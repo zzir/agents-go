@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -130,7 +131,7 @@ func TestCreateRunHonorsPreferWait(t *testing.T) {
 	}
 	runner := bridge.NewRunner(t.Context(), db, &bridge.AgentDeps{
 		AgentConfigs: agents, Providers: store.NewProviderStore(db), Sessions: sessions,
-		Traces: store.NewTraceStore(db), Settings: store.NewSettingStore(db), Memories: store.NewMemoryStore(db),
+		Traces: store.NewTraceStore(db), Settings: settings.NewReader(store.NewSettingStore(db)), Memories: store.NewMemoryStore(db),
 	})
 	h := NewRunHandler(runner)
 	engine := gin.New()

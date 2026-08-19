@@ -1,8 +1,6 @@
 package bridge
 
 import (
-	"context"
-	"strconv"
 	"testing"
 
 	"github.com/zzir/agents-go/agents"
@@ -73,28 +71,6 @@ func TestUnknownToolReturnsToTheModelByDefault(t *testing.T) {
 		t.Fatalf("explicit error = %v, want the abort", got.Exec.ToolNotFoundBehavior)
 	}
 }
-
-// The tri-state read of trace_include_sensitive_data: unset and garbage defer
-// to the SDK default (nil), an explicit value comes through as a pointer.
-func TestSensitiveTraceSettingTriState(t *testing.T) {
-	if got := sensitiveTraceSetting(context.Background(), nil); got != nil {
-		t.Fatalf("no settings store must mean nil, got %v", *got)
-	}
-	// The parse itself, without a store round-trip.
-	for raw, want := range map[string]*bool{
-		"false": boolPtr(false), "0": boolPtr(false), "true": boolPtr(true),
-	} {
-		v, err := strconv.ParseBool(raw)
-		if err != nil {
-			t.Fatalf("ParseBool(%q): %v", raw, err)
-		}
-		if v != *want {
-			t.Fatalf("ParseBool(%q) = %v, want %v", raw, v, *want)
-		}
-	}
-}
-
-func boolPtr(b bool) *bool { return &b }
 
 // The resolved flag reaches the run options — this is what actually gates
 // what generation spans record.

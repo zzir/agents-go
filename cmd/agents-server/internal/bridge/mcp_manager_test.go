@@ -15,6 +15,7 @@ import (
 
 	"github.com/rs/zerolog"
 
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/mcp"
 )
@@ -218,7 +219,7 @@ func TestConnectEnabledMcpServersConcurrent(t *testing.T) {
 	mk("hung", "http://"+hung.Addr().String())
 	mk("fast", fast.URL)
 
-	mgr := NewMcpManager(ctx, store.NewSettingStore(db))
+	mgr := NewMcpManager(ctx, settings.NewReader(store.NewSettingStore(db)))
 	go ConnectEnabledMcpServers(ctx, mgr, mcpStore, nil)
 
 	// The reachable server must be reached well within the hung server's 30s

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/rs/zerolog"
@@ -16,6 +15,7 @@ import (
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/middleware"
 	"github.com/zzir/agents-go/agents/tasks"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/skills"
 	"github.com/zzir/agents-go/tools/bravesearch"
@@ -28,7 +28,7 @@ type AgentDeps struct {
 	McpServers       *store.McpServerStore
 	SandboxConfigs   *store.SandboxStore
 	Memories         *store.MemoryStore
-	Settings         *store.SettingStore
+	Settings         *settings.Reader
 	ProviderRoutes   *store.ProviderRouteStore
 	Sessions         *store.SessionStore
 	Traces           *store.TraceStore
@@ -185,7 +185,7 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandbox
 	}
 	result, err := buildAgentFromConfig(ctx, deps, agentConfigID, sandboxID, bc)
 	if err == nil {
-		result.TraceIncludeSensitive = sensitiveTraceSetting(ctx, deps.Settings)
+		result.TraceIncludeSensitive = deps.Settings.BoolPtr(ctx, settings.KeyTraceIncludeSensitiveData)
 	}
 	if err == nil && !background && deps.TaskManager != nil {
 		// The model's background surface: four verbs — spawn (the server's,
@@ -429,7 +429,7 @@ func splitApproveTools(names []string) (approveTools []string, approveCommands b
 // prompt and its memories, measuring each into the profile.
 func layerInstructions(ctx context.Context, deps *AgentDeps, agent *agents.Agent, ac *store.AgentConfig, prof *store.PromptProfile) {
 	prof.InstructionsChars = len(ac.Instructions)
-	if global := settingValue(ctx, deps.Settings, "system_prompt"); global != "" {
+	if global := deps.Settings.String(ctx, settings.KeySystemPrompt); global != "" {
 		agent.Instructions = agents.WrapInstructions(agent.Instructions, global, "")
 		prof.GlobalPromptChars = len(global)
 	}
@@ -499,7 +499,7 @@ func attachMCPServers(ctx context.Context, deps *AgentDeps, agent *agents.Agent,
 // attachBraveSearch adds the Brave Search tool when a brave_api_key is set; a
 // build failure is logged and skipped, not fatal.
 func attachBraveSearch(ctx context.Context, deps *AgentDeps, agent *agents.Agent, proxyClient *http.Client) {
-	apiKey := settingValue(ctx, deps.Settings, "brave_api_key")
+	apiKey := deps.Settings.String(ctx, settings.KeyBraveAPIKey)
 	if apiKey == "" {
 		return
 	}
@@ -655,33 +655,6 @@ func buildMemoryBlock(memories []store.Memory) string {
 		fmt.Fprintf(&b, "- **%s**: %s\n", m.Key, m.Content)
 	}
 	return b.String()
-}
-
-func settingValue(ctx context.Context, settings *store.SettingStore, key string) string {
-	if settings == nil {
-		return ""
-	}
-	s, err := settings.Get(ctx, key)
-	if err != nil || s.Value == "" {
-		return ""
-	}
-	return s.Value
-}
-
-// sensitiveTraceSetting reads the global trace_include_sensitive_data setting
-// as the tri-state the SDK expects: nil (unset / unparsable) defers to the SDK
-// default of including everything; an explicit false keeps prompts, outputs
-// and tool arguments out of stored traces.
-func sensitiveTraceSetting(ctx context.Context, settings *store.SettingStore) *bool {
-	raw := strings.TrimSpace(settingValue(ctx, settings, "trace_include_sensitive_data"))
-	if raw == "" {
-		return nil
-	}
-	v, err := strconv.ParseBool(raw)
-	if err != nil {
-		return nil
-	}
-	return &v
 }
 
 // Provider selection — validation, construction, auth modes, setting keys —

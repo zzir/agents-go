@@ -9,6 +9,7 @@ import (
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/session"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -18,7 +19,7 @@ func newBareRunner(t *testing.T) (*Runner, *bun.DB) {
 	runner := NewRunner(context.Background(), db, &AgentDeps{
 		AgentConfigs:     store.NewAgentConfigStore(db),
 		Sessions:         store.NewSessionStore(db),
-		Settings:         store.NewSettingStore(db),
+		Settings:         settings.NewReader(store.NewSettingStore(db)),
 		Memories:         store.NewMemoryStore(db),
 		PendingApprovals: store.NewPendingApprovalStore(db),
 		SandboxConfigs:   store.NewSandboxStore(db),

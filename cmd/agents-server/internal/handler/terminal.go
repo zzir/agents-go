@@ -12,6 +12,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/sandbox"
 )
@@ -20,9 +21,6 @@ const (
 	// terminalReadChunk caps one binary frame of terminal output. Reads block
 	// on the PTY, so this also bounds per-terminal buffer memory.
 	terminalReadChunk = 32 << 10
-	// maxTerminalsPerSandbox bounds concurrent terminals per sandbox config —
-	// a fat-finger guard, not a scheduler.
-	maxTerminalsPerSandbox = 4
 )
 
 // TerminalHandler serves /ws/terminal: one interactive sandbox terminal per
@@ -36,8 +34,9 @@ const (
 // deletes can tear them down (an SSH/docker rebuild would otherwise leave
 // orphaned sessions running against the old config).
 type TerminalHandler struct {
-	store   *store.SandboxStore
-	manager sandboxProvider
+	store    *store.SandboxStore
+	manager  sandboxProvider
+	settings *settings.Reader
 
 	mu   sync.Mutex
 	live map[string]map[*liveTerminal]struct{} // sandbox config id → open terminals
@@ -73,8 +72,8 @@ type liveTerminal struct {
 }
 
 // NewTerminalHandler returns a handler backed by the given store and sandbox manager.
-func NewTerminalHandler(s *store.SandboxStore, m sandboxProvider) *TerminalHandler {
-	return &TerminalHandler{store: s, manager: m, live: map[string]map[*liveTerminal]struct{}{}, fence: map[string]int64{}}
+func NewTerminalHandler(s *store.SandboxStore, m sandboxProvider, cfg *settings.Reader) *TerminalHandler {
+	return &TerminalHandler{store: s, manager: m, settings: cfg, live: map[string]map[*liveTerminal]struct{}{}, fence: map[string]int64{}}
 }
 
 // Handle runs one terminal session on an authenticated WebSocket connection.
@@ -97,9 +96,10 @@ func (h *TerminalHandler) Handle(conn *server.WSConn) {
 	// return, and this defer drops the hold.
 	defer release()
 	lt := &liveTerminal{term: term, conn: conn, gen: opened.RuntimeGen}
-	if ok, stale := h.register(sandboxID, lt); !ok {
+	limit := h.settings.Int(conn.Context(), settings.KeyMaxTerminalsPerSandbox)
+	if ok, stale := h.register(sandboxID, lt, limit); !ok {
 		_ = term.Close()
-		msg := fmt.Sprintf("too many open terminals for this sandbox (max %d)", maxTerminalsPerSandbox)
+		msg := fmt.Sprintf("too many open terminals for this sandbox (max %d)", limit)
 		if stale {
 			// The config was updated or deleted while this terminal was
 			// dialing: its shell would serve retired credentials (or a
@@ -243,14 +243,14 @@ func (h *TerminalHandler) open(conn *server.WSConn) (sandbox.Terminal, *store.Sa
 // generation fence (see the fence field) — checked under the same lock the
 // fence moves under. The two refusals are distinct answers: full is
 // temporary, stale is final.
-func (h *TerminalHandler) register(sandboxID string, lt *liveTerminal) (ok, stale bool) {
+func (h *TerminalHandler) register(sandboxID string, lt *liveTerminal, limit int) (ok, stale bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if lt.gen < h.fence[sandboxID] {
 		return false, true
 	}
 	set := h.live[sandboxID]
-	if len(set) >= maxTerminalsPerSandbox {
+	if len(set) >= limit {
 		return false, false
 	}
 	if set == nil {

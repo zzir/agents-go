@@ -14,6 +14,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/mcp"
 )
@@ -25,7 +26,7 @@ type McpManager struct {
 	// importantly the stdio subprocesses), independent of whichever request
 	// context happened to trigger the connect.
 	rootCtx  context.Context
-	settings *store.SettingStore
+	settings *settings.Reader
 	mu       sync.RWMutex
 	servers  map[string]*mcp.Server
 	// connecting marks servers whose handshake is in flight, carrying the
@@ -51,13 +52,13 @@ type connectState struct {
 
 // NewMcpManager returns a new manager with no active connections. rootCtx
 // scopes connection lifetimes: cancelling it stops every stdio subprocess.
-func NewMcpManager(rootCtx context.Context, settings *store.SettingStore) *McpManager {
+func NewMcpManager(rootCtx context.Context, cfg *settings.Reader) *McpManager {
 	if rootCtx == nil {
 		rootCtx = context.Background()
 	}
 	return &McpManager{
 		rootCtx:    rootCtx,
-		settings:   settings,
+		settings:   cfg,
 		servers:    make(map[string]*mcp.Server),
 		connecting: make(map[string]*connectState),
 		connectGen: make(map[string]uint64),

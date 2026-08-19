@@ -5,8 +5,25 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
+
+// The settings registry owns the key strings; a backend points at one. A key
+// with no def is a global fallback credential that is never masked, never
+// validated and never shown in the panel.
+func TestEveryProviderKeyHasASettingDef(t *testing.T) {
+	for _, d := range providerDefs {
+		def, ok := settings.Lookup(d.SettingKey)
+		if !ok {
+			t.Errorf("provider %q names setting %q, which the registry does not define", d.Type, d.SettingKey)
+			continue
+		}
+		if def.Kind != settings.KindSecret {
+			t.Errorf("provider key %q is kind %q, want secret", d.SettingKey, def.Kind)
+		}
+	}
+}
 
 func TestValidateProvider(t *testing.T) {
 	ok := func(providerType, authMode string) *store.Provider {

@@ -270,18 +270,3 @@ func sanitizeProvider(pv *store.Provider) {
 	pv.ChatGPTLoggedIn = pv.ChatGPTToken != ""
 	pv.ChatGPTToken = "" // json:"-" already hides it; cleared as defense in depth
 }
-
-// secretSettingKeys are the settings whose values are secrets and therefore
-// masked on read and sentinel-resolved on write.
-var secretSettingKeys = map[string]bool{
-	"brave_api_key": true,
-}
-
-// The per-provider global fallback keys ("openai_api_key", …) are derived
-// from the provider registry, so a new backend cannot add a key setting and
-// forget to mask it.
-func init() {
-	for _, p := range bridge.ProviderTypes() {
-		secretSettingKeys[p.SettingKey] = true
-	}
-}

@@ -4,32 +4,22 @@ import (
 	"context"
 	"errors"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
 
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
-
-// defaultApprovalTTLMinutes bounds how long a run may sit awaiting approval
-// before it is expired. Overridable via the approval_ttl_minutes setting; 0
-// disables expiry.
-const defaultApprovalTTLMinutes = 24 * 60
 
 // RunApprovalReaper expires pending tool approvals that have gone unanswered
 // past the TTL. On expiry it drops the record and writes a session annotation
 // so the timeout is visible instead of silently vanishing. It runs at startup
 // and hourly until ctx ends — run it in a goroutine.
-func RunApprovalReaper(ctx context.Context, settings *store.SettingStore, approvals *store.PendingApprovalStore, entries *store.EntryStore, tasks *store.TaskStore, announce func(ctx context.Context, taskID string)) {
+func RunApprovalReaper(ctx context.Context, cfg *settings.Reader, approvals *store.PendingApprovalStore, entries *store.EntryStore, tasks *store.TaskStore, announce func(ctx context.Context, taskID string)) {
 	log := zerolog.Ctx(ctx)
 	reap := func() {
-		ttl := defaultApprovalTTLMinutes
-		if st, err := settings.Get(ctx, "approval_ttl_minutes"); err == nil {
-			if v, err := strconv.Atoi(strings.TrimSpace(st.Value)); err == nil {
-				ttl = v
-			}
-		}
+		ttl := cfg.Int(ctx, settings.KeyApprovalTTLMinutes)
 		if ttl <= 0 {
 			return // expiry disabled
 		}
@@ -117,16 +107,12 @@ func RunApprovalReaper(ctx context.Context, settings *store.SettingStore, approv
 // controlled by the trace_retention_days setting (a positive integer number
 // of days; unset, zero, or invalid disables pruning). It blocks until ctx
 // ends — run it in a goroutine.
-func RunTraceRetention(ctx context.Context, settings *store.SettingStore, traces *store.TraceStore) {
+func RunTraceRetention(ctx context.Context, cfg *settings.Reader, traces *store.TraceStore) {
 	log := zerolog.Ctx(ctx)
 	prune := func() {
-		st, err := settings.Get(ctx, "trace_retention_days")
-		if err != nil {
-			return // unset — retention disabled
-		}
-		days, err := strconv.Atoi(strings.TrimSpace(st.Value))
-		if err != nil || days <= 0 {
-			return
+		days := cfg.Int(ctx, settings.KeyTraceRetentionDays)
+		if days <= 0 {
+			return // unset or zero — retention disabled
 		}
 		cutoff := time.Now().UTC().AddDate(0, 0, -days)
 		n, err := traces.DeleteOlderThan(ctx, cutoff)

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -16,7 +17,7 @@ func TestApprovalReaperEndsThePausedTaskAndAnnouncesIt(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	runner, sessions, tasks, _ := newTaskTestRunner(t)
-	if err := runner.Deps.Settings.Set(ctx, "approval_ttl_minutes", "1"); err != nil {
+	if err := store.NewSettingStore(runner.db).Set(ctx, settings.KeyApprovalTTLMinutes, "1"); err != nil {
 		t.Fatal(err)
 	}
 	parent := &store.Session{ID: store.NewID(), Name: "p"}

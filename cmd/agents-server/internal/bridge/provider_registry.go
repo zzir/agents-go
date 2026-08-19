@@ -10,6 +10,7 @@ import (
 	"github.com/openai/openai-go/v3/option"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	anthropicProvider "github.com/zzir/agents-go/models/anthropic"
 	"github.com/zzir/agents-go/models/modelkit"
@@ -58,14 +59,14 @@ type providerDef struct {
 var providerDefs = []providerDef{
 	{
 		Type:         ProviderTypeOpenAI,
-		SettingKey:   "openai_api_key",
+		SettingKey:   settings.KeyOpenAIAPIKey,
 		AuthModes:    []string{AuthModeChatGPTLogin},
 		Build:        newOpenAIModelProvider,
 		Capabilities: openaiProvider.Capabilities(),
 	},
 	{
 		Type:       ProviderTypeAnthropic,
-		SettingKey: "anthropic_api_key",
+		SettingKey: settings.KeyAnthropicAPIKey,
 		Build: func(apiKey, baseURL string, _ *ChatGPTCredentials, proxyClient *http.Client) agents.ModelProvider {
 			return newAnthropicModelProvider(apiKey, baseURL, proxyClient)
 		},

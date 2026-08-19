@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -42,7 +43,7 @@ const chatgptHTTPTimeout = 30 * time.Second
 type ChatGPTOAuth struct {
 	providers *store.ProviderStore
 	// settings routes token endpoint calls through the configured proxy_url.
-	settings *store.SettingStore
+	settings *settings.Reader
 
 	mu      sync.Mutex
 	pending map[string]*chatgptPending // keyed by state
@@ -62,13 +63,13 @@ type chatgptPending struct {
 
 // NewChatGPTOAuth returns the OAuth manager over the provider rows it logs in
 // and the settings its token calls honor (proxy_url).
-func NewChatGPTOAuth(providers *store.ProviderStore, settings *store.SettingStore) *ChatGPTOAuth {
-	if providers == nil || settings == nil {
-		panic("bridge: NewChatGPTOAuth needs the provider and setting stores")
+func NewChatGPTOAuth(providers *store.ProviderStore, cfg *settings.Reader) *ChatGPTOAuth {
+	if providers == nil || cfg == nil {
+		panic("bridge: NewChatGPTOAuth needs the provider store and the setting reader")
 	}
 	return &ChatGPTOAuth{
 		providers: providers,
-		settings:  settings,
+		settings:  cfg,
 		pending:   make(map[string]*chatgptPending),
 	}
 }

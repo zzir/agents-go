@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -30,17 +31,17 @@ func NewSettingHandler(s *store.SettingStore) *SettingHandler {
 //	@Security		BearerAuth
 //	@Router			/settings [get]
 func (h *SettingHandler) List(c *gin.Context) {
-	settings, err := h.store.List(c.Request.Context())
+	stored, err := h.store.List(c.Request.Context())
 	if err != nil {
 		internalError(c, err)
 		return
 	}
-	for i := range settings {
-		if secretSettingKeys[settings[i].Key] {
-			settings[i].Value = maskSecret(settings[i].Value)
+	for i := range stored {
+		if settings.IsSecret(stored[i].Key) {
+			stored[i].Value = maskSecret(stored[i].Value)
 		}
 	}
-	c.JSON(http.StatusOK, settings)
+	c.JSON(http.StatusOK, stored)
 }
 
 // Get responds with the setting identified by the key path parameter, secret
@@ -61,7 +62,7 @@ func (h *SettingHandler) Get(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
-	if secretSettingKeys[st.Key] {
+	if settings.IsSecret(st.Key) {
 		st.Value = maskSecret(st.Value)
 	}
 	c.JSON(http.StatusOK, st)
@@ -94,7 +95,7 @@ func (h *SettingHandler) Set(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 	key := c.Param("key")
-	if secretSettingKeys[key] && req.Value == SecretMask {
+	if settings.IsSecret(key) && req.Value == SecretMask {
 		// Keep the stored secret when the client echoes the mask. A transient
 		// (non-not-found) Get failure must abort: continuing would resolve the mask
 		// to "" and silently clear the stored secret. Not-found leaves nothing to
@@ -114,7 +115,7 @@ func (h *SettingHandler) Set(c *gin.Context) {
 		return
 	}
 	st := store.Setting{Key: key, Value: req.Value}
-	if secretSettingKeys[key] {
+	if settings.IsSecret(key) {
 		st.Value = maskSecret(st.Value)
 	}
 	c.JSON(http.StatusOK, st)

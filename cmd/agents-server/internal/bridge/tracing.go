@@ -4,13 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"maps"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/tracing"
 )
@@ -176,12 +175,8 @@ func newTracer(ctx context.Context, send func(string, any), traces *store.TraceS
 	return tracing.NewTracer(newWSProcessor(ctx, send, traces, sessionID, runID, parentRunID, storedCap))
 }
 
-// spanDataCap resolves the trace_span_data_kb setting: a positive number of
-// kilobytes, anything else the default. Read once per run.
-func spanDataCap(ctx context.Context, settings *store.SettingStore) int {
-	kb, err := strconv.Atoi(strings.TrimSpace(settingValue(ctx, settings, "trace_span_data_kb")))
-	if err != nil || kb <= 0 {
-		return storedSpanDataJSON
-	}
-	return kb << 10
+// spanDataCap resolves the trace_span_data_kb setting into bytes. Read once
+// per run.
+func spanDataCap(ctx context.Context, cfg *settings.Reader) int {
+	return cfg.Int(ctx, settings.KeyTraceSpanDataKB) << 10
 }

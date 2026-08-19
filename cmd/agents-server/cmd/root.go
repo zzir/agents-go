@@ -19,6 +19,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/docs"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/handler"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/web"
 )
@@ -90,6 +91,7 @@ func run(_ *cobra.Command, _ []string) error {
 	mcpServerStore := store.NewMcpServerStore(db)
 	memoryStore := store.NewMemoryStore(db)
 	settingStore := store.NewSettingStore(db)
+	settingReader := settings.NewReader(settingStore)
 	providerRouteStore := store.NewProviderRouteStore(db)
 	sandboxStore := store.NewSandboxStore(db)
 	guardrailStore := store.NewGuardrailStore(db)
@@ -101,12 +103,12 @@ func run(_ *cobra.Command, _ []string) error {
 	wakeupStore := store.NewWakeupStore(db)
 	contextProfileStore := store.NewContextProfileStore(db)
 	guardrailResolver := bridge.NewGuardrailResolver(guardrailStore)
-	mcpManager := bridge.NewMcpManager(ctx, settingStore)
+	mcpManager := bridge.NewMcpManager(ctx, settingReader)
 	oauthCoordinator := bridge.NewOAuthCoordinator(mcpServerStore)
-	chatgptOAuth := bridge.NewChatGPTOAuth(providerStore, settingStore)
+	chatgptOAuth := bridge.NewChatGPTOAuth(providerStore, settingReader)
 	defer mcpManager.CloseAll()
 	go bridge.ConnectEnabledMcpServers(ctx, mcpManager, mcpServerStore, oauthCoordinator)
-	go bridge.RunTraceRetention(ctx, settingStore, traceStore)
+	go bridge.RunTraceRetention(ctx, settingReader, traceStore)
 	sandboxManager := bridge.NewSandboxManager(flagWorkspace)
 	defer sandboxManager.CloseAll()
 
@@ -116,7 +118,7 @@ func run(_ *cobra.Command, _ []string) error {
 		McpServers:       mcpServerStore,
 		SandboxConfigs:   sandboxStore,
 		Memories:         memoryStore,
-		Settings:         settingStore,
+		Settings:         settingReader,
 		ProviderRoutes:   providerRouteStore,
 		Sessions:         sessionStore,
 		Traces:           traceStore,
@@ -150,7 +152,7 @@ func run(_ *cobra.Command, _ []string) error {
 	triggerHandler := handler.NewTriggerHandler(triggerStore, sessionStore, triggerScheduler)
 	providerRouteHandler := handler.NewProviderRouteHandler(providerRouteStore, providerStore)
 	guardrailHandler := handler.NewGuardrailHandler(guardrailStore, guardrailResolver)
-	terminalHandler := handler.NewTerminalHandler(sandboxStore, sandboxManager)
+	terminalHandler := handler.NewTerminalHandler(sandboxStore, sandboxManager, settingReader)
 	sandboxHandler := handler.NewSandboxHandler(sandboxStore, sandboxManager, flagAllowLocalSandbox, terminalHandler, flagWorkspace)
 	traceHandler := handler.NewTraceHandler(traceStore)
 	playgroundHandler := handler.NewPlaygroundHandler(deps)
@@ -180,7 +182,7 @@ func run(_ *cobra.Command, _ []string) error {
 	// The reaper and the clock start after the sweep AND after the handlers,
 	// for the same reason the drain does: they end and start runs, and they
 	// announce through hooks (OnBroadcast) the WS handler has only now wired.
-	go bridge.RunApprovalReaper(ctx, settingStore, pendingApprovalStore, entryStore, taskStore, runner.AnnounceTask)
+	go bridge.RunApprovalReaper(ctx, settingReader, pendingApprovalStore, entryStore, taskStore, runner.AnnounceTask)
 	if err := triggerScheduler.Start(ctx); err != nil {
 		return fmt.Errorf("starting the trigger scheduler: %w", err)
 	}

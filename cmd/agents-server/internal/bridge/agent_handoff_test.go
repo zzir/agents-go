@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -40,7 +41,7 @@ func TestBuildFullAgentDiamondHandoffNotACycle(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	s := store.NewAgentConfigStore(db)
-	deps := &AgentDeps{AgentConfigs: s, Settings: store.NewSettingStore(db), Memories: store.NewMemoryStore(db)}
+	deps := &AgentDeps{AgentConfigs: s, Settings: settings.NewReader(store.NewSettingStore(db)), Memories: store.NewMemoryStore(db)}
 
 	d := mkAgent(t, s, "D")
 	b := mkAgent(t, s, "B", d)
@@ -86,7 +87,7 @@ func TestBuildFullAgentHandoffTargetErrorPropagates(t *testing.T) {
 	db := newTestDB(t)
 	s := store.NewAgentConfigStore(db)
 	deps := &AgentDeps{
-		AgentConfigs: s, Settings: store.NewSettingStore(db), Memories: store.NewMemoryStore(db),
+		AgentConfigs: s, Settings: settings.NewReader(store.NewSettingStore(db)), Memories: store.NewMemoryStore(db),
 		Guardrails: NewGuardrailResolver(store.NewGuardrailStore(db)),
 	}
 
@@ -109,7 +110,7 @@ func TestBuildFullAgentRealCycleBroken(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	s := store.NewAgentConfigStore(db)
-	deps := &AgentDeps{AgentConfigs: s, Settings: store.NewSettingStore(db), Memories: store.NewMemoryStore(db)}
+	deps := &AgentDeps{AgentConfigs: s, Settings: settings.NewReader(store.NewSettingStore(db)), Memories: store.NewMemoryStore(db)}
 
 	// Create A and B, then point B back at A to form the cycle.
 	a := mkAgent(t, s, "A")

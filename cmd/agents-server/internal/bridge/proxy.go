@@ -5,28 +5,17 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 )
 
 // ProxyHTTPClient returns an *http.Client configured with the proxy_url
 // from settings. Returns nil if no proxy is configured.
-func ProxyHTTPClient(ctx context.Context, settings *store.SettingStore) *http.Client {
-	proxyURL := getProxyURL(ctx, settings)
+func ProxyHTTPClient(ctx context.Context, cfg *settings.Reader) *http.Client {
+	proxyURL := cfg.String(ctx, settings.KeyProxyURL)
 	if proxyURL == "" {
 		return nil
 	}
 	return newProxyClient(proxyURL)
-}
-
-func getProxyURL(ctx context.Context, settings *store.SettingStore) string {
-	if settings == nil {
-		return ""
-	}
-	s, err := settings.Get(ctx, "proxy_url")
-	if err != nil || s.Value == "" {
-		return ""
-	}
-	return s.Value
 }
 
 func newProxyClient(proxyURL string) *http.Client {

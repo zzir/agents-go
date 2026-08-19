@@ -17,6 +17,7 @@ import (
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/sandbox"
 )
@@ -128,7 +129,7 @@ func terminalTestServer(t *testing.T, provider sandboxProvider) (*httptest.Serve
 	if err := sandboxes.Create(t.Context(), cfg); err != nil {
 		t.Fatal(err)
 	}
-	th := NewTerminalHandler(sandboxes, provider)
+	th := NewTerminalHandler(sandboxes, provider, settings.NewReader(nil))
 	engine := gin.New()
 	engine.GET("/ws/terminal", server.HandleWSWithAuth(th.Handle, testWSToken))
 	srv := httptest.NewServer(engine)
@@ -360,7 +361,7 @@ func TestTerminalOpen_ValidatesWorkDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider := &fakeProvider{sb: &fakeTerminalSandbox{term: newFakeTerminal()}}
-	th := NewTerminalHandler(sandboxes, provider)
+	th := NewTerminalHandler(sandboxes, provider, settings.NewReader(nil))
 	engine := gin.New()
 	engine.GET("/ws/terminal", server.HandleWSWithAuth(th.Handle, testWSToken))
 	srv := httptest.NewServer(engine)
@@ -418,18 +419,18 @@ func TestTerminalWS_ReleasesInstanceOnClose(t *testing.T) {
 // generation is refused at register — the sweep that retired it ran while
 // this terminal was still dialing and could not see it.
 func TestTerminalRegisterFence(t *testing.T) {
-	th := NewTerminalHandler(nil, nil)
+	th := NewTerminalHandler(nil, nil, settings.NewReader(nil))
 	th.CloseSandboxTerminals("sb", 2)
 
-	if ok, stale := th.register("sb", &liveTerminal{gen: 1}); ok || !stale {
+	if ok, stale := th.register("sb", &liveTerminal{gen: 1}, 4); ok || !stale {
 		t.Fatalf("stale-generation register: ok=%v stale=%v, want a stale refusal", ok, stale)
 	}
-	if ok, stale := th.register("sb", &liveTerminal{gen: 2}); !ok || stale {
+	if ok, stale := th.register("sb", &liveTerminal{gen: 2}, 4); !ok || stale {
 		t.Fatalf("current-generation register: ok=%v stale=%v, want accepted", ok, stale)
 	}
 	// The fence never regresses: an older sweep arriving late cannot reopen it.
 	th.CloseSandboxTerminals("sb", 1)
-	if ok, stale := th.register("sb", &liveTerminal{gen: 1}); ok || !stale {
+	if ok, stale := th.register("sb", &liveTerminal{gen: 1}, 4); ok || !stale {
 		t.Fatalf("register after a late older sweep: ok=%v stale=%v, want still refused", ok, stale)
 	}
 }

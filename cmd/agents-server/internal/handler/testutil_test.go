@@ -13,6 +13,7 @@ import (
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -95,5 +96,5 @@ func testAgentConfigHandler(db *bun.DB) *AgentConfigHandler {
 // with a terminal registry over the same pair and the workspace given. Local
 // sandboxes stay refused, as the flag defaults.
 func testSandboxHandler(sandboxes *store.SandboxStore, manager *bridge.SandboxManager, workspace string) *SandboxHandler {
-	return NewSandboxHandler(sandboxes, manager, false, NewTerminalHandler(sandboxes, manager), workspace)
+	return NewSandboxHandler(sandboxes, manager, false, NewTerminalHandler(sandboxes, manager, settings.NewReader(nil)), workspace)
 }

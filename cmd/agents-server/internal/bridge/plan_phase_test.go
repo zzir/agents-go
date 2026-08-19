@@ -6,6 +6,7 @@ import (
 
 	"github.com/zzir/agents-go/agents/middleware"
 	"github.com/zzir/agents-go/agents/session"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -69,7 +70,7 @@ func TestRestorePlanPhase(t *testing.T) {
 	}
 	runner := NewRunner(ctx, db, &AgentDeps{
 		AgentConfigs:   store.NewAgentConfigStore(db),
-		Settings:       store.NewSettingStore(db),
+		Settings:       settings.NewReader(store.NewSettingStore(db)),
 		Memories:       store.NewMemoryStore(db),
 		McpServers:     store.NewMcpServerStore(db),
 		ProviderRoutes: store.NewProviderRouteStore(db),
@@ -134,7 +135,7 @@ func TestRestorePlanPhase(t *testing.T) {
 	}
 	broken := NewRunner(ctx, dbBroken, &AgentDeps{
 		AgentConfigs:   store.NewAgentConfigStore(dbBroken),
-		Settings:       store.NewSettingStore(dbBroken),
+		Settings:       settings.NewReader(store.NewSettingStore(dbBroken)),
 		Memories:       store.NewMemoryStore(dbBroken),
 		McpServers:     store.NewMcpServerStore(dbBroken),
 		ProviderRoutes: store.NewProviderRouteStore(dbBroken),

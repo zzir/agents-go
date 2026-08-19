@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -15,7 +16,7 @@ func TestChatGPTOAuthMissingProvider(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	providers := store.NewProviderStore(db)
-	o := NewChatGPTOAuth(providers, store.NewSettingStore(db))
+	o := NewChatGPTOAuth(providers, settings.NewReader(store.NewSettingStore(db)))
 
 	// Missing provider -> ErrNotFound, not a folded logged_in:false.
 	if _, err := o.IsLoggedIn(ctx, "nope"); !errors.Is(err, store.ErrNotFound) {

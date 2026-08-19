@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/zzir/agents-go/agents/middleware"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -34,7 +35,7 @@ func TestBuildFullAgentIgnoresLegacyUsePreviousResponseID(t *testing.T) {
 	deps := &AgentDeps{
 		AgentConfigs: agentConfigs,
 		Providers:    store.NewProviderStore(db),
-		Settings:     store.NewSettingStore(db),
+		Settings:     settings.NewReader(store.NewSettingStore(db)),
 		Memories:     store.NewMemoryStore(db),
 	}
 	built, err := BuildFullAgent(ctx, deps, ac.ID, "")
@@ -61,7 +62,7 @@ func TestBackgroundBuildIsToldNobodyIsReading(t *testing.T) {
 	deps := &AgentDeps{
 		AgentConfigs: agentConfigs,
 		Providers:    store.NewProviderStore(db),
-		Settings:     store.NewSettingStore(db),
+		Settings:     settings.NewReader(store.NewSettingStore(db)),
 		Memories:     store.NewMemoryStore(db),
 	}
 	instructionsOf := func(background bool) string {
@@ -103,7 +104,7 @@ func TestBuildFullAgentAppliesWorkflowModes(t *testing.T) {
 	deps := &AgentDeps{
 		AgentConfigs: agentConfigs,
 		Providers:    store.NewProviderStore(db),
-		Settings:     store.NewSettingStore(db),
+		Settings:     settings.NewReader(store.NewSettingStore(db)),
 		Memories:     store.NewMemoryStore(db),
 	}
 	built, err := BuildFullAgent(ctx, deps, ac.ID, "")

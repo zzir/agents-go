@@ -557,6 +557,11 @@ Memories can be scoped to a specific agent via `agent_config_id`.
 | PUT    | `/settings/:key` | Set value                |
 | DELETE | `/settings/:key` | Delete                   |
 
+The keys, their types, defaults and how the panel presents them all come from
+ONE table — `internal/settings`'s registry. Nothing here is a second source of
+truth: the backend reads a key through it, secret masking derives from it, and
+the panel renders from it. Adding a global setting is one entry there.
+
 Known keys:
 
 - `proxy_url` — HTTP proxy for model and MCP calls
@@ -586,6 +591,8 @@ Known keys:
   the row, which the panel fetches when the span is opened. Applies to new runs
 - `approval_ttl_minutes` — how long a pending tool approval may sit unanswered
   before it expires (default `1440` = 24h; `0` disables expiry)
+- `max_terminals_per_sandbox` — concurrent interactive terminals allowed on one
+  sandbox (default `4`, max `32`) — a fat-finger guard, not a scheduler
 
 ### Skills — `/api/v1/skills` (read-only)
 
@@ -1848,6 +1855,23 @@ When a change genuinely doesn't fit, update this list in the same PR.
     editing sequences. `get_workflow` is `ReadOnly`, so plan mode reads
     definitions and withholds saves; the Context panel meters the pair as its
     own bucket (`tools · workflows`).
+
+**Configuration**
+
+40. **A global setting is one entry in the registry, and everything else
+    derives from it.** `internal/settings` names every key, its kind, its
+    default and how the panel presents it; nothing may name a setting any
+    other way. The backend reads through `settings.Reader` (which resolves the
+    registered default, so no reader carries its own fallback), masking is
+    `Kind == secret` rather than a hand-kept list, and the panel renders the
+    table the server serves rather than a copy of it. The rule exists because
+    the key set used to live in four places at once — backend literals, a
+    masking map, the provider table, and a `DEFAULT_KEYS` array in the
+    frontend — and `approval_ttl_minutes` is what that cost: read by the
+    reaper, documented here, and invisible in the UI for want of a fifth edit.
+    A default lives in the registry, never in a `const` beside its one reader:
+    a default the panel cannot show is one the operator has to read the source
+    to learn.
 
 ## Database
 

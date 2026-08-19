@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -26,7 +27,7 @@ func TestBuildFullAgentFailsOnBadCriticalConfig(t *testing.T) {
 	}
 	deps := &AgentDeps{
 		AgentConfigs: s,
-		Settings:     store.NewSettingStore(db),
+		Settings:     settings.NewReader(store.NewSettingStore(db)),
 		Memories:     store.NewMemoryStore(db),
 		Guardrails:   NewGuardrailResolver(store.NewGuardrailStore(db)),
 		Workspace:    ws,
@@ -85,7 +86,7 @@ func TestBuildFullAgentPromotesGuardrailsToRunLevel(t *testing.T) {
 	s := store.NewAgentConfigStore(db)
 	deps := &AgentDeps{
 		AgentConfigs: s,
-		Settings:     store.NewSettingStore(db),
+		Settings:     settings.NewReader(store.NewSettingStore(db)),
 		Memories:     store.NewMemoryStore(db),
 		Guardrails:   NewGuardrailResolver(store.NewGuardrailStore(db)),
 	}

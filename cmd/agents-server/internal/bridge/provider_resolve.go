@@ -31,7 +31,7 @@ func providerKey(ctx context.Context, deps *AgentDeps, pv *store.Provider) strin
 	if err != nil {
 		return ""
 	}
-	return settingValue(ctx, deps.Settings, def.SettingKey)
+	return deps.Settings.String(ctx, def.SettingKey)
 }
 
 // AgentProvider loads the endpoint an agent reaches its model through. An
@@ -85,7 +85,7 @@ func resolveProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig
 	// provider pointed at a custom base_url must carry its own key — otherwise
 	// the global (e.g. OpenAI) key would be sent to whatever host it names.
 	if apiKey == "" && pv.BaseURL == "" {
-		apiKey = settingValue(ctx, deps.Settings, def.SettingKey)
+		apiKey = deps.Settings.String(ctx, def.SettingKey)
 	}
 	if apiKey == "" {
 		return nil, def.Type, nil
@@ -107,7 +107,7 @@ func resolveProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig
 			if ferr != nil {
 				return ""
 			}
-			return settingValue(ctx, deps.Settings, fdef.SettingKey)
+			return deps.Settings.String(ctx, fdef.SettingKey)
 		})
 	}
 	return provider, def.Type, nil

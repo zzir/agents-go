@@ -11,6 +11,7 @@ import (
 	"github.com/zzir/agents-go/agents/session"
 	sdktasks "github.com/zzir/agents-go/agents/tasks"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -39,7 +40,7 @@ func newTaskTestRunner(t *testing.T) (*Runner, *store.SessionStore, *store.TaskS
 		AgentConfigs:     agentConfigs,
 		Providers:        store.NewProviderStore(db),
 		Sessions:         sessions,
-		Settings:         store.NewSettingStore(db),
+		Settings:         settings.NewReader(store.NewSettingStore(db)),
 		Memories:         store.NewMemoryStore(db),
 		PendingApprovals: store.NewPendingApprovalStore(db),
 		Tasks:            tasks,

@@ -10,6 +10,7 @@ import (
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -53,7 +54,7 @@ func TestResolveApprovalBusyKeepsPending(t *testing.T) {
 		AgentConfigs:     agentConfigs,
 		Providers:        store.NewProviderStore(db),
 		Sessions:         sessions,
-		Settings:         store.NewSettingStore(db),
+		Settings:         settings.NewReader(store.NewSettingStore(db)),
 		Memories:         store.NewMemoryStore(db),
 		PendingApprovals: approvals,
 	})
@@ -147,7 +148,7 @@ func TestResolveApprovalStaleSchemaDiscarded(t *testing.T) {
 		AgentConfigs:     agentConfigs,
 		Providers:        store.NewProviderStore(db),
 		Sessions:         sessions,
-		Settings:         store.NewSettingStore(db),
+		Settings:         settings.NewReader(store.NewSettingStore(db)),
 		Memories:         store.NewMemoryStore(db),
 		PendingApprovals: approvals,
 	})
@@ -204,7 +205,7 @@ func TestResolveApprovalOlderDecodableSchemaNotDiscarded(t *testing.T) {
 		AgentConfigs:     agentConfigs,
 		Providers:        store.NewProviderStore(db),
 		Sessions:         sessions,
-		Settings:         store.NewSettingStore(db),
+		Settings:         settings.NewReader(store.NewSettingStore(db)),
 		Memories:         store.NewMemoryStore(db),
 		PendingApprovals: approvals,
 	})
@@ -280,7 +281,7 @@ func TestResolveApprovalTaskNotYetInputRequiredKeepsPending(t *testing.T) {
 		AgentConfigs:     agentConfigs,
 		Providers:        store.NewProviderStore(db),
 		Sessions:         sessions,
-		Settings:         store.NewSettingStore(db),
+		Settings:         settings.NewReader(store.NewSettingStore(db)),
 		Memories:         store.NewMemoryStore(db),
 		PendingApprovals: approvals,
 		Tasks:            tasks,

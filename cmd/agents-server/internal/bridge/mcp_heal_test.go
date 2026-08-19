@@ -11,6 +11,7 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -57,7 +58,7 @@ func TestManagerConnectionHealsItself(t *testing.T) {
 	defer endpoint.Close()
 
 	db := newTestDB(t)
-	mgr := NewMcpManager(ctx, store.NewSettingStore(db))
+	mgr := NewMcpManager(ctx, settings.NewReader(store.NewSettingStore(db)))
 	cfg := &store.McpServerConfig{
 		ID: store.NewID(), Name: "healer", TransportType: "streamable_http", Enabled: true,
 		Config: []byte(`{"endpoint":"` + endpoint.URL + `"}`),
