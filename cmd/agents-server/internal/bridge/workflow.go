@@ -7,9 +7,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/rs/zerolog"
-
 	"github.com/zzir/agents-go/agents/tasks"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
@@ -104,7 +103,7 @@ func (r *Runner) RunWorkflow(ctx context.Context, workflowID, sessionID, input s
 		}
 		note := store.WorkflowStarted{TaskID: info.TaskID, WorkflowID: workflowID, WorkflowName: name, Brief: input, Origin: origin}
 		if aerr := store.NewEntryStoreFor(r.db, ref).AppendWorkflowStarted(ctx, ref, note); aerr != nil {
-			zerolog.Ctx(ctx).Warn().Err(aerr).Str("task_id", info.TaskID).Msg("recording the workflow-started note")
+			logging.Ctx(ctx).Warn("recording the workflow-started note", "error", aerr, "task_id", info.TaskID)
 		}
 		// A conversation that begins with a workflow has no first message for
 		// the title generator to name it by; the workflow and its brief are
@@ -325,8 +324,7 @@ func (r *Runner) startWorkflowStep(ctx context.Context, req tasks.LaunchRequest,
 			_, _, _, cerr = r.compactSessionAs(rootCtx, req.SessionID, ac)
 		}
 		if cerr != nil {
-			zerolog.Ctx(rootCtx).Warn().Err(cerr).Str("task_id", req.TaskID).Str("step_id", step.ID).
-				Msg("workflow: compact before step did not run")
+			logging.Ctx(rootCtx).Warn("workflow: compact before step did not run", "error", cerr, "task_id", req.TaskID, "step_id", step.ID)
 		}
 	}
 	// The sandbox comes from the PARENT (Inherit) — every step shares one

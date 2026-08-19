@@ -13,10 +13,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/rs/zerolog"
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -353,10 +353,7 @@ func (h *SessionHandler) Fork(c *gin.Context) {
 		// trace-copy failure must not fail the request or orphan the new session.
 		// It is logged, not swallowed, so the missing traces are diagnosable.
 		if err := h.traces.ForkBySession(ctx, srcID, dst.ID, runIDs); err != nil {
-			zerolog.Ctx(ctx).Warn().Err(err).
-				Str("src_session", srcID).
-				Str("dst_session", dst.ID).
-				Msg("fork: copying traces to the new session failed; session forked without traces")
+			logging.Ctx(ctx).Warn("fork: copying traces to the new session failed; session forked without traces", "error", err, "src_session", srcID, "dst_session", dst.ID)
 		}
 	}
 	c.JSON(http.StatusCreated, dst)
@@ -471,7 +468,7 @@ func (h *SessionHandler) Context(c *gin.Context) {
 	// What the last run put in front of the conversation. Absent until a run
 	// has built the agent once — nothing else knows what a build assembled.
 	if prof, err := h.profiles.Get(ctx, sess.ID); err != nil {
-		zerolog.Ctx(ctx).Warn().Err(err).Msg("context report: prompt profile unreadable")
+		logging.Ctx(ctx).Warn("context report: prompt profile unreadable", "error", err)
 	} else if prof != nil {
 		prof.Tools = append(prof.Tools, h.mcpBuckets(ctx, prof.MCPServerIDs)...)
 		rep.Prompt = prof

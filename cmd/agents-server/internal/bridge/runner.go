@@ -5,12 +5,12 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/rs/zerolog"
 	"github.com/uptrace/bun"
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/agents/tasks"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
@@ -224,7 +224,7 @@ type segmentSpec struct {
 // execStreamed executes one run segment — fresh or resumed — to completion,
 // publishing events to the hub, and returns its outcome.
 func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfigID, sandboxID, workDir string, spec segmentSpec) *RunOutcome {
-	log := zerolog.Ctx(ctx)
+	log := logging.Ctx(ctx)
 	// Stamp the run id so a spawn_task inside the run records which run spawned
 	// it — that is what lets the trace panel nest the task's wake-up run here.
 	ctx = tasks.WithParentRunID(ctx, runID)
@@ -232,7 +232,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	sendEvent := func(typ string, payload any) {
 		env, err := protocol.NewEnvelope(typ, payload)
 		if err != nil {
-			log.Error().Err(err).Str("type", typ).Msg("marshal event")
+			log.Error("marshal event", "error", err, "type", typ)
 			return
 		}
 		r.hub.publish(runID, env)
@@ -349,7 +349,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	// failure here costs a panel section, never the run.
 	if r.Deps.ContextProfiles != nil {
 		if err := r.Deps.ContextProfiles.Save(ctx, sessionID, built.Profile); err != nil {
-			log.Warn().Err(err).Msg("failed to record the session's context profile")
+			log.Warn("failed to record the session's context profile", "error", err)
 		}
 	}
 

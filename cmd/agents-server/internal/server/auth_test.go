@@ -1,6 +1,7 @@
 package server
 
 import (
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -8,7 +9,6 @@ import (
 	"testing/fstest"
 
 	"github.com/gin-gonic/gin"
-	"github.com/rs/zerolog"
 )
 
 // Every exempt path must name a route this router actually serves. An
@@ -47,7 +47,7 @@ func TestAuthExemptCoversOnlyServedRoutes(t *testing.T) {
 // once. handler/contract_test.go pins the same bytes from the other emitter.
 func TestErrorEnvelopeMatchesTheSharedShape(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	s := New(zerolog.Nop(), "tok")
+	s := New(slog.New(slog.DiscardHandler), "tok")
 	s.ServeStatic(fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<!doctype html>")}})
 
 	authed := func(r *http.Request) *http.Request {

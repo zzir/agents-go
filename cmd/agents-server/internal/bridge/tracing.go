@@ -6,8 +6,7 @@ import (
 	"maps"
 	"time"
 
-	"github.com/rs/zerolog"
-
+	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
@@ -162,7 +161,7 @@ func (p *wsProcessor) OnSpanEnd(span *tracing.Span) {
 		EndedAt:     ts.EndedAt,
 	}
 	if err := p.traces.Insert(p.ctx, te); err != nil {
-		zerolog.Ctx(p.ctx).Warn().Err(err).Msg("failed to persist trace span")
+		logging.Ctx(p.ctx).Warn("failed to persist trace span", "error", err)
 	}
 }
 

@@ -6,10 +6,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/rs/zerolog"
-
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/tasks"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
@@ -119,7 +118,7 @@ func (t taskStopper) Stop(ctx context.Context, runID string, graceful bool) (tas
 	// Not running: paused on an approval, already over, or never started.
 	if t.r.Deps.PendingApprovals != nil {
 		if err := t.r.Deps.PendingApprovals.Delete(ctx, runID); err != nil && !errors.Is(err, store.ErrNotFound) {
-			zerolog.Ctx(ctx).Warn().Err(err).Str("run_id", runID).Msg("discarding pending approval on stop")
+			logging.Ctx(ctx).Warn("discarding pending approval on stop", "error", err, "run_id", runID)
 		}
 	}
 	if !live {
@@ -190,12 +189,12 @@ func (r *Runner) onTaskUpdate(ctx context.Context, t *tasks.Task) {
 	}
 	ref, rerr := store.RefFor(ctx, r.db, t.ParentSessionID)
 	if rerr != nil {
-		zerolog.Ctx(ctx).Warn().Err(rerr).Str("task_id", t.ID).Msg("recording task display update")
+		logging.Ctx(ctx).Warn("recording task display update", "error", rerr, "task_id", t.ID)
 		return
 	}
 	entries := store.NewEntryStoreFor(r.db, ref)
 	if err := entries.AppendCallDisplayUpdate(ctx, ref, t.ToolCallID, display); err != nil {
-		zerolog.Ctx(ctx).Warn().Err(err).Str("task_id", t.ID).Msg("recording task display update")
+		logging.Ctx(ctx).Warn("recording task display update", "error", err, "task_id", t.ID)
 	}
 }
 

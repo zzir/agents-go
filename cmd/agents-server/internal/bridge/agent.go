@@ -10,11 +10,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/rs/zerolog"
-
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/middleware"
 	"github.com/zzir/agents-go/agents/tasks"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/skills"
@@ -451,7 +450,7 @@ func buildHandoffs(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx, agen
 		hResult, err := buildAgentFromConfig(ctx, deps, hID, sandboxID, bc)
 		if err != nil {
 			if errors.Is(err, errHandoffCycle) {
-				zerolog.Ctx(ctx).Warn().Err(err).Str("handoff_id", hID).Msg("handoff cycle, skipping edge")
+				logging.Ctx(ctx).Warn("handoff cycle, skipping edge", "error", err, "handoff_id", hID)
 				continue
 			}
 			return fmt.Errorf("agent %q handoff %q: %w", ac.Name, hID, err)
@@ -490,7 +489,7 @@ func attachMCPServers(ctx context.Context, deps *AgentDeps, agent *agents.Agent,
 			agent.MCPServers = append(agent.MCPServers, srv)
 			attached = append(attached, id)
 		} else {
-			zerolog.Ctx(ctx).Debug().Str("mcp_id", id).Msg("MCP server not connected, skipping")
+			logging.Ctx(ctx).Debug("MCP server not connected, skipping", "mcp_id", id)
 		}
 	}
 	return attached
@@ -509,7 +508,7 @@ func attachBraveSearch(ctx context.Context, deps *AgentDeps, agent *agents.Agent
 	}
 	bsTool, err := bravesearch.New(bsOpts)
 	if err != nil {
-		zerolog.Ctx(ctx).Warn().Err(err).Msg("failed to create brave_search tool")
+		logging.Ctx(ctx).Warn("failed to create brave_search tool", "error", err)
 		return
 	}
 	agent.Tools = append(agent.Tools, bsTool)

@@ -10,9 +10,9 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/rs/zerolog"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -463,27 +463,27 @@ func (h *McpServerHandler) ClearOAuth(c *gin.Context) {
 func (h *McpServerHandler) OAuthCallback(c *gin.Context) {
 	// The request logger records only the path (the query is redacted), so the
 	// outcome of the callback — the actionable half — is logged here explicitly.
-	log := zerolog.Ctx(c.Request.Context())
+	log := logging.Ctx(c.Request.Context())
 	// Provider denial redirects (?error=access_denied&state=...) carry no
 	// code, so the error parameter must be checked before requiring one.
 	if errMsg := c.Query("error"); errMsg != "" {
-		log.Warn().Str("error", errMsg).Msg("mcp oauth callback: authorization server returned an error")
+		log.Warn("mcp oauth callback: authorization server returned an error", "error", errMsg)
 		writeOAuthCallbackPage(c, "error", errMsg)
 		return
 	}
 	state := c.Query("state")
 	code := c.Query("code")
 	if state == "" || code == "" {
-		log.Warn().Msg("mcp oauth callback: missing state or code parameter")
+		log.Warn("mcp oauth callback: missing state or code parameter")
 		c.String(http.StatusBadRequest, "missing state or code parameter")
 		return
 	}
 	if err := h.oauth.HandleCallback(state, code, c.Query("iss")); err != nil {
-		log.Warn().Err(err).Msg("mcp oauth callback: could not deliver authorization code")
+		log.Warn("mcp oauth callback: could not deliver authorization code", "error", err)
 		writeOAuthCallbackPage(c, "error", err.Error())
 		return
 	}
-	log.Info().Msg("mcp oauth callback: authorization code delivered to the pending connection")
+	log.Info("mcp oauth callback: authorization code delivered to the pending connection")
 	writeOAuthCallbackPage(c, "success", "")
 }
 

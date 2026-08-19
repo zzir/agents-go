@@ -13,12 +13,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/docs"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/handler"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
@@ -33,6 +33,8 @@ var (
 	flagToken             string
 	flagAllowLocalSandbox bool
 	flagMaxTasks          int
+	flagLogLevel          string
+	flagLogFormat         string
 )
 
 var rootCmd = &cobra.Command{
@@ -49,6 +51,8 @@ func init() {
 	rootCmd.Flags().StringVar(&flagToken, "token", "", "Authentication token (auto-generated if empty)")
 	rootCmd.Flags().BoolVar(&flagAllowLocalSandbox, "allow-local-sandbox", false, "Allow creating local (non-isolated) sandboxes")
 	rootCmd.Flags().IntVar(&flagMaxTasks, "max-tasks", 0, "Max live background tasks per session (0 = default 6)")
+	rootCmd.Flags().StringVar(&flagLogLevel, "log-level", "info", "Log level: debug, info, warn, error")
+	rootCmd.Flags().StringVar(&flagLogFormat, "log-format", "text", "Log format: text, json")
 }
 
 // buildVersion is the plain version string (without commit/date), surfaced by
@@ -69,10 +73,11 @@ func Execute() {
 }
 
 func run(_ *cobra.Command, _ []string) error {
-	log := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.RFC3339}).
-		With().Timestamp().Logger()
-
-	ctx := log.WithContext(context.Background())
+	log, err := logging.New(os.Stderr, flagLogLevel, flagLogFormat)
+	if err != nil {
+		return err
+	}
+	ctx := logging.Into(context.Background(), log)
 
 	dsn := fmt.Sprintf("file:%s?cache=shared&_journal_mode=WAL", flagDB)
 	db, err := store.NewSQLiteDB(dsn)
@@ -199,7 +204,7 @@ func run(_ *cobra.Command, _ []string) error {
 	if token == "" {
 		token = server.GenerateToken()
 	}
-	log.Info().Str("token", token).Msg("auth token")
+	log.Info("auth token", "token", token)
 
 	srv := server.New(log, token)
 	srv.RegisterAPI(handler.Handlers{
@@ -254,9 +259,12 @@ func run(_ *cobra.Command, _ []string) error {
 	}
 
 	go func() {
-		log.Info().Str("addr", addr).Str("workspace", flagWorkspace).Msg("server started")
+		log.Info("server started", "addr", addr, "workspace", flagWorkspace)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatal().Err(err).Msg("server error")
+			// Nothing above can recover from a dead listener, and staying up
+			// would leave a process serving nobody.
+			log.Error("server error", "error", err)
+			os.Exit(1)
 		}
 	}()
 
@@ -264,7 +272,7 @@ func run(_ *cobra.Command, _ []string) error {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	log.Info().Msg("shutting down")
+	log.Info("shutting down")
 	// The clock first: a tick during the drain would only start a run the
 	// drain refuses, recorded on the trigger as a failure that was nobody's.
 	triggerScheduler.Stop()
@@ -284,7 +292,7 @@ func run(_ *cobra.Command, _ []string) error {
 		// A hijacked WebSocket keeps Shutdown waiting until its deadline; the
 		// runs are already drained and persisted by then, so reporting that as
 		// the process's exit status turned every ordinary stop into a failure.
-		log.Warn().Err(err).Msg("http shutdown did not complete cleanly")
+		log.Warn("http shutdown did not complete cleanly", "error", err)
 	}
 	return nil
 }

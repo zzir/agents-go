@@ -5,9 +5,8 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/rs/zerolog"
-
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
@@ -93,7 +92,7 @@ func (cs *connSubs) closeAll() {
 
 // Handle reads and dispatches WebSocket messages on conn until the connection closes.
 func (h *WSHandler) Handle(conn *server.WSConn) {
-	log := zerolog.Ctx(conn.Context())
+	log := logging.Ctx(conn.Context())
 	// Drain outbound events through a bounded queue + writer goroutine so a
 	// slow client can't back-pressure the hub/run goroutines that publish them.
 	conn.StartWriter()
@@ -110,9 +109,9 @@ func (h *WSHandler) Handle(conn *server.WSConn) {
 			if server.IsNormalClose(err) {
 				// Client went away (tab closed, reload, navigate) — expected,
 				// not an error.
-				log.Debug().Msg("ws connection closed")
+				log.Debug("ws connection closed")
 			} else {
-				log.Debug().Err(err).Msg("ws read error")
+				log.Debug("ws read error", "error", err)
 			}
 			return
 		}
@@ -121,7 +120,7 @@ func (h *WSHandler) Handle(conn *server.WSConn) {
 		case protocol.EventRunCreate:
 			var msg protocol.RunCreate
 			if err := json.Unmarshal(env.Payload, &msg); err != nil {
-				log.Error().Err(err).Msg("unmarshal run.create")
+				log.Error("unmarshal run.create", "error", err)
 				continue
 			}
 			h.handleRunCreate(conn, msg)
@@ -129,7 +128,7 @@ func (h *WSHandler) Handle(conn *server.WSConn) {
 		case protocol.EventRunSubscribe:
 			var msg protocol.RunSubscribe
 			if err := json.Unmarshal(env.Payload, &msg); err != nil {
-				log.Error().Err(err).Msg("unmarshal run.subscribe")
+				log.Error("unmarshal run.subscribe", "error", err)
 				continue
 			}
 			h.subscribe(conn, subs, msg.RunID, msg.FromSeq)
@@ -137,7 +136,7 @@ func (h *WSHandler) Handle(conn *server.WSConn) {
 		case protocol.EventToolApprove:
 			var msg protocol.ToolApprove
 			if err := json.Unmarshal(env.Payload, &msg); err != nil {
-				log.Error().Err(err).Msg("unmarshal tool.approve")
+				log.Error("unmarshal tool.approve", "error", err)
 				continue
 			}
 			go h.resolve(conn, msg.ToolCallID, true, bridge.ParseApprovalScope(msg.Scope), "")
@@ -145,7 +144,7 @@ func (h *WSHandler) Handle(conn *server.WSConn) {
 		case protocol.EventToolReject:
 			var msg protocol.ToolReject
 			if err := json.Unmarshal(env.Payload, &msg); err != nil {
-				log.Error().Err(err).Msg("unmarshal tool.reject")
+				log.Error("unmarshal tool.reject", "error", err)
 				continue
 			}
 			go h.resolve(conn, msg.ToolCallID, false, bridge.ApprovalOnce, msg.Reason)
@@ -153,7 +152,7 @@ func (h *WSHandler) Handle(conn *server.WSConn) {
 		case protocol.EventRunCancel:
 			var msg protocol.RunCancel
 			if err := json.Unmarshal(env.Payload, &msg); err != nil {
-				log.Error().Err(err).Msg("unmarshal run.cancel")
+				log.Error("unmarshal run.cancel", "error", err)
 				continue
 			}
 			if msg.Mode == "graceful" {
@@ -165,13 +164,13 @@ func (h *WSHandler) Handle(conn *server.WSConn) {
 		case protocol.EventRunInject:
 			var msg protocol.RunInject
 			if err := json.Unmarshal(env.Payload, &msg); err != nil {
-				log.Error().Err(err).Str("type", env.Type).Msg("unmarshal run injection")
+				log.Error("unmarshal run injection", "error", err, "type", env.Type)
 				continue
 			}
 			h.inject(conn, msg)
 
 		default:
-			log.Warn().Str("type", env.Type).Msg("unknown ws message type")
+			log.Warn("unknown ws message type", "type", env.Type)
 		}
 	}
 }
@@ -228,10 +227,10 @@ func (h *WSHandler) handleRunCreate(conn *server.WSConn, msg protocol.RunCreate)
 // any connection not already watching it (a connection that watched the
 // interrupted run is still attached and just keeps receiving events).
 func (h *WSHandler) resolve(conn *server.WSConn, toolCallID string, approve bool, scope bridge.ApprovalScope, reason string) {
-	log := zerolog.Ctx(conn.Context())
+	log := logging.Ctx(conn.Context())
 	_, sessionID, err := h.runner.ResolveApproval(conn.Context(), toolCallID, approve, scope, reason, nil)
 	if err != nil {
-		log.Error().Err(err).Str("tool_call_id", toolCallID).Msg("resolve approval failed")
+		log.Error("resolve approval failed", "error", err, "tool_call_id", toolCallID)
 		// Carry the session id (when known) so the client can rebuild the paused
 		// turn's approval card — the optimistic approve/reject status was applied
 		// but the resume never happened.
@@ -256,7 +255,7 @@ func mustJSON(v any) json.RawMessage {
 func (h *WSHandler) inject(conn *server.WSConn, msg protocol.RunInject) {
 	delivered, err := h.runner.Hub().Inject(msg.RunID, msg.Queue, msg.Input)
 	if err != nil {
-		zerolog.Ctx(conn.Context()).Error().Err(err).Str("queue", msg.Queue).Msg("run injection")
+		logging.Ctx(conn.Context()).Error("run injection", "error", err, "queue", msg.Queue)
 	}
 	if delivered && err == nil {
 		return

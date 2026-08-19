@@ -5,9 +5,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/rs/zerolog"
-
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -77,7 +76,7 @@ func resolveProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig
 			apiKey = creds.AccessToken
 			chatgptCreds = creds
 		} else {
-			zerolog.Ctx(ctx).Warn().Err(err).Msg("ChatGPT OAuth token unavailable, falling back to api_key")
+			logging.Ctx(ctx).Warn("ChatGPT OAuth token unavailable, falling back to api_key", "error", err)
 		}
 	}
 	// The global per-provider key is the built-in default endpoint's credential,
@@ -181,7 +180,7 @@ func BuildRouterProvider(ctx context.Context, deps *AgentDeps, fallback agents.M
 		// (e.g. a pre-provider_type database) would otherwise disable ALL
 		// routing with no signal, and every prefixed model name would fall to
 		// the agent's own provider.
-		zerolog.Ctx(ctx).Warn().Err(err).Msg("provider routes unavailable; prefix routing disabled for this run")
+		logging.Ctx(ctx).Warn("provider routes unavailable; prefix routing disabled for this run", "error", err)
 		return fallback
 	}
 	if len(routes) == 0 {
@@ -196,7 +195,7 @@ func BuildRouterProvider(ctx context.Context, deps *AgentDeps, fallback agents.M
 			// this is a row that bypassed the API. Skipped loudly rather than
 			// falling back to the agent's own provider, which would send the
 			// prefixed model name to the wrong backend in silence.
-			zerolog.Ctx(ctx).Warn().Err(err).Str("prefix", r.Prefix).Msg("provider route skipped: provider unavailable")
+			logging.Ctx(ctx).Warn("provider route skipped: provider unavailable", "error", err, "prefix", r.Prefix)
 			continue
 		}
 		// ChatGPT-login providers can't route: their credential is an OAuth
@@ -204,15 +203,14 @@ func BuildRouterProvider(ctx context.Context, deps *AgentDeps, fallback agents.M
 		// which buildPlainProvider does not run — routing one would send an
 		// empty or wrong key. Skip it loudly rather than authenticate wrongly.
 		if pv.AuthMode == AuthModeChatGPTLogin {
-			zerolog.Ctx(ctx).Warn().Str("prefix", r.Prefix).
-				Msg("provider route skipped: chatgpt_login providers cannot be used through a route")
+			logging.Ctx(ctx).Warn("provider route skipped: chatgpt_login providers cannot be used through a route", "prefix", r.Prefix)
 			continue
 		}
 		// An unregistered type must not default to OpenAI — the silent
 		// wrong-backend case — so the route is skipped instead.
 		fp, err := buildPlainProvider(pv.Type, providerKey(ctx, deps, pv), pv.BaseURL, proxyClient)
 		if err != nil {
-			zerolog.Ctx(ctx).Warn().Err(err).Str("prefix", r.Prefix).Msg("provider route skipped: invalid provider type")
+			logging.Ctx(ctx).Warn("provider route skipped: invalid provider type", "error", err, "prefix", r.Prefix)
 			continue
 		}
 		routeMap[r.Prefix] = fp

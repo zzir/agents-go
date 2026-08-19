@@ -6,10 +6,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/rs/zerolog"
-
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/tasks"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -38,7 +37,7 @@ func (r *Runner) spawnTool(ctx context.Context) *agents.Tool {
 	if r.Deps.Workflows != nil {
 		list, err := r.Deps.Workflows.List(ctx)
 		if err != nil {
-			zerolog.Ctx(ctx).Warn().Err(err).Msg("spawn_task: listing workflows for the description")
+			logging.Ctx(ctx).Warn("spawn_task: listing workflows for the description", "error", err)
 		}
 		offered = list
 	}

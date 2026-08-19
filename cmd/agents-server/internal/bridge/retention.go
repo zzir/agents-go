@@ -6,8 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/rs/zerolog"
-
+	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
@@ -17,7 +16,7 @@ import (
 // so the timeout is visible instead of silently vanishing. It runs at startup
 // and hourly until ctx ends — run it in a goroutine.
 func RunApprovalReaper(ctx context.Context, cfg *settings.Reader, approvals *store.PendingApprovalStore, entries *store.EntryStore, tasks *store.TaskStore, announce func(ctx context.Context, taskID string)) {
-	log := zerolog.Ctx(ctx)
+	log := logging.Ctx(ctx)
 	reap := func() {
 		ttl := cfg.Int(ctx, settings.KeyApprovalTTLMinutes)
 		if ttl <= 0 {
@@ -26,7 +25,7 @@ func RunApprovalReaper(ctx context.Context, cfg *settings.Reader, approvals *sto
 		cutoff := time.Now().UTC().Add(-time.Duration(ttl) * time.Minute)
 		expired, err := approvals.ListOlderThan(ctx, cutoff)
 		if err != nil {
-			log.Error().Err(err).Msg("approval reaper failed")
+			log.Error("approval reaper failed", "error", err)
 			return
 		}
 		for _, p := range expired {
@@ -43,7 +42,7 @@ func RunApprovalReaper(ctx context.Context, cfg *settings.Reader, approvals *sto
 				var terr error
 				task, terr = tasks.ByChildSession(ctx, p.SessionID)
 				if terr != nil && !errors.Is(terr, store.ErrNotFound) {
-					log.Warn().Err(terr).Str("run_id", p.RunID).Msg("expiring an approval: its task could not be read; kept for the next round")
+					log.Warn("expiring an approval: its task could not be read; kept for the next round", "error", terr, "run_id", p.RunID)
 					continue
 				}
 			}
@@ -56,7 +55,7 @@ func RunApprovalReaper(ctx context.Context, cfg *settings.Reader, approvals *sto
 				var ended bool
 				claimed, ended, err = tasks.ClaimApprovalCancelled(ctx, task.ID, p.RunID, "approval expired after "+strconv.Itoa(ttl)+" minutes")
 				if err != nil {
-					log.Warn().Err(err).Str("run_id", p.RunID).Msg("expiring an approval; kept for the next round")
+					log.Warn("expiring an approval; kept for the next round", "error", err, "run_id", p.RunID)
 					continue
 				}
 				if ended && announce != nil {
@@ -67,7 +66,7 @@ func RunApprovalReaper(ctx context.Context, cfg *settings.Reader, approvals *sto
 			} else if derr := approvals.Delete(ctx, p.RunID); derr == nil {
 				claimed = true
 			} else if !errors.Is(derr, store.ErrNotFound) {
-				log.Warn().Err(derr).Str("run_id", p.RunID).Msg("expiring an approval; kept for the next round")
+				log.Warn("expiring an approval; kept for the next round", "error", derr, "run_id", p.RunID)
 				continue
 			}
 			if !claimed {
@@ -77,8 +76,7 @@ func RunApprovalReaper(ctx context.Context, cfg *settings.Reader, approvals *sto
 			// task's or a step's hidden child session, whose transcript is
 			// where the pause happened.
 			if ref, rerr := entries.RefFor(ctx, p.SessionID); rerr != nil {
-				log.Warn().Err(rerr).Str("session_id", p.SessionID).
-					Msg("cannot record an approval-timeout banner")
+				log.Warn("cannot record an approval-timeout banner", "error", rerr, "session_id", p.SessionID)
 			} else {
 				banner := "Tool approval timed out after " + strconv.Itoa(ttl) + " minutes; the run was terminated."
 				if p.Kind == store.ApprovalKindStep {
@@ -86,7 +84,7 @@ func RunApprovalReaper(ctx context.Context, cfg *settings.Reader, approvals *sto
 				}
 				_ = entries.AppendAnnotation(ctx, ref, p.RunID, banner)
 			}
-			log.Info().Str("run_id", p.RunID).Str("session_id", p.SessionID).Msg("expired pending approval")
+			log.Info("expired pending approval", "run_id", p.RunID, "session_id", p.SessionID)
 		}
 	}
 
@@ -108,7 +106,7 @@ func RunApprovalReaper(ctx context.Context, cfg *settings.Reader, approvals *sto
 // of days; unset, zero, or invalid disables pruning). It blocks until ctx
 // ends — run it in a goroutine.
 func RunTraceRetention(ctx context.Context, cfg *settings.Reader, traces *store.TraceStore) {
-	log := zerolog.Ctx(ctx)
+	log := logging.Ctx(ctx)
 	prune := func() {
 		days := cfg.Int(ctx, settings.KeyTraceRetentionDays)
 		if days <= 0 {
@@ -117,11 +115,11 @@ func RunTraceRetention(ctx context.Context, cfg *settings.Reader, traces *store.
 		cutoff := time.Now().UTC().AddDate(0, 0, -days)
 		n, err := traces.DeleteOlderThan(ctx, cutoff)
 		if err != nil {
-			log.Error().Err(err).Msg("trace retention prune failed")
+			log.Error("trace retention prune failed", "error", err)
 			return
 		}
 		if n > 0 {
-			log.Info().Int64("removed", n).Int("retention_days", days).Msg("pruned old trace events")
+			log.Info("pruned old trace events", "removed", n, "retention_days", days)
 		}
 	}
 

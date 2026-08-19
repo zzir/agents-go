@@ -8,11 +8,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/rs/zerolog"
-
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/middleware"
 	"github.com/zzir/agents-go/agents/session"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -273,7 +272,7 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 	// states a purely additive SDK bump (1.5 → 1.6) resumes fine.
 	if v := pendingStateSchemaVersion(pending.State); !agents.RunStateVersionSupported(v) {
 		if delErr := r.Deps.PendingApprovals.Delete(mctx, pending.RunID); delErr != nil {
-			zerolog.Ctx(ctx).Error().Err(delErr).Str("run_id", pending.RunID).Msg("discarding stale pending approval")
+			logging.Ctx(ctx).Error("discarding stale pending approval", "error", delErr, "run_id", pending.RunID)
 		}
 		return "", pending.SessionID, &StaleApprovalStateError{RunID: pending.RunID, HaveVersion: v, WantVersion: agents.RunStateSchemaVersion}
 	}
@@ -426,7 +425,7 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 		// one without the other.
 		if taskMeta != nil && taskMeta.TaskID != "" {
 			if _, perr := r.Deps.Tasks.Pause(mctx, taskMeta.TaskID, pending.RunID, nil, pending); perr != nil {
-				zerolog.Ctx(ctx).Error().Err(perr).Str("task_id", taskMeta.TaskID).Msg("restoring the paused task after a failed resume")
+				logging.Ctx(ctx).Error("restoring the paused task after a failed resume", "error", perr, "task_id", taskMeta.TaskID)
 			}
 		} else {
 			r.restorePendingApproval(mctx, pending)
@@ -444,8 +443,7 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 // even if the request that triggered it is gone.
 func (r *Runner) restorePendingApproval(ctx context.Context, pending *store.PendingApproval) {
 	if saveErr := r.Deps.PendingApprovals.Save(context.WithoutCancel(ctx), pending); saveErr != nil {
-		zerolog.Ctx(ctx).Error().Err(saveErr).Str("run_id", pending.RunID).
-			Msg("restoring pending approval after failed claim/resume")
+		logging.Ctx(ctx).Error("restoring pending approval after failed claim/resume", "error", saveErr, "run_id", pending.RunID)
 	}
 }
 

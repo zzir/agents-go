@@ -11,9 +11,9 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/rs/zerolog"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/mcp"
@@ -229,9 +229,9 @@ func (m *McpManager) Reconcile(desired *store.McpServerConfig, oauth *OAuthCoord
 			result, err := oauth.ConnectWithOAuth(ctx, m, &cfg, &hc, "")
 			switch {
 			case err != nil:
-				zerolog.Ctx(ctx).Warn().Err(err).Str("mcp", cfg.Name).Msg("mcp oauth reconnect after config change failed")
+				logging.Ctx(ctx).Warn("mcp oauth reconnect after config change failed", "error", err, "mcp", cfg.Name)
 			case !result.Connected:
-				zerolog.Ctx(ctx).Warn().Str("mcp", cfg.Name).Msg("mcp oauth reconnect after config change needs user authorization")
+				logging.Ctx(ctx).Warn("mcp oauth reconnect after config change needs user authorization", "mcp", cfg.Name)
 			}
 		}()
 		return
@@ -242,7 +242,7 @@ func (m *McpManager) Reconcile(desired *store.McpServerConfig, oauth *OAuthCoord
 		// The write already returned to the client, so this log is the only
 		// trace a failed reconnect leaves.
 		if err := m.Connect(ctx, &cfg); err != nil {
-			zerolog.Ctx(ctx).Warn().Err(err).Str("mcp", cfg.Name).Msg("mcp reconnect after config change failed")
+			logging.Ctx(ctx).Warn("mcp reconnect after config change failed", "error", err, "mcp", cfg.Name)
 		}
 	}()
 }
@@ -431,10 +431,10 @@ func (m *McpManager) CloseAll() {
 // skipped so one bad server cannot block the others (or server startup).
 // Intended to be run in a goroutine.
 func ConnectEnabledMcpServers(ctx context.Context, mgr *McpManager, servers *store.McpServerStore, oauth *OAuthCoordinator) {
-	log := zerolog.Ctx(ctx)
+	log := logging.Ctx(ctx)
 	configs, err := servers.List(ctx)
 	if err != nil {
-		log.Warn().Err(err).Msg("listing mcp servers for auto-connect")
+		log.Warn("listing mcp servers for auto-connect", "error", err)
 		return
 	}
 	// Connect concurrently, each under its own handshake timeout: a hung or
@@ -456,17 +456,17 @@ func ConnectEnabledMcpServers(ctx context.Context, mgr *McpManager, servers *sto
 					result, err := oauth.ConnectWithOAuth(cctx, mgr, cfg, &hc, "")
 					switch {
 					case err != nil:
-						log.Warn().Err(err).Str("mcp", cfg.Name).Msg("mcp oauth auto-connect failed")
+						log.Warn("mcp oauth auto-connect failed", "error", err, "mcp", cfg.Name)
 					case result.Connected:
-						log.Info().Str("mcp", cfg.Name).Msg("mcp oauth auto-connected with saved token")
+						log.Info("mcp oauth auto-connected with saved token", "mcp", cfg.Name)
 					default:
-						log.Warn().Str("mcp", cfg.Name).Msg("mcp oauth auto-connect needs user authorization, skipping")
+						log.Warn("mcp oauth auto-connect needs user authorization, skipping", "mcp", cfg.Name)
 					}
 					return
 				}
 			}
 			if err := mgr.Connect(cctx, cfg); err != nil {
-				log.Warn().Err(err).Str("mcp", cfg.Name).Msg("mcp auto-connect failed")
+				log.Warn("mcp auto-connect failed", "error", err, "mcp", cfg.Name)
 			}
 		})
 	}

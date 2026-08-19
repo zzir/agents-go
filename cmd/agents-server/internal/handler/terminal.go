@@ -7,9 +7,9 @@ import (
 	"sync"
 
 	"github.com/gorilla/websocket"
-	"github.com/rs/zerolog"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
@@ -78,13 +78,13 @@ func NewTerminalHandler(s *store.SandboxStore, m sandboxProvider, cfg *settings.
 
 // Handle runs one terminal session on an authenticated WebSocket connection.
 func (h *TerminalHandler) Handle(conn *server.WSConn) {
-	log := zerolog.Ctx(conn.Context())
+	log := logging.Ctx(conn.Context())
 
 	term, opened, release, err := h.open(conn)
 	if err != nil {
 		// Client-caused failures (bad first frame, unknown sandbox, unsupported
 		// backend) are reported on the wire and logged at debug only.
-		log.Debug().Err(err).Msg("terminal open failed")
+		log.Debug("terminal open failed", "error", err)
 		_ = conn.WriteJSON(&protocol.Envelope{Type: protocol.EventTerminalError, Payload: mustJSON(protocol.TerminalError{
 			Message: err.Error(),
 		})})
@@ -117,7 +117,7 @@ func (h *TerminalHandler) Handle(conn *server.WSConn) {
 	if err := conn.WriteJSON(&protocol.Envelope{Type: protocol.EventTerminalReady}); err != nil {
 		return
 	}
-	log.Debug().Str("sandbox_id", sandboxID).Msg("terminal opened")
+	log.Debug("terminal opened", "sandbox_id", sandboxID)
 
 	// Output pump: PTY → binary frames. It owns the exit notification — when
 	// the shell exits, Read returns EOF, the code is resolved and reported,
@@ -149,7 +149,7 @@ func (h *TerminalHandler) Handle(conn *server.WSConn) {
 		mt, data, err := conn.ReadMessage()
 		if err != nil {
 			if !server.IsNormalClose(err) {
-				log.Debug().Err(err).Msg("terminal ws read error")
+				log.Debug("terminal ws read error", "error", err)
 			}
 			return
 		}
@@ -161,11 +161,11 @@ func (h *TerminalHandler) Handle(conn *server.WSConn) {
 		case websocket.TextMessage:
 			var env protocol.Envelope
 			if err := json.Unmarshal(data, &env); err != nil {
-				log.Debug().Err(err).Msg("terminal control frame not JSON")
+				log.Debug("terminal control frame not JSON", "error", err)
 				continue
 			}
 			if env.Type != protocol.EventTerminalResize {
-				log.Warn().Str("type", env.Type).Msg("unknown terminal control type")
+				log.Warn("unknown terminal control type", "type", env.Type)
 				continue
 			}
 			var msg protocol.TerminalResize

@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/robfig/cron/v3"
-	"github.com/rs/zerolog"
 
+	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -145,7 +145,7 @@ func (s *TriggerScheduler) reconcile(ctx context.Context) {
 			}
 		}
 	} else {
-		zerolog.Ctx(ctx).Warn().Err(err).Msg("reconciling triggers: store not read; held entries only")
+		logging.Ctx(ctx).Warn("reconciling triggers: store not read; held entries only", "error", err)
 	}
 	for id := range ids {
 		s.Sync(ctx, id)
@@ -172,7 +172,7 @@ func (s *TriggerScheduler) Sync(ctx context.Context, triggerID string) {
 	defer s.mu.Unlock()
 	t, err := s.store.Get(ctx, triggerID)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		zerolog.Ctx(ctx).Warn().Err(err).Str("trigger_id", triggerID).Msg("syncing a trigger: not read; left as it was")
+		logging.Ctx(ctx).Warn("syncing a trigger: not read; left as it was", "error", err, "trigger_id", triggerID)
 		return
 	}
 	wanted := err == nil && t.Enabled && t.Kind == store.TriggerKindCron
@@ -191,11 +191,11 @@ func (s *TriggerScheduler) Sync(ctx context.Context, triggerID string) {
 		// The hub's root context: a fire outlives nothing but the process.
 		root := s.runner.hub.rootCtx
 		if _, err := s.Fire(root, triggerID, ""); err != nil {
-			zerolog.Ctx(root).Warn().Err(err).Str("trigger_id", triggerID).Msg("cron trigger did not fire")
+			logging.Ctx(root).Warn("cron trigger did not fire", "error", err, "trigger_id", triggerID)
 		}
 	})
 	if err != nil {
-		zerolog.Ctx(ctx).Warn().Err(err).Str("trigger_id", t.ID).Str("schedule", t.Schedule).Msg("trigger schedule not scheduled")
+		logging.Ctx(ctx).Warn("trigger schedule not scheduled", "error", err, "trigger_id", t.ID, "schedule", t.Schedule)
 		return
 	}
 	s.entries[t.ID] = heldEntry{id: entry, schedule: t.Schedule}
@@ -251,7 +251,7 @@ func (s *TriggerScheduler) Fire(ctx context.Context, triggerID, payload string) 
 		startedID = fired.RunID
 	}
 	if rerr := s.store.RecordFire(context.WithoutCancel(ctx), t.ID, startedID, msg); rerr != nil {
-		zerolog.Ctx(ctx).Warn().Err(rerr).Str("trigger_id", t.ID).Msg("recording a trigger fire")
+		logging.Ctx(ctx).Warn("recording a trigger fire", "error", rerr, "trigger_id", t.ID)
 	}
 	return fired, ferr
 }
@@ -266,7 +266,7 @@ func (s *TriggerScheduler) fireWorkflow(ctx context.Context, t *store.Trigger, i
 		// Only while it still names that workflow: re-pointed under this fire,
 		// it is a live trigger again and stays.
 		if derr := s.store.DeleteIfWorkflow(ctx, t.ID, t.WorkflowID); derr != nil && !errors.Is(derr, store.ErrNotFound) {
-			zerolog.Ctx(ctx).Warn().Err(derr).Str("trigger_id", t.ID).Msg("removing a trigger whose workflow is gone")
+			logging.Ctx(ctx).Warn("removing a trigger whose workflow is gone", "error", derr, "trigger_id", t.ID)
 		}
 		s.Sync(ctx, t.ID)
 		return nil, fmt.Errorf("trigger %s: %w", t.ID, werr)
@@ -313,7 +313,7 @@ func (s *TriggerScheduler) fireAgentTurn(ctx context.Context, t *store.Trigger, 
 		}
 		tf := store.TriggerFired{RunID: runID, AgentConfigID: agent.ID, AgentName: agent.Name, Brief: input, Origin: store.OriginOf(t)}
 		if aerr := store.NewEntryStoreFor(s.runner.db, ref).AppendTriggerFired(noteCtx, ref, tf); aerr != nil {
-			zerolog.Ctx(noteCtx).Warn().Err(aerr).Str("trigger_id", t.ID).Msg("recording the trigger-fired note")
+			logging.Ctx(noteCtx).Warn("recording the trigger-fired note", "error", aerr, "trigger_id", t.ID)
 		}
 	}
 	if _, err := s.runner.startRunReserved(runID, t.SessionID, agent.ID, "", "", input, "", nil, nil, note); err != nil {

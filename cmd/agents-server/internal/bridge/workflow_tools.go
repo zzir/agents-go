@@ -8,9 +8,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/rs/zerolog"
-
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -111,7 +110,7 @@ func (r *Runner) saveWorkflowDescription(ctx context.Context) string {
 	if r.Deps.AgentConfigs != nil {
 		list, err := r.Deps.AgentConfigs.List(ctx)
 		if err != nil {
-			zerolog.Ctx(ctx).Warn().Err(err).Msg("save_workflow: listing agents for the description")
+			logging.Ctx(ctx).Warn("save_workflow: listing agents for the description", "error", err)
 		}
 		if len(list) > 0 {
 			names := make([]string, 0, len(list))

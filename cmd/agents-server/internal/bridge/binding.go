@@ -9,8 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/rs/zerolog"
-
+	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
@@ -217,8 +216,7 @@ func (r *Runner) bindSessionAgent(sessionID, agentConfigID string) {
 	if err := r.Deps.Sessions.BindAgentIfEmpty(context.Background(), sessionID, agentConfigID); err != nil {
 		// Best-effort back-fill of the session's bound agent; log rather than
 		// swallow so a persistent failure is diagnosable.
-		zerolog.Ctx(r.hub.rootCtx).Warn().Err(err).Str("session_id", sessionID).
-			Msg("updating session agent config")
+		logging.Ctx(r.hub.rootCtx).Warn("updating session agent config", "error", err, "session_id", sessionID)
 	}
 }
 

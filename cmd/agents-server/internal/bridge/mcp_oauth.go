@@ -11,9 +11,9 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
-	"github.com/rs/zerolog"
 	"golang.org/x/oauth2"
 
+	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
@@ -300,7 +300,7 @@ func (c *OAuthCoordinator) ConnectWithOAuth(
 	c.mu.Unlock()
 
 	// Captured now: the flow outlives the request context that carries it.
-	log := zerolog.Ctx(ctx)
+	log := logging.Ctx(ctx)
 	errCh := make(chan error, 1)
 	go func() {
 		// ConnectHTTPWithOAuth releases the manager's connect slot (finishConnect)
@@ -316,9 +316,9 @@ func (c *OAuthCoordinator) ConnectWithOAuth(
 		close(attempt.done)
 		// The one log line that says how the interactive flow ended.
 		if err != nil {
-			log.Warn().Err(err).Str("mcp", cfg.Name).Msg("mcp oauth interactive connect ended without connecting")
+			log.Warn("mcp oauth interactive connect ended without connecting", "error", err, "mcp", cfg.Name)
 		} else {
-			log.Info().Str("mcp", cfg.Name).Msg("mcp oauth interactive connect established")
+			log.Info("mcp oauth interactive connect established", "mcp", cfg.Name)
 		}
 		errCh <- err
 	}()
@@ -333,8 +333,7 @@ func (c *OAuthCoordinator) ConnectWithOAuth(
 
 		// Logs the exact redirect_uri the AS must send the browser back to —
 		// the first thing to compare when no callback ever arrives.
-		log.Info().Str("mcp", cfg.Name).Str("redirect_uri", RedirectURI(requestOrigin)).
-			Msg("mcp oauth authorization URL issued; awaiting browser callback")
+		log.Info("mcp oauth authorization URL issued; awaiting browser callback", "mcp", cfg.Name, "redirect_uri", RedirectURI(requestOrigin))
 
 		go func() {
 			timer := time.NewTimer(oauthPendingTimeout)

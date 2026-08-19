@@ -5,10 +5,9 @@ import (
 	"errors"
 	"time"
 
-	"github.com/rs/zerolog"
-
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/session"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -52,8 +51,7 @@ func (r *Runner) savePartialTurn(t partialTurn) {
 
 	ref, refErr := store.RefFor(ctx, r.db, t.sessionID)
 	if refErr != nil {
-		zerolog.Ctx(r.hub.rootCtx).Warn().Err(refErr).Str("run_id", t.runID).Str("session_id", t.sessionID).
-			Msg("persisting partial turn")
+		logging.Ctx(r.hub.rootCtx).Warn("persisting partial turn", "error", refErr, "run_id", t.runID, "session_id", t.sessionID)
 		return
 	}
 	es := store.NewEntryStoreFor(r.db, ref)
@@ -109,8 +107,7 @@ func (r *Runner) savePartialTurn(t partialTurn) {
 	if err := es.Append(ctx, entries...); err != nil {
 		// The only durable record of a cancelled/failed turn's prompt and
 		// in-flight thinking; best-effort, but never silent.
-		zerolog.Ctx(r.hub.rootCtx).Warn().Err(err).Str("run_id", t.runID).Str("session_id", t.sessionID).
-			Msg("persisting partial turn")
+		logging.Ctx(r.hub.rootCtx).Warn("persisting partial turn", "error", err, "run_id", t.runID, "session_id", t.sessionID)
 	}
 }
 

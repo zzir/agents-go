@@ -7,8 +7,8 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
-	"github.com/rs/zerolog"
 
+	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
@@ -63,10 +63,7 @@ func upstreamError(c *gin.Context, err error) {
 
 // internalError reports a 500. The error detail goes to the server log only.
 func internalError(c *gin.Context, err error) {
-	zerolog.Ctx(c.Request.Context()).Error().Err(err).
-		Str("method", c.Request.Method).
-		Str("path", c.FullPath()).
-		Msg("internal error")
+	logging.Ctx(c.Request.Context()).Error("internal error", "error", err, "method", c.Request.Method, "path", c.FullPath())
 	abortError(c, http.StatusInternalServerError, protocol.CodeInternal, "internal error")
 }
 

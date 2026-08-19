@@ -50,6 +50,21 @@ On startup the server prints an auto-generated auth token. Open
 | `--token`               | auto        | Auth token; randomly generated when omitted            |
 | `--allow-local-sandbox` | `false`     | Allow creating local (non-isolated) sandboxes          |
 | `--max-tasks`           | `0`         | Max live background tasks per session (`0` = default 6) |
+| `--log-level`           | `info`      | `debug`, `info`, `warn` or `error`                     |
+| `--log-format`          | `text`      | `text` for a terminal, `json` for a collector          |
+
+### Logging
+
+Structured records over [`log/slog`](https://pkg.go.dev/log/slog), to stderr.
+`--log-format json` emits one JSON object per record for a collector; `text` is
+the terminal default. A bad `--log-level` or `--log-format` is a start-up
+error, not a silent fallback — a typo must not quietly turn logging down.
+
+`slog.Handler` is the swap point, so there is no logger interface here to
+replace: pointing records somewhere else is a different handler in
+`internal/logging`, and nothing else moves. Subsystems reach the logger through
+`logging.Ctx(ctx)`; a context nobody wired yields one that discards, so no call
+site checks and nothing writes anywhere unasked.
 
 ## Authentication
 

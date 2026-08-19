@@ -4,9 +4,8 @@ import (
 	"context"
 	"strings"
 
-	"github.com/rs/zerolog"
-
 	"github.com/zzir/agents-go/agents/tasks"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -38,8 +37,7 @@ func (w Waker) Cancel(ctx context.Context, kind, sourceID, attempt string) {
 		return
 	}
 	if err := w.r.Deps.Wakeups.CancelFor(ctx, kind, sourceID, attempt); err != nil {
-		zerolog.Ctx(ctx).Warn().Err(err).Str("kind", kind).Str("source_id", sourceID).
-			Msg("cancelling a wake-up debt")
+		logging.Ctx(ctx).Warn("cancelling a wake-up debt", "error", err, "kind", kind, "source_id", sourceID)
 	}
 }
 
@@ -53,10 +51,10 @@ func (w Waker) Drain(ctx context.Context, sessionID string) {
 	if !w.canWake(ctx, sessionID) {
 		return
 	}
-	log := zerolog.Ctx(ctx)
+	log := logging.Ctx(ctx)
 	pending, err := w.r.Deps.Wakeups.Pending(ctx, sessionID)
 	if err != nil {
-		log.Warn().Err(err).Str("session_id", sessionID).Msg("listing wake-up debts")
+		log.Warn("listing wake-up debts", "error", err, "session_id", sessionID)
 		return
 	}
 	// A debt with no agent config was born undeliverable: Inherit is frozen at
@@ -65,10 +63,9 @@ func (w Waker) Drain(ctx context.Context, sessionID string) {
 	deliverable := make([]store.Wakeup, 0, len(pending))
 	for i := range pending {
 		if store.DecodeInherit([]byte(pending[i].Inherit)).AgentConfigID == "" {
-			log.Warn().Str("wakeup_id", pending[i].ID).Str("session_id", sessionID).
-				Msg("wake-up carries no agent config; cancelled as undeliverable")
+			log.Warn("wake-up carries no agent config; cancelled as undeliverable", "wakeup_id", pending[i].ID, "session_id", sessionID)
 			if _, err := w.r.Deps.Wakeups.Settle(ctx, pending[i].ID, pending[i].Attempt, store.WakeCancelled); err != nil {
-				log.Warn().Err(err).Str("wakeup_id", pending[i].ID).Msg("cancelling an undeliverable wake-up")
+				log.Warn("cancelling an undeliverable wake-up", "error", err, "wakeup_id", pending[i].ID)
 			}
 			continue
 		}
@@ -88,7 +85,7 @@ func (w Waker) Drain(ctx context.Context, sessionID string) {
 		strings.Join(payloads, "\n\n"), parentRunID, nil); err != nil {
 		// Lost a race with a run that started between the guard and here. The
 		// debts stay pending and that run's own boundary re-drains them.
-		log.Debug().Err(err).Str("session_id", sessionID).Msg("wake-up run did not start")
+		log.Debug("wake-up run did not start", "error", err, "session_id", sessionID)
 		return
 	}
 	// Settled only AFTER the launch, and bound to the attempt this batch read:
@@ -97,7 +94,7 @@ func (w Waker) Drain(ctx context.Context, sessionID string) {
 	// settled; a different-inherit debt stays pending for its own turn.
 	for i := range batch {
 		if _, err := w.r.Deps.Wakeups.Settle(ctx, batch[i].ID, batch[i].Attempt, store.WakeDelivered); err != nil {
-			log.Warn().Err(err).Str("wakeup_id", batch[i].ID).Msg("marking a wake-up delivered")
+			log.Warn("marking a wake-up delivered", "error", err, "wakeup_id", batch[i].ID)
 		}
 	}
 }
@@ -134,8 +131,7 @@ func (w Waker) canWake(ctx context.Context, sessionID string) bool {
 	}
 	approvals, err := w.r.Deps.PendingApprovals.ListBySession(ctx, sessionID)
 	if err != nil {
-		zerolog.Ctx(ctx).Warn().Err(err).Str("session_id", sessionID).
-			Msg("checking pending approvals before a wake-up; skipping")
+		logging.Ctx(ctx).Warn("checking pending approvals before a wake-up; skipping", "error", err, "session_id", sessionID)
 		return false
 	}
 	return len(approvals) == 0
@@ -150,7 +146,7 @@ func (w Waker) DrainAll(ctx context.Context) {
 	}
 	sessions, err := w.r.Deps.Wakeups.PendingSessions(ctx)
 	if err != nil {
-		zerolog.Ctx(ctx).Warn().Err(err).Msg("listing sessions owed a wake-up")
+		logging.Ctx(ctx).Warn("listing sessions owed a wake-up", "error", err)
 		return
 	}
 	for _, id := range sessions {

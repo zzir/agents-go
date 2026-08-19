@@ -7,6 +7,7 @@ import (
 	"crypto/subtle"
 	"io"
 	"io/fs"
+	"log/slog"
 	"mime"
 	"net/http"
 	"net/url"
@@ -14,27 +15,26 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/rs/zerolog"
 
+	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 )
 
-// Server wraps the gin engine and logger.
+// Server wraps the gin engine.
 type Server struct {
 	Engine *gin.Engine
-	Log    zerolog.Logger
 	token  string
 }
 
 // New creates a Server with a gin engine configured for release mode, recovery, and request logging.
-func New(log zerolog.Logger, token string) *Server {
+func New(log *slog.Logger, token string) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.New()
 	engine.Use(gin.Recovery())
 	engine.Use(cspMiddleware())
-	engine.Use(zerologMiddleware(log))
+	engine.Use(logMiddleware(log))
 	engine.Use(TokenAuth(token))
-	s := &Server{Engine: engine, Log: log, token: token}
+	s := &Server{Engine: engine, token: token}
 	s.registerAuthRoutes()
 	return s
 }
@@ -167,16 +167,12 @@ func redactQuery(u *url.URL) string {
 	return u.Path + "?" + q.Encode()
 }
 
-func zerologMiddleware(log zerolog.Logger) gin.HandlerFunc {
+func logMiddleware(log *slog.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Make the logger reachable via zerolog.Ctx from handlers and from
+		// Make the logger reachable via logging.Ctx from handlers and from
 		// everything derived from the request context (e.g. WS connections).
-		c.Request = c.Request.WithContext(log.WithContext(c.Request.Context()))
+		c.Request = c.Request.WithContext(logging.Into(c.Request.Context(), log))
 		c.Next()
-		log.Info().
-			Str("method", c.Request.Method).
-			Str("path", redactQuery(c.Request.URL)).
-			Int("status", c.Writer.Status()).
-			Msg("request")
+		log.Info("request", "method", c.Request.Method, "path", redactQuery(c.Request.URL), "status", c.Writer.Status())
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -13,8 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rs/zerolog"
-
+	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/mcp"
@@ -258,7 +258,7 @@ func (b *syncBuffer) String() string {
 // it must not be swallowed.
 func TestReconcileLogsFailedReconnect(t *testing.T) {
 	var logs syncBuffer
-	ctx := zerolog.New(&logs).Level(zerolog.WarnLevel).WithContext(t.Context())
+	ctx := logging.Into(t.Context(), slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})))
 	m := NewMcpManager(ctx, nil)
 
 	m.Reconcile(&store.McpServerConfig{

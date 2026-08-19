@@ -10,8 +10,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
-	"github.com/rs/zerolog"
 
+	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 )
 
@@ -178,7 +178,7 @@ func HandleWS(handler WSHandlerFunc) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ws, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
-			zerolog.Ctx(c.Request.Context()).Error().Err(err).Msg("ws upgrade")
+			logging.Ctx(c.Request.Context()).Error("ws upgrade", "error", err)
 			return
 		}
 		// Bound every inbound frame up front: gorilla defaults to no limit.
@@ -198,7 +198,7 @@ func HandleWSWithAuth(handler WSHandlerFunc, token string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ws, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
-			zerolog.Ctx(c.Request.Context()).Error().Err(err).Msg("ws upgrade")
+			logging.Ctx(c.Request.Context()).Error("ws upgrade", "error", err)
 			return
 		}
 		// Cap inbound frame size immediately — before the auth handshake — so an

@@ -8,9 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rs/zerolog"
-
 	"github.com/zzir/agents-go/agents/tasks"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
@@ -248,7 +247,7 @@ func (r *Runner) FailOrphanedTasks(ctx context.Context) {
 		return
 	}
 	if err := r.tasks.FailOrphans(ctx); err != nil {
-		zerolog.Ctx(ctx).Warn().Err(err).Msg("failing tasks orphaned by the restart")
+		logging.Ctx(ctx).Warn("failing tasks orphaned by the restart", "error", err)
 	}
 }
 
@@ -290,7 +289,7 @@ func (r *Runner) StopSessionTree(sessionID string) {
 		// when they were live.
 		live, err := r.Deps.Tasks.ListByParent(ctx, sessionID)
 		if err != nil {
-			zerolog.Ctx(ctx).Warn().Err(err).Str("session_id", sessionID).Msg("listing tasks for session stop")
+			logging.Ctx(ctx).Warn("listing tasks for session stop", "error", err, "session_id", sessionID)
 		}
 		for i := range live {
 			if isTerminalTaskStatus(live[i].Status) {
@@ -310,7 +309,7 @@ func (r *Runner) StopSessionTree(sessionID string) {
 		err = r.tasks.StopTree(stopCtx, sessionID)
 		cancelStop()
 		if err != nil {
-			zerolog.Ctx(ctx).Warn().Err(err).Str("session_id", sessionID).Msg("stopping session tasks")
+			logging.Ctx(ctx).Warn("stopping session tasks", "error", err, "session_id", sessionID)
 		}
 	}
 	for _, rid := range waits {
@@ -338,7 +337,7 @@ func (r *Runner) ReleaseSessionBinding(sandboxID, workDir string) {
 	ctx := r.hub.rootCtx
 	n, err := r.Deps.Sessions.CountBindingRefs(ctx, sandboxID, workDir)
 	if err != nil {
-		zerolog.Ctx(ctx).Warn().Err(err).Str("sandbox_id", sandboxID).Msg("counting sandbox binding refs")
+		logging.Ctx(ctx).Warn("counting sandbox binding refs", "error", err, "sandbox_id", sandboxID)
 		return
 	}
 	if n > 0 {

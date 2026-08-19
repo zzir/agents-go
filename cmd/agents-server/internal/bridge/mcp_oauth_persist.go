@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rs/zerolog"
 	"golang.org/x/oauth2"
 
+	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -44,7 +44,7 @@ type tokenPayload struct {
 // because a refresh triggered by a request that then went away must still land.
 func persistGrant(ctx context.Context, s *store.McpServerStore, configID string, ocfg *oauth2.Config, tok *oauth2.Token) {
 	ctx = context.WithoutCancel(ctx)
-	log := zerolog.Ctx(ctx)
+	log := logging.Ctx(ctx)
 	p := tokenPayload{
 		AccessToken:  tok.AccessToken,
 		TokenType:    tok.TokenType,
@@ -58,12 +58,11 @@ func persistGrant(ctx context.Context, s *store.McpServerStore, configID string,
 	}
 	b, err := json.Marshal(p)
 	if err != nil {
-		log.Error().Err(err).Str("mcp", configID).Msg("encoding MCP OAuth grant failed")
+		log.Error("encoding MCP OAuth grant failed", "error", err, "mcp", configID)
 		return
 	}
 	if err := s.SaveOAuthToken(ctx, configID, string(b)); err != nil {
-		log.Error().Err(err).Str("mcp", configID).
-			Msg("persisting MCP OAuth grant failed; connection works now but won't survive a restart")
+		log.Error("persisting MCP OAuth grant failed; connection works now but won't survive a restart", "error", err, "mcp", configID)
 	}
 }
 
