@@ -203,6 +203,9 @@ export const api = {
   },
   settings: {
     list: () => request('/settings'),
+    // The registry the panel renders from — kinds, defaults, labels. A new
+    // global setting is a Go entry; nothing here enumerates keys.
+    defs: () => request('/setting-defs'),
     get: (key: string) => request(`/settings/${key}`),
     set: (key: string, value: unknown) => request(`/settings/${key}`, { method: 'PUT', body: JSON.stringify({ value }) }),
     delete: (key: string) => request(`/settings/${key}`, { method: 'DELETE' }),

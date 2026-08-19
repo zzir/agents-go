@@ -1,37 +1,45 @@
 import { useState, useCallback, useEffect, type ChangeEvent } from 'react';
-import { Button, TextInput, Textarea, FormControl, Stack, PageHeader, Select } from '@primer/react';
+import { Button, TextInput, Textarea, FormControl, Stack, PageHeader, Select, SegmentedControl, Label } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { fc } from '@/lib/form';
 import { api } from '@/lib/api';
 import { useApi, useCrud } from '@/lib/hooks';
 import { toast } from '@/lib/toast';
 
-interface Setting { key: string; value: string }
+// A stored row. `unknown` marks a key the server's registry no longer defines
+// — listed so it can be deleted, since nothing else would ever show it.
+interface Setting { key: string; value: string; unknown?: boolean }
+
+// One entry of the server's settings registry (GET /setting-defs). The panel
+// renders from this, so adding a global setting is a Go change alone.
+interface SettingDef {
+  key: string;
+  kind: 'string' | 'text' | 'secret' | 'int' | 'bool';
+  group: string;
+  label: string;
+  description?: string;
+  placeholder?: string;
+  default?: string;
+  min?: number;
+  max?: number;
+}
+
 interface ProviderRoute { id: string; prefix: string; provider_id: string }
 
 // The endpoints a route can point at; managed under Providers.
 interface ProviderRef { id: string; name: string }
 
-interface SettingDef {
-  key: string;
-  label: string;
-  placeholder: string;
-  description?: string;
-  multiline?: boolean;
-}
-
-const DEFAULT_KEYS: SettingDef[] = [
-  { key: 'proxy_url', label: 'Proxy URL', placeholder: 'http://127.0.0.1:7890 or socks5://127.0.0.1:1080', description: 'All outbound API and MCP HTTP requests will be routed through this proxy.' },
-  { key: 'system_prompt', label: 'System prompt', placeholder: 'Optional instructions prepended to all agents', multiline: true },
-  { key: 'openai_api_key', label: 'OpenAI API key (fallback)', placeholder: 'sk-... (******** keeps the stored key)', description: 'Used by agents and fallback-model entries on the OpenAI provider that have no API key of their own.' },
-  { key: 'anthropic_api_key', label: 'Anthropic API key (fallback)', placeholder: 'sk-ant-... (******** keeps the stored key)', description: 'Used by agents and fallback-model entries on the Anthropic provider that have no API key of their own.' },
-  { key: 'brave_api_key', label: 'Brave Search API key', placeholder: 'BSA-xxxxxxxx', description: 'When set, a brave_search tool is injected into all agents. Get a key at brave.com/search/api.' },
-  { key: 'trace_retention_days', label: 'Trace retention (days)', placeholder: 'e.g. 30 — empty disables pruning', description: 'Trace events older than this many days are pruned daily. Leave empty (or 0) to keep everything.' },
-  { key: 'trace_include_sensitive_data', label: 'Trace sensitive data', placeholder: 'true (default) or false', description: 'Set to false to keep prompts, outputs and tool arguments out of stored traces — spans then carry only timing and usage metadata (the trace panel\'s Replay has nothing to seed from). Applies to new runs.' },
-  { key: 'trace_span_data_kb', label: 'Stored span payload (KB)', placeholder: 'e.g. 8192 — empty uses the default', description: 'How much of a span\'s model request and response is stored. Past it the payload is replaced with a marker and a Replay of that call has nothing to seed from — raise it if you replay large turns. Live updates to the browser are capped separately at 256KB; what they drop is still in the trace. Applies to new runs.' },
-];
+const GROUP_TITLES: Record<string, string> = {
+  network: 'Network',
+  prompt: 'Prompt',
+  credentials: 'Credentials',
+  tracing: 'Tracing',
+  logging: 'Logging',
+  limits: 'Limits',
+};
 
 export function SettingsPanel() {
+  const { data: defs } = useApi<SettingDef[]>(() => api.settings.defs() as Promise<SettingDef[]>);
   const { data: settings, reload } = useApi<Setting[]>(() => api.settings.list() as Promise<Setting[]>);
   const [saving, setSaving] = useState<Record<string, boolean>>({});
 
@@ -45,11 +53,30 @@ export function SettingsPanel() {
       await api.settings.set(key, value);
       reload();
     } catch (e) {
+      // A rejected value now carries the server's reason ("… must be at most 32").
       toast.error((e as Error).message);
     } finally {
       setSaving(prev => ({ ...prev, [key]: false }));
     }
   };
+
+  const handleDelete = async (key: string) => {
+    try {
+      await api.settings.delete(key);
+      reload();
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
+
+  const unknown = (settings || []).filter(s => s.unknown);
+  // Group headers come from the def order the server serves, not a table here.
+  const groups: { name: string; defs: SettingDef[] }[] = [];
+  for (const def of defs || []) {
+    const last = groups[groups.length - 1];
+    if (last && last.name === def.group) last.defs.push(def);
+    else groups.push({ name: def.group, defs: [def] });
+  }
 
   return (
     <Stack gap="spacious">
@@ -59,17 +86,27 @@ export function SettingsPanel() {
         </PageHeader.TitleArea>
         <PageHeader.Description>Network, prompt, and integration settings that apply to all agents.</PageHeader.Description>
       </PageHeader>
-      <Stack gap="spacious">
-        {DEFAULT_KEYS.map(def => (
-          <SettingRow
-            key={def.key}
-            def={def}
-            value={getValue(def.key)}
-            saving={saving[def.key]}
-            onSave={v => handleSave(def.key, v)}
-          />
-        ))}
-      </Stack>
+      {groups.map(g => (
+        <div key={g.name} className="form-group">
+          <PageHeader>
+            <PageHeader.TitleArea>
+              <PageHeader.Title as="h3">{GROUP_TITLES[g.name] || g.name}</PageHeader.Title>
+            </PageHeader.TitleArea>
+          </PageHeader>
+          <Stack gap="spacious">
+            {g.defs.map(def => (
+              <SettingRow
+                key={def.key}
+                def={def}
+                value={getValue(def.key)}
+                saving={saving[def.key]}
+                onSave={v => handleSave(def.key, v)}
+              />
+            ))}
+          </Stack>
+        </div>
+      ))}
+      {unknown.length > 0 && <UnknownSection rows={unknown} onDelete={handleDelete} />}
       <ProviderRoutesSection />
     </Stack>
   );
@@ -87,11 +124,29 @@ function SettingRow({ def, value, saving, onSave }: SettingRowProps) {
   const changed = draft !== value;
   useEffect(() => { setDraft(value); }, [value]);
 
+  // The default belongs in the caption, not in a placeholder the operator has
+  // to guess at: it is what the server actually applies when the box is empty.
+  const caption = [def.description, def.default ? `Default: ${def.default}.` : null]
+    .filter(Boolean).join(' ');
+
   return (
     <FormControl>
       <FormControl.Label>{def.label}</FormControl.Label>
-      {def.description && <FormControl.Caption>{def.description}</FormControl.Caption>}
-      {def.multiline ? (
+      {caption && <FormControl.Caption>{caption}</FormControl.Caption>}
+      <SettingInput def={def} draft={draft} setDraft={setDraft} />
+      {changed && (
+        <Button onClick={() => onSave(draft)} disabled={saving} variant="primary" size="small">
+          {saving ? 'Saving…' : 'Save'}
+        </Button>
+      )}
+    </FormControl>
+  );
+}
+
+function SettingInput({ def, draft, setDraft }: { def: SettingDef; draft: string; setDraft: (v: string) => void }) {
+  switch (def.kind) {
+    case 'text':
+      return (
         <Textarea
           value={draft}
           onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setDraft(e.target.value)}
@@ -100,20 +155,77 @@ function SettingRow({ def, value, saving, onSave }: SettingRowProps) {
           block
           style={{ fontFamily: 'var(--fontStack-monospace)' }}
         />
-      ) : (
+      );
+    case 'bool':
+      // Three states, not a checkbox: an empty value is its own answer —
+      // "whatever the server decides" — and for trace_include_sensitive_data
+      // that is what lets the SDK read its environment variable. A checkbox
+      // would silently convert unset into an explicit choice on first save.
+      return (
+        <SegmentedControl aria-label={def.label} size="small">
+          {([['', def.default ? `Default (${def.default})` : 'Default'], ['true', 'On'], ['false', 'Off']] as const).map(([v, text]) => (
+            <SegmentedControl.Button key={v || 'default'} selected={draft === v} onClick={() => setDraft(v)}>
+              {text}
+            </SegmentedControl.Button>
+          ))}
+        </SegmentedControl>
+      );
+    case 'int':
+      return (
+        <TextInput
+          type="number"
+          value={draft}
+          // A whole-number setting never goes negative, and `min: 0` is
+          // omitted from the JSON — so the floor is 0 unless a def raises it.
+          // Without this the spinner would offer values the server rejects.
+          min={def.min ?? 0}
+          max={def.max}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => setDraft(e.target.value)}
+          placeholder={def.placeholder || def.default}
+          block
+        />
+      );
+    default:
+      return (
         <TextInput
           value={draft}
           onChange={(e: ChangeEvent<HTMLInputElement>) => setDraft(e.target.value)}
-          placeholder={def.placeholder}
+          placeholder={def.kind === 'secret' ? '******** keeps the stored value' : def.placeholder}
           block
         />
-      )}
-      {changed && (
-        <Button onClick={() => onSave(draft)} disabled={saving} variant="primary" size="small">
-          {saving ? 'Saving…' : 'Save'}
-        </Button>
-      )}
-    </FormControl>
+      );
+  }
+}
+
+// Rows the registry does not define: written before writes were validated, or
+// left behind by a removed feature. Shown rather than hidden, because a value
+// nobody can see is a value nobody can clear.
+function UnknownSection({ rows, onDelete }: { rows: Setting[]; onDelete: (key: string) => void }) {
+  return (
+    <div className="form-group">
+      <PageHeader>
+        <PageHeader.TitleArea>
+          <PageHeader.Title as="h3">Unrecognized</PageHeader.Title>
+        </PageHeader.TitleArea>
+        <PageHeader.Description>Stored keys this server does not define. Nothing reads them.</PageHeader.Description>
+      </PageHeader>
+      <div className="Box">
+        {rows.map(r => (
+          <div key={r.key} className="Box-row">
+            <div className="resource-row-main">
+              <div className="resource-row-head">
+                <span className="resource-row-title">{r.key}</span>
+                <Label variant="attention">unknown</Label>
+              </div>
+              <div className="resource-row-sub">{r.value}</div>
+            </div>
+            <div className="resource-row-actions">
+              <Button onClick={() => onDelete(r.key)} size="small" variant="danger">Delete</Button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
