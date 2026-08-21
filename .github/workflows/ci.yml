@@ -13,7 +13,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26'
+          go-version: '1.27'
           check-latest: true
           cache: true
 
@@ -104,7 +104,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26'
+          go-version: '1.27'
           check-latest: true
           cache: true
       - name: govulncheck
@@ -122,7 +122,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26'
+          go-version: '1.27'
           check-latest: true
           cache: true
       - uses: actions/setup-node@v4
@@ -137,11 +137,11 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v8
         with:
-          version: v2.12
+          version: v2.13
       - name: golangci-lint (agents-server)
         uses: golangci/golangci-lint-action@v8
         with:
-          version: v2.12
+          version: v2.13
           working-directory: cmd/agents-server
       # mcp gets the full run too: it is a client with real logic, not a thin
       # backend adapter, and it was fully linted for free while it lived in the
@@ -149,7 +149,7 @@ jobs:
       - name: golangci-lint (mcp)
         uses: golangci/golangci-lint-action@v8
         with:
-          version: v2.12
+          version: v2.13
           working-directory: mcp
       # The three runs above cover root, agents-server and mcp (lint +
       # gofmt/goimports formatters). The support submodules don't run full

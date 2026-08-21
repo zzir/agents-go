@@ -11,7 +11,7 @@ sandbox. Built on a Go SDK you can also embed.
 [![Release](https://img.shields.io/github/v/release/zzir/agents-go)](https://github.com/zzir/agents-go/releases)
 [![CI](https://github.com/zzir/agents-go/actions/workflows/ci.yml/badge.svg)](https://github.com/zzir/agents-go/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/zzir/agents-go.svg)](https://pkg.go.dev/github.com/zzir/agents-go)
-[![Go 1.26+](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go)](go.mod)
+[![Go 1.27+](https://img.shields.io/badge/Go-1.27%2B-00ADD8?logo=go)](go.mod)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 [Get started](#get-started) ·
@@ -38,7 +38,7 @@ sandbox. Built on a Go SDK you can also embed.
 
    (A browser download on macOS is quarantined and Gatekeeper refuses the
    unsigned binary; `xattr -d com.apple.quarantine ./agents-server` clears
-   it.) Or build from source — Go 1.26+ and npm, the UI is compiled into the
+   it.) Or build from source — Go 1.27+ and npm, the UI is compiled into the
    binary:
 
    ```bash

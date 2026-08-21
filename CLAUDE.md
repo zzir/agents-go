@@ -19,7 +19,7 @@ directory name).
 
 ## Commands
 
-Requires Go 1.26+.
+Requires Go 1.27+.
 
 ```bash
 ./scripts/ci.sh                       # full CI locally: gofmt, vet, build, race tests, every submodule (GOWORK=off)
@@ -27,7 +27,7 @@ go test -race ./...                   # race detector is ON in CI — keep it gr
 go test -race ./agents -run TestName  # single test
 go run ./cmd/verifyexamples           # every example still runs (fake model APIs)
 go run ./cmd/verifydocs               # doc snippets + doc.go links name things that exist
-golangci-lint run                     # CI uses golangci-lint v2.12
+golangci-lint run                     # CI uses golangci-lint v2.13
 ```
 
 ## Layout

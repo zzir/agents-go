@@ -14,7 +14,9 @@ linters:
     - revive         # style: exported docs, naming, etc.
     - thelper        # test helpers call t.Helper()
     - unconvert      # unnecessary type conversions
-    - unparam        # unused function parameters
+    # - unparam      # unused function parameters — disabled: panics on the
+    #                # agents package under Go 1.27 (mvdan.cc/unparam gcsizes
+    #                # assertion); re-enable when an unparam fix ships.
     - usestdlibvars  # http.MethodPost etc. instead of literals
     - wastedassign   # assignments never read
     - whitespace     # stray leading/trailing blank lines

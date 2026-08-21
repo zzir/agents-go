@@ -1,6 +1,6 @@
 module github.com/zzir/agents-go/sandbox/ssh
 
-go 1.26.4
+go 1.27.0
 
 require (
 	github.com/pkg/sftp v1.13.7

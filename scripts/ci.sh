@@ -6,7 +6,7 @@
 # Two things make local runs differ from CI unless handled:
 #   1. go.work (gitignored) — CI builds each module standalone, so we disable it.
 #   2. CI runs on Linux — for a faithful OS match, run this script inside the
-#      golang image:  docker run --rm -v "$PWD":/src -w /src golang:1.26 ./scripts/ci.sh
+#      golang image:  docker run --rm -v "$PWD":/src -w /src golang:1.27 ./scripts/ci.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

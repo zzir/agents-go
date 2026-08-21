@@ -1,6 +1,6 @@
 module github.com/zzir/agents-go/sandbox/docker
 
-go 1.26.4
+go 1.27.0
 
 require (
 	github.com/containerd/errdefs v1.0.0
