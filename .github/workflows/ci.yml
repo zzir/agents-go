@@ -40,12 +40,8 @@ jobs:
       # -race, unlike the other submodules: these tests used to live in the root
       # module and so ran under the root's race step. mcp_locking_test.go exists
       # because that coverage caught something; plain `go test` would drop it.
-      # examples/mcpserver has its own go.mod too, so root `go build ./...`
-      # no longer reaches it.
       - name: Test mcp module
-        run: |
-          (cd mcp && go vet ./... && go test -race ./...)
-          (cd examples/mcpserver && go vet ./... && go build -o /dev/null ./...)
+        run: (cd mcp && go vet ./... && go test -race ./...)
 
       - name: Test models/anthropic module
         run: |
@@ -148,7 +144,7 @@ jobs:
       # (golangci-lint-action puts the binary on PATH for later steps.)
       - name: Verify formatting (gofmt + goimports)
         run: |
-          for m in models/anthropic examples/anthropic examples/mcpserver sandbox/docker sandbox/ssh sessions skills; do
+          for m in models/anthropic examples/anthropic sandbox/docker sandbox/ssh sessions skills; do
             out=$(cd "$m" && golangci-lint fmt --diff)
             if [ -n "$out" ]; then
               echo "::error::$m is not gofmt/goimports-clean"; echo "$out"; exit 1

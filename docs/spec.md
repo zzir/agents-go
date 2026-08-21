@@ -2802,7 +2802,11 @@ removed (§1.2). Four cuts in one pass:
   `brave_api_key` setting, not SDK surface.
 
 `cmd/verifydocs` and `cmd/verifyexamples` merged into `cmd/verify` in the same
-pass — one CI step, same two checks.
+pass — one CI step, same two checks. A follow-up cut removed the whole MCP
+serve direction — `NewAgentServer` (nothing consumed it, not even the
+example), then `NewToolServer`/`ServeStdio` with `examples/mcpserver` (the
+example was their only consumer). The `mcp` module is a client; the workbench
+serves its own MCP endpoint independently.
 
 ---
 

@@ -147,7 +147,7 @@ example: shared adapter plumbing, stdlib-only, so it lives in root.
 | `sessions` | the SQL drivers |
 | `skills` | the YAML parser |
 | `cmd/agents-server` | a web application, not a library |
-| `examples/anthropic`, `examples/mcpserver` | example programs needing those same heavy deps |
+| `examples/anthropic` | an example program needing that same heavy dep |
 
 CI builds each module standalone with `GOWORK=off`, so a workspace-only fix
 cannot hide a missing `go.mod` require.

@@ -31,14 +31,14 @@ golangci-lint run                     # CI uses golangci-lint v2.13
 
 ## Layout
 
-Go workspace (`go.work`, gitignored) with ten modules. **A submodule exists only
+Go workspace (`go.work`, gitignored) with nine modules. **A submodule exists only
 to keep a heavy dependency out of the core** ([spec.md §5.7](docs/spec.md)) —
 anything dependency-free stays in the root module. Non-root modules `require` the
 root via `replace => ..`:
 
 - **root** — the SDK (includes `models/modelkit`, the dependency-free toolkit +
   conformance suite for model adapters)
-- **`mcp`** — MCP client and server (carries modelcontextprotocol/go-sdk and the
+- **`mcp`** — MCP client (carries modelcontextprotocol/go-sdk and the
   seven indirect requirements that came with it; import path unchanged)
 - **`models/anthropic`** — Anthropic Messages API backend (carries
   anthropic-sdk-go; translates to the canonical Responses format, spec §5.10)
@@ -46,8 +46,8 @@ root via `replace => ..`:
 - **`sessions`** — SQLite/PostgreSQL `Session` backends
 - **`skills`** — Agent Skills (`SKILL.md`) loader
 - **`cmd/agents-server`** — web app (REST + WS + embedded UI)
-- **`examples/anthropic`**, **`examples/mcpserver`** — the examples with their
-  own modules, for their extra deps
+- **`examples/anthropic`** — the one example with its own module, for its
+  extra dep
 
 CI builds each module standalone with `GOWORK=off`, so a workspace-only fix can
 hide a missing `go.mod` require — always validate with `./scripts/ci.sh`. The
@@ -108,10 +108,9 @@ Core type: `agents.Agent` (a plain struct); everything orbits the runner.
   travels on the `context`, so a subsystem outside the runner (retry, MCP,
   sandbox) opens a child without a threaded handle. Export is a consumer-side
   `Processor` (spec §5.6b); the server stores spans itself.
-- **MCP** — `mcp/`: a client bridged into the runner by `agents/mcp.go`, and
-  `mcp/serve.go` for the other direction (expose tools or a whole agent as an
-  MCP server). Its own module — `agents.MCPServer` is the inversion that keeps
-  the go-sdk out of the core, so never import `mcp` from `agents`.
+- **MCP** — `mcp/`: a client bridged into the runner by `agents/mcp.go`. Its
+  own module — `agents.MCPServer` is the inversion that keeps the go-sdk out
+  of the core, so never import `mcp` from `agents`.
 - **Sandbox** — `sandbox/`: `Sandbox` interface, wrapped as a tool via
   `sandbox/tool.go`; `policy.go` filters commands before the approval gate.
 - **Background tasks** — `agents/tasks/`: sub-agents that outlive the turn that

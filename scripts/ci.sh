@@ -41,16 +41,13 @@ step "Test mcp module"
 # module and so ran under the root's race step. mcp_locking_test.go exists
 # because that coverage caught something; plain `go test` would drop it.
 (cd mcp && go vet ./... && go test -race ./...)
-# examples/mcpserver has its own go.mod (it reaches the MCP go-sdk directly), so
-# root `go build ./...` does not reach it. Discard the output: a bare `go build`
-# in a main package writes the executable into the source tree, and an 18MB
-# binary once made it into a commit that way.
-(cd examples/mcpserver && go vet ./... && go build -o /dev/null ./...)
 
 step "Test models/anthropic module"
 (cd models/anthropic && go vet ./... && go test ./...)
 # examples/anthropic has its own go.mod (anthropic-sdk-go), so root `go build
-# ./...` does not reach it; discard the output like examples/mcpserver.
+# ./...` does not reach it. Discard the output: a bare `go build` in a main
+# package writes the executable into the source tree, and an 18MB binary once
+# made it into a commit that way.
 (cd examples/anthropic && go vet ./... && go build -o /dev/null ./...)
 
 step "Test agents-server module"
@@ -95,7 +92,7 @@ if command -v golangci-lint >/dev/null; then
   # backend adapter, and it was fully linted for free while it lived in the
   # root module. The support submodules below run formatters only.
   (cd mcp && golangci-lint run)                # mcp: lint + formatters
-  for m in models/anthropic examples/anthropic examples/mcpserver sandbox/docker sandbox/ssh sessions skills; do
+  for m in models/anthropic examples/anthropic sandbox/docker sandbox/ssh sessions skills; do
     out=$(cd "$m" && golangci-lint fmt --diff)
     if [ -n "$out" ]; then
       echo "$m is not gofmt/goimports-clean:"; echo "$out"; exit 1
