@@ -196,6 +196,7 @@ function LoginPage({ onLogin }: { onLogin: () => void }) {
           onChange={(e) => setTokenVal(e.target.value)}
           validationStatus={error ? 'error' : undefined}
         />
+        <Button type="submit" variant="primary" block disabled={loading || !token.trim()}>Sign in</Button>
       </form>
     </div>
   );

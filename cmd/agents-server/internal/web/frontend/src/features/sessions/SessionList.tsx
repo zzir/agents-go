@@ -1,6 +1,6 @@
 import './sessions.css';
 import { useState, useEffect, useRef, type ReactElement, type RefObject, type SyntheticEvent } from 'react';
-import { ActionList, ActionMenu, IconButton, TextInput } from '@primer/react';
+import { ActionList, ActionMenu, IconButton, TextInput, useConfirm } from '@primer/react';
 import { KebabHorizontalIcon, PinIcon, PinSlashIcon, PlusIcon, RepoForkedIcon, SearchIcon, TrashIcon, WorkflowIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
@@ -105,6 +105,7 @@ function SessionItem({ s, activeId, isRunning, isAwaiting, onSelect, onPin, onFo
 }
 
 export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onCreated, reloadKey, runningSessions, awaitingSessions, onOpenHub }: SessionListProps): ReactElement {
+  const confirmDialog = useConfirm();
   const { data: sessions, reload, mutateData } = useApi(() => api.sessions.list() as Promise<Session[]>);
 
   useEffect(() => {
@@ -132,7 +133,17 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onCr
     }
   };
 
+  // The heaviest delete in the app — the conversation goes with its messages,
+  // traces and tasks — so it confirms like every other one (invariant 41).
   const handleDelete = async (id: string) => {
+    const name = (sessions || []).find(s => s.id === id)?.name || id.slice(0, 8);
+    const ok = await confirmDialog({
+      title: `Delete “${name}”?`,
+      content: 'The conversation is removed with its messages, traces and tasks. This cannot be undone.',
+      confirmButtonContent: 'Delete',
+      confirmButtonType: 'danger',
+    });
+    if (!ok) return;
     try {
       await api.sessions.delete(id);
     } catch (e) {
