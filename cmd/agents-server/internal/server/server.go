@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"cmp"
 	"compress/gzip"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -12,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"regexp"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -24,6 +27,10 @@ import (
 type Server struct {
 	Engine *gin.Engine
 	token  string
+	// cspPolicy is the Content-Security-Policy every response carries; base
+	// policy from New, extended by ServeStatic with the hashes of the served
+	// page's inline scripts.
+	cspPolicy string
 }
 
 // New creates a Server with a gin engine configured for release mode, recovery, and request logging.
@@ -31,10 +38,10 @@ func New(log *slog.Logger, token string) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.New()
 	engine.Use(gin.Recovery())
-	engine.Use(cspMiddleware())
+	s := &Server{Engine: engine, token: token, cspPolicy: buildCSP(nil)}
+	engine.Use(s.cspMiddleware())
 	engine.Use(logMiddleware(log))
 	engine.Use(TokenAuth(token))
-	s := &Server{Engine: engine, token: token}
 	s.registerAuthRoutes()
 	return s
 }
@@ -79,6 +86,7 @@ func (s *Server) ServeHealth(version string) {
 // Text assets (.js, .css, .html, .svg, .json) may be pre-compressed as .br files;
 // they are served transparently with Content-Encoding: br.
 func (s *Server) ServeStatic(staticFS fs.FS) {
+	s.cspPolicy = buildCSP(inlineScriptHashes(staticFS))
 	httpFS := http.FS(staticFS)
 	s.Engine.NoRoute(func(c *gin.Context) {
 		// Unmatched API paths are client errors, not SPA routes: answer with a
@@ -133,20 +141,69 @@ func serveAsset(c *gin.Context, sfs fs.FS, httpFS http.FileSystem, p string) boo
 	return false
 }
 
-func cspMiddleware() gin.HandlerFunc {
+// buildCSP renders the policy; scriptHashes extends script-src with the
+// sha256 sources of the page's inline scripts.
+func buildCSP(scriptHashes []string) string {
 	// connect-src is same-origin: the SPA only talks to this server (REST over
 	// http(s), live updates over the ws/wss upgrade of the same origin), so
 	// 'self' already covers same-origin WebSockets in modern browsers.
-	const policy = "default-src 'self'; " +
-		"script-src 'self'; " +
+	scriptSrc := "script-src 'self'"
+	for _, h := range scriptHashes {
+		scriptSrc += " 'sha256-" + h + "'"
+	}
+	return "default-src 'self'; " +
+		scriptSrc + "; " +
 		"style-src 'self' 'unsafe-inline'; " +
 		"img-src 'self' data: blob:; " +
 		"connect-src 'self'; " +
 		"font-src 'self' data:"
+}
+
+func (s *Server) cspMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		c.Header("Content-Security-Policy", policy)
+		c.Header("Content-Security-Policy", s.cspPolicy)
 		c.Next()
 	}
+}
+
+// inlineScriptRE matches bare inline <script> blocks; tagged scripts
+// (type="module", src=…) are external and covered by 'self'.
+var inlineScriptRE = regexp.MustCompile(`(?s)<script>(.*?)</script>`)
+
+// inlineScriptHashes hashes every inline <script> of the FS's index.html —
+// computed from the same bytes the server serves, so the policy cannot drift
+// from the page. (index.html's theme-init must stay inline and synchronous:
+// it gates first paint.)
+func inlineScriptHashes(fsys fs.FS) []string {
+	html := readIndexHTML(fsys)
+	if html == nil {
+		return nil
+	}
+	var hashes []string
+	for _, m := range inlineScriptRE.FindAllSubmatch(html, -1) {
+		sum := sha256.Sum256(m[1])
+		hashes = append(hashes, base64.StdEncoding.EncodeToString(sum[:]))
+	}
+	return hashes
+}
+
+func readIndexHTML(fsys fs.FS) []byte {
+	if raw, err := fs.ReadFile(fsys, "index.html"); err == nil {
+		return raw
+	}
+	raw, err := fs.ReadFile(fsys, "index.html.gz")
+	if err != nil {
+		return nil
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(raw))
+	if err != nil {
+		return nil
+	}
+	html, err := io.ReadAll(zr)
+	if err != nil {
+		return nil
+	}
+	return html
 }
 
 // redactSensitiveQueryKeys are query parameters scrubbed from request logs:
