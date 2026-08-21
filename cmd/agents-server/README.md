@@ -45,7 +45,7 @@ On startup the server prints an auto-generated auth token. Open
 |-------------------------|-------------|--------------------------------------------------------|
 | `--host`                | `127.0.0.1` | Bind address (use `0.0.0.0` for LAN access)            |
 | `--port`                | `9527`      | HTTP listen port                                       |
-| `--db`                  | `data.db`   | SQLite database file                                   |
+| `--db`                  | `data.db`   | SQLite file path, or a `postgres://` DSN               |
 | `--workspace`           | `.`         | Workspace directory for skills and file operations     |
 | `--token`               | auto        | Auth token; randomly generated when omitted            |
 | `--allow-local-sandbox` | `false`     | Allow creating local (non-isolated) sandboxes          |
@@ -1928,7 +1928,15 @@ When a change genuinely doesn't fit, update this list in the same PR.
 
 ## Database
 
-SQLite in WAL mode. Tables are created automatically on startup:
+SQLite in WAL mode by default; pass `--db` a `postgres://` (or
+`postgresql://`) DSN to use PostgreSQL 16+ instead — same schema, created the
+same way:
+
+```bash
+./agents-server --db 'postgres://user:pass@localhost:5432/agents?sslmode=disable'
+```
+
+Tables are created automatically on startup:
 
 | Table               | Description                                                                         |
 |---------------------|-------------------------------------------------------------------------------------|

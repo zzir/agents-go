@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/driver/pgdriver"
 )
 
 // ErrNotFound reports that the requested row does not exist. Store methods
@@ -29,12 +30,25 @@ func requireRows(res rowsAffected) error {
 }
 
 // UniqueViolation reports the offending column list (e.g. "name" or
-// "type, name", table prefixes stripped) and true when err is a SQLite UNIQUE
+// "type, name", table prefixes stripped) and true when err is a UNIQUE
 // constraint failure, letting handlers map a duplicate to 409 without a
-// racy pre-check. Best-effort by message, so it works across sqlite drivers.
+// racy pre-check. SQLite is matched best-effort by message, so it works
+// across sqlite drivers; PostgreSQL by SQLSTATE.
 func UniqueViolation(err error) (string, bool) {
 	if err == nil {
 		return "", false
+	}
+	var pgErr pgdriver.Error
+	if errors.As(err, &pgErr) && pgErr.Field('C') == "23505" {
+		// DETAIL reads `Key (col[, col...])=(...) already exists.`; fall back
+		// to the constraint name when the server withholds it.
+		detail := pgErr.Field('D')
+		if _, rest, ok := strings.Cut(detail, "Key ("); ok {
+			if cols, _, ok := strings.Cut(rest, ")="); ok {
+				return cols, true
+			}
+		}
+		return pgErr.Field('n'), true
 	}
 	const marker = "UNIQUE constraint failed: "
 	i := strings.Index(err.Error(), marker)

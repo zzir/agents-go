@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect"
 )
 
 // schemaModels is every persisted model — the tables CreateSchema creates and
@@ -170,14 +171,18 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 		return fmt.Errorf("creating mcp_servers unique name index: %w", err)
 	}
 	// A workflow's name is how a person picks it to run; two sharing one make
-	// the choice a coin flip. COLLATE NOCASE because the tool matches the name
-	// case-INSENSITIVELY (EqualFold) — "Build" and "build" must not both exist,
-	// or the model naming one hits whichever the listing happens to return.
+	// the choice a coin flip. Case-insensitive because the tool matches the
+	// name with EqualFold — "Build" and "build" must not both exist, or the
+	// model naming one hits whichever the listing happens to return.
+	workflowName := "name COLLATE NOCASE"
+	if db.Dialect().Name() == dialect.PG {
+		workflowName = "lower(name)"
+	}
 	if _, err := db.NewCreateIndex().
 		Model((*Workflow)(nil)).
 		Index("idx_workflows_name").
 		Unique().
-		ColumnExpr("name COLLATE NOCASE").
+		ColumnExpr(workflowName).
 		IfNotExists().
 		Exec(ctx); err != nil {
 		return fmt.Errorf("creating workflows unique name index: %w", err)
@@ -231,7 +236,7 @@ func verifySchema(ctx context.Context, db *bun.DB) error {
 		var probe []map[string]any
 		if err := db.NewSelect().Model(model).Limit(0).Scan(ctx, &probe); err != nil {
 			return fmt.Errorf(
-				"database schema is out of date for %T (%w); this build changed the database layout and ships no migrations — back up the database file if needed, delete it, and restart to recreate it",
+				"database schema is out of date for %T (%w); this build changed the database layout and ships no migrations — back up the database if needed, delete it (or drop its tables), and restart to recreate it",
 				model, err)
 		}
 	}

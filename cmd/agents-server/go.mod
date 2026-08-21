@@ -11,7 +11,9 @@ require (
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/spf13/cobra v1.10.2
 	github.com/uptrace/bun v1.2.18
+	github.com/uptrace/bun/dialect/pgdialect v1.2.18
 	github.com/uptrace/bun/dialect/sqlitedialect v1.2.18
+	github.com/uptrace/bun/driver/pgdriver v1.2.18
 	github.com/uptrace/bun/driver/sqliteshim v1.2.18
 	github.com/zzir/agents-go v0.0.0
 	github.com/zzir/agents-go/mcp v0.0.0
@@ -117,6 +119,7 @@ require (
 	golang.org/x/tools v0.47.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
+	mellium.im/sasl v0.3.2 // indirect
 	modernc.org/libc v1.74.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect

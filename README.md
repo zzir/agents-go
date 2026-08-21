@@ -54,8 +54,9 @@ sandbox. Built on a Go SDK you can also embed.
 
    It listens on `http://127.0.0.1:9527` and prints an auth token at startup;
    paste the token into the login screen. State lives in `data.db` in the
-   directory you ran it from (`--db`); skills and file tools use `--workspace`
-   (default `.`). All flags: [manual](cmd/agents-server/README.md#flags).
+   directory you ran it from (`--db`; a `postgres://` DSN uses PostgreSQL
+   instead); skills and file tools use `--workspace` (default `.`). All
+   flags: [manual](cmd/agents-server/README.md#flags).
 
 3. **Add a provider, create an agent, chat.** Settings → Providers: an OpenAI
    or Anthropic API key, or sign in with ChatGPT. Settings → Agents: name,

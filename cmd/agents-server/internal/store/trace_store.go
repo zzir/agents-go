@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect"
 )
 
 // TraceStore persists and queries trace events.
@@ -56,17 +57,29 @@ func (s *TraceStore) list(ctx context.Context, sessionID string, beforeID int64,
 	q := s.db.NewSelect().Model(&events).
 		Where("session_id = ?", sessionID)
 	if summary {
-		paths := make([]string, len(payloadFields))
-		exists := make([]string, len(payloadFields))
-		for i, f := range payloadFields {
-			paths[i] = "'$." + f + "'"
-			exists[i] = "json_type(te.data, '$." + f + "') IS NOT NULL"
-		}
 		// A row whose data is not JSON (there is none such from this build)
 		// is passed through as it is rather than failing the whole listing.
-		q = q.ExcludeColumn("data").
-			ColumnExpr("CASE WHEN json_valid(te.data) THEN json_remove(te.data, " + strings.Join(paths, ", ") + ") ELSE te.data END AS data").
-			ColumnExpr("CASE WHEN json_valid(te.data) THEN (" + strings.Join(exists, " OR ") + ") ELSE 0 END AS payload_omitted")
+		var dataExpr, omittedExpr string
+		if s.db.Dialect().Name() == dialect.PG {
+			removed := "te.data::jsonb"
+			exists := make([]string, len(payloadFields))
+			for i, f := range payloadFields {
+				removed += " - '" + f + "'"
+				exists[i] = "jsonb_exists(te.data::jsonb, '" + f + "')"
+			}
+			dataExpr = "CASE WHEN te.data IS JSON THEN (" + removed + ")::text ELSE te.data END AS data"
+			omittedExpr = "CASE WHEN te.data IS JSON THEN (" + strings.Join(exists, " OR ") + ") ELSE false END AS payload_omitted"
+		} else {
+			paths := make([]string, len(payloadFields))
+			exists := make([]string, len(payloadFields))
+			for i, f := range payloadFields {
+				paths[i] = "'$." + f + "'"
+				exists[i] = "json_type(te.data, '$." + f + "') IS NOT NULL"
+			}
+			dataExpr = "CASE WHEN json_valid(te.data) THEN json_remove(te.data, " + strings.Join(paths, ", ") + ") ELSE te.data END AS data"
+			omittedExpr = "CASE WHEN json_valid(te.data) THEN (" + strings.Join(exists, " OR ") + ") ELSE 0 END AS payload_omitted"
+		}
+		q = q.ExcludeColumn("data").ColumnExpr(dataExpr).ColumnExpr(omittedExpr)
 	}
 	if beforeID > 0 {
 		q = q.Where("id < ?", beforeID)

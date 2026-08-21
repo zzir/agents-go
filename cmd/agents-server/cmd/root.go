@@ -46,7 +46,7 @@ var rootCmd = &cobra.Command{
 func init() {
 	rootCmd.Flags().StringVar(&flagHost, "host", "127.0.0.1", "Bind address (use 0.0.0.0 for LAN access)")
 	rootCmd.Flags().IntVar(&flagPort, "port", 9527, "HTTP server port")
-	rootCmd.Flags().StringVar(&flagDB, "db", "data.db", "SQLite database path")
+	rootCmd.Flags().StringVar(&flagDB, "db", "data.db", "SQLite database path, or a postgres:// DSN")
 	rootCmd.Flags().StringVar(&flagWorkspace, "workspace", ".", "Workspace directory")
 	rootCmd.Flags().StringVar(&flagToken, "token", "", "Authentication token (auto-generated if empty)")
 	rootCmd.Flags().BoolVar(&flagAllowLocalSandbox, "allow-local-sandbox", false, "Allow creating local (non-isolated) sandboxes")
@@ -79,8 +79,7 @@ func run(_ *cobra.Command, _ []string) error {
 	}
 	ctx := logging.Into(context.Background(), log)
 
-	dsn := fmt.Sprintf("file:%s?cache=shared&_journal_mode=WAL", flagDB)
-	db, err := store.NewSQLiteDB(dsn)
+	db, err := store.OpenDB(flagDB)
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
