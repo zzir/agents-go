@@ -144,10 +144,10 @@ func TestBuildParams_Settings(t *testing.T) {
 		Input: agents.InputItemsFromText("hi"),
 		Tools: []*agents.Tool{{Name: "t", ParamsJSONSchema: map[string]any{"type": "object"}}},
 		Settings: &agents.ModelSettings{
-			Temperature:       agents.Ptr(0.5),
-			MaxTokens:         agents.Ptr[int64](256),
+			Temperature:       new(0.5),
+			MaxTokens:         new(int64(256)),
 			ToolChoice:        agents.ToolChoiceRequired,
-			ParallelToolCalls: agents.Ptr(true),
+			ParallelToolCalls: new(true),
 		},
 	}
 	got := marshalParams(t, req)
@@ -199,7 +199,7 @@ func TestBuildParams_ContextManagement(t *testing.T) {
 		Input: agents.InputItemsFromText("hi"),
 		Settings: &agents.ModelSettings{
 			ContextManagement: []agents.ContextManagement{
-				{Type: "compaction", CompactThreshold: agents.Ptr[int64](200000)},
+				{Type: "compaction", CompactThreshold: new(int64(200000))},
 			},
 		},
 	}
@@ -223,7 +223,7 @@ func TestBuildParams_ParallelToolCallsExcludesHandoffs(t *testing.T) {
 	req := agents.ModelRequest{
 		Input:    agents.InputItemsFromText("hi"),
 		Handoffs: []agents.Handoff{{ToolName: "transfer_to_x", InputJSONSchema: map[string]any{"type": "object"}}},
-		Settings: &agents.ModelSettings{ParallelToolCalls: agents.Ptr(true)},
+		Settings: &agents.ModelSettings{ParallelToolCalls: new(true)},
 	}
 	got := marshalParams(t, req)
 	if _, ok := got["parallel_tool_calls"]; ok {
@@ -248,8 +248,7 @@ func TestUsageFromResponse_NoUsageBlock(t *testing.T) {
 
 func TestResponseTerminalFailure_TypedError(t *testing.T) {
 	err := responseTerminalFailure("response.failed", "failed", "server_error", "boom", "")
-	var mbe *agents.ModelBehaviorError
-	if !errors.As(err, &mbe) {
+	if _, ok := errors.AsType[*agents.ModelBehaviorError](err); !ok {
 		t.Fatalf("error = %T, want *agents.ModelBehaviorError", err)
 	}
 	msg := err.Error()
@@ -264,8 +263,7 @@ func TestResponseErrorEventFailure_TypedError(t *testing.T) {
 	err := responseErrorEventFailure("response.error", responses.ResponseErrorEvent{
 		Code: "rate_limit", Message: "slow down", Param: "input",
 	})
-	var mbe *agents.ModelBehaviorError
-	if !errors.As(err, &mbe) {
+	if _, ok := errors.AsType[*agents.ModelBehaviorError](err); !ok {
 		t.Fatalf("error = %T, want *agents.ModelBehaviorError", err)
 	}
 	msg := err.Error()

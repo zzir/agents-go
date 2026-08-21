@@ -144,7 +144,7 @@ func Scenarios() []Scenario {
 		{
 			Name:     "truncated",
 			UserText: "Write a novel.",
-			Settings: &agents.ModelSettings{MaxTokens: agents.Ptr(int64(16))},
+			Settings: &agents.ModelSettings{MaxTokens: new(int64(16))},
 			Turn: TurnSpec{
 				ResponseID: "resp_truncated",
 				Text:       "It was a dark and",

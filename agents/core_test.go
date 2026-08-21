@@ -44,12 +44,12 @@ func TestUsageAddPreservesEntries(t *testing.T) {
 
 func TestModelSettingsResolve(t *testing.T) {
 	base := &ModelSettings{
-		Temperature: Ptr(0.2),
+		Temperature: new(0.2),
 		ToolChoice:  ToolChoiceAuto,
-		MaxTokens:   Ptr[int64](100),
+		MaxTokens:   new(int64(100)),
 	}
 	override := &ModelSettings{
-		Temperature: Ptr(0.9),
+		Temperature: new(0.9),
 		ToolChoice:  ToolChoiceRequired,
 	}
 	got := base.Resolve(override)
@@ -70,7 +70,7 @@ func TestModelSettingsResolve(t *testing.T) {
 }
 
 func TestModelSettingsResolveNil(t *testing.T) {
-	base := &ModelSettings{Temperature: Ptr(0.2)}
+	base := &ModelSettings{Temperature: new(0.2)}
 	got := base.Resolve(nil)
 	if *got.Temperature != 0.2 {
 		t.Errorf("temperature = %v", *got.Temperature)

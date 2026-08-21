@@ -53,12 +53,12 @@ agent := &agents.Agent{Name: "fast", Model: "gpt-4o-mini"}
 
 ## Model settings
 
-`ModelSettings` carries optional parameters (temperature, tool_choice, max tokens, reasoning effort, …). All fields use pointers or zero-value-means-unset semantics so the provider default applies unless you set them; use `agents.Ptr` for pointer fields.
+`ModelSettings` carries optional parameters (temperature, tool_choice, max tokens, reasoning effort, …). All fields use pointers or zero-value-means-unset semantics so the provider default applies unless you set them; use `new(expr)` for pointer fields.
 
 ```go
 agent.ModelSettings = &agents.ModelSettings{
-	Temperature: agents.Ptr(0.2),
-	MaxTokens:   agents.Ptr(int64(1024)),
+	Temperature: new(0.2),
+	MaxTokens:   new(int64(1024)),
 }
 ```
 
@@ -66,7 +66,7 @@ A run-level override merges over each agent's own settings:
 
 ```go
 res, err := agents.RunSync(ctx, agent, input, agents.RunOptions{
-	Model: agents.ModelOptions{Provider: provider, Settings: &agents.ModelSettings{Temperature: agents.Ptr(0.0)}},
+	Model: agents.ModelOptions{Provider: provider, Settings: &agents.ModelSettings{Temperature: new(0.0)}},
 })
 ```
 

@@ -271,7 +271,3 @@ func (m *ModelSettings) Resolve(override *ModelSettings) *ModelSettings {
 	}
 	return &out
 }
-
-// Ptr is a small helper that returns a pointer to v. It is convenient for
-// setting optional ModelSettings fields, e.g. Temperature: agents.Ptr(0.7).
-func Ptr[T any](v T) *T { return &v }

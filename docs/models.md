@@ -148,20 +148,20 @@ A runnable example is in `examples/fallback`.
 
 ## Model settings
 
-`ModelSettings` carries the provider knobs; `nil`/zero fields mean "leave unset" (use `agents.Ptr` for pointers):
+`ModelSettings` carries the provider knobs; `nil`/zero fields mean "leave unset" (use `new(expr)` for pointers):
 
 ```go
 agent.ModelSettings = &agents.ModelSettings{
-	Temperature:       agents.Ptr(0.3),
-	TopP:              agents.Ptr(0.9),
-	MaxTokens:         agents.Ptr(int64(2048)),
+	Temperature:       new(0.3),
+	TopP:              new(0.9),
+	MaxTokens:         new(int64(2048)),
 	ToolChoice:        agents.ToolChoiceAuto, // "auto" | "required" | "none" | a tool name
-	ParallelToolCalls: agents.Ptr(true),
+	ParallelToolCalls: new(true),
 	Truncation:        agents.TruncationAuto,
 	Reasoning:         &agents.Reasoning{Effort: "medium", Summary: "auto"},
 	Verbosity:         "low",
-	Store:             agents.Ptr(true),
-	TopLogprobs:       agents.Ptr(int64(5)), // logprobs are included automatically
+	Store:             new(true),
+	TopLogprobs:       new(int64(5)), // logprobs are included automatically
 	Metadata:          map[string]string{"team": "support"},
 	PromptCacheKey:    "chatbot-v3",         // forwarded as prompt_cache_key
 	PromptCacheOptions: &agents.PromptCacheOptions{Mode: agents.PromptCacheModeExplicit, TTL: "30m"},
@@ -178,7 +178,7 @@ Notes:
 - `ToolChoice` of `"required"` or a specific tool name is automatically released after the agent calls a tool, preventing infinite loops — see [Agents](agents.md#stopping-after-tools-run). Any value other than `"auto"`/`"required"`/`"none"` is sent as a function tool name (the SDK has no provider-hosted tools).
 - `PromptCacheKey` is forwarded as the Responses API `prompt_cache_key` to improve prompt-cache hit rates. Unlike the Python SDK, the runner **never auto-generates** one ([differences](migration_from_python.md)): set it explicitly, or supply your own via `ExtraBody["prompt_cache_key"]`. Empty means unset.
 - `PromptCacheOptions` configures prompt caching: `Mode` is `"implicit"` (default) or `"explicit"`, `TTL` is the minimum cache-entry lifetime (currently only `"30m"`). With `"explicit"` mode, mark cache breakpoints on input content parts (`prompt_cache_breakpoint`) to control which prompt prefixes are cached. nil leaves it unset.
-- `ContextManagement` passes server-side context-management entries through to the Responses API — currently `ContextManagement{Type: "compaction", CompactThreshold: agents.Ptr(int64(...))}`, where a nil `CompactThreshold` leaves the threshold to the server. A nil/empty slice leaves it unset.
+- `ContextManagement` passes server-side context-management entries through to the Responses API — currently `ContextManagement{Type: "compaction", CompactThreshold: new(int64(...))}`, where a nil `CompactThreshold` leaves the threshold to the server. A nil/empty slice leaves it unset.
 - The per-run overlay replaces `ExtraHeaders` / `ExtraQuery` / `ExtraBody` **wholesale** when the override sets them, rather than merging per key: a run-level `ExtraBody` shadows the agent's `ExtraBody` entirely, it does not union with it.
 
 ## Custom models

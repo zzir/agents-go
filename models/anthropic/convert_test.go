@@ -306,11 +306,10 @@ func TestBuildParamsThinkingBudgetVsExplicitMaxTokens(t *testing.T) {
 		Input: agents.InputItemsFromText("hi"),
 		Settings: &agents.ModelSettings{
 			Reasoning: &agents.Reasoning{Effort: agents.ReasoningEffortMedium},
-			MaxTokens: agents.Ptr(int64(1000)),
+			MaxTokens: new(int64(1000)),
 		},
 	})
-	var ue *agents.UserError
-	if !errors.As(err, &ue) {
+	if _, ok := errors.AsType[*agents.UserError](err); !ok {
 		t.Fatalf("expected UserError for max_tokens below the thinking budget, got %v", err)
 	}
 }
@@ -323,8 +322,7 @@ func TestBuildParamsRejectsUnsupportedSettings(t *testing.T) {
 		"metadata_other_key":   {Input: agents.InputItemsFromText("hi"), Settings: &agents.ModelSettings{Metadata: map[string]string{"trace": "x"}}},
 	} {
 		_, err := testModel().buildParams(req)
-		var ue *agents.UserError
-		if !errors.As(err, &ue) {
+		if _, ok := errors.AsType[*agents.UserError](err); !ok {
 			t.Errorf("%s: expected UserError, got %v", name, err)
 		}
 	}
@@ -389,13 +387,12 @@ func TestBuildParamsEmptyToolResult(t *testing.T) {
 
 func TestBuildParamsThinkingSamplingConflicts(t *testing.T) {
 	for name, s := range map[string]*agents.ModelSettings{
-		"temperature": {Reasoning: &agents.Reasoning{Effort: agents.ReasoningEffortLow}, Temperature: agents.Ptr(0.5)},
-		"top_p":       {Reasoning: &agents.Reasoning{Effort: agents.ReasoningEffortLow}, TopP: agents.Ptr(0.9)},
+		"temperature": {Reasoning: &agents.Reasoning{Effort: agents.ReasoningEffortLow}, Temperature: new(0.5)},
+		"top_p":       {Reasoning: &agents.Reasoning{Effort: agents.ReasoningEffortLow}, TopP: new(0.9)},
 		"tool_choice": {Reasoning: &agents.Reasoning{Effort: agents.ReasoningEffortLow}, ToolChoice: agents.ToolChoiceRequired},
 	} {
 		_, err := testModel().buildParams(agents.ModelRequest{Input: agents.InputItemsFromText("hi"), Settings: s})
-		var ue *agents.UserError
-		if !errors.As(err, &ue) {
+		if _, ok := errors.AsType[*agents.UserError](err); !ok {
 			t.Errorf("%s: expected UserError for thinking conflict, got %v", name, err)
 		}
 	}

@@ -13,7 +13,7 @@ import (
 func TestResolveCoversEverySetting(t *testing.T) {
 	t.Parallel()
 
-	typ := reflect.TypeOf(ModelSettings{})
+	typ := reflect.TypeFor[ModelSettings]()
 	for i := range typ.NumField() {
 		field := typ.Field(i)
 		if !field.IsExported() {
@@ -129,7 +129,7 @@ func TestNonZeroSampleRefusesZeroProbes(t *testing.T) {
 	t.Parallel()
 
 	for _, typ := range []reflect.Type{
-		reflect.TypeOf(time.Time{}),              // a struct, but all of its state is unexported
+		reflect.TypeFor[time.Time](),             // a struct, but all of its state is unexported
 		reflect.TypeOf(struct{ At time.Time }{}), // and one level down
 	} {
 		if sample, ok := nonZeroSample(typ); ok && sample.IsZero() {
@@ -167,7 +167,7 @@ func TestResolveReplacesExtrasWholesale(t *testing.T) {
 
 func TestResolveKeepsBaseExtrasWhenOverrideUnset(t *testing.T) {
 	base := &ModelSettings{ExtraHeaders: map[string]string{"a": "1"}}
-	got := base.Resolve(&ModelSettings{Temperature: Ptr(0.5)})
+	got := base.Resolve(&ModelSettings{Temperature: new(0.5)})
 	if got.ExtraHeaders["a"] != "1" {
 		t.Errorf("ExtraHeaders = %v, want base retained when override unset", got.ExtraHeaders)
 	}
@@ -197,7 +197,7 @@ func TestResolvePromptCacheOptions(t *testing.T) {
 }
 
 func TestResolveContextManagement(t *testing.T) {
-	cm := []ContextManagement{{Type: "compaction", CompactThreshold: Ptr[int64](200000)}}
+	cm := []ContextManagement{{Type: "compaction", CompactThreshold: new(int64(200000))}}
 	got := (&ModelSettings{}).Resolve(&ModelSettings{ContextManagement: cm})
 	if len(got.ContextManagement) != 1 || got.ContextManagement[0].Type != "compaction" {
 		t.Fatalf("ContextManagement = %v, want single compaction entry", got.ContextManagement)
