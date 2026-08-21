@@ -110,6 +110,14 @@ you can do from your own code:
 go get github.com/zzir/agents-go
 ```
 
+> **Pre-1.0 API notice.** Until v1.0.0, a minor release may rename or remove
+> exported identifiers. Breaks are batched into as few releases as possible,
+> and every one is recorded in the
+> [release notes](https://github.com/zzir/agents-go/releases) with the old
+> spelling beside the new. If you embed the SDK in production: pin the
+> version, and when you bump it, hand the release notes to your coding agent —
+> they are written to work as a migration map.
+
 ```go
 package main
 
