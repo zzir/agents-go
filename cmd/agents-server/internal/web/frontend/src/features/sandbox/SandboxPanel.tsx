@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Button, TextInput, Label, Select, Checkbox, FormControl, Stack } from '@primer/react';
+import { SecretInput } from '@/components/SecretInput';
 import { FormActions } from '@/components/FormActions';
 import { CrudPanel } from '@/components/CrudPanel';
 import { ResourceRow } from '@/components/ResourceRow';
@@ -191,7 +192,7 @@ function SandboxForm({ initial, onSave, onCancel, onDelete }: SandboxFormProps) 
         'Path on the server host. Tried before password. Leave empty to use a password or the SSH agent.',
       )}
       {t === 'ssh' && fc('Password',
-        <TextInput block type="password" value={form.password} onChange={e => set('password', e.target.value)} placeholder="(optional)" />,
+        <SecretInput block value={form.password} onChange={e => set('password', e.target.value)} placeholder="(optional)" />,
       )}
       {t === 'ssh' && (
         <FormControl>

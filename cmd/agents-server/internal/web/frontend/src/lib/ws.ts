@@ -18,6 +18,9 @@ export class WSClient {
   // token is being rejected. Lets the app prompt a re-login instead of silently
   // reconnecting forever.
   onAuthFail: (() => void) | null;
+  // Fired with true once authenticated, false when the socket drops — the
+  // app's persistent connection indicator.
+  onStatus: ((connected: boolean) => void) | null;
   private _closed: boolean;
   private _retryDelay: number;
   private _reconnectTimer: ReturnType<typeof setTimeout> | null;
@@ -32,6 +35,7 @@ export class WSClient {
     this.handlers = {};
     this.onReconnect = null;
     this.onAuthFail = null;
+    this.onStatus = null;
     this._closed = false;
     this._retryDelay = 1000;
     this._reconnectTimer = null;
@@ -85,6 +89,7 @@ export class WSClient {
             // caller resubscribe/resync. First-ever auth is not a reconnect.
             if (this._everAuthed) this.onReconnect?.();
             this._everAuthed = true;
+            this.onStatus?.(true);
           }
           return;
         }
@@ -97,6 +102,7 @@ export class WSClient {
 
     this.ws.onclose = () => {
       if (this._closed) return;
+      this.onStatus?.(false);
       // Closed AFTER opening but before authenticating: the server rejects a
       // bad token by silently closing (no error frame). Count consecutive such
       // closes and, once it's clearly not a one-off blip, surface it so the app

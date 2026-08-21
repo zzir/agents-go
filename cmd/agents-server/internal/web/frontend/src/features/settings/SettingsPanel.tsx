@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, type ChangeEvent } from 'react';
 import { Button, TextInput, Textarea, FormControl, Stack, PageHeader, Select, SegmentedControl, Label } from '@primer/react';
+import { SecretInput } from '@/components/SecretInput';
 import { FormActions } from '@/components/FormActions';
 import { CrudPanel } from '@/components/CrudPanel';
 import { ResourceRow } from '@/components/ResourceRow';
@@ -198,12 +199,21 @@ function SettingInput({ def, draft, setDraft }: { def: SettingDef; draft: string
           block
         />
       );
+    case 'secret':
+      return (
+        <SecretInput
+          value={draft}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => setDraft(e.target.value)}
+          placeholder="******** keeps the stored value"
+          block
+        />
+      );
     default:
       return (
         <TextInput
           value={draft}
           onChange={(e: ChangeEvent<HTMLInputElement>) => setDraft(e.target.value)}
-          placeholder={def.kind === 'secret' ? '******** keeps the stored value' : def.placeholder}
+          placeholder={def.placeholder}
           block
         />
       );

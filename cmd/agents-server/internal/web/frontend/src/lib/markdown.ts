@@ -96,6 +96,16 @@ export function renderMarkdownAsync(text: string): Promise<string> {
   });
 }
 
+// KaTeX's stylesheet is ~77KB gz the first paint never needs — it loads the
+// first time worker output actually contains math (a failed load retries on
+// the next math block).
+let katexCssLoaded = false;
+function ensureKatexCss(html: string): void {
+  if (katexCssLoaded || !html.includes('class="katex')) return;
+  katexCssLoaded = true;
+  import('katex/dist/katex.min.css').catch(() => { katexCssLoaded = false; });
+}
+
 // React hook: returns cached HTML synchronously when available, otherwise ''
 // until the worker responds. Callers render into dangerouslySetInnerHTML.
 export function useAsyncMarkdown(text: string): string {
@@ -103,9 +113,9 @@ export function useAsyncMarkdown(text: string): string {
   useEffect(() => {
     if (!text) { setHtml(''); return; }
     const hit = lruGet(text);
-    if (hit !== undefined) { setHtml(hit); return; }
+    if (hit !== undefined) { ensureKatexCss(hit); setHtml(hit); return; }
     let cancelled = false;
-    renderMarkdownAsync(text).then((h) => { if (!cancelled) setHtml(h); });
+    renderMarkdownAsync(text).then((h) => { if (!cancelled) { ensureKatexCss(h); setHtml(h); } });
     return () => { cancelled = true; };
   }, [text]);
   return html;

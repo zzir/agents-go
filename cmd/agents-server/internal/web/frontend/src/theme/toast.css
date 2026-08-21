@@ -1,16 +1,40 @@
-.global-toast {
-  /* Primer's Flash sets position:relative at equal specificity; !important
-     guarantees the toast stays viewport-fixed regardless of CSS load order. */
-  position: fixed !important;
-  top: 16px;
+/* The toast stack: fixed, centered, newest at the bottom. The container is
+   always in the DOM so its live region exists before the first message. */
+.global-toast-stack {
+  position: fixed;
+  top: var(--base-size-16);
   left: 50%;
   transform: translateX(-50%);
-  max-width: min(480px, calc(100vw - 32px));
   z-index: var(--zIndex-toast);
+  display: flex;
+  flex-direction: column;
+  gap: var(--base-size-8);
+  max-width: min(480px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.global-toast {
+  pointer-events: auto;
   cursor: pointer;
   animation: toast-in var(--base-duration-200) var(--base-easing-easeOut);
   box-shadow: var(--shadow-floating-small);
 }
-@keyframes toast-in { from { opacity: 0; transform: translateX(-50%) translateY(-8px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
-@keyframes toast-out { from { opacity: 1; transform: translateX(-50%) translateY(0); } to { opacity: 0; transform: translateX(-50%) translateY(-8px); } }
+@keyframes toast-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes toast-out { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(-8px); } }
 .global-toast-exit { animation: toast-out var(--base-duration-200) var(--base-easing-easeIn) forwards; }
+
+/* Lost-connection pill — bottom center, out of the toast stack's way. */
+.conn-indicator {
+  position: fixed;
+  bottom: var(--base-size-16);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: var(--zIndex-toast);
+  padding: var(--base-size-4) var(--base-size-12);
+  border-radius: var(--borderRadius-full);
+  background: var(--bgColor-attention-muted);
+  color: var(--fgColor-attention);
+  border: 1px solid var(--borderColor-attention-muted);
+  font-size: var(--base-text-size-xs);
+  font-weight: var(--base-text-weight-medium);
+}

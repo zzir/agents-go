@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo, memo } from 'react';
-import { TextInput, Dialog, NavList as PrimerNavList, Flash, Button } from '@primer/react';
+import { Dialog, NavList as PrimerNavList, Flash, Button } from '@primer/react';
+import { SecretInput } from '@/components/SecretInput';
 import {
   DependabotIcon, McpIcon, ShieldCheckIcon, SparkleIcon, CpuIcon, PlugIcon,
   ContainerIcon, DatabaseIcon, GearIcon,
@@ -38,42 +39,51 @@ const FLASH_ICON: Record<string, React.ReactNode> = {
 };
 type FlashProps = React.ComponentProps<typeof Flash>;
 
+// A queue, not one slot: three errors during a long run stack up instead of
+// each overwriting the last. Errors stay until clicked away; everything else
+// auto-dismisses. The stack div always exists so the live region is
+// established before the first announcement.
 function GlobalToast() {
-  const [item, setItem] = useState<{ msg: string; type: string; seq: number } | null>(null);
-  const [exiting, setExiting] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const exitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [items, setItems] = useState<Array<{ id: number; msg: string; type: string; exiting?: boolean }>>([]);
   const seqRef = useRef(0);
+  const timersRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
 
-  const dismiss = useCallback(() => {
-    setExiting(true);
-    exitTimerRef.current = setTimeout(() => { setItem(null); setExiting(false); exitTimerRef.current = null; }, 150);
+  const dismiss = useCallback((id: number) => {
+    const t = timersRef.current.get(id);
+    if (t) { clearTimeout(t); timersRef.current.delete(id); }
+    setItems(prev => prev.map(it => (it.id === id ? { ...it, exiting: true } : it)));
+    setTimeout(() => setItems(prev => prev.filter(it => it.id !== id)), 150);
   }, []);
 
   useEffect(() => {
     onToast(({ msg, type }) => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-      if (exitTimerRef.current) { clearTimeout(exitTimerRef.current); exitTimerRef.current = null; }
-      setExiting(false);
-      seqRef.current += 1;
-      setItem({ msg, type, seq: seqRef.current });
-      timerRef.current = setTimeout(() => { dismiss(); timerRef.current = null; }, 4000);
+      const id = ++seqRef.current;
+      setItems(prev => [...prev.slice(-4), { id, msg, type }]);
+      if (type !== 'error') timersRef.current.set(id, setTimeout(() => dismiss(id), 4000));
     });
-    return () => onToast(null);
+    const timers = timersRef.current;
+    return () => {
+      onToast(null);
+      for (const t of timers.values()) clearTimeout(t);
+    };
   }, [dismiss]);
 
-  if (!item) return null;
   return (
-    <Flash
-      key={item.seq}
-      variant={FLASH_VARIANT[item.type] || 'default'}
-      className={'global-toast' + (exiting ? ' global-toast-exit' : '')}
-      onClick={() => { if (timerRef.current) clearTimeout(timerRef.current); dismiss(); }}
-    >
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-        {FLASH_ICON[item.type]}{item.msg}
-      </span>
-    </Flash>
+    <div className="global-toast-stack" role="status" aria-live="polite">
+      {items.map(it => (
+        <Flash
+          key={it.id}
+          variant={FLASH_VARIANT[it.type] || 'default'}
+          role={it.type === 'error' ? 'alert' : undefined}
+          className={'global-toast' + (it.exiting ? ' global-toast-exit' : '')}
+          onClick={() => dismiss(it.id)}
+        >
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            {FLASH_ICON[it.type]}{it.msg}
+          </span>
+        </Flash>
+      ))}
+    </div>
   );
 }
 
@@ -177,9 +187,9 @@ function LoginPage({ onLogin }: { onLogin: () => void }) {
   return (
     <div className="login-page">
       <form className="login-card" onSubmit={handleSubmit}>
-        <img src="/icon.svg" width={48} height={48} />
-        <TextInput
-          type="password"
+        <img src="/icon.svg" width={48} height={48} alt="" />
+        <SecretInput
+          aria-label="API token"
           placeholder="Token"
           value={token}
           autoFocus
@@ -384,7 +394,7 @@ function App() {
     });
   }, []);
 
-  const { wsRef, sessionRunRef, loadSession, loadTraces, loadSpanPayload, deleteSession, loadEarlier, forgetLoaded, watchTask, unwatchTask } = useAgentSocket(updateSS);
+  const { wsRef, sessionRunRef, connected, loadSession, loadTraces, loadSpanPayload, deleteSession, loadEarlier, forgetLoaded, watchTask, unwatchTask } = useAgentSocket(updateSS);
 
   // patchTask applies a server-confirmed task state change (e.g. the stop
   // API's response) directly — the fallback for when no hub broadcast will
@@ -926,6 +936,9 @@ function App() {
         )}
       </AppShell>
       {settingsOpen && <SettingsDialog onClose={() => { setSettingsOpen(false); setSettingsReloadKey(k => k + 1); }} />}
+      {/* Lost-connection pill: the socket announces a drop here, not only at
+          the moment a send fails. */}
+      {!connected && <div className="conn-indicator" role="status">Reconnecting…</div>}
       <GlobalToast />
     </ThemeProvider>
   );

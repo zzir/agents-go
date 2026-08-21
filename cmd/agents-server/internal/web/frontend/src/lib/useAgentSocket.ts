@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { WSClient } from '@/lib/ws';
 import { EV, ERR, TASK_KIND_WORKFLOW, type RunDiagnostic, type TaskRow, type TaskStatus, type WorkflowState } from '@/lib/protocol';
 import { buildTimeline, type DisplayExtra, type EntryView } from '@/lib/timeline';
@@ -249,6 +249,8 @@ export function withSpanPayload(runs: Record<string, TraceEvent[]>, runId: strin
 
 export function useAgentSocket(updateSSRaw: UpdateSSFn) {
   const wsRef = useRef<WSClient | null>(null);
+  // Optimistic true: the indicator marks a LOST connection, not a pending one.
+  const [connected, setConnected] = useState(true);
   // Conversations deleted in this page (deleteSession): a late event of the
   // delete cascade's own, or a fetch that was in flight when the conversation
   // went, must not rebuild one — every write this hook makes goes through here.
@@ -583,6 +585,8 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       window.dispatchEvent(new Event('auth:logout'));
       toast.error('Session expired — please sign in again');
     };
+
+    ws.onStatus = setConnected;
 
     ws.on(EV.runStarted, (p: { session_id?: string; run_id: string; input?: string; parent_session_id?: string; parent_run_id?: string; task_id?: string; kind?: string; tool_call_id?: string; label?: string; attempt?: number; max_attempts?: number }) => {
       // A background task run — a sub-agent's or a workflow step's: track it
@@ -1435,5 +1439,5 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
     updateSS(sid, s => ({ ...s, loaded: false, entries: [], hasMore: false }));
   }, [updateSS]);
 
-  return { wsRef, sessionRunRef, loadSession, loadTraces, loadSpanPayload, deleteSession, loadEarlier, forgetLoaded, watchTask, unwatchTask };
+  return { wsRef, sessionRunRef, connected, loadSession, loadTraces, loadSpanPayload, deleteSession, loadEarlier, forgetLoaded, watchTask, unwatchTask };
 }

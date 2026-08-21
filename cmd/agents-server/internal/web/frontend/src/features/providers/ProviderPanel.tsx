@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, TextInput, Label, SegmentedControl, Stack } from '@primer/react';
+import { SecretInput } from '@/components/SecretInput';
 import { FormActions } from '@/components/FormActions';
 import { CrudPanel } from '@/components/CrudPanel';
 import { ResourceRow } from '@/components/ResourceRow';
@@ -93,7 +94,7 @@ function ProviderForm({ initial, onSave, onCancel, onDelete, providerTypes }: Pr
       {/* No Base URL for chatgpt_login: the account token is sent only to
           ChatGPT, never to an operator-typed host. */}
       {(!supportsChatGPT || form.auth_mode !== 'chatgpt_login') && <>
-        {fc('API key', <TextInput block type="password" value={form.api_key}
+        {fc('API key', <SecretInput block value={form.api_key}
           onChange={e => set('api_key', e.target.value)} placeholder={meta.keyPlaceholder} />, staleKeyHint)}
         {fc('Base URL', <TextInput block value={form.base_url}
           onChange={e => set('base_url', e.target.value)} placeholder={meta.baseURLPlaceholder} />)}

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Button, TextInput, Textarea, Label, FormControl, Checkbox, Select, Stack } from '@primer/react';
+import { TokenListInput } from '@/components/TokenListInput';
 import { FormActions } from '@/components/FormActions';
 import { CrudPanel } from '@/components/CrudPanel';
 import { ResourceRow } from '@/components/ResourceRow';
@@ -391,7 +392,9 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
             <div className="form-group-title">Behavior</div>
             {fc('Max turns', <TextInput block type="number" min={0} value={String(form.max_turns || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('max_turns', parseInt(e.target.value) || 0)} />, '0 = SDK default (10)')}
             {fc('Max tool concurrency', <TextInput block type="number" min={0} value={String(form.max_tool_concurrency || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('max_tool_concurrency', parseInt(e.target.value) || 0)} />, '0 = unlimited')}
-            {fc('Stop at tools', <TextInput value={form.stop_at_tools || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('stop_at_tools', e.target.value)} placeholder="tool1, tool2" block />, 'End the run after a turn that calls any of these; empty = run until the model stops')}
+            {fc('Stop at tools', <TokenListInput ariaLabel="Stop at tools" placeholder="tool1, tool2"
+              values={(form.stop_at_tools || '').split(',').map(s => s.trim()).filter(Boolean)}
+              onChange={vals => set('stop_at_tools', vals.join(','))} />, 'End the run after a turn that calls any of these; empty = run until the model stops')}
             {/* Older configs spell the default out ("return_to_model" or its
                 alias); it is the default now, so those read as the unset button. */}
             {seg('Tool not found behavior', RETURN_TO_MODEL.has(form.tool_not_found_behavior || '') ? '' : form.tool_not_found_behavior, [['', 'Return to model (default)'], ['error', 'End the run']], v => set('tool_not_found_behavior', v),

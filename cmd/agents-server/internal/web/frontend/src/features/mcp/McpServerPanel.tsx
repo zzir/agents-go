@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Button, TextInput, Label, Select, Checkbox, FormControl, Stack, ToggleSwitch } from '@primer/react';
+import { SecretInput } from '@/components/SecretInput';
+import { TokenListInput } from '@/components/TokenListInput';
 import { FormActions } from '@/components/FormActions';
 import { CrudPanel } from '@/components/CrudPanel';
 import { ResourceRow } from '@/components/ResourceRow';
@@ -173,11 +175,13 @@ function McpForm({ initial, onSave, onCancel, onDelete, onClearAuth }: McpFormPr
         'Pre-registered OAuth client ID. Leave empty to use dynamic client registration (DCR).',
       )}
       {!isStdio && isOAuth && form.oauth_client_id && fc('Client secret',
-        <TextInput block value={form.oauth_client_secret} onChange={e => set('oauth_client_secret', e.target.value)} type="password" monospace />,
+        <SecretInput block value={form.oauth_client_secret} onChange={e => set('oauth_client_secret', e.target.value)} monospace />,
       )}
       {!isStdio && isOAuth && fc('Scopes',
-        <TextInput block value={form.oauth_scopes} onChange={e => set('oauth_scopes', e.target.value)} placeholder="read write" monospace />,
-        'Space-separated OAuth scopes to request.',
+        <TokenListInput ariaLabel="OAuth scopes" placeholder="read write"
+          values={form.oauth_scopes.split(/\s+/).filter(Boolean)}
+          onChange={vals => set('oauth_scopes', vals.join(' '))} />,
+        'OAuth scopes to request.',
       )}
       {canClearAuth && fc('Saved authorization',
         <Button onClick={handleClearAuth} variant="danger" disabled={clearing}>Clear auth</Button>,
