@@ -5,7 +5,6 @@ import (
 	"cmp"
 	"compress/gzip"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -27,7 +26,7 @@ import (
 // Server wraps the gin engine.
 type Server struct {
 	Engine *gin.Engine
-	token  string
+	auth   AuthFunc
 	// cspPolicy is the Content-Security-Policy every response carries; base
 	// policy from New, extended by ServeStatic with the hashes of the served
 	// page's inline scripts.
@@ -66,17 +65,18 @@ func (s *Server) SetTrustedProxies(proxies []string) error {
 }
 
 // New creates a Server with a gin engine configured for release mode, recovery, and request logging.
-func New(log *slog.Logger, token string) *Server {
+// auth answers every /api/* request's credential; the auth ROUTES (login,
+// OAuth flows) are handlers and mount through RegisterAPI like the rest.
+func New(log *slog.Logger, auth AuthFunc) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.New()
 	_ = engine.SetTrustedProxies(nil)
 	engine.Use(gin.Recovery())
-	s := &Server{Engine: engine, token: token, cspPolicy: buildCSP(nil)}
+	s := &Server{Engine: engine, auth: auth, cspPolicy: buildCSP(nil)}
 	engine.Use(limitBody(maxBodyBytes))
 	engine.Use(s.cspMiddleware())
 	engine.Use(logMiddleware(log))
-	engine.Use(TokenAuth(token))
-	s.registerAuthRoutes()
+	engine.Use(TokenAuth(auth))
 	return s
 }
 
@@ -87,37 +87,6 @@ func limitBody(n int64) gin.HandlerFunc {
 		}
 		c.Next()
 	}
-}
-
-func (s *Server) registerAuthRoutes() {
-	login := func(c *gin.Context) {
-		var req struct {
-			Token string `json:"token"`
-		}
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, protocol.NewErrorResponse(protocol.CodeValidation, "invalid request"))
-			return
-		}
-		if subtle.ConstantTimeCompare([]byte(req.Token), []byte(s.token)) != 1 {
-			c.JSON(http.StatusUnauthorized, protocol.NewErrorResponse(protocol.CodeUnauthorized, "invalid token"))
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"ok": true})
-	}
-	check := func(c *gin.Context) {
-		if subtle.ConstantTimeCompare([]byte(extractToken(c)), []byte(s.token)) != 1 {
-			c.JSON(http.StatusUnauthorized, protocol.NewErrorResponse(protocol.CodeUnauthorized, "unauthorized"))
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"ok": true})
-	}
-	auth := s.Engine.Group(APIPrefix + "/auth")
-	// The auth surface is where credentials are guessed; everything on it —
-	// including the OAuth endpoints that mount here later — shares one strict
-	// per-IP budget.
-	auth.Use(RateLimit(authRatePerMinute, authRateBurst))
-	auth.POST("/login", login)
-	auth.GET("/check", check)
 }
 
 // ServeHealth mounts an unauthenticated liveness endpoint at /health that

@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"crypto/subtle"
 	"net/http"
 	"net/url"
 	"sync"
@@ -207,10 +206,11 @@ func (c *WSConn) startHeartbeat(pongWait, pingInterval time.Duration) {
 type WSHandlerFunc func(conn *WSConn)
 
 // HandleWSWithAuth upgrades to WebSocket, then requires the client to send
-// {"type":"auth","token":"..."} as the first message. On success it replies
+// {"type":"auth","token":"..."} as the first message — resolved by auth, so a
+// static token, a session token and a PAT all work. On success it replies
 // with {"type":"auth.ok"} and enters the normal handler loop; on failure it
 // closes the connection silently.
-func HandleWSWithAuth(handler WSHandlerFunc, token string) gin.HandlerFunc {
+func HandleWSWithAuth(handler WSHandlerFunc, auth AuthFunc) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ws, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
@@ -226,12 +226,15 @@ func HandleWSWithAuth(handler WSHandlerFunc, token string) gin.HandlerFunc {
 		// Require the auth frame to arrive within a bounded window so an idle,
 		// unauthenticated connection can't hold a goroutine and buffer open.
 		_ = ws.SetReadDeadline(time.Now().Add(wsAuthDeadline))
-		var auth struct {
+		var frame struct {
 			Type  string `json:"type"`
 			Token string `json:"token"`
 		}
-		if err := conn.ReadJSON(&auth); err != nil || auth.Type != protocol.EventAuth ||
-			subtle.ConstantTimeCompare([]byte(auth.Token), []byte(token)) != 1 {
+		if err := conn.ReadJSON(&frame); err != nil || frame.Type != protocol.EventAuth {
+			conn.Close()
+			return
+		}
+		if _, err := auth(c.Request.Context(), frame.Token); err != nil {
 			conn.Close()
 			return
 		}

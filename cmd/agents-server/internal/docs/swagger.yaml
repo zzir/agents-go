@@ -981,6 +981,27 @@ components:
         message:
           type: string
       type: object
+    protocol.AuthConfig:
+      properties:
+        mode:
+          type: string
+        providers:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+      type: object
+    protocol.UserInfo:
+      properties:
+        email:
+          type: string
+        id:
+          type: string
+        name:
+          type: string
+        role:
+          type: string
+      type: object
     session.DiagnosticType:
       enum:
       - model_retry
@@ -2210,6 +2231,107 @@ paths:
       summary: Reject tool call
       tags:
       - approvals
+  /auth/check:
+    get:
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: boolean
+                type: object
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Unauthorized
+      security:
+      - BearerAuth: []
+      summary: Validate the presented credential
+      tags:
+      - auth
+  /auth/config:
+    get:
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/protocol.AuthConfig'
+          description: OK
+      summary: Auth configuration
+      tags:
+      - auth
+  /auth/login:
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: boolean
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: malformed body, or token login disabled (OAuth mode)
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Unauthorized
+      summary: Token login
+      tags:
+      - auth
+  /auth/logout:
+    post:
+      responses:
+        "204":
+          description: signed out
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Sign out
+      tags:
+      - auth
+  /auth/me:
+    get:
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/protocol.UserInfo'
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Unauthorized
+      security:
+      - BearerAuth: []
+      summary: Current user
+      tags:
+      - auth
   /guardrails:
     get:
       responses:

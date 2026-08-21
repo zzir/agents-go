@@ -28,11 +28,12 @@ func (s *Server) RegisterHook(hook gin.HandlerFunc) {
 	s.Engine.POST(HooksPrefix+"/:id", RateLimit(hookRatePerMinute, hookRateBurst), hook)
 }
 
-// RegisterWS mounts the WebSocket endpoints with token auth: /ws for run
-// events, /ws/terminal for one interactive sandbox terminal per connection.
+// RegisterWS mounts the WebSocket endpoints with application-level auth (the
+// first WS frame, resolved by the same AuthFunc as REST): /ws for run events,
+// /ws/terminal for one interactive sandbox terminal per connection.
 func (s *Server) RegisterWS(ws, terminal WSHandlerFunc) {
-	s.Engine.GET("/ws", HandleWSWithAuth(ws, s.token))
-	s.Engine.GET("/ws/terminal", HandleWSWithAuth(terminal, s.token))
+	s.Engine.GET("/ws", HandleWSWithAuth(ws, s.auth))
+	s.Engine.GET("/ws/terminal", HandleWSWithAuth(terminal, s.auth))
 }
 
 // ServeOpenAPI mounts the OpenAPI document (auth-exempt) at

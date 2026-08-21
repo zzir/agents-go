@@ -20,6 +20,7 @@ func TestAuthExemptCoversOnlyServedRoutes(t *testing.T) {
 	for _, p := range []string{
 		"/api/v1/auth/login",
 		"/api/v1/auth/check",
+		"/api/v1/auth/config",
 		"/api/v1/mcp-servers/oauth/callback",
 		"/api/v1/openapi.yaml",
 	} {
@@ -30,6 +31,9 @@ func TestAuthExemptCoversOnlyServedRoutes(t *testing.T) {
 	for _, p := range []string{
 		"/api/v1/chatgpt/oauth/callback",
 		"/api/auth/login",
+		"/api/v1/auth/me",
+		"/api/v1/auth/logout",
+		"/api/v1/auth/tokens",
 		"/api/v1/sessions",
 		"/api/v1/agents/a1/chatgpt/status",
 	} {
@@ -39,24 +43,20 @@ func TestAuthExemptCoversOnlyServedRoutes(t *testing.T) {
 	}
 }
 
-// The non-2xx responses this package writes itself — the auth middleware, the
-// login/check endpoints, the JSON 404 for unmatched API paths — go out as the
-// envelope documented in README "Errors". Compared against literal bytes
-// rather than a re-marshalled protocol.ErrorResponse: the bytes are the
-// contract, and a renamed field would move both sides of that comparison at
-// once. handler/contract_test.go pins the same bytes from the other emitter.
+// The non-2xx responses this package writes itself — the auth middleware and
+// the JSON 404 for unmatched API paths — go out as the envelope documented in
+// README "Errors". Compared against literal bytes rather than a re-marshalled
+// protocol.ErrorResponse: the bytes are the contract, and a renamed field
+// would move both sides of that comparison at once. handler/contract_test.go
+// pins the same bytes from the other emitter; the login endpoint's live in
+// handler/auth_test.go since the auth routes moved there.
 func TestErrorEnvelopeMatchesTheSharedShape(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	s := New(slog.New(slog.DiscardHandler), "tok")
+	s := New(slog.New(slog.DiscardHandler), staticAuth("tok"))
 	s.ServeStatic(fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<!doctype html>")}})
 
 	authed := func(r *http.Request) *http.Request {
 		r.Header.Set("Authorization", "Bearer tok")
-		return r
-	}
-	jsonReq := func(method, path, body string) *http.Request {
-		r := httptest.NewRequest(method, path, strings.NewReader(body))
-		r.Header.Set("Content-Type", "application/json")
 		return r
 	}
 
@@ -70,12 +70,6 @@ func TestErrorEnvelopeMatchesTheSharedShape(t *testing.T) {
 			`{"error":{"code":"unauthorized","message":"unauthorized"}}`},
 		{"unmatched api path", authed(httptest.NewRequest(http.MethodGet, "/api/v1/nope", nil)), http.StatusNotFound,
 			`{"error":{"code":"not_found","message":"not found"}}`},
-		{"login malformed body", jsonReq(http.MethodPost, "/api/v1/auth/login", "{"), http.StatusBadRequest,
-			`{"error":{"code":"validation","message":"invalid request"}}`},
-		{"login wrong token", jsonReq(http.MethodPost, "/api/v1/auth/login", `{"token":"nope"}`), http.StatusUnauthorized,
-			`{"error":{"code":"unauthorized","message":"invalid token"}}`},
-		{"check wrong token", httptest.NewRequest(http.MethodGet, "/api/v1/auth/check", nil), http.StatusUnauthorized,
-			`{"error":{"code":"unauthorized","message":"unauthorized"}}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

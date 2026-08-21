@@ -77,7 +77,7 @@ func TestRunEventsBroadcastToAllConnections(t *testing.T) {
 	runner := bridge.NewRunner(t.Context(), db, deps)
 	wsh := NewWSHandler(runner)
 	engine := gin.New()
-	engine.GET("/ws", server.HandleWSWithAuth(wsh.Handle, testWSToken))
+	engine.GET("/ws", server.HandleWSWithAuth(wsh.Handle, testAuthFunc(testWSToken)))
 	srv := httptest.NewServer(engine)
 	t.Cleanup(srv.Close)
 

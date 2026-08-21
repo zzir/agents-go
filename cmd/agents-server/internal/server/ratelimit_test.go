@@ -1,7 +1,6 @@
 package server
 
 import (
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -26,21 +25,26 @@ func TestIPLimiterKeysAreIndependent(t *testing.T) {
 	}
 }
 
-// The auth surface answers 429 with the error envelope once an IP exceeds its
-// budget — it is the one place credentials can be guessed.
-func TestAuthEndpointsRateLimited(t *testing.T) {
+// A route behind AuthRateLimit answers 429 with the error envelope once an IP
+// exceeds the auth budget. The probe stands in for the /auth group, which
+// mounts this exact middleware in handler's route registration.
+func TestAuthRateLimitAnswers429(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	s := New(slog.New(slog.DiscardHandler), "tok")
+	engine := gin.New()
+	engine.POST("/probe", AuthRateLimit(), func(c *gin.Context) { c.String(http.StatusOK, "ok") })
 
-	last := 0
+	last, body := 0, ""
 	for i := 0; i < authRateBurst+5; i++ {
-		req := httptest.NewRequest(http.MethodPost, APIPrefix+"/auth/login", strings.NewReader(`{"token":"nope"}`))
+		req := httptest.NewRequest(http.MethodPost, "/probe", strings.NewReader(`{}`))
 		w := httptest.NewRecorder()
-		s.Engine.ServeHTTP(w, req)
-		last = w.Code
+		engine.ServeHTTP(w, req)
+		last, body = w.Code, w.Body.String()
 	}
 	if last != http.StatusTooManyRequests {
 		t.Fatalf("status after exceeding burst = %d, want %d", last, http.StatusTooManyRequests)
+	}
+	if want := `"code":"rate_limited"`; !strings.Contains(body, want) {
+		t.Fatalf("429 body %q does not carry %s", body, want)
 	}
 }
 

@@ -2,6 +2,8 @@ package handler
 
 import (
 	"github.com/gin-gonic/gin"
+
+	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 )
 
 // Handlers is the full set of REST handlers the server mounts; Register wires
@@ -9,6 +11,7 @@ import (
 // endpoint means a handler method plus one line below — not a field in a
 // per-endpoint forwarding struct kept in sync across packages.
 type Handlers struct {
+	Auth           *AuthHandler
 	Sessions       *SessionHandler
 	Runs           *RunHandler
 	Approvals      *ApprovalHandler
@@ -33,6 +36,19 @@ type Handlers struct {
 
 // Register mounts every REST endpoint under api.
 func (h Handlers) Register(api *gin.RouterGroup) {
+	{
+		// One strict per-IP budget for the whole auth surface — it is where
+		// credentials are guessed. Which paths skip the token middleware is
+		// server.authExempt's list, not the group's: /me and /logout live here
+		// too and stay authenticated.
+		auth := api.Group("/auth")
+		auth.Use(server.AuthRateLimit())
+		auth.POST("/login", h.Auth.Login)
+		auth.GET("/check", h.Auth.Check)
+		auth.GET("/config", h.Auth.Config)
+		auth.GET("/me", h.Auth.Me)
+		auth.POST("/logout", h.Auth.Logout)
+	}
 	{
 		sessions := api.Group("/sessions")
 		sessions.GET("", h.Sessions.List)

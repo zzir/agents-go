@@ -16,6 +16,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/zzir/agents-go/cmd/agents-server/internal/authn"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/docs"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/handler"
@@ -227,7 +228,15 @@ func run(_ *cobra.Command, _ []string) error {
 	}
 	log.Info("auth token", "token", token)
 
-	srv := server.New(log, token)
+	// Token mode: the static credential maps to the one implicit local
+	// account, so ownership has a referent before OAuth mode exists.
+	localUser, err := store.NewUserStore(db).EnsureLocalUser(ctx)
+	if err != nil {
+		return fmt.Errorf("ensuring the local user: %w", err)
+	}
+	authSvc := authn.NewStatic(token, localUser)
+
+	srv := server.New(log, authSvc.Authenticate)
 	if flagTrustedProxies != "" {
 		proxies := strings.Split(flagTrustedProxies, ",")
 		for i := range proxies {
@@ -238,6 +247,7 @@ func run(_ *cobra.Command, _ []string) error {
 		}
 	}
 	srv.RegisterAPI(handler.Handlers{
+		Auth:           handler.NewAuthHandler(authSvc),
 		Sessions:       sessionHandler,
 		Runs:           runHandler,
 		Approvals:      approvalHandler,

@@ -78,6 +78,12 @@ func (l *ipLimiter) pruneLocked(now time.Time) {
 	}
 }
 
+// AuthRateLimit is the budget for the auth surface — the one place
+// credentials are guessed. Mounted by the route registration in handler.
+func AuthRateLimit() gin.HandlerFunc {
+	return RateLimit(authRatePerMinute, authRateBurst)
+}
+
 // RateLimit is a gin middleware enforcing a per-client-IP request rate. The
 // client IP honors X-Forwarded-For only from proxies named in
 // SetTrustedProxies; everyone else is keyed by their direct address.

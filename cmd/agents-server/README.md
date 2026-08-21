@@ -106,12 +106,23 @@ REST requests authenticate with a Bearer token in the `Authorization` header:
 
 The `?token=<token>` query parameter is no longer accepted for REST — it leaked
 into browser history and proxy logs. The WebSocket instead authenticates at the
-application level, via its first message (see [WebSocket protocol](#websocket-protocol)).
+application level, via its first message (see [WebSocket protocol](#websocket-protocol)),
+resolved by the same credential check as REST.
+
+The auth surface under `/api/v1/auth`:
+
+| Method | Path           | Auth | Description                                              |
+|--------|----------------|------|----------------------------------------------------------|
+| GET    | `/auth/config` | none | How to authenticate: `{mode, providers?}` — the login page renders from it |
+| POST   | `/auth/login`  | none | Validate the static token (token mode; 400 in OAuth mode) |
+| GET    | `/auth/check`  | none | Validate the presented Bearer — the SPA's stored-credential probe |
+| GET    | `/auth/me`     | yes  | The authenticated caller: `{id, email, name?, role}`     |
+| POST   | `/auth/logout` | yes  | Revoke the presented session token (no-op in token mode) |
 
 Exempt from auth: the MCP OAuth redirect callback
 (`GET /api/v1/mcp-servers/oauth/callback` — the browser follows it without an
 Authorization header), the OpenAPI document (`GET /api/v1/openapi.yaml`), the
-`/api/v1/auth/*` login/check endpoints, and `GET /health`. Every entry on that
+`config`/`login`/`check` endpoints above, and `GET /health`. Every entry on that
 list must name a route this router actually serves: an exemption for a path
 nothing serves silently unauthenticates whatever gets mounted there later. The
 converse holds for the redirect URI the OAuth handler hands the authorization
