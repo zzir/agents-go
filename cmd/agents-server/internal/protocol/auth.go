@@ -15,3 +15,10 @@ type AuthConfig struct {
 	Mode      string   `json:"mode"`
 	Providers []string `json:"providers,omitempty"`
 }
+
+// AuthSession is a successful /auth/exchange: the session token (this response
+// is the only place its plaintext exists) and who it belongs to.
+type AuthSession struct {
+	Token string   `json:"token"`
+	User  UserInfo `json:"user"`
+}

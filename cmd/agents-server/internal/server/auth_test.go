@@ -21,6 +21,9 @@ func TestAuthExemptCoversOnlyServedRoutes(t *testing.T) {
 		"/api/v1/auth/login",
 		"/api/v1/auth/check",
 		"/api/v1/auth/config",
+		"/api/v1/auth/exchange",
+		"/api/v1/auth/oauth/google/start",
+		"/api/v1/auth/oauth/google/callback",
 		"/api/v1/mcp-servers/oauth/callback",
 		"/api/v1/openapi.yaml",
 	} {

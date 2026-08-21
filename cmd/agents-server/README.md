@@ -54,6 +54,10 @@ On startup the server prints an auto-generated auth token. Open
 | `--log-format`          | `text`      | `text` for a terminal, `json` for a collector          |
 | `--base-url`            | —           | Public origin, `scheme://host[:port]` — see [Deployment](#deployment) |
 | `--trusted-proxies`     | —           | Comma-separated proxy IPs/CIDRs whose `X-Forwarded-For` is believed for client IPs |
+| `--auth`                | `token`     | `token` (single static token) or `oauth` (per-user login — see [OAuth mode](#oauth-mode)) |
+| `--oauth-google-client-id` / `--oauth-google-client-secret` | — | Google login credentials (secret also via `AGENTS_OAUTH_GOOGLE_CLIENT_SECRET`) |
+| `--allowed-domains` / `--allowed-emails` | — | OAuth admission allowlist (comma-separated)  |
+| `--bootstrap-admin`     | —           | Email that signs in as admin; implicitly admitted        |
 
 ### Deployment
 
@@ -111,18 +115,52 @@ resolved by the same credential check as REST.
 
 The auth surface under `/api/v1/auth`:
 
-| Method | Path           | Auth | Description                                              |
-|--------|----------------|------|----------------------------------------------------------|
-| GET    | `/auth/config` | none | How to authenticate: `{mode, providers?}` — the login page renders from it |
-| POST   | `/auth/login`  | none | Validate the static token (token mode; 400 in OAuth mode) |
-| GET    | `/auth/check`  | none | Validate the presented Bearer — the SPA's stored-credential probe |
-| GET    | `/auth/me`     | yes  | The authenticated caller: `{id, email, name?, role}`     |
-| POST   | `/auth/logout` | yes  | Revoke the presented session token (no-op in token mode) |
+| Method | Path                             | Auth | Description                                              |
+|--------|----------------------------------|------|----------------------------------------------------------|
+| GET    | `/auth/config`                   | none | How to authenticate: `{mode, providers?}` — the login page renders from it |
+| POST   | `/auth/login`                    | none | Validate the static token (token mode; 400 in OAuth mode) |
+| GET    | `/auth/check`                    | none | Validate the presented Bearer — the SPA's stored-credential probe |
+| GET    | `/auth/oauth/:provider/start`    | none | 302 into the provider's authorize flow (PKCE)            |
+| GET    | `/auth/oauth/:provider/callback` | none | Provider redirect target; 302 into the SPA with `#auth_code=<one-time>` on success, `#auth_error=<tag>` on failure |
+| POST   | `/auth/exchange`                 | none | Trade the one-time code for `{token, user}` — the only response the session token's plaintext rides |
+| GET    | `/auth/me`                       | yes  | The authenticated caller: `{id, email, name?, role}`     |
+| POST   | `/auth/logout`                   | yes  | Revoke the presented session token (no-op in token mode) |
+
+### OAuth mode
+
+`--auth oauth` replaces the single static token with per-user Google sign-in
+and database-backed credentials:
+
+```bash
+./agents-server --auth oauth --base-url https://agents.example.com \
+  --oauth-google-client-id XXX.apps.googleusercontent.com \
+  --oauth-google-client-secret '...' \
+  --allowed-domains example.com
+```
+
+- **Admission is an explicit allowlist** — `--allowed-domains` and/or
+  `--allowed-emails` (matched against the provider-verified email, lowercased);
+  starting with none configured is a startup error, never allow-everyone.
+  `--bootstrap-admin <email>` is implicitly admitted and signs in as admin —
+  the recovery hatch. Otherwise the first account created is the admin, later
+  ones are members.
+- **Logins with the same verified email merge into one account** across
+  providers; the (provider, subject) identity is the primary key of a login.
+- **Sessions are rows, not JWTs**: a 30-day sliding expiry, revoked by
+  `/auth/logout`, cleaned hourly. The callback hands the SPA a one-time code
+  in the URL fragment; the session token itself never appears in a URL.
+- **`--token` is refused in OAuth mode** — programmatic access uses personal
+  access tokens instead (see below). The Google redirect URI to register is
+  `<base-url>/api/v1/auth/oauth/google/callback`.
+- The client secret can come from `AGENTS_OAUTH_GOOGLE_CLIENT_SECRET` instead
+  of the flag. Secrets configure the process only; they are never stored in
+  the database.
 
 Exempt from auth: the MCP OAuth redirect callback
 (`GET /api/v1/mcp-servers/oauth/callback` — the browser follows it without an
 Authorization header), the OpenAPI document (`GET /api/v1/openapi.yaml`), the
-`config`/`login`/`check` endpoints above, and `GET /health`. Every entry on that
+`config`/`login`/`check`/`exchange` and `oauth/*` endpoints above, and
+`GET /health`. Every entry on that
 list must name a route this router actually serves: an exemption for a path
 nothing serves silently unauthenticates whatever gets mounted there later. The
 converse holds for the redirect URI the OAuth handler hands the authorization

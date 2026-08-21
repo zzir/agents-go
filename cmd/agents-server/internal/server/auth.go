@@ -61,6 +61,8 @@ func authExempt(path string) bool {
 	case path == APIPrefix+"/auth/login",
 		path == APIPrefix+"/auth/check",
 		path == APIPrefix+"/auth/config",
+		path == APIPrefix+"/auth/exchange",
+		strings.HasPrefix(path, APIPrefix+"/auth/oauth/"),
 		path == APIPrefix+"/mcp-servers/oauth/callback",
 		path == APIPrefix+"/openapi.yaml":
 		return true

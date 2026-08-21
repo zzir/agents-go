@@ -2,9 +2,11 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -79,7 +81,7 @@ func TestOAuthModeSessionTokens(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
-	engine := authEngine(t, authn.NewOAuth(users, tokens))
+	engine := authEngine(t, authn.NewOAuth(authn.OAuthConfig{Users: users, Tokens: tokens}))
 
 	bearer := func(r *http.Request) *http.Request {
 		r.Header.Set("Authorization", "Bearer "+secret)
@@ -105,6 +107,87 @@ func TestOAuthModeSessionTokens(t *testing.T) {
 	engine.ServeHTTP(rec, bearer(httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)))
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("me after logout = %d, want 401", rec.Code)
+	}
+}
+
+// fakeLoginProvider skips the external IdP: any code yields a fixed identity. What
+// this test exercises is the HTTP surface — routing, auth exemption, the
+// redirect contract, and the one-time exchange.
+type fakeLoginProvider struct{ email string }
+
+func (f *fakeLoginProvider) Name() string { return "fake" }
+func (f *fakeLoginProvider) AuthCodeURL(state, _, redirectURI string) string {
+	return "https://idp.example/authorize?state=" + state + "&redirect_uri=" + redirectURI
+}
+func (f *fakeLoginProvider) Identity(_ context.Context, code, _, _ string) (store.OAuthIdentity, error) {
+	return store.OAuthIdentity{Provider: "fake", Subject: "s-" + code, Email: f.email, Name: "F"}, nil
+}
+
+// The full login flow over HTTP: start redirects out with state, the callback
+// redirects into the SPA with a one-time code, exchange yields the session
+// token, and that token opens /auth/me.
+func TestOAuthFlowOverHTTP(t *testing.T) {
+	db := newTestDB(t)
+	svc := authn.NewOAuth(authn.OAuthConfig{
+		Users: store.NewUserStore(db), Tokens: store.NewAuthTokenStore(db),
+		BaseURL:       "http://app.local",
+		Providers:     []authn.OAuthProvider{&fakeLoginProvider{email: "p@example.com"}},
+		AllowedEmails: []string{"p@example.com"},
+	})
+	engine := authEngine(t, svc)
+
+	rec := httptest.NewRecorder()
+	engine.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/auth/oauth/fake/start", nil))
+	if rec.Code != http.StatusFound {
+		t.Fatalf("start = %d, want 302", rec.Code)
+	}
+	loc, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil || loc.Query().Get("state") == "" {
+		t.Fatalf("start location = %q (%v)", rec.Header().Get("Location"), err)
+	}
+
+	rec = httptest.NewRecorder()
+	engine.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		"/api/v1/auth/oauth/fake/callback?state="+loc.Query().Get("state")+"&code=c1", nil))
+	if rec.Code != http.StatusFound {
+		t.Fatalf("callback = %d, want 302", rec.Code)
+	}
+	code, ok := strings.CutPrefix(rec.Header().Get("Location"), "http://app.local/#auth_code=")
+	if !ok {
+		t.Fatalf("callback location = %q", rec.Header().Get("Location"))
+	}
+
+	rec = doJSON(t, engine, http.MethodPost, "/api/v1/auth/exchange", `{"code":"`+code+`"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("exchange = %d %s", rec.Code, rec.Body.String())
+	}
+	var session struct {
+		Token string `json:"token"`
+		User  struct {
+			Email string `json:"email"`
+		} `json:"user"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &session); err != nil || session.Token == "" {
+		t.Fatalf("exchange body %s (%v)", rec.Body.String(), err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	req.Header.Set("Authorization", "Bearer "+session.Token)
+	rec = httptest.NewRecorder()
+	engine.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"p@example.com"`) {
+		t.Fatalf("me = %d %s", rec.Code, rec.Body.String())
+	}
+
+	// An unknown provider 404s; a replayed exchange code 401s.
+	rec = httptest.NewRecorder()
+	engine.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/auth/oauth/nope/start", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown provider start = %d, want 404", rec.Code)
+	}
+	rec = doJSON(t, engine, http.MethodPost, "/api/v1/auth/exchange", `{"code":"`+code+`"}`)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("exchange replay = %d, want 401", rec.Code)
 	}
 }
 

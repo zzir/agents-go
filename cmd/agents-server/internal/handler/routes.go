@@ -48,6 +48,9 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		auth.GET("/config", h.Auth.Config)
 		auth.GET("/me", h.Auth.Me)
 		auth.POST("/logout", h.Auth.Logout)
+		auth.GET("/oauth/:provider/start", h.Auth.OAuthStart)
+		auth.GET("/oauth/:provider/callback", h.Auth.OAuthCallback)
+		auth.POST("/exchange", h.Auth.Exchange)
 	}
 	{
 		sessions := api.Group("/sessions")

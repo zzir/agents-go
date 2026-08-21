@@ -135,3 +135,32 @@ func RunTraceRetention(ctx context.Context, cfg *settings.Reader, traces *store.
 		}
 	}
 }
+
+// RunAuthTokenCleanup deletes expired session tokens and PATs at startup and
+// then hourly — the maintenance half of the lazy delete Authenticate does in
+// passing. It blocks until ctx ends — run it in a goroutine.
+func RunAuthTokenCleanup(ctx context.Context, tokens *store.AuthTokenStore) {
+	log := logging.Ctx(ctx)
+	sweep := func() {
+		n, err := tokens.DeleteExpired(ctx)
+		if err != nil {
+			log.Error("auth token cleanup failed", "error", err)
+			return
+		}
+		if n > 0 {
+			log.Info("removed expired auth tokens", "removed", n)
+		}
+	}
+
+	sweep()
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			sweep()
+		}
+	}
+}

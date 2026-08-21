@@ -39,6 +39,12 @@ var (
 	flagLogFormat         string
 	flagBaseURL           string
 	flagTrustedProxies    string
+	flagAuthMode          string
+	flagGoogleClientID    string
+	flagGoogleSecret      string
+	flagAllowedDomains    string
+	flagAllowedEmails     string
+	flagBootstrapAdmin    string
 )
 
 var rootCmd = &cobra.Command{
@@ -59,11 +65,28 @@ func init() {
 	rootCmd.Flags().StringVar(&flagLogFormat, "log-format", "text", "Log format: text, json")
 	rootCmd.Flags().StringVar(&flagBaseURL, "base-url", "", "Public origin of this server, scheme://host[:port] (required behind a reverse proxy for OAuth flows)")
 	rootCmd.Flags().StringVar(&flagTrustedProxies, "trusted-proxies", "", "Comma-separated proxy IPs/CIDRs whose X-Forwarded-For is believed for client IPs (default: none)")
+	rootCmd.Flags().StringVar(&flagAuthMode, "auth", "token", "Authentication mode: token (single static token) or oauth (per-user login)")
+	rootCmd.Flags().StringVar(&flagGoogleClientID, "oauth-google-client-id", "", "Google OAuth client id (enables the google login provider)")
+	rootCmd.Flags().StringVar(&flagGoogleSecret, "oauth-google-client-secret", "", "Google OAuth client secret (or env AGENTS_OAUTH_GOOGLE_CLIENT_SECRET)")
+	rootCmd.Flags().StringVar(&flagAllowedDomains, "allowed-domains", "", "Comma-separated email domains admitted to OAuth login")
+	rootCmd.Flags().StringVar(&flagAllowedEmails, "allowed-emails", "", "Comma-separated email addresses admitted to OAuth login")
+	rootCmd.Flags().StringVar(&flagBootstrapAdmin, "bootstrap-admin", "", "Email that signs in as admin (implicitly admitted; the recovery hatch)")
 }
 
 // buildVersion is the plain version string (without commit/date), surfaced by
 // the /health endpoint.
 var buildVersion = "dev"
+
+// splitList parses a comma-separated flag into trimmed, non-empty entries.
+func splitList(raw string) []string {
+	var out []string
+	for _, v := range strings.Split(raw, ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
 
 // SetVersionInfo sets the version string shown by --version.
 func SetVersionInfo(version, commit, date string) {
@@ -222,19 +245,62 @@ func run(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("resolving the workspace path: %w", err)
 	}
 
-	token := flagToken
-	if token == "" {
-		token = server.GenerateToken()
-	}
-	log.Info("auth token", "token", token)
-
-	// Token mode: the static credential maps to the one implicit local
-	// account, so ownership has a referent before OAuth mode exists.
-	localUser, err := store.NewUserStore(db).EnsureLocalUser(ctx)
+	// Both modes keep the implicit local account, so ownership always has a
+	// referent — token mode authenticates as it, OAuth mode leaves it dormant
+	// (no identity, no token, no way to sign in as it).
+	userStore := store.NewUserStore(db)
+	localUser, err := userStore.EnsureLocalUser(ctx)
 	if err != nil {
 		return fmt.Errorf("ensuring the local user: %w", err)
 	}
-	authSvc := authn.NewStatic(token, localUser)
+	authTokens := store.NewAuthTokenStore(db)
+
+	var authSvc *authn.Service
+	switch flagAuthMode {
+	case "token":
+		token := flagToken
+		if token == "" {
+			token = server.GenerateToken()
+		}
+		log.Info("auth token", "token", token)
+		authSvc = authn.NewStatic(token, localUser)
+	case "oauth":
+		// Fail-fast on a combination that could not be signed in to, or that
+		// would admit everyone: OAuth mode demands an explicit allowlist.
+		if flagToken != "" {
+			return fmt.Errorf("--token cannot combine with --auth oauth; programmatic access uses personal access tokens")
+		}
+		if baseURL == "" {
+			return fmt.Errorf("--auth oauth requires --base-url: the OAuth redirect URI derives from it")
+		}
+		googleSecret := flagGoogleSecret
+		if googleSecret == "" {
+			googleSecret = os.Getenv("AGENTS_OAUTH_GOOGLE_CLIENT_SECRET")
+		}
+		var providers []authn.OAuthProvider
+		if flagGoogleClientID != "" {
+			if googleSecret == "" {
+				return fmt.Errorf("google login needs --oauth-google-client-secret (or AGENTS_OAUTH_GOOGLE_CLIENT_SECRET)")
+			}
+			providers = append(providers, &authn.Google{ClientID: flagGoogleClientID, ClientSecret: googleSecret})
+		}
+		if len(providers) == 0 {
+			return fmt.Errorf("--auth oauth needs at least one provider (--oauth-google-client-id)")
+		}
+		domains, emails := splitList(flagAllowedDomains), splitList(flagAllowedEmails)
+		if len(domains) == 0 && len(emails) == 0 && flagBootstrapAdmin == "" {
+			return fmt.Errorf("--auth oauth needs an allowlist: --allowed-domains, --allowed-emails or --bootstrap-admin")
+		}
+		authSvc = authn.NewOAuth(authn.OAuthConfig{
+			Users: userStore, Tokens: authTokens,
+			BaseURL: baseURL, Providers: providers,
+			AllowedDomains: domains, AllowedEmails: emails,
+			BootstrapAdmin: flagBootstrapAdmin, Log: log,
+		})
+	default:
+		return fmt.Errorf("unknown --auth mode %q (token or oauth)", flagAuthMode)
+	}
+	go bridge.RunAuthTokenCleanup(bgCtx, authTokens)
 
 	srv := server.New(log, authSvc.Authenticate)
 	if flagTrustedProxies != "" {
