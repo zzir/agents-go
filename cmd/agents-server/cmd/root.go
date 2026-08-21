@@ -77,7 +77,16 @@ func run(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	ctx := logging.Into(context.Background(), log)
+	// The root context scopes runs, connections, and the hub; it ends when this
+	// function returns, so their Done branches are reachable, not dead code.
+	ctx, stopRoot := context.WithCancel(logging.Into(context.Background(), log))
+	defer stopRoot()
+	// The maintenance loops (approval reaper, trace retention, MCP auto-connect,
+	// wake-up drain) get their own cancellation so shutdown can stop them FIRST:
+	// a reaper still ticking during the drain could expire the very approval the
+	// drain is persisting.
+	bgCtx, stopBg := context.WithCancel(ctx)
+	defer stopBg()
 
 	db, err := store.OpenDB(flagDB)
 	if err != nil {
@@ -112,8 +121,8 @@ func run(_ *cobra.Command, _ []string) error {
 	oauthCoordinator := bridge.NewOAuthCoordinator(mcpServerStore)
 	chatgptOAuth := bridge.NewChatGPTOAuth(providerStore, settingReader)
 	defer mcpManager.CloseAll()
-	go bridge.ConnectEnabledMcpServers(ctx, mcpManager, mcpServerStore, oauthCoordinator)
-	go bridge.RunTraceRetention(ctx, settingReader, traceStore)
+	go bridge.ConnectEnabledMcpServers(bgCtx, mcpManager, mcpServerStore, oauthCoordinator)
+	go bridge.RunTraceRetention(bgCtx, settingReader, traceStore)
 	sandboxManager := bridge.NewSandboxManager(flagWorkspace)
 	defer sandboxManager.CloseAll()
 
@@ -183,11 +192,11 @@ func run(_ *cobra.Command, _ []string) error {
 	// runner.OnRunAttach, an ordinary field with no synchronization, and a run
 	// starting here would read it while the main goroutine was still writing.
 	runner.FailOrphanedTasks(ctx)
-	go runner.DrainPendingWakeups(ctx)
+	go runner.DrainPendingWakeups(bgCtx)
 	// The reaper and the clock start after the sweep AND after the handlers,
 	// for the same reason the drain does: they end and start runs, and they
 	// announce through hooks (OnBroadcast) the WS handler has only now wired.
-	go bridge.RunApprovalReaper(ctx, settingReader, pendingApprovalStore, entryStore, taskStore, runner.AnnounceTask)
+	go bridge.RunApprovalReaper(bgCtx, settingReader, pendingApprovalStore, entryStore, taskStore, runner.AnnounceTask)
 	if err := triggerScheduler.Start(ctx); err != nil {
 		return fmt.Errorf("starting the trigger scheduler: %w", err)
 	}
@@ -280,6 +289,8 @@ func run(_ *cobra.Command, _ []string) error {
 	// The clock first: a tick during the drain would only start a run the
 	// drain refuses, recorded on the trigger as a failure that was nobody's.
 	triggerScheduler.Stop()
+	// Then the maintenance loops, for the reason at bgCtx's creation.
+	stopBg()
 	// Drain FIRST, then the listener. Each live run is cancelled and waited
 	// for, so its partial turn persists (run.cancelled, savePartialTurn)
 	// instead of vanishing when the process exits under it — and ending the
