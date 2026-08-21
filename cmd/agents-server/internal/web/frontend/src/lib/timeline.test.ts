@@ -373,13 +373,13 @@ describe('stream/replay isomorphism', () => {
   });
 
   it('documented difference: rejected status is live-only, replay shows completed', () => {
-    let live = ensureLiveTurn([], RUN)!;
-    live = appendToolCall(live, {
+    let _live = ensureLiveTurn([], RUN)!;
+    _live = appendToolCall(_live, {
       tool_call_id: 'c1', tool_name: 'rm', arguments: '{}',
       needs_approval: true, status: null, output: null,
     }, '')!;
     // User rejects (optimistic patch in app.tsx sets the status)…
-    live = applyToolResult(live, 'c1', 'rejected by user')!;
+    _live = applyToolResult(_live, 'c1', 'rejected by user')!;
     // …but here the status was still null when the result landed, so it
     // completes. Simulate the real order: status set BEFORE the result.
     let live2 = ensureLiveTurn([], RUN)!;

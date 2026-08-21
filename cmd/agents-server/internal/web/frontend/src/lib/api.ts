@@ -56,13 +56,12 @@ export async function checkAuth(): Promise<boolean> {
   return true;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 interface CrudMethods {
-  list: () => Promise<any>;
-  create: (data: unknown) => Promise<any>;
-  get: (id: string | number) => Promise<any>;
-  update: (id: string | number, data: unknown) => Promise<any>;
-  delete: (id: string | number) => Promise<any>;
+  list: () => Promise<unknown>;
+  create: (data: unknown) => Promise<unknown>;
+  get: (id: string | number) => Promise<unknown>;
+  update: (id: string | number, data: unknown) => Promise<unknown>;
+  delete: (id: string | number) => Promise<unknown>;
 }
 
 function crud(base: string): CrudMethods {

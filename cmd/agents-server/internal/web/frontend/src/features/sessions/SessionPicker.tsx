@@ -34,7 +34,7 @@ export function SessionPicker({ value, onChange, placeholder = 'Select a convers
   const [filter, setFilter] = useState('');
   const [creating, setCreating] = useState(false);
 
-  const list = sessions || [];
+  const list = useMemo(() => sessions || [], [sessions]);
   const items = useMemo<SelectPanelItemInput[]>(() => {
     const visible = filterSessionsByName(list, filter);
     const ordered = [...visible.filter(s => s.pinned), ...visible.filter(s => !s.pinned)];

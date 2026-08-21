@@ -15,7 +15,7 @@ export GOWORK=off
 step() { printf '\n\033[1m== %s ==\033[0m\n' "$*"; }
 
 step "Frontend build"
-(cd cmd/agents-server/internal/web/frontend && npm install --ignore-scripts && npm run build)
+(cd cmd/agents-server/internal/web/frontend && npm install --ignore-scripts && npm run lint && npm run build)
 
 step "Vet"
 go vet ./...

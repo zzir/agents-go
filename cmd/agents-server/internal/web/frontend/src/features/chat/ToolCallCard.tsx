@@ -280,7 +280,7 @@ export function ToolCallCard({ toolCall, live, onInspectTask, onRetryTask }: Too
           <StackIcon size={14} />
         </button>
       )}
-      {showStatus && <Label variant={statusVariant as any}>{statusLabel}</Label>}
+      {showStatus && <Label variant={statusVariant}>{statusLabel}</Label>}
     </>
   );
 

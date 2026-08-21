@@ -58,7 +58,12 @@ jobs:
       # The server embeds frontend/dist (go:embed), so the frontend must build
       # before the agents-server module can compile at all.
       - name: Frontend build
-        run: cd cmd/agents-server/internal/web/frontend && npm install --ignore-scripts && npm run build
+        run: cd cmd/agents-server/internal/web/frontend && npm install --ignore-scripts && npm run lint && npm run build
+
+      # The lockfile is deliberately not committed, so the installed tree is
+      # what gets audited — high and above fails the build.
+      - name: Frontend audit
+        run: cd cmd/agents-server/internal/web/frontend && npm audit --omit=dev --audit-level=high
 
       - name: Test agents-server module
         run: (cd cmd/agents-server && go vet ./... && go test -race ./...)

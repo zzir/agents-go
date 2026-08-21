@@ -222,7 +222,7 @@ function comparableText(items: PayloadRecord[]): string {
 // run, tools are schema-only and never executed).
 function ReplayDialog({ data, onClose }: { data: PayloadRecord; onClose: () => void }) {
   const { data: agentList } = useApi<AgentOption[]>(() => api.agents.list() as Promise<AgentOption[]>);
-  const agents = agentList || [];
+  const agents = useMemo(() => agentList || [], [agentList]);
   const [agentId, setAgentId] = useState('');
   const [model, setModel] = useState(typeof data.model === 'string' ? data.model : '');
   const [instructions, setInstructions] = useState(typeof data.system_instructions === 'string' ? data.system_instructions : '');

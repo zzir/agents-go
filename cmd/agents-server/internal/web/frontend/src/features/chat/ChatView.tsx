@@ -4,14 +4,14 @@ import { Button, Dialog, IconButton, ActionMenu, ActionList, Select, Stack, Text
 import { Blankslate } from '@primer/react/experimental';
 import { api } from '@/lib/api';
 import { CHECK_ICON } from '@/lib/markdownShared';
-import { type TurnPart, type TimelineEntry, type Branches, type EntryView, type WorkflowStartedNote } from '@/lib/timeline';
+import { type TurnPart, type TimelineEntry, type Branches, type WorkflowStartedNote } from '@/lib/timeline';
 import { useScrollToBottom, useApi } from '@/lib/hooks';
 import { loadSessionAgent, saveSessionAgent, loadSessionSandbox, saveSessionSandbox, loadSessionWorkdir, saveSessionWorkdir } from '@/lib/drafts';
 import { bindingWorkDirIssue, composerSandboxView, groupProjects, projectLabel, type SessionBinding } from '@/lib/binding';
 import { useRecentProjects } from '@/lib/useRecentProjects';
 import { fc } from '@/lib/form';
-import { parseTaskNotification, TASK_KIND_WORKFLOW, type TaskStatus, type RunDiagnostic } from '@/lib/protocol';
-import type { SessionState, TaskState, TaskViewState } from '@/lib/useAgentSocket';
+import { parseTaskNotification, TASK_KIND_WORKFLOW, type TaskStatus } from '@/lib/protocol';
+import type { SessionState, TaskState } from '@/lib/useAgentSocket';
 import { ChatSessionProvider, useDerivedChatTasks, type ChatSessionState, type ChatActions } from '@/features/chat/ChatSessionContext';
 import { BackgroundListPanel, BackgroundDetailPanel, BackgroundMissingPanel } from '@/features/chat/BackgroundPanel';
 import { MessageBubble } from '@/features/chat/MessageBubble';
@@ -23,7 +23,7 @@ import { Greeting } from '@/features/chat/Greeting';
 import { ChatToc } from '@/features/chat/ChatToc';
 import { MessageInput } from '@/features/chat/MessageInput';
 import { WorkflowStrip } from '@/features/chat/WorkflowStrip';
-import { TraceDrawer, type TraceEventData, type TraceReveal } from '@/features/chat/TracePanel';
+import { TraceDrawer, type TraceReveal } from '@/features/chat/TracePanel';
 import { ContextPanel } from '@/features/chat/ContextPanel';
 import { ChatTopBar } from '@/features/chat/ChatTopBar';
 import { ArrowDownIcon, CommentDiscussionIcon, DependabotIcon, FileDirectoryIcon, PlusIcon } from '@primer/octicons-react';
@@ -321,7 +321,7 @@ export function ChatView({
   // as the task's own trace (the task's trace lives in the Inspector). A
   // workflow execution is a task too, so its notification parses the same
   // way; the kind, from the task rows, picks the word.
-  const runLabelFor = (content: string) => {
+  const runLabelFor = useCallback((content: string) => {
     const notif = parseTaskNotification(content);
     if (!notif) return content;
     const labels = notif.items.map(it => it.label).filter(Boolean);
@@ -329,7 +329,7 @@ export function ChatView({
     if (!which) return notif.text.split('\n')[0];
     const workflow = notif.items.length > 0 && notif.items.every(it => it.taskId && tasks?.[it.taskId]?.kind === TASK_KIND_WORKFLOW);
     return (workflow ? 'workflow result: ' : 'task result: ') + which;
-  };
+  }, [tasks]);
 
   const { turnRunMap, userRunMap, runLabels, staleRuns } = useMemo(() => {
     const tMap: Record<number, string> = {};
@@ -341,7 +341,7 @@ export function ChatView({
     const noteIdxByTask: Record<string, number> = {};
     let turnIdx = 0;
     for (let i = 0; i < messages.length; i++) {
-      const entry = messages[i] as any;
+      const entry = messages[i] as unknown as { role: string; runId?: string; content?: string; note?: WorkflowStartedNote };
       const rid = entry.runId;
       if (entry.role === 'system' && entry.note?.taskId) {
         noteIdxByTask[entry.note.taskId] = i;
@@ -360,7 +360,7 @@ export function ChatView({
           const noted = notif.items.find(it => it.taskId && noteIdxByTask[it.taskId] !== undefined);
           if (noted?.taskId !== undefined && noted.taskId !== null) {
             const idx = noteIdxByTask[noted.taskId];
-            const note = (messages[idx] as any).note as WorkflowStartedNote;
+            const note = (messages[idx] as unknown as { note: WorkflowStartedNote }).note;
             uMap[idx] = rid;
             labels[rid] = '▶ ' + (note.workflowName || noted.label) + ' (' + originText(note.origin) + ')';
           }
@@ -418,7 +418,7 @@ export function ChatView({
       if (!q.onPath) stale.add(rid);
     }
     return { turnRunMap: tMap, userRunMap: uMap, runLabels: labels, staleRuns: stale };
-  }, [messages, entries, traceRuns, runQuestions, tasks]);
+  }, [messages, entries, traceRuns, runQuestions, runLabelFor]);
 
   // Wake-up run → the run whose spawn_task started the chain, read straight
   // off the trace: a wake run's spans carry parent_run_id, recorded at launch.

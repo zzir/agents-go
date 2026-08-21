@@ -10,7 +10,6 @@ import { fc } from '@/lib/form';
 import { toast } from '@/lib/toast';
 
 const TYPES = ['local', 'docker', 'ssh'] as const;
-type SandboxType = (typeof TYPES)[number];
 
 const TYPE_LABELS: Record<string, string> = { local: 'Local', docker: 'Docker', ssh: 'SSH' };
 

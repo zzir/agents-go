@@ -24,7 +24,7 @@ import { WorkflowsHub, type HubTab } from '@/features/workflows/WorkflowsHub';
 import { WORKFLOW_COMMAND } from '@/features/chat/SlashMenu';
 import { SESSIONS_CHANGED } from '@/features/sessions/SessionPicker';
 import { useAgentSocket, defaultSS, type SessionState } from '@/lib/useAgentSocket';
-import { patchToolCall } from '@/lib/timeline';
+import { patchToolCall, type ToolCallPatch } from '@/lib/timeline';
 import { syncTaskCard } from '@/lib/streamReducer';
 import { clearSessionPrefs } from '@/lib/drafts';
 import { onToast, toast } from '@/lib/toast';
@@ -601,7 +601,7 @@ function App() {
     // The phase travels WITH the message: only a /plan message says anything,
     // and an absent `plan` leaves the session's phase alone — an approved plan
     // is what unlocks it again.
-    const payload: Record<string, any> = { session_id: sid, input: text, agent_config_id: agentConfigId };
+    const payload: Record<string, unknown> = { session_id: sid, input: text, agent_config_id: agentConfigId };
     if (planned) payload.plan = true;
     if (planOff) payload.plan = false;
     if (sandboxId) {
@@ -627,7 +627,7 @@ function App() {
     return wsRef.current.send(EV.runCancel, { run_id: runId, mode: graceful ? 'graceful' : '' });
   }, [activeSession, wsRef, sessionRunRef]);
 
-  const updateToolCall = useCallback((toolCallId: string, patch: Record<string, any>) => {
+  const updateToolCall = useCallback((toolCallId: string, patch: ToolCallPatch) => {
     if (!activeSession) return;
     updateSS(activeSession, s => {
       const patched = patchToolCall(s.messages, toolCallId, patch);
@@ -700,8 +700,8 @@ function App() {
     try {
       await api.sessions.branch(activeSession, tipEntryId);
       await reloadTimeline(activeSession);
-    } catch (e: any) {
-      toast.error(e.message || 'Could not switch attempt');
+    } catch (e) {
+      toast.error((e as Error).message || 'Could not switch attempt');
     }
   }, [activeSession, reloadTimeline]);
 
@@ -720,8 +720,8 @@ function App() {
       } else {
         toast.info('Nothing to fold — the kept window already covers the history');
       }
-    } catch (e: any) {
-      toast.error(e.message || 'Compaction failed');
+    } catch (e) {
+      toast.error((e as Error).message || 'Compaction failed');
     }
   }, [activeSession, reloadTimeline]);
 
@@ -740,7 +740,7 @@ function App() {
       // here was a leftover from the fork-a-new-session implementation.)
       // Empty input: the run answers the branch we just switched to rather
       // than adding a new user message. The server maps it to an empty item list.
-      const payload: Record<string, any> = { session_id: activeSession, input: '', agent_config_id: agentConfigId };
+      const payload: Record<string, unknown> = { session_id: activeSession, input: '', agent_config_id: agentConfigId };
       if (sandboxId) {
         payload.sandbox_id = sandboxId;
         // A regen can be an unbound session's first sandbox-carrying run, so
@@ -750,10 +750,10 @@ function App() {
       if (!wsRef.current.send(EV.runCreate, payload)) {
         toast.error('WebSocket disconnected — message not sent');
       }
-    } catch (e: any) {
-      toast.error(e.message || 'Regenerate failed');
+    } catch (e) {
+      toast.error((e as Error).message || 'Regenerate failed');
     }
-  }, [activeSession, wsRef, updateSS, loadSession]);
+  }, [activeSession, wsRef, reloadTimeline]);
 
   // A trace row opening its payload: fetched into the active session's state
   // (the panel showing it), from the session whose rows hold the span.

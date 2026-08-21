@@ -368,6 +368,9 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
     if (toolCalls.length === 0) return { ...page, timeline };
     const runId = pending[0].run_id;
     const userInput = pending[0].user_input || '';
+    // The synthesized rows carry only the fields the transcript reads; the
+    // full entry type would demand ids a pending approval never had.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const out = [...timeline] as any[];
 
     // The streaming SDK persists the user prompt (and any completed safe-prefix
@@ -393,7 +396,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
     if (userInput && !hasUser) out.push({ role: 'user', content: userInput, runId, messageId: Number.MAX_SAFE_INTEGER - 1 });
     out.push({ role: 'turn' as const, parts: [{ type: 'tools' as const, toolCalls }], runId, messageId: Number.MAX_SAFE_INTEGER });
     return { ...page, timeline: out };
-  }, []);
+  }, [updateSS]);
 
   const reloadMessages = useCallback((sid: string) => {
     const gen = timelineGenRef.current[sid] || 0;
@@ -1314,15 +1317,18 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
     };
 
     ws.connect();
+    // The pending-frame map is one Map for the hook's lifetime; the cleanup
+    // clears whatever is queued at unmount.
+    const rafPending = rafPendingRef.current;
     return () => {
       ws.close();
       if (rafIdRef.current) {
         cancelAnimationFrame(rafIdRef.current);
         rafIdRef.current = 0;
       }
-      rafPendingRef.current.clear();
+      rafPending.clear();
     };
-  }, [updateSS, reloadMessages, scheduleFrame]);
+  }, [updateSS, reloadMessages, scheduleFrame, fetchTimeline]);
 
   // watchTask opens the Inspector's live view of a task: snapshot the child
   // session's persisted transcript + traces, then let the child-run event
@@ -1368,7 +1374,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
     }).catch(() => {
       updateSS(sid, s => (s.taskView && s.taskView.taskId === taskId ? { ...s, taskView: { ...s.taskView, loaded: true } } : s));
     });
-  }, [updateSS]);
+  }, [updateSS, fetchTimeline]);
 
   const unwatchTask = useCallback((sid: string) => {
     taskWatchRef.current = null;
