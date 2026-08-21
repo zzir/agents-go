@@ -1,3 +1,10 @@
+import type { components } from '@/lib/apiTypes.gen';
+
+// The generated OpenAPI schemas — swagger.yaml is CI-checked fresh, and
+// `npm run gen:api` keeps apiTypes.gen.ts matching it (CI checks that too).
+type S = components['schemas'];
+export type ApiSchemas = S;
+
 const BASE = '/api/v1';
 
 export function getToken(): string {
@@ -56,15 +63,15 @@ export async function checkAuth(): Promise<boolean> {
   return true;
 }
 
-interface CrudMethods {
-  list: () => Promise<unknown>;
-  create: (data: unknown) => Promise<unknown>;
-  get: (id: string | number) => Promise<unknown>;
-  update: (id: string | number, data: unknown) => Promise<unknown>;
-  delete: (id: string | number) => Promise<unknown>;
+interface CrudMethods<T> {
+  list: () => Promise<T[]>;
+  create: (data: unknown) => Promise<T>;
+  get: (id: string | number) => Promise<T>;
+  update: (id: string | number, data: unknown) => Promise<T>;
+  delete: (id: string | number) => Promise<null>;
 }
 
-function crud(base: string): CrudMethods {
+function crud<T>(base: string): CrudMethods<T> {
   return {
     list: () => request(base),
     create: (data: unknown) => request(base, { method: 'POST', body: JSON.stringify(data) }),
@@ -76,7 +83,7 @@ function crud(base: string): CrudMethods {
 
 export const api = {
   sessions: {
-    ...crud('/sessions'),
+    ...crud<S['store.Session']>('/sessions'),
     create: (name: string, agentConfigId?: string) => request('/sessions', { method: 'POST', body: JSON.stringify({ name, ...(agentConfigId ? { agent_config_id: agentConfigId } : {}) }) }),
     update: (id: string | number, name: string) => request(`/sessions/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
     // limit/beforeId page BACKWARDS: the newest `limit` entries first, then
@@ -117,19 +124,19 @@ export const api = {
     pin: (id: string | number, pinned: boolean) => request(`/sessions/${id}`, { method: 'PATCH', body: JSON.stringify({ pinned }) }),
   },
   agents: {
-    ...crud('/agents'),
+    ...crud<S['store.AgentConfig']>('/agents'),
     // The agent's CURRENT tool surface as schema-only definitions — what the
     // bridge would hand the model right now (sandbox tools excluded). Backs
     // the Replay dialog's tool picker.
     tools: (id: string | number) => request(`/agents/${id}/tools`),
   },
   mcpServers: {
-    ...crud('/mcp-servers'),
+    ...crud<S['handler.mcpServerListItem']>('/mcp-servers'),
     connect: (id: string | number) => request(`/mcp-servers/${id}/connect`, { method: 'POST' }),
     clearOAuth: (id: string | number) => request(`/mcp-servers/${id}/oauth-token`, { method: 'DELETE' }),
     tools: (id: string | number) => request(`/mcp-servers/${id}/tools`),
   },
-  memories: crud('/memories'),
+  memories: crud<S['store.Memory']>('/memories'),
   playground: {
     generate: (body: {
       agent_config_id: string;
@@ -220,12 +227,12 @@ export const api = {
     delete: (name: string) => request(`/skill-repos/${name}`, { method: 'DELETE' }),
   },
   guardrails: {
-    ...crud('/guardrails'),
+    ...crud<S['store.Guardrail']>('/guardrails'),
     list: () => request('/guardrails'),
   },
-  providers: crud('/providers'),
+  providers: crud<S['store.Provider']>('/providers'),
   workflows: {
-    ...crud('/workflows'),
+    ...crud<S['store.Workflow']>('/workflows'),
     // A person's own run of a workflow: the brief they wrote, for the session
     // the result comes back to.
     // sandbox_id/work_dir bind a still-unbound session first, so the
@@ -236,12 +243,12 @@ export const api = {
   // Triggers start a workflow without a conversation asking: on a cron
   // schedule, or on a signed webhook call. fire runs one by hand.
   triggers: {
-    ...crud('/triggers'),
+    ...crud<S['handler.TriggerView']>('/triggers'),
     listFor: (workflowId: string) => request(`/triggers?workflow_id=${encodeURIComponent(workflowId)}`),
     fire: (id: string | number, payload = '') => request(`/triggers/${id}/fire`, { method: 'POST', body: JSON.stringify({ payload }) }),
     rotateSecret: (id: string | number) => request(`/triggers/${id}/rotate-secret`, { method: 'POST' }),
   },
-  providerRoutes: crud('/provider-routes'),
+  providerRoutes: crud<S['store.ProviderRoute']>('/provider-routes'),
   providerTypes: {
     list: () => request('/provider-types'),
   },
@@ -265,7 +272,7 @@ export const api = {
     dismiss: (id: string | number) => request(`/tasks/${id}/dismiss`, { method: 'POST' }),
   },
   sandboxes: {
-    ...crud('/sandboxes'),
+    ...crud<S['store.SandboxConfig']>('/sandboxes'),
     test: (id: string | number) => request(`/sandboxes/${id}/test`, { method: 'POST' }),
   },
   // The OAuth flow belongs to the endpoint: the token is the provider's

@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "gen:api": "openapi-typescript ../../docs/swagger.yaml -o src/lib/apiTypes.gen.ts",
     "lint": "eslint .",
     "test": "vitest run",
     "build": "tsc --noEmit && vitest run && vite build",
@@ -37,6 +38,7 @@
     "eslint": "10.9.0",
     "eslint-plugin-react-hooks": "7.1.1",
     "jsdom": "30.0.1",
+    "openapi-typescript": "7.13.0",
     "typescript": "5.9.3",
     "typescript-eslint": "8.67.0",
     "vite": "6.4.3",

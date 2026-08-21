@@ -90,6 +90,18 @@ jobs:
             exit 1
           fi
 
+      # The frontend's generated API types must match that spec, by the same rule.
+      - name: Frontend API types up to date
+        run: |
+          cd cmd/agents-server/internal/web/frontend
+          before=$(git hash-object src/lib/apiTypes.gen.ts)
+          npm run --silent gen:api
+          after=$(git hash-object src/lib/apiTypes.gen.ts)
+          if [ "$before" != "$after" ]; then
+            echo "::error::src/lib/apiTypes.gen.ts is stale — run 'npm run gen:api' in the frontend and commit the result."
+            exit 1
+          fi
+
   vuln:
     runs-on: ubuntu-latest
     steps:

@@ -84,6 +84,17 @@ step "OpenAPI spec up to date"
   exit 1
 }
 
+# The frontend's generated API types must match that spec, by the same
+# hash-compare rule.
+(cd cmd/agents-server/internal/web/frontend \
+  && before=$(git hash-object src/lib/apiTypes.gen.ts) \
+  && npm run --silent gen:api \
+  && after=$(git hash-object src/lib/apiTypes.gen.ts) \
+  && [ "$before" = "$after" ]) || {
+  echo "src/lib/apiTypes.gen.ts is stale — run 'npm run gen:api' in the frontend and commit the result." >&2
+  exit 1
+}
+
 step "golangci-lint (lint + gofmt/goimports)"
 if command -v golangci-lint >/dev/null; then
   golangci-lint run                            # root: lint + formatters
