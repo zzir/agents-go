@@ -72,7 +72,7 @@ func (f *fakeTerminal) Write(p []byte) (int, error) {
 // halves, which is what makes the echoed line and the printed one distinct.
 func (f *fakeTerminal) sentinelLine(printfLine string) string {
 	var parts []string
-	for _, field := range strings.Fields(printfLine) {
+	for field := range strings.FieldsSeq(printfLine) {
 		if strings.HasPrefix(field, "'__agents_sh_") || (strings.HasPrefix(field, "'") && strings.HasSuffix(field, "__'")) {
 			parts = append(parts, strings.Trim(field, "'"))
 		}
@@ -384,13 +384,11 @@ func TestSessionPool_ConcurrentSameNameKeepsOneSession(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make(chan error, 8)
 	for range 8 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			if _, _, err := p.run(context.Background(), sb, "build", "echo hi", 5*time.Second); err != nil {
 				errs <- err
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	close(errs)

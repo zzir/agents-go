@@ -1,6 +1,8 @@
 package compaction
 
 import (
+	"slices"
+
 	"github.com/zzir/agents-go/agents/session"
 )
 
@@ -270,8 +272,8 @@ func (idx *Index) ContextTokens() int {
 		if g.Excluded {
 			continue
 		}
-		for ei := len(g.Entries) - 1; ei >= 0; ei-- {
-			u := g.Entries[ei].Usage
+		for ei, v := range slices.Backward(g.Entries) {
+			u := v.Usage
 			if u != nil && u.TotalTokens != 0 {
 				usageGroup, usageEntry = gi, ei
 				break

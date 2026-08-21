@@ -63,11 +63,11 @@ func noopTool(name string, calls *atomic.Int32) *agents.Tool {
 // approval, approval unlocks the toolset and the SAME run continues to done.
 func TestPlan_ApproveUnlocksExecutionInTheSameRun(t *testing.T) {
 	var writes atomic.Int32
-	model := &recordingModel{scriptedModel: scriptedModel{responses: []*agents.ModelResponse{
+	model := &recordingModel{responses: []*agents.ModelResponse{
 		resp(toolCallArgs(t, PlanToolName, "c1", `{"plan":"change the thing"}`)),
 		resp(toolCallArgs(t, "write_file", "c2", `{}`)),
 		resp(message(t, "done")),
-	}}}
+	}}
 	// A write tool the HOST already disabled: the plan gate must compose with
 	// its hook, not shadow it — unlock must not resurrect it.
 	lockedWrite := noopTool("locked_write", nil)
@@ -127,10 +127,10 @@ func TestPlan_ApproveUnlocksExecutionInTheSameRun(t *testing.T) {
 // write tools still refusing.
 func TestPlan_RejectKeepsPlanning(t *testing.T) {
 	var writes atomic.Int32
-	model := &recordingModel{scriptedModel: scriptedModel{responses: []*agents.ModelResponse{
+	model := &recordingModel{responses: []*agents.ModelResponse{
 		resp(toolCallArgs(t, PlanToolName, "c1", `{"plan":"v1"}`)),
 		resp(message(t, "let me rethink")),
-	}}}
+	}}
 	agent := &agents.Agent{
 		Name:      "a",
 		ModelImpl: model,
@@ -160,10 +160,10 @@ func TestPlan_RejectKeepsPlanning(t *testing.T) {
 // from a tool this session never had.
 func TestPlan_GatedToolRefusesInsteadOfFailing(t *testing.T) {
 	var writes atomic.Int32
-	model := &recordingModel{scriptedModel: scriptedModel{responses: []*agents.ModelResponse{
+	model := &recordingModel{responses: []*agents.ModelResponse{
 		resp(toolCallArgs(t, "write_file", "c1", `{}`)),
 		resp(message(t, "right, planning first")),
-	}}}
+	}}
 	agent := &agents.Agent{
 		Name:      "a",
 		ModelImpl: model,
@@ -309,10 +309,10 @@ func TestPlanPhase_UnlockGatedByHook(t *testing.T) {
 // because the phase refuses the call whatever a human would answer.
 func TestPlan_GatedApprovalToolsRaiseNoApprovalWhilePlanning(t *testing.T) {
 	var writes, deploys atomic.Int32
-	model := &recordingModel{scriptedModel: scriptedModel{responses: []*agents.ModelResponse{
+	model := &recordingModel{responses: []*agents.ModelResponse{
 		resp(toolCallArgs(t, "write_file", "c1", `{}`), toolCallArgs(t, "deploy", "c2", `{}`)),
 		resp(message(t, "planning")),
-	}}}
+	}}
 	write := noopTool("write_file", &writes)
 	write.NeedsApproval = true
 	agent := &agents.Agent{
@@ -343,11 +343,11 @@ func TestPlan_GatedApprovalToolsRaiseNoApprovalWhilePlanning(t *testing.T) {
 // Apply) both pause exactly as they would without plan mode.
 func TestPlan_ApprovalSurvivesTheUnlock(t *testing.T) {
 	var writes, deploys atomic.Int32
-	model := &recordingModel{scriptedModel: scriptedModel{responses: []*agents.ModelResponse{
+	model := &recordingModel{responses: []*agents.ModelResponse{
 		resp(toolCallArgs(t, PlanToolName, "c1", `{"plan":"p"}`)),
 		resp(toolCallArgs(t, "write_file", "c2", `{}`), toolCallArgs(t, "deploy", "c3", `{}`)),
 		resp(message(t, "done")),
-	}}}
+	}}
 	write := noopTool("write_file", &writes)
 	write.NeedsApproval = true
 	agent := &agents.Agent{
@@ -395,10 +395,10 @@ func TestPlan_ApprovalSurvivesTheUnlock(t *testing.T) {
 // phases: the phase never suppresses approval on a tool it is not refusing.
 func TestPlan_ListedReadOnlyToolStillPausesWhilePlanning(t *testing.T) {
 	var reads atomic.Int32
-	model := &recordingModel{scriptedModel: scriptedModel{responses: []*agents.ModelResponse{
+	model := &recordingModel{responses: []*agents.ModelResponse{
 		resp(toolCallArgs(t, "read_file", "c1", `{}`)),
 		resp(message(t, "read it")),
-	}}}
+	}}
 	agent := &agents.Agent{
 		Name:         "a",
 		ModelImpl:    model,

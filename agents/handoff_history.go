@@ -115,12 +115,11 @@ func extractNestedTranscript(item InputItem) ([]InputItem, bool) {
 	if !strings.HasPrefix(content, historySummaryLeadIn) {
 		return nil, false
 	}
-	si := strings.Index(content, defaultHistoryStartMarker)
-	ei := strings.LastIndex(content, defaultHistoryEndMarker)
-	if si == -1 || ei == -1 || ei <= si {
+	_, rest, foundStart := strings.Cut(content, defaultHistoryStartMarker)
+	body, _, foundEnd := strings.CutLast(rest, defaultHistoryEndMarker)
+	if !foundStart || !foundEnd {
 		return nil, false
 	}
-	body := content[si+len(defaultHistoryStartMarker) : ei]
 	var parsed []InputItem
 	sawUnparsable := false
 	for line := range strings.SplitSeq(body, "\n") {

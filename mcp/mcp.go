@@ -575,10 +575,7 @@ func (s *Server) runWithRetries(ctx context.Context, fn func() error) error {
 			return err
 		}
 		// Cap the shift so an unbounded retry loop cannot overflow the exponent.
-		shift := attempts - 1
-		if shift > 30 {
-			shift = 30
-		}
+		shift := min(attempts-1, 30)
 		backoff := base * time.Duration(int64(1)<<shift)
 		select {
 		case <-ctx.Done():

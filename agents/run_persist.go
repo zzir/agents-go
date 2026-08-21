@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"log/slog"
+	"slices"
 
 	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/tracing"
@@ -178,8 +179,8 @@ func (r *runner) offChainItems() bool {
 // SourceModel item because position, not provenance, is the whole question, and
 // it is the one way a log outgrows the chain that clears on its own.
 func hasOffChainItems(items []*RunItem) bool {
-	for i := len(items) - 1; i >= 0; i-- {
-		if items[i].Source.Type == SourceModel {
+	for i, item := range slices.Backward(items) {
+		if item.Source.Type == SourceModel {
 			return i != len(items)-1
 		}
 	}

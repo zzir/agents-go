@@ -18,7 +18,7 @@ func nonZeroFor(t reflect.Type) (reflect.Value, bool) {
 	case reflect.Bool:
 		return reflect.ValueOf(true).Convert(t), true
 	case reflect.Slice:
-		if t == reflect.TypeOf(json.RawMessage(nil)) {
+		if t == reflect.TypeFor[json.RawMessage]() {
 			return reflect.ValueOf(json.RawMessage(`{"a":1}`)), true
 		}
 		v := reflect.MakeSlice(t, 1, 1)
@@ -44,7 +44,7 @@ func nonZeroFor(t reflect.Type) (reflect.Value, bool) {
 	case reflect.Interface:
 		return reflect.ValueOf(any("x")), true
 	case reflect.Struct:
-		if t == reflect.TypeOf(time.Time{}) {
+		if t == reflect.TypeFor[time.Time]() {
 			return reflect.ValueOf(time.Unix(1, 0).UTC()), true
 		}
 		v := reflect.New(t).Elem()
@@ -69,7 +69,7 @@ func nonZeroFor(t reflect.Type) (reflect.Value, bool) {
 // compaction pass gets discarded as a no-op or an index resumes onto a history
 // that is not its own.
 func TestEqualCoversEverySessionEntryField(t *testing.T) {
-	typ := reflect.TypeOf(Entry{})
+	typ := reflect.TypeFor[Entry]()
 	for i := range typ.NumField() {
 		field := typ.Field(i)
 		t.Run(field.Name, func(t *testing.T) {
@@ -98,7 +98,7 @@ func TestEqualCoversEverySessionEntryField(t *testing.T) {
 // equalDisplay (Title and Summary were, once) still passed it, and an UPDATE
 // entry settling only that field compared equal to the entry it amended.
 func TestEqualCoversEveryDisplayField(t *testing.T) {
-	typ := reflect.TypeOf(ItemDisplay{})
+	typ := reflect.TypeFor[ItemDisplay]()
 	for i := range typ.NumField() {
 		field := typ.Field(i)
 		t.Run(field.Name, func(t *testing.T) {

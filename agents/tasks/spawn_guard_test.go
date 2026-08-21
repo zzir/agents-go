@@ -81,13 +81,11 @@ func TestSpawnLockTableSurvivesConcurrentSpawns(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for range 16 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			_, _ = h.m.Spawn(ctx, SpawnRequest{
 				ParentSessionID: "parent", AgentName: "worker", Input: "do it",
 			})
-		}()
+		})
 	}
 	wg.Wait()
 

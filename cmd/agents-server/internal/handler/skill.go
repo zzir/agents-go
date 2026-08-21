@@ -378,9 +378,8 @@ func extractDescription(rfs fs.FS, name string) string {
 		}
 
 		if inFrontmatter {
-			if strings.HasPrefix(line, "description:") {
-				desc := strings.TrimPrefix(line, "description:")
-				desc = strings.TrimSpace(desc)
+			if after, ok := strings.CutPrefix(line, "description:"); ok {
+				desc := strings.TrimSpace(after)
 				desc = strings.Trim(desc, ">")
 				desc = strings.TrimSpace(desc)
 				if desc != "" {

@@ -27,8 +27,7 @@ func TestCloseDoesNotOvertakeAnAcceptedPublish(t *testing.T) {
 		go func() {
 			defer close(done)
 			for item, err := range stream {
-				var gap *GapError
-				if errors.As(err, &gap) {
+				if gap, ok := errors.AsType[*GapError](err); ok {
 					mu.Lock()
 					gaps++
 					mu.Unlock()

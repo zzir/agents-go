@@ -174,8 +174,7 @@ func TestCompaction_ServerHeldHistoryExcludesALocalSession(t *testing.T) {
 				Conversation: conv,
 				Compaction:   CompactionOptions{Compactor: &recordingCompactor{drop: 1}},
 			})
-			var ue *UserError
-			if !errors.As(err, &ue) {
+			if _, ok := errors.AsType[*UserError](err); !ok {
 				t.Errorf("err = %v, want a *UserError", err)
 			}
 		})

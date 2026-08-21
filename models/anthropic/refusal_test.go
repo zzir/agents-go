@@ -94,8 +94,7 @@ func TestStreamedRunRefusalSurfacesModelRefusalError(t *testing.T) {
 	if runErr == nil {
 		t.Fatal("a streamed refusal must fail the run")
 	}
-	var refErr *agents.ModelRefusalError
-	if !errors.As(runErr, &refErr) {
+	if _, ok := errors.AsType[*agents.ModelRefusalError](runErr); !ok {
 		t.Fatalf("want ModelRefusalError, got %T: %v", runErr, runErr)
 	}
 }
@@ -128,8 +127,7 @@ func TestRunSyncRefusalDropsToolCalls(t *testing.T) {
 	_, err := agents.RunSync(context.Background(), agent, "go", agents.RunOptions{
 		Model: agents.ModelOptions{Provider: NewProvider(option.WithBaseURL(srv.URL), option.WithAPIKey("test-key"))},
 	})
-	var refErr *agents.ModelRefusalError
-	if !errors.As(err, &refErr) {
+	if _, ok := errors.AsType[*agents.ModelRefusalError](err); !ok {
 		t.Fatalf("want ModelRefusalError, got %T: %v", err, err)
 	}
 	if ran {

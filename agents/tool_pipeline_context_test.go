@@ -180,8 +180,7 @@ func TestHandoff_InvalidRequiredKey(t *testing.T) {
 	source.ModelImpl = model
 
 	_, err := RunSync(context.Background(), source, "please", RunOptions{})
-	var mbe *ModelBehaviorError
-	if !errors.As(err, &mbe) {
+	if _, ok := errors.AsType[*ModelBehaviorError](err); !ok {
 		t.Fatalf("err = %v (%T), want *ModelBehaviorError", err, err)
 	}
 }

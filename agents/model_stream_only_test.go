@@ -126,8 +126,7 @@ func TestStreamOnlyModel_NoTerminalEventErrors(t *testing.T) {
 		mustStreamEvent(t, `{"type":"response.created","response":{"id":"r"}}`),
 	}}
 	_, err := NewStreamOnlyModel(inner).Respond(context.Background(), ModelRequest{})
-	var mbe *ModelBehaviorError
-	if !errors.As(err, &mbe) {
+	if _, ok := errors.AsType[*ModelBehaviorError](err); !ok {
 		t.Fatalf("err = %v, want *ModelBehaviorError", err)
 	}
 }

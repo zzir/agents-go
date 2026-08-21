@@ -81,8 +81,7 @@ func runErrorFor(runID string, err error, fallback string) protocol.RunError {
 	if code := agents.CodeOf(err); code != agents.CodeUnknown {
 		e.Code = string(code)
 	}
-	var tw *agents.GuardrailTripwireError
-	if errors.As(err, &tw) {
+	if tw, ok := errors.AsType[*agents.GuardrailTripwireError](err); ok {
 		e.Guardrail = tw.Result.Guardrail.Name
 		e.Stage = string(tw.Stage())
 	}

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"strings"
 
@@ -70,9 +71,7 @@ func pick(src map[string]any, keys ...string) map[string]any {
 // else, so new item types aren't silently dropped.
 func stripResponseMeta(m map[string]any) map[string]any {
 	dst := make(map[string]any, len(m))
-	for k, v := range m {
-		dst[k] = v
-	}
+	maps.Copy(dst, m)
 	delete(dst, "id")
 	delete(dst, "status")
 	return dst

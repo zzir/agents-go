@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -107,8 +108,8 @@ func (g *StepGate) Verdict(output string) (passed, ok bool) {
 		return passed, true
 	}
 	lines := strings.Split(output, "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := normalizeGateWord(lines[i])
+	for _, line := range slices.Backward(lines) {
+		line := normalizeGateWord(line)
 		if line == "" {
 			continue
 		}

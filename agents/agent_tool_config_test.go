@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -191,9 +192,8 @@ func TestAgentToolInheritsRunLevelInputGuardrails(t *testing.T) {
 // lastToolOutputText extracts the last tool output string from the run items.
 func lastToolOutputText(t *testing.T, res *RunResult) string {
 	t.Helper()
-	for i := len(res.NewItems) - 1; i >= 0; i-- {
-		if res.NewItems[i].Kind == ItemToolCallOutput {
-			it := res.NewItems[i]
+	for _, it := range slices.Backward(res.NewItems) {
+		if it.Kind == ItemToolCallOutput {
 			if s, ok := it.Output.(string); ok {
 				return s
 			}

@@ -35,8 +35,7 @@ func TestConvertPromptRejectsNonStringVariable(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for non-string variable, got nil")
 	}
-	var ue *agents.UserError
-	if !errors.As(err, &ue) {
+	if _, ok := errors.AsType[*agents.UserError](err); !ok {
 		t.Fatalf("error = %T, want *agents.UserError", err)
 	}
 }

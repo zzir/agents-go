@@ -113,8 +113,7 @@ func TestValidateHandoffInput(t *testing.T) {
 				}
 				return
 			}
-			var mbe *ModelBehaviorError
-			if !errors.As(err, &mbe) {
+			if _, ok := errors.AsType[*ModelBehaviorError](err); !ok {
 				t.Fatalf("err = %v (%T), want *ModelBehaviorError", err, err)
 			}
 		})
@@ -159,13 +158,11 @@ func TestValidateHandoffInput_Concurrent(t *testing.T) {
 	h := &Handoff{ToolName: "transfer_to_billing", InputJSONSchema: flatHandoffSchema}
 	var wg sync.WaitGroup
 	for range 16 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			if err := validateHandoffInput(h, `{"reason":"needs billing"}`); err != nil {
 				t.Error(err)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }

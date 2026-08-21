@@ -164,8 +164,8 @@ func (s *InMemoryStore) ListByParent(_ context.Context, parentSessionID string) 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var out []Task
-	for i := len(s.order) - 1; i >= 0; i-- {
-		if t := s.tasks[s.order[i]]; t != nil && t.ParentSessionID == parentSessionID {
+	for _, v := range slices.Backward(s.order) {
+		if t := s.tasks[v]; t != nil && t.ParentSessionID == parentSessionID {
 			out = append(out, *t)
 		}
 	}

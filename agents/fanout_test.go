@@ -12,8 +12,7 @@ func drainFanout(stream func(func(Seq[int], error) bool)) ([]int, []*GapError) {
 	var got []int
 	var gaps []*GapError
 	for item, err := range stream {
-		var gap *GapError
-		if errors.As(err, &gap) {
+		if gap, ok := errors.AsType[*GapError](err); ok {
 			gaps = append(gaps, gap)
 			if gap.AtEnd() {
 				continue // no item accompanies a gap that runs to the end
@@ -266,23 +265,19 @@ func TestFanoutCancelDuringPublishIsSafe(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for range 8 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for range 200 {
 				stream, cancel := f.Subscribe(0)
 				go func() { drainFanout(stream) }()
 				cancel()
 			}
-		}()
+		})
 	}
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for i := range 2000 {
 			f.Publish(i)
 		}
-	}()
+	})
 
 	done := make(chan struct{})
 	go func() { wg.Wait(); close(done) }()
@@ -338,13 +333,11 @@ func TestFanoutOrdersConcurrentPublishes(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for p := range publishers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for i := range each {
 				f.Publish(p*each + i)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	f.Close()
@@ -377,13 +370,11 @@ func TestFanoutReplayOrdersAgainstConcurrentPublish(t *testing.T) {
 		}
 
 		var wg sync.WaitGroup
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for i := 33; i <= 64; i++ {
 				f.Publish(i)
 			}
-		}()
+		})
 
 		stream, cancel := f.Subscribe(0)
 		wg.Wait()
@@ -485,8 +476,7 @@ func TestFanoutAheadOfHeadCursorResetsImmediately(t *testing.T) {
 	ch := make(chan got, 1)
 	go func() {
 		for _, err := range stream {
-			var g *GapError
-			if errors.As(err, &g) {
+			if g, ok := errors.AsType[*GapError](err); ok {
 				ch <- got{gap: g}
 				return
 			}

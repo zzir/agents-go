@@ -215,10 +215,7 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.Tool {
 
 			timeout := cfg.Timeout
 			if args.TimeoutSeconds > 0 {
-				requested := time.Duration(args.TimeoutSeconds) * time.Second
-				if requested > cfg.MaxTimeout {
-					requested = cfg.MaxTimeout
-				}
+				requested := min(time.Duration(args.TimeoutSeconds)*time.Second, cfg.MaxTimeout)
 				timeout = requested
 			}
 

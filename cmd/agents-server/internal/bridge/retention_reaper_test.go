@@ -14,8 +14,7 @@ import (
 // approval's own attempt — even when the child session cannot take the
 // banner, and the change is announced to the clients.
 func TestApprovalReaperEndsThePausedTaskAndAnnouncesIt(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	runner, sessions, tasks, _ := newTaskTestRunner(t)
 	if err := store.NewSettingStore(runner.db).Set(ctx, settings.KeyApprovalTTLMinutes, "1"); err != nil {
 		t.Fatal(err)

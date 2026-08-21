@@ -97,8 +97,7 @@ func TestResolveApprovalBusyKeepsPending(t *testing.T) {
 	}
 
 	_, _, err = runner.ResolveApproval(ctx, "call-busy-1", true, ApprovalOnce, "", nil)
-	var busy ErrSessionBusy
-	if !errors.As(err, &busy) {
+	if _, ok := errors.AsType[ErrSessionBusy](err); !ok {
 		t.Fatalf("want ErrSessionBusy, got %v", err)
 	}
 	if _, err := approvals.Get(ctx, "paused-run"); err != nil {
@@ -234,8 +233,7 @@ func TestResolveApprovalOlderDecodableSchemaNotDiscarded(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error from the minimal state")
 	}
-	var stale *StaleApprovalStateError
-	if errors.As(err, &stale) {
+	if _, ok := errors.AsType[*StaleApprovalStateError](err); ok {
 		t.Fatalf("a decodable 1.5 state was reported stale: %v", err)
 	}
 	if _, err := approvals.Get(ctx, "paused-15"); err != nil {
@@ -317,8 +315,7 @@ func TestResolveApprovalTaskNotYetInputRequiredKeepsPending(t *testing.T) {
 	}
 
 	_, _, err = runner.ResolveApproval(ctx, "call-race-1", true, ApprovalOnce, "", nil)
-	var notReady *ApprovalNotReadyError
-	if !errors.As(err, &notReady) {
+	if _, ok := errors.AsType[*ApprovalNotReadyError](err); !ok {
 		t.Fatalf("want *ApprovalNotReadyError (retryable), got %v", err)
 	}
 	// The pending row MUST survive so the decision can be retried once postRun

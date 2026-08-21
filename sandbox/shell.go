@@ -191,10 +191,10 @@ func (s *ShellSession) readUntilSentinel(ctx context.Context, timeout time.Durat
 		if idx := bytes.Index(s.buf, []byte(s.sentinel)); idx >= 0 {
 			// The exit status follows the token on the same line.
 			rest := s.buf[idx+len(s.sentinel):]
-			if nl := bytes.IndexByte(rest, '\n'); nl >= 0 {
+			if before, after, ok := bytes.Cut(rest, []byte{'\n'}); ok {
 				out := string(s.buf[:idx])
-				code, _ := strconv.Atoi(strings.TrimSpace(string(rest[:nl])))
-				s.buf = append([]byte(nil), rest[nl+1:]...)
+				code, _ := strconv.Atoi(strings.TrimSpace(string(before)))
+				s.buf = append([]byte(nil), after...)
 				return trimEcho(out, s.lastLine), code, nil
 			}
 			// The status line is not complete yet; keep reading.
@@ -227,7 +227,7 @@ func (s *ShellSession) readUntilSentinel(ctx context.Context, timeout time.Durat
 // finds no matches.
 func trimEcho(out, written string) string {
 	outLines := strings.Split(out, "\n")
-	for _, echoed := range strings.Split(strings.TrimRight(written, "\n"), "\n") {
+	for echoed := range strings.SplitSeq(strings.TrimRight(written, "\n"), "\n") {
 		if len(outLines) == 0 {
 			break
 		}

@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"slices"
 	"testing"
 )
 
@@ -14,12 +15,7 @@ func toolNames(req ModelRequest) []string {
 }
 
 func has(names []string, want string) bool {
-	for _, n := range names {
-		if n == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(names, want)
 }
 
 // An agent offered forty tools chooses worse than one offered four, and most of

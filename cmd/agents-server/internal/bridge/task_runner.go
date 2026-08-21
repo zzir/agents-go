@@ -117,10 +117,7 @@ func (r *Runner) taskMeta(ctx context.Context, sessionID string) (*TaskMeta, err
 		// input_required while the run executes.
 		return nil, fmt.Errorf("resolving task for session %s: %w", sessionID, err)
 	}
-	attempt := task.Attempt
-	if attempt < 1 {
-		attempt = 1
-	}
+	attempt := max(task.Attempt, 1)
 	return &TaskMeta{
 		TaskID:          task.ID,
 		Kind:            task.Kind,

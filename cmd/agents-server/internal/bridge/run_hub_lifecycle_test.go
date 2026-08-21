@@ -153,11 +153,9 @@ func TestPublishSeqOrderingUnderConcurrency(t *testing.T) {
 	const n = 200
 	var wg sync.WaitGroup
 	for range n {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			h.publish("run1", env(protocol.EventRunStep))
-		}()
+		})
 	}
 	wg.Wait()
 

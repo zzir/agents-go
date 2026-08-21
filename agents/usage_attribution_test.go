@@ -158,22 +158,18 @@ func TestUsage_SnapshotConcurrentWithAdd(t *testing.T) {
 	var wg sync.WaitGroup
 	const writers, adds = 8, 100
 	for range writers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for range adds {
 				u.Add(&Usage{Requests: 1, InputTokens: 2, OutputTokens: 3, TotalTokens: 5})
 			}
-		}()
+		})
 	}
 	for range 4 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for range 200 {
 				_ = u.Snapshot().TotalTokens
 			}
-		}()
+		})
 	}
 	wg.Wait()
 

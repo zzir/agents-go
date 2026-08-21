@@ -92,8 +92,7 @@ func TestResumeRun_TraceGroupIDAndMetadata(t *testing.T) {
 func TestResumeRun_NilCurrentAgentIsAUserError(t *testing.T) {
 	_, err := ResumeRunSync(context.Background(), &RunState{},
 		RunOptions{Observe: ObserveOptions{Tracer: tracing.NewTracer(&traceRecordingProcessor{})}})
-	var ue *UserError
-	if !errors.As(err, &ue) {
+	if _, ok := errors.AsType[*UserError](err); !ok {
 		t.Fatalf("err = %v (%T), want a *UserError", err, err)
 	}
 }

@@ -606,8 +606,7 @@ func (h *RunHub) SubscribeSeq(runID string, fromSeq int, sink SeqSink) (func(), 
 				}
 				pinned = nil
 			}
-			var gap *agents.GapError
-			if errors.As(err, &gap) {
+			if gap, ok := errors.AsType[*agents.GapError](err); ok {
 				env, mkErr := protocol.NewEnvelope(protocol.EventRunGap, protocol.RunGap{
 					RunID:    runID,
 					Dropped:  gap.Dropped,

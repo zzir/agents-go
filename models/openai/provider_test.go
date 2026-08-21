@@ -12,8 +12,7 @@ func TestProvider_EmptyModelIsUserError(t *testing.T) {
 	if err == nil {
 		t.Fatal("Model(\"\") with no default should error")
 	}
-	var ue *agents.UserError
-	if !errors.As(err, &ue) {
+	if _, ok := errors.AsType[*agents.UserError](err); !ok {
 		t.Errorf("error = %T, want *agents.UserError", err)
 	}
 }

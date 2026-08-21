@@ -93,9 +93,7 @@ func main() {
 				agent = catalog["researcher"]
 			}
 
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				defer func() {
 					mu.Lock()
 					delete(running, req.SessionID)
@@ -126,7 +124,7 @@ func main() {
 				// The single entry point that advances task state — for task
 				// sessions AND parent sessions.
 				mgr.OnRunFinished(context.Background(), req.SessionID, out)
-			}()
+			})
 			return nil
 		}),
 

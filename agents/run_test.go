@@ -225,8 +225,7 @@ func TestRun_MaxTurnsExceeded(t *testing.T) {
 	if CodeOf(err) != CodeMaxTurns {
 		t.Errorf("error = %v, want CodeMaxTurns", err)
 	}
-	var mte *MaxTurnsError
-	if !errors.As(err, &mte) {
+	if _, ok := errors.AsType[*MaxTurnsError](err); !ok {
 		t.Errorf("error not a *MaxTurnsError: %T", err)
 	}
 }
@@ -338,8 +337,7 @@ func TestRun_UnknownToolErrors(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unknown tool")
 	}
-	var mbe *ModelBehaviorError
-	if !errors.As(err, &mbe) {
+	if _, ok := errors.AsType[*ModelBehaviorError](err); !ok {
 		t.Errorf("error not *ModelBehaviorError: %T (%v)", err, err)
 	}
 }
@@ -514,8 +512,7 @@ func TestRun_InputGuardrailTripwireCancelsModel(t *testing.T) {
 	}
 
 	_, err := RunSync(context.Background(), agent, "hi", RunOptions{})
-	var tw *GuardrailTripwireError
-	if !errors.As(err, &tw) {
+	if _, ok := errors.AsType[*GuardrailTripwireError](err); !ok {
 		t.Fatalf("err = %v, want *GuardrailTripwireError", err)
 	}
 	select {

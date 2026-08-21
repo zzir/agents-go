@@ -198,9 +198,9 @@ func TestConnectEnabledMcpServersConcurrent(t *testing.T) {
 
 	// A server that responds immediately (fails the MCP handshake fast) and
 	// records that its connect was attempted.
-	var fastHit int32
+	var fastHit atomic.Int32
 	fast := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		atomic.AddInt32(&fastHit, 1)
+		fastHit.Add(1)
 		w.WriteHeader(http.StatusBadRequest)
 	}))
 	defer fast.Close()
@@ -225,7 +225,7 @@ func TestConnectEnabledMcpServersConcurrent(t *testing.T) {
 	// The reachable server must be reached well within the hung server's 30s
 	// handshake timeout — proving the two connects run concurrently.
 	deadline := time.After(8 * time.Second)
-	for atomic.LoadInt32(&fastHit) == 0 {
+	for fastHit.Load() == 0 {
 		select {
 		case <-deadline:
 			t.Fatal("reachable server was not connected while another hung — auto-connect is serialized")

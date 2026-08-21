@@ -404,10 +404,10 @@ func externalOrigin(r *http.Request) string {
 // first element of an RFC 7239 Forwarded header. Values may be double-quoted.
 func forwardedParam(header, key string) string {
 	first := header
-	if i := strings.IndexByte(header, ','); i >= 0 {
-		first = header[:i]
+	if before, _, ok := strings.Cut(header, ","); ok {
+		first = before
 	}
-	for _, part := range strings.Split(first, ";") {
+	for part := range strings.SplitSeq(first, ";") {
 		name, val, ok := strings.Cut(strings.TrimSpace(part), "=")
 		if !ok || !strings.EqualFold(strings.TrimSpace(name), key) {
 			continue

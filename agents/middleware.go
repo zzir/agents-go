@@ -1,6 +1,9 @@
 package agents
 
-import "context"
+import (
+	"context"
+	"slices"
+)
 
 // RunInput is what a middleware sees and may change before the run proceeds.
 //
@@ -58,8 +61,7 @@ func (f RunMiddlewareFunc) Run(ctx context.Context, next RunFunc, in RunInput) R
 // chainMiddleware wraps base so the first middleware in the slice is the
 // outermost — the order they are read in is the order they see the run.
 func chainMiddleware(base RunFunc, mws []RunMiddleware) RunFunc {
-	for i := len(mws) - 1; i >= 0; i-- {
-		mw := mws[i]
+	for _, mw := range slices.Backward(mws) {
 		if mw == nil {
 			continue
 		}

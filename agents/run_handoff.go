@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"fmt"
+	"slices"
 )
 
 // multipleHandoffsMessage is sent back as the tool output for every handoff
@@ -84,9 +85,9 @@ func (r *runner) handoffInputFilter(h *Handoff) func(HandoffInputData) HandoffIn
 }
 
 func lastMessageItem(items []*RunItem) *RunItem {
-	for i := len(items) - 1; i >= 0; i-- {
-		if items[i].Kind == ItemMessage {
-			return items[i]
+	for _, item := range slices.Backward(items) {
+		if item.Kind == ItemMessage {
+			return item
 		}
 	}
 	return nil

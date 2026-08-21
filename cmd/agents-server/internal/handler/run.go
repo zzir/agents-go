@@ -101,7 +101,7 @@ const MaxPreferWait = 10 * time.Minute
 // (respond-async, …) are ignored.
 func preferWait(r *http.Request) (time.Duration, bool) {
 	for _, h := range r.Header.Values("Prefer") {
-		for _, pref := range strings.Split(h, ",") {
+		for pref := range strings.SplitSeq(h, ",") {
 			k, v, _ := strings.Cut(strings.TrimSpace(pref), "=")
 			if !strings.EqualFold(strings.TrimSpace(k), "wait") {
 				continue

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sync/atomic"
 )
 
@@ -161,8 +162,7 @@ func agentToolOutput(res *RunResult) string {
 		}
 		return res.FinalOutputString()
 	}
-	for i := len(res.NewItems) - 1; i >= 0; i-- {
-		it := res.NewItems[i]
+	for _, it := range slices.Backward(res.NewItems) {
 		switch it.Kind {
 		case ItemMessage:
 			if t := it.Text(); t != "" {

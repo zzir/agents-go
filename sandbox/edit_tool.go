@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"slices"
 	"strings"
 	"time"
 
@@ -227,9 +228,9 @@ func applyPatch(ctx context.Context, sb Sandbox, patch string) (string, error) {
 					rbErrs = append(rbErrs, rbLabel(op)+": "+uerr.Error())
 				}
 			}
-			for i := len(done) - 1; i >= 0; i-- {
-				if uerr := done[i].undo(rbCtx); uerr != nil {
-					rbErrs = append(rbErrs, rbLabel(done[i])+": "+uerr.Error())
+			for _, d := range slices.Backward(done) {
+				if uerr := d.undo(rbCtx); uerr != nil {
+					rbErrs = append(rbErrs, rbLabel(d)+": "+uerr.Error())
 				}
 			}
 			cancelRB()

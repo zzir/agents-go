@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"slices"
 
 	"github.com/zzir/agents-go/agents/session"
 )
@@ -100,9 +101,9 @@ func turnFinalOutput(agent *Agent, items []*RunItem) any {
 			return text
 		}
 	}
-	for i := len(items) - 1; i >= 0; i-- {
-		if items[i].Kind == ItemToolCallOutput {
-			return coerceToolFinalOutput(agent, items[i].Output)
+	for _, item := range slices.Backward(items) {
+		if item.Kind == ItemToolCallOutput {
+			return coerceToolFinalOutput(agent, item.Output)
 		}
 	}
 	return ""

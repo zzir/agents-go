@@ -130,9 +130,7 @@ func TestPolicy_ConcurrentCheck(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for range 8 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			shared, copied := &p, p
 			for _, target := range []*Policy{shared, &copied} {
 				if err := target.Check("git status"); err != nil {
@@ -142,7 +140,7 @@ func TestPolicy_ConcurrentCheck(t *testing.T) {
 					t.Error("git push was permitted")
 				}
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }

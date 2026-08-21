@@ -230,8 +230,7 @@ func TestToolOutputGuardrailRaise(t *testing.T) {
 	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
 	_, err := RunSync(context.Background(), agent, "go", RunOptions{})
-	var tw *GuardrailTripwireError
-	if !errors.As(err, &tw) {
+	if _, ok := errors.AsType[*GuardrailTripwireError](err); !ok {
 		t.Fatalf("expected *GuardrailTripwireError, got %T (%v)", err, err)
 	}
 }

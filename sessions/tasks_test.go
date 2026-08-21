@@ -75,9 +75,7 @@ func TestSQLTaskStore_FinalizeIsCompareAndSet(t *testing.T) {
 	var wins int
 	var wg sync.WaitGroup
 	for i := range 6 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			st := tasks.StatusCompleted
 			if i%2 == 0 {
 				st = tasks.StatusFailed
@@ -92,7 +90,7 @@ func TestSQLTaskStore_FinalizeIsCompareAndSet(t *testing.T) {
 				wins++
 				mu.Unlock()
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	if wins != 1 {

@@ -23,7 +23,7 @@ type tokenPayload struct {
 	AccessToken  string    `json:"access_token"`
 	TokenType    string    `json:"token_type,omitempty"`
 	RefreshToken string    `json:"refresh_token,omitempty"`
-	Expiry       time.Time `json:"expiry,omitempty"`
+	Expiry       time.Time `json:"expiry"`
 
 	// Refresh context, absent in payloads written before the go-sdk v1.7.0
 	// upgrade; such legacy grants degrade to a static token (usable until

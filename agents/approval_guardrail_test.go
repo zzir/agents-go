@@ -215,8 +215,7 @@ func TestPreApprovalGuardrail_TripwireHaltsRun(t *testing.T) {
 	agent := preApprovalFixture(t, g, &ran)
 
 	_, err := RunSync(context.Background(), agent, "send", RunOptions{Exec: ExecOptions{PreApprovalToolInputGuardrails: true}})
-	var tripErr *GuardrailTripwireError
-	if !errors.As(err, &tripErr) {
+	if _, ok := errors.AsType[*GuardrailTripwireError](err); !ok {
 		t.Fatalf("expected *GuardrailTripwireError, got %v", err)
 	}
 	if ran.Load() != 0 {
@@ -321,8 +320,7 @@ func TestDetails_NonJSONCompatibleFailsRun(t *testing.T) {
 				return TextResult("x").WithDetails(map[string]any{"bad": value}), nil
 			})
 			_, err := RunSync(context.Background(), agent, "go", RunOptions{})
-			var uerr *UserError
-			if !errors.As(err, &uerr) {
+			if _, ok := errors.AsType[*UserError](err); !ok {
 				t.Fatalf("expected UserError, got %v", err)
 			}
 			if !strings.Contains(err.Error(), "get_data") {

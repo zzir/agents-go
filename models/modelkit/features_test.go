@@ -30,7 +30,7 @@ var passthroughSettings = map[string]bool{
 func TestFeatureSetCoversEverySetting(t *testing.T) {
 	t.Parallel()
 
-	typ := reflect.TypeOf(agents.ModelSettings{})
+	typ := reflect.TypeFor[agents.ModelSettings]()
 	for name := range passthroughSettings {
 		if _, ok := typ.FieldByName(name); !ok {
 			t.Errorf("passthroughSettings exempts %s, which is no longer a ModelSettings field", name)
@@ -152,7 +152,7 @@ func TestNonZeroSampleRefusesZeroProbes(t *testing.T) {
 	t.Parallel()
 
 	for _, typ := range []reflect.Type{
-		reflect.TypeOf(time.Time{}),              // a struct, but all of its state is unexported
+		reflect.TypeFor[time.Time](),             // a struct, but all of its state is unexported
 		reflect.TypeOf(struct{ At time.Time }{}), // and one level down
 	} {
 		if sample, ok := nonZeroSample(typ); ok && sample.IsZero() {
@@ -162,7 +162,7 @@ func TestNonZeroSampleRefusesZeroProbes(t *testing.T) {
 }
 
 func TestRejectIgnoresUnusedFeatures(t *testing.T) {
-	req := agents.ModelRequest{Settings: &agents.ModelSettings{Temperature: agents.Ptr(0.2)}}
+	req := agents.ModelRequest{Settings: &agents.ModelSettings{Temperature: new(0.2)}}
 	if err := Reject("prov", req, FeatureServiceTier, FeatureVerbosity, FeaturePreviousResponseID); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -174,8 +174,7 @@ func TestRejectNamesTheFeature(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	var ue *agents.UserError
-	if !errors.As(err, &ue) {
+	if _, ok := errors.AsType[*agents.UserError](err); !ok {
 		t.Fatalf("expected *agents.UserError, got %T", err)
 	}
 	if !strings.Contains(err.Error(), "service_tier") || !strings.Contains(err.Error(), "prov") {

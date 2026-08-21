@@ -66,8 +66,7 @@ func TestTask_DepthIsBounded(t *testing.T) {
 	childSession := h.childOf(t, parent.TaskID)
 
 	_, err := h.m.Spawn(ctx, SpawnRequest{ParentSessionID: childSession, AgentName: "worker", Input: "again"})
-	var depth ErrDepthLimit
-	if !errors.As(err, &depth) {
+	if _, ok := errors.AsType[ErrDepthLimit](err); !ok {
 		t.Fatalf("err = %v, want ErrDepthLimit", err)
 	}
 }
@@ -179,9 +178,7 @@ func TestNotify_ConcurrentFinalizersProduceOneWinner(t *testing.T) {
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	for i := range 8 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			st := StatusCompleted
 			if i%2 == 0 {
 				st = StatusFailed
@@ -196,7 +193,7 @@ func TestNotify_ConcurrentFinalizersProduceOneWinner(t *testing.T) {
 				wins++
 				mu.Unlock()
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	if wins != 1 {
@@ -501,8 +498,7 @@ func TestStop_AlreadyFinalIsReportedNotRetried(t *testing.T) {
 	h.m.OnRunFinished(ctx, h.childOf(t, info.TaskID), RunOutcome{Status: StatusCompleted, Text: "done"})
 
 	got, err := h.m.Stop(ctx, info.TaskID, false)
-	var final ErrAlreadyFinal
-	if !errors.As(err, &final) {
+	if _, ok := errors.AsType[ErrAlreadyFinal](err); !ok {
 		t.Fatalf("err = %v, want ErrAlreadyFinal", err)
 	}
 	if got == nil || got.Status != StatusCompleted {
@@ -646,11 +642,9 @@ func TestSpawnCapHoldsUnderConcurrentSpawns(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for range 8 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			_, _ = h.m.Spawn(ctx, SpawnRequest{ParentSessionID: "p", Input: "go"})
-		}()
+		})
 	}
 	wg.Wait()
 

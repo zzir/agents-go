@@ -312,8 +312,7 @@ func TestBlockingInputGuardrailPreventsModelCall(t *testing.T) {
 			},
 		}},
 	})
-	var tw *GuardrailTripwireError
-	if !errors.As(err, &tw) {
+	if _, ok := errors.AsType[*GuardrailTripwireError](err); !ok {
 		t.Fatalf("err = %v, want *GuardrailTripwireError", err)
 	}
 	if model.calls != 0 {

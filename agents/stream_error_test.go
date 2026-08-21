@@ -193,8 +193,7 @@ func TestInputGuardrailTripwire_PersistenceDependsOnBlocking(t *testing.T) {
 	}
 	tripped := func(t *testing.T, err error) {
 		t.Helper()
-		var tw *GuardrailTripwireError
-		if !errors.As(err, &tw) {
+		if _, ok := errors.AsType[*GuardrailTripwireError](err); !ok {
 			t.Fatalf("expected *GuardrailTripwireError, got %v", err)
 		}
 	}

@@ -146,8 +146,7 @@ func TestRunStateFromJSON_SchemaVersionAcceptance(t *testing.T) {
 			t.Parallel()
 			_, err := RunStateFromJSON(minimalStateJSON(tc.version), registry)
 			if tc.wantErr {
-				var ue *UserError
-				if !errors.As(err, &ue) {
+				if _, ok := errors.AsType[*UserError](err); !ok {
 					t.Fatalf("err = %v (%T), want a *UserError", err, err)
 				}
 				return
@@ -169,8 +168,7 @@ func TestRunStateFromJSON_SchemaVersionAcceptance(t *testing.T) {
 func TestRunStateFromJSON_RejectsAmbiguousReleasedMinor(t *testing.T) {
 	t.Parallel()
 	_, err := RunStateFromJSON(minimalStateJSON("1.3"), map[string]*Agent{"a": {Name: "a"}})
-	var ue *UserError
-	if !errors.As(err, &ue) {
+	if _, ok := errors.AsType[*UserError](err); !ok {
 		t.Fatalf("err = %v (%T), want a *UserError refusing 1.3", err, err)
 	}
 }

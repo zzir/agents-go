@@ -1233,8 +1233,7 @@ func (m *Manager) StopTree(ctx context.Context, sessionID string) error {
 	var errs []error
 	for i := range live {
 		if _, err := m.Stop(ctx, live[i].ID, false); err != nil {
-			var final ErrAlreadyFinal
-			if errors.As(err, &final) {
+			if _, ok := errors.AsType[ErrAlreadyFinal](err); ok {
 				continue
 			}
 			errs = append(errs, err)
@@ -1266,10 +1265,7 @@ func (m *Manager) awaitFinish(ctx context.Context, taskID string, timeout time.D
 	m.mu.Unlock()
 	defer m.dropWaiter(taskID, ch)
 
-	poll := statusPollInterval
-	if timeout < poll {
-		poll = timeout
-	}
+	poll := min(timeout, statusPollInterval)
 	timer := time.NewTimer(poll)
 	defer timer.Stop()
 	select {

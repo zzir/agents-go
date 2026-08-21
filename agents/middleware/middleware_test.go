@@ -202,8 +202,7 @@ func TestRetry_GivesUpAndReportsTheError(t *testing.T) {
 	_, err := agents.RunSync(context.Background(), agent, "go", agents.RunOptions{
 		Middlewares: []agents.RunMiddleware{Retry{MaxAttempts: 2}},
 	})
-	var mbe *agents.ModelBehaviorError
-	if !errors.As(err, &mbe) {
+	if _, ok := errors.AsType[*agents.ModelBehaviorError](err); !ok {
 		t.Errorf("err = %v, want the original failure after the retries ran out", err)
 	}
 }

@@ -43,8 +43,7 @@ func TestErrorHandlers_InvalidFinalOutput_FailsWithoutHandler(t *testing.T) {
 	agent := &Agent{Name: "a", OutputType: OutputType[sentiment](), ModelImpl: model}
 
 	_, err := RunSync(context.Background(), agent, "hi", RunOptions{})
-	var mbe *ModelBehaviorError
-	if !errors.As(err, &mbe) {
+	if _, ok := errors.AsType[*ModelBehaviorError](err); !ok {
 		t.Fatalf("error = %v, want *ModelBehaviorError", err)
 	}
 }
@@ -70,8 +69,7 @@ func TestErrorHandlers_InvalidFinalOutput_RecoversValidatedFallback(t *testing.T
 		t.Errorf("final output = %#v", res.FinalOutput)
 	}
 	// The handler saw the validation failure and the run snapshot.
-	var mbe *ModelBehaviorError
-	if !errors.As(seen.Error, &mbe) {
+	if _, ok := errors.AsType[*ModelBehaviorError](seen.Error); !ok {
 		t.Errorf("handler error = %v, want *ModelBehaviorError", seen.Error)
 	}
 	if len(seen.RunData.RawResponses) != 1 {
@@ -128,8 +126,7 @@ func TestErrorHandlers_InvalidFinalOutput_RejectsInvalidFallback(t *testing.T) {
 		},
 	}}}
 	_, err := RunSync(context.Background(), agent, "hi", opts)
-	var ue *UserError
-	if !errors.As(err, &ue) {
+	if _, ok := errors.AsType[*UserError](err); !ok {
 		t.Fatalf("error = %v, want *UserError", err)
 	}
 	if !strings.Contains(err.Error(), "run error handler") {
@@ -147,8 +144,7 @@ func TestErrorHandlers_InvalidFinalOutput_CanDecline(t *testing.T) {
 		},
 	}}}
 	_, err := RunSync(context.Background(), agent, "hi", opts)
-	var mbe *ModelBehaviorError
-	if !errors.As(err, &mbe) {
+	if _, ok := errors.AsType[*ModelBehaviorError](err); !ok {
 		t.Fatalf("error = %v, want the original *ModelBehaviorError", err)
 	}
 }
@@ -169,8 +165,7 @@ func TestErrorHandlers_InvalidFinalOutput_IgnoresOtherModelBehaviorErrors(t *tes
 		},
 	}}}
 	_, err := RunSync(context.Background(), agent, "hi", opts)
-	var mbe *ModelBehaviorError
-	if !errors.As(err, &mbe) {
+	if _, ok := errors.AsType[*ModelBehaviorError](err); !ok {
 		t.Fatalf("error = %v, want *ModelBehaviorError", err)
 	}
 	if handlerCalled {
@@ -285,8 +280,7 @@ func TestErrorHandlers_RefusalTakesPrecedenceOverText(t *testing.T) {
 	agent := &Agent{Name: "a", ModelImpl: model}
 
 	_, err := RunSync(context.Background(), agent, "hi", RunOptions{})
-	var re *ModelRefusalError
-	if !errors.As(err, &re) {
+	if _, ok := errors.AsType[*ModelRefusalError](err); !ok {
 		t.Fatalf("error = %v, want *ModelRefusalError", err)
 	}
 }

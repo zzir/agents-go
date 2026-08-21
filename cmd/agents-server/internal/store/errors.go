@@ -51,8 +51,8 @@ func UniqueViolation(err error) (string, bool) {
 	cols := make([]string, 0, 2)
 	for part := range strings.SplitSeq(rest, ",") {
 		part = strings.TrimSpace(part)
-		if dot := strings.LastIndex(part, "."); dot >= 0 {
-			part = part[dot+1:]
+		if _, after, ok := strings.CutLast(part, "."); ok {
+			part = after
 		}
 		part = identifierPrefix(part)
 		if part != "" {

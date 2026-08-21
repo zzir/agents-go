@@ -61,8 +61,7 @@ func TestAgentAsTool_ValidatesDefaultInput(t *testing.T) {
 			tCtx := &ToolContext{RunContext: NewRunContext(nil)}
 			_, err := tool.OnInvoke(context.Background(), tCtx, tc.args)
 			if tc.want == "" {
-				var mbe *ModelBehaviorError
-				if !errors.As(err, &mbe) {
+				if _, ok := errors.AsType[*ModelBehaviorError](err); !ok {
 					t.Fatalf("err = %v (%T), want *ModelBehaviorError", err, err)
 				}
 				if subModel.calls != 0 {
@@ -100,8 +99,7 @@ func TestAsTool_CustomInputBuilderValidatesInput(t *testing.T) {
 	tCtx := &ToolContext{RunContext: NewRunContext(nil)}
 
 	_, err := tool.OnInvoke(context.Background(), tCtx, `{"q":"cats","n":3}`)
-	var mbe *ModelBehaviorError
-	if !errors.As(err, &mbe) {
+	if _, ok := errors.AsType[*ModelBehaviorError](err); !ok {
 		t.Fatalf("err = %v (%T), want *ModelBehaviorError", err, err)
 	}
 	if subModel.calls != 0 {

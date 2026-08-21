@@ -63,8 +63,7 @@ func TestClassifyKeepsChain(t *testing.T) {
 
 	// A typed SDK error stays matchable by type.
 	tagged = Classify(CodeMCP, &MaxTurnsError{MaxTurns: 1})
-	var mt *MaxTurnsError
-	if !errors.As(tagged, &mt) {
+	if _, ok := errors.AsType[*MaxTurnsError](tagged); !ok {
 		t.Error("errors.As cannot reach *MaxTurnsError through Classify")
 	}
 }
@@ -135,8 +134,7 @@ func TestToolPanicCode(t *testing.T) {
 	if got := CodeOf(err); got != CodeToolPanic {
 		t.Errorf("CodeOf = %q, want %q (err: %v)", got, CodeToolPanic, err)
 	}
-	var pe *toolPanicError
-	if !errors.As(err, &pe) {
+	if _, ok := errors.AsType[*toolPanicError](err); !ok {
 		t.Error("the panic itself is no longer reachable via errors.As")
 	}
 	if !strings.Contains(err.Error(), "kaboom") {
