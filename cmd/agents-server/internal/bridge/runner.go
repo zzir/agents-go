@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime/debug"
 
 	"github.com/uptrace/bun"
 
@@ -188,6 +189,16 @@ func (r *Runner) startRunReserved(runID, sessionID, agentConfigID, sandboxID, wo
 func (r *Runner) launchSegment(seg *runSegment, runID, sessionID string, onDone func(*RunOutcome), exec func() *RunOutcome) {
 	go func() {
 		defer seg.finalize()
+		// Last-resort recover: exec recovers its own panics (see execStreamed),
+		// so reaching here means the teardown below panicked. Free the session
+		// slot — a leaked slot bricks the session until restart — and keep the
+		// process, which is running every other session's work.
+		defer func() {
+			if p := recover(); p != nil {
+				logging.Ctx(r.hub.rootCtx).Error("run teardown panicked", "run_id", runID, "panic", p, "stack", string(debug.Stack()))
+				r.hub.finish(runID, false)
+			}
+		}()
 		result := exec()
 		r.hub.finish(runID, result.Interrupted)
 		r.postRun(runID, sessionID, result)
@@ -223,7 +234,7 @@ type segmentSpec struct {
 
 // execStreamed executes one run segment — fresh or resumed — to completion,
 // publishing events to the hub, and returns its outcome.
-func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfigID, sandboxID, workDir string, spec segmentSpec) *RunOutcome {
+func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfigID, sandboxID, workDir string, spec segmentSpec) (out *RunOutcome) {
 	log := logging.Ctx(ctx)
 	// Stamp the run id so a spawn_task inside the run records which run spawned
 	// it — that is what lets the trace panel nest the task's wake-up run here.
@@ -324,6 +335,16 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 		return mkErrResult(gerr.Code, err.Error())
 	}
 
+	// A panic anywhere below — a tool, a model adapter, stream handling — fails
+	// THIS segment instead of taking the process, and every other session's run,
+	// down with it. Recovered here so failTurn can record it durably.
+	defer func() {
+		if p := recover(); p != nil {
+			log.Error("run panicked", "run_id", runID, "panic", p, "stack", string(debug.Stack()))
+			out = failTurn("", protocol.CodeInternal, fmt.Errorf("internal error: %v", p), "", "")
+		}
+	}()
+
 	// Refuse to run against a session that doesn't exist — otherwise the run
 	// would write orphaned messages under an arbitrary session id.
 	if spec.fresh {
@@ -405,7 +426,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 		return failTurn(agent.Model, spec.failCode, err, streamedReasoning, streamedText)
 	}
 
-	out, err := r.finishResult(res, runID, sessionID, agentConfigID, sandboxID, workDir, sendEvent)
+	out, err = r.finishResult(res, runID, sessionID, agentConfigID, sandboxID, workDir, sendEvent)
 	if err != nil {
 		// The pause could not be made durable: a decision would have nothing
 		// to act on (README invariant 37 lists what an approval IS — a row).
