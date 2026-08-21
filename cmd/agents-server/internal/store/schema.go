@@ -29,6 +29,9 @@ var schemaModels = []any{
 	(*Task)(nil),
 	(*Wakeup)(nil),
 	(*ContextProfile)(nil),
+	(*User)(nil),
+	(*Identity)(nil),
+	(*AuthToken)(nil),
 }
 
 // CreateSchema creates every table and supporting index if they do not
@@ -218,6 +221,39 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 		IfNotExists().
 		Exec(ctx); err != nil {
 		return fmt.Errorf("creating provider_routes unique prefix index: %w", err)
+	}
+	// Accounts merge by verified email, so email is an identity — two rows
+	// sharing one would make every merge a coin flip. UNIQUE also arbitrates
+	// two first logins racing to create the same account.
+	if _, err := db.NewCreateIndex().
+		Model((*User)(nil)).
+		Index("idx_users_email").
+		Unique().
+		Column("email").
+		IfNotExists().
+		Exec(ctx); err != nil {
+		return fmt.Errorf("creating users unique email index: %w", err)
+	}
+	// One provider subject is one login; UNIQUE arbitrates concurrent logins
+	// of the same subject racing to link it.
+	if _, err := db.NewCreateIndex().
+		Model((*Identity)(nil)).
+		Index("idx_identities_subject").
+		Unique().
+		Column("provider", "subject").
+		IfNotExists().
+		Exec(ctx); err != nil {
+		return fmt.Errorf("creating identities unique subject index: %w", err)
+	}
+	// Every request authenticates by hash lookup — this index IS the auth path.
+	if _, err := db.NewCreateIndex().
+		Model((*AuthToken)(nil)).
+		Index("idx_auth_tokens_hash").
+		Unique().
+		Column("token_hash").
+		IfNotExists().
+		Exec(ctx); err != nil {
+		return fmt.Errorf("creating auth_tokens unique hash index: %w", err)
 	}
 	return nil
 }

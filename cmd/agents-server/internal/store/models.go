@@ -613,3 +613,70 @@ func (m *ProviderRoute) BeforeAppendModel(_ context.Context, q bun.Query) error 
 func (m *SandboxConfig) BeforeAppendModel(_ context.Context, q bun.Query) error {
 	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
 }
+
+// User is an account. In --auth token mode the one implicit local user
+// (LocalUserID) is the whole population; in --auth oauth mode rows are created
+// at first login. Role is enforced from P2b on — recorded here from day one so
+// ownership has a referent in both modes.
+type User struct {
+	bun.BaseModel `bun:"table:users,alias:u"`
+
+	ID    string `bun:"id,pk"          json:"id"`
+	Email string `bun:"email,notnull"  json:"email"` // lowercased; unique via idx_users_email
+	Name  string `bun:"name,nullzero"  json:"name,omitempty"`
+	// AvatarURL is stored but not rendered by the UI (remote images would need
+	// a CSP img-src hole); kept for a later proxy or export.
+	AvatarURL string `bun:"avatar_url,nullzero" json:"-"`
+	Role      string `bun:"role,notnull"        json:"role"` // RoleAdmin | RoleMember
+
+	LastLoginAt time.Time `bun:"last_login_at,nullzero" json:"last_login_at,omitzero"`
+	CreatedAt   time.Time `bun:"created_at,notnull"     json:"created_at"`
+	UpdatedAt   time.Time `bun:"updated_at,notnull"     json:"updated_at"`
+}
+
+// Identity links one OAuth login (provider + subject) to a user. A user may
+// hold several — logins with the same verified email merge into one account.
+type Identity struct {
+	bun.BaseModel `bun:"table:identities,alias:idn"`
+
+	ID       string `bun:"id,pk"             json:"id"`
+	UserID   string `bun:"user_id,notnull"   json:"user_id"`
+	Provider string `bun:"provider,notnull"  json:"provider"`
+	Subject  string `bun:"subject,notnull"   json:"subject"` // unique with provider via idx_identities_subject
+
+	CreatedAt time.Time `bun:"created_at,notnull" json:"created_at"`
+	UpdatedAt time.Time `bun:"updated_at,notnull" json:"updated_at"`
+}
+
+// AuthToken is a credential row: a browser session or a personal access token.
+// Only the SHA-256 of the secret is stored; the plaintext exists exactly once,
+// in the response that created it.
+type AuthToken struct {
+	bun.BaseModel `bun:"table:auth_tokens,alias:at"`
+
+	ID        string `bun:"id,pk"              json:"id"`
+	UserID    string `bun:"user_id,notnull"    json:"user_id"`
+	Kind      string `bun:"kind,notnull"       json:"kind"` // TokenKindSession | TokenKindPAT
+	TokenHash string `bun:"token_hash,notnull" json:"-"`    // unique via idx_auth_tokens_hash
+	Name      string `bun:"name,nullzero"      json:"name,omitempty"`
+
+	LastUsedAt time.Time `bun:"last_used_at,nullzero" json:"last_used_at,omitzero"`
+	ExpiresAt  time.Time `bun:"expires_at,nullzero"   json:"expires_at,omitzero"` // zero on a PAT = never
+	CreatedAt  time.Time `bun:"created_at,notnull"    json:"created_at"`
+	UpdatedAt  time.Time `bun:"updated_at,notnull"    json:"updated_at"`
+}
+
+// BeforeAppendModel stamps the id and timestamps; bun invokes it on insert and update.
+func (m *User) BeforeAppendModel(_ context.Context, q bun.Query) error {
+	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
+}
+
+// BeforeAppendModel stamps the id and timestamps; bun invokes it on insert and update.
+func (m *Identity) BeforeAppendModel(_ context.Context, q bun.Query) error {
+	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
+}
+
+// BeforeAppendModel stamps the id and timestamps; bun invokes it on insert and update.
+func (m *AuthToken) BeforeAppendModel(_ context.Context, q bun.Query) error {
+	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
+}
