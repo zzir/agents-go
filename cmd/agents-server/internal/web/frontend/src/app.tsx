@@ -187,7 +187,6 @@ function LoginPage({ onLogin }: { onLogin: () => void }) {
   return (
     <div className="login-page">
       <form className="login-card" onSubmit={handleSubmit}>
-        <img src="/icon.svg" width={48} height={48} alt="" />
         <SecretInput
           aria-label="API token"
           placeholder="Token"
@@ -876,7 +875,6 @@ function App() {
     <ThemeProvider>
       <div className="login-page">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16, alignItems: 'center' }}>
-          <img src="/icon.svg" width={48} height={48} />
           <Flash variant="danger">Couldn&apos;t reach the server. Check your connection and try again.</Flash>
           <Button onClick={runCheck}>Retry</Button>
         </div>

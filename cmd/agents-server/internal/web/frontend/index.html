@@ -4,10 +4,25 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>agents-go</title>
-  <link rel="icon" href="/icon.svg" type="image/svg+xml" />
-  <link rel="apple-touch-icon" href="/icon.svg" />
+  <!-- An explicit empty icon: without a link the browser requests
+       /favicon.ico and logs a 404 on every load. -->
+  <link rel="icon" href="data:," />
   <meta name="theme-color" content="#ffffff" />
-  <script src="/theme-init.js"></script>
+  <!-- Theme init, inline so it runs before first paint — the dark body
+       background below keys off data-color-mode, and setting it from React
+       would flash white for dark-mode users. ThemeProvider takes over after
+       mount for live toggling. -->
+  <script>
+    (function () {
+      var d = localStorage.getItem('theme') === 'dark';
+      var h = document.documentElement;
+      h.setAttribute('data-color-mode', d ? 'dark' : 'light');
+      h.setAttribute('data-dark-theme', 'dark');
+      h.setAttribute('data-light-theme', 'light');
+      var m = document.querySelector('meta[name="theme-color"]');
+      if (m) m.content = d ? '#0d1117' : '#ffffff';
+    })();
+  </script>
   <style>
     #root:not(:has(> *)) { visibility: hidden; }
     body { background: #fff; }
