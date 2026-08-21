@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Button, TextInput, Label, Stack, PageHeader } from '@primer/react';
+import { Button, TextInput, Label, Stack, PageHeader, useConfirm } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { api } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
@@ -9,6 +9,7 @@ import { BADGE } from '@/lib/badges';
 import { Disclosure } from '@/components/Disclosure';
 
 export function SkillsPanel() {
+  const confirmDialog = useConfirm();
   const { data: skills, loading, error, reload } = useApi<Skill[]>(() => api.skills.list() as Promise<Skill[]>);
   const [repoUrl, setRepoUrl] = useState('');
   const [cloning, setCloning] = useState(false);
@@ -55,7 +56,13 @@ export function SkillsPanel() {
   };
 
   const handleDelete = async (topDir: string) => {
-    if (!confirm('Delete "' + topDir + '"?')) return;
+    const ok = await confirmDialog({
+      title: `Delete “${topDir}”?`,
+      content: 'The cloned repository and all its skills are removed. This cannot be undone.',
+      confirmButtonContent: 'Delete',
+      confirmButtonType: 'danger',
+    });
+    if (!ok) return;
     try {
       await api.skills.delete(topDir);
       reload();

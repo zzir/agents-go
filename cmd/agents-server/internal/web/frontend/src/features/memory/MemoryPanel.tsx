@@ -120,7 +120,7 @@ export function MemoryPanel() {
         <MemoryForm onSave={save} onCancel={cancel} agents={agents} />
       )}
       {editing && (
-        <MemoryForm initial={editing} onSave={save} onCancel={cancel} onDelete={() => { remove(editing.id); cancel(); }} agents={agents} />
+        <MemoryForm initial={editing} onSave={save} onCancel={cancel} onDelete={async () => { if (await remove(editing.id, editing.key)) cancel(); }} agents={agents} />
       )}
 
       {!adding && !editing && <div className="Box">

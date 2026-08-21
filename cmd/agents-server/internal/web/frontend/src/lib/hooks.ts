@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, type DependencyList, type RefCallback, type PointerEvent, type KeyboardEvent } from 'react';
+import { useConfirm } from '@primer/react';
 import { toast } from '@/lib/toast';
 
 const NARROW_QUERY = '(max-width: 767px)';
@@ -199,7 +200,7 @@ interface UseCrudResult<T, F> {
   startEdit: (item: T) => void;
   cancel: () => void;
   save: (form: F) => Promise<void>;
-  remove: (id: CrudId) => Promise<void>;
+  remove: (id: CrudId, label?: string) => Promise<boolean>;
 }
 
 /**
@@ -212,6 +213,7 @@ interface UseCrudResult<T, F> {
 export function useCrud<T extends { id: CrudId }, F = Partial<T>>(
   resource: CrudResource<F>,
 ): UseCrudResult<T, F> {
+  const confirmDialog = useConfirm();
   const { data, loading, reload } = useApi<T[]>(() => resource.list() as Promise<T[]>);
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<T | null>(null);
@@ -241,14 +243,25 @@ export function useCrud<T extends { id: CrudId }, F = Partial<T>>(
     }
   }, [editing, resource, reload]);
 
-  const remove = useCallback(async (id: CrudId) => {
+  // Every delete confirms here, so a new panel cannot forget the guard.
+  // Returns whether the row was deleted (false on decline or API error).
+  const remove = useCallback(async (id: CrudId, label?: string) => {
+    const ok = await confirmDialog({
+      title: label ? `Delete “${label}”?` : 'Delete this item?',
+      content: 'This cannot be undone.',
+      confirmButtonContent: 'Delete',
+      confirmButtonType: 'danger',
+    });
+    if (!ok) return false;
     try {
       await resource.delete(id);
       await reload();
+      return true;
     } catch (e) {
       toast.error((e as Error).message);
+      return false;
     }
-  }, [resource, reload]);
+  }, [confirmDialog, resource, reload]);
 
   return { items: data ?? [], loading, reload, adding, editing, startAdd, startEdit, cancel, save, remove };
 }

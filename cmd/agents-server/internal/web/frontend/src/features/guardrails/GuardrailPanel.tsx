@@ -162,7 +162,7 @@ export function GuardrailPanel() {
       </PageHeader>
 
       {adding && <GuardrailForm onSave={save} onCancel={cancel} />}
-      {editing && <GuardrailForm initial={editing} onSave={save} onCancel={cancel} onDelete={() => { remove(editing.id); cancel(); }} />}
+      {editing && <GuardrailForm initial={editing} onSave={save} onCancel={cancel} onDelete={async () => { if (await remove(editing.id, editing.name)) cancel(); }} />}
 
       {!adding && !editing && <div className="Box">
         {guardrails.map((g, i) => (

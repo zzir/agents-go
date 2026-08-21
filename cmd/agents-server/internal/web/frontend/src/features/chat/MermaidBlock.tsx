@@ -23,7 +23,7 @@ function primerThemeVars(): Record<string, string> {
   const s = getComputedStyle(el);
   const v = (n: string) => s.getPropertyValue(n).trim();
   return {
-    fontFamily: v('--font-sans'),
+    fontFamily: v('--fontStack-sansSerif'),
     fontSize: '14px',
 
     primaryColor: v('--bgColor-muted'),

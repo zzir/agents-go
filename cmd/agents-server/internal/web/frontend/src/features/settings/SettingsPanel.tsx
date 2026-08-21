@@ -327,7 +327,7 @@ function ProviderRoutesSection() {
         <PageHeader.Description>Route model names by prefix (e.g. &quot;groq/llama-3&quot; &rarr; prefix &quot;groq&quot;). The agent&apos;s own provider is the fallback.</PageHeader.Description>
       </PageHeader>
       {adding && <RouteForm onSave={save} onCancel={cancel} providers={providers} />}
-      {editing && <RouteForm initial={editing} onSave={save} onCancel={cancel} onDelete={() => { remove(editing.id); cancel(); }} providers={providers} />}
+      {editing && <RouteForm initial={editing} onSave={save} onCancel={cancel} onDelete={async () => { if (await remove(editing.id, editing.prefix)) cancel(); }} providers={providers} />}
       {!adding && !editing && <div className="Box">
         {routes.map(r => (
           <div key={r.id} className="Box-row">

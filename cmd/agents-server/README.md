@@ -1926,6 +1926,15 @@ When a change genuinely doesn't fit, update this list in the same PR.
     a default the panel cannot show is one the operator has to read the source
     to learn.
 
+41. **A destructive action confirms once, in one place.** Every settings
+    panel's Delete goes through `useCrud.remove`, which asks (Primer
+    `useConfirm`) before calling the API — a new panel gets the guard by
+    construction rather than by remembering to add it. Deletes that live
+    outside `useCrud` (skill repos, background tasks, triggers) use the same
+    `useConfirm` dialog, never `window.confirm` and never a bare button. The
+    rule exists because the guard used to be per-panel and eight of ten
+    destructive flows had none.
+
 ## Database
 
 SQLite in WAL mode by default; pass `--db` a `postgres://` (or

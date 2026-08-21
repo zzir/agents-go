@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
+// hooks.ts imports useConfirm; Primer's dist drags CSS vitest can't load.
+vi.mock('@primer/react', () => ({ useConfirm: () => async () => true }));
 import { usePage } from '@/lib/hooks';
 
 const g = globalThis as Record<string, unknown>;

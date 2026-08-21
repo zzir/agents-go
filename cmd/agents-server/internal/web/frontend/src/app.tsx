@@ -93,6 +93,10 @@ const DIALOG_TABS: { key: string; label: string; icon: Icon; load: () => Promise
   { key: 'general',    label: 'General',    icon: GearIcon,       load: () => import('@/features/settings/SettingsPanel') },
 ];
 
+function TabLoadError() {
+  return <Flash variant="danger">Failed to load this panel — reload the page.</Flash>;
+}
+
 function SettingsDialog({ onClose }: { onClose: () => void }) {
   const [tab, setTab] = useState('providers');
   const [TabComp, setTabComp] = useState<React.ComponentType | null>(null);
@@ -108,6 +112,9 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
     if (!entry) return;
     entry.load().then(mod => {
       if (!stale) setTabComp(() => mod.default);
+    }).catch(() => {
+      // A stale chunk 404 would otherwise leave the panel blank forever.
+      if (!stale) setTabComp(() => TabLoadError);
     });
     return () => { stale = true; };
   }, [tab]);

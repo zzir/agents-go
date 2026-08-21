@@ -13,4 +13,9 @@ import ReactDOM from 'react-dom/client'
 
 import('./app').then(({ default: App }) => {
   ReactDOM.createRoot(document.getElementById('root')!).render(<App />)
+}).catch(() => {
+  // A stale chunk after a server restart 404s here; without this the page
+  // stays blank with no message.
+  document.getElementById('root')!.textContent =
+    'Failed to load the app — reload the page.'
 })

@@ -182,7 +182,7 @@ export function ProviderPanel() {
           initial={toForm(editing)}
           onSave={save}
           onCancel={cancel}
-          onDelete={() => { remove(editing.id); cancel(); }}
+          onDelete={async () => { if (await remove(editing.id, editing.name)) cancel(); }}
           providerTypes={providerTypes}
         />
       )}

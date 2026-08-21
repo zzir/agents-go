@@ -271,7 +271,7 @@ export function SandboxPanel() {
         {!adding && !editing && <PageHeader.Actions><Button onClick={startAdd} variant="primary" size="small">+ Add</Button></PageHeader.Actions>}
       </PageHeader>
       {adding && <SandboxForm onSave={save} onCancel={cancel} />}
-      {editing && <SandboxForm initial={editing} onSave={save} onCancel={cancel} onDelete={() => { remove(editing.id); cancel(); }} />}
+      {editing && <SandboxForm initial={editing} onSave={save} onCancel={cancel} onDelete={async () => { if (await remove(editing.id, editing.name)) cancel(); }} />}
       {!adding && !editing && <div className="Box">
         {items.map(s => (
           <div key={s.id} className="Box-row">

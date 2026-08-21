@@ -341,7 +341,7 @@ export function McpServerPanel() {
         {!adding && !editing && <PageHeader.Actions><Button onClick={startAdd} variant="primary" size="small">+ Add</Button></PageHeader.Actions>}
       </PageHeader>
       {adding && <McpForm onSave={handleSave} onCancel={cancel} />}
-      {editing && <McpForm initial={editing} onSave={handleSave} onCancel={cancel} onDelete={() => { remove(editing.id); cancel(); }} onClearAuth={() => handleClearAuth(editing.id)} />}
+      {editing && <McpForm initial={editing} onSave={handleSave} onCancel={cancel} onDelete={async () => { if (await remove(editing.id, editing.name)) cancel(); }} onClearAuth={() => handleClearAuth(editing.id)} />}
       {!adding && !editing && <div className="Box">
         {servers.map(s => {
           const action = STATUS_ACTION[s.status];

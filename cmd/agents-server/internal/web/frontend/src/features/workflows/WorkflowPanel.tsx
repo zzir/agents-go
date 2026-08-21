@@ -343,7 +343,7 @@ export function WorkflowPanel({ sessionId }: { sessionId: string | null }) {
           }}
           onSave={save}
           onCancel={cancel}
-          onDelete={() => { remove(editing.id); cancel(); }}
+          onDelete={async () => { if (await remove(editing.id, editing.name)) cancel(); }}
           agents={agents}
         />
       )}
