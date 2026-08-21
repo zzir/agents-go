@@ -1,7 +1,8 @@
 import { useState, type ChangeEvent } from 'react';
-import { Button, TextInput, Label, SegmentedControl, Stack, PageHeader, Checkbox, FormControl } from '@primer/react';
+import { Button, TextInput, Label, SegmentedControl, Stack, Checkbox, FormControl } from '@primer/react';
 import { FormActions } from '@/components/FormActions';
-import { Blankslate } from '@primer/react/experimental';
+import { CrudPanel } from '@/components/CrudPanel';
+import { ResourceRow } from '@/components/ResourceRow';
 import { api } from '@/lib/api';
 import { useCrud } from '@/lib/hooks';
 import { fc } from '@/lib/form';
@@ -149,47 +150,25 @@ export function GuardrailPanel() {
 
   const isBuiltin = (g: Guardrail): boolean => !g.id;
 
+  const form = adding ? <GuardrailForm onSave={save} onCancel={cancel} />
+    : editing ? <GuardrailForm initial={editing} onSave={save} onCancel={cancel} onDelete={async () => { if (await remove(editing.id, editing.name)) cancel(); }} />
+    : null;
+
   return (
-    <Stack gap="normal">
-      <PageHeader>
-        <PageHeader.TitleArea>
-          <PageHeader.Title>Guardrails</PageHeader.Title>
-        </PageHeader.TitleArea>
-        {!adding && !editing && <PageHeader.Actions><Button onClick={startAdd} variant="primary" size="small">+ Add</Button></PageHeader.Actions>}
-      </PageHeader>
-
-      {adding && <GuardrailForm onSave={save} onCancel={cancel} />}
-      {editing && <GuardrailForm initial={editing} onSave={save} onCancel={cancel} onDelete={async () => { if (await remove(editing.id, editing.name)) cancel(); }} />}
-
-      {!adding && !editing && <div className="Box">
-        {guardrails.map((g, i) => (
-          <div key={g.id || ('builtin-' + i)} className="Box-row">
-            <div className="resource-row-main">
-              <div className="resource-row-head">
-                <span className="resource-row-title">{g.name}</span>
-                {isBuiltin(g) && <Label variant={BADGE.builtin}>built-in</Label>}
-              </div>
-              <div className="resource-row-sub">
-                {[(g.stages || []).map(st => STAGE_LABELS[st] || st).join(', '), g.mode].filter(Boolean).join(' · ')}
-                {g.description && (' — ' + g.description)}
-              </div>
-            </div>
-            {!isBuiltin(g) && (
-              <div className="resource-row-actions">
-                <Button onClick={() => startEdit(g)} size="small" variant="invisible">Edit</Button>
-              </div>
-            )}
-          </div>
-        ))}
-        {guardrails.length === 0 && (
-          <Blankslate>
-            <Blankslate.Description>
-              No guardrails configured. Built-in guardrails (content_filter, max_input_length, max_output_length) are always available.
-            </Blankslate.Description>
-          </Blankslate>
-        )}
-      </div>}
-    </Stack>
+    <CrudPanel title="Guardrails" onAdd={startAdd} form={form} isEmpty={guardrails.length === 0}
+      empty="No guardrails configured. Built-in guardrails (content_filter, max_input_length, max_output_length) are always available.">
+      {guardrails.map((g, i) => (
+        <ResourceRow key={g.id || ('builtin-' + i)}
+          title={g.name}
+          badges={isBuiltin(g) && <Label variant={BADGE.builtin}>built-in</Label>}
+          sub={<>
+            {[(g.stages || []).map(st => STAGE_LABELS[st] || st).join(', '), g.mode].filter(Boolean).join(' · ')}
+            {g.description && (' — ' + g.description)}
+          </>}
+          actions={!isBuiltin(g) && <Button onClick={() => startEdit(g)} size="small" variant="invisible">Edit</Button>}
+        />
+      ))}
+    </CrudPanel>
   );
 }
 

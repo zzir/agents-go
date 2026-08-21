@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Button, CounterLabel, Stack } from '@primer/react';
+import { Button, CounterLabel, Flash, Stack } from '@primer/react';
 import { Blankslate, DataTable, Table, type Column } from '@primer/react/experimental';
 import { HistoryIcon, LinkExternalIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
@@ -117,7 +117,7 @@ export function RunsView({ version, onOpenRun }: { version: string; onOpenRun: (
   }
   return (
     <Stack gap="condensed">
-      {error && <div className="wf-run-hint">Could not load runs: {error}</div>}
+      {error && <Flash variant="danger">Could not load runs: {error}</Flash>}
       {/* One line per run: every text cell clips with an ellipsis and carries
           the full text as its title; the Status column is the one that
           gives way (growCollapse), the others size to their clipped content. */}

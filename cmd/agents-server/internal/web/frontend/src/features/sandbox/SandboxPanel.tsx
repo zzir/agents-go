@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { Button, TextInput, Label, Select, Checkbox, FormControl, Stack, PageHeader } from '@primer/react';
+import { Button, TextInput, Label, Select, Checkbox, FormControl, Stack } from '@primer/react';
 import { FormActions } from '@/components/FormActions';
-import { Blankslate } from '@primer/react/experimental';
+import { CrudPanel } from '@/components/CrudPanel';
+import { ResourceRow } from '@/components/ResourceRow';
 import { api } from '@/lib/api';
 import { BADGE } from '@/lib/badges';
 import { useCrud } from '@/lib/hooks';
@@ -259,41 +260,26 @@ export function SandboxPanel() {
 
   const typeLabel = (t: string) => TYPE_LABELS[t] || t;
 
+  const form = adding ? <SandboxForm onSave={save} onCancel={cancel} />
+    : editing ? <SandboxForm initial={editing} onSave={save} onCancel={cancel} onDelete={async () => { if (await remove(editing.id, editing.name)) cancel(); }} />
+    : null;
+
   return (
-    <Stack gap="normal">
-      <PageHeader>
-        <PageHeader.TitleArea>
-          <PageHeader.Title>Sandboxes</PageHeader.Title>
-        </PageHeader.TitleArea>
-        {!adding && !editing && <PageHeader.Actions><Button onClick={startAdd} variant="primary" size="small">+ Add</Button></PageHeader.Actions>}
-      </PageHeader>
-      {adding && <SandboxForm onSave={save} onCancel={cancel} />}
-      {editing && <SandboxForm initial={editing} onSave={save} onCancel={cancel} onDelete={async () => { if (await remove(editing.id, editing.name)) cancel(); }} />}
-      {!adding && !editing && <div className="Box">
-        {items.map(s => (
-          <div key={s.id} className="Box-row">
-            <div className="resource-row-main">
-              <div className="resource-row-head">
-                <span className="resource-row-title">{s.name}</span>
-                <Label variant={BADGE.type}>{typeLabel(s.type)}</Label>
-              </div>
-              <div className="resource-row-sub">{sandboxSummary(s)}</div>
-            </div>
-            <div className="resource-row-actions">
-              <Button onClick={() => handleTest(s)} size="small" disabled={testingId === s.id} style={{ color: 'var(--fgColor-success)' }}>
-                {testingId === s.id ? 'Testing...' : 'Test'}
-              </Button>
-              <Button onClick={() => startEdit(s)} size="small" variant="invisible">Edit</Button>
-            </div>
-          </div>
-        ))}
-        {items.length === 0 && (
-          <Blankslate>
-            <Blankslate.Description>No sandboxes configured.</Blankslate.Description>
-          </Blankslate>
-        )}
-      </div>}
-    </Stack>
+    <CrudPanel title="Sandboxes" onAdd={startAdd} form={form} isEmpty={items.length === 0} empty="No sandboxes configured.">
+      {items.map(s => (
+        <ResourceRow key={s.id}
+          title={s.name}
+          badges={<Label variant={BADGE.type}>{typeLabel(s.type)}</Label>}
+          sub={sandboxSummary(s)}
+          actions={<>
+            <Button onClick={() => handleTest(s)} size="small" disabled={testingId === s.id} style={{ color: 'var(--fgColor-success)' }}>
+              {testingId === s.id ? 'Testing...' : 'Test'}
+            </Button>
+            <Button onClick={() => startEdit(s)} size="small" variant="invisible">Edit</Button>
+          </>}
+        />
+      ))}
+    </CrudPanel>
   );
 }
 

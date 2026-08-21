@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Button, TextInput, Label, SegmentedControl, Stack, PageHeader } from '@primer/react';
+import { Button, TextInput, Label, SegmentedControl, Stack } from '@primer/react';
 import { FormActions } from '@/components/FormActions';
-import { Blankslate } from '@primer/react/experimental';
+import { CrudPanel } from '@/components/CrudPanel';
+import { ResourceRow } from '@/components/ResourceRow';
 import { api } from '@/lib/api';
 import { useApi, useCrud } from '@/lib/hooks';
 import { fc, seg } from '@/lib/form';
@@ -164,65 +165,45 @@ export function ProviderPanel() {
     api_key: p.api_key || '', base_url: p.base_url || '',
   });
 
+  const form = adding ? <ProviderForm onSave={save} onCancel={cancel} providerTypes={providerTypes} />
+    : editing ? (
+      <ProviderForm
+        initial={toForm(editing)}
+        onSave={save}
+        onCancel={cancel}
+        onDelete={async () => { if (await remove(editing.id, editing.name)) cancel(); }}
+        providerTypes={providerTypes}
+      />
+    ) : null;
+
   return (
-    <Stack gap="normal">
-      <PageHeader>
-        <PageHeader.TitleArea>
-          <PageHeader.Title>Providers</PageHeader.Title>
-        </PageHeader.TitleArea>
-        {!adding && !editing && <PageHeader.Actions><Button onClick={startAdd} variant="primary" size="small">+ Add</Button></PageHeader.Actions>}
-      </PageHeader>
-
-      {adding && <ProviderForm onSave={save} onCancel={cancel} providerTypes={providerTypes} />}
-      {editing && (
-        <ProviderForm
-          initial={toForm(editing)}
-          onSave={save}
-          onCancel={cancel}
-          onDelete={async () => { if (await remove(editing.id, editing.name)) cancel(); }}
-          providerTypes={providerTypes}
-        />
-      )}
-
-      {!adding && !editing && <div className="Box">
-        {providers.map(p => {
-          const meta = providerMeta(p.type || '');
-          const chatgpt = p.auth_mode === 'chatgpt_login';
-          return (
-            <div key={p.id} className="Box-row">
-              <div className="resource-row-main">
-                <div className="resource-row-head">
-                  {/* Login state is STATUS, so it is the dot the MCP list uses,
-                      not a Label; the Sign in/out action names the next move. */}
-                  {chatgpt && <span
-                    className="form-status-dot"
-                    style={{ background: p.chatgpt_logged_in ? 'var(--fgColor-success)' : 'var(--fgColor-attention)' }}
-                    title={p.chatgpt_logged_in ? 'ChatGPT signed in' : 'ChatGPT not signed in'}
-                  />}
-                  <span className="resource-row-title">{p.name}</span>
-                  <Label variant={BADGE.type}>{meta.badge}</Label>
-                </div>
-                <div className="resource-row-sub">{p.base_url || meta.baseURLPlaceholder}</div>
-              </div>
-              <div className="resource-row-actions">
-                {chatgpt && (p.chatgpt_logged_in
-                  ? <Button onClick={() => handleLogout(p.id)} size="small" variant="invisible">Sign out</Button>
-                  : <Button onClick={() => handleLogin(p.id)} size="small" variant="invisible" loading={!!signingIn[p.id]}>Sign in</Button>)}
-                <Button onClick={() => startEdit(p)} size="small" variant="invisible">Edit</Button>
-              </div>
-            </div>
-          );
-        })}
-        {providers.length === 0 && (
-          <Blankslate>
-            <Blankslate.Description>
-              No providers yet. An agent without one runs on the built-in default: the OpenAI backend
-              on the global API key from Settings.
-            </Blankslate.Description>
-          </Blankslate>
-        )}
-      </div>}
-    </Stack>
+    <CrudPanel title="Providers" onAdd={startAdd} form={form} isEmpty={providers.length === 0}
+      empty="No providers yet. An agent without one runs on the built-in default: the OpenAI backend on the global API key from Settings.">
+      {providers.map(p => {
+        const meta = providerMeta(p.type || '');
+        const chatgpt = p.auth_mode === 'chatgpt_login';
+        return (
+          <ResourceRow key={p.id}
+            /* Login state is STATUS, so it is the dot the MCP list uses, not
+               a Label; the Sign in/out action names the next move. */
+            status={chatgpt && <span
+              className="form-status-dot"
+              style={{ background: p.chatgpt_logged_in ? 'var(--fgColor-success)' : 'var(--fgColor-attention)' }}
+              title={p.chatgpt_logged_in ? 'ChatGPT signed in' : 'ChatGPT not signed in'}
+            />}
+            title={p.name}
+            badges={<Label variant={BADGE.type}>{meta.badge}</Label>}
+            sub={p.base_url || meta.baseURLPlaceholder}
+            actions={<>
+              {chatgpt && (p.chatgpt_logged_in
+                ? <Button onClick={() => handleLogout(p.id)} size="small" variant="invisible">Sign out</Button>
+                : <Button onClick={() => handleLogin(p.id)} size="small" variant="invisible" loading={!!signingIn[p.id]}>Sign in</Button>)}
+              <Button onClick={() => startEdit(p)} size="small" variant="invisible">Edit</Button>
+            </>}
+          />
+        );
+      })}
+    </CrudPanel>
   );
 }
 

@@ -1,7 +1,8 @@
 import { useState, useCallback, useEffect, type ChangeEvent } from 'react';
 import { Button, TextInput, Textarea, FormControl, Stack, PageHeader, Select, SegmentedControl, Label } from '@primer/react';
 import { FormActions } from '@/components/FormActions';
-import { Blankslate } from '@primer/react/experimental';
+import { CrudPanel } from '@/components/CrudPanel';
+import { ResourceRow } from '@/components/ResourceRow';
 import { fc } from '@/lib/form';
 import { nameOf } from '@/lib/named';
 import { api } from '@/lib/api';
@@ -315,38 +316,22 @@ function ProviderRoutesSection() {
   const { data: providers } = useApi<ProviderRef[]>(() => api.providers.list() as Promise<ProviderRef[]>);
   const providerName = (id: string) => nameOf(providers, id);
 
+  const form = adding ? <RouteForm onSave={save} onCancel={cancel} providers={providers} />
+    : editing ? <RouteForm initial={editing} onSave={save} onCancel={cancel} onDelete={async () => { if (await remove(editing.id, editing.prefix)) cancel(); }} providers={providers} />
+    : null;
+
   return (
-    <div className="form-group">
-      <PageHeader>
-        <PageHeader.TitleArea>
-          <PageHeader.Title as="h3">Provider Routes</PageHeader.Title>
-        </PageHeader.TitleArea>
-        {!adding && !editing && <PageHeader.Actions><Button onClick={startAdd} variant="primary" size="small">+ Add</Button></PageHeader.Actions>}
-        <PageHeader.Description>Route model names by prefix (e.g. &quot;groq/llama-3&quot; &rarr; prefix &quot;groq&quot;). The agent&apos;s own provider is the fallback.</PageHeader.Description>
-      </PageHeader>
-      {adding && <RouteForm onSave={save} onCancel={cancel} providers={providers} />}
-      {editing && <RouteForm initial={editing} onSave={save} onCancel={cancel} onDelete={async () => { if (await remove(editing.id, editing.prefix)) cancel(); }} providers={providers} />}
-      {!adding && !editing && <div className="Box">
-        {routes.map(r => (
-          <div key={r.id} className="Box-row">
-            <div className="resource-row-main">
-              <div className="resource-row-head">
-                <span className="resource-row-title">{r.prefix}/</span>
-                <span className="resource-row-sub">&rarr; {providerName(r.provider_id)}</span>
-              </div>
-            </div>
-            <div className="resource-row-actions">
-              <Button onClick={() => startEdit(r)} size="small" variant="invisible">Edit</Button>
-            </div>
-          </div>
-        ))}
-        {routes.length === 0 && (
-          <Blankslate>
-            <Blankslate.Description>No provider routes configured.</Blankslate.Description>
-          </Blankslate>
-        )}
-      </div>}
-    </div>
+    <CrudPanel title="Provider Routes" as="section" onAdd={startAdd} form={form}
+      description={<>Route model names by prefix (e.g. &quot;groq/llama-3&quot; &rarr; prefix &quot;groq&quot;). The agent&apos;s own provider is the fallback.</>}
+      isEmpty={routes.length === 0} empty="No provider routes configured.">
+      {routes.map(r => (
+        <ResourceRow key={r.id}
+          title={r.prefix + '/'}
+          badges={<span className="resource-row-sub">&rarr; {providerName(r.provider_id)}</span>}
+          actions={<Button onClick={() => startEdit(r)} size="small" variant="invisible">Edit</Button>}
+        />
+      ))}
+    </CrudPanel>
   );
 }
 

@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Button, Stack } from '@primer/react';
-import { Blankslate, Table } from '@primer/react/experimental';
+import { Button, Flash, Stack } from '@primer/react';
+import { Blankslate } from '@primer/react/experimental';
 import { ZapIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
 import { PAGE_SIZE, useApi, usePage } from '@/lib/hooks';
+import { Paged } from '@/components/Paged';
 import { SecretBox, TriggerForm, TriggerRow, useTriggerActions, type Trigger } from '@/features/workflows/TriggersDialog';
 import { nameOf, type Named } from '@/lib/named';
 
@@ -38,19 +39,15 @@ export function TriggersView({ sessionId }: { sessionId: string | null }) {
       )}
       {actions.minted && <SecretBox trigger={actions.minted} />}
       {loading && <div className="wf-run-hint">Loading…</div>}
-      {error && <div className="wf-run-hint">Could not load triggers: {error}</div>}
+      {error && <Flash variant="danger">Could not load triggers: {error}</Flash>}
       {list.length > 0 && (
-        <div className={page.count > 1 ? 'hub-paged' : undefined}>
+        <Paged page={page} total={list.length} label="Trigger pages">
           <div className="Box">
             {page.items.map(t => (
               <TriggerRow key={t.id} t={t} sessionName={sessionName(t.session_id)} targetName={targetName(t)} actions={actions} />
             ))}
           </div>
-          {page.count > 1 && (
-            <Table.Pagination aria-label="Trigger pages" pageSize={PAGE_SIZE} totalCount={list.length}
-              defaultPageIndex={page.index} onChange={({ pageIndex }) => page.setIndex(pageIndex)} />
-          )}
-        </div>
+        </Paged>
       )}
       {!loading && !error && list.length === 0 && !adding && (
         <Blankslate>

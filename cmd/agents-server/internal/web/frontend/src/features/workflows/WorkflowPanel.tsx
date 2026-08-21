@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Button, TextInput, Textarea, Label, CounterLabel, Select, IconButton, Stack, Dialog } from '@primer/react';
 import { FormActions } from '@/components/FormActions';
-import { Blankslate, Table } from '@primer/react/experimental';
+import { Paged } from '@/components/Paged';
+import { Blankslate } from '@primer/react/experimental';
 import { ChevronUpIcon, ChevronDownIcon, TrashIcon, PlayIcon, ZapIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
 import { PAGE_SIZE, useApi, useCrud, usePage } from '@/lib/hooks';
@@ -346,7 +347,7 @@ export function WorkflowPanel({ sessionId }: { sessionId: string | null }) {
         />
       )}
 
-      {!adding && !editing && <div className={page.count > 1 ? 'hub-paged' : undefined}>
+      {!adding && !editing && <Paged page={page} total={workflows.length} label="Workflow pages">
         <div className="Box">
           {/* The row is the toggle (a div header: it nests the buttons, whose
               clicks are stopped at their box); it opens on what the line
@@ -393,11 +394,7 @@ export function WorkflowPanel({ sessionId }: { sessionId: string | null }) {
             </Blankslate>
           )}
         </div>
-        {page.count > 1 && (
-          <Table.Pagination aria-label="Workflow pages" pageSize={PAGE_SIZE} totalCount={workflows.length}
-            defaultPageIndex={page.index} onChange={({ pageIndex }) => page.setIndex(pageIndex)} />
-        )}
-      </div>}
+      </Paged>}
 
       {running && <RunDialog workflow={running} sessionId={sessionId} onClose={() => setRunning(null)} />}
       {triggersFor && <TriggersDialog workflowId={triggersFor.id} workflowName={triggersFor.name} sessionId={sessionId} onClose={() => setTriggersFor(null)} />}

@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { ActionList, ActionMenu, Button, Dialog, IconButton, Label, Select, Stack, TextInput, Textarea, useConfirm } from '@primer/react';
+import { ActionList, ActionMenu, Button, Dialog, Flash, IconButton, Label, Select, Stack, TextInput, Textarea, useConfirm } from '@primer/react';
+import { Blankslate } from '@primer/react/experimental';
 import { ClockIcon, DependabotIcon, KebabHorizontalIcon, TrashIcon, WebhookIcon, WorkflowIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
 import { useApi, useCopy } from '@/lib/hooks';
@@ -291,14 +292,16 @@ export function TriggersDialog({ workflowId, workflowName, sessionId, onClose }:
         {actions.minted && <SecretBox trigger={actions.minted} />}
 
         {loading && <div className="wf-run-hint">Loading…</div>}
-        {error && <div className="wf-run-hint">Could not load triggers: {error}</div>}
+        {error && <Flash variant="danger">Could not load triggers: {error}</Flash>}
         {(triggers || []).length > 0 && (
           <div className="Box">
             {(triggers || []).map(t => <TriggerRow key={t.id} t={t} sessionName={sessionName(t.session_id)} actions={actions} />)}
           </div>
         )}
         {!loading && !error && (triggers || []).length === 0 && !adding && (
-          <div className="wf-run-hint">No triggers yet.</div>
+          <Blankslate>
+            <Blankslate.Description>No triggers yet.</Blankslate.Description>
+          </Blankslate>
         )}
 
         {adding ? (

@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Button, TextInput, Label, Select, Checkbox, FormControl, Stack, PageHeader, ToggleSwitch } from '@primer/react';
+import { Button, TextInput, Label, Select, Checkbox, FormControl, Stack, ToggleSwitch } from '@primer/react';
 import { FormActions } from '@/components/FormActions';
-import { Blankslate } from '@primer/react/experimental';
+import { CrudPanel } from '@/components/CrudPanel';
+import { ResourceRow } from '@/components/ResourceRow';
 import { api } from '@/lib/api';
 import { BADGE } from '@/lib/badges';
 import { useCrud } from '@/lib/hooks';
@@ -333,53 +334,36 @@ export function McpServerPanel() {
     bumpGrace();
   };
 
+  const form = adding ? <McpForm onSave={handleSave} onCancel={cancel} />
+    : editing ? <McpForm initial={editing} onSave={handleSave} onCancel={cancel} onDelete={async () => { if (await remove(editing.id, editing.name)) cancel(); }} onClearAuth={() => handleClearAuth(editing.id)} />
+    : null;
+
   return (
-    <Stack gap="normal">
-      <PageHeader>
-        <PageHeader.TitleArea>
-          <PageHeader.Title>MCP Servers</PageHeader.Title>
-        </PageHeader.TitleArea>
-        {!adding && !editing && <PageHeader.Actions><Button onClick={startAdd} variant="primary" size="small">+ Add</Button></PageHeader.Actions>}
-      </PageHeader>
-      {adding && <McpForm onSave={handleSave} onCancel={cancel} />}
-      {editing && <McpForm initial={editing} onSave={handleSave} onCancel={cancel} onDelete={async () => { if (await remove(editing.id, editing.name)) cancel(); }} onClearAuth={() => handleClearAuth(editing.id)} />}
-      {!adding && !editing && <div className="Box">
-        {servers.map(s => {
-          const action = STATUS_ACTION[s.status];
-          return (
-            <div key={s.id} className="Box-row">
-              <div className="resource-row-main">
-                <div className="resource-row-head">
-                  <span className="form-status-dot" style={{ background: STATUS_DOT[s.status] || 'var(--fgColor-muted)' }} />
-                  <span className="resource-row-title">{s.name}</span>
-                  {s.config && s.config.auth_mode === 'oauth' && <Label variant={BADGE.type}>OAuth</Label>}
-                </div>
-                <div className="resource-row-sub">
-                  {s.transport_type + (s.config && s.config.command ? ': ' + s.config.command : '') + (s.config && s.config.endpoint ? ': ' + s.config.endpoint : '')}
-                </div>
-              </div>
-              <div className="resource-row-actions">
-                {action && (
-                  <Button
-                    onClick={() => handleConnect(s.id)}
-                    disabled={action.inProgress || busy[s.id]}
-                    size="small"
-                    style={{ color: 'var(--fgColor-success)', minWidth: 90, textAlign: 'center' }}
-                  >{busy[s.id] ? '...' : action.label}</Button>
-                )}
-                <Button onClick={() => startEdit(s)} size="small" variant="invisible">Edit</Button>
-                <EnabledToggle server={s} onToggle={handleToggleEnabled} />
-              </div>
-            </div>
-          );
-        })}
-        {servers.length === 0 && (
-          <Blankslate>
-            <Blankslate.Description>No MCP servers configured.</Blankslate.Description>
-          </Blankslate>
-        )}
-      </div>}
-    </Stack>
+    <CrudPanel title="MCP Servers" onAdd={startAdd} form={form} isEmpty={servers.length === 0} empty="No MCP servers configured.">
+      {servers.map(s => {
+        const action = STATUS_ACTION[s.status];
+        return (
+          <ResourceRow key={s.id}
+            status={<span className="form-status-dot" style={{ background: STATUS_DOT[s.status] || 'var(--fgColor-muted)' }} />}
+            title={s.name}
+            badges={s.config && s.config.auth_mode === 'oauth' && <Label variant={BADGE.type}>OAuth</Label>}
+            sub={s.transport_type + (s.config && s.config.command ? ': ' + s.config.command : '') + (s.config && s.config.endpoint ? ': ' + s.config.endpoint : '')}
+            actions={<>
+              {action && (
+                <Button
+                  onClick={() => handleConnect(s.id)}
+                  disabled={action.inProgress || busy[s.id]}
+                  size="small"
+                  style={{ color: 'var(--fgColor-success)', minWidth: 90, textAlign: 'center' }}
+                >{busy[s.id] ? '...' : action.label}</Button>
+              )}
+              <Button onClick={() => startEdit(s)} size="small" variant="invisible">Edit</Button>
+              <EnabledToggle server={s} onToggle={handleToggleEnabled} />
+            </>}
+          />
+        );
+      })}
+    </CrudPanel>
   );
 }
 

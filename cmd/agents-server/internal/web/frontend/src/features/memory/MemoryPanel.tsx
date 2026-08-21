@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { Button, TextInput, Textarea, Label, Select, Stack, PageHeader } from '@primer/react';
+import { Button, TextInput, Textarea, Label, Select, Stack } from '@primer/react';
 import { FormActions } from '@/components/FormActions';
-import { Blankslate } from '@primer/react/experimental';
+import { CrudPanel } from '@/components/CrudPanel';
+import { ResourceRow } from '@/components/ResourceRow';
 import { api } from '@/lib/api';
 import { nameOf } from '@/lib/named';
 import { useApi, useCrud } from '@/lib/hooks';
@@ -99,53 +100,23 @@ export function MemoryPanel() {
 
   const agentName = (id: string) => (!id || !agents ? 'Global' : nameOf(agents, id));
 
+  const form = adding ? <MemoryForm onSave={save} onCancel={cancel} agents={agents} />
+    : editing ? <MemoryForm initial={editing} onSave={save} onCancel={cancel} onDelete={async () => { if (await remove(editing.id, editing.key)) cancel(); }} agents={agents} />
+    : null;
+
   return (
-    <Stack gap="normal">
-      <PageHeader>
-        <PageHeader.TitleArea>
-          <PageHeader.Title>Memory</PageHeader.Title>
-        </PageHeader.TitleArea>
-        {!adding && !editing && <PageHeader.Actions><Button onClick={startAdd} variant="primary" size="small">+ Add</Button></PageHeader.Actions>}
-      </PageHeader>
-
-      {adding && (
-        <MemoryForm onSave={save} onCancel={cancel} agents={agents} />
-      )}
-      {editing && (
-        <MemoryForm initial={editing} onSave={save} onCancel={cancel} onDelete={async () => { if (await remove(editing.id, editing.key)) cancel(); }} agents={agents} />
-      )}
-
-      {!adding && !editing && <div className="Box">
-        {memories.map(m => (
-          <div key={m.id} className="Box-row">
-            <div className="resource-row-main">
-              <div className="resource-row-head">
-                <span className="resource-row-title">{m.key}</span>
-                {/* Global is the default and says nothing — only a SCOPED
-                    memory carries a badge: the agent it belongs to. */}
-                {m.agent_config_id && (
-                  <Label variant={BADGE.ref}>{agentName(m.agent_config_id)}</Label>
-                )}
-              </div>
-              <div className="resource-row-sub">
-                {m.content.substring(0, 120) +
-                  (m.content.length > 120 ? '...' : '')}
-              </div>
-            </div>
-            <div className="resource-row-actions">
-              <Button onClick={() => startEdit(m)} size="small" variant="invisible">
-                Edit
-              </Button>
-            </div>
-          </div>
-        ))}
-        {memories.length === 0 && (
-          <Blankslate>
-            <Blankslate.Description>No memories stored.</Blankslate.Description>
-          </Blankslate>
-        )}
-      </div>}
-    </Stack>
+    <CrudPanel title="Memory" onAdd={startAdd} form={form} isEmpty={memories.length === 0} empty="No memories stored.">
+      {/* Global is the default and says nothing — only a SCOPED memory
+          carries a badge: the agent it belongs to. */}
+      {memories.map(m => (
+        <ResourceRow key={m.id}
+          title={m.key}
+          badges={m.agent_config_id && <Label variant={BADGE.ref}>{agentName(m.agent_config_id)}</Label>}
+          sub={m.content.substring(0, 120) + (m.content.length > 120 ? '...' : '')}
+          actions={<Button onClick={() => startEdit(m)} size="small" variant="invisible">Edit</Button>}
+        />
+      ))}
+    </CrudPanel>
   );
 }
 

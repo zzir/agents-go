@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { Button, TextInput, Textarea, Label, FormControl, Checkbox, Select, Stack, PageHeader } from '@primer/react';
+import { Button, TextInput, Textarea, Label, FormControl, Checkbox, Select, Stack } from '@primer/react';
 import { FormActions } from '@/components/FormActions';
-import { Blankslate } from '@primer/react/experimental';
+import { CrudPanel } from '@/components/CrudPanel';
+import { ResourceRow } from '@/components/ResourceRow';
 import { api } from '@/lib/api';
 import { useApi, useCrud } from '@/lib/hooks';
 import { fc, seg } from '@/lib/form';
@@ -498,50 +499,32 @@ export function AgentConfigPanel() {
     } catch { return all.length; }
   };
 
+  const form = adding ? <AgentForm onSave={save} onCancel={cancel} mcpServers={mcpServers ?? undefined} skills={skills ?? undefined} allAgents={agents} providerTypes={providerTypes ?? undefined} providers={providers ?? undefined} />
+    : editing ? <AgentForm initial={editing} onSave={save} onCancel={cancel} onDelete={async () => { if (await remove(editing.id, editing.name)) cancel(); }} mcpServers={mcpServers ?? undefined} skills={skills ?? undefined} allAgents={agents} providerTypes={providerTypes ?? undefined} providers={providers ?? undefined} />
+    : null;
+
   return (
-    <Stack gap="normal">
-      <PageHeader>
-        <PageHeader.TitleArea>
-          <PageHeader.Title>Agents</PageHeader.Title>
-        </PageHeader.TitleArea>
-        {!adding && !editing && <PageHeader.Actions><Button onClick={startAdd} variant="primary" size="small">+ Add</Button></PageHeader.Actions>}
-      </PageHeader>
-
-      {adding && <AgentForm onSave={save} onCancel={cancel} mcpServers={mcpServers ?? undefined} skills={skills ?? undefined} allAgents={agents} providerTypes={providerTypes ?? undefined} providers={providers ?? undefined} />}
-      {editing && <AgentForm initial={editing} onSave={save} onCancel={cancel} onDelete={async () => { if (await remove(editing.id, editing.name)) cancel(); }} mcpServers={mcpServers ?? undefined} skills={skills ?? undefined} allAgents={agents} providerTypes={providerTypes ?? undefined} providers={providers ?? undefined} />}
-
-      {!adding && !editing && <div className="Box">
-        {agents.map(a => {
-          const mcp = mcpCount(a.tools);
-          const skl = skillCount(a.skills);
-          const rowProvider = (providers || []).find(p => p.id === a.provider_id);
-          const pmeta = providerMeta(rowProvider?.type ?? '');
-          return (
-            <div key={a.id} className="Box-row">
-              <div className="resource-row-main">
-                <div className="resource-row-head">
-                  <span className="resource-row-title">{a.name}</span>
-                  <Label variant={BADGE.ref}>{rowProvider?.name || pmeta.badge}</Label>
-                  {mcp > 0 && <Label variant={BADGE.count}>{'MCP·' + mcp}</Label>}
-                  {skl > 0 && <Label variant={BADGE.count}>{'Skills·' + skl}</Label>}
-                </div>
-                <div className="resource-row-meta">
-                  <span>{a.model || 'default model'}</span>
-                </div>
-              </div>
-              <div className="resource-row-actions">
-                <Button onClick={() => startEdit(a)} size="small" variant="invisible">Edit</Button>
-              </div>
-            </div>
-          );
-        })}
-        {agents.length === 0 && (
-          <Blankslate>
-            <Blankslate.Description>No agents configured. Add one to customize model, provider, and behavior.</Blankslate.Description>
-          </Blankslate>
-        )}
-      </div>}
-    </Stack>
+    <CrudPanel title="Agents" onAdd={startAdd} form={form} isEmpty={agents.length === 0}
+      empty="No agents configured. Add one to customize model, provider, and behavior.">
+      {agents.map(a => {
+        const mcp = mcpCount(a.tools);
+        const skl = skillCount(a.skills);
+        const rowProvider = (providers || []).find(p => p.id === a.provider_id);
+        const pmeta = providerMeta(rowProvider?.type ?? '');
+        return (
+          <ResourceRow key={a.id}
+            title={a.name}
+            badges={<>
+              <Label variant={BADGE.ref}>{rowProvider?.name || pmeta.badge}</Label>
+              {mcp > 0 && <Label variant={BADGE.count}>{'MCP·' + mcp}</Label>}
+              {skl > 0 && <Label variant={BADGE.count}>{'Skills·' + skl}</Label>}
+            </>}
+            meta={<span>{a.model || 'default model'}</span>}
+            actions={<Button onClick={() => startEdit(a)} size="small" variant="invisible">Edit</Button>}
+          />
+        );
+      })}
+    </CrudPanel>
   );
 }
 
