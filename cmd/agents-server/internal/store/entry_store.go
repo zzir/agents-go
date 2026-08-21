@@ -205,9 +205,10 @@ func (s *EntryStore) SetModel(model string) { s.model = model }
 //
 // The append point is read inside the same transaction as the insert: reading
 // the tip and writing against it are one step (spec §2.5e2), or two concurrent
-// appends both read the old tip and silently fork the branch. The pool is
-// capped at one connection (see Open), so the transaction owns the database
-// for its whole extent and a competing write cannot interleave.
+// appends both read the old tip and silently fork the branch. On SQLite the
+// single-connection pool serializes the two outright; on Postgres two appends
+// can interleave, and the (session, gen, seq) unique index turns the loser
+// into a failed write — either way a forked branch cannot land.
 func (s *EntryStore) Append(ctx context.Context, entries ...session.Entry) error {
 	if len(entries) == 0 {
 		return nil

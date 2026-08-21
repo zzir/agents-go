@@ -1937,9 +1937,12 @@ When a change genuinely doesn't fit, update this list in the same PR.
 
 ## Database
 
-SQLite in WAL mode by default; pass `--db` a `postgres://` (or
-`postgresql://`) DSN to use PostgreSQL 16+ instead — same schema, created the
-same way:
+SQLite in WAL mode with a 5s busy timeout by default — both applied as PRAGMA
+statements and verified when the database opens, because the two SQLite drivers
+the build can pick disagree on DSN pragma syntax and silently drop what they
+don't recognize. Pass `--db` a `postgres://` (or `postgresql://`) DSN to use
+PostgreSQL 16+ instead — same schema, created the same way; the Postgres pool
+is capped at 16 connections:
 
 ```bash
 ./agents-server --db 'postgres://user:pass@localhost:5432/agents?sslmode=disable'
