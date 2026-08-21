@@ -10,6 +10,7 @@ import { ThemeProvider } from '@/theme/ThemeProvider';
 import { AppShell } from '@/layout/AppShell';
 import { SessionList as SessionListImpl } from '@/features/sessions/SessionList';
 import { ChatView, type ChatViewActions, type InspectorPanel } from '@/features/chat/ChatView';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 
 // Lazy: xterm (+ webgl renderer) is a few hundred KB the first paint never
 // needs — the chunk loads when the terminal panel first opens, then the panel
@@ -147,7 +148,7 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
           </PrimerNavList>
         </nav>
         <div className="settings-content">
-          {TabComp ? <TabComp /> : null}
+          {TabComp ? <ErrorBoundary resetKey={tab}><TabComp /></ErrorBoundary> : null}
         </div>
       </div>
     </Dialog>
@@ -274,7 +275,7 @@ function writeHash(sessionId: string | null, panel: InspectorPanel, hub: HubTab 
   }
 }
 
-export default function App() {
+function App() {
   const [authed, setAuthed] = useState(!!getToken());
   const [checking, setChecking] = useState(true);
   // The initial auth check failed at the network level (server unreachable), as
@@ -909,7 +910,9 @@ export default function App() {
   return (
     <ThemeProvider>
       <AppShell onSettingsOpen={() => setSettingsOpen(true)} sidebarPane={sidebarPane} sidebarOpen={sidebarOpen} onSidebarToggle={setSidebarOpen}>
-        {main}
+        {/* A bad turn payload must not take the sidebar, composer and socket
+            down with it; switching session or hub tab retries. */}
+        <ErrorBoundary resetKey={hubTab ?? activeSession}>{main}</ErrorBoundary>
         {terminalEverOpened && (
           <React.Suspense fallback={null}>
             <TerminalPanel
@@ -925,5 +928,21 @@ export default function App() {
       {settingsOpen && <SettingsDialog onClose={() => { setSettingsOpen(false); setSettingsReloadKey(k => k + 1); }} />}
       <GlobalToast />
     </ThemeProvider>
+  );
+}
+
+// The last line of defense: App itself failed to render. Everything below the
+// boundary is gone, so the only honest offer is a reload. Styled with bare
+// CSS vars — ThemeProvider died with the tree.
+export default function Root() {
+  return (
+    <ErrorBoundary fallback={(_retry, error) => (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'var(--base-size-16)', marginTop: '20vh', color: 'var(--fgColor-default)' }}>
+        <div>The app crashed while rendering: {String(error.message || error)}</div>
+        <button onClick={() => window.location.reload()}>Reload</button>
+      </div>
+    )}>
+      <App />
+    </ErrorBoundary>
   );
 }
