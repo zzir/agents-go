@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -38,10 +39,37 @@ type Server struct {
 // straight into memory. The webhook route applies its own tighter cap.
 const maxBodyBytes = 1 << 20
 
+// NormalizeBaseURL validates a --base-url value — the server's public origin —
+// and returns it in canonical form (no trailing slash). Only a bare
+// scheme://host[:port] is accepted: every derived URL (OAuth callbacks, links)
+// assumes the app is mounted at the root.
+func NormalizeBaseURL(raw string) (string, error) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("invalid base-url: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", fmt.Errorf("base-url must be http or https, got %q", raw)
+	}
+	if u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+		return "", fmt.Errorf("base-url must be a bare scheme://host[:port], got %q", raw)
+	}
+	return u.Scheme + "://" + u.Host, nil
+}
+
+// SetTrustedProxies names the proxies (IPs or CIDRs) whose forwarding headers
+// gin's ClientIP may believe. New starts with none trusted — gin's own default
+// trusts everyone, which lets any direct client spoof its IP past the rate
+// limiter and the access log.
+func (s *Server) SetTrustedProxies(proxies []string) error {
+	return s.Engine.SetTrustedProxies(proxies)
+}
+
 // New creates a Server with a gin engine configured for release mode, recovery, and request logging.
 func New(log *slog.Logger, token string) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.New()
+	_ = engine.SetTrustedProxies(nil)
 	engine.Use(gin.Recovery())
 	s := &Server{Engine: engine, token: token, cspPolicy: buildCSP(nil)}
 	engine.Use(limitBody(maxBodyBytes))
@@ -84,6 +112,10 @@ func (s *Server) registerAuthRoutes() {
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	}
 	auth := s.Engine.Group(APIPrefix + "/auth")
+	// The auth surface is where credentials are guessed; everything on it —
+	// including the OAuth endpoints that mount here later — shares one strict
+	// per-IP budget.
+	auth.Use(RateLimit(authRatePerMinute, authRateBurst))
 	auth.POST("/login", login)
 	auth.GET("/check", check)
 }

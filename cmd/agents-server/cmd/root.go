@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -35,6 +36,8 @@ var (
 	flagMaxTasks          int
 	flagLogLevel          string
 	flagLogFormat         string
+	flagBaseURL           string
+	flagTrustedProxies    string
 )
 
 var rootCmd = &cobra.Command{
@@ -53,6 +56,8 @@ func init() {
 	rootCmd.Flags().IntVar(&flagMaxTasks, "max-tasks", 0, "Max live background tasks per session (0 = default 6)")
 	rootCmd.Flags().StringVar(&flagLogLevel, "log-level", "info", "Log level: debug, info, warn, error")
 	rootCmd.Flags().StringVar(&flagLogFormat, "log-format", "text", "Log format: text, json")
+	rootCmd.Flags().StringVar(&flagBaseURL, "base-url", "", "Public origin of this server, scheme://host[:port] (required behind a reverse proxy for OAuth flows)")
+	rootCmd.Flags().StringVar(&flagTrustedProxies, "trusted-proxies", "", "Comma-separated proxy IPs/CIDRs whose X-Forwarded-For is believed for client IPs (default: none)")
 }
 
 // buildVersion is the plain version string (without commit/date), surfaced by
@@ -87,6 +92,14 @@ func run(_ *cobra.Command, _ []string) error {
 	// drain is persisting.
 	bgCtx, stopBg := context.WithCancel(ctx)
 	defer stopBg()
+
+	baseURL := ""
+	if flagBaseURL != "" {
+		var err error
+		if baseURL, err = server.NormalizeBaseURL(flagBaseURL); err != nil {
+			return err
+		}
+	}
 
 	db, err := store.OpenDB(flagDB)
 	if err != nil {
@@ -156,7 +169,7 @@ func run(_ *cobra.Command, _ []string) error {
 		Stopper: runner, Compactor: runner,
 	})
 	agentConfigHandler := handler.NewAgentConfigHandler(agentConfigStore, mcpServerStore, providerStore, guardrailResolver)
-	mcpServerHandler := handler.NewMcpServerHandler(mcpServerStore, mcpManager, oauthCoordinator)
+	mcpServerHandler := handler.NewMcpServerHandler(mcpServerStore, mcpManager, oauthCoordinator, baseURL)
 	memoryHandler := handler.NewMemoryHandler(memoryStore)
 	settingHandler := handler.NewSettingHandler(settingStore)
 	skillHandler := handler.NewSkillHandler(flagWorkspace)
@@ -215,6 +228,15 @@ func run(_ *cobra.Command, _ []string) error {
 	log.Info("auth token", "token", token)
 
 	srv := server.New(log, token)
+	if flagTrustedProxies != "" {
+		proxies := strings.Split(flagTrustedProxies, ",")
+		for i := range proxies {
+			proxies[i] = strings.TrimSpace(proxies[i])
+		}
+		if err := srv.SetTrustedProxies(proxies); err != nil {
+			return fmt.Errorf("invalid --trusted-proxies: %w", err)
+		}
+	}
 	srv.RegisterAPI(handler.Handlers{
 		Sessions:       sessionHandler,
 		Runs:           runHandler,

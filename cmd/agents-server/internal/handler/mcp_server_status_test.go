@@ -18,7 +18,7 @@ import (
 // reconnects it silently — no popup, so no needs_auth).
 func TestMcpServerStatusDerivation(t *testing.T) {
 	db := newTestDB(t)
-	h := NewMcpServerHandler(store.NewMcpServerStore(db), bridge.NewMcpManager(t.Context(), settings.NewReader(store.NewSettingStore(db))), nil)
+	h := NewMcpServerHandler(store.NewMcpServerStore(db), bridge.NewMcpManager(t.Context(), settings.NewReader(store.NewSettingStore(db))), nil, "")
 
 	oauthCfg := json.RawMessage(`{"endpoint":"http://x","auth_mode":"oauth"}`)
 	cases := []struct {
@@ -49,7 +49,7 @@ func TestMcpServerConnectRejectsDisabled(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := newTestDB(t)
 	mcpStore := store.NewMcpServerStore(db)
-	h := NewMcpServerHandler(mcpStore, bridge.NewMcpManager(t.Context(), settings.NewReader(store.NewSettingStore(db))), nil)
+	h := NewMcpServerHandler(mcpStore, bridge.NewMcpManager(t.Context(), settings.NewReader(store.NewSettingStore(db))), nil, "")
 	engine := gin.New()
 	engine.POST("/mcp-servers/:id/connect", h.Connect)
 
@@ -69,7 +69,7 @@ func TestMcpServerUpdateDisableReportsDisabled(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := newTestDB(t)
 	mcpStore := store.NewMcpServerStore(db)
-	h := NewMcpServerHandler(mcpStore, bridge.NewMcpManager(t.Context(), settings.NewReader(store.NewSettingStore(db))), nil)
+	h := NewMcpServerHandler(mcpStore, bridge.NewMcpManager(t.Context(), settings.NewReader(store.NewSettingStore(db))), nil, "")
 	engine := gin.New()
 	engine.PUT("/mcp-servers/:id", h.Update)
 

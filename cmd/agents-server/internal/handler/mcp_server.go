@@ -7,7 +7,6 @@ import (
 	"errors"
 	"html"
 	"net/http"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -21,11 +20,14 @@ type McpServerHandler struct {
 	store   *store.McpServerStore
 	manager *bridge.McpManager
 	oauth   *bridge.OAuthCoordinator
+	// baseURL is the configured public origin (--base-url); empty means derive
+	// from the direct connection.
+	baseURL string
 }
 
 // NewMcpServerHandler returns a handler backed by the given store and connection manager.
-func NewMcpServerHandler(s *store.McpServerStore, m *bridge.McpManager, oc *bridge.OAuthCoordinator) *McpServerHandler {
-	return &McpServerHandler{store: s, manager: m, oauth: oc}
+func NewMcpServerHandler(s *store.McpServerStore, m *bridge.McpManager, oc *bridge.OAuthCoordinator, baseURL string) *McpServerHandler {
+	return &McpServerHandler{store: s, manager: m, oauth: oc, baseURL: baseURL}
 }
 
 // MCP server lifecycle states reported to the UI. Exactly one is derived per
@@ -336,7 +338,7 @@ func (h *McpServerHandler) Connect(c *gin.Context) {
 	if cfg.TransportType == "streamable_http" {
 		var hc store.HTTPMcpConfig
 		if err := json.Unmarshal(cfg.Config, &hc); err == nil && hc.AuthMode == "oauth" {
-			origin := externalOrigin(c.Request)
+			origin := h.externalOrigin(c.Request)
 			result, err := h.oauth.ConnectWithOAuth(c.Request.Context(), h.manager, cfg, &hc, origin)
 			if err != nil {
 				upstreamError(c, err)
@@ -361,60 +363,20 @@ func (h *McpServerHandler) Connect(c *gin.Context) {
 	c.JSON(http.StatusOK, mcpConnectResp{Status: "connected"})
 }
 
-// externalOrigin derives the browser-facing origin (scheme://host) used to build
-// the OAuth redirect_uri. Behind a TLS-terminating reverse proxy the request
-// reaches us as plain http on an internal host, so the real scheme/host live in
-// the forwarding headers: this prefers RFC 7239 Forwarded, then the de-facto
-// X-Forwarded-Proto / X-Forwarded-Host, and otherwise falls back to the direct
-// connection. The redirect_uri must match what the browser actually loaded, or
-// the authorization server rejects the callback.
-//
-// NOTE: these headers are trustworthy only when a trusted reverse proxy sets
-// them — a direct client can forge them. There is no proxy-trust setting yet, so
-// this assumes the documented reverse-proxy deployment.
-// TODO: gate forwarded-header trust on an explicit --trusted-proxy / trust-proxy
-// config flag once one exists.
-func externalOrigin(r *http.Request) string {
+// externalOrigin is the browser-facing origin (scheme://host) used to build
+// the OAuth redirect_uri: --base-url when configured, otherwise the direct
+// connection. Forwarded/X-Forwarded-* headers are deliberately NOT consulted —
+// a direct client can forge them — so behind a TLS-terminating reverse proxy
+// --base-url is required for OAuth flows to build a matching redirect_uri.
+func (h *McpServerHandler) externalOrigin(r *http.Request) string {
+	if h.baseURL != "" {
+		return h.baseURL
+	}
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"
 	}
-	host := r.Host
-	if fwd := r.Header.Get("Forwarded"); fwd != "" {
-		if p := forwardedParam(fwd, "proto"); p != "" {
-			scheme = p
-		}
-		if h := forwardedParam(fwd, "host"); h != "" {
-			host = h
-		}
-	} else {
-		// X-Forwarded-* may be a comma-separated proxy chain; the first element is
-		// the value closest to the original client.
-		if p := r.Header.Get("X-Forwarded-Proto"); p != "" {
-			scheme = strings.TrimSpace(strings.Split(p, ",")[0])
-		}
-		if h := r.Header.Get("X-Forwarded-Host"); h != "" {
-			host = strings.TrimSpace(strings.Split(h, ",")[0])
-		}
-	}
-	return scheme + "://" + host
-}
-
-// forwardedParam extracts a token=value parameter (e.g. proto, host) from the
-// first element of an RFC 7239 Forwarded header. Values may be double-quoted.
-func forwardedParam(header, key string) string {
-	first := header
-	if before, _, ok := strings.Cut(header, ","); ok {
-		first = before
-	}
-	for part := range strings.SplitSeq(first, ";") {
-		name, val, ok := strings.Cut(strings.TrimSpace(part), "=")
-		if !ok || !strings.EqualFold(strings.TrimSpace(name), key) {
-			continue
-		}
-		return strings.Trim(strings.TrimSpace(val), `"`)
-	}
-	return ""
+	return scheme + "://" + r.Host
 }
 
 // ClearOAuth disconnects the MCP server identified by the id path parameter

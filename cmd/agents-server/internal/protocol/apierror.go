@@ -36,4 +36,7 @@ const (
 	// Distinct from internal: the request was fine and retrying elsewhere (or
 	// later) is the answer.
 	CodeUnavailable = "unavailable"
+	// CodeRateLimited is a per-client refusal (HTTP 429): the request was fine,
+	// the rate was not.
+	CodeRateLimited = "rate_limited"
 )

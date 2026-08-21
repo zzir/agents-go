@@ -13,7 +13,7 @@ panel/handler pair follows.
 
 ## Contents
 
-- [Quick start](#quick-start) — build, flags
+- [Quick start](#quick-start) — build, flags, [deployment](#deployment)
 - [Authentication](#authentication)
 - [REST API](#rest-api) — [errors](#errors) · [conventions](#response-conventions) · [sessions](#sessions--apiv1sessions) · [runs / SSE](#runs--apiv1runs) · [approvals](#approvals--apiv1approvals) · [tasks](#tasks--apiv1tasks) · [agents](#agents--apiv1agents) · [MCP servers](#mcp-servers--apiv1mcp-servers) · [memories](#memories--apiv1memories) · [settings](#settings--apiv1settings) · [skills](#skills--apiv1skills-read-only) · [skill repos](#skill-repos--apiv1skill-repos) · [providers](#providers--apiv1providers) · [workflows](#workflows--apiv1workflows) · [provider routes](#provider-routes--apiv1provider-routes) · [guardrails](#guardrails--apiv1guardrails) · [sandboxes](#sandboxes--apiv1sandboxes) · [playground](#playground--apiv1playground) · [secret handling](#secret-handling) · [OpenAPI](#openapi)
 - [WebSocket protocol](#websocket-protocol)
@@ -52,6 +52,30 @@ On startup the server prints an auto-generated auth token. Open
 | `--max-tasks`           | `0`         | Max live background tasks per session (`0` = default 6) |
 | `--log-level`           | `info`      | `debug`, `info`, `warn` or `error`                     |
 | `--log-format`          | `text`      | `text` for a terminal, `json` for a collector          |
+| `--base-url`            | —           | Public origin, `scheme://host[:port]` — see [Deployment](#deployment) |
+| `--trusted-proxies`     | —           | Comma-separated proxy IPs/CIDRs whose `X-Forwarded-For` is believed for client IPs |
+
+### Deployment
+
+Standing alone on localhost, no flags are needed. Behind a TLS-terminating
+reverse proxy, two things change:
+
+- **`--base-url` is required for OAuth flows** (MCP server OAuth today). Every
+  externally visible URL — an OAuth `redirect_uri` must match what the browser
+  loaded — is derived from it. Forwarding headers (`Forwarded`,
+  `X-Forwarded-*`) are deliberately never consulted for URL construction: a
+  direct client can forge them, and an explicit origin cannot be spoofed. Only
+  a bare `scheme://host[:port]` is accepted; the app assumes it is mounted at
+  the proxy's root.
+- **`--trusted-proxies` names who may set `X-Forwarded-For`.** It affects only
+  the client IP used by the rate limiter and the access log. The default
+  trusts no proxy — without it a direct client could put any address in the
+  header and dodge per-IP limits. (This overrides gin's trust-everyone
+  default.)
+
+The server itself speaks plain HTTP; TLS is the proxy's job. The auth endpoints
+(`/api/v1/auth/*`) and the webhook (`/hooks/:id`) enforce per-IP rate limits —
+exceeding one answers `429` with code `rate_limited`.
 
 ### Logging
 
@@ -132,6 +156,7 @@ detail.
 | `upstream`     | 502  | A failing upstream dependency (model provider, MCP server, sandbox host, git) |
 | `internal`     | 500  | Unexpected server error (detail is logged, not returned)                      |
 | `unavailable`  | 503  | Transient refusal while the server drains for shutdown — retry later          |
+| `rate_limited` | 429  | This client IP exceeded an endpoint's rate budget — slow down and retry       |
 
 ### Response conventions
 
