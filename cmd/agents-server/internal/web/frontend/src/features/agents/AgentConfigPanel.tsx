@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Button, TextInput, Textarea, Label, FormControl, Checkbox, Select, Stack, PageHeader } from '@primer/react';
+import { FormActions } from '@/components/FormActions';
 import { Blankslate } from '@primer/react/experimental';
 import { api } from '@/lib/api';
 import { useApi, useCrud } from '@/lib/hooks';
@@ -439,8 +440,8 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
         </div>
       </Disclosure>
 
-      <div className="form-actions">
-        <Button onClick={() => {
+      <FormActions
+        onSave={() => {
           const ms: Record<string, unknown> = { ...preservedMs };
           const reasoning: Record<string, unknown> = { ...(initMs.reasoning as Record<string, unknown> | undefined) };
           if (reasoningEffort) reasoning.effort = reasoningEffort; else delete reasoning.effort;
@@ -461,10 +462,10 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
           const model_settings = Object.keys(ms).length > 0 ? JSON.stringify(ms) : '';
           const flatPayload = { ...form, handoffs: JSON.stringify(selectedHandoffs), tools: JSON.stringify(selectedMcp), skills: JSON.stringify(effectiveSkills), model_settings };
           onSave(nestConfig(flatPayload) as unknown as AgentFormData & { handoffs: string; tools: string; skills: string; model_settings: string });
-        }} variant="primary">Save</Button>
-        {onCancel && <Button onClick={onCancel}>Cancel</Button>}
-        {onDelete && <Button onClick={onDelete} variant="danger" style={{ marginLeft: 'auto' }}>Delete</Button>}
-      </div>
+        }}
+        onCancel={onCancel}
+        onDelete={onDelete}
+      />
     </Stack>
   );
 }

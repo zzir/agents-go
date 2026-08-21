@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { CopyIcon, CheckIcon, CodeIcon, EyeIcon } from '@primer/octicons-react';
 import { sanitizeSVG } from '@/lib/markdown';
+import { useCopy } from '@/lib/hooks';
 import { ZoomOverlay } from '@/features/chat/ZoomOverlay';
 
 /* ---------- mermaid helpers ---------- */
@@ -168,14 +169,8 @@ export function MermaidBlock({ source }: { source: string }) {
   const { svg, failed } = useMermaidSvg(source);
   const [viewerOpen, setViewerOpen] = useState(false);
   const [mode, setMode] = useState<'code' | 'svg'>('svg');
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = useCallback(() => {
-    navigator.clipboard.writeText(source).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
-  }, [source]);
+  const { copied, copy } = useCopy();
+  const handleCopy = useCallback(() => copy(source), [source, copy]);
 
   const showSvg = mode === 'svg' && svg && !failed;
 

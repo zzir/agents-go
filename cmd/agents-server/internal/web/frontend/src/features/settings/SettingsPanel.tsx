@@ -1,7 +1,9 @@
 import { useState, useCallback, useEffect, type ChangeEvent } from 'react';
 import { Button, TextInput, Textarea, FormControl, Stack, PageHeader, Select, SegmentedControl, Label } from '@primer/react';
+import { FormActions } from '@/components/FormActions';
 import { Blankslate } from '@primer/react/experimental';
 import { fc } from '@/lib/form';
+import { nameOf } from '@/lib/named';
 import { api } from '@/lib/api';
 import { useApi, useCrud } from '@/lib/hooks';
 import { toast } from '@/lib/toast';
@@ -302,11 +304,7 @@ function RouteForm({ initial, onSave, onCancel, onDelete, providers }: {
           {(providers || []).map(p => <Select.Option key={p.id} value={p.id}>{p.name}</Select.Option>)}
         </Select>
       ), 'The endpoint this prefix routes to — its credential lives there')}
-      <div className="form-actions">
-        <Button onClick={() => { if (draft.prefix && draft.provider_id) onSave(draft); }} variant="primary" size="small">Save</Button>
-        <Button onClick={onCancel} size="small">Cancel</Button>
-        {onDelete && <Button onClick={onDelete} variant="danger" size="small" style={{ marginLeft: 'auto' }}>Delete</Button>}
-      </div>
+      <FormActions size="small" onSave={() => { if (draft.prefix && draft.provider_id) onSave(draft); }} onCancel={onCancel} onDelete={onDelete} />
     </Stack>
   );
 }
@@ -315,7 +313,7 @@ function ProviderRoutesSection() {
   const { items: routes, adding, editing, startAdd, startEdit, cancel, save, remove } =
     useCrud<ProviderRoute, RouteDraft>(api.providerRoutes);
   const { data: providers } = useApi<ProviderRef[]>(() => api.providers.list() as Promise<ProviderRef[]>);
-  const providerName = (id: string) => (providers || []).find(p => p.id === id)?.name || id.slice(0, 8);
+  const providerName = (id: string) => nameOf(providers, id);
 
   return (
     <div className="form-group">

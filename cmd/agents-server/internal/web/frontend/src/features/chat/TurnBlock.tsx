@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, memo } from 'react';
 import { IconButton } from '@primer/react';
+import { useCopy } from '@/lib/hooks';
 import { ChevronRightIcon, ChevronLeftIcon, RepoForkedIcon, CopyIcon, CheckIcon, SyncIcon, AlertIcon, StopIcon, ShieldIcon } from '@primer/octicons-react';
 import { Disclosure } from '@/components/Disclosure';
 import { formatDuration, type TurnPart, type ErrorPart, type CancelledPart, type Branches } from '@/lib/timeline';
@@ -103,7 +104,7 @@ export const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, 
   const { running, compacting, liveAgentName, liveStartedAt } = useChatSession();
   const { regenerate, fork, switchBranch } = useChatActions();
   const isEmpty = parts.length === 0 && !streaming && !reasoning;
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopy();
 
   const { segments, notices } = useMemo(() => buildSegments(parts), [parts]);
 
@@ -121,12 +122,8 @@ export const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, 
   );
 
   const handleCopy = useCallback(() => {
-    if (!turnText) return;
-    navigator.clipboard.writeText(turnText).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
-  }, [turnText]);
+    if (turnText) copy(turnText);
+  }, [turnText, copy]);
 
   const regenEntryId = prompt?.entryId;
   const regenContent = prompt?.content;

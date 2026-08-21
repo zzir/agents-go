@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Button, TextInput, Label, Select, Checkbox, FormControl, Stack, PageHeader, ToggleSwitch } from '@primer/react';
+import { FormActions } from '@/components/FormActions';
 import { Blankslate } from '@primer/react/experimental';
 import { api } from '@/lib/api';
 import { BADGE } from '@/lib/badges';
@@ -192,16 +193,16 @@ function McpForm({ initial, onSave, onCancel, onDelete, onClearAuth }: McpFormPr
         <Checkbox checked={form.enabled} onChange={e => set('enabled', e.target.checked)} />
         <FormControl.Label>Enabled</FormControl.Label>
       </FormControl>
-      <div className="form-actions">
-        <Button onClick={() => {
+      <FormActions
+        onSave={() => {
           let packed: Partial<McpServer>;
           try { packed = pack(form); }
           catch (e) { toast.error((e as Error).message); return; }
           onSave(packed);
-        }} variant="primary">Save</Button>
-        {onCancel && <Button onClick={onCancel}>Cancel</Button>}
-        {onDelete && <Button onClick={onDelete} variant="danger" style={{ marginLeft: 'auto' }}>Delete</Button>}
-      </div>
+        }}
+        onCancel={onCancel}
+        onDelete={onDelete}
+      />
     </Stack>
   );
 }

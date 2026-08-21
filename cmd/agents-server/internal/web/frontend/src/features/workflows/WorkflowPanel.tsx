@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { Button, TextInput, Textarea, Label, CounterLabel, Select, IconButton, Stack, Dialog } from '@primer/react';
+import { FormActions } from '@/components/FormActions';
 import { Blankslate, Table } from '@primer/react/experimental';
 import { ChevronUpIcon, ChevronDownIcon, TrashIcon, PlayIcon, ZapIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
 import { PAGE_SIZE, useApi, useCrud, usePage } from '@/lib/hooks';
 import { fc } from '@/lib/form';
+import { nameOf } from '@/lib/named';
 import { BADGE } from '@/lib/badges';
 import { toast } from '@/lib/toast';
 import { EdgeGraph, END, stepLabel, type Workflow, type WorkflowBudget, type WorkflowStep } from '@/features/workflows/graph';
@@ -232,11 +234,7 @@ function WorkflowForm({ initial, onSave, onCancel, onDelete, agents }: WorkflowF
         <div className="wf-run-hint">Over any of these the execution stops, failed with the reason. Laps default to 3: a loop that keeps returning to the same step is not converging.</div>
       </div>
 
-      <div className="form-actions">
-        <Button onClick={() => onSave(form)} variant="primary">Save</Button>
-        {onCancel && <Button onClick={onCancel}>Cancel</Button>}
-        {onDelete && <Button onClick={onDelete} variant="danger" style={{ marginLeft: 'auto' }}>Delete</Button>}
-      </div>
+      <FormActions onSave={() => onSave(form)} onCancel={onCancel} onDelete={onDelete} />
     </Stack>
   );
 }
@@ -314,7 +312,7 @@ export function WorkflowPanel({ sessionId }: { sessionId: string | null }) {
   const [running, setRunning] = useState<Workflow | null>(null);
   const [triggersFor, setTriggersFor] = useState<Workflow | null>(null);
 
-  const agentName = (id: string) => (agents || []).find(a => a.id === id)?.name || id.slice(0, 8);
+  const agentName = (id: string) => nameOf(agents, id);
   // A step in the list goes by its name, or its agent's when it has none —
   // the summary line and the drawn chart agree.
   const stepName = (s: WorkflowStep) => s.name || agentName(s.agent_config_id);

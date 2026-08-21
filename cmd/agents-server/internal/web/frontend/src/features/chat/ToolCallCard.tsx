@@ -1,4 +1,5 @@
 import { Button, Label } from '@primer/react';
+import { StatusLabel } from '@/lib/status';
 import { ToolsIcon, StackIcon, SyncIcon, CheckIcon, DotFillIcon, CircleIcon } from '@primer/octicons-react';
 import { Disclosure } from '@/components/Disclosure';
 import { useAsyncMarkdown } from '@/lib/markdown';
@@ -256,8 +257,8 @@ export function ToolCallCard({ toolCall, live, onInspectTask, onRetryTask }: Too
           same way whether or not it has a summary. */}
       <span className="ToolCallCard-spacer" />
       {mcpServer && <Label>{mcpServer}</Label>}
-      {task?.status && <Label variant={task.status === 'completed' ? 'success' : task.status === 'failed' ? 'danger' : task.status === 'cancelled' ? 'secondary' : 'accent'}>{'task ' + task.status.replace('_', ' ')}</Label>}
-      {!task?.status && liveTaskStatus && <Label variant={liveTaskStatus === 'input_required' ? 'attention' : 'accent'}>{'task ' + liveTaskStatus.replace('_', ' ')}</Label>}
+      {task?.status && <StatusLabel status={task.status} prefix="task" />}
+      {!task?.status && liveTaskStatus && <StatusLabel status={liveTaskStatus} prefix="task" />}
       {(task?.attempt ?? 0) > 1 && <Label variant="secondary">{'attempt ' + task!.attempt}</Label>}
       {/* Only on a card whose task is FAILED: a retry needs something to
           resume, and the badge above is the card's own word on that. */}

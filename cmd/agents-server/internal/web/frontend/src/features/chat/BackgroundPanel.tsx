@@ -13,26 +13,13 @@ import { useChatActions, useChatSession, useChatBackground } from '@/features/ch
 import { useDecisionHold } from '@/features/chat/useDecisionHold';
 import { api } from '@/lib/api';
 import { toast } from '@/lib/toast';
+import { isLive, statusDot } from '@/lib/status';
+import { useCopy, useNowTicker } from '@/lib/hooks';
 
 // This is the panel behind the top bar's Tasks button. It holds both kinds of
 // background work — spawned tasks and workflow executions — because to a
 // person they are one thing: work happening in a session they are not in. The
 // UI keeps saying "Tasks"; a second word would be a second concept.
-
-// statusDot carries the state as color (with the words in the
-// tooltip/aria-label): in the list the group headers name the state, in the
-// detail header the action buttons spell it out. Live states pulse, same
-// rhythm as the trace live dot.
-// statusDot is the task's status as the colored dot every list shows beside
-// its title (form-status-dot's task cousin).
-export function statusDot(status: string) {
-  const text = status.replace('_', ' ');
-  return <span className={'task-status-dot task-status-dot-' + status} title={text} aria-label={text} role="img" />;
-}
-
-function isLive(status: string): boolean {
-  return status === 'working' || status === 'input_required';
-}
 
 // The list's group order: live work first, then terminal states by kind.
 const GROUPS: Array<{ title: string; match: (s: BackgroundItem['status']) => boolean }> = [
@@ -52,12 +39,7 @@ export function BackgroundListPanel({ onClose }: { onClose: () => void }) {
   const { held, decide } = useDecisionHold();
   const hasActive = items.some(it => isLive(it.status));
   // Live durations tick once a second while anything is active.
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!hasActive) return;
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, [hasActive]);
+  const now = useNowTicker(hasActive);
   const groups = useMemo(() => GROUPS
     .map(g => ({ title: g.title, items: items.filter(it => g.match(it.status)).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)) }))
     .filter(g => g.items.length > 0), [items]);
@@ -170,7 +152,7 @@ export function BackgroundDetailPanel({ item, view, onBack, onClose }: Backgroun
   // question a sequence gets asked; a task's only shape is its transcript.
   const [tab, setTab] = useState<'steps' | 'transcript' | 'trace'>(item.kind === 'workflow' ? 'steps' : 'transcript');
   const [traceExpanded, setTraceExpanded] = useState(true);
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopy();
   const { held, decide } = useDecisionHold();
   const live = isLive(item.status);
   // One segment per RUN — a retry starts a new run on the same child session,
@@ -206,9 +188,7 @@ export function BackgroundDetailPanel({ item, view, onBack, onClose }: Backgroun
         <div className="task-detail-spacer" />
         {/* Full id, right-aligned; only the action buttons (live work) may
             compress it — then the text ellipsizes, never the buttons. */}
-        <button className="task-detail-id" title="Copy id" onClick={() => {
-          navigator.clipboard.writeText(item.id).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); });
-        }}>
+        <button className="task-detail-id" title="Copy id" onClick={() => copy(item.id)}>
           <span className="task-detail-id-text">{item.id}</span> {copied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
         </button>
         {item.status === 'input_required' && item.pendingCallId && onApprove && onReject && (

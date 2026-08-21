@@ -119,10 +119,12 @@
   background: var(--bgColor-neutral-muted);
   color: var(--fgColor-muted);
 }
+/* Colors follow lib/status.tsx's table: input_required is attention like the
+   task dot, cancelled stays the neutral default gray. */
 .wf-outcome-completed, .wf-outcome-pass { background: var(--bgColor-success-muted); color: var(--fgColor-success); }
 .wf-outcome-failed, .wf-outcome-fail { background: var(--bgColor-danger-muted); color: var(--fgColor-danger); }
-.wf-outcome-running, .wf-outcome-input_required { background: var(--bgColor-accent-muted); color: var(--fgColor-accent); }
-.wf-outcome-cancelled { background: var(--bgColor-attention-muted); color: var(--fgColor-attention); }
+.wf-outcome-running { background: var(--bgColor-accent-muted); color: var(--fgColor-accent); }
+.wf-outcome-input_required { background: var(--bgColor-attention-muted); color: var(--fgColor-attention); }
 .wf-steps-brief {
   margin-top: var(--base-size-12);
   padding: var(--base-size-8) var(--base-size-12);

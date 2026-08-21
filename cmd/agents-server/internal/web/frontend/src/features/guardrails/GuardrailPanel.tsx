@@ -1,5 +1,6 @@
 import { useState, type ChangeEvent } from 'react';
 import { Button, TextInput, Label, SegmentedControl, Stack, PageHeader, Checkbox, FormControl } from '@primer/react';
+import { FormActions } from '@/components/FormActions';
 import { Blankslate } from '@primer/react/experimental';
 import { api } from '@/lib/api';
 import { useCrud } from '@/lib/hooks';
@@ -137,11 +138,7 @@ function GuardrailForm({ initial, onSave, onCancel, onDelete }: GuardrailFormPro
           <FormControl.Caption>At the input stage, run before the model call (a gate) instead of racing it — a tripwire then prevents the call and any token spend</FormControl.Caption>
         </FormControl>
       )}
-      <div className="form-actions">
-        <Button onClick={handleSave} variant="primary">Save</Button>
-        {onCancel && <Button onClick={onCancel}>Cancel</Button>}
-        {onDelete && <Button onClick={onDelete} variant="danger" style={{ marginLeft: 'auto' }}>Delete</Button>}
-      </div>
+      <FormActions onSave={handleSave} onCancel={onCancel} onDelete={onDelete} />
     </Stack>
   );
 }

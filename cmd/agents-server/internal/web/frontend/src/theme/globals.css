@@ -526,13 +526,17 @@ a:hover {
     margin-bottom: var(--base-size-16);
 }
 
-/* Footer action row — set off from the fields above */
+/* Footer action row — set off from the fields above; Delete on the far edge */
 .form-actions {
     display: flex;
     gap: var(--base-size-8);
     margin-top: var(--base-size-24);
     padding-top: var(--base-size-16);
     border-top: 1px solid var(--borderColor-muted);
+}
+
+.form-actions .form-actions-delete {
+    margin-left: auto;
 }
 
 /* Advanced disclosure — a plain Disclosure; the header is the ruled toggle */

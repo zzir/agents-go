@@ -1,5 +1,6 @@
-import { useState, useCallback, memo } from 'react';
+import { useCallback, memo } from 'react';
 import { IconButton } from '@primer/react';
+import { useCopy } from '@/lib/hooks';
 import { PulseIcon, CopyIcon, CheckIcon } from '@primer/octicons-react';
 import { parseTaskNotification } from '@/lib/protocol';
 import { useChatActions } from '@/features/chat/ChatSessionContext';
@@ -14,15 +15,11 @@ interface UserMessageProps {
 
 export const UserMessage = memo(function UserMessage({ content, traceRunId, msgIdx, entryId }: UserMessageProps) {
   const { openTrace } = useChatActions();
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopy();
 
   const handleCopy = useCallback(() => {
-    if (!content) return;
-    navigator.clipboard.writeText(content).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
-  }, [content]);
+    if (content) copy(content);
+  }, [content, copy]);
 
   // A server-injected notification (a finished task or workflow) never renders
   // in the timeline: the model reads it verbatim, but for the person the

@@ -3,6 +3,7 @@ import { Button, Flash, SelectPanel, type SelectPanelItemInput } from '@primer/r
 import { CommentDiscussionIcon, PinIcon, PlusIcon, TriangleDownIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
+import { nameOf } from '@/lib/named';
 import { filterSessionsByName } from '@/lib/sessionFilter';
 import { createOrReuseSession } from '@/lib/newSession';
 import { toast } from '@/lib/toast';
@@ -45,7 +46,7 @@ export function SessionPicker({ value, onChange, placeholder = 'Select a convers
       }),
     ];
   }, [list, filter, creating]);
-  const selectedName = value ? (list.find(s => s.id === value)?.name || value.slice(0, 8)) : '';
+  const selectedName = value ? nameOf(list, value) : '';
   const selected = value ? (items.find(i => i.id === value) || { id: value, text: selectedName }) : undefined;
 
   const createNew = async () => {

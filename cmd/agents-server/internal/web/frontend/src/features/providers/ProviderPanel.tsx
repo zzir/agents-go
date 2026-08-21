@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, TextInput, Label, SegmentedControl, Stack, PageHeader } from '@primer/react';
+import { FormActions } from '@/components/FormActions';
 import { Blankslate } from '@primer/react/experimental';
 import { api } from '@/lib/api';
 import { useApi, useCrud } from '@/lib/hooks';
@@ -97,11 +98,7 @@ function ProviderForm({ initial, onSave, onCancel, onDelete, providerTypes }: Pr
           onChange={e => set('base_url', e.target.value)} placeholder={meta.baseURLPlaceholder} />)}
       </>}
 
-      <div className="form-actions">
-        <Button onClick={() => onSave(form)} variant="primary">Save</Button>
-        {onCancel && <Button onClick={onCancel}>Cancel</Button>}
-        {onDelete && <Button onClick={onDelete} variant="danger" style={{ marginLeft: 'auto' }}>Delete</Button>}
-      </div>
+      <FormActions onSave={() => onSave(form)} onCancel={onCancel} onDelete={onDelete} />
     </Stack>
   );
 }

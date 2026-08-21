@@ -4,7 +4,8 @@ import { Blankslate, Table } from '@primer/react/experimental';
 import { ZapIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
 import { PAGE_SIZE, useApi, usePage } from '@/lib/hooks';
-import { SecretBox, TriggerForm, TriggerRow, useTriggerActions, type Named, type Trigger } from '@/features/workflows/TriggersDialog';
+import { SecretBox, TriggerForm, TriggerRow, useTriggerActions, type Trigger } from '@/features/workflows/TriggersDialog';
+import { nameOf, type Named } from '@/lib/named';
 
 // TriggersView is every trigger in one list — what starts on its own, a
 // workflow or an agent's turn, and how it last went — with the form to add
@@ -16,7 +17,6 @@ export function TriggersView({ sessionId }: { sessionId: string | null }) {
   const { data: sessions } = useApi<Named[]>(() => api.sessions.list() as Promise<Named[]>);
   const [adding, setAdding] = useState(false);
 
-  const nameOf = (list: Named[] | null, id: string) => (list || []).find(x => x.id === id)?.name || id.slice(0, 8);
   const sessionName = (id: string) => nameOf(sessions, id);
   const targetName = (t: Trigger) => t.target === 'agent' ? nameOf(agents, t.agent_config_id || '') : nameOf(workflows, t.workflow_id || '');
   const actions = useTriggerActions(reload, sessionName);

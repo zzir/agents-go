@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Button, CounterLabel, Label, Stack } from '@primer/react';
+import { Button, CounterLabel, Stack } from '@primer/react';
 import { Blankslate, DataTable, Table, type Column } from '@primer/react/experimental';
 import { HistoryIcon, LinkExternalIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
-import { PAGE_SIZE, useApi } from '@/lib/hooks';
+import { PAGE_SIZE, useApi, useNowTicker } from '@/lib/hooks';
+import { isLive, StatusLabel } from '@/lib/status';
 import { TASK_KIND_WORKFLOW, type TaskRow } from '@/lib/protocol';
 import { taskStateFromRow } from '@/lib/useAgentSocket';
 import { itemDuration, taskItem, type BackgroundItem } from '@/lib/background';
@@ -17,12 +18,6 @@ interface RunRow extends BackgroundItem {
 
 interface TaskWithSession extends TaskRow { session_name?: string }
 interface TaskPage { items: TaskWithSession[]; total: number }
-
-// A status as a Label: live states in the accent/attention colors the task
-// dot uses, terminal ones in success/danger/secondary.
-const STATUS_VARIANT: Record<string, 'accent' | 'attention' | 'success' | 'danger' | 'secondary'> = {
-  working: 'accent', input_required: 'attention', completed: 'success', failed: 'danger', cancelled: 'secondary',
-};
 
 function fmtStarted(ms?: number): string {
   if (!ms) return '';
@@ -62,13 +57,8 @@ export function RunsView({ version, onOpenRun }: { version: string; onOpenRun: (
   const total = data?.total || 0;
 
   // Live durations tick; a page with nothing live stands still.
-  const anyLive = rows.some(r => r.status === 'working' || r.status === 'input_required');
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!anyLive) return;
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, [anyLive]);
+  const anyLive = rows.some(r => isLive(r.status));
+  const now = useNowTicker(anyLive);
 
   const columns: Column<RunRow>[] = [
     {
@@ -84,7 +74,7 @@ export function RunsView({ version, onOpenRun }: { version: string; onOpenRun: (
       header: 'Status', id: 'status', width: 'growCollapse', minWidth: 180,
       renderCell: r => (
         <span className="hub-run-status" title={r.error || r.activity || undefined}>
-          <span className="hub-run-badge"><Label variant={STATUS_VARIANT[r.status] || 'secondary'} size="small">{r.status.replace('_', ' ')}</Label></span>
+          <span className="hub-run-badge"><StatusLabel status={r.status} size="small" /></span>
           {r.activity && <span className="hub-clip hub-run-activity">{r.activity}</span>}
           {r.error && <span className="hub-clip hub-run-error">{r.error}</span>}
         </span>

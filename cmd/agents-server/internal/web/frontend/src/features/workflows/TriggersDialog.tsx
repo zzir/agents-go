@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { ActionList, ActionMenu, Button, Dialog, IconButton, Label, Select, Stack, TextInput, Textarea, useConfirm } from '@primer/react';
 import { ClockIcon, DependabotIcon, KebabHorizontalIcon, TrashIcon, WebhookIcon, WorkflowIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
-import { useApi } from '@/lib/hooks';
+import { useApi, useCopy } from '@/lib/hooks';
+import { nameOf, type Named } from '@/lib/named';
 import { fc } from '@/lib/form';
 import { toast } from '@/lib/toast';
 import { BADGE } from '@/lib/badges';
@@ -35,8 +36,6 @@ export interface Trigger {
   hook_path?: string;
 }
 
-export interface Named { id: string; name?: string }
-
 interface TriggerForm {
   target: 'workflow' | 'agent';
   workflow_id: string;
@@ -49,18 +48,12 @@ interface TriggerForm {
 
 const SCHEDULE_HINT = 'Five fields (0 9 * * 1-5), or @hourly / @daily / @every 30m (a minute at least). Ticks missed while the server is down are not replayed.';
 
-const nameOf = (list: Named[] | null | undefined, id: string) => (list || []).find(x => x.id === id)?.name || id.slice(0, 8);
-
 // SecretBox shows a freshly minted webhook secret, once, with what a caller
 // needs: the URL, the two headers, and a signing example.
 export function SecretBox({ trigger }: { trigger: Trigger }) {
-  const [copied, setCopied] = useState('');
+  const { copied, copy: copyText } = useCopy();
   const url = window.location.origin + (trigger.hook_path || '');
-  const copy = (what: string, text: string) => {
-    navigator.clipboard.writeText(text)
-      .then(() => { setCopied(what); setTimeout(() => setCopied(''), 1500); })
-      .catch(() => toast.error('Could not copy — select it and copy by hand'));
-  };
+  const copy = (what: string, text: string) => copyText(text, what);
   const example = [
     `TS=$(date +%s)`,
     `BODY='{"event":"example"}'`,

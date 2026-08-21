@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Button, TextInput, Label, Select, Checkbox, FormControl, Stack, PageHeader } from '@primer/react';
+import { FormActions } from '@/components/FormActions';
 import { Blankslate } from '@primer/react/experimental';
 import { api } from '@/lib/api';
 import { BADGE } from '@/lib/badges';
@@ -218,11 +219,7 @@ function SandboxForm({ initial, onSave, onCancel, onDelete }: SandboxFormProps) 
         'Cap on bytes a single read_file returns; larger files fail instead of loading into memory. Empty = 8 MiB default.',
       )}
 
-      <div className="form-actions">
-        <Button onClick={() => onSave({ ...pack(form), revision: initial?.revision })} variant="primary">Save</Button>
-        {onCancel && <Button onClick={onCancel}>Cancel</Button>}
-        {onDelete && <Button onClick={onDelete} variant="danger" style={{ marginLeft: 'auto' }}>Delete</Button>}
-      </div>
+      <FormActions onSave={() => onSave({ ...pack(form), revision: initial?.revision })} onCancel={onCancel} onDelete={onDelete} />
     </Stack>
   );
 }

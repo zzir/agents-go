@@ -1,4 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+// graph → MermaidBlock → lib/hooks → @primer/react, whose dist drags CSS the
+// node test runner can't load.
+vi.mock('@primer/react', () => ({ useConfirm: () => async () => true }));
 import { diffLines } from '@/lib/diff';
 import {
   canonicalWorkflowText, normalizeGateWord, parseWorkflowSpec, specFromStored, specSteps, stepFlags, storedStepNames,

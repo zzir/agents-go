@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { Button, TextInput, Textarea, Label, Select, Stack, PageHeader } from '@primer/react';
+import { FormActions } from '@/components/FormActions';
 import { Blankslate } from '@primer/react/experimental';
 import { api } from '@/lib/api';
+import { nameOf } from '@/lib/named';
 import { useApi, useCrud } from '@/lib/hooks';
 import { fc } from '@/lib/form';
 import { JsonField } from '@/lib/JsonField';
@@ -83,13 +85,7 @@ function MemoryForm({ initial, onSave, onCancel, onDelete, agents }: MemoryFormP
         onChange={v => set('metadata', v)}
         placeholder='{"tag": "value"}'
       />
-      <div className="form-actions">
-        <Button onClick={() => onSave(form)} variant="primary">
-          Save
-        </Button>
-        {onCancel && <Button onClick={onCancel}>Cancel</Button>}
-        {onDelete && <Button onClick={onDelete} variant="danger" style={{ marginLeft: 'auto' }}>Delete</Button>}
-      </div>
+      <FormActions onSave={() => onSave(form)} onCancel={onCancel} onDelete={onDelete} />
     </Stack>
   );
 }
@@ -101,11 +97,7 @@ export function MemoryPanel() {
     () => api.agents.list() as Promise<AgentConfig[]>,
   );
 
-  const agentName = (id: string) => {
-    if (!id || !agents) return 'Global';
-    const found = agents.find(a => a.id === id);
-    return found ? found.name : id.substring(0, 8);
-  };
+  const agentName = (id: string) => (!id || !agents ? 'Global' : nameOf(agents, id));
 
   return (
     <Stack gap="normal">

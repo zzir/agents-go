@@ -266,6 +266,37 @@ export function useCrud<T extends { id: CrudId }, F = Partial<T>>(
   return { items: data ?? [], loading, reload, adding, editing, startAdd, startEdit, cancel, save, remove };
 }
 
+/** Copy-to-clipboard with the 1.5s "Copied" flip every copy button shows.
+ * `copied` holds the key passed to `copy` (default 'default') until the flip
+ * ends, null otherwise — so one hook serves multi-target boxes too. A denied
+ * clipboard permission reports via toast instead of failing silently. */
+export function useCopy(): { copied: string | null; copy: (text: string, key?: string) => void } {
+  const [copied, setCopied] = useState<string | null>(null);
+  const timer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  const copy = useCallback((text: string, key = 'default') => {
+    navigator.clipboard.writeText(text)
+      .then(() => {
+        setCopied(key);
+        window.clearTimeout(timer.current);
+        timer.current = window.setTimeout(() => setCopied(null), 1500);
+      })
+      .catch(() => toast.error('Could not copy — select it and copy by hand'));
+  }, []);
+  return { copied, copy };
+}
+
+/** Ticks once a second while `live`; returns the current ms timestamp for duration labels. */
+export function useNowTicker(live: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!live) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [live]);
+  return now;
+}
+
 // PAGE_SIZE is the rows a hub list shows at once, whether it pages on the
 // server (runs) or in the browser (usePage).
 export const PAGE_SIZE = 25;
