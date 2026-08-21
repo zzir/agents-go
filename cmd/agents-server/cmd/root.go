@@ -248,12 +248,17 @@ func run(_ *cobra.Command, _ []string) error {
 	httpSrv := &http.Server{
 		Addr:    addr,
 		Handler: srv.Engine,
-		// Slow-loris protection: bound how long a client may take to send request
-		// headers, and how long an idle keep-alive connection may linger. There is
-		// deliberately NO global WriteTimeout — it would abort the long-lived SSE
-		// (/runs/{id}/events) and WebSocket (/ws, /ws/terminal) responses mid-stream;
-		// those transports bound their own writes (SSE heartbeat, ws write deadline).
+		// Slow-loris protection: bound the headers, the whole request read (or a
+		// client dribbling a request BODY holds the connection forever — headers
+		// alone don't cover it), and how long an idle keep-alive connection may
+		// linger. The long-lived responses opt out of ReadTimeout themselves: the
+		// WebSocket endpoints hijack and manage their own deadlines, and the SSE
+		// handler clears the read deadline (see RunHandler.Events). There is
+		// deliberately NO global WriteTimeout — it would abort those same streams
+		// mid-response; they bound their own writes (SSE heartbeat, ws write
+		// deadline).
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       60 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
 

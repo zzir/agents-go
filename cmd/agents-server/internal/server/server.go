@@ -33,17 +33,32 @@ type Server struct {
 	cspPolicy string
 }
 
+// maxBodyBytes caps any request body read, matching the WebSocket frame limit
+// (wsMaxMessageBytes): without it every JSON endpoint reads an unbounded body
+// straight into memory. The webhook route applies its own tighter cap.
+const maxBodyBytes = 1 << 20
+
 // New creates a Server with a gin engine configured for release mode, recovery, and request logging.
 func New(log *slog.Logger, token string) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.New()
 	engine.Use(gin.Recovery())
 	s := &Server{Engine: engine, token: token, cspPolicy: buildCSP(nil)}
+	engine.Use(limitBody(maxBodyBytes))
 	engine.Use(s.cspMiddleware())
 	engine.Use(logMiddleware(log))
 	engine.Use(TokenAuth(token))
 	s.registerAuthRoutes()
 	return s
+}
+
+func limitBody(n int64) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.Request.Body != nil {
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, n)
+		}
+		c.Next()
+	}
 }
 
 func (s *Server) registerAuthRoutes() {

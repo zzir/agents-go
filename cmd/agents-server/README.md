@@ -103,7 +103,8 @@ signature instead (see [Workflows](#workflows--apiv1workflows)).
 ## REST API
 
 Base path `/api/v1` — the only mount; there is no unversioned alias. All
-request and response bodies are JSON.
+request and response bodies are JSON. Request bodies are capped at 1 MiB
+(matching the WebSocket frame limit); a larger one fails the request.
 
 ### Errors
 

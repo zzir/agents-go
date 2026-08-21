@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 )
 
@@ -313,6 +314,13 @@ func (h *RunHandler) Events(c *gin.Context) {
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
+
+	// Opt out of the server's ReadTimeout: its expiry surfaces as a background
+	// read error that cancels this request's context, which would cut the
+	// stream off mid-run. SSE writes forever and reads nothing.
+	if err := http.NewResponseController(c.Writer).SetReadDeadline(time.Time{}); err != nil {
+		logging.Ctx(ctx).Warn("cannot clear the SSE read deadline; the stream dies at the server ReadTimeout", "error", err)
+	}
 
 	// A heartbeat keeps intermediaries from idling the connection out.
 	ticker := time.NewTicker(25 * time.Second)
