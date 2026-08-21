@@ -313,7 +313,7 @@ func run(_ *cobra.Command, _ []string) error {
 		}
 	}
 	srv.RegisterAPI(handler.Handlers{
-		Auth:           handler.NewAuthHandler(authSvc),
+		Auth:           handler.NewAuthHandler(authSvc, authTokens),
 		Sessions:       sessionHandler,
 		Runs:           runHandler,
 		Approvals:      approvalHandler,

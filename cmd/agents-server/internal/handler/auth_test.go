@@ -20,11 +20,11 @@ import (
 
 // authEngine mounts the real middleware chain plus the auth routes, the way
 // root.go wires them.
-func authEngine(t *testing.T, svc *authn.Service) *gin.Engine {
+func authEngine(t *testing.T, svc *authn.Service, tokens *store.AuthTokenStore) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	s := server.New(slog.New(slog.DiscardHandler), svc.Authenticate)
-	s.RegisterAPI(Handlers{Auth: NewAuthHandler(svc)}.Register)
+	s.RegisterAPI(Handlers{Auth: NewAuthHandler(svc, tokens)}.Register)
 	return s.Engine
 }
 
@@ -33,7 +33,7 @@ func authEngine(t *testing.T, svc *authn.Service) *gin.Engine {
 // auth routes moved here).
 func TestTokenLoginEnvelopes(t *testing.T) {
 	local := &store.User{ID: store.LocalUserID, Email: "local@localhost", Role: store.RoleAdmin}
-	engine := authEngine(t, authn.NewStatic("tok", local))
+	engine := authEngine(t, authn.NewStatic("tok", local), nil)
 
 	cases := []struct {
 		name   string
@@ -81,7 +81,7 @@ func TestOAuthModeSessionTokens(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
-	engine := authEngine(t, authn.NewOAuth(authn.OAuthConfig{Users: users, Tokens: tokens}))
+	engine := authEngine(t, authn.NewOAuth(authn.OAuthConfig{Users: users, Tokens: tokens}), tokens)
 
 	bearer := func(r *http.Request) *http.Request {
 		r.Header.Set("Authorization", "Bearer "+secret)
@@ -134,7 +134,7 @@ func TestOAuthFlowOverHTTP(t *testing.T) {
 		Providers:     []authn.OAuthProvider{&fakeLoginProvider{email: "p@example.com"}},
 		AllowedEmails: []string{"p@example.com"},
 	})
-	engine := authEngine(t, svc)
+	engine := authEngine(t, svc, nil)
 
 	rec := httptest.NewRecorder()
 	engine.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/auth/oauth/fake/start", nil))
@@ -191,10 +191,103 @@ func TestOAuthFlowOverHTTP(t *testing.T) {
 	}
 }
 
+// PATs: minted once with the plaintext in that response alone, listed without
+// secrets, usable as a bearer, revocable — and refused outright in token mode,
+// where they could never authenticate.
+func TestPersonalAccessTokens(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	users, tokens := store.NewUserStore(db), store.NewAuthTokenStore(db)
+	u, err := users.ResolveOAuthLogin(ctx, store.OAuthIdentity{Provider: "google", Subject: "s1", Email: "a@example.com"}, "")
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	session, _, err := tokens.Mint(ctx, u.ID, store.TokenKindSession, "", time.Time{})
+	if err != nil {
+		t.Fatalf("mint session: %v", err)
+	}
+	engine := authEngine(t, authn.NewOAuth(authn.OAuthConfig{Users: users, Tokens: tokens}), tokens)
+
+	do := func(method, path, body string) *httptest.ResponseRecorder {
+		var rdr *strings.Reader
+		if body == "" {
+			rdr = strings.NewReader("")
+		} else {
+			rdr = strings.NewReader(body)
+		}
+		req := httptest.NewRequest(method, path, rdr)
+		req.Header.Set("Authorization", "Bearer "+session)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		engine.ServeHTTP(rec, req)
+		return rec
+	}
+
+	rec := do(http.MethodPost, "/api/v1/auth/tokens", `{"name":"ci"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create = %d %s", rec.Code, rec.Body.String())
+	}
+	var created struct {
+		Token string `json:"token"`
+		Pat   struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"pat"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil ||
+		!strings.HasPrefix(created.Token, "ags_p_") || created.Pat.Name != "ci" {
+		t.Fatalf("create body %s (%v)", rec.Body.String(), err)
+	}
+
+	// The PAT authenticates like any bearer.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	req.Header.Set("Authorization", "Bearer "+created.Token)
+	rec = httptest.NewRecorder()
+	engine.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("me with PAT = %d", rec.Code)
+	}
+
+	// The list carries names and dates, never token material.
+	rec = do(http.MethodGet, "/api/v1/auth/tokens", "")
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "ags_p_") ||
+		!strings.Contains(rec.Body.String(), `"ci"`) {
+		t.Fatalf("list = %d %s", rec.Code, rec.Body.String())
+	}
+
+	// A nameless token is refused — a label is what makes revocation usable.
+	if rec = do(http.MethodPost, "/api/v1/auth/tokens", `{"name":"  "}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("nameless create = %d, want 400", rec.Code)
+	}
+
+	rec = do(http.MethodDelete, "/api/v1/auth/tokens/"+created.Pat.ID, "")
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete = %d", rec.Code)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	req.Header.Set("Authorization", "Bearer "+created.Token)
+	rec = httptest.NewRecorder()
+	engine.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("me with revoked PAT = %d, want 401", rec.Code)
+	}
+
+	// Token mode refuses the whole PAT surface.
+	local := &store.User{ID: store.LocalUserID, Email: "local@localhost", Role: store.RoleAdmin}
+	tokenEngine := authEngine(t, authn.NewStatic("tok", local), tokens)
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/auth/tokens", nil)
+	req.Header.Set("Authorization", "Bearer tok")
+	rec = httptest.NewRecorder()
+	tokenEngine.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("PATs in token mode = %d, want 400", rec.Code)
+	}
+}
+
 // The mounted auth group carries the per-IP rate limit.
 func TestAuthGroupRateLimited(t *testing.T) {
 	local := &store.User{ID: store.LocalUserID, Email: "local@localhost", Role: store.RoleAdmin}
-	engine := authEngine(t, authn.NewStatic("tok", local))
+	engine := authEngine(t, authn.NewStatic("tok", local), nil)
 
 	last := 0
 	for i := 0; i < 20; i++ {

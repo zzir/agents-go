@@ -156,6 +156,14 @@ and database-backed credentials:
   of the flag. Secrets configure the process only; they are never stored in
   the database.
 
+**Personal access tokens** are OAuth mode's programmatic credential (curl,
+scripts, CI): `POST /auth/tokens {name, expires_in_days?}` answers with the
+plaintext exactly once (`ags_p_…`, 0 days = never expires); `GET /auth/tokens`
+lists labels and dates, never secrets; `DELETE /auth/tokens/:id` revokes. A
+PAT authenticates everywhere a session token does — REST and the WS auth
+frame. In token mode the endpoints answer 400: the static compare is the whole
+check there, so a PAT could be minted but never authenticate.
+
 Exempt from auth: the MCP OAuth redirect callback
 (`GET /api/v1/mcp-servers/oauth/callback` — the browser follows it without an
 Authorization header), the OpenAPI document (`GET /api/v1/openapi.yaml`), the

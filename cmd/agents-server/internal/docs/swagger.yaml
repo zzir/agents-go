@@ -998,6 +998,26 @@ components:
         user:
           $ref: '#/components/schemas/protocol.UserInfo'
       type: object
+    protocol.PatCreated:
+      properties:
+        pat:
+          $ref: '#/components/schemas/protocol.PatView'
+        token:
+          type: string
+      type: object
+    protocol.PatView:
+      properties:
+        created_at:
+          type: string
+        expires_at:
+          type: string
+        id:
+          type: string
+        last_used_at:
+          type: string
+        name:
+          type: string
+      type: object
     protocol.UserInfo:
       properties:
         email:
@@ -2413,6 +2433,75 @@ paths:
                 $ref: '#/components/schemas/handler.ErrorResponse'
           description: unknown provider (or token mode)
       summary: Begin an OAuth login
+      tags:
+      - auth
+  /auth/tokens:
+    get:
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/protocol.PatView'
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: token mode
+      security:
+      - BearerAuth: []
+      summary: List personal access tokens
+      tags:
+      - auth
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/protocol.PatCreated'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+      security:
+      - BearerAuth: []
+      summary: Create a personal access token
+      tags:
+      - auth
+  /auth/tokens/{id}:
+    delete:
+      parameters:
+      - description: Token ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: revoked
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+      security:
+      - BearerAuth: []
+      summary: Revoke a personal access token
       tags:
       - auth
   /guardrails:

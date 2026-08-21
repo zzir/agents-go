@@ -2,23 +2,142 @@ package handler
 
 import (
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/authn"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
 // AuthHandler serves the authentication surface: config for the login page,
-// token login (token mode), and the signed-in user's session endpoints.
+// token login (token mode), the signed-in user's session endpoints, and
+// personal access tokens.
 type AuthHandler struct {
-	svc *authn.Service
+	svc    *authn.Service
+	tokens *store.AuthTokenStore
 }
 
-// NewAuthHandler returns an AuthHandler over the given service.
-func NewAuthHandler(svc *authn.Service) *AuthHandler {
-	return &AuthHandler{svc: svc}
+// NewAuthHandler returns an AuthHandler over the given service and token
+// store (the latter may be nil in tests that never touch PATs).
+func NewAuthHandler(svc *authn.Service, tokens *store.AuthTokenStore) *AuthHandler {
+	return &AuthHandler{svc: svc, tokens: tokens}
+}
+
+// requirePATMode gates the PAT endpoints: in token mode a PAT could be minted
+// but never authenticate (the static compare is the whole check), so refusing
+// is honest where accepting would hand out dead credentials.
+func (h *AuthHandler) requirePATMode(c *gin.Context) (protocol.UserInfo, bool) {
+	if h.svc.Mode() != authn.ModeOAuth {
+		c.JSON(http.StatusBadRequest, protocol.NewErrorResponse(protocol.CodeValidation,
+			"personal access tokens require --auth oauth; token mode authenticates with the static token"))
+		return protocol.UserInfo{}, false
+	}
+	u, ok := server.CurrentUser(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, protocol.NewErrorResponse(protocol.CodeUnauthorized, "unauthorized"))
+		return protocol.UserInfo{}, false
+	}
+	return u, true
+}
+
+func patView(t *store.AuthToken) protocol.PatView {
+	v := protocol.PatView{ID: t.ID, Name: t.Name, CreatedAt: t.CreatedAt.Format(time.RFC3339)}
+	if !t.LastUsedAt.IsZero() {
+		v.LastUsedAt = t.LastUsedAt.Format(time.RFC3339)
+	}
+	if !t.ExpiresAt.IsZero() {
+		v.ExpiresAt = t.ExpiresAt.Format(time.RFC3339)
+	}
+	return v
+}
+
+// ListTokens lists the caller's personal access tokens — labels and dates,
+// never secrets.
+//
+//	@Summary	List personal access tokens
+//	@Tags		auth
+//	@Produce	json
+//	@Success	200	{array}		protocol.PatView
+//	@Failure	400	{object}	ErrorResponse	"token mode"
+//	@Security	BearerAuth
+//	@Router		/auth/tokens [get]
+func (h *AuthHandler) ListTokens(c *gin.Context) {
+	u, ok := h.requirePATMode(c)
+	if !ok {
+		return
+	}
+	list, err := h.tokens.ListByUser(c.Request.Context(), u.ID, store.TokenKindPAT)
+	if err != nil {
+		internalError(c, err)
+		return
+	}
+	out := make([]protocol.PatView, 0, len(list))
+	for i := range list {
+		out = append(out, patView(&list[i]))
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+// CreateToken mints a personal access token. The response carries the
+// plaintext once; it is not retrievable afterwards.
+//
+//	@Summary	Create a personal access token
+//	@Tags		auth
+//	@Accept		json
+//	@Produce	json
+//	@Success	201	{object}	protocol.PatCreated
+//	@Failure	400	{object}	ErrorResponse
+//	@Security	BearerAuth
+//	@Router		/auth/tokens [post]
+func (h *AuthHandler) CreateToken(c *gin.Context) {
+	u, ok := h.requirePATMode(c)
+	if !ok {
+		return
+	}
+	var req struct {
+		Name          string `json:"name"`
+		ExpiresInDays int    `json:"expires_in_days"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Name) == "" || req.ExpiresInDays < 0 {
+		c.JSON(http.StatusBadRequest, protocol.NewErrorResponse(protocol.CodeValidation,
+			"a token needs a name; expires_in_days is optional (0 = never)"))
+		return
+	}
+	var expires time.Time
+	if req.ExpiresInDays > 0 {
+		expires = time.Now().UTC().AddDate(0, 0, req.ExpiresInDays)
+	}
+	secret, minted, err := h.tokens.Mint(c.Request.Context(), u.ID, store.TokenKindPAT, strings.TrimSpace(req.Name), expires)
+	if err != nil {
+		internalError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, protocol.PatCreated{Token: secret, Pat: patView(minted)})
+}
+
+// DeleteToken revokes one of the caller's personal access tokens.
+//
+//	@Summary	Revoke a personal access token
+//	@Tags		auth
+//	@Param		id	path	string	true	"Token ID"
+//	@Success	204	"revoked"
+//	@Failure	404	{object}	ErrorResponse
+//	@Security	BearerAuth
+//	@Router		/auth/tokens/{id} [delete]
+func (h *AuthHandler) DeleteToken(c *gin.Context) {
+	u, ok := h.requirePATMode(c)
+	if !ok {
+		return
+	}
+	if err := h.tokens.Revoke(c.Request.Context(), c.Param("id"), u.ID); err != nil {
+		storeError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 // Config reports how to authenticate, for the login page.

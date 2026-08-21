@@ -22,3 +22,20 @@ type AuthSession struct {
 	Token string   `json:"token"`
 	User  UserInfo `json:"user"`
 }
+
+// PatView is one personal access token as the list shows it — never the
+// secret, which exists only in the PatCreated response that minted it.
+type PatView struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	CreatedAt  string `json:"created_at"`
+	LastUsedAt string `json:"last_used_at,omitempty"`
+	ExpiresAt  string `json:"expires_at,omitempty"`
+}
+
+// PatCreated answers a mint: the plaintext appears here once and is never
+// retrievable again.
+type PatCreated struct {
+	Token string  `json:"token"`
+	Pat   PatView `json:"pat"`
+}
