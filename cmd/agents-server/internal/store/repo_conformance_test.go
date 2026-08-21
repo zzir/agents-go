@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/zzir/agents-go/agents/session"
-	"github.com/zzir/agents-go/agentstest"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/internal/agentstest"
 )
 
 func TestServerRepoConformance(t *testing.T) {

@@ -120,7 +120,7 @@ func NewTraceID() string { return "trace_" + randHex(16) }
 // characters.
 //
 // The width is 8 bytes because that is what an OpenTelemetry span id is, and
-// tracing/otel rebuilds our tree as OTel spans by reusing these ids verbatim.
+// An OTel-shaped exporter can rebuild our tree by reusing these ids verbatim.
 // A wider id would have to be truncated there — silently, and differently for
 // each exporter that tried. Trace ids are 16 bytes, which already matches.
 func NewSpanID() string { return "span_" + randHex(8) }

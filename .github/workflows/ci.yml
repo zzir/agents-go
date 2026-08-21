@@ -67,21 +67,12 @@ jobs:
       - name: Test agents-server module
         run: (cd cmd/agents-server && go vet ./... && go test -race ./...)
 
-      - name: Test tracing/otel module
-        run: |
-          (cd tracing/otel && go vet ./... && go test ./...)
-          (cd examples/otel && go vet ./... && go build -o /dev/null ./...)
-
-      # go build proves the examples compile; this proves they still run. A bad
-      # struct tag or a nil provider is a runtime failure the compiler misses,
-      # and the examples are what a reader copies first.
-      - name: Examples run (fake model APIs)
-        run: go run ./cmd/verifyexamples
-
-      # The docs are the API's other surface and nothing compiled them; this
-      # checks that snippets and links name things that exist.
-      - name: Docs name things that exist
-        run: go run ./cmd/verifydocs
+      # go build proves nothing about either half: docs snippets are uncompiled
+      # text that kept naming renamed symbols, and an example can compile then
+      # panic or hang. One command checks doc names and runs every example
+      # against fake model APIs.
+      - name: Docs and examples verify
+        run: go run ./cmd/verify
 
       # Stale means "regenerating changes the file" — compared by content, so
       # a fresh-but-uncommitted regeneration passes locally and a clean CI
@@ -157,7 +148,7 @@ jobs:
       # (golangci-lint-action puts the binary on PATH for later steps.)
       - name: Verify formatting (gofmt + goimports)
         run: |
-          for m in models/anthropic examples/anthropic examples/mcpserver examples/otel sandbox/docker sandbox/ssh sessions skills tracing/otel; do
+          for m in models/anthropic examples/anthropic examples/mcpserver sandbox/docker sandbox/ssh sessions skills; do
             out=$(cd "$m" && golangci-lint fmt --diff)
             if [ -n "$out" ]; then
               echo "::error::$m is not gofmt/goimports-clean"; echo "$out"; exit 1

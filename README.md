@@ -164,9 +164,9 @@ guardrails, typed tools, structured output, streaming, approvals. By topic:
   providers; retry, fallback and routing decorators;
   [middleware](docs/running_agents.md#middleware) around a whole run
 - [MCP](docs/mcp.md), [Sandboxes](docs/sandbox.md), [Skills](docs/skills.md),
-  [Tracing](docs/tracing.md) (OpenTelemetry via `tracing/otel`),
-  [Background tasks](docs/tasks.md), [Testing](docs/testing.md) — `agentstest`
-  scripts the model, so agents are tested without a key
+  [Tracing](docs/tracing.md), [Background tasks](docs/tasks.md),
+  [Testing](docs/testing.md) — a scripted `Model` fake tests agents
+  without a key
 
 The core is one small module; MCP, the Docker/SSH sandboxes, SQL sessions,
 skills and the Anthropic provider are opt-in submodules

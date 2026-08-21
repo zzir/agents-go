@@ -25,20 +25,19 @@ Requires Go 1.27+.
 ./scripts/ci.sh                       # full CI locally: gofmt, vet, build, race tests, every submodule (GOWORK=off)
 go test -race ./...                   # race detector is ON in CI — keep it green
 go test -race ./agents -run TestName  # single test
-go run ./cmd/verifyexamples           # every example still runs (fake model APIs)
-go run ./cmd/verifydocs               # doc snippets + doc.go links name things that exist
+go run ./cmd/verify                   # docs name things that exist + every example runs (fake model APIs)
 golangci-lint run                     # CI uses golangci-lint v2.13
 ```
 
 ## Layout
 
-Go workspace (`go.work`, gitignored) with twelve modules. **A submodule exists only
+Go workspace (`go.work`, gitignored) with ten modules. **A submodule exists only
 to keep a heavy dependency out of the core** ([spec.md §5.7](docs/spec.md)) —
 anything dependency-free stays in the root module. Non-root modules `require` the
 root via `replace => ..`:
 
-- **root** — the SDK (includes `tools/bravesearch` and `models/modelkit`, the
-  dependency-free toolkit + conformance suite for model adapters)
+- **root** — the SDK (includes `models/modelkit`, the dependency-free toolkit +
+  conformance suite for model adapters)
 - **`mcp`** — MCP client and server (carries modelcontextprotocol/go-sdk and the
   seven indirect requirements that came with it; import path unchanged)
 - **`models/anthropic`** — Anthropic Messages API backend (carries
@@ -46,10 +45,9 @@ root via `replace => ..`:
 - **`sandbox/docker`**, **`sandbox/ssh`** — sandbox backends
 - **`sessions`** — SQLite/PostgreSQL `Session` backends
 - **`skills`** — Agent Skills (`SKILL.md`) loader
-- **`tracing/otel`** — OpenTelemetry exporter (the core stays vendor-neutral)
 - **`cmd/agents-server`** — web app (REST + WS + embedded UI)
-- **`examples/otel`**, **`examples/anthropic`**, **`examples/mcpserver`** — the
-  examples with their own modules, for their extra deps
+- **`examples/anthropic`**, **`examples/mcpserver`** — the examples with their
+  own modules, for their extra deps
 
 CI builds each module standalone with `GOWORK=off`, so a workspace-only fix can
 hide a missing `go.mod` require — always validate with `./scripts/ci.sh`. The
@@ -96,8 +94,7 @@ Core type: `agents.Agent` (a plain struct); everything orbits the runner.
   entries into model input), and `session.Projector` (which kinds reach the
   model). The shared value types (`Source`, `ItemDisplay`, `RequestUsage`,
   `Diagnostic`, `ErrorCode`) live in session and are aliased in agents. Storage is
-  `InMemoryStorage` / `filesession.Store` in core, SQL in the `sessions`
-  module, server-side variants in `openai` (Conversations, Compaction,
+  `InMemoryStorage` in core, SQL in the `sessions` module, server-side variants in `openai` (Conversations, Compaction,
   `UsePreviousResponseID` / `ConversationID`).
 - **Entries are append-only** — `agents/session/entry.go`. A session is a TREE:
   `ParentID` links, `Branch`/`PathEntries` walk it, and a display that settles
@@ -109,8 +106,8 @@ Core type: `agents.Agent` (a plain struct); everything orbits the runner.
 - **Tracing** — `tracing/`: a span is a `Type` tag + `Data map[string]any`,
   rather than one Go type per span kind. The current parent
   travels on the `context`, so a subsystem outside the runner (retry, MCP,
-  sandbox) opens a child without a threaded handle. `tracing/otel` maps it to
-  OpenTelemetry.
+  sandbox) opens a child without a threaded handle. Export is a consumer-side
+  `Processor` (spec §5.6b); the server stores spans itself.
 - **MCP** — `mcp/`: a client bridged into the runner by `agents/mcp.go`, and
   `mcp/serve.go` for the other direction (expose tools or a whole agent as an
   MCP server). Its own module — `agents.MCPServer` is the inversion that keeps
@@ -122,9 +119,10 @@ Core type: `agents.Agent` (a plain struct); everything orbits the runner.
   state is claimed by compare-and-set.
 - **Fan-out** — `agents/fanout.go`: one producer, many consumers, per-subscriber
   buffers. A dropped event is reported as a `*GapError`, never silent.
-- **Test doubles** — `agentstest/` is the public harness for code that USES the
-  SDK. The `agents` package cannot import it (cycle), which is why
-  `agents/run_test.go` has its own unexported `fakeModel`.
+- **Test doubles** — `internal/agentstest` is the shared harness + conformance
+  suites (test infrastructure, not API — spec §5.23). The `agents` package
+  cannot import it (cycle), which is why `agents/run_test.go` has its own
+  unexported `fakeModel`.
 
 ## Design decisions (deliberate — don't "fix" without cause)
 
@@ -150,7 +148,7 @@ The full list, with reasons, lives in [docs/spec.md](docs/spec.md) §1.2 (non-go
   review its changelog and record the decision (ported / declined + why) in
   `docs/upstream_watch.md`. There is no obligation to match.
 - **A new black-box test goes in `package agents_test`.** That external test
-  package can import `agentstest` (the shipped harness) without a cycle, and
+  package can import `internal/agentstest` (the shared harness) without a cycle, and
   both are established practice: `agents/` has ~10 `agents_test` files doing
   exactly this. The bulk of the older test files are internal
   (`package agents`) with their own unexported `fakeModel`; they stay where
@@ -158,7 +156,7 @@ The full list, with reasons, lives in [docs/spec.md](docs/spec.md) §1.2 (non-go
 - **Docs track the code.** Any functional change must update the relevant
   `docs/` page — and `README.md` when it affects the feature set or
   quick-start. New public capabilities get a runnable example under
-  `examples/`. `cmd/verifydocs` checks that doc snippets still name things that
+  `examples/`. `cmd/verify` checks that doc snippets still name things that
   exist; it runs in CI, so a rename that leaves the prose behind fails there.
 
 ## Principles

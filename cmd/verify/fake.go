@@ -36,7 +36,7 @@ func (f *fakeResponses) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// is out of scope; say so loudly rather than returning a shape the SDK will
 	// misparse into a confusing error.
 	if !strings.HasSuffix(r.URL.Path, "/responses") {
-		http.Error(w, fmt.Sprintf("verifyexamples fake: unsupported path %q", r.URL.Path), http.StatusNotFound)
+		http.Error(w, fmt.Sprintf("verify fake: unsupported path %q", r.URL.Path), http.StatusNotFound)
 		return
 	}
 
@@ -61,7 +61,7 @@ func (f *fakeResponses) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-const fakeText = "verifyexamples: ok"
+const fakeText = "verify: ok"
 
 func (f *fakeResponses) response(req responsesRequest, callTool bool, turn int) map[string]any {
 	var output []any
@@ -134,7 +134,7 @@ func zeroForSchema(spec map[string]any) any {
 	case "object":
 		return map[string]any{}
 	default:
-		return "verifyexamples"
+		return "verify"
 	}
 }
 

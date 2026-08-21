@@ -586,8 +586,8 @@ next backend will answer differently.
 - **A handle is bound when it is BUILT**, never on first use. A handle created,
   held, and first touched after its session was deleted and recreated still
   refers to the one it was built for. *Shared.*
-- **A constructor where the id names the STORAGE** (`filesession.New`,
-  `sessions.New`) is a different thing and keeps its meaning: opening it twice
+- **A constructor where the id names the STORAGE** (`sessions.New`) is a
+  different thing and keeps its meaning: opening it twice
   is the same conversation, and it cannot tell "reopened" from "recreated". It
   does not share storage with a repo's sessions **in either direction** — a repo
   delete does not reach it, and its writes do not reach a repo session.
@@ -657,8 +657,8 @@ next backend will answer differently.
   has no sequence number to resume from, and `Cursor`'s other reading of a
   negative limit — take the most recent N — belongs to entry cursors, which
   have an oldest end to take from. Sessions sharing a time may come back in
-  either order. *Shared contract (`agentstest.RepoConformance`); ordering per
-  backend.*
+  either order. *Shared contract (`internal/agentstest.RepoConformance`);
+  ordering per backend.*
 
 #### What must be one step
 
@@ -1669,11 +1669,6 @@ was ending:
   which four identical calls in one turn defeat.
 - Sandbox is instrumented at the **tool** layer, the one place every backend
   (local, Docker, SSH) is reached through, rather than per backend.
-- OTel semantic conventions are **pinned** (`SemConvVersion`); the GenAI
-  conventions are experimental upstream and have renamed keys between releases,
-  so a change there is a deliberate edit rather than a dependency-bump side
-  effect. Spans with no GenAI equivalent use an `agents.` prefix — naming them
-  `gen_ai.*` would imply a portability that is not there.
 
 ### 2.11d Diagnostics
 
@@ -1979,9 +1974,9 @@ below are behavior, not implementation detail — see [tasks.md](tasks.md).
   any depth — the generation makes a surviving row inert, the cascade is what
   stops it surviving, and a hidden session left behind is unreachable forever.
   *Per backend, because only a backend that holds both can answer it; the
-  Manager deletes nothing, and a repo without a task table (filesession, the
-  in-memory repo) leaves the rows and the child sessions to the host — the
-  boundary docs/tasks.md "Deleting a session" states.*
+  Manager deletes nothing, and a repo without a task table (the in-memory
+  repo) leaves the rows and the child sessions to the host — the boundary
+  docs/tasks.md "Deleting a session" states.*
 - **A notification line is machine-readable, and its fields come from
   untrusted text.** A label and a result are model output; formatting escapes
   the line delimiter AND the field delimiter, because the line pattern's own
@@ -2303,34 +2298,26 @@ independent working directories at the cost of IPC, serialization, and a second
 lifecycle to manage. Nested runs already give us independent sessions and
 configuration; the isolation is not worth the machinery at this scale.
 
-### 5.6b Tracing stays vendor-neutral; OpenTelemetry is a separate module
+### 5.6b Tracing stays vendor-neutral; OTel export is the consumer's job
 
 The core `tracing` package has no dependencies: a span is a flat record with
-string ids and a `Data` map. `tracing/otel` translates that into OTel spans and
-carries the OTel SDK, per §5.7.
-
-The reconstruction is not free — our spans are exported after they finish, often
-children first, while OTel builds trees from live spans through a context. It
-works by pinning a custom `IDGenerator` to the ids the span already has. Two
-invariants fall out and must hold:
+string ids and a `Data` map. Two invariants keep that record portable:
 
 - **`tracing.NewSpanID` is 8 bytes and `NewTraceID` is 16** — the OTel widths.
-  Widening either would force every OTel-shaped exporter to truncate, silently
+  Widening either would force every OTel-shaped consumer to truncate, silently
   and inconsistently.
-- **The exporter requires a batch processor.** Pinning is stateful, so `Export`
-  serializes; it is not a synchronous per-span processor.
+- **A trace has one root span per agent**, not one per trace: a handoff
+  finishes the current agent span and opens the next one under the same
+  (empty) top-level parent, so an N-handoff run contributes N+1 parentless
+  spans. An exporter that groups by trace must carry workflow metadata across
+  roots itself.
 
-A trace has **one root span per agent**, not one per trace. A handoff finishes
-the current agent span and opens the next one under the same (empty) top-level
-parent, so an N-handoff run contributes N+1 parentless spans, arriving in
-separate export batches. `tracing/otel` therefore keeps a trace's workflow
-metadata after stamping a root span and reclaims it by bounded eviction:
-releasing it at the first root would leave every agent after a handoff without a
-workflow name.
-
-The alternative — making the core emit OTel spans directly — was rejected:
-it puts a heavy, fast-moving dependency in every consumer's build for a feature
-most do not use.
+Making the core emit OTel spans directly was rejected — a heavy, fast-moving
+dependency in every consumer's build for a feature most do not use. The
+`tracing/otel` exporter submodule that once did the translation was **removed**
+(2026-08) with the rest of the zero-consumer surface (§5.23): the workbench
+reads spans through its own store, and an external consumer integrates by
+implementing a `tracing.Processor` against the flat record.
 
 ### 5.7 A submodule exists only to keep a heavy dependency out of the core
 
@@ -2792,6 +2779,30 @@ A server-suggested `Retry-After` longer than the configured `MaxDelay` **ends**
 the retries — returning that attempt's wrapped error — rather than clamping to
 the cap and trying again: a wait the caller capped below what the server asked
 for is a signal to stop, not to retry sooner.
+
+### 5.23 Zero-consumer surface was cut to the workbench's actual needs
+
+Applied 2026-08, on the standing rule that a feature nothing consumes is
+removed (§1.2). Four cuts in one pass:
+
+- **`tracing/otel` removed** (with `examples/otel`). The workbench reads spans
+  through its own store; the integration seam for anyone else is
+  `tracing.Processor` (§5.6b).
+- **`filesession` removed.** Nothing imported it but its own tests. Durable
+  sessions are the `sessions` module (SQL) or the server's store; the
+  zero-dependency option in core is `session.NewInMemorySession`.
+- **`agentstest` is `internal/agentstest`** (with `examples/testing` and
+  docs/testing.md's public-harness framing gone). The harness and the four
+  conformance suites stay, as test infrastructure rather than API: the
+  repo's own test files and the nested modules (path-prefix rule) keep
+  importing it. Testing user code against the SDK means implementing
+  `agents.Model` — the seam is the API, not a shipped fake.
+- **`tools/bravesearch` is `cmd/agents-server/internal/bravesearch`** (with
+  `examples/bravesearch`). Web search is a workbench feature wired to the
+  `brave_api_key` setting, not SDK surface.
+
+`cmd/verifydocs` and `cmd/verifyexamples` merged into `cmd/verify` in the same
+pass — one CI step, same two checks.
 
 ---
 

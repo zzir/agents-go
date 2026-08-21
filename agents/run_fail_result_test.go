@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/zzir/agents-go/agents"
-	"github.com/zzir/agents-go/agentstest"
+	"github.com/zzir/agents-go/internal/agentstest"
 )
 
 // TestFailAfterHandoffFilterReportsUnfilteredLog pins what a failed run reports

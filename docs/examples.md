@@ -10,7 +10,6 @@ go run ./examples/hello
 | Example | Shows |
 |---|---|
 | [`examples/hello`](../examples/hello/main.go) | The minimal agent: provider, instructions, one `Run` |
-| [`examples/testing`](../examples/testing/agent_test.go) | Testing an agent with `agentstest`: scripted model, no API key ([Testing](testing.md)) |
 | [`examples/tools`](../examples/tools/main.go) | Typed function tools via `NewTool` |
 | [`examples/toolimage`](../examples/toolimage/main.go) | A tool returning image content (`ToolOutputImage`) |
 | [`examples/handoffs`](../examples/handoffs/main.go) | A triage agent delegating to specialists with `HandoffTo` |
@@ -32,7 +31,6 @@ go run ./examples/hello
 | [`examples/runcompaction`](../examples/runcompaction/main.go) | Run-level compaction: a `compaction.Strategy` folding tool results mid-run, at the turn boundary |
 | [`examples/conversations`](../examples/conversations/main.go) | `openai.ConversationsSession`: history stored server-side via the Conversations API |
 | [`examples/prompt`](../examples/prompt/main.go) | Binding an OpenAI stored prompt via `Agent.Prompt` |
-| [`examples/bravesearch`](../examples/bravesearch/main.go) | The Brave web-search tool (`tools/bravesearch`) |
 | [`examples/sandbox`](../examples/sandbox/main.go) | An agent that writes and runs code in a local sandbox |
 | [`sandbox/docker/example`](../sandbox/docker/example/main.go) | The Docker sandbox backend (separate module) |
 | [`sandbox/ssh/example`](../sandbox/ssh/example/main.go) | The SSH sandbox backend (separate module) |
@@ -46,7 +44,6 @@ Most examples only need `OPENAI_API_KEY`. The exceptions:
 - `examples/prompt` — a stored prompt ID: `OPENAI_PROMPT_ID=pmpt_... go run ./examples/prompt`
 - `examples/anthropic` — `ANTHROPIC_API_KEY=... go run .` (from its directory; separate module)
 - `examples/mcpserver` — `go run .` (from its directory; separate module, no API key)
-- `examples/bravesearch` — `BRAVE_API_KEY=... go run ./examples/bravesearch`
 - `examples/sandbox` — the host needs `python3`
 - Examples in the optional submodules run from their module directory:
 

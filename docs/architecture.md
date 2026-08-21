@@ -146,9 +146,8 @@ example: shared adapter plumbing, stdlib-only, so it lives in root.
 | `sandbox/docker`, `sandbox/ssh` | the Docker and SSH client libraries |
 | `sessions` | the SQL drivers |
 | `skills` | the YAML parser |
-| `tracing/otel` | the OpenTelemetry SDK |
 | `cmd/agents-server` | a web application, not a library |
-| `examples/otel`, `examples/anthropic`, `examples/mcpserver` | example programs needing those same heavy deps |
+| `examples/anthropic`, `examples/mcpserver` | example programs needing those same heavy deps |
 
 CI builds each module standalone with `GOWORK=off`, so a workspace-only fix
 cannot hide a missing `go.mod` require.

@@ -7,7 +7,7 @@ import (
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/session"
-	"github.com/zzir/agents-go/agentstest"
+	"github.com/zzir/agents-go/internal/agentstest"
 )
 
 // offChainRecorder is a storage that records the CompactionArgs each run hands

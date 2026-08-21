@@ -13,7 +13,7 @@ import (
 // of the address means a function that takes a Ref cannot be handed a bare id.
 //
 // A ref with no generation is the direct scope, where the id names the storage
-// (filesession.New, sessions.New). It is a scope, NOT a wildcard: a repo's
+// (sessions.New). It is a scope, NOT a wildcard: a repo's
 // delete does not reach it, and its writes do not reach a repo's sessions.
 type Ref struct {
 	// ID is the session's name, as a caller knows it.

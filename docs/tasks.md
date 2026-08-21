@@ -352,8 +352,7 @@ and only a repo that holds both tables can do it:
 | Repo | On `Delete` of a parent |
 |---|---|
 | `sessions.NewRepo(db)` (SQL) | Removes the session, its entries, its task rows in both roles, and every hidden session in the task tree, at any depth — one transaction |
-| `filesession.NewRepo(dir)` | Removes the session and its entries only. It has no task table to look in, so with `sessions.NewTaskStore(db)` beside it the rows and the child sessions are yours to remove: `StopTree`, then `ListByParent` and delete each child, then the rows |
-| `session.NewInMemoryRepo()` | Same as filesession — tests only |
+| `session.NewInMemoryRepo()` | Removes the session and its entries only — it has no task table to look in. With `sessions.NewTaskStore(db)` beside it the rows and the child sessions are yours to remove: `StopTree`, then `ListByParent` and delete each child, then the rows |
 
 The generation columns on the SQL task store are the second line, not the
 first: a task row that survives a delete some other way is inert (it lists

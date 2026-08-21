@@ -303,29 +303,14 @@ t := &agents.Tool{
 
 `sandbox.CodeTool` wraps an isolated execution backend (local, Docker) as a "run this code" tool — see [Sandbox agents](sandbox.md).
 
-## Web search (Brave)
+## Web search
 
-`tools/bravesearch` is a ready-made function tool that searches the web via the [Brave Search API](https://api-dashboard.search.brave.com/api-reference/web/search/get). It is a plain, provider-agnostic function tool — the SDK calls Brave's REST API from Go and returns formatted results — so it works with any model backend (the SDK does not use provider-hosted search tools).
-
-```go
-import "github.com/zzir/agents-go/tools/bravesearch"
-
-search, err := bravesearch.New(bravesearch.Options{
-    // APIKey defaults to the BRAVE_API_KEY environment variable.
-    Count: 5, // results to request (1-20)
-})
-if err != nil {
-    log.Fatal(err)
-}
-
-agent := &agents.Agent{
-    Name:  "research-bot",
-    Model: "gpt-4o",
-    Tools: []*agents.Tool{search},
-}
-```
-
-The model controls only the `query`; `Count`, `Country`, `SearchLang`, `SafeSearch` and `Freshness` are fixed by `Options`. A runnable example lives in `examples/bravesearch`.
+Web search is a **workbench** feature, not SDK surface: set `brave_api_key` in
+the agents-server settings and every agent gets a `brave_search` tool backed by
+the [Brave Search API](https://api-dashboard.search.brave.com/api-reference/web/search/get).
+The SDK deliberately does not model provider-hosted search tools; in your own
+embedding, a search tool is an ordinary `NewTool` function that calls whichever
+API you use.
 
 ## File editing
 

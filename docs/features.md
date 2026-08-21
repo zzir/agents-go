@@ -35,7 +35,7 @@ See [Sessions](sessions.md) and [Context management](context.md).
 
 | Capability | API |
 |---|---|
-| Sessions | `session.Session`, `InMemorySession`, `filesession.Store` (JSONL), `sessions` module (SQLite/Postgres) |
+| Sessions | `session.Session`, `InMemorySession`, `sessions` module (SQLite/Postgres) |
 | Server-side sessions | `openai.ConversationsSession` (OpenAI Conversations API) |
 | History compaction | `RunOptions.Compaction` + `agents/compaction` strategies (local, append-only checkpoints), `openai.CompactionSession` (server-side `responses.compact`) |
 | Session forking | `session.Fork` |
@@ -63,7 +63,6 @@ See [Tracing](tracing.md), [MCP](mcp.md), [Sandbox agents](sandbox.md),
 | Tracing | `tracing.NewTracer`, `tracing.NewBatchProcessor`; `RunOptions.Observe.TraceGroupID/TraceMetadata` |
 | MCP | `mcp.NewStdioServer / NewStreamableHTTPServer / NewWithTransport` |
 | Sandbox (code execution) | `sandbox.CodeTool` + Local / Docker / SSH backends |
-| Web search | `bravesearch.New(bravesearch.Options{...})` (Brave Search API) |
 | File editing | `sandbox.ApplyPatchTool` (Codex-style patches, edits through the sandbox) |
 | Skills | `skills.Load / LoadRecursive / RenderIndex / ReadFileTool` (Agent Skills `SKILL.md`) |
 
@@ -76,13 +75,10 @@ Core module path: `github.com/zzir/agents-go`.
 | `agents` | Core: agents, runner, tools, guardrails, sessions, HITL, tracing hooks |
 | `models/openai` | OpenAI Responses API model provider (built on `openai-go` v3) |
 | `models/modelkit` | Dependency-free toolkit for model adapters + `conformancetest` golden matrix |
-| `filesession` | `Store` (JSONL file store) + `Repo` (a directory of them), zero dependencies |
 | `tracing` | Traces, spans, processors and exporters |
 | `sandbox` | `Sandbox` interface + `CodeTool` + `apply_patch` + local backend |
-| `tools/bravesearch` | Brave Search web-search tool |
 | `mcp` | **separate module** — Model Context Protocol client and server (modelcontextprotocol/go-sdk) |
 | `models/anthropic` | **separate module** — Anthropic Messages API backend (translated to Responses) |
-| `tracing/otel` | **separate module** — OpenTelemetry exporter for the vendor-neutral tracing core |
 | `sandbox/docker` | **separate module** — Docker sandbox backend |
 | `sandbox/ssh` | **separate module** — remote SSH sandbox backend |
 | `sessions` | **separate module** — SQLite/PostgreSQL session store (uptrace/bun) |

@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/zzir/agents-go/agents"
-	"github.com/zzir/agents-go/agentstest"
+	"github.com/zzir/agents-go/internal/agentstest"
 )
 
 // A handoff declared as pure data — Target set, no OnInvoke — switches the run.
@@ -80,8 +80,7 @@ func TestHandoffNeitherTargetNorOnInvoke(t *testing.T) {
 	}
 
 	_, err := agents.RunSync(context.Background(), root, "hi", agents.RunOptions{})
-	var ue *agents.UserError
-	if !errors.As(err, &ue) {
+	if _, ok := errors.AsType[*agents.UserError](err); !ok {
 		t.Fatalf("err = %v, want *agents.UserError", err)
 	}
 }

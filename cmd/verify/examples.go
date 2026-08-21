@@ -1,14 +1,10 @@
-// Command verifyexamples runs every example under examples/ against fake
-// model APIs (Responses and Messages, one server) and fails if one does not
-// complete.
+// The examples check: every example under examples/ runs against fake model
+// APIs (Responses and Messages, one server) and must complete.
 //
-//	go run ./cmd/verifyexamples          # run them
-//	go run ./cmd/verifyexamples -v       # ...and show each example's output
-//
-// Why it exists: `go build ./...` already proves the examples compile, which is
-// the cheap half. It does not catch an example that compiles and then panics on
-// a nil provider, loops forever, or silently prints nothing — and the examples
-// are exactly what a reader copies first. A broad API change rewrites all of
+// `go build ./...` already proves the examples compile, which is the cheap
+// half. It does not catch an example that compiles and then panics on a nil
+// provider, loops forever, or silently prints nothing — and the examples are
+// exactly what a reader copies first. A broad API change rewrites all of
 // them; this is the net under that.
 //
 // It is deliberately NOT an assertion of model behavior. The fake answers with
@@ -19,7 +15,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -35,7 +30,6 @@ import (
 // skips lists examples that need more than an OpenAI endpoint. Each one states
 // what it needs, so the list can be re-litigated rather than just inherited.
 var skips = map[string]string{
-	"bravesearch":   "calls the live Brave Search API (BRAVE_API_KEY)",
 	"fallback":      "second provider is Groq's real endpoint (GROQ_API_KEY)",
 	"prompt":        "needs a server-stored prompt (OPENAI_PROMPT_ID)",
 	"sandbox":       "needs a Docker daemon",
@@ -47,21 +41,10 @@ var skips = map[string]string{
 // reason for CI to sit for ten minutes.
 const perExample = 60 * time.Second
 
-func main() {
-	os.Exit(run())
-}
-
-// run is main's body, returning the exit code rather than calling os.Exit, so
-// that the signal handler installed below is released on every path out.
-func run() int {
-	verbose := flag.Bool("v", false, "print each example's output")
-	flag.Parse()
-
-	root, err := repoRoot()
-	if err != nil {
-		fail("locate repo root: %v", err)
-	}
-
+// verifyExamples runs every example and returns the exit code. It returns
+// rather than calling os.Exit so the signal handler installed below is
+// released on every path out.
+func verifyExamples(root string, verbose bool) int {
 	names, err := exampleNames(filepath.Join(root, "examples"))
 	if err != nil {
 		fail("list examples: %v", err)
@@ -114,12 +97,12 @@ func run() int {
 		}
 		ran++
 		fmt.Printf("ok   %-16s\n", name)
-		if *verbose {
+		if verbose {
 			fmt.Print(indent(out))
 		}
 	}
 
-	fmt.Printf("\n%d ran, %d skipped, %d failed\n", ran, skipped, failed)
+	fmt.Printf("\nexamples: %d ran, %d skipped, %d failed\n", ran, skipped, failed)
 	if failed > 0 {
 		return 1
 	}
@@ -144,12 +127,12 @@ func runExample(ctx context.Context, root, name, baseURL string) (string, error)
 		// A nested-module example is not in the root go.work, so workspace
 		// mode resolves "." against the root module and cannot find the
 		// package at all. CI runs with GOWORK=off and never saw it; the
-		// documented local command did, and failed on examples/otel.
+		// documented local command did, and failed on a nested example.
 		"GOWORK=off",
 		"OPENAI_BASE_URL="+baseURL,
-		"OPENAI_API_KEY=verifyexamples",
+		"OPENAI_API_KEY=verify",
 		"ANTHROPIC_BASE_URL="+baseURL,
-		"ANTHROPIC_API_KEY=verifyexamples",
+		"ANTHROPIC_API_KEY=verify",
 		// Keep a developer's real key and org out of the run: an example that
 		// ignored the BASE_URL overrides would otherwise quietly hit the real
 		// API and bill for it.
@@ -202,14 +185,6 @@ func exampleNames(dir string) ([]string, error) {
 	return names, nil
 }
 
-func repoRoot() (string, error) {
-	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(out)), nil
-}
-
 func indent(s string) string {
 	if s == "" {
 		return ""
@@ -219,9 +194,4 @@ func indent(s string) string {
 		lines[i] = "     " + l
 	}
 	return strings.Join(lines, "\n") + "\n"
-}
-
-func fail(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, "verifyexamples: "+format+"\n", args...)
-	os.Exit(1)
 }

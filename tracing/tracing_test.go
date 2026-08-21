@@ -20,7 +20,7 @@ func TestNewTraceID_Format(t *testing.T) {
 	}
 }
 
-// Span ids are 8 bytes so tracing/otel can reuse them verbatim as OTel span
+// Span ids are 8 bytes so an OTel-shaped exporter can reuse them verbatim as span
 // ids; trace ids are 16, which OTel also expects. Widening either would force
 // every OTel-shaped exporter to truncate, silently and inconsistently.
 func TestNewSpanID_Format(t *testing.T) {

@@ -17,7 +17,7 @@ type RepoUnderTest struct {
 	Repo session.Repo
 
 	// Direct opens a session by id through the backend's NON-repo constructor
-	// — filesession.New, sessions.New — where the id names the storage
+	// — sessions.New — where the id names the storage
 	// outright. A backend without one leaves this nil and those checks skip.
 	//
 	// It is the scope a repo must never reach, in either direction.
@@ -292,8 +292,8 @@ func repoSessionsNewestFirst(t *testing.T, r RepoUnderTest, ids ...string) []str
 		}
 		handles[i] = sess
 	}
-	for i := len(handles) - 1; i >= 0; i-- {
-		repoWrite(t, handles[i], "hello")
+	for i, handle := range slices.Backward(handles) {
+		repoWrite(t, handle, "hello")
 		if i > 0 {
 			time.Sleep(10 * time.Millisecond)
 		}

@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/zzir/agents-go/agents"
-	"github.com/zzir/agents-go/agentstest"
+	"github.com/zzir/agents-go/internal/agentstest"
 )
 
 // TestCancelAtTurnBoundaryCarriesProgress pins the shape a cancellation takes

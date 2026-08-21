@@ -71,9 +71,8 @@
 // a branch instead of deleting it, and compaction appends a checkpoint
 // instead of rewriting. Which entry kinds reach the model is a projection
 // decided by session.Projector. Storage is pluggable: an in-memory store is
-// built in, the filesession package stores entries in JSONL files, and the
-// sessions module adds SQLite and PostgreSQL. Wire it to a run through
-// [ConversationOptions].
+// built in and the sessions module adds SQLite and PostgreSQL. Wire it to a
+// run through [ConversationOptions].
 //
 // # Human in the loop
 //
@@ -93,7 +92,6 @@
 // # Observability
 //
 // [ErrorCode] classifies failures for transport; [RunResult].Diagnostics
-// lists trouble the run survived. The tracing package records spans (the
-// tracing/otel module maps them to OpenTelemetry), and [LogConfig] turns on
-// structured slog records, silent by default.
+// lists trouble the run survived. The tracing package records spans, and
+// [LogConfig] turns on structured slog records, silent by default.
 package agents

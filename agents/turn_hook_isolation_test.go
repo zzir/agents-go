@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/zzir/agents-go/agents"
-	"github.com/zzir/agents-go/agentstest"
+	"github.com/zzir/agents-go/internal/agentstest"
 )
 
 // pingAgent is a two-turn script: call the ping tool, then answer. It gives the

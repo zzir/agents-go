@@ -1,21 +1,11 @@
-// Command verifydocs checks that the Go snippets in the documentation still
-// name things that exist.
+// The docs check: the Go snippets in the documentation must still name things
+// that exist.
 //
-//	go run ./cmd/verifydocs        # check
-//	go run ./cmd/verifydocs -v     # ...and list what was checked
-//
-// Why it exists: the docs are the API's other surface, and nothing compiled
-// them. `go build ./...` covers the code and cmd/verifyexamples covers
-// examples/, but a snippet in sessions.md is just text — it kept calling
-// GetItems and PopItem for a while after both were renamed, and quickstart.md
-// showed a guardrail type that had been merged away. The first thing a reader
-// copies should not be the thing that fails to compile.
-//
-// It cannot compile the snippets: 114 of the 157 are fragments with no
-// imports and undeclared variables, and wrapping each one would mean writing a
-// preamble per snippet and keeping THAT correct. So it checks names instead,
-// which catches the failure mode that actually happens — a symbol is renamed
-// or removed and the prose keeps the old one.
+// It cannot compile the snippets: most are fragments with no imports and
+// undeclared variables, and wrapping each one would mean writing a preamble
+// per snippet and keeping THAT correct. So it checks names instead, which
+// catches the failure mode that actually happens — a symbol is renamed or
+// removed and the prose keeps the old one.
 //
 // Four checks:
 //
@@ -40,7 +30,6 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -63,25 +52,21 @@ import (
 // resolving each github.com/zzir/agents-go/… import literal against the tree,
 // which is worth doing and is not what this map does.)
 var sdkPackages = map[string]string{
-	"agents":      "agents",
-	"agentstest":  "agentstest",
-	"compaction":  "agents/compaction",
-	"middleware":  "agents/middleware",
-	"session":     "agents/session",
-	"tasks":       "agents/tasks",
-	"tracing":     "tracing",
-	"agentsotel":  "tracing/otel", // a bare otel. is the OpenTelemetry SDK's own package
-	"sandbox":     "sandbox",
-	"mcp":         "mcp",
-	"filesession": "filesession",
-	"anthropic":   "models/anthropic",
-	"modelkit":    "models/modelkit",
-	"openai":      "models/openai",
-	"sessions":    "sessions",
-	"skills":      "skills",
-	"bravesearch": "tools/bravesearch",
-	"docker":      "sandbox/docker",
-	"sshsb":       "sandbox/ssh", // a bare ssh. is golang.org/x/crypto/ssh
+	"agents":     "agents",
+	"compaction": "agents/compaction",
+	"middleware": "agents/middleware",
+	"session":    "agents/session",
+	"tasks":      "agents/tasks",
+	"tracing":    "tracing",
+	"sandbox":    "sandbox",
+	"mcp":        "mcp",
+	"anthropic":  "models/anthropic",
+	"modelkit":   "models/modelkit",
+	"openai":     "models/openai",
+	"sessions":   "sessions",
+	"skills":     "skills",
+	"docker":     "sandbox/docker",
+	"sshsb":      "sandbox/ssh", // a bare ssh. is golang.org/x/crypto/ssh
 }
 
 var (
@@ -120,23 +105,16 @@ type pkgInfo struct {
 	ctors   map[string]string          // constructor name -> type it returns
 }
 
-func main() {
-	verbose := flag.Bool("v", false, "list every file checked")
-	flag.Parse()
-
-	root, err := repoRoot()
-	if err != nil {
-		fail(err)
-	}
-
+// verifyDocs runs the docs check and returns the exit code.
+func verifyDocs(root string, verbose bool) int {
 	pkgs, err := loadSymbols(root)
 	if err != nil {
-		fail(err)
+		fail("%v", err)
 	}
 
 	docs, err := docFiles(root)
 	if err != nil {
-		fail(err)
+		fail("%v", err)
 	}
 
 	var problems []string
@@ -144,42 +122,42 @@ func main() {
 	for _, path := range docs {
 		src, err := os.ReadFile(path)
 		if err != nil {
-			fail(err)
+			fail("%v", err)
 		}
 		rel, _ := filepath.Rel(root, path)
 		for _, m := range goBlock.FindAllStringSubmatch(string(src), -1) {
 			blocks++
 			problems = append(problems, checkBlock(rel, m[1], pkgs)...)
 		}
-		if *verbose {
+		if verbose {
 			fmt.Printf("  %s\n", rel)
 		}
 	}
 
 	docProblems, links, derr := checkDocGo(root, pkgs)
 	if derr != nil {
-		fail(derr)
+		fail("%v", derr)
 	}
 	problems = append(problems, docProblems...)
 
 	anchorProblems, mdLinks, aerr := checkAnchors(root, docs)
 	if aerr != nil {
-		fail(aerr)
+		fail("%v", aerr)
 	}
 	problems = append(problems, anchorProblems...)
 
-	fmt.Printf("verifydocs: %d Go blocks in %d files, %d doc.go links, %d markdown links\n",
+	fmt.Printf("docs: %d Go blocks in %d files, %d doc.go links, %d markdown links\n",
 		blocks, len(docs), links, mdLinks)
 	if len(problems) == 0 {
-		fmt.Println("verifydocs: OK")
-		return
+		fmt.Println("docs: OK")
+		return 0
 	}
 	slices.Sort(problems)
 	for _, p := range problems {
 		fmt.Fprintln(os.Stderr, p)
 	}
-	fmt.Fprintf(os.Stderr, "\nverifydocs: %d problem(s)\n", len(problems))
-	os.Exit(1)
+	fmt.Fprintf(os.Stderr, "\ndocs: %d problem(s)\n", len(problems))
+	return 1
 }
 
 // checkBlock reports every reference in one snippet that names nothing.
@@ -570,29 +548,4 @@ func docFiles(root string) ([]string, error) {
 	out = append(out, filepath.Join(root, "cmd", "agents-server", "README.md"))
 	slices.Sort(out)
 	return out, nil
-}
-
-// repoRoot walks up from the working directory to the module root.
-func repoRoot() (string, error) {
-	dir, err := os.Getwd()
-	if err != nil {
-		return "", err
-	}
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			if _, err := os.Stat(filepath.Join(dir, "docs")); err == nil {
-				return dir, nil
-			}
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", fmt.Errorf("no module root with a docs/ directory above %s", dir)
-		}
-		dir = parent
-	}
-}
-
-func fail(err error) {
-	fmt.Fprintln(os.Stderr, "verifydocs:", err)
-	os.Exit(1)
 }

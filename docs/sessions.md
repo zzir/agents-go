@@ -106,7 +106,7 @@ bubble shows when rebuilding a view from a paused run's pending input.
 A `SessionRepo` owns which sessions exist, separately from what each one holds.
 
 ```go
-repo, _ := filesession.NewRepo("./sessions")     // or sessions.NewRepo(db)
+repo := session.NewInMemoryRepo()                // or sessions.NewRepo(db)
 sess, _ := repo.Create(ctx, session.CreateOptions{Title: "New session"})
 list, _ := repo.List(ctx, session.ListOptions{})  // hidden sessions left out
 ```
@@ -120,7 +120,7 @@ Two things it fixes:
   maintaining that filter and stops forgetting it.
 - **Every backend answers a listing the same way** — newest change first, cut
   to `ListOptions.Limit` after the hidden filter, a limit that is not positive
-  meaning no limit. `agentstest.RepoConformance` holds all four to it, so
+  meaning no limit. A shared conformance suite holds every backend to it, so
   moving from the in-memory repo to SQL does not quietly change which
   conversations a sidebar shows.
 
@@ -208,39 +208,16 @@ The built-ins sit on a spectrum from "zero dependencies" to "full database". The
 | Implementation | Storage | Dependencies | Module | Use when |
 |---|---|---|---|---|
 | `InMemorySession` | memory | none | core | tests, short-lived chats |
-| `filesession.Store` | JSONL file | none | core | single process, no database wanted |
-| `sessions` (SQLite) | `.db` file | bun + driver | `sessions` | one host, but you want SQL (transactions, external querying) |
+| `sessions` (SQLite) | `.db` file | bun + driver | `sessions` | durable local history in one file |
 | `sessions` (PostgreSQL) | server | bun + driver | `sessions` | concurrent processes, shared/production storage |
 | `openai.ConversationsSession` | OpenAI server | core (`models/openai`) | core | no local store; history lives in the OpenAI Conversations API |
 | `openai.CompactionSession` | wraps another Session | core (`models/openai`) | core | auto-summarize history via `responses.compact` once it grows large |
-
-`filesession.Store` and the SQLite backend overlap — both persist to one local file — and the line between them is dependencies: `filesession.Store` is **zero-dependency** and lives in the core module, so anyone using the SDK has it without pulling a database driver. Reach for the `sessions` module's SQLite when you specifically want SQL semantics (real transactions, querying the `.db` with other tools, an easy migration path to Postgres).
 
 ## Built-in implementations
 
 ### InMemorySession
 
 `session.NewInMemorySession()` — goroutine-safe, process-lifetime history. Ideal for tests. Treat returned items as read-only (they share underlying pointers with the store).
-
-### filesession.Store (JSONL file)
-
-`filesession.Store` persists history as one JSON item per line, with zero extra dependencies. It fills the "simple local persistence" niche without pulling in a database driver (for actual SQLite/Postgres, see the `sessions` module below). It is a `session.Storage`, not a `session.Session` — wrap it in `session.NewSession`:
-
-```go
-import "github.com/zzir/agents-go/filesession"
-
-store, err := filesession.New("sessions", "user-123") // sessions/user-123.jsonl
-// or pin an exact path:
-store, err = filesession.NewAtPath("/var/data/chats/user-123.jsonl")
-
-sess := session.NewSession(store) // storage alone until it is wrapped
-```
-
-Properties:
-
-- Goroutine-safe within a process — including multiple `Store` instances opened on the same path (they share a per-path lock). Cross-process access is **not** locked.
-- Appends are written in a single `write` call; rewrites (`ReplaceEntries`) go through an fsynced temp file + atomic rename.
-- Corrupt lines are skipped on read rather than failing the whole session.
 
 ### SQL sessions (SQLite / PostgreSQL)
 
@@ -362,7 +339,7 @@ combine with a local `Session`.
 ```go
 import "github.com/zzir/agents-go/models/openai"
 
-base := session.NewInMemorySession() // or filesession.New, sessions.New, …
+base := session.NewInMemorySession() // or sessions.New, …
 sess, err := openai.NewCompactionSession(base, openai.CompactionOptions{
 	Model:     "gpt-4.1",  // OpenAI model used for compaction (default gpt-4.1)
 	Threshold: 20,         // compact when ≥20 candidate items accumulate (default 10)
@@ -520,11 +497,7 @@ for _, e := range entries {
 One session = one conversation. Key sessions by conversation ID:
 
 ```go
-func sessionFor(userID, threadID string) (*session.Session, error) {
-	storage, err := filesession.New("sessions", userID+"-"+threadID)
-	if err != nil {
-		return nil, err
-	}
-	return session.NewSession(storage), nil
+func sessionFor(db *bun.DB, userID, threadID string) *session.Session {
+	return sessions.New(db, userID+"-"+threadID)
 }
 ```

@@ -24,7 +24,7 @@ type messagesRequest struct {
 
 func (f *fakeMessages) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !strings.HasSuffix(r.URL.Path, "/messages") {
-		http.Error(w, fmt.Sprintf("verifyexamples fake: unsupported path %q", r.URL.Path), http.StatusNotFound)
+		http.Error(w, fmt.Sprintf("verify fake: unsupported path %q", r.URL.Path), http.StatusNotFound)
 		return
 	}
 

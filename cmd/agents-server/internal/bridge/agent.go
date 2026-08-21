@@ -13,11 +13,11 @@ import (
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/middleware"
 	"github.com/zzir/agents-go/agents/tasks"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/bravesearch"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/skills"
-	"github.com/zzir/agents-go/tools/bravesearch"
 )
 
 // AgentDeps holds all the dependencies needed to build a fully configured agent.

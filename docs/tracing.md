@@ -101,9 +101,10 @@ exporter := tracing.FuncExporter(func(items []tracing.Item) {
 
 There is no built-in HTTP exporter. Sending spans over the wire means picking a
 format, and every collector wants a different one — so the SDK exports to a
-function and lets you write the six lines that match yours. For OpenTelemetry
-specifically, use the [`tracing/otel`](#opentelemetry) module rather than
-writing them.
+function and lets you write the six lines that match yours. That includes
+OpenTelemetry: the span record is OTel-shaped (8-byte span ids, 16-byte trace
+ids), and a `Processor` or `Exporter` that feeds an OTel SDK is yours to write
+against your collector ([spec.md §5.6b](spec.md)).
 
 ## Custom processors
 
@@ -126,104 +127,14 @@ Span callbacks can fire from concurrent goroutines (parallel tools, input guardr
 
 Spans record names, timing, error messages and small attributes such as `response_id` and `call_id` — not prompts, completions or tool payloads. Those two ids stay on the span with sensitive data off, so a consumer can still join a span to the session entry it produced. If you add attributes from your own hooks, apply your data policies accordingly.
 
-## OpenTelemetry
+Two shapes an exporter can rely on ([spec.md §5.6b](spec.md)):
 
-`tracing/otel` exports our traces as OTel spans. It is a **separate module** —
-the OTel SDK is a heavy dependency with its own release cadence, and the core
-stays vendor-neutral ([spec.md §5.7](spec.md)).
-
-```go
-import agentsotel "github.com/zzir/agents-go/tracing/otel"
-
-tp, exp, err := agentsotel.NewTracerProvider(sdktrace.WithBatcher(otlpExporter))
-if err != nil { return err }
-defer tp.Shutdown(ctx)
-
-proc := tracing.NewBatchProcessor(exp, tracing.BatchProcessorOptions{})
-tracer := tracing.NewTracer(proc)
-```
-
-Runnable version: [`examples/otel`](../examples/otel/main.go).
-
-### Seeing it in a UI
-
-Jaeger is a collector and a viewer in one container, so a local setup is two
-commands. It accepts OTLP directly — no separate collector process:
-
-```bash
-docker run -d --name jaeger \
-  -p 16686:16686 \   # UI
-  -p 4317:4317 \     # OTLP/gRPC
-  jaegertracing/jaeger:2.11.0
-
-cd examples/otel && OPENAI_API_KEY=... OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4317 go run .
-```
-
-Then open <http://localhost:16686> and pick the service. One run appears as a
-tree: `invoke_agent` spanning the whole run, with a `chat` span per model call
-and an `execute_tool` span per tool underneath it.
-
-Two things worth setting, both in the example:
-
-- **A service name.** Without a `resource` carrying `service.name`, every trace
-  lands under `unknown_service` and a UI has nothing to group by.
-- **Flush both stages before exit.** `proc.ForceFlush()` moves our spans into
-  the OTel SDK; `tp.ForceFlush(ctx)` moves the SDK's batch over the wire.
-  Skipping either loses the trace of a short-lived program entirely.
-
-Anything else that speaks OTLP works the same way — Grafana Tempo, an
-OpenTelemetry Collector fanning out to several backends, or a hosted vendor
-(point `OTEL_EXPORTER_OTLP_ENDPOINT` at it and drop `WithInsecure`).
-
-### How the tree survives
-
-Our spans are flat records with string ids, exported in batches *after* they
-finish — usually children before parents. OTel builds its tree from live spans
-nested through a context, which no longer exists by then.
-
-The exporter rebuilds it by **pinning**: it sets a custom `IDGenerator` to the
-exact ids the span already has, injects the parent as a remote `SpanContext`,
-and starts and ends the span with its original timestamps. Trace ids, span ids,
-parent links and durations all survive, including when a child is exported
-before its already-finished parent.
-
-Two consequences:
-
-- **Drive it with a batch processor.** The pinning is stateful, so `Export`
-  serializes; it is not usable as a synchronous per-span processor.
-- **Span ids are 8 bytes** (`tracing.NewSpanID`) because that is an OTel span
-  id. Widening them would force this exporter — and any other OTel-shaped one —
-  to truncate silently.
-
-### Attribute mapping
-
-Pinned to GenAI semantic conventions **v1.38.0** (they are still experimental
-upstream and have renamed keys between releases, so the version is recorded in
-`attributes.go` rather than tracking whatever the SDK ships).
-
-| Our span | OTel name | Key attributes |
-|---|---|---|
-| agent | `invoke_agent {name}` | `gen_ai.operation.name`, `gen_ai.agent.name` |
-| generation | `chat {model}` | `gen_ai.provider.name`, `gen_ai.request.model`, `gen_ai.response.id`, `gen_ai.usage.*` |
-| function | `execute_tool {name}` | `gen_ai.operation.name`, `gen_ai.tool.name` |
-| handoff | `handoff` | `agents.handoff.tool` |
-| guardrail | `guardrail` | `agents.guardrail.stage` |
-| compaction | `compact` | `agents.compaction.before_items` / `after_items` |
-
-Concepts with no GenAI equivalent use an `agents.` prefix rather than a
-`gen_ai.` one that would imply a convention covering them. An error maps to
-`codes.Error` plus `error.type`, carrying the SDK's `ErrorCode` — a stable,
-low-cardinality value, which is what the convention asks for.
-
-The workflow name, the trace group id and each `tracing.WithMetadata` entry (as
-`agents.metadata.<key>`) land on **root spans only** — repeating them on every
-child would multiply a constant across the trace. Metadata values are rendered
-as strings rather than typed: the same key may hold a different shape on the
-next run, and a backend indexing by key would see the attribute type drift.
-
-A trace has a root span per **agent**, not one per trace. A handoff ends the
-current agent span and starts the next one at the top level, so every agent in a
-handoff chain carries these attributes.
+- **Span ids are 8 bytes and trace ids 16** (`tracing.NewSpanID`,
+  `tracing.NewTraceID`) — the OTel widths, so an OTel-shaped consumer never
+  truncates.
+- **A trace has a root span per agent**, not one per trace: a handoff ends the
+  current agent span and starts the next one at the top level, so an exporter
+  grouping by trace must carry workflow metadata across roots itself.
 
 ## Instrumenting your own code
 

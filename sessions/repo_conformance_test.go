@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/zzir/agents-go/agents/session"
-	"github.com/zzir/agents-go/agentstest"
+	"github.com/zzir/agents-go/internal/agentstest"
 	"github.com/zzir/agents-go/sessions"
 )
 
