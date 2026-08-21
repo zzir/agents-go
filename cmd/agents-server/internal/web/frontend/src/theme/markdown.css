@@ -13,8 +13,8 @@
 .markdown-body pre { background: none; }
 .code-block-wrapper {
   position: relative;
-  margin: 16px 0;
-  border-radius: 6px;
+  margin: var(--base-size-16) 0;
+  border-radius: var(--borderRadius-medium);
   overflow: hidden;
 }
 .code-block-wrapper .btn-copy {
@@ -24,8 +24,8 @@
   opacity: 0;
   transition: opacity var(--base-duration-200) var(--base-easing-easeInOut);
   z-index: 1;
-  padding: 4px;
-  border-radius: 4px;
+  padding: var(--base-size-4);
+  border-radius: var(--borderRadius-small);
   background: var(--bgColor-neutral-muted);
 }
 .code-block-wrapper:hover .btn-copy,
@@ -36,8 +36,8 @@
 .code-block-wrapper .hljs-code-block {
   margin: 0;
   border: 1px solid var(--borderColor-default);
-  border-radius: 6px;
-  font-size: 13px;
+  border-radius: var(--borderRadius-medium);
+  font-size: var(--base-text-size-xs);
   line-height: 1.5;
   overflow-x: auto;
 }
@@ -58,7 +58,7 @@
   bottom: 1px;
   height: 90px;
   background: linear-gradient(transparent, var(--bgColor-default));
-  border-radius: 0 0 6px 6px;
+  border-radius: 0 0 var(--borderRadius-medium) var(--borderRadius-medium);
   pointer-events: none;
 }
 .btn-code-expand {
@@ -71,8 +71,8 @@
   left: 50%;
   transform: translateX(-50%);
   z-index: 2;
-  padding: 3px 12px;
-  font-size: 12px;
+  padding: var(--base-size-4) var(--base-size-12);
+  font-size: var(--base-text-size-xs);
   color: var(--fgColor-default);
   background: var(--bgColor-default);
   border: 1px solid var(--borderColor-default);
@@ -90,7 +90,7 @@
   top: 6px;
   right: 6px;
   display: flex;
-  gap: 2px;
+  gap: var(--base-size-2);
   opacity: 0;
   transition: opacity var(--base-duration-200) var(--base-easing-easeInOut);
   z-index: 1;
@@ -98,8 +98,8 @@
 .code-block-wrapper:hover .code-block-actions,
 .code-block-actions:focus-within { opacity: 1; }
 .code-block-actions .btn-octicon {
-  padding: 4px;
-  border-radius: 4px;
+  padding: var(--base-size-4);
+  border-radius: var(--borderRadius-small);
   background: var(--bgColor-neutral-muted);
   cursor: pointer;
   border: none;
@@ -116,7 +116,7 @@
   justify-content: center;
   padding: var(--base-size-16);
   border: 1px solid var(--borderColor-default);
-  border-radius: 6px;
+  border-radius: var(--borderRadius-medium);
   overflow: hidden;
   cursor: zoom-in;
 }

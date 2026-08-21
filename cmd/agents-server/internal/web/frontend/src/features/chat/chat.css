@@ -17,7 +17,7 @@
   justify-content: space-between;
   gap: var(--base-size-8);
   height: var(--topbar-height);
-  padding: 8px 16px; /* match .side-panel-header */
+  padding: var(--base-size-8) var(--base-size-16); /* match .side-panel-header */
   border-bottom: 1px solid var(--borderColor-muted);
   flex-shrink: 0;
 }
@@ -37,8 +37,8 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 14px;
-  font-weight: 600; /* match .side-panel-title */
+  font-size: var(--base-text-size-sm);
+  font-weight: var(--base-text-weight-semibold); /* match .side-panel-title */
   /* The title is the session's identity — it never yields to the badge.
      Its own max-width still clamps a truly long name. */
   flex-shrink: 0;
@@ -50,14 +50,14 @@
    title. Read-only on purpose — the binding is immutable, so this is context,
    not a control. */
 .chat-topbar-binding {
-  padding: 2px 6px;
+  padding: var(--base-size-2) var(--base-size-6);
   max-width: 200px;
   min-width: 0;
   flex-shrink: 1;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-size: 12px;
+  gap: var(--base-size-4);
+  font-size: var(--base-text-size-xs);
   color: var(--fgColor-muted);
 }
 .chat-topbar-binding svg {
@@ -73,7 +73,7 @@
 .chat-topbar-actions {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--base-size-2);
   flex-shrink: 0;
 }
 
@@ -87,7 +87,7 @@
 .message-user-actions {
   display: flex;
   gap: 0;
-  margin-top: 2px;
+  margin-top: var(--base-size-2);
   opacity: 0;
   transition: opacity var(--base-duration-100) var(--base-easing-easeInOut);
 }
@@ -114,23 +114,23 @@
 .turn-actions {
   display: flex;
   gap: 0;
-  margin-top: 4px;
+  margin-top: var(--base-size-4);
   opacity: 0;
   transition: opacity var(--base-duration-100) var(--base-easing-easeInOut);
 }
 .message-turn:hover .turn-actions,
 .turn-actions:focus-within { opacity: 1; }
 .turn-duration {
-  font-size: 12px;
+  font-size: var(--base-text-size-xs);
   color: var(--fgColor-muted);
   line-height: 20px;
-  margin-left: 4px;
+  margin-left: var(--base-size-4);
   user-select: none;
 }
 .turn-duration-live {
   display: block;
   margin-left: 0;
-  margin-top: 4px;
+  margin-top: var(--base-size-4);
   font-variant-numeric: tabular-nums;
 }
 
@@ -170,7 +170,7 @@
   right: 0;
   width: fit-content;
   margin: 0 auto;
-  z-index: 10;
+  z-index: var(--zIndex-float);
   border-radius: var(--borderRadius-full) !important;
   box-shadow: var(--shadow-floating-small);
   animation: msg-in var(--base-duration-200) var(--base-easing-easeOut) both;
@@ -192,7 +192,7 @@
 .chat-toc-item {
   display: flex;
   align-items: center;
-  padding: 5px 4px;
+  padding: var(--base-size-4) var(--base-size-4);
   /* Many prompts: bars compress instead of overflowing the 70vh rail. */
   flex-shrink: 1;
   min-height: 5px;
@@ -221,7 +221,7 @@
   text-overflow: ellipsis;
   max-width: min(380px, 45vw);
 }
-/* The rail lives in the side gutter of the 860px message column; hide it
+/* The rail lives in the side gutter of the message column (--content-max-width); hide it
    when the column is too narrow for a gutter. */
 @container (max-width: 980px) {
   .chat-toc { display: none; }
@@ -234,7 +234,7 @@
      contain:paint), which would otherwise clip the ring where the bubble meets
      the edge. Kept in sync with .message-turn so bubbles and turns align. */
   padding: var(--base-size-8) var(--base-size-4);
-  max-width: 860px;
+  max-width: var(--content-max-width);
   margin: 0 auto;
   width: 100%;
   /* Chrome jank fix: skip layout/paint for off-screen messages. Long chats
@@ -261,7 +261,7 @@
   white-space: pre-wrap;
   word-break: break-word;
   background: var(--bgColor-accent-muted);
-  padding: 8px 14px;
+  padding: var(--base-size-8) var(--base-size-12);
   border-radius: var(--borderRadius-large) var(--borderRadius-large) var(--borderRadius-small) var(--borderRadius-large);
   border: 1px solid var(--borderColor-muted);
 }
@@ -273,7 +273,7 @@
    content-visibility:auto paint containment (outline is painted, so it clips
    just like box-shadow would). */
 @keyframes msg-jump-flash {
-  0%, 55% { outline: 2px solid var(--borderColor-accent-emphasis, #0969da); outline-offset: 1px; }
+  0%, 55% { outline: 2px solid var(--borderColor-accent-emphasis); outline-offset: 1px; }
   100%    { outline: 2px solid transparent; outline-offset: 1px; }
 }
 .msg-jump-flash .message-body {
@@ -320,7 +320,7 @@
 
 /* Compaction indicator (inline, like tool call groups) */
 .compaction-card {
-  max-width: 860px;
+  max-width: var(--content-max-width);
   margin: 0 auto;
   width: 100%;
 }
@@ -329,18 +329,18 @@
   align-items: center;
   gap: var(--base-size-8);
   padding: var(--base-size-4) 0;
-  font-size: var(--text-body-size-small);
+  font-size: var(--base-text-size-xs);
   color: var(--fgColor-muted);
   cursor: pointer;
   user-select: none;
 }
 .compaction-card-toggle:hover { color: var(--fgColor-default); }
-.compaction-card-toggle .process-icon { transition: transform 0.15s ease; }
+.compaction-card-toggle .process-icon { transition: transform var(--base-duration-200) var(--base-easing-ease); }
 .compaction-card-toggle.expanded .process-icon { transform: rotate(90deg); }
 .compaction-card-body {
   padding: var(--base-size-8) var(--base-size-12);
   margin: 0 0 var(--base-size-8) var(--base-size-24);
-  font-size: var(--text-body-size-small);
+  font-size: var(--base-text-size-xs);
   color: var(--fgColor-muted);
   border-left: 2px solid var(--borderColor-muted);
 }
@@ -357,7 +357,7 @@
 
 /* Assistant turn (one run: text + tool calls as one block) */
 .message-turn {
-  max-width: 860px;
+  max-width: var(--content-max-width);
   margin: 0 auto;
   width: 100%;
   /* Match .message's horizontal padding so user bubbles and assistant turns
@@ -385,8 +385,8 @@
 .process-group-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
+  gap: var(--base-size-6);
+  padding: var(--base-size-4) var(--base-size-8);
   font-size: var(--base-text-size-xs);
   color: var(--fgColor-muted);
   cursor: pointer;
@@ -394,16 +394,16 @@
   border-radius: var(--borderRadius-full);
   background: var(--bgColor-muted);
   border: 1px solid var(--borderColor-muted);
-  transition: background 0.1s, color 0.1s;
+  transition: background var(--base-duration-100), color var(--base-duration-100);
 }
 .process-group-toggle:hover { background: var(--bgColor-neutral-muted); color: var(--fgColor-default); }
 .process-group-toggle .process-icon {
   width: 12px; height: 12px; flex-shrink: 0; color: var(--fgColor-muted);
-  transition: transform 0.15s;
+  transition: transform var(--base-duration-200);
 }
 .process-group-toggle.expanded .process-icon { transform: rotate(90deg); }
 .process-group-toggle .process-status {
-  margin-left: 4px;
+  margin-left: var(--base-size-4);
 }
 
 /* Process timeline — thinking + tool calls in one rail */
@@ -415,13 +415,13 @@
 }
 .pt-entry {
   display: flex;
-  gap: 6px;
+  gap: var(--base-size-6);
   align-items: flex-start;
 }
 .pt-icon {
   flex-shrink: 0;
   color: var(--fgColor-muted);
-  margin-top: 2px;
+  margin-top: var(--base-size-2);
 }
 .pt-thinking {
   font-size: var(--base-text-size-xs);
@@ -432,10 +432,10 @@
 .pt-handoff {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--base-size-6);
   font-size: var(--base-text-size-xs);
   color: var(--fgColor-severe);
-  padding: 2px 8px;
+  padding: var(--base-size-2) var(--base-size-8);
   background: var(--bgColor-severe-muted);
   border: 1px solid var(--borderColor-severe-muted);
   border-radius: var(--borderRadius-full);
@@ -449,8 +449,8 @@
 .thinking-dots {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 8px 14px;
+  gap: var(--base-size-4);
+  padding: var(--base-size-8) var(--base-size-12);
   background: var(--bgColor-muted);
   border: 1px solid var(--borderColor-muted);
   border-radius: var(--borderRadius-large);
@@ -459,7 +459,7 @@
 .thinking-dots span {
   width: 6px;
   height: 6px;
-  border-radius: 50%;
+  border-radius: var(--borderRadius-full);
   background: var(--fgColor-muted);
   animation: thinking-bounce 1.4s infinite ease-in-out both;
 }
@@ -484,14 +484,14 @@
 .chat-input-box {
   /* The slash popup is positioned off this box. */
   position: relative;
-  max-width: 880px;
+  max-width: var(--composer-max-width);
   margin: 0 auto;
   display: flex;
   flex-direction: column;
   border: 1px solid var(--borderColor-default);
   border-radius: 16px;
   background: var(--bgColor-default);
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition: border-color var(--base-duration-200), box-shadow var(--base-duration-200);
   box-shadow: var(--shadow-resting-xsmall);
 }
 
@@ -506,12 +506,12 @@
   /* Short enough to fit above a greeting's mid-screen composer too. */
   max-height: min(320px, 34vh);
   overflow-y: auto;
-  z-index: 20;
-  padding: 4px 0;
+  z-index: var(--zIndex-popup);
+  padding: var(--base-size-4) 0;
   border: 1px solid var(--borderColor-default);
-  border-radius: 12px;
-  background: var(--overlay-bgColor, var(--bgColor-default));
-  box-shadow: var(--shadow-floating-small, 0 8px 24px rgba(0, 0, 0, 0.12));
+  border-radius: var(--borderRadius-large);
+  background: var(--overlay-bgColor);
+  box-shadow: var(--shadow-floating-small);
 }
 .chat-input-box:focus-within {
   border-color: var(--fgColor-accent);
@@ -522,7 +522,7 @@
   border: none;
   outline: none;
   resize: none;
-  padding: 14px 16px 4px;
+  padding: var(--base-size-12) var(--base-size-16) var(--base-size-4);
   font-size: var(--base-text-size-sm);
   font-family: var(--fontStack-sansSerif);
   background: transparent;
@@ -539,13 +539,13 @@
 .chat-input-toolbar {
   display: flex;
   align-items: center;
-  padding: 4px 6px 6px;
-  gap: 4px;
+  padding: var(--base-size-4) var(--base-size-6) var(--base-size-6);
+  gap: var(--base-size-4);
 }
 .chat-input-toolbar-left {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--base-size-2);
   min-width: 0;
 }
 
@@ -565,7 +565,7 @@
 .chat-input-toolbar-right {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--base-size-2);
   margin-left: auto;
 }
 .chat-input-toolbar-send {
@@ -576,13 +576,13 @@
   width: 1px;
   height: 20px;
   background: var(--borderColor-muted);
-  margin: 0 4px;
+  margin: 0 var(--base-size-4);
   flex-shrink: 0;
 }
 .chat-input-toolbar-warn {
-  font-size: 11px;
+  font-size: var(--base-text-size-xs);
   color: var(--fgColor-danger);
-  padding: 0 8px;
+  padding: 0 var(--base-size-8);
 }
 
 /* Chat layout with trace drawer */
@@ -600,8 +600,8 @@
 /* ToolCallCard — content styles (shell is Disclosure) */
 .ToolCallCard { margin: var(--base-size-4) 0; }
 .ToolCallCard-name {
-  font-weight: 600;
-  font-size: 13px;
+  font-weight: var(--base-text-weight-semibold);
+  font-size: var(--base-text-size-xs);
   font-family: var(--fontStack-sansSerif);
   flex-shrink: 0;
 }
@@ -614,78 +614,78 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
-  font-weight: 400;
+  font-size: var(--base-text-size-xs);
+  font-weight: var(--base-text-weight-normal);
   color: var(--fgColor-muted);
 }
 /* paths / commands render in the code font; prose titles (labels, queries) don't */
-.ToolCallCard-tasktitle--mono { font-family: var(--fontStack-monospace, monospace); }
+.ToolCallCard-tasktitle--mono { font-family: var(--fontStack-monospace); }
 /* Flexible gap: the single flex-grow element in the header, so the trailing
    group (MCP label / task status / inspect / approval status) lands at the
    right edge on every card — with or without a summary. */
 .ToolCallCard-spacer { flex: 1; }
-.ToolCallCard-output { margin-top: 8px; }
+.ToolCallCard-output { margin-top: var(--base-size-8); }
 .ToolCallCard-output-label {
-  font-size: 11px;
+  font-size: var(--base-text-size-xs);
   color: var(--fgColor-muted);
-  margin-bottom: 4px;
+  margin-bottom: var(--base-size-4);
 }
 .ToolCallCard-output pre { color: var(--fgColor-default); }
 /* A multimodal result: its parts stacked; an image sized to the card, the
    overlay shows it 1:1. */
-.ToolCallCard-content { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.ToolCallCard-content { display: flex; flex-direction: column; align-items: flex-start; gap: var(--base-size-8); }
 .ToolCallCard-content pre { align-self: stretch; }
 .ToolCallCard-image {
   display: block;
   max-width: 100%;
   max-height: 320px;
   border: 1px solid var(--borderColor-default);
-  border-radius: 6px;
+  border-radius: var(--borderRadius-medium);
   cursor: zoom-in;
 }
-.ToolCallCard-file { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--fgColor-muted); }
+.ToolCallCard-file { display: inline-flex; align-items: center; gap: var(--base-size-4); font-size: var(--base-text-size-xs); color: var(--fgColor-muted); }
 
 /* apply_patch preview: highlighted as a ```diff block via the markdown pipeline
    (same hljs theme + dark mode as every other code block) */
 .ToolCallCard-diff { margin: 0; }
 .ToolCallCard-diff pre { margin: 0; }
-.ToolCallCard-file { font-family: var(--fontStack-monospace, monospace); font-size: 12px; color: var(--fgColor-muted); }
+.ToolCallCard-file { font-family: var(--fontStack-monospace); font-size: var(--base-text-size-xs); color: var(--fgColor-muted); }
 
 .ToolCallCard-approval {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 10px;
+  gap: var(--base-size-8);
+  margin-top: var(--base-size-8);
 }
 
 /* submit_plan review: the plan renders as prose, not JSON */
-.ToolCallCard-plan { margin: 0; font-size: 13px; }
+.ToolCallCard-plan { margin: 0; font-size: var(--base-text-size-xs); }
 
 /* save_workflow review: the proposed definition, and what it replaces */
-.ToolCallCard-wf { display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.ToolCallCard-wf { display: flex; flex-direction: column; gap: var(--base-size-8); font-size: var(--base-text-size-xs); }
 .ToolCallCard-wf-desc { color: var(--fgColor-muted); }
-.ToolCallCard-wf-steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
-.ToolCallCard-wf-step-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
-.ToolCallCard-wf-step-name { font-weight: 600; }
-.ToolCallCard-wf-step-agent { color: var(--fgColor-muted); font-family: var(--fontStack-monospace, monospace); font-size: 12px; }
-.ToolCallCard-wf-prompt { margin: 2px 0 0; white-space: pre-wrap; word-break: break-word; font-size: 12px; color: var(--fgColor-default); }
-.ToolCallCard-wf-budget { font-size: 12px; color: var(--fgColor-muted); }
-.ToolCallCard-wf-review { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.ToolCallCard-wf-steps { margin: 0; padding-left: var(--base-size-20); display: flex; flex-direction: column; gap: var(--base-size-6); }
+.ToolCallCard-wf-step-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--base-size-6); }
+.ToolCallCard-wf-step-name { font-weight: var(--base-text-weight-semibold); }
+.ToolCallCard-wf-step-agent { color: var(--fgColor-muted); font-family: var(--fontStack-monospace); font-size: var(--base-text-size-xs); }
+.ToolCallCard-wf-prompt { margin: var(--base-size-2) 0 0; white-space: pre-wrap; word-break: break-word; font-size: var(--base-text-size-xs); color: var(--fgColor-default); }
+.ToolCallCard-wf-budget { font-size: var(--base-text-size-xs); color: var(--fgColor-muted); }
+.ToolCallCard-wf-review { display: flex; flex-direction: column; align-items: flex-start; gap: var(--base-size-4); }
 .ToolCallCard-wf-review .ToolCallCard-wf-diff { align-self: stretch; }
-.ToolCallCard-wf-review-head { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--fgColor-muted); }
-.ToolCallCard-wf-review-error { font-size: 12px; color: var(--fgColor-danger); }
+.ToolCallCard-wf-review-head { display: flex; align-items: center; gap: var(--base-size-8); font-size: var(--base-text-size-xs); color: var(--fgColor-muted); }
+.ToolCallCard-wf-review-error { font-size: var(--base-text-size-xs); color: var(--fgColor-danger); }
 .ToolCallCard-wf-diff {
-  font-family: var(--fontStack-monospace, monospace);
-  font-size: 12px;
+  font-family: var(--fontStack-monospace);
+  font-size: var(--base-text-size-xs);
   border: 1px solid var(--borderColor-default);
-  border-radius: 6px;
-  padding: 4px 0;
+  border-radius: var(--borderRadius-medium);
+  padding: var(--base-size-4) 0;
   overflow-x: auto;
 }
-.ToolCallCard-wf-diff-line { display: flex; gap: 6px; white-space: pre-wrap; word-break: break-word; padding: 0 6px; }
+.ToolCallCard-wf-diff-line { display: flex; gap: var(--base-size-6); white-space: pre-wrap; word-break: break-word; padding: 0 var(--base-size-6); }
 .ToolCallCard-wf-diff-sign { flex-shrink: 0; user-select: none; width: 1ch; }
-.ToolCallCard-wf-diff-add { background: var(--bgColor-success-muted, rgba(46, 160, 67, 0.15)); color: var(--fgColor-default); }
-.ToolCallCard-wf-diff-del { background: var(--bgColor-danger-muted, rgba(207, 34, 46, 0.1)); color: var(--fgColor-muted); text-decoration: line-through; }
+.ToolCallCard-wf-diff-add { background: var(--bgColor-success-muted); color: var(--fgColor-default); }
+.ToolCallCard-wf-diff-del { background: var(--bgColor-danger-muted); color: var(--fgColor-muted); text-decoration: line-through; }
 
 /* todo_write checklist */
 .ToolCallCard-todos {
@@ -694,13 +694,13 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: var(--base-size-4);
 }
 .ToolCallCard-todo {
   display: flex;
   align-items: baseline;
-  gap: 7px;
-  font-size: 13px;
+  gap: var(--base-size-8);
+  font-size: var(--base-text-size-xs);
   color: var(--fgColor-default);
 }
 .ToolCallCard-todo-icon {
@@ -710,7 +710,7 @@
 }
 .ToolCallCard-todo--completed { color: var(--fgColor-muted); text-decoration: line-through; }
 .ToolCallCard-todo--completed .ToolCallCard-todo-icon { color: var(--fgColor-success); }
-.ToolCallCard-todo--in_progress { font-weight: 600; }
+.ToolCallCard-todo--in_progress { font-weight: var(--base-text-weight-semibold); }
 .ToolCallCard-todo--in_progress .ToolCallCard-todo-icon { color: var(--fgColor-accent); }
 .ToolCallCard-todo--pending .ToolCallCard-todo-icon { color: var(--fgColor-muted); }
 
@@ -729,13 +729,13 @@
   border-radius: var(--borderRadius-medium);
   background: var(--bgColor-muted);
   color: var(--fgColor-muted);
-  font-size: var(--text-body-size-small);
+  font-size: var(--base-text-size-xs);
 }
 .cancelled-card-icon { color: var(--fgColor-muted); flex-shrink: 0; }
 
 /* Live agent name next to the thinking dots */
 .thinking-agent {
-  margin-left: 8px;
+  margin-left: var(--base-size-8);
   font-size: var(--base-text-size-xs);
   color: var(--fgColor-muted);
 }
@@ -749,7 +749,7 @@
 }
 .chat-content-centered .chat-input-container {
   width: 100%;
-  max-width: 860px;
+  max-width: var(--content-max-width);
   padding: 0;
 }
 
@@ -763,12 +763,12 @@
   user-select: none;
 }
 .chat-greeting-emoji {
-  font-size: 40px;
+  font-size: var(--base-text-size-2xl);
   line-height: 1;
 }
 .chat-greeting-text {
-  font-size: 28px;
-  font-weight: 600;
+  font-size: var(--base-text-size-xl);
+  font-weight: var(--base-text-weight-semibold);
   color: var(--fgColor-default);
   font-family: var(--fontStack-sansSerif);
 }
@@ -809,13 +809,13 @@
 .svg-overlay {
   position: fixed;
   inset: 0;
-  z-index: 200;
+  z-index: var(--zIndex-overlay);
   display: flex;
   overflow: auto;
   background: color-mix(in srgb, var(--bgColor-default) 70%, transparent);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
-  animation: svg-overlay-in 0.15s ease-out;
+  animation: svg-overlay-in var(--base-duration-200) var(--base-easing-easeOut);
   cursor: zoom-out;
 }
 @keyframes svg-overlay-in {
@@ -829,7 +829,7 @@
    padding keeps a gutter even at the scroll extremes. */
 .svg-overlay > div {
   margin: auto;
-  padding: 32px;
+  padding: var(--base-size-32);
   flex-shrink: 0;
 }
 .svg-overlay svg,
@@ -849,14 +849,14 @@
 
 /* State groups: a small muted header per non-empty state bucket. */
 .task-group-title {
-  font-size: 11px;
-  font-weight: var(--base-text-weight-medium, 500);
+  font-size: var(--base-text-size-xs);
+  font-weight: var(--base-text-weight-medium);
   color: var(--fgColor-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  margin: var(--base-size-12) 2px var(--base-size-4);
+  margin: var(--base-size-12) var(--base-size-2) var(--base-size-4);
 }
-.task-group:first-of-type .task-group-title { margin-top: 2px; }
+.task-group:first-of-type .task-group-title { margin-top: var(--base-size-2); }
 
 .task-row {
   border: 1px solid var(--borderColor-default);
@@ -870,14 +870,14 @@
 /* A workflow execution's mark in the list; a task is the unmarked default. */
 .task-row-kind { color: var(--fgColor-muted); flex-shrink: 0; }
 .task-row-label {
-  font-size: var(--text-body-size-small);
+  font-size: var(--base-text-size-xs);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   flex: 1;
 }
 /* Right-hand duration: live rows tick, terminal rows are fixed. */
 .task-row-duration {
   font-family: var(--fontStack-monospace);
-  font-size: 11px;
+  font-size: var(--base-text-size-xs);
   color: var(--fgColor-muted);
   white-space: nowrap;
   flex-shrink: 0;
@@ -885,16 +885,16 @@
 /* Inline on the action line, next to Stop — truncates, never wraps. */
 .task-row-activity {
   font-family: var(--fontStack-monospace);
-  font-size: 11px;
+  font-size: var(--base-text-size-xs);
   color: var(--fgColor-muted);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   min-width: 0;
 }
 /* failed rows keep a one-line error excerpt; other terminal rows are 1 line. */
 .task-row-error {
-  font-size: var(--text-body-size-small);
+  font-size: var(--base-text-size-xs);
   color: var(--fgColor-danger);
-  margin-top: 2px;
+  margin-top: var(--base-size-2);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .task-row-actions { display: flex; align-items: center; gap: var(--base-size-4); margin-top: var(--base-size-6); }
@@ -906,7 +906,7 @@
    comes from trace.css (same bundle). */
 .task-status-dot {
   width: 8px; height: 8px;
-  border-radius: 50%;
+  border-radius: var(--borderRadius-full);
   flex-shrink: 0;
 }
 .task-status-dot-working        { background: var(--fgColor-accent); animation: pulse-live 1.5s ease-in-out infinite; }
@@ -927,9 +927,9 @@
 .task-detail-spacer { flex: 1; }
 .task-detail-id {
   border: none; background: none; padding: 0;
-  font-family: var(--fontStack-monospace); font-size: 11px;
+  font-family: var(--fontStack-monospace); font-size: var(--base-text-size-xs);
   color: var(--fgColor-muted); cursor: pointer;
-  display: inline-flex; align-items: center; gap: 3px;
+  display: inline-flex; align-items: center; gap: var(--base-size-4);
   flex-shrink: 1; min-width: 24px; overflow: hidden;
 }
 .task-detail-id-text {
@@ -940,15 +940,15 @@
 .task-detail-tabs { display: flex; gap: var(--base-size-4); margin-bottom: var(--base-size-8); }
 .task-detail-tabs button {
   border: none; background: none; cursor: pointer;
-  font-size: var(--text-body-size-small);
+  font-size: var(--base-text-size-xs);
   color: var(--fgColor-muted);
-  padding: 2px 8px;
+  padding: var(--base-size-2) var(--base-size-8);
   border-radius: var(--borderRadius-medium);
 }
 .task-detail-tabs button.active {
   color: var(--fgColor-default);
   background: var(--bgColor-muted);
-  font-weight: var(--base-text-weight-medium, 500);
+  font-weight: var(--base-text-weight-medium);
 }
 
 .task-view { display: flex; flex-direction: column; gap: var(--base-size-8); }
@@ -957,26 +957,26 @@
   background: var(--bgColor-accent-muted);
   border-radius: var(--borderRadius-medium);
   padding: var(--base-size-4) var(--base-size-8);
-  font-size: var(--text-body-size-small);
+  font-size: var(--base-text-size-xs);
   max-width: 90%;
   white-space: pre-wrap;
 }
-.task-view-turn { font-size: var(--text-body-size-small); }
-.task-view-text { font-size: var(--text-body-size-small); }
+.task-view-turn { font-size: var(--base-text-size-xs); }
+.task-view-text { font-size: var(--base-text-size-xs); }
 .task-view-thinking summary {
   cursor: pointer;
   color: var(--fgColor-muted);
-  font-size: var(--text-body-size-small);
+  font-size: var(--base-text-size-xs);
 }
 .task-view-thinking {}
-.task-view-error { color: var(--fgColor-danger); font-size: var(--text-body-size-small); }
-.task-view-handoff { color: var(--fgColor-muted); font-size: var(--text-body-size-small); }
+.task-view-error { color: var(--fgColor-danger); font-size: var(--base-text-size-xs); }
+.task-view-handoff { color: var(--fgColor-muted); font-size: var(--base-text-size-xs); }
 
 /* the inspect affordance on a spawn card header — pushed to the row's trailing
    edge so it mirrors the leading chevron (the label/badges stay by the name) */
 .ToolCallCard-inspect {
   margin-left: auto;
-  border: none; background: none; padding: 0 2px;
+  border: none; background: none; padding: 0 var(--base-size-2);
   color: var(--fgColor-muted); cursor: pointer;
   display: inline-flex; align-items: center;
 }
@@ -993,7 +993,7 @@
   width: 0.4em;
   height: 0.4em;
   margin-left: 0.4em;
-  border-radius: 50%;
+  border-radius: var(--borderRadius-full);
   background: currentColor;
   animation: ToolCallCard-pulse 1.2s ease-in-out infinite;
 }
@@ -1016,7 +1016,7 @@
   gap: 0;
 }
 .branch-count {
-  font-size: 12px;
+  font-size: var(--base-text-size-xs);
   color: var(--fgColor-muted);
   font-variant-numeric: tabular-nums;
   user-select: none;

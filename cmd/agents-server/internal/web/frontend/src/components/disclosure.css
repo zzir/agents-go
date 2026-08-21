@@ -27,14 +27,14 @@
 .disclosure-header {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--base-size-6);
   width: 100%;
   padding: var(--base-size-6) var(--base-size-12);
   border: none;
   background: var(--_headerBg);
   color: var(--_headerFg);
   font-size: var(--base-text-size-sm);
-  font-weight: 600;
+  font-weight: var(--base-text-weight-semibold);
   cursor: pointer;
   user-select: none;
   text-align: left;
@@ -52,7 +52,7 @@
 .disclosure-chevron {
   flex-shrink: 0;
   color: var(--_headerFg);
-  transition: transform 0.15s;
+  transition: transform var(--base-duration-200);
 }
 .disclosure.expanded .disclosure-chevron {
   transform: rotate(90deg);
@@ -72,7 +72,7 @@
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--base-size-8);
 }
 
 /* Body — text + code defaults aligned with Primer */

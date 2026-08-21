@@ -2,17 +2,17 @@
    in globals.css; bars, labels and the Blankslate are Primer. This file styles
    only what neither provides: the section rhythm and the item rows. */
 .ctx-body {
-  padding: 0 var(--base-size-12, 12px) var(--base-size-12, 12px);
-  font-size: 12px;
+  padding: 0 var(--base-size-12) var(--base-size-12);
+  font-size: var(--base-text-size-xs);
 }
 .ctx-loading {
   display: flex;
   justify-content: center;
-  padding: var(--base-size-24, 24px);
+  padding: var(--base-size-24);
 }
 
 .ctx-sec {
-  padding: var(--base-size-12, 12px) 0;
+  padding: var(--base-size-12) 0;
   border-bottom: 1px solid var(--borderColor-muted);
 }
 .ctx-sec:last-child {
@@ -22,10 +22,10 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--base-size-8, 8px);
-  margin-bottom: var(--base-size-8, 8px);
+  gap: var(--base-size-8);
+  margin-bottom: var(--base-size-8);
   color: var(--fgColor-muted);
-  font-size: 11px;
+  font-size: var(--base-text-size-xs);
   letter-spacing: 0.03em;
   text-transform: uppercase;
 }
@@ -38,7 +38,7 @@
 .ctx-mono {
   font-family: var(--fontStack-monospace);
   font-variant-numeric: tabular-nums;
-  font-size: 11px;
+  font-size: var(--base-text-size-xs);
 }
 .ctx-muted { color: var(--fgColor-muted); }
 .ctx-ok { color: var(--fgColor-success); }
@@ -46,12 +46,12 @@
 .ctx-big {
   display: flex;
   align-items: baseline;
-  gap: 7px;
-  margin-bottom: var(--base-size-8, 8px);
+  gap: var(--base-size-8);
+  margin-bottom: var(--base-size-8);
 }
 .ctx-num {
-  font-size: 24px;
-  font-weight: var(--base-text-weight-semibold, 600);
+  font-size: var(--base-text-size-lg);
+  font-weight: var(--base-text-weight-semibold);
   letter-spacing: -0.01em;
 }
 .ctx-slash { color: var(--fgColor-muted); }
@@ -59,19 +59,19 @@
 .ctx-legend {
   display: flex;
   align-items: center;
-  gap: var(--base-size-12, 12px);
-  margin-top: var(--base-size-8, 8px);
+  gap: var(--base-size-12);
+  margin-top: var(--base-size-8);
   color: var(--fgColor-muted);
-  font-size: 11px;
+  font-size: var(--base-text-size-xs);
 }
 /* The source chip sits at the far end of whichever legend it labels. */
 .ctx-legend > [data-component='Label'] { margin-left: auto; }
 .ctx-legend-end { margin-left: auto; }
 
 .ctx-note {
-  margin-top: var(--base-size-8, 8px);
+  margin-top: var(--base-size-8);
   color: var(--fgColor-muted);
-  font-size: 11px;
+  font-size: var(--base-text-size-xs);
   line-height: 1.5;
   opacity: 0.85;
 }
@@ -81,10 +81,10 @@
   flex-shrink: 0;
   white-space: nowrap;
   border: 1px solid var(--borderColor-default);
-  border-radius: var(--borderRadius-small, 4px);
+  border-radius: var(--borderRadius-small);
   background: none;
-  padding: 0 6px;
-  font-size: 10px;
+  padding: 0 var(--base-size-6);
+  font-size: var(--base-text-size-xs);
   line-height: 16px;
   letter-spacing: 0;
   text-transform: none;
@@ -142,13 +142,13 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--base-size-4, 4px);
+  gap: var(--base-size-4);
 }
 .ctx-row-top {
   display: flex;
   align-items: center;
-  gap: 7px;
-  margin-bottom: 5px;
+  gap: var(--base-size-8);
+  margin-bottom: var(--base-size-4);
 }
 .ctx-row-name {
   flex: 1;
@@ -179,11 +179,11 @@
 
 /* Composition rows carry no interaction, so they are plain list items. */
 .ctx-rows-plain > li {
-  padding: 3px 6px;
+  padding: var(--base-size-4) var(--base-size-6);
 }
 .ctx-big-small {
-  margin-bottom: 10px;
+  margin-bottom: var(--base-size-8);
 }
 .ctx-num-small {
-  font-size: 18px;
+  font-size: var(--base-text-size-md);
 }

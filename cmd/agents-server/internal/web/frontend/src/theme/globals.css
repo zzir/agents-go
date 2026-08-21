@@ -26,7 +26,7 @@ html, body {
 
 ::-webkit-scrollbar-thumb {
     background: var(--borderColor-muted);
-    border-radius: 3px;
+    border-radius: var(--borderRadius-small);
 }
 
 ::-webkit-scrollbar-thumb:hover {
@@ -62,6 +62,23 @@ a:hover {
    chat top bar, and side-panel header — they must sit on the same 48px line. */
 :root {
     --topbar-height: 48px;
+
+    /* The transcript column and the composer above it; the composer is
+       deliberately 20px wider so the transcript sits inside its outline. */
+    --content-max-width: 860px;
+    --composer-max-width: 880px;
+
+    /* App-level layering, lowest to highest. A new layer slots in here —
+       never as a bare number in a rule. Component-local stacking (resize
+       handles, in-card buttons) stays a literal 1/2 in its own context. */
+    --zIndex-float: 10;     /* scroll-to-bottom chip */
+    --zIndex-popup: 20;     /* slash-command menu */
+    --zIndex-topbar: 30;    /* mobile header */
+    --zIndex-panel: 40;     /* side panel (mobile) */
+    --zIndex-backdrop: 49;  /* sidebar backdrop, directly under the drawer */
+    --zIndex-drawer: 50;    /* sidebar (mobile) */
+    --zIndex-overlay: 200;  /* zoom overlay */
+    --zIndex-toast: 1100;   /* above everything, dialogs included */
 }
 
 .app-layout {
@@ -81,12 +98,12 @@ a:hover {
     flex-shrink: 0;
     border-bottom: 1px solid var(--borderColor-muted);
     background: var(--bgColor-default);
-    z-index: 30;
+    z-index: var(--zIndex-topbar);
 }
 
 .mobile-header-title {
     flex: 1;
-    font-weight: 600;
+    font-weight: var(--base-text-weight-semibold);
     font-size: var(--base-text-size-md);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -97,8 +114,8 @@ a:hover {
 .sidebar-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.3);
-    z-index: 49;
+    background: var(--overlay-backdrop-bgColor);
+    z-index: var(--zIndex-backdrop);
     display: none;
 }
 
@@ -141,7 +158,7 @@ a:hover {
     inset: 0;
     background-color: var(--bgColor-neutral-muted);
     opacity: 0;
-    transition: opacity 0.15s ease;
+    transition: opacity var(--base-duration-200) var(--base-easing-ease);
 }
 
 .pane-resize-handle:hover::before,
@@ -254,7 +271,7 @@ a:hover {
     align-items: center;
     justify-content: space-between;
     height: var(--topbar-height);
-    padding: 8px 16px;
+    padding: var(--base-size-8) var(--base-size-16);
     border-bottom: 1px solid var(--borderColor-muted);
     flex-shrink: 0;
 }
@@ -262,16 +279,16 @@ a:hover {
 .side-panel-title {
     display: flex;
     align-items: center;
-    gap: 8px;
-    font-size: 14px;
-    font-weight: 600;
+    gap: var(--base-size-8);
+    font-size: var(--base-text-size-sm);
+    font-weight: var(--base-text-weight-semibold);
     color: var(--fgColor-default);
 }
 
 .side-panel-body {
     flex: 1;
     overflow-y: auto;
-    padding: 8px;
+    padding: var(--base-size-8);
 }
 
 @media (max-width: 767px) {
@@ -279,7 +296,7 @@ a:hover {
         position: fixed;
         inset: var(--topbar-height) 0 0;
         width: 100%;
-        z-index: 40;
+        z-index: var(--zIndex-panel);
     }
 }
 
@@ -291,9 +308,9 @@ a:hover {
         bottom: 0;
         width: 35vw;
         border-right: 1px solid var(--borderColor-muted);
-        z-index: 50;
+        z-index: var(--zIndex-drawer);
         transform: translateX(-100%);
-        transition: transform 0.2s ease;
+        transition: transform var(--base-duration-200) var(--base-easing-ease);
         display: flex;
         overflow: hidden;
     }
@@ -320,7 +337,7 @@ a:hover {
 }
 
 .settings-nav a[aria-current="page"] [data-component="ActionList.Item.Label"] {
-    font-weight: var(--base-text-weight-normal, 400);
+    font-weight: var(--base-text-weight-normal);
 }
 
 .settings-content {
@@ -374,7 +391,7 @@ a:hover {
 .disclosure-row > .disclosure-header {
     padding: var(--base-size-8) var(--base-size-16);
     font-size: var(--base-text-size-sm);
-    font-weight: 500;
+    font-weight: var(--base-text-weight-medium);
     color: var(--fgColor-default);
 }
 
@@ -409,7 +426,7 @@ a:hover {
 }
 
 .resource-row-title {
-    font-weight: 500;
+    font-weight: var(--base-text-weight-medium);
     font-size: var(--base-text-size-sm);
     color: var(--fgColor-default);
 }
@@ -418,7 +435,7 @@ a:hover {
     display: flex;
     align-items: center;
     gap: var(--base-size-4);
-    margin-top: 2px;
+    margin-top: var(--base-size-2);
     font-size: var(--base-text-size-xs);
     color: var(--fgColor-muted);
 }
@@ -433,9 +450,9 @@ a:hover {
 }
 
 .resource-row-sub {
-    margin-top: 4px;
-    font-size: 11px;
-    font-weight: var(--base-text-weight-normal, 400);
+    margin-top: var(--base-size-4);
+    font-size: var(--base-text-size-xs);
+    font-weight: var(--base-text-weight-normal);
     color: var(--fgColor-muted);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -464,7 +481,7 @@ a:hover {
 
 .form-group-title {
     font-size: var(--base-text-size-xs);
-    font-weight: 600;
+    font-weight: var(--base-text-weight-semibold);
     text-transform: uppercase;
     letter-spacing: 0.06em;
     color: var(--fgColor-muted);
@@ -495,7 +512,7 @@ a:hover {
     display: inline-block;
     width: 6px;
     height: 6px;
-    margin-left: 4px;
+    margin-left: var(--base-size-4);
 }
 
 .form-status-text {
@@ -526,7 +543,7 @@ a:hover {
 .advanced-toggle > .disclosure-header {
     padding: var(--base-size-16) 0 var(--base-size-4);
     font-size: var(--base-text-size-xs);
-    font-weight: 600;
+    font-weight: var(--base-text-weight-semibold);
     color: var(--fgColor-muted);
     border-top: 1px solid var(--borderColor-muted);
 }
@@ -553,9 +570,9 @@ a:hover {
 
 /* Caption + checkbox list */
 .FormControl-caption {
-    font-size: 11px;
+    font-size: var(--base-text-size-xs);
     color: var(--fgColor-muted);
-    margin-top: 2px;
+    margin-top: var(--base-size-2);
 }
 
 .form-checkbox-group {
@@ -601,7 +618,7 @@ a:hover {
 .checkbox-group-header-count {
     grid-area: 1 / 3;
     justify-self: end;
-    font-size: 11px;
+    font-size: var(--base-text-size-xs);
     color: var(--fgColor-muted);
 }
 
@@ -622,10 +639,10 @@ a:hover {
 
 /* Cards — visual treatment borrowed from Primer React Card component */
 .Box {
-    background-color: var(--bgColor-default, var(--bgColor-default));
-    border: var(--borderWidth-thin, 1px) solid var(--borderColor-default, var(--borderColor-default));
+    background-color: var(--bgColor-default);
+    border: var(--borderWidth-thin) solid var(--borderColor-default);
     border-radius: var(--borderRadius-medium);
-    box-shadow: var(--shadow-resting-small, 0 1px 1px 0 rgba(31, 35, 40, .04), 0 1px 2px 0 rgba(31, 35, 40, .03));
+    box-shadow: var(--shadow-resting-small);
     overflow: hidden;
 }
 

@@ -101,7 +101,7 @@ export function UnboundHint({ sessionId, what }: { sessionId: string; what: stri
   );
   if (!sessionId || !data || data.sandbox_id) return null;
   return (
-    <Flash variant="warning" style={{ fontSize: 13, padding: '6px 10px' }}>
+    <Flash variant="warning" style={{ fontSize: 'var(--base-text-size-xs)', padding: 'var(--base-size-6) var(--base-size-8)' }}>
       This conversation has no project bound — {what} will have no file or command tools. Bind one first by sending
       it a message with a project picked, if the work touches files.
     </Flash>

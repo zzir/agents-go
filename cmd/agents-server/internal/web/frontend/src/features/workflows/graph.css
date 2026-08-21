@@ -1,23 +1,23 @@
 /* Where the sequence goes — a flowchart once mermaid has drawn it, the same
    shape in words until then. Only shown once a step names an edge. */
 .wf-edge-graph {
-  margin-top: 8px;
-  padding: 8px 12px;
+  margin-top: var(--base-size-8);
+  padding: var(--base-size-8) var(--base-size-12);
   border: 1px solid var(--borderColor-default);
-  border-radius: 6px;
+  border-radius: var(--borderRadius-medium);
   background: var(--bgColor-muted);
   overflow-x: auto;
 }
 .wf-edge-graph svg { max-width: 100%; max-height: 240px; height: auto; display: block; margin: 0 auto; }
 
 .wf-edge-summary {
-  margin-top: 8px;
-  padding: 8px 12px;
+  margin-top: var(--base-size-8);
+  padding: var(--base-size-8) var(--base-size-12);
   border: 1px solid var(--borderColor-default);
-  border-radius: 6px;
+  border-radius: var(--borderRadius-medium);
   background: var(--bgColor-muted);
   font-family: var(--fontStack-monospace);
-  font-size: 12px;
+  font-size: var(--base-text-size-xs);
   color: var(--fgColor-muted);
   line-height: 1.6;
 }

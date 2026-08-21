@@ -65,9 +65,9 @@
   display: flex;
   align-items: center;
   gap: var(--base-size-4);
-  padding: 2px var(--base-size-4) 2px var(--base-size-8);
+  padding: var(--base-size-2) var(--base-size-4) var(--base-size-2) var(--base-size-8);
   border-radius: var(--borderRadius-medium);
-  font-size: 12px;
+  font-size: var(--base-text-size-xs);
   color: var(--fgColor-muted);
   cursor: pointer;
   white-space: nowrap;
@@ -86,7 +86,7 @@
   text-overflow: ellipsis;
 }
 .terminal-tab-status {
-  font-size: 11px;
+  font-size: var(--base-text-size-xs);
   color: var(--fgColor-muted);
   opacity: 0.8;
 }
@@ -109,7 +109,7 @@
   justify-content: center;
   gap: var(--base-size-8);
   color: var(--fgColor-muted);
-  font-size: 13px;
+  font-size: var(--base-text-size-xs);
 }
 .terminal-panel-empty svg {
   vertical-align: text-bottom;

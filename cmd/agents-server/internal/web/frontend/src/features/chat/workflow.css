@@ -3,15 +3,15 @@
 .wf-bar {
   display: flex;
   align-items: center;
-  gap: var(--base-size-8, 8px);
-  width: calc(100% - 2 * var(--base-size-16, 16px));
-  max-width: 880px;
-  margin: 0 auto var(--base-size-4, 4px);
-  padding: 5px var(--base-size-8, 8px);
+  gap: var(--base-size-8);
+  width: calc(100% - 2 * var(--base-size-16));
+  max-width: var(--composer-max-width);
+  margin: 0 auto var(--base-size-4);
+  padding: var(--base-size-4) var(--base-size-8);
   border: 1px solid var(--borderColor-muted);
-  border-radius: var(--borderRadius-medium, 6px);
+  border-radius: var(--borderRadius-medium);
   background: var(--bgColor-muted);
-  font-size: 11px;
+  font-size: var(--base-text-size-xs);
   color: var(--fgColor-muted);
   cursor: pointer;
 }
@@ -21,16 +21,16 @@
 .wf-bar-actions {
   display: flex;
   align-items: center;
-  gap: var(--base-size-4, 4px);
+  gap: var(--base-size-4);
   margin-left: auto;
   flex-shrink: 0;
 }
 .chat-content-centered .wf-bar {
   width: 100%;
-  max-width: 860px;
+  max-width: var(--content-max-width);
 }
 .wf-bar-name {
-  font-weight: var(--base-text-weight-semibold, 600);
+  font-weight: var(--base-text-weight-semibold);
   color: var(--fgColor-default);
   white-space: nowrap;
 }
@@ -53,18 +53,18 @@
   display: block;
   height: 100%;
   background: var(--fgColor-accent);
-  transition: width 0.2s ease;
+  transition: width var(--base-duration-200) var(--base-easing-ease);
 }
 
 /* Step editor rows in the Workflows panel. */
 .wf-step {
   display: flex;
   flex-direction: column;
-  gap: var(--base-size-4, 4px);
-  padding: var(--base-size-8, 8px);
-  margin-bottom: var(--base-size-8, 8px);
+  gap: var(--base-size-4);
+  padding: var(--base-size-8);
+  margin-bottom: var(--base-size-8);
   border: 1px solid var(--borderColor-muted);
-  border-radius: var(--borderRadius-medium, 6px);
+  border-radius: var(--borderRadius-medium);
 }
 /* Ordinal, name, agent, the three buttons. The name takes what the fixed-width
    agent picker leaves; on a narrow panel the picker drops to a second line. */
@@ -72,7 +72,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--base-size-4, 4px);
+  gap: var(--base-size-4);
 }
 .wf-step-name {
   flex: 1 1 200px;
@@ -83,14 +83,14 @@
   min-width: 150px;
 }
 .wf-step-opt {
-  font-size: 12px;
+  font-size: var(--base-text-size-xs);
   color: var(--fgColor-muted);
 }
 /* The two edge pickers share a row and wrap on a narrow panel. */
 .wf-step-edges {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--base-size-8, 8px) var(--base-size-16, 16px);
+  gap: var(--base-size-8) var(--base-size-16);
   align-items: center;
 }
 
@@ -98,23 +98,23 @@
 .wf-steps {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: var(--base-text-size-xs);
 }
 .wf-steps td {
-  padding: 4px 8px;
+  padding: var(--base-size-4) var(--base-size-8);
   border-bottom: 1px solid var(--borderColor-muted);
   vertical-align: middle;
 }
 .wf-steps-index { width: 2em; color: var(--fgColor-muted); text-align: right; }
-.wf-steps-name { font-weight: 500; }
-.wf-steps-retry { font-weight: 400; color: var(--fgColor-muted); }
+.wf-steps-name { font-weight: var(--base-text-weight-medium); }
+.wf-steps-retry { font-weight: var(--base-text-weight-normal); color: var(--fgColor-muted); }
 .wf-steps-num { text-align: right; color: var(--fgColor-muted); font-family: var(--fontStack-monospace); white-space: nowrap; }
 .wf-steps-live td { background: var(--bgColor-accent-muted); }
 .wf-outcome {
   display: inline-block;
-  padding: 0 6px;
+  padding: 0 var(--base-size-6);
   border-radius: 10px;
-  font-size: 11px;
+  font-size: var(--base-text-size-xs);
   line-height: 18px;
   background: var(--bgColor-neutral-muted);
   color: var(--fgColor-muted);
@@ -124,16 +124,16 @@
 .wf-outcome-running, .wf-outcome-input_required { background: var(--bgColor-accent-muted); color: var(--fgColor-accent); }
 .wf-outcome-cancelled { background: var(--bgColor-attention-muted); color: var(--fgColor-attention); }
 .wf-steps-brief {
-  margin-top: 12px;
-  padding: 8px 12px;
-  border-radius: 6px;
+  margin-top: var(--base-size-12);
+  padding: var(--base-size-8) var(--base-size-12);
+  border-radius: var(--borderRadius-medium);
   background: var(--bgColor-muted);
-  font-size: 12px;
+  font-size: var(--base-text-size-xs);
   white-space: pre-wrap;
 }
 .wf-steps-brief-label {
   display: block;
-  margin-bottom: 4px;
-  font-weight: 600;
+  margin-bottom: var(--base-size-4);
+  font-weight: var(--base-text-weight-semibold);
   color: var(--fgColor-muted);
 }

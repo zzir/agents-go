@@ -2,13 +2,13 @@
 .wf-step-opts {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 16px;
+  gap: var(--base-size-4) var(--base-size-16);
   align-items: center;
 }
 
 .wf-step-gate {
   display: inline-flex;
-  gap: 6px;
+  gap: var(--base-size-6);
   align-items: center;
 }
 
@@ -17,22 +17,22 @@
 }
 
 .wf-run-hint {
-  font-size: 13px;
+  font-size: var(--base-text-size-xs);
   color: var(--fgColor-muted);
 }
 
 .wf-templates {
   display: flex;
-  gap: 8px;
+  gap: var(--base-size-8);
   justify-content: center;
-  margin-top: 8px;
+  margin-top: var(--base-size-8);
 }
 
 /* The three budget fields on one row. */
 .wf-budget {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 16px;
+  gap: var(--base-size-4) var(--base-size-16);
   align-items: center;
 }
 .wf-budget input {
@@ -41,7 +41,7 @@
 
 /* A workflow row's detail: the description over the drawn sequence. */
 .wf-row-desc {
-  font-size: 12px;
+  font-size: var(--base-text-size-xs);
   color: var(--fgColor-muted);
 }
 
@@ -50,31 +50,31 @@
 .wf-trigger-title {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--base-size-4);
 }
 .wf-trigger-when {
   font-family: var(--fontStack-monospace);
-  font-size: 12px;
+  font-size: var(--base-text-size-xs);
 }
 .wf-trigger-detail {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--base-size-6);
 }
 .wf-trigger-detail .resource-row-meta {
   margin-top: 0;
 }
 /* The brief in full, as written — it wraps, unlike the row's clipped lines. */
 .wf-trigger-brief {
-  padding: 6px 10px;
-  border-radius: 6px;
+  padding: var(--base-size-6) var(--base-size-8);
+  border-radius: var(--borderRadius-medium);
   background: var(--bgColor-muted);
-  font-size: 12px;
+  font-size: var(--base-text-size-xs);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 .wf-trigger-last {
-  font-size: 12px;
+  font-size: var(--base-text-size-xs);
   color: var(--fgColor-muted);
   overflow-wrap: anywhere;
 }
@@ -83,43 +83,43 @@
 }
 /* The add form is a bordered block below the list, like an editor. */
 .wf-trigger-form {
-  padding: 8px 12px;
+  padding: var(--base-size-8) var(--base-size-12);
   border: 1px solid var(--borderColor-default);
-  border-radius: 6px;
+  border-radius: var(--borderRadius-medium);
   background: var(--bgColor-default);
 }
 .wf-secret-box {
-  padding: 10px 12px;
+  padding: var(--base-size-8) var(--base-size-12);
   border: 1px solid var(--borderColor-attention-muted);
-  border-radius: 6px;
+  border-radius: var(--borderRadius-medium);
   background: var(--bgColor-attention-muted);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--base-size-6);
 }
 .wf-secret-title {
-  font-weight: 600;
-  font-size: 13px;
+  font-weight: var(--base-text-weight-semibold);
+  font-size: var(--base-text-size-xs);
 }
 .wf-secret-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--base-size-8);
   min-width: 0;
 }
 .wf-secret-row code {
   flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
-  font-size: 12px;
+  font-size: var(--base-text-size-xs);
 }
 .wf-secret-example {
   margin: 0;
-  padding: 8px;
+  padding: var(--base-size-8);
   background: var(--bgColor-inset);
-  border-radius: 6px;
+  border-radius: var(--borderRadius-medium);
   font-family: var(--fontStack-monospace);
-  font-size: 12px;
+  font-size: var(--base-text-size-xs);
   overflow-x: auto;
   white-space: pre;
 }

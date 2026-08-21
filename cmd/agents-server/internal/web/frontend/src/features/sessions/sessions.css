@@ -69,10 +69,10 @@
 
 /* Empty state — muted centered hint inside the sidebar */
 .sidebar-scroll .blankslate {
-  padding: 24px 16px;
+  padding: var(--base-size-24) var(--base-size-16);
   text-align: center;
   color: var(--fgColor-muted);
-  font-size: var(--text-body-size-small, 12px);
+  font-size: var(--base-text-size-xs);
 }
 
 /* Session name: single line, fade at trailing edge */
@@ -92,7 +92,7 @@
 }
 
 .sidebar-scroll .session-row:has(.session-selected) [data-component="ActionList.Item.Label"] {
-  font-weight: var(--base-text-weight-normal, 400);
+  font-weight: var(--base-text-weight-normal);
 }
 
 /* --- SessionPicker (the Conversation SelectPanel in forms) --- */

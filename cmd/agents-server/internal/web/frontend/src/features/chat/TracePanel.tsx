@@ -737,7 +737,7 @@ function GenerationPayload({ data, indent }: { data: PayloadRecord; indent: numb
     <div className="trace-payload" style={{ marginLeft: indent }}>
       <div className="trace-payload-meta">
         <span className="trace-payload-meta-text" title={meta}>{meta}</span>
-        <Link as="button" onClick={() => setReplayOpen(true)} style={{ flexShrink: 0, fontSize: 11 }}>
+        <Link as="button" onClick={() => setReplayOpen(true)} style={{ flexShrink: 0, fontSize: 'var(--base-text-size-xs)' }}>
           Replay
         </Link>
       </div>
@@ -890,7 +890,7 @@ function SpanRow({ node, depth, range, alignChevron, reveal, loadSpan }: { node:
       <div
         ref={rowRef}
         className={'trace-span' + (hasData ? ' trace-span-clickable' : '')}
-        style={{ paddingLeft: 2 + depth * 10 }}
+        style={{ paddingLeft: 2 + depth * 8 }}
         onClick={hasData ? toggle : undefined}
       >
         {(hasData || alignChevron) && (
@@ -920,20 +920,20 @@ function SpanRow({ node, depth, range, alignChevron, reveal, loadSpan }: { node:
         )}
       </div>
       {open && failed && (
-        <div className="trace-span-error" style={{ marginLeft: 14 + depth * 10 }}>{s.error}</div>
+        <div className="trace-span-error" style={{ marginLeft: 14 + depth * 8 }}>{s.error}</div>
       )}
       {open && omitted && payload === 'loading' && (
-        <div className="trace-span-note" style={{ marginLeft: 14 + depth * 10 }}>Loading the payload…</div>
+        <div className="trace-span-note" style={{ marginLeft: 14 + depth * 8 }}>Loading the payload…</div>
       )}
       {open && omitted && payload === 'failed' && (
-        <div className="trace-span-note" style={{ marginLeft: 14 + depth * 10 }}>The payload is not stored yet — a span still running has no row; reopen once it ends.</div>
+        <div className="trace-span-note" style={{ marginLeft: 14 + depth * 8 }}>The payload is not stored yet — a span still running has no row; reopen once it ends.</div>
       )}
       {open && s.data && extraData && !(omitted && payload === 'loading') && (
         s.type === 'generation' && (s.data.input !== undefined || s.data.output !== undefined)
-          ? <GenerationPayload data={s.data} indent={14 + depth * 10} />
+          ? <GenerationPayload data={s.data} indent={14 + depth * 8} />
           : s.type === 'function' && (s.data.input !== undefined || s.data.output !== undefined)
-            ? <FunctionPayload data={s.data} indent={14 + depth * 10} />
-            : <pre className="trace-span-data" style={{ marginLeft: 14 + depth * 10 }}>
+            ? <FunctionPayload data={s.data} indent={14 + depth * 8} />
+            : <pre className="trace-span-data" style={{ marginLeft: 14 + depth * 8 }}>
                 {JSON.stringify(s.data, null, 2)}
               </pre>
       )}
