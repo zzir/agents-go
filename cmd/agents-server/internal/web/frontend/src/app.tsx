@@ -3,7 +3,7 @@ import { Dialog, NavList as PrimerNavList, Flash, Button } from '@primer/react';
 import { SecretInput } from '@/components/SecretInput';
 import {
   DependabotIcon, McpIcon, ShieldCheckIcon, SparkleIcon, CpuIcon, PlugIcon,
-  ContainerIcon, DatabaseIcon, GearIcon,
+  ContainerIcon, DatabaseIcon, GearIcon, PersonIcon,
   XCircleFillIcon, AlertFillIcon, CheckCircleFillIcon, InfoIcon,
 } from '@primer/octicons-react';
 import type { Icon } from '@primer/octicons-react';
@@ -19,7 +19,7 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 const TerminalPanel = React.lazy(() =>
   import('@/features/terminal/TerminalPanel').then(m => ({ default: m.TerminalPanel })),
 );
-import { login, checkAuth, getToken, api } from '@/lib/api';
+import { login, checkAuth, getToken, api, authConfig, exchangeCode, type AuthConfig } from '@/lib/api';
 import { EV, TASK_KIND_WORKFLOW } from '@/lib/protocol';
 import { WorkflowsHub, type HubTab } from '@/features/workflows/WorkflowsHub';
 import { WORKFLOW_COMMAND } from '@/features/chat/SlashMenu';
@@ -101,6 +101,7 @@ const DIALOG_TABS: { key: string; label: string; icon: Icon; load: () => Promise
   { key: 'memory',     label: 'Memory',     icon: DatabaseIcon,   load: () => import('@/features/memory/MemoryPanel') },
   { key: 'guardrails', label: 'Guardrails', icon: ShieldCheckIcon, load: () => import('@/features/guardrails/GuardrailPanel') },
   { key: 'plugins',    label: 'Plugins',    icon: PlugIcon,       load: () => import('@/features/plugins/PluginsPanel') },
+  { key: 'account',    label: 'Account',    icon: PersonIcon,     load: () => import('@/features/account/AccountPanel') },
   { key: 'general',    label: 'General',    icon: GearIcon,       load: () => import('@/features/settings/SettingsPanel') },
 ];
 
@@ -165,10 +166,29 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
   );
 }
 
-function LoginPage({ onLogin }: { onLogin: () => void }) {
+// AUTH_ERROR_TEXT maps the callback's coarse #auth_error tags to a sentence.
+const AUTH_ERROR_TEXT: Record<string, string> = {
+  state_mismatch: 'The sign-in expired or was already used — try again.',
+  exchange_failed: 'The provider rejected the sign-in — try again.',
+  not_allowed: 'This account is not on the allowlist for this server.',
+  login_failed: 'Sign-in failed on the server — try again.',
+};
+
+function LoginPage({ onLogin, authError }: { onLogin: () => void; authError?: string }) {
   const [token, setTokenVal] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  // null while /auth/config is in flight; token mode is also the fallback if
+  // it fails (the form still works against a token-mode server).
+  const [cfg, setCfg] = useState<AuthConfig | null>(null);
+
+  useEffect(() => {
+    let stale = false;
+    authConfig()
+      .then(c => { if (!stale) setCfg(c); })
+      .catch(() => { if (!stale) setCfg({ mode: 'token' }); });
+    return () => { stale = true; };
+  }, []);
 
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
@@ -184,19 +204,37 @@ function LoginPage({ onLogin }: { onLogin: () => void }) {
     }
   }, [token, onLogin]);
 
+  const oauthMsg = authError ? (AUTH_ERROR_TEXT[authError] || AUTH_ERROR_TEXT.login_failed) : '';
+
   return (
     <div className="login-page">
       <form className="login-card" onSubmit={handleSubmit}>
-        <SecretInput
-          aria-label="API token"
-          placeholder="Token"
-          value={token}
-          autoFocus
-          loading={loading || undefined}
-          onChange={(e) => setTokenVal(e.target.value)}
-          validationStatus={error ? 'error' : undefined}
-        />
-        <Button type="submit" variant="primary" block disabled={loading || !token.trim()}>Sign in</Button>
+        {oauthMsg ? <Flash variant="danger">{oauthMsg}</Flash> : null}
+        {cfg?.mode === 'oauth' ? (
+          (cfg.providers || []).map(p => (
+            // A full-page navigation: the flow returns via the server's
+            // redirect with a one-time code in the fragment.
+            <Button
+              key={p} block variant="primary"
+              onClick={() => { window.location.href = `/api/v1/auth/oauth/${p}/start`; }}
+            >
+              Sign in with {p.charAt(0).toUpperCase() + p.slice(1)}
+            </Button>
+          ))
+        ) : cfg ? (
+          <>
+            <SecretInput
+              aria-label="API token"
+              placeholder="Token"
+              value={token}
+              autoFocus
+              loading={loading || undefined}
+              onChange={(e) => setTokenVal(e.target.value)}
+              validationStatus={error ? 'error' : undefined}
+            />
+            <Button type="submit" variant="primary" block disabled={loading || !token.trim()}>Sign in</Button>
+          </>
+        ) : null}
       </form>
     </div>
   );
@@ -285,7 +323,28 @@ function writeHash(sessionId: string | null, panel: InspectorPanel, hub: HubTab 
   }
 }
 
+// consumeAuthFragment strips a login-callback fragment (#auth_code= /
+// #auth_error=) from the URL before the hash router ever parses it, and
+// returns what it carried. Stripping immediately keeps the one-time code out
+// of the session history the user can arrow back through.
+function consumeAuthFragment(): { code?: string; error?: string } {
+  const h = window.location.hash;
+  if (h.startsWith('#auth_code=')) {
+    history.replaceState(null, '', window.location.pathname);
+    return { code: decodeURIComponent(h.slice('#auth_code='.length)) };
+  }
+  if (h.startsWith('#auth_error=')) {
+    history.replaceState(null, '', window.location.pathname);
+    return { error: decodeURIComponent(h.slice('#auth_error='.length)) };
+  }
+  return {};
+}
+
 function App() {
+  // Login-callback state, captured (and stripped from the URL) before
+  // anything reads the hash.
+  const [authFragment] = useState(consumeAuthFragment);
+  const [authError, setAuthError] = useState(authFragment.error || '');
   const [authed, setAuthed] = useState(!!getToken());
   const [checking, setChecking] = useState(true);
   // The initial auth check failed at the network level (server unreachable), as
@@ -352,7 +411,20 @@ function App() {
       .catch(() => { setChecking(false); setCheckError(true); });
   }, []);
 
-  useEffect(() => { runCheck(); }, [runCheck]);
+  useEffect(() => {
+    // An OAuth callback landed us here: trade the one-time code for the
+    // session token instead of probing a credential that doesn't exist yet.
+    if (authFragment.code) {
+      exchangeCode(authFragment.code)
+        .then(() => { setAuthed(true); setChecking(false); })
+        .catch(e => {
+          setAuthError(e instanceof Error && e.message ? 'state_mismatch' : 'login_failed');
+          setChecking(false);
+        });
+      return;
+    }
+    runCheck();
+  }, [runCheck, authFragment]);
 
   useEffect(() => {
     writeHash(activeSession, activePanel, hubTab);
@@ -882,7 +954,7 @@ function App() {
       </div>
     </ThemeProvider>
   );
-  if (!authed && !checking) return <ThemeProvider><LoginPage onLogin={() => setAuthed(true)} /></ThemeProvider>;
+  if (!authed && !checking) return <ThemeProvider><LoginPage onLogin={() => setAuthed(true)} authError={authError} /></ThemeProvider>;
   if (!authed) return <ThemeProvider>{null}</ThemeProvider>;
 
   const currentSS = ss[activeSession!] || DEFAULT_SS;

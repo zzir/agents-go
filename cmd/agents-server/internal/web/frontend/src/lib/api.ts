@@ -63,6 +63,41 @@ export async function checkAuth(): Promise<boolean> {
   return true;
 }
 
+export interface AuthConfig { mode: 'token' | 'oauth'; providers?: string[] }
+export interface AuthUser { id: string; email: string; name?: string; role: string }
+
+// How to authenticate — auth-exempt, called by the login page before any
+// credential exists.
+export async function authConfig(): Promise<AuthConfig> {
+  const res = await fetch(`${BASE}/auth/config`);
+  if (!res.ok) throw new Error('auth config unavailable');
+  return res.json();
+}
+
+// Trade the OAuth callback's one-time #auth_code for the session token and
+// store it. The token plaintext exists only in this response.
+export async function exchangeCode(code: string): Promise<AuthUser> {
+  const res = await fetch(`${BASE}/auth/exchange`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code }),
+  });
+  if (!res.ok) throw new Error('sign-in expired — try again');
+  const body = await res.json();
+  setToken(body.token);
+  return body.user;
+}
+
+// Revoke the current session server-side (no-op in token mode), then forget
+// the local copy. Always resolves — a dead server must not block sign-out.
+export async function logout(): Promise<void> {
+  try {
+    await request('/auth/logout', { method: 'POST' });
+  } catch { /* the local clear below is the part that must happen */ }
+  clearToken();
+  window.dispatchEvent(new Event('auth:logout'));
+}
+
 interface CrudMethods<T> {
   list: () => Promise<T[]>;
   create: (data: unknown) => Promise<T>;
@@ -82,6 +117,17 @@ function crud<T>(base: string): CrudMethods<T> {
 }
 
 export const api = {
+  auth: {
+    me: (): Promise<AuthUser> => request('/auth/me'),
+    // Personal access tokens (OAuth mode): the create response is the only
+    // place a token's plaintext appears.
+    pats: {
+      list: (): Promise<S['protocol.PatView'][]> => request('/auth/tokens'),
+      create: (name: string, expiresInDays: number): Promise<S['protocol.PatCreated']> =>
+        request('/auth/tokens', { method: 'POST', body: JSON.stringify({ name, expires_in_days: expiresInDays }) }),
+      delete: (id: string) => request(`/auth/tokens/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    },
+  },
   sessions: {
     ...crud<S['store.Session']>('/sessions'),
     create: (name: string, agentConfigId?: string) => request('/sessions', { method: 'POST', body: JSON.stringify({ name, ...(agentConfigId ? { agent_config_id: agentConfigId } : {}) }) }),

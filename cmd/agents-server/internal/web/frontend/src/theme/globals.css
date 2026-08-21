@@ -669,3 +669,37 @@ a:hover {
 .login-card .form-control {
     width: 240px;
 }
+
+/* Account panel */
+.account-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--bgColor-accent-muted);
+  color: var(--fgColor-accent);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.account-pat-row {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--borderColor-muted);
+}
+.account-pat-row:last-child {
+  border-bottom: none;
+}
+.account-name {
+  font-weight: 600;
+}
+.account-muted {
+  font-size: 12px;
+  color: var(--fgColor-muted);
+  margin: 0;
+}
+.account-secret {
+  font-family: var(--fontStack-monospace, monospace);
+  font-size: 12px;
+  word-break: break-all;
+}
