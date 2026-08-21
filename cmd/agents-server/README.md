@@ -1158,6 +1158,12 @@ client must authenticate at the application level by sending
 `{"type":"auth","token":"..."}` as the first message. The server replies with
 `{"type":"auth.ok"}`.
 
+After `auth.ok` the server pings every 25 seconds and drops a connection that
+answers no ping for 60 — a half-open connection (NAT idled out, client gone
+without a close frame) would otherwise pin its goroutine and buffers until TCP
+keepalive notices, hours later. Browsers and standard WebSocket libraries
+answer pings automatically; a custom client only needs to keep reading.
+
 All messages use the envelope format `{"type":"...", "payload":{...}}`.
 
 Runs live in the runner's hub, independent of the connection, and their events

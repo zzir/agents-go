@@ -34,12 +34,19 @@ const (
 	// wsAuthDeadline caps how long an upgraded-but-unauthenticated connection may
 	// take to send its auth frame. Without it, a client that completes the
 	// upgrade but never authenticates pins a goroutine and its read buffer
-	// indefinitely. It is cleared on success — the event/terminal streams are
-	// long-lived and legitimately idle between messages.
+	// indefinitely. On success the heartbeat's rolling deadline takes over.
 	wsAuthDeadline = 10 * time.Second
 	// wsHandshakeTimeout bounds the upgrade handshake itself, so a slow client
 	// dribbling the upgrade request cannot tie up the accepting goroutine.
 	wsHandshakeTimeout = 10 * time.Second
+	// wsPongWait is the heartbeat's read deadline: a connection that answers no
+	// ping within it is half-open (NAT idled out, client gone without a close
+	// frame) and is dropped instead of pinning its goroutine and outbound queue
+	// until TCP keepalive notices, hours later.
+	wsPongWait = 60 * time.Second
+	// wsPingInterval is how often the heartbeat pings; well under wsPongWait so
+	// one lost ping doesn't kill a healthy connection.
+	wsPingInterval = 25 * time.Second
 )
 
 var upgrader = websocket.Upgrader{
@@ -170,25 +177,34 @@ func (c *WSConn) Close() {
 	_ = c.conn.Close()
 }
 
+// startHeartbeat arms a rolling read deadline pushed forward by each pong and
+// pings on a ticker to solicit them (browsers and gorilla clients answer pings
+// automatically). Reads fail once the peer stops answering, ending the handler
+// loop. WriteControl is safe alongside the other write methods, so no mutex.
+func (c *WSConn) startHeartbeat(pongWait, pingInterval time.Duration) {
+	_ = c.conn.SetReadDeadline(time.Now().Add(pongWait))
+	c.conn.SetPongHandler(func(string) error {
+		return c.conn.SetReadDeadline(time.Now().Add(pongWait))
+	})
+	go func() {
+		ticker := time.NewTicker(pingInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-c.ctx.Done():
+				return
+			case <-ticker.C:
+				if err := c.conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(wsWriteTimeout)); err != nil {
+					c.Close()
+					return
+				}
+			}
+		}
+	}()
+}
+
 // WSHandlerFunc handles a single upgraded websocket connection.
 type WSHandlerFunc func(conn *WSConn)
-
-// HandleWS upgrades an HTTP request to a WebSocket and runs handler with the connection.
-func HandleWS(handler WSHandlerFunc) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		ws, err := upgrader.Upgrade(c.Writer, c.Request, nil)
-		if err != nil {
-			logging.Ctx(c.Request.Context()).Error("ws upgrade", "error", err)
-			return
-		}
-		// Bound every inbound frame up front: gorilla defaults to no limit.
-		ws.SetReadLimit(wsMaxMessageBytes)
-		ctx, cancel := context.WithCancel(c.Request.Context())
-		conn := &WSConn{conn: ws, ctx: ctx, cancel: cancel}
-		defer conn.Close()
-		handler(conn)
-	}
-}
 
 // HandleWSWithAuth upgrades to WebSocket, then requires the client to send
 // {"type":"auth","token":"..."} as the first message. On success it replies
@@ -219,9 +235,11 @@ func HandleWSWithAuth(handler WSHandlerFunc, token string) gin.HandlerFunc {
 			conn.Close()
 			return
 		}
-		// Authenticated: drop the deadline (the stream idles between messages by
-		// design). The read-size limit stays in force for the whole connection.
-		_ = ws.SetReadDeadline(time.Time{})
+		// Authenticated: the heartbeat's rolling deadline replaces the auth one
+		// (the stream idles between messages by design, so a bare deadline can't
+		// stay — but no deadline at all left half-open connections pinned until
+		// TCP keepalive). The read-size limit stays for the whole connection.
+		conn.startHeartbeat(wsPongWait, wsPingInterval)
 		_ = conn.WriteJSON(map[string]string{"type": protocol.EventAuthOK})
 
 		defer conn.Close()
