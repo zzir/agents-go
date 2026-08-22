@@ -40,7 +40,10 @@ type AgentDeps struct {
 	ContextProfiles  *store.ContextProfileStore
 	Workflows        *store.WorkflowStore
 	Wakeups          *store.WakeupStore
-	Workspace        string
+	// Users answers the run owner's role; nil means every owner is an admin
+	// (a single-user deployment).
+	Users     *store.UserStore
+	Workspace string
 	// MaxTasks overrides the per-session live background-task cap when > 0
 	// (--max-tasks; 0 keeps the built-in default).
 	MaxTasks int
@@ -57,7 +60,8 @@ type AgentDeps struct {
 	// WorkflowTools is set by NewRunner and builds the run's get_workflow /
 	// save_workflow — per run, like SpawnTool, because the save tool's
 	// description names the agents on offer. Attached only when the config
-	// opts in (behavior.workflow_authoring); never on a background run.
+	// opts in (behavior.workflow_authoring); never on a background run, and
+	// save_workflow only on an admin's run (README "Ownership and roles").
 	WorkflowTools func(ctx context.Context) []*agents.Tool
 }
 
@@ -158,7 +162,7 @@ func (b *BuildResult) Release() {
 // global settings (system_prompt). agentConfigID is required. sandboxID is
 // optional — when set, only that sandbox is attached; when empty, all are.
 func BuildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandboxID string) (*BuildResult, error) {
-	return buildFullAgent(ctx, deps, agentConfigID, sandboxID, "", false)
+	return buildFullAgent(ctx, deps, agentConfigID, sandboxID, "", false, "")
 }
 
 // BackgroundInstructions is what a run nobody is watching has to be told. The
@@ -170,7 +174,8 @@ was. Your final message is the only account of this turn that leaves here — en
 with the outcome, not with a question.`
 
 // buildFullAgent is BuildFullAgent with the run-scoped extras: the session's
-// bound workDir for the sandbox tools, and BACKGROUND awareness.
+// bound workDir for the sandbox tools, BACKGROUND awareness, and the owner
+// whose role gates save_workflow ("" = ungated, the full surface).
 //
 // A background run is one nobody is sitting in front of — a task's, a workflow
 // step's. Three things follow from that single fact, which is why they share
@@ -178,7 +183,7 @@ with the outcome, not with a question.`
 // cannot start a sequence either, since a workflow is what spawn_task starts
 // when told a name), and no plan or todo mode, because a plan review is an
 // approval nobody would ever answer.
-func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandboxID, workDir string, background bool) (*BuildResult, error) {
+func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandboxID, workDir string, background bool, ownerID string) (*BuildResult, error) {
 	if agentConfigID == "" {
 		return nil, fmt.Errorf("agent_config_id is required")
 	}
@@ -213,7 +218,13 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandbox
 	// (README invariant 39).
 	if err == nil && !background && result.Behavior.WorkflowAuthoring && deps.WorkflowTools != nil {
 		mark := len(result.Agent.Tools)
-		result.Agent.Tools = append(result.Agent.Tools, deps.WorkflowTools(ctx)...)
+		for _, tool := range deps.WorkflowTools(ctx) {
+			// A member reads definitions (as the API lets them) but cannot
+			// write one: the REST gate holds through the tool as well.
+			if tool.ReadOnly || ownerIsAdmin(ctx, deps, ownerID) {
+				result.Agent.Tools = append(result.Agent.Tools, tool)
+			}
+		}
 		bucketToolsSince(result.Agent, mark, store.ToolSourceWorkflows, &result.Profile)
 	}
 	if err != nil {
@@ -677,4 +688,18 @@ func splitList(s string) []string {
 		}
 	}
 	return out
+}
+
+// ownerIsAdmin reports whether the run's owner may write shared configuration.
+// No owner or no user store means ungated; a lookup failure fails closed.
+func ownerIsAdmin(ctx context.Context, deps *AgentDeps, ownerID string) bool {
+	if ownerID == "" || deps.Users == nil {
+		return true
+	}
+	u, err := deps.Users.ByID(ctx, ownerID)
+	if err != nil {
+		logging.Ctx(ctx).Warn("resolving the run owner's role", "owner_id", ownerID, "error", err)
+		return false
+	}
+	return u.Role == store.RoleAdmin
 }

@@ -77,7 +77,7 @@ func TestExecCommandRoutedOffSDKApproveList(t *testing.T) {
 	}
 	// A background build keeps the raw list (no plan gate), which is where the
 	// routing filter is observable.
-	built, err := buildFullAgent(ctx, deps, ac.ID, "", "", true)
+	built, err := buildFullAgent(ctx, deps, ac.ID, "", "", true, "")
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}

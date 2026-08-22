@@ -253,8 +253,9 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	// From the hub record, not a second store lookup: register/resume already
 	// resolved it, so this cannot disagree with what the run registered as.
 	var task *TaskMeta
+	var ownerID string
 	if info, ok := r.hub.Info(runID); ok {
-		task = info.Task
+		task, ownerID = info.Task, info.OwnerID
 	}
 	// A resumed segment re-announces the original prompt so a late-joining
 	// browser (attached at resume) can render the user bubble; earlier
@@ -357,7 +358,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	// Build fully configured agent from DB config. A BACKGROUND run — a task's,
 	// a workflow step's; both task sessions — is built without the tools and
 	// modes that only make sense with a person in front of them.
-	built, err := buildFullAgent(ctx, r.Deps, agentConfigID, sandboxID, workDir, task != nil)
+	built, err := buildFullAgent(ctx, r.Deps, agentConfigID, sandboxID, workDir, task != nil, ownerID)
 	if err != nil {
 		return failTurn("", protocol.CodeConfigError, err, "", "")
 	}

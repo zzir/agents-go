@@ -483,3 +483,41 @@ func TestSaveWorkflowIsApprovedThenWritten(t *testing.T) {
 		t.Fatalf("the invalid save wrote: %d workflows", len(list))
 	}
 }
+
+// A member's chat run reads definitions but cannot write one: the admin gate
+// on POST/PUT /workflows holds through the tool surface too.
+func TestSaveWorkflowIsAdminOnly(t *testing.T) {
+	ctx := context.Background()
+	model, srv := newRecordingModel(t, func(int, []byte) []any { return sayOutput("ok") })
+	runner, _, coder := workflowToolsFixture(t, srv.URL)
+	users := store.NewUserStore(runner.db)
+	runner.Deps.Users = users
+	if _, err := users.EnsureLocalUser(ctx); err != nil {
+		t.Fatal(err)
+	}
+	member := &store.User{ID: store.NewID(), Email: "m@example.com", Role: store.RoleMember}
+	if _, err := runner.db.NewInsert().Model(member).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	theirs := &store.Session{OwnerID: member.ID, ID: store.NewID(), Name: "member chat"}
+	if err := runner.Deps.Sessions.Create(ctx, theirs); err != nil {
+		t.Fatal(err)
+	}
+	runChat(t, runner, theirs, coder, "member asks")
+	memberTools := model.toolsOfBody(t, "member asks", time.Second)
+	if slices.Contains(memberTools, WorkflowSaveToolName) || !slices.Contains(memberTools, WorkflowGetToolName) {
+		t.Fatalf("member run tools = %v, want get_workflow without save_workflow", memberTools)
+	}
+
+	// The local admin keeps both.
+	mine := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "admin chat"}
+	if err := runner.Deps.Sessions.Create(ctx, mine); err != nil {
+		t.Fatal(err)
+	}
+	runChat(t, runner, mine, coder, "admin asks")
+	adminTools := model.toolsOfBody(t, "admin asks", time.Second)
+	if !slices.Contains(adminTools, WorkflowSaveToolName) {
+		t.Fatalf("admin run tools = %v, want save_workflow", adminTools)
+	}
+}

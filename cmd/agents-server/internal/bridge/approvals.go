@@ -115,8 +115,8 @@ func (r *Runner) persistInterruption(result *RunOutcome) error {
 // agent the SDK re-runs, so omitting the sandbox here strips its
 // sandbox-backed tools (exec_command, read_file, …) and the approved call
 // fails with "tool not found on agent".
-func (r *Runner) buildAgentRegistry(ctx context.Context, agentConfigID, sandboxID, workDir string, background bool) (map[string]*agents.Agent, *BuildResult, error) {
-	built, err := buildFullAgent(ctx, r.Deps, agentConfigID, sandboxID, workDir, background)
+func (r *Runner) buildAgentRegistry(ctx context.Context, agentConfigID, sandboxID, workDir string, background bool, ownerID string) (map[string]*agents.Agent, *BuildResult, error) {
+	built, err := buildFullAgent(ctx, r.Deps, agentConfigID, sandboxID, workDir, background, ownerID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -285,7 +285,12 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 		// skip its reclaim; refuse rather than guess.
 		return "", pending.SessionID, err
 	}
-	registry, rebuilt, err := r.buildAgentRegistry(ctx, pending.AgentConfigID, pending.SandboxID, pending.WorkDir, taskMeta != nil)
+	// The rebuild carries the owner's role like the original build did.
+	sess, err := r.Deps.Sessions.Get(ctx, pending.SessionID)
+	if err != nil {
+		return "", pending.SessionID, err
+	}
+	registry, rebuilt, err := r.buildAgentRegistry(ctx, pending.AgentConfigID, pending.SandboxID, pending.WorkDir, taskMeta != nil, sess.OwnerID)
 	if err != nil {
 		return "", pending.SessionID, fmt.Errorf("rebuilding agent: %w", err)
 	}

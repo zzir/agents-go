@@ -169,6 +169,7 @@ func run(_ *cobra.Command, _ []string) error {
 	workflowStore := store.NewWorkflowStore(db)
 	triggerStore := store.NewTriggerStore(db)
 	wakeupStore := store.NewWakeupStore(db)
+	userStore := store.NewUserStore(db)
 	contextProfileStore := store.NewContextProfileStore(db)
 	guardrailResolver := bridge.NewGuardrailResolver(guardrailStore)
 	mcpManager := bridge.NewMcpManager(ctx, settingReader)
@@ -198,6 +199,7 @@ func run(_ *cobra.Command, _ []string) error {
 		Tasks:            taskStore,
 		ContextProfiles:  contextProfileStore,
 		Workflows:        workflowStore,
+		Users:            userStore,
 		Wakeups:          wakeupStore,
 		Workspace:        flagWorkspace,
 		MaxTasks:         flagMaxTasks,
@@ -265,7 +267,6 @@ func run(_ *cobra.Command, _ []string) error {
 	// Both modes keep the implicit local account, so ownership always has a
 	// referent — token mode authenticates as it, OAuth mode leaves it dormant
 	// (no identity, no token, no way to sign in as it).
-	userStore := store.NewUserStore(db)
 	localUser, err := userStore.EnsureLocalUser(ctx)
 	if err != nil {
 		return fmt.Errorf("ensuring the local user: %w", err)
