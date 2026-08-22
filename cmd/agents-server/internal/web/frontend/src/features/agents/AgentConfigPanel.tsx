@@ -118,6 +118,7 @@ interface AgentFormProps {
   onSave: (form: AgentFormData & { handoffs: string; tools: string; skills: string; model_settings: string }) => void;
   onCancel?: () => void;
   onDelete?: () => void;
+  saving?: boolean;
   mcpServers?: McpServer[];
   skills?: Skill[];
   allAgents?: Agent[];
@@ -125,7 +126,7 @@ interface AgentFormProps {
   providers?: ProviderRef[];
 }
 
-function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, allAgents, providerTypes, providers }: AgentFormProps) {
+function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, skills, allAgents, providerTypes, providers }: AgentFormProps) {
   const initHandoffs = (): (string | number)[] => {
     try { return JSON.parse((initial && initial.handoffs) || '[]'); } catch { return []; }
   };
@@ -445,6 +446,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
       </Disclosure>
 
       <FormActions
+        saving={saving}
         onSave={() => {
           const ms: Record<string, unknown> = { ...preservedMs };
           const reasoning: Record<string, unknown> = { ...(initMs.reasoning as Record<string, unknown> | undefined) };
@@ -475,7 +477,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, mcpServers, skills, al
 }
 
 export function AgentConfigPanel() {
-  const { items: agents, adding, editing, startAdd, startEdit, cancel, save, remove } =
+  const { items: agents, adding, editing, startAdd, startEdit, cancel, save, saving, remove } =
     useCrud<Agent, AgentFormData & { handoffs: string; tools: string; skills: string; model_settings: string }>(api.agents);
   const { data: mcpServers } = useApi<McpServer[]>(() => api.mcpServers.list() as Promise<McpServer[]>);
   const { data: skills } = useApi<Skill[]>(() => api.skills.list() as Promise<Skill[]>);
@@ -502,8 +504,8 @@ export function AgentConfigPanel() {
     } catch { return all.length; }
   };
 
-  const form = adding ? <AgentForm onSave={save} onCancel={cancel} mcpServers={mcpServers ?? undefined} skills={skills ?? undefined} allAgents={agents} providerTypes={providerTypes ?? undefined} providers={providers ?? undefined} />
-    : editing ? <AgentForm initial={editing} onSave={save} onCancel={cancel} onDelete={async () => { if (await remove(editing.id, editing.name)) cancel(); }} mcpServers={mcpServers ?? undefined} skills={skills ?? undefined} allAgents={agents} providerTypes={providerTypes ?? undefined} providers={providers ?? undefined} />
+  const form = adding ? <AgentForm saving={saving} onSave={save} onCancel={cancel} mcpServers={mcpServers ?? undefined} skills={skills ?? undefined} allAgents={agents} providerTypes={providerTypes ?? undefined} providers={providers ?? undefined} />
+    : editing ? <AgentForm saving={saving} initial={editing} onSave={save} onCancel={cancel} onDelete={async () => { if (await remove(editing.id, editing.name)) cancel(); }} mcpServers={mcpServers ?? undefined} skills={skills ?? undefined} allAgents={agents} providerTypes={providerTypes ?? undefined} providers={providers ?? undefined} />
     : null;
 
   return (

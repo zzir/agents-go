@@ -4,8 +4,9 @@ import { Blankslate, type Column } from '@primer/react/experimental';
 import { PeopleIcon } from '@primer/octicons-react';
 import { UserAvatar, displayName } from '@/components/UserAvatar';
 import { ListTable, RowMenu, actionsColumn } from '@/components/ListTable';
-import { api, type ApiSchemas, type AuthUser } from '@/lib/api';
+import { api, type ApiSchemas } from '@/lib/api';
 import { shortDate } from '@/lib/format';
+import { useMe } from '@/lib/me';
 
 type UserRow = Omit<ApiSchemas['store.User'], 'id'> & { id: string };
 
@@ -15,16 +16,16 @@ export const LOCAL_USER_ID = '00000000-0000-0000-0000-000000000001';
 // MembersPanel: every account and its role. An admin promotes or demotes
 // anyone but themself (the server refuses a self-demotion too).
 export function MembersPanel() {
-  const [me, setMe] = useState<AuthUser | null>(null);
+  const { me } = useMe();
   const [users, setUsers] = useState<UserRow[] | null>(null);
   const [error, setError] = useState('');
   const confirm = useConfirm();
 
   const reload = useCallback(() => {
-    Promise.all([api.auth.me(), api.auth.users.list()])
-      .then(([u, list]) => {
-        setMe(u);
+    api.auth.users.list()
+      .then(list => {
         setUsers((list ?? []).filter(x => x.id && x.id !== LOCAL_USER_ID).map(x => ({ ...x, id: x.id || '' })));
+        setError('');
       })
       .catch(() => setError('Failed to load members.'));
   }, []);
@@ -47,9 +48,9 @@ export function MembersPanel() {
       confirmButtonContent: 'Sign out',
       confirmButtonType: 'danger',
     }))) return;
-    setError('');
     try {
       await api.auth.users.revokeTokens(u.id);
+      setError('');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to revoke the tokens.');
     }

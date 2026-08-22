@@ -39,10 +39,11 @@ interface ProviderFormProps {
   onSave: (form: ProviderFormData) => void;
   onCancel?: (() => void) | null;
   onDelete?: (() => void) | null;
+  saving?: boolean;
   providerTypes: ProviderTypeInfo[] | null;
 }
 
-function ProviderForm({ initial, onSave, onCancel, onDelete, providerTypes }: ProviderFormProps) {
+function ProviderForm({ initial, onSave, onCancel, onDelete, saving, providerTypes }: ProviderFormProps) {
   const [form, setForm] = useState<ProviderFormData>(initial || EMPTY);
   const set = (k: keyof ProviderFormData, v: string) => setForm(prev => ({ ...prev, [k]: v }));
 
@@ -101,14 +102,14 @@ function ProviderForm({ initial, onSave, onCancel, onDelete, providerTypes }: Pr
           onChange={e => set('base_url', e.target.value)} placeholder={meta.baseURLPlaceholder} />)}
       </>}
 
-      <FormActions onSave={() => onSave(form)} onCancel={onCancel} onDelete={onDelete} />
+      <FormActions saving={saving} onSave={() => onSave(form)} onCancel={onCancel} onDelete={onDelete} />
     </Stack>
   );
 }
 
 export function ProviderPanel() {
   const readOnly = useReadOnly();
-  const { items: providers, adding, editing, startAdd, startEdit, cancel, save, remove, reload } =
+  const { items: providers, adding, editing, startAdd, startEdit, cancel, save, saving, remove, reload } =
     useCrud<Provider, ProviderFormData>(api.providers);
   const { data: providerTypes } = useApi<ProviderTypeInfo[]>(() => api.providerTypes.list() as Promise<ProviderTypeInfo[]>);
   const [signingIn, setSigningIn] = useState<Record<string, boolean>>({});
@@ -168,9 +169,9 @@ export function ProviderPanel() {
     api_key: p.api_key || '', base_url: p.base_url || '',
   });
 
-  const form = adding ? <ProviderForm onSave={save} onCancel={cancel} providerTypes={providerTypes} />
+  const form = adding ? <ProviderForm saving={saving} onSave={save} onCancel={cancel} providerTypes={providerTypes} />
     : editing ? (
-      <ProviderForm
+      <ProviderForm saving={saving}
         initial={toForm(editing)}
         onSave={save}
         onCancel={cancel}

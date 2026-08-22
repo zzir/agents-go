@@ -7,20 +7,26 @@ export type ApiSchemas = S;
 
 const BASE = '/api/v1';
 
+// TOKEN_KEY names the credential in both storages: localStorage for an
+// OAuth session (new tabs share the 30-day session), sessionStorage for the
+// token-mode login (gone with the tab).
+export const TOKEN_KEY = 'auth_token';
+
 export function getToken(): string {
-  return sessionStorage.getItem('auth_token') || '';
+  return localStorage.getItem(TOKEN_KEY) || sessionStorage.getItem(TOKEN_KEY) || '';
 }
 
-export function setToken(t: string): void {
-  sessionStorage.setItem('auth_token', t);
+export function setToken(t: string, opts: { persist: boolean }): void {
+  clearToken();
+  (opts.persist ? localStorage : sessionStorage).setItem(TOKEN_KEY, t);
 }
 
 export function clearToken(): void {
-  sessionStorage.removeItem('auth_token');
+  localStorage.removeItem(TOKEN_KEY);
+  sessionStorage.removeItem(TOKEN_KEY);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function request(path: string, opts: RequestInit = {}): Promise<any> {
+async function request<T = unknown>(path: string, opts: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json', ...(opts.headers as Record<string, string>) };
   const t = getToken();
   if (t) headers['Authorization'] = `Bearer ${t}`;
@@ -38,7 +44,7 @@ async function request(path: string, opts: RequestInit = {}): Promise<any> {
     err.status = res.status;
     throw err;
   }
-  if (res.status === 204) return null;
+  if (res.status === 204) return null as T;
   return res.json();
 }
 
@@ -49,7 +55,7 @@ export async function login(token: string): Promise<boolean> {
     body: JSON.stringify({ token }),
   });
   if (!res.ok) throw new Error('invalid token');
-  setToken(token);
+  setToken(token, { persist: false });
   return true;
 }
 
@@ -73,8 +79,8 @@ function httpError(res: Response): Error & { status: number } {
   return err;
 }
 
-export interface AuthConfig { mode: 'token' | 'oauth'; providers?: string[] }
-export interface AuthUser { id: string; email: string; name?: string; role: string; avatar_url?: string }
+export type AuthConfig = S['protocol.AuthConfig'];
+export type AuthUser = S['protocol.UserInfo'];
 
 // How to authenticate — auth-exempt, called by the login page before any
 // credential exists.
@@ -93,9 +99,9 @@ export async function exchangeCode(code: string): Promise<AuthUser> {
     body: JSON.stringify({ code }),
   });
   if (!res.ok) throw httpError(res);
-  const body = await res.json();
-  setToken(body.token);
-  return body.user;
+  const body: S['protocol.AuthSession'] = await res.json();
+  setToken(body.token || '', { persist: true });
+  return body.user || {};
 }
 
 // Revoke the current session server-side (no-op in token mode), forget the
@@ -121,45 +127,45 @@ interface CrudMethods<T> {
 
 function crud<T>(base: string): CrudMethods<T> {
   return {
-    list: () => request(base),
-    create: (data: unknown) => request(base, { method: 'POST', body: JSON.stringify(data) }),
-    get: (id: string | number) => request(`${base}/${id}`),
-    update: (id: string | number, data: unknown) => request(`${base}/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
-    delete: (id: string | number) => request(`${base}/${id}`, { method: 'DELETE' }),
+    list: () => request<T[]>(base),
+    create: (data: unknown) => request<T>(base, { method: 'POST', body: JSON.stringify(data) }),
+    get: (id: string | number) => request<T>(`${base}/${id}`),
+    update: (id: string | number, data: unknown) => request<T>(`${base}/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    delete: (id: string | number) => request<null>(`${base}/${id}`, { method: 'DELETE' }),
   };
 }
 
 export const api = {
   auth: {
-    me: (): Promise<AuthUser> => request('/auth/me'),
+    me: () => request<AuthUser>('/auth/me'),
     // Admin: every account; role changes and disabling (never one's own
     // account, never the last enabled admin); signing one out everywhere.
     users: {
-      list: (): Promise<S['store.User'][]> => request('/auth/users'),
+      list: () => request<S['store.User'][]>('/auth/users'),
       patch: (id: string, patch: { role?: 'admin' | 'member'; disabled?: boolean }) =>
-        request(`/auth/users/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+        request<null>(`/auth/users/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) }),
       revokeTokens: (id: string) =>
-        request(`/auth/users/${encodeURIComponent(id)}/tokens`, { method: 'DELETE' }),
+        request<null>(`/auth/users/${encodeURIComponent(id)}/tokens`, { method: 'DELETE' }),
     },
     // Admin: the audit log, newest first; `before` (an event id) pages older.
-    audit: (limit = 50, before?: string): Promise<S['store.AuditEvent'][]> =>
-      request(`/auth/audit?limit=${limit}${before ? `&before=${encodeURIComponent(before)}` : ''}`),
+    audit: (limit = 50, before?: string) =>
+      request<S['store.AuditEvent'][]>(`/auth/audit?limit=${limit}${before ? `&before=${encodeURIComponent(before)}` : ''}`),
     // Personal access tokens (OAuth mode): the create response is the only
     // place a token's plaintext appears.
     pats: {
-      list: (): Promise<S['protocol.PatView'][]> => request('/auth/tokens'),
-      create: (name: string, expiresInDays: number): Promise<S['protocol.PatCreated']> =>
-        request('/auth/tokens', { method: 'POST', body: JSON.stringify({ name, expires_in_days: expiresInDays }) }),
-      delete: (id: string) => request(`/auth/tokens/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+      list: () => request<S['protocol.PatView'][]>('/auth/tokens'),
+      create: (name: string, expiresInDays: number) =>
+        request<S['protocol.PatCreated']>('/auth/tokens', { method: 'POST', body: JSON.stringify({ name, expires_in_days: expiresInDays }) }),
+      delete: (id: string) => request<null>(`/auth/tokens/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     },
   },
   sessions: {
     ...crud<S['store.Session']>('/sessions'),
     // Admin: every owner's sessions — existence and recency, never content —
     // and reassigning one (its task sessions follow) to another account.
-    listAll: (): Promise<S['store.Session'][]> => request('/sessions?all=true'),
-    setOwner: (id: string, userId: string): Promise<S['store.Session']> =>
-      request(`/sessions/${id}/owner`, { method: 'PUT', body: JSON.stringify({ user_id: userId }) }),
+    listAll: () => request<S['store.Session'][]>('/sessions?all=true'),
+    setOwner: (id: string, userId: string) =>
+      request<S['store.Session']>(`/sessions/${id}/owner`, { method: 'PUT', body: JSON.stringify({ user_id: userId }) }),
     create: (name: string, agentConfigId?: string) => request('/sessions', { method: 'POST', body: JSON.stringify({ name, ...(agentConfigId ? { agent_config_id: agentConfigId } : {}) }) }),
     update: (id: string | number, name: string) => request(`/sessions/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
     // limit/beforeId page BACKWARDS: the newest `limit` entries first, then
@@ -196,7 +202,7 @@ export const api = {
     // Moves the session's active branch to an entry. Append-only: the
     // abandoned attempt stays recorded and can be switched back to.
     branch: (id: string | number, entryId: string) => request(`/sessions/${id}/branch`, { method: 'POST', body: JSON.stringify({ entry_id: entryId }) }),
-    fork: (id: string | number, messageId?: string, opts?: { exclusive?: boolean; label?: string }) => request(`/sessions/${id}/fork`, { method: 'POST', body: JSON.stringify({ ...(messageId ? { message_id: messageId } : {}), ...opts }) }),
+    fork: (id: string | number, messageId?: string, opts?: { exclusive?: boolean; label?: string }) => request<S['store.Session']>(`/sessions/${id}/fork`, { method: 'POST', body: JSON.stringify({ ...(messageId ? { message_id: messageId } : {}), ...opts }) }),
     pin: (id: string | number, pinned: boolean) => request(`/sessions/${id}`, { method: 'PATCH', body: JSON.stringify({ pinned }) }),
   },
   agents: {

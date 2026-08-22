@@ -131,9 +131,10 @@ interface SandboxFormProps {
   onSave: (form: PackedForm) => void;
   onCancel?: () => void;
   onDelete?: () => void;
+  saving?: boolean;
 }
 
-function SandboxForm({ initial, onSave, onCancel, onDelete }: SandboxFormProps) {
+function SandboxForm({ initial, onSave, onCancel, onDelete, saving }: SandboxFormProps) {
   const blank: Partial<SandboxConfig> = { name: '', type: 'docker' };
   const [form, setForm] = useState<FlatForm>(initial ? flatten(initial) : flatten(blank));
   const set = (k: keyof FlatForm, v: unknown) => setForm(prev => ({ ...prev, [k]: v }));
@@ -221,7 +222,7 @@ function SandboxForm({ initial, onSave, onCancel, onDelete }: SandboxFormProps) 
         'Cap on bytes a single read_file returns; larger files fail instead of loading into memory. Empty = 8 MiB default.',
       )}
 
-      <FormActions onSave={() => onSave({ ...pack(form), revision: initial?.revision })} onCancel={onCancel} onDelete={onDelete} />
+      <FormActions saving={saving} onSave={() => onSave({ ...pack(form), revision: initial?.revision })} onCancel={onCancel} onDelete={onDelete} />
     </Stack>
   );
 }
@@ -240,7 +241,7 @@ function sandboxSummary(s: SandboxConfig): string {
 
 export function SandboxPanel() {
   const readOnly = useReadOnly();
-  const { items, adding, editing, startAdd, startEdit, cancel, save, remove } =
+  const { items, adding, editing, startAdd, startEdit, cancel, save, saving, remove } =
     useCrud<SandboxConfig, PackedForm>(api.sandboxes);
   const [testingId, setTestingId] = useState<string | null>(null);
 
@@ -262,8 +263,8 @@ export function SandboxPanel() {
 
   const typeLabel = (t: string) => TYPE_LABELS[t] || t;
 
-  const form = adding ? <SandboxForm onSave={save} onCancel={cancel} />
-    : editing ? <SandboxForm initial={editing} onSave={save} onCancel={cancel} onDelete={async () => { if (await remove(editing.id, editing.name)) cancel(); }} />
+  const form = adding ? <SandboxForm saving={saving} onSave={save} onCancel={cancel} />
+    : editing ? <SandboxForm saving={saving} initial={editing} onSave={save} onCancel={cancel} onDelete={async () => { if (await remove(editing.id, editing.name)) cancel(); }} />
     : null;
 
   return (

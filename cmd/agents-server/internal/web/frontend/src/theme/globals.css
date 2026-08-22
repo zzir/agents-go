@@ -425,6 +425,39 @@ a:hover {
     overflow: hidden;
 }
 
+/* Narrow (the dialog is fullscreen): the nav is a scrollable strip of tabs
+   above the content, one row, instead of a column beside it. */
+@media (max-width: 767px) {
+    .settings-layout {
+        flex-direction: column;
+    }
+
+    .settings-nav {
+        width: auto;
+        border-right: none;
+        border-bottom: 1px solid var(--borderColor-muted);
+        overflow-x: auto;
+        overflow-y: hidden;
+    }
+
+    .settings-nav ul {
+        display: flex;
+        flex-wrap: nowrap;
+        width: max-content;
+    }
+
+    .settings-nav li {
+        flex-shrink: 0;
+    }
+
+    /* The divider between shared and personal sections, turned on its side. */
+    .settings-nav li[data-component="ActionList.Divider"] {
+        width: 1px;
+        height: auto;
+        margin: var(--base-size-4) var(--base-size-4);
+    }
+}
+
 /* --- List rows inside a Box card --- */
 .Box-row {
     display: flex;
@@ -841,12 +874,12 @@ a:hover {
   font-weight: 600;
 }
 .account-muted {
-  font-size: 12px;
+  font-size: var(--base-text-size-xs);
   color: var(--fgColor-muted);
   margin: 0;
 }
 .account-secret {
   font-family: var(--fontStack-monospace, monospace);
-  font-size: 12px;
+  font-size: var(--base-text-size-xs);
   word-break: break-all;
 }

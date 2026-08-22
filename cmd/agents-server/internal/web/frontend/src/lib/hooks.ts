@@ -196,6 +196,8 @@ interface UseCrudResult<T, F> {
   reload: () => Promise<void>;
   adding: boolean;
   editing: T | null;
+  // A save in flight; the form's Save button waits on it.
+  saving: boolean;
   startAdd: () => void;
   startEdit: (item: T) => void;
   cancel: () => void;
@@ -217,12 +219,19 @@ export function useCrud<T extends { id: CrudId }, F = Partial<T>>(
   const { data, loading, reload } = useApi<T[]>(() => resource.list() as Promise<T[]>);
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<T | null>(null);
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
 
   const startAdd = useCallback(() => { setEditing(null); setAdding(true); }, []);
   const startEdit = useCallback((item: T) => { setAdding(false); setEditing(item); }, []);
   const cancel = useCallback(() => { setAdding(false); setEditing(null); }, []);
 
   const save = useCallback(async (form: F) => {
+    // The ref is the same-tick guard: two clicks can land before a state
+    // write renders.
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
     try {
       if (editing) await resource.update(editing.id, form);
       else await resource.create(form);
@@ -240,6 +249,9 @@ export function useCrud<T extends { id: CrudId }, F = Partial<T>>(
         setEditing(null);
         await reload();
       }
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
   }, [editing, resource, reload]);
 
@@ -263,7 +275,7 @@ export function useCrud<T extends { id: CrudId }, F = Partial<T>>(
     }
   }, [confirmDialog, resource, reload]);
 
-  return { items: data ?? [], loading, reload, adding, editing, startAdd, startEdit, cancel, save, remove };
+  return { items: data ?? [], loading, reload, adding, editing, saving, startAdd, startEdit, cancel, save, remove };
 }
 
 /** Copy-to-clipboard with the 1.5s "Copied" flip every copy button shows.
@@ -275,6 +287,8 @@ export function useCopy(): { copied: string | null; copy: (text: string, key?: s
   const timer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(timer.current), []);
   const copy = useCallback((text: string, key = 'default') => {
+    // No clipboard API on an insecure (plain-http LAN) origin.
+    if (!navigator.clipboard) { toast.error('Could not copy — select it and copy by hand'); return; }
     navigator.clipboard.writeText(text)
       .then(() => {
         setCopied(key);

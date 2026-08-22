@@ -42,6 +42,7 @@ interface GuardrailFormProps {
   onSave: (form: GuardrailFormData) => void;
   onCancel?: (() => void) | null;
   onDelete?: (() => void) | null;
+  saving?: boolean;
 }
 
 // Mirrors agents/guardrail.go — keep in sync.
@@ -55,7 +56,7 @@ const STAGE_LABELS: Record<string, string> = {
 const MODES = ['regex', 'max_length'] as const;
 const MODE_LABELS: Record<string, string> = { regex: 'Regex Pattern', max_length: 'Max Length' };
 
-function GuardrailForm({ initial, onSave, onCancel, onDelete }: GuardrailFormProps) {
+function GuardrailForm({ initial, onSave, onCancel, onDelete, saving }: GuardrailFormProps) {
   const [form, setForm] = useState<GuardrailFormData>(initial || {
     name: '', description: '', stages: ['input'], mode: 'regex', blocking: false,
   });
@@ -139,19 +140,19 @@ function GuardrailForm({ initial, onSave, onCancel, onDelete }: GuardrailFormPro
           <FormControl.Caption>At the input stage, run before the model call (a gate) instead of racing it — a tripwire then prevents the call and any token spend</FormControl.Caption>
         </FormControl>
       )}
-      <FormActions onSave={handleSave} onCancel={onCancel} onDelete={onDelete} />
+      <FormActions saving={saving} onSave={handleSave} onCancel={onCancel} onDelete={onDelete} />
     </Stack>
   );
 }
 
 export function GuardrailPanel() {
-  const { items: guardrails, adding, editing, startAdd, startEdit, cancel, save, remove } =
+  const { items: guardrails, adding, editing, startAdd, startEdit, cancel, save, saving, remove } =
     useCrud<Guardrail, GuardrailFormData>(api.guardrails);
 
   const isBuiltin = (g: Guardrail): boolean => !g.id;
 
-  const form = adding ? <GuardrailForm onSave={save} onCancel={cancel} />
-    : editing ? <GuardrailForm initial={editing} onSave={save} onCancel={cancel} onDelete={async () => { if (await remove(editing.id, editing.name)) cancel(); }} />
+  const form = adding ? <GuardrailForm saving={saving} onSave={save} onCancel={cancel} />
+    : editing ? <GuardrailForm saving={saving} initial={editing} onSave={save} onCancel={cancel} onDelete={async () => { if (await remove(editing.id, editing.name)) cancel(); }} />
     : null;
 
   return (

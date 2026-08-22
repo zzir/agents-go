@@ -1,10 +1,10 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo, memo } from 'react';
-import { Dialog, NavList as PrimerNavList, Flash, Button } from '@primer/react';
+import { Dialog, NavList as PrimerNavList, Flash, Button, IconButton } from '@primer/react';
 import { SecretInput } from '@/components/SecretInput';
 import {
   DependabotIcon, McpIcon, ShieldCheckIcon, SparkleIcon, CpuIcon, PlugIcon,
   ContainerIcon, DatabaseIcon, GearIcon, PersonIcon, PeopleIcon, CommentDiscussionIcon, LogIcon, LockIcon,
-  XCircleFillIcon, AlertFillIcon, CheckCircleFillIcon, InfoIcon,
+  XCircleFillIcon, AlertFillIcon, CheckCircleFillIcon, InfoIcon, XIcon,
 } from '@primer/octicons-react';
 import type { Icon } from '@primer/octicons-react';
 import { ThemeProvider } from '@/theme/ThemeProvider';
@@ -19,17 +19,21 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 const TerminalPanel = React.lazy(() =>
   import('@/features/terminal/TerminalPanel').then(m => ({ default: m.TerminalPanel })),
 );
-import { login, checkAuth, getToken, api, authConfig, exchangeCode, type AuthConfig, type AuthUser } from '@/lib/api';
+import { login, checkAuth, getToken, api, authConfig, exchangeCode, TOKEN_KEY, type AuthConfig } from '@/lib/api';
 import { EV, TASK_KIND_WORKFLOW } from '@/lib/protocol';
 import { WorkflowsHub, type HubTab } from '@/features/workflows/WorkflowsHub';
 import { WORKFLOW_COMMAND } from '@/features/chat/SlashMenu';
-import { SESSIONS_CHANGED } from '@/features/sessions/SessionPicker';
+import { SESSIONS_CHANGED, SESSION_REMOVED } from '@/features/sessions/SessionPicker';
 import { useAgentSocket, defaultSS, type SessionState } from '@/lib/useAgentSocket';
 import { patchToolCall, type ToolCallPatch } from '@/lib/timeline';
 import { syncTaskCard } from '@/lib/streamReducer';
 import { clearSessionPrefs } from '@/lib/drafts';
 import { onToast, toast } from '@/lib/toast';
 import { ReadOnlyContext } from '@/lib/access';
+import { MeContext, useMeLoader } from '@/lib/me';
+import { useNarrow } from '@/lib/hooks';
+import { readHash, writeHash, consumeAuthFragment, stashReturnHash, restoreReturnHash } from '@/lib/route';
+import { isTooLarge } from '@/lib/messageSize';
 
 const FLASH_VARIANT: Record<string, FlashProps['variant']> = { error: 'danger', warning: 'warning', success: 'success', info: 'default' };
 const FLASH_ICON: Record<string, React.ReactNode> = {
@@ -41,9 +45,10 @@ const FLASH_ICON: Record<string, React.ReactNode> = {
 type FlashProps = React.ComponentProps<typeof Flash>;
 
 // A queue, not one slot: three errors during a long run stack up instead of
-// each overwriting the last. Errors stay until clicked away; everything else
-// auto-dismisses. The stack div always exists so the live region is
-// established before the first announcement.
+// each overwriting the last. Errors stay until dismissed — a click, their
+// close button, or Escape (the newest first); everything else auto-dismisses.
+// The stack div always exists so the live region is established before the
+// first announcement.
 function GlobalToast() {
   const [items, setItems] = useState<Array<{ id: number; msg: string; type: string; exiting?: boolean }>>([]);
   const seqRef = useRef(0);
@@ -69,6 +74,18 @@ function GlobalToast() {
     };
   }, [dismiss]);
 
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      const last = [...itemsRef.current].reverse().find(it => !it.exiting);
+      if (last) dismiss(last.id);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [dismiss]);
+
   return (
     <div className="global-toast-stack" role="status" aria-live="polite">
       {items.map(it => (
@@ -82,6 +99,10 @@ function GlobalToast() {
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
             {FLASH_ICON[it.type]}{it.msg}
           </span>
+          {it.type === 'error' && (
+            <IconButton icon={XIcon} size="small" variant="invisible" aria-label="Dismiss" className="global-toast-close"
+              onClick={e => { e.stopPropagation(); dismiss(it.id); }} />
+          )}
         </Flash>
       ))}
     </div>
@@ -125,9 +146,12 @@ function TabLoadError() {
 // lazily loaded panels, one open at a time. readOnly is a member's Settings:
 // shared configuration is theirs to read (the API allows it) and not to
 // write (the server refuses with 403), so the panels show and offer nothing.
-function PanelDialog({ title, tabs, readOnly, onClose }: { title: string; tabs: DialogTab[]; readOnly?: boolean; onClose: () => void }) {
+// readOnly null is "not known yet" (/auth/me still loading): the nav shows,
+// the panel waits, so an admin never sees the read-only note flash.
+function PanelDialog({ title, tabs, readOnly, onClose }: { title: string; tabs: DialogTab[]; readOnly?: boolean | null; onClose: () => void }) {
   const [tab, setTab] = useState(tabs[0].key);
   const [TabComp, setTabComp] = useState<React.ComponentType | null>(null);
+  const narrow = useNarrow();
 
   useEffect(() => {
     // The previous panel stays on screen while the next chunk loads — clearing
@@ -152,10 +176,12 @@ function PanelDialog({ title, tabs, readOnly, onClose }: { title: string; tabs: 
       title={title}
       onClose={() => onClose()}
       height="auto"
+      position={{ narrow: 'fullscreen', regular: 'center' }}
       // Both sides scale with the viewport and cap, so the dialog stays a
       // landscape box on a large screen instead of a column (a capped width
       // under an uncapped height); Primer's own max-* still clamp small ones.
-      style={{ width: 'clamp(960px, 80dvw, 1600px)', height: 'clamp(560px, 85dvh, 1000px)' }}
+      // A narrow screen takes Primer's fullscreen instead.
+      style={narrow ? undefined : { width: 'clamp(960px, 80dvw, 1600px)', height: 'clamp(560px, 85dvh, 1000px)' }}
       renderBody={({ children }) => (
         <Dialog.Body className="settings-body" style={{ padding: 0 }}>
           {children}
@@ -190,7 +216,7 @@ function PanelDialog({ title, tabs, readOnly, onClose }: { title: string; tabs: 
               </span>
             </Flash>
           )}
-          {TabComp ? (
+          {TabComp && readOnly !== null ? (
             <ReadOnlyContext value={!!readOnly}>
               <ErrorBoundary resetKey={tab}><TabComp /></ErrorBoundary>
             </ReadOnlyContext>
@@ -273,7 +299,7 @@ function LoginPage({ onLogin, authError }: { onLogin: () => void; authError?: st
             // redirect with a one-time code in the fragment.
             <Button
               key={p} block variant="primary"
-              onClick={() => { window.location.href = `/api/v1/auth/oauth/${p}/start`; }}
+              onClick={() => { stashReturnHash(); window.location.href = `/api/v1/auth/oauth/${p}/start`; }}
             >
               Sign in with {p.charAt(0).toUpperCase() + p.slice(1)}
             </Button>
@@ -345,67 +371,18 @@ function panelKey(p: InspectorPanel): string {
   return p.kind;
 }
 
-// The URL names the view: a conversation (with the open Inspector lens), or
-// the Workflows hub (with its tab). The hub is a place of its own, so the
-// conversation last open is kept beside it in state, not in the URL.
-interface HashState { sessionId: string | null; panel: InspectorPanel; hub: HubTab | null }
-
-function readHash(): HashState {
-  const h = window.location.hash;
-  const hub = /^#\/workflows(?:\/(definitions|triggers|runs))?$/.exec(h);
-  if (hub) return { sessionId: null, panel: null, hub: (hub[1] as HubTab) || 'definitions' };
-  const m = /^#\/session\/([a-zA-Z0-9_-]+)(?:\/(trace|tasks|context|task\/([a-zA-Z0-9_-]+)))?$/.exec(h);
-  if (!m) return { sessionId: null, panel: null, hub: null };
-  let panel: InspectorPanel = null;
-  if (m[2] === 'trace') panel = { kind: 'trace' };
-  else if (m[2] === 'tasks') panel = { kind: 'tasks' };
-  else if (m[2] === 'context') panel = { kind: 'context' };
-  else if (m[3]) panel = { kind: 'task', taskId: m[3] };
-  return { sessionId: m[1], panel, hub: null };
-}
-
-function writeHash(sessionId: string | null, panel: InspectorPanel, hub: HubTab | null) {
-  let next = '';
-  if (hub) {
-    next = `#/workflows/${hub}`;
-  } else if (sessionId) {
-    next = `#/session/${sessionId}`;
-    if (panel?.kind === 'trace') next += '/trace';
-    else if (panel?.kind === 'tasks') next += '/tasks';
-    else if (panel?.kind === 'context') next += '/context';
-    else if (panel?.kind === 'task') next += `/task/${panel.taskId}`;
-  }
-  if (window.location.hash !== next) {
-    window.history.replaceState(null, '', next || window.location.pathname);
-  }
-}
-
-// consumeAuthFragment strips a login-callback fragment (#auth_code= /
-// #auth_error=) from the URL before the hash router ever parses it, and
-// returns what it carried. Stripping immediately keeps the one-time code out
-// of the session history the user can arrow back through.
-function consumeAuthFragment(): { code?: string; error?: string } {
-  const h = window.location.hash;
-  if (h.startsWith('#auth_code=')) {
-    history.replaceState(null, '', window.location.pathname);
-    return { code: decodeURIComponent(h.slice('#auth_code='.length)) };
-  }
-  if (h.startsWith('#auth_error=')) {
-    history.replaceState(null, '', window.location.pathname);
-    return { error: decodeURIComponent(h.slice('#auth_error='.length)) };
-  }
-  return {};
-}
+// Login-callback state, captured (and stripped from the URL) once at module
+// load — before any render, so StrictMode's double init cannot consume it twice.
+const AUTH_FRAGMENT = consumeAuthFragment();
 
 function App() {
-  // Login-callback state, captured (and stripped from the URL) before
-  // anything reads the hash.
-  const [authFragment] = useState(consumeAuthFragment);
-  const [authError, setAuthError] = useState(authFragment.error || '');
+  const [authError, setAuthError] = useState(AUTH_FRAGMENT.error || '');
   const [authed, setAuthed] = useState(!!getToken());
-  // The signed-in user, fetched once authenticated; the role shapes what the
-  // settings dialog offers.
-  const [me, setMe] = useState<AuthUser | null>(null);
+  // The signed-in user, fetched once authenticated and shared by context; the
+  // role shapes what the settings dialog offers. isAdmin is null until known.
+  const meState = useMeLoader(authed);
+  const me = meState.me;
+  const isAdmin = meState.loading ? null : me?.role === 'admin';
   const [checking, setChecking] = useState(true);
   // The initial auth check failed at the network level (server unreachable), as
   // opposed to resolving "not authenticated". Without this the app would sit on
@@ -481,18 +458,11 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!authed) { setMe(null); return; }
-    let stale = false;
-    api.auth.me().then(u => { if (!stale) setMe(u); }).catch(() => {});
-    return () => { stale = true; };
-  }, [authed]);
-
-  useEffect(() => {
     // An OAuth callback landed us here: trade the one-time code for the
     // session token instead of probing a credential that doesn't exist yet.
-    if (authFragment.code) {
-      exchangeCode(authFragment.code)
-        .then(() => { setAuthed(true); setChecking(false); })
+    if (AUTH_FRAGMENT.code) {
+      exchangeCode(AUTH_FRAGMENT.code)
+        .then(() => { setAuthed(true); setChecking(false); restoreReturnHash(); })
         .catch(e => {
           setAuthError(exchangeErrorTag(e));
           setChecking(false);
@@ -500,7 +470,7 @@ function App() {
       return;
     }
     runCheck();
-  }, [runCheck, authFragment]);
+  }, [runCheck]);
 
   useEffect(() => {
     writeHash(activeSession, activePanel, hubTab);
@@ -525,6 +495,17 @@ function App() {
     window.addEventListener('auth:logout', handler);
     return () => window.removeEventListener('auth:logout', handler);
   }, []);
+
+  // Another tab signed out (the persisted token went) or in (one appeared
+  // while this tab shows the login page): a fresh document follows suit.
+  useEffect(() => {
+    const handler = (e: StorageEvent) => {
+      if (e.storageArea !== localStorage || e.key !== TOKEN_KEY) return;
+      if ((authed && !e.newValue) || (!authed && e.newValue)) window.location.reload();
+    };
+    window.addEventListener('storage', handler);
+    return () => window.removeEventListener('storage', handler);
+  }, [authed]);
 
   // A conversation made somewhere other than the sidebar (a picker's "New
   // session") is a conversation the sidebar must list.
@@ -735,6 +716,12 @@ function App() {
       toast.info(planOff ? '/plan off takes the message to run: /plan off <what to do>' : '/plan takes the message to plan for: /plan <what to do>');
       return;
     }
+    // Over the server's frame limit the socket would be closed (1009), with
+    // no run.error to say why.
+    if (isTooLarge(text)) {
+      toast.error('Message is too large');
+      return;
+    }
     // Typing straight into the box with no active session starts a new session,
     // instead of silently dropping the message. The freshly-created session has
     // no history, so mark it loaded to protect the optimistic message from the
@@ -833,6 +820,14 @@ function App() {
     setBindingsVersion(v => v + 1);
   }, [deleteSession]);
 
+  // The Admin dialog deleting or reassigning a conversation away: the same
+  // cleanup as the sidebar's delete.
+  useEffect(() => {
+    const handler = (e: Event) => handleDeleteSession((e as CustomEvent<string>).detail);
+    window.addEventListener(SESSION_REMOVED, handler);
+    return () => window.removeEventListener(SESSION_REMOVED, handler);
+  }, [handleDeleteSession]);
+
   const handleLoadEarlier = useCallback(() => {
     if (!activeSession) return;
     const s = ss[activeSession];
@@ -846,7 +841,7 @@ function App() {
     try {
       const forked = await api.sessions.fork(activeSession, String(messageId));
       setSessionReloadKey(k => k + 1);
-      setActiveSession(forked.id);
+      setActiveSession(forked.id || null);
       setActivePanel(null);
     } catch (e) {
       toast.error((e as Error).message || 'Fork failed');
@@ -1020,6 +1015,10 @@ function App() {
     setHubTab(null);
   }, []);
 
+  // The Plugins placeholder is an admin's preview of the settings' shape.
+  // Memoized: the dialog reloads its panel whenever the tab list changes.
+  const settingsTabs = useMemo(() => (isAdmin ? SETTINGS_TABS : SETTINGS_TABS.filter(t => t.key !== 'plugins')), [isAdmin]);
+
   if (!authed && checkError) return (
     <ThemeProvider>
       <div className="login-page">
@@ -1049,7 +1048,7 @@ function App() {
   );
 
   const main = hubTab ? (
-    <WorkflowsHub tab={hubTab} onTabChange={setHubTab} sessionId={activeSession} tasksSig={tasksSig} onOpenRun={handleOpenRun} canEdit={me?.role === 'admin'} />
+    <WorkflowsHub tab={hubTab} onTabChange={setHubTab} sessionId={activeSession} tasksSig={tasksSig} onOpenRun={handleOpenRun} canEdit={isAdmin} />
   ) : (
     <MemoizedChatView
       sessionId={activeSession}
@@ -1066,32 +1065,34 @@ function App() {
 
   return (
     <ThemeProvider>
-      <AppShell user={me} onSettingsOpen={() => setSettingsOpen(true)} onAdminOpen={() => setAdminOpen(true)} sidebarPane={sidebarPane} sidebarOpen={sidebarOpen} onSidebarToggle={setSidebarOpen}>
-        {/* A bad turn payload must not take the sidebar, composer and socket
-            down with it; switching session or hub tab retries. */}
-        <ErrorBoundary resetKey={hubTab ?? activeSession}>{main}</ErrorBoundary>
-        {terminalEverOpened && (
-          <React.Suspense fallback={null}>
-            <TerminalPanel
-              open={terminalOpen}
-              onClose={() => setTerminalOpen(false)}
-              settingsReloadKey={settingsReloadKey}
-              bindingsVersion={bindingsVersion}
-              openRequest={terminalRequest}
-            />
-          </React.Suspense>
+      <MeContext value={meState}>
+        <AppShell onSettingsOpen={() => setSettingsOpen(true)} onAdminOpen={() => setAdminOpen(true)} sidebarPane={sidebarPane} sidebarOpen={sidebarOpen} onSidebarToggle={setSidebarOpen}>
+          {/* A bad turn payload must not take the sidebar, composer and socket
+              down with it; switching session or hub tab retries. */}
+          <ErrorBoundary resetKey={hubTab ?? activeSession}>{main}</ErrorBoundary>
+          {terminalEverOpened && (
+            <React.Suspense fallback={null}>
+              <TerminalPanel
+                open={terminalOpen}
+                onClose={() => setTerminalOpen(false)}
+                settingsReloadKey={settingsReloadKey}
+                bindingsVersion={bindingsVersion}
+                openRequest={terminalRequest}
+              />
+            </React.Suspense>
+          )}
+        </AppShell>
+        {settingsOpen && (
+          <PanelDialog title="Settings" tabs={settingsTabs} readOnly={isAdmin === null ? null : !isAdmin}
+            onClose={() => { setSettingsOpen(false); setSettingsReloadKey(k => k + 1); }} />
         )}
-      </AppShell>
-      {settingsOpen && (
-        <PanelDialog title="Settings" tabs={SETTINGS_TABS} readOnly={me?.role !== 'admin'}
-          onClose={() => { setSettingsOpen(false); setSettingsReloadKey(k => k + 1); }} />
-      )}
-      {/* Admin deletes sessions; the sidebar relists on close. */}
-      {adminOpen && <PanelDialog title="Admin" tabs={ADMIN_TABS} onClose={() => { setAdminOpen(false); setSessionReloadKey(k => k + 1); }} />}
-      {/* Lost-connection pill: the socket announces a drop here, not only at
-          the moment a send fails. */}
-      {!connected && <div className="conn-indicator" role="status">Reconnecting…</div>}
-      <GlobalToast />
+        {/* Admin deletes sessions; the sidebar relists on close. */}
+        {adminOpen && <PanelDialog title="Admin" tabs={ADMIN_TABS} onClose={() => { setAdminOpen(false); setSessionReloadKey(k => k + 1); }} />}
+        {/* Lost-connection pill: the socket announces a drop here, not only at
+            the moment a send fails. */}
+        {!connected && <div className="conn-indicator" role="status">Reconnecting…</div>}
+        <GlobalToast />
+      </MeContext>
     </ThemeProvider>
   );
 }

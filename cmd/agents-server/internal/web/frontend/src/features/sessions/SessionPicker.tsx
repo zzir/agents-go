@@ -15,6 +15,10 @@ interface SessionRef { id: string; name: string; pinned?: boolean; sandbox_id?: 
 // (here), so the sidebar's list refetches — the same one-shot window event
 // the API layer uses for a logout.
 export const SESSIONS_CHANGED = 'sessions:changed';
+// SESSION_REMOVED carries (detail) the id of a conversation this browser can
+// no longer see — deleted or reassigned from the Admin dialog — for the app
+// to drop its state the way the sidebar's own delete does.
+export const SESSION_REMOVED = 'sessions:removed';
 
 // The first row: not a conversation but the way to make one.
 const NEW_SESSION = '__new_session__';

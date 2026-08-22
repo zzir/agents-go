@@ -1,13 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActionList, Button, Dialog, Flash, FormControl, Label, PageHeader, Stack, TextInput, useConfirm } from '@primer/react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { ActionList, Button, Dialog, Flash, FormControl, IconButton, Label, PageHeader, Stack, TextInput, useConfirm } from '@primer/react';
 import { Blankslate, type Column } from '@primer/react/experimental';
-import { KeyIcon, PersonIcon } from '@primer/octicons-react';
+import { KeyIcon, PersonIcon, XIcon } from '@primer/octicons-react';
 
 import { UserAvatar, displayName } from '@/components/UserAvatar';
 import { ListTable, RowMenu, actionsColumn } from '@/components/ListTable';
-import { api, authConfig, type ApiSchemas, type AuthConfig, type AuthUser } from '@/lib/api';
+import { api, authConfig, type ApiSchemas, type AuthConfig } from '@/lib/api';
 import { shortDate } from '@/lib/format';
 import { useCopy } from '@/lib/hooks';
+import { useMe } from '@/lib/me';
 
 type PatView = ApiSchemas['protocol.PatView'];
 type PatRow = Omit<PatView, 'id'> & { id: string };
@@ -18,13 +19,13 @@ type PatRow = Omit<PatView, 'id'> & { id: string };
 // Signing out and administration live in the sidebar's account menu.
 export function AccountPanel() {
   const [cfg, setCfg] = useState<AuthConfig | null>(null);
-  const [me, setMe] = useState<AuthUser | null>(null);
+  const { me, error: meError } = useMe();
   const [error, setError] = useState('');
 
   useEffect(() => {
     let stale = false;
-    Promise.all([authConfig(), api.auth.me()])
-      .then(([c, u]) => { if (!stale) { setCfg(c); setMe(u); } })
+    authConfig()
+      .then(c => { if (!stale) setCfg(c); })
       .catch(() => { if (!stale) setError('Failed to load account details.'); });
     return () => { stale = true; };
   }, []);
@@ -38,7 +39,7 @@ export function AccountPanel() {
           </PageHeader.TitleArea>
           <PageHeader.Description>The account this browser is signed in as.</PageHeader.Description>
         </PageHeader>
-        {error ? <Flash variant="danger">{error}</Flash> : null}
+        {error || meError ? <Flash variant="danger">{error || 'Failed to load account details.'}</Flash> : null}
         {me ? (
           <div className="account-profile">
             <UserAvatar user={me} size={40} />
@@ -76,7 +77,7 @@ function PatSection() {
   const { copied, copy } = useCopy();
 
   const reload = useCallback(() => {
-    api.auth.pats.list().then(p => setPats(p ?? [])).catch(() => setError('Failed to load tokens.'));
+    api.auth.pats.list().then(p => { setPats(p ?? []); setError(''); }).catch(() => setError('Failed to load tokens.'));
   }, []);
   useEffect(() => { reload(); }, [reload]);
 
@@ -128,6 +129,7 @@ function PatSection() {
           <Stack direction="horizontal" align="center" gap="condensed">
             <code className="account-secret">{minted}</code>
             <Button size="small" onClick={() => copy(minted)}>{copied ? 'Copied' : 'Copy'}</Button>
+            <IconButton icon={XIcon} size="small" variant="invisible" aria-label="Dismiss" onClick={() => setMinted('')} />
           </Stack>
           <p className="account-muted" style={{ marginTop: 4, marginBottom: 0 }}>Save it now — it cannot be shown again.</p>
         </Flash>
@@ -167,6 +169,7 @@ function NewTokenDialog({ onClose, onMinted }: { onClose: () => void; onMinted: 
   const nameRef = useRef<HTMLInputElement>(null);
 
   const create = useCallback(async () => {
+    if (busy || !name.trim()) return;
     setBusy(true);
     setError('');
     try {
@@ -176,7 +179,7 @@ function NewTokenDialog({ onClose, onMinted }: { onClose: () => void; onMinted: 
       setError(e instanceof Error ? e.message : 'Failed to create the token.');
       setBusy(false);
     }
-  }, [name, days, onMinted]);
+  }, [busy, name, days, onMinted]);
 
   return (
     <Dialog
@@ -189,7 +192,8 @@ function NewTokenDialog({ onClose, onMinted }: { onClose: () => void; onMinted: 
         { buttonType: 'primary', content: 'Create token', disabled: busy || !name.trim(), onClick: () => { void create(); } },
       ]}
     >
-      <Stack gap="normal">
+      {/* A form, so Enter in a field submits like the footer button. */}
+      <Stack as="form" gap="normal" onSubmit={(e: FormEvent) => { e.preventDefault(); void create(); }}>
         {error ? <Flash variant="danger">{error}</Flash> : null}
         <FormControl required>
           <FormControl.Label>Name</FormControl.Label>

@@ -37,10 +37,11 @@ interface MemoryFormProps {
   onSave: (form: MemoryFormData) => void;
   onCancel?: (() => void) | null;
   onDelete?: (() => void) | null;
+  saving?: boolean;
   agents: AgentConfig[] | null;
 }
 
-function MemoryForm({ initial, onSave, onCancel, onDelete, agents }: MemoryFormProps) {
+function MemoryForm({ initial, onSave, onCancel, onDelete, saving, agents }: MemoryFormProps) {
   const [form, setForm] = useState<MemoryFormData>(
     initial || { key: '', content: '', metadata: '', agent_config_id: '' },
   );
@@ -86,13 +87,13 @@ function MemoryForm({ initial, onSave, onCancel, onDelete, agents }: MemoryFormP
         onChange={v => set('metadata', v)}
         placeholder='{"tag": "value"}'
       />
-      <FormActions onSave={() => onSave(form)} onCancel={onCancel} onDelete={onDelete} />
+      <FormActions saving={saving} onSave={() => onSave(form)} onCancel={onCancel} onDelete={onDelete} />
     </Stack>
   );
 }
 
 export function MemoryPanel() {
-  const { items: memories, adding, editing, startAdd, startEdit, cancel, save, remove } =
+  const { items: memories, adding, editing, startAdd, startEdit, cancel, save, saving, remove } =
     useCrud<Memory, MemoryFormData>(api.memories);
   const { data: agents } = useApi<AgentConfig[]>(
     () => api.agents.list() as Promise<AgentConfig[]>,
@@ -100,8 +101,8 @@ export function MemoryPanel() {
 
   const agentName = (id: string) => (!id || !agents ? 'Global' : nameOf(agents, id));
 
-  const form = adding ? <MemoryForm onSave={save} onCancel={cancel} agents={agents} />
-    : editing ? <MemoryForm initial={editing} onSave={save} onCancel={cancel} onDelete={async () => { if (await remove(editing.id, editing.key)) cancel(); }} agents={agents} />
+  const form = adding ? <MemoryForm saving={saving} onSave={save} onCancel={cancel} agents={agents} />
+    : editing ? <MemoryForm saving={saving} initial={editing} onSave={save} onCancel={cancel} onDelete={async () => { if (await remove(editing.id, editing.key)) cancel(); }} agents={agents} />
     : null;
 
   return (

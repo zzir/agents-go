@@ -70,6 +70,7 @@ interface McpFormProps {
   onSave: (data: Partial<McpServer>) => void;
   onCancel?: () => void;
   onDelete?: () => void;
+  saving?: boolean;
   onClearAuth?: () => Promise<boolean>;
 }
 
@@ -136,7 +137,7 @@ function pack(form: McpFormData): Partial<McpServer> {
   return { ...base, config };
 }
 
-function McpForm({ initial, onSave, onCancel, onDelete, onClearAuth }: McpFormProps) {
+function McpForm({ initial, onSave, onCancel, onDelete, saving, onClearAuth }: McpFormProps) {
   const [form, setForm] = useState<McpFormData>(flatten(initial || {}));
   const [authCleared, setAuthCleared] = useState(false);
   const [clearing, setClearing] = useState(false);
@@ -200,6 +201,7 @@ function McpForm({ initial, onSave, onCancel, onDelete, onClearAuth }: McpFormPr
         <FormControl.Label>Enabled</FormControl.Label>
       </FormControl>
       <FormActions
+        saving={saving}
         onSave={() => {
           let packed: Partial<McpServer>;
           try { packed = pack(form); }
@@ -267,7 +269,7 @@ const POLL_INTERVAL_MS = 1500;
 
 export function McpServerPanel() {
   const readOnly = useReadOnly();
-  const { items: servers, reload, adding, editing, startAdd, startEdit, cancel, save, remove } = useCrud<McpServer, Partial<McpServer>>(api.mcpServers);
+  const { items: servers, reload, adding, editing, startAdd, startEdit, cancel, save, saving, remove } = useCrud<McpServer, Partial<McpServer>>(api.mcpServers);
   // busy covers only the POST /connect round-trip; every longer-lived state
   // (connecting, authorizing) is reported by the backend via status.
   const [busy, setBusy] = useState<Record<string | number, boolean>>({});
@@ -340,8 +342,8 @@ export function McpServerPanel() {
     bumpGrace();
   };
 
-  const form = adding ? <McpForm onSave={handleSave} onCancel={cancel} />
-    : editing ? <McpForm initial={editing} onSave={handleSave} onCancel={cancel} onDelete={async () => { if (await remove(editing.id, editing.name)) cancel(); }} onClearAuth={() => handleClearAuth(editing.id)} />
+  const form = adding ? <McpForm saving={saving} onSave={handleSave} onCancel={cancel} />
+    : editing ? <McpForm saving={saving} initial={editing} onSave={handleSave} onCancel={cancel} onDelete={async () => { if (await remove(editing.id, editing.name)) cancel(); }} onClearAuth={() => handleClearAuth(editing.id)} />
     : null;
 
   return (

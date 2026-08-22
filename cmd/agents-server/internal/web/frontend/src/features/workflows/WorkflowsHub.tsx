@@ -24,7 +24,9 @@ interface WorkflowsHubProps {
   onOpenRun: (sessionId: string, taskId: string) => void;
   // Definitions are shared configuration: admin-written. A member still runs
   // one and sets triggers on it (their own acts, into their own sessions).
-  canEdit: boolean;
+  // null while the role is still unknown: neither the editor nor the
+  // member's notice shows.
+  canEdit: boolean | null;
 }
 
 // WorkflowsHub is the middle column when the sidebar's Workflows entry is

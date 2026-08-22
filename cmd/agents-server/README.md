@@ -200,6 +200,13 @@ and database-backed credentials:
   the reconnect's auth frame decides afresh. Signing out, revoking a PAT
   and changing a role also close the user's connections outright (the web
   terminal included); a still-valid credential reconnects and carries on.
+  The UI fetches `/auth/me` once at app level and again whenever the socket
+  reconnects, since that close is how a changed role reaches it.
+- **Where the browser keeps the token.** In OAuth mode the session token
+  lives in `localStorage`, so every tab shares the 30-day session and a
+  sign-out in one tab reloads the others; token mode keeps the static token
+  in `sessionStorage`, gone with the tab. An OAuth sign-in started from a
+  deep link (`#/session/…`) returns to that view after the code exchange.
 - **`--token` is refused in OAuth mode** — programmatic access uses personal
   access tokens instead (see below). The Google redirect URI to register is
   `<base-url>/api/v1/auth/oauth/google/callback`.
@@ -255,7 +262,9 @@ Two rules, enforced at the routes (`handler/authz.go`), shape who may do what:
   panels: Members (roles, disabling, signing out everywhere), Sessions
   (every owner's: reassign or delete, never read) and Audit logs. Settings for a member shows the same configuration panels read-only
   — what the API lets them read, laid out as the admin sees it, with no
-  Add, Edit, Delete or Test — plus their Account (profile and PATs).
+  Add, Edit, Delete or Test — plus their Account (profile and PATs). The
+  Terminal button is shown to admins only, as `/ws/terminal` is admin-only
+  server-side; nothing else in the UI hides what the server would allow.
 
 In token mode the one local account is an admin and owns everything, so every
 check passes.
@@ -1422,6 +1431,10 @@ The WebSocket does not accept a token in the query string. After connecting, the
 client must authenticate at the application level by sending
 `{"type":"auth","token":"..."}` as the first message. The server replies with
 `{"type":"auth.ok"}`.
+
+An inbound frame over 1 MiB closes the socket with `1009`, and no
+`run.error` can follow a close frame — so the composer refuses a prompt past
+that size before sending it.
 
 After `auth.ok` the server pings every 25 seconds and drops a connection that
 answers no ping for 60 — a half-open connection (NAT idled out, client gone

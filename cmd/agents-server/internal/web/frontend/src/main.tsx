@@ -18,7 +18,9 @@ import('./app').then(({ default: App }) => {
   }).render(<App />)
 }).catch(() => {
   // A stale chunk after a server restart 404s here; without this the page
-  // stays blank with no message.
-  document.getElementById('root')!.textContent =
-    'Failed to load the app — reload the page.'
+  // stays blank with no message. An element, not a text node: index.html
+  // hides #root until it has a child element.
+  const p = document.createElement('p')
+  p.textContent = 'Failed to load the app — reload the page.'
+  document.getElementById('root')!.replaceChildren(p)
 })

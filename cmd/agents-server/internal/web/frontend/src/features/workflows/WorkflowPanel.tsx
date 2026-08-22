@@ -71,10 +71,11 @@ interface WorkflowFormProps {
   onSave: (form: WorkflowFormData) => void;
   onCancel?: (() => void) | null;
   onDelete?: (() => void) | null;
+  saving?: boolean;
   agents: AgentRef[] | null;
 }
 
-function WorkflowForm({ initial, onSave, onCancel, onDelete, agents }: WorkflowFormProps) {
+function WorkflowForm({ initial, onSave, onCancel, onDelete, saving, agents }: WorkflowFormProps) {
   const [form, setForm] = useState<WorkflowFormData>(
     initial || { name: '', description: '', steps: [emptyStep()], budget: {} },
   );
@@ -235,7 +236,7 @@ function WorkflowForm({ initial, onSave, onCancel, onDelete, agents }: WorkflowF
         <div className="wf-run-hint">Over any of these the execution stops, failed with the reason. Laps default to 3: a loop that keeps returning to the same step is not converging.</div>
       </div>
 
-      <FormActions onSave={() => onSave(form)} onCancel={onCancel} onDelete={onDelete} />
+      <FormActions saving={saving} onSave={() => onSave(form)} onCancel={onCancel} onDelete={onDelete} />
     </Stack>
   );
 }
@@ -304,8 +305,8 @@ function RunDialog({ workflow, sessionId, onClose }: { workflow: Workflow; sessi
   );
 }
 
-export function WorkflowPanel({ sessionId, canEdit }: { sessionId: string | null; canEdit: boolean }) {
-  const { items: workflows, adding, editing, startAdd, startEdit, cancel, save, remove } =
+export function WorkflowPanel({ sessionId, canEdit }: { sessionId: string | null; canEdit: boolean | null }) {
+  const { items: workflows, adding, editing, startAdd, startEdit, cancel, save, saving, remove } =
     useCrud<Workflow, WorkflowFormData>(api.workflows);
   const { data: agents } = useApi<AgentRef[]>(() => api.agents.list() as Promise<AgentRef[]>);
   // A template pre-fills the add form; cleared when the form closes.
@@ -331,9 +332,9 @@ export function WorkflowPanel({ sessionId, canEdit }: { sessionId: string | null
         {canEdit && !adding && !editing && <Button onClick={startAdd} variant="primary" size="small">+ Add</Button>}
       </div>
 
-      {adding && <WorkflowForm initial={template} onSave={f => { setTemplate(null); save(f); }} onCancel={closeForm} agents={agents} />}
+      {adding && <WorkflowForm saving={saving} initial={template} onSave={f => { setTemplate(null); save(f); }} onCancel={closeForm} agents={agents} />}
       {editing && (
-        <WorkflowForm
+        <WorkflowForm saving={saving}
           initial={{
             name: editing.name,
             description: editing.description || '',
@@ -384,7 +385,7 @@ export function WorkflowPanel({ sessionId, canEdit }: { sessionId: string | null
             <Blankslate>
               <Blankslate.Description>
                 No workflows yet. A workflow runs a fixed sequence of agents on one session — plan, then execute,
-                then verify, each on the model you choose for it.{canEdit ? ' Start from a shape:' : ' An admin defines them.'}
+                then verify, each on the model you choose for it.{canEdit ? ' Start from a shape:' : canEdit === false ? ' An admin defines them.' : ''}
               </Blankslate.Description>
               {canEdit && <div className="wf-templates">
                 {TEMPLATES.map(t => (

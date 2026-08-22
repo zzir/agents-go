@@ -4,6 +4,7 @@ import type { ReactElement } from 'react';
 import type { InspectorPanel } from '@/features/chat/ChatView';
 import { useChatSession } from '@/features/chat/ChatSessionContext';
 import { projectBase } from '@/lib/binding';
+import { useIsAdmin } from '@/lib/me';
 
 interface ChatTopBarProps {
   sessionName: string;
@@ -29,6 +30,9 @@ export function ChatTopBar({
   binding,
 }: ChatTopBarProps): ReactElement {
   const { sessionId } = useChatSession();
+  // /ws/terminal is admin-only server-side; a member gets no button rather
+  // than one that fails. Unknown yet (loading) keeps it, disabled as usual.
+  const isAdmin = useIsAdmin();
   return (
     <div className="chat-topbar">
       <div className="chat-topbar-info">
@@ -74,14 +78,16 @@ export function ChatTopBar({
           disabled={!sessionId}
           onClick={() => onPanelChange(panel?.kind === 'context' ? null : { kind: 'context' })}
         />
-        <IconButton
-          icon={TerminalIcon}
-          variant="invisible"
-          size="small"
-          aria-label="Terminal"
-          disabled={!terminalEnabled}
-          onClick={onTerminalOpen}
-        />
+        {isAdmin !== false && (
+          <IconButton
+            icon={TerminalIcon}
+            variant="invisible"
+            size="small"
+            aria-label="Terminal"
+            disabled={!terminalEnabled}
+            onClick={onTerminalOpen}
+          />
+        )}
       </div>
     </div>
   );

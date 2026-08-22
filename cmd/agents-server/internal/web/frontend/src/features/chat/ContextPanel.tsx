@@ -129,7 +129,7 @@ function Growth({ points }: { points: number[] }) {
 }
 
 export function ContextPanel({ sessionId, running, reloadKey, onClose, onCompact }: ContextPanelProps) {
-  const { data, loading } = useApi<ContextReport>(() => api.sessions.context(sessionId), [sessionId, running, reloadKey]);
+  const { data, loading } = useApi<ContextReport>(() => api.sessions.context(sessionId) as Promise<ContextReport>, [sessionId, running, reloadKey]);
   const [compacting, setCompacting] = useState(false);
   const compact = async () => {
     if (!onCompact || compacting) return;

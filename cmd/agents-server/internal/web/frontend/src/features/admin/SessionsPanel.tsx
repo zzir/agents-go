@@ -5,7 +5,9 @@ import { CommentDiscussionIcon } from '@primer/octicons-react';
 import { ListTable, RowMenu, actionsColumn } from '@/components/ListTable';
 import { api, type ApiSchemas } from '@/lib/api';
 import { shortTime } from '@/lib/format';
+import { useMe } from '@/lib/me';
 import { LOCAL_USER_ID } from '@/features/admin/MembersPanel';
+import { SESSION_REMOVED } from '@/features/sessions/SessionPicker';
 
 type UserRow = Omit<ApiSchemas['store.User'], 'id'> & { id: string };
 type SessionRow = Omit<ApiSchemas['store.Session'], 'id'> & { id: string; owner: string };
@@ -19,6 +21,7 @@ export function SessionsPanel() {
   const [reassigning, setReassigning] = useState<SessionRow | null>(null);
   const [error, setError] = useState('');
   const confirm = useConfirm();
+  const { me } = useMe();
 
   const reload = useCallback(() => {
     Promise.all([api.auth.users.list(), api.sessions.listAll()])
@@ -27,6 +30,7 @@ export function SessionsPanel() {
         setUsers(rows);
         const email = (ownerId?: string) => rows.find(x => x.id === ownerId)?.email || ownerId || '';
         setSessions((s ?? []).map(row => ({ ...row, id: row.id || '', owner: email(row.owner_id) })));
+        setError('');
       })
       .catch(() => setError('Failed to load sessions.'));
   }, []);
@@ -41,6 +45,9 @@ export function SessionsPanel() {
     }))) return;
     try {
       await api.sessions.delete(s.id);
+      // The app drops its state for the conversation as the sidebar's delete
+      // would — it may be the one open.
+      window.dispatchEvent(new CustomEvent(SESSION_REMOVED, { detail: s.id }));
       reload();
     } catch {
       setError('Failed to delete the session.');
@@ -91,7 +98,12 @@ export function SessionsPanel() {
           session={reassigning}
           users={users.filter(u => u.id !== LOCAL_USER_ID && u.id !== reassigning.owner_id)}
           onClose={() => setReassigning(null)}
-          onDone={() => { setReassigning(null); reload(); }}
+          onDone={userId => {
+            // Reassigned away from this browser's account: gone like a delete.
+            if (userId !== me?.id) window.dispatchEvent(new CustomEvent(SESSION_REMOVED, { detail: reassigning.id }));
+            setReassigning(null);
+            reload();
+          }}
         />
       ) : null}
     </Stack>
@@ -100,7 +112,7 @@ export function SessionsPanel() {
 
 // ReassignDialog picks the account a session (and its task sessions) moves to.
 function ReassignDialog({ session, users, onClose, onDone }: {
-  session: SessionRow; users: UserRow[]; onClose: () => void; onDone: () => void;
+  session: SessionRow; users: UserRow[]; onClose: () => void; onDone: (userId: string) => void;
 }) {
   const [userId, setUserId] = useState(users[0]?.id || '');
   const [busy, setBusy] = useState(false);
@@ -111,7 +123,7 @@ function ReassignDialog({ session, users, onClose, onDone }: {
     setError('');
     try {
       await api.sessions.setOwner(session.id, userId);
-      onDone();
+      onDone(userId);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to reassign the session.');
       setBusy(false);

@@ -10,6 +10,7 @@ import {
 import { api, clearToken } from '@/lib/api';
 import { resyncAfterGap, type GapResync } from '@/lib/gapResync';
 import { toast } from '@/lib/toast';
+import { ME_RELOAD } from '@/lib/me';
 
 import type { TraceEventData as TraceEvent } from '@/features/chat/TracePanel';
 
@@ -370,10 +371,9 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
     if (toolCalls.length === 0) return { ...page, timeline };
     const runId = pending[0].run_id;
     const userInput = pending[0].user_input || '';
-    // The synthesized rows carry only the fields the transcript reads; the
-    // full entry type would demand ids a pending approval never had.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const out = [...timeline] as any[];
+    // The synthesized rows have no row id: a pending approval was never
+    // persisted, so there is nothing to fork from or anchor to.
+    const out = [...timeline];
 
     // The streaming SDK persists the user prompt (and any completed safe-prefix
     // items) up front, BEFORE the pause — so the timeline may already hold this
@@ -395,8 +395,8 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       return { ...page, timeline: out };
     }
     const hasUser = out.some(m => m.role === 'user' && (m.runId === runId || (userInput && m.content === userInput)));
-    if (userInput && !hasUser) out.push({ role: 'user', content: userInput, runId, messageId: Number.MAX_SAFE_INTEGER - 1 });
-    out.push({ role: 'turn' as const, parts: [{ type: 'tools' as const, toolCalls }], runId, messageId: Number.MAX_SAFE_INTEGER });
+    if (userInput && !hasUser) out.push({ role: 'user', content: userInput, runId, messageId: undefined });
+    out.push({ role: 'turn', parts: [{ type: 'tools', toolCalls }], runId, messageId: undefined });
     return { ...page, timeline: out };
   }, [updateSS]);
 
@@ -1306,6 +1306,9 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
     // hub replays buffered events) and reload persisted history so a run that
     // completed offline shows its result.
     ws.onReconnect = () => {
+      // The role may have changed while away (a 1008 close is how the server
+      // says so): the app refetches who we are.
+      window.dispatchEvent(new Event(ME_RELOAD));
       // Task runs are not resubscribed (their terminal events may be gone from
       // the hub entirely) — re-pull the durable rows so statuses that changed
       // during the outage land in the chips.

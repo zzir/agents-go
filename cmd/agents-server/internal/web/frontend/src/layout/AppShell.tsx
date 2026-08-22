@@ -4,7 +4,6 @@ import { MoonIcon, SunIcon, ThreeBarsIcon } from '@primer/octicons-react';
 import { useTheme } from '@/theme/ThemeProvider';
 import { useNarrow, useResizablePane } from '@/lib/hooks';
 import { UserMenu } from '@/layout/UserMenu';
-import type { AuthUser } from '@/lib/api';
 
 const PANE_WIDTH_KEY = 'paneWidth';
 const PANE_MIN = 260;
@@ -12,7 +11,6 @@ const PANE_MAX = 400;
 const PANE_DEFAULT = 300;
 
 interface AppShellProps {
-  user: AuthUser | null;
   onSettingsOpen: () => void;
   onAdminOpen: () => void;
   sidebarPane: ReactNode;
@@ -21,7 +19,7 @@ interface AppShellProps {
   children: ReactNode;
 }
 
-export function AppShell({ user, onSettingsOpen, onAdminOpen, sidebarPane, sidebarOpen, onSidebarToggle, children }: AppShellProps) {
+export function AppShell({ onSettingsOpen, onAdminOpen, sidebarPane, sidebarOpen, onSidebarToggle, children }: AppShellProps) {
   const { theme, toggle } = useTheme();
   const narrow = useNarrow();
   const closeSidebar = useCallback(() => onSidebarToggle(false), [onSidebarToggle]);
@@ -35,7 +33,7 @@ export function AppShell({ user, onSettingsOpen, onAdminOpen, sidebarPane, sideb
           <IconButton icon={ThreeBarsIcon} variant="invisible" aria-label="Open sidebar" onClick={() => onSidebarToggle(true)} />
           <span className="mobile-header-title" />
           <IconButton icon={theme === 'day' ? MoonIcon : SunIcon} variant="invisible" aria-label="Toggle theme" onClick={toggle} />
-          <UserMenu user={user} onSettingsOpen={onSettingsOpen} onAdminOpen={onAdminOpen} compact />
+          <UserMenu onSettingsOpen={onSettingsOpen} onAdminOpen={onAdminOpen} compact />
         </header>
       )}
 
@@ -49,7 +47,7 @@ export function AppShell({ user, onSettingsOpen, onAdminOpen, sidebarPane, sideb
             </div>
             {!narrow && (
               <div className="sidebar-footer">
-                <UserMenu user={user} onSettingsOpen={onSettingsOpen} onAdminOpen={onAdminOpen} />
+                <UserMenu onSettingsOpen={onSettingsOpen} onAdminOpen={onAdminOpen} />
                 <IconButton icon={theme === 'day' ? MoonIcon : SunIcon} variant="invisible" size="small" aria-label="Toggle theme" onClick={toggle} />
               </div>
             )}
