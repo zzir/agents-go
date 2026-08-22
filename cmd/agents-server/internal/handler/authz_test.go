@@ -46,7 +46,7 @@ func authzRig(t *testing.T) (*gin.Engine, *store.SessionStore) {
 	agents := store.NewAgentConfigStore(db)
 	deps := &bridge.AgentDeps{AgentConfigs: agents, Sessions: sessions, Traces: store.NewTraceStore(db)}
 	runner := bridge.NewRunner(t.Context(), db, deps)
-	s := server.New(slog.New(slog.DiscardHandler), usersByToken)
+	s := server.New(slog.New(slog.DiscardHandler), usersByToken, nil)
 	s.RegisterAPI(Handlers{
 		Authz:    AuthzDeps{Sessions: sessions, Tasks: store.NewTaskStore(db), Approvals: store.NewPendingApprovalStore(db), Triggers: store.NewTriggerStore(db), Hub: runner.Hub()},
 		Sessions: NewSessionHandler(testSessionDeps(db, func(d *SessionDeps) { d.Sessions, d.Agents, d.Stopper = sessions, agents, runner })),
@@ -226,8 +226,8 @@ func TestUserRoleManagement(t *testing.T) {
 		}
 	}
 	local := &store.User{ID: store.LocalUserID, Email: "local@localhost", Role: store.RoleAdmin}
-	s := server.New(slog.New(slog.DiscardHandler), usersByToken)
-	s.RegisterAPI(Handlers{Auth: NewAuthHandler(authn.NewStatic("tok", local), nil, store.NewUserStore(db))}.Register)
+	s := server.New(slog.New(slog.DiscardHandler), usersByToken, nil)
+	s.RegisterAPI(Handlers{Auth: NewAuthHandler(authn.NewStatic("tok", local), nil, store.NewUserStore(db), nil)}.Register)
 	engine := s.Engine
 
 	if rec := serve(engine, as(memberUser, http.MethodGet, "/api/v1/auth/users", "")); rec.Code != http.StatusForbidden {

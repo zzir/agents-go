@@ -67,7 +67,8 @@ func (s *Server) SetTrustedProxies(proxies []string) error {
 // New creates a Server with a gin engine configured for release mode, recovery, and request logging.
 // auth answers every /api/* request's credential; the auth ROUTES (login,
 // OAuth flows) are handlers and mount through RegisterAPI like the rest.
-func New(log *slog.Logger, auth AuthFunc) *Server {
+// audit, when non-nil, receives every successful mutating request (see Audit).
+func New(log *slog.Logger, auth AuthFunc, audit AuditFunc) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.New()
 	_ = engine.SetTrustedProxies(nil)
@@ -77,6 +78,9 @@ func New(log *slog.Logger, auth AuthFunc) *Server {
 	engine.Use(s.cspMiddleware())
 	engine.Use(logMiddleware(log))
 	engine.Use(TokenAuth(auth))
+	if audit != nil {
+		engine.Use(Audit(audit))
+	}
 	return s
 }
 

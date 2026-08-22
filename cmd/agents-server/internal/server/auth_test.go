@@ -55,7 +55,7 @@ func TestAuthExemptCoversOnlyServedRoutes(t *testing.T) {
 // handler/auth_test.go since the auth routes moved there.
 func TestErrorEnvelopeMatchesTheSharedShape(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	s := New(slog.New(slog.DiscardHandler), staticAuth("tok"))
+	s := New(slog.New(slog.DiscardHandler), staticAuth("tok"), nil)
 	s.ServeStatic(fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<!doctype html>")}})
 
 	authed := func(r *http.Request) *http.Request {

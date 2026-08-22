@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,12 +21,46 @@ type AuthHandler struct {
 	svc    *authn.Service
 	tokens *store.AuthTokenStore
 	users  *store.UserStore
+	audit  *store.AuditStore
 }
 
 // NewAuthHandler returns an AuthHandler over the given service and stores
-// (either store may be nil in tests that never reach its endpoints).
-func NewAuthHandler(svc *authn.Service, tokens *store.AuthTokenStore, users *store.UserStore) *AuthHandler {
-	return &AuthHandler{svc: svc, tokens: tokens, users: users}
+// (a store may be nil in tests that never reach its endpoints).
+func NewAuthHandler(svc *authn.Service, tokens *store.AuthTokenStore, users *store.UserStore, audit *store.AuditStore) *AuthHandler {
+	return &AuthHandler{svc: svc, tokens: tokens, users: users, audit: audit}
+}
+
+// ListAudit pages the audit log newest first — the admin's "who did what".
+//
+//	@Summary	Audit log (admin)
+//	@Tags		auth
+//	@Produce	json
+//	@Param		limit	query		int		false	"Page size (default 100, max 500)"
+//	@Param		before	query		string	false	"RFC 3339 time; entries before it"
+//	@Success	200		{array}		store.AuditEvent
+//	@Failure	403		{object}	ErrorResponse
+//	@Security	BearerAuth
+//	@Router		/auth/audit [get]
+func (h *AuthHandler) ListAudit(c *gin.Context) {
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	var before time.Time
+	if q := c.Query("before"); q != "" {
+		t, err := time.Parse(time.RFC3339Nano, q)
+		if err != nil {
+			badRequest(c, "before must be an RFC 3339 time")
+			return
+		}
+		before = t
+	}
+	list, err := h.audit.ListRecent(c.Request.Context(), limit, before)
+	if err != nil {
+		internalError(c, err)
+		return
+	}
+	if list == nil {
+		list = []store.AuditEvent{}
+	}
+	c.JSON(http.StatusOK, list)
 }
 
 // ListUsers lists every account — the admin's user management view.
@@ -75,6 +110,7 @@ func (h *AuthHandler) SetUserRole(c *gin.Context) {
 		badRequest(c, "you cannot demote yourself")
 		return
 	}
+	server.SetAuditDetail(c, "role="+req.Role)
 	if err := h.users.SetRole(c.Request.Context(), c.Param("id"), req.Role); err != nil {
 		storeError(c, err)
 		return
@@ -171,6 +207,7 @@ func (h *AuthHandler) CreateToken(c *gin.Context) {
 		internalError(c, err)
 		return
 	}
+	server.SetAuditResource(c, minted.ID)
 	c.JSON(http.StatusCreated, protocol.PatCreated{Token: secret, Pat: patView(minted)})
 }
 
@@ -232,6 +269,9 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	if !h.svc.StaticOK(req.Token) {
 		c.JSON(http.StatusUnauthorized, protocol.NewErrorResponse(protocol.CodeUnauthorized, "invalid token"))
 		return
+	}
+	if u, err := h.svc.Authenticate(c.Request.Context(), req.Token); err == nil {
+		server.SetAuditActor(c, u) // a login is the one line worth having on this route
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
@@ -329,6 +369,7 @@ func (h *AuthHandler) Exchange(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, protocol.NewErrorResponse(protocol.CodeUnauthorized, "unknown or expired code"))
 		return
 	}
+	server.SetAuditActor(c, user) // the exchange IS the completed login
 	c.JSON(http.StatusOK, protocol.AuthSession{Token: token, User: user})
 }
 

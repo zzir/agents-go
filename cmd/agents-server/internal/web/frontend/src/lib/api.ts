@@ -125,6 +125,8 @@ export const api = {
       setRole: (id: string, role: 'admin' | 'member') =>
         request(`/auth/users/${encodeURIComponent(id)}/role`, { method: 'PUT', body: JSON.stringify({ role }) }),
     },
+    // Admin: the audit log, newest first.
+    audit: (limit = 50): Promise<S['store.AuditEvent'][]> => request(`/auth/audit?limit=${limit}`),
     // Personal access tokens (OAuth mode): the create response is the only
     // place a token's plaintext appears.
     pats: {

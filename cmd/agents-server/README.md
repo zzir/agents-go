@@ -58,6 +58,7 @@ On startup the server prints an auto-generated auth token. Open
 | `--oauth-google-client-id` / `--oauth-google-client-secret` | — | Google login credentials (secret also via `AGENTS_OAUTH_GOOGLE_CLIENT_SECRET`) |
 | `--allowed-domains` / `--allowed-emails` | — | OAuth admission allowlist (comma-separated)  |
 | `--bootstrap-admin`     | —           | Email that signs in as admin; implicitly admitted        |
+| `--audit-retention-days` | `0`        | Prune audit log entries older than N days (0 = keep forever) — see [Audit log](#audit-log) |
 
 ### Deployment
 
@@ -125,6 +126,7 @@ The auth surface under `/api/v1/auth`:
 | POST   | `/auth/exchange`                 | none | Trade the one-time code for `{token, user}` — the only response the session token's plaintext rides |
 | GET    | `/auth/me`                       | yes  | The authenticated caller: `{id, email, name?, role}`     |
 | POST   | `/auth/logout`                   | yes  | Revoke the presented session token (no-op in token mode) |
+| GET    | `/auth/audit`                    | admin | The audit log, newest first (`?limit`, `?before=<RFC 3339>`) |
 | GET    | `/auth/users`                    | admin | Every account with its role                             |
 | PUT    | `/auth/users/:id/role`           | admin | `{role: admin\|member}`; an admin cannot demote themself |
 
@@ -195,6 +197,20 @@ Two rules, enforced at the routes (`handler/authz.go`), shape who may do what:
 
 In token mode the one local account is an admin and owns everything, so every
 check passes.
+
+### Audit log
+
+`audit_events` answers "who did what, to what, when": every successful
+mutating API request (`METHOD /route/pattern`, the path parameter as the
+resource, the caller from the credential), plus the acts that bypass REST —
+`ws.run.create`, `ws.approval` (with the verdict and scope: `scope=all` is the
+one to notice), `terminal.open` — and logins (`POST /auth/login`,
+`POST /auth/exchange`). A line carries a short detail a handler annotated (a
+role, a scope), never a request body and never a secret. Failures and reads
+leave nothing. Retention is the process's `--audit-retention-days` (default
+0 = keep forever), deliberately not a setting: the log of configuration
+changes must not be shortened through the API it records. Admins read it at
+`GET /auth/audit` and in the Account panel.
 
 Exempt from auth: the MCP OAuth redirect callback
 (`GET /api/v1/mcp-servers/oauth/callback` — the browser follows it without an
@@ -2098,6 +2114,7 @@ Tables are created automatically on startup:
 | `tasks`             | Background tasks — sub-agents spawned via `spawn_task` and workflow executions (`kind`, `state`) — durable identity and status |
 | `providers`         | Model-API endpoints and their credentials; agents and routes reference one |
 | `workflows`         | Fixed step sequences (each step: agent + prompt, with a stable id); an execution is a `tasks` row |
+| `audit_events`      | Who did what, to what, when — see [Audit log](#audit-log)                          |
 | `wakeups`           | "This session is owed a turn carrying this" — the debt background work leaves behind; settled rows are pruned after 7 days |
 | `context_profiles`  | One row per session: what its last build put in front of the conversation (prompt layers, tool surface) |
 

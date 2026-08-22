@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,6 +35,9 @@ const (
 // deletes can tear them down (an SSH/docker rebuild would otherwise leave
 // orphaned sessions running against the old config).
 type TerminalHandler struct {
+	// Audit, when set, records every terminal opened: a shell on a sandbox
+	// host is the act most worth a line. Wired at bootstrap.
+	Audit    server.AuditFunc
 	store    *store.SandboxStore
 	manager  sandboxProvider
 	settings *settings.Reader
@@ -89,6 +93,11 @@ func (h *TerminalHandler) Handle(conn *server.WSConn) {
 	}
 
 	term, opened, release, err := h.open(conn)
+	if err == nil && h.Audit != nil {
+		h.Audit(context.WithoutCancel(conn.Context()), server.AuditRecord{
+			Actor: conn.User, Action: "terminal.open", Resource: opened.ID,
+		})
+	}
 	if err != nil {
 		// Client-caused failures (bad first frame, unknown sandbox, unsupported
 		// backend) are reported on the wire and logged at debug only.

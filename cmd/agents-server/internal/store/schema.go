@@ -32,6 +32,7 @@ var schemaModels = []any{
 	(*User)(nil),
 	(*Identity)(nil),
 	(*AuthToken)(nil),
+	(*AuditEvent)(nil),
 }
 
 // CreateSchema creates every table and supporting index if they do not
@@ -253,6 +254,15 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 		IfNotExists().
 		Exec(ctx); err != nil {
 		return fmt.Errorf("creating identities unique subject index: %w", err)
+	}
+	// The audit log is read newest-first and pruned by age.
+	if _, err := db.NewCreateIndex().
+		Model((*AuditEvent)(nil)).
+		Index("idx_audit_events_created_at").
+		Column("created_at").
+		IfNotExists().
+		Exec(ctx); err != nil {
+		return fmt.Errorf("creating audit_events created_at index: %w", err)
 	}
 	// Every request authenticates by hash lookup — this index IS the auth path.
 	if _, err := db.NewCreateIndex().

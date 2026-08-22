@@ -45,6 +45,7 @@ var (
 	flagAllowedDomains    string
 	flagAllowedEmails     string
 	flagBootstrapAdmin    string
+	flagAuditRetention    int
 )
 
 var rootCmd = &cobra.Command{
@@ -71,6 +72,7 @@ func init() {
 	rootCmd.Flags().StringVar(&flagAllowedDomains, "allowed-domains", "", "Comma-separated email domains admitted to OAuth login")
 	rootCmd.Flags().StringVar(&flagAllowedEmails, "allowed-emails", "", "Comma-separated email addresses admitted to OAuth login")
 	rootCmd.Flags().StringVar(&flagBootstrapAdmin, "bootstrap-admin", "", "Email that signs in as admin (implicitly admitted; the recovery hatch)")
+	rootCmd.Flags().IntVar(&flagAuditRetention, "audit-retention-days", 0, "Prune audit log entries older than this many days (0 = keep forever); a process setting, never an API one")
 }
 
 // buildVersion is the plain version string (without commit/date), surfaced by
@@ -303,7 +305,26 @@ func run(_ *cobra.Command, _ []string) error {
 	go bridge.RunAuthTokenCleanup(bgCtx, authTokens)
 	go bridge.RunWakeupCleanup(bgCtx, wakeupStore)
 
-	srv := server.New(log, authSvc.Authenticate)
+	// The audit log: who did what. A process-level retention, not a setting —
+	// the log of configuration changes must not be shortened through the API
+	// it records.
+	auditStore := store.NewAuditStore(db)
+	recordAudit := func(ctx context.Context, r server.AuditRecord) {
+		err := auditStore.Record(ctx, &store.AuditEvent{
+			ActorID: r.Actor.ID, ActorEmail: r.Actor.Email,
+			Action: r.Action, Resource: r.Resource, Detail: r.Detail, ClientIP: r.ClientIP,
+		})
+		if err != nil {
+			log.Error("audit record failed", "error", err, "action", r.Action)
+		}
+	}
+	if flagAuditRetention > 0 {
+		go bridge.RunAuditRetention(bgCtx, auditStore, flagAuditRetention)
+	}
+	wsHandler.Audit = recordAudit
+	terminalHandler.Audit = recordAudit
+
+	srv := server.New(log, authSvc.Authenticate, recordAudit)
 	if flagTrustedProxies != "" {
 		proxies := strings.Split(flagTrustedProxies, ",")
 		for i := range proxies {
@@ -318,7 +339,7 @@ func run(_ *cobra.Command, _ []string) error {
 			Sessions: sessionStore, Tasks: taskStore, Approvals: pendingApprovalStore,
 			Triggers: triggerStore, Hub: runner.Hub(),
 		},
-		Auth:           handler.NewAuthHandler(authSvc, authTokens, userStore),
+		Auth:           handler.NewAuthHandler(authSvc, authTokens, userStore, auditStore),
 		Sessions:       sessionHandler,
 		Runs:           runHandler,
 		Approvals:      approvalHandler,

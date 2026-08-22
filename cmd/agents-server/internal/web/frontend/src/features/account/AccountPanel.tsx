@@ -173,6 +173,7 @@ function PatSection() {
 
 type UserRow = ApiSchemas['store.User'];
 type SessionRow = ApiSchemas['store.Session'];
+type AuditRow = ApiSchemas['store.AuditEvent'];
 
 // AdminSection is the admin's management view: every account with its role,
 // and every owner's sessions — existence and recency only; content stays the
@@ -180,12 +181,13 @@ type SessionRow = ApiSchemas['store.Session'];
 function AdminSection({ me }: { me: AuthUser }) {
   const [users, setUsers] = useState<UserRow[]>([]);
   const [sessions, setSessions] = useState<SessionRow[]>([]);
+  const [audit, setAudit] = useState<AuditRow[]>([]);
   const [error, setError] = useState('');
   const confirm = useConfirm();
 
   const reload = useCallback(() => {
-    Promise.all([api.auth.users.list(), api.sessions.listAll()])
-      .then(([u, s]) => { setUsers(u); setSessions(s); })
+    Promise.all([api.auth.users.list(), api.sessions.listAll(), api.auth.audit(50)])
+      .then(([u, s, a]) => { setUsers(u); setSessions(s); setAudit(a); })
       .catch(() => setError('Failed to load the admin view.'));
   }, []);
   useEffect(() => { reload(); }, [reload]);
@@ -262,8 +264,36 @@ function AdminSection({ me }: { me: AuthUser }) {
           ))}
         </Stack>
       )}
+      <PageHeader role="presentation">
+        <PageHeader.TitleArea variant="medium">
+          <PageHeader.Title>Audit log</PageHeader.Title>
+        </PageHeader.TitleArea>
+      </PageHeader>
+      <p className="account-muted">
+        Who did what: every configuration change, approval decision, run start
+        and terminal opened — the latest 50. Retention is the server's
+        <code> --audit-retention-days</code>, not a setting.
+      </p>
+      {audit.length === 0 ? (
+        <span className="account-muted">Nothing recorded yet.</span>
+      ) : (
+        <Stack gap="none" className="account-pat-list">
+          {audit.map(e => (
+            <Stack key={e.id} direction="horizontal" align="center" gap="condensed" className="account-pat-row">
+              <code className="account-secret" style={{ flexGrow: 1 }}>{e.action}{e.resource ? ` ${e.resource}` : ''}{e.detail ? ` (${e.detail})` : ''}</code>
+              <span className="account-muted">{e.actor_email || e.actor_id} · {shortTime(e.created_at)}</span>
+            </Stack>
+          ))}
+        </Stack>
+      )}
     </Stack>
   );
+}
+
+function shortTime(iso?: string): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? '' : d.toLocaleString();
 }
 
 function shortDate(iso?: string): string {

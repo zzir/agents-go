@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"sync"
@@ -25,6 +26,19 @@ type WSHandler struct {
 	registry  *ConnRegistry
 	sessions  *store.SessionStore
 	approvals *store.PendingApprovalStore
+	// Audit, when set, records the acts that bypass REST: run starts and
+	// approval decisions made over the socket. Wired at bootstrap.
+	Audit server.AuditFunc
+}
+
+// audit records one explicit event for conn's user; a nil Audit is silence.
+func (h *WSHandler) audit(conn *server.WSConn, action, resource, detail string) {
+	if h.Audit == nil {
+		return
+	}
+	h.Audit(context.WithoutCancel(conn.Context()), server.AuditRecord{
+		Actor: conn.User, Action: action, Resource: resource, Detail: detail,
+	})
 }
 
 // NewWSHandler returns a WebSocket handler backed by the given runner and
@@ -227,6 +241,9 @@ func (h *WSHandler) handleRunCreate(conn *server.WSConn, msg protocol.RunCreate)
 	// published. The plan intent rides the request: StartRun applies it inside
 	// the reservation, so a busy refusal never mutates the session's phase.
 	_, err := h.runner.StartRun(msg.SessionID, msg.AgentConfigID, msg.SandboxID, msg.WorkDir, msg.Input, msg.Plan, nil)
+	if err == nil {
+		h.audit(conn, "ws.run.create", msg.SessionID, "")
+	}
 	if err != nil {
 		// These fire before any run.started, so no run→session mapping exists
 		// client-side yet: carry the session id so the error is attributable.
@@ -268,6 +285,9 @@ func (h *WSHandler) resolve(conn *server.WSConn, toolCallID string, approve bool
 		return
 	}
 	_, sessionID, err := h.runner.ResolveApproval(conn.Context(), toolCallID, approve, scope, reason, nil)
+	if err == nil {
+		h.audit(conn, "ws.approval", toolCallID, auditDecision(approve, scope))
+	}
 	if err != nil {
 		log.Error("resolve approval failed", "error", err, "tool_call_id", toolCallID)
 		// Carry the session id (when known) so the client can rebuild the paused

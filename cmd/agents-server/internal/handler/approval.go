@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -138,6 +139,7 @@ func (r approveReq) toScope() bridge.ApprovalScope {
 
 func (h *ApprovalHandler) resolve(c *gin.Context, approve bool, scope bridge.ApprovalScope, reason string) {
 	toolCallID := c.Param("tool_call_id")
+	server.SetAuditDetail(c, auditDecision(approve, scope))
 	runID, _, err := h.runner.ResolveApproval(c.Request.Context(), toolCallID, approve, scope, reason, nil)
 	if err != nil {
 		h.resolveError(c, err)
@@ -200,4 +202,13 @@ func (h *ApprovalHandler) resolveError(c *gin.Context, err error) {
 		return
 	}
 	internalError(c, err)
+}
+
+// auditDecision is the audit line's detail for an approval: the verdict and,
+// for an approval, how far the trust reaches ("all" is the one to notice).
+func auditDecision(approve bool, scope bridge.ApprovalScope) string {
+	if !approve {
+		return "reject"
+	}
+	return "approve scope=" + string(scope)
 }

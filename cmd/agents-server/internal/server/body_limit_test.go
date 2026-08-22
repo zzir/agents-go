@@ -15,7 +15,7 @@ import (
 // probe route stands in for any of them; the middleware is engine-wide.
 func TestBodyLimitRejectsOversizedRequest(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	s := New(slog.New(slog.DiscardHandler), staticAuth("tok"))
+	s := New(slog.New(slog.DiscardHandler), staticAuth("tok"), nil)
 	s.Engine.POST("/probe", func(c *gin.Context) {
 		var v map[string]any
 		if err := c.ShouldBindJSON(&v); err != nil {

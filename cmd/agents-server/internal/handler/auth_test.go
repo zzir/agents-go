@@ -23,8 +23,8 @@ import (
 func authEngine(t *testing.T, svc *authn.Service, tokens *store.AuthTokenStore) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	s := server.New(slog.New(slog.DiscardHandler), svc.Authenticate)
-	s.RegisterAPI(Handlers{Auth: NewAuthHandler(svc, tokens, nil)}.Register)
+	s := server.New(slog.New(slog.DiscardHandler), svc.Authenticate, nil)
+	s.RegisterAPI(Handlers{Auth: NewAuthHandler(svc, tokens, nil, nil)}.Register)
 	return s.Engine
 }
 

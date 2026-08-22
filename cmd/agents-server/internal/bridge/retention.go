@@ -196,3 +196,31 @@ func RunWakeupCleanup(ctx context.Context, wakeups *store.WakeupStore) {
 		}
 	}
 }
+
+// RunAuditRetention prunes audit events older than days at startup and then
+// daily. It blocks until ctx ends — run it in a goroutine.
+func RunAuditRetention(ctx context.Context, audit *store.AuditStore, days int) {
+	log := logging.Ctx(ctx)
+	prune := func() {
+		n, err := audit.DeleteOlderThan(ctx, time.Now().UTC().AddDate(0, 0, -days))
+		if err != nil {
+			log.Error("audit retention prune failed", "error", err)
+			return
+		}
+		if n > 0 {
+			log.Info("pruned audit events", "removed", n, "retention_days", days)
+		}
+	}
+
+	prune()
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			prune()
+		}
+	}
+}

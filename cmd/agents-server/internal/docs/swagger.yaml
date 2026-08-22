@@ -1204,6 +1204,31 @@ components:
         approve_tools:
           type: string
       type: object
+    store.AuditEvent:
+      properties:
+        action:
+          description: |-
+            Action is "METHOD /route/pattern" for REST, or a dotted name for the
+            explicit events (ws.run.create, ws.approval, terminal.open).
+          type: string
+        actor_email:
+          type: string
+        actor_id:
+          description: |-
+            ActorID/ActorEmail identify the caller; the email is a snapshot so the
+            line stays readable after the account is gone.
+          type: string
+        client_ip:
+          type: string
+        created_at:
+          type: string
+        detail:
+          type: string
+        id:
+          type: string
+        resource:
+          type: string
+      type: object
     store.BehaviorGroup:
       description: |-
         The remaining knobs are grouped into JSON category columns (see
@@ -2284,6 +2309,39 @@ paths:
       summary: Reject tool call
       tags:
       - approvals
+  /auth/audit:
+    get:
+      parameters:
+      - description: Page size (default 100, max 500)
+        in: query
+        name: limit
+        schema:
+          type: integer
+      - description: RFC 3339 time; entries before it
+        in: query
+        name: before
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/store.AuditEvent'
+                type: array
+          description: OK
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Forbidden
+      security:
+      - BearerAuth: []
+      summary: Audit log (admin)
+      tags:
+      - auth
   /auth/check:
     get:
       responses:

@@ -58,6 +58,7 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		auth.DELETE("/tokens/:id", h.Auth.DeleteToken)
 		auth.GET("/users", adminOnly(), h.Auth.ListUsers)
 		auth.PUT("/users/:id/role", adminOnly(), h.Auth.SetUserRole)
+		auth.GET("/audit", adminOnly(), h.Auth.ListAudit)
 	}
 	// Two rules shape everything below (authz.go): a session's content is its
 	// owner's alone — the :id subtrees are gated on ownership, and a foreign

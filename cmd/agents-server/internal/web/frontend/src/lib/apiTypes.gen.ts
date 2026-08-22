@@ -448,6 +448,56 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Audit log (admin) */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Page size (default 100, max 500) */
+                    limit?: number;
+                    /** @description RFC 3339 time; entries before it */
+                    before?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["store.AuditEvent"][];
+                    };
+                };
+                /** @description Forbidden */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/check": {
         parameters: {
             query?: never;
@@ -6387,6 +6437,24 @@ export interface components {
         };
         "store.ApprovalGroup": {
             approve_tools?: string;
+        };
+        "store.AuditEvent": {
+            /**
+             * @description Action is "METHOD /route/pattern" for REST, or a dotted name for the
+             *     explicit events (ws.run.create, ws.approval, terminal.open).
+             */
+            action?: string;
+            actor_email?: string;
+            /**
+             * @description ActorID/ActorEmail identify the caller; the email is a snapshot so the
+             *     line stays readable after the account is gone.
+             */
+            actor_id?: string;
+            client_ip?: string;
+            created_at?: string;
+            detail?: string;
+            id?: string;
+            resource?: string;
         };
         /**
          * @description The remaining knobs are grouped into JSON category columns (see
