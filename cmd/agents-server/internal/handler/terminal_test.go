@@ -131,7 +131,7 @@ func terminalTestServer(t *testing.T, provider sandboxProvider) (*httptest.Serve
 	}
 	th := NewTerminalHandler(sandboxes, provider, settings.NewReader(nil))
 	engine := newTestEngine()
-	engine.GET("/ws/terminal", server.HandleWSWithAuth(th.Handle, testAuthFunc(testWSToken), nil))
+	engine.GET("/ws/terminal", server.HandleWSWithAuth(th.Handle, testAuthFunc(testWSToken), nil, nil))
 	srv := httptest.NewServer(engine)
 	t.Cleanup(srv.Close)
 	return srv, th, cfg.ID
@@ -363,7 +363,7 @@ func TestTerminalOpen_ValidatesWorkDir(t *testing.T) {
 	provider := &fakeProvider{sb: &fakeTerminalSandbox{term: newFakeTerminal()}}
 	th := NewTerminalHandler(sandboxes, provider, settings.NewReader(nil))
 	engine := newTestEngine()
-	engine.GET("/ws/terminal", server.HandleWSWithAuth(th.Handle, testAuthFunc(testWSToken), nil))
+	engine.GET("/ws/terminal", server.HandleWSWithAuth(th.Handle, testAuthFunc(testWSToken), nil, nil))
 	srv := httptest.NewServer(engine)
 	t.Cleanup(srv.Close)
 

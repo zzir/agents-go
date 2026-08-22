@@ -183,6 +183,13 @@ and database-backed credentials:
 - **Sessions are rows, not JWTs**: a 30-day sliding expiry, revoked by
   `/auth/logout`, cleaned hourly. The callback hands the SPA a one-time code
   in the URL fragment; the session token itself never appears in a URL.
+- **A revocation reaches live connections.** REST authenticates every
+  request; a WebSocket authenticates once, so each inbound frame resolves
+  its credential again before acting — a revoked token, an expired session
+  or a changed role closes the connection (close code 1008) instead, and
+  the reconnect's auth frame decides afresh. Signing out, revoking a PAT
+  and changing a role also close the user's connections outright (the web
+  terminal included); a still-valid credential reconnects and carries on.
 - **`--token` is refused in OAuth mode** — programmatic access uses personal
   access tokens instead (see below). The Google redirect URI to register is
   `<base-url>/api/v1/auth/oauth/google/callback`.

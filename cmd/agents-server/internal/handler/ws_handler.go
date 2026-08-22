@@ -147,6 +147,13 @@ func (h *WSHandler) Handle(conn *server.WSConn) {
 			return
 		}
 
+		// Every frame acts as the credential that opened the connection, so
+		// the credential is checked again before each: a revoked token or a
+		// changed role ends the connection here, not at the next reconnect.
+		if !conn.Recheck() {
+			return
+		}
+
 		switch env.Type {
 		case protocol.EventRunCreate:
 			var msg protocol.RunCreate

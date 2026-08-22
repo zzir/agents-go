@@ -365,6 +365,8 @@ func run(_ *cobra.Command, _ []string) error {
 
 	srv := server.New(log, authSvc.Authenticate, recordAudit)
 	srv.SetImageHosts(authSvc.AvatarHosts())
+	authHandler := handler.NewAuthHandler(authSvc, authTokens, userStore, auditStore)
+	authHandler.Conns = srv.Conns
 	if flagTrustedProxies != "" {
 		proxies := strings.Split(flagTrustedProxies, ",")
 		for i := range proxies {
@@ -383,7 +385,7 @@ func run(_ *cobra.Command, _ []string) error {
 			Sessions: sessionStore, Tasks: taskStore, Approvals: pendingApprovalStore,
 			Triggers: triggerStore, Hub: runner.Hub(),
 		},
-		Auth:           handler.NewAuthHandler(authSvc, authTokens, userStore, auditStore),
+		Auth:           authHandler,
 		Sessions:       sessionHandler,
 		Runs:           runHandler,
 		Approvals:      approvalHandler,

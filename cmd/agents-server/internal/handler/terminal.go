@@ -85,6 +85,9 @@ func (h *TerminalHandler) Handle(conn *server.WSConn) {
 	log := logging.Ctx(conn.Context())
 	// A terminal is a shell on a sandbox host with the server's stored
 	// credentials — admin-only, like every other write to what runs where.
+	if !conn.Recheck() {
+		return
+	}
 	if conn.User.Role != store.RoleAdmin {
 		_ = conn.WriteJSON(&protocol.Envelope{Type: protocol.EventTerminalError, Payload: mustJSON(protocol.TerminalError{
 			Message: "the terminal requires the admin role",

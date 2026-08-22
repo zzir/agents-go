@@ -79,6 +79,93 @@ type WSConn struct {
 	// User is who authenticated the connection (HandleWSWithAuth); the fan-out
 	// attaches a connection only to runs of sessions this user owns.
 	User protocol.UserInfo
+	// recheck resolves the credential the connection authenticated with,
+	// again — Recheck's half.
+	recheck func(context.Context) (protocol.UserInfo, error)
+}
+
+// Recheck resolves the connection's credential again and reports whether it
+// still names the same user with the same role. When it does not — revoked,
+// expired, demoted — the connection is closed with a policy-violation frame
+// and false is returned: the client reconnects, and the reconnect's auth
+// frame decides afresh. Called before a frame acts, so a revocation takes
+// effect at the next action rather than at the next reconnect.
+func (c *WSConn) Recheck() bool {
+	if c.recheck == nil {
+		return true
+	}
+	u, err := c.recheck(c.ctx)
+	if err == nil && u.ID == c.User.ID && u.Role == c.User.Role {
+		return true
+	}
+	c.CloseWith(websocket.ClosePolicyViolation, "credential no longer valid")
+	return false
+}
+
+// CloseWith sends a close frame carrying code and reason, then closes.
+func (c *WSConn) CloseWith(code int, reason string) {
+	c.mu.Lock()
+	_ = c.conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, reason), time.Now().Add(wsWriteTimeout))
+	c.mu.Unlock()
+	c.Close()
+}
+
+// ConnTracker holds every authenticated WebSocket connection by user, so a
+// revocation or a role change can close what the old credential opened.
+type ConnTracker struct {
+	mu     sync.Mutex
+	byUser map[string]map[*WSConn]struct{}
+}
+
+// NewConnTracker returns an empty tracker.
+func NewConnTracker() *ConnTracker {
+	return &ConnTracker{byUser: make(map[string]map[*WSConn]struct{})}
+}
+
+func (t *ConnTracker) add(c *WSConn) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	set := t.byUser[c.User.ID]
+	if set == nil {
+		set = make(map[*WSConn]struct{})
+		t.byUser[c.User.ID] = set
+	}
+	set[c] = struct{}{}
+}
+
+func (t *ConnTracker) remove(c *WSConn) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if set := t.byUser[c.User.ID]; set != nil {
+		delete(set, c)
+		if len(set) == 0 {
+			delete(t.byUser, c.User.ID)
+		}
+	}
+}
+
+// CloseForUser closes every connection the user holds, with reason. Each
+// client reconnects and authenticates afresh — a still-valid credential
+// comes straight back, a revoked one is refused.
+func (t *ConnTracker) CloseForUser(userID, reason string) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	conns := make([]*WSConn, 0, len(t.byUser[userID]))
+	for c := range t.byUser[userID] {
+		conns = append(conns, c)
+	}
+	t.mu.Unlock()
+	for _, c := range conns {
+		c.CloseWith(websocket.ClosePolicyViolation, reason)
+	}
 }
 
 // Context returns the per-connection context, cancelled when the connection closes.
@@ -214,8 +301,10 @@ type WSHandlerFunc func(conn *WSConn)
 // static token, a session token and a PAT all work. On success it replies
 // with {"type":"auth.ok"} and enters the normal handler loop; on failure it
 // closes the connection silently. Failures draw on guard's per-IP budget, the
-// same one REST draws on; an exhausted IP is refused before the upgrade.
-func HandleWSWithAuth(handler WSHandlerFunc, auth AuthFunc, guard *AuthGuard) gin.HandlerFunc {
+// same one REST draws on; an exhausted IP is refused before the upgrade. An
+// authenticated connection is held in conns (nil: untracked) for as long as
+// the handler runs.
+func HandleWSWithAuth(handler WSHandlerFunc, auth AuthFunc, guard *AuthGuard, conns *ConnTracker) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ip := c.ClientIP()
 		if guard.Exhausted(ip) {
@@ -252,13 +341,16 @@ func HandleWSWithAuth(handler WSHandlerFunc, auth AuthFunc, guard *AuthGuard) gi
 			return
 		}
 		conn.User = user
+		token := frame.Token
+		conn.recheck = func(ctx context.Context) (protocol.UserInfo, error) { return auth(ctx, token) }
 		// Authenticated: the heartbeat's rolling deadline replaces the auth one
 		// (the stream idles between messages by design, so a bare deadline can't
-		// stay — but no deadline at all left half-open connections pinned until
-		// TCP keepalive). The read-size limit stays for the whole connection.
+		// stay). The read-size limit stays for the whole connection.
 		conn.startHeartbeat(wsPongWait, wsPingInterval)
 		_ = conn.WriteJSON(map[string]string{"type": protocol.EventAuthOK})
 
+		conns.add(conn)
+		defer conns.remove(conn)
 		defer conn.Close()
 		handler(conn)
 	}

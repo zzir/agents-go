@@ -23,7 +23,7 @@ func TestWSAuthReadLimitRejectsOversizedFrame(t *testing.T) {
 		case reached <- struct{}{}:
 		default:
 		}
-	}, staticAuth("tok"), nil))
+	}, staticAuth("tok"), nil, nil))
 	srv := httptest.NewServer(engine)
 	defer srv.Close()
 
@@ -68,7 +68,7 @@ func TestWSAuthSucceedsWithinReadLimit(t *testing.T) {
 		default:
 		}
 		<-conn.Context().Done()
-	}, staticAuth("tok"), nil))
+	}, staticAuth("tok"), nil, nil))
 	srv := httptest.NewServer(engine)
 	defer srv.Close()
 

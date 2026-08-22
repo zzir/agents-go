@@ -22,6 +22,9 @@ type AuthHandler struct {
 	tokens *store.AuthTokenStore
 	users  *store.UserStore
 	audit  *store.AuditStore
+	// Conns closes a user's live WebSocket connections when a credential
+	// or role they were opened under goes away (nil: nothing to close).
+	Conns *server.ConnTracker
 }
 
 // NewAuthHandler returns an AuthHandler over the given service and stores
@@ -115,6 +118,9 @@ func (h *AuthHandler) SetUserRole(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
+	// What the old role opened — a terminal above all — closes; the client
+	// reconnects as what it is now.
+	h.Conns.CloseForUser(c.Param("id"), "role changed")
 	c.Status(http.StatusNoContent)
 }
 
@@ -229,6 +235,9 @@ func (h *AuthHandler) DeleteToken(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
+	// A connection the revoked token opened closes; those the user's other
+	// credentials opened reconnect and carry on.
+	h.Conns.CloseForUser(u.ID, "token revoked")
 	c.Status(http.StatusNoContent)
 }
 
@@ -394,6 +403,9 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	if err := h.svc.Logout(c.Request.Context(), server.BearerToken(c)); err != nil {
 		internalError(c, err)
 		return
+	}
+	if u, ok := server.CurrentUser(c); ok {
+		h.Conns.CloseForUser(u.ID, "signed out")
 	}
 	c.Status(http.StatusNoContent)
 }

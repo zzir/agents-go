@@ -208,7 +208,7 @@ func TestRunEventsStayWithTheOwner(t *testing.T) {
 	})
 	wsh := NewWSHandler(runner, sessions, store.NewPendingApprovalStore(db))
 	engine := gin.New()
-	engine.GET("/ws", server.HandleWSWithAuth(wsh.Handle, usersByToken, nil))
+	engine.GET("/ws", server.HandleWSWithAuth(wsh.Handle, usersByToken, nil, nil))
 	srv := httptest.NewServer(engine)
 	t.Cleanup(srv.Close)
 
