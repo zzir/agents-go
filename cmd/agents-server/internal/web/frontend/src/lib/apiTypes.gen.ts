@@ -2517,7 +2517,7 @@ export interface paths {
             /** @description Provider */
             requestBody: {
                 content: {
-                    "application/json": Record<string, never> | components["schemas"]["store.Provider"];
+                    "application/json": Record<string, never> | components["schemas"]["handler.providerReq"];
                 };
             };
             responses: {
@@ -2613,7 +2613,7 @@ export interface paths {
             /** @description Provider */
             requestBody: {
                 content: {
-                    "application/json": Record<string, never> | components["schemas"]["store.Provider"];
+                    "application/json": Record<string, never> | components["schemas"]["handler.providerReq"];
                 };
             };
             responses: {
@@ -5254,7 +5254,7 @@ export interface paths {
             /** @description Trigger */
             requestBody: {
                 content: {
-                    "application/json": Record<string, never> | components["schemas"]["store.Trigger"];
+                    "application/json": Record<string, never> | components["schemas"]["handler.triggerReq"];
                 };
             };
             responses: {
@@ -5338,7 +5338,7 @@ export interface paths {
             /** @description Trigger */
             requestBody: {
                 content: {
-                    "application/json": Record<string, never> | components["schemas"]["store.Trigger"];
+                    "application/json": Record<string, never> | components["schemas"]["handler.triggerReq"];
                 };
             };
             responses: {
@@ -6430,6 +6430,14 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        "handler.providerReq": {
+            /** @description APIKey is write-only: the ******** mask keeps the stored key. */
+            api_key?: string;
+            auth_mode?: string;
+            base_url?: string;
+            name?: string;
+            type?: string;
+        };
         "handler.rejectReq": {
             reason?: string;
         };
@@ -6476,6 +6484,16 @@ export interface components {
         };
         "handler.taskStopReq": {
             graceful?: boolean;
+        };
+        "handler.triggerReq": {
+            agent_config_id?: string;
+            brief?: string;
+            enabled?: boolean;
+            kind?: string;
+            schedule?: string;
+            session_id?: string;
+            target?: string;
+            workflow_id?: string;
         };
         "protocol.APIError": {
             code?: string;
@@ -7052,43 +7070,6 @@ export interface components {
             session_id?: string;
             span_id?: string;
             started_at?: string;
-        };
-        "store.Trigger": {
-            agent_config_id?: string;
-            /**
-             * @description Brief leads every execution or turn this trigger starts; a webhook's
-             *     payload is appended to it.
-             */
-            brief?: string;
-            created_at?: string;
-            enabled?: boolean;
-            id?: string;
-            kind?: string;
-            last_error?: string;
-            /**
-             * @description What the last fire did, for the panel and for a cron that keeps failing:
-             *     the id it started — a task for a workflow, a run for an agent turn — or
-             *     why it started nothing.
-             */
-            last_fired_at?: string;
-            last_started_id?: string;
-            /**
-             * @description Schedule is the cron expression (five fields, or a descriptor such as
-             *     @hourly or @every 10m). Cron kind only.
-             */
-            schedule?: string;
-            /**
-             * @description SessionID is the conversation the work reports to — or, for an agent
-             *     turn, happens in.
-             */
-            session_id?: string;
-            /**
-             * @description Target says what a fire starts; WorkflowID or AgentConfigID names it,
-             *     the other stays empty.
-             */
-            target?: string;
-            updated_at?: string;
-            workflow_id?: string;
         };
         "store.User": {
             /**

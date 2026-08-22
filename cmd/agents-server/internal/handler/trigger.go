@@ -115,23 +115,45 @@ func viewOf(t *store.Trigger, mintedSecret string) TriggerView {
 // HookPath is the webhook URL path of a trigger, relative to the server root.
 func HookPath(triggerID string) string { return server.HooksPrefix + "/" + triggerID }
 
+// triggerReq is the request body for Create and Update: what a client may
+// set. The id, the secret and the fire record are the server's.
+type triggerReq struct {
+	Target        string `json:"target,omitempty"`
+	WorkflowID    string `json:"workflow_id,omitempty"`
+	AgentConfigID string `json:"agent_config_id,omitempty"`
+	SessionID     string `json:"session_id"`
+	Kind          string `json:"kind"`
+	Brief         string `json:"brief"`
+	Schedule      string `json:"schedule,omitempty"`
+	Enabled       bool   `json:"enabled"`
+}
+
+func (r *triggerReq) toModel() *store.Trigger {
+	return &store.Trigger{
+		Target: r.Target, WorkflowID: r.WorkflowID, AgentConfigID: r.AgentConfigID,
+		SessionID: r.SessionID, Kind: r.Kind, Brief: r.Brief, Schedule: r.Schedule, Enabled: r.Enabled,
+	}
+}
+
 // bind decodes and validates an incoming trigger: its shape, its schedule,
 // and the session it names (a conversation, not a task's own). The target —
 // the workflow or the agent — is checked by the store, in the transaction
 // that writes the row.
-func (h *TriggerHandler) bind(c *gin.Context, t *store.Trigger) bool {
-	if err := c.ShouldBindJSON(t); err != nil {
+func (h *TriggerHandler) bind(c *gin.Context) (*store.Trigger, bool) {
+	var req triggerReq
+	if err := c.ShouldBindJSON(&req); err != nil {
 		badRequest(c, err.Error())
-		return false
+		return nil, false
 	}
+	t := req.toModel()
 	if err := store.NormalizeTrigger(t); err != nil {
 		badRequest(c, err.Error())
-		return false
+		return nil, false
 	}
 	if t.Kind == store.TriggerKindCron {
 		if err := bridge.ValidateCronSchedule(t.Schedule); err != nil {
 			badRequest(c, err.Error())
-			return false
+			return nil, false
 		}
 	}
 	ctx := c.Request.Context()
@@ -142,17 +164,17 @@ func (h *TriggerHandler) bind(c *gin.Context, t *store.Trigger) bool {
 		} else {
 			internalError(c, err)
 		}
-		return false
+		return nil, false
 	}
 	if !ownsSession(c, sess) {
 		badRequest(c, "session_id names no session")
-		return false
+		return nil, false
 	}
 	if sess.Hidden {
 		badRequest(c, "session_id names a task's own session; a trigger reports to a conversation")
-		return false
+		return nil, false
 	}
-	return true
+	return t, true
 }
 
 // List responds with the caller's triggers, or a workflow's with ?workflow_id=.
@@ -206,29 +228,27 @@ func (h *TriggerHandler) Get(c *gin.Context) {
 //	@Tags			triggers
 //	@Accept			json
 //	@Produce		json
-//	@Param			trigger	body		store.Trigger	true	"Trigger"
+//	@Param			trigger	body		triggerReq	true	"Trigger"
 //	@Success		201		{object}	TriggerView
 //	@Failure		400		{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/triggers [post]
 func (h *TriggerHandler) Create(c *gin.Context) {
-	var t store.Trigger
-	if !h.bind(c, &t) {
+	t, ok := h.bind(c)
+	if !ok {
 		return
 	}
-	t.ID = "" // server-owned
-	t.LastFiredAt, t.LastStartedID, t.LastError = time.Time{}, "", ""
 	minted := ""
 	if t.Kind == store.TriggerKindWebhook {
 		minted = store.NewTriggerSecret()
 		t.Secret = minted
 	}
-	if err := h.store.Create(c.Request.Context(), &t); err != nil {
+	if err := h.store.Create(c.Request.Context(), t); err != nil {
 		h.saveError(c, err)
 		return
 	}
 	h.firer.Sync(c.Request.Context(), t.ID)
-	created(c, t.ID, viewOf(&t, minted))
+	created(c, t.ID, viewOf(t, minted))
 }
 
 // saveError maps a trigger write's failure: a reference that vanished between
@@ -247,8 +267,8 @@ func (h *TriggerHandler) saveError(c *gin.Context, err error) {
 //	@Tags		triggers
 //	@Accept		json
 //	@Produce	json
-//	@Param		id		path		string			true	"Trigger ID"
-//	@Param		trigger	body		store.Trigger	true	"Trigger"
+//	@Param		id		path		string		true	"Trigger ID"
+//	@Param		trigger	body		triggerReq	true	"Trigger"
 //	@Success	200		{object}	TriggerView
 //	@Failure	400		{object}	ErrorResponse
 //	@Failure	404		{object}	ErrorResponse
@@ -261,19 +281,18 @@ func (h *TriggerHandler) Update(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
-	var t store.Trigger
-	if !h.bind(c, &t) {
+	t, ok := h.bind(c)
+	if !ok {
 		return
 	}
-	// What a client cannot set: the kind is fixed at creation (a webhook's
-	// secret and URL would be meaningless on a cron); the secret and the fire
-	// record are not written here at all — UpdateSettings touches the settable
-	// columns only, so a rotation or a fire racing this update is not undone.
+	// The kind is fixed at creation (a webhook's secret and URL would be
+	// meaningless on a cron); UpdateSettings touches the settable columns
+	// only, so a rotation or a fire racing this update is not undone.
 	if t.Kind != cur.Kind {
 		badRequest(c, "kind cannot change; create another trigger")
 		return
 	}
-	if err := h.store.UpdateSettings(ctx, id, &t); err != nil {
+	if err := h.store.UpdateSettings(ctx, id, t); err != nil {
 		h.saveError(c, err)
 		return
 	}

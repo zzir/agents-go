@@ -904,6 +904,20 @@ components:
           additionalProperties: {}
           type: object
       type: object
+    handler.providerReq:
+      properties:
+        api_key:
+          description: 'APIKey is write-only: the ******** mask keeps the stored key.'
+          type: string
+        auth_mode:
+          type: string
+        base_url:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+      type: object
     handler.rejectReq:
       properties:
         reason:
@@ -985,6 +999,25 @@ components:
       properties:
         graceful:
           type: boolean
+      type: object
+    handler.triggerReq:
+      properties:
+        agent_config_id:
+          type: string
+        brief:
+          type: string
+        enabled:
+          type: boolean
+        kind:
+          type: string
+        schedule:
+          type: string
+        session_id:
+          type: string
+        target:
+          type: string
+        workflow_id:
+          type: string
       type: object
     protocol.APIError:
       properties:
@@ -1843,53 +1876,6 @@ components:
         span_id:
           type: string
         started_at:
-          type: string
-      type: object
-    store.Trigger:
-      properties:
-        agent_config_id:
-          type: string
-        brief:
-          description: |-
-            Brief leads every execution or turn this trigger starts; a webhook's
-            payload is appended to it.
-          type: string
-        created_at:
-          type: string
-        enabled:
-          type: boolean
-        id:
-          type: string
-        kind:
-          type: string
-        last_error:
-          type: string
-        last_fired_at:
-          description: |-
-            What the last fire did, for the panel and for a cron that keeps failing:
-            the id it started — a task for a workflow, a run for an agent turn — or
-            why it started nothing.
-          type: string
-        last_started_id:
-          type: string
-        schedule:
-          description: |-
-            Schedule is the cron expression (five fields, or a descriptor such as
-            @hourly or @every 10m). Cron kind only.
-          type: string
-        session_id:
-          description: |-
-            SessionID is the conversation the work reports to — or, for an agent
-            turn, happens in.
-          type: string
-        target:
-          description: |-
-            Target says what a fire starts; WorkflowID or AgentConfigID names it,
-            the other stays empty.
-          type: string
-        updated_at:
-          type: string
-        workflow_id:
           type: string
       type: object
     store.User:
@@ -3628,7 +3614,7 @@ paths:
             schema:
               oneOf:
               - type: object
-              - $ref: '#/components/schemas/store.Provider'
+              - $ref: '#/components/schemas/handler.providerReq'
                 description: Provider
                 summary: provider
         description: Provider
@@ -3730,7 +3716,7 @@ paths:
             schema:
               oneOf:
               - type: object
-              - $ref: '#/components/schemas/store.Provider'
+              - $ref: '#/components/schemas/handler.providerReq'
                 description: Provider
                 summary: provider
         description: Provider
@@ -5461,7 +5447,7 @@ paths:
             schema:
               oneOf:
               - type: object
-              - $ref: '#/components/schemas/store.Trigger'
+              - $ref: '#/components/schemas/handler.triggerReq'
                 description: Trigger
                 summary: trigger
         description: Trigger
@@ -5547,7 +5533,7 @@ paths:
             schema:
               oneOf:
               - type: object
-              - $ref: '#/components/schemas/store.Trigger'
+              - $ref: '#/components/schemas/handler.triggerReq'
                 description: Trigger
                 summary: trigger
         description: Trigger

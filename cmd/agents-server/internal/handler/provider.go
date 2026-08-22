@@ -22,22 +22,40 @@ func NewProviderHandler(s *store.ProviderStore) *ProviderHandler {
 	return &ProviderHandler{store: s}
 }
 
+// providerReq is the request body for Create and Update: what a client may
+// set. The id, the timestamps and the ChatGPT token (the OAuth flow's) are
+// the server's.
+type providerReq struct {
+	Name     string `json:"name"`
+	Type     string `json:"type,omitempty"`
+	AuthMode string `json:"auth_mode,omitempty"`
+	// APIKey is write-only: the ******** mask keeps the stored key.
+	APIKey  string `json:"api_key,omitempty"`
+	BaseURL string `json:"base_url,omitempty"`
+}
+
+func (r *providerReq) toModel() *store.Provider {
+	return &store.Provider{Name: r.Name, Type: r.Type, AuthMode: r.AuthMode, APIKey: r.APIKey, BaseURL: r.BaseURL}
+}
+
 // bind decodes and validates an incoming provider body, reporting the failure
 // itself. Type and auth mode are the provider registry's answer.
-func (h *ProviderHandler) bind(c *gin.Context, pv *store.Provider) bool {
-	if err := c.ShouldBindJSON(pv); err != nil {
+func (h *ProviderHandler) bind(c *gin.Context) (*store.Provider, bool) {
+	var req providerReq
+	if err := c.ShouldBindJSON(&req); err != nil {
 		badRequest(c, err.Error())
-		return false
+		return nil, false
 	}
+	pv := req.toModel()
 	if err := store.NormalizeProvider(pv); err != nil {
 		badRequest(c, err.Error())
-		return false
+		return nil, false
 	}
 	if err := bridge.ValidateProvider(pv); err != nil {
 		badRequest(c, err.Error())
-		return false
+		return nil, false
 	}
-	return true
+	return pv, true
 }
 
 // List responds with every provider, keys masked.
@@ -87,27 +105,24 @@ func (h *ProviderHandler) Get(c *gin.Context) {
 //	@Tags		providers
 //	@Accept		json
 //	@Produce	json
-//	@Param		provider	body		store.Provider	true	"Provider"
+//	@Param		provider	body		providerReq	true	"Provider"
 //	@Success	201			{object}	store.Provider
 //	@Failure	400			{object}	ErrorResponse
 //	@Failure	409			{object}	ErrorResponse	"duplicate name"
 //	@Security	BearerAuth
 //	@Router		/providers [post]
 func (h *ProviderHandler) Create(c *gin.Context) {
-	var pv store.Provider
-	if !h.bind(c, &pv) {
+	pv, ok := h.bind(c)
+	if !ok {
 		return
 	}
-	// id/timestamps are server-owned; the ChatGPT token is set only by the
-	// OAuth flow, never a CRUD body.
-	pv.ID, pv.ChatGPTToken = "", ""
 	// There is no stored value yet, so a mask sentinel resolves to empty.
 	pv.APIKey = resolveSecret(pv.APIKey, "")
-	if err := h.store.Create(c.Request.Context(), &pv); err != nil {
+	if err := h.store.Create(c.Request.Context(), pv); err != nil {
 		saveError(c, err) // duplicate name -> 409
 		return
 	}
-	sanitizeProvider(&pv)
+	sanitizeProvider(pv)
 	created(c, pv.ID, pv)
 }
 
@@ -118,8 +133,8 @@ func (h *ProviderHandler) Create(c *gin.Context) {
 //	@Tags			providers
 //	@Accept			json
 //	@Produce		json
-//	@Param			id			path		string			true	"Provider ID"
-//	@Param			provider	body		store.Provider	true	"Provider"
+//	@Param			id			path		string		true	"Provider ID"
+//	@Param			provider	body		providerReq	true	"Provider"
 //	@Success		200			{object}	store.Provider
 //	@Failure		400			{object}	ErrorResponse
 //	@Failure		404			{object}	ErrorResponse
@@ -127,14 +142,14 @@ func (h *ProviderHandler) Create(c *gin.Context) {
 //	@Security		BearerAuth
 //	@Router			/providers/{id} [put]
 func (h *ProviderHandler) Update(c *gin.Context) {
-	var pv store.Provider
-	if !h.bind(c, &pv) {
+	pv, ok := h.bind(c)
+	if !ok {
 		return
 	}
 	ctx, id := c.Request.Context(), c.Param("id")
 	// The mask resolves against the stored row inside the store's transaction,
 	// and only for the destination the key was stored for — README invariant 9.
-	err := h.store.Update(ctx, id, &pv, func(prev *store.Provider) error {
+	err := h.store.Update(ctx, id, pv, func(prev *store.Provider) error {
 		if pv.APIKey == SecretMask && prev.APIKey != "" &&
 			credentialTargetChanged(prev.Type, prev.BaseURL, pv.Type, pv.BaseURL) {
 			return badRequestError("type or base_url changed: the stored api_key belongs to the previous destination — replace it or clear it")
