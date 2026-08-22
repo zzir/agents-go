@@ -82,6 +82,30 @@ type WSConn struct {
 	// recheck resolves the credential the connection authenticated with,
 	// again — Recheck's half.
 	recheck func(context.Context) (protocol.UserInfo, error)
+
+	// The heartbeat's read deadline, and whether PauseHeartbeat lifted it.
+	hbMu     sync.Mutex
+	hbPaused bool
+	pongWait time.Duration
+}
+
+// PauseHeartbeat lifts the heartbeat's read deadline for a stretch in which
+// the handler will not read — a terminal dialing a host, pulling an image —
+// since pongs are only processed by a read, and a deadline nobody can
+// extend would end the connection. ResumeHeartbeat re-arms it.
+func (c *WSConn) PauseHeartbeat() {
+	c.hbMu.Lock()
+	c.hbPaused = true
+	c.hbMu.Unlock()
+	_ = c.conn.SetReadDeadline(time.Time{})
+}
+
+// ResumeHeartbeat re-arms the heartbeat's read deadline after PauseHeartbeat.
+func (c *WSConn) ResumeHeartbeat() {
+	c.hbMu.Lock()
+	c.hbPaused = false
+	c.hbMu.Unlock()
+	_ = c.conn.SetReadDeadline(time.Now().Add(c.pongWait))
 }
 
 // Recheck resolves the connection's credential again and reports whether it
@@ -272,8 +296,15 @@ func (c *WSConn) Close() {
 // automatically). Reads fail once the peer stops answering, ending the handler
 // loop. WriteControl is safe alongside the other write methods, so no mutex.
 func (c *WSConn) startHeartbeat(pongWait, pingInterval time.Duration) {
+	c.pongWait = pongWait
 	_ = c.conn.SetReadDeadline(time.Now().Add(pongWait))
 	c.conn.SetPongHandler(func(string) error {
+		c.hbMu.Lock()
+		paused := c.hbPaused
+		c.hbMu.Unlock()
+		if paused {
+			return nil
+		}
 		return c.conn.SetReadDeadline(time.Now().Add(pongWait))
 	})
 	go func() {

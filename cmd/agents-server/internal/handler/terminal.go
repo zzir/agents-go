@@ -242,6 +242,12 @@ func (h *TerminalHandler) open(conn *server.WSConn) (sandbox.Terminal, *store.Sa
 			return nil, nil, nil, err
 		}
 	}
+	// From here no read happens until the shell is up — an ssh dial, a
+	// first-time image pull — so the heartbeat's deadline is lifted for the
+	// duration; otherwise a slow open ends at the first read with a deadline
+	// no pong could have extended.
+	conn.PauseHeartbeat()
+	defer conn.ResumeHeartbeat()
 	sb, release, err := h.manager.Acquire(cfg, workDir)
 	if err != nil {
 		return nil, nil, nil, err
