@@ -3,7 +3,7 @@ import { Dialog, NavList as PrimerNavList, Flash, Button } from '@primer/react';
 import { SecretInput } from '@/components/SecretInput';
 import {
   DependabotIcon, McpIcon, ShieldCheckIcon, SparkleIcon, CpuIcon, PlugIcon,
-  ContainerIcon, DatabaseIcon, GearIcon, PersonIcon, PeopleIcon, CommentDiscussionIcon, LogIcon,
+  ContainerIcon, DatabaseIcon, GearIcon, PersonIcon, PeopleIcon, CommentDiscussionIcon, LogIcon, LockIcon,
   XCircleFillIcon, AlertFillIcon, CheckCircleFillIcon, InfoIcon,
 } from '@primer/octicons-react';
 import type { Icon } from '@primer/octicons-react';
@@ -179,6 +179,16 @@ function PanelDialog({ title, tabs, readOnly, onClose }: { title: string; tabs: 
           </PrimerNavList>
         </nav>
         <div className="settings-content">
+          {/* The why behind the read-only panels — once, above whichever
+              shared panel is open; Account is the member's own. */}
+          {readOnly && tab !== 'account' && (
+            <Flash variant="default" className="settings-readonly-note">
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                <LockIcon size={16} />
+                Read-only. Shared configuration is managed by admins; you can use all of it in your own sessions.
+              </span>
+            </Flash>
+          )}
           {TabComp ? (
             <ReadOnlyContext value={!!readOnly}>
               <ErrorBoundary resetKey={tab}><TabComp /></ErrorBoundary>
