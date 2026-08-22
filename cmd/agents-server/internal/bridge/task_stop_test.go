@@ -152,7 +152,7 @@ func TestStopTaskCancelsALiveRun(t *testing.T) {
 
 	runner, sessions, tasks, agentConfigs := newTaskTestRunner(t)
 	fakeModelAgent(t, runner.db, agentConfigs, srv.URL)
-	parent := &store.Session{ID: store.NewID(), Name: "chat"}
+	parent := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "chat"}
 	if err := sessions.Create(ctx, parent); err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +212,7 @@ func TestStopTaskCancelsARunInsideATool(t *testing.T) {
 		t.Fatal(err)
 	}
 	fakeModelAgent(t, runner.db, agentConfigs, srv.URL)
-	parent := &store.Session{ID: store.NewID(), Name: "chat", SandboxID: sb.ID, WorkDir: workspace}
+	parent := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "chat", SandboxID: sb.ID, WorkDir: workspace}
 	if err := sessions.Create(ctx, parent); err != nil {
 		t.Fatal(err)
 	}
@@ -271,11 +271,11 @@ func TestStopTaskClaimsAnEndingTheRunNeverRecorded(t *testing.T) {
 	ctx := context.Background()
 	runner, sessions, tasks, _ := newTaskTestRunner(t)
 
-	parent := &store.Session{ID: store.NewID(), Name: "chat"}
+	parent := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "chat"}
 	if err := sessions.Create(ctx, parent); err != nil {
 		t.Fatal(err)
 	}
-	child := &store.Session{ID: store.NewID(), Name: "task: probe", Hidden: true}
+	child := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "task: probe", Hidden: true}
 	if err := sessions.Create(ctx, child); err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +290,7 @@ func TestStopTaskClaimsAnEndingTheRunNeverRecorded(t *testing.T) {
 
 	// A hub run whose segment has fully drained — its goroutine is gone, so
 	// nothing else will ever speak for it — while the row still reads working.
-	seg, _, err := runner.hub.register(row.RunID, child.ID, "", "", "", &TaskMeta{
+	seg, _, err := runner.hub.register(row.RunID, child.ID, "", "", "", "", &TaskMeta{
 		TaskID: row.ID, ParentSessionID: parent.ID,
 	})
 	if err != nil {

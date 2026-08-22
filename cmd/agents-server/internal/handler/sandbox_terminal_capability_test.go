@@ -40,7 +40,7 @@ func TestSandboxList_TerminalCapability(t *testing.T) {
 	}
 
 	h := testSandboxHandler(sandboxes, nil, t.TempDir())
-	engine := gin.New()
+	engine := newTestEngine()
 	engine.GET("/sandboxes", h.List)
 
 	w := doJSON(t, engine, "GET", "/sandboxes", "")
@@ -98,7 +98,7 @@ func TestSandboxList_WorkDirDefaults(t *testing.T) {
 	}
 
 	h := testSandboxHandler(sandboxes, nil, ws)
-	engine := gin.New()
+	engine := newTestEngine()
 	engine.GET("/sandboxes", h.List)
 
 	w := doJSON(t, engine, "GET", "/sandboxes", "")
@@ -134,14 +134,14 @@ func TestSandboxUpdate_FreezesIdentityWhileReferenced(t *testing.T) {
 	sessions := store.NewSessionStore(db)
 	manager := bridge.NewSandboxManager(t.TempDir())
 	h := testSandboxHandler(sandboxes, manager, t.TempDir())
-	engine := gin.New()
+	engine := newTestEngine()
 	engine.PUT("/sandboxes/:id", h.Update)
 
 	cfg := &store.SandboxConfig{Name: "box", Type: "ssh", Config: json.RawMessage(`{"addr":"h1","user":"u","work_dir":"/srv"}`)}
 	if err := sandboxes.Create(t.Context(), cfg); err != nil {
 		t.Fatal(err)
 	}
-	sess := &store.Session{ID: store.NewID(), Name: "s"}
+	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "s"}
 	if err := sessions.Create(t.Context(), sess); err != nil {
 		t.Fatal(err)
 	}

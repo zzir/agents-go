@@ -10,7 +10,7 @@ import (
 // the session slot frees, and the process survives to serve everything else.
 func TestLaunchSegmentRecoversPanic(t *testing.T) {
 	hub := NewRunHub(context.Background())
-	seg, _, err := hub.register("run-1", "sess-1", "agent", "", "", nil)
+	seg, _, err := hub.register("run-1", "sess-1", "", "agent", "", "", nil)
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -23,7 +23,7 @@ func TestLaunchSegmentRecoversPanic(t *testing.T) {
 		t.Fatal("session slot still held after a panicking segment")
 	}
 	// The slot must be genuinely reusable, not just unlisted.
-	seg2, _, err := hub.register("run-2", "sess-1", "agent", "", "", nil)
+	seg2, _, err := hub.register("run-2", "sess-1", "", "agent", "", "", nil)
 	if err != nil {
 		t.Fatalf("register after panic: %v", err)
 	}

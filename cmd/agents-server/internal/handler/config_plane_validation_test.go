@@ -50,7 +50,7 @@ func TestSandboxValidation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := newTestDB(t)
 	h := testSandboxHandler(store.NewSandboxStore(db), bridge.NewSandboxManager(t.TempDir()), t.TempDir())
-	engine := gin.New()
+	engine := newTestEngine()
 	engine.POST("/sandboxes", h.Create)
 
 	cases := []struct {
@@ -87,7 +87,7 @@ func TestMcpServerNameUnique(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := newTestDB(t)
 	h := NewMcpServerHandler(store.NewMcpServerStore(db), bridge.NewMcpManager(t.Context(), settings.NewReader(store.NewSettingStore(db))), nil, "")
-	engine := gin.New()
+	engine := newTestEngine()
 	engine.POST("/mcp-servers", h.Create)
 
 	body := `{"name":"fs","transport_type":"stdio","config":{"command":"npx"}}`
@@ -106,7 +106,7 @@ func TestMcpServerToolsNotFoundVsNotConnected(t *testing.T) {
 	db := newTestDB(t)
 	mcpStore := store.NewMcpServerStore(db)
 	h := NewMcpServerHandler(mcpStore, bridge.NewMcpManager(t.Context(), settings.NewReader(store.NewSettingStore(db))), nil, "")
-	engine := gin.New()
+	engine := newTestEngine()
 	engine.GET("/mcp-servers/:id/tools", h.Tools)
 
 	// Missing server -> 404.
@@ -134,7 +134,7 @@ func TestProviderRoutePrefixUnique(t *testing.T) {
 		t.Fatalf("create provider: %v", err)
 	}
 	h := NewProviderRouteHandler(store.NewProviderRouteStore(db), providers)
-	engine := gin.New()
+	engine := newTestEngine()
 	engine.POST("/provider-routes", h.Create)
 
 	body := `{"prefix":"gpt","provider_id":"` + pv.ID + `"}`

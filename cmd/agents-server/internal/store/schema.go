@@ -222,6 +222,15 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 		Exec(ctx); err != nil {
 		return fmt.Errorf("creating provider_routes unique prefix index: %w", err)
 	}
+	// The sidebar lists one owner's sessions by recency of change.
+	if _, err := db.NewCreateIndex().
+		Model((*Session)(nil)).
+		Index("idx_sessions_owner_updated_at").
+		Column("owner_id", "updated_at").
+		IfNotExists().
+		Exec(ctx); err != nil {
+		return fmt.Errorf("creating sessions owner index: %w", err)
+	}
 	// Accounts merge by verified email, so email is an identity — two rows
 	// sharing one would make every merge a coin flip. UNIQUE also arbitrates
 	// two first logins racing to create the same account.

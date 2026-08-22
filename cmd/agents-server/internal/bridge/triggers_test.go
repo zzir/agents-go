@@ -305,7 +305,7 @@ func TestTriggerFireRunsAnAgentTurn(t *testing.T) {
 
 	// Busy: a run in flight on the session refuses the turn, and the trigger
 	// records that.
-	seg, _, err := runner.hub.register("held-run", sess.ID, agentID, "", "", nil)
+	seg, _, err := runner.hub.register("held-run", sess.ID, "", agentID, "", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

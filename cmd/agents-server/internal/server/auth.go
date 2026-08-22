@@ -36,6 +36,10 @@ func BearerToken(c *gin.Context) string {
 // userContextKey is where TokenAuth parks the caller for CurrentUser.
 const userContextKey = "agents.user"
 
+// SetCurrentUser attaches the caller for CurrentUser — TokenAuth's half; tests
+// that mount handlers without the middleware use it to sign a caller in.
+func SetCurrentUser(c *gin.Context, u protocol.UserInfo) { c.Set(userContextKey, u) }
+
 // CurrentUser returns the authenticated caller TokenAuth attached. The bool is
 // false only on auth-exempt routes, where nobody authenticated.
 func CurrentUser(c *gin.Context) (protocol.UserInfo, bool) {
@@ -87,7 +91,7 @@ func TokenAuth(auth AuthFunc) gin.HandlerFunc {
 				protocol.NewErrorResponse(protocol.CodeUnauthorized, "unauthorized"))
 			return
 		}
-		c.Set(userContextKey, user)
+		SetCurrentUser(c, user)
 		c.Next()
 	}
 }

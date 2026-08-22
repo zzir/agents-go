@@ -16,7 +16,7 @@ func newSettingEngine(t *testing.T) (*gin.Engine, *store.SettingStore) {
 	gin.SetMode(gin.TestMode)
 	st := store.NewSettingStore(newTestDB(t))
 	h := NewSettingHandler(st)
-	e := gin.New()
+	e := newTestEngine()
 	e.GET("/settings", h.List)
 	e.GET("/settings/:key", h.Get)
 	e.PUT("/settings/:key", h.Set)

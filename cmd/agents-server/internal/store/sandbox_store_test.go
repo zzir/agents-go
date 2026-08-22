@@ -16,7 +16,7 @@ func TestSandboxDeleteIfUnreferenced(t *testing.T) {
 	sandboxes := NewSandboxStore(db)
 	createSandboxRow(t, db, "sb-1")
 
-	sess := &Session{ID: NewID(), Name: "s"}
+	sess := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "s"}
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestSandboxUpdateIdentityIfUnreferenced(t *testing.T) {
 		t.Fatalf("stale identity update: err=%v, want ErrRevisionConflict", err)
 	}
 
-	sess := &Session{ID: NewID(), Name: "s"}
+	sess := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "s"}
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatal(err)
 	}

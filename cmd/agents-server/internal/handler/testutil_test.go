@@ -35,6 +35,17 @@ func newTestDB(t *testing.T) *bun.DB {
 	return db
 }
 
+// newTestEngine is gin.New() with the local admin signed in, as the auth
+// middleware would have done — every handler reads the caller.
+func newTestEngine() *gin.Engine {
+	e := gin.New()
+	e.Use(func(c *gin.Context) {
+		server.SetCurrentUser(c, protocol.UserInfo{ID: store.LocalUserID, Email: "local@localhost", Role: store.RoleAdmin})
+		c.Next()
+	})
+	return e
+}
+
 // testAuthFunc is the tests' stand-in for authn's token mode.
 func testAuthFunc(tok string) server.AuthFunc {
 	return func(_ context.Context, bearer string) (protocol.UserInfo, error) {

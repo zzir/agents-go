@@ -75,6 +75,10 @@ type WSConn struct {
 	mu      sync.Mutex
 	out     chan any
 	outOnce sync.Once
+
+	// User is who authenticated the connection (HandleWSWithAuth); the fan-out
+	// attaches a connection only to runs of sessions this user owns.
+	User protocol.UserInfo
 }
 
 // Context returns the per-connection context, cancelled when the connection closes.
@@ -234,10 +238,12 @@ func HandleWSWithAuth(handler WSHandlerFunc, auth AuthFunc) gin.HandlerFunc {
 			conn.Close()
 			return
 		}
-		if _, err := auth(c.Request.Context(), frame.Token); err != nil {
+		user, err := auth(c.Request.Context(), frame.Token)
+		if err != nil {
 			conn.Close()
 			return
 		}
+		conn.User = user
 		// Authenticated: the heartbeat's rolling deadline replaces the auth one
 		// (the stream idles between messages by design, so a bare deadline can't
 		// stay — but no deadline at all left half-open connections pinned until

@@ -55,7 +55,7 @@ func TestSavePartialTurn_CancelledAfterItems(t *testing.T) {
 	// A session row, because that is what a session id addresses: the runner
 	// resolves the generation before it writes, and an id with no row is not a
 	// session it can write to.
-	if err := store.NewSessionStore(db).Create(context.Background(), &store.Session{ID: sid, Name: "s"}); err != nil {
+	if err := store.NewSessionStore(db).Create(context.Background(), &store.Session{OwnerID: store.LocalUserID, ID: sid, Name: "s"}); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
 
@@ -91,7 +91,7 @@ func TestSavePartialTurn_KeepsInFlightThinking(t *testing.T) {
 	// A session row, because that is what a session id addresses: the runner
 	// resolves the generation before it writes, and an id with no row is not a
 	// session it can write to.
-	if err := store.NewSessionStore(db).Create(context.Background(), &store.Session{ID: sid, Name: "s"}); err != nil {
+	if err := store.NewSessionStore(db).Create(context.Background(), &store.Session{OwnerID: store.LocalUserID, ID: sid, Name: "s"}); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
 
@@ -134,7 +134,7 @@ func TestSavePartialTurn_CancelledBeforeAnyItems(t *testing.T) {
 	// A session row, because that is what a session id addresses: the runner
 	// resolves the generation before it writes, and an id with no row is not a
 	// session it can write to.
-	if err := store.NewSessionStore(db).Create(context.Background(), &store.Session{ID: sid, Name: "s"}); err != nil {
+	if err := store.NewSessionStore(db).Create(context.Background(), &store.Session{OwnerID: store.LocalUserID, ID: sid, Name: "s"}); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
 
@@ -155,7 +155,7 @@ func TestSavePartialTurn_CancelledBeforeAnyItems(t *testing.T) {
 func TestSavePartialTurn_IgnoresASupersededGeneration(t *testing.T) {
 	runner, db := newBareRunner(t)
 	sid, rid := store.NewID(), store.NewID()
-	if err := store.NewSessionStore(db).Create(context.Background(), &store.Session{ID: sid, Name: "s"}); err != nil {
+	if err := store.NewSessionStore(db).Create(context.Background(), &store.Session{OwnerID: store.LocalUserID, ID: sid, Name: "s"}); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
 

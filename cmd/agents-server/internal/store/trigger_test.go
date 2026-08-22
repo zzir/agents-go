@@ -88,7 +88,7 @@ func seedRefs(t *testing.T, db *bun.DB) (*Workflow, *Session) {
 	if err := NewWorkflowStore(db).Create(ctx, wf); err != nil {
 		t.Fatal(err)
 	}
-	sess := &Session{ID: NewID(), Name: "s"}
+	sess := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "s"}
 	if err := NewSessionStore(db).Create(ctx, sess); err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func TestTriggersAreDeletedWithTheirWorkflowAndSession(t *testing.T) {
 	if err := workflows.Create(ctx, wf); err != nil {
 		t.Fatal(err)
 	}
-	sess := &Session{ID: NewID(), Name: "s"}
+	sess := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "s"}
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatal(err)
 	}

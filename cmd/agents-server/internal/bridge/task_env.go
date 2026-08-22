@@ -256,7 +256,7 @@ func (r *Runner) publishTaskUpdated(ctx context.Context, t *tasks.Task) {
 		except = t.RunID
 	}
 	if r.OnBroadcast != nil {
-		r.OnBroadcast(env, except)
+		r.OnBroadcast(env, except, t.ParentSessionID)
 	}
 }
 

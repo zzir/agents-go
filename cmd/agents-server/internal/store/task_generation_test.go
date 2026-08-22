@@ -16,11 +16,11 @@ func TestTaskRowsAreBoundToASessionGeneration(t *testing.T) {
 	sessions := NewSessionStore(db)
 	tasks := NewTaskStore(db)
 
-	parent := &Session{ID: "s1", Name: "chat"}
+	parent := &Session{OwnerID: LocalUserID, ID: "s1", Name: "chat"}
 	if err := sessions.Create(ctx, parent); err != nil {
 		t.Fatal(err)
 	}
-	child := &Session{ID: "c1", Name: "task", Hidden: true}
+	child := &Session{OwnerID: LocalUserID, ID: "c1", Name: "task", Hidden: true}
 	if err := sessions.Create(ctx, child); err != nil {
 		t.Fatal(err)
 	}
@@ -62,8 +62,8 @@ func TestSessionDeleteCascadesTaskRows(t *testing.T) {
 	tasks := NewTaskStore(db)
 
 	for _, s := range []*Session{
-		{ID: "s1", Name: "chat"},
-		{ID: "c1", Name: "task", Hidden: true},
+		{ID: "s1", OwnerID: LocalUserID, Name: "chat"},
+		{ID: "c1", OwnerID: LocalUserID, Name: "task", Hidden: true},
 	} {
 		if err := sessions.Create(ctx, s); err != nil {
 			t.Fatal(err)
@@ -104,15 +104,15 @@ func TestListRecentSpansSessions(t *testing.T) {
 	sessions := NewSessionStore(db)
 	tasks := NewTaskStore(db)
 
-	a := &Session{ID: NewID(), Name: "alpha"}
-	b := &Session{ID: NewID(), Name: "beta"}
+	a := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "alpha"}
+	b := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "beta"}
 	for _, s := range []*Session{a, b} {
 		if err := sessions.Create(ctx, s); err != nil {
 			t.Fatal(err)
 		}
 	}
 	mk := func(parent *Session, kind, status string) *Task {
-		child := &Session{ID: NewID(), Name: "child", Hidden: true}
+		child := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "child", Hidden: true}
 		if err := sessions.Create(ctx, child); err != nil {
 			t.Fatal(err)
 		}

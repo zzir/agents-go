@@ -62,13 +62,13 @@ func triggerRigWithSessions(t *testing.T) (*gin.Engine, *fakeFirer, *store.Workf
 		t.Fatal(err)
 	}
 	sessions := store.NewSessionStore(db)
-	sess := &store.Session{ID: store.NewID(), Name: "chat"}
+	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "chat"}
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatal(err)
 	}
 	firer := &fakeFirer{}
 	h := NewTriggerHandler(store.NewTriggerStore(db), sessions, firer)
-	engine := gin.New()
+	engine := newTestEngine()
 	api := engine.Group(server.APIPrefix)
 	Handlers{Triggers: h}.registerTriggers(api)
 	engine.POST(server.HooksPrefix+"/:id", h.Hook)
@@ -92,7 +92,7 @@ func TestTriggerCreateValidatesAndMintsTheSecretOnce(t *testing.T) {
 		b, _ := json.Marshal(map[string]any{"workflow_id": wfID, "session_id": sessID, "kind": kind, "schedule": schedule, "brief": "go", "enabled": true})
 		return string(b)
 	}
-	hidden := &store.Session{ID: store.NewID(), Name: "task", Hidden: true}
+	hidden := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "task", Hidden: true}
 	if err := sessions.Create(context.Background(), hidden); err != nil {
 		t.Fatal(err)
 	}

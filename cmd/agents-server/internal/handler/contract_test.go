@@ -21,7 +21,7 @@ func TestRestContract(t *testing.T) {
 	sh := NewSessionHandler(testSessionDeps(db, func(d *SessionDeps) { d.Sessions = sessions }))
 	ah := testAgentConfigHandler(db)
 
-	engine := gin.New()
+	engine := newTestEngine()
 	engine.POST("/sessions", sh.Create)
 	engine.PATCH("/sessions/:id", sh.Patch)
 	engine.DELETE("/sessions/:id", sh.Delete)
@@ -110,7 +110,7 @@ func TestForkCopiesSandboxBinding(t *testing.T) {
 	}
 	sh := NewSessionHandler(testSessionDeps(db, func(d *SessionDeps) { d.Sessions = sessions }))
 
-	engine := gin.New()
+	engine := newTestEngine()
 	engine.POST("/sessions", sh.Create)
 	engine.POST("/sessions/:id/fork", sh.Fork)
 
@@ -152,7 +152,7 @@ func TestPatchCannotMoveBinding(t *testing.T) {
 	}
 	sh := NewSessionHandler(testSessionDeps(db, func(d *SessionDeps) { d.Sessions = sessions }))
 
-	engine := gin.New()
+	engine := newTestEngine()
 	engine.POST("/sessions", sh.Create)
 	engine.PATCH("/sessions/:id", sh.Patch)
 

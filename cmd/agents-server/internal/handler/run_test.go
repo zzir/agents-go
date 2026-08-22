@@ -114,7 +114,7 @@ func TestCreateRunHonorsPreferWait(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := newTestDB(t)
 	sessions := store.NewSessionStore(db)
-	sess := &store.Session{ID: store.NewID(), Name: "s"}
+	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "s"}
 	if err := sessions.Create(t.Context(), sess); err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestCreateRunHonorsPreferWait(t *testing.T) {
 		Traces: store.NewTraceStore(db), Settings: settings.NewReader(store.NewSettingStore(db)), Memories: store.NewMemoryStore(db),
 	})
 	h := NewRunHandler(runner)
-	engine := gin.New()
+	engine := newTestEngine()
 	engine.POST("/sessions/:id/runs", h.Create)
 	body := `{"input":"hello","agent_config_id":"` + ac.ID + `"}`
 

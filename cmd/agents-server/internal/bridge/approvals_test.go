@@ -45,7 +45,7 @@ func TestResolveApprovalBusyKeepsPending(t *testing.T) {
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatalf("create agent config: %v", err)
 	}
-	sess := &store.Session{ID: store.NewID(), Name: "s"}
+	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "s"}
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestResolveApprovalBusyKeepsPending(t *testing.T) {
 	}
 
 	// Occupy the session with a live run so ResumeRun must fail busy.
-	if _, _, err := runner.hub.register("blocker-run", sess.ID, ac.ID, "", "", nil); err != nil {
+	if _, _, err := runner.hub.register("blocker-run", sess.ID, "", ac.ID, "", "", nil); err != nil {
 		t.Fatalf("register blocker: %v", err)
 	}
 
@@ -139,7 +139,7 @@ func TestResolveApprovalStaleSchemaDiscarded(t *testing.T) {
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatalf("create agent config: %v", err)
 	}
-	sess := &store.Session{ID: store.NewID(), Name: "s"}
+	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "s"}
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestResolveApprovalOlderDecodableSchemaNotDiscarded(t *testing.T) {
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatalf("create agent config: %v", err)
 	}
-	sess := &store.Session{ID: store.NewID(), Name: "s"}
+	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "s"}
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -261,7 +261,7 @@ func TestResolveApprovalTaskNotYetInputRequiredKeepsPending(t *testing.T) {
 		t.Fatalf("create agent config: %v", err)
 	}
 	// The task's hidden child session (pending.SessionID points here).
-	child := &store.Session{ID: store.NewID(), Name: "task"}
+	child := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "task"}
 	if err := sessions.Create(ctx, child); err != nil {
 		t.Fatalf("create child session: %v", err)
 	}

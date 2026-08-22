@@ -17,7 +17,7 @@ func TestPlanUnlockClearsThePhase(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	sessions := store.NewSessionStore(db)
-	sess := &store.Session{ID: store.NewID(), Name: "s", Planning: true}
+	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "s", Planning: true}
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestRestorePlanPhase(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	sessions := store.NewSessionStore(db)
-	sess := &store.Session{ID: store.NewID(), Name: "s"}
+	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "s"}
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestRestorePlanPhase(t *testing.T) {
 	// A failed read surfaces as an error — never a silent planning phase.
 	dbBroken := newTestDB(t)
 	sessions2 := store.NewSessionStore(dbBroken)
-	sess2 := &store.Session{ID: store.NewID(), Name: "s2"}
+	sess2 := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "s2"}
 	if err := sessions2.Create(ctx, sess2); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -164,12 +164,12 @@ func TestPlanIntentIsNotAppliedWhenTheRunIsRefused(t *testing.T) {
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatal(err)
 	}
-	sess := &store.Session{ID: store.NewID(), Name: "s"}
+	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "s"}
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatal(err)
 	}
 	// Occupy the session so the next start is refused as busy.
-	if _, _, err := runner.hub.register("holder", sess.ID, ac.ID, "", "", nil); err != nil {
+	if _, _, err := runner.hub.register("holder", sess.ID, "", ac.ID, "", "", nil); err != nil {
 		t.Fatal(err)
 	}
 

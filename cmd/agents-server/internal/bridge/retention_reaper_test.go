@@ -19,7 +19,7 @@ func TestApprovalReaperEndsThePausedTaskAndAnnouncesIt(t *testing.T) {
 	if err := store.NewSettingStore(runner.db).Set(ctx, settings.KeyApprovalTTLMinutes, "1"); err != nil {
 		t.Fatal(err)
 	}
-	parent := &store.Session{ID: store.NewID(), Name: "p"}
+	parent := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "p"}
 	if err := sessions.Create(ctx, parent); err != nil {
 		t.Fatal(err)
 	}

@@ -18,7 +18,7 @@ func TestMaybeGenerateTitleGuards(t *testing.T) {
 
 	// Already-titled session: no-op even with a user message (name guard runs
 	// first, before touching a model).
-	titled := &store.Session{ID: store.NewID(), Name: "Existing Title"}
+	titled := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "Existing Title"}
 	if err := sessions.Create(ctx, titled); err != nil {
 		t.Fatalf("create titled session: %v", err)
 	}
@@ -28,7 +28,7 @@ func TestMaybeGenerateTitleGuards(t *testing.T) {
 	}
 
 	// New Session but no user input: no model call, no rename.
-	empty := &store.Session{ID: store.NewID(), Name: "New Session"}
+	empty := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "New Session"}
 	if err := sessions.Create(ctx, empty); err != nil {
 		t.Fatalf("create empty session: %v", err)
 	}
@@ -38,7 +38,7 @@ func TestMaybeGenerateTitleGuards(t *testing.T) {
 	}
 
 	// New Session with input but no provider: still bails before any model call.
-	noProv := &store.Session{ID: store.NewID(), Name: "New Session"}
+	noProv := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "New Session"}
 	if err := sessions.Create(ctx, noProv); err != nil {
 		t.Fatalf("create no-provider session: %v", err)
 	}

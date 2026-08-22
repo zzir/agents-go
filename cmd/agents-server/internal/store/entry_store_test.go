@@ -484,7 +484,7 @@ func TestEntryWritesBumpSessionUpdatedAt(t *testing.T) {
 	db := newTestDB(t)
 	sid := NewID()
 	ss := NewSessionStore(db)
-	if err := ss.Create(ctx, &Session{ID: sid, Name: "n"}); err != nil {
+	if err := ss.Create(ctx, &Session{OwnerID: LocalUserID, ID: sid, Name: "n"}); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
 	ref, err := RefFor(ctx, db, sid)
@@ -560,7 +560,7 @@ func TestForkSessionAtomicNoOrphan(t *testing.T) {
 	db := newTestDB(t)
 	sessions := NewSessionStore(db)
 
-	src := &Session{ID: NewID(), Name: "src"}
+	src := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "src"}
 	if err := sessions.Create(ctx, src); err != nil {
 		t.Fatalf("create src: %v", err)
 	}
@@ -568,12 +568,12 @@ func TestForkSessionAtomicNoOrphan(t *testing.T) {
 	seed(t, s, userEntry(t, "hi"))
 
 	// Reuse an existing id so the session insert inside ForkSession fails.
-	taken := &Session{ID: NewID(), Name: "taken"}
+	taken := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "taken"}
 	if err := sessions.Create(ctx, taken); err != nil {
 		t.Fatalf("create taken: %v", err)
 	}
 
-	if _, err := s.ForkSession(ctx, &Session{ID: taken.ID, Name: "fork"}, refOf(t, db, src.ID), 0, false); err == nil {
+	if _, err := s.ForkSession(ctx, &Session{OwnerID: LocalUserID, ID: taken.ID, Name: "fork"}, refOf(t, db, src.ID), 0, false); err == nil {
 		t.Fatal("expected ForkSession to fail on a duplicate session id")
 	}
 	var copied []entryRow
@@ -590,7 +590,7 @@ func TestForkSessionAtomicNoOrphan(t *testing.T) {
 func TestForkSessionMissingSource(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	dst := &Session{ID: NewID(), Name: "fork"}
+	dst := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "fork"}
 
 	s := NewEntryStoreFor(db, session.Direct("nonexistent-src"))
 	if _, err := s.ForkSession(ctx, dst, refOf(t, db, "nonexistent-src"), 0, false); !errors.Is(err, ErrNotFound) {
@@ -607,7 +607,7 @@ func TestForkEntriesCopiesSnapshot(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	sessions := NewSessionStore(db)
-	src := &Session{ID: NewID(), Name: "src"}
+	src := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "src"}
 	if err := sessions.Create(ctx, src); err != nil {
 		t.Fatalf("create src: %v", err)
 	}
@@ -617,7 +617,7 @@ func TestForkEntriesCopiesSnapshot(t *testing.T) {
 	s.SetRunID("runB")
 	seed(t, s, userEntry(t, "3"))
 
-	dst := &Session{ID: NewID(), Name: "dst"}
+	dst := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "dst"}
 	runIDs, err := s.ForkSession(ctx, dst, refOf(t, db, src.ID), 0, false)
 	if err != nil {
 		t.Fatalf("fork: %v", err)
@@ -652,7 +652,7 @@ func TestForkEntriesUpToBoundary(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	sessions := NewSessionStore(db)
-	src := &Session{ID: NewID(), Name: "src"}
+	src := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "src"}
 	if err := sessions.Create(ctx, src); err != nil {
 		t.Fatalf("create src: %v", err)
 	}
@@ -666,7 +666,7 @@ func TestForkEntriesUpToBoundary(t *testing.T) {
 	}
 	cut := all[1].ID
 
-	inc := &Session{ID: NewID(), Name: "inc"}
+	inc := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "inc"}
 	if _, err := s.ForkSession(ctx, inc, refOf(t, db, src.ID), cut, false); err != nil {
 		t.Fatalf("inclusive fork: %v", err)
 	}
@@ -675,7 +675,7 @@ func TestForkEntriesUpToBoundary(t *testing.T) {
 		t.Fatalf("inclusive up-to copied %d, want 2", len(got))
 	}
 
-	exc := &Session{ID: NewID(), Name: "exc"}
+	exc := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "exc"}
 	if _, err := s.ForkSession(ctx, exc, refOf(t, db, src.ID), cut, true); err != nil {
 		t.Fatalf("exclusive fork: %v", err)
 	}
@@ -848,7 +848,7 @@ func TestForkMaterializesTheDestinationAppendPoint(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	sessions := NewSessionStore(db)
-	src := &Session{ID: NewID(), Name: "src"}
+	src := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "src"}
 	if err := sessions.Create(ctx, src); err != nil {
 		t.Fatalf("create src: %v", err)
 	}
@@ -856,7 +856,7 @@ func TestForkMaterializesTheDestinationAppendPoint(t *testing.T) {
 	s.SetRunID("r1")
 	seed(t, s, userEntry(t, "one"), userEntry(t, "two"))
 
-	dst := &Session{ID: NewID(), Name: "dst"}
+	dst := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "dst"}
 	if _, err := s.ForkSession(ctx, dst, refOf(t, db, src.ID), 0, false); err != nil {
 		t.Fatalf("fork: %v", err)
 	}
@@ -895,7 +895,7 @@ func TestForkCutOnAFoldedEntry(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	sessions := NewSessionStore(db)
-	src := &Session{ID: NewID(), Name: "src"}
+	src := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "src"}
 	if err := sessions.Create(ctx, src); err != nil {
 		t.Fatalf("create src: %v", err)
 	}
@@ -910,7 +910,7 @@ func TestForkCutOnAFoldedEntry(t *testing.T) {
 	markCompacted(t, s, stored[0].ID, stored[1].ID)
 	rows := loadRows(t, db, src.ID)
 
-	dst := &Session{ID: NewID(), Name: "dst"}
+	dst := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "dst"}
 	if _, err := s.ForkSession(ctx, dst, refOf(t, db, src.ID), rows[1].ID, false); err != nil {
 		t.Fatalf("fork: %v", err)
 	}
@@ -991,7 +991,7 @@ func TestRunHasItemsIsScopedToTheGeneration(t *testing.T) {
 	db := newTestDB(t)
 	sessions := NewSessionStore(db)
 	sid := NewID()
-	if err := sessions.Create(ctx, &Session{ID: sid, Name: "first"}); err != nil {
+	if err := sessions.Create(ctx, &Session{OwnerID: LocalUserID, ID: sid, Name: "first"}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	dead := storeFor(t, db, sid)

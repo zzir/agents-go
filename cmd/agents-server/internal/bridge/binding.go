@@ -192,7 +192,7 @@ func (r *Runner) BindSessionSandbox(ctx context.Context, sessionID, sandboxID, w
 				if env, eerr := protocol.NewEnvelope(protocol.EventSessionSandboxBound, protocol.SessionSandboxBound{
 					SessionID: sessionID, SandboxID: plan.sandboxID, WorkDir: plan.workDir,
 				}); eerr == nil {
-					r.OnBroadcast(env, "")
+					r.OnBroadcast(env, "", sessionID)
 				}
 			}
 			return true, nil
@@ -242,7 +242,7 @@ func (r *Runner) reserveRun(runID, sessionID, agentConfigID, sandboxID, workDir 
 		if err != nil {
 			return nil, nil, bindingPlan{}, false, err
 		}
-		seg, ctx, err = r.hub.register(runID, sessionID, agentConfigID, plan.sandboxID, plan.workDir, meta)
+		seg, ctx, err = r.hub.register(runID, sessionID, sess.OwnerID, agentConfigID, plan.sandboxID, plan.workDir, meta)
 		if err != nil {
 			return nil, nil, bindingPlan{}, false, err
 		}

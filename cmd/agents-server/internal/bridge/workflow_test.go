@@ -80,7 +80,7 @@ func workflowFixture(t *testing.T, modelURL string) (*Runner, *store.Session, *s
 	if err := runner.Deps.Workflows.Create(ctx, wf); err != nil {
 		t.Fatal(err)
 	}
-	sess := &store.Session{ID: store.NewID(), Name: "chat"}
+	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "chat"}
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatal(err)
 	}
@@ -620,7 +620,7 @@ func TestWorkflowCompactsBeforeAStep(t *testing.T) {
 	if err := runner.Deps.Workflows.Create(ctx, wf); err != nil {
 		t.Fatal(err)
 	}
-	sess := &store.Session{ID: store.NewID(), Name: "chat", AgentConfigID: ac.ID}
+	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "chat", AgentConfigID: ac.ID}
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatal(err)
 	}
@@ -924,7 +924,7 @@ func TestPausedStepIsAnnouncedWithoutARun(t *testing.T) {
 	runner, sess, wf := workflowFixture(t, srv.URL)
 	var mu sync.Mutex
 	var seen []protocol.TaskUpdated
-	runner.OnBroadcast = func(env *protocol.Envelope, _ string) {
+	runner.OnBroadcast = func(env *protocol.Envelope, _, _ string) {
 		if env.Type != protocol.EventTaskUpdated {
 			return
 		}
@@ -1191,7 +1191,7 @@ func TestRunWorkflowStartsAnExecutionForAPerson(t *testing.T) {
 		t.Fatalf("unknown session: err = %v, want not found", err)
 	}
 	// A task's own (hidden) session is not a conversation to report to.
-	hidden := &store.Session{ID: store.NewID(), Name: "task", Hidden: true}
+	hidden := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "task", Hidden: true}
 	if err := runner.Deps.Sessions.Create(ctx, hidden); err != nil {
 		t.Fatal(err)
 	}

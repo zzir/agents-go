@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/zzir/agents-go/agents/session"
 )
@@ -31,9 +32,22 @@ func (a *SessionRepoAdapter) Create(ctx context.Context, opts session.CreateOpti
 	if id == "" {
 		id = NewID()
 	}
+	// A served session (a task's transcript) inherits its parent's owner. One
+	// without a parent is the SDK's own creation — the repo conformance suite,
+	// tooling — and belongs to the local account; a person's conversation is
+	// created by the handler, which knows who is asking.
+	owner := LocalUserID
+	if opts.ParentID != "" {
+		parent, err := a.sessions.Get(ctx, opts.ParentID)
+		if err != nil {
+			return nil, fmt.Errorf("creating a served session: parent: %w", err)
+		}
+		owner = parent.OwnerID
+	}
 	row := &Session{
-		ID:   id,
-		Name: opts.Title,
+		ID:      id,
+		OwnerID: owner,
+		Name:    opts.Title,
 		// Hidden sessions are the task transcripts: they are excluded from the
 		// chat list by the task-session filter the list query already applies.
 		Hidden: opts.Hidden,
@@ -62,7 +76,7 @@ func (a *SessionRepoAdapter) Open(ctx context.Context, id string) (*session.Sess
 
 // List implements session.Repo.
 func (a *SessionRepoAdapter) List(ctx context.Context, opts session.ListOptions) ([]session.Metadata, error) {
-	rows, err := a.sessions.List(ctx)
+	rows, err := a.sessions.List(ctx, "")
 	if err != nil {
 		return nil, err
 	}

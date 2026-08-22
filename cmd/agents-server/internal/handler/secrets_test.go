@@ -20,7 +20,7 @@ func TestAgentConfigSecretRoundTrip(t *testing.T) {
 	st := store.NewAgentConfigStore(db)
 	h := NewAgentConfigHandler(st, store.NewMcpServerStore(db), store.NewProviderStore(db), bridge.NewGuardrailResolver(store.NewGuardrailStore(db)))
 
-	engine := gin.New()
+	engine := newTestEngine()
 	engine.POST("/agents", h.Create)
 	engine.GET("/agents/:id", h.Get)
 	engine.PUT("/agents/:id", h.Update)
@@ -114,7 +114,7 @@ func TestProviderUpdateRejectsMaskedKeyAcrossDestinationChange(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := newTestDB(t)
 	h := NewProviderHandler(store.NewProviderStore(db))
-	engine := gin.New()
+	engine := newTestEngine()
 	engine.POST("/providers", h.Create)
 	engine.PUT("/providers/:id", h.Update)
 

@@ -16,7 +16,7 @@ import (
 func TestCancelResumeNoDataRace(t *testing.T) {
 	for range 100 {
 		h := NewRunHub(context.Background())
-		seg, _, err := h.register("run1", "sess1", "", "", "", nil)
+		seg, _, err := h.register("run1", "sess1", "", "", "", "", nil)
 		if err != nil {
 			t.Fatalf("register: %v", err)
 		}
@@ -32,7 +32,7 @@ func TestCancelResumeNoDataRace(t *testing.T) {
 		}()
 		go func() {
 			defer wg.Done()
-			if seg2, _, _, rerr := h.resume("run1", "sess1", "", "", "", nil); rerr == nil {
+			if seg2, _, _, rerr := h.resume("run1", "sess1", "", "", "", "", nil); rerr == nil {
 				seg2.finalize()
 			}
 		}()

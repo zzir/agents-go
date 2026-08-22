@@ -72,7 +72,7 @@ func TestSessionDeleteCascadesPendingApprovals(t *testing.T) {
 	sessions := NewSessionStore(db)
 	approvals := NewPendingApprovalStore(db)
 
-	sess := &Session{ID: NewID(), Name: "s"}
+	sess := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "s"}
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatal(err)
 	}

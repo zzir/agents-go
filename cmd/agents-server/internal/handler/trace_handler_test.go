@@ -24,7 +24,7 @@ func TestTraceListingSummaryAndSpan(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := NewTraceHandler(traces)
-	engine := gin.New()
+	engine := newTestEngine()
 	engine.GET("/sessions/:id/traces", h.ListBySession)
 	engine.GET("/sessions/:id/traces/:span_id", h.GetBySpan)
 

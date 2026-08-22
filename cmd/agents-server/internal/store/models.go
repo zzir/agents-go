@@ -15,9 +15,14 @@ type Session struct {
 	ID string `bun:"id,pk"               json:"id"`
 	// Gen names which generation of this id owns the session's entries; see
 	// session.Ref.
-	Gen    string `bun:"gen,notnull"          json:"-"`
-	Name   string `bun:"name,notnull"         json:"name"`
-	Pinned bool   `bun:"pinned"               json:"pinned"`
+	Gen string `bun:"gen,notnull"          json:"-"`
+	// OwnerID is the user the conversation belongs to — the only ownership
+	// column: a task's hidden session inherits it from its parent, a trigger
+	// fires into a session, an approval is filed on one. Content is the
+	// owner's alone; an admin may list, stop and delete (README "Ownership").
+	OwnerID string `bun:"owner_id,notnull"     json:"owner_id"`
+	Name    string `bun:"name,notnull"         json:"name"`
+	Pinned  bool   `bun:"pinned"               json:"pinned"`
 	// Hidden marks a session that exists to serve another one — a background
 	// task's transcript. Listings leave it out by default.
 	//

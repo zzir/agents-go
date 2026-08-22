@@ -21,7 +21,7 @@ func TestOAuthRedirectPathIsMountedAndUnauthenticated(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 
-	mounted := gin.New()
+	mounted := newTestEngine()
 	Handlers{}.Register(mounted.Group(server.APIPrefix))
 	var found bool
 	for _, r := range mounted.Routes() {

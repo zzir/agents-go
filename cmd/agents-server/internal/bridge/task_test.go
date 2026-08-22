@@ -65,7 +65,7 @@ func TestSpawnTaskCreatesHiddenSessionAndRow(t *testing.T) {
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatal(err)
 	}
-	parent := &store.Session{ID: store.NewID(), Name: "chat"}
+	parent := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "chat"}
 	if err := sessions.Create(ctx, parent); err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestSpawnTaskCreatesHiddenSessionAndRow(t *testing.T) {
 	if _, err := sessions.Get(ctx, task.ChildSessionID); err != nil {
 		t.Fatalf("child session missing: %v", err)
 	}
-	list, err := sessions.List(ctx)
+	list, err := sessions.List(ctx, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func TestDrainTaskNotificationsQueuesWhileBusy(t *testing.T) {
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatal(err)
 	}
-	parent := &store.Session{ID: store.NewID(), Name: "chat", AgentConfigID: ac.ID}
+	parent := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "chat", AgentConfigID: ac.ID}
 	if err := sessions.Create(ctx, parent); err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestDrainTaskNotificationsQueuesWhileBusy(t *testing.T) {
 	}
 	// Busy parent: the debt stays pending — draining refuses while a run holds
 	// the session, and taskFinished (OnFinished) now only drains.
-	if _, _, err := runner.hub.register("busy-run", parent.ID, ac.ID, "", "", nil); err != nil {
+	if _, _, err := runner.hub.register("busy-run", parent.ID, "", ac.ID, "", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	runner.taskFinished(ctx, &sdktasks.Task{
@@ -222,7 +222,7 @@ func TestStartupSweepDeliversPendingNotifications(t *testing.T) {
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatal(err)
 	}
-	parent := &store.Session{ID: store.NewID(), Name: "chat", AgentConfigID: ac.ID}
+	parent := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "chat", AgentConfigID: ac.ID}
 	if err := sessions.Create(ctx, parent); err != nil {
 		t.Fatal(err)
 	}

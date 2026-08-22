@@ -65,7 +65,7 @@ func TestRunEventsBroadcastToAllConnections(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := newTestDB(t)
 	sessions := store.NewSessionStore(db)
-	sess := &store.Session{ID: store.NewID(), Name: "s"}
+	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "s"}
 	if err := sessions.Create(t.Context(), sess); err != nil {
 		t.Fatal(err)
 	}
@@ -75,8 +75,8 @@ func TestRunEventsBroadcastToAllConnections(t *testing.T) {
 		Traces:       store.NewTraceStore(db),
 	}
 	runner := bridge.NewRunner(t.Context(), db, deps)
-	wsh := NewWSHandler(runner)
-	engine := gin.New()
+	wsh := NewWSHandler(runner, sessions, store.NewPendingApprovalStore(db))
+	engine := newTestEngine()
 	engine.GET("/ws", server.HandleWSWithAuth(wsh.Handle, testAuthFunc(testWSToken)))
 	srv := httptest.NewServer(engine)
 	t.Cleanup(srv.Close)
@@ -154,7 +154,7 @@ func TestRunEventsBroadcastToAllConnections(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	upd, _ := json.Marshal(protocol.TaskUpdated{TaskID: "t1", ParentSessionID: sess.ID, Status: "cancelled"})
-	runner.OnBroadcast(&protocol.Envelope{Type: protocol.EventTaskUpdated, Payload: upd}, sp2.RunID)
+	runner.OnBroadcast(&protocol.Envelope{Type: protocol.EventTaskUpdated, Payload: upd}, sp2.RunID, sess.ID)
 	got := readUntil(t, late, protocol.EventTaskUpdated)
 	var tu protocol.TaskUpdated
 	_ = json.Unmarshal(got.Payload, &tu)

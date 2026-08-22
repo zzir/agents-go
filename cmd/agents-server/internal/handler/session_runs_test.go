@@ -21,7 +21,7 @@ func TestSessionRunsListsQuestions(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	sessions := store.NewSessionStore(db)
-	sess := &store.Session{ID: store.NewID(), Name: "s"}
+	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "s"}
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestSessionRunsListsQuestions(t *testing.T) {
 	}
 
 	h := NewSessionHandler(testSessionDeps(db))
-	engine := gin.New()
+	engine := newTestEngine()
 	engine.GET("/sessions/:id/runs", h.Runs)
 
 	w := doJSON(t, engine, http.MethodGet, "/sessions/"+sess.ID+"/runs", "")

@@ -22,8 +22,12 @@ func NewSessionStore(db *bun.DB) *SessionStore {
 	return &SessionStore{db: db}
 }
 
-// Create inserts sess, stamping its created_at and updated_at timestamps.
+// Create inserts sess, stamping its created_at and updated_at timestamps. An
+// owner is required: a session nobody owns would be one nobody can open.
 func (s *SessionStore) Create(ctx context.Context, sess *Session) error {
+	if sess.OwnerID == "" {
+		return errors.New("creating session: no owner")
+	}
 	if sess.Gen == "" {
 		// Assigned here rather than by each caller, so no path that creates a
 		// session can forget it and leave one sharing its entries with whatever
@@ -43,17 +47,19 @@ func (s *SessionStore) Create(ctx context.Context, sess *Session) error {
 	return nil
 }
 
-// List returns all chat sessions, most recently CHANGED first — an append, a
-// pop or a clear moves a session up exactly as a rename does (the entry store
-// stamps updated_at on every write). Hidden task-transcript sessions (owned by
-// a tasks row) are excluded — they surface through the parent session's task
-// list, not the sidebar.
-func (s *SessionStore) List(ctx context.Context) ([]Session, error) {
+// List returns one owner's chat sessions, most recently CHANGED first — an
+// append, a pop or a clear moves a session up exactly as a rename does (the
+// entry store stamps updated_at on every write). Hidden task-transcript
+// sessions (owned by a tasks row) are excluded — they surface through the
+// parent session's task list, not the sidebar. An empty ownerID lists every
+// owner's: the admin's management view, never a member's sidebar.
+func (s *SessionStore) List(ctx context.Context, ownerID string) ([]Session, error) {
 	var sessions []Session
-	if err := s.db.NewSelect().Model(&sessions).
-		Where("hidden = ?", false).
-		OrderExpr("updated_at DESC").
-		Scan(ctx); err != nil {
+	q := s.db.NewSelect().Model(&sessions).Where("hidden = ?", false)
+	if ownerID != "" {
+		q = q.Where("owner_id = ?", ownerID)
+	}
+	if err := q.OrderExpr("updated_at DESC").Scan(ctx); err != nil {
 		return nil, fmt.Errorf("listing sessions: %w", err)
 	}
 	return sessions, nil

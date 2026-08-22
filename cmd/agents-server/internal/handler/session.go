@@ -17,6 +17,7 @@ import (
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -104,17 +105,29 @@ func NewSessionHandler(d SessionDeps) *SessionHandler {
 	}
 }
 
-// List responds with all sessions.
+// List responds with the caller's sessions. `?all=true` is the admin's
+// management view — every owner's sessions, existence and recency only (the
+// same rows; content stays behind the owner checks of the per-session routes).
 //
 //	@Summary	List sessions
 //	@Tags		sessions
 //	@Produce	json
+//	@Param		all	query		bool	false	"Every owner's sessions (admin only)"
 //	@Success	200	{array}		store.Session
+//	@Failure	403	{object}	ErrorResponse	"all=true by a member"
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/sessions [get]
 func (h *SessionHandler) List(c *gin.Context) {
-	sessions, err := h.sessions.List(c.Request.Context())
+	u, _ := server.CurrentUser(c)
+	owner := u.ID
+	if c.Query("all") == "true" {
+		if !requireAdmin(c) {
+			return
+		}
+		owner = ""
+	}
+	sessions, err := h.sessions.List(c.Request.Context(), owner)
 	if err != nil {
 		internalError(c, err)
 		return
@@ -155,8 +168,10 @@ func (h *SessionHandler) Create(c *gin.Context) {
 			return
 		}
 	}
+	u, _ := server.CurrentUser(c)
 	sess := &store.Session{
 		ID:            store.NewID(),
+		OwnerID:       u.ID,
 		Name:          req.Name,
 		AgentConfigID: req.AgentConfigID,
 	}
@@ -323,6 +338,7 @@ func (h *SessionHandler) Fork(c *gin.Context) {
 
 	dst := &store.Session{
 		ID:            store.NewID(),
+		OwnerID:       src.OwnerID,
 		Name:          branchName(src.Name, label),
 		AgentConfigID: src.AgentConfigID,
 		// The sandbox binding is copied, not re-bound: a fork continues the

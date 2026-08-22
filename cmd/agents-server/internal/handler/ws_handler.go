@@ -21,21 +21,38 @@ import (
 // persisted by the runner, so approve/reject work across reconnects and
 // restarts.
 type WSHandler struct {
-	runner   *bridge.Runner
-	registry *ConnRegistry
+	runner    *bridge.Runner
+	registry  *ConnRegistry
+	sessions  *store.SessionStore
+	approvals *store.PendingApprovalStore
 }
 
 // NewWSHandler returns a WebSocket handler backed by the given runner and
-// wires the runner's attach hook to the connection registry.
+// wires the runner's attach hook to the connection registry. sessions and
+// approvals back the ownership checks every message is subject to.
 //
 // The hook is a plain field the run goroutines read, so this must run before
 // anything that can start a run — the caller orders the startup sweeps around
 // it (see cmd.run).
-func NewWSHandler(runner *bridge.Runner) *WSHandler {
-	h := &WSHandler{runner: runner, registry: NewConnRegistry(runner.Hub())}
+func NewWSHandler(runner *bridge.Runner, sessions *store.SessionStore, approvals *store.PendingApprovalStore) *WSHandler {
+	h := &WSHandler{runner: runner, registry: NewConnRegistry(runner.Hub(), sessions), sessions: sessions, approvals: approvals}
 	runner.OnRunAttach = h.registry.AttachAll
 	runner.OnBroadcast = h.registry.Broadcast
 	return h
+}
+
+// ownsRun reports whether conn's user owns the session of a live run.
+func (h *WSHandler) ownsRun(conn *server.WSConn, runID string) bool {
+	info, ok := h.runner.Hub().Info(runID)
+	return ok && info.OwnerID == conn.User.ID
+}
+
+// refuseRun tells the client a run is not theirs to touch — indistinguishable
+// from one that does not exist.
+func refuseRun(conn *server.WSConn, runID string) {
+	_ = conn.WriteJSON(&protocol.Envelope{Type: protocol.EventRunError, Payload: mustJSON(protocol.RunError{
+		RunID: runID, Code: protocol.CodeRunNotFound, Message: "run not found or expired",
+	})})
 }
 
 // wsSink returns an event sink that enqueues envelopes onto the connection's
@@ -155,6 +172,10 @@ func (h *WSHandler) Handle(conn *server.WSConn) {
 				log.Error("unmarshal run.cancel", "error", err)
 				continue
 			}
+			if !h.ownsRun(conn, msg.RunID) {
+				refuseRun(conn, msg.RunID)
+				continue
+			}
 			if msg.Mode == "graceful" {
 				h.runner.StopRunAfterTurn(msg.RunID)
 			} else {
@@ -178,6 +199,10 @@ func (h *WSHandler) Handle(conn *server.WSConn) {
 // subscribe attaches conn to runID's event stream (replaying from fromSeq),
 // tracking the subscription on subs for cleanup.
 func (h *WSHandler) subscribe(conn *server.WSConn, subs *connSubs, runID string, fromSeq int) {
+	if !h.ownsRun(conn, runID) {
+		refuseRun(conn, runID)
+		return
+	}
 	cancel, ok := h.runner.Hub().Subscribe(runID, fromSeq, wsSink(conn))
 	if !ok {
 		_ = conn.WriteJSON(&protocol.Envelope{Type: protocol.EventRunError, Payload: mustJSON(protocol.RunError{
@@ -189,10 +214,18 @@ func (h *WSHandler) subscribe(conn *server.WSConn, subs *connSubs, runID string,
 }
 
 func (h *WSHandler) handleRunCreate(conn *server.WSConn, msg protocol.RunCreate) {
+	// Only the session's owner starts runs in it; a foreign session reads as
+	// absent, the same as a missing one.
+	if sess, err := h.sessions.Get(conn.Context(), msg.SessionID); err != nil || sess.OwnerID != conn.User.ID {
+		_ = conn.WriteJSON(&protocol.Envelope{Type: protocol.EventRunError, Payload: mustJSON(protocol.RunError{
+			SessionID: msg.SessionID, Code: protocol.CodeSessionNotFound, Message: "session not found: " + msg.SessionID,
+		})})
+		return
+	}
 	// No explicit subscribe here: the runner's OnRunAttach hook attached every
-	// connection (this one included) before the first event published. The plan
-	// intent rides the request: StartRun applies it inside the reservation, so a
-	// busy refusal never mutates the session's phase.
+	// connection of the owner (this one included) before the first event
+	// published. The plan intent rides the request: StartRun applies it inside
+	// the reservation, so a busy refusal never mutates the session's phase.
 	_, err := h.runner.StartRun(msg.SessionID, msg.AgentConfigID, msg.SandboxID, msg.WorkDir, msg.Input, msg.Plan, nil)
 	if err != nil {
 		// These fire before any run.started, so no run→session mapping exists
@@ -228,6 +261,12 @@ func (h *WSHandler) handleRunCreate(conn *server.WSConn, msg protocol.RunCreate)
 // interrupted run is still attached and just keeps receiving events).
 func (h *WSHandler) resolve(conn *server.WSConn, toolCallID string, approve bool, scope bridge.ApprovalScope, reason string) {
 	log := logging.Ctx(conn.Context())
+	if !ownsApproval(conn.Context(), h.approvals, h.sessions, conn.User.ID, toolCallID) {
+		_ = conn.WriteJSON(&protocol.Envelope{Type: protocol.EventRunError, Payload: mustJSON(protocol.RunError{
+			Code: protocol.CodeApprovalFailed, Message: "approval not found",
+		})})
+		return
+	}
 	_, sessionID, err := h.runner.ResolveApproval(conn.Context(), toolCallID, approve, scope, reason, nil)
 	if err != nil {
 		log.Error("resolve approval failed", "error", err, "tool_call_id", toolCallID)
@@ -253,6 +292,10 @@ func mustJSON(v any) json.RawMessage {
 // typed something and it went nowhere, which they need to know — the client
 // turns it into a new run or shows it as undelivered.
 func (h *WSHandler) inject(conn *server.WSConn, msg protocol.RunInject) {
+	if !h.ownsRun(conn, msg.RunID) {
+		refuseRun(conn, msg.RunID)
+		return
+	}
 	delivered, err := h.runner.Hub().Inject(msg.RunID, msg.Queue, msg.Input)
 	if err != nil {
 		logging.Ctx(conn.Context()).Error("run injection", "error", err, "queue", msg.Queue)

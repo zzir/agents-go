@@ -27,8 +27,8 @@ func TestSessionDeleteRemovesOwningTask(t *testing.T) {
 	sessions := NewSessionStore(db)
 	tasks := NewTaskStore(db)
 
-	parent := &Session{ID: NewID(), Name: "parent"}
-	child := &Session{ID: NewID(), Name: "child"}
+	parent := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "parent"}
+	child := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "child"}
 	for _, s := range []*Session{parent, child} {
 		if err := sessions.Create(ctx, s); err != nil {
 			t.Fatalf("create session: %v", err)
@@ -57,7 +57,7 @@ func TestBindAgentIfEmptyKeepsTheFirstBinding(t *testing.T) {
 	db := newTestDB(t)
 	sessions := NewSessionStore(db)
 
-	sess := &Session{ID: NewID(), Name: "s"}
+	sess := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "s"}
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestBindSandboxIfEmptyKeepsTheFirstBinding(t *testing.T) {
 		createSandboxRow(t, db, id)
 	}
 
-	sess := &Session{ID: NewID(), Name: "s"}
+	sess := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "s"}
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestBindSandboxIfEmptyKeepsTheFirstBinding(t *testing.T) {
 	}
 
 	// An empty workDir is a valid binding value ("the sandbox's own default").
-	other := &Session{ID: NewID(), Name: "o"}
+	other := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "o"}
 	if err := sessions.Create(ctx, other); err != nil {
 		t.Fatalf("create other: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestCountBindingRefs(t *testing.T) {
 	createSandboxRow(t, db, "sb-2")
 
 	mk := func(sandboxID, workDir string) *Session {
-		s := &Session{ID: NewID(), Name: "s"}
+		s := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "s"}
 		if err := sessions.Create(ctx, s); err != nil {
 			t.Fatalf("create: %v", err)
 		}
@@ -184,7 +184,7 @@ func TestBindSandboxRefusesVanishedTarget(t *testing.T) {
 	db := newTestDB(t)
 	sessions := NewSessionStore(db)
 
-	sess := &Session{ID: NewID(), Name: "s"}
+	sess := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "s"}
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -206,7 +206,7 @@ func TestBindSandboxIfEmptyRace(t *testing.T) {
 	createSandboxRow(t, db, "sb-a")
 	createSandboxRow(t, db, "sb-b")
 
-	sess := &Session{ID: NewID(), Name: "s"}
+	sess := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "s"}
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -240,8 +240,8 @@ func TestSessionDeleteParentCascadesTask(t *testing.T) {
 	sessions := NewSessionStore(db)
 	tasks := NewTaskStore(db)
 
-	parent := &Session{ID: NewID(), Name: "parent"}
-	child := &Session{ID: NewID(), Name: "child"}
+	parent := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "parent"}
+	child := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "child"}
 	for _, s := range []*Session{parent, child} {
 		if err := sessions.Create(ctx, s); err != nil {
 			t.Fatalf("create session: %v", err)
@@ -280,7 +280,7 @@ func TestBindSandboxRefusesAStaleRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sess := &Session{ID: NewID(), Name: "s"}
+	sess := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "s"}
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatal(err)
 	}
@@ -302,7 +302,7 @@ func TestNameIfDefaultKeepsAPersonsRename(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	sessions := NewSessionStore(db)
-	sess := &Session{ID: NewID(), Name: DefaultSessionName}
+	sess := &Session{OwnerID: LocalUserID, ID: NewID(), Name: DefaultSessionName}
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatal(err)
 	}
@@ -336,13 +336,13 @@ func TestSessionDeleteCascadesTheWholeTreeOverLiveEdges(t *testing.T) {
 	sessions := NewSessionStore(db)
 	tasks := NewTaskStore(db)
 
-	root := &Session{ID: NewID(), Name: "root"}
-	child := &Session{ID: NewID(), Name: "child", Hidden: true}
-	grandchild := &Session{ID: NewID(), Name: "grandchild", Hidden: true}
+	root := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "root"}
+	child := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "child", Hidden: true}
+	grandchild := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "grandchild", Hidden: true}
 	// A session that shares an id with the root's FORMER incarnation's child:
 	// the stale row below points at it, but was bound to a generation of the
 	// root that no longer exists.
-	bystander := &Session{ID: NewID(), Name: "bystander"}
+	bystander := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "bystander"}
 	for _, s := range []*Session{root, child, grandchild, bystander} {
 		if err := sessions.Create(ctx, s); err != nil {
 			t.Fatalf("create session: %v", err)

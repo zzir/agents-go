@@ -87,7 +87,7 @@ func TestStartRunBindsSessionSandbox(t *testing.T) {
 	runner, _ := newBareRunner(t)
 	ctx := context.Background()
 
-	sess := &store.Session{ID: store.NewID(), Name: "s"}
+	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "s"}
 	if err := runner.Deps.Sessions.Create(ctx, sess); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestStartRunWithoutSandboxLeavesSessionBindable(t *testing.T) {
 	runner, _ := newBareRunner(t)
 	ctx := context.Background()
 
-	sess := &store.Session{ID: store.NewID(), Name: "s"}
+	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "s"}
 	if err := runner.Deps.Sessions.Create(ctx, sess); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -152,14 +152,14 @@ func TestRefusedRunDoesNotBind(t *testing.T) {
 	runner, _ := newBareRunner(t)
 	ctx := context.Background()
 
-	sess := &store.Session{ID: store.NewID(), Name: "s"}
+	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "s"}
 	if err := runner.Deps.Sessions.Create(ctx, sess); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
 	createSandboxConfig(t, runner, "sb-1")
 
 	// Occupy the session's run slot directly, standing in for a live run.
-	seg, _, err := runner.hub.register("run-live", sess.ID, "", "", "", nil)
+	seg, _, err := runner.hub.register("run-live", sess.ID, "", "", "", "", nil)
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestInvalidBindingRefusedUnbound(t *testing.T) {
 	runner, _ := newBareRunner(t)
 	ctx := context.Background()
 
-	sess := &store.Session{ID: store.NewID(), Name: "s"}
+	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "s"}
 	if err := runner.Deps.Sessions.Create(ctx, sess); err != nil {
 		t.Fatalf("create session: %v", err)
 	}

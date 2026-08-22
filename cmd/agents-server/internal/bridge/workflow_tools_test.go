@@ -141,7 +141,7 @@ func workflowToolsFixture(t *testing.T, modelURL string) (runner *Runner, sess *
 			t.Fatal(err)
 		}
 	}
-	sess = &store.Session{ID: store.NewID(), Name: "chat"}
+	sess = &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "chat"}
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +236,7 @@ func TestWorkflowAuthoringToolsAreOptInAndChatOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	other := &store.Session{ID: store.NewID(), Name: "chat 2"}
+	other := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "chat 2"}
 	if err := runner.Deps.Sessions.Create(ctx, other); err != nil {
 		t.Fatal(err)
 	}
@@ -468,7 +468,7 @@ func TestSaveWorkflowIsApprovedThenWritten(t *testing.T) {
 	}
 
 	// The invalid save: no pause, the refusal goes straight back to the model.
-	other := &store.Session{ID: store.NewID(), Name: "chat 2"}
+	other := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "chat 2"}
 	if err := runner.Deps.Sessions.Create(ctx, other); err != nil {
 		t.Fatal(err)
 	}

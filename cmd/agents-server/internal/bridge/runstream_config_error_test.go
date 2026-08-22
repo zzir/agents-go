@@ -24,7 +24,7 @@ func TestRunStreamed_NoAPIKeyPersistsPromptAndError(t *testing.T) {
 	// fallback either), so runStreamed hits the "no API key" branch.
 	cfgID := mkAgent(t, store.NewAgentConfigStore(db), "keyless")
 
-	sess := &store.Session{ID: store.NewID(), Name: "t", AgentConfigID: cfgID}
+	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "t", AgentConfigID: cfgID}
 	if err := runner.Deps.Sessions.Create(ctx, sess); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestRunStreamed_ClassifiesTheSessionLookup(t *testing.T) {
 
 	t.Run("unreachable store", func(t *testing.T) {
 		runner, db := newBareRunner(t)
-		sess := &store.Session{ID: store.NewID(), Name: "t"}
+		sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "t"}
 		if err := runner.Deps.Sessions.Create(context.Background(), sess); err != nil {
 			t.Fatalf("create session: %v", err)
 		}
@@ -86,7 +86,7 @@ func TestRunStreamed_ClassifiesTheSessionLookup(t *testing.T) {
 	// under a cancelled marker, not a red config_error the user never caused.
 	t.Run("cancelled run", func(t *testing.T) {
 		runner, db := newBareRunner(t)
-		sess := &store.Session{ID: store.NewID(), Name: "t"}
+		sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "t"}
 		if err := runner.Deps.Sessions.Create(context.Background(), sess); err != nil {
 			t.Fatalf("create session: %v", err)
 		}

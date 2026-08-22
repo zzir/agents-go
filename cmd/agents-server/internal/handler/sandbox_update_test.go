@@ -25,7 +25,7 @@ func TestSandboxUpdate_UIRenameIsNotAContentChange(t *testing.T) {
 	}
 
 	h := testSandboxHandler(sandboxes, bridge.NewSandboxManager(t.TempDir()), t.TempDir())
-	engine := gin.New()
+	engine := newTestEngine()
 	engine.PUT("/sandboxes/:id", h.Update)
 
 	// The exact shape the UI sends for a rename: full field set, explicit
@@ -77,7 +77,7 @@ func TestSandboxUpdate_StaleClientRevisionConflicts(t *testing.T) {
 	}
 
 	h := testSandboxHandler(sandboxes, bridge.NewSandboxManager(t.TempDir()), t.TempDir())
-	engine := gin.New()
+	engine := newTestEngine()
 	engine.PUT("/sandboxes/:id", h.Update)
 
 	body := func(name string, revision string) string {

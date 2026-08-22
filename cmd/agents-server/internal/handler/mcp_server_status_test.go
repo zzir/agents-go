@@ -50,7 +50,7 @@ func TestMcpServerConnectRejectsDisabled(t *testing.T) {
 	db := newTestDB(t)
 	mcpStore := store.NewMcpServerStore(db)
 	h := NewMcpServerHandler(mcpStore, bridge.NewMcpManager(t.Context(), settings.NewReader(store.NewSettingStore(db))), nil, "")
-	engine := gin.New()
+	engine := newTestEngine()
 	engine.POST("/mcp-servers/:id/connect", h.Connect)
 
 	cfg := &store.McpServerConfig{ID: store.NewID(), Name: "fs", TransportType: "stdio", Config: json.RawMessage(`{"command":"true"}`), Enabled: false}
@@ -70,7 +70,7 @@ func TestMcpServerUpdateDisableReportsDisabled(t *testing.T) {
 	db := newTestDB(t)
 	mcpStore := store.NewMcpServerStore(db)
 	h := NewMcpServerHandler(mcpStore, bridge.NewMcpManager(t.Context(), settings.NewReader(store.NewSettingStore(db))), nil, "")
-	engine := gin.New()
+	engine := newTestEngine()
 	engine.PUT("/mcp-servers/:id", h.Update)
 
 	cfg := &store.McpServerConfig{ID: store.NewID(), Name: "fs", TransportType: "stdio", Config: json.RawMessage(`{"command":"true"}`), Enabled: true}

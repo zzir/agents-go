@@ -68,7 +68,7 @@ func TestSkillRepoDeleteValid(t *testing.T) {
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	engine := gin.New()
+	engine := newTestEngine()
 	engine.DELETE("/skill-repos/:name", h.Delete)
 	req := httptest.NewRequest(http.MethodDelete, "/skill-repos/myrepo", nil)
 	w := httptest.NewRecorder()
@@ -90,7 +90,7 @@ func TestSkillRepoRootDeleteGuardRouted(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(skillsDir, "keep"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	engine := gin.New()
+	engine := newTestEngine()
 	engine.DELETE("/skill-repos/:name", h.Delete)
 
 	for _, target := range []string{"/skill-repos/%2E", "/skill-repos/."} {

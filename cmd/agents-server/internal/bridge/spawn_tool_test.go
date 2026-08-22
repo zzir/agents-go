@@ -118,7 +118,7 @@ func TestModelStartsAWorkflow(t *testing.T) {
 	if err := runner.Deps.Workflows.Create(ctx, wf); err != nil {
 		t.Fatal(err)
 	}
-	sess := &store.Session{ID: store.NewID(), Name: "chat"}
+	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "chat"}
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatal(err)
 	}
@@ -302,7 +302,7 @@ func TestWorkflowStepIsBuiltAsABackgroundRun(t *testing.T) {
 	if err := runner.Deps.Workflows.Create(ctx, wf); err != nil {
 		t.Fatal(err)
 	}
-	sess := &store.Session{ID: store.NewID(), Name: "chat"}
+	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "chat"}
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatal(err)
 	}

@@ -53,7 +53,7 @@ func TestCompactSessionFoldsOutsideARun(t *testing.T) {
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatal(err)
 	}
-	sess := &store.Session{ID: store.NewID(), Name: "chat", AgentConfigID: ac.ID}
+	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "chat", AgentConfigID: ac.ID}
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestCompactSessionFoldsOutsideARun(t *testing.T) {
 	}
 
 	// A session the kept window already covers: a polite no-op, not an error.
-	short := &store.Session{ID: store.NewID(), Name: "short", AgentConfigID: ac.ID}
+	short := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "short", AgentConfigID: ac.ID}
 	if err := sessions.Create(ctx, short); err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestCompactSessionGuards(t *testing.T) {
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatal(err)
 	}
-	sess := &store.Session{ID: store.NewID(), Name: "chat", AgentConfigID: ac.ID}
+	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "chat", AgentConfigID: ac.ID}
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func TestCompactSessionGuards(t *testing.T) {
 	}
 
 	// A live run on the session wins over the pass.
-	seg, _, err := runner.hub.register("run_live", sess.ID, ac.ID, "", "", nil)
+	seg, _, err := runner.hub.register("run_live", sess.ID, "", ac.ID, "", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

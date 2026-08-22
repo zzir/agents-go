@@ -21,7 +21,7 @@ func TestGuardrailConfigObjectRoundTrip(t *testing.T) {
 	db := newTestDB(t)
 	grStore := store.NewGuardrailStore(db)
 	h := NewGuardrailHandler(grStore, bridge.NewGuardrailResolver(grStore))
-	engine := gin.New()
+	engine := newTestEngine()
 	engine.POST("/guardrails", h.Create)
 	engine.GET("/guardrails", h.List)
 	engine.PUT("/guardrails/:id", h.Update)

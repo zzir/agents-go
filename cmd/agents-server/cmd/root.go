@@ -211,7 +211,7 @@ func run(_ *cobra.Command, _ []string) error {
 	runHandler := handler.NewRunHandler(runner)
 	approvalHandler := handler.NewApprovalHandler(pendingApprovalStore, runner)
 	taskHandler := handler.NewTaskHandler(taskStore, runner)
-	wsHandler := handler.NewWSHandler(runner)
+	wsHandler := handler.NewWSHandler(runner, sessionStore, pendingApprovalStore)
 
 	// The restart reconciliation, in two halves that have opposite ordering
 	// needs.

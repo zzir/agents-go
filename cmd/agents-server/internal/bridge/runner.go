@@ -39,13 +39,14 @@ type Runner struct {
 	// Written once during bootstrap, read from run goroutines, unsynchronized:
 	// nothing that can start a run may launch before it is wired (see cmd.run).
 	OnRunAttach func(runID string)
-	// OnBroadcast, when set, delivers an event to every connection NOT
-	// attached to exceptRunID's stream — for a fact a run stream cannot carry
-	// to everyone: a task paused before its step has a run id but no run
-	// (README invariant 37), and a run interrupted on an approval is not one a
-	// connection joining afterwards attaches to. Empty exceptRunID means every
-	// connection. Same wiring rule as OnRunAttach.
-	OnBroadcast func(env *protocol.Envelope, exceptRunID string)
+	// OnBroadcast, when set, delivers an event about sessionID to every
+	// connection of its owner NOT attached to exceptRunID's stream — for a fact
+	// a run stream cannot carry to everyone: a task paused before its step has
+	// a run id but no run (README invariant 37), and a run interrupted on an
+	// approval is not one a connection joining afterwards attaches to. Empty
+	// exceptRunID means every connection of the owner. Same wiring rule as
+	// OnRunAttach.
+	OnBroadcast func(env *protocol.Envelope, exceptRunID, sessionID string)
 }
 
 // NewRunner creates a Runner backed by the given database and agent
@@ -476,7 +477,11 @@ func (r *Runner) ResumeRun(runID string, state *agents.RunState, sessionID, agen
 	if err != nil {
 		return "", err
 	}
-	seg, ctx, reopened, err := r.hub.resume(runID, sessionID, agentConfigID, sandboxID, workDir, meta)
+	sess, err := r.Deps.Sessions.Get(r.hub.rootCtx, sessionID)
+	if err != nil {
+		return "", err
+	}
+	seg, ctx, reopened, err := r.hub.resume(runID, sessionID, sess.OwnerID, agentConfigID, sandboxID, workDir, meta)
 	if err != nil {
 		return "", err
 	}

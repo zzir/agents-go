@@ -12,7 +12,7 @@ import (
 // in force rather than the raw 0 the flag defaults to.
 func TestServerInfoReportsTheEffectiveConfig(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	e := gin.New()
+	e := newTestEngine()
 	e.GET("/server", ServerInfoHandler(ServerInfo{
 		Version: "1.2.3", Workspace: "/srv/work", AllowLocalSandbox: false, MaxTasks: 6,
 	}))

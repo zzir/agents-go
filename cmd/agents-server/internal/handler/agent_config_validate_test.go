@@ -21,7 +21,7 @@ func newAgentEngine(t *testing.T) (*gin.Engine, *store.McpServerStore) {
 	mcpStore := store.NewMcpServerStore(db)
 	h := NewAgentConfigHandler(store.NewAgentConfigStore(db), mcpStore, store.NewProviderStore(db), bridge.NewGuardrailResolver(store.NewGuardrailStore(db)))
 
-	engine := gin.New()
+	engine := newTestEngine()
 	engine.POST("/agents", h.Create)
 	engine.PUT("/agents/:id", h.Update)
 	return engine, mcpStore
