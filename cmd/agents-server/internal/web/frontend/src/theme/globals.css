@@ -403,6 +403,11 @@ a:hover {
     margin-bottom: var(--base-size-16);
 }
 
+/* A settings form reads at a column's width; lists and tables take the room. */
+.settings-form {
+    max-width: 768px;
+}
+
 .settings-body[data-component="Dialog.Body"] {
     display: flex;
     flex-direction: column;

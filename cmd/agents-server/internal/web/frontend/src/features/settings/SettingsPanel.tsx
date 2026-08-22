@@ -103,7 +103,7 @@ export function SettingsPanel() {
       </PageHeader>
       {/* A member sees the values and can change none: one fieldset over
           the rows disables every input and the Save each would show. */}
-      <fieldset disabled={readOnly} className="readonly-form">
+      <fieldset disabled={readOnly} className="readonly-form settings-form">
       {groups.map(g => (
         <div key={g.name} className="form-group">
           <PageHeader>

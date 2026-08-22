@@ -33,7 +33,9 @@ export function CrudPanel({ title, as, description, onAdd, onCancel, form, isEmp
         {form && readOnly && onCancel && <PageHeader.Actions><Button onClick={onCancel} size="small">Back</Button></PageHeader.Actions>}
         {description && <PageHeader.Description>{description}</PageHeader.Description>}
       </PageHeader>
-      {form && (readOnly ? <fieldset disabled className="readonly-form">{form}</fieldset> : form)}
+      {form && (readOnly
+        ? <fieldset disabled className="readonly-form settings-form">{form}</fieldset>
+        : <div className="settings-form">{form}</div>)}
       {!form && (
         <div className="Box">
           {children}
