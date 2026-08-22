@@ -31,8 +31,9 @@ type OAuthProvider interface {
 // Login-flow windows. Pending state is process-local by design (single
 // instance); multi-instance moves it to the database.
 const (
-	// loginTTL bounds an authorize round-trip: state older than this is gone.
-	loginTTL = 10 * time.Minute
+	// LoginTTL bounds an authorize round-trip: state older than this is gone,
+	// and the browser's login cookie lives exactly as long.
+	LoginTTL = 10 * time.Minute
 	// exchangeTTL bounds the one-time code's life between the callback
 	// redirect and the SPA's exchange call — one page load.
 	exchangeTTL = time.Minute
@@ -42,7 +43,11 @@ const (
 type pendingLogin struct {
 	provider string
 	verifier string
-	created  time.Time
+	// nonce is the browser's half: set in a cookie at start, it ties the
+	// callback to the tab that began the login (a state alone is a secret the
+	// attacker's own login hands them).
+	nonce   string
+	created time.Time
 }
 
 // pendingExchange is one minted session waiting for the SPA to collect it,

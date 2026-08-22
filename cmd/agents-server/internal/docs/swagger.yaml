@@ -2505,6 +2505,11 @@ paths:
         name: code
         schema:
           type: string
+      - description: The provider's error (a cancelled consent)
+        in: query
+        name: error
+        schema:
+          type: string
       responses:
         "302":
           description: redirect into the SPA

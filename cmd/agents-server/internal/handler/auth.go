@@ -317,11 +317,19 @@ func (h *AuthHandler) Me(c *gin.Context) {
 //	@Failure	404			{object}	ErrorResponse	"unknown provider (or token mode)"
 //	@Router		/auth/oauth/{provider}/start [get]
 func (h *AuthHandler) OAuthStart(c *gin.Context) {
-	authURL, err := h.svc.Begin(c.Param("provider"))
+	authURL, nonce, err := h.svc.Begin(c.Param("provider"))
 	if err != nil {
 		notFound(c)
 		return
 	}
+	// The browser's half of the login: HttpOnly so no script reads it, Lax
+	// so the provider's top-level redirect back still carries it, and as
+	// short-lived as the pending login itself.
+	name, secure := h.svc.LoginCookie()
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name: name, Value: nonce, Path: "/", MaxAge: int(authn.LoginTTL / time.Second),
+		HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode,
+	})
 	c.Redirect(http.StatusFound, authURL)
 }
 
@@ -334,10 +342,14 @@ func (h *AuthHandler) OAuthStart(c *gin.Context) {
 //	@Param		provider	path	string	true	"Provider name"
 //	@Param		state		query	string	true	"Authorize round-trip state"
 //	@Param		code		query	string	false	"Authorization code"
+//	@Param		error		query	string	false	"The provider's error (a cancelled consent)"
 //	@Success	302			"redirect into the SPA"
 //	@Router		/auth/oauth/{provider}/callback [get]
 func (h *AuthHandler) OAuthCallback(c *gin.Context) {
-	redirect := h.svc.Complete(c.Request.Context(), c.Param("provider"), c.Query("state"), c.Query("code"))
+	name, secure := h.svc.LoginCookie()
+	nonce, _ := c.Cookie(name)
+	http.SetCookie(c.Writer, &http.Cookie{Name: name, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode})
+	redirect := h.svc.Complete(c.Request.Context(), c.Param("provider"), c.Query("state"), c.Query("code"), nonce, c.Query("error"))
 	c.Redirect(http.StatusFound, redirect)
 }
 

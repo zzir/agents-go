@@ -802,6 +802,8 @@ export interface paths {
                     state: string;
                     /** @description Authorization code */
                     code?: string;
+                    /** @description The provider's error (a cancelled consent) */
+                    error?: string;
                 };
                 header?: never;
                 path: {

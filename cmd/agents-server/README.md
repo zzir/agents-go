@@ -135,8 +135,8 @@ The auth surface under `/api/v1/auth`:
 | GET    | `/auth/config`                   | none | How to authenticate: `{mode, providers?}` — the login page renders from it |
 | POST   | `/auth/login`                    | none | Validate the static token (token mode; 400 in OAuth mode) |
 | GET    | `/auth/check`                    | yes  | The SPA's stored-credential probe: `{ok}` for a valid Bearer, `401` otherwise |
-| GET    | `/auth/oauth/:provider/start`    | none | 302 into the provider's authorize flow (PKCE)            |
-| GET    | `/auth/oauth/:provider/callback` | none | Provider redirect target; 302 into the SPA with `#auth_code=<one-time>` on success, `#auth_error=<tag>` on failure |
+| GET    | `/auth/oauth/:provider/start`    | none | 302 into the provider's authorize flow (PKCE); sets the login cookie |
+| GET    | `/auth/oauth/:provider/callback` | none | Provider redirect target; 302 into the SPA with `#auth_code=<one-time>` on success, `#auth_error=<tag>` on failure (`state_mismatch`, `cancelled`, `exchange_failed`, `not_allowed`, `login_failed`) |
 | POST   | `/auth/exchange`                 | none | Trade the one-time code for `{token, user}` — the only response the session token's plaintext rides |
 | GET    | `/auth/me`                       | yes  | The authenticated caller: `{id, email, name?, role, avatar_url?}` |
 | POST   | `/auth/logout`                   | yes  | Revoke the presented session token (no-op in token mode) |
@@ -173,6 +173,13 @@ and database-backed credentials:
   browser loads it; the CSP's `img-src` admits each configured provider's
   picture hosts (Google: `https://*.googleusercontent.com`) and nothing else.
   No picture shows initials.
+- **A login belongs to the browser that started it.** `start` sets one
+  HttpOnly cookie (`__Host-agents_oauth` on https, `SameSite=Lax`, ten
+  minutes) holding a nonce the pending login remembers; the callback must
+  present it, or the `state` — valid as it may be — is a mismatch. Without
+  that, an insider's own callback URL opened in a colleague's browser would
+  sign the colleague into the insider's account. The cookie is the login
+  flow's alone: API requests authenticate by Bearer, never by cookie.
 - **Sessions are rows, not JWTs**: a 30-day sliding expiry, revoked by
   `/auth/logout`, cleaned hourly. The callback hands the SPA a one-time code
   in the URL fragment; the session token itself never appears in a URL.

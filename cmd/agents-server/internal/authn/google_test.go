@@ -100,7 +100,7 @@ func TestOAuthLoginFlow(t *testing.T) {
 		AllowedDomains: []string{"Example.com"},
 	})
 
-	authURL, err := svc.Begin("google")
+	authURL, _, err := svc.Begin("google")
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
@@ -116,7 +116,16 @@ func TestOAuthLoginFlow(t *testing.T) {
 		t.Fatalf("redirect_uri = %q", got)
 	}
 
-	redirect := svc.Complete(ctx, "google", state, "code-1")
+	// The callback must come from the browser that started the login: a
+	// missing or foreign nonce is a mismatch even with a valid state, and a
+	// mismatch spends the state.
+	if got := svc.Complete(ctx, "google", state, "code-1", "someone-elses", ""); !strings.Contains(got, "auth_error=state_mismatch") {
+		t.Fatalf("callback with a foreign nonce = %q, want state_mismatch", got)
+	}
+	authURL, nonce, _ := svc.Begin("google")
+	parsed, _ = url.Parse(authURL)
+	state = parsed.Query().Get("state")
+	redirect := svc.Complete(ctx, "google", state, "code-1", nonce, "")
 	code, ok := strings.CutPrefix(redirect, "http://app.local/#auth_code=")
 	if !ok {
 		t.Fatalf("callback redirect = %q", redirect)
@@ -133,7 +142,7 @@ func TestOAuthLoginFlow(t *testing.T) {
 	}
 
 	// Both halves are single-use: the state and the one-time code.
-	if again := svc.Complete(ctx, "google", state, "code-1"); !strings.Contains(again, "auth_error=state_mismatch") {
+	if again := svc.Complete(ctx, "google", state, "code-1", nonce, ""); !strings.Contains(again, "auth_error=state_mismatch") {
 		t.Fatalf("state replay = %q, want state_mismatch", again)
 	}
 	if _, _, ok := svc.Exchange(code); ok {
@@ -161,9 +170,9 @@ func TestOAuthLoginRefusesUnlistedEmail(t *testing.T) {
 		AllowedDomains: []string{"another.com"},
 	})
 
-	authURL, _ := svc.Begin("google")
+	authURL, nonce, _ := svc.Begin("google")
 	parsed, _ := url.Parse(authURL)
-	redirect := svc.Complete(ctx, "google", parsed.Query().Get("state"), "code-1")
+	redirect := svc.Complete(ctx, "google", parsed.Query().Get("state"), "code-1", nonce, "")
 	if !strings.Contains(redirect, "auth_error=not_allowed") {
 		t.Fatalf("redirect = %q, want not_allowed", redirect)
 	}
@@ -171,5 +180,34 @@ func TestOAuthLoginRefusesUnlistedEmail(t *testing.T) {
 		// local user absent in this db; the refused login must not have
 		// created any account either.
 		t.Fatal("unexpected local user")
+	}
+}
+
+// A consent the person cancelled at the provider is reported as such, not as
+// a mismatched state — and it still spends the state.
+func TestOAuthLoginCancelledAtTheProvider(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.NewSQLiteDB("file:" + store.NewID() + "?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatalf("db: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := store.CreateSchema(ctx, db); err != nil {
+		t.Fatalf("schema: %v", err)
+	}
+	svc := NewOAuth(OAuthConfig{
+		Users: store.NewUserStore(db), Tokens: store.NewAuthTokenStore(db),
+		BaseURL:        "http://app.local",
+		Providers:      []OAuthProvider{testGoogle(fakeGoogleIDP(t, true))},
+		AllowedDomains: []string{"example.com"},
+	})
+	authURL, nonce, _ := svc.Begin("google")
+	parsed, _ := url.Parse(authURL)
+	state := parsed.Query().Get("state")
+	if got := svc.Complete(ctx, "google", state, "", nonce, "access_denied"); !strings.Contains(got, "auth_error=cancelled") {
+		t.Fatalf("cancelled consent = %q, want cancelled", got)
+	}
+	if got := svc.Complete(ctx, "google", state, "code-1", nonce, ""); !strings.Contains(got, "auth_error=state_mismatch") {
+		t.Fatalf("state after a cancel = %q, want spent", got)
 	}
 }

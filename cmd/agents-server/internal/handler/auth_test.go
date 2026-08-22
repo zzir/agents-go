@@ -147,16 +147,52 @@ func TestOAuthFlowOverHTTP(t *testing.T) {
 	if err != nil || loc.Query().Get("state") == "" {
 		t.Fatalf("start location = %q (%v)", rec.Header().Get("Location"), err)
 	}
+	// The browser's half of the login rides a cookie: HttpOnly, Lax (the
+	// provider's redirect back is a top-level navigation), not Secure on a
+	// plain-http base URL.
+	var loginCookie *http.Cookie
+	for _, ck := range rec.Result().Cookies() {
+		if ck.Name == "agents_oauth" {
+			loginCookie = ck
+		}
+	}
+	if loginCookie == nil || loginCookie.Value == "" || !loginCookie.HttpOnly || loginCookie.SameSite != http.SameSiteLaxMode || loginCookie.Path != "/" {
+		t.Fatalf("start must set the login cookie (HttpOnly, Lax, path /): %+v", loginCookie)
+	}
+
+	// A callback from a browser that did not start the login — no cookie —
+	// is a mismatch, and spends the state: the login CSRF that would land a
+	// victim inside the attacker's account.
+	callback := "/api/v1/auth/oauth/fake/callback?state=" + loc.Query().Get("state") + "&code=c1"
+	rec = httptest.NewRecorder()
+	engine.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, callback, nil))
+	if rec.Code != http.StatusFound || !strings.Contains(rec.Header().Get("Location"), "auth_error=state_mismatch") {
+		t.Fatalf("callback without the cookie = %d %q, want state_mismatch", rec.Code, rec.Header().Get("Location"))
+	}
 
 	rec = httptest.NewRecorder()
-	engine.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
-		"/api/v1/auth/oauth/fake/callback?state="+loc.Query().Get("state")+"&code=c1", nil))
+	engine.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/auth/oauth/fake/start", nil))
+	loc, _ = url.Parse(rec.Header().Get("Location"))
+	for _, ck := range rec.Result().Cookies() {
+		if ck.Name == "agents_oauth" {
+			loginCookie = ck
+		}
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/oauth/fake/callback?state="+loc.Query().Get("state")+"&code=c1", nil)
+	req.AddCookie(loginCookie)
+	rec = httptest.NewRecorder()
+	engine.ServeHTTP(rec, req)
 	if rec.Code != http.StatusFound {
 		t.Fatalf("callback = %d, want 302", rec.Code)
 	}
 	code, ok := strings.CutPrefix(rec.Header().Get("Location"), "http://app.local/#auth_code=")
 	if !ok {
 		t.Fatalf("callback location = %q", rec.Header().Get("Location"))
+	}
+	for _, ck := range rec.Result().Cookies() {
+		if ck.Name == "agents_oauth" && ck.MaxAge >= 0 {
+			t.Fatalf("the callback must clear the login cookie, got %+v", ck)
+		}
 	}
 
 	rec = doJSON(t, engine, http.MethodPost, "/api/v1/auth/exchange", `{"code":"`+code+`"}`)
@@ -173,7 +209,7 @@ func TestOAuthFlowOverHTTP(t *testing.T) {
 		t.Fatalf("exchange body %s (%v)", rec.Body.String(), err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
 	req.Header.Set("Authorization", "Bearer "+session.Token)
 	rec = httptest.NewRecorder()
 	engine.ServeHTTP(rec, req)

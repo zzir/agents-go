@@ -49,7 +49,7 @@ type Service struct {
 	bootstrapAdmin string
 	log            *slog.Logger
 
-	// In-flight login state, process-local (see loginTTL).
+	// In-flight login state, process-local (see LoginTTL).
 	mu       sync.Mutex
 	logins   map[string]pendingLogin    // by state
 	sessions map[string]pendingExchange // by one-time exchange code
@@ -181,27 +181,41 @@ func (s *Service) redirectURI(provider string) string {
 	return s.baseURL + "/api/v1/auth/oauth/" + provider + "/callback"
 }
 
-// Begin starts one login: mints state + PKCE verifier, parks them, and returns
-// the provider's authorize URL to redirect the browser to.
-func (s *Service) Begin(provider string) (string, error) {
+// LoginCookie names the cookie that carries Begin's nonce and whether it is
+// Secure: the __Host- prefix (https only) pins it to this origin and path /,
+// so no sibling host or subpath can plant one.
+func (s *Service) LoginCookie() (name string, secure bool) {
+	if strings.HasPrefix(s.baseURL, "https://") {
+		return "__Host-agents_oauth", true
+	}
+	return "agents_oauth", false
+}
+
+// Begin starts one login: mints state + PKCE verifier + a browser nonce,
+// parks them, and returns the provider's authorize URL to redirect the
+// browser to and the nonce for the handler to set as a cookie.
+func (s *Service) Begin(provider string) (authURL, nonce string, err error) {
 	p, ok := s.providers[provider]
 	if !ok {
-		return "", store.ErrNotFound
+		return "", "", store.ErrNotFound
 	}
-	state, verifier := randomToken(), oauth2.GenerateVerifier()
+	state, verifier, nonce := randomToken(), oauth2.GenerateVerifier(), randomToken()
 	s.mu.Lock()
 	s.pruneLocked(time.Now())
-	s.logins[state] = pendingLogin{provider: provider, verifier: verifier, created: time.Now()}
+	s.logins[state] = pendingLogin{provider: provider, verifier: verifier, nonce: nonce, created: time.Now()}
 	s.mu.Unlock()
-	return p.AuthCodeURL(state, verifier, s.redirectURI(provider)), nil
+	return p.AuthCodeURL(state, verifier, s.redirectURI(provider)), nonce, nil
 }
 
 // Complete finishes one login from the provider's callback and always returns
 // a redirect for the browser: on success into the SPA carrying a one-time
 // exchange code in the fragment (fragments stay out of logs, and the session
 // token itself never rides a URL), on failure carrying a coarse error tag —
-// the detail goes to the log, not to an unauthenticated visitor.
-func (s *Service) Complete(ctx context.Context, provider, state, code string) string {
+// the detail goes to the log, not to an unauthenticated visitor. nonce is the
+// cookie Begin handed the browser; a callback without the right one is a
+// login somebody else started. providerErr is the provider's own error
+// parameter (a cancelled consent), reported as such.
+func (s *Service) Complete(ctx context.Context, provider, state, code, nonce, providerErr string) string {
 	fail := func(tag string, err error) string {
 		s.log.Warn("oauth login failed", "provider", provider, "reason", tag, "error", err)
 		return s.baseURL + "/#auth_error=" + url.QueryEscape(tag)
@@ -210,7 +224,16 @@ func (s *Service) Complete(ctx context.Context, provider, state, code string) st
 	pending, ok := s.logins[state]
 	delete(s.logins, state) // single use, hit or miss
 	s.mu.Unlock()
-	if !ok || pending.provider != provider || time.Since(pending.created) > loginTTL || code == "" {
+	if !ok || pending.provider != provider || time.Since(pending.created) > LoginTTL {
+		return fail("state_mismatch", nil)
+	}
+	if nonce == "" || subtle.ConstantTimeCompare([]byte(nonce), []byte(pending.nonce)) != 1 {
+		return fail("state_mismatch", errors.New("callback from a browser that did not start this login"))
+	}
+	if providerErr != "" {
+		return fail("cancelled", errors.New(providerErr))
+	}
+	if code == "" {
 		return fail("state_mismatch", nil)
 	}
 	p := s.providers[provider]
@@ -255,7 +278,7 @@ func (s *Service) Exchange(code string) (string, protocol.UserInfo, bool) {
 // paths that grow the maps.
 func (s *Service) pruneLocked(now time.Time) {
 	for k, v := range s.logins {
-		if now.Sub(v.created) > loginTTL {
+		if now.Sub(v.created) > LoginTTL {
 			delete(s.logins, k)
 		}
 	}
