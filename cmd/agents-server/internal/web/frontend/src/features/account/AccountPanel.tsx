@@ -3,7 +3,7 @@ import { Button, Flash, FormControl, Label, PageHeader, Stack, TextInput, useCon
 import { Blankslate } from '@primer/react/experimental';
 import { PersonIcon, TrashIcon, CopyIcon } from '@primer/octicons-react';
 
-import { api, authConfig, logout, type ApiSchemas, type AuthConfig, type AuthUser } from '@/lib/api';
+import { api, authConfig, fetchMyAvatar, logout, type ApiSchemas, type AuthConfig, type AuthUser } from '@/lib/api';
 import { toast } from '@/lib/toast';
 
 type PatView = ApiSchemas['protocol.PatView'];
@@ -14,6 +14,7 @@ type PatView = ApiSchemas['protocol.PatView'];
 export function AccountPanel() {
   const [cfg, setCfg] = useState<AuthConfig | null>(null);
   const [me, setMe] = useState<AuthUser | null>(null);
+  const [avatar, setAvatar] = useState<string | null>(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -22,6 +23,13 @@ export function AccountPanel() {
       .then(([c, u]) => { if (!stale) { setCfg(c); setMe(u); } })
       .catch(() => { if (!stale) setError('Failed to load account details.'); });
     return () => { stale = true; };
+  }, []);
+
+  // The picture, when the server stored one at login; initials otherwise.
+  useEffect(() => {
+    let url: string | null = null;
+    fetchMyAvatar().then(u => { url = u; setAvatar(u); }).catch(() => {});
+    return () => { if (url) URL.revokeObjectURL(url); };
   }, []);
 
   return (
@@ -37,7 +45,9 @@ export function AccountPanel() {
       {error ? <Flash variant="danger">{error}</Flash> : null}
       {me ? (
         <Stack direction="horizontal" align="center" gap="condensed">
-          <span className="account-avatar" aria-hidden>{initialOf(me)}</span>
+          {avatar
+            ? <img className="account-avatar account-avatar-img" src={avatar} alt="" />
+            : <span className="account-avatar" aria-hidden>{initialOf(me)}</span>}
           <Stack gap="none">
             <span className="account-name">{me.name || me.email}</span>
             <span className="account-muted">{me.email}</span>

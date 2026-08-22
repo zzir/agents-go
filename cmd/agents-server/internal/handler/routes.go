@@ -53,6 +53,7 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		auth.GET("/oauth/:provider/callback", guess, h.Auth.OAuthCallback)
 		auth.POST("/exchange", guess, h.Auth.Exchange)
 		auth.GET("/me", h.Auth.Me)
+		auth.GET("/me/avatar", h.Auth.MyAvatar)
 		auth.POST("/logout", h.Auth.Logout)
 		auth.GET("/tokens", h.Auth.ListTokens)
 		auth.POST("/tokens", h.Auth.CreateToken)

@@ -703,3 +703,7 @@ a:hover {
   font-size: 12px;
   word-break: break-all;
 }
+
+.account-avatar-img {
+  object-fit: cover;
+}

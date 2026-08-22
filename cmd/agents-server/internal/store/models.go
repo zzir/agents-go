@@ -629,9 +629,12 @@ type User struct {
 	ID    string `bun:"id,pk"          json:"id"`
 	Email string `bun:"email,notnull"  json:"email"` // lowercased; unique via idx_users_email
 	Name  string `bun:"name,nullzero"  json:"name,omitempty"`
-	// AvatarURL is stored but not rendered by the UI (remote images would need
-	// a CSP img-src hole); kept for a later proxy or export.
-	AvatarURL string `bun:"avatar_url,nullzero" json:"-"`
+	// AvatarURL is the provider's picture URL. The UI never loads it (a remote
+	// image would need a CSP img-src hole): the server fetches it once at
+	// login into Avatar and serves that same-origin (/auth/me/avatar).
+	AvatarURL  string `bun:"avatar_url,nullzero"  json:"-"`
+	Avatar     []byte `bun:"avatar,nullzero"      json:"-"`
+	AvatarType string `bun:"avatar_type,nullzero" json:"-"`
 	Role      string `bun:"role,notnull"        json:"role"` // RoleAdmin | RoleMember
 
 	LastLoginAt time.Time `bun:"last_login_at,nullzero" json:"last_login_at,omitzero"`

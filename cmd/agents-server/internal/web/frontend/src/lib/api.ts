@@ -88,6 +88,16 @@ export async function exchangeCode(code: string): Promise<AuthUser> {
   return body.user;
 }
 
+// The caller's avatar as an object URL (the provider's picture, fetched by the
+// server at login and served same-origin), or null when there is none. An
+// <img src> cannot carry the bearer, so it is fetched and handed over as a
+// blob: URL — which the CSP allows.
+export async function fetchMyAvatar(): Promise<string | null> {
+  const res = await fetch(`${BASE}/auth/me/avatar`, { headers: { 'Authorization': `Bearer ${getToken()}` } });
+  if (!res.ok) return null;
+  return URL.createObjectURL(await res.blob());
+}
+
 // Revoke the current session server-side (no-op in token mode), then forget
 // the local copy. Always resolves — a dead server must not block sign-out.
 export async function logout(): Promise<void> {

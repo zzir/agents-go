@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
@@ -32,6 +33,7 @@ func fakeGoogleIdP(t *testing.T, verified bool) *httptest.Server {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "at-1", "token_type": "Bearer"})
 	})
+	var srv *httptest.Server
 	mux.HandleFunc("/userinfo", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer at-1" {
 			t.Errorf("userinfo auth = %q", r.Header.Get("Authorization"))
@@ -39,10 +41,14 @@ func fakeGoogleIdP(t *testing.T, verified bool) *httptest.Server {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"sub": "g-sub-1", "email": "Person@Example.com", "email_verified": verified,
-			"name": "Person", "picture": "https://img.example/p.png",
+			"name": "Person", "picture": srv.URL + "/picture",
 		})
 	})
-	srv := httptest.NewServer(mux)
+	mux.HandleFunc("/picture", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write([]byte("PNG-BYTES"))
+	})
+	srv = httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv
 }
@@ -122,6 +128,23 @@ func TestOAuthLoginFlow(t *testing.T) {
 	}
 	if _, err := svc.Authenticate(ctx, token); err != nil {
 		t.Fatalf("the minted session must authenticate: %v", err)
+	}
+	// The provider's picture is fetched off the login path and stored for
+	// same-origin serving; wait for the goroutine.
+	users := store.NewUserStore(db)
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		data, ctype, err := users.Avatar(ctx, user.ID)
+		if err == nil {
+			if string(data) != "PNG-BYTES" || ctype != "image/png" {
+				t.Fatalf("stored avatar = %q %q", data, ctype)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("avatar was not stored: %v", err)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 
 	// Both halves are single-use: the state and the one-time code.
