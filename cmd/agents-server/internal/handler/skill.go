@@ -188,7 +188,7 @@ func (h *SkillHandler) Clone(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusCreated, skillRepoResp{Name: name, Skills: skills})
+	created(c, name, skillRepoResp{Name: name, Skills: skills})
 }
 
 // repoDir validates the repo name path parameter and resolves it inside the

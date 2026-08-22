@@ -139,7 +139,7 @@ func (r approveReq) toScope() bridge.ApprovalScope {
 
 func (h *ApprovalHandler) resolve(c *gin.Context, approve bool, scope bridge.ApprovalScope, reason string) {
 	toolCallID := c.Param("tool_call_id")
-	server.SetAuditDetail(c, auditDecision(approve, scope))
+	server.SetAuditDetail(c, auditDecision(approve, scope, pendingCall(c)))
 	runID, _, err := h.runner.ResolveApproval(c.Request.Context(), toolCallID, approve, scope, reason, nil)
 	if err != nil {
 		h.resolveError(c, err)
@@ -206,9 +206,16 @@ func (h *ApprovalHandler) resolveError(c *gin.Context, err error) {
 
 // auditDecision is the audit line's detail for an approval: the verdict and,
 // for an approval, how far the trust reaches ("all" is the one to notice).
-func auditDecision(approve bool, scope bridge.ApprovalScope) string {
-	if !approve {
-		return "reject"
+// auditDecision is the audit detail of an approval decision: the verdict,
+// the scope, and the tool it was about — approving an exec_command and
+// approving a save_workflow are not the same act.
+func auditDecision(approve bool, scope bridge.ApprovalScope, call *store.PendingToolCall) string {
+	d := "reject"
+	if approve {
+		d = "approve scope=" + string(scope)
 	}
-	return "approve scope=" + string(scope)
+	if call != nil && call.ToolName != "" {
+		d += " tool=" + call.ToolName
+	}
+	return d
 }

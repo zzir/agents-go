@@ -78,16 +78,29 @@ func requireRunOwner(c *gin.Context, info bridge.RunInfo, ok bool) bool {
 	return true
 }
 
-// ownsApproval reports whether userID owns the session the pending approval
-// for toolCallID is filed on (a task's hidden session inherits its parent's
-// owner, so a task's approvals are the parent's owner's to decide).
-func ownsApproval(ctx context.Context, approvals *store.PendingApprovalStore, sessions *store.SessionStore, userID, toolCallID string) bool {
-	pending, _, err := approvals.FindByToolCall(ctx, toolCallID)
+// ownsApproval returns the pending tool call toolCallID when userID owns the
+// session its approval is filed on (a task's hidden session inherits its
+// parent's owner, so a task's approvals are the parent's owner's to decide).
+func ownsApproval(ctx context.Context, approvals *store.PendingApprovalStore, sessions *store.SessionStore, userID, toolCallID string) (*store.PendingToolCall, bool) {
+	pending, call, err := approvals.FindByToolCall(ctx, toolCallID)
 	if err != nil {
-		return false
+		return nil, false
 	}
 	sess, err := sessions.Get(ctx, pending.SessionID)
-	return err == nil && sess.OwnerID == userID
+	if err != nil || sess.OwnerID != userID {
+		return nil, false
+	}
+	return call, true
+}
+
+// approvalKey is where approvalGate parks the pending call for the handler.
+const approvalKey = "agents.approval"
+
+// pendingCall returns the call approvalGate loaded, if it ran.
+func pendingCall(c *gin.Context) *store.PendingToolCall {
+	v, _ := c.Get(approvalKey)
+	p, _ := v.(*store.PendingToolCall)
+	return p
 }
 
 // AuthzDeps are the stores the route gates resolve ownership through.
@@ -144,11 +157,13 @@ func (d AuthzDeps) taskGate() gin.HandlerFunc {
 func (d AuthzDeps) approvalGate() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		u, _ := server.CurrentUser(c)
-		if !ownsApproval(c.Request.Context(), d.Approvals, d.Sessions, u.ID, c.Param("tool_call_id")) {
+		pending, ok := ownsApproval(c.Request.Context(), d.Approvals, d.Sessions, u.ID, c.Param("tool_call_id"))
+		if !ok {
 			notFound(c)
 			c.Abort()
 			return
 		}
+		c.Set(approvalKey, pending)
 		c.Next()
 	}
 }

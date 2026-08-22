@@ -270,16 +270,40 @@ an account with `PUT /sessions/:id/owner` — or delete it.
 
 ### Audit log
 
-`audit_events` answers "who did what, to what, when": every successful
-mutating API request (`METHOD /route/pattern`, the path parameter as the
-resource, the caller from the credential), plus the acts that bypass REST —
-`ws.run.create`, `ws.approval` (with the verdict and scope: `scope=all` is the
-one to notice), `terminal.open` — and logins (`POST /auth/login`,
-`POST /auth/exchange`). A line carries a short detail a handler annotated (a
-role, a scope), never a request body and never a secret. Failures and reads
-leave nothing. Retention is the process's `--audit-retention-days` (default
-0 = keep forever), deliberately not a setting: the log of configuration
-changes must not be shortened through the API it records. Admins read it at
+`audit_events` answers "who did what, to what, when". Two shapes of line:
+
+- **A request.** Every successful mutating API request (`POST`/`PUT`/`PATCH`/
+  `DELETE` under `/api/v1` answering below 300) leaves `METHOD /route/pattern`
+  as the action, the caller from the credential, and as the resource the
+  path parameter or — for a create, which has none — the id of what was
+  created. A handler annotates a short detail where the route alone cannot
+  say what happened: `role=member disabled=true`, `owner=<id>`, and on an
+  approval the verdict, the scope and the tool (`approve scope=all
+  tool=exec_command` is the one to notice). Never a request body, never a
+  secret. Failures and reads leave nothing. The line is written on its own
+  goroutine after the response.
+- **An act that is not a request**, named by what it is:
+
+  | Action          | Who is the actor                        | Resource          | Detail                          |
+  |-----------------|-----------------------------------------|-------------------|---------------------------------|
+  | `ws.run.create` | the connection's user                   | session id        |                                 |
+  | `ws.approval`   | the connection's user                   | tool call id      | verdict, scope, tool            |
+  | `terminal.open` | the connection's user                   | sandbox id        |                                 |
+  | `workflow.save` | the session's owner (who approved it)   | workflow id       | `tool=save_workflow created`    |
+  | `trigger.fire`  | the owner of the session it fired into  | trigger id        | `source=cron\|webhook started=` |
+  | `POST /auth/login`, `POST /auth/exchange` | the account that signed in | | |
+
+  A person's manual fire (`POST /triggers/:id/fire`) is the request's line;
+  the clock's and a webhook's have no request, so the scheduler writes
+  theirs. A `save_workflow` is the one write to shared configuration that
+  happens through a tool, so the tool writes it — the approval line alone
+  would read like any other `exec_command`.
+
+Retention is the process's `--audit-retention-days` (default 0 = keep
+forever), deliberately not a setting: the log of configuration changes must
+not be shortened through the API it records. The log carries each actor's
+email and client IP — personal data; the flag is its retention control, and
+deleting the database file deletes the log with it. Admins read it at
 `GET /auth/audit` (`?limit=&before=<RFC 3339>` pages older) and in the Admin
 dialog's Audit logs.
 

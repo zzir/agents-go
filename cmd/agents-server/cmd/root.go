@@ -362,6 +362,7 @@ func run(_ *cobra.Command, _ []string) error {
 	}
 	wsHandler.Audit = recordAudit
 	terminalHandler.Audit = recordAudit
+	deps.Audit = recordAudit
 
 	srv := server.New(log, authSvc.Authenticate, recordAudit)
 	srv.SetImageHosts(authSvc.AvatarHosts())

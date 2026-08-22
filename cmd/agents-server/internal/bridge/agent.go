@@ -15,6 +15,7 @@ import (
 	"github.com/zzir/agents-go/agents/tasks"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bravesearch"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/skills"
@@ -40,6 +41,9 @@ type AgentDeps struct {
 	ContextProfiles  *store.ContextProfileStore
 	Workflows        *store.WorkflowStore
 	Wakeups          *store.WakeupStore
+	// Audit records the acts a run performs on shared configuration (a
+	// save_workflow), attributed to the session's owner; nil records nothing.
+	Audit server.AuditFunc
 	// Users answers the run owner's role; nil means every owner is an admin
 	// (a single-user deployment).
 	Users     *store.UserStore
@@ -62,7 +66,7 @@ type AgentDeps struct {
 	// description names the agents on offer. Attached only when the config
 	// opts in (behavior.workflow_authoring); never on a background run, and
 	// save_workflow only on an admin's run (README "Ownership and roles").
-	WorkflowTools func(ctx context.Context) []*agents.Tool
+	WorkflowTools func(ctx context.Context, ownerID string) []*agents.Tool
 }
 
 // BuildResult contains the built agent and its resolved model provider.
@@ -218,7 +222,7 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandbox
 	// (README invariant 39).
 	if err == nil && !background && result.Behavior.WorkflowAuthoring && deps.WorkflowTools != nil {
 		mark := len(result.Agent.Tools)
-		for _, tool := range deps.WorkflowTools(ctx) {
+		for _, tool := range deps.WorkflowTools(ctx, ownerID) {
 			// A member reads definitions (as the API lets them) but cannot
 			// write one: the REST gate holds through the tool as well.
 			if tool.ReadOnly || ownerIsAdmin(ctx, deps, ownerID) {

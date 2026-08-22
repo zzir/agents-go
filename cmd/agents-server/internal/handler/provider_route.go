@@ -132,7 +132,7 @@ func (h *ProviderRouteHandler) Create(c *gin.Context) {
 		saveError(c, err) // duplicate prefix -> 409
 		return
 	}
-	c.JSON(http.StatusCreated, pr)
+	created(c, pr.ID, pr)
 }
 
 // Update overwrites the provider route identified by the id path parameter.

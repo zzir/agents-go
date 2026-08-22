@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -47,22 +48,31 @@ func TestAuditLogRecordsMutations(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create = %d %s", rec.Code, rec.Body.String())
 	}
-	mu.Lock()
-	n := len(seen)
-	mu.Unlock()
-	if n != 1 || seen[0].Actor.ID != adminUser.ID || seen[0].Action != "POST /agents" {
-		t.Fatalf("audit after create = %+v, want one line by the admin for POST /agents", seen)
+	id := strings.Trim(strings.SplitN(strings.SplitN(rec.Body.String(), `"id":"`, 2)[1], `"`, 2)[0], `"`)
+	// The line lands on its own goroutine, after the response.
+	recorded := func(n int) []server.AuditRecord {
+		deadline := time.Now().Add(2 * time.Second)
+		for {
+			mu.Lock()
+			got := append([]server.AuditRecord(nil), seen...)
+			mu.Unlock()
+			if len(got) >= n || time.Now().After(deadline) {
+				return got
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	got := recorded(1)
+	if len(got) != 1 || got[0].Actor.ID != adminUser.ID || got[0].Action != "POST /agents" || got[0].Resource != id {
+		t.Fatalf("audit after create = %+v, want one line by the admin for POST /agents naming %s", got, id)
 	}
 
 	// An update names the resource from the path.
-	id := strings.Trim(strings.SplitN(strings.SplitN(rec.Body.String(), `"id":"`, 2)[1], `"`, 2)[0], `"`)
 	if rec := serve(engine, as(adminUser, http.MethodPut, "/api/v1/agents/"+id, `{"name":"a2","model":"m"}`)); rec.Code != http.StatusOK {
 		t.Fatalf("update = %d %s", rec.Code, rec.Body.String())
 	}
-	mu.Lock()
-	last := seen[len(seen)-1]
-	mu.Unlock()
-	if last.Action != "PUT /agents/:id" || last.Resource != id {
+	got = recorded(2)
+	if last := got[len(got)-1]; last.Action != "PUT /agents/:id" || last.Resource != id {
 		t.Fatalf("audit for update = %+v", last)
 	}
 

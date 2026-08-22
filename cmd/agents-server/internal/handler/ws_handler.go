@@ -285,7 +285,8 @@ func (h *WSHandler) handleRunCreate(conn *server.WSConn, msg protocol.RunCreate)
 // interrupted run is still attached and just keeps receiving events).
 func (h *WSHandler) resolve(conn *server.WSConn, toolCallID string, approve bool, scope bridge.ApprovalScope, reason string) {
 	log := logging.Ctx(conn.Context())
-	if !ownsApproval(conn.Context(), h.approvals, h.sessions, conn.User.ID, toolCallID) {
+	pending, ok := ownsApproval(conn.Context(), h.approvals, h.sessions, conn.User.ID, toolCallID)
+	if !ok {
 		_ = conn.WriteJSON(&protocol.Envelope{Type: protocol.EventRunError, Payload: mustJSON(protocol.RunError{
 			Code: protocol.CodeApprovalFailed, Message: "approval not found",
 		})})
@@ -293,7 +294,7 @@ func (h *WSHandler) resolve(conn *server.WSConn, toolCallID string, approve bool
 	}
 	_, sessionID, err := h.runner.ResolveApproval(conn.Context(), toolCallID, approve, scope, reason, nil)
 	if err == nil {
-		h.audit(conn, "ws.approval", toolCallID, auditDecision(approve, scope))
+		h.audit(conn, "ws.approval", toolCallID, auditDecision(approve, scope, pending))
 	}
 	if err != nil {
 		log.Error("resolve approval failed", "error", err, "tool_call_id", toolCallID)

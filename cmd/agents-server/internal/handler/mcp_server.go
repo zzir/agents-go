@@ -193,7 +193,7 @@ func (h *McpServerHandler) Create(c *gin.Context) {
 	// A newly created enabled server connects in the background, same as an
 	// update — "I added a server" should not need a separate connect click.
 	h.manager.Reconcile(cfg, h.oauth)
-	c.JSON(http.StatusCreated, h.listItem(cfg))
+	created(c, cfg.ID, h.listItem(cfg))
 }
 
 // Get responds with the MCP server configuration identified by the id path parameter.

@@ -10,6 +10,7 @@ import (
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -126,4 +127,11 @@ func pageParams(c *gin.Context) (beforeID string, limit int) {
 		limit = 0
 	}
 	return beforeID, limit
+}
+
+// created answers 201 with body and names id as the request's audit
+// resource — a create has no path parameter to carry it.
+func created(c *gin.Context, id string, body any) {
+	server.SetAuditResource(c, id)
+	c.JSON(http.StatusCreated, body)
 }

@@ -109,7 +109,7 @@ func (h *ProviderHandler) Create(c *gin.Context) {
 		return
 	}
 	sanitizeProvider(&pv)
-	c.JSON(http.StatusCreated, pv)
+	created(c, pv.ID, pv)
 }
 
 // Update overwrites a provider.

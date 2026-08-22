@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/zzir/agents-go/agents/session"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -48,9 +49,17 @@ func TestTriggerFireStartsTheWorkflowAndRecordsIt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	info, err := sched.Fire(ctx, trg.ID, `{"pr": 42}`)
+	// A fire nobody requested — the clock's, a webhook's — is audited by the
+	// scheduler itself, attributed to the session's owner; a person's fire
+	// is the request's line, not a second one.
+	var audited []server.AuditRecord
+	runner.Deps.Audit = func(_ context.Context, r server.AuditRecord) { audited = append(audited, r) }
+	info, err := sched.Fire(ctx, trg.ID, `{"pr": 42}`, FireWebhook)
 	if err != nil {
 		t.Fatalf("Fire: %v", err)
+	}
+	if len(audited) != 1 || audited[0].Action != "trigger.fire" || audited[0].Resource != trg.ID || audited[0].Actor.ID != sess.OwnerID || !strings.Contains(audited[0].Detail, "source=webhook") {
+		t.Fatalf("audit after a webhook fire = %+v", audited)
 	}
 	done, st := awaitWorkflow(t, runner, info.TaskID, 15*time.Second)
 	if done.Status != "completed" || done.ParentSessionID != sess.ID {
@@ -94,7 +103,7 @@ func TestTriggerFireStartsTheWorkflowAndRecordsIt(t *testing.T) {
 	if err := sched.store.Update(ctx, trg.ID, trg); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := sched.Fire(ctx, trg.ID, ""); !errors.Is(err, ErrTriggerDisabled) {
+	if _, err := sched.Fire(ctx, trg.ID, "", FireManual); !errors.Is(err, ErrTriggerDisabled) {
 		t.Fatalf("fire of a disabled trigger = %v, want ErrTriggerDisabled", err)
 	}
 	// A fire that cannot start (the session is gone) is recorded as the
@@ -103,7 +112,7 @@ func TestTriggerFireStartsTheWorkflowAndRecordsIt(t *testing.T) {
 	if err := sched.store.Update(ctx, trg.ID, trg); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := sched.Fire(ctx, trg.ID, ""); err == nil {
+	if _, err := sched.Fire(ctx, trg.ID, "", FireManual); err == nil {
 		t.Fatal("a fire into a missing session must fail")
 	}
 	rec, _ = sched.store.Get(ctx, trg.ID)
@@ -119,7 +128,7 @@ func TestTriggerFireStartsTheWorkflowAndRecordsIt(t *testing.T) {
 	if _, err := runner.db.NewDelete().Model((*store.Workflow)(nil)).Where("id = ?", wf.ID).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := sched.Fire(ctx, trg.ID, ""); !errors.Is(err, store.ErrNotFound) {
+	if _, err := sched.Fire(ctx, trg.ID, "", FireManual); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("fire without a workflow = %v, want not found", err)
 	}
 	if _, err := sched.store.Get(ctx, trg.ID); !errors.Is(err, store.ErrNotFound) {
@@ -230,7 +239,7 @@ func TestTriggerSchedulerFollowsTheTable(t *testing.T) {
 	if err := runner.Deps.Workflows.Delete(ctx, wf.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := sched.Fire(ctx, tick.ID, ""); !errors.Is(err, store.ErrNotFound) {
+	if _, err := sched.Fire(ctx, tick.ID, "", FireManual); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("fire of a cascaded-away trigger = %v, want not found", err)
 	}
 	if _, ok := sched.entries[tick.ID]; ok {
@@ -253,7 +262,7 @@ func TestTriggerFireRunsAnAgentTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	fired, err := sched.Fire(ctx, trg.ID, "")
+	fired, err := sched.Fire(ctx, trg.ID, "", FireManual)
 	if err != nil {
 		t.Fatalf("Fire: %v", err)
 	}
@@ -310,7 +319,7 @@ func TestTriggerFireRunsAnAgentTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { seg.finalize(); runner.hub.finish("held-run", false) }()
-	if _, err := sched.Fire(ctx, trg.ID, ""); !errors.As(err, new(ErrSessionBusy)) {
+	if _, err := sched.Fire(ctx, trg.ID, "", FireManual); !errors.As(err, new(ErrSessionBusy)) {
 		t.Fatalf("Fire on a busy session = %v, want ErrSessionBusy", err)
 	}
 	rec, err = sched.store.Get(ctx, trg.ID)

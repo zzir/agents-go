@@ -90,7 +90,7 @@ func (h *MemoryHandler) Create(c *gin.Context) {
 		internalError(c, err)
 		return
 	}
-	c.JSON(http.StatusCreated, m)
+	created(c, m.ID, m)
 }
 
 // Get responds with the memory identified by the id path parameter.

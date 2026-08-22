@@ -135,7 +135,7 @@ func (h *AgentConfigHandler) Create(c *gin.Context) {
 		return
 	}
 	sanitizeAgentConfig(&ac)
-	c.JSON(http.StatusCreated, ac)
+	created(c, ac.ID, ac)
 }
 
 // Get responds with the agent configuration identified by the id path

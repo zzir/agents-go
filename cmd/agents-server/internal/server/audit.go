@@ -20,8 +20,9 @@ type AuditRecord struct {
 	ClientIP string
 }
 
-// AuditFunc persists one record. It runs on the request goroutine after the
-// response is written, on a context detached from the request's cancellation.
+// AuditFunc persists one record. Audit calls it on its own goroutine, after
+// the response, on a context detached from the request's cancellation — a
+// slow write never delays a reply.
 type AuditFunc func(ctx context.Context, r AuditRecord)
 
 const (
@@ -78,6 +79,6 @@ func Audit(record AuditFunc) gin.HandlerFunc {
 		if v, found := c.Get(auditDetailKey); found {
 			r.Detail, _ = v.(string)
 		}
-		record(context.WithoutCancel(c.Request.Context()), r)
+		go record(context.WithoutCancel(c.Request.Context()), r)
 	}
 }

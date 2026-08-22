@@ -36,7 +36,7 @@ const (
 // TriggerFirer fires triggers and keeps cron ones on the clock; the bridge's
 // TriggerScheduler.
 type TriggerFirer interface {
-	Fire(ctx context.Context, triggerID, payload string) (*bridge.Fired, error)
+	Fire(ctx context.Context, triggerID, payload, source string) (*bridge.Fired, error)
 	Sync(ctx context.Context, triggerID string)
 }
 
@@ -228,7 +228,7 @@ func (h *TriggerHandler) Create(c *gin.Context) {
 		return
 	}
 	h.firer.Sync(c.Request.Context(), t.ID)
-	c.JSON(http.StatusCreated, viewOf(&t, minted))
+	created(c, t.ID, viewOf(&t, minted))
 }
 
 // saveError maps a trigger write's failure: a reference that vanished between
@@ -334,13 +334,13 @@ func (h *TriggerHandler) Fire(c *gin.Context) {
 			return
 		}
 	}
-	h.fire(c, c.Param("id"), req.Payload)
+	h.fire(c, c.Param("id"), req.Payload, bridge.FireManual)
 }
 
 // fire is the shared tail of a manual fire and a webhook call; it reports
 // whether something was started.
-func (h *TriggerHandler) fire(c *gin.Context, id, payload string) bool {
-	fired, err := h.firer.Fire(c.Request.Context(), id, payload)
+func (h *TriggerHandler) fire(c *gin.Context, id, payload, source string) bool {
+	fired, err := h.firer.Fire(c.Request.Context(), id, payload, source)
 	if err != nil {
 		switch {
 		case errors.Is(err, bridge.ErrTriggerDisabled), errors.Is(err, bridge.ErrWorkflowUnavailable), errors.Is(err, bridge.ErrTriggerTarget):
@@ -429,7 +429,7 @@ func (h *TriggerHandler) Hook(c *gin.Context) {
 		conflict(c, "replayed delivery: this timestamp and body were already accepted or are being delivered")
 		return
 	}
-	if !h.fire(c, id, string(body)) {
+	if !h.fire(c, id, string(body), bridge.FireWebhook) {
 		h.replays.forget(key)
 	}
 }

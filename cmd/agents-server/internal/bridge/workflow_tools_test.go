@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -255,7 +256,11 @@ func TestSaveWorkflowCreatesAndUpdatesByName(t *testing.T) {
 	ctx := context.Background()
 	_, srv := newRecordingModel(t, func(int, []byte) []any { return sayOutput("ok") })
 	runner, _, _ := workflowToolsFixture(t, srv.URL)
-	tools := runner.workflowTools(ctx)
+	// The one write to shared configuration that happens through a tool is
+	// audited, attributed to the session's owner.
+	var audited []server.AuditRecord
+	runner.Deps.Audit = func(_ context.Context, r server.AuditRecord) { audited = append(audited, r) }
+	tools := runner.workflowTools(ctx, store.LocalUserID)
 	save := toolNamed(t, tools, WorkflowSaveToolName)
 	if !save.NeedsApproval || save.ReadOnly {
 		t.Fatalf("save_workflow: NeedsApproval=%v ReadOnly=%v, want an approval-gated writer", save.NeedsApproval, save.ReadOnly)
@@ -276,6 +281,9 @@ func TestSaveWorkflowCreatesAndUpdatesByName(t *testing.T) {
 		t.Fatalf("workflows = %d (%v), want 1", len(list), err)
 	}
 	stored := list[0]
+	if len(audited) != 1 || audited[0].Action != "workflow.save" || audited[0].Resource != stored.ID || audited[0].Actor.ID != store.LocalUserID || !strings.Contains(audited[0].Detail, "created") {
+		t.Fatalf("audit after a save = %+v, want workflow.save on the new id by the owner", audited)
+	}
 	if stored.Description != "Implement a feature end to end, with tests" || stored.Budget.MaxLaps != 2 || len(stored.Steps) != 3 {
 		t.Fatalf("stored = %+v", stored)
 	}
@@ -321,7 +329,7 @@ func TestSaveWorkflowRefusesWhatWouldNotSave(t *testing.T) {
 	ctx := context.Background()
 	_, srv := newRecordingModel(t, func(int, []byte) []any { return sayOutput("ok") })
 	runner, _, _ := workflowToolsFixture(t, srv.URL)
-	save := toolNamed(t, runner.workflowTools(ctx), WorkflowSaveToolName)
+	save := toolNamed(t, runner.workflowTools(ctx, store.LocalUserID), WorkflowSaveToolName)
 
 	cases := []struct{ name, spec, want string }{
 		{"unknown agent", strings.Replace(buildSpec, `"agent":"reviewer"`, `"agent":"tester"`, 1), `no agent named "tester" (available: coder, planner, reviewer)`},
@@ -363,7 +371,7 @@ func TestGetWorkflowRoundTrips(t *testing.T) {
 	_, srv := newRecordingModel(t, func(int, []byte) []any { return sayOutput("ok") })
 	runner, _, coder := workflowToolsFixture(t, srv.URL)
 	reviewer, _ := runner.agentConfigByName(ctx, "reviewer")
-	tools := runner.workflowTools(ctx)
+	tools := runner.workflowTools(ctx, store.LocalUserID)
 	get := toolNamed(t, tools, WorkflowGetToolName)
 
 	if out := invokeText(t, get, `{"name":"build"}`); !strings.Contains(out, "no workflows yet") {

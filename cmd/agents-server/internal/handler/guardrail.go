@@ -74,7 +74,7 @@ func (h *GuardrailHandler) Create(c *gin.Context) {
 		saveError(c, err) // duplicate (type, name) -> 409
 		return
 	}
-	c.JSON(http.StatusCreated, g)
+	created(c, g.ID, g)
 }
 
 // Get responds with a single guardrail by ID.

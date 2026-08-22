@@ -208,9 +208,9 @@ func (h *SandboxHandler) Create(c *gin.Context) {
 		internalError(c, err)
 		return
 	}
-	created := sanitizeSandboxConfig(*cfg)
-	h.annotate(&created)
-	c.JSON(http.StatusCreated, created)
+	view := sanitizeSandboxConfig(*cfg)
+	h.annotate(&view)
+	created(c, view.ID, view)
 }
 
 // Get responds with the sandbox configuration identified by the id path

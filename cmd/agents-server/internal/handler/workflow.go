@@ -188,7 +188,7 @@ func (h *WorkflowHandler) Create(c *gin.Context) {
 		saveError(c, err) // duplicate name -> 409
 		return
 	}
-	c.JSON(http.StatusCreated, wf)
+	created(c, wf.ID, wf)
 }
 
 // Update overwrites a workflow definition.

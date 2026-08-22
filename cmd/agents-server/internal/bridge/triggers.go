@@ -190,7 +190,7 @@ func (s *TriggerScheduler) Sync(ctx context.Context, triggerID string) {
 	entry, err := s.cron.AddFunc(t.Schedule, func() {
 		// The hub's root context: a fire outlives nothing but the process.
 		root := s.runner.hub.rootCtx
-		if _, err := s.Fire(root, triggerID, ""); err != nil {
+		if _, err := s.Fire(root, triggerID, "", FireCron); err != nil {
 			logging.Ctx(root).Warn("cron trigger did not fire", "error", err, "trigger_id", triggerID)
 		}
 	})
@@ -212,12 +212,21 @@ type Fired struct {
 	RunID string `json:"run_id,omitempty"`
 }
 
+// What started a fire. A person's fire is audited by the request that made
+// it; the clock's and a webhook's have no request, so Fire audits those
+// itself, attributed to the session's owner.
+const (
+	FireManual  = "manual"
+	FireCron    = "cron"
+	FireWebhook = "webhook"
+)
+
 // Fire starts what the trigger names now — its workflow, or a turn of its
 // agent — with its brief led by payload when there is one (a webhook's
 // body), and records the outcome on the trigger. A disabled trigger does not
 // fire; a session at its background cap, or busy with a run, refuses like
 // any start would, and that refusal is what the trigger then shows.
-func (s *TriggerScheduler) Fire(ctx context.Context, triggerID, payload string) (*Fired, error) {
+func (s *TriggerScheduler) Fire(ctx context.Context, triggerID, payload, source string) (*Fired, error) {
 	t, err := s.store.Get(ctx, triggerID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -252,6 +261,11 @@ func (s *TriggerScheduler) Fire(ctx context.Context, triggerID, payload string) 
 	}
 	if rerr := s.store.RecordFire(context.WithoutCancel(ctx), t.ID, startedID, msg); rerr != nil {
 		logging.Ctx(ctx).Warn("recording a trigger fire", "error", rerr, "trigger_id", t.ID)
+	}
+	if ferr == nil && source != FireManual {
+		if sess, err := s.runner.Deps.Sessions.Get(ctx, t.SessionID); err == nil {
+			s.runner.auditAs(ctx, sess.OwnerID, "trigger.fire", t.ID, "source="+source+" started="+startedID)
+		}
 	}
 	return fired, ferr
 }

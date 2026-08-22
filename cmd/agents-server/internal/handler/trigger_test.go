@@ -24,7 +24,7 @@ type fakeFirer struct {
 	refuse error
 }
 
-func (f *fakeFirer) Fire(_ context.Context, id, payload string) (*bridge.Fired, error) {
+func (f *fakeFirer) Fire(_ context.Context, id, payload, _ string) (*bridge.Fired, error) {
 	f.fires = append(f.fires, id+"|"+payload)
 	if f.refuse != nil {
 		return nil, f.refuse

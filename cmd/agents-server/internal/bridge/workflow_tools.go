@@ -10,6 +10,8 @@ import (
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -68,7 +70,7 @@ func invalidWorkflowf(format string, args ...any) error {
 // workflowTools builds the run's authoring pair. Per run, like spawnTool: the
 // save tool's description names the agents on offer, which change without a
 // restart.
-func (r *Runner) workflowTools(ctx context.Context) []*agents.Tool {
+func (r *Runner) workflowTools(ctx context.Context, ownerID string) []*agents.Tool {
 	get := agents.NewTool(WorkflowGetToolName,
 		"Read a workflow definition by name, in the shape save_workflow takes. Read one before changing it.",
 		func(ctx context.Context, _ *agents.ToolContext, args getWorkflowArgs) (agents.ToolResult, error) {
@@ -78,7 +80,7 @@ func (r *Runner) workflowTools(ctx context.Context) []*agents.Tool {
 
 	save := agents.NewTool(WorkflowSaveToolName, r.saveWorkflowDescription(ctx),
 		func(ctx context.Context, _ *agents.ToolContext, spec workflowSpec) (agents.ToolResult, error) {
-			return r.saveWorkflow(ctx, spec)
+			return r.saveWorkflow(ctx, ownerID, spec)
 		})
 	// Approval-gated always: the card IS the review, and the tool decides
 	// that itself rather than an agent's approve list, which a config could
@@ -157,7 +159,7 @@ func (r *Runner) getWorkflow(ctx context.Context, name string) (agents.ToolResul
 // saveWorkflow answers save_workflow, after the approval: the same resolve
 // the gate ran, then the write. A same-named definition created while the
 // approval waited turns the create into an update of it.
-func (r *Runner) saveWorkflow(ctx context.Context, spec workflowSpec) (agents.ToolResult, error) {
+func (r *Runner) saveWorkflow(ctx context.Context, ownerID string, spec workflowSpec) (agents.ToolResult, error) {
 	wf, existing, err := r.resolveWorkflowSpec(ctx, spec)
 	if errors.Is(err, errInvalidWorkflowSpec) {
 		return agents.TextResult("Nothing was saved: " + strings.TrimPrefix(err.Error(), errInvalidWorkflowSpec.Error()+": ") + "."), nil
@@ -179,6 +181,7 @@ func (r *Runner) saveWorkflow(ctx context.Context, spec workflowSpec) (agents.To
 	if err != nil {
 		return agents.ToolResult{}, err
 	}
+	r.auditWorkflowSave(ctx, ownerID, wf, existing == nil)
 	details := map[string]any{"workflow_id": wf.ID, "created": existing == nil}
 	if existing == nil {
 		return agents.TextResult(fmt.Sprintf("Created workflow %q (%s). spawn_task(workflow=%q, input=...) can start it now.",
@@ -191,6 +194,35 @@ func (r *Runner) saveWorkflow(ctx context.Context, spec workflowSpec) (agents.To
 		wf.Name, change)).
 		WithSummary("Updated · " + change).
 		WithDetails(details), nil
+}
+
+// auditWorkflowSave writes the audit line for a save_workflow: the one
+// write to shared configuration that happens through a tool rather than a
+// request, attributed to the session's owner, who approved it.
+func (r *Runner) auditWorkflowSave(ctx context.Context, ownerID string, wf *store.Workflow, isCreate bool) {
+	detail := "tool=save_workflow updated"
+	if isCreate {
+		detail = "tool=save_workflow created"
+	}
+	r.auditAs(ctx, ownerID, "workflow.save", wf.ID, detail)
+}
+
+// auditAs records an act the server performed on a session owner's behalf —
+// a tool's write, a trigger's fire — attributed to that owner. Nothing is
+// recorded without an audit sink.
+func (r *Runner) auditAs(ctx context.Context, ownerID, action, resource, detail string) {
+	if r.Deps.Audit == nil {
+		return
+	}
+	actor := protocol.UserInfo{ID: ownerID}
+	if r.Deps.Users != nil && ownerID != "" {
+		if u, err := r.Deps.Users.ByID(ctx, ownerID); err == nil {
+			actor = protocol.UserInfo{ID: u.ID, Email: u.Email, Role: u.Role}
+		}
+	}
+	r.Deps.Audit(context.WithoutCancel(ctx), server.AuditRecord{
+		Actor: actor, Action: action, Resource: resource, Detail: detail,
+	})
 }
 
 func stepCount(n int) string {

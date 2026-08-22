@@ -187,7 +187,7 @@ func (h *SessionHandler) Create(c *gin.Context) {
 		internalError(c, err)
 		return
 	}
-	c.JSON(http.StatusCreated, sess)
+	created(c, sess.ID, sess)
 }
 
 // Get responds with the session identified by the id path parameter.
@@ -442,7 +442,7 @@ func (h *SessionHandler) Fork(c *gin.Context) {
 			logging.Ctx(ctx).Warn("fork: copying traces to the new session failed; session forked without traces", "error", err, "src_session", srcID, "dst_session", dst.ID)
 		}
 	}
-	c.JSON(http.StatusCreated, dst)
+	created(c, dst.ID, dst)
 }
 
 // Messages responds with the session entries for the id path parameter.
