@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect"
 )
 
 // User roles. Recorded from the first login; enforced by handlers from P2b on.
@@ -102,6 +103,16 @@ func (s *UserStore) List(ctx context.Context) ([]User, error) {
 	return out, nil
 }
 
+// CountReal counts the accounts people sign in as — every user but the
+// token-mode local one.
+func (s *UserStore) CountReal(ctx context.Context) (int, error) {
+	n, err := s.db.NewSelect().Model((*User)(nil)).Where("id != ?", LocalUserID).Count(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("counting users: %w", err)
+	}
+	return n, nil
+}
+
 // SetRole changes one account's role; ErrNotFound when absent.
 func (s *UserStore) SetRole(ctx context.Context, id, role string) error {
 	res, err := s.db.NewUpdate().Model((*User)(nil)).
@@ -126,10 +137,11 @@ type OAuthIdentity struct {
 // ResolveOAuthLogin finds or creates the account for one completed OAuth login.
 // Merge order: the (provider, subject) identity wins; else a user with the
 // same verified email gains a new identity (one person, several providers);
-// else a new account. The first OAuth account, and any login matching
-// bootstrapAdmin, is an admin. Concurrent first logins are arbitrated by the
-// unique indexes — the loser's transaction fails and its one retry sees the
-// winner's rows.
+// else a new account. A login matching bootstrapAdmin is an admin; with no
+// bootstrapAdmin the first OAuth account is (README "OAuth mode"). Concurrent
+// logins of one person are arbitrated by the unique indexes — the loser's
+// transaction fails and its one retry sees the winner's rows; concurrent
+// first logins of two people are serialized by firstAccountLock.
 func (s *UserStore) ResolveOAuthLogin(ctx context.Context, id OAuthIdentity, bootstrapAdmin string) (*User, error) {
 	u, err := s.resolveOAuthLogin(ctx, id, bootstrapAdmin)
 	if _, dup := UniqueViolation(err); dup {
@@ -146,7 +158,7 @@ func (s *UserStore) resolveOAuthLogin(ctx context.Context, id OAuthIdentity, boo
 	}
 	var out *User
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		u, err := userForIdentity(ctx, tx, id, email)
+		u, err := userForIdentity(ctx, tx, id, email, bootstrapAdmin == "")
 		if err != nil {
 			return err
 		}
@@ -170,8 +182,9 @@ func (s *UserStore) resolveOAuthLogin(ctx context.Context, id OAuthIdentity, boo
 }
 
 // userForIdentity resolves the account inside the login transaction, creating
-// rows as the merge order requires.
-func userForIdentity(ctx context.Context, tx bun.Tx, id OAuthIdentity, email string) (*User, error) {
+// rows as the merge order requires. firstIsAdmin makes a brand-new account the
+// admin when it is the first real one.
+func userForIdentity(ctx context.Context, tx bun.Tx, id OAuthIdentity, email string, firstIsAdmin bool) (*User, error) {
 	idn := new(Identity)
 	err := tx.NewSelect().Model(idn).
 		Where("provider = ? AND subject = ?", id.Provider, id.Subject).Scan(ctx)
@@ -190,14 +203,24 @@ func userForIdentity(ctx context.Context, tx bun.Tx, id OAuthIdentity, email str
 	err = tx.NewSelect().Model(u).Where("email = ?", email).Scan(ctx)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		// A brand-new account. The first real (non-local) one is the admin.
-		n, cerr := tx.NewSelect().Model((*User)(nil)).Where("id != ?", LocalUserID).Count(ctx)
-		if cerr != nil {
-			return nil, cerr
-		}
 		u = &User{Email: email, Role: RoleMember}
-		if n == 0 {
-			u.Role = RoleAdmin
+		if firstIsAdmin {
+			// Two different people's first logins must not both count zero:
+			// PostgreSQL runs READ COMMITTED, so the count is serialized by a
+			// transaction-scoped advisory lock (SQLite's one connection
+			// serializes by itself).
+			if tx.Dialect().Name() == dialect.PG {
+				if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(?)", firstAccountLock); err != nil {
+					return nil, err
+				}
+			}
+			n, cerr := tx.NewSelect().Model((*User)(nil)).Where("id != ?", LocalUserID).Count(ctx)
+			if cerr != nil {
+				return nil, cerr
+			}
+			if n == 0 {
+				u.Role = RoleAdmin
+			}
 		}
 		if _, err := tx.NewInsert().Model(u).Exec(ctx); err != nil {
 			return nil, err
@@ -211,6 +234,10 @@ func userForIdentity(ctx context.Context, tx bun.Tx, id OAuthIdentity, email str
 	}
 	return u, nil
 }
+
+// firstAccountLock keys the advisory lock that serializes "is this the first
+// account" on PostgreSQL.
+const firstAccountLock = 0x6167656e7473 // "agents"
 
 // AuthTokenStore persists session tokens and PATs, hashed.
 type AuthTokenStore struct{ db *bun.DB }

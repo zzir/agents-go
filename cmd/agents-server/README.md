@@ -158,10 +158,15 @@ and database-backed credentials:
 
 - **Admission is an explicit allowlist** — `--allowed-domains` and/or
   `--allowed-emails` (matched against the provider-verified email, lowercased);
-  starting with none configured is a startup error, never allow-everyone.
-  `--bootstrap-admin <email>` is implicitly admitted and signs in as admin —
-  the recovery hatch. Otherwise the first account created is the admin, later
-  ones are members.
+  starting with none configured is a startup error, never allow-everyone. A
+  domain with an `@` in it, or an address without one, is a startup error too.
+- **Who is the admin is decided one of two ways.** `--bootstrap-admin <email>`
+  names them: implicitly admitted, admin on every login (the recovery hatch),
+  and with it set nobody else becomes admin by signing in. Without it, the
+  first account created is the admin and later ones are members — a race
+  anyone on an allowed domain can win, which the server warns about at
+  startup while no account exists. (Two people's simultaneous first logins
+  are serialized, so there is one first.)
 - **Logins with the same verified email merge into one account** across
   providers; the (provider, subject) identity is the primary key of a login.
 - **The provider's picture URL rides `/auth/me` as `avatar_url`** and the

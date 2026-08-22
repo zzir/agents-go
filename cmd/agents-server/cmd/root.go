@@ -306,14 +306,37 @@ func run(_ *cobra.Command, _ []string) error {
 			return fmt.Errorf("--auth oauth needs at least one provider (--oauth-google-client-id)")
 		}
 		domains, emails := splitList(flagAllowedDomains), splitList(flagAllowedEmails)
-		if len(domains) == 0 && len(emails) == 0 && flagBootstrapAdmin == "" {
+		bootstrapAdmin := strings.ToLower(strings.TrimSpace(flagBootstrapAdmin))
+		for _, d := range domains {
+			if strings.Contains(d, "@") {
+				return fmt.Errorf("--allowed-domains takes domains, not addresses: %q", d)
+			}
+		}
+		for _, e := range append(emails, bootstrapAdmin) {
+			if e != "" && !strings.Contains(e, "@") {
+				return fmt.Errorf("--allowed-emails and --bootstrap-admin take addresses: %q", e)
+			}
+		}
+		if flagBootstrapAdmin != "" && bootstrapAdmin == "" {
+			return fmt.Errorf("--bootstrap-admin is blank")
+		}
+		if len(domains) == 0 && len(emails) == 0 && bootstrapAdmin == "" {
 			return fmt.Errorf("--auth oauth needs an allowlist: --allowed-domains, --allowed-emails or --bootstrap-admin")
+		}
+		if bootstrapAdmin == "" {
+			// Without a named admin the first account to sign in is it — a
+			// race anyone on an allowed domain can win until someone has.
+			if n, err := userStore.CountReal(ctx); err != nil {
+				return fmt.Errorf("counting users: %w", err)
+			} else if n == 0 {
+				log.Warn("no admin account yet: the first OAuth login becomes the admin — name one with --bootstrap-admin to choose who")
+			}
 		}
 		authSvc = authn.NewOAuth(authn.OAuthConfig{
 			Users: userStore, Tokens: authTokens,
 			BaseURL: baseURL, Providers: providers,
 			AllowedDomains: domains, AllowedEmails: emails,
-			BootstrapAdmin: flagBootstrapAdmin, Log: log,
+			BootstrapAdmin: bootstrapAdmin, Log: log,
 		})
 	default:
 		return fmt.Errorf("unknown --auth mode %q (token or oauth)", flagAuthMode)

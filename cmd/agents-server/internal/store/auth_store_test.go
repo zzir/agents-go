@@ -90,6 +90,26 @@ func TestResolveOAuthLoginAdminRules(t *testing.T) {
 	}
 }
 
+// With a bootstrap admin named, nobody becomes admin by being first: the
+// first stranger on an allowed domain is a member, the named one is admin
+// whenever they arrive.
+func TestBootstrapAdminSuppressesFirstAccountRule(t *testing.T) {
+	ctx := context.Background()
+	s := NewUserStore(newTestDB(t))
+
+	first, err := s.ResolveOAuthLogin(ctx, googleID("sub-1", "eve@example.com"), "alice@example.com")
+	if err != nil || first.Role != RoleMember {
+		t.Fatalf("first login while a bootstrap admin is named = %v role %q, want member", err, first.Role)
+	}
+	alice, err := s.ResolveOAuthLogin(ctx, googleID("sub-2", "Alice@example.com"), "alice@example.com")
+	if err != nil || alice.Role != RoleAdmin {
+		t.Fatalf("the bootstrap admin's login = %v role %q, want admin", err, alice.Role)
+	}
+	if n, err := s.CountReal(ctx); err != nil || n != 2 {
+		t.Fatalf("CountReal = %d, %v; want 2", n, err)
+	}
+}
+
 func TestAuthTokensLifecycle(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
@@ -165,7 +185,7 @@ func TestPATExpiryAndRevoke(t *testing.T) {
 	if err != nil || len(list) != 1 { // the expired one was deleted in passing
 		t.Fatalf("list = %d tokens (%v), want 1", len(list), err)
 	}
-	if err := tokens.Revoke(ctx, list[0].ID, "someone-else"); !errors.Is(err, ErrNotFound) {
+	if err := tokens.Revoke(ctx, list[0].ID, NewID()); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("cross-user revoke = %v, want ErrNotFound", err)
 	}
 	if err := tokens.Revoke(ctx, list[0].ID, u.ID); err != nil {
