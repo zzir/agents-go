@@ -71,19 +71,38 @@ func NewProviderStore(db *bun.DB) *ProviderStore {
 	return &ProviderStore{CrudStore: NewCrudStore[Provider](db, "provider", "created_at DESC").withSecrets(sealProvider, openProvider), db: db}
 }
 
-// Update overwrites the provider but preserves the chatgpt_token column, so
-// editing a name or base URL does not log the endpoint out.
-func (s *ProviderStore) Update(ctx context.Context, id string, p *Provider) error {
+// ErrProviderRouted refuses switching a provider to chatgpt_login while a
+// route still points at it: the route would be left dead (ErrProviderNotRoutable
+// is the same rule from the route's side).
+var ErrProviderRouted = errors.New("this provider is used by a route, which cannot use chatgpt_login: remove the route first")
+
+// Update overwrites the provider in one transaction that first reads the
+// stored row (locked) and hands it to prepare, nil to skip — how a masked
+// api_key keeps its stored value. A chatgpt_login provider keeps its
+// chatgpt_token, so a rename does not log the endpoint out; any other mode
+// clears it, since the UI can no longer revoke one.
+func (s *ProviderStore) Update(ctx context.Context, id string, p *Provider, prepare func(prev *Provider) error) error {
 	p.ID = id
-	err := sealedWrite(p, sealProvider, openProvider, func() error {
-		res, err := s.db.NewUpdate().Model(p).
-			ExcludeColumn("id", "created_at", "chatgpt_token").
-			Where("id = ?", id).
-			Exec(ctx)
-		if err == nil {
-			err = requireRows(res)
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		var keep []string
+		if p.AuthMode == AuthModeChatGPTLogin {
+			keep = []string{"chatgpt_token"}
+		} else {
+			p.ChatGPTToken = ""
 		}
-		return err
+		return s.updateFrom(ctx, tx, id, p, func(prev *Provider) error {
+			if p.AuthMode == AuthModeChatGPTLogin && prev.AuthMode != AuthModeChatGPTLogin {
+				if n, err := tx.NewSelect().Model((*ProviderRoute)(nil)).Where("provider_id = ?", id).Count(ctx); err != nil {
+					return err
+				} else if n > 0 {
+					return ErrProviderRouted
+				}
+			}
+			if prepare == nil {
+				return nil
+			}
+			return prepare(prev)
+		}, keep...)
 	})
 	if err != nil {
 		return fmt.Errorf("updating provider %s: %w", id, err)
@@ -149,9 +168,7 @@ func (s *ProviderStore) explainRefusal(ctx context.Context, id string) (int, err
 	return agents + routes, nil
 }
 
-// RouteRefCount is how many provider routes point at this provider. A route
-// cannot use a chatgpt_login provider (its OAuth token needs the direct path),
-// so switching one to that mode while routes reference it is refused.
+// RouteRefCount is how many provider routes point at this provider.
 func (s *ProviderStore) RouteRefCount(ctx context.Context, id string) (int, error) {
 	n, err := s.db.NewSelect().Model((*ProviderRoute)(nil)).Where("provider_id = ?", id).Count(ctx)
 	if err != nil {

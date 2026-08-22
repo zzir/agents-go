@@ -9,6 +9,7 @@ import (
 	"uuid"
 
 	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect"
 )
 
 // NewID returns a UUIDv7 — the primary key of every string-keyed entity. Time-
@@ -160,6 +161,58 @@ func (s *CrudStore[T]) Update(ctx context.Context, id string, m *T) error {
 		return fmt.Errorf("updating %s %s: %w", s.label, id, err)
 	}
 	return nil
+}
+
+// lockRow reads the row matching where into model inside tx, for a
+// read-modify-write. On PostgreSQL it is SELECT ... FOR UPDATE, so a
+// concurrent write of the same row waits instead of landing over a stale
+// read; SQLite's one connection serializes by itself. ErrNotFound when no
+// row matches.
+func lockRow(ctx context.Context, tx bun.Tx, model any, where string, arg any) error {
+	q := tx.NewSelect().Model(model).Where(where, arg)
+	if tx.Dialect().Name() == dialect.PG {
+		q = q.For("UPDATE")
+	}
+	if err := q.Scan(ctx); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	return nil
+}
+
+// updateFrom is the read-modify-write behind the Update of every store that
+// keeps a credential across edits: inside tx, read the row (locked), hand it
+// to prepare — which folds into m what m keeps from it — then overwrite every
+// column but id, created_at and keep. A nil prepare just writes m.
+func (s *CrudStore[T]) updateFrom(ctx context.Context, tx bun.Tx, id string, m *T, prepare func(prev *T) error, keep ...string) error {
+	prev := new(T)
+	if err := lockRow(ctx, tx, prev, "id = ?", id); err != nil {
+		return err
+	}
+	if err := s.opened(prev); err != nil {
+		return err
+	}
+	if prepare != nil {
+		if err := prepare(prev); err != nil {
+			return err
+		}
+	}
+	if err := s.sealed(m); err != nil {
+		return err
+	}
+	res, err := tx.NewUpdate().Model(m).
+		ExcludeColumn(append([]string{"id", "created_at"}, keep...)...).
+		Where("id = ?", id).
+		Exec(ctx)
+	if err == nil {
+		err = requireRows(res)
+	}
+	if oerr := s.opened(m); err == nil {
+		err = oerr
+	}
+	return err
 }
 
 // Delete removes the row with the given id. Returns an ErrNotFound-wrapping

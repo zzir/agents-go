@@ -29,7 +29,7 @@ func TestCrudStoreRoundTrip(t *testing.T) {
 
 	// Update is a full-row replace except id/created_at; updated_at is refreshed.
 	upd := &AgentConfig{Name: "second", Model: "o4-mini", Behavior: BehaviorGroup{MaxTurns: 9}}
-	if err := s.Update(ctx, ac.ID, upd); err != nil {
+	if err := s.Update(ctx, ac.ID, upd, nil); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 	got2, err := s.Get(ctx, ac.ID)

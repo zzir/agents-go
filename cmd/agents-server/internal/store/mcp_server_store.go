@@ -21,17 +21,12 @@ func NewMcpServerStore(db *bun.DB) *McpServerStore {
 }
 
 // Update overwrites the server config but preserves the oauth_token column.
-// Returns an ErrNotFound-wrapping error when the row doesn't exist.
-func (s *McpServerStore) Update(ctx context.Context, id string, m *McpServerConfig) error {
-	err := sealedWrite(m, sealMcpServer, openMcpServer, func() error {
-		res, err := s.db.NewUpdate().Model(m).
-			ExcludeColumn("id", "created_at", "oauth_token").
-			Where("id = ?", id).
-			Exec(ctx)
-		if err == nil {
-			err = requireRows(res)
-		}
-		return err
+// The stored row is read in the same transaction and handed to prepare (nil
+// to skip), so masked header values and client secret keep their stored
+// values. Returns an ErrNotFound-wrapping error when the row doesn't exist.
+func (s *McpServerStore) Update(ctx context.Context, id string, m *McpServerConfig, prepare func(prev *McpServerConfig) error) error {
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		return s.updateFrom(ctx, tx, id, m, prepare, "oauth_token")
 	})
 	if err != nil {
 		return fmt.Errorf("updating mcp server config %s: %w", id, err)

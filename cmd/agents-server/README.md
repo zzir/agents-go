@@ -1659,6 +1659,13 @@ When a change genuinely doesn't fit, update this list in the same PR.
    is rejected (agents, routes) and fallback entries restore strictly by
    `(normalized provider_type, normalized base_url, model)` — never by
    position; an unmatched mask clears.
+   **The mask resolves inside the store's transaction.** The store's `Update`
+   (providers, agents, MCP servers) and `SettingStore.Modify` read the stored
+   row — `FOR UPDATE` on PostgreSQL — and hand it to the handler's callback
+   before writing; a handler must never `Get` first and resolve outside, or
+   two concurrent edits let a client echoing the mask restore the key the
+   other just replaced. A rule the callback refuses returns
+   `badRequestError`, which `saveError` maps.
 10. **OAuth-class tokens never leave the server.** Store them in their own
     column with `json:"-"`, exclude the column from CRUD updates
     (`ExcludeColumn`), and expose only a derived boolean

@@ -118,7 +118,7 @@ func TestBuildFullAgentRealCycleBroken(t *testing.T) {
 	aCfg, _ := s.Get(ctx, a)
 	raw, _ := json.Marshal([]string{b})
 	aCfg.HandoffsJSON = string(raw)
-	if err := s.Update(ctx, a, aCfg); err != nil {
+	if err := s.Update(ctx, a, aCfg, nil); err != nil {
 		t.Fatalf("update A: %v", err)
 	}
 

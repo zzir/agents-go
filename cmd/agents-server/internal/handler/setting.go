@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -115,28 +114,23 @@ func (h *SettingHandler) Set(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 	key := c.Param("key")
-	if settings.IsSecret(key) && req.Value == SecretMask {
-		// Keep the stored secret when the client echoes the mask. A transient
-		// (non-not-found) Get failure must abort: continuing would resolve the mask
-		// to "" and silently clear the stored secret. Not-found leaves nothing to
-		// preserve, so the mask resolves to "".
-		prev, err := h.store.Get(ctx, key)
-		if err != nil && !errors.Is(err, store.ErrNotFound) {
-			internalError(c, err)
-			return
+	// A client echoing the mask keeps the stored secret, resolved inside the
+	// store's transaction (nothing stored resolves to ""). Validated AFTER the
+	// mask resolves, so what is checked is what is stored.
+	err := h.store.Modify(ctx, key, func(prev string, found bool) (string, error) {
+		if settings.IsSecret(key) && req.Value == SecretMask {
+			req.Value = ""
+			if found {
+				req.Value = prev
+			}
 		}
-		req.Value = ""
-		if prev != nil {
-			req.Value = prev.Value
+		if err := settings.Validate(key, req.Value); err != nil {
+			return "", badRequestError(err.Error())
 		}
-	}
-	// Validated AFTER the mask resolves, so what is checked is what is stored.
-	if err := settings.Validate(key, req.Value); err != nil {
-		badRequest(c, err.Error())
-		return
-	}
-	if err := h.store.Set(ctx, key, req.Value); err != nil {
-		internalError(c, err)
+		return req.Value, nil
+	})
+	if err != nil {
+		saveError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, settingViewOf(store.Setting{Key: key, Value: req.Value}))

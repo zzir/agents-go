@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"html"
 	"net/http"
 
@@ -252,22 +251,14 @@ func (h *McpServerHandler) Update(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 	id := c.Param("id")
-	// Load the current row so masked header values / oauth_client_secret can
-	// round-trip. A transient (non-not-found) Get failure must abort: continuing
-	// with an empty prev would resolve those ******** masks to "" and silently
-	// wipe the stored secrets. Not-found carries through to a 404 from Update.
-	prev, err := h.store.Get(ctx, id)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		internalError(c, err)
-		return
-	}
 	cfg := req.toModel()
-	var prevConfig json.RawMessage
-	if prev != nil {
-		prevConfig = prev.Config
-	}
-	cfg.Config = restoreMcpConfig(cfg.TransportType, cfg.Config, prevConfig)
-	if err := h.store.Update(ctx, id, cfg); err != nil {
+	// Masked header values / oauth_client_secret round-trip to their stored
+	// values inside the store's transaction.
+	err := h.store.Update(ctx, id, cfg, func(prev *store.McpServerConfig) error {
+		cfg.Config = restoreMcpConfig(cfg.TransportType, cfg.Config, prev.Config)
+		return nil
+	})
+	if err != nil {
 		saveError(c, err) // duplicate name -> 409, not-found -> 404
 		return
 	}

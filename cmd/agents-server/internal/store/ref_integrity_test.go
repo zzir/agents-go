@@ -72,7 +72,7 @@ func TestUpdateGuardsProviderReferences(t *testing.T) {
 		t.Fatal(err)
 	}
 	ac.ProviderID = id("ghost")
-	if err := agents.Update(ctx, ac.ID, ac); !errors.Is(err, ErrProviderRef) {
+	if err := agents.Update(ctx, ac.ID, ac, nil); !errors.Is(err, ErrProviderRef) {
 		t.Fatalf("agent update to a missing provider = %v, want ErrProviderRef", err)
 	}
 }

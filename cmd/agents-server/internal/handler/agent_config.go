@@ -188,22 +188,13 @@ func (h *AgentConfigHandler) Update(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 	id := c.Param("id")
-	// Load the current row so the masked fallback-model keys can round-trip to
-	// their stored values. A transient (non-not-found) Get failure must abort:
-	// continuing with an empty prev would resolve the ******** mask to "" and
-	// silently WIPE them. Not-found is fine to carry through — the Update below
-	// returns 404 for it.
-	prev, err := h.store.Get(ctx, id)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		internalError(c, err)
-		return
-	}
-	var prevFallback string
-	if prev != nil {
-		prevFallback = prev.Resilience.FallbackModels
-	}
-	ac.Resilience.FallbackModels = restoreFallbackModels(ac.Resilience.FallbackModels, prevFallback)
-	if err := h.store.Update(ctx, id, &ac); err != nil {
+	// The masked fallback-model keys round-trip to their stored values inside
+	// the store's transaction.
+	err := h.store.Update(ctx, id, &ac, func(prev *store.AgentConfig) error {
+		ac.Resilience.FallbackModels = restoreFallbackModels(ac.Resilience.FallbackModels, prev.Resilience.FallbackModels)
+		return nil
+	})
+	if err != nil {
 		saveError(c, err) // duplicate name -> 409, not-found -> 404
 		return
 	}

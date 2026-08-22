@@ -36,19 +36,12 @@ func (s *AgentConfigStore) Create(ctx context.Context, ac *AgentConfig) error {
 
 // Update overwrites the agent config, under the same provider guard as Create
 // — re-pointing an agent at a provider races a delete exactly like a create
-// does. Returns an ErrNotFound-wrapping error when the row doesn't exist.
-func (s *AgentConfigStore) Update(ctx context.Context, id string, m *AgentConfig) error {
-	err := sealedWrite(m, sealAgentConfig, openAgentConfig, func() error {
-		return writeReferencingProvider(ctx, s.db, m.ProviderID, nil, func(ctx context.Context, tx bun.Tx) error {
-			res, err := tx.NewUpdate().Model(m).
-				ExcludeColumn("id", "created_at").
-				Where("id = ?", id).
-				Exec(ctx)
-			if err == nil {
-				err = requireRows(res)
-			}
-			return err
-		})
+// does. The stored row is read in the same transaction and handed to prepare
+// (nil to skip), so a masked fallback-model key keeps its stored value.
+// Returns an ErrNotFound-wrapping error when the row doesn't exist.
+func (s *AgentConfigStore) Update(ctx context.Context, id string, m *AgentConfig, prepare func(prev *AgentConfig) error) error {
+	err := writeReferencingProvider(ctx, s.db, m.ProviderID, nil, func(ctx context.Context, tx bun.Tx) error {
+		return s.updateFrom(ctx, tx, id, m, prepare)
 	})
 	if err != nil {
 		return fmt.Errorf("updating agent config %s: %w", id, err)

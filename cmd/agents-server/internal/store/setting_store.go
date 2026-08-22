@@ -68,6 +68,42 @@ func (s *SettingStore) Set(ctx context.Context, key, value string) error {
 	return nil
 }
 
+// Modify sets key from its stored value: one transaction reads the current
+// value (locked; found is false when there is none), asks value for the new
+// one, and upserts it — how a masked secret keeps what is stored with no
+// window for a concurrent Set to slip between. value's error comes back
+// as given.
+func (s *SettingStore) Modify(ctx context.Context, key string, value func(prev string, found bool) (string, error)) error {
+	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		var prev string
+		st := new(Setting)
+		err := lockRow(ctx, tx, st, "key = ?", key)
+		found := err == nil
+		switch {
+		case errors.Is(err, ErrNotFound):
+		case err != nil:
+			return fmt.Errorf("getting setting %s: %w", key, err)
+		default:
+			if err := s.open(st); err != nil {
+				return fmt.Errorf("getting setting %s: %w", key, err)
+			}
+			prev = st.Value
+		}
+		next, err := value(prev, found)
+		if err != nil {
+			return err
+		}
+		st = &Setting{Key: key, Value: s.seal(key, next)}
+		if _, err := tx.NewInsert().Model(st).
+			On("CONFLICT (key) DO UPDATE").
+			Set("value = EXCLUDED.value").
+			Exec(ctx); err != nil {
+			return fmt.Errorf("setting %s: %w", key, err)
+		}
+		return nil
+	})
+}
+
 // List returns all settings ordered by key — all but the secret key check,
 // which is the process's, not a setting.
 func (s *SettingStore) List(ctx context.Context) ([]Setting, error) {

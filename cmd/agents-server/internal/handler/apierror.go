@@ -87,18 +87,27 @@ func storeError(c *gin.Context, err error) {
 	internalError(c, err)
 }
 
+// badRequestError carries a 400's message out of a store callback — a
+// handler's rule that runs inside the store's transaction, on the row as
+// stored. saveError maps it.
+type badRequestError string
+
+func (e badRequestError) Error() string { return string(e) }
+
 // saveError maps a create/update store failure: a UNIQUE constraint violation
 // → 409 (so uniqueness is enforced by the DB, not a racy handler pre-check),
-// a refused provider reference → 400 (the caller's input names a provider that
-// is gone or unroutable — the handler pre-check's answer, arrived at inside
-// the store's tx), ErrNotFound → 404, anything else → 500. This centralizes
-// the duplicate-key response so every table's uniqueness costs only its index.
+// a refused provider reference or a rule that failed inside the store's tx →
+// 400 (the caller's input is what is wrong), ErrNotFound → 404, anything else
+// → 500. This centralizes the duplicate-key response so every table's
+// uniqueness costs only its index.
 func saveError(c *gin.Context, err error) {
 	if cols, ok := store.UniqueViolation(err); ok {
 		conflict(c, "already in use: "+cols)
 		return
 	}
-	if errors.Is(err, store.ErrProviderRef) || errors.Is(err, store.ErrProviderNotRoutable) {
+	var rejected badRequestError
+	if errors.Is(err, store.ErrProviderRef) || errors.Is(err, store.ErrProviderNotRoutable) ||
+		errors.Is(err, store.ErrProviderRouted) || errors.As(err, &rejected) {
 		badRequest(c, err.Error())
 		return
 	}

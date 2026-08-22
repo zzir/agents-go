@@ -58,7 +58,7 @@ func TestSecretsSealedAtRest(t *testing.T) {
 		t.Fatalf("Get = %+v %v", got, err)
 	}
 	pv.Name = "p2"
-	if err := providers.Update(ctx, pv.ID, pv); err != nil || pv.APIKey != "sk-live" {
+	if err := providers.Update(ctx, pv.ID, pv, nil); err != nil || pv.APIKey != "sk-live" {
 		t.Fatalf("Update: %v key=%q", err, pv.APIKey)
 	}
 	if err := providers.SaveChatGPTToken(ctx, pv.ID, `{"access":"tok"}`); err != nil {

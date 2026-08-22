@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 
@@ -133,51 +132,19 @@ func (h *ProviderHandler) Update(c *gin.Context) {
 		return
 	}
 	ctx, id := c.Request.Context(), c.Param("id")
-	// Load the stored row so a masked key can round-trip. A transient
-	// (non-not-found) Get failure must abort: continuing with an empty prev
-	// would resolve the ******** mask to "" and silently WIPE the key.
-	prev, err := h.store.Get(ctx, id)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		internalError(c, err)
-		return
-	}
-	var prevKey, prevType, prevBaseURL string
-	if prev != nil {
-		prevKey, prevType, prevBaseURL = prev.APIKey, prev.Type, prev.BaseURL
-	}
-	// A masked key means "keep the stored one" — which only makes sense for
-	// the DESTINATION it was stored for. Restoring it after the backend or the
-	// endpoint moved would send one service's real credential to another (two
-	// OpenAI-compatible endpoints differ only in base_url); refuse instead.
-	if pv.APIKey == SecretMask && prevKey != "" &&
-		credentialTargetChanged(prevType, prevBaseURL, pv.Type, pv.BaseURL) {
-		badRequest(c, "type or base_url changed: the stored api_key belongs to the previous destination — replace it or clear it")
-		return
-	}
-	// Switching to chatgpt_login while routes point here would leave them dead
-	// (a route cannot carry an OAuth token). Refuse, naming the fix.
-	if pv.AuthMode == bridge.AuthModeChatGPTLogin && prev != nil && prev.AuthMode != bridge.AuthModeChatGPTLogin {
-		if n, cErr := h.store.RouteRefCount(ctx, id); cErr != nil {
-			internalError(c, cErr)
-			return
-		} else if n > 0 {
-			badRequest(c, "this provider is used by a route, which cannot use chatgpt_login: remove the route first")
-			return
+	// The mask resolves against the stored row inside the store's transaction,
+	// and only for the destination the key was stored for — README invariant 9.
+	err := h.store.Update(ctx, id, &pv, func(prev *store.Provider) error {
+		if pv.APIKey == SecretMask && prev.APIKey != "" &&
+			credentialTargetChanged(prev.Type, prev.BaseURL, pv.Type, pv.BaseURL) {
+			return badRequestError("type or base_url changed: the stored api_key belongs to the previous destination — replace it or clear it")
 		}
-	}
-	pv.APIKey = resolveSecret(pv.APIKey, prevKey)
-	if err := h.store.Update(ctx, id, &pv); err != nil {
-		saveError(c, err) // duplicate name -> 409, not-found -> 404
+		pv.APIKey = resolveSecret(pv.APIKey, prev.APIKey)
+		return nil
+	})
+	if err != nil {
+		saveError(c, err) // duplicate name -> 409, not-found -> 404, routed chatgpt_login -> 400
 		return
-	}
-	// Update preserves the chatgpt_token column, so a provider that moves OFF
-	// chatgpt_login would otherwise keep a stranded token the UI can no longer
-	// revoke (the disconnect button renders for chatgpt_login providers only).
-	if pv.AuthMode != bridge.AuthModeChatGPTLogin {
-		if err := h.store.ClearChatGPTToken(ctx, id); err != nil {
-			internalError(c, err)
-			return
-		}
 	}
 	updated, err := h.store.Get(ctx, id)
 	if err != nil {
