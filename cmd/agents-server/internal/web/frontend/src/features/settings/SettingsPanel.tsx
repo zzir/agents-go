@@ -2,7 +2,8 @@ import { useState, useCallback, useEffect, type ChangeEvent } from 'react';
 import { Button, TextInput, Textarea, FormControl, Stack, PageHeader, Select, SegmentedControl, Label } from '@primer/react';
 import { SecretInput } from '@/components/SecretInput';
 import { FormActions } from '@/components/FormActions';
-import { CrudPanel } from '@/components/CrudPanel';
+import { CrudPanel, RowEditButton } from '@/components/CrudPanel';
+import { useReadOnly } from '@/lib/access';
 import { ResourceRow } from '@/components/ResourceRow';
 import { fc } from '@/lib/form';
 import { nameOf } from '@/lib/named';
@@ -52,6 +53,7 @@ const GROUP_TITLES: Record<string, string> = {
 };
 
 export function SettingsPanel() {
+  const readOnly = useReadOnly();
   const { data: defs } = useApi<SettingDef[]>(() => api.settings.defs() as Promise<SettingDef[]>);
   const { data: settings, reload } = useApi<Setting[]>(() => api.settings.list() as Promise<Setting[]>);
   const [saving, setSaving] = useState<Record<string, boolean>>({});
@@ -99,6 +101,9 @@ export function SettingsPanel() {
         </PageHeader.TitleArea>
         <PageHeader.Description>Network, prompt, and integration settings that apply to all agents.</PageHeader.Description>
       </PageHeader>
+      {/* A member sees the values and can change none: one fieldset over
+          the rows disables every input and the Save each would show. */}
+      <fieldset disabled={readOnly} className="readonly-form">
       {groups.map(g => (
         <div key={g.name} className="form-group">
           <PageHeader>
@@ -119,7 +124,8 @@ export function SettingsPanel() {
           </Stack>
         </div>
       ))}
-      {unknown.length > 0 && <UnknownSection rows={unknown} onDelete={handleDelete} />}
+      </fieldset>
+      {unknown.length > 0 && <UnknownSection rows={unknown} onDelete={readOnly ? null : handleDelete} />}
       <ServerSection />
       <ProviderRoutesSection />
     </Stack>
@@ -223,7 +229,7 @@ function SettingInput({ def, draft, setDraft }: { def: SettingDef; draft: string
 // Rows the registry does not define: written before writes were validated, or
 // left behind by a removed feature. Shown rather than hidden, because a value
 // nobody can see is a value nobody can clear.
-function UnknownSection({ rows, onDelete }: { rows: Setting[]; onDelete: (key: string) => void }) {
+function UnknownSection({ rows, onDelete }: { rows: Setting[]; onDelete: ((key: string) => void) | null }) {
   return (
     <div className="form-group">
       <PageHeader>
@@ -242,9 +248,11 @@ function UnknownSection({ rows, onDelete }: { rows: Setting[]; onDelete: (key: s
               </div>
               <div className="resource-row-sub">{r.value}</div>
             </div>
-            <div className="resource-row-actions">
-              <Button onClick={() => onDelete(r.key)} size="small" variant="danger">Delete</Button>
-            </div>
+            {onDelete && (
+              <div className="resource-row-actions">
+                <Button onClick={() => onDelete(r.key)} size="small" variant="danger">Delete</Button>
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -331,14 +339,14 @@ function ProviderRoutesSection() {
     : null;
 
   return (
-    <CrudPanel title="Provider Routes" as="section" onAdd={startAdd} form={form}
+    <CrudPanel title="Provider Routes" as="section" onAdd={startAdd} onCancel={cancel} form={form}
       description={<>Route model names by prefix (e.g. &quot;groq/llama-3&quot; &rarr; prefix &quot;groq&quot;). The agent&apos;s own provider is the fallback.</>}
       isEmpty={routes.length === 0} empty="No provider routes configured.">
       {routes.map(r => (
         <ResourceRow key={r.id}
           title={r.prefix + '/'}
           badges={<span className="resource-row-sub">&rarr; {providerName(r.provider_id)}</span>}
-          actions={<Button onClick={() => startEdit(r)} size="small" variant="invisible">Edit</Button>}
+          actions={<RowEditButton onClick={() => startEdit(r)} />}
         />
       ))}
     </CrudPanel>

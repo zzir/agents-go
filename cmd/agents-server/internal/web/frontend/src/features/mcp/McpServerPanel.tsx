@@ -3,7 +3,8 @@ import { Button, TextInput, Label, Select, Checkbox, FormControl, Stack, ToggleS
 import { SecretInput } from '@/components/SecretInput';
 import { TokenListInput } from '@/components/TokenListInput';
 import { FormActions } from '@/components/FormActions';
-import { CrudPanel } from '@/components/CrudPanel';
+import { CrudPanel, RowEditButton } from '@/components/CrudPanel';
+import { useReadOnly } from '@/lib/access';
 import { ResourceRow } from '@/components/ResourceRow';
 import { api } from '@/lib/api';
 import { BADGE } from '@/lib/badges';
@@ -265,6 +266,7 @@ const MUTATION_GRACE_MS = 8000;
 const POLL_INTERVAL_MS = 1500;
 
 export function McpServerPanel() {
+  const readOnly = useReadOnly();
   const { items: servers, reload, adding, editing, startAdd, startEdit, cancel, save, remove } = useCrud<McpServer, Partial<McpServer>>(api.mcpServers);
   // busy covers only the POST /connect round-trip; every longer-lived state
   // (connecting, authorizing) is reported by the backend via status.
@@ -343,7 +345,7 @@ export function McpServerPanel() {
     : null;
 
   return (
-    <CrudPanel title="MCP Servers" onAdd={startAdd} form={form} isEmpty={servers.length === 0} empty="No MCP servers configured.">
+    <CrudPanel title="MCP Servers" onAdd={startAdd} onCancel={cancel} form={form} isEmpty={servers.length === 0} empty="No MCP servers configured.">
       {servers.map(s => {
         const action = STATUS_ACTION[s.status];
         return (
@@ -353,7 +355,7 @@ export function McpServerPanel() {
             badges={s.config && s.config.auth_mode === 'oauth' && <Label variant={BADGE.type}>OAuth</Label>}
             sub={s.transport_type + (s.config && s.config.command ? ': ' + s.config.command : '') + (s.config && s.config.endpoint ? ': ' + s.config.endpoint : '')}
             actions={<>
-              {action && (
+              {action && !readOnly && (
                 <Button
                   onClick={() => handleConnect(s.id)}
                   disabled={action.inProgress || busy[s.id]}
@@ -361,8 +363,8 @@ export function McpServerPanel() {
                   style={{ color: 'var(--fgColor-success)', minWidth: 90, textAlign: 'center' }}
                 >{busy[s.id] ? '...' : action.label}</Button>
               )}
-              <Button onClick={() => startEdit(s)} size="small" variant="invisible">Edit</Button>
-              <EnabledToggle server={s} onToggle={handleToggleEnabled} />
+              <RowEditButton onClick={() => startEdit(s)} />
+              {!readOnly && <EnabledToggle server={s} onToggle={handleToggleEnabled} />}
             </>}
           />
         );

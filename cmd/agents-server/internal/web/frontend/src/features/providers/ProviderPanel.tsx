@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, TextInput, Label, SegmentedControl, Stack } from '@primer/react';
 import { SecretInput } from '@/components/SecretInput';
 import { FormActions } from '@/components/FormActions';
-import { CrudPanel } from '@/components/CrudPanel';
+import { CrudPanel, RowEditButton } from '@/components/CrudPanel';
+import { useReadOnly } from '@/lib/access';
 import { ResourceRow } from '@/components/ResourceRow';
 import { api } from '@/lib/api';
 import { useApi, useCrud } from '@/lib/hooks';
@@ -106,6 +107,7 @@ function ProviderForm({ initial, onSave, onCancel, onDelete, providerTypes }: Pr
 }
 
 export function ProviderPanel() {
+  const readOnly = useReadOnly();
   const { items: providers, adding, editing, startAdd, startEdit, cancel, save, remove, reload } =
     useCrud<Provider, ProviderFormData>(api.providers);
   const { data: providerTypes } = useApi<ProviderTypeInfo[]>(() => api.providerTypes.list() as Promise<ProviderTypeInfo[]>);
@@ -178,7 +180,7 @@ export function ProviderPanel() {
     ) : null;
 
   return (
-    <CrudPanel title="Providers" onAdd={startAdd} form={form} isEmpty={providers.length === 0}
+    <CrudPanel title="Providers" onAdd={startAdd} onCancel={cancel} form={form} isEmpty={providers.length === 0}
       empty="No providers yet. An agent without one runs on the built-in default: the OpenAI backend on the global API key from Settings.">
       {providers.map(p => {
         const meta = providerMeta(p.type || '');
@@ -196,10 +198,10 @@ export function ProviderPanel() {
             badges={<Label variant={BADGE.type}>{meta.badge}</Label>}
             sub={p.base_url || meta.baseURLPlaceholder}
             actions={<>
-              {chatgpt && (p.chatgpt_logged_in
+              {chatgpt && !readOnly && (p.chatgpt_logged_in
                 ? <Button onClick={() => handleLogout(p.id)} size="small" variant="invisible">Sign out</Button>
                 : <Button onClick={() => handleLogin(p.id)} size="small" variant="invisible" loading={!!signingIn[p.id]}>Sign in</Button>)}
-              <Button onClick={() => startEdit(p)} size="small" variant="invisible">Edit</Button>
+              <RowEditButton onClick={() => startEdit(p)} />
             </>}
           />
         );

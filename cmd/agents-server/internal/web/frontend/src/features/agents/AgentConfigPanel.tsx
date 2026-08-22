@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { Button, TextInput, Textarea, Label, FormControl, Checkbox, Select, Stack } from '@primer/react';
+import { TextInput, Textarea, Label, FormControl, Checkbox, Select, Stack } from '@primer/react';
 import { TokenListInput } from '@/components/TokenListInput';
 import { FormActions } from '@/components/FormActions';
-import { CrudPanel } from '@/components/CrudPanel';
+import { CrudPanel, RowEditButton } from '@/components/CrudPanel';
 import { ResourceRow } from '@/components/ResourceRow';
 import { api } from '@/lib/api';
 import { useApi, useCrud } from '@/lib/hooks';
@@ -507,7 +507,7 @@ export function AgentConfigPanel() {
     : null;
 
   return (
-    <CrudPanel title="Agents" onAdd={startAdd} form={form} isEmpty={agents.length === 0}
+    <CrudPanel title="Agents" onAdd={startAdd} onCancel={cancel} form={form} isEmpty={agents.length === 0}
       empty="No agents configured. Add one to customize model, provider, and behavior.">
       {agents.map(a => {
         const mcp = mcpCount(a.tools);
@@ -523,7 +523,7 @@ export function AgentConfigPanel() {
               {skl > 0 && <Label variant={BADGE.count}>{'Skills·' + skl}</Label>}
             </>}
             meta={<span>{a.model || 'default model'}</span>}
-            actions={<Button onClick={() => startEdit(a)} size="small" variant="invisible">Edit</Button>}
+            actions={<RowEditButton onClick={() => startEdit(a)} />}
           />
         );
       })}

@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { Button, TextInput, Label, Select, Checkbox, FormControl, Stack } from '@primer/react';
 import { SecretInput } from '@/components/SecretInput';
 import { FormActions } from '@/components/FormActions';
-import { CrudPanel } from '@/components/CrudPanel';
+import { CrudPanel, RowEditButton } from '@/components/CrudPanel';
+import { useReadOnly } from '@/lib/access';
 import { ResourceRow } from '@/components/ResourceRow';
 import { api } from '@/lib/api';
 import { BADGE } from '@/lib/badges';
@@ -238,6 +239,7 @@ function sandboxSummary(s: SandboxConfig): string {
 }
 
 export function SandboxPanel() {
+  const readOnly = useReadOnly();
   const { items, adding, editing, startAdd, startEdit, cancel, save, remove } =
     useCrud<SandboxConfig, PackedForm>(api.sandboxes);
   const [testingId, setTestingId] = useState<string | null>(null);
@@ -265,17 +267,19 @@ export function SandboxPanel() {
     : null;
 
   return (
-    <CrudPanel title="Sandboxes" onAdd={startAdd} form={form} isEmpty={items.length === 0} empty="No sandboxes configured.">
+    <CrudPanel title="Sandboxes" onAdd={startAdd} onCancel={cancel} form={form} isEmpty={items.length === 0} empty="No sandboxes configured.">
       {items.map(s => (
         <ResourceRow key={s.id}
           title={s.name}
           badges={<Label variant={BADGE.type}>{typeLabel(s.type)}</Label>}
           sub={sandboxSummary(s)}
           actions={<>
-            <Button onClick={() => handleTest(s)} size="small" disabled={testingId === s.id} style={{ color: 'var(--fgColor-success)' }}>
-              {testingId === s.id ? 'Testing...' : 'Test'}
-            </Button>
-            <Button onClick={() => startEdit(s)} size="small" variant="invisible">Edit</Button>
+            {!readOnly && (
+              <Button onClick={() => handleTest(s)} size="small" disabled={testingId === s.id} style={{ color: 'var(--fgColor-success)' }}>
+                {testingId === s.id ? 'Testing...' : 'Test'}
+              </Button>
+            )}
+            <RowEditButton onClick={() => startEdit(s)} />
           </>}
         />
       ))}

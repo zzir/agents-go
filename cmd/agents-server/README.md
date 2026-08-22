@@ -185,7 +185,17 @@ Two rules, enforced at the routes (`handler/authz.go`), shape who may do what:
   provider routes: every write changes what runs on the host or whose
   credentials are spent, so `POST`/`PUT`/`DELETE` on them answer `403` for a
   member. The web terminal (`/ws/terminal`) is a shell on a sandbox host with
-  the server's stored credentials — admin only.
+  the server's stored credentials — admin only. The gate holds through the
+  model's tools as well: `save_workflow` rides only an admin's run (a member's
+  agent still gets `get_workflow`), so a member approving their own agent's
+  call cannot write what the API refuses them.
+- **Using shared configuration is not writing it.** A member runs any agent,
+  any workflow, and any sandbox in their own session — and approves their own
+  tool calls there. A shared `ssh` or `local` sandbox is therefore a shared
+  shell: every member who can pick it can execute on that host, under the
+  credentials the server stores. That is the single-workspace model — one
+  team, one trust boundary — not an oversight; a host that only admins may
+  touch is a host that is not configured as a sandbox here.
 - **A session's content belongs to its owner alone.** `sessions.owner_id` is
   the one ownership column: a task's hidden session inherits its parent's
   owner, a trigger fires into a session, an approval is filed on one. The
@@ -203,7 +213,9 @@ Two rules, enforced at the routes (`handler/authz.go`), shape who may do what:
   in as admin. In the UI the account menu (sidebar footer: avatar and name)
   holds Settings, Sign out and — for admins — Admin, a dialog of three
   panels: Members (roles), Sessions (every owner's, delete only) and Audit
-  logs. Settings for a member is their Account alone (profile and PATs).
+  logs. Settings for a member shows the same configuration panels read-only
+  — what the API lets them read, laid out as the admin sees it, with no
+  Add, Edit, Delete or Test — plus their Account (profile and PATs).
 
 In token mode the one local account is an admin and owns everything, so every
 check passes.

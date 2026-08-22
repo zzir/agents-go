@@ -1,7 +1,7 @@
 import { useState, type ChangeEvent } from 'react';
-import { Button, TextInput, Label, SegmentedControl, Stack, Checkbox, FormControl } from '@primer/react';
+import { TextInput, Label, SegmentedControl, Stack, Checkbox, FormControl } from '@primer/react';
 import { FormActions } from '@/components/FormActions';
-import { CrudPanel } from '@/components/CrudPanel';
+import { CrudPanel, RowEditButton } from '@/components/CrudPanel';
 import { ResourceRow } from '@/components/ResourceRow';
 import { api } from '@/lib/api';
 import { useCrud } from '@/lib/hooks';
@@ -155,7 +155,7 @@ export function GuardrailPanel() {
     : null;
 
   return (
-    <CrudPanel title="Guardrails" onAdd={startAdd} form={form} isEmpty={guardrails.length === 0}
+    <CrudPanel title="Guardrails" onAdd={startAdd} onCancel={cancel} form={form} isEmpty={guardrails.length === 0}
       empty="No guardrails configured. Built-in guardrails (content_filter, max_input_length, max_output_length) are always available.">
       {guardrails.map((g, i) => (
         <ResourceRow key={g.id || ('builtin-' + i)}
@@ -165,7 +165,7 @@ export function GuardrailPanel() {
             {[(g.stages || []).map(st => STAGE_LABELS[st] || st).join(', '), g.mode].filter(Boolean).join(' · ')}
             {g.description && (' — ' + g.description)}
           </>}
-          actions={!isBuiltin(g) && <Button onClick={() => startEdit(g)} size="small" variant="invisible">Edit</Button>}
+          actions={!isBuiltin(g) && <RowEditButton onClick={() => startEdit(g)} />}
         />
       ))}
     </CrudPanel>

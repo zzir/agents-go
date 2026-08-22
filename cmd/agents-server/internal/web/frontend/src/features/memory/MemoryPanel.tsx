@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { Button, TextInput, Textarea, Label, Select, Stack } from '@primer/react';
+import { TextInput, Textarea, Label, Select, Stack } from '@primer/react';
 import { FormActions } from '@/components/FormActions';
-import { CrudPanel } from '@/components/CrudPanel';
+import { CrudPanel, RowEditButton } from '@/components/CrudPanel';
 import { ResourceRow } from '@/components/ResourceRow';
 import { api } from '@/lib/api';
 import { nameOf } from '@/lib/named';
@@ -105,7 +105,7 @@ export function MemoryPanel() {
     : null;
 
   return (
-    <CrudPanel title="Memory" onAdd={startAdd} form={form} isEmpty={memories.length === 0} empty="No memories stored.">
+    <CrudPanel title="Memory" onAdd={startAdd} onCancel={cancel} form={form} isEmpty={memories.length === 0} empty="No memories stored.">
       {/* Global is the default and says nothing — only a SCOPED memory
           carries a badge: the agent it belongs to. */}
       {memories.map(m => (
@@ -113,7 +113,7 @@ export function MemoryPanel() {
           title={m.key}
           badges={m.agent_config_id && <Label variant={BADGE.ref}>{agentName(m.agent_config_id)}</Label>}
           sub={m.content.substring(0, 120) + (m.content.length > 120 ? '...' : '')}
-          actions={<Button onClick={() => startEdit(m)} size="small" variant="invisible">Edit</Button>}
+          actions={<RowEditButton onClick={() => startEdit(m)} />}
         />
       ))}
     </CrudPanel>

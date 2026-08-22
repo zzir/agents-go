@@ -7,8 +7,10 @@ import { toast } from '@/lib/toast';
 import { type Skill, groupByRepo } from '@/lib/skills';
 import { BADGE } from '@/lib/badges';
 import { Disclosure } from '@/components/Disclosure';
+import { useReadOnly } from '@/lib/access';
 
 export function SkillsPanel() {
+  const readOnly = useReadOnly();
   const confirmDialog = useConfirm();
   const { data: skills, loading, error, reload } = useApi<Skill[]>(() => api.skills.list() as Promise<Skill[]>);
   const [repoUrl, setRepoUrl] = useState('');
@@ -79,7 +81,7 @@ export function SkillsPanel() {
         <PageHeader.TitleArea>
           <PageHeader.Title>Skills</PageHeader.Title>
         </PageHeader.TitleArea>
-        {!adding && <PageHeader.Actions><Button onClick={() => setAdding(true)} variant="primary" size="small">+ Add</Button></PageHeader.Actions>}
+        {!adding && !readOnly && <PageHeader.Actions><Button onClick={() => setAdding(true)} variant="primary" size="small">+ Add</Button></PageHeader.Actions>}
       </PageHeader>
 
       {adding && (
@@ -132,7 +134,7 @@ export function SkillsPanel() {
               label={<>
                 {group.repo}
                 <Label variant={BADGE.count}>{'Skills·' + group.skills.length}</Label>
-                <div className="resource-row-actions">
+                {!readOnly && <div className="resource-row-actions">
                   <Button
                     size="small"
                     variant="invisible"
@@ -144,7 +146,7 @@ export function SkillsPanel() {
                   <Button size="small" variant="danger" onClick={e => { e.stopPropagation(); handleDelete(group.repo); }}>
                     Delete
                   </Button>
-                </div>
+                </div>}
               </>}
             >
               {group.skills.map(s => (

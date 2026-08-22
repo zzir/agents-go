@@ -29,6 +29,7 @@ import { patchToolCall, type ToolCallPatch } from '@/lib/timeline';
 import { syncTaskCard } from '@/lib/streamReducer';
 import { clearSessionPrefs } from '@/lib/drafts';
 import { onToast, toast } from '@/lib/toast';
+import { ReadOnlyContext } from '@/lib/access';
 
 const FLASH_VARIANT: Record<string, FlashProps['variant']> = { error: 'danger', warning: 'warning', success: 'success', info: 'default' };
 const FLASH_ICON: Record<string, React.ReactNode> = {
@@ -108,10 +109,6 @@ const SETTINGS_TABS: DialogTab[] = [
   { key: 'general',    label: 'General',    icon: GearIcon,       load: () => import('@/features/settings/SettingsPanel') },
 ];
 
-// Shared configuration is admin-written (the server refuses members with
-// 403); a member's settings are their own account. The tab list reflects
-// that instead of showing panels whose every Save would be refused.
-const MEMBER_SETTINGS_TABS = SETTINGS_TABS.filter(t => t.key === 'account');
 
 // The Admin dialog: people and what they own, then the record of it all.
 const ADMIN_TABS: DialogTab[] = [
@@ -125,8 +122,10 @@ function TabLoadError() {
 }
 
 // PanelDialog is the tabbed dialog behind both Settings and Admin: a nav of
-// lazily loaded panels, one open at a time.
-function PanelDialog({ title, tabs, onClose }: { title: string; tabs: DialogTab[]; onClose: () => void }) {
+// lazily loaded panels, one open at a time. readOnly is a member's Settings:
+// shared configuration is theirs to read (the API allows it) and not to
+// write (the server refuses with 403), so the panels show and offer nothing.
+function PanelDialog({ title, tabs, readOnly, onClose }: { title: string; tabs: DialogTab[]; readOnly?: boolean; onClose: () => void }) {
   const [tab, setTab] = useState(tabs[0].key);
   const [TabComp, setTabComp] = useState<React.ComponentType | null>(null);
 
@@ -178,7 +177,11 @@ function PanelDialog({ title, tabs, onClose }: { title: string; tabs: DialogTab[
           </PrimerNavList>
         </nav>
         <div className="settings-content">
-          {TabComp ? <ErrorBoundary resetKey={tab}><TabComp /></ErrorBoundary> : null}
+          {TabComp ? (
+            <ReadOnlyContext value={!!readOnly}>
+              <ErrorBoundary resetKey={tab}><TabComp /></ErrorBoundary>
+            </ReadOnlyContext>
+          ) : null}
         </div>
       </div>
     </Dialog>
@@ -1037,7 +1040,7 @@ function App() {
         )}
       </AppShell>
       {settingsOpen && (
-        <PanelDialog title="Settings" tabs={me?.role === 'admin' ? SETTINGS_TABS : MEMBER_SETTINGS_TABS}
+        <PanelDialog title="Settings" tabs={SETTINGS_TABS} readOnly={me?.role !== 'admin'}
           onClose={() => { setSettingsOpen(false); setSettingsReloadKey(k => k + 1); }} />
       )}
       {/* Admin deletes sessions; the sidebar relists on close. */}
