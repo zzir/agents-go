@@ -276,8 +276,8 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-// Check validates the presented bearer — the stored-credential probe the SPA
-// runs before showing the app.
+// Check is the SPA's stored-credential probe: an authenticated route (the
+// middleware did the check) that answers nothing but ok.
 //
 //	@Summary	Validate the presented credential
 //	@Tags		auth
@@ -287,10 +287,6 @@ func (h *AuthHandler) Login(c *gin.Context) {
 //	@Security	BearerAuth
 //	@Router		/auth/check [get]
 func (h *AuthHandler) Check(c *gin.Context) {
-	if _, err := h.svc.Authenticate(c.Request.Context(), server.BearerToken(c)); err != nil {
-		c.JSON(http.StatusUnauthorized, protocol.NewErrorResponse(protocol.CodeUnauthorized, "unauthorized"))
-		return
-	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 

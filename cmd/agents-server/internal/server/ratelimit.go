@@ -16,11 +16,14 @@ import (
 // fate with a full table (429) rather than growing memory without bound.
 const rateLimiterMaxKeys = 10000
 
-// Per-IP budgets. The auth surface is a credential oracle, so it gets a tight
-// budget; webhooks fire from machines and legitimately burst.
+// Per-IP budgets. A credential guess (a failed bearer, a token login, a code
+// exchange) gets a tight budget; the OAuth flow steps and webhooks are hit by
+// legitimate clients in bursts.
 const (
 	authRatePerMinute = 10
 	authRateBurst     = 10
+	flowRatePerMinute = 60
+	flowRateBurst     = 30
 	hookRatePerMinute = 60
 	hookRateBurst     = 30
 )
@@ -67,6 +70,14 @@ func (l *ipLimiter) Allow(key string) bool {
 	return b.lim.Allow()
 }
 
+// Exhausted reports whether key has no budget left, without consuming any.
+func (l *ipLimiter) Exhausted(key string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	b := l.buckets[key]
+	return b != nil && b.lim.Tokens() < 1
+}
+
 // pruneLocked drops entries idle long enough to have refilled their burst —
 // forgetting them changes nothing about what they would be allowed.
 func (l *ipLimiter) pruneLocked(now time.Time) {
@@ -78,10 +89,39 @@ func (l *ipLimiter) pruneLocked(now time.Time) {
 	}
 }
 
-// AuthRateLimit is the budget for the auth surface — the one place
-// credentials are guessed. Mounted by the route registration in handler.
+// AuthRateLimit is the budget for the routes where every request is a
+// credential guess (token login, code exchange). Mounted by the route
+// registration in handler.
 func AuthRateLimit() gin.HandlerFunc {
 	return RateLimit(authRatePerMinute, authRateBurst)
+}
+
+// FlowRateLimit is the looser budget for the OAuth flow steps (start,
+// callback), which allocate server state per call but guess nothing.
+func FlowRateLimit() gin.HandlerFunc {
+	return RateLimit(flowRatePerMinute, flowRateBurst)
+}
+
+// AuthGuard is the per-IP budget of FAILED credential checks shared by every
+// place a bearer is resolved (REST, the WS auth frame): a failure consumes
+// one, an exhausted IP is refused before the check runs, and a credential
+// that authenticates costs nothing — so a valid client is never limited.
+type AuthGuard struct{ fails *ipLimiter }
+
+// NewAuthGuard returns a guard with the credential-guess budget.
+func NewAuthGuard() *AuthGuard {
+	return &AuthGuard{fails: newIPLimiter(authRatePerMinute, authRateBurst)}
+}
+
+// Exhausted reports whether ip has failed too often to be checked again now.
+// A nil guard never refuses.
+func (g *AuthGuard) Exhausted(ip string) bool { return g != nil && g.fails.Exhausted(ip) }
+
+// Failed records one failed check for ip.
+func (g *AuthGuard) Failed(ip string) {
+	if g != nil {
+		g.fails.Allow(ip)
+	}
 }
 
 // RateLimit is a gin middleware enforcing a per-client-IP request rate. The

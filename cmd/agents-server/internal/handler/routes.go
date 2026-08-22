@@ -40,18 +40,17 @@ type Handlers struct {
 func (h Handlers) Register(api *gin.RouterGroup) {
 	{
 		auth := api.Group("/auth")
-		// One strict per-IP budget for the routes where a credential can be
-		// guessed — the unauthenticated ones (server.authExempt's list). The
-		// authenticated routes below it carry no extra limit: the Account panel
-		// alone issues half a dozen of them on open, and a signed-in caller is
-		// not guessing anything.
-		guess := server.AuthRateLimit()
+		// The guess budget sits on the two routes where every request IS a
+		// credential guess; the flow steps get the looser budget; config is a
+		// static fact. Authenticated routes (check included) draw on the
+		// failure budget in server.TokenAuth, which a valid bearer never spends.
+		guess, flow := server.AuthRateLimit(), server.FlowRateLimit()
 		auth.POST("/login", guess, h.Auth.Login)
-		auth.GET("/check", guess, h.Auth.Check)
-		auth.GET("/config", guess, h.Auth.Config)
-		auth.GET("/oauth/:provider/start", guess, h.Auth.OAuthStart)
-		auth.GET("/oauth/:provider/callback", guess, h.Auth.OAuthCallback)
 		auth.POST("/exchange", guess, h.Auth.Exchange)
+		auth.GET("/oauth/:provider/start", flow, h.Auth.OAuthStart)
+		auth.GET("/oauth/:provider/callback", flow, h.Auth.OAuthCallback)
+		auth.GET("/config", h.Auth.Config)
+		auth.GET("/check", h.Auth.Check)
 		auth.GET("/me", h.Auth.Me)
 		auth.POST("/logout", h.Auth.Logout)
 		auth.GET("/tokens", h.Auth.ListTokens)

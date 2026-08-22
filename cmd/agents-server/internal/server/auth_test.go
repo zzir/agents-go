@@ -19,7 +19,6 @@ import (
 func TestAuthExemptCoversOnlyServedRoutes(t *testing.T) {
 	for _, p := range []string{
 		"/api/v1/auth/login",
-		"/api/v1/auth/check",
 		"/api/v1/auth/config",
 		"/api/v1/auth/exchange",
 		"/api/v1/auth/oauth/google/start",
@@ -34,6 +33,7 @@ func TestAuthExemptCoversOnlyServedRoutes(t *testing.T) {
 	for _, p := range []string{
 		"/api/v1/chatgpt/oauth/callback",
 		"/api/auth/login",
+		"/api/v1/auth/check",
 		"/api/v1/auth/me",
 		"/api/v1/auth/logout",
 		"/api/v1/auth/tokens",

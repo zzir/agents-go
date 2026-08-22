@@ -32,8 +32,8 @@ func (s *Server) RegisterHook(hook gin.HandlerFunc) {
 // first WS frame, resolved by the same AuthFunc as REST): /ws for run events,
 // /ws/terminal for one interactive sandbox terminal per connection.
 func (s *Server) RegisterWS(ws, terminal WSHandlerFunc) {
-	s.Engine.GET("/ws", HandleWSWithAuth(ws, s.auth))
-	s.Engine.GET("/ws/terminal", HandleWSWithAuth(terminal, s.auth))
+	s.Engine.GET("/ws", HandleWSWithAuth(ws, s.auth, s.guard))
+	s.Engine.GET("/ws/terminal", HandleWSWithAuth(terminal, s.auth, s.guard))
 }
 
 // ServeOpenAPI mounts the OpenAPI document (auth-exempt) at

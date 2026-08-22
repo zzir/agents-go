@@ -37,7 +37,7 @@ func TestOAuthRedirectPathIsMountedAndUnauthenticated(t *testing.T) {
 	// wired McpServerHandler, and what matters here is that the middleware lets
 	// the request through at all.
 	guarded := gin.New()
-	guarded.Use(server.TokenAuth(testAuthFunc("secret")))
+	guarded.Use(server.TokenAuth(testAuthFunc("secret"), nil))
 	guarded.GET(path, func(c *gin.Context) { c.Status(http.StatusOK) })
 	rec := httptest.NewRecorder()
 	guarded.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))

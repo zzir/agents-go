@@ -52,9 +52,9 @@ func CurrentUser(c *gin.Context) (protocol.UserInfo, bool) {
 }
 
 // authExempt reports whether path is reachable without a credential: the
-// endpoints a not-yet-authenticated login page needs (config, login, check),
-// the browser-facing OAuth redirect callback (which cannot carry an
-// Authorization header), and the OpenAPI document.
+// endpoints a not-yet-authenticated login page needs (config, login, the
+// OAuth flow, exchange), the browser-facing OAuth redirect callback (which
+// cannot carry an Authorization header), and the OpenAPI document.
 //
 // Every entry must name a route that exists — an exemption for a path nothing
 // serves silently unauthenticates whatever gets mounted there later. The
@@ -63,7 +63,6 @@ func CurrentUser(c *gin.Context) (protocol.UserInfo, bool) {
 func authExempt(path string) bool {
 	switch {
 	case path == APIPrefix+"/auth/login",
-		path == APIPrefix+"/auth/check",
 		path == APIPrefix+"/auth/config",
 		path == APIPrefix+"/auth/exchange",
 		strings.HasPrefix(path, APIPrefix+"/auth/oauth/"),
@@ -76,17 +75,24 @@ func authExempt(path string) bool {
 
 // TokenAuth returns a gin middleware that authenticates /api/* requests via
 // auth and attaches the caller for CurrentUser. /ws uses application-level
-// auth (first WS message) against the same AuthFunc.
-func TokenAuth(auth AuthFunc) gin.HandlerFunc {
+// auth (first WS message) against the same AuthFunc and guard. Failures
+// draw on guard's per-IP budget; an exhausted IP answers 429 unchecked.
+func TokenAuth(auth AuthFunc, guard *AuthGuard) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
 		if authExempt(path) || !strings.HasPrefix(path, "/api/") {
 			c.Next()
 			return
 		}
-
+		ip := c.ClientIP()
+		if guard.Exhausted(ip) {
+			c.AbortWithStatusJSON(http.StatusTooManyRequests,
+				protocol.NewErrorResponse(protocol.CodeRateLimited, "too many failed credentials; slow down"))
+			return
+		}
 		user, err := auth(c.Request.Context(), BearerToken(c))
 		if err != nil {
+			guard.Failed(ip)
 			c.AbortWithStatusJSON(http.StatusUnauthorized,
 				protocol.NewErrorResponse(protocol.CodeUnauthorized, "unauthorized"))
 			return

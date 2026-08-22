@@ -206,24 +206,39 @@ const AUTH_ERROR_TEXT: Record<string, string> = {
   state_mismatch: 'The sign-in expired or was already used — try again.',
   exchange_failed: 'The provider rejected the sign-in — try again.',
   not_allowed: 'This account is not on the allowlist for this server.',
+  rate_limited: 'Too many sign-in attempts from your address — wait a minute and try again.',
   login_failed: 'Sign-in failed on the server — try again.',
 };
+
+// exchangeErrorTag maps a failed code exchange to the login page's message:
+// the server refuses a used or expired code with 401; anything else is not
+// the code's fault.
+function exchangeErrorTag(e: unknown): string {
+  const status = (e as { status?: number } | null)?.status;
+  if (status === 401) return 'state_mismatch';
+  if (status === 429) return 'rate_limited';
+  return 'login_failed';
+}
 
 function LoginPage({ onLogin, authError }: { onLogin: () => void; authError?: string }) {
   const [token, setTokenVal] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  // null while /auth/config is in flight; token mode is also the fallback if
-  // it fails (the form still works against a token-mode server).
+  // null while /auth/config is in flight. A failure shows as such, with a
+  // retry — guessing token mode would offer a password box that an OAuth
+  // server answers with 400.
   const [cfg, setCfg] = useState<AuthConfig | null>(null);
+  const [cfgError, setCfgError] = useState(false);
+  const [cfgAttempt, setCfgAttempt] = useState(0);
 
   useEffect(() => {
     let stale = false;
+    setCfgError(false);
     authConfig()
       .then(c => { if (!stale) setCfg(c); })
-      .catch(() => { if (!stale) setCfg({ mode: 'token' }); });
+      .catch(() => { if (!stale) setCfgError(true); });
     return () => { stale = true; };
-  }, []);
+  }, [cfgAttempt]);
 
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
@@ -245,7 +260,12 @@ function LoginPage({ onLogin, authError }: { onLogin: () => void; authError?: st
     <div className="login-page">
       <form className="login-card" onSubmit={handleSubmit}>
         {oauthMsg ? <Flash variant="danger">{oauthMsg}</Flash> : null}
-        {cfg?.mode === 'oauth' ? (
+        {cfgError ? (
+          <>
+            <Flash variant="danger">Couldn&apos;t load the sign-in options from the server.</Flash>
+            <Button block onClick={() => setCfgAttempt(n => n + 1)}>Retry</Button>
+          </>
+        ) : cfg?.mode === 'oauth' ? (
           (cfg.providers || []).map(p => (
             // A full-page navigation: the flow returns via the server's
             // redirect with a one-time code in the fragment.
@@ -388,7 +408,7 @@ function App() {
   // The initial auth check failed at the network level (server unreachable), as
   // opposed to resolving "not authenticated". Without this the app would sit on
   // a blank screen forever; instead we surface a retryable error state.
-  const [checkError, setCheckError] = useState(false);
+  const [checkError, setCheckError] = useState('');
   const [activeSession, setActiveSession] = useState<string | null>(() => readHash().sessionId);
   const [activePanel, setActivePanel] = useState<InspectorPanel>(() => readHash().panel);
   // The Workflows hub, when it is the open view (null = a conversation).
@@ -442,12 +462,20 @@ function App() {
 
   const runCheck = useCallback(() => {
     setChecking(true);
-    setCheckError(false);
+    setCheckError('');
     checkAuth()
       .then(ok => { setAuthed(ok); setChecking(false); })
-      // A network-level failure (server down, offline) rejects here — don't
-      // stay stuck in "checking"; show the retry screen below.
-      .catch(() => { setChecking(false); setCheckError(true); });
+      // A network-level failure (server down, offline) or a non-refusal
+      // status (429, 502) rejects here — don't stay stuck in "checking" and
+      // don't sign out; show the retry screen below.
+      .catch(e => {
+        setChecking(false);
+        const status = (e as { status?: number } | null)?.status;
+        setCheckError(status === 429
+          ? 'Too many requests from your address — wait a minute and retry.'
+          : status ? `The server answered HTTP ${status} — try again.`
+          : 'Couldn\'t reach the server. Check your connection and try again.');
+      });
   }, []);
 
   useEffect(() => {
@@ -464,7 +492,7 @@ function App() {
       exchangeCode(authFragment.code)
         .then(() => { setAuthed(true); setChecking(false); })
         .catch(e => {
-          setAuthError(e instanceof Error && e.message ? 'state_mismatch' : 'login_failed');
+          setAuthError(exchangeErrorTag(e));
           setChecking(false);
         });
       return;
@@ -491,7 +519,7 @@ function App() {
   useEffect(() => {
     // A logout is a definitive "not authenticated" — clear any lingering
     // network-error state so the login page shows, not the retry screen.
-    const handler = () => { setAuthed(false); setCheckError(false); };
+    const handler = () => { setAuthed(false); setCheckError(''); };
     window.addEventListener('auth:logout', handler);
     return () => window.removeEventListener('auth:logout', handler);
   }, []);
@@ -994,7 +1022,7 @@ function App() {
     <ThemeProvider>
       <div className="login-page">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16, alignItems: 'center' }}>
-          <Flash variant="danger">Couldn&apos;t reach the server. Check your connection and try again.</Flash>
+          <Flash variant="danger">{checkError}</Flash>
           <Button onClick={runCheck}>Retry</Button>
         </div>
       </div>

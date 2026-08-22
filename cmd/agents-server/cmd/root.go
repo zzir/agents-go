@@ -350,6 +350,10 @@ func run(_ *cobra.Command, _ []string) error {
 		if err := srv.SetTrustedProxies(proxies); err != nil {
 			return fmt.Errorf("invalid --trusted-proxies: %w", err)
 		}
+	} else if baseURL != "" {
+		// --base-url is the "behind a proxy" signal; without trusted proxies
+		// every client shares the proxy's IP and so one per-IP budget.
+		log.Warn("--base-url is set but --trusted-proxies is not: every request arrives from the proxy's address, so all users share one per-IP rate budget")
 	}
 	srv.RegisterAPI(handler.Handlers{
 		Authz: handler.AuthzDeps{

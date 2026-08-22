@@ -73,17 +73,28 @@ reverse proxy, two things change:
   direct client can forge them, and an explicit origin cannot be spoofed. Only
   a bare `scheme://host[:port]` is accepted; the app assumes it is mounted at
   the proxy's root.
-- **`--trusted-proxies` names who may set `X-Forwarded-For`.** It affects only
-  the client IP used by the rate limiter and the access log. The default
-  trusts no proxy — without it a direct client could put any address in the
-  header and dodge per-IP limits. (This overrides gin's trust-everyone
+- **`--trusted-proxies` is required behind a proxy.** It names who may set
+  `X-Forwarded-For`, and that header is where the client IP for the rate
+  budgets and the access log comes from. Without it every request arrives
+  from the proxy's address, so the whole team shares one per-IP budget — and
+  the server warns at startup when `--base-url` is set without it. The
+  default trusts no proxy: a direct client could otherwise put any address
+  in the header and dodge the budgets. (This overrides gin's trust-everyone
   default.)
 
-The server itself speaks plain HTTP; TLS is the proxy's job. The
-unauthenticated auth endpoints (login, check, config, the OAuth flow, exchange
-— where a credential could be guessed) and the webhook (`/hooks/:id`) enforce
-per-IP rate limits — exceeding one answers `429` with code `rate_limited`.
-Authenticated routes carry no such budget.
+The server itself speaks plain HTTP; TLS is the proxy's job. Three per-IP
+budgets exist, each answering `429` with code `rate_limited` when exceeded:
+
+- **Credential guesses, 10/min.** A failed bearer on any authenticated route
+  or on the WebSocket auth frame, a token login, a code exchange. A bearer
+  that authenticates spends nothing — a signed-in client is never limited,
+  however many tabs it opens — and an IP that has exhausted the budget is
+  refused before its credential is checked.
+- **OAuth flow steps, 60/min** (`oauth/*/start`, `oauth/*/callback`): they
+  allocate server state per call but guess nothing.
+- **Webhooks, 60/min** (`/hooks/:id`), burst 30.
+
+`/auth/config` is a static fact and carries no budget.
 
 ### Logging
 
@@ -123,7 +134,7 @@ The auth surface under `/api/v1/auth`:
 |--------|----------------------------------|------|----------------------------------------------------------|
 | GET    | `/auth/config`                   | none | How to authenticate: `{mode, providers?}` — the login page renders from it |
 | POST   | `/auth/login`                    | none | Validate the static token (token mode; 400 in OAuth mode) |
-| GET    | `/auth/check`                    | none | Validate the presented Bearer — the SPA's stored-credential probe |
+| GET    | `/auth/check`                    | yes  | The SPA's stored-credential probe: `{ok}` for a valid Bearer, `401` otherwise |
 | GET    | `/auth/oauth/:provider/start`    | none | 302 into the provider's authorize flow (PKCE)            |
 | GET    | `/auth/oauth/:provider/callback` | none | Provider redirect target; 302 into the SPA with `#auth_code=<one-time>` on success, `#auth_error=<tag>` on failure |
 | POST   | `/auth/exchange`                 | none | Trade the one-time code for `{token, user}` — the only response the session token's plaintext rides |
@@ -238,7 +249,7 @@ dialog's Audit logs.
 Exempt from auth: the MCP OAuth redirect callback
 (`GET /api/v1/mcp-servers/oauth/callback` — the browser follows it without an
 Authorization header), the OpenAPI document (`GET /api/v1/openapi.yaml`), the
-`config`/`login`/`check`/`exchange` and `oauth/*` endpoints above, and
+`config`/`login`/`exchange` and `oauth/*` endpoints above, and
 `GET /health`. Every entry on that
 list must name a route this router actually serves: an exemption for a path
 nothing serves silently unauthenticates whatever gets mounted there later. The

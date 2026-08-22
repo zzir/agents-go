@@ -53,14 +53,24 @@ export async function login(token: string): Promise<boolean> {
   return true;
 }
 
+// Probe the stored credential. Only a refusal (401/403) means the token is
+// bad and gets it cleared; any other failure (429, a proxy's 502 mid-restart)
+// rejects with the status so the caller can retry rather than sign out.
 export async function checkAuth(): Promise<boolean> {
   const t = getToken();
   if (!t) return false;
   const res = await fetch(`${BASE}/auth/check`, {
     headers: { 'Authorization': `Bearer ${t}` },
   });
-  if (!res.ok) { clearToken(); return false; }
+  if (res.status === 401 || res.status === 403) { clearToken(); return false; }
+  if (!res.ok) throw httpError(res);
   return true;
+}
+
+function httpError(res: Response): Error & { status: number } {
+  const err = new Error(`HTTP ${res.status}`) as Error & { status: number };
+  err.status = res.status;
+  return err;
 }
 
 export interface AuthConfig { mode: 'token' | 'oauth'; providers?: string[] }
@@ -70,7 +80,7 @@ export interface AuthUser { id: string; email: string; name?: string; role: stri
 // credential exists.
 export async function authConfig(): Promise<AuthConfig> {
   const res = await fetch(`${BASE}/auth/config`);
-  if (!res.ok) throw new Error('auth config unavailable');
+  if (!res.ok) throw httpError(res);
   return res.json();
 }
 
@@ -82,20 +92,23 @@ export async function exchangeCode(code: string): Promise<AuthUser> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code }),
   });
-  if (!res.ok) throw new Error('sign-in expired — try again');
+  if (!res.ok) throw httpError(res);
   const body = await res.json();
   setToken(body.token);
   return body.user;
 }
 
-// Revoke the current session server-side (no-op in token mode), then forget
-// the local copy. Always resolves — a dead server must not block sign-out.
+// Revoke the current session server-side (no-op in token mode), forget the
+// local copy, then reload: the socket and every piece of in-memory state
+// belong to the signed-out user, and a fresh document is the one sure way
+// to own none of it when the next account signs in. Always resolves — a
+// dead server must not block sign-out.
 export async function logout(): Promise<void> {
   try {
     await request('/auth/logout', { method: 'POST' });
   } catch { /* the local clear below is the part that must happen */ }
   clearToken();
-  window.dispatchEvent(new Event('auth:logout'));
+  window.location.reload();
 }
 
 interface CrudMethods<T> {

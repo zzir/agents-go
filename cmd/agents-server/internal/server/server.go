@@ -27,6 +27,7 @@ import (
 type Server struct {
 	Engine *gin.Engine
 	auth   AuthFunc
+	guard  *AuthGuard
 	// cspPolicy is the Content-Security-Policy every response carries; base
 	// policy from New, extended by ServeStatic with the hashes of the served
 	// page's inline scripts and by SetImageHosts with the avatar hosts.
@@ -81,11 +82,11 @@ func New(log *slog.Logger, auth AuthFunc, audit AuditFunc) *Server {
 	engine := gin.New()
 	_ = engine.SetTrustedProxies(nil)
 	engine.Use(gin.Recovery())
-	s := &Server{Engine: engine, auth: auth, cspPolicy: buildCSP(nil, nil)}
+	s := &Server{Engine: engine, auth: auth, guard: NewAuthGuard(), cspPolicy: buildCSP(nil, nil)}
 	engine.Use(limitBody(maxBodyBytes))
 	engine.Use(s.cspMiddleware())
 	engine.Use(logMiddleware(log))
-	engine.Use(TokenAuth(auth))
+	engine.Use(TokenAuth(auth, s.guard))
 	if audit != nil {
 		engine.Use(Audit(audit))
 	}

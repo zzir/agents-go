@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -300,19 +301,87 @@ func TestAuthGroupRateLimited(t *testing.T) {
 	}
 }
 
-// Only the routes where a credential can be guessed carry the auth budget:
-// a signed-in caller hammering /auth/me (the Account panel issues several
-// auth requests per open) must never see 429.
-func TestAuthenticatedAuthRoutesAreNotRateLimited(t *testing.T) {
+// A valid credential never spends budget: a signed-in caller hammering
+// /auth/me or the SPA's /auth/check probe (every page load, every tab) must
+// never see 429 — a 429 there signs a legitimate user out.
+func TestValidCredentialIsNeverRateLimited(t *testing.T) {
 	local := &store.User{ID: store.LocalUserID, Email: "local@localhost", Role: store.RoleAdmin}
 	engine := authEngine(t, authn.NewStatic("tok", local), nil)
-	for i := range 30 {
+	for _, path := range []string{"/api/v1/auth/me", "/api/v1/auth/check", "/api/v1/auth/config"} {
+		for i := range 30 {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			req.Header.Set("Authorization", "Bearer tok")
+			rec := httptest.NewRecorder()
+			engine.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("request %d to %s = %d, want 200", i+1, path, rec.Code)
+			}
+		}
+	}
+}
+
+// Failed bearers draw on a per-IP budget on EVERY authenticated route, so a
+// weak static token cannot be brute-forced at line rate through /auth/me;
+// once exhausted the IP is refused unchecked, and a valid bearer from the
+// same IP is refused too until the budget refills.
+func TestFailedBearersExhaustTheGuessBudget(t *testing.T) {
+	local := &store.User{ID: store.LocalUserID, Email: "local@localhost", Role: store.RoleAdmin}
+	engine := authEngine(t, authn.NewStatic("tok", local), nil)
+	last := 0
+	for range 20 {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
-		req.Header.Set("Authorization", "Bearer tok")
+		req.Header.Set("Authorization", "Bearer nope")
 		rec := httptest.NewRecorder()
 		engine.ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("request %d to /auth/me = %d, want 200", i+1, rec.Code)
-		}
+		last = rec.Code
+	}
+	if last != http.StatusTooManyRequests {
+		t.Fatalf("status after 20 bad bearers = %d, want 429", last)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	req.Header.Set("Authorization", "Bearer tok")
+	rec := httptest.NewRecorder()
+	engine.ServeHTTP(rec, req)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("valid bearer from an exhausted IP = %d, want 429", rec.Code)
+	}
+}
+
+// The budget is per client IP: X-Forwarded-For is ignored unless the direct
+// peer is a trusted proxy, so a direct client cannot dodge the budget by
+// rotating the header, and behind a trusted proxy each forwarded client has
+// its own budget instead of sharing the proxy's.
+func TestGuessBudgetKeyedByClientIP(t *testing.T) {
+	local := &store.User{ID: store.LocalUserID, Email: "local@localhost", Role: store.RoleAdmin}
+	bad := func(engine *gin.Engine, forwarded string) int {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+		req.RemoteAddr = "10.0.0.1:1234"
+		req.Header.Set("Authorization", "Bearer nope")
+		req.Header.Set("X-Forwarded-For", forwarded)
+		rec := httptest.NewRecorder()
+		engine.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	untrusted := authEngine(t, authn.NewStatic("tok", local), nil)
+	last := 0
+	for i := range 20 {
+		last = bad(untrusted, "203.0.113."+strconv.Itoa(i))
+	}
+	if last != http.StatusTooManyRequests {
+		t.Fatalf("rotating X-Forwarded-For from an untrusted peer dodged the budget: %d", last)
+	}
+
+	gin.SetMode(gin.TestMode)
+	s := server.New(slog.New(slog.DiscardHandler), authn.NewStatic("tok", local).Authenticate, nil)
+	if err := s.SetTrustedProxies([]string{"10.0.0.1"}); err != nil {
+		t.Fatal(err)
+	}
+	s.RegisterAPI(Handlers{Auth: NewAuthHandler(authn.NewStatic("tok", local), nil, nil, nil)}.Register)
+	for range 20 {
+		bad(s.Engine, "203.0.113.7")
+	}
+	if got := bad(s.Engine, "203.0.113.8"); got != http.StatusUnauthorized {
+		t.Fatalf("behind a trusted proxy a different forwarded client = %d, want 401 (own budget)", got)
 	}
 }

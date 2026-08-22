@@ -213,9 +213,16 @@ type WSHandlerFunc func(conn *WSConn)
 // {"type":"auth","token":"..."} as the first message — resolved by auth, so a
 // static token, a session token and a PAT all work. On success it replies
 // with {"type":"auth.ok"} and enters the normal handler loop; on failure it
-// closes the connection silently.
-func HandleWSWithAuth(handler WSHandlerFunc, auth AuthFunc) gin.HandlerFunc {
+// closes the connection silently. Failures draw on guard's per-IP budget, the
+// same one REST draws on; an exhausted IP is refused before the upgrade.
+func HandleWSWithAuth(handler WSHandlerFunc, auth AuthFunc, guard *AuthGuard) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		ip := c.ClientIP()
+		if guard.Exhausted(ip) {
+			c.AbortWithStatusJSON(http.StatusTooManyRequests,
+				protocol.NewErrorResponse(protocol.CodeRateLimited, "too many failed credentials; slow down"))
+			return
+		}
 		ws, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
 			logging.Ctx(c.Request.Context()).Error("ws upgrade", "error", err)
@@ -240,6 +247,7 @@ func HandleWSWithAuth(handler WSHandlerFunc, auth AuthFunc) gin.HandlerFunc {
 		}
 		user, err := auth(c.Request.Context(), frame.Token)
 		if err != nil {
+			guard.Failed(ip)
 			conn.Close()
 			return
 		}
