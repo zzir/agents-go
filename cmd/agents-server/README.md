@@ -79,9 +79,11 @@ reverse proxy, two things change:
   header and dodge per-IP limits. (This overrides gin's trust-everyone
   default.)
 
-The server itself speaks plain HTTP; TLS is the proxy's job. The auth endpoints
-(`/api/v1/auth/*`) and the webhook (`/hooks/:id`) enforce per-IP rate limits —
-exceeding one answers `429` with code `rate_limited`.
+The server itself speaks plain HTTP; TLS is the proxy's job. The
+unauthenticated auth endpoints (login, check, config, the OAuth flow, exchange
+— where a credential could be guessed) and the webhook (`/hooks/:id`) enforce
+per-IP rate limits — exceeding one answers `429` with code `rate_limited`.
+Authenticated routes carry no such budget.
 
 ### Logging
 

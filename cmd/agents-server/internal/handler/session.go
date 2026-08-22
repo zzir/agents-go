@@ -132,6 +132,9 @@ func (h *SessionHandler) List(c *gin.Context) {
 		internalError(c, err)
 		return
 	}
+	if sessions == nil {
+		sessions = []store.Session{} // an empty list, never JSON null
+	}
 	c.JSON(http.StatusOK, sessions)
 }
 

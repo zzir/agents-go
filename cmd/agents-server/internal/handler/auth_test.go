@@ -298,3 +298,20 @@ func TestAuthGroupRateLimited(t *testing.T) {
 		t.Fatalf("status after hammering login = %d, want 429", last)
 	}
 }
+
+// Only the routes where a credential can be guessed carry the auth budget:
+// a signed-in caller hammering /auth/me (the Account panel issues several
+// auth requests per open) must never see 429.
+func TestAuthenticatedAuthRoutesAreNotRateLimited(t *testing.T) {
+	local := &store.User{ID: store.LocalUserID, Email: "local@localhost", Role: store.RoleAdmin}
+	engine := authEngine(t, authn.NewStatic("tok", local), nil)
+	for i := 0; i < 30; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+		req.Header.Set("Authorization", "Bearer tok")
+		rec := httptest.NewRecorder()
+		engine.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("request %d to /auth/me = %d, want 200", i+1, rec.Code)
+		}
+	}
+}

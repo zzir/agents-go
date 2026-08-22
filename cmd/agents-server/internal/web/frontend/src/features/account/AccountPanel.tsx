@@ -78,7 +78,7 @@ function PatSection() {
   const confirm = useConfirm();
 
   const reload = useCallback(() => {
-    api.auth.pats.list().then(setPats).catch(() => setError('Failed to load tokens.'));
+    api.auth.pats.list().then(p => setPats(p ?? [])).catch(() => setError('Failed to load tokens.'));
   }, []);
   useEffect(() => { reload(); }, [reload]);
 
@@ -187,7 +187,7 @@ function AdminSection({ me }: { me: AuthUser }) {
 
   const reload = useCallback(() => {
     Promise.all([api.auth.users.list(), api.sessions.listAll(), api.auth.audit(50)])
-      .then(([u, s, a]) => { setUsers(u); setSessions(s); setAudit(a); })
+      .then(([u, s, a]) => { setUsers(u ?? []); setSessions(s ?? []); setAudit(a ?? []); })
       .catch(() => setError('Failed to load the admin view.'));
   }, []);
   useEffect(() => { reload(); }, [reload]);

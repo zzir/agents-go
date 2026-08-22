@@ -39,20 +39,21 @@ type Handlers struct {
 // Register mounts every REST endpoint under api.
 func (h Handlers) Register(api *gin.RouterGroup) {
 	{
-		// One strict per-IP budget for the whole auth surface — it is where
-		// credentials are guessed. Which paths skip the token middleware is
-		// server.authExempt's list, not the group's: /me and /logout live here
-		// too and stay authenticated.
 		auth := api.Group("/auth")
-		auth.Use(server.AuthRateLimit())
-		auth.POST("/login", h.Auth.Login)
-		auth.GET("/check", h.Auth.Check)
-		auth.GET("/config", h.Auth.Config)
+		// One strict per-IP budget for the routes where a credential can be
+		// guessed — the unauthenticated ones (server.authExempt's list). The
+		// authenticated routes below it carry no extra limit: the Account panel
+		// alone issues half a dozen of them on open, and a signed-in caller is
+		// not guessing anything.
+		guess := server.AuthRateLimit()
+		auth.POST("/login", guess, h.Auth.Login)
+		auth.GET("/check", guess, h.Auth.Check)
+		auth.GET("/config", guess, h.Auth.Config)
+		auth.GET("/oauth/:provider/start", guess, h.Auth.OAuthStart)
+		auth.GET("/oauth/:provider/callback", guess, h.Auth.OAuthCallback)
+		auth.POST("/exchange", guess, h.Auth.Exchange)
 		auth.GET("/me", h.Auth.Me)
 		auth.POST("/logout", h.Auth.Logout)
-		auth.GET("/oauth/:provider/start", h.Auth.OAuthStart)
-		auth.GET("/oauth/:provider/callback", h.Auth.OAuthCallback)
-		auth.POST("/exchange", h.Auth.Exchange)
 		auth.GET("/tokens", h.Auth.ListTokens)
 		auth.POST("/tokens", h.Auth.CreateToken)
 		auth.DELETE("/tokens/:id", h.Auth.DeleteToken)
