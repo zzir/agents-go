@@ -156,6 +156,9 @@ type CreateOptions struct {
 	// Hidden marks a session that exists to serve another — a background task's
 	// private history. List leaves hidden sessions out by default.
 	Hidden bool
+	// ParentID names the session this one serves, when Hidden. A repo that
+	// attaches facts to a session (who owns it) inherits them from here.
+	ParentID string
 }
 
 // ListOptions filters a session listing.

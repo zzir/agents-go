@@ -544,7 +544,9 @@ A `SessionRepo` owns which sessions exist, separately from their contents.
   created" the same state.
 - **`Hidden` belongs to the session**, not to each caller's filter. A session
   that serves another one (a background task's history) is excluded from
-  listings by default.
+  listings by default, and is created naming the session it serves
+  (`CreateOptions.ParentID`) so a repo that attaches facts to sessions — an
+  owner — can inherit them instead of guessing.
 - **Opening an unknown session is an error**, never an empty session. A wrong id
   that reads as a fresh conversation makes a run start over instead of
   continuing, which is worse than failing.

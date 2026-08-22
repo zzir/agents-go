@@ -357,8 +357,10 @@ func (m *Manager) Spawn(ctx context.Context, req SpawnRequest) (*Info, error) {
 	if _, err := m.cfg.Sessions.Create(ctx, session.CreateOptions{
 		ID:    childID,
 		Title: cmp.Or(req.Kind, "task") + ": " + label,
-		// Hidden: a task's transcript is not a conversation the user started.
-		Hidden: true,
+		// Hidden: a task's transcript is not a conversation the user started;
+		// it serves the parent, and inherits whatever the repo attaches to it.
+		Hidden:   true,
+		ParentID: req.ParentSessionID,
 	}); err != nil {
 		return nil, fmt.Errorf("tasks: creating task session: %w", err)
 	}
