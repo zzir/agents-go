@@ -1,9 +1,14 @@
 package store
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/uptrace/bun"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/secrets"
 )
@@ -82,4 +87,38 @@ func mapJSONKeys(label string, raw json.RawMessage, fn func(label, s string) (st
 // still opens (and fails loudly on) rows sealed under a key that is gone.
 func hasSealed(raw json.RawMessage) bool {
 	return strings.Contains(string(raw), `"enc:`)
+}
+
+// secretKeyCheck is the settings row that proves the configured key is the
+// one the database's secrets were sealed under: a canary sealed at the
+// first start with a key, opened at every start after.
+const secretKeyCheck = "secret_key_check"
+
+// VerifySecretKey fails fast, at startup, on a key the database's sealed
+// rows would not open: a sealed canary with no key configured, or with
+// another key — either would otherwise surface as the first settings
+// panel failing to load. With a key and no canary yet, it seals one.
+func VerifySecretKey(ctx context.Context, db *bun.DB) error {
+	var stored string
+	err := db.NewSelect().Model((*Setting)(nil)).Column("value").Where("key = ?", secretKeyCheck).Scan(ctx, &stored)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		if secretBox == nil {
+			return nil
+		}
+		st := &Setting{Key: secretKeyCheck, Value: sealSecret(labelSetting, "ok")}
+		if _, err := db.NewInsert().Model(st).On("CONFLICT (key) DO NOTHING").Exec(ctx); err != nil {
+			return fmt.Errorf("sealing the secret key check: %w", err)
+		}
+		return nil
+	case err != nil:
+		return fmt.Errorf("reading the secret key check: %w", err)
+	}
+	if secretBox == nil {
+		return errors.New("this database holds credentials sealed under a key, and none is configured: set AGENTS_SECRET_KEY (or --secret-key-file) to the key they were sealed with")
+	}
+	if _, err := openSecret(labelSetting, stored); err != nil {
+		return fmt.Errorf("the configured secret key is not the one this database's credentials were sealed under (%w); restore that key, or start with a fresh database", err)
+	}
+	return nil
 }

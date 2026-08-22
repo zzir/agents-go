@@ -68,10 +68,12 @@ func (s *SettingStore) Set(ctx context.Context, key, value string) error {
 	return nil
 }
 
-// List returns all settings ordered by key.
+// List returns all settings ordered by key — all but the secret key check,
+// which is the process's, not a setting.
 func (s *SettingStore) List(ctx context.Context) ([]Setting, error) {
 	var settings []Setting
 	if err := s.db.NewSelect().Model(&settings).
+		Where("key != ?", secretKeyCheck).
 		OrderExpr("key ASC").
 		Scan(ctx); err != nil {
 		return nil, fmt.Errorf("listing settings: %w", err)

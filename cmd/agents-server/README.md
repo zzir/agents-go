@@ -1383,8 +1383,12 @@ as someone else's ciphertext. Without a key the server logs one warning and
 stores plaintext — the single-user workbench. Rows written before a key was
 set stay plaintext until their next write, and open either way; a sealed row
 with no key, or under another key, is a loud error naming the key ids, never
-ciphertext handed out as a credential. There is no rotation: losing the key
-loses the secrets.
+ciphertext handed out as a credential. The first start with a key seals a
+canary (`settings.secret_key_check`) and every start after opens it, so a
+key that is missing or not the one refuses to start with one message —
+rather than the first Settings panel failing to load. There is no
+rotation: losing the key loses the secrets; the recovery is the key itself
+or a fresh database.
 
 ### Health
 

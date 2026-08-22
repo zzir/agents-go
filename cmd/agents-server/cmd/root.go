@@ -150,6 +150,9 @@ func run(_ *cobra.Command, _ []string) error {
 	if err := store.CreateSchema(ctx, db); err != nil {
 		return fmt.Errorf("creating schema: %w", err)
 	}
+	if err := store.VerifySecretKey(ctx, db); err != nil {
+		return err
+	}
 
 	sessionStore := store.NewSessionStore(db)
 	entryStore := store.NewSharedEntryStore(db)

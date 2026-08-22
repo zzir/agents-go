@@ -175,3 +175,41 @@ func TestSealedValueDoesNotRelocate(t *testing.T) {
 		t.Fatalf("pasted ciphertext opened to %q, want the pasted text itself", got.APIKey)
 	}
 }
+
+// The key is checked at startup against a canary sealed at the first start
+// with one: no key where the canary says there was one, or another key,
+// fails then — not at the first panel that cannot load.
+func TestVerifySecretKeyFailsFastOnAMissingOrChangedKey(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+
+	// No key, no canary: plaintext mode, nothing to check.
+	UseSecretBox(nil)
+	if err := VerifySecretKey(ctx, db); err != nil {
+		t.Fatalf("plaintext mode: %v", err)
+	}
+	// The first start with a key seals the canary; the next start opens it.
+	withTestBox(t)
+	if err := VerifySecretKey(ctx, db); err != nil {
+		t.Fatalf("first start with a key: %v", err)
+	}
+	if raw := rawColumn(t, db, "SELECT value FROM settings WHERE key = ?", secretKeyCheck); !secrets.IsSealed(raw) {
+		t.Fatalf("canary at rest = %q, want sealed", raw)
+	}
+	if err := VerifySecretKey(ctx, db); err != nil {
+		t.Fatalf("second start with the key: %v", err)
+	}
+	// The key lost: refused, naming the env var.
+	UseSecretBox(nil)
+	if err := VerifySecretKey(ctx, db); err == nil || !strings.Contains(err.Error(), "AGENTS_SECRET_KEY") {
+		t.Fatalf("no key against a sealed canary = %v, want a refusal naming the key", err)
+	}
+	// Another key: refused, naming the mismatch.
+	other := make([]byte, 32)
+	other[0] = 9
+	box, _ := secrets.New(other)
+	UseSecretBox(box)
+	if err := VerifySecretKey(ctx, db); err == nil || !strings.Contains(err.Error(), "sealed under") {
+		t.Fatalf("another key against the canary = %v, want a refusal", err)
+	}
+}
