@@ -240,14 +240,17 @@ a:hover {
     min-width: 0;
 }
 
-/* The account menu's trigger: an invisible button holding avatar + name. */
+/* The account menu's trigger: an invisible button holding avatar + name, the
+   height of a small control so the footer lines up with the terminal
+   panel's header across the divider. */
 .user-menu-trigger {
     display: inline-flex;
     align-items: center;
     gap: var(--base-size-8);
     min-width: 0;
     max-width: 100%;
-    padding: var(--base-size-4) var(--base-size-8);
+    height: var(--control-small-size, 28px);
+    padding: 0 var(--base-size-8);
     border: 0;
     border-radius: var(--borderRadius-medium);
     background: transparent;
@@ -261,8 +264,10 @@ a:hover {
 .user-menu-trigger:disabled {
     cursor: default;
 }
+/* Avatar only, beside the narrow header's medium icon buttons. */
 .user-menu-compact {
-    padding: var(--base-size-4);
+    height: var(--control-medium-size, 32px);
+    padding: 0 var(--base-size-4);
 }
 .user-menu-name {
     font-size: var(--base-text-size-sm);
