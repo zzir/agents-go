@@ -339,11 +339,13 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 
 	// A panic anywhere below — a tool, a model adapter, stream handling — fails
 	// THIS segment instead of taking the process, and every other session's run,
-	// down with it. Recovered here so failTurn can record it durably.
+	// down with it. Recovered here so failTurn can record it durably, with
+	// whatever the stream had shown by then.
+	var partial streamedPartial
 	defer func() {
 		if p := recover(); p != nil {
 			log.Error("run panicked", "run_id", runID, "panic", p, "stack", string(debug.Stack()))
-			out = failTurn("", protocol.CodeInternal, fmt.Errorf("internal error: %v", p), "", "")
+			out = failTurn("", protocol.CodeInternal, fmt.Errorf("internal error: %v", p), partial.Reasoning(), partial.Text())
 		}
 	}()
 
@@ -423,7 +425,8 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	r.hub.setControl(runID, ctrl)
 	// The stream carries both halves of the outcome: the run's result as its
 	// terminal event, or a terminal error. There is no second place to consult.
-	res, streamedText, streamedReasoning, err := r.drainStream(stream, runID, sendEvent)
+	res, err := r.drainStream(stream, runID, sendEvent, &partial)
+	streamedText, streamedReasoning := partial.Text(), partial.Reasoning()
 	if err != nil {
 		return failTurn(agent.Model, spec.failCode, err, streamedReasoning, streamedText)
 	}

@@ -2224,6 +2224,18 @@ When a change genuinely doesn't fit, update this list in the same PR.
     either filed on a session or it is shared — not a third category with
     its own column and its own checks.
 
+43. **Shutdown is ordered, and every waiter is told.** On SIGINT/SIGTERM:
+    the clock stops (a tick during the drain would start a run the drain
+    refuses); the maintenance loops stop (a reaper ticking during the drain
+    could expire the approval being persisted); every running run is
+    cancelled and waited for, so its partial turn persists; every run's
+    broadcaster is closed — an interrupted run's too, which the drain neither
+    cancels nor waits for — so an SSE stream returns; the WebSocket
+    connections are closed with `1001 Going Away`, since a hijacked
+    connection is outside `http.Server.Shutdown`'s reach; then the listener
+    drains, for at most five seconds, and whatever it was still waiting on
+    is a warning, not an exit status.
+
 ## Database
 
 SQLite in WAL mode with a 5s busy timeout by default — both applied as PRAGMA

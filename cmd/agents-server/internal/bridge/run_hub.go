@@ -278,13 +278,22 @@ func (h *RunHub) Shutdown(ctx context.Context) {
 		}
 		rec.mu.Unlock()
 	}
+wait:
 	for _, gate := range gates {
 		select {
 		case <-gate:
 		case <-ctx.Done():
-			return
+			break wait
 		}
 	}
+	// Every broadcaster ends now — those of interrupted runs included, which
+	// the drain neither cancels nor waits for — so a subscriber (an SSE
+	// stream) returns instead of holding the HTTP shutdown to its deadline.
+	h.mu.Lock()
+	for _, rec := range h.runs {
+		rec.fanout.Close()
+	}
+	h.mu.Unlock()
 }
 
 // markSessionDeleting records that sessionID's delete cascade has begun, so no

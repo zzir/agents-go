@@ -436,15 +436,12 @@ func run(_ *cobra.Command, _ []string) error {
 	httpSrv := &http.Server{
 		Addr:    addr,
 		Handler: srv.Engine,
-		// Slow-loris protection: bound the headers, the whole request read (or a
-		// client dribbling a request BODY holds the connection forever — headers
-		// alone don't cover it), and how long an idle keep-alive connection may
-		// linger. The long-lived responses opt out of ReadTimeout themselves: the
-		// WebSocket endpoints hijack and manage their own deadlines, and the SSE
-		// handler clears the read deadline (see RunHandler.Events). There is
-		// deliberately NO global WriteTimeout — it would abort those same streams
-		// mid-response; they bound their own writes (SSE heartbeat, ws write
-		// deadline).
+		// Slow-loris protection: headers, the whole request read (a client
+		// dribbling a BODY would otherwise hold the connection), and idle
+		// keep-alive. ReadTimeout covers the request only — net/http lifts it
+		// once the body is consumed, so a long response (SSE) is not cut by it,
+		// and the WebSocket endpoints hijack and keep their own deadlines. No
+		// WriteTimeout: it would abort those streams; each bounds its own writes.
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       60 * time.Second,
 		IdleTimeout:       120 * time.Second,
@@ -480,12 +477,14 @@ func run(_ *cobra.Command, _ []string) error {
 	defer cancelDrain()
 	runner.Shutdown(drainCtx)
 
+	// The WebSocket clients hear a going-away frame rather than a dropped
+	// TCP connection (hijacked connections are outside Shutdown's reach).
+	srv.Conns.CloseAll("server shutting down")
 	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := httpSrv.Shutdown(shutCtx); err != nil {
-		// A hijacked WebSocket keeps Shutdown waiting until its deadline; the
-		// runs are already drained and persisted by then, so reporting that as
-		// the process's exit status turned every ordinary stop into a failure.
+		// The runs are drained and persisted by now; whatever kept Shutdown
+		// waiting is not worth an exit status.
 		log.Warn("http shutdown did not complete cleanly", "error", err)
 	}
 	return nil

@@ -15,10 +15,12 @@ import (
 )
 
 const (
-	// wsOutBuffer bounds a connection's outbound queue. It must hold a full
-	// replay burst (RunHub.EventBufferCap == 512) plus live events arriving
-	// during replay; overflow means a genuinely stuck client and closes it.
-	wsOutBuffer = 1024
+	// wsOutBuffer bounds a connection's outbound queue. A connection joining
+	// mid-run is attached to EVERY live run of its user with a full replay
+	// (RunHub.EventBufferCap == 512 each) — a chat run and its background
+	// tasks at once — so the queue holds several bursts plus the live events
+	// arriving meanwhile; overflow means a genuinely stuck client and closes it.
+	wsOutBuffer = 8 * 512
 	// wsWriteTimeout caps a single socket write so a client whose TCP receive
 	// window is full can never block the writer goroutine indefinitely.
 	wsWriteTimeout = 15 * time.Second
@@ -171,6 +173,26 @@ func (t *ConnTracker) remove(c *WSConn) {
 		if len(set) == 0 {
 			delete(t.byUser, c.User.ID)
 		}
+	}
+}
+
+// CloseAll closes every tracked connection with a going-away frame — the
+// shutdown's goodbye, so clients reconnect to the next process rather than
+// discover a dropped socket.
+func (t *ConnTracker) CloseAll(reason string) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	var conns []*WSConn
+	for _, set := range t.byUser {
+		for c := range set {
+			conns = append(conns, c)
+		}
+	}
+	t.mu.Unlock()
+	for _, c := range conns {
+		c.CloseWith(websocket.CloseGoingAway, reason)
 	}
 }
 

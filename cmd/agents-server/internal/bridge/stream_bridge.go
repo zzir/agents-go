@@ -24,8 +24,8 @@ import (
 // announce, not this bridge's to reverse-engineer from raw response events;
 // deltas cannot race the reset because the SDK persists between model calls,
 // where no delta is in flight.
-func (r *Runner) drainStream(stream agents.RunStream, runID string, send func(string, any)) (res *agents.RunResult, streamedText, streamedReasoning string, runErr error) {
-	var text, reasoning strings.Builder
+func (r *Runner) drainStream(stream agents.RunStream, runID string, send func(string, any), partial *streamedPartial) (res *agents.RunResult, runErr error) {
+	text, reasoning := &partial.text, &partial.reasoning
 	for event, err := range stream {
 		if err != nil {
 			runErr = err
@@ -64,8 +64,15 @@ func (r *Runner) drainStream(stream agents.RunStream, runID string, send func(st
 		}
 		r.handleStreamEvent(event, runID, send)
 	}
-	return res, text.String(), reasoning.String(), runErr
+	return res, runErr
 }
+
+// streamedPartial is what the stream showed since the SDK last persisted —
+// held by the caller so a panic mid-stream can still record it.
+type streamedPartial struct{ text, reasoning strings.Builder }
+
+func (p *streamedPartial) Text() string      { return p.text.String() }
+func (p *streamedPartial) Reasoning() string { return p.reasoning.String() }
 
 // runErrorFor builds the run.error for a terminal run failure. The code comes
 // from the SDK (agents.CodeOf) so this stays correct as the SDK's vocabulary
