@@ -270,6 +270,42 @@ func TestTerminalWS_EchoResizeExit(t *testing.T) {
 	}
 }
 
+// A member is refused before the open is even read: the terminal is a shell
+// on a host with the server's stored credentials — admin only.
+func TestTerminalWS_MemberRefused(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := newTestDB(t)
+	sandboxes := store.NewSandboxStore(db)
+	cfg := &store.SandboxConfig{Name: "box", Type: "ssh", Config: json.RawMessage(`{"addr":"h","user":"u"}`)}
+	if err := sandboxes.Create(t.Context(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	provider := &fakeProvider{sb: &fakeTerminalSandbox{term: newFakeTerminal()}}
+	th := NewTerminalHandler(sandboxes, provider, settings.NewReader(nil))
+	member := protocol.UserInfo{ID: store.NewID(), Email: "m@example.com", Role: store.RoleMember}
+	asMember := func(_ context.Context, bearer string) (protocol.UserInfo, error) {
+		if bearer != testWSToken {
+			return protocol.UserInfo{}, errors.New("unauthorized")
+		}
+		return member, nil
+	}
+	engine := newTestEngine()
+	engine.GET("/ws/terminal", server.HandleWSWithAuth(th.Handle, asMember, nil, nil))
+	srv := httptest.NewServer(engine)
+	t.Cleanup(srv.Close)
+
+	conn := dialTerminalRaw(t, srv)
+	env := readTerminalEnvelope(t, conn)
+	var te protocol.TerminalError
+	_ = json.Unmarshal(env.Payload, &te)
+	if env.Type != protocol.EventTerminalError || !strings.Contains(te.Message, "admin") {
+		t.Fatalf("member's first frame = %s %q, want the admin-only refusal", env.Type, te.Message)
+	}
+	if n := len(provider.workDirs); n != 0 {
+		t.Fatalf("a refused member's connection acquired a sandbox %d time(s)", n)
+	}
+}
+
 func TestTerminalWS_UnknownSandboxRejected(t *testing.T) {
 	srv, _, _ := terminalTestServer(t, &fakeProvider{sb: &fakeTerminalSandbox{term: newFakeTerminal()}})
 	conn := dialTerminalRaw(t, srv)

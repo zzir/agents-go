@@ -40,7 +40,15 @@ func usersByToken(_ context.Context, bearer string) (protocol.UserInfo, error) {
 
 // authzRig mounts the real middleware chain and the full route table over an
 // in-memory database, with three users to act as.
-func authzRig(t *testing.T) (*gin.Engine, *store.SessionStore, *bun.DB) {
+// rig is authzRig's result: the engine and the stores and runner behind it.
+type rig struct {
+	engine   *gin.Engine
+	sessions *store.SessionStore
+	db       *bun.DB
+	runner   *bridge.Runner
+}
+
+func authzRig(t *testing.T) rig {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	db := newTestDB(t)
@@ -48,14 +56,104 @@ func authzRig(t *testing.T) (*gin.Engine, *store.SessionStore, *bun.DB) {
 	agents := store.NewAgentConfigStore(db)
 	deps := &bridge.AgentDeps{AgentConfigs: agents, Sessions: sessions, Traces: store.NewTraceStore(db)}
 	runner := bridge.NewRunner(t.Context(), db, deps)
+	tasks, approvals, triggers := store.NewTaskStore(db), store.NewPendingApprovalStore(db), store.NewTriggerStore(db)
 	s := server.New(slog.New(slog.DiscardHandler), usersByToken, nil)
 	s.RegisterAPI(Handlers{
-		Authz:    AuthzDeps{Sessions: sessions, Tasks: store.NewTaskStore(db), Approvals: store.NewPendingApprovalStore(db), Triggers: store.NewTriggerStore(db), Hub: runner.Hub()},
-		Sessions: NewSessionHandler(testSessionDeps(db, func(d *SessionDeps) { d.Sessions, d.Agents, d.Stopper = sessions, agents, runner })),
-		Runs:     NewRunHandler(runner),
-		Agents:   testAgentConfigHandler(db),
+		Authz:     AuthzDeps{Sessions: sessions, Tasks: tasks, Approvals: approvals, Triggers: triggers, Hub: runner.Hub()},
+		Sessions:  NewSessionHandler(testSessionDeps(db, func(d *SessionDeps) { d.Sessions, d.Agents, d.Stopper = sessions, agents, runner })),
+		Runs:      NewRunHandler(runner),
+		Agents:    testAgentConfigHandler(db),
+		Tasks:     NewTaskHandler(tasks, runner),
+		Approvals: NewApprovalHandler(approvals, runner),
+		Triggers:  NewTriggerHandler(triggers, sessions, &fakeFirer{}),
+		Workflows: NewWorkflowHandler(store.NewWorkflowStore(db), agents, sessions, runner),
 	}.Register)
-	return s.Engine, sessions, db
+	return rig{engine: s.Engine, sessions: sessions, db: db, runner: runner}
+}
+
+// Every :id subtree filed on a session — runs, tasks, approvals, triggers —
+// answers 404 to a user who does not own that session, the same as for an
+// id that does not exist; and a workflow run is into a session the caller
+// owns. The admin is a stranger here too: management is not reading.
+func TestSessionSubtreesAreTheOwnersAlone(t *testing.T) {
+	r := authzRig(t)
+	engine, sessions, db := r.engine, r.sessions, r.db
+	ctx := context.Background()
+	sess := &store.Session{OwnerID: memberUser.ID, ID: store.NewID(), Name: "mine"}
+	if err := sessions.Create(ctx, sess); err != nil {
+		t.Fatal(err)
+	}
+	child := &store.Session{OwnerID: memberUser.ID, ID: store.NewID(), Name: "task", Hidden: true}
+	if err := sessions.Create(ctx, child); err != nil {
+		t.Fatal(err)
+	}
+	task := &store.Task{ID: store.NewID(), RunID: store.NewID(), ParentSessionID: sess.ID, ChildSessionID: child.ID, Status: "completed"}
+	if err := store.NewTaskStore(db).Create(ctx, task); err != nil {
+		t.Fatal(err)
+	}
+	approvals := store.NewPendingApprovalStore(db)
+	pending := &store.PendingApproval{RunID: store.NewID(), SessionID: sess.ID, State: "{}", ToolCalls: json.RawMessage(`[{"tool_call_id":"call_1","tool_name":"exec_command","arguments":"{}"}]`)}
+	if err := approvals.Save(ctx, pending); err != nil {
+		t.Fatal(err)
+	}
+	wf := &store.Workflow{Name: "build", Steps: store.WorkflowSteps{{Prompt: "do"}}}
+	if err := store.NewWorkflowStore(db).Create(ctx, wf); err != nil {
+		t.Fatal(err)
+	}
+	trg := &store.Trigger{WorkflowID: wf.ID, SessionID: sess.ID, Kind: store.TriggerKindWebhook, Brief: "b", Secret: store.NewTriggerSecret(), Enabled: true}
+	if err := store.NewTriggerStore(db).Create(ctx, trg); err != nil {
+		t.Fatal(err)
+	}
+
+	probes := []struct{ method, path string }{
+		{http.MethodPost, "/api/v1/tasks/" + task.ID + "/stop"},
+		{http.MethodPost, "/api/v1/tasks/" + task.ID + "/dismiss"},
+		{http.MethodPost, "/api/v1/approvals/call_1/approve"},
+		{http.MethodPost, "/api/v1/approvals/call_1/reject"},
+		{http.MethodGet, "/api/v1/triggers/" + trg.ID},
+		{http.MethodDelete, "/api/v1/triggers/" + trg.ID},
+		{http.MethodPost, "/api/v1/triggers/" + trg.ID + "/fire"},
+	}
+	for _, u := range []protocol.UserInfo{otherUser, adminUser} {
+		for _, p := range probes {
+			if rec := serve(engine, as(u, p.method, p.path, "")); rec.Code != http.StatusNotFound {
+				t.Errorf("%s %s %s = %d, want 404", u.ID, p.method, p.path, rec.Code)
+			}
+		}
+		body := `{"session_id":"` + sess.ID + `","input":"go"}`
+		if rec := serve(engine, as(u, http.MethodPost, "/api/v1/workflows/"+wf.ID+"/runs", body)); rec.Code != http.StatusNotFound {
+			t.Errorf("%s workflow run into a foreign session = %d, want 404", u.ID, rec.Code)
+		}
+	}
+	// The owner reaches them (whatever each then answers about its state).
+	if rec := serve(engine, as(memberUser, http.MethodGet, "/api/v1/triggers/"+trg.ID, "")); rec.Code != http.StatusOK {
+		t.Fatalf("owner GET trigger = %d", rec.Code)
+	}
+	if rec := serve(engine, as(memberUser, http.MethodPost, "/api/v1/tasks/"+task.ID+"/dismiss", "")); rec.Code == http.StatusNotFound {
+		t.Fatalf("owner dismiss task = 404")
+	}
+	// A live run: its lookup, stream and cancel are the owner's alone. The
+	// run fails on config at once (no provider), but the hub keeps its record
+	// for a while — long enough to be looked up.
+	done := make(chan struct{})
+	runID, err := r.runner.StartRun(sess.ID, "", "", "", "hi", nil, func(*bridge.RunOutcome) { close(done) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-done
+	for _, p := range []struct{ method, path string }{
+		{http.MethodGet, "/api/v1/runs/" + runID},
+		{http.MethodPost, "/api/v1/runs/" + runID + "/cancel"},
+	} {
+		for _, u := range []protocol.UserInfo{otherUser, adminUser} {
+			if rec := serve(engine, as(u, p.method, p.path, "")); rec.Code != http.StatusNotFound {
+				t.Errorf("%s %s %s = %d, want 404", u.ID, p.method, p.path, rec.Code)
+			}
+		}
+	}
+	if rec := serve(engine, as(memberUser, http.MethodGet, "/api/v1/runs/"+runID, "")); rec.Code != http.StatusOK {
+		t.Fatalf("owner GET run = %d", rec.Code)
+	}
 }
 
 func as(user protocol.UserInfo, method, path, body string) *http.Request {
@@ -79,7 +177,7 @@ func serve(engine *gin.Engine, req *http.Request) *httptest.ResponseRecorder {
 
 // Shared configuration: every member reads, only admins write.
 func TestSharedConfigWritesAreAdminOnly(t *testing.T) {
-	engine, _, _ := authzRig(t)
+	engine := authzRig(t).engine
 	body := `{"name":"a1","model":"gpt-5.5"}`
 
 	if rec := serve(engine, as(memberUser, http.MethodPost, "/api/v1/agents", body)); rec.Code != http.StatusForbidden {
@@ -97,7 +195,7 @@ func TestSharedConfigWritesAreAdminOnly(t *testing.T) {
 // to an admin; the sidebar lists one owner's; an admin may list all and
 // delete, never read.
 func TestSessionsArePrivateToTheirOwner(t *testing.T) {
-	engine, _, _ := authzRig(t)
+	engine := authzRig(t).engine
 
 	rec := serve(engine, as(memberUser, http.MethodPost, "/api/v1/sessions", `{"name":"mine"}`))
 	if rec.Code != http.StatusCreated {
@@ -149,7 +247,8 @@ func TestSessionsArePrivateToTheirOwner(t *testing.T) {
 // be an account, and afterwards the session — and the hidden session serving
 // it — reads for the new owner and not the old.
 func TestSessionReassignIsAdminManagement(t *testing.T) {
-	engine, sessions, db := authzRig(t)
+	r := authzRig(t)
+	engine, sessions, db := r.engine, r.sessions, r.db
 	ctx := context.Background()
 	// The rig resolves bearers to three users that exist only as UserInfo;
 	// the reassign target must be a row.
@@ -264,6 +363,40 @@ func TestRunEventsStayWithTheOwner(t *testing.T) {
 	_ = json.Unmarshal(refused.Payload, &re)
 	if re.Code != protocol.CodeSessionNotFound {
 		t.Fatalf("stranger run.create answered %q, want session_not_found", re.Code)
+	}
+
+	// A stranger who connects MID-RUN (the register path, which replays every
+	// live run of the user) gets no replay either: again the refused probe
+	// is the first thing they hear.
+	late := dial(otherUser)
+	if err := late.WriteJSON(protocol.Envelope{Type: protocol.EventRunSubscribe, Payload: sub}); err != nil {
+		t.Fatal(err)
+	}
+	_ = late.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if err := late.ReadJSON(&first); err != nil {
+		t.Fatalf("late stranger probe: %v", err)
+	}
+	_ = json.Unmarshal(first.Payload, &re)
+	if first.Type != protocol.EventRunError || re.Code != protocol.CodeRunNotFound {
+		t.Fatalf("late stranger's first event = %s %q, want the refused subscribe (no replay leaked)", first.Type, re.Code)
+	}
+
+	// The broadcast bus — a fact about the session a run stream cannot carry
+	// to everyone — reaches the owner's connections only.
+	fact := &protocol.Envelope{Type: protocol.EventSessionSandboxBound, Payload: json.RawMessage(`{"session_id":"` + sess.ID + `"}`)}
+	wsh.registry.Broadcast(fact, "", sess.ID)
+	if got := readUntil(t, owner, protocol.EventSessionSandboxBound); got.Type != protocol.EventSessionSandboxBound {
+		t.Fatalf("owner did not hear the broadcast")
+	}
+	if err := stranger.WriteJSON(protocol.Envelope{Type: protocol.EventRunSubscribe, Payload: sub}); err != nil {
+		t.Fatal(err)
+	}
+	_ = stranger.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if err := stranger.ReadJSON(&first); err != nil {
+		t.Fatalf("stranger probe after broadcast: %v", err)
+	}
+	if first.Type != protocol.EventRunError {
+		t.Fatalf("stranger heard %s after a broadcast about a foreign session", first.Type)
 	}
 }
 
