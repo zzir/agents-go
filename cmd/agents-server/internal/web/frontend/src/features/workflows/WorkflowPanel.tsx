@@ -304,7 +304,7 @@ function RunDialog({ workflow, sessionId, onClose }: { workflow: Workflow; sessi
   );
 }
 
-export function WorkflowPanel({ sessionId }: { sessionId: string | null }) {
+export function WorkflowPanel({ sessionId, canEdit }: { sessionId: string | null; canEdit: boolean }) {
   const { items: workflows, adding, editing, startAdd, startEdit, cancel, save, remove } =
     useCrud<Workflow, WorkflowFormData>(api.workflows);
   const { data: agents } = useApi<AgentRef[]>(() => api.agents.list() as Promise<AgentRef[]>);
@@ -328,7 +328,7 @@ export function WorkflowPanel({ sessionId }: { sessionId: string | null }) {
           background, in a session of its own — started by the agent when a request matches its
           description, by you with a brief, or by a trigger.
         </div>
-        {!adding && !editing && <Button onClick={startAdd} variant="primary" size="small">+ Add</Button>}
+        {canEdit && !adding && !editing && <Button onClick={startAdd} variant="primary" size="small">+ Add</Button>}
       </div>
 
       {adding && <WorkflowForm initial={template} onSave={f => { setTemplate(null); save(f); }} onCancel={closeForm} agents={agents} />}
@@ -371,7 +371,7 @@ export function WorkflowPanel({ sessionId }: { sessionId: string | null }) {
                 </Button>
                 <Button onClick={() => setTriggersFor(w)} size="small" variant="invisible" leadingVisual={ZapIcon}
                   title="Run it on a schedule or from a webhook">Triggers</Button>
-                <Button onClick={() => startEdit(w)} size="small" variant="invisible">Edit</Button>
+                {canEdit && <Button onClick={() => startEdit(w)} size="small" variant="invisible">Edit</Button>}
               </div>
             </>}>
               <div className="hub-row-detail">
@@ -384,13 +384,13 @@ export function WorkflowPanel({ sessionId }: { sessionId: string | null }) {
             <Blankslate>
               <Blankslate.Description>
                 No workflows yet. A workflow runs a fixed sequence of agents on one session — plan, then execute,
-                then verify, each on the model you choose for it. Start from a shape:
+                then verify, each on the model you choose for it.{canEdit ? ' Start from a shape:' : ' An admin defines them.'}
               </Blankslate.Description>
-              <div className="wf-templates">
+              {canEdit && <div className="wf-templates">
                 {TEMPLATES.map(t => (
                   <Button key={t.key} size="small" onClick={() => { setTemplate(t.form()); startAdd(); }}>{t.label}</Button>
                 ))}
-              </div>
+              </div>}
             </Blankslate>
           )}
         </div>

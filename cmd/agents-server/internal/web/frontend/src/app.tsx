@@ -987,7 +987,7 @@ function App() {
   );
 
   const main = hubTab ? (
-    <WorkflowsHub tab={hubTab} onTabChange={setHubTab} sessionId={activeSession} tasksSig={tasksSig} onOpenRun={handleOpenRun} />
+    <WorkflowsHub tab={hubTab} onTabChange={setHubTab} sessionId={activeSession} tasksSig={tasksSig} onOpenRun={handleOpenRun} canEdit={me?.role === 'admin'} />
   ) : (
     <MemoizedChatView
       sessionId={activeSession}
