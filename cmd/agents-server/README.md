@@ -328,7 +328,10 @@ signature instead (see [Workflows](#workflows--apiv1workflows)).
 
 Base path `/api/v1` — the only mount; there is no unversioned alias. All
 request and response bodies are JSON. Request bodies are capped at 1 MiB
-(matching the WebSocket frame limit); a larger one fails the request.
+(matching the WebSocket frame limit): a declared length past it answers
+`413`, an undeclared body is cut there and fails its decode. One route
+carries more — `POST /playground/generate` replays a stored span payload,
+so its cap is the `trace_span_data_kb` setting plus 256 KB.
 
 ### Errors
 

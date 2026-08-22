@@ -31,6 +31,8 @@ type Server struct {
 	// Conns tracks the authenticated WebSocket connections, so a revocation
 	// can close them.
 	Conns *ConnTracker
+	// bodyLimits are the per-path overrides of maxBodyBytes (SetBodyLimit).
+	bodyLimits map[string]func() int64
 	// cspPolicy is the Content-Security-Policy every response carries; base
 	// policy from New, extended by ServeStatic with the hashes of the served
 	// page's inline scripts and by SetImageHosts with the avatar hosts.
@@ -47,8 +49,15 @@ func (s *Server) SetImageHosts(hosts []string) {
 
 // maxBodyBytes caps any request body read, matching the WebSocket frame limit
 // (wsMaxMessageBytes): without it every JSON endpoint reads an unbounded body
-// straight into memory. The webhook route applies its own tighter cap.
+// straight into memory. The webhook route applies its own tighter cap; a
+// route that legitimately carries more registers a limit with SetBodyLimit.
 const maxBodyBytes = 1 << 20
+
+// SetBodyLimit gives one path its own body cap, read per request — for the
+// playground, whose replay carries a stored span payload the settings size.
+func (s *Server) SetBodyLimit(path string, limit func() int64) {
+	s.bodyLimits[path] = limit
+}
 
 // NormalizeBaseURL validates a --base-url value — the server's public origin —
 // and returns it in canonical form (no trailing slash). Only a bare
@@ -85,8 +94,8 @@ func New(log *slog.Logger, auth AuthFunc, audit AuditFunc) *Server {
 	engine := gin.New()
 	_ = engine.SetTrustedProxies(nil)
 	engine.Use(gin.Recovery())
-	s := &Server{Engine: engine, auth: auth, guard: NewAuthGuard(), Conns: NewConnTracker(), cspPolicy: buildCSP(nil, nil)}
-	engine.Use(limitBody(maxBodyBytes))
+	s := &Server{Engine: engine, auth: auth, guard: NewAuthGuard(), Conns: NewConnTracker(), cspPolicy: buildCSP(nil, nil), bodyLimits: map[string]func() int64{}}
+	engine.Use(s.limitBody)
 	engine.Use(s.cspMiddleware())
 	engine.Use(logMiddleware(log))
 	engine.Use(TokenAuth(auth, s.guard))
@@ -96,13 +105,23 @@ func New(log *slog.Logger, auth AuthFunc, audit AuditFunc) *Server {
 	return s
 }
 
-func limitBody(n int64) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		if c.Request.Body != nil {
-			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, n)
-		}
-		c.Next()
+// limitBody caps the request body: a declared length past the cap is
+// refused outright as 413; an undeclared one is cut at the cap by the
+// reader, which the handler's decode then reports.
+func (s *Server) limitBody(c *gin.Context) {
+	n := int64(maxBodyBytes)
+	if limit := s.bodyLimits[c.Request.URL.Path]; limit != nil {
+		n = max(n, limit())
 	}
+	if c.Request.ContentLength > n {
+		c.AbortWithStatusJSON(http.StatusRequestEntityTooLarge,
+			protocol.NewErrorResponse(protocol.CodeValidation, fmt.Sprintf("request body exceeds %d bytes", n)))
+		return
+	}
+	if c.Request.Body != nil {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, n)
+	}
+	c.Next()
 }
 
 // ServeHealth mounts an unauthenticated liveness endpoint at /health that

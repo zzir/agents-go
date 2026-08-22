@@ -366,6 +366,11 @@ func run(_ *cobra.Command, _ []string) error {
 
 	srv := server.New(log, authSvc.Authenticate, recordAudit)
 	srv.SetImageHosts(authSvc.AvatarHosts())
+	// A replay posts a stored span payload back: the body cap follows the
+	// size the settings let a span keep, plus room for the rest of the request.
+	srv.SetBodyLimit(server.APIPrefix+"/playground/generate", func() int64 {
+		return int64(settingReader.Int(ctx, settings.KeyTraceSpanDataKB))*1024 + 256*1024
+	})
 	authHandler := handler.NewAuthHandler(authSvc, authTokens, userStore, auditStore)
 	authHandler.Conns = srv.Conns
 	if flagTrustedProxies != "" {
