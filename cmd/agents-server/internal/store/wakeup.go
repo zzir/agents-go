@@ -28,20 +28,20 @@ const WakeKindTask = "task"
 type Wakeup struct {
 	bun.BaseModel `bun:"table:wakeups,alias:wku"`
 
-	ID string `bun:"id,pk" json:"id"`
+	ID string `bun:"id,pk,type:uuid" json:"id"`
 	// SessionID is who is owed the turn.
-	SessionID string `bun:"session_id,notnull" json:"session_id"`
+	SessionID string `bun:"session_id,notnull,type:uuid" json:"session_id"`
 	// Kind and SourceID name what owes it — the source's bookkeeping handle for
 	// cancelling its own debt; the waker never reads them.
 	Kind     string `bun:"kind,notnull" json:"kind"`
-	SourceID string `bun:"source_id"    json:"source_id,omitempty"`
+	SourceID string `bun:"source_id,nullzero,type:uuid" json:"source_id,omitempty"`
 	// Inherit is the encoded run configuration the turn runs under, frozen at
 	// the moment the work was ASKED for. The drain also GROUPS debts by this
 	// string: one turn pays every debt with the same Inherit.
 	Inherit string `bun:"inherit,nullzero" json:"-"`
 	// ParentRunID is the run whose tool call started the work, so the wake-up's
 	// trace nests under it instead of opening a second root.
-	ParentRunID string `bun:"parent_run_id" json:"parent_run_id,omitempty"`
+	ParentRunID string `bun:"parent_run_id,nullzero,type:uuid" json:"parent_run_id,omitempty"`
 	// Payload is the text the turn carries.
 	Payload string `bun:"payload" json:"payload"`
 	// Attempt binds the debt to the try that owes it: a source retried while a

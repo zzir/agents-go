@@ -2115,11 +2115,18 @@ is capped at 16 connections:
 ./agents-server --db 'postgres://user:pass@localhost:5432/agents?sslmode=disable'
 ```
 
-String primary keys are UUIDv7 (`store.NewID`): time-ordered, so inserts land
-at the right edge of an index and rows created together sit together.
-Secrets — session tokens, PATs, OAuth state, the webhook secret — are not ids
-and stay 256-bit `crypto/rand`; a UUID's 122 random bits would be a
-downgrade.
+Every id column — primary keys and the foreign keys that reference them — is
+typed `uuid` and holds a UUIDv7 (`store.NewID`): time-ordered, so inserts land
+at the right edge of an index and rows created together sit together; 16
+bytes a key on PostgreSQL. One rule: an id that names one of OUR entities is a
+uuid; an identifier of foreign shape stays text — entry ids (`e<seq>`, by
+sequence), span ids (`span_<hex>`, the OTel width), a model's `tool_call_id`,
+an audit line's `resource`. "Unset" is NULL, never `""` (`nullzero`). The
+token-mode local account has the fixed id
+`00000000-0000-0000-0000-000000000001`. On PostgreSQL a malformed id in a path
+answers 400; SQLite stores any text. Secrets — session tokens, PATs, OAuth
+state, the webhook secret — are not ids and stay 256-bit `crypto/rand`; a
+UUID's 122 random bits would be a downgrade.
 
 Tables are created automatically on startup:
 

@@ -79,6 +79,10 @@ func storeError(c *gin.Context, err error) {
 		conflict(c, err.Error())
 		return
 	}
+	if store.IsMalformedID(err) {
+		badRequest(c, "malformed id")
+		return
+	}
 	internalError(c, err)
 }
 

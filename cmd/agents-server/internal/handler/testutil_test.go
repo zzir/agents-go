@@ -52,7 +52,7 @@ func testAuthFunc(tok string) server.AuthFunc {
 		if bearer != tok {
 			return protocol.UserInfo{}, errors.New("unauthorized")
 		}
-		return protocol.UserInfo{ID: "local", Email: "local@localhost", Role: "admin"}, nil
+		return protocol.UserInfo{ID: store.LocalUserID, Email: "local@localhost", Role: "admin"}, nil
 	}
 }
 

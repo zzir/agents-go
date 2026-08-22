@@ -547,6 +547,11 @@ A `SessionRepo` owns which sessions exist, separately from their contents.
   listings by default, and is created naming the session it serves
   (`CreateOptions.ParentID`) so a repo that attaches facts to sessions — an
   owner — can inherit them instead of guessing.
+- **A backend may constrain the shape of the ids it accepts** — the server's
+  PostgreSQL backend types every id column `uuid`, so a caller-chosen id must
+  be one. The conformance suite routes its literal names through
+  `RepoUnderTest.IDs` for such a backend; a backend without the constraint
+  leaves it nil.
 - **Opening an unknown session is an error**, never an empty session. A wrong id
   that reads as a fresh conversation makes a run start over instead of
   continuing, which is worse than failing.

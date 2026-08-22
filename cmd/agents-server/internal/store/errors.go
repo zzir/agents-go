@@ -100,3 +100,12 @@ func updateColumn(ctx context.Context, db *bun.DB, model any, label, id, column 
 	}
 	return nil
 }
+
+// IsMalformedID reports whether err is PostgreSQL refusing a value that is not
+// a UUID for a uuid column (SQLSTATE 22P02) — a path parameter like
+// /sessions/abc. SQLite stores anything, so only PostgreSQL raises it; handlers
+// answer 400 rather than 500.
+func IsMalformedID(err error) bool {
+	var pgErr pgdriver.Error
+	return errors.As(err, &pgErr) && pgErr.Field('C') == "22P02"
+}

@@ -23,9 +23,9 @@ func (s *MemoryStore) ListForAgent(ctx context.Context, agentConfigID string) ([
 	var memories []Memory
 	q := s.db.NewSelect().Model(&memories)
 	if agentConfigID != "" {
-		q = q.Where("agent_config_id = '' OR agent_config_id = ?", agentConfigID)
+		q = q.Where("agent_config_id IS NULL OR agent_config_id = ?", agentConfigID)
 	} else {
-		q = q.Where("agent_config_id = ''")
+		q = q.Where("agent_config_id IS NULL")
 	}
 	if err := q.OrderExpr("updated_at DESC").Scan(ctx); err != nil {
 		return nil, fmt.Errorf("listing memories for agent: %w", err)

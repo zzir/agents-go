@@ -30,8 +30,8 @@ const (
 
 // LocalUserID is the implicit account behind --auth token mode: one machine,
 // one person, full access. Ownership columns reference it so both auth modes
-// share one data model.
-const LocalUserID = "local"
+// share one data model. A fixed UUID, as every id column is uuid-typed.
+const LocalUserID = "00000000-0000-0000-0000-000000000001"
 
 const (
 	// sessionTokenTTL is the sliding window a session stays valid without use.

@@ -65,10 +65,20 @@ func TestPGRepoConformance(t *testing.T) {
 		t.Helper()
 		db := pgTestDB(t)
 		sessions := store.NewSessionStore(db)
+		// Every id column is uuid-typed on PostgreSQL: the suite's literal
+		// names become memoized UUIDs.
+		ids := map[string]string{}
 		return agentstest.RepoUnderTest{
 			Repo: store.NewSessionRepoAdapter(sessions, func(ref session.Ref) session.Storage {
 				return store.NewEntryStoreFor(db, ref)
 			}),
+			IDs: func(name string) string {
+				if id, ok := ids[name]; ok {
+					return id
+				}
+				ids[name] = store.NewID()
+				return ids[name]
+			},
 		}
 	})
 }
@@ -99,15 +109,16 @@ func TestPGTraceSummary(t *testing.T) {
 	ctx := context.Background()
 	db := pgTestDB(t)
 	traces := store.NewTraceStore(db)
+	sessionID, runID := store.NewID(), store.NewID()
 	ev := &store.TraceEvent{
-		SessionID: "s1", RunID: "r1", Kind: "span", SpanID: "sp1", Name: "generation",
+		SessionID: sessionID, RunID: runID, Kind: "span", SpanID: "sp1", Name: "generation",
 		Data:      `{"model":"gpt","input":[{"role":"user"}],"output":"big"}`,
 		CreatedAt: time.Now().UTC(),
 	}
 	if err := traces.Insert(ctx, ev); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := traces.ListSummaryBySession(ctx, "s1", 0, 0)
+	rows, err := traces.ListSummaryBySession(ctx, sessionID, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +131,7 @@ func TestPGTraceSummary(t *testing.T) {
 	if strings.Contains(rows[0].Data, "input") || !strings.Contains(rows[0].Data, "model") {
 		t.Errorf("summary data = %q, want payload stripped and the rest kept", rows[0].Data)
 	}
-	full, err := traces.GetBySpan(ctx, "s1", "sp1")
+	full, err := traces.GetBySpan(ctx, sessionID, "sp1")
 	if err != nil {
 		t.Fatal(err)
 	}

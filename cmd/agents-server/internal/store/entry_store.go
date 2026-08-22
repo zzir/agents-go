@@ -22,7 +22,7 @@ type entryRow struct {
 	bun.BaseModel `bun:"table:entries,alias:e"`
 
 	ID        int64  `bun:"id,pk,autoincrement" json:"id"`
-	SessionID string `bun:"session_id,notnull"  json:"session_id"`
+	SessionID string `bun:"session_id,notnull,type:uuid" json:"session_id"`
 	// Gen is the session generation these entries belong to; see
 	// session.Ref. Empty is the direct scope, not a wildcard.
 	Gen string `bun:"gen,notnull" json:"-"`
@@ -33,7 +33,7 @@ type entryRow struct {
 	EntryID  string `bun:"entry_id,notnull"    json:"entry_id"`
 	ParentID string `bun:"parent_id"           json:"parent_id,omitempty"`
 	Kind     string `bun:"kind,notnull"        json:"kind"`
-	RunID    string `bun:"run_id"              json:"run_id,omitempty"`
+	RunID    string `bun:"run_id,nullzero,type:uuid" json:"run_id,omitempty"`
 	// Entry is the JSON of an session.Entry.
 	Entry string `bun:"entry,type:text,notnull" json:"-"`
 	// SourceModel records which model produced the entry, so replaying the
@@ -66,7 +66,7 @@ type entryRow struct {
 type appendPointRow struct {
 	bun.BaseModel `bun:"table:append_points,alias:ap"`
 
-	SessionID string `bun:"session_id,pk"`
+	SessionID string `bun:"session_id,pk,type:uuid"`
 	// Gen is the generation this point belongs to — part of the key, as it is
 	// part of every other address of an entry row (see EntryStore.scoped).
 	Gen string `bun:"gen,pk"`

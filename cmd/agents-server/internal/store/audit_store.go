@@ -17,10 +17,10 @@ import (
 type AuditEvent struct {
 	bun.BaseModel `bun:"table:audit_events,alias:ae"`
 
-	ID string `bun:"id,pk" json:"id"`
+	ID string `bun:"id,pk,type:uuid" json:"id"`
 	// ActorID/ActorEmail identify the caller; the email is a snapshot so the
 	// line stays readable after the account is gone.
-	ActorID    string `bun:"actor_id,notnull"     json:"actor_id"`
+	ActorID    string `bun:"actor_id,notnull,type:uuid" json:"actor_id"`
 	ActorEmail string `bun:"actor_email,nullzero" json:"actor_email,omitempty"`
 	// Action is "METHOD /route/pattern" for REST, or a dotted name for the
 	// explicit events (ws.run.create, ws.approval, terminal.open).

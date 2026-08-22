@@ -8,6 +8,10 @@ import { toast } from '@/lib/toast';
 
 type PatView = ApiSchemas['protocol.PatView'];
 
+// The implicit token-mode account (store.LocalUserID); dormant in OAuth mode
+// and not a person to manage.
+const LOCAL_USER_ID = '00000000-0000-0000-0000-000000000001';
+
 // AccountPanel: who is signed in, sign out, and (OAuth mode) personal access
 // tokens. In token mode the PAT section is absent — the server refuses the
 // surface there, since a PAT could never authenticate against a static token.
@@ -229,7 +233,7 @@ function AdminSection({ me }: { me: AuthUser }) {
       </PageHeader>
       {error ? <Flash variant="danger">{error}</Flash> : null}
       <Stack gap="none" className="account-pat-list">
-        {users.filter(u => u.id !== 'local').map(u => (
+        {users.filter(u => u.id !== LOCAL_USER_ID).map(u => (
           <Stack key={u.id} direction="horizontal" align="center" gap="condensed" className="account-pat-row">
             <span className="account-name" style={{ flexGrow: 1 }}>{u.name || u.email}</span>
             <span className="account-muted">{u.email}</span>

@@ -12,7 +12,7 @@ import (
 type Session struct {
 	bun.BaseModel `bun:"table:sessions,alias:s"`
 
-	ID string `bun:"id,pk"               json:"id"`
+	ID string `bun:"id,pk,type:uuid"     json:"id"`
 	// Gen names which generation of this id owns the session's entries; see
 	// session.Ref.
 	Gen string `bun:"gen,notnull"          json:"-"`
@@ -20,7 +20,7 @@ type Session struct {
 	// column: a task's hidden session inherits it from its parent, a trigger
 	// fires into a session, an approval is filed on one. Content is the
 	// owner's alone; an admin may list, stop and delete (README "Ownership").
-	OwnerID string `bun:"owner_id,notnull"     json:"owner_id"`
+	OwnerID string `bun:"owner_id,notnull,type:uuid" json:"owner_id"`
 	Name    string `bun:"name,notnull"         json:"name"`
 	Pinned  bool   `bun:"pinned"               json:"pinned"`
 	// Hidden marks a session that exists to serve another one — a background
@@ -31,13 +31,13 @@ type Session struct {
 	// was in order to exclude one, and anything else worth hiding would have
 	// had to teach it a second special case.
 	Hidden        bool   `bun:"hidden"               json:"hidden,omitempty"`
-	AgentConfigID string `bun:"agent_config_id"      json:"agent_config_id,omitempty"`
+	AgentConfigID string `bun:"agent_config_id,nullzero,type:uuid" json:"agent_config_id,omitempty"`
 	// SandboxID/WorkDir are the session's PERMANENT sandbox binding: the first
 	// run that carries a sandbox writes them (compare-and-set, see
 	// BindSandboxIfEmpty) and they are never rewritten — the session's file
 	// system context must not change under a conversation that already touched
 	// it. An empty WorkDir means "the sandbox's own default".
-	SandboxID string `bun:"sandbox_id"           json:"sandbox_id,omitempty"`
+	SandboxID string `bun:"sandbox_id,nullzero,type:uuid" json:"sandbox_id,omitempty"`
 	WorkDir   string `bun:"work_dir"             json:"work_dir,omitempty"`
 	// Planning is the session's plan phase: true means its next run starts
 	// read-only until a plan is approved. It is materialized here — not derived
@@ -59,19 +59,19 @@ type Session struct {
 type Task struct {
 	bun.BaseModel `bun:"table:tasks,alias:t"`
 
-	ID string `bun:"id,pk"                json:"task_id"`
+	ID string `bun:"id,pk,type:uuid"      json:"task_id"`
 	// RunID is the id of the task's CURRENT run: a retry replaces it, and so
 	// does each step of a workflow. It is distinct from the task id because the
 	// task is the durable entity and a run is one try at it — which is what
 	// makes a retry expressible at all.
-	RunID string `bun:"run_id"               json:"run_id,omitempty"`
+	RunID string `bun:"run_id,nullzero,type:uuid" json:"run_id,omitempty"`
 	// Kind is the SDK's host-defined discriminator: "" for a sub-agent task,
 	// TaskKindWorkflow for a workflow execution.
 	Kind string `bun:"kind" json:"kind,omitempty"`
 	// State is the SDK's opaque per-job record — for a workflow, the encoded
 	// WorkflowState (the definition snapshot and where the sequence stands).
 	State           json.RawMessage `bun:"state,type:text,nullzero" json:"state,omitempty"`
-	ParentSessionID string          `bun:"parent_session_id,notnull" json:"parent_session_id"`
+	ParentSessionID string          `bun:"parent_session_id,notnull,type:uuid" json:"parent_session_id"`
 	// ParentSessionGen and ChildSessionGen are the GENERATIONS of the sessions
 	// this row names (session.Ref). A session id names a session, not a
 	// place, so a row matched on the id alone attaches itself to a replacement
@@ -80,11 +80,11 @@ type Task struct {
 	// them at insert and every by-session read compares them against the
 	// generation answering to that id now (see liveParent / liveChild).
 	ParentSessionGen string `bun:"parent_session_gen" json:"-"`
-	ParentRunID      string `bun:"parent_run_id"        json:"parent_run_id,omitempty"`
+	ParentRunID      string `bun:"parent_run_id,nullzero,type:uuid" json:"parent_run_id,omitempty"`
 	ToolCallID       string `bun:"tool_call_id"         json:"tool_call_id,omitempty"`
 	Label            string `bun:"label"                json:"label,omitempty"`
-	AgentConfigID    string `bun:"agent_config_id"      json:"agent_config_id,omitempty"`
-	ChildSessionID   string `bun:"child_session_id,notnull" json:"child_session_id"`
+	AgentConfigID    string `bun:"agent_config_id,nullzero,type:uuid" json:"agent_config_id,omitempty"`
+	ChildSessionID   string `bun:"child_session_id,notnull,type:uuid" json:"child_session_id"`
 	ChildSessionGen  string `bun:"child_session_gen"        json:"-"`
 	// Depth is how many task hops from a user-initiated run. Persisted because
 	// it is the ONLY input to the recursion bound: dropping it made every task
@@ -101,8 +101,8 @@ type Task struct {
 	// ParentAgentConfigID / ParentSandboxID / ParentWorkDir snapshot the
 	// spawning run's configuration so the completion notification (and a retry)
 	// can start a run with the same setup.
-	ParentAgentConfigID string `bun:"parent_agent_config_id" json:"-"`
-	ParentSandboxID     string `bun:"parent_sandbox_id"      json:"-"`
+	ParentAgentConfigID string `bun:"parent_agent_config_id,nullzero,type:uuid" json:"-"`
+	ParentSandboxID     string `bun:"parent_sandbox_id,nullzero,type:uuid" json:"-"`
 	ParentWorkDir       string `bun:"parent_work_dir"        json:"-"`
 	Status              string `bun:"status,notnull"     json:"status"`
 	Summary             string `bun:"summary,nullzero"   json:"summary,omitempty"`
@@ -132,7 +132,7 @@ const TaskKindWorkflow = "workflow"
 type AgentConfig struct {
 	bun.BaseModel `bun:"table:agent_configs,alias:ac"`
 
-	ID           string `bun:"id,pk"          json:"id"`
+	ID           string `bun:"id,pk,type:uuid" json:"id"`
 	Name         string `bun:"name,notnull"   json:"name"`
 	Instructions string `bun:"instructions"   json:"instructions"`
 	Model        string `bun:"model"          json:"model"`
@@ -142,7 +142,7 @@ type AgentConfig struct {
 	// sessions.sandbox_id is one). Empty means the built-in default: the
 	// openai backend on the global api-key setting, which is what an agent
 	// created before any provider existed runs on.
-	ProviderID string `bun:"provider_id" json:"provider_id,omitempty"`
+	ProviderID string `bun:"provider_id,nullzero,type:uuid" json:"provider_id,omitempty"`
 	// ContextWindow is the model's window in tokens, declared rather than
 	// discovered — no provider reports it on a response. It sits beside Model
 	// because it describes the model, not the endpoint: two agents on one
@@ -184,7 +184,7 @@ type AgentConfig struct {
 type Provider struct {
 	bun.BaseModel `bun:"table:providers,alias:pv"`
 
-	ID   string `bun:"id,pk"        json:"id"`
+	ID   string `bun:"id,pk,type:uuid" json:"id"`
 	Name string `bun:"name,notnull" json:"name"`
 	// Type selects the backend (bridge.ProviderType*). Empty means openai, the
 	// value that predates the field.
@@ -215,7 +215,7 @@ type Provider struct {
 type McpServerConfig struct {
 	bun.BaseModel `bun:"table:mcp_servers,alias:ms"`
 
-	ID            string `bun:"id,pk"                  json:"id"`
+	ID            string `bun:"id,pk,type:uuid"        json:"id"`
 	Name          string `bun:"name,notnull"           json:"name"`
 	TransportType string `bun:"transport_type,notnull" json:"transport_type"` // stdio | streamable_http
 	// Enabled deliberately carries no bun default tag: with `default:true`,
@@ -291,8 +291,8 @@ type HTTPMcpConfig struct {
 type Memory struct {
 	bun.BaseModel `bun:"table:memories,alias:mem"`
 
-	ID            string    `bun:"id,pk"               json:"id"`
-	AgentConfigID string    `bun:"agent_config_id"     json:"agent_config_id,omitempty"`
+	ID            string    `bun:"id,pk,type:uuid"     json:"id"`
+	AgentConfigID string    `bun:"agent_config_id,nullzero,type:uuid" json:"agent_config_id,omitempty"`
 	Key           string    `bun:"key,notnull"          json:"key"`
 	Content       string    `bun:"content,notnull"      json:"content"`
 	Metadata      string    `bun:"metadata"             json:"metadata,omitempty"`
@@ -309,7 +309,7 @@ type Memory struct {
 type ContextProfile struct {
 	bun.BaseModel `bun:"table:context_profiles,alias:cxp"`
 
-	SessionID string `bun:"session_id,pk"`
+	SessionID string `bun:"session_id,pk,type:uuid"`
 	// Payload is a PromptProfile as JSON.
 	Payload string `bun:"payload,type:text"`
 }
@@ -370,12 +370,12 @@ type Setting struct {
 type ProviderRoute struct {
 	bun.BaseModel `bun:"table:provider_routes,alias:pr"`
 
-	ID     string `bun:"id,pk"          json:"id"`
+	ID     string `bun:"id,pk,type:uuid" json:"id"`
 	Prefix string `bun:"prefix,notnull" json:"prefix"`
 	// ProviderID names the Provider this prefix routes to. A route used to
 	// carry its own type/key/base_url — a third copy of the same credential —
 	// and now references the one row that holds it.
-	ProviderID string    `bun:"provider_id"        json:"provider_id"`
+	ProviderID string    `bun:"provider_id,nullzero,type:uuid" json:"provider_id"`
 	CreatedAt  time.Time `bun:"created_at,notnull" json:"created_at"`
 	UpdatedAt  time.Time `bun:"updated_at,notnull" json:"updated_at"`
 }
@@ -385,13 +385,13 @@ type TraceEvent struct {
 	bun.BaseModel `bun:"table:trace_events,alias:te"`
 
 	ID        int64  `bun:"id,pk,autoincrement"  json:"id"`
-	SessionID string `bun:"session_id,notnull"   json:"session_id"`
-	RunID     string `bun:"run_id,notnull"       json:"run_id"`
+	SessionID string `bun:"session_id,notnull,type:uuid" json:"session_id"`
+	RunID     string `bun:"run_id,notnull,type:uuid" json:"run_id"`
 	// ParentRunID is the run's LINEAGE: for a task wake-up run, the run whose
 	// spawn started the chain. Recorded on the trace itself so the panel's run
 	// grouping reads it directly — deriving it from task rows or notification
 	// text broke on every surface that does not carry them (forks above all).
-	ParentRunID string    `bun:"parent_run_id"        json:"parent_run_id,omitempty"`
+	ParentRunID string    `bun:"parent_run_id,nullzero,type:uuid" json:"parent_run_id,omitempty"`
 	Kind        string    `bun:"kind,notnull"         json:"kind"`
 	SpanID      string    `bun:"span_id"              json:"span_id,omitempty"`
 	ParentID    string    `bun:"parent_id"            json:"parent_id,omitempty"`
@@ -414,7 +414,7 @@ type TraceEvent struct {
 type SandboxConfig struct {
 	bun.BaseModel `bun:"table:sandbox_configs,alias:sb"`
 
-	ID   string `bun:"id,pk"        json:"id"`
+	ID   string `bun:"id,pk,type:uuid" json:"id"`
 	Name string `bun:"name,notnull" json:"name"`
 	Type string `bun:"type,notnull" json:"type"` // local | docker | ssh
 
@@ -497,7 +497,7 @@ type SSHConfig struct {
 type Guardrail struct {
 	bun.BaseModel `bun:"table:guardrails,alias:gr"`
 
-	ID          string `bun:"id,pk"              json:"id"`
+	ID          string `bun:"id,pk,type:uuid"    json:"id"`
 	Name        string `bun:"name,notnull"       json:"name"`
 	Description string `bun:"description"        json:"description"`
 	// Stages are the run stages this guardrail inspects: input, output,
@@ -528,15 +528,15 @@ type GuardrailConfig struct {
 type PendingApproval struct {
 	bun.BaseModel `bun:"table:pending_approvals,alias:pa"`
 
-	RunID     string `bun:"run_id,pk"              json:"run_id"`
-	SessionID string `bun:"session_id,notnull"     json:"session_id"`
+	RunID     string `bun:"run_id,pk,type:uuid"    json:"run_id"`
+	SessionID string `bun:"session_id,notnull,type:uuid" json:"session_id"`
 	// Kind is what the decision is about: "" a tool call the run paused on
 	// (State is the run to resume), ApprovalKindStep a workflow step waiting to
 	// start (no run exists yet — approving launches it, rejecting cancels the
 	// execution).
 	Kind          string `bun:"kind"                   json:"kind,omitempty"`
-	AgentConfigID string `bun:"agent_config_id"        json:"agent_config_id,omitempty"`
-	SandboxID     string `bun:"sandbox_id"             json:"sandbox_id,omitempty"`
+	AgentConfigID string `bun:"agent_config_id,nullzero,type:uuid" json:"agent_config_id,omitempty"`
+	SandboxID     string `bun:"sandbox_id,nullzero,type:uuid" json:"sandbox_id,omitempty"`
 	WorkDir       string `bun:"work_dir"               json:"work_dir,omitempty"`
 	// State is the JSON from agents.RunState.MarshalJSON. Hidden from the API.
 	State string `bun:"state,type:text,notnull" json:"-"`
@@ -626,7 +626,7 @@ func (m *SandboxConfig) BeforeAppendModel(_ context.Context, q bun.Query) error 
 type User struct {
 	bun.BaseModel `bun:"table:users,alias:u"`
 
-	ID    string `bun:"id,pk"          json:"id"`
+	ID    string `bun:"id,pk,type:uuid" json:"id"`
 	Email string `bun:"email,notnull"  json:"email"` // lowercased; unique via idx_users_email
 	Name  string `bun:"name,nullzero"  json:"name,omitempty"`
 	// AvatarURL is the provider's picture URL, carried by /auth/me and loaded
@@ -644,8 +644,8 @@ type User struct {
 type Identity struct {
 	bun.BaseModel `bun:"table:identities,alias:idn"`
 
-	ID       string `bun:"id,pk"             json:"id"`
-	UserID   string `bun:"user_id,notnull"   json:"user_id"`
+	ID       string `bun:"id,pk,type:uuid"   json:"id"`
+	UserID   string `bun:"user_id,notnull,type:uuid" json:"user_id"`
 	Provider string `bun:"provider,notnull"  json:"provider"`
 	Subject  string `bun:"subject,notnull"   json:"subject"` // unique with provider via idx_identities_subject
 
@@ -659,8 +659,8 @@ type Identity struct {
 type AuthToken struct {
 	bun.BaseModel `bun:"table:auth_tokens,alias:at"`
 
-	ID        string `bun:"id,pk"              json:"id"`
-	UserID    string `bun:"user_id,notnull"    json:"user_id"`
+	ID        string `bun:"id,pk,type:uuid"    json:"id"`
+	UserID    string `bun:"user_id,notnull,type:uuid" json:"user_id"`
 	Kind      string `bun:"kind,notnull"       json:"kind"` // TokenKindSession | TokenKindPAT
 	TokenHash string `bun:"token_hash,notnull" json:"-"`    // unique via idx_auth_tokens_hash
 	Name      string `bun:"name,nullzero"      json:"name,omitempty"`

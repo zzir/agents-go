@@ -224,7 +224,7 @@ func scanJSONColumn(src, dst any, what string) error {
 type Workflow struct {
 	bun.BaseModel `bun:"table:workflows,alias:wfl"`
 
-	ID   string `bun:"id,pk"        json:"id"`
+	ID   string `bun:"id,pk,type:uuid" json:"id"`
 	Name string `bun:"name,notnull" json:"name"`
 	// Description says WHEN to run this, in one line. An agent matching a
 	// request against it is the only way a workflow starts, so it is required.

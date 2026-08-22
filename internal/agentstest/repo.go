@@ -16,6 +16,12 @@ type RepoUnderTest struct {
 	// Repo is the implementation being checked.
 	Repo session.Repo
 
+	// IDs maps the suite's literal session names ("x", "shared") to ids the
+	// backend accepts — a backend with a uuid-typed id column supplies a
+	// memoized generator. Nil uses the names as they are. A name maps to the
+	// same id for the whole check, so open-after-create still meets its row.
+	IDs func(name string) string
+
 	// Direct opens a session by id through the backend's NON-repo constructor
 	// — sessions.New — where the id names the storage
 	// outright. A backend without one leaves this nil and those checks skip.
@@ -56,6 +62,14 @@ var repoChecks = []struct {
 	{"ListHonoursLimit", checkListLimit},
 }
 
+// id resolves a suite-literal session name through IDs.
+func (r RepoUnderTest) id(name string) string {
+	if r.IDs == nil {
+		return name
+	}
+	return r.IDs(name)
+}
+
 func repoWrite(t *testing.T, sess *session.Session, text string) {
 	t.Helper()
 	item, err := session.UnmarshalInputItem([]byte(`{"role":"user","content":"` + text + `"}`))
@@ -83,13 +97,13 @@ func repoTexts(t *testing.T, sess *session.Session) []string {
 func checkCreateThenOpen(t *testing.T, r RepoUnderTest) {
 	t.Helper()
 	ctx := context.Background()
-	sess, err := r.Repo.Create(ctx, session.CreateOptions{ID: "x", Title: "A chat"})
+	sess, err := r.Repo.Create(ctx, session.CreateOptions{ID: r.id("x"), Title: "A chat"})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	repoWrite(t, sess, "hello")
 
-	again, err := r.Repo.Open(ctx, "x")
+	again, err := r.Repo.Open(ctx, r.id("x"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -100,7 +114,7 @@ func checkCreateThenOpen(t *testing.T, r RepoUnderTest) {
 
 func checkOpenUnknown(t *testing.T, r RepoUnderTest) {
 	t.Helper()
-	_, err := r.Repo.Open(context.Background(), "never-created")
+	_, err := r.Repo.Open(context.Background(), r.id("never-created"))
 	if err == nil {
 		t.Fatal("opening an unknown session succeeded")
 	}
@@ -108,7 +122,7 @@ func checkOpenUnknown(t *testing.T, r RepoUnderTest) {
 
 func checkDeleteUnknown(t *testing.T, r RepoUnderTest) {
 	t.Helper()
-	if err := r.Repo.Delete(context.Background(), "never-created"); err != nil {
+	if err := r.Repo.Delete(context.Background(), r.id("never-created")); err != nil {
 		t.Fatalf("deleting an unknown session: %v", err)
 	}
 }
@@ -122,18 +136,18 @@ func checkDeleteUnknown(t *testing.T, r RepoUnderTest) {
 func checkRecreatedID(t *testing.T, r RepoUnderTest) {
 	t.Helper()
 	ctx := context.Background()
-	if _, err := r.Repo.Create(ctx, session.CreateOptions{ID: "x"}); err != nil {
+	if _, err := r.Repo.Create(ctx, session.CreateOptions{ID: r.id("x")}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	stale, err := r.Repo.Open(ctx, "x")
+	stale, err := r.Repo.Open(ctx, r.id("x"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 
-	if err := r.Repo.Delete(ctx, "x"); err != nil {
+	if err := r.Repo.Delete(ctx, r.id("x")); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	fresh, err := r.Repo.Create(ctx, session.CreateOptions{ID: "x"})
+	fresh, err := r.Repo.Create(ctx, session.CreateOptions{ID: r.id("x")})
 	if err != nil {
 		t.Fatalf("recreate: %v", err)
 	}
@@ -168,13 +182,13 @@ func checkRecreatedID(t *testing.T, r RepoUnderTest) {
 func checkDeletedHandleRefusesEveryWrite(t *testing.T, r RepoUnderTest) {
 	t.Helper()
 	ctx := context.Background()
-	sess, err := r.Repo.Create(ctx, session.CreateOptions{ID: "x"})
+	sess, err := r.Repo.Create(ctx, session.CreateOptions{ID: r.id("x")})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	repoWrite(t, sess, "written while it existed")
 	st := sess.Storage()
-	if err := r.Repo.Delete(ctx, "x"); err != nil {
+	if err := r.Repo.Delete(ctx, r.id("x")); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 
@@ -208,17 +222,17 @@ func checkDeletedHandleRefusesEveryWrite(t *testing.T, r RepoUnderTest) {
 func checkStaleHandleMetadata(t *testing.T, r RepoUnderTest) {
 	t.Helper()
 	ctx := context.Background()
-	if _, err := r.Repo.Create(ctx, session.CreateOptions{ID: "x", Title: "first"}); err != nil {
+	if _, err := r.Repo.Create(ctx, session.CreateOptions{ID: r.id("x"), Title: "first"}); err != nil {
 		t.Fatal(err)
 	}
-	stale, err := r.Repo.Open(ctx, "x")
+	stale, err := r.Repo.Open(ctx, r.id("x"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := r.Repo.Delete(ctx, "x"); err != nil {
+	if err := r.Repo.Delete(ctx, r.id("x")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.Repo.Create(ctx, session.CreateOptions{ID: "x", Title: "second"}); err != nil {
+	if _, err := r.Repo.Create(ctx, session.CreateOptions{ID: r.id("x"), Title: "second"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -240,12 +254,12 @@ func checkDeleteVsDirect(t *testing.T, r RepoUnderTest) {
 	ctx := context.Background()
 
 	// An id the repo has never heard of.
-	direct, err := r.Direct("orphan")
+	direct, err := r.Direct(r.id("orphan"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	repoWrite(t, direct, "written directly")
-	if err := r.Repo.Delete(ctx, "orphan"); err != nil {
+	if err := r.Repo.Delete(ctx, r.id("orphan")); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 	if got := repoTexts(t, direct); len(got) != 1 {
@@ -254,15 +268,15 @@ func checkDeleteVsDirect(t *testing.T, r RepoUnderTest) {
 
 	// And with a repo session of the same id present, deleting it takes only
 	// its own history.
-	shared, err := r.Direct("shared")
+	shared, err := r.Direct(r.id("shared"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	repoWrite(t, shared, "written directly")
-	if _, err := r.Repo.Create(ctx, session.CreateOptions{ID: "shared"}); err != nil {
+	if _, err := r.Repo.Create(ctx, session.CreateOptions{ID: r.id("shared")}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if err := r.Repo.Delete(ctx, "shared"); err != nil {
+	if err := r.Repo.Delete(ctx, r.id("shared")); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 	if got := repoTexts(t, shared); len(got) != 1 {
@@ -285,8 +299,10 @@ func repoSessionsNewestFirst(t *testing.T, r RepoUnderTest, ids ...string) []str
 	t.Helper()
 	ctx := context.Background()
 	handles := make([]*session.Session, len(ids))
+	mapped := make([]string, len(ids))
 	for i, id := range ids {
-		sess, err := r.Repo.Create(ctx, session.CreateOptions{ID: id})
+		mapped[i] = r.id(id)
+		sess, err := r.Repo.Create(ctx, session.CreateOptions{ID: mapped[i]})
 		if err != nil {
 			t.Fatalf("create %q: %v", id, err)
 		}
@@ -298,7 +314,7 @@ func repoSessionsNewestFirst(t *testing.T, r RepoUnderTest, ids ...string) []str
 			time.Sleep(10 * time.Millisecond)
 		}
 	}
-	return slices.Clone(ids)
+	return mapped
 }
 
 func metadataIDs(md []session.Metadata) []string {
@@ -371,13 +387,13 @@ func checkDirectIsolation(t *testing.T, r RepoUnderTest) {
 	}
 	ctx := context.Background()
 
-	sess, err := r.Repo.Create(ctx, session.CreateOptions{ID: "x"})
+	sess, err := r.Repo.Create(ctx, session.CreateOptions{ID: r.id("x")})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	repoWrite(t, sess, "through the repo")
 
-	direct, err := r.Direct("x")
+	direct, err := r.Direct(r.id("x"))
 	if err != nil {
 		t.Fatal(err)
 	}

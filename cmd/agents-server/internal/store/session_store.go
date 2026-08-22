@@ -151,7 +151,7 @@ func (s *SessionStore) BindAgentIfEmpty(ctx context.Context, id, agentConfigID s
 	if _, err := s.db.NewUpdate().Model((*Session)(nil)).
 		Set("agent_config_id = ?", agentConfigID).
 		Where("id = ?", id).
-		Where("agent_config_id = '' OR agent_config_id IS NULL").
+		Where("agent_config_id IS NULL").
 		Exec(ctx); err != nil {
 		return fmt.Errorf("binding session %s to agent config %s: %w", id, agentConfigID, err)
 	}
@@ -183,7 +183,7 @@ func (s *SessionStore) BindSandboxIfEmpty(ctx context.Context, id, sandboxID, wo
 		Set("sandbox_id = ?", sandboxID).
 		Set("work_dir = ?", workDir).
 		Where("id = ?", id).
-		Where("sandbox_id = '' OR sandbox_id IS NULL").
+		Where("sandbox_id IS NULL").
 		Where("EXISTS (SELECT 1 FROM sandbox_configs WHERE id = ? AND revision = ?)", sandboxID, revision).
 		Exec(ctx)
 	if err != nil {
