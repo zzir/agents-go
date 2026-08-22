@@ -140,7 +140,7 @@ The auth surface under `/api/v1/auth`:
 | POST   | `/auth/exchange`                 | none | Trade the one-time code for `{token, user}` — the only response the session token's plaintext rides |
 | GET    | `/auth/me`                       | yes  | The authenticated caller: `{id, email, name?, role, avatar_url?}` |
 | POST   | `/auth/logout`                   | yes  | Revoke the presented session token (no-op in token mode) |
-| GET    | `/auth/audit`                    | admin | The audit log, newest first (`?limit`, `?before=<RFC 3339>`) |
+| GET    | `/auth/audit`                    | admin | The audit log, newest first (`?limit` ≤ 500, `?before=<event id>`) |
 | GET    | `/auth/users`                    | admin | Every account with its role and `disabled_at`            |
 | PATCH  | `/auth/users/:id`                | admin | `{role?: admin\|member, disabled?: bool}`; never one's own account, never the local one; `409` when it would leave no enabled admin; disabling also revokes every token |
 | DELETE | `/auth/users/:id/tokens`         | admin | Sign the account out everywhere: every session and PAT revoked, live connections closed |
@@ -304,8 +304,9 @@ forever), deliberately not a setting: the log of configuration changes must
 not be shortened through the API it records. The log carries each actor's
 email and client IP — personal data; the flag is its retention control, and
 deleting the database file deletes the log with it. Admins read it at
-`GET /auth/audit` (`?limit=&before=<RFC 3339>` pages older) and in the Admin
-dialog's Audit logs.
+`GET /auth/audit` (`?limit=` up to 500, `&before=<event id>` pages older —
+the id is a UUIDv7, so it orders like the time and never ties) and in the
+Admin dialog's Audit logs.
 
 Exempt from auth: the MCP OAuth redirect callback
 (`GET /api/v1/mcp-servers/oauth/callback` — the browser follows it without an
@@ -2286,7 +2287,7 @@ Tables are created automatically on startup:
 | `provider_routes`   | Model-prefix routing rules                                                          |
 | `sandbox_configs`   | Sandbox configurations                                                              |
 | `guardrails`        | Custom guardrail definitions                                                        |
-| `trace_events`      | Trace spans (agent, generation, function, handoff, compaction) + run lineage        |
+| `trace_events`      | Trace spans (agent, generation, function, handoff, compaction) + run lineage; pruned in batches by `trace_retention_days` |
 | `pending_approvals` | Runs paused for human-in-the-loop tool approval (persisted so they survive restart) |
 | `tasks`             | Background tasks — sub-agents spawned via `spawn_task` and workflow executions (`kind`, `state`) — durable identity and status |
 | `providers`         | Model-API endpoints and their credentials; agents and routes reference one |

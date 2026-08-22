@@ -192,7 +192,7 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 		return fmt.Errorf("creating workflows unique name index: %w", err)
 	}
 	// Draining asks for one session's debts, and the restart sweep asks for
-	// every session owed one.
+	// every session owed one; the hourly prune asks for the settled ones by age.
 	if _, err := db.NewCreateIndex().
 		Model((*Wakeup)(nil)).
 		Index("idx_wakeups_session_state").
@@ -200,6 +200,14 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 		IfNotExists().
 		Exec(ctx); err != nil {
 		return fmt.Errorf("creating wakeups index: %w", err)
+	}
+	if _, err := db.NewCreateIndex().
+		Model((*Wakeup)(nil)).
+		Index("idx_wakeups_state_created").
+		Column("state", "created_at").
+		IfNotExists().
+		Exec(ctx); err != nil {
+		return fmt.Errorf("creating wakeups prune index: %w", err)
 	}
 	// A provider's name is how a person picks it in every config UI, so two
 	// sharing one make the choice a coin flip. Enforce it at the DB.

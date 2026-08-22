@@ -119,13 +119,12 @@ func (s *TraceStore) GetBySpan(ctx context.Context, sessionID, spanID string) (*
 // DeleteOlderThan removes trace events created before cutoff. Returns the
 // number of rows removed.
 func (s *TraceStore) DeleteOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
-	res, err := s.db.NewDelete().Model((*TraceEvent)(nil)).
-		Where("created_at < ?", cutoff).
-		Exec(ctx)
+	n, err := deleteInBatches(ctx, s.db, (*TraceEvent)(nil), func(q *bun.SelectQuery) *bun.SelectQuery {
+		return q.Where("created_at < ?", cutoff)
+	})
 	if err != nil {
-		return 0, fmt.Errorf("deleting trace events before %s: %w", cutoff, err)
+		return n, fmt.Errorf("deleting trace events before %s: %w", cutoff, err)
 	}
-	n, _ := res.RowsAffected()
 	return n, nil
 }
 

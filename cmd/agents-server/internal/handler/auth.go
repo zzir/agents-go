@@ -40,23 +40,14 @@ func NewAuthHandler(svc *authn.Service, tokens *store.AuthTokenStore, users *sto
 //	@Tags		auth
 //	@Produce	json
 //	@Param		limit	query		int		false	"Page size (default 100, max 500)"
-//	@Param		before	query		string	false	"RFC 3339 time; entries before it"
+//	@Param		before	query		string	false	"An event id; the page before it"
 //	@Success	200		{array}		store.AuditEvent
 //	@Failure	403		{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/auth/audit [get]
 func (h *AuthHandler) ListAudit(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.Query("limit"))
-	var before time.Time
-	if q := c.Query("before"); q != "" {
-		t, err := time.Parse(time.RFC3339Nano, q)
-		if err != nil {
-			badRequest(c, "before must be an RFC 3339 time")
-			return
-		}
-		before = t
-	}
-	list, err := h.audit.ListRecent(c.Request.Context(), limit, before)
+	list, err := h.audit.ListRecent(c.Request.Context(), limit, c.Query("before"))
 	if err != nil {
 		internalError(c, err)
 		return

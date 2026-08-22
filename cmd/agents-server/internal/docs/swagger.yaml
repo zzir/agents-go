@@ -2342,7 +2342,7 @@ paths:
         name: limit
         schema:
           type: integer
-      - description: RFC 3339 time; entries before it
+      - description: An event id; the page before it
         in: query
         name: before
         schema:

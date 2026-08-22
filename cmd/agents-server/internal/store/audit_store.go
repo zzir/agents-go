@@ -52,18 +52,20 @@ func (s *AuditStore) Record(ctx context.Context, e *AuditEvent) error {
 	return nil
 }
 
-// ListRecent returns up to limit events newest first, those before `before`
-// when it is set — a cursor for paging backwards.
-func (s *AuditStore) ListRecent(ctx context.Context, limit int, before time.Time) ([]AuditEvent, error) {
-	if limit <= 0 || limit > 500 {
+// ListRecent returns up to limit events newest first, those before the row
+// beforeID when it is set — a cursor for paging backwards. The id is a
+// UUIDv7, so it orders like created_at and, unlike it, never ties.
+func (s *AuditStore) ListRecent(ctx context.Context, limit int, beforeID string) ([]AuditEvent, error) {
+	if limit <= 0 {
 		limit = 100
 	}
+	limit = min(limit, 500)
 	var out []AuditEvent
 	q := s.db.NewSelect().Model(&out)
-	if !before.IsZero() {
-		q = q.Where("created_at < ?", before)
+	if beforeID != "" {
+		q = q.Where("id < ?", beforeID)
 	}
-	if err := q.OrderExpr("created_at DESC, id DESC").Limit(limit).Scan(ctx); err != nil {
+	if err := q.OrderExpr("id DESC").Limit(limit).Scan(ctx); err != nil {
 		return nil, fmt.Errorf("listing audit events: %w", err)
 	}
 	return out, nil
@@ -71,10 +73,11 @@ func (s *AuditStore) ListRecent(ctx context.Context, limit int, before time.Time
 
 // DeleteOlderThan prunes events created before cutoff.
 func (s *AuditStore) DeleteOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
-	res, err := s.db.NewDelete().Model((*AuditEvent)(nil)).Where("created_at < ?", cutoff).Exec(ctx)
+	n, err := deleteInBatches(ctx, s.db, (*AuditEvent)(nil), func(q *bun.SelectQuery) *bun.SelectQuery {
+		return q.Where("created_at < ?", cutoff)
+	})
 	if err != nil {
-		return 0, fmt.Errorf("pruning audit events: %w", err)
+		return n, fmt.Errorf("pruning audit events: %w", err)
 	}
-	n, _ := res.RowsAffected()
 	return n, nil
 }

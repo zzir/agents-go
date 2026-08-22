@@ -174,3 +174,27 @@ func (s *CrudStore[T]) Delete(ctx context.Context, id string) error {
 	}
 	return nil
 }
+
+// pruneBatchSize bounds one DELETE of a maintenance sweep: on SQLite the
+// pool is one connection, so a sweep that deleted a month of rows in one
+// statement would hold every append and read for its whole duration.
+var pruneBatchSize = 5000
+
+// deleteInBatches deletes the rows of model that match where, batch by
+// batch until none match, and returns the count. where scopes a SELECT of
+// ids; the DELETE targets those ids.
+func deleteInBatches(ctx context.Context, db *bun.DB, model any, where func(*bun.SelectQuery) *bun.SelectQuery) (int64, error) {
+	var total int64
+	for {
+		ids := where(db.NewSelect().Model(model).Column("id")).Limit(pruneBatchSize)
+		res, err := db.NewDelete().Model(model).Where("id IN (?)", ids).Exec(ctx)
+		if err != nil {
+			return total, err
+		}
+		n, _ := res.RowsAffected()
+		total += n
+		if n < int64(pruneBatchSize) {
+			return total, nil
+		}
+	}
+}

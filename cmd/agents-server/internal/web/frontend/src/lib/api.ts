@@ -141,7 +141,7 @@ export const api = {
       revokeTokens: (id: string) =>
         request(`/auth/users/${encodeURIComponent(id)}/tokens`, { method: 'DELETE' }),
     },
-    // Admin: the audit log, newest first; `before` (RFC 3339) pages older.
+    // Admin: the audit log, newest first; `before` (an event id) pages older.
     audit: (limit = 50, before?: string): Promise<S['store.AuditEvent'][]> =>
       request(`/auth/audit?limit=${limit}${before ? `&before=${encodeURIComponent(before)}` : ''}`),
     // Personal access tokens (OAuth mode): the create response is the only

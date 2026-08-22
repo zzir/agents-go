@@ -152,11 +152,11 @@ func (s *WakeupStore) CancelFor(ctx context.Context, kind, sourceID, attempt str
 // cutoff. A settled debt is history nothing reads; without this the table
 // grows with every task that ever finished.
 func (s *WakeupStore) DeleteSettledBefore(ctx context.Context, cutoff time.Time) (int64, error) {
-	res, err := s.db.NewDelete().Model((*Wakeup)(nil)).
-		Where("state IN (?, ?) AND created_at < ?", WakeDelivered, WakeCancelled, cutoff).Exec(ctx)
+	n, err := deleteInBatches(ctx, s.db, (*Wakeup)(nil), func(q *bun.SelectQuery) *bun.SelectQuery {
+		return q.Where("state IN (?, ?) AND created_at < ?", WakeDelivered, WakeCancelled, cutoff)
+	})
 	if err != nil {
-		return 0, fmt.Errorf("pruning settled wake-ups: %w", err)
+		return n, fmt.Errorf("pruning settled wake-ups: %w", err)
 	}
-	n, _ := res.RowsAffected()
 	return n, nil
 }

@@ -461,7 +461,7 @@ export interface paths {
                 query?: {
                     /** @description Page size (default 100, max 500) */
                     limit?: number;
-                    /** @description RFC 3339 time; entries before it */
+                    /** @description An event id; the page before it */
                     before?: string;
                 };
                 header?: never;

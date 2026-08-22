@@ -12,7 +12,7 @@ type AuditRow = Omit<ApiSchemas['store.AuditEvent'], 'id'> & { id: string };
 const CHUNK = 200;
 
 // AuditPanel: the audit log, newest first. Older chunks come on request,
-// keyed on the last line's time (the server's `before` cursor).
+// keyed on the last line's id (the server's `before` cursor).
 export function AuditPanel() {
   const [rows, setRows] = useState<AuditRow[] | null>(null);
   const [done, setDone] = useState(false);
@@ -72,7 +72,7 @@ export function AuditPanel() {
         )}
         footer={!done && last?.created_at ? (
           <div className="list-table-more">
-            <Button size="small" disabled={busy} onClick={() => { void load(last.created_at); }}>Load older entries</Button>
+            <Button size="small" disabled={busy} onClick={() => { void load(last.id); }}>Load older entries</Button>
           </div>
         ) : null}
       />
