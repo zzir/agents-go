@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1046,5 +1047,59 @@ func TestRunHasItemsIsScopedToTheGeneration(t *testing.T) {
 	}
 	if has {
 		t.Fatal("a dead generation's entries answered for the session that replaced it")
+	}
+}
+
+// Append order is seq, not the row id: a UUIDv7 id follows the wall clock,
+// which a clock step or a second process can run backwards, and the history
+// the model reads must not reorder with it. With the newest row given the
+// smallest id, every read still comes back in append order, and the page
+// cursor still cuts at the named row.
+func TestEntryReadsOrderBySeqNotID(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	id := ids(t)
+	ref := session.Direct(id("s1"))
+	s := NewEntryStoreFor(db, ref)
+	seed(t, s, userEntry(t, "first"), userEntry(t, "second"), userEntry(t, "third"))
+
+	var rows []entryRow
+	if err := db.NewSelect().Model(&rows).Where("session_id = ?", ref.ID).OrderExpr("seq ASC").Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// Swap the ids of the first and last rows: the last now sorts first by id.
+	first, last := rows[0].ID, rows[2].ID
+	for _, step := range []struct{ from, to string }{{first, "00000000-0000-7000-8000-00000000ffff"}, {last, first}, {"00000000-0000-7000-8000-00000000ffff", last}} {
+		if _, err := db.NewUpdate().Model((*entryRow)(nil)).Set("id = ?", step.to).Where("id = ?", step.from).Exec(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	entries, err := s.load(ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range entries {
+		got = append(got, contentOf(e))
+	}
+	if !slices.Equal(got, []string{"first", "second", "third"}) {
+		t.Fatalf("load order = %v, want append order", got)
+	}
+	views, err := s.GetEntries(ctx, ref, "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if views[0].Content != "first" || views[2].Content != "third" {
+		t.Fatalf("GetEntries order = %q, %q, %q", views[0].Content, views[1].Content, views[2].Content)
+	}
+	// The cursor names the third row (which now carries the smallest id):
+	// the page before it is the first two.
+	page, err := s.GetEntries(ctx, ref, views[2].ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page) != 2 || page[1].Content != "second" {
+		t.Fatalf("page before the third = %d rows ending %q, want first, second", len(page), page[len(page)-1].Content)
 	}
 }

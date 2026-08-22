@@ -81,7 +81,7 @@ func (s *EntryStore) ContextReport(ctx context.Context, ref session.Ref) (*Conte
 	if err := s.db.NewSelect().Model(&rows).
 		ExcludeColumn("entry").
 		Where("session_id = ?", ref.ID).Where("gen = ?", ref.Gen).
-		OrderExpr("id ASC").Scan(ctx); err != nil {
+		OrderExpr("seq ASC").Scan(ctx); err != nil {
 		return nil, fmt.Errorf("reading entries for the context report of session %s: %w", ref.ID, err)
 	}
 	onPath, err := s.activeBranchOfRows(ctx, ref, rows)

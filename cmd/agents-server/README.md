@@ -2236,13 +2236,17 @@ is capped at 16 connections:
 Every id column — primary keys, the foreign keys that reference them, and the
 row ids of `entries` and `trace_events` — is typed `uuid` and holds a UUIDv7
 (`store.NewID`): time-ordered, so inserts land at the right edge of an index
-and rows created together sit together; 16 bytes a key on PostgreSQL. The
-entry and trace rows that used to autoincrement order by id exactly as before
-(Go's `uuid.NewV7` is monotonic within a process), which is what their
-cursors and `ORDER BY id` rely on. One rule: an id that names one of OUR entities is a
-uuid; an identifier of foreign shape stays text — entry ids (`e<seq>`, by
-sequence), span ids (`span_<hex>`, the OTel width), a model's `tool_call_id`,
-an audit line's `resource`. "Unset" is NULL, never `""` (`nullzero`). The
+and rows created together sit together; 16 bytes a key on PostgreSQL. Order
+is never read off the id where it matters: a session's entries are read,
+paged, forked and compacted in `seq` order — the append position the SDK
+assigns, which a clock stepping backwards or a second process cannot
+reorder — and an entry cursor names a row, whose position is then its
+`seq`. Trace events have no `seq` and list by id, which is append order
+within one process (Go's `uuid.NewV7` is monotonic there) and nothing more.
+One rule: an id that names one of OUR entities is a uuid; an identifier of
+foreign shape stays text — entry ids (`e<seq>`, by sequence), span ids
+(`span_<hex>`, the OTel width), a model's `tool_call_id`, an audit line's
+`resource`. "Unset" is NULL, never `""` (`nullzero`). The
 token-mode local account has the fixed id
 `00000000-0000-0000-0000-000000000001`. On PostgreSQL a malformed id in a path
 answers 400; SQLite stores any text — which is why CI runs the store suite on

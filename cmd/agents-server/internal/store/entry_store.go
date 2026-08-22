@@ -428,7 +428,7 @@ func (s *EntryStore) load(ctx context.Context, includeCompacted bool) ([]session
 func (s *EntryStore) loadIn(ctx context.Context, db bun.IDB, includeCompacted, strict bool) ([]session.Entry, error) {
 	var rows []entryRow
 	q := s.scoped(db.NewSelect().Model(&rows)).
-		OrderExpr("id ASC")
+		OrderExpr("seq ASC")
 	if !includeCompacted {
 		q = q.Where("compacted = ?", false)
 	}
@@ -606,7 +606,8 @@ type CompactionInfo struct {
 //
 // With a limit it returns the NEWEST that many (still oldest-first) and the
 // caller pages backwards with the smallest id it received — a cursor, because
-// an offset would shift under a concurrent append.
+// an offset would shift under a concurrent append. Order is the append
+// order, seq; the id is the cursor's name for a row, not its position.
 //
 // Update entries are folded into their targets here, not shipped to the client:
 // folding is the SDK's rule and there should be one implementation. It happens
@@ -617,7 +618,7 @@ func (s *EntryStore) GetEntries(ctx context.Context, ref session.Ref, beforeID s
 	var rows []entryRow
 	if err := s.db.NewSelect().Model(&rows).
 		Where("session_id = ?", ref.ID).Where("gen = ?", ref.Gen).
-		OrderExpr("id ASC").Scan(ctx); err != nil {
+		OrderExpr("seq ASC").Scan(ctx); err != nil {
 		return nil, fmt.Errorf("getting entries: %w", err)
 	}
 
@@ -656,11 +657,19 @@ func (s *EntryStore) GetEntries(ctx context.Context, ref session.Ref, beforeID s
 	}
 
 	// The cursor applies to the folded list: paging on raw row ids would return
-	// short pages wherever an update was folded away.
+	// short pages wherever an update was folded away. It names a row; the cut
+	// is at that row's position, which is its seq.
 	if beforeID != "" {
+		var beforeSeq int64 = -1
+		for i := range rows {
+			if rows[i].ID == beforeID {
+				beforeSeq = rows[i].Seq
+				break
+			}
+		}
 		cut := len(views)
 		for i, v := range views {
-			if v.ID >= beforeID {
+			if beforeSeq >= 0 && meta[v.EntryID].Seq >= beforeSeq {
 				cut = i
 				break
 			}
@@ -883,12 +892,15 @@ func forkEntriesTx(ctx context.Context, tx bun.Tx, src, dst session.Ref, upToID 
 	var rows []entryRow
 	q := tx.NewSelect().Model(&rows).
 		Where("session_id = ?", src.ID).Where("gen = ?", src.Gen).
-		OrderExpr("id ASC")
+		OrderExpr("seq ASC")
 	if upToID != "" {
+		// The boundary names a row; the prefix is everything at or before
+		// its position.
+		at := tx.NewSelect().Model((*entryRow)(nil)).Column("seq").Where("id = ?", upToID)
 		if exclusive {
-			q = q.Where("id < ?", upToID)
+			q = q.Where("seq < (?)", at)
 		} else {
-			q = q.Where("id <= ?", upToID)
+			q = q.Where("seq <= (?)", at)
 		}
 	}
 	if err := q.Scan(ctx); err != nil {

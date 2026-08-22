@@ -98,7 +98,7 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args session.Com
 	var rows []entryRow
 	if err := ca.scoped(ca.db.NewSelect().Model(&rows)).
 		ExcludeColumn("entry").
-		OrderExpr("id ASC").
+		OrderExpr("seq ASC").
 		Scan(ctx); err != nil {
 		return fmt.Errorf("compaction adapter: loading entries: %w", err)
 	}

@@ -619,7 +619,10 @@ next backend will answer differently.
 
 `Seq` is a **cursor position**, and that is the whole of its meaning.
 
-- **Monotonic within a session**, so `AfterSeq` orders.
+- **Monotonic within a session**, so `AfterSeq` orders — and it is the ONLY
+  order a backend reads history in. A storage row's own key may be
+  time-ordered by construction (a UUIDv7), but a clock that steps backwards
+  or a second process reorders such keys; `Seq` does not move.
 - **Never reused**, including after the entry holding it is removed. A caller
   resuming from the last number it saw would otherwise skip the next append
   forever, silently, its cursor already past it.
