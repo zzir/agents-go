@@ -13,29 +13,30 @@ import (
 func TestTaskRowsAreBoundToASessionGeneration(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
+	id := ids(t)
 	sessions := NewSessionStore(db)
 	tasks := NewTaskStore(db)
 
-	parent := &Session{OwnerID: LocalUserID, ID: "s1", Name: "chat"}
+	parent := &Session{OwnerID: LocalUserID, ID: id("s1"), Name: "chat"}
 	if err := sessions.Create(ctx, parent); err != nil {
 		t.Fatal(err)
 	}
-	child := &Session{OwnerID: LocalUserID, ID: "c1", Name: "task", Hidden: true}
+	child := &Session{OwnerID: LocalUserID, ID: id("c1"), Name: "task", Hidden: true}
 	if err := sessions.Create(ctx, child); err != nil {
 		t.Fatal(err)
 	}
 
 	task := &Task{
-		ID: "t1", RunID: "r1", ParentSessionID: "s1", ChildSessionID: "c1",
+		ID: id("t1"), RunID: id("r1"), ParentSessionID: id("s1"), ChildSessionID: id("c1"),
 		Status: taskWorking,
 	}
 	if err := tasks.Create(ctx, task); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := tasks.ListByParent(ctx, "s1"); err != nil || len(got) != 1 {
+	if got, err := tasks.ListByParent(ctx, id("s1")); err != nil || len(got) != 1 {
 		t.Fatalf("the spawning session sees %d task(s) (err=%v); want 1", len(got), err)
 	}
-	if _, err := tasks.ByChildSession(ctx, "c1"); err != nil {
+	if _, err := tasks.ByChildSession(ctx, id("c1")); err != nil {
 		t.Fatalf("resolving the task by its child session: %v", err)
 	}
 
@@ -44,11 +45,11 @@ func TestTaskRowsAreBoundToASessionGeneration(t *testing.T) {
 	// is concerned.
 	if _, err := db.NewUpdate().Model((*Session)(nil)).
 		Set("gen = ?", "a-newer-generation").
-		Where("id IN (?, ?)", "s1", "c1").Exec(ctx); err != nil {
+		Where("id IN (?, ?)", id("s1"), id("c1")).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
 
-	if got, err := tasks.ListByParent(ctx, "s1"); err != nil || len(got) != 0 {
+	if got, err := tasks.ListByParent(ctx, id("s1")); err != nil || len(got) != 0 {
 		t.Fatalf("the replacement session inherited %d task(s) (err=%v)", len(got), err)
 	}
 }
@@ -58,25 +59,26 @@ func TestTaskRowsAreBoundToASessionGeneration(t *testing.T) {
 func TestSessionDeleteCascadesTaskRows(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
+	id := ids(t)
 	sessions := NewSessionStore(db)
 	tasks := NewTaskStore(db)
 
 	for _, s := range []*Session{
-		{ID: "s1", OwnerID: LocalUserID, Name: "chat"},
-		{ID: "c1", OwnerID: LocalUserID, Name: "task", Hidden: true},
+		{ID: id("s1"), OwnerID: LocalUserID, Name: "chat"},
+		{ID: id("c1"), OwnerID: LocalUserID, Name: "task", Hidden: true},
 	} {
 		if err := sessions.Create(ctx, s); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if err := tasks.Create(ctx, &Task{
-		ID: "t1", RunID: "r1", ParentSessionID: "s1", ChildSessionID: "c1",
+		ID: id("t1"), RunID: id("r1"), ParentSessionID: id("s1"), ChildSessionID: id("c1"),
 		Status: taskWorking,
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := sessions.Delete(ctx, "s1"); err != nil {
+	if err := sessions.Delete(ctx, id("s1")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -90,7 +92,7 @@ func TestSessionDeleteCascadesTaskRows(t *testing.T) {
 	}
 	// The hidden child session went with it too — a transcript with no task
 	// has no path in the UI at all.
-	if _, err := sessions.Get(ctx, "c1"); err == nil {
+	if _, err := sessions.Get(ctx, id("c1")); err == nil {
 		t.Error("the task's hidden child session outlived the delete cascade")
 	}
 }

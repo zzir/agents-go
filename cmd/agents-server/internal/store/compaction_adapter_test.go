@@ -65,7 +65,7 @@ func summaryTranscript(t *testing.T, input []agents.InputItem) string {
 // annotation, which carries no item), in order.
 func insertItemRows(t *testing.T, s *EntryStore, rawItems []string) {
 	t.Helper()
-	s.SetRunID("r1")
+	s.SetRunID(NewID())
 	s.SetModel("m1")
 	entries := make([]session.Entry, 0, len(rawItems))
 	for _, raw := range rawItems {
@@ -395,7 +395,7 @@ func TestCompactionAdapterTokenTrigger(t *testing.T) {
 	db := newTestDB(t)
 	sessionID := NewID()
 	sa := NewEntryStoreFor(db, session.Direct(sessionID))
-	sa.SetRunID("r1")
+	sa.SetRunID(NewID())
 	sa.SetModel("m1")
 
 	// Six tiny entries: many by count, small by tokens.

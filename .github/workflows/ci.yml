@@ -8,6 +8,20 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # The store suite runs on both dialects: every id column is uuid-typed
+    # on PostgreSQL, which SQLite's TEXT never checks.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: agents_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
 
@@ -67,6 +81,11 @@ jobs:
 
       - name: Test agents-server module
         run: (cd cmd/agents-server && go vet ./... && go test -race ./...)
+
+      - name: Test agents-server store on PostgreSQL
+        env:
+          AGENTS_PG_TEST_DSN: postgres://postgres:test@localhost:5432/agents_test?sslmode=disable
+        run: (cd cmd/agents-server && go test ./internal/store/)
 
       # go build proves nothing about either half: docs snippets are uncompiled
       # text that kept naming renamed symbols, and an example can compile then

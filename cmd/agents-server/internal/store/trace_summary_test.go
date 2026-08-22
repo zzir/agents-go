@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 )
 
@@ -15,23 +16,24 @@ func TestTraceSummaryListingLeavesThePayloadOut(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	ts := NewTraceStore(db)
-	gen := &TraceEvent{SessionID: "s1", RunID: "r1", Kind: "span", SpanID: "sp-gen", Name: "generation", Detail: "generation",
+	id := ids(t)
+	gen := &TraceEvent{SessionID: id("s1"), RunID: id("r1"), Kind: "span", SpanID: "sp-gen", Name: "generation", Detail: "generation",
 		Data: `{"model":"gpt-test","input_tokens":12,"output_tokens":3,"input":[{"role":"user","content":"a very long history"}],"output":[{"type":"message"}],"system_instructions":"be brief","tools":[{"name":"t"}]}`}
-	fn := &TraceEvent{SessionID: "s1", RunID: "r1", Kind: "span", SpanID: "sp-fn", Name: "function:exec", Detail: "function",
+	fn := &TraceEvent{SessionID: id("s1"), RunID: id("r1"), Kind: "span", SpanID: "sp-fn", Name: "function:exec", Detail: "function",
 		Data: `{"input":"{\"cmd\":\"ls\"}","output":"a b c"}`}
-	agent := &TraceEvent{SessionID: "s1", RunID: "r1", Kind: "span", SpanID: "sp-agent", Name: "agent:coder", Detail: "agent",
+	agent := &TraceEvent{SessionID: id("s1"), RunID: id("r1"), Kind: "span", SpanID: "sp-agent", Name: "agent:coder", Detail: "agent",
 		Data: `{"handoffs":[],"agent_name":"coder"}`}
-	compaction := &TraceEvent{SessionID: "s1", RunID: "r1", Kind: "span", SpanID: "sp-compact", Name: "compaction", Detail: "compaction",
+	compaction := &TraceEvent{SessionID: id("s1"), RunID: id("r1"), Kind: "span", SpanID: "sp-compact", Name: "compaction", Detail: "compaction",
 		Data: `{"before_items":3,"after_items":1}`}
-	legacy := &TraceEvent{SessionID: "s1", RunID: "r1", Kind: "span", SpanID: "sp-legacy", Name: "old", Data: "not json"}
-	other := &TraceEvent{SessionID: "s2", RunID: "r9", Kind: "span", SpanID: "sp-gen", Name: "generation", Data: `{"input":"x"}`}
+	legacy := &TraceEvent{SessionID: id("s1"), RunID: id("r1"), Kind: "span", SpanID: "sp-legacy", Name: "old", Data: "not json"}
+	other := &TraceEvent{SessionID: id("s2"), RunID: id("r9"), Kind: "span", SpanID: "sp-gen", Name: "generation", Data: `{"input":"x"}`}
 	for _, ev := range []*TraceEvent{gen, fn, agent, compaction, legacy, other} {
 		if err := ts.Insert(ctx, ev); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	rows, err := ts.ListSummaryBySession(ctx, "s1", "", 0)
+	rows, err := ts.ListSummaryBySession(ctx, id("s1"), "", 0)
 	if err != nil {
 		t.Fatalf("summary: %v", err)
 	}
@@ -59,12 +61,14 @@ func TestTraceSummaryListingLeavesThePayloadOut(t *testing.T) {
 	}
 	// Only the payload fields go; the rest of the row's data stays, and a row
 	// that had any payload field is marked, whatever its type.
-	if agentRow := byID["sp-agent"]; !agentRow.PayloadOmitted || agentRow.Data != `{"agent_name":"coder"}` {
+	// Compared as JSON values: the PostgreSQL branch rewrites through jsonb,
+	// which spaces and reorders keys.
+	if agentRow := byID["sp-agent"]; !agentRow.PayloadOmitted || !sameJSON(agentRow.Data, `{"agent_name":"coder"}`) {
 		t.Fatalf("agent summary = %+v, want handoffs out, agent_name kept, marked", agentRow)
 	}
 	// Nothing bulky: nothing removed, and not marked — the client would fetch
 	// for nothing.
-	if row := byID["sp-compact"]; row.PayloadOmitted || row.Data != `{"before_items":3,"after_items":1}` {
+	if row := byID["sp-compact"]; row.PayloadOmitted || !sameJSON(row.Data, `{"before_items":3,"after_items":1}`) {
 		t.Fatalf("compaction summary = %+v, want it untouched and unmarked", row)
 	}
 	if legacyRow := byID["sp-legacy"]; legacyRow.PayloadOmitted || legacyRow.Data != "not json" {
@@ -72,21 +76,30 @@ func TestTraceSummaryListingLeavesThePayloadOut(t *testing.T) {
 	}
 
 	// The full listing is as ever.
-	full, err := ts.ListBySession(ctx, "s1", "", 0)
+	full, err := ts.ListBySession(ctx, id("s1"), "", 0)
 	if err != nil || len(full) != 5 || full[0].Data != gen.Data || full[0].PayloadOmitted {
 		t.Fatalf("full listing = %+v (%v)", full, err)
 	}
 
 	// One span, whole — scoped to the session, so another session's span of
 	// the same id is not it.
-	got, err := ts.GetBySpan(ctx, "s1", "sp-gen")
+	got, err := ts.GetBySpan(ctx, id("s1"), "sp-gen")
 	if err != nil || got.Data != gen.Data || got.PayloadOmitted {
 		t.Fatalf("GetBySpan = %+v (%v)", got, err)
 	}
-	if _, err := ts.GetBySpan(ctx, "s1", "nope"); !errors.Is(err, ErrNotFound) {
+	if _, err := ts.GetBySpan(ctx, id("s1"), "nope"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing span: %v, want ErrNotFound", err)
 	}
-	if _, err := ts.GetBySpan(ctx, "s3", "sp-gen"); !errors.Is(err, ErrNotFound) {
+	if _, err := ts.GetBySpan(ctx, NewID(), "sp-gen"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("another session's span: %v, want ErrNotFound", err)
 	}
+}
+
+// sameJSON reports whether two documents hold the same value.
+func sameJSON(a, b string) bool {
+	var va, vb any
+	if json.Unmarshal([]byte(a), &va) != nil || json.Unmarshal([]byte(b), &vb) != nil {
+		return a == b
+	}
+	return reflect.DeepEqual(va, vb)
 }

@@ -12,15 +12,16 @@ import (
 func TestGetEntriesPagination(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	s := NewEntryStoreFor(db, session.Direct("s1"))
-	s.SetRunID("r1")
+	id := ids(t)
+	s := NewEntryStoreFor(db, session.Direct(id("s1")))
+	s.SetRunID(id("r1"))
 
 	for i := range 5 {
 		seed(t, s, userEntry(t, fmt.Sprint(i)))
 	}
 
 	// No limit: all 5, oldest-first.
-	all, err := s.GetEntries(ctx, session.Direct("s1"), "", 0)
+	all, err := s.GetEntries(ctx, session.Direct(id("s1")), "", 0)
 	if err != nil {
 		t.Fatalf("get all: %v", err)
 	}
@@ -34,7 +35,7 @@ func TestGetEntriesPagination(t *testing.T) {
 	}
 
 	// limit=2 returns the newest two, still ascending.
-	page, err := s.GetEntries(ctx, session.Direct("s1"), "", 2)
+	page, err := s.GetEntries(ctx, session.Direct(id("s1")), "", 2)
 	if err != nil {
 		t.Fatalf("get page: %v", err)
 	}
@@ -43,7 +44,7 @@ func TestGetEntriesPagination(t *testing.T) {
 	}
 
 	// before_id cursor: everything older than the page's first id, newest 2.
-	older, err := s.GetEntries(ctx, session.Direct("s1"), page[0].ID, 2)
+	older, err := s.GetEntries(ctx, session.Direct(id("s1")), page[0].ID, 2)
 	if err != nil {
 		t.Fatalf("get older: %v", err)
 	}
@@ -56,9 +57,10 @@ func TestTraceRetention(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	ts := NewTraceStore(db)
+	id := ids(t)
 
-	old := &TraceEvent{SessionID: "s1", RunID: "r1", Kind: "span", Name: "old", CreatedAt: time.Now().UTC().AddDate(0, 0, -40)}
-	recent := &TraceEvent{SessionID: "s1", RunID: "r2", Kind: "span", Name: "new", CreatedAt: time.Now().UTC()}
+	old := &TraceEvent{SessionID: id("s1"), RunID: id("r1"), Kind: "span", Name: "old", CreatedAt: time.Now().UTC().AddDate(0, 0, -40)}
+	recent := &TraceEvent{SessionID: id("s1"), RunID: id("r2"), Kind: "span", Name: "new", CreatedAt: time.Now().UTC()}
 	if _, err := db.NewInsert().Model(old).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +75,7 @@ func TestTraceRetention(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("want 1 pruned, got %d", n)
 	}
-	left, _ := ts.ListBySession(ctx, "s1", "", 0)
+	left, _ := ts.ListBySession(ctx, id("s1"), "", 0)
 	if len(left) != 1 || left[0].Name != "new" {
 		t.Fatalf("wrong survivor: %+v", left)
 	}

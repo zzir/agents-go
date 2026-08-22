@@ -12,12 +12,13 @@ func TestDeleteSettledBefore(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	s := NewWakeupStore(db)
+	id := ids(t)
 	old := time.Now().UTC().Add(-48 * time.Hour)
 	rows := []*Wakeup{
-		{ID: "w-delivered", SessionID: "s", Kind: "task", State: WakeDelivered, CreatedAt: old},
-		{ID: "w-cancelled", SessionID: "s", Kind: "task", State: WakeCancelled, CreatedAt: old},
-		{ID: "w-pending", SessionID: "s", Kind: "task", State: WakePending, CreatedAt: old},
-		{ID: "w-fresh", SessionID: "s", Kind: "task", State: WakeDelivered, CreatedAt: time.Now().UTC()},
+		{ID: id("w-delivered"), SessionID: id("s"), Kind: "task", State: WakeDelivered, CreatedAt: old},
+		{ID: id("w-cancelled"), SessionID: id("s"), Kind: "task", State: WakeCancelled, CreatedAt: old},
+		{ID: id("w-pending"), SessionID: id("s"), Kind: "task", State: WakePending, CreatedAt: old},
+		{ID: id("w-fresh"), SessionID: id("s"), Kind: "task", State: WakeDelivered, CreatedAt: time.Now().UTC()},
 	}
 	for _, w := range rows {
 		if _, err := db.NewInsert().Model(w).Exec(ctx); err != nil {
@@ -32,7 +33,11 @@ func TestDeleteSettledBefore(t *testing.T) {
 	if err := db.NewSelect().Model(&left).OrderExpr("id").Scan(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if len(left) != 2 || left[0].ID != "w-fresh" || left[1].ID != "w-pending" {
+	got := map[string]bool{}
+	for _, w := range left {
+		got[w.ID] = true
+	}
+	if len(left) != 2 || !got[id("w-fresh")] || !got[id("w-pending")] {
 		t.Fatalf("remaining = %+v", left)
 	}
 }

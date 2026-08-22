@@ -202,8 +202,8 @@ func (s *TriggerStore) UpdateSettings(ctx context.Context, id string, t *Trigger
 		}
 		res, err := tx.NewUpdate().Model((*Trigger)(nil)).
 			Set("target = ?", t.Target).
-			Set("workflow_id = ?", t.WorkflowID).
-			Set("agent_config_id = ?", t.AgentConfigID).
+			Set("workflow_id = ?", uuidOrNull(t.WorkflowID)).
+			Set("agent_config_id = ?", uuidOrNull(t.AgentConfigID)).
 			Set("session_id = ?", t.SessionID).
 			Set("brief = ?", t.Brief).
 			Set("schedule = ?", t.Schedule).
@@ -294,7 +294,7 @@ func (s *TriggerStore) ListByOwner(ctx context.Context, ownerID, workflowID stri
 func (s *TriggerStore) RecordFire(ctx context.Context, id, startedID, fireErr string) error {
 	_, err := s.db.NewUpdate().Model((*Trigger)(nil)).
 		Set("last_fired_at = ?", time.Now().UTC()).
-		Set("last_started_id = ?", startedID).
+		Set("last_started_id = ?", uuidOrNull(startedID)).
 		Set("last_error = ?", fireErr).
 		Set("updated_at = ?", time.Now().UTC()).
 		Where("id = ?", id).

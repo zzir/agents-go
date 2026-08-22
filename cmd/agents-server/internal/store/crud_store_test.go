@@ -4,22 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
-
-	"github.com/uptrace/bun"
 )
-
-func newTestDB(t *testing.T) *bun.DB {
-	t.Helper()
-	db, err := NewSQLiteDB("file:" + NewID() + "?mode=memory&cache=shared")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if err := CreateSchema(context.Background(), db); err != nil {
-		t.Fatalf("schema: %v", err)
-	}
-	return db
-}
 
 func TestCrudStoreRoundTrip(t *testing.T) {
 	ctx := context.Background()
@@ -83,10 +68,11 @@ func TestCrudStoreRoundTrip(t *testing.T) {
 func TestMemoryStoreListForAgent(t *testing.T) {
 	ctx := context.Background()
 	s := NewMemoryStore(newTestDB(t))
+	id := ids(t)
 
 	global := &Memory{Key: "g", Content: "global"}
-	scoped := &Memory{AgentConfigID: "agent-1", Key: "s", Content: "scoped"}
-	other := &Memory{AgentConfigID: "agent-2", Key: "o", Content: "other"}
+	scoped := &Memory{AgentConfigID: id("agent-1"), Key: "s", Content: "scoped"}
+	other := &Memory{AgentConfigID: id("agent-2"), Key: "o", Content: "other"}
 	for _, m := range []*Memory{global, scoped, other} {
 		if err := s.Create(ctx, m); err != nil {
 			t.Fatalf("create: %v", err)
@@ -94,7 +80,7 @@ func TestMemoryStoreListForAgent(t *testing.T) {
 	}
 
 	// agent-1 sees global + its own, never agent-2's.
-	got, err := s.ListForAgent(ctx, "agent-1")
+	got, err := s.ListForAgent(ctx, id("agent-1"))
 	if err != nil {
 		t.Fatalf("list for agent: %v", err)
 	}
@@ -102,7 +88,7 @@ func TestMemoryStoreListForAgent(t *testing.T) {
 		t.Fatalf("expected 2 memories for agent-1, got %d: %+v", len(got), got)
 	}
 	for _, m := range got {
-		if m.AgentConfigID == "agent-2" {
+		if m.AgentConfigID == id("agent-2") {
 			t.Fatalf("agent-1 leaked agent-2 memory: %+v", m)
 		}
 	}
@@ -122,7 +108,7 @@ func TestMemoryStoreListForAgent(t *testing.T) {
 func TestAgentConfigDeleteNotFoundAndOtherEntities(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	if err := NewAgentConfigStore(db).Delete(ctx, "nope"); !errors.Is(err, ErrNotFound) {
+	if err := NewAgentConfigStore(db).Delete(ctx, NewID()); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("deleting missing agent: want ErrNotFound, got %v", err)
 	}
 	// A Memory (also CrudStore-backed) deletes through the plain path.

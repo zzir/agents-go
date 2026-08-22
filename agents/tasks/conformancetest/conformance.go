@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"uuid"
 
 	"github.com/zzir/agents-go/agents/tasks"
 )
@@ -30,13 +31,21 @@ func Run(t *testing.T, newStore func(t *testing.T) tasks.Store) {
 	t.Helper()
 	ctx := context.Background()
 
-	// mk returns a working task with predictable ids: task "t<n>", run
-	// "t<n>-run", parent/child sessions named after it.
+	// mk returns a working task with stable ids per n — UUIDs, memoized by
+	// name, since a backend may type its id columns (the server's PostgreSQL
+	// does) and a literal "t1" is then a syntax error, not an id.
+	ids := map[string]string{}
+	name := func(s string) string {
+		if ids[s] == "" {
+			ids[s] = uuid.NewV7().String()
+		}
+		return ids[s]
+	}
 	mk := func(n int) *tasks.Task {
 		id := fmt.Sprintf("t%d", n)
 		return &tasks.Task{
-			ID: id, RunID: id + "-run", Label: "job " + id,
-			ParentSessionID: "parent-" + id, ChildSessionID: "child-" + id,
+			ID: name(id), RunID: name(id + "-run"), Label: "job " + id,
+			ParentSessionID: name("parent-" + id), ChildSessionID: name("child-" + id),
 			Status: tasks.StatusWorking,
 		}
 	}
@@ -68,7 +77,7 @@ func Run(t *testing.T, newStore func(t *testing.T) tasks.Store) {
 		if got.Kind != "sequence" || string(got.State) != `{"step":1}` {
 			t.Fatalf("roundtrip lost the host's fields: kind %q state %s", got.Kind, got.State)
 		}
-		if _, err := s.Get(ctx, "absent"); !errors.Is(err, tasks.ErrNotFound) {
+		if _, err := s.Get(ctx, name("absent")); !errors.Is(err, tasks.ErrNotFound) {
 			t.Fatalf("missing task: err = %v, want ErrNotFound", err)
 		}
 		if got, err := s.ByChildSession(ctx, task.ChildSessionID); err != nil || got.ID != task.ID {
@@ -80,7 +89,7 @@ func Run(t *testing.T, newStore func(t *testing.T) tasks.Store) {
 		s := newStore(t)
 		task := create(t, s, 1)
 		// The wrong run cannot end the attempt.
-		if won, err := s.Finalize(ctx, task.ID, "other-run", tasks.StatusFailed, "s", "r", nil); err != nil || won {
+		if won, err := s.Finalize(ctx, task.ID, name("other-run"), tasks.StatusFailed, "s", "r", nil); err != nil || won {
 			t.Fatalf("foreign finalize: won=%v err=%v, want a refusal", won, err)
 		}
 		// The ending may carry the job's final State, written in the same
@@ -103,25 +112,25 @@ func Run(t *testing.T, newStore func(t *testing.T) tasks.Store) {
 		s := newStore(t)
 		task := create(t, s, 1)
 		// Working: nothing to resume.
-		if won, err := s.RetryClaim(ctx, task.ID, "run2", 3); err != nil || won {
+		if won, err := s.RetryClaim(ctx, task.ID, name("run2"), 3); err != nil || won {
 			t.Fatalf("claimed a working task: won=%v err=%v", won, err)
 		}
 		if _, err := s.Finalize(ctx, task.ID, task.RunID, tasks.StatusFailed, "boom", "boom", nil); err != nil {
 			t.Fatal(err)
 		}
-		won, err := s.RetryClaim(ctx, task.ID, "run2", 3)
+		won, err := s.RetryClaim(ctx, task.ID, name("run2"), 3)
 		if err != nil || !won {
 			t.Fatalf("claim: won=%v err=%v", won, err)
 		}
 		got, _ := s.Get(ctx, task.ID)
-		if got.Status != tasks.StatusWorking || got.RunID != "run2" || got.AttemptNo() != 2 {
+		if got.Status != tasks.StatusWorking || got.RunID != name("run2") || got.AttemptNo() != 2 {
 			t.Fatalf("claim = %s/%s attempt %d, want working/run2 attempt 2", got.Status, got.RunID, got.AttemptNo())
 		}
 		if got.Summary != "" || got.Result != "" {
 			t.Fatalf("the failed attempt survived the claim: %+v", got)
 		}
 		// Unknown id is a different answer from a refused claim.
-		if _, err := s.RetryClaim(ctx, "absent", "run", 3); !errors.Is(err, tasks.ErrNotFound) {
+		if _, err := s.RetryClaim(ctx, name("absent"), name("run"), 3); !errors.Is(err, tasks.ErrNotFound) {
 			t.Fatalf("missing task: err = %v, want ErrNotFound", err)
 		}
 	})
@@ -134,7 +143,7 @@ func Run(t *testing.T, newStore func(t *testing.T) tasks.Store) {
 			if _, err := s.Finalize(ctx, task.ID, currentRun(t, s, task.ID), tasks.StatusFailed, "boom", "", nil); err != nil {
 				t.Fatal(err)
 			}
-			if won, err := s.RetryClaim(ctx, task.ID, fmt.Sprintf("run%d", want), 3); err != nil || !won {
+			if won, err := s.RetryClaim(ctx, task.ID, name(fmt.Sprintf("run%d", want)), 3); err != nil || !won {
 				t.Fatalf("claim to attempt %d: won=%v err=%v", want, won, err)
 			}
 			if got, _ := s.Get(ctx, task.ID); got.AttemptNo() != want {
@@ -144,7 +153,7 @@ func Run(t *testing.T, newStore func(t *testing.T) tasks.Store) {
 		if _, err := s.Finalize(ctx, task.ID, currentRun(t, s, task.ID), tasks.StatusFailed, "boom", "", nil); err != nil {
 			t.Fatal(err)
 		}
-		if won, err := s.RetryClaim(ctx, task.ID, "run4", 3); err != nil || won {
+		if won, err := s.RetryClaim(ctx, task.ID, name("run4"), 3); err != nil || won {
 			t.Fatalf("claim past the ceiling: won=%v err=%v, want a refusal", won, err)
 		}
 		if got, _ := s.Get(ctx, task.ID); got.AttemptNo() != 3 {
@@ -162,7 +171,7 @@ func Run(t *testing.T, newStore func(t *testing.T) tasks.Store) {
 		if _, err := s.Finalize(ctx, task.ID, task.RunID, tasks.StatusFailed, "boom", "", nil); err != nil {
 			t.Fatal(err)
 		}
-		if won, err := s.RetryClaim(ctx, task.ID, "run2", 3); err != nil || !won {
+		if won, err := s.RetryClaim(ctx, task.ID, name("run2"), 3); err != nil || !won {
 			t.Fatalf("claim: won=%v err=%v", won, err)
 		}
 		if got, _ := s.Get(ctx, task.ID); got.AttemptNo() != 2 {
@@ -174,15 +183,15 @@ func Run(t *testing.T, newStore func(t *testing.T) tasks.Store) {
 		s := newStore(t)
 		task := create(t, s, 1)
 		// The wrong run cannot move the task on.
-		if won, err := s.Advance(ctx, task.ID, "other-run", "run2", json.RawMessage(`{"step":2}`)); err != nil || won {
+		if won, err := s.Advance(ctx, task.ID, name("other-run"), name("run2"), json.RawMessage(`{"step":2}`)); err != nil || won {
 			t.Fatalf("foreign advance: won=%v err=%v, want a refusal", won, err)
 		}
-		won, err := s.Advance(ctx, task.ID, task.RunID, "run2", json.RawMessage(`{"step":2}`))
+		won, err := s.Advance(ctx, task.ID, task.RunID, name("run2"), json.RawMessage(`{"step":2}`))
 		if err != nil || !won {
 			t.Fatalf("advance: won=%v err=%v", won, err)
 		}
 		got, _ := s.Get(ctx, task.ID)
-		if got.RunID != "run2" || string(got.State) != `{"step":2}` || got.Status != tasks.StatusWorking {
+		if got.RunID != name("run2") || string(got.State) != `{"step":2}` || got.Status != tasks.StatusWorking {
 			t.Fatalf("advance did not land whole: %+v", got)
 		}
 		// A continuation is not a retry: the attempt count is untouched.
@@ -191,36 +200,36 @@ func Run(t *testing.T, newStore func(t *testing.T) tasks.Store) {
 		}
 		// The same run id rewrites State in place — how a host records what it
 		// learns at launch.
-		if won, err := s.Advance(ctx, task.ID, "run2", "run2", json.RawMessage(`{"step":2,"launched":true}`)); err != nil || !won {
+		if won, err := s.Advance(ctx, task.ID, name("run2"), name("run2"), json.RawMessage(`{"step":2,"launched":true}`)); err != nil || !won {
 			t.Fatalf("in-place advance: won=%v err=%v", won, err)
 		}
 		if got, _ := s.Get(ctx, task.ID); string(got.State) != `{"step":2,"launched":true}` {
 			t.Fatalf("in-place advance did not rewrite the state: %s", got.State)
 		}
 		// A nil state leaves State as it is — the rule Finalize follows too.
-		if won, err := s.Advance(ctx, task.ID, "run2", "run2b", nil); err != nil || !won {
+		if won, err := s.Advance(ctx, task.ID, name("run2"), name("run2b"), nil); err != nil || !won {
 			t.Fatalf("advance with nil state: won=%v err=%v", won, err)
 		}
-		if got, _ := s.Get(ctx, task.ID); got.RunID != "run2b" || string(got.State) != `{"step":2,"launched":true}` {
+		if got, _ := s.Get(ctx, task.ID); got.RunID != name("run2b") || string(got.State) != `{"step":2,"launched":true}` {
 			t.Fatalf("a nil state must not clear the state: %+v", got)
 		}
-		if won, err := s.Advance(ctx, task.ID, "run2b", "run2", nil); err != nil || !won {
+		if won, err := s.Advance(ctx, task.ID, name("run2b"), name("run2"), nil); err != nil || !won {
 			t.Fatalf("advance back: won=%v err=%v", won, err)
 		}
 		// Only a WORKING task advances: paused and terminal rows refuse.
-		if err := s.MarkInputRequired(ctx, task.ID, "run2"); err != nil {
+		if err := s.MarkInputRequired(ctx, task.ID, name("run2")); err != nil {
 			t.Fatal(err)
 		}
-		if won, err := s.Advance(ctx, task.ID, "run2", "run3", nil); err != nil || won {
+		if won, err := s.Advance(ctx, task.ID, name("run2"), name("run3"), nil); err != nil || won {
 			t.Fatalf("advanced a paused task: won=%v err=%v", won, err)
 		}
-		if _, err := s.Finalize(ctx, task.ID, "run2", tasks.StatusCancelled, "", "", nil); err != nil {
+		if _, err := s.Finalize(ctx, task.ID, name("run2"), tasks.StatusCancelled, "", "", nil); err != nil {
 			t.Fatal(err)
 		}
-		if won, err := s.Advance(ctx, task.ID, "run2", "run3", nil); err != nil || won {
+		if won, err := s.Advance(ctx, task.ID, name("run2"), name("run3"), nil); err != nil || won {
 			t.Fatalf("advanced a terminal task: won=%v err=%v", won, err)
 		}
-		if _, err := s.Advance(ctx, "absent", "run", "run2", nil); !errors.Is(err, tasks.ErrNotFound) {
+		if _, err := s.Advance(ctx, name("absent"), name("run"), name("run2"), nil); !errors.Is(err, tasks.ErrNotFound) {
 			t.Fatalf("missing task: err = %v, want ErrNotFound", err)
 		}
 	})
@@ -231,14 +240,14 @@ func Run(t *testing.T, newStore func(t *testing.T) tasks.Store) {
 		if _, err := s.Finalize(ctx, task.ID, task.RunID, tasks.StatusFailed, "boom", "", nil); err != nil {
 			t.Fatal(err)
 		}
-		if won, err := s.RetryClaim(ctx, task.ID, "run2", 3); err != nil || !won {
+		if won, err := s.RetryClaim(ctx, task.ID, name("run2"), 3); err != nil || !won {
 			t.Fatalf("claim: won=%v err=%v", won, err)
 		}
 		// Only the claim's owner can release it.
-		if won, err := s.ReleaseRetryClaim(ctx, task.ID, "other-run", "s", "r"); err != nil || won {
+		if won, err := s.ReleaseRetryClaim(ctx, task.ID, name("other-run"), "s", "r"); err != nil || won {
 			t.Fatalf("foreign release: won=%v err=%v, want a refusal", won, err)
 		}
-		won, err := s.ReleaseRetryClaim(ctx, task.ID, "run2", "never started", "never started")
+		won, err := s.ReleaseRetryClaim(ctx, task.ID, name("run2"), "never started", "never started")
 		if err != nil || !won {
 			t.Fatalf("release: won=%v err=%v", won, err)
 		}
@@ -250,7 +259,7 @@ func Run(t *testing.T, newStore func(t *testing.T) tasks.Store) {
 			t.Fatalf("release did not record the failure: %+v", got)
 		}
 		// Released, the row is failed — nothing left to undo.
-		if won, err := s.ReleaseRetryClaim(ctx, task.ID, "run2", "s", "r"); err != nil || won {
+		if won, err := s.ReleaseRetryClaim(ctx, task.ID, name("run2"), "s", "r"); err != nil || won {
 			t.Fatalf("double release: won=%v err=%v, want a refusal", won, err)
 		}
 	})
@@ -259,7 +268,7 @@ func Run(t *testing.T, newStore func(t *testing.T) tasks.Store) {
 		s := newStore(t)
 		task := create(t, s, 1)
 		// A stale attempt's mark is a silent no-op.
-		if err := s.MarkInputRequired(ctx, task.ID, "other-run"); err != nil {
+		if err := s.MarkInputRequired(ctx, task.ID, name("other-run")); err != nil {
 			t.Fatal(err)
 		}
 		if got, _ := s.Get(ctx, task.ID); got.Status != tasks.StatusWorking {
@@ -272,7 +281,7 @@ func Run(t *testing.T, newStore func(t *testing.T) tasks.Store) {
 			t.Fatalf("mark did not pause: %s", got.Status)
 		}
 		// A stale attempt cannot reclaim; the current one can, once.
-		if ok, err := s.ReclaimWorking(ctx, task.ID, "other-run"); err != nil || ok {
+		if ok, err := s.ReclaimWorking(ctx, task.ID, name("other-run")); err != nil || ok {
 			t.Fatalf("stale reclaim: ok=%v err=%v, want a refusal", ok, err)
 		}
 		if ok, err := s.ReclaimWorking(ctx, task.ID, task.RunID); err != nil || !ok {
@@ -285,7 +294,7 @@ func Run(t *testing.T, newStore func(t *testing.T) tasks.Store) {
 		if ok, _ := s.ReclaimWorking(ctx, task.ID, task.RunID); ok {
 			t.Fatal("reclaimed a terminal task")
 		}
-		if _, err := s.ReclaimWorking(ctx, "absent", "run"); !errors.Is(err, tasks.ErrNotFound) {
+		if _, err := s.ReclaimWorking(ctx, name("absent"), name("run")); !errors.Is(err, tasks.ErrNotFound) {
 			t.Fatalf("missing task: err = %v, want ErrNotFound", err)
 		}
 	})

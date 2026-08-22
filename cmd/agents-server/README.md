@@ -2156,9 +2156,12 @@ sequence), span ids (`span_<hex>`, the OTel width), a model's `tool_call_id`,
 an audit line's `resource`. "Unset" is NULL, never `""` (`nullzero`). The
 token-mode local account has the fixed id
 `00000000-0000-0000-0000-000000000001`. On PostgreSQL a malformed id in a path
-answers 400; SQLite stores any text. Secrets — session tokens, PATs, OAuth
-state, the webhook secret — are not ids and stay 256-bit `crypto/rand`; a
-UUID's 122 random bits would be a downgrade.
+answers 400; SQLite stores any text — which is why CI runs the store suite on
+PostgreSQL as well (`AGENTS_PG_TEST_DSN`; see `scripts/ci.sh`): a raw-SQL
+write that binds `""` where a uuid column expects NULL passes SQLite and fails
+only there. Secrets — session tokens, PATs, OAuth state, the webhook secret —
+are not ids and stay 256-bit `crypto/rand`; a UUID's 122 random bits would be
+a downgrade.
 
 Tables are created automatically on startup:
 

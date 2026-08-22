@@ -11,12 +11,13 @@ import (
 func TestPendingApprovalRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	s := NewPendingApprovalStore(newTestDB(t))
+	id := ids(t)
 
 	calls, _ := json.Marshal([]PendingToolCall{{ToolCallID: "call-1", ToolName: "shell", Arguments: `{"cmd":"ls"}`}})
 	p := &PendingApproval{
-		RunID:         "run-1",
-		SessionID:     "sess-1",
-		AgentConfigID: "agent-1",
+		RunID:         id("run-1"),
+		SessionID:     id("sess-1"),
+		AgentConfigID: id("agent-1"),
 		State:         `{"schema_version":"1.0"}`,
 		ToolCalls:     calls,
 	}
@@ -25,18 +26,18 @@ func TestPendingApprovalRoundTrip(t *testing.T) {
 	}
 
 	// Get and list.
-	got, err := s.Get(ctx, "run-1")
-	if err != nil || got.SessionID != "sess-1" {
+	got, err := s.Get(ctx, id("run-1"))
+	if err != nil || got.SessionID != id("sess-1") {
 		t.Fatalf("get: %v / %+v", err, got)
 	}
-	bySession, err := s.ListBySession(ctx, "sess-1")
+	bySession, err := s.ListBySession(ctx, id("sess-1"))
 	if err != nil || len(bySession) != 1 {
 		t.Fatalf("list by session: %v / %d", err, len(bySession))
 	}
 
 	// FindByToolCall locates the record and the specific call.
 	found, tc, err := s.FindByToolCall(ctx, "call-1")
-	if err != nil || found.RunID != "run-1" || tc.ToolName != "shell" {
+	if err != nil || found.RunID != id("run-1") || tc.ToolName != "shell" {
 		t.Fatalf("find by tool call: %v / %+v / %+v", err, found, tc)
 	}
 	if _, _, err := s.FindByToolCall(ctx, "nope"); !errors.Is(err, ErrNotFound) {
@@ -55,13 +56,13 @@ func TestPendingApprovalRoundTrip(t *testing.T) {
 
 	// Delete claims the row; a second delete reports not-found so concurrent
 	// decisions can use it as the exclusive claim.
-	if err := s.Delete(ctx, "run-1"); err != nil {
+	if err := s.Delete(ctx, id("run-1")); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	if _, err := s.Get(ctx, "run-1"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.Get(ctx, id("run-1")); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("get after delete: want ErrNotFound, got %v", err)
 	}
-	if err := s.Delete(ctx, "run-1"); !errors.Is(err, ErrNotFound) {
+	if err := s.Delete(ctx, id("run-1")); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("re-delete: want ErrNotFound, got %v", err)
 	}
 }
@@ -69,6 +70,7 @@ func TestPendingApprovalRoundTrip(t *testing.T) {
 func TestSessionDeleteCascadesPendingApprovals(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
+	id := ids(t)
 	sessions := NewSessionStore(db)
 	approvals := NewPendingApprovalStore(db)
 
@@ -76,14 +78,14 @@ func TestSessionDeleteCascadesPendingApprovals(t *testing.T) {
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatal(err)
 	}
-	if err := approvals.Save(ctx, &PendingApproval{RunID: "r1", SessionID: sess.ID, State: "{}"}); err != nil {
+	if err := approvals.Save(ctx, &PendingApproval{RunID: id("r1"), SessionID: sess.ID, State: "{}"}); err != nil {
 		t.Fatal(err)
 	}
 
 	if err := sessions.Delete(ctx, sess.ID); err != nil {
 		t.Fatalf("delete session: %v", err)
 	}
-	if _, err := approvals.Get(ctx, "r1"); !errors.Is(err, ErrNotFound) {
+	if _, err := approvals.Get(ctx, id("r1")); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("pending approval should be cascade-deleted, got %v", err)
 	}
 }
@@ -91,9 +93,10 @@ func TestSessionDeleteCascadesPendingApprovals(t *testing.T) {
 func TestPendingApprovalReap(t *testing.T) {
 	ctx := context.Background()
 	s := NewPendingApprovalStore(newTestDB(t))
+	id := ids(t)
 
-	old := &PendingApproval{RunID: "old", SessionID: "s", State: "{}", CreatedAt: time.Now().UTC().Add(-2 * time.Hour)}
-	fresh := &PendingApproval{RunID: "fresh", SessionID: "s", State: "{}"}
+	old := &PendingApproval{RunID: id("old"), SessionID: id("s"), State: "{}", CreatedAt: time.Now().UTC().Add(-2 * time.Hour)}
+	fresh := &PendingApproval{RunID: id("fresh"), SessionID: id("s"), State: "{}"}
 	if err := s.Save(ctx, old); err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +108,7 @@ func TestPendingApprovalReap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if len(expired) != 1 || expired[0].RunID != "old" {
+	if len(expired) != 1 || expired[0].RunID != id("old") {
 		t.Fatalf("expired = %+v, want the old one only", expired)
 	}
 	if all, _ := s.List(ctx); len(all) != 2 {
@@ -118,16 +121,17 @@ func TestPendingApprovalReap(t *testing.T) {
 func TestClaimApprovalCancelledIsOneWriteAndExclusive(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
+	id := ids(t)
 	approvals, tasks := NewPendingApprovalStore(db), NewTaskStore(db)
-	row := &Task{ID: NewID(), RunID: NewID(), ParentSessionID: "p", ChildSessionID: "c", Status: "input_required", Label: "t"}
+	row := &Task{ID: NewID(), RunID: NewID(), ParentSessionID: id("p"), ChildSessionID: id("c"), Status: "input_required", Label: "t"}
 	if err := tasks.Create(ctx, row); err != nil {
 		t.Fatal(err)
 	}
-	if err := approvals.Save(ctx, &PendingApproval{RunID: row.RunID, SessionID: "c", State: "{}"}); err != nil {
+	if err := approvals.Save(ctx, &PendingApproval{RunID: row.RunID, SessionID: id("c"), State: "{}"}); err != nil {
 		t.Fatal(err)
 	}
 	// A pending debt of this attempt goes with the cancellation.
-	if err := NewWakeupStore(db).Owe(ctx, &Wakeup{SessionID: "p", Kind: WakeKindTask, SourceID: row.ID, Attempt: row.RunID, Payload: "x"}); err != nil {
+	if err := NewWakeupStore(db).Owe(ctx, &Wakeup{SessionID: id("p"), Kind: WakeKindTask, SourceID: row.ID, Attempt: row.RunID, Payload: "x"}); err != nil {
 		t.Fatal(err)
 	}
 	type result struct{ claimed, ended bool }
@@ -161,20 +165,20 @@ func TestClaimApprovalCancelledIsOneWriteAndExclusive(t *testing.T) {
 	if _, err := approvals.Get(ctx, row.RunID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("the approval must be gone: %v", err)
 	}
-	pending, _ := NewWakeupStore(db).Pending(ctx, "p")
+	pending, _ := NewWakeupStore(db).Pending(ctx, id("p"))
 	if len(pending) != 0 {
 		t.Fatalf("the debt of the cancelled attempt must be dropped: %+v", pending)
 	}
 	// A stale row — its task already on another attempt — is claimed and
 	// removed, and the task untouched.
-	row2 := &Task{ID: NewID(), RunID: "new-run", ParentSessionID: "p", ChildSessionID: "c2", Status: "working", Label: "t"}
+	row2 := &Task{ID: NewID(), RunID: id("new-run"), ParentSessionID: id("p"), ChildSessionID: id("c2"), Status: "working", Label: "t"}
 	if err := tasks.Create(ctx, row2); err != nil {
 		t.Fatal(err)
 	}
-	if err := approvals.Save(ctx, &PendingApproval{RunID: "old-run", SessionID: "c2", State: "{}"}); err != nil {
+	if err := approvals.Save(ctx, &PendingApproval{RunID: id("old-run"), SessionID: id("c2"), State: "{}"}); err != nil {
 		t.Fatal(err)
 	}
-	claimed, ended, err := tasks.ClaimApprovalCancelled(ctx, row2.ID, "old-run", "expired")
+	claimed, ended, err := tasks.ClaimApprovalCancelled(ctx, row2.ID, id("old-run"), "expired")
 	if err != nil || !claimed || ended {
 		t.Fatalf("stale claim = %v,%v,%v — want claimed, not ended", claimed, ended, err)
 	}
@@ -188,12 +192,13 @@ func TestClaimApprovalCancelledIsOneWriteAndExclusive(t *testing.T) {
 func TestClaimApprovalWorkingIsAllOrNothing(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
+	id := ids(t)
 	approvals, tasks := NewPendingApprovalStore(db), NewTaskStore(db)
-	row := &Task{ID: NewID(), RunID: NewID(), ParentSessionID: "p", ChildSessionID: "c", Status: "working", Label: "t"}
+	row := &Task{ID: NewID(), RunID: NewID(), ParentSessionID: id("p"), ChildSessionID: id("c"), Status: "working", Label: "t"}
 	if err := tasks.Create(ctx, row); err != nil {
 		t.Fatal(err)
 	}
-	if err := approvals.Save(ctx, &PendingApproval{RunID: row.RunID, SessionID: "c", State: "{}"}); err != nil {
+	if err := approvals.Save(ctx, &PendingApproval{RunID: row.RunID, SessionID: id("c"), State: "{}"}); err != nil {
 		t.Fatal(err)
 	}
 	// Not paused yet: nothing written, the row still there.
@@ -227,6 +232,7 @@ func TestClaimApprovalWorkingIsAllOrNothing(t *testing.T) {
 func TestListByParentTasks(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
+	id := ids(t)
 	s := NewPendingApprovalStore(db)
 	tasks := NewTaskStore(db)
 
@@ -238,24 +244,24 @@ func TestListByParentTasks(t *testing.T) {
 		}
 	}
 
-	if err := tasks.Create(ctx, &Task{ID: "task-1", RunID: "run-t1", ParentSessionID: "parent-1", ChildSessionID: "child-1", Label: "mine", Status: "input_required"}); err != nil {
+	if err := tasks.Create(ctx, &Task{ID: id("task-1"), RunID: id("run-t1"), ParentSessionID: id("parent-1"), ChildSessionID: id("child-1"), Label: "mine", Status: "input_required"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := tasks.Create(ctx, &Task{ID: "task-2", RunID: "run-t2", ParentSessionID: "parent-2", ChildSessionID: "child-2", Label: "other", Status: "input_required"}); err != nil {
+	if err := tasks.Create(ctx, &Task{ID: id("task-2"), RunID: id("run-t2"), ParentSessionID: id("parent-2"), ChildSessionID: id("child-2"), Label: "other", Status: "input_required"}); err != nil {
 		t.Fatal(err)
 	}
-	mk("run-t1", "child-1") // parent-1's task approval
-	mk("run-t2", "child-2") // another parent's task approval
-	mk("run-c", "parent-1") // a plain chat approval in parent-1 itself
+	mk(id("run-t1"), id("child-1")) // parent-1's task approval
+	mk(id("run-t2"), id("child-2")) // another parent's task approval
+	mk(id("run-c"), id("parent-1")) // a plain chat approval in parent-1 itself
 
-	got, err := s.ListByParentTasks(ctx, "parent-1")
+	got, err := s.ListByParentTasks(ctx, id("parent-1"))
 	if err != nil {
 		t.Fatalf("ListByParentTasks: %v", err)
 	}
 	if len(got) != 1 {
 		t.Fatalf("got %d approvals, want exactly parent-1's task approval: %+v", len(got), got)
 	}
-	if got[0].RunID != "run-t1" || got[0].TaskID != "task-1" || got[0].TaskLabel != "mine" {
+	if got[0].RunID != id("run-t1") || got[0].TaskID != id("task-1") || got[0].TaskLabel != "mine" {
 		t.Fatalf("joined row = %+v", got[0])
 	}
 }

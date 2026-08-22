@@ -12,6 +12,7 @@ import (
 func TestContextProfileSaveReplaces(t *testing.T) {
 	ctx := context.Background()
 	s := NewContextProfileStore(newTestDB(t))
+	id := ids(t)
 
 	must := func(err error) {
 		t.Helper()
@@ -19,16 +20,16 @@ func TestContextProfileSaveReplaces(t *testing.T) {
 			t.Fatalf("save: %v", err)
 		}
 	}
-	must(s.Save(ctx, "s1", PromptProfile{
+	must(s.Save(ctx, id("s1"), PromptProfile{
 		MemoryChars: 100,
 		Tools:       []ToolBucket{{Source: ToolSourceSandbox, Count: 2, Chars: 300}},
 	}))
-	must(s.Save(ctx, "s1", PromptProfile{
+	must(s.Save(ctx, id("s1"), PromptProfile{
 		MemoryChars: 900,
 		Tools:       []ToolBucket{{Source: ToolSourceSandbox, Count: 6, Chars: 1200}},
 	}))
 
-	got, err := s.Get(ctx, "s1")
+	got, err := s.Get(ctx, id("s1"))
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -40,7 +41,7 @@ func TestContextProfileSaveReplaces(t *testing.T) {
 // A session no run has built yet has no profile, which is absence — not an error
 // and not an empty profile the panel would draw as zeros.
 func TestContextProfileMissingIsNil(t *testing.T) {
-	got, err := NewContextProfileStore(newTestDB(t)).Get(context.Background(), "nobody")
+	got, err := NewContextProfileStore(newTestDB(t)).Get(context.Background(), NewID())
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}

@@ -14,7 +14,7 @@ func TestSaveChatGPTTokenMissingProviderIsNotFound(t *testing.T) {
 	db := newTestDB(t)
 	s := NewProviderStore(db)
 
-	if err := s.SaveChatGPTToken(ctx, "does-not-exist", "{}"); !errors.Is(err, ErrNotFound) {
+	if err := s.SaveChatGPTToken(ctx, NewID(), "{}"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("save to missing provider: err = %v, want ErrNotFound", err)
 	}
 
@@ -30,7 +30,7 @@ func TestSaveChatGPTTokenMissingProviderIsNotFound(t *testing.T) {
 		t.Fatalf("clear existing provider: %v", err)
 	}
 	// Clearing a missing provider is also not-found.
-	if err := s.ClearChatGPTToken(ctx, "nope"); !errors.Is(err, ErrNotFound) {
+	if err := s.ClearChatGPTToken(ctx, NewID()); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("clear missing provider: err = %v, want ErrNotFound", err)
 	}
 }
@@ -112,7 +112,7 @@ func TestSaveOAuthTokenNotFound(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	s := NewMcpServerStore(db)
-	if err := s.SaveOAuthToken(ctx, "ghost", `{"access_token":"x"}`); !errors.Is(err, ErrNotFound) {
+	if err := s.SaveOAuthToken(ctx, NewID(), `{"access_token":"x"}`); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("SaveOAuthToken(missing) err = %v, want ErrNotFound", err)
 	}
 	// An existing server persists fine.

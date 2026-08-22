@@ -19,6 +19,16 @@ func NewID() string {
 	return uuid.NewV7().String()
 }
 
+// uuidOrNull is an empty id as a raw-SQL bind value: NULL, which a uuid
+// column accepts where "" is a syntax error. Model writes get this from the
+// nullzero tag; a Set("col = ?") does not.
+func uuidOrNull(id string) any {
+	if id == "" {
+		return nil
+	}
+	return id
+}
+
 // stampOnAppend is the shared BeforeAppendModel logic for entities with a
 // string "id" primary key and created_at/updated_at columns: it assigns an ID
 // and timestamps on insert and refreshes updated_at on update. Each such model

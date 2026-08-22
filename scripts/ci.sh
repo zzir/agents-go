@@ -53,6 +53,17 @@ step "Test models/anthropic module"
 step "Test agents-server module"
 (cd cmd/agents-server && go vet ./... && go test -race ./...)
 
+# CI runs the store suite on PostgreSQL too (a service container). Locally
+# it takes a server: set AGENTS_PG_TEST_DSN to run it, else the step is skipped.
+#   docker run -d -e POSTGRES_PASSWORD=test -e POSTGRES_DB=agents_test -p 54329:5432 postgres:16-alpine
+#   AGENTS_PG_TEST_DSN='postgres://postgres:test@localhost:54329/agents_test?sslmode=disable' ./scripts/ci.sh
+if [ -n "${AGENTS_PG_TEST_DSN:-}" ]; then
+  step "Test agents-server store on PostgreSQL"
+  (cd cmd/agents-server && go test ./internal/store/)
+else
+  step "Test agents-server store on PostgreSQL (skipped: AGENTS_PG_TEST_DSN unset)"
+fi
+
 step "Docs and examples verify"
 # go build proves nothing about either: docs snippets are uncompiled text that
 # kept naming renamed symbols, and an example can compile then panic or hang.

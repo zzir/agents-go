@@ -104,7 +104,7 @@ func TestTriggerStoreRoundTripAndFireRecord(t *testing.T) {
 	wf, sess := seedRefs(t, db)
 	// A trigger names a workflow and a session that exist — checked in the
 	// insert's own transaction, so a delete cannot slip between check and write.
-	if err := s.Create(ctx, &Trigger{WorkflowID: "nope", SessionID: sess.ID, Kind: TriggerKindWebhook, Brief: "b"}); !errors.Is(err, ErrTriggerRef) {
+	if err := s.Create(ctx, &Trigger{WorkflowID: NewID(), SessionID: sess.ID, Kind: TriggerKindWebhook, Brief: "b"}); !errors.Is(err, ErrTriggerRef) {
 		t.Fatalf("create naming no workflow = %v, want ErrTriggerRef", err)
 	}
 	trg := &Trigger{WorkflowID: wf.ID, SessionID: sess.ID, Kind: TriggerKindWebhook, Brief: "b", Secret: NewTriggerSecret(), Enabled: true}
@@ -116,7 +116,7 @@ func TestTriggerStoreRoundTripAndFireRecord(t *testing.T) {
 	if err := s.UpdateSettings(ctx, trg.ID, &Trigger{WorkflowID: wf.ID, SessionID: sess.ID, Kind: TriggerKindWebhook, Brief: "changed", Enabled: false}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpdateSettings(ctx, trg.ID, &Trigger{WorkflowID: "gone", SessionID: sess.ID, Brief: "x"}); !errors.Is(err, ErrTriggerRef) {
+	if err := s.UpdateSettings(ctx, trg.ID, &Trigger{WorkflowID: NewID(), SessionID: sess.ID, Brief: "x"}); !errors.Is(err, ErrTriggerRef) {
 		t.Fatalf("update naming no workflow = %v, want ErrTriggerRef", err)
 	}
 	got, err := s.Get(ctx, trg.ID)
@@ -132,11 +132,14 @@ func TestTriggerStoreRoundTripAndFireRecord(t *testing.T) {
 	if got, _ = s.Get(ctx, trg.ID); got.Secret != "new-secret" || got.Brief != "changed" {
 		t.Fatalf("after rotation: %+v — want only the secret changed", got)
 	}
-	if err := s.RecordFire(ctx, trg.ID, "task-1", ""); err != nil {
+	// The fire record and the settings update both write uuid columns by raw
+	// SET: an empty id must land as NULL, not "" (a syntax error on PostgreSQL).
+	started := NewID()
+	if err := s.RecordFire(ctx, trg.ID, started, ""); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = s.Get(ctx, trg.ID)
-	if got.LastStartedID != "task-1" || got.LastError != "" || time.Since(got.LastFiredAt) > time.Minute {
+	if got.LastStartedID != started || got.LastError != "" || time.Since(got.LastFiredAt) > time.Minute {
 		t.Fatalf("fire record = %+v", got)
 	}
 	if err := s.RecordFire(ctx, trg.ID, "", "session at its cap"); err != nil {
@@ -194,7 +197,7 @@ func TestTriggersAreDeletedWithTheirWorkflowAndSession(t *testing.T) {
 		t.Fatalf("an unrelated trigger was deleted: %v", err)
 	}
 	// Deleting a workflow that is not there is still a not-found.
-	if err := workflows.Delete(ctx, "nope"); !errors.Is(err, ErrNotFound) {
+	if err := workflows.Delete(ctx, NewID()); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("delete of an unknown workflow = %v, want ErrNotFound", err)
 	}
 }
