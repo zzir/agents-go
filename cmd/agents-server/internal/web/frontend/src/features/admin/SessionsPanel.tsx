@@ -1,76 +1,83 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Button, Flash, PageHeader, Stack, useConfirm } from '@primer/react';
-import { TrashIcon } from '@primer/octicons-react';
-import { Paged } from '@/components/Paged';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ActionList, Flash, PageHeader, Stack, useConfirm } from '@primer/react';
+import { Blankslate, type Column } from '@primer/react/experimental';
+import { CommentDiscussionIcon } from '@primer/octicons-react';
+import { ListTable, RowMenu, actionsColumn } from '@/components/ListTable';
 import { api, type ApiSchemas } from '@/lib/api';
-import { PAGE_SIZE, usePage } from '@/lib/hooks';
-import { shortDate } from '@/lib/format';
+import { shortTime } from '@/lib/format';
 
 type UserRow = ApiSchemas['store.User'];
-type SessionRow = ApiSchemas['store.Session'];
+type SessionRow = Omit<ApiSchemas['store.Session'], 'id'> & { id: string; owner: string };
 
 // SessionsPanel: every owner's conversations — existence and recency only;
 // content stays the owner's. Deleting is management; reading is not offered.
 export function SessionsPanel() {
-  const [users, setUsers] = useState<UserRow[]>([]);
-  const [sessions, setSessions] = useState<SessionRow[]>([]);
+  const [sessions, setSessions] = useState<SessionRow[] | null>(null);
   const [error, setError] = useState('');
   const confirm = useConfirm();
-  const page = usePage(sessions, PAGE_SIZE);
 
   const reload = useCallback(() => {
     Promise.all([api.auth.users.list(), api.sessions.listAll()])
-      .then(([u, s]) => { setUsers(u ?? []); setSessions(s ?? []); })
+      .then(([u, s]) => {
+        const email = (ownerId?: string) => (u ?? []).find((x: UserRow) => x.id === ownerId)?.email || ownerId || '';
+        setSessions((s ?? []).map(row => ({ ...row, id: row.id || '', owner: email(row.owner_id) })));
+      })
       .catch(() => setError('Failed to load sessions.'));
   }, []);
   useEffect(() => { reload(); }, [reload]);
 
-  const emailOf = useCallback((ownerId?: string) => users.find(u => u.id === ownerId)?.email || ownerId || '', [users]);
-
   const remove = useCallback(async (s: SessionRow) => {
     if (!(await confirm({
       title: 'Delete session?',
-      content: `"${s.name}" (${emailOf(s.owner_id)}) and everything in it will be removed.`,
+      content: `"${s.name}" (${s.owner}) and everything in it will be removed.`,
       confirmButtonContent: 'Delete',
       confirmButtonType: 'danger',
     }))) return;
     try {
-      await api.sessions.delete(s.id || '');
+      await api.sessions.delete(s.id);
       reload();
     } catch {
       setError('Failed to delete the session.');
     }
-  }, [confirm, reload, emailOf]);
+  }, [confirm, reload]);
+
+  const columns = useMemo<Column<SessionRow>[]>(() => [
+    { header: 'Session', id: 'name', rowHeader: true, width: 'growCollapse', minWidth: 160, renderCell: s => <span className="list-clip" title={s.name}>{s.name}</span> },
+    { header: 'Owner', id: 'owner', width: 'growCollapse', minWidth: 120, maxWidth: 260, renderCell: s => <span className="list-clip" title={s.owner}>{s.owner}</span> },
+    { header: 'Updated', id: 'updated', width: 'auto', renderCell: s => <span className="list-nowrap">{shortTime(s.updated_at)}</span> },
+    actionsColumn<SessionRow>(s => (
+      <RowMenu label={`Actions for ${s.name}`}>
+        <ActionList.Item variant="danger" onSelect={() => { void remove(s); }}>Delete</ActionList.Item>
+      </RowMenu>
+    )),
+  ], [remove]);
 
   return (
     <Stack gap="normal">
       <PageHeader>
         <PageHeader.TitleArea>
-          <PageHeader.Title>Sessions</PageHeader.Title>
+          <PageHeader.Title><span id="sessions-title">Sessions</span></PageHeader.Title>
         </PageHeader.TitleArea>
+        <PageHeader.Description>
+          Every owner's conversations, by recency. Content is the owner's alone;
+          an admin may delete one.
+        </PageHeader.Description>
       </PageHeader>
-      <p className="account-muted">
-        Every owner's conversations, by recency. Content is the owner's alone;
-        an admin may delete one.
-      </p>
       {error ? <Flash variant="danger">{error}</Flash> : null}
-      {sessions.length === 0 ? (
-        <span className="account-muted">No sessions.</span>
-      ) : (
-        <Paged page={page} total={sessions.length} label="Sessions pages">
-          <Stack gap="none" className="account-pat-list">
-            {page.items.map(s => (
-              <Stack key={s.id} direction="horizontal" align="center" gap="condensed" className="account-pat-row">
-                <span className="account-name" style={{ flexGrow: 1 }}>{s.name}</span>
-                <span className="account-muted">{emailOf(s.owner_id)} · {shortDate(s.updated_at)}</span>
-                <Button size="small" variant="danger" leadingVisual={TrashIcon} onClick={() => { void remove(s); }}>
-                  Delete
-                </Button>
-              </Stack>
-            ))}
-          </Stack>
-        </Paged>
-      )}
+      <ListTable
+        labelledBy="sessions-title"
+        rows={sessions ?? []}
+        columns={columns}
+        loading={sessions === null}
+        search={{ placeholder: 'Search sessions', match: (s, q) => `${s.name || ''} ${s.owner}`.toLowerCase().includes(q) }}
+        empty={(
+          <Blankslate>
+            <Blankslate.Visual><CommentDiscussionIcon size={24} /></Blankslate.Visual>
+            <Blankslate.Heading>No sessions</Blankslate.Heading>
+            <Blankslate.Description>Conversations list here as members start them.</Blankslate.Description>
+          </Blankslate>
+        )}
+      />
     </Stack>
   );
 }

@@ -1,16 +1,20 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button, Flash, PageHeader, Stack } from '@primer/react';
+import { Blankslate, type Column } from '@primer/react/experimental';
+import { LogIcon } from '@primer/octicons-react';
+import { ListTable } from '@/components/ListTable';
 import { api, type ApiSchemas } from '@/lib/api';
 import { shortTime } from '@/lib/format';
 
-type AuditRow = ApiSchemas['store.AuditEvent'];
+type AuditRow = Omit<ApiSchemas['store.AuditEvent'], 'id'> & { id: string };
 
-const PAGE = 50;
+// Rows fetched per cursor step; the table pages over what is loaded.
+const CHUNK = 200;
 
-// AuditPanel: the audit log, newest first, older pages keyed on the last
-// line's time (the server's `before` cursor).
+// AuditPanel: the audit log, newest first. Older chunks come on request,
+// keyed on the last line's time (the server's `before` cursor).
 export function AuditPanel() {
-  const [rows, setRows] = useState<AuditRow[]>([]);
+  const [rows, setRows] = useState<AuditRow[] | null>(null);
   const [done, setDone] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -18,9 +22,9 @@ export function AuditPanel() {
   const load = useCallback(async (before?: string) => {
     setBusy(true);
     try {
-      const page = (await api.auth.audit(PAGE, before)) ?? [];
-      setRows(prev => before ? [...prev, ...page] : page);
-      setDone(page.length < PAGE);
+      const chunk = ((await api.auth.audit(CHUNK, before)) ?? []).map(e => ({ ...e, id: e.id || '' }));
+      setRows(prev => before ? [...(prev ?? []), ...chunk] : chunk);
+      setDone(chunk.length < CHUNK);
     } catch {
       setError('Failed to load the audit log.');
     } finally {
@@ -29,38 +33,49 @@ export function AuditPanel() {
   }, []);
   useEffect(() => { void load(); }, [load]);
 
-  const last = rows[rows.length - 1];
+  const last = rows?.[rows.length - 1];
+
+  const columns = useMemo<Column<AuditRow>[]>(() => [
+    { header: 'Action', id: 'action', rowHeader: true, width: 'auto', renderCell: e => <code className="list-code">{e.action}</code> },
+    { header: 'Resource', id: 'resource', width: 'growCollapse', minWidth: 160, renderCell: e => <code className="list-code list-clip" title={e.resource}>{e.resource}{e.detail ? ` (${e.detail})` : ''}</code> },
+    { header: 'Actor', id: 'actor', width: 'auto', renderCell: e => <span className="list-clip" title={e.actor_email || e.actor_id}>{e.actor_email || e.actor_id}</span> },
+    { header: 'When', id: 'when', width: 'auto', renderCell: e => <span className="list-nowrap">{shortTime(e.created_at)}</span> },
+  ], []);
 
   return (
     <Stack gap="normal">
       <PageHeader>
         <PageHeader.TitleArea>
-          <PageHeader.Title>Audit logs</PageHeader.Title>
+          <PageHeader.Title><span id="audit-title">Audit logs</span></PageHeader.Title>
         </PageHeader.TitleArea>
+        <PageHeader.Description>
+          <span>
+            Who did what: every configuration change, approval decision, run start,
+            terminal opened and login. Retention is the server's
+            <code> --audit-retention-days</code>, not a setting.
+          </span>
+        </PageHeader.Description>
       </PageHeader>
-      <p className="account-muted">
-        Who did what: every configuration change, approval decision, run start,
-        terminal opened and login. Retention is the server's
-        <code> --audit-retention-days</code>, not a setting.
-      </p>
       {error ? <Flash variant="danger">{error}</Flash> : null}
-      {rows.length === 0 && !busy ? (
-        <span className="account-muted">Nothing recorded yet.</span>
-      ) : (
-        <Stack gap="none" className="account-pat-list">
-          {rows.map(e => (
-            <Stack key={e.id} direction="horizontal" align="center" gap="condensed" className="account-pat-row">
-              <code className="account-secret" style={{ flexGrow: 1 }}>{e.action}{e.resource ? ` ${e.resource}` : ''}{e.detail ? ` (${e.detail})` : ''}</code>
-              <span className="account-muted">{e.actor_email || e.actor_id} · {shortTime(e.created_at)}</span>
-            </Stack>
-          ))}
-        </Stack>
-      )}
-      {!done && last?.created_at ? (
-        <div>
-          <Button size="small" disabled={busy} onClick={() => { void load(last.created_at); }}>Load older</Button>
-        </div>
-      ) : null}
+      <ListTable
+        labelledBy="audit-title"
+        rows={rows ?? []}
+        columns={columns}
+        loading={rows === null}
+        search={{ placeholder: 'Search loaded entries', match: (e, q) => `${e.action} ${e.resource || ''} ${e.detail || ''} ${e.actor_email || ''}`.toLowerCase().includes(q) }}
+        empty={(
+          <Blankslate>
+            <Blankslate.Visual><LogIcon size={24} /></Blankslate.Visual>
+            <Blankslate.Heading>Nothing recorded yet</Blankslate.Heading>
+            <Blankslate.Description>The first change, approval or login writes the first line.</Blankslate.Description>
+          </Blankslate>
+        )}
+        footer={!done && last?.created_at ? (
+          <div className="list-table-more">
+            <Button size="small" disabled={busy} onClick={() => { void load(last.created_at); }}>Load older entries</Button>
+          </div>
+        ) : null}
+      />
     </Stack>
   );
 }

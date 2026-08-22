@@ -87,7 +87,7 @@ function GlobalToast() {
   );
 }
 
-type DialogTab = { key: string; label: string; icon: Icon; load: () => Promise<{ default: React.ComponentType }> };
+type DialogTab = { key: string; label: string; icon: Icon; load: () => Promise<{ default: React.ComponentType }>; dividerBefore?: boolean };
 
 // Ordered so each section builds on the ones above it: a provider is what an
 // agent talks to, an agent is what runs, then what an agent attaches (tools,
@@ -103,7 +103,8 @@ const SETTINGS_TABS: DialogTab[] = [
   { key: 'memory',     label: 'Memory',     icon: DatabaseIcon,   load: () => import('@/features/memory/MemoryPanel') },
   { key: 'guardrails', label: 'Guardrails', icon: ShieldCheckIcon, load: () => import('@/features/guardrails/GuardrailPanel') },
   { key: 'plugins',    label: 'Plugins',    icon: PlugIcon,       load: () => import('@/features/plugins/PluginsPanel') },
-  { key: 'account',    label: 'Account',    icon: PersonIcon,     load: () => import('@/features/account/AccountPanel') },
+  // Shared configuration above the line, the person's own below it.
+  { key: 'account',    label: 'Account',    icon: PersonIcon,     load: () => import('@/features/account/AccountPanel'), dividerBefore: true },
   { key: 'general',    label: 'General',    icon: GearIcon,       load: () => import('@/features/settings/SettingsPanel') },
 ];
 
@@ -163,14 +164,16 @@ function PanelDialog({ title, tabs, onClose }: { title: string; tabs: DialogTab[
         <nav className="settings-nav">
           <PrimerNavList aria-label={`${title} sections`}>
             {tabs.map(t => (
-              <PrimerNavList.Item
-                key={t.key}
-                aria-current={tab === t.key ? 'page' : undefined}
-                onClick={() => setTab(t.key)}
-              >
-                <PrimerNavList.LeadingVisual><t.icon size={16} /></PrimerNavList.LeadingVisual>
-                {t.label}
-              </PrimerNavList.Item>
+              <React.Fragment key={t.key}>
+                {t.dividerBefore && tabs[0] !== t && <PrimerNavList.Divider />}
+                <PrimerNavList.Item
+                  aria-current={tab === t.key ? 'page' : undefined}
+                  onClick={() => setTab(t.key)}
+                >
+                  <PrimerNavList.LeadingVisual><t.icon size={16} /></PrimerNavList.LeadingVisual>
+                  {t.label}
+                </PrimerNavList.Item>
+              </React.Fragment>
             ))}
           </PrimerNavList>
         </nav>
