@@ -12,7 +12,7 @@ import (
 // One key exhausts its burst alone; another key's budget is untouched.
 func TestIPLimiterKeysAreIndependent(t *testing.T) {
 	l := newIPLimiter(60, 3)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if !l.Allow("a") {
 			t.Fatalf("request %d for key a should pass within burst", i+1)
 		}
@@ -34,7 +34,7 @@ func TestAuthRateLimitAnswers429(t *testing.T) {
 	engine.POST("/probe", AuthRateLimit(), func(c *gin.Context) { c.String(http.StatusOK, "ok") })
 
 	last, body := 0, ""
-	for i := 0; i < authRateBurst+5; i++ {
+	for range authRateBurst + 5 {
 		req := httptest.NewRequest(http.MethodPost, "/probe", strings.NewReader(`{}`))
 		w := httptest.NewRecorder()
 		engine.ServeHTTP(w, req)

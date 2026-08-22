@@ -291,7 +291,7 @@ func TestAuthGroupRateLimited(t *testing.T) {
 	engine := authEngine(t, authn.NewStatic("tok", local), nil)
 
 	last := 0
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		rec := doJSON(t, engine, http.MethodPost, "/api/v1/auth/login", `{"token":"nope"}`)
 		last = rec.Code
 	}
@@ -306,7 +306,7 @@ func TestAuthGroupRateLimited(t *testing.T) {
 func TestAuthenticatedAuthRoutesAreNotRateLimited(t *testing.T) {
 	local := &store.User{ID: store.LocalUserID, Email: "local@localhost", Role: store.RoleAdmin}
 	engine := authEngine(t, authn.NewStatic("tok", local), nil)
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
 		req.Header.Set("Authorization", "Bearer tok")
 		rec := httptest.NewRecorder()

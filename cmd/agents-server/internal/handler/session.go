@@ -331,8 +331,8 @@ func (h *SessionHandler) Fork(c *gin.Context) {
 
 	var req struct {
 		MessageID *string `json:"message_id"`
-		Exclusive bool   `json:"exclusive"`
-		Label     string `json:"label"`
+		Exclusive bool    `json:"exclusive"`
+		Label     string  `json:"label"`
 	}
 	// An empty body means "fork everything"; anything else must parse.
 	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {

@@ -37,8 +37,8 @@ func mapJSONKeys(raw json.RawMessage, fn func(string) (string, error), keys ...s
 		return raw, nil
 	}
 	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &obj); err != nil || obj == nil {
-		return raw, nil // not an object: nothing here to seal
+	if json.Unmarshal(raw, &obj) != nil || obj == nil {
+		return raw, nil //nolint:nilerr // not an object: nothing here to seal, the value passes through
 	}
 	changed := false
 	for _, k := range keys {

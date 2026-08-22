@@ -2,6 +2,10 @@ module github.com/zzir/agents-go/cmd/agents-server
 
 go 1.27.0
 
+// The npm tree carries a Go port (flatted/golang) that ./... would otherwise
+// build, vet and lint as part of this module.
+ignore ./internal/web/frontend/node_modules
+
 require (
 	github.com/anthropics/anthropic-sdk-go v1.61.0
 	github.com/gin-gonic/gin v1.12.0

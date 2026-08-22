@@ -91,8 +91,8 @@ func mapJSONArrayKey(raw, key string, fn func(string) (string, error)) (string, 
 		return raw, nil
 	}
 	var items []json.RawMessage
-	if err := json.Unmarshal([]byte(raw), &items); err != nil {
-		return raw, nil
+	if json.Unmarshal([]byte(raw), &items) != nil {
+		return raw, nil //nolint:nilerr // not an array: nothing here to seal, the value passes through
 	}
 	for i, item := range items {
 		out, err := mapJSONKeys(item, fn, key)

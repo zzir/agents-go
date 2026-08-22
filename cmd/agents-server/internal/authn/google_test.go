@@ -12,11 +12,11 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// fakeGoogleIdP stands in for Google's token and userinfo endpoints. It
+// fakeGoogleIDP stands in for Google's token and userinfo endpoints. It
 // enforces the parts of the contract the Google provider must uphold: the
 // PKCE verifier travels with the code exchange, and the identity comes from
 // userinfo with a Bearer access token.
-func fakeGoogleIdP(t *testing.T, verified bool) *httptest.Server {
+func fakeGoogleIDP(t *testing.T, verified bool) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
@@ -62,7 +62,7 @@ func testGoogle(idp *httptest.Server) *Google {
 }
 
 func TestGoogleIdentityRoundTrip(t *testing.T) {
-	g := testGoogle(fakeGoogleIdP(t, true))
+	g := testGoogle(fakeGoogleIDP(t, true))
 	id, err := g.Identity(context.Background(), "code-1", "verifier-1", "http://app.local/cb")
 	if err != nil {
 		t.Fatalf("identity: %v", err)
@@ -73,7 +73,7 @@ func TestGoogleIdentityRoundTrip(t *testing.T) {
 }
 
 func TestGoogleRejectsUnverifiedEmail(t *testing.T) {
-	g := testGoogle(fakeGoogleIdP(t, false))
+	g := testGoogle(fakeGoogleIDP(t, false))
 	if _, err := g.Identity(context.Background(), "code-1", "v", "http://app.local/cb"); err == nil {
 		t.Fatal("an unverified email must be refused")
 	}
@@ -95,7 +95,7 @@ func TestOAuthLoginFlow(t *testing.T) {
 	svc := NewOAuth(OAuthConfig{
 		Users: store.NewUserStore(db), Tokens: store.NewAuthTokenStore(db),
 		BaseURL:   "http://app.local",
-		Providers: []OAuthProvider{testGoogle(fakeGoogleIdP(t, true))},
+		Providers: []OAuthProvider{testGoogle(fakeGoogleIDP(t, true))},
 		// The domain check must be case-insensitive end to end.
 		AllowedDomains: []string{"Example.com"},
 	})
@@ -157,7 +157,7 @@ func TestOAuthLoginRefusesUnlistedEmail(t *testing.T) {
 	svc := NewOAuth(OAuthConfig{
 		Users: users, Tokens: store.NewAuthTokenStore(db),
 		BaseURL:        "http://app.local",
-		Providers:      []OAuthProvider{testGoogle(fakeGoogleIdP(t, true))},
+		Providers:      []OAuthProvider{testGoogle(fakeGoogleIDP(t, true))},
 		AllowedDomains: []string{"another.com"},
 	})
 
