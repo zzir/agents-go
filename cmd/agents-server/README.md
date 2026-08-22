@@ -724,7 +724,9 @@ Known keys:
 - `brave_api_key` — injects a `brave_search` tool into all agents (secret; masked
   on read — see [Secret handling](#secret-handling))
 - `trace_retention_days` — prune trace events older than N days (checked at
-  startup and once a day); empty or `0` disables pruning
+  startup and once a day); default 30, `0` keeps everything. Each generation
+  span stores the whole conversation it was given, so the table grows with
+  the square of a session's length — keeping everything is a choice
 - `trace_include_sensitive_data` — `false` keeps prompts, outputs and tool
   arguments out of stored traces (generation spans carry only timing/usage
   metadata; the trace panel's Replay then has nothing to seed from). Empty or
@@ -2096,7 +2098,7 @@ Tables are created automatically on startup:
 | `tasks`             | Background tasks — sub-agents spawned via `spawn_task` and workflow executions (`kind`, `state`) — durable identity and status |
 | `providers`         | Model-API endpoints and their credentials; agents and routes reference one |
 | `workflows`         | Fixed step sequences (each step: agent + prompt, with a stable id); an execution is a `tasks` row |
-| `wakeups`           | "This session is owed a turn carrying this" — the debt background work leaves behind |
+| `wakeups`           | "This session is owed a turn carrying this" — the debt background work leaves behind; settled rows are pruned after 7 days |
 | `context_profiles`  | One row per session: what its last build put in front of the conversation (prompt layers, tool surface) |
 
 The database file can be deleted and recreated freely — there is no migration

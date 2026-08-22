@@ -301,6 +301,7 @@ func run(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("unknown --auth mode %q (token or oauth)", flagAuthMode)
 	}
 	go bridge.RunAuthTokenCleanup(bgCtx, authTokens)
+	go bridge.RunWakeupCleanup(bgCtx, wakeupStore)
 
 	srv := server.New(log, authSvc.Authenticate)
 	if flagTrustedProxies != "" {

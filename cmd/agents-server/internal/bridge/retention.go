@@ -164,3 +164,35 @@ func RunAuthTokenCleanup(ctx context.Context, tokens *store.AuthTokenStore) {
 		}
 	}
 }
+
+// wakeupRetention is how long a settled wake-up row stays readable after the
+// fact — long enough to inspect a recent task's delivery, not forever.
+const wakeupRetention = 7 * 24 * time.Hour
+
+// RunWakeupCleanup prunes settled wake-ups older than wakeupRetention at
+// startup and then hourly. It blocks until ctx ends — run it in a goroutine.
+func RunWakeupCleanup(ctx context.Context, wakeups *store.WakeupStore) {
+	log := logging.Ctx(ctx)
+	sweep := func() {
+		n, err := wakeups.DeleteSettledBefore(ctx, time.Now().UTC().Add(-wakeupRetention))
+		if err != nil {
+			log.Error("wake-up cleanup failed", "error", err)
+			return
+		}
+		if n > 0 {
+			log.Info("pruned settled wake-ups", "removed", n)
+		}
+	}
+
+	sweep()
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			sweep()
+		}
+	}
+}

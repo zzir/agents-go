@@ -112,12 +112,16 @@ var defs = []Def{{
 	Placeholder: "BSA-xxxxxxxx",
 	Description: "When set, a brave_search tool is injected into all agents. Get a key at brave.com/search/api.",
 }, {
+	// Defaulted: a generation span stores the whole conversation it was
+	// given, so trace_events grows with the square of a session's length —
+	// "keep everything" is a choice, not the absence of one.
 	Key:         KeyTraceRetentionDays,
 	Kind:        KindInt,
 	Group:       GroupTracing,
 	Label:       "Trace retention (days)",
-	Placeholder: "e.g. 30 — empty keeps everything",
-	Description: "Trace events older than this many days are pruned daily. Leave empty (or 0) to keep everything.",
+	Placeholder: "e.g. 30 — 0 keeps everything",
+	Description: "Trace events older than this many days are pruned daily. 0 keeps everything; each generation span stores the full conversation it saw, so that grows fast.",
+	Default:     "30",
 	Min:         0,
 }, {
 	// No default: unset must stay unset, because the SDK then reads
