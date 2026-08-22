@@ -67,10 +67,11 @@ func triggerRigWithSessions(t *testing.T) (*gin.Engine, *fakeFirer, *store.Workf
 		t.Fatal(err)
 	}
 	firer := &fakeFirer{}
-	h := NewTriggerHandler(store.NewTriggerStore(db), sessions, firer)
+	triggers := store.NewTriggerStore(db)
+	h := NewTriggerHandler(triggers, sessions, firer)
 	engine := newTestEngine()
 	api := engine.Group(server.APIPrefix)
-	Handlers{Triggers: h}.registerTriggers(api)
+	Handlers{Triggers: h, Authz: AuthzDeps{Sessions: sessions, Triggers: triggers}}.registerTriggers(api)
 	engine.POST(server.HooksPrefix+"/:id", h.Hook)
 	return engine, firer, wf, sess, sessions
 }

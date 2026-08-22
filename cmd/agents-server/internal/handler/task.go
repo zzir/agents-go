@@ -9,6 +9,7 @@ import (
 
 	"github.com/zzir/agents-go/agents/tasks"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -203,7 +204,8 @@ type TaskPage struct {
 func (h *TaskHandler) List(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.Query("limit"))
 	offset, _ := strconv.Atoi(c.Query("offset"))
-	rows, total, err := h.tasks.ListRecent(c.Request.Context(), c.Query("kind"), c.Query("live") == "true", limit, offset)
+	u, _ := server.CurrentUser(c)
+	rows, total, err := h.tasks.ListRecent(c.Request.Context(), u.ID, c.Query("kind"), c.Query("live") == "true", limit, offset)
 	if err != nil {
 		internalError(c, err)
 		return

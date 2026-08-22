@@ -258,6 +258,23 @@ func (s *TriggerStore) ListByWorkflow(ctx context.Context, workflowID string) ([
 	return out, nil
 }
 
+// ListByOwner returns the triggers whose session ownerID owns, newest first;
+// workflowID, when set, narrows to one workflow's. A trigger is as private as
+// the conversation it fires into.
+func (s *TriggerStore) ListByOwner(ctx context.Context, ownerID, workflowID string) ([]Trigger, error) {
+	var out []Trigger
+	q := s.db.NewSelect().Model(&out).
+		Join("JOIN sessions AS s ON s.id = trg.session_id").
+		Where("s.owner_id = ?", ownerID)
+	if workflowID != "" {
+		q = q.Where("trg.workflow_id = ?", workflowID)
+	}
+	if err := q.OrderExpr("trg.created_at DESC").Scan(ctx); err != nil {
+		return nil, fmt.Errorf("listing triggers: %w", err)
+	}
+	return out, nil
+}
+
 // RecordFire writes what a fire did — the task or run it started, or why it
 // started nothing.
 func (s *TriggerStore) RecordFire(ctx context.Context, id, startedID, fireErr string) error {

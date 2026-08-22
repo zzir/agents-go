@@ -271,9 +271,17 @@ func (h *SessionHandler) Delete(c *gin.Context) {
 	// The binding, read before the cascade erases it: releasing the cached
 	// sandbox instance afterwards needs to know which pair this session held.
 	var boundSandbox, boundWorkDir string
-	if sess, err := h.sessions.Get(c.Request.Context(), id); err == nil {
-		boundSandbox, boundWorkDir = sess.SandboxID, sess.WorkDir
+	sess, err := h.sessions.Get(c.Request.Context(), id)
+	if err != nil {
+		storeError(c, err)
+		return
 	}
+	// Management, not reading: the owner or an admin.
+	if u, _ := server.CurrentUser(c); !ownsSession(c, sess) && u.Role != store.RoleAdmin {
+		notFound(c)
+		return
+	}
+	boundSandbox, boundWorkDir = sess.SandboxID, sess.WorkDir
 	// Stop the session's live run and all its background tasks (bounded wait)
 	// BEFORE the cascade: a task still executing would keep writing entries
 	// and traces into rows this delete is about to remove.

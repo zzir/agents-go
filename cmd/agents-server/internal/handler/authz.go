@@ -89,3 +89,84 @@ func ownsApproval(ctx context.Context, approvals *store.PendingApprovalStore, se
 	sess, err := sessions.Get(ctx, pending.SessionID)
 	return err == nil && sess.OwnerID == userID
 }
+
+// AuthzDeps are the stores the route gates resolve ownership through.
+type AuthzDeps struct {
+	Sessions  *store.SessionStore
+	Tasks     *store.TaskStore
+	Approvals *store.PendingApprovalStore
+	Triggers  *store.TriggerStore
+	Hub       *bridge.RunHub
+}
+
+// sessionGate gates /sessions/:id/* on owning the session.
+func (d AuthzDeps) sessionGate() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if _, ok := requireOwnedSession(c, d.Sessions, c.Param("id")); !ok {
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
+// runGate gates /runs/:id/* on owning the live run's session.
+func (d AuthzDeps) runGate() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		info, ok := d.Hub.Info(c.Param("id"))
+		if !requireRunOwner(c, info, ok) {
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
+// taskGate gates /tasks/:id/* on owning the task's parent session.
+func (d AuthzDeps) taskGate() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		t, err := d.Tasks.Get(c.Request.Context(), c.Param("id"))
+		if err != nil {
+			storeError(c, err)
+			c.Abort()
+			return
+		}
+		if _, ok := requireOwnedSession(c, d.Sessions, t.ParentSessionID); !ok {
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
+// approvalGate gates /approvals/:tool_call_id/* on owning the session the
+// approval is filed on.
+func (d AuthzDeps) approvalGate() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		u, _ := server.CurrentUser(c)
+		if !ownsApproval(c.Request.Context(), d.Approvals, d.Sessions, u.ID, c.Param("tool_call_id")) {
+			notFound(c)
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
+// triggerGate gates /triggers/:id/* on owning the session the trigger fires
+// into.
+func (d AuthzDeps) triggerGate() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		t, err := d.Triggers.Get(c.Request.Context(), c.Param("id"))
+		if err != nil {
+			storeError(c, err)
+			c.Abort()
+			return
+		}
+		if _, ok := requireOwnedSession(c, d.Sessions, t.SessionID); !ok {
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}

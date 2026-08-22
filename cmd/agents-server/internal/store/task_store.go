@@ -92,7 +92,8 @@ type TaskWithSession struct {
 // and the total the page is cut from. limit is capped at 500 (0 = the cap).
 // liveParent keeps a dead incarnation's rows out, as every by-session read
 // does; the join supplies the session's name.
-func (s *TaskStore) ListRecent(ctx context.Context, kind string, liveOnly bool, limit, offset int) (rows []TaskWithSession, total int, err error) {
+// ownerID, when set, keeps to tasks whose parent session that user owns.
+func (s *TaskStore) ListRecent(ctx context.Context, ownerID, kind string, liveOnly bool, limit, offset int) (rows []TaskWithSession, total int, err error) {
 	if limit <= 0 || limit > 500 {
 		limit = 500
 	}
@@ -103,6 +104,9 @@ func (s *TaskStore) ListRecent(ctx context.Context, kind string, liveOnly bool, 
 		// A hidden parent is a task's own session: its tasks are nested work,
 		// with no conversation of their own to open.
 		q = q.Join("JOIN sessions AS ps ON ps.id = t.parent_session_id").Where(liveParent).Where("ps.hidden = ?", false)
+		if ownerID != "" {
+			q = q.Where("ps.owner_id = ?", ownerID)
+		}
 		if kind != "" {
 			q = q.Where("t.kind = ?", kind)
 		}

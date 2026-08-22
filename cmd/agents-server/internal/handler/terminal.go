@@ -79,6 +79,14 @@ func NewTerminalHandler(s *store.SandboxStore, m sandboxProvider, cfg *settings.
 // Handle runs one terminal session on an authenticated WebSocket connection.
 func (h *TerminalHandler) Handle(conn *server.WSConn) {
 	log := logging.Ctx(conn.Context())
+	// A terminal is a shell on a sandbox host with the server's stored
+	// credentials — admin-only, like every other write to what runs where.
+	if conn.User.Role != store.RoleAdmin {
+		_ = conn.WriteJSON(&protocol.Envelope{Type: protocol.EventTerminalError, Payload: mustJSON(protocol.TerminalError{
+			Message: "the terminal requires the admin role",
+		})})
+		return
+	}
 
 	term, opened, release, err := h.open(conn)
 	if err != nil {

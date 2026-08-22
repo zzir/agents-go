@@ -26,14 +26,15 @@ type WorkflowStarter interface {
 // Executions are tasks (kind "workflow"): once started they are listed,
 // stopped, retried and dismissed through the task endpoints.
 type WorkflowHandler struct {
-	store   *store.WorkflowStore
-	agents  *store.AgentConfigStore
-	starter WorkflowStarter
+	store    *store.WorkflowStore
+	agents   *store.AgentConfigStore
+	sessions *store.SessionStore
+	starter  WorkflowStarter
 }
 
 // NewWorkflowHandler returns a handler backed by the given stores and starter.
-func NewWorkflowHandler(s *store.WorkflowStore, agents *store.AgentConfigStore, starter WorkflowStarter) *WorkflowHandler {
-	return &WorkflowHandler{store: s, agents: agents, starter: starter}
+func NewWorkflowHandler(s *store.WorkflowStore, agents *store.AgentConfigStore, sessions *store.SessionStore, starter WorkflowStarter) *WorkflowHandler {
+	return &WorkflowHandler{store: s, agents: agents, sessions: sessions, starter: starter}
 }
 
 // runWorkflowReq is the body of a manual run: the session the result comes back
@@ -68,6 +69,10 @@ func (h *WorkflowHandler) Run(c *gin.Context) {
 	var req runWorkflowReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		badRequest(c, err.Error())
+		return
+	}
+	// Into a session the caller owns; a foreign one reads as absent.
+	if _, ok := requireOwnedSession(c, h.sessions, req.SessionID); !ok {
 		return
 	}
 	if req.SandboxID != "" {

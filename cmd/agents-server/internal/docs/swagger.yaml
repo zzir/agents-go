@@ -1616,6 +1616,13 @@ components:
           type: string
         name:
           type: string
+        owner_id:
+          description: |-
+            OwnerID is the user the conversation belongs to — the only ownership
+            column: a task's hidden session inherits it from its parent, a trigger
+            fires into a session, an approval is filed on one. Content is the
+            owner's alone; an admin may list, stop and delete (README "Ownership").
+          type: string
         pinned:
           type: boolean
         planning:
@@ -3980,6 +3987,12 @@ paths:
       - server
   /sessions:
     get:
+      parameters:
+      - description: Every owner's sessions (admin only)
+        in: query
+        name: all
+        schema:
+          type: boolean
       responses:
         "200":
           content:
@@ -3989,6 +4002,12 @@ paths:
                   $ref: '#/components/schemas/store.Session'
                 type: array
           description: OK
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: all=true by a member
         "500":
           content:
             application/json:

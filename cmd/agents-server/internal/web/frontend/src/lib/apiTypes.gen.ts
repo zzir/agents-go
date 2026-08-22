@@ -3169,7 +3169,10 @@ export interface paths {
         /** List sessions */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description Every owner's sessions (admin only) */
+                    all?: boolean;
+                };
                 header?: never;
                 path?: never;
                 cookie?: never;
@@ -3183,6 +3186,15 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["store.Session"][];
+                    };
+                };
+                /** @description all=true by a member */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
                     };
                 };
                 /** @description Internal Server Error */
@@ -6560,6 +6572,13 @@ export interface components {
             hidden?: boolean;
             id?: string;
             name?: string;
+            /**
+             * @description OwnerID is the user the conversation belongs to — the only ownership
+             *     column: a task's hidden session inherits it from its parent, a trigger
+             *     fires into a session, an approval is filed on one. Content is the
+             *     owner's alone; an admin may list, stop and delete (README "Ownership").
+             */
+            owner_id?: string;
             pinned?: boolean;
             /**
              * @description Planning is the session's plan phase: true means its next run starts

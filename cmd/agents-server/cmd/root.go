@@ -198,7 +198,7 @@ func run(_ *cobra.Command, _ []string) error {
 	settingHandler := handler.NewSettingHandler(settingStore)
 	skillHandler := handler.NewSkillHandler(flagWorkspace)
 	providerHandler := handler.NewProviderHandler(providerStore)
-	workflowHandler := handler.NewWorkflowHandler(workflowStore, agentConfigStore, runner)
+	workflowHandler := handler.NewWorkflowHandler(workflowStore, agentConfigStore, sessionStore, runner)
 	triggerScheduler := bridge.NewTriggerScheduler(runner, triggerStore)
 	triggerHandler := handler.NewTriggerHandler(triggerStore, sessionStore, triggerScheduler)
 	providerRouteHandler := handler.NewProviderRouteHandler(providerRouteStore, providerStore)
@@ -313,6 +313,10 @@ func run(_ *cobra.Command, _ []string) error {
 		}
 	}
 	srv.RegisterAPI(handler.Handlers{
+		Authz: handler.AuthzDeps{
+			Sessions: sessionStore, Tasks: taskStore, Approvals: pendingApprovalStore,
+			Triggers: triggerStore, Hub: runner.Hub(),
+		},
 		Auth:           handler.NewAuthHandler(authSvc, authTokens),
 		Sessions:       sessionHandler,
 		Runs:           runHandler,

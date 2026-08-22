@@ -144,6 +144,10 @@ func (h *TriggerHandler) bind(c *gin.Context, t *store.Trigger) bool {
 		}
 		return false
 	}
+	if !ownsSession(c, sess) {
+		badRequest(c, "session_id names no session")
+		return false
+	}
 	if sess.Hidden {
 		badRequest(c, "session_id names a task's own session; a trigger reports to a conversation")
 		return false
@@ -151,7 +155,7 @@ func (h *TriggerHandler) bind(c *gin.Context, t *store.Trigger) bool {
 	return true
 }
 
-// List responds with every trigger, or a workflow's with ?workflow_id=.
+// List responds with the caller's triggers, or a workflow's with ?workflow_id=.
 //
 //	@Summary	List triggers
 //	@Tags		triggers
@@ -162,15 +166,8 @@ func (h *TriggerHandler) bind(c *gin.Context, t *store.Trigger) bool {
 //	@Security	BearerAuth
 //	@Router		/triggers [get]
 func (h *TriggerHandler) List(c *gin.Context) {
-	var (
-		rows []store.Trigger
-		err  error
-	)
-	if wf := c.Query("workflow_id"); wf != "" {
-		rows, err = h.store.ListByWorkflow(c.Request.Context(), wf)
-	} else {
-		rows, err = h.store.List(c.Request.Context())
-	}
+	u, _ := server.CurrentUser(c)
+	rows, err := h.store.ListByOwner(c.Request.Context(), u.ID, c.Query("workflow_id"))
 	if err != nil {
 		internalError(c, err)
 		return
