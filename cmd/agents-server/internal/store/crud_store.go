@@ -2,22 +2,21 @@ package store
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
+	"uuid"
 
 	"github.com/uptrace/bun"
 )
 
-// NewID returns a random 128-bit hex identifier, used as a primary key for
-// stored entities.
+// NewID returns a UUIDv7 — the primary key of every string-keyed entity. Time-
+// ordered, so inserts land at the right edge of a B-tree index and rows made
+// together sit together (README "Database"). Secrets — tokens, states, the
+// webhook secret — are NOT ids and keep 256-bit crypto/rand.
 func NewID() string {
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
+	return uuid.NewV7().String()
 }
 
 // stampOnAppend is the shared BeforeAppendModel logic for entities with a

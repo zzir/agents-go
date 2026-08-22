@@ -2111,6 +2111,12 @@ is capped at 16 connections:
 ./agents-server --db 'postgres://user:pass@localhost:5432/agents?sslmode=disable'
 ```
 
+String primary keys are UUIDv7 (`store.NewID`): time-ordered, so inserts land
+at the right edge of an index and rows created together sit together.
+Secrets — session tokens, PATs, OAuth state, the webhook secret — are not ids
+and stay 256-bit `crypto/rand`; a UUID's 122 random bits would be a
+downgrade.
+
 Tables are created automatically on startup:
 
 | Table               | Description                                                                         |

@@ -30,7 +30,7 @@ func pgTestDB(t *testing.T) *bun.DB {
 		t.Skip("AGENTS_PG_TEST_DSN not set; skipping PostgreSQL store tests")
 	}
 	ctx := context.Background()
-	schema := "t_" + store.NewID()
+	schema := "t_" + strings.ReplaceAll(store.NewID(), "-", "") // a UUID's hyphens are not identifier characters
 
 	admin := store.NewPostgresDB(dsn)
 	if _, err := admin.ExecContext(ctx, "CREATE SCHEMA "+schema); err != nil {
