@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/zzir/agents-go/agents"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -258,8 +258,8 @@ func TestSaveWorkflowCreatesAndUpdatesByName(t *testing.T) {
 	runner, _, _ := workflowToolsFixture(t, srv.URL)
 	// The one write to shared configuration that happens through a tool is
 	// audited, attributed to the session's owner.
-	var audited []server.AuditRecord
-	runner.Deps.Audit = func(_ context.Context, r server.AuditRecord) { audited = append(audited, r) }
+	var audited []protocol.AuditRecord
+	runner.Deps.Audit = func(_ context.Context, r protocol.AuditRecord) { audited = append(audited, r) }
 	tools := runner.workflowTools(ctx, store.LocalUserID)
 	save := toolNamed(t, tools, WorkflowSaveToolName)
 	if !save.NeedsApproval || save.ReadOnly {

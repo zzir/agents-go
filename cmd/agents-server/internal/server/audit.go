@@ -10,21 +10,6 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 )
 
-// AuditRecord is one line for the audit log: who did what, to what. Detail is
-// whatever a handler chose to annotate — never a request body.
-type AuditRecord struct {
-	Actor    protocol.UserInfo
-	Action   string
-	Resource string
-	Detail   string
-	ClientIP string
-}
-
-// AuditFunc persists one record. Audit calls it on its own goroutine, after
-// the response, on a context detached from the request's cancellation — a
-// slow write never delays a reply.
-type AuditFunc func(ctx context.Context, r AuditRecord)
-
 const (
 	auditDetailKey   = "agents.audit.detail"
 	auditResourceKey = "agents.audit.resource"
@@ -47,7 +32,7 @@ func SetAuditActor(c *gin.Context, u protocol.UserInfo) { c.Set(auditActorKey, u
 // "METHOD /route/pattern" with the first path parameter as the resource. A
 // request nobody authenticated (an auth-exempt route that did not name its
 // actor) leaves no line — there is no one to attribute it to.
-func Audit(record AuditFunc) gin.HandlerFunc {
+func Audit(record protocol.AuditFunc) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Next()
 		switch c.Request.Method {
@@ -65,7 +50,7 @@ func Audit(record AuditFunc) gin.HandlerFunc {
 				return
 			}
 		}
-		r := AuditRecord{
+		r := protocol.AuditRecord{
 			Actor:    actor,
 			Action:   c.Request.Method + " " + strings.TrimPrefix(c.FullPath(), APIPrefix),
 			ClientIP: c.ClientIP(),

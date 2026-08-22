@@ -28,7 +28,7 @@ type WSHandler struct {
 	approvals *store.PendingApprovalStore
 	// Audit, when set, records the acts that bypass REST: run starts and
 	// approval decisions made over the socket. Wired at bootstrap.
-	Audit server.AuditFunc
+	Audit protocol.AuditFunc
 }
 
 // audit records one explicit event for conn's user; a nil Audit is silence.
@@ -36,7 +36,7 @@ func (h *WSHandler) audit(conn *server.WSConn, action, resource, detail string) 
 	if h.Audit == nil {
 		return
 	}
-	h.Audit(context.WithoutCancel(conn.Context()), server.AuditRecord{
+	h.Audit(context.WithoutCancel(conn.Context()), protocol.AuditRecord{
 		Actor: conn.User, Action: action, Resource: resource, Detail: detail,
 	})
 }

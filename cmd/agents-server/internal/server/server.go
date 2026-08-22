@@ -89,7 +89,7 @@ func (s *Server) SetTrustedProxies(proxies []string) error {
 // auth answers every /api/* request's credential; the auth ROUTES (login,
 // OAuth flows) are handlers and mount through RegisterAPI like the rest.
 // audit, when non-nil, receives every successful mutating request (see Audit).
-func New(log *slog.Logger, auth AuthFunc, audit AuditFunc) *Server {
+func New(log *slog.Logger, auth AuthFunc, audit protocol.AuditFunc) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.New()
 	_ = engine.SetTrustedProxies(nil)

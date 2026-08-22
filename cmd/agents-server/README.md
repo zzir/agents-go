@@ -325,9 +325,10 @@ Authorization header), the OpenAPI document (`GET /api/v1/openapi.yaml`), the
 list must name a route this router actually serves: an exemption for a path
 nothing serves silently unauthenticates whatever gets mounted there later. The
 converse holds for the redirect URI the OAuth handler hands the authorization
-server — `bridge.RedirectURI`, built from `server.APIPrefix`, never a second
-spelling of the path: a callback that lands anywhere else under `/api/` is
-neither routed nor exempt, so every login ends in `401 unauthorized`. The
+server — the handler builds it from `server.APIPrefix` and the one
+`mcpOAuthCallbackPath` constant its route is mounted on; `bridge` receives the
+finished URI and knows no path. A callback that lands anywhere else under
+`/api/` is neither routed nor exempt, so every login ends in `401 unauthorized`. The
 ChatGPT login callback is deliberately absent — its redirect lands on a
 temporary listener at 127.0.0.1:1455, never on this server. Webhook triggers
 (`POST /hooks/:id`) live outside `/api/` for the same reason a callback does —
@@ -1567,7 +1568,7 @@ cmd/agents-server/
 │   │   └── ...                 tracing, guardrails, proxy, MCP/ChatGPT OAuth
 │   ├── docs/                   generated OpenAPI 3.1 document, swagger.yaml (make openapi)
 │   ├── store/                  data layer (bun ORM; SQLite or PostgreSQL, 22 tables — see Database)
-│   ├── protocol/               wire types — WS messages + REST error envelope
+│   ├── protocol/               wire types — WS messages, REST error envelope, the audit record
 │   └── web/                    embedded SPA static files
 └── {workspace}/skills/         agent skills managed via API (runtime dir, not in the repo)
 ```

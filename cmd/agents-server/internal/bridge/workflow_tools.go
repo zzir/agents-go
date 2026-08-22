@@ -11,7 +11,6 @@ import (
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -220,7 +219,7 @@ func (r *Runner) auditAs(ctx context.Context, ownerID, action, resource, detail 
 			actor = protocol.UserInfo{ID: u.ID, Email: u.Email, Role: u.Role}
 		}
 	}
-	r.Deps.Audit(context.WithoutCancel(ctx), server.AuditRecord{
+	r.Deps.Audit(context.WithoutCancel(ctx), protocol.AuditRecord{
 		Actor: actor, Action: action, Resource: resource, Detail: detail,
 	})
 }

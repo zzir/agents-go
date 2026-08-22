@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/zzir/agents-go/agents/session"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -52,8 +52,8 @@ func TestTriggerFireStartsTheWorkflowAndRecordsIt(t *testing.T) {
 	// A fire nobody requested — the clock's, a webhook's — is audited by the
 	// scheduler itself, attributed to the session's owner; a person's fire
 	// is the request's line, not a second one.
-	var audited []server.AuditRecord
-	runner.Deps.Audit = func(_ context.Context, r server.AuditRecord) { audited = append(audited, r) }
+	var audited []protocol.AuditRecord
+	runner.Deps.Audit = func(_ context.Context, r protocol.AuditRecord) { audited = append(audited, r) }
 	info, err := sched.Fire(ctx, trg.ID, `{"pr": 42}`, FireWebhook)
 	if err != nil {
 		t.Fatalf("Fire: %v", err)

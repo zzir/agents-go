@@ -37,7 +37,7 @@ const (
 type TerminalHandler struct {
 	// Audit, when set, records every terminal opened: a shell on a sandbox
 	// host is the act most worth a line. Wired at bootstrap.
-	Audit    server.AuditFunc
+	Audit    protocol.AuditFunc
 	store    *store.SandboxStore
 	manager  sandboxProvider
 	settings *settings.Reader
@@ -97,7 +97,7 @@ func (h *TerminalHandler) Handle(conn *server.WSConn) {
 
 	term, opened, release, err := h.open(conn)
 	if err == nil && h.Audit != nil {
-		h.Audit(context.WithoutCancel(conn.Context()), server.AuditRecord{
+		h.Audit(context.WithoutCancel(conn.Context()), protocol.AuditRecord{
 			Actor: conn.User, Action: "terminal.open", Resource: opened.ID,
 		})
 	}

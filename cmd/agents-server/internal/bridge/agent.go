@@ -15,7 +15,7 @@ import (
 	"github.com/zzir/agents-go/agents/tasks"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bravesearch"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/skills"
@@ -43,7 +43,7 @@ type AgentDeps struct {
 	Wakeups          *store.WakeupStore
 	// Audit records the acts a run performs on shared configuration (a
 	// save_workflow), attributed to the session's owner; nil records nothing.
-	Audit server.AuditFunc
+	Audit protocol.AuditFunc
 	// Users answers the run owner's role; nil withholds the tools only an
 	// admin gets.
 	Users     *store.UserStore

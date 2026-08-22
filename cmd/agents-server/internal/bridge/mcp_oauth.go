@@ -14,7 +14,6 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -153,17 +152,6 @@ func (c *OAuthCoordinator) clearInflight(id string, a *oauthAttempt) {
 	c.mu.Unlock()
 }
 
-// oauthCallbackPath must stay the path the router mounts and the token
-// middleware exempts — a redirect_uri pointing anywhere else under /api comes
-// back 401 (no route, no exemption, and a browser redirect carries no bearer).
-const oauthCallbackPath = server.APIPrefix + "/mcp-servers/oauth/callback"
-
-// RedirectURI builds the OAuth callback URL from the origin of the current
-// HTTP request (scheme + host), so it works regardless of bind address.
-func RedirectURI(requestOrigin string) string {
-	return requestOrigin + oauthCallbackPath
-}
-
 // ConnectResult is returned by ConnectWithOAuth.
 type ConnectResult struct {
 	// Connected is true when the server connected without needing user
@@ -177,7 +165,9 @@ type ConnectResult struct {
 // ConnectWithOAuth attempts to connect an MCP server that uses OAuth. It
 // creates the auth handler, kicks off the connection in a goroutine, and
 // returns immediately with either a Connected result or an AuthorizeURL that
-// the frontend should open.
+// the frontend should open. redirectURI is the absolute callback URL the
+// authorization server sends the browser back to — the handler's route, so
+// the handler builds it; empty means a non-interactive caller.
 // ctx bounds the SILENT paths — the saved-token direct connect below — so a
 // caller's deadline (e.g. startup auto-connect's per-server timeout) actually
 // applies. It must NOT bound the interactive full flow, which outlives the
@@ -187,15 +177,15 @@ func (c *OAuthCoordinator) ConnectWithOAuth(
 	mgr *McpManager,
 	cfg *store.McpServerConfig,
 	hc *store.HTTPMcpConfig,
-	requestOrigin string,
+	redirectURI string,
 ) (*ConnectResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	// An empty origin means a non-interactive caller (startup auto-connect) that
-	// cannot drive a browser popup; only an interactive request supersedes a
-	// prior attempt and may park the popup-wait goroutine.
-	interactive := requestOrigin != ""
+	// A non-interactive caller (startup auto-connect) cannot drive a browser
+	// popup; only an interactive request supersedes a prior attempt and may
+	// park the popup-wait goroutine.
+	interactive := redirectURI != ""
 	if interactive {
 		c.supersedeInflight(cfg.ID)
 	}
@@ -223,7 +213,7 @@ func (c *OAuthCoordinator) ConnectWithOAuth(
 	httpClient := oauthHTTPClient(mgr.proxyClient(context.Background()))
 
 	handlerCfg := &auth.AuthorizationCodeHandlerConfig{
-		RedirectURL:              RedirectURI(requestOrigin),
+		RedirectURL:              redirectURI,
 		AuthorizationCodeFetcher: fetcher,
 		Client:                   httpClient,
 		// SEP-2207: request offline_access when the server advertises it, so
@@ -247,7 +237,6 @@ func (c *OAuthCoordinator) ConnectWithOAuth(
 	if preregistered != nil {
 		handlerCfg.PreregisteredClient = preregistered
 	} else {
-		redirectURI := RedirectURI(requestOrigin)
 		handlerCfg.DynamicClientRegistrationConfig = &auth.DynamicClientRegistrationConfig{
 			Metadata: &oauthex.ClientRegistrationMetadata{
 				ClientName:   "agents-go",
@@ -333,7 +322,7 @@ func (c *OAuthCoordinator) ConnectWithOAuth(
 
 		// Logs the exact redirect_uri the AS must send the browser back to —
 		// the first thing to compare when no callback ever arrives.
-		log.Info("mcp oauth authorization URL issued; awaiting browser callback", "mcp", cfg.Name, "redirect_uri", RedirectURI(requestOrigin))
+		log.Info("mcp oauth authorization URL issued; awaiting browser callback", "mcp", cfg.Name, "redirect_uri", redirectURI)
 
 		go func() {
 			timer := time.NewTimer(oauthPendingTimeout)

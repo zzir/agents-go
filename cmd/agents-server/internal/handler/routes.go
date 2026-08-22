@@ -122,7 +122,7 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		mcpServers := api.Group("/mcp-servers")
 		mcpServers.GET("", h.McpServers.List)
 		mcpServers.POST("", admin, h.McpServers.Create)
-		mcpServers.GET("/oauth/callback", h.McpServers.OAuthCallback)
+		api.GET(mcpOAuthCallbackPath, h.McpServers.OAuthCallback)
 		mcpServers.GET("/:id", h.McpServers.Get)
 		mcpServers.PUT("/:id", admin, h.McpServers.Update)
 		mcpServers.DELETE("/:id", admin, h.McpServers.Delete)

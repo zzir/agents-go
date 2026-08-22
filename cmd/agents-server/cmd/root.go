@@ -21,6 +21,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/docs"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/handler"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/secrets"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
@@ -351,7 +352,7 @@ func run(_ *cobra.Command, _ []string) error {
 	// the log of configuration changes must not be shortened through the API
 	// it records.
 	auditStore := store.NewAuditStore(db)
-	recordAudit := func(ctx context.Context, r server.AuditRecord) {
+	recordAudit := func(ctx context.Context, r protocol.AuditRecord) {
 		err := auditStore.Record(ctx, &store.AuditEvent{
 			ActorID: r.Actor.ID, ActorEmail: r.Actor.Email,
 			Action: r.Action, Resource: r.Resource, Detail: r.Detail, ClientIP: r.ClientIP,

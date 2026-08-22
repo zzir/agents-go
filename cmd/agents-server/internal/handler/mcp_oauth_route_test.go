@@ -3,21 +3,18 @@ package handler
 import (
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 )
 
-// The authorization server sends the browser back to bridge.RedirectURI, and a
-// redirect carries no Authorization header: that path must be a mounted route
+// The authorization server sends the browser back to mcpOAuthCallbackPath, and
+// a redirect carries no Authorization header: that path must be a mounted route
 // AND exempt from the token middleware, or every MCP OAuth login ends in 401.
 func TestOAuthRedirectPathIsMountedAndUnauthenticated(t *testing.T) {
-	const origin = "http://localhost:9527"
-	path := strings.TrimPrefix(bridge.RedirectURI(origin), origin)
+	path := server.APIPrefix + mcpOAuthCallbackPath
 
 	gin.SetMode(gin.TestMode)
 

@@ -276,7 +276,7 @@ func startInteractiveConnect(t *testing.T, rs *httptest.Server) (*OAuthCoordinat
 
 	// The request context ends when the handler returns — mirror that.
 	reqCtx, cancelReq := context.WithCancel(context.Background())
-	res, err := c.ConnectWithOAuth(reqCtx, mgr, cfg, &hc, "http://127.0.0.1:1")
+	res, err := c.ConnectWithOAuth(reqCtx, mgr, cfg, &hc, "http://127.0.0.1:1/mcp-servers/oauth/callback")
 	cancelReq()
 	if err != nil {
 		t.Fatalf("ConnectWithOAuth: %v", err)

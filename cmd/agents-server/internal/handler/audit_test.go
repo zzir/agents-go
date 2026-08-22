@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/authn"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
@@ -25,8 +26,8 @@ func TestAuditLogRecordsMutations(t *testing.T) {
 	db := newTestDB(t)
 	audit := store.NewAuditStore(db)
 	var mu sync.Mutex
-	var seen []server.AuditRecord
-	record := func(ctx context.Context, r server.AuditRecord) {
+	var seen []protocol.AuditRecord
+	record := func(ctx context.Context, r protocol.AuditRecord) {
 		mu.Lock()
 		seen = append(seen, r)
 		mu.Unlock()
@@ -50,11 +51,11 @@ func TestAuditLogRecordsMutations(t *testing.T) {
 	}
 	id := strings.Trim(strings.SplitN(strings.SplitN(rec.Body.String(), `"id":"`, 2)[1], `"`, 2)[0], `"`)
 	// The line lands on its own goroutine, after the response.
-	recorded := func(n int) []server.AuditRecord {
+	recorded := func(n int) []protocol.AuditRecord {
 		deadline := time.Now().Add(2 * time.Second)
 		for {
 			mu.Lock()
-			got := append([]server.AuditRecord(nil), seen...)
+			got := append([]protocol.AuditRecord(nil), seen...)
 			mu.Unlock()
 			if len(got) >= n || time.Now().After(deadline) {
 				return got

@@ -12,6 +12,7 @@ import (
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -24,6 +25,11 @@ type McpServerHandler struct {
 	// from the direct connection.
 	baseURL string
 }
+
+// mcpOAuthCallbackPath is the MCP OAuth redirect route, relative to the API
+// group. It must stay a path server.TokenAuth exempts — a browser redirect
+// carries no bearer, so anywhere else under the API answers 401.
+const mcpOAuthCallbackPath = "/mcp-servers/oauth/callback"
 
 // NewMcpServerHandler returns a handler backed by the given store and connection manager.
 func NewMcpServerHandler(s *store.McpServerStore, m *bridge.McpManager, oc *bridge.OAuthCoordinator, baseURL string) *McpServerHandler {
@@ -338,8 +344,8 @@ func (h *McpServerHandler) Connect(c *gin.Context) {
 	if cfg.TransportType == "streamable_http" {
 		var hc store.HTTPMcpConfig
 		if err := json.Unmarshal(cfg.Config, &hc); err == nil && hc.AuthMode == "oauth" {
-			origin := h.externalOrigin(c.Request)
-			result, err := h.oauth.ConnectWithOAuth(c.Request.Context(), h.manager, cfg, &hc, origin)
+			redirectURI := h.externalOrigin(c.Request) + server.APIPrefix + mcpOAuthCallbackPath
+			result, err := h.oauth.ConnectWithOAuth(c.Request.Context(), h.manager, cfg, &hc, redirectURI)
 			if err != nil {
 				upstreamError(c, err)
 				return
