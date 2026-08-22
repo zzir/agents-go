@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,17 +15,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/zzir/agents-go/cmd/agents-server/internal/authn"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/docs"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/handler"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/secrets"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/web"
 )
 
 var (
@@ -130,6 +123,11 @@ func run(_ *cobra.Command, _ []string) error {
 			return err
 		}
 	}
+	// Absolute, because "." means nothing to a browser reading it.
+	workspaceAbs, err := filepath.Abs(flagWorkspace)
+	if err != nil {
+		return fmt.Errorf("resolving the workspace path: %w", err)
+	}
 
 	// Stored credentials are sealed under one process key. Without a key they
 	// are plaintext — the single-user workbench — and the log says so once.
@@ -147,7 +145,6 @@ func run(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("opening database: %w", err)
 	}
 	defer db.Close()
-
 	if err := store.CreateSchema(ctx, db); err != nil {
 		return fmt.Errorf("creating schema: %w", err)
 	}
@@ -155,86 +152,17 @@ func run(_ *cobra.Command, _ []string) error {
 		return err
 	}
 
-	sessionStore := store.NewSessionStore(db)
-	entryStore := store.NewSharedEntryStore(db)
-	traceStore := store.NewTraceStore(db)
-	agentConfigStore := store.NewAgentConfigStore(db)
-	mcpServerStore := store.NewMcpServerStore(db)
-	memoryStore := store.NewMemoryStore(db)
-	settingStore := store.NewSettingStore(db)
-	settingStore.SealIf(settings.IsSecret)
-	settingReader := settings.NewReader(settingStore)
-	providerRouteStore := store.NewProviderRouteStore(db)
-	sandboxStore := store.NewSandboxStore(db)
-	guardrailStore := store.NewGuardrailStore(db)
-	pendingApprovalStore := store.NewPendingApprovalStore(db)
-	taskStore := store.NewTaskStore(db)
-	providerStore := store.NewProviderStore(db)
-	workflowStore := store.NewWorkflowStore(db)
-	triggerStore := store.NewTriggerStore(db)
-	wakeupStore := store.NewWakeupStore(db)
-	userStore := store.NewUserStore(db)
-	contextProfileStore := store.NewContextProfileStore(db)
-	guardrailResolver := bridge.NewGuardrailResolver(guardrailStore)
-	mcpManager := bridge.NewMcpManager(ctx, settingReader)
-	oauthCoordinator := bridge.NewOAuthCoordinator(mcpServerStore)
-	chatgptOAuth := bridge.NewChatGPTOAuth(providerStore, settingReader)
-	defer mcpManager.CloseAll()
-	go bridge.ConnectEnabledMcpServers(bgCtx, mcpManager, mcpServerStore, oauthCoordinator)
-	go bridge.RunTraceRetention(bgCtx, settingReader, traceStore)
-	sandboxManager := bridge.NewSandboxManager(flagWorkspace)
-	defer sandboxManager.CloseAll()
-
-	deps := &bridge.AgentDeps{
-		AgentConfigs:     agentConfigStore,
-		Providers:        providerStore,
-		McpServers:       mcpServerStore,
-		SandboxConfigs:   sandboxStore,
-		Memories:         memoryStore,
-		Settings:         settingReader,
-		ProviderRoutes:   providerRouteStore,
-		Sessions:         sessionStore,
-		Traces:           traceStore,
-		Guardrails:       guardrailResolver,
-		McpManager:       mcpManager,
-		SandboxManager:   sandboxManager,
-		ChatGPTOAuth:     chatgptOAuth,
-		PendingApprovals: pendingApprovalStore,
-		Tasks:            taskStore,
-		ContextProfiles:  contextProfileStore,
-		Workflows:        workflowStore,
-		Users:            userStore,
-		Wakeups:          wakeupStore,
-		Workspace:        flagWorkspace,
-		MaxTasks:         flagMaxTasks,
+	st := newStores(db)
+	// The audit log: who did what. A process-level retention, not a setting —
+	// the log of configuration changes must not be shortened through the API
+	// it records.
+	recordAudit := auditRecorder(st.Audit, log)
+	if flagAuditRetention > 0 {
+		go bridge.RunAuditRetention(bgCtx, st.Audit, flagAuditRetention)
 	}
-	runner := bridge.NewRunner(ctx, db, deps)
-
-	sessionHandler := handler.NewSessionHandler(handler.SessionDeps{
-		Sessions: sessionStore, Entries: entryStore, Traces: traceStore, Agents: agentConfigStore,
-		Profiles: contextProfileStore, MCP: mcpManager, MCPServers: mcpServerStore, Users: userStore,
-		Stopper: runner, Compactor: runner,
-	})
-	agentConfigHandler := handler.NewAgentConfigHandler(agentConfigStore, mcpServerStore, providerStore, guardrailResolver)
-	mcpServerHandler := handler.NewMcpServerHandler(mcpServerStore, mcpManager, oauthCoordinator, baseURL)
-	memoryHandler := handler.NewMemoryHandler(memoryStore)
-	settingHandler := handler.NewSettingHandler(settingStore)
-	skillHandler := handler.NewSkillHandler(flagWorkspace)
-	providerHandler := handler.NewProviderHandler(providerStore)
-	workflowHandler := handler.NewWorkflowHandler(workflowStore, agentConfigStore, sessionStore, runner)
-	triggerScheduler := bridge.NewTriggerScheduler(runner, triggerStore)
-	triggerHandler := handler.NewTriggerHandler(triggerStore, sessionStore, triggerScheduler)
-	providerRouteHandler := handler.NewProviderRouteHandler(providerRouteStore, providerStore)
-	guardrailHandler := handler.NewGuardrailHandler(guardrailStore, guardrailResolver)
-	terminalHandler := handler.NewTerminalHandler(sandboxStore, sandboxManager, settingReader)
-	sandboxHandler := handler.NewSandboxHandler(sandboxStore, sandboxManager, flagAllowLocalSandbox, terminalHandler, flagWorkspace)
-	traceHandler := handler.NewTraceHandler(traceStore)
-	playgroundHandler := handler.NewPlaygroundHandler(deps)
-	chatgptOAuthHandler := handler.NewChatGPTOAuthHandler(chatgptOAuth)
-	runHandler := handler.NewRunHandler(runner)
-	approvalHandler := handler.NewApprovalHandler(pendingApprovalStore, runner)
-	taskHandler := handler.NewTaskHandler(taskStore, runner)
-	wsHandler := handler.NewWSHandler(runner, sessionStore, pendingApprovalStore)
+	svc := newBridge(ctx, bgCtx, db, st, recordAudit)
+	defer svc.Close()
+	hs := newHandlers(st, svc, recordAudit, baseURL, workspaceAbs)
 
 	// The restart reconciliation, in two halves that have opposite ordering
 	// needs.
@@ -251,187 +179,28 @@ func run(_ *cobra.Command, _ []string) error {
 	// goroutine and AFTER the handlers: NewWSHandler installs
 	// runner.OnRunAttach, an ordinary field with no synchronization, and a run
 	// starting here would read it while the main goroutine was still writing.
-	runner.FailOrphanedTasks(ctx)
-	go runner.DrainPendingWakeups(bgCtx)
+	svc.Runner.FailOrphanedTasks(ctx)
+	go svc.Runner.DrainPendingWakeups(bgCtx)
 	// The reaper and the clock start after the sweep AND after the handlers,
 	// for the same reason the drain does: they end and start runs, and they
 	// announce through hooks (OnBroadcast) the WS handler has only now wired.
-	go bridge.RunApprovalReaper(bgCtx, settingReader, pendingApprovalStore, entryStore, taskStore, runner.AnnounceTask)
-	if err := triggerScheduler.Start(ctx); err != nil {
+	go bridge.RunApprovalReaper(bgCtx, st.SettingReader, st.PendingApprovals, st.Entries, st.Tasks, svc.Runner.AnnounceTask)
+	if err := svc.Scheduler.Start(ctx); err != nil {
 		return fmt.Errorf("starting the trigger scheduler: %w", err)
 	}
-	defer triggerScheduler.Stop()
+	defer svc.Scheduler.Stop()
 
-	// Absolute, because "." means nothing to a browser reading it.
-	workspaceAbs, err := filepath.Abs(flagWorkspace)
+	authSvc, err := newAuth(ctx, st, baseURL, log)
 	if err != nil {
-		return fmt.Errorf("resolving the workspace path: %w", err)
+		return err
 	}
+	go bridge.RunAuthTokenCleanup(bgCtx, st.AuthTokens)
+	go bridge.RunWakeupCleanup(bgCtx, st.Wakeups)
 
-	// Both modes keep the implicit local account, so ownership always has a
-	// referent — token mode authenticates as it, OAuth mode leaves it dormant
-	// (no identity, no token, no way to sign in as it).
-	localUser, err := userStore.EnsureLocalUser(ctx)
+	srv, err := newServer(ctx, log, authSvc, recordAudit, st, hs, baseURL)
 	if err != nil {
-		return fmt.Errorf("ensuring the local user: %w", err)
+		return err
 	}
-	authTokens := store.NewAuthTokenStore(db)
-
-	var authSvc *authn.Service
-	switch flagAuthMode {
-	case "token":
-		token := flagToken
-		if token == "" {
-			token = server.GenerateToken()
-		}
-		log.Info("auth token", "token", token)
-		authSvc = authn.NewStatic(token, localUser)
-	case "oauth":
-		// Fail-fast on a combination that could not be signed in to, or that
-		// would admit everyone: OAuth mode demands an explicit allowlist.
-		if flagToken != "" {
-			return fmt.Errorf("--token cannot combine with --auth oauth; programmatic access uses personal access tokens")
-		}
-		if baseURL == "" {
-			return fmt.Errorf("--auth oauth requires --base-url: the OAuth redirect URI derives from it")
-		}
-		googleSecret := flagGoogleSecret
-		if googleSecret == "" {
-			googleSecret = os.Getenv("AGENTS_OAUTH_GOOGLE_CLIENT_SECRET")
-		}
-		var providers []authn.OAuthProvider
-		if flagGoogleClientID != "" {
-			if googleSecret == "" {
-				return fmt.Errorf("google login needs --oauth-google-client-secret (or AGENTS_OAUTH_GOOGLE_CLIENT_SECRET)")
-			}
-			providers = append(providers, &authn.Google{ClientID: flagGoogleClientID, ClientSecret: googleSecret})
-		}
-		if len(providers) == 0 {
-			return fmt.Errorf("--auth oauth needs at least one provider (--oauth-google-client-id)")
-		}
-		domains, emails := splitList(flagAllowedDomains), splitList(flagAllowedEmails)
-		bootstrapAdmin := strings.ToLower(strings.TrimSpace(flagBootstrapAdmin))
-		for _, d := range domains {
-			if strings.Contains(d, "@") {
-				return fmt.Errorf("--allowed-domains takes domains, not addresses: %q", d)
-			}
-		}
-		for _, e := range append(emails, bootstrapAdmin) {
-			if e != "" && !strings.Contains(e, "@") {
-				return fmt.Errorf("--allowed-emails and --bootstrap-admin take addresses: %q", e)
-			}
-		}
-		if flagBootstrapAdmin != "" && bootstrapAdmin == "" {
-			return fmt.Errorf("--bootstrap-admin is blank")
-		}
-		if len(domains) == 0 && len(emails) == 0 && bootstrapAdmin == "" {
-			return fmt.Errorf("--auth oauth needs an allowlist: --allowed-domains, --allowed-emails or --bootstrap-admin")
-		}
-		if bootstrapAdmin == "" {
-			// Without a named admin the first account to sign in is it — a
-			// race anyone on an allowed domain can win until someone has.
-			if n, err := userStore.CountReal(ctx); err != nil {
-				return fmt.Errorf("counting users: %w", err)
-			} else if n == 0 {
-				log.Warn("no admin account yet: the first OAuth login becomes the admin — name one with --bootstrap-admin to choose who")
-			}
-		}
-		authSvc = authn.NewOAuth(authn.OAuthConfig{
-			Users: userStore, Tokens: authTokens,
-			BaseURL: baseURL, Providers: providers,
-			AllowedDomains: domains, AllowedEmails: emails,
-			BootstrapAdmin: bootstrapAdmin, Log: log,
-		})
-	default:
-		return fmt.Errorf("unknown --auth mode %q (token or oauth)", flagAuthMode)
-	}
-	go bridge.RunAuthTokenCleanup(bgCtx, authTokens)
-	go bridge.RunWakeupCleanup(bgCtx, wakeupStore)
-
-	// The audit log: who did what. A process-level retention, not a setting —
-	// the log of configuration changes must not be shortened through the API
-	// it records.
-	auditStore := store.NewAuditStore(db)
-	recordAudit := func(ctx context.Context, r protocol.AuditRecord) {
-		err := auditStore.Record(ctx, &store.AuditEvent{
-			ActorID: r.Actor.ID, ActorEmail: r.Actor.Email,
-			Action: r.Action, Resource: r.Resource, Detail: r.Detail, ClientIP: r.ClientIP,
-		})
-		if err != nil {
-			log.Error("audit record failed", "error", err, "action", r.Action)
-		}
-	}
-	if flagAuditRetention > 0 {
-		go bridge.RunAuditRetention(bgCtx, auditStore, flagAuditRetention)
-	}
-	wsHandler.Audit = recordAudit
-	terminalHandler.Audit = recordAudit
-	deps.Audit = recordAudit
-
-	srv := server.New(log, authSvc.Authenticate, recordAudit)
-	srv.SetImageHosts(authSvc.AvatarHosts())
-	// A replay posts a stored span payload back: the body cap follows the
-	// size the settings let a span keep, plus room for the rest of the request.
-	srv.SetBodyLimit(server.APIPrefix+"/playground/generate", func() int64 {
-		return int64(settingReader.Int(ctx, settings.KeyTraceSpanDataKB))*1024 + 256*1024
-	})
-	authHandler := handler.NewAuthHandler(authSvc, authTokens, userStore, auditStore)
-	authHandler.Conns = srv.Conns
-	if flagTrustedProxies != "" {
-		proxies := strings.Split(flagTrustedProxies, ",")
-		for i := range proxies {
-			proxies[i] = strings.TrimSpace(proxies[i])
-		}
-		if err := srv.SetTrustedProxies(proxies); err != nil {
-			return fmt.Errorf("invalid --trusted-proxies: %w", err)
-		}
-	} else if baseURL != "" {
-		// --base-url is the "behind a proxy" signal; without trusted proxies
-		// every client shares the proxy's IP and so one per-IP budget.
-		log.Warn("--base-url is set but --trusted-proxies is not: every request arrives from the proxy's address, so all users share one per-IP rate budget")
-	}
-	srv.RegisterAPI(handler.Handlers{
-		Authz: handler.AuthzDeps{
-			Sessions: sessionStore, Tasks: taskStore, Approvals: pendingApprovalStore,
-			Triggers: triggerStore, Hub: runner.Hub(),
-		},
-		Auth:           authHandler,
-		Sessions:       sessionHandler,
-		Runs:           runHandler,
-		Approvals:      approvalHandler,
-		Tasks:          taskHandler,
-		Agents:         agentConfigHandler,
-		McpServers:     mcpServerHandler,
-		Memories:       memoryHandler,
-		Settings:       settingHandler,
-		Skills:         skillHandler,
-		Providers:      providerHandler,
-		Workflows:      workflowHandler,
-		Triggers:       triggerHandler,
-		ProviderRoutes: providerRouteHandler,
-		Guardrails:     guardrailHandler,
-		Sandboxes:      sandboxHandler,
-		Traces:         traceHandler,
-		Playground:     playgroundHandler,
-		ChatGPT:        chatgptOAuthHandler,
-		Server: handler.ServerInfo{
-			Version:           buildVersion,
-			Workspace:         workspaceAbs,
-			AllowLocalSandbox: flagAllowLocalSandbox,
-			MaxTasks:          runner.Hub().MaxTasks(),
-		},
-	}.Register)
-	srv.RegisterWS(wsHandler.Handle, terminalHandler.Handle)
-	srv.RegisterHook(triggerHandler.Hook)
-
-	srv.ServeHealth(buildVersion)
-	srv.ServeOpenAPI(docs.SpecYAML)
-
-	staticFS, err := fs.Sub(web.StaticFS, "frontend/dist")
-	if err != nil {
-		return fmt.Errorf("embedding static files: %w", err)
-	}
-	srv.ServeStatic(staticFS)
 
 	addr := fmt.Sprintf("%s:%d", flagHost, flagPort)
 	httpSrv := &http.Server{
@@ -465,7 +234,7 @@ func run(_ *cobra.Command, _ []string) error {
 	log.Info("shutting down")
 	// The clock first: a tick during the drain would only start a run the
 	// drain refuses, recorded on the trigger as a failure that was nobody's.
-	triggerScheduler.Stop()
+	svc.Scheduler.Stop()
 	// Then the maintenance loops, for the reason at bgCtx's creation.
 	stopBg()
 	// Drain FIRST, then the listener. Each live run is cancelled and waited
@@ -476,7 +245,7 @@ func run(_ *cobra.Command, _ []string) error {
 	// streams that were waiting on those very runs.
 	drainCtx, cancelDrain := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelDrain()
-	runner.Shutdown(drainCtx)
+	svc.Runner.Shutdown(drainCtx)
 
 	// The WebSocket clients hear a going-away frame rather than a dropped
 	// TCP connection (hijacked connections are outside Shutdown's reach).

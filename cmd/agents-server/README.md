@@ -1544,7 +1544,8 @@ and updating or deleting a sandbox closes its live terminals.
 ```
 cmd/agents-server/
 ├── main.go                     entry point
-├── cmd/root.go                 CLI flags & server bootstrap
+├── cmd/root.go                 CLI flags, start-up and shutdown ordering
+├── cmd/wire.go                 the composition root: stores → bridge → handlers → auth → server
 ├── internal/
 │   ├── server/                 Gin engine, routing, WS upgrade + heartbeat
 │   │   ├── auth.go             bearer middleware (AuthFunc), the auth-exempt list
