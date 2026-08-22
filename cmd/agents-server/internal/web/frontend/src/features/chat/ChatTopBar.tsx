@@ -2,7 +2,7 @@ import { IconButton } from '@primer/react';
 import { FileDirectoryIcon, MeterIcon, PulseIcon, StackIcon, TerminalIcon } from '@primer/octicons-react';
 import type { ReactElement } from 'react';
 import type { InspectorPanel } from '@/features/chat/ChatView';
-import { useChatSession, useChatBackground } from '@/features/chat/ChatSessionContext';
+import { useChatSession } from '@/features/chat/ChatSessionContext';
 import { projectBase } from '@/lib/binding';
 
 interface ChatTopBarProps {
@@ -29,9 +29,6 @@ export function ChatTopBar({
   binding,
 }: ChatTopBarProps): ReactElement {
   const { sessionId } = useChatSession();
-  // Tasks and workflow executions both — the panel holds either, so a session
-  // with only a workflow must not find the button greyed out.
-  const backgroundCount = useChatBackground().length;
   return (
     <div className="chat-topbar">
       <div className="chat-topbar-info">
@@ -53,8 +50,10 @@ export function ChatTopBar({
           variant="invisible"
           size="small"
           aria-label="Tasks"
+          // Same gate as the other lenses: an empty session opens to its
+          // empty state, not a greyed-out button.
+          disabled={!sessionId}
           onClick={() => onPanelChange(panel?.kind === 'tasks' ? null : { kind: 'tasks' })}
-          disabled={!sessionId || backgroundCount === 0}
         />
         <IconButton
           icon={PulseIcon}

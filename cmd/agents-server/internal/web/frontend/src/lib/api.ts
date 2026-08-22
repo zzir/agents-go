@@ -125,8 +125,9 @@ export const api = {
       setRole: (id: string, role: 'admin' | 'member') =>
         request(`/auth/users/${encodeURIComponent(id)}/role`, { method: 'PUT', body: JSON.stringify({ role }) }),
     },
-    // Admin: the audit log, newest first.
-    audit: (limit = 50): Promise<S['store.AuditEvent'][]> => request(`/auth/audit?limit=${limit}`),
+    // Admin: the audit log, newest first; `before` (RFC 3339) pages older.
+    audit: (limit = 50, before?: string): Promise<S['store.AuditEvent'][]> =>
+      request(`/auth/audit?limit=${limit}${before ? `&before=${encodeURIComponent(before)}` : ''}`),
     // Personal access tokens (OAuth mode): the create response is the only
     // place a token's plaintext appears.
     pats: {

@@ -1,8 +1,10 @@
 import { type ReactNode, useCallback } from 'react';
-import { Button, IconButton } from '@primer/react';
-import { GearIcon, MoonIcon, SunIcon, ThreeBarsIcon } from '@primer/octicons-react';
+import { IconButton } from '@primer/react';
+import { MoonIcon, SunIcon, ThreeBarsIcon } from '@primer/octicons-react';
 import { useTheme } from '@/theme/ThemeProvider';
 import { useNarrow, useResizablePane } from '@/lib/hooks';
+import { UserMenu } from '@/layout/UserMenu';
+import type { AuthUser } from '@/lib/api';
 
 const PANE_WIDTH_KEY = 'paneWidth';
 const PANE_MIN = 260;
@@ -10,14 +12,16 @@ const PANE_MAX = 400;
 const PANE_DEFAULT = 300;
 
 interface AppShellProps {
+  user: AuthUser | null;
   onSettingsOpen: () => void;
+  onAdminOpen: () => void;
   sidebarPane: ReactNode;
   sidebarOpen: boolean;
   onSidebarToggle: (open: boolean) => void;
   children: ReactNode;
 }
 
-export function AppShell({ onSettingsOpen, sidebarPane, sidebarOpen, onSidebarToggle, children }: AppShellProps) {
+export function AppShell({ user, onSettingsOpen, onAdminOpen, sidebarPane, sidebarOpen, onSidebarToggle, children }: AppShellProps) {
   const { theme, toggle } = useTheme();
   const narrow = useNarrow();
   const closeSidebar = useCallback(() => onSidebarToggle(false), [onSidebarToggle]);
@@ -31,7 +35,7 @@ export function AppShell({ onSettingsOpen, sidebarPane, sidebarOpen, onSidebarTo
           <IconButton icon={ThreeBarsIcon} variant="invisible" aria-label="Open sidebar" onClick={() => onSidebarToggle(true)} />
           <span className="mobile-header-title" />
           <IconButton icon={theme === 'day' ? MoonIcon : SunIcon} variant="invisible" aria-label="Toggle theme" onClick={toggle} />
-          <IconButton icon={GearIcon} variant="invisible" aria-label="Settings" onClick={onSettingsOpen} />
+          <UserMenu user={user} onSettingsOpen={onSettingsOpen} onAdminOpen={onAdminOpen} compact />
         </header>
       )}
 
@@ -45,12 +49,8 @@ export function AppShell({ onSettingsOpen, sidebarPane, sidebarOpen, onSidebarTo
             </div>
             {!narrow && (
               <div className="sidebar-footer">
-                <Button variant="invisible" size="small" onClick={onSettingsOpen}>
-                  <GearIcon size={16} /> Settings
-                </Button>
-                <Button variant="invisible" size="small" onClick={toggle} aria-label="Toggle theme">
-                  {theme === 'day' ? <MoonIcon size={16} /> : <SunIcon size={16} />}
-                </Button>
+                <UserMenu user={user} onSettingsOpen={onSettingsOpen} onAdminOpen={onAdminOpen} />
+                <IconButton icon={theme === 'day' ? MoonIcon : SunIcon} variant="invisible" size="small" aria-label="Toggle theme" onClick={toggle} />
               </div>
             )}
           </div>

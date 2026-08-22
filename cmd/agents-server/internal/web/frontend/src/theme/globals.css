@@ -77,6 +77,7 @@ a:hover {
     --zIndex-panel: 40;     /* side panel (mobile) */
     --zIndex-backdrop: 49;  /* sidebar backdrop, directly under the drawer */
     --zIndex-drawer: 50;    /* sidebar (mobile) */
+    --zIndex-portal: 60;    /* Primer's portal (menus, dialogs): above the mobile panel and drawer */
     --zIndex-overlay: 200;  /* zoom overlay */
     --zIndex-toast: 1100;   /* above everything, dialogs included */
 }
@@ -86,6 +87,13 @@ a:hover {
     flex-direction: column;
     height: 100vh;
     overflow: hidden;
+}
+
+/* Primer portals its overlays into this root and orders them by DOM position,
+   with no z-index of their own: without one here a menu opened from the
+   mobile header paints beneath the fixed side panel and drawer. */
+#__primerPortalRoot__ {
+    z-index: var(--zIndex-portal);
 }
 
 /* Mobile top bar — conditionally rendered via useNarrow() in AppShell */
@@ -220,14 +228,48 @@ a:hover {
     min-height: 0;
 }
 
-/* Sidebar footer (settings + theme) */
+/* Sidebar footer (account menu + theme) */
 .sidebar-footer {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: var(--base-size-4);
     padding: var(--base-size-4) var(--base-size-8);
     border-top: 1px solid var(--borderColor-muted);
     flex-shrink: 0;
+    min-width: 0;
+}
+
+/* The account menu's trigger: an invisible button holding avatar + name. */
+.user-menu-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--base-size-8);
+    min-width: 0;
+    max-width: 100%;
+    padding: var(--base-size-4) var(--base-size-8);
+    border: 0;
+    border-radius: var(--borderRadius-medium);
+    background: transparent;
+    color: var(--fgColor-default);
+    font: inherit;
+    cursor: pointer;
+}
+.user-menu-trigger:hover:not(:disabled) {
+    background: var(--control-transparent-bgColor-hover);
+}
+.user-menu-trigger:disabled {
+    cursor: default;
+}
+.user-menu-compact {
+    padding: var(--base-size-4);
+}
+.user-menu-name {
+    font-size: var(--base-text-size-sm);
+    font-weight: var(--base-text-weight-medium);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 /* --- Main content area --- */
@@ -671,17 +713,16 @@ a:hover {
 }
 
 /* Account panel */
-.account-avatar {
+.user-avatar {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
   border-radius: 50%;
   background: var(--bgColor-accent-muted);
   color: var(--fgColor-accent);
   font-weight: 600;
   flex-shrink: 0;
+  object-fit: cover;
 }
 .account-pat-row {
   padding: 8px 0;
@@ -702,8 +743,4 @@ a:hover {
   font-family: var(--fontStack-monospace, monospace);
   font-size: 12px;
   word-break: break-all;
-}
-
-.account-avatar-img {
-  object-fit: cover;
 }

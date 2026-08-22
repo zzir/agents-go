@@ -10,6 +10,7 @@ import { toast } from '@/lib/toast';
 import { BADGE } from '@/lib/badges';
 import { Disclosure } from '@/components/Disclosure';
 import { SessionPicker, UnboundHint } from '@/features/sessions/SessionPicker';
+import { shortTime } from '@/lib/format';
 
 // A trigger starts work without a conversation asking — on a cron schedule,
 // or on a signed webhook call — into the session it names, with the brief its
@@ -76,12 +77,6 @@ export function SecretBox({ trigger }: { trigger: Trigger }) {
       <Button size="small" onClick={() => copy('example', example)}>{copied === 'example' ? 'Copied' : 'Copy example'}</Button>
     </div>
   );
-}
-
-export function fmtWhen(iso?: string): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return isNaN(d.getTime()) ? '' : d.toLocaleString();
 }
 
 // useTriggerActions is what every trigger list does with a row — enable /
@@ -184,7 +179,7 @@ export function TriggerRow({ t, sessionName, targetName, actions }:
         </div>
         {t.brief && <div className="wf-trigger-brief">{t.brief}</div>}
         <div className={'wf-trigger-last' + (t.last_error ? ' wf-trigger-error' : '')}>
-          {t.last_error ? `last fire failed: ${t.last_error}` : t.last_fired_at ? `last fired ${fmtWhen(t.last_fired_at)}${started}` : 'never fired'}
+          {t.last_error ? `last fire failed: ${t.last_error}` : t.last_fired_at ? `last fired ${shortTime(t.last_fired_at)}${started}` : 'never fired'}
         </div>
       </div>
     </Disclosure>

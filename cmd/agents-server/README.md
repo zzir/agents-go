@@ -200,7 +200,10 @@ Two rules, enforced at the routes (`handler/authz.go`), shape who may do what:
   owner's sessions (existence and recency), and `DELETE /sessions/:id` works on
   any of them; opening, reading or running one is the owner's alone. Roles are
   `admin` and `member`: the first OAuth account and `--bootstrap-admin` sign
-  in as admin; the Account panel lets an admin promote or demote others.
+  in as admin. In the UI the account menu (sidebar footer: avatar and name)
+  holds Settings, Sign out and — for admins — Admin, a dialog of three
+  panels: Members (roles), Sessions (every owner's, delete only) and Audit
+  logs. Settings for a member is their Account alone (profile and PATs).
 
 In token mode the one local account is an admin and owns everything, so every
 check passes.
@@ -217,7 +220,8 @@ role, a scope), never a request body and never a secret. Failures and reads
 leave nothing. Retention is the process's `--audit-retention-days` (default
 0 = keep forever), deliberately not a setting: the log of configuration
 changes must not be shortened through the API it records. Admins read it at
-`GET /auth/audit` and in the Account panel.
+`GET /auth/audit` (`?limit=&before=<RFC 3339>` pages older) and in the Admin
+dialog's Audit logs.
 
 Exempt from auth: the MCP OAuth redirect callback
 (`GET /api/v1/mcp-servers/oauth/callback` — the browser follows it without an

@@ -3,7 +3,7 @@ import { Dialog, NavList as PrimerNavList, Flash, Button } from '@primer/react';
 import { SecretInput } from '@/components/SecretInput';
 import {
   DependabotIcon, McpIcon, ShieldCheckIcon, SparkleIcon, CpuIcon, PlugIcon,
-  ContainerIcon, DatabaseIcon, GearIcon, PersonIcon,
+  ContainerIcon, DatabaseIcon, GearIcon, PersonIcon, PeopleIcon, CommentDiscussionIcon, LogIcon,
   XCircleFillIcon, AlertFillIcon, CheckCircleFillIcon, InfoIcon,
 } from '@primer/octicons-react';
 import type { Icon } from '@primer/octicons-react';
@@ -87,12 +87,14 @@ function GlobalToast() {
   );
 }
 
+type DialogTab = { key: string; label: string; icon: Icon; load: () => Promise<{ default: React.ComponentType }> };
+
 // Ordered so each section builds on the ones above it: a provider is what an
 // agent talks to, an agent is what runs, then what an agent attaches (tools,
 // execution, state, the checks around it). General last. Workflows are not
 // here: they are authored once and then WATCHED, which is the sidebar's
 // Workflows hub, not a settings tab.
-const DIALOG_TABS: { key: string; label: string; icon: Icon; load: () => Promise<{ default: React.ComponentType }> }[] = [
+const SETTINGS_TABS: DialogTab[] = [
   { key: 'providers',  label: 'Providers',  icon: CpuIcon,        load: () => import('@/features/providers/ProviderPanel') },
   { key: 'agents',     label: 'Agents',     icon: DependabotIcon, load: () => import('@/features/agents/AgentConfigPanel') },
   { key: 'mcp',        label: 'MCP',        icon: McpIcon,        load: () => import('@/features/mcp/McpServerPanel') },
@@ -105,15 +107,25 @@ const DIALOG_TABS: { key: string; label: string; icon: Icon; load: () => Promise
   { key: 'general',    label: 'General',    icon: GearIcon,       load: () => import('@/features/settings/SettingsPanel') },
 ];
 
+// Shared configuration is admin-written (the server refuses members with
+// 403); a member's settings are their own account. The tab list reflects
+// that instead of showing panels whose every Save would be refused.
+const MEMBER_SETTINGS_TABS = SETTINGS_TABS.filter(t => t.key === 'account');
+
+// The Admin dialog: people and what they own, then the record of it all.
+const ADMIN_TABS: DialogTab[] = [
+  { key: 'members',  label: 'Members',    icon: PeopleIcon,            load: () => import('@/features/admin/MembersPanel') },
+  { key: 'sessions', label: 'Sessions',   icon: CommentDiscussionIcon, load: () => import('@/features/admin/SessionsPanel') },
+  { key: 'audit',    label: 'Audit logs', icon: LogIcon,               load: () => import('@/features/admin/AuditPanel') },
+];
+
 function TabLoadError() {
   return <Flash variant="danger">Failed to load this panel — reload the page.</Flash>;
 }
 
-function SettingsDialog({ onClose, role }: { onClose: () => void; role: string }) {
-  // Shared configuration is admin-written (the server refuses members with
-  // 403); a member's settings are their own account. The tab list reflects
-  // that instead of showing panels whose every Save would be refused.
-  const tabs = useMemo(() => role === 'admin' ? DIALOG_TABS : DIALOG_TABS.filter(t => t.key === 'account'), [role]);
+// PanelDialog is the tabbed dialog behind both Settings and Admin: a nav of
+// lazily loaded panels, one open at a time.
+function PanelDialog({ title, tabs, onClose }: { title: string; tabs: DialogTab[]; onClose: () => void }) {
   const [tab, setTab] = useState(tabs[0].key);
   const [TabComp, setTabComp] = useState<React.ComponentType | null>(null);
 
@@ -137,7 +149,7 @@ function SettingsDialog({ onClose, role }: { onClose: () => void; role: string }
 
   return (
     <Dialog
-      title="Settings"
+      title={title}
       onClose={() => onClose()}
       height="large"
       style={{ width: 'min(960px, calc(100vw - 64px))' }}
@@ -149,7 +161,7 @@ function SettingsDialog({ onClose, role }: { onClose: () => void; role: string }
     >
       <div className="settings-layout">
         <nav className="settings-nav">
-          <PrimerNavList aria-label="Settings sections">
+          <PrimerNavList aria-label={`${title} sections`}>
             {tabs.map(t => (
               <PrimerNavList.Item
                 key={t.key}
@@ -363,6 +375,7 @@ function App() {
   // The Workflows hub, when it is the open view (null = a conversation).
   const [hubTab, setHubTab] = useState<HubTab | null>(() => readHash().hub);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [adminOpen, setAdminOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sessionReloadKey, setSessionReloadKey] = useState(0);
   // Bumped by workflow.updated: the chat's workflow strip and Tasks panel
@@ -1004,7 +1017,7 @@ function App() {
 
   return (
     <ThemeProvider>
-      <AppShell onSettingsOpen={() => setSettingsOpen(true)} sidebarPane={sidebarPane} sidebarOpen={sidebarOpen} onSidebarToggle={setSidebarOpen}>
+      <AppShell user={me} onSettingsOpen={() => setSettingsOpen(true)} onAdminOpen={() => setAdminOpen(true)} sidebarPane={sidebarPane} sidebarOpen={sidebarOpen} onSidebarToggle={setSidebarOpen}>
         {/* A bad turn payload must not take the sidebar, composer and socket
             down with it; switching session or hub tab retries. */}
         <ErrorBoundary resetKey={hubTab ?? activeSession}>{main}</ErrorBoundary>
@@ -1020,7 +1033,12 @@ function App() {
           </React.Suspense>
         )}
       </AppShell>
-      {settingsOpen && <SettingsDialog role={me?.role || 'member'} onClose={() => { setSettingsOpen(false); setSettingsReloadKey(k => k + 1); }} />}
+      {settingsOpen && (
+        <PanelDialog title="Settings" tabs={me?.role === 'admin' ? SETTINGS_TABS : MEMBER_SETTINGS_TABS}
+          onClose={() => { setSettingsOpen(false); setSettingsReloadKey(k => k + 1); }} />
+      )}
+      {/* Admin deletes sessions; the sidebar relists on close. */}
+      {adminOpen && <PanelDialog title="Admin" tabs={ADMIN_TABS} onClose={() => { setAdminOpen(false); setSessionReloadKey(k => k + 1); }} />}
       {/* Lost-connection pill: the socket announces a drop here, not only at
           the moment a send fails. */}
       {!connected && <div className="conn-indicator" role="status">Reconnecting…</div>}

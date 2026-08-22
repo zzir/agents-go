@@ -3,18 +3,17 @@ import { Button, Flash, FormControl, Label, PageHeader, Stack, TextInput, useCon
 import { Blankslate } from '@primer/react/experimental';
 import { PersonIcon, TrashIcon, CopyIcon } from '@primer/octicons-react';
 
-import { api, authConfig, logout, type ApiSchemas, type AuthConfig, type AuthUser } from '@/lib/api';
+import { UserAvatar, displayName } from '@/components/UserAvatar';
+import { api, authConfig, type ApiSchemas, type AuthConfig, type AuthUser } from '@/lib/api';
+import { shortDate } from '@/lib/format';
 import { toast } from '@/lib/toast';
 
 type PatView = ApiSchemas['protocol.PatView'];
 
-// The implicit token-mode account (store.LocalUserID); dormant in OAuth mode
-// and not a person to manage.
-const LOCAL_USER_ID = '00000000-0000-0000-0000-000000000001';
-
-// AccountPanel: who is signed in, sign out, and (OAuth mode) personal access
-// tokens. In token mode the PAT section is absent — the server refuses the
-// surface there, since a PAT could never authenticate against a static token.
+// AccountPanel: who is signed in and (OAuth mode) personal access tokens. In
+// token mode the PAT section is absent — the server refuses the surface
+// there, since a PAT could never authenticate against a static token.
+// Signing out and administration live in the sidebar's account menu.
 export function AccountPanel() {
   const [cfg, setCfg] = useState<AuthConfig | null>(null);
   const [me, setMe] = useState<AuthUser | null>(null);
@@ -34,24 +33,18 @@ export function AccountPanel() {
         <PageHeader.TitleArea>
           <PageHeader.Title>Account</PageHeader.Title>
         </PageHeader.TitleArea>
-        <PageHeader.Actions>
-          <Button onClick={() => { void logout(); }}>Sign out</Button>
-        </PageHeader.Actions>
       </PageHeader>
       {error ? <Flash variant="danger">{error}</Flash> : null}
       {me ? (
         <Stack direction="horizontal" align="center" gap="condensed">
-          {me.avatar_url
-            ? <img className="account-avatar account-avatar-img" src={me.avatar_url} alt="" referrerPolicy="no-referrer" />
-            : <span className="account-avatar" aria-hidden>{initialOf(me)}</span>}
+          <UserAvatar user={me} />
           <Stack gap="none">
-            <span className="account-name">{me.name || me.email}</span>
+            <span className="account-name">{displayName(me)}</span>
             <span className="account-muted">{me.email}</span>
           </Stack>
           <Label variant={me.role === 'admin' ? 'accent' : 'secondary'}>{me.role}</Label>
         </Stack>
       ) : null}
-      {me?.role === 'admin' && cfg?.mode === 'oauth' ? <AdminSection me={me} /> : null}
       {cfg?.mode === 'oauth' ? <PatSection /> : cfg ? (
         <Blankslate>
           <Blankslate.Visual><PersonIcon size={24} /></Blankslate.Visual>
@@ -65,11 +58,6 @@ export function AccountPanel() {
       ) : null}
     </Stack>
   );
-}
-
-function initialOf(u: AuthUser): string {
-  const s = (u.name || u.email || '?').trim();
-  return s ? s[0].toUpperCase() : '?';
 }
 
 // PatSection lists, mints and revokes personal access tokens. The minted
@@ -175,137 +163,6 @@ function PatSection() {
       )}
     </Stack>
   );
-}
-
-type UserRow = ApiSchemas['store.User'];
-type SessionRow = ApiSchemas['store.Session'];
-type AuditRow = ApiSchemas['store.AuditEvent'];
-
-// AdminSection is the admin's management view: every account with its role,
-// and every owner's sessions — existence and recency only; content stays the
-// owner's. Deleting is management; reading is not offered.
-function AdminSection({ me }: { me: AuthUser }) {
-  const [users, setUsers] = useState<UserRow[]>([]);
-  const [sessions, setSessions] = useState<SessionRow[]>([]);
-  const [audit, setAudit] = useState<AuditRow[]>([]);
-  const [error, setError] = useState('');
-  const confirm = useConfirm();
-
-  const reload = useCallback(() => {
-    Promise.all([api.auth.users.list(), api.sessions.listAll(), api.auth.audit(50)])
-      .then(([u, s, a]) => { setUsers(u ?? []); setSessions(s ?? []); setAudit(a ?? []); })
-      .catch(() => setError('Failed to load the admin view.'));
-  }, []);
-  useEffect(() => { reload(); }, [reload]);
-
-  const emailOf = (ownerId?: string) => users.find(u => u.id === ownerId)?.email || ownerId || '';
-
-  const setRole = useCallback(async (u: UserRow, role: 'admin' | 'member') => {
-    try {
-      await api.auth.users.setRole(u.id || '', role);
-      reload();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to change the role.');
-    }
-  }, [reload]);
-
-  const removeSession = useCallback(async (s: SessionRow) => {
-    if (!(await confirm({
-      title: 'Delete session?',
-      content: `"${s.name}" (${emailOf(s.owner_id)}) and everything in it will be removed.`,
-      confirmButtonContent: 'Delete',
-      confirmButtonType: 'danger',
-    }))) return;
-    try {
-      await api.sessions.delete(s.id || '');
-      reload();
-    } catch {
-      setError('Failed to delete the session.');
-    }
-  }, [confirm, reload, users]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  return (
-    <Stack gap="normal">
-      <PageHeader role="presentation">
-        <PageHeader.TitleArea variant="medium">
-          <PageHeader.Title>Users</PageHeader.Title>
-        </PageHeader.TitleArea>
-      </PageHeader>
-      {error ? <Flash variant="danger">{error}</Flash> : null}
-      <Stack gap="none" className="account-pat-list">
-        {users.filter(u => u.id !== LOCAL_USER_ID).map(u => (
-          <Stack key={u.id} direction="horizontal" align="center" gap="condensed" className="account-pat-row">
-            <span className="account-name" style={{ flexGrow: 1 }}>{u.name || u.email}</span>
-            <span className="account-muted">{u.email}</span>
-            <Label variant={u.role === 'admin' ? 'accent' : 'secondary'}>{u.role}</Label>
-            {u.id === me.id ? null : (
-              <Button size="small" onClick={() => { void setRole(u, u.role === 'admin' ? 'member' : 'admin'); }}>
-                {u.role === 'admin' ? 'Make member' : 'Make admin'}
-              </Button>
-            )}
-          </Stack>
-        ))}
-      </Stack>
-      <PageHeader role="presentation">
-        <PageHeader.TitleArea variant="medium">
-          <PageHeader.Title>All sessions</PageHeader.Title>
-        </PageHeader.TitleArea>
-      </PageHeader>
-      <p className="account-muted">
-        Every owner's conversations, by recency. Content is the owner's alone;
-        an admin may delete one.
-      </p>
-      {sessions.length === 0 ? (
-        <span className="account-muted">No sessions.</span>
-      ) : (
-        <Stack gap="none" className="account-pat-list">
-          {sessions.map(s => (
-            <Stack key={s.id} direction="horizontal" align="center" gap="condensed" className="account-pat-row">
-              <span className="account-name" style={{ flexGrow: 1 }}>{s.name}</span>
-              <span className="account-muted">{emailOf(s.owner_id)} · {shortDate(s.updated_at)}</span>
-              <Button size="small" variant="danger" leadingVisual={TrashIcon} onClick={() => { void removeSession(s); }}>
-                Delete
-              </Button>
-            </Stack>
-          ))}
-        </Stack>
-      )}
-      <PageHeader role="presentation">
-        <PageHeader.TitleArea variant="medium">
-          <PageHeader.Title>Audit log</PageHeader.Title>
-        </PageHeader.TitleArea>
-      </PageHeader>
-      <p className="account-muted">
-        Who did what: every configuration change, approval decision, run start
-        and terminal opened — the latest 50. Retention is the server's
-        <code> --audit-retention-days</code>, not a setting.
-      </p>
-      {audit.length === 0 ? (
-        <span className="account-muted">Nothing recorded yet.</span>
-      ) : (
-        <Stack gap="none" className="account-pat-list">
-          {audit.map(e => (
-            <Stack key={e.id} direction="horizontal" align="center" gap="condensed" className="account-pat-row">
-              <code className="account-secret" style={{ flexGrow: 1 }}>{e.action}{e.resource ? ` ${e.resource}` : ''}{e.detail ? ` (${e.detail})` : ''}</code>
-              <span className="account-muted">{e.actor_email || e.actor_id} · {shortTime(e.created_at)}</span>
-            </Stack>
-          ))}
-        </Stack>
-      )}
-    </Stack>
-  );
-}
-
-function shortTime(iso?: string): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return isNaN(d.getTime()) ? '' : d.toLocaleString();
-}
-
-function shortDate(iso?: string): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return isNaN(d.getTime()) ? '' : d.toLocaleDateString();
 }
 
 export default AccountPanel;
