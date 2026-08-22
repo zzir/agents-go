@@ -151,8 +151,10 @@ function PanelDialog({ title, tabs, readOnly, onClose }: { title: string; tabs: 
     <Dialog
       title={title}
       onClose={() => onClose()}
-      height="large"
-      style={{ width: 'min(960px, calc(100vw - 64px))' }}
+      height="auto"
+      // Fills the window less Primer's own margin (its max-height/max-width
+      // clamp the same figure), so the panels get the room the screen has.
+      style={{ width: 'min(1200px, calc(100dvw - 64px))', height: 'calc(100dvh - 64px)' }}
       renderBody={({ children }) => (
         <Dialog.Body className="settings-body" style={{ padding: 0 }}>
           {children}
