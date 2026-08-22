@@ -330,7 +330,7 @@ func (h *SessionHandler) Fork(c *gin.Context) {
 	}
 
 	var req struct {
-		MessageID *int64 `json:"message_id"`
+		MessageID *string `json:"message_id"`
 		Exclusive bool   `json:"exclusive"`
 		Label     string `json:"label"`
 	}
@@ -342,7 +342,7 @@ func (h *SessionHandler) Fork(c *gin.Context) {
 
 	label := req.Label
 	label = cmp.Or(label, "fork")
-	var upTo int64
+	var upTo string
 	if req.MessageID != nil {
 		upTo = *req.MessageID
 	}

@@ -118,7 +118,7 @@ func TestPGTraceSummary(t *testing.T) {
 	if err := traces.Insert(ctx, ev); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := traces.ListSummaryBySession(ctx, sessionID, 0, 0)
+	rows, err := traces.ListSummaryBySession(ctx, sessionID, "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

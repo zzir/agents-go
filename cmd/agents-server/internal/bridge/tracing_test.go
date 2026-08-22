@@ -94,7 +94,7 @@ func TestSpanRowsCarryTheRunLineage(t *testing.T) {
 	now := time.Now()
 	p.OnSpanEnd(&tracing.Span{TraceID: "t1", SpanID: "s1", Name: "agent:x", Type: "agent", StartedAt: now, EndedAt: now})
 
-	rows, err := traces.ListBySession(ctx, "sess", 0, 0)
+	rows, err := traces.ListBySession(ctx, "sess", "", 0)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}

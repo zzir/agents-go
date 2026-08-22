@@ -34,7 +34,7 @@ func (s *TraceStore) Insert(ctx context.Context, ev *TraceEvent) error {
 // ListBySession returns trace events for sessionID ordered oldest first.
 // limit > 0 selects the newest `limit` rows (optionally only those with
 // id < beforeID); limit <= 0 returns everything.
-func (s *TraceStore) ListBySession(ctx context.Context, sessionID string, beforeID int64, limit int) ([]TraceEvent, error) {
+func (s *TraceStore) ListBySession(ctx context.Context, sessionID string, beforeID string, limit int) ([]TraceEvent, error) {
 	return s.list(ctx, sessionID, beforeID, limit, false)
 }
 
@@ -48,11 +48,11 @@ var payloadFields = []string{"input", "output", "system_instructions", "tools", 
 // each row's Data (PayloadOmitted marks the rows that had any), done in the
 // database so nothing bulky is read, sent or parsed until GetBySpan is asked
 // for one span.
-func (s *TraceStore) ListSummaryBySession(ctx context.Context, sessionID string, beforeID int64, limit int) ([]TraceEvent, error) {
+func (s *TraceStore) ListSummaryBySession(ctx context.Context, sessionID string, beforeID string, limit int) ([]TraceEvent, error) {
 	return s.list(ctx, sessionID, beforeID, limit, true)
 }
 
-func (s *TraceStore) list(ctx context.Context, sessionID string, beforeID int64, limit int, summary bool) ([]TraceEvent, error) {
+func (s *TraceStore) list(ctx context.Context, sessionID string, beforeID string, limit int, summary bool) ([]TraceEvent, error) {
 	var events []TraceEvent
 	q := s.db.NewSelect().Model(&events).
 		Where("session_id = ?", sessionID)
@@ -81,7 +81,7 @@ func (s *TraceStore) list(ctx context.Context, sessionID string, beforeID int64,
 		}
 		q = q.ExcludeColumn("data").ColumnExpr(dataExpr).ColumnExpr(omittedExpr)
 	}
-	if beforeID > 0 {
+	if beforeID != "" {
 		q = q.Where("id < ?", beforeID)
 	}
 	if limit > 0 {
@@ -147,7 +147,7 @@ func (s *TraceStore) ForkBySession(ctx context.Context, srcSessionID, dstSession
 		return nil
 	}
 	for i := range events {
-		events[i].ID = 0
+		events[i].ID = "" // minted afresh on insert
 		events[i].SessionID = dstSessionID
 	}
 	if _, err := s.db.NewInsert().Model(&events).Exec(ctx); err != nil {

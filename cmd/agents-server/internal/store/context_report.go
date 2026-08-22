@@ -144,13 +144,13 @@ func (s *EntryStore) UsageTotals(ctx context.Context, ref session.Ref) (int, err
 // definition of "active". Shared by the context report and the compaction
 // pass, so the number the panel draws is measured over the rows the pass folds.
 func (s *EntryStore) activeBranchOfRows(ctx context.Context, ref session.Ref, rows []entryRow) (map[string]bool, error) {
-	var leaves []int64
+	var leaves []string
 	for i := range rows {
 		if rows[i].Kind == string(session.EntryKindLeaf) {
 			leaves = append(leaves, rows[i].ID)
 		}
 	}
-	bodies := map[int64]session.Entry{}
+	bodies := map[string]session.Entry{}
 	if len(leaves) > 0 {
 		var err error
 		if bodies, err = s.entryBodies(ctx, ref, leaves); err != nil {
@@ -173,7 +173,7 @@ func (s *EntryStore) activeBranchOfRows(ctx context.Context, ref session.Ref, ro
 }
 
 // entryBodies decodes the named rows' entries, keyed by row id.
-func (s *EntryStore) entryBodies(ctx context.Context, ref session.Ref, ids []int64) (map[int64]session.Entry, error) {
+func (s *EntryStore) entryBodies(ctx context.Context, ref session.Ref, ids []string) (map[string]session.Entry, error) {
 	var rows []entryRow
 	if err := s.db.NewSelect().Model(&rows).
 		Column("id", "entry").
@@ -181,7 +181,7 @@ func (s *EntryStore) entryBodies(ctx context.Context, ref session.Ref, ids []int
 		Where("id IN (?)", bun.List(ids)).Scan(ctx); err != nil {
 		return nil, fmt.Errorf("reading entry bodies for session %s: %w", ref.ID, err)
 	}
-	out := make(map[int64]session.Entry, len(rows))
+	out := make(map[string]session.Entry, len(rows))
 	for i := range rows {
 		var e session.Entry
 		if json.Unmarshal([]byte(rows[i].Entry), &e) != nil {

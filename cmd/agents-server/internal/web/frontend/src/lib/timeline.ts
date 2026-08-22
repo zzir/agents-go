@@ -64,7 +64,7 @@ const DISPLAY = {
 // plus the row id the cursor pages on. Update entries are already folded into
 // their targets server-side, so nothing here needs to apply them.
 interface EntryView {
-  id?: number;
+  id?: string;
   entry_id?: string;
   parent_id?: string;
   kind: string;
@@ -184,7 +184,7 @@ interface UserEntry {
   content: string;
   // Absent on entries not yet persisted: the sender's optimistic bubble and
   // the bubble a watching browser builds from run.started's input.
-  messageId?: number;
+  messageId?: string;
   // entryId is the durable entry id, which is what a branch switch aims at —
   // messageId is a row id, and branching is expressed in entry ids.
   entryId?: string;
@@ -209,7 +209,7 @@ interface WorkflowStartedNote {
 interface SystemEntry {
   role: 'system';
   content: string;
-  messageId: number | undefined;
+  messageId: string | undefined;
   // The durable entry id, for anchors.
   entryId?: string;
   // Present on a workflow-started note; the chip renders it instead of content.
@@ -221,7 +221,7 @@ interface TurnEntry {
   parts: TurnPart[];
   // Persisted turns carry the anchoring row id; a live turn assembled from
   // stream events has none until the post-run reload swaps it in.
-  messageId?: number;
+  messageId?: string;
   runId?: string;
   // Set when this turn is one of several attempts at the same point, so the
   // renderer can offer "2 / 3 ‹ ›" instead of silently showing one of them.
@@ -231,7 +231,7 @@ interface TurnEntry {
 interface CompactionEntry {
   role: 'compaction';
   content: string;
-  messageId: number | undefined;
+  messageId: string | undefined;
   // The durable entry id — the Context panel's jump target for a checkpoint
   // that ranks among the heaviest items.
   entryId?: string;
@@ -346,7 +346,7 @@ function assemble(
   const pendingTC: Record<string, ToolCall> = {};
   let turn: TurnEntry | null = null;
   const ensureTurn = (): void => {
-    if (!turn) { turn = { role: 'turn', parts: [], messageId: 0 }; timeline.push(turn); }
+    if (!turn) { turn = { role: 'turn', parts: [], messageId: '' }; timeline.push(turn); }
   };
   const finishTurn = (): void => { turn = null; };
   // anchor pins the turn to the row it last absorbed, so a fork or a scroll

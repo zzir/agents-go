@@ -20,7 +20,7 @@ func TestGetEntriesPagination(t *testing.T) {
 	}
 
 	// No limit: all 5, oldest-first.
-	all, err := s.GetEntries(ctx, session.Direct("s1"), 0, 0)
+	all, err := s.GetEntries(ctx, session.Direct("s1"), "", 0)
 	if err != nil {
 		t.Fatalf("get all: %v", err)
 	}
@@ -34,7 +34,7 @@ func TestGetEntriesPagination(t *testing.T) {
 	}
 
 	// limit=2 returns the newest two, still ascending.
-	page, err := s.GetEntries(ctx, session.Direct("s1"), 0, 2)
+	page, err := s.GetEntries(ctx, session.Direct("s1"), "", 2)
 	if err != nil {
 		t.Fatalf("get page: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestTraceRetention(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("want 1 pruned, got %d", n)
 	}
-	left, _ := ts.ListBySession(ctx, "s1", 0, 0)
+	left, _ := ts.ListBySession(ctx, "s1", "", 0)
 	if len(left) != 1 || left[0].Name != "new" {
 		t.Fatalf("wrong survivor: %+v", left)
 	}

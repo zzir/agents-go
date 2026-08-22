@@ -6572,7 +6572,7 @@ export interface components {
             diagnostics?: components["schemas"]["agents.Diagnostic"][];
             display?: components["schemas"]["agents.ItemDisplay"];
             entry_id?: string;
-            id?: number;
+            id?: string;
             kind?: string;
             /**
              * @description OnPath reports whether this entry is on the session's ACTIVE branch. An
@@ -6878,7 +6878,7 @@ export interface components {
             detail?: string;
             ended_at?: string;
             error?: string;
-            id?: number;
+            id?: string;
             kind?: string;
             name?: string;
             parent_id?: string;

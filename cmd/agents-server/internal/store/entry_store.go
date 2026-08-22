@@ -21,7 +21,7 @@ import (
 type entryRow struct {
 	bun.BaseModel `bun:"table:entries,alias:e"`
 
-	ID        int64  `bun:"id,pk,autoincrement" json:"id"`
+	ID        string `bun:"id,pk,type:uuid"     json:"id"`
 	SessionID string `bun:"session_id,notnull,type:uuid" json:"session_id"`
 	// Gen is the session generation these entries belong to; see
 	// session.Ref. Empty is the direct scope, not a wildcard.
@@ -55,6 +55,14 @@ type entryRow struct {
 	// soft delete: the row stays so the UI can still show what was folded.
 	Compacted bool      `bun:"compacted"          json:"compacted,omitempty"`
 	CreatedAt time.Time `bun:"created_at,notnull" json:"created_at"`
+}
+
+// BeforeAppendModel mints the id on insert; bun invokes it on insert and update.
+func (r *entryRow) BeforeAppendModel(_ context.Context, q bun.Query) error {
+	if _, ok := q.(*bun.InsertQuery); ok && r.ID == "" {
+		r.ID = NewID()
+	}
+	return nil
 }
 
 // appendPointRow is where one session stands: the branch tip, and the highest
@@ -558,7 +566,7 @@ var _ session.Storage = (*EntryStore)(nil)
 // cursor pages on. Nothing is re-derived here — Display, Source, Usage and
 // Diagnostics come from what the runner wrote.
 type EntryView struct {
-	ID       int64  `json:"id"`
+	ID       string `json:"id"`
 	EntryID  string `json:"entry_id"`
 	ParentID string `json:"parent_id,omitempty"`
 	Kind     string `json:"kind"`
@@ -605,7 +613,7 @@ type CompactionInfo struct {
 // over the whole session before the cursor is applied (an update and the entry
 // it amends need not land in the same page), so this reads every row on every
 // call — a known cost, paid once per page a person asks for.
-func (s *EntryStore) GetEntries(ctx context.Context, ref session.Ref, beforeID int64, limit int) ([]EntryView, error) {
+func (s *EntryStore) GetEntries(ctx context.Context, ref session.Ref, beforeID string, limit int) ([]EntryView, error) {
 	var rows []entryRow
 	if err := s.db.NewSelect().Model(&rows).
 		Where("session_id = ?", ref.ID).Where("gen = ?", ref.Gen).
@@ -649,7 +657,7 @@ func (s *EntryStore) GetEntries(ctx context.Context, ref session.Ref, beforeID i
 
 	// The cursor applies to the folded list: paging on raw row ids would return
 	// short pages wherever an update was folded away.
-	if beforeID > 0 {
+	if beforeID != "" {
 		cut := len(views)
 		for i, v := range views {
 			if v.ID >= beforeID {
@@ -681,7 +689,7 @@ type RunQuestion struct {
 // over the page it holds, here over all of them (a GetEntries read, the cost
 // the messages page pays too).
 func (s *EntryStore) RunQuestions(ctx context.Context, ref session.Ref) ([]RunQuestion, error) {
-	views, err := s.GetEntries(ctx, ref, 0, 0)
+	views, err := s.GetEntries(ctx, ref, "", 0)
 	if err != nil {
 		return nil, err
 	}
@@ -871,12 +879,12 @@ func (s *EntryStore) appendHostNote(ctx context.Context, ref session.Ref, kind, 
 // rewritten to the destination's namespace and parent links remapped alongside,
 // so the fork is a self-consistent tree — copying ids verbatim would make the
 // two sessions' entries indistinguishable by the id every lookup keys on.
-func forkEntriesTx(ctx context.Context, tx bun.Tx, src, dst session.Ref, upToID int64, exclusive bool) ([]string, error) {
+func forkEntriesTx(ctx context.Context, tx bun.Tx, src, dst session.Ref, upToID string, exclusive bool) ([]string, error) {
 	var rows []entryRow
 	q := tx.NewSelect().Model(&rows).
 		Where("session_id = ?", src.ID).Where("gen = ?", src.Gen).
 		OrderExpr("id ASC")
-	if upToID > 0 {
+	if upToID != "" {
 		if exclusive {
 			q = q.Where("id < ?", upToID)
 		} else {
@@ -917,7 +925,7 @@ func forkEntriesTx(ctx context.Context, tx bun.Tx, src, dst session.Ref, upToID 
 		if err != nil {
 			return nil, fmt.Errorf("fork entries encode: %w", err)
 		}
-		rows[i].ID = 0
+		rows[i].ID = "" // minted afresh on insert
 		rows[i].SessionID = dst.ID
 		rows[i].Gen = dst.Gen
 		rows[i].Seq = e.Seq
@@ -940,7 +948,7 @@ func forkEntriesTx(ctx context.Context, tx bun.Tx, src, dst session.Ref, upToID 
 
 // ForkSession atomically creates dst and copies src's entries into it in one
 // transaction, so a failure never leaves an orphaned empty session behind.
-func (s *EntryStore) ForkSession(ctx context.Context, dst *Session, src session.Ref, upToID int64, exclusive bool) ([]string, error) {
+func (s *EntryStore) ForkSession(ctx context.Context, dst *Session, src session.Ref, upToID string, exclusive bool) ([]string, error) {
 	var runIDs []string
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		// Confirm the source still exists inside the tx, by (id, gen): a

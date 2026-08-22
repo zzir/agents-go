@@ -165,7 +165,7 @@ func TestWorkflowRunsEveryStepInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	views, err := store.NewEntryStoreFor(runner.db, ref).GetEntries(ctx, ref, 0, 0)
+	views, err := store.NewEntryStoreFor(runner.db, ref).GetEntries(ctx, ref, "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func TestWorkflowRunsEveryStepInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	parentRows, err := store.NewEntryStoreFor(runner.db, parentRef).GetEntries(ctx, parentRef, 0, 0)
+	parentRows, err := store.NewEntryStoreFor(runner.db, parentRef).GetEntries(ctx, parentRef, "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +327,7 @@ func TestWorkflowFailureEdgeLoopsBackAndCompletes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	views, err := store.NewEntryStoreFor(runner.db, ref).GetEntries(ctx, ref, 0, 0)
+	views, err := store.NewEntryStoreFor(runner.db, ref).GetEntries(ctx, ref, "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -390,7 +390,7 @@ func TestWorkflowRetryPastTheCeilingIsRefusedBeforeARun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	views, err := store.NewEntryStoreFor(runner.db, ref).GetEntries(ctx, ref, 0, 0)
+	views, err := store.NewEntryStoreFor(runner.db, ref).GetEntries(ctx, ref, "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -640,7 +640,7 @@ func TestWorkflowCompactsBeforeAStep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	views, err := store.NewEntryStoreFor(runner.db, ref).GetEntries(ctx, ref, 0, 0)
+	views, err := store.NewEntryStoreFor(runner.db, ref).GetEntries(ctx, ref, "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -727,7 +727,7 @@ func TestRetryWorkflowResumesFromTheFailedStep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	views, err := store.NewEntryStoreFor(runner.db, ref).GetEntries(ctx, ref, 0, 0)
+	views, err := store.NewEntryStoreFor(runner.db, ref).GetEntries(ctx, ref, "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1208,7 +1208,7 @@ func TestRunWorkflowStartsAnExecutionForAPerson(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	views, err := store.NewEntryStoreFor(runner.db, ref).GetEntries(ctx, ref, 0, 0)
+	views, err := store.NewEntryStoreFor(runner.db, ref).GetEntries(ctx, ref, "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

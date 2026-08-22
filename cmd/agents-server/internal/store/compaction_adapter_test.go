@@ -303,7 +303,7 @@ func TestPersistCompactionSkipsWhenEntriesGone(t *testing.T) {
 	sa := NewEntryStoreFor(db, session.Direct(sessionID))
 	insertItemRows(t, sa, []string{userItemJSON, assistantItemJSON})
 	rows := loadRows(t, db, sessionID)
-	ids := []int64{rows[0].ID, rows[1].ID}
+	ids := []string{rows[0].ID, rows[1].ID}
 
 	summary, err := session.NewCompactionEntry(session.CompactionPayload{Summary: "sum"})
 	if err != nil {
@@ -330,7 +330,7 @@ func TestPersistCompactionSkipsWhenEntriesGone(t *testing.T) {
 	// Positive control: with the rows present it applies and appends the checkpoint.
 	insertItemRows(t, sa, []string{userItemJSON, assistantItemJSON})
 	got := loadRows(t, db, sessionID)
-	ids2 := []int64{got[0].ID, got[1].ID}
+	ids2 := []string{got[0].ID, got[1].ID}
 	summary2, err := session.NewCompactionEntry(session.CompactionPayload{Summary: "sum2"})
 	if err != nil {
 		t.Fatalf("checkpoint 2: %v", err)
@@ -367,7 +367,7 @@ func TestPersistCompactionParentsTheCheckpointAtTheSurvivingTip(t *testing.T) {
 	}
 	ca := NewCompactionAdapter(sa, &summaryFakeModel{}, 1, 1, "", CompactionNotifier{})
 	// A fold that takes the tail, tip included, rather than a prefix.
-	applied, err := ca.persistCompaction(ctx, []int64{rows[1].ID, rows[2].ID}, summary)
+	applied, err := ca.persistCompaction(ctx, []string{rows[1].ID, rows[2].ID}, summary)
 	if err != nil {
 		t.Fatalf("persistCompaction: %v", err)
 	}

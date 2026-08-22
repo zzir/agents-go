@@ -782,7 +782,7 @@ function App() {
   const handleFork = useCallback(async (messageId: string | number) => {
     if (!activeSession) return;
     try {
-      const forked = await api.sessions.fork(activeSession, Number(messageId));
+      const forked = await api.sessions.fork(activeSession, String(messageId));
       setSessionReloadKey(k => k + 1);
       setActiveSession(forked.id);
       setActivePanel(null);

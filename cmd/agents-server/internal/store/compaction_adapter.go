@@ -229,7 +229,7 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args session.Com
 	// projection reads them from there, so a tail entry later popped is simply
 	// gone rather than living on in a copy (session.CompactionPayload).
 	excluded := make([]string, 0, len(toCompact))
-	compactIDs := make([]int64, len(toCompact))
+	compactIDs := make([]string, len(toCompact))
 	for i, row := range toCompact {
 		compactIDs[i] = row.ID
 		excluded = append(excluded, row.EntryID)
@@ -371,8 +371,8 @@ func estimateFold(active, folded []entryRow, summaryText string) (before, after 
 }
 
 // rowIDs is the rows' primary keys, for a bodies fetch.
-func rowIDs(rows []entryRow) []int64 {
-	ids := make([]int64, len(rows))
+func rowIDs(rows []entryRow) []string {
+	ids := make([]string, len(rows))
 	for i := range rows {
 		ids[i] = rows[i].ID
 	}
@@ -473,7 +473,7 @@ func jsonAsText(raw json.RawMessage) string {
 // entries are gone (the session was deleted between loading the history and
 // this write), so it skips the checkpoint rather than orphan one in a session
 // that no longer exists.
-func (ca *CompactionAdapter) persistCompaction(ctx context.Context, compactIDs []int64, summary session.Entry) (bool, error) {
+func (ca *CompactionAdapter) persistCompaction(ctx context.Context, compactIDs []string, summary session.Entry) (bool, error) {
 	applied := false
 	err := ca.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		res, err := tx.NewUpdate().Model((*entryRow)(nil)).

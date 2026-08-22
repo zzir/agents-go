@@ -177,7 +177,7 @@ func TestModelStartsAWorkflow(t *testing.T) {
 	// spans.
 	deadline = time.Now().Add(15 * time.Second)
 	for {
-		rows, err := runner.Deps.Traces.ListBySession(ctx, sess.ID, 0, 0)
+		rows, err := runner.Deps.Traces.ListBySession(ctx, sess.ID, "", 0)
 		if err != nil {
 			t.Fatal(err)
 		}

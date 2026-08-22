@@ -119,12 +119,9 @@ func requireResource[T any](c *gin.Context, get func(context.Context, string) (T
 // pageParams reads the backwards-pagination query parameters shared by the
 // messages and traces listings: before_id (exclusive upper id bound) and
 // limit (0 = unbounded). Invalid values read as 0.
-func pageParams(c *gin.Context) (beforeID int64, limit int) {
-	beforeID, _ = strconv.ParseInt(c.Query("before_id"), 10, 64)
+func pageParams(c *gin.Context) (beforeID string, limit int) {
+	beforeID = c.Query("before_id")
 	limit, _ = strconv.Atoi(c.Query("limit"))
-	if beforeID < 0 {
-		beforeID = 0
-	}
 	if limit < 0 {
 		limit = 0
 	}

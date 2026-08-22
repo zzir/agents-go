@@ -39,7 +39,7 @@ function partsOf(msgs: ReturnType<typeof buildTimeline>): TurnEntry['parts'] {
 describe('stream/replay isomorphism', () => {
   it('full turn: thinking → tool call → interim narration → final text', () => {
     // --- streaming path: the event order the hub delivers.
-    let live = ensureLiveTurn([{ role: 'user', content: 'q', messageId: 1 }], RUN)!;
+    let live = ensureLiveTurn([{ role: 'user', content: 'q', messageId: '1' }], RUN)!;
     live = appendReasoningItem(live, 'pondering', false)!;
     // needs_approval arrives normalized: the socket layer maps the wire's
     // explicit false to undefined so streamed calls match replayed ones.
@@ -55,12 +55,12 @@ describe('stream/replay isomorphism', () => {
 
     // --- replay path: the rows the backend persists for that same turn.
     const rows: EntryView[] = [
-      { id: 1, run_id: RUN, kind: 'item', role: 'user', content: 'q' },
-      { id: 2, run_id: RUN, kind: 'item', role: 'assistant', content: 'pondering', display: { kind: 'reasoning', text: 'pondering' } },
-      { id: 3, run_id: RUN, kind: 'item', role: 'assistant', content: 'search({"q":"x"})', display: { kind: 'tool_call', call_id: 'c1', tool_name: 'search', arguments: '{"q":"x"}' } },
-      { id: 4, run_id: RUN, kind: 'item', role: 'tool', content: 'found it', display: { kind: 'tool_output', call_id: 'c1', output: 'found it' } },
-      { id: 5, run_id: RUN, kind: 'item', role: 'assistant', content: 'let me check', display: { kind: 'message', text: 'let me check' } },
-      { id: 6, run_id: RUN, kind: 'item', role: 'assistant', content: 'the answer', display: { kind: 'message', text: 'the answer' } },
+      { id: "1", run_id: RUN, kind: 'item', role: 'user', content: 'q' },
+      { id: "2", run_id: RUN, kind: 'item', role: 'assistant', content: 'pondering', display: { kind: 'reasoning', text: 'pondering' } },
+      { id: "3", run_id: RUN, kind: 'item', role: 'assistant', content: 'search({"q":"x"})', display: { kind: 'tool_call', call_id: 'c1', tool_name: 'search', arguments: '{"q":"x"}' } },
+      { id: "4", run_id: RUN, kind: 'item', role: 'tool', content: 'found it', display: { kind: 'tool_output', call_id: 'c1', output: 'found it' } },
+      { id: "5", run_id: RUN, kind: 'item', role: 'assistant', content: 'let me check', display: { kind: 'message', text: 'let me check' } },
+      { id: "6", run_id: RUN, kind: 'item', role: 'assistant', content: 'the answer', display: { kind: 'message', text: 'the answer' } },
     ];
     const replayed = buildTimeline(rows);
 
@@ -91,8 +91,8 @@ describe('stream/replay isomorphism', () => {
     })!;
 
     const rows: EntryView[] = [
-      { id: 1, run_id: RUN, kind: 'item', role: 'assistant', content: 'apply_patch({})', display: { kind: 'tool_call', call_id: 'c1', tool_name: 'apply_patch', arguments: '{}' } },
-      { id: 2, run_id: RUN, kind: 'item', role: 'tool', content: 'patch failed', display: { kind: 'tool_output', call_id: 'c1', output: 'patch failed', title: 'Apply patch', summary: '0 of 3 hunks applied', renderer: 'diff', is_error: true, extra: { command: 'apply', partial: true } } },
+      { id: "1", run_id: RUN, kind: 'item', role: 'assistant', content: 'apply_patch({})', display: { kind: 'tool_call', call_id: 'c1', tool_name: 'apply_patch', arguments: '{}' } },
+      { id: "2", run_id: RUN, kind: 'item', role: 'tool', content: 'patch failed', display: { kind: 'tool_output', call_id: 'c1', output: 'patch failed', title: 'Apply patch', summary: '0 of 3 hunks applied', renderer: 'diff', is_error: true, extra: { command: 'apply', partial: true } } },
     ];
 
     const streamParts = (live[live.length - 1] as TurnEntry).parts;
@@ -128,8 +128,8 @@ describe('stream/replay isomorphism', () => {
     expect(applyTaskTerminal(live, 'c1', { id: 't1', status: 'failed' })).toBeNull();
 
     const rows: EntryView[] = [
-      { id: 1, run_id: RUN, kind: 'item', role: 'assistant', content: 'spawn_task({"agent":"researcher"})', display: { kind: 'tool_call', call_id: 'c1', tool_name: 'spawn_task', arguments: '{"agent":"researcher"}', title: 'Research topic', summary: 'Found 3 sources', extra: { task_id: 't1', task_status: 'completed' } } },
-      { id: 2, run_id: RUN, kind: 'item', role: 'tool', content: 'task_id: t1\nstatus: working', display: { kind: 'tool_output', call_id: 'c1', output: 'task_id: t1\nstatus: working' } },
+      { id: "1", run_id: RUN, kind: 'item', role: 'assistant', content: 'spawn_task({"agent":"researcher"})', display: { kind: 'tool_call', call_id: 'c1', tool_name: 'spawn_task', arguments: '{"agent":"researcher"}', title: 'Research topic', summary: 'Found 3 sources', extra: { task_id: 't1', task_status: 'completed' } } },
+      { id: "2", run_id: RUN, kind: 'item', role: 'tool', content: 'task_id: t1\nstatus: working', display: { kind: 'tool_output', call_id: 'c1', output: 'task_id: t1\nstatus: working' } },
     ];
 
     const streamParts = (live[live.length - 1] as TurnEntry).parts;
@@ -162,7 +162,7 @@ describe('stream/replay isomorphism', () => {
     live = applyTaskTerminal(live, 'c1', { id: 't1', label: 'Quick job', status: 'failed', summary: 'boom' })!;
 
     const rows: EntryView[] = [
-      { id: 1, run_id: RUN, kind: 'item', role: 'assistant', content: 'spawn_task({})', display: { kind: 'tool_call', call_id: 'c1', tool_name: 'spawn_task', arguments: '{}', title: 'Quick job', summary: 'boom', extra: { task_id: 't1', task_status: 'failed' } } },
+      { id: "1", run_id: RUN, kind: 'item', role: 'assistant', content: 'spawn_task({})', display: { kind: 'tool_call', call_id: 'c1', tool_name: 'spawn_task', arguments: '{}', title: 'Quick job', summary: 'boom', extra: { task_id: 't1', task_status: 'failed' } } },
     ];
 
     const streamParts = (live[live.length - 1] as TurnEntry).parts;
@@ -199,7 +199,7 @@ describe('stream/replay isomorphism', () => {
     const rows: EntryView[] = [
       // task_summary_attempt mirrors the server's terminal update: the fold's
       // summary belongs to attempt 2, so replay keeps it.
-      { id: 1, run_id: RUN, kind: 'item', role: 'assistant', content: 'spawn_task({})', display: { kind: 'tool_call', call_id: 'c1', tool_name: 'spawn_task', arguments: '{}', title: 'Flaky job', summary: 'done', extra: { task_id: 't1', task_status: 'completed', task_attempt: 2, task_summary_attempt: 2 } } },
+      { id: "1", run_id: RUN, kind: 'item', role: 'assistant', content: 'spawn_task({})', display: { kind: 'tool_call', call_id: 'c1', tool_name: 'spawn_task', arguments: '{}', title: 'Flaky job', summary: 'done', extra: { task_id: 't1', task_status: 'completed', task_attempt: 2, task_summary_attempt: 2 } } },
     ];
 
     const streamParts = (live[live.length - 1] as TurnEntry).parts;
@@ -223,7 +223,7 @@ describe('stream/replay isomorphism', () => {
     // would show "Task result: <old failure>" against a task that is working
     // again — or against a later attempt that finished with nothing to say.
     const spawnRow = (extra: Record<string, unknown>): EntryView[] => ([
-      { id: 1, run_id: RUN, kind: 'item', role: 'assistant', content: 'spawn_task({})', display: { kind: 'tool_call', call_id: 'c1', tool_name: 'spawn_task', arguments: '{}', title: 'Flaky job', summary: 'rate limited', extra } },
+      { id: "1", run_id: RUN, kind: 'item', role: 'assistant', content: 'spawn_task({})', display: { kind: 'tool_call', call_id: 'c1', tool_name: 'spawn_task', arguments: '{}', title: 'Flaky job', summary: 'rate limited', extra } },
     ]);
     const taskOf = (rows: EntryView[]) => {
       const parts = partsOf(buildTimeline(rows));
@@ -309,8 +309,8 @@ describe('stream/replay isomorphism', () => {
     live = appendErrorPart(live, { type: 'error', content: 'blocked', guardrail: 'no_secrets', stage: 'input' }, 'was thinking', '');
 
     const rows: EntryView[] = [
-      { id: 1, run_id: RUN, kind: 'annotation', role: 'assistant', content: 'was thinking', display: { kind: 'reasoning', text: 'was thinking' } },
-      { id: 2, run_id: RUN, kind: 'annotation', role: 'system', content: 'blocked', display: { kind: 'error', text: 'blocked', extra: { guardrail: 'no_secrets', stage: 'input' } } },
+      { id: "1", run_id: RUN, kind: 'annotation', role: 'assistant', content: 'was thinking', display: { kind: 'reasoning', text: 'was thinking' } },
+      { id: "2", run_id: RUN, kind: 'annotation', role: 'system', content: 'blocked', display: { kind: 'error', text: 'blocked', extra: { guardrail: 'no_secrets', stage: 'input' } } },
     ];
 
     const streamParts = (live[live.length - 1] as TurnEntry).parts;
@@ -326,8 +326,8 @@ describe('stream/replay isomorphism', () => {
     live = appendCancelledPart(live, '', 'partial answer')!;
 
     const rows: EntryView[] = [
-      { id: 1, run_id: RUN, kind: 'annotation', role: 'assistant', content: 'partial answer', display: { kind: 'message', text: 'partial answer' } },
-      { id: 2, run_id: RUN, kind: 'annotation', role: 'system', content: '', display: { kind: 'cancelled' } },
+      { id: "1", run_id: RUN, kind: 'annotation', role: 'assistant', content: 'partial answer', display: { kind: 'message', text: 'partial answer' } },
+      { id: "2", run_id: RUN, kind: 'annotation', role: 'system', content: '', display: { kind: 'cancelled' } },
     ];
 
     const streamParts = (live[live.length - 1] as TurnEntry).parts;
@@ -344,8 +344,8 @@ describe('stream/replay isomorphism', () => {
     // to "system" — the display kind, not the role, decides it is prose; it
     // must never collapse into a single-line system chip.
     const rows: EntryView[] = [
-      { id: 1, run_id: RUN, kind: 'annotation', role: 'system', content: '核实完毕 **增补**', display: { kind: 'message', text: '核实完毕 **增补**' } },
-      { id: 2, run_id: RUN, kind: 'annotation', role: 'system', content: 'stream failed', display: { kind: 'error', text: 'stream failed' } },
+      { id: "1", run_id: RUN, kind: 'annotation', role: 'system', content: '核实完毕 **增补**', display: { kind: 'message', text: '核实完毕 **增补**' } },
+      { id: "2", run_id: RUN, kind: 'annotation', role: 'system', content: 'stream failed', display: { kind: 'error', text: 'stream failed' } },
     ];
     expect(partsOf(buildTimeline(rows))).toEqual([
       { type: 'text', content: '核实完毕 **增补**' },
@@ -362,8 +362,8 @@ describe('stream/replay isomorphism', () => {
     // The backend persists no handoff row — the transfer_to_* tool call is the
     // durable record. A replay therefore has no handoff part, by design.
     const rows: EntryView[] = [
-      { id: 1, run_id: RUN, kind: 'item', role: 'assistant', content: 'transfer_to_coder({})', display: { kind: 'tool_call', call_id: 'h1', tool_name: 'transfer_to_coder', arguments: '{}' } },
-      { id: 2, run_id: RUN, kind: 'item', role: 'tool', content: 'ok', display: { kind: 'tool_output', call_id: 'h1', output: 'ok' } },
+      { id: "1", run_id: RUN, kind: 'item', role: 'assistant', content: 'transfer_to_coder({})', display: { kind: 'tool_call', call_id: 'h1', tool_name: 'transfer_to_coder', arguments: '{}' } },
+      { id: "2", run_id: RUN, kind: 'item', role: 'tool', content: 'ok', display: { kind: 'tool_output', call_id: 'h1', output: 'ok' } },
     ];
     const replayParts = partsOf(buildTimeline(rows));
     expect(replayParts.some(p => p.type === 'handoff')).toBe(false);
@@ -394,8 +394,8 @@ describe('stream/replay isomorphism', () => {
     // Replay: per-call status is not persisted, so the same call reads
     // 'completed' — the rejection is only visible in the output text.
     const rows: EntryView[] = [
-      { id: 1, run_id: RUN, kind: 'item', role: 'assistant', content: 'rm({})', display: { kind: 'tool_call', call_id: 'c1', tool_name: 'rm', arguments: '{}' } },
-      { id: 2, run_id: RUN, kind: 'item', role: 'tool', content: 'rejected by user', display: { kind: 'tool_output', call_id: 'c1', output: 'rejected by user' } },
+      { id: "1", run_id: RUN, kind: 'item', role: 'assistant', content: 'rm({})', display: { kind: 'tool_call', call_id: 'c1', tool_name: 'rm', arguments: '{}' } },
+      { id: "2", run_id: RUN, kind: 'item', role: 'tool', content: 'rejected by user', display: { kind: 'tool_output', call_id: 'c1', output: 'rejected by user' } },
     ];
     const replayCall = (partsOf(buildTimeline(rows))[0] as { toolCalls: Array<{ status: string | null }> }).toolCalls[0];
     expect(replayCall.status).toBe('completed');
@@ -418,8 +418,8 @@ describe('stream/replay isomorphism', () => {
     // then the history fetch resolves. The live tail (no messageId) must be
     // re-appended after the persisted rows.
     const persisted = buildTimeline([
-      { id: 1, run_id: 'old', kind: 'item', role: 'user', content: 'earlier q' },
-      { id: 2, run_id: 'old', kind: 'item', role: 'assistant', content: 'earlier a', display: { kind: 'message', text: 'earlier a' } },
+      { id: "1", run_id: 'old', kind: 'item', role: 'user', content: 'earlier q' },
+      { id: "2", run_id: 'old', kind: 'item', role: 'assistant', content: 'earlier a', display: { kind: 'message', text: 'earlier a' } },
     ]);
     let live = ensureLiveTurn([], RUN, 'new q')!;
     live = appendMessageItem(live, 'streaming…', false)!;
@@ -430,7 +430,7 @@ describe('stream/replay isomorphism', () => {
     // Entries the store already covers are deduped: the run's user prompt
     // persisted while the fetch was in flight must not double up.
     const persistedWithPrompt = buildTimeline([
-      { id: 1, run_id: RUN, kind: 'item', role: 'user', content: 'new q' },
+      { id: "1", run_id: RUN, kind: 'item', role: 'user', content: 'new q' },
     ]);
     const merged2 = mergeLiveTail(persistedWithPrompt, live, RUN);
     expect(merged2.filter(m => m.role === 'user')).toHaveLength(1);
@@ -442,7 +442,7 @@ describe('stream/replay isomorphism', () => {
     // messageId stamped — e.g. a regenerate raced the terminal reload. The
     // fetched timeline already pruned it; the merge must not put it back.
     const persisted = buildTimeline([
-      { id: 1, run_id: 'run-old', kind: 'item', role: 'user', content: 'hello', entry_id: 'u1' },
+      { id: "1", run_id: 'run-old', kind: 'item', role: 'user', content: 'hello', entry_id: 'u1' },
     ]);
     const stale = [
       { role: 'user', content: 'hello', clientMsgId: 'c1' },
@@ -461,7 +461,7 @@ describe('stream/replay isomorphism', () => {
     // one-to-one: one bubble consumes the persisted copy, the second must NOT
     // also collapse onto it — that used to drop the genuine second send.
     const persisted = buildTimeline([
-      { id: 1, run_id: 'r0', kind: 'item', role: 'user', content: 'x' },
+      { id: "1", run_id: 'r0', kind: 'item', role: 'user', content: 'x' },
     ]);
     const live = [
       { role: 'user', content: 'x', clientMsgId: 'c1' },
@@ -488,10 +488,10 @@ describe('stream/replay isomorphism', () => {
 
   it('compaction: folded history renders in place, the checkpoint is an inline marker', () => {
     const timeline = buildTimeline([
-      { id: 1, entry_id: 'e1', kind: 'item', role: 'user', content: 'old question' },
-      { id: 2, entry_id: 'e2', kind: 'item', role: 'assistant', content: 'old answer', display: { kind: 'message', text: 'old answer' } },
-      { id: 3, entry_id: 'e3', kind: 'compaction', role: 'compaction', content: 'summary of the above', compaction: { excluded_ids: ['e1', 'e2'], tokens_before: 12400, tokens_after: 3100 } },
-      { id: 4, entry_id: 'e4', kind: 'item', role: 'user', content: 'new question' },
+      { id: "1", entry_id: 'e1', kind: 'item', role: 'user', content: 'old question' },
+      { id: "2", entry_id: 'e2', kind: 'item', role: 'assistant', content: 'old answer', display: { kind: 'message', text: 'old answer' } },
+      { id: "3", entry_id: 'e3', kind: 'compaction', role: 'compaction', content: 'summary of the above', compaction: { excluded_ids: ['e1', 'e2'], tokens_before: 12400, tokens_after: 3100 } },
+      { id: "4", entry_id: 'e4', kind: 'item', role: 'user', content: 'new question' },
     ]);
     // The transcript is decoupled from the fold: history stays loose and in
     // full, the marker sits where the pass happened.
@@ -503,10 +503,10 @@ describe('stream/replay isomorphism', () => {
 
   it('compaction: a second pass leaves the first marker and the history in place', () => {
     const timeline = buildTimeline([
-      { id: 1, entry_id: 'e1', kind: 'item', role: 'user', content: 'oldest' },
-      { id: 2, entry_id: 'e2', kind: 'compaction', role: 'compaction', content: 'first summary', compaction: { excluded_ids: ['e1'] } },
-      { id: 3, entry_id: 'e3', kind: 'item', role: 'user', content: 'middle' },
-      { id: 4, entry_id: 'e4', kind: 'compaction', role: 'compaction', content: 'second summary', compaction: { excluded_ids: ['e1', 'e2', 'e3'] } },
+      { id: "1", entry_id: 'e1', kind: 'item', role: 'user', content: 'oldest' },
+      { id: "2", entry_id: 'e2', kind: 'compaction', role: 'compaction', content: 'first summary', compaction: { excluded_ids: ['e1'] } },
+      { id: "3", entry_id: 'e3', kind: 'item', role: 'user', content: 'middle' },
+      { id: "4", entry_id: 'e4', kind: 'compaction', role: 'compaction', content: 'second summary', compaction: { excluded_ids: ['e1', 'e2', 'e3'] } },
     ]);
     expect(timeline.map(m => m.role)).toEqual(['user', 'compaction', 'user', 'compaction']);
     expect((timeline[3] as { content: string }).content).toBe('second summary');
@@ -515,8 +515,8 @@ describe('stream/replay isomorphism', () => {
   it('compaction: an entry marked compacted stays in place', () => {
     // Soft-deleted from the model's context, not from what happened.
     const timeline = buildTimeline([
-      { id: 1, entry_id: 'e1', kind: 'item', role: 'user', content: 'orphaned', compacted: true },
-      { id: 2, entry_id: 'e2', kind: 'item', role: 'user', content: 'current' },
+      { id: "1", entry_id: 'e1', kind: 'item', role: 'user', content: 'orphaned', compacted: true },
+      { id: "2", entry_id: 'e2', kind: 'item', role: 'user', content: 'current' },
     ]);
     expect(timeline.map(m => (m as { content?: string }).content)).toEqual(['orphaned', 'current']);
   });
@@ -524,10 +524,10 @@ describe('stream/replay isomorphism', () => {
   it('branching: the abandoned attempt leaves the timeline but stays offerable', () => {
     // One question, answered twice. e2 was abandoned; e4 is current.
     const timeline = buildTimeline([
-      { id: 1, entry_id: 'e1', kind: 'item', role: 'user', content: 'question', on_path: true },
-      { id: 2, entry_id: 'e2', parent_id: 'e1', kind: 'item', role: 'assistant', content: 'first', display: { kind: 'message', text: 'first' }, on_path: false },
-      { id: 3, entry_id: 'e3', parent_id: 'e2', kind: 'leaf', role: 'assistant', on_path: false },
-      { id: 4, entry_id: 'e4', parent_id: 'e1', kind: 'item', role: 'assistant', content: 'second', display: { kind: 'message', text: 'second' }, on_path: true },
+      { id: "1", entry_id: 'e1', kind: 'item', role: 'user', content: 'question', on_path: true },
+      { id: "2", entry_id: 'e2', parent_id: 'e1', kind: 'item', role: 'assistant', content: 'first', display: { kind: 'message', text: 'first' }, on_path: false },
+      { id: "3", entry_id: 'e3', parent_id: 'e2', kind: 'leaf', role: 'assistant', on_path: false },
+      { id: "4", entry_id: 'e4', parent_id: 'e1', kind: 'item', role: 'assistant', content: 'second', display: { kind: 'message', text: 'second' }, on_path: true },
     ]);
     // Both answers inline would be a conversation that never happened.
     expect(timeline.map(m => m.role)).toEqual(['user', 'turn']);
@@ -546,9 +546,9 @@ describe('stream/replay isomorphism', () => {
     // off-path filter must apply anyway, or the replaced answer stays on
     // screen for the whole regeneration.
     const timeline = buildTimeline([
-      { id: 1, entry_id: 'e1', kind: 'item', role: 'user', content: 'question', on_path: true },
-      { id: 2, entry_id: 'e2', parent_id: 'e1', kind: 'item', role: 'assistant', content: 'old answer', display: { kind: 'message', text: 'old answer' }, on_path: false },
-      { id: 3, entry_id: 'e3', parent_id: 'e1', kind: 'leaf', role: 'user', on_path: true },
+      { id: "1", entry_id: 'e1', kind: 'item', role: 'user', content: 'question', on_path: true },
+      { id: "2", entry_id: 'e2', parent_id: 'e1', kind: 'item', role: 'assistant', content: 'old answer', display: { kind: 'message', text: 'old answer' }, on_path: false },
+      { id: "3", entry_id: 'e3', parent_id: 'e1', kind: 'leaf', role: 'user', on_path: true },
     ]);
     expect(timeline.map(m => m.role)).toEqual(['user']);
   });
@@ -557,9 +557,9 @@ describe('stream/replay isomorphism', () => {
     // Every branch switch appends a leaf entry at whatever the tip was.
     // Counting those as children invents a fork at each switch.
     const timeline = buildTimeline([
-      { id: 1, entry_id: 'e1', kind: 'item', role: 'user', content: 'q', on_path: true },
-      { id: 2, entry_id: 'e2', parent_id: 'e1', kind: 'item', role: 'assistant', content: 'a', display: { kind: 'message', text: 'a' }, on_path: true },
-      { id: 3, entry_id: 'e3', parent_id: 'e2', kind: 'leaf', role: 'assistant', on_path: true },
+      { id: "1", entry_id: 'e1', kind: 'item', role: 'user', content: 'q', on_path: true },
+      { id: "2", entry_id: 'e2', parent_id: 'e1', kind: 'item', role: 'assistant', content: 'a', display: { kind: 'message', text: 'a' }, on_path: true },
+      { id: "3", entry_id: 'e3', parent_id: 'e2', kind: 'leaf', role: 'assistant', on_path: true },
     ]);
     expect((timeline[1] as TurnEntry).branches).toBeUndefined();
   });
@@ -571,9 +571,9 @@ describe('stream/replay isomorphism', () => {
     // the task is live the chips row carries its status, so the isomorphism
     // contract does not extend to these fields.
     const timeline = buildTimeline([
-      { id: 1, run_id: RUN, kind: 'item', role: 'user', content: 'spawn something' },
-      { id: 2, run_id: RUN, kind: 'item', role: 'assistant', display: { kind: 'tool_call', call_id: 'c1', tool_name: 'spawn_task', arguments: '{}', title: 'audit', summary: 'all green', extra: { task_id: 't1', task_status: 'completed' } } },
-      { id: 3, run_id: RUN, kind: 'item', role: 'tool', display: { kind: 'tool_output', call_id: 'c1', output: '{"task_id":"t1"}' } },
+      { id: "1", run_id: RUN, kind: 'item', role: 'user', content: 'spawn something' },
+      { id: "2", run_id: RUN, kind: 'item', role: 'assistant', display: { kind: 'tool_call', call_id: 'c1', tool_name: 'spawn_task', arguments: '{}', title: 'audit', summary: 'all green', extra: { task_id: 't1', task_status: 'completed' } } },
+      { id: "3", run_id: RUN, kind: 'item', role: 'tool', display: { kind: 'tool_output', call_id: 'c1', output: '{"task_id":"t1"}' } },
     ]);
     const turn = timeline[1] as TurnEntry;
     const tools = turn.parts.find(p => p.type === 'tools') as { toolCalls: Array<{ task?: { id?: string; status?: string; summary?: string } }> };
@@ -584,19 +584,19 @@ describe('stream/replay isomorphism', () => {
 describe('workflow-started note', () => {
   it('replays as a system row carrying the note, its own turn boundary', () => {
     const rows: EntryView[] = [
-      { id: 1, kind: 'annotation', role: 'system', content: 'Workflow "build" started by you', display: {
+      { id: "1", kind: 'annotation', role: 'system', content: 'Workflow "build" started by you', display: {
         kind: 'workflow_started', text: 'Workflow "build" started by you',
         extra: { task_id: 't1', workflow_id: 'w1', workflow_name: 'build', brief: 'ship it', origin: { kind: 'person' } },
       } },
-      { id: 2, run_id: 'w-run', kind: 'item', role: 'user', content: '[task-notification] Task "build" (t1) completed. Result: done' },
-      { id: 3, run_id: 'w-run', kind: 'item', role: 'assistant', content: 'It finished.', display: { kind: 'message', text: 'It finished.' } },
+      { id: "2", run_id: 'w-run', kind: 'item', role: 'user', content: '[task-notification] Task "build" (t1) completed. Result: done' },
+      { id: "3", run_id: 'w-run', kind: 'item', role: 'assistant', content: 'It finished.', display: { kind: 'message', text: 'It finished.' } },
     ];
     const msgs = buildTimeline(rows);
     expect(msgs.map(m => m.role)).toEqual(['system', 'user', 'turn']);
     const note = (msgs[0] as { note?: unknown }).note;
     expect(note).toEqual({ taskId: 't1', workflowId: 'w1', workflowName: 'build', brief: 'ship it', origin: { kind: 'person' } });
     // A note with no extra still renders as the plain line, never crashes.
-    const bare = buildTimeline([{ id: 1, kind: 'annotation', role: 'system', content: 'Workflow "x" started by you', display: { kind: 'workflow_started' } }]);
+    const bare = buildTimeline([{ id: "1", kind: 'annotation', role: 'system', content: 'Workflow "x" started by you', display: { kind: 'workflow_started' } }]);
     expect((bare[0] as { note?: { taskId: string } }).note?.taskId).toBe('');
     expect((bare[0] as { content?: string }).content).toBe('Workflow "x" started by you');
   });

@@ -31,7 +31,7 @@ func TestTraceSummaryListingLeavesThePayloadOut(t *testing.T) {
 		}
 	}
 
-	rows, err := ts.ListSummaryBySession(ctx, "s1", 0, 0)
+	rows, err := ts.ListSummaryBySession(ctx, "s1", "", 0)
 	if err != nil {
 		t.Fatalf("summary: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestTraceSummaryListingLeavesThePayloadOut(t *testing.T) {
 	}
 
 	// The full listing is as ever.
-	full, err := ts.ListBySession(ctx, "s1", 0, 0)
+	full, err := ts.ListBySession(ctx, "s1", "", 0)
 	if err != nil || len(full) != 5 || full[0].Data != gen.Data || full[0].PayloadOmitted {
 		t.Fatalf("full listing = %+v (%v)", full, err)
 	}

@@ -384,7 +384,7 @@ type ProviderRoute struct {
 type TraceEvent struct {
 	bun.BaseModel `bun:"table:trace_events,alias:te"`
 
-	ID        int64  `bun:"id,pk,autoincrement"  json:"id"`
+	ID        string `bun:"id,pk,type:uuid"      json:"id"`
 	SessionID string `bun:"session_id,notnull,type:uuid" json:"session_id"`
 	RunID     string `bun:"run_id,notnull,type:uuid" json:"run_id"`
 	// ParentRunID is the run's LINEAGE: for a task wake-up run, the run whose
@@ -684,4 +684,12 @@ func (m *Identity) BeforeAppendModel(_ context.Context, q bun.Query) error {
 // BeforeAppendModel stamps the id and timestamps; bun invokes it on insert and update.
 func (m *AuthToken) BeforeAppendModel(_ context.Context, q bun.Query) error {
 	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
+}
+
+// BeforeAppendModel mints the id on insert; bun invokes it on insert and update.
+func (m *TraceEvent) BeforeAppendModel(_ context.Context, q bun.Query) error {
+	if _, ok := q.(*bun.InsertQuery); ok && m.ID == "" {
+		m.ID = NewID()
+	}
+	return nil
 }

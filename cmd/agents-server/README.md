@@ -385,7 +385,9 @@ fold). 409 while a run is executing — the run compacts at its own boundaries;
 `?before_id=`. Without `limit` the full list is returned (oldest-first),
 backward-compatible with older clients. With `limit`, the newest `limit` items
 are returned; page backwards by passing the smallest id you received as
-`before_id` (an exclusive upper bound). For `messages` the limit counts the
+`before_id` (an exclusive upper bound). Row ids are UUIDv7 strings and order
+by insertion — `NewV7` is monotonic within a process — so "smallest" is the
+first one in a page. For `messages` the limit counts the
 ENTRIES a client receives, not table rows — update entries are folded into
 their targets first, so a page is never short of what was asked for. The web UI
 loads the newest 200 and offers "Load earlier messages".
@@ -2115,10 +2117,13 @@ is capped at 16 connections:
 ./agents-server --db 'postgres://user:pass@localhost:5432/agents?sslmode=disable'
 ```
 
-Every id column — primary keys and the foreign keys that reference them — is
-typed `uuid` and holds a UUIDv7 (`store.NewID`): time-ordered, so inserts land
-at the right edge of an index and rows created together sit together; 16
-bytes a key on PostgreSQL. One rule: an id that names one of OUR entities is a
+Every id column — primary keys, the foreign keys that reference them, and the
+row ids of `entries` and `trace_events` — is typed `uuid` and holds a UUIDv7
+(`store.NewID`): time-ordered, so inserts land at the right edge of an index
+and rows created together sit together; 16 bytes a key on PostgreSQL. The
+entry and trace rows that used to autoincrement order by id exactly as before
+(Go's `uuid.NewV7` is monotonic within a process), which is what their
+cursors and `ORDER BY id` rely on. One rule: an id that names one of OUR entities is a
 uuid; an identifier of foreign shape stays text — entry ids (`e<seq>`, by
 sequence), span ids (`span_<hex>`, the OTel width), a model's `tool_call_id`,
 an audit line's `resource`. "Unset" is NULL, never `""` (`nullzero`). The

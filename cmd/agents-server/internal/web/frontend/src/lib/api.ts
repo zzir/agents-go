@@ -146,10 +146,10 @@ export const api = {
     // older pages keyed on the smallest id received. A cursor rather than an
     // offset because entries keep arriving — an offset shifts under a
     // concurrent append and silently repeats or skips a row.
-    messages: (id: string | number, opts?: { limit?: number; beforeId?: number }) => {
+    messages: (id: string | number, opts?: { limit?: number; beforeId?: string }) => {
       const q = new URLSearchParams();
       if (opts?.limit) q.set('limit', String(opts.limit));
-      if (opts?.beforeId) q.set('before_id', String(opts.beforeId));
+      if (opts?.beforeId) q.set('before_id', opts.beforeId);
       const qs = q.toString();
       return request(`/sessions/${id}/messages` + (qs ? '?' + qs : ''));
     },
@@ -176,7 +176,7 @@ export const api = {
     // Moves the session's active branch to an entry. Append-only: the
     // abandoned attempt stays recorded and can be switched back to.
     branch: (id: string | number, entryId: string) => request(`/sessions/${id}/branch`, { method: 'POST', body: JSON.stringify({ entry_id: entryId }) }),
-    fork: (id: string | number, messageId?: number, opts?: { exclusive?: boolean; label?: string }) => request(`/sessions/${id}/fork`, { method: 'POST', body: JSON.stringify({ ...(messageId ? { message_id: messageId } : {}), ...opts }) }),
+    fork: (id: string | number, messageId?: string, opts?: { exclusive?: boolean; label?: string }) => request(`/sessions/${id}/fork`, { method: 'POST', body: JSON.stringify({ ...(messageId ? { message_id: messageId } : {}), ...opts }) }),
     pin: (id: string | number, pinned: boolean) => request(`/sessions/${id}`, { method: 'PATCH', body: JSON.stringify({ pinned }) }),
   },
   agents: {

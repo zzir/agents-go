@@ -957,7 +957,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
         const sid = p.session_id || (p.run_id ? runMapRef.current[p.run_id] : undefined);
         if (sid) {
           updateSS(sid, s => {
-            const msgs = s.messages as Array<{ role?: string; clientMsgId?: string; messageId?: number; runId?: string }>;
+            const msgs = s.messages as Array<{ role?: string; clientMsgId?: string; messageId?: string; runId?: string }>;
             for (let i = msgs.length - 1; i >= 0; i--) {
               const m = msgs[i];
               if (m.role === 'user' && m.clientMsgId && m.messageId === undefined && m.runId === undefined) {
@@ -1398,7 +1398,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
   // inside one left it undefined every time, so the fetch never started and the
   // button stayed on "Loading…" forever. The caller holds the state and knows
   // the cursor already.
-  const loadEarlier = useCallback((sid: string, beforeId: number): void => {
+  const loadEarlier = useCallback((sid: string, beforeId: string): void => {
     if (!sid || !beforeId || loadingMoreRef.current.has(sid)) return;
     const oldest = beforeId;
     loadingMoreRef.current.add(sid);

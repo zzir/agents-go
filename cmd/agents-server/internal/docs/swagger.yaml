@@ -1386,7 +1386,7 @@ components:
         entry_id:
           type: string
         id:
-          type: integer
+          type: string
         kind:
           type: string
         on_path:
@@ -1805,7 +1805,7 @@ components:
         error:
           type: string
         id:
-          type: integer
+          type: string
         kind:
           type: string
         name:
