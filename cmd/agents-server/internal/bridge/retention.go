@@ -11,6 +11,22 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
+// runEvery runs fn at once and then every period until ctx ends — the shape
+// of every maintenance loop here.
+func runEvery(ctx context.Context, period time.Duration, fn func()) {
+	fn()
+	ticker := time.NewTicker(period)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			fn()
+		}
+	}
+}
+
 // RunApprovalReaper expires pending tool approvals that have gone unanswered
 // past the TTL. On expiry it drops the record and writes a session annotation
 // so the timeout is visible instead of silently vanishing. It runs at startup
@@ -88,17 +104,7 @@ func RunApprovalReaper(ctx context.Context, cfg *settings.Reader, approvals *sto
 		}
 	}
 
-	reap()
-	ticker := time.NewTicker(time.Hour)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			reap()
-		}
-	}
+	runEvery(ctx, time.Hour, reap)
 }
 
 // RunTraceRetention prunes old trace events at startup and then once a day,
@@ -123,17 +129,7 @@ func RunTraceRetention(ctx context.Context, cfg *settings.Reader, traces *store.
 		}
 	}
 
-	prune()
-	ticker := time.NewTicker(24 * time.Hour)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			prune()
-		}
-	}
+	runEvery(ctx, 24*time.Hour, prune)
 }
 
 // RunAuthTokenCleanup deletes expired session tokens and PATs at startup and
@@ -152,17 +148,7 @@ func RunAuthTokenCleanup(ctx context.Context, tokens *store.AuthTokenStore) {
 		}
 	}
 
-	sweep()
-	ticker := time.NewTicker(time.Hour)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			sweep()
-		}
-	}
+	runEvery(ctx, time.Hour, sweep)
 }
 
 // wakeupRetention is how long a settled wake-up row stays readable after the
@@ -184,17 +170,7 @@ func RunWakeupCleanup(ctx context.Context, wakeups *store.WakeupStore) {
 		}
 	}
 
-	sweep()
-	ticker := time.NewTicker(time.Hour)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			sweep()
-		}
-	}
+	runEvery(ctx, time.Hour, sweep)
 }
 
 // RunAuditRetention prunes audit events older than days at startup and then
@@ -212,15 +188,5 @@ func RunAuditRetention(ctx context.Context, audit *store.AuditStore, days int) {
 		}
 	}
 
-	prune()
-	ticker := time.NewTicker(24 * time.Hour)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			prune()
-		}
-	}
+	runEvery(ctx, 24*time.Hour, prune)
 }

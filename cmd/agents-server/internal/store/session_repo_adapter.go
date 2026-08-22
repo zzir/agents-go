@@ -77,9 +77,10 @@ func (a *SessionRepoAdapter) Open(ctx context.Context, id string) (*session.Sess
 	return session.NewSession(a.entries(session.Ref{ID: row.ID, Gen: row.Gen})), nil
 }
 
-// List implements session.Repo.
+// List implements session.Repo: the SDK's view has no owner, so it is every
+// owner's listing.
 func (a *SessionRepoAdapter) List(ctx context.Context, opts session.ListOptions) ([]session.Metadata, error) {
-	rows, err := a.sessions.List(ctx, "")
+	rows, err := a.sessions.List(ctx, EveryOwner)
 	if err != nil {
 		return nil, err
 	}

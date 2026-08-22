@@ -178,8 +178,7 @@ func (h *AuthHandler) RevokeUserTokens(c *gin.Context) {
 }
 
 // requirePATMode gates the PAT endpoints: in token mode a PAT could be minted
-// but never authenticate (the static compare is the whole check), so refusing
-// is honest where accepting would hand out dead credentials.
+// but never authenticate (README "Personal access tokens").
 func (h *AuthHandler) requirePATMode(c *gin.Context) (protocol.UserInfo, bool) {
 	if h.svc.Mode() != authn.ModeOAuth {
 		c.JSON(http.StatusBadRequest, protocol.NewErrorResponse(protocol.CodeValidation,

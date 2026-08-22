@@ -93,7 +93,7 @@ func TestExecCommandRoutedOffSDKApproveList(t *testing.T) {
 	// A foreground build hands the (filtered) list to the plan gate, which
 	// translates it into per-tool predicates and clears it — the phase must be
 	// able to suppress approval on a call it is refusing anyway.
-	fg, err := BuildFullAgent(ctx, deps, ac.ID, "")
+	fg, err := BuildFullAgent(ctx, deps, ac.ID, "", store.LocalUserID)
 	if err != nil {
 		t.Fatalf("foreground build: %v", err)
 	}

@@ -72,7 +72,7 @@ func TestBuildFullAgentBuildsErrorHandlers(t *testing.T) {
 	if err := s.Create(ctx, ac); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	built, err := BuildFullAgent(ctx, deps, ac.ID, "")
+	built, err := BuildFullAgent(ctx, deps, ac.ID, "", store.LocalUserID)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestBuildFullAgentFailsOnBadErrorHandlers(t *testing.T) {
 	if err := s.Create(ctx, ac); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	_, err := BuildFullAgent(ctx, deps, ac.ID, "")
+	_, err := BuildFullAgent(ctx, deps, ac.ID, "", store.LocalUserID)
 	if err == nil || !strings.Contains(err.Error(), "must be a JSON string") {
 		t.Fatalf("want plain-text string error, got %v", err)
 	}

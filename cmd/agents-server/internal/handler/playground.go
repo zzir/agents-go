@@ -15,6 +15,7 @@ import (
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -101,7 +102,8 @@ func (h *PlaygroundHandler) Generate(c *gin.Context) {
 		return
 	}
 
-	built, err := bridge.BuildFullAgent(c.Request.Context(), h.deps, req.AgentConfigID, "")
+	u, _ := server.CurrentUser(c)
+	built, err := bridge.BuildFullAgent(c.Request.Context(), h.deps, req.AgentConfigID, "", u.ID)
 	if err != nil {
 		badRequest(c, "building agent: "+err.Error())
 		return
@@ -311,7 +313,10 @@ func (h *PlaygroundHandler) generateStream(c *gin.Context, model agents.Model, m
 //	@Security		BearerAuth
 //	@Router			/agents/{id}/tools [get]
 func (h *PlaygroundHandler) AgentTools(c *gin.Context) {
-	built, err := bridge.BuildFullAgent(c.Request.Context(), h.deps, c.Param("id"), "")
+	// The surface as the caller's own runs would get it — a member's
+	// listing does not show the save_workflow their runs never carry.
+	u, _ := server.CurrentUser(c)
+	built, err := bridge.BuildFullAgent(c.Request.Context(), h.deps, c.Param("id"), "", u.ID)
 	if err != nil {
 		badRequest(c, "building agent: "+err.Error())
 		return

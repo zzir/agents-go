@@ -67,6 +67,21 @@ func requireOwnedSession(c *gin.Context, sessions *store.SessionStore, id string
 	return sess, true
 }
 
+// sessionKey is where sessionGate parks the row it loaded, so the handler
+// behind it reads the session once, not twice.
+const sessionKey = "agents.session"
+
+// gatedSession returns the session sessionGate loaded for this request, or
+// loads it when no gate ran (a handler mounted without one).
+func gatedSession(c *gin.Context, sessions *store.SessionStore) (*store.Session, error) {
+	if v, ok := c.Get(sessionKey); ok {
+		if sess, ok := v.(*store.Session); ok && sess.ID == c.Param("id") {
+			return sess, nil
+		}
+	}
+	return sessions.Get(c.Request.Context(), c.Param("id"))
+}
+
 // requireRunOwner checks the caller owns the session a live run belongs to
 // (hub record), answering 404 for a foreign or unknown run.
 func requireRunOwner(c *gin.Context, info bridge.RunInfo, ok bool) bool {
@@ -115,10 +130,12 @@ type AuthzDeps struct {
 // sessionGate gates /sessions/:id/* on owning the session.
 func (d AuthzDeps) sessionGate() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if _, ok := requireOwnedSession(c, d.Sessions, c.Param("id")); !ok {
+		sess, ok := requireOwnedSession(c, d.Sessions, c.Param("id"))
+		if !ok {
 			c.Abort()
 			return
 		}
+		c.Set(sessionKey, sess)
 		c.Next()
 	}
 }

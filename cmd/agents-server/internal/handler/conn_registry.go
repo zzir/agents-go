@@ -12,14 +12,11 @@ import (
 )
 
 // ConnRegistry tracks every authenticated WebSocket connection so run events
-// behave as a broadcast bus PER OWNER: a run started from ANY client (this
-// connection, another browser, REST) is attached to every connection of the
-// session's owner, and a connection that joins mid-run is attached to each
-// in-flight stream of its user with a full replay. Without it, run events
-// were a private reply channel to whichever connection happened to start the
-// run — a second browser on the same session saw nothing until a manual
-// reload. A run of someone else's session reaches nobody else — content is
-// the owner's alone.
+// behave as a broadcast bus PER OWNER: a run started from any client (this
+// connection, another browser, REST) reaches every connection of the
+// session's owner, a connection joining mid-run is attached to each of its
+// user's in-flight streams with a full replay, and nobody else's connection
+// hears a thing (README invariant 42).
 type ConnRegistry struct {
 	hub      *bridge.RunHub
 	sessions *store.SessionStore

@@ -130,7 +130,7 @@ func (h *SessionHandler) List(c *gin.Context) {
 		if !requireAdmin(c) {
 			return
 		}
-		owner = ""
+		owner = store.EveryOwner
 	}
 	sessions, err := h.sessions.List(c.Request.Context(), owner)
 	if err != nil {
@@ -202,7 +202,7 @@ func (h *SessionHandler) Create(c *gin.Context) {
 //	@Security	BearerAuth
 //	@Router		/sessions/{id} [get]
 func (h *SessionHandler) Get(c *gin.Context) {
-	sess, err := h.sessions.Get(c.Request.Context(), c.Param("id"))
+	sess, err := gatedSession(c, h.sessions)
 	if err != nil {
 		storeError(c, err)
 		return
@@ -382,7 +382,7 @@ func (h *SessionHandler) Fork(c *gin.Context) {
 	srcID := c.Param("id")
 	ctx := c.Request.Context()
 
-	src, err := h.sessions.Get(ctx, srcID)
+	src, err := gatedSession(c, h.sessions)
 	if err != nil {
 		storeError(c, err)
 		return
@@ -518,7 +518,7 @@ func (h *SessionHandler) Runs(c *gin.Context) {
 //	@Router			/sessions/{id}/context [get]
 func (h *SessionHandler) Context(c *gin.Context) {
 	ctx := c.Request.Context()
-	sess, err := h.sessions.Get(ctx, c.Param("id"))
+	sess, err := gatedSession(c, h.sessions)
 	if err != nil {
 		storeError(c, err)
 		return

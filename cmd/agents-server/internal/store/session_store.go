@@ -47,6 +47,13 @@ func (s *SessionStore) Create(ctx context.Context, sess *Session) error {
 	return nil
 }
 
+// EveryOwner is the owner argument that lists every owner's rows — the
+// admin's explicit ask. An empty owner is refused, so a handler that forgot
+// to resolve its caller lists nothing rather than everything.
+const EveryOwner = "*"
+
+var errListNoOwner = errors.New("listing without an owner")
+
 // List returns one owner's chat sessions, most recently CHANGED first — an
 // append, a pop or a clear moves a session up exactly as a rename does (the
 // entry store stamps updated_at on every write). Hidden task-transcript
@@ -54,9 +61,12 @@ func (s *SessionStore) Create(ctx context.Context, sess *Session) error {
 // parent session's task list, not the sidebar. An empty ownerID lists every
 // owner's: the admin's management view, never a member's sidebar.
 func (s *SessionStore) List(ctx context.Context, ownerID string) ([]Session, error) {
+	if ownerID == "" {
+		return nil, errListNoOwner
+	}
 	var sessions []Session
 	q := s.db.NewSelect().Model(&sessions).Where("hidden = ?", false)
-	if ownerID != "" {
+	if ownerID != EveryOwner {
 		q = q.Where("owner_id = ?", ownerID)
 	}
 	if err := q.OrderExpr("updated_at DESC").Scan(ctx); err != nil {

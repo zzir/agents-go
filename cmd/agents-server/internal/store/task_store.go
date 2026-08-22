@@ -94,6 +94,9 @@ type TaskWithSession struct {
 // does; the join supplies the session's name.
 // ownerID, when set, keeps to tasks whose parent session that user owns.
 func (s *TaskStore) ListRecent(ctx context.Context, ownerID, kind string, liveOnly bool, limit, offset int) (rows []TaskWithSession, total int, err error) {
+	if ownerID == "" {
+		return nil, 0, errListNoOwner
+	}
 	if limit <= 0 || limit > 500 {
 		limit = 500
 	}
@@ -104,7 +107,7 @@ func (s *TaskStore) ListRecent(ctx context.Context, ownerID, kind string, liveOn
 		// A hidden parent is a task's own session: its tasks are nested work,
 		// with no conversation of their own to open.
 		q = q.Join("JOIN sessions AS ps ON ps.id = t.parent_session_id").Where(liveParent).Where("ps.hidden = ?", false)
-		if ownerID != "" {
+		if ownerID != EveryOwner {
 			q = q.Where("ps.owner_id = ?", ownerID)
 		}
 		if kind != "" {

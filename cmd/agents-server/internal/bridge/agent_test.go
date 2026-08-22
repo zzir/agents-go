@@ -38,7 +38,7 @@ func TestBuildFullAgentIgnoresLegacyUsePreviousResponseID(t *testing.T) {
 		Settings:     settings.NewReader(store.NewSettingStore(db)),
 		Memories:     store.NewMemoryStore(db),
 	}
-	built, err := BuildFullAgent(ctx, deps, ac.ID, "")
+	built, err := BuildFullAgent(ctx, deps, ac.ID, "", store.LocalUserID)
 	if err != nil {
 		t.Fatalf("a legacy row with the stale key must build: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestBuildFullAgentAppliesWorkflowModes(t *testing.T) {
 		Settings:     settings.NewReader(store.NewSettingStore(db)),
 		Memories:     store.NewMemoryStore(db),
 	}
-	built, err := BuildFullAgent(ctx, deps, ac.ID, "")
+	built, err := BuildFullAgent(ctx, deps, ac.ID, "", store.LocalUserID)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}

@@ -16,7 +16,7 @@ import (
 	"github.com/uptrace/bun/dialect"
 )
 
-// User roles. Recorded from the first login; enforced by handlers from P2b on.
+// User roles (README "Ownership and roles").
 const (
 	RoleAdmin  = "admin"
 	RoleMember = "member"

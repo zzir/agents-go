@@ -16,11 +16,9 @@ import (
 	"strings"
 )
 
-// A sealed value is "enc:v2:<kid>:<base64 nonce+ciphertext>": the key id
-// names which key sealed it, so a mismatch says so instead of "wrong key?".
-// A stored value without the prefix is plaintext from before a key was
-// configured and passes through unchanged — enabling encryption later never
-// locks existing rows out; they seal on their next write.
+// A sealed value is "enc:v2:<kid>:<base64 nonce+ciphertext>"; a stored value
+// without the prefix is plaintext from before a key and passes through
+// (README "Secret handling").
 const (
 	prefix   = "enc:"
 	version  = "v2"
@@ -103,12 +101,8 @@ func FromEnvOrFile(env, file string) (*Box, error) {
 }
 
 // Seal encrypts plain for the named place — "table.column", the additional
-// data the ciphertext is bound to, so a sealed value moved to another column
-// (a provider's key pasted as another provider's, or as an MCP header bound
-// for an attacker's endpoint) does not open there. "" stays "" (an absent
-// secret is not a secret). A value that already looks sealed is sealed
-// again as the text it is: nothing pasted in through the API is ever stored
-// as someone else's ciphertext.
+// data the ciphertext is bound to, so it opens nowhere else. "" stays "".
+// A value that already looks sealed is sealed as the text it is.
 func (b *Box) Seal(label, plain string) string {
 	if b == nil || plain == "" {
 		return plain
@@ -120,9 +114,7 @@ func (b *Box) Seal(label, plain string) string {
 }
 
 // Open decrypts a value sealed for label; an unsealed one passes through. A
-// sealed value with no key, or under another key, is an error naming which
-// — silently reading ciphertext as a credential would fail somewhere far
-// less clear.
+// sealed value with no key, or under another key, is an error naming which.
 func (b *Box) Open(label, stored string) (string, error) {
 	if !strings.HasPrefix(stored, prefix) {
 		return stored, nil

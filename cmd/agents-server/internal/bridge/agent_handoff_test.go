@@ -48,7 +48,7 @@ func TestBuildFullAgentDiamondHandoffNotACycle(t *testing.T) {
 	c := mkAgent(t, s, "C", d)
 	a := mkAgent(t, s, "A", b, c)
 
-	built, err := BuildFullAgent(ctx, deps, a, "")
+	built, err := BuildFullAgent(ctx, deps, a, "", store.LocalUserID)
 	if err != nil {
 		t.Fatalf("build A: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestBuildFullAgentHandoffTargetErrorPropagates(t *testing.T) {
 	}
 	a := mkAgent(t, s, "A", bad.ID)
 
-	_, err := BuildFullAgent(ctx, deps, a, "")
+	_, err := BuildFullAgent(ctx, deps, a, "", store.LocalUserID)
 	if err == nil || !strings.Contains(err.Error(), "output_schema") {
 		t.Fatalf("a broken handoff target must fail the build, got %v", err)
 	}
@@ -122,7 +122,7 @@ func TestBuildFullAgentRealCycleBroken(t *testing.T) {
 		t.Fatalf("update A: %v", err)
 	}
 
-	built, err := BuildFullAgent(ctx, deps, a, "")
+	built, err := BuildFullAgent(ctx, deps, a, "", store.LocalUserID)
 	if err != nil {
 		t.Fatalf("build A (cycle must be broken, not error): %v", err)
 	}

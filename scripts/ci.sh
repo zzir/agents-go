@@ -17,6 +17,11 @@ step() { printf '\n\033[1m== %s ==\033[0m\n' "$*"; }
 step "Frontend build"
 (cd cmd/agents-server/internal/web/frontend && npm install --ignore-scripts && npm run lint && npm run build)
 
+step "Frontend audit"
+# The lockfile is deliberately not committed, so the installed tree is what
+# gets audited — high and above fails, here as in CI.
+(cd cmd/agents-server/internal/web/frontend && npm audit --omit=dev --audit-level=high)
+
 step "Vet"
 go vet ./...
 

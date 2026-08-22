@@ -17,8 +17,7 @@ import (
 )
 
 // OAuthProvider runs one external login: build the authorize redirect, then
-// turn the returned code into a verified identity. Google ships; GitHub
-// follows the same shape when it lands.
+// turn the returned code into a verified identity.
 type OAuthProvider interface {
 	Name() string
 	AuthCodeURL(state, verifier, redirectURI string) string

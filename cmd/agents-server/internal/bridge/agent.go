@@ -44,8 +44,8 @@ type AgentDeps struct {
 	// Audit records the acts a run performs on shared configuration (a
 	// save_workflow), attributed to the session's owner; nil records nothing.
 	Audit server.AuditFunc
-	// Users answers the run owner's role; nil means every owner is an admin
-	// (a single-user deployment).
+	// Users answers the run owner's role; nil withholds the tools only an
+	// admin gets.
 	Users     *store.UserStore
 	Workspace string
 	// MaxTasks overrides the per-session live background-task cap when > 0
@@ -165,8 +165,10 @@ func (b *BuildResult) Release() {
 // associated resources: provider, MCP tools, sandbox CodeTool, memory, and
 // global settings (system_prompt). agentConfigID is required. sandboxID is
 // optional — when set, only that sandbox is attached; when empty, all are.
-func BuildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandboxID string) (*BuildResult, error) {
-	return buildFullAgent(ctx, deps, agentConfigID, sandboxID, "", false, "")
+// forUserID is who the build is for, as a run's owner would be: it decides
+// which tools they would get.
+func BuildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandboxID, forUserID string) (*BuildResult, error) {
+	return buildFullAgent(ctx, deps, agentConfigID, sandboxID, "", false, forUserID)
 }
 
 // BackgroundInstructions is what a run nobody is watching has to be told. The
@@ -222,10 +224,11 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandbox
 	// (README invariant 39).
 	if err == nil && !background && result.Behavior.WorkflowAuthoring && deps.WorkflowTools != nil {
 		mark := len(result.Agent.Tools)
+		// A member reads definitions (as the API lets them) but cannot write
+		// one: the REST gate holds through the tool as well.
+		admin := ownerIsAdmin(ctx, deps, ownerID)
 		for _, tool := range deps.WorkflowTools(ctx, ownerID) {
-			// A member reads definitions (as the API lets them) but cannot
-			// write one: the REST gate holds through the tool as well.
-			if tool.ReadOnly || ownerIsAdmin(ctx, deps, ownerID) {
+			if tool.ReadOnly || admin {
 				result.Agent.Tools = append(result.Agent.Tools, tool)
 			}
 		}
@@ -694,11 +697,13 @@ func splitList(s string) []string {
 	return out
 }
 
-// ownerIsAdmin reports whether the run's owner may write shared configuration.
-// No owner or no user store means ungated; a lookup failure fails closed.
+// ownerIsAdmin reports whether the run's owner may write shared
+// configuration. Anything that cannot say yes — no owner, no user store, a
+// failed lookup — says no.
 func ownerIsAdmin(ctx context.Context, deps *AgentDeps, ownerID string) bool {
 	if ownerID == "" || deps.Users == nil {
-		return true
+		logging.Ctx(ctx).Warn("cannot resolve the run owner's role; shared-configuration tools withheld", "owner_id", ownerID)
+		return false
 	}
 	u, err := deps.Users.ByID(ctx, ownerID)
 	if err != nil {

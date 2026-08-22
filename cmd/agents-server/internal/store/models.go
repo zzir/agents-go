@@ -619,10 +619,9 @@ func (m *SandboxConfig) BeforeAppendModel(_ context.Context, q bun.Query) error 
 	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
 }
 
-// User is an account. In --auth token mode the one implicit local user
-// (LocalUserID) is the whole population; in --auth oauth mode rows are created
-// at first login. Role is enforced from P2b on — recorded here from day one so
-// ownership has a referent in both modes.
+// User is an account: the one implicit local user (LocalUserID) in --auth
+// token mode, a row per first login in --auth oauth mode — so ownership has
+// a referent in both.
 type User struct {
 	bun.BaseModel `bun:"table:users,alias:u"`
 

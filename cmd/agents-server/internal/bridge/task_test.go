@@ -36,10 +36,15 @@ func newTaskTestRunner(t *testing.T) (*Runner, *store.SessionStore, *store.TaskS
 	sessions := store.NewSessionStore(db)
 	tasks := store.NewTaskStore(db)
 	agentConfigs := store.NewAgentConfigStore(db)
+	users := store.NewUserStore(db)
+	if _, err := users.EnsureLocalUser(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	runner := NewRunner(context.Background(), db, &AgentDeps{
 		AgentConfigs:     agentConfigs,
 		Providers:        store.NewProviderStore(db),
 		Sessions:         sessions,
+		Users:            users,
 		Settings:         settings.NewReader(store.NewSettingStore(db)),
 		Memories:         store.NewMemoryStore(db),
 		PendingApprovals: store.NewPendingApprovalStore(db),
@@ -97,7 +102,7 @@ func TestSpawnTaskCreatesHiddenSessionAndRow(t *testing.T) {
 	if _, err := sessions.Get(ctx, task.ChildSessionID); err != nil {
 		t.Fatalf("child session missing: %v", err)
 	}
-	list, err := sessions.List(ctx, "")
+	list, err := sessions.List(ctx, store.EveryOwner)
 	if err != nil {
 		t.Fatal(err)
 	}

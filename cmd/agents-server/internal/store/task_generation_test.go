@@ -137,7 +137,7 @@ func TestListRecentSpansSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	all, total, err := tasks.ListRecent(ctx, "", "", false, 0, 0)
+	all, total, err := tasks.ListRecent(ctx, EveryOwner, "", false, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,14 +152,14 @@ func TestListRecentSpansSessions(t *testing.T) {
 		t.Fatalf("session names = %v", names)
 	}
 
-	wfs, total, err := tasks.ListRecent(ctx, "", TaskKindWorkflow, false, 0, 0)
+	wfs, total, err := tasks.ListRecent(ctx, EveryOwner, TaskKindWorkflow, false, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(wfs) != 2 || total != 2 {
 		t.Fatalf("workflows = %d rows of %d, want 2", len(wfs), total)
 	}
-	live, _, err := tasks.ListRecent(ctx, "", TaskKindWorkflow, true, 0, 0)
+	live, _, err := tasks.ListRecent(ctx, EveryOwner, TaskKindWorkflow, true, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,11 +168,11 @@ func TestListRecentSpansSessions(t *testing.T) {
 	}
 	// A page: one row at a time, the total unchanged, the second page the
 	// next row.
-	first, total, err := tasks.ListRecent(ctx, "", "", false, 1, 0)
+	first, total, err := tasks.ListRecent(ctx, EveryOwner, "", false, 1, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, _, err := tasks.ListRecent(ctx, "", "", false, 1, 1)
+	second, _, err := tasks.ListRecent(ctx, EveryOwner, "", false, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
