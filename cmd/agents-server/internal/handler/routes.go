@@ -69,8 +69,10 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		sessions := api.Group("/sessions")
 		sessions.GET("", h.Sessions.List)
 		sessions.POST("", h.Sessions.Create)
-		// Delete is management: the owner, or an admin (who never reads it).
+		// Delete and reassign are management: the owner or an admin deletes,
+		// an admin reassigns — neither reads.
 		sessions.DELETE("/:id", h.Sessions.Delete)
+		sessions.PUT("/:id/owner", admin, h.Sessions.SetOwner)
 		owned := sessions.Group("/:id", h.Authz.sessionGate())
 		owned.GET("", h.Sessions.Get)
 		owned.PATCH("", h.Sessions.Patch)

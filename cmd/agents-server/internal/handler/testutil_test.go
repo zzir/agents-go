@@ -79,6 +79,7 @@ type noopStopper struct{}
 func (noopStopper) StopSessionTree(string)               {}
 func (noopStopper) AbortSessionDelete(string)            {}
 func (noopStopper) ReleaseSessionBinding(string, string) {}
+func (noopStopper) SessionBusy(string) bool              { return false }
 
 // noopCompactor is a SessionCompactor that finds nothing to fold.
 type noopCompactor struct{}
@@ -100,7 +101,7 @@ func testSessionDeps(db *bun.DB, tune ...func(*SessionDeps)) SessionDeps {
 	d := SessionDeps{
 		Sessions: store.NewSessionStore(db), Entries: store.NewSharedEntryStore(db), Traces: store.NewTraceStore(db),
 		Agents: store.NewAgentConfigStore(db), Profiles: store.NewContextProfileStore(db),
-		MCP: noLister{}, MCPServers: store.NewMcpServerStore(db),
+		MCP: noLister{}, MCPServers: store.NewMcpServerStore(db), Users: store.NewUserStore(db),
 		Stopper: noopStopper{}, Compactor: noopCompactor{},
 	}
 	for _, f := range tune {

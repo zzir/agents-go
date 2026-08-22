@@ -152,8 +152,11 @@ export const api = {
   },
   sessions: {
     ...crud<S['store.Session']>('/sessions'),
-    // Admin: every owner's sessions — existence and recency, never content.
+    // Admin: every owner's sessions — existence and recency, never content —
+    // and reassigning one (its task sessions follow) to another account.
     listAll: (): Promise<S['store.Session'][]> => request('/sessions?all=true'),
+    setOwner: (id: string, userId: string): Promise<S['store.Session']> =>
+      request(`/sessions/${id}/owner`, { method: 'PUT', body: JSON.stringify({ user_id: userId }) }),
     create: (name: string, agentConfigId?: string) => request('/sessions', { method: 'POST', body: JSON.stringify({ name, ...(agentConfigId ? { agent_config_id: agentConfigId } : {}) }) }),
     update: (id: string | number, name: string) => request(`/sessions/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
     // limit/beforeId page BACKWARDS: the newest `limit` entries first, then

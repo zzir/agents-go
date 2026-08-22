@@ -257,6 +257,12 @@ func (r *Runner) DrainPendingWakeups(ctx context.Context) { (Waker{r}).DrainAll(
 // partial turn persists before the process exits.
 func (r *Runner) Shutdown(ctx context.Context) { r.hub.Shutdown(ctx) }
 
+// SessionBusy reports whether a run is live on the session.
+func (r *Runner) SessionBusy(sessionID string) bool {
+	_, ok := r.hub.ActiveRunForSession(sessionID)
+	return ok
+}
+
 // AbortSessionDelete undoes StopSessionTree's deleting mark after the store
 // delete failed and rolled back — the session still exists and must accept
 // runs again.

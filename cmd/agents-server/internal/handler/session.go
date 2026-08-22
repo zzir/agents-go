@@ -34,6 +34,8 @@ type RunStopper interface {
 	// references the pair — the instance (an ssh connection, a docker
 	// container) would otherwise live until process exit.
 	ReleaseSessionBinding(sandboxID, workDir string)
+	// SessionBusy reports whether a run is live on the session.
+	SessionBusy(sessionID string) bool
 }
 
 // MCPToolLister answers what a connected MCP server currently exposes;
@@ -69,6 +71,8 @@ type SessionDeps struct {
 	Profiles   *store.ContextProfileStore
 	MCP        MCPToolLister
 	MCPServers *store.McpServerStore
+	// Users resolves the account a session is reassigned to.
+	Users *store.UserStore
 	// Stopper stops the session tree before a delete's cascade; Compactor is
 	// the manual compaction pass. Both the bridge Runner.
 	Stopper   RunStopper
@@ -84,6 +88,7 @@ type SessionHandler struct {
 	profiles   *store.ContextProfileStore
 	mcp        MCPToolLister
 	mcpServers *store.McpServerStore
+	users      *store.UserStore
 	stopper    RunStopper
 	compactor  SessionCompactor
 }
@@ -93,14 +98,14 @@ type SessionHandler struct {
 func NewSessionHandler(d SessionDeps) *SessionHandler {
 	switch {
 	case d.Sessions == nil, d.Entries == nil, d.Traces == nil, d.Agents == nil,
-		d.Profiles == nil, d.MCPServers == nil:
+		d.Profiles == nil, d.MCPServers == nil, d.Users == nil:
 		panic("handler: SessionDeps has a nil store")
 	case d.MCP == nil, d.Stopper == nil, d.Compactor == nil:
 		panic("handler: SessionDeps has a nil MCP lister, stopper or compactor")
 	}
 	return &SessionHandler{
 		sessions: d.Sessions, entries: d.Entries, traces: d.Traces, agents: d.Agents,
-		profiles: d.Profiles, mcp: d.MCP, mcpServers: d.MCPServers,
+		profiles: d.Profiles, mcp: d.MCP, mcpServers: d.MCPServers, users: d.Users,
 		stopper: d.Stopper, compactor: d.Compactor,
 	}
 }
@@ -256,6 +261,60 @@ func (h *SessionHandler) Patch(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, sess)
+}
+
+// SetOwner reassigns the session (and the hidden sessions serving it) to
+// another account — management, for an admin: the way a session made under
+// one auth mode reaches someone after a switch. Refused while a run is live
+// on it, so the run's stream keeps one owner from start to end.
+//
+//	@Summary	Reassign session owner (admin)
+//	@Tags		sessions
+//	@Accept		json
+//	@Param		id		path		string			true	"Session ID"
+//	@Param		body	body		SetOwnerRequest	true	"The new owner"
+//	@Success	200		{object}	store.Session
+//	@Failure	400		{object}	ErrorResponse	"malformed body, or no such user"
+//	@Failure	403		{object}	ErrorResponse
+//	@Failure	404		{object}	ErrorResponse
+//	@Failure	409		{object}	ErrorResponse	"a run is live on the session"
+//	@Security	BearerAuth
+//	@Router		/sessions/{id}/owner [put]
+func (h *SessionHandler) SetOwner(c *gin.Context) {
+	var req SetOwnerRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.UserID == "" {
+		badRequest(c, "user_id is required")
+		return
+	}
+	id := c.Param("id")
+	if _, err := h.users.ByID(c.Request.Context(), req.UserID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			badRequest(c, "no such user")
+			return
+		}
+		storeError(c, err)
+		return
+	}
+	if h.stopper.SessionBusy(id) {
+		conflict(c, "a run is live on this session; stop it first")
+		return
+	}
+	if err := h.sessions.SetOwner(c.Request.Context(), id, req.UserID); err != nil {
+		storeError(c, err)
+		return
+	}
+	sess, err := h.sessions.Get(c.Request.Context(), id)
+	if err != nil {
+		storeError(c, err)
+		return
+	}
+	server.SetAuditDetail(c, "owner="+req.UserID)
+	c.JSON(http.StatusOK, sess)
+}
+
+// SetOwnerRequest is the body of PUT /sessions/:id/owner.
+type SetOwnerRequest struct {
+	UserID string `json:"user_id"`
 }
 
 // Delete removes the session identified by the id path parameter together

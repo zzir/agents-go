@@ -569,6 +569,11 @@ components:
         work_dir:
           type: string
       type: object
+    handler.SetOwnerRequest:
+      properties:
+        user_id:
+          type: string
+      type: object
     handler.SettingView:
       properties:
         key:
@@ -4573,6 +4578,62 @@ paths:
       security:
       - BearerAuth: []
       summary: List session entries
+      tags:
+      - sessions
+  /sessions/{id}/owner:
+    put:
+      parameters:
+      - description: Session ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.SetOwnerRequest'
+                description: The new owner
+                summary: body
+        description: The new owner
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.Session'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: malformed body, or no such user
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: a run is live on the session
+      security:
+      - BearerAuth: []
+      summary: Reassign session owner (admin)
       tags:
       - sessions
   /sessions/{id}/runs:

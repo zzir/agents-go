@@ -236,6 +236,14 @@ Two rules, enforced at the routes (`handler/authz.go`), shape who may do what:
 In token mode the one local account is an admin and owns everything, so every
 check passes.
 
+**Switching auth modes keeps the data and changes who can reach it.** Every
+session made in token mode belongs to the local account, which OAuth mode
+leaves dormant; every session made in OAuth mode belongs to the person who
+made it, whom token mode cannot sign in as. After a switch the old sessions
+are therefore visible only in the admin's `GET /sessions?all=true` listing
+(and the Admin dialog's Sessions panel), where an admin can reassign one to
+an account with `PUT /sessions/:id/owner` — or delete it.
+
 ### Audit log
 
 `audit_events` answers "who did what, to what, when": every successful
@@ -319,6 +327,7 @@ detail.
 | GET    | `/sessions/:id`           | Get session — plus `planning`, whether its next run starts by planning |
 | PATCH  | `/sessions/:id`           | Partial update — `{name?, pinned?}`, returns the updated session |
 | DELETE | `/sessions/:id`           | Delete the session and everything it owns: entries, traces, approvals, wake-ups, triggers, and its task tree (rows and hidden child sessions, at any depth over live edges) |
+| PUT    | `/sessions/:id/owner`     | Reassign the session and its task tree to `{user_id}` (admin); `409` while a run is live on it |
 | GET    | `/sessions/:id/messages`  | List session entries (paginated)                                     |
 | GET    | `/sessions/:id/traces`    | List trace events (paginated); `?summary=true` leaves each span's payload fields out (`payload_omitted`) — what the trace panel opens with |
 | GET    | `/sessions/:id/traces/:span_id` | One span whole, payload included — what a summary row opens with, or a live span the WebSocket cap trimmed |

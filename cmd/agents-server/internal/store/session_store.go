@@ -222,31 +222,66 @@ func (s *SessionStore) CountBindingRefs(ctx context.Context, sandboxID, workDir 
 // is ErrNotFound; a child that is already gone is not.
 func (s *SessionStore) Delete(ctx context.Context, id string) error {
 	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		queue := []string{id}
-		visited := map[string]bool{id: true}
-		for len(queue) > 0 {
-			cur := queue[0]
-			queue = queue[1:]
-			var childIDs []string
-			if err := tx.NewSelect().Model((*Task)(nil)).
-				Column("child_session_id").
-				Where("parent_session_id = ?", cur).
-				Where(liveParent).Where(liveChild).
-				Scan(ctx, &childIDs); err != nil {
-				return fmt.Errorf("listing task sessions for %s: %w", cur, err)
-			}
-			for _, c := range childIDs {
-				if !visited[c] {
-					visited[c] = true
-					queue = append(queue, c)
-				}
-			}
+		tree, err := sessionTree(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		for _, cur := range tree {
 			if err := deleteSessionRows(ctx, tx, cur, cur == id); err != nil {
 				return err
 			}
 		}
 		return nil
 	})
+}
+
+// SetOwner reassigns the session and every hidden session serving it (its
+// tasks' transcripts, recursively) to ownerID — the one ownership column
+// stays consistent across the tree. ErrNotFound when the root is absent.
+func (s *SessionStore) SetOwner(ctx context.Context, id, ownerID string) error {
+	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		tree, err := sessionTree(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		res, err := tx.NewUpdate().Model((*Session)(nil)).
+			Set("owner_id = ?", ownerID).
+			Where("id IN (?)", bun.List(tree)).
+			Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("reassigning session %s: %w", id, err)
+		}
+		n, err := res.RowsAffected()
+		if err == nil && n == 0 {
+			return ErrNotFound
+		}
+		return err
+	})
+}
+
+// sessionTree lists id and every hidden session serving it, parents before
+// children, following the live task edges (a task row whose session was
+// deleted and re-created is not an edge).
+func sessionTree(ctx context.Context, tx bun.Tx, id string) ([]string, error) {
+	tree := []string{id}
+	visited := map[string]bool{id: true}
+	for i := 0; i < len(tree); i++ {
+		var childIDs []string
+		if err := tx.NewSelect().Model((*Task)(nil)).
+			Column("child_session_id").
+			Where("parent_session_id = ?", tree[i]).
+			Where(liveParent).Where(liveChild).
+			Scan(ctx, &childIDs); err != nil {
+			return nil, fmt.Errorf("listing task sessions for %s: %w", tree[i], err)
+		}
+		for _, c := range childIDs {
+			if !visited[c] {
+				visited[c] = true
+				tree = append(tree, c)
+			}
+		}
+	}
+	return tree, nil
 }
 
 // deleteSessionRows removes one session of the tree: its row and everything

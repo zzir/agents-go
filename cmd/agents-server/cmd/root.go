@@ -208,7 +208,7 @@ func run(_ *cobra.Command, _ []string) error {
 
 	sessionHandler := handler.NewSessionHandler(handler.SessionDeps{
 		Sessions: sessionStore, Entries: entryStore, Traces: traceStore, Agents: agentConfigStore,
-		Profiles: contextProfileStore, MCP: mcpManager, MCPServers: mcpServerStore,
+		Profiles: contextProfileStore, MCP: mcpManager, MCPServers: mcpServerStore, Users: userStore,
 		Stopper: runner, Compactor: runner,
 	})
 	agentConfigHandler := handler.NewAgentConfigHandler(agentConfigStore, mcpServerStore, providerStore, guardrailResolver)

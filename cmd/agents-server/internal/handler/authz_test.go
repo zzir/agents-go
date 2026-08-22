@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/uptrace/bun"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/authn"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
@@ -38,7 +39,7 @@ func usersByToken(_ context.Context, bearer string) (protocol.UserInfo, error) {
 
 // authzRig mounts the real middleware chain and the full route table over an
 // in-memory database, with three users to act as.
-func authzRig(t *testing.T) (*gin.Engine, *store.SessionStore) {
+func authzRig(t *testing.T) (*gin.Engine, *store.SessionStore, *bun.DB) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	db := newTestDB(t)
@@ -53,7 +54,7 @@ func authzRig(t *testing.T) (*gin.Engine, *store.SessionStore) {
 		Runs:     NewRunHandler(runner),
 		Agents:   testAgentConfigHandler(db),
 	}.Register)
-	return s.Engine, sessions
+	return s.Engine, sessions, db
 }
 
 func as(user protocol.UserInfo, method, path, body string) *http.Request {
@@ -77,7 +78,7 @@ func serve(engine *gin.Engine, req *http.Request) *httptest.ResponseRecorder {
 
 // Shared configuration: every member reads, only admins write.
 func TestSharedConfigWritesAreAdminOnly(t *testing.T) {
-	engine, _ := authzRig(t)
+	engine, _, _ := authzRig(t)
 	body := `{"name":"a1","model":"gpt-5.5"}`
 
 	if rec := serve(engine, as(memberUser, http.MethodPost, "/api/v1/agents", body)); rec.Code != http.StatusForbidden {
@@ -95,7 +96,7 @@ func TestSharedConfigWritesAreAdminOnly(t *testing.T) {
 // to an admin; the sidebar lists one owner's; an admin may list all and
 // delete, never read.
 func TestSessionsArePrivateToTheirOwner(t *testing.T) {
-	engine, _ := authzRig(t)
+	engine, _, _ := authzRig(t)
 
 	rec := serve(engine, as(memberUser, http.MethodPost, "/api/v1/sessions", `{"name":"mine"}`))
 	if rec.Code != http.StatusCreated {
@@ -139,6 +140,56 @@ func TestSessionsArePrivateToTheirOwner(t *testing.T) {
 	}
 	if rec := serve(engine, as(adminUser, http.MethodDelete, "/api/v1/sessions/"+sess.ID, "")); rec.Code != http.StatusNoContent {
 		t.Fatalf("admin delete = %d, want 204 (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// Reassigning a session is an admin's management act: a member is refused
+// (403, the write is on shared ground, not a 404 oracle), the new owner must
+// be an account, and afterwards the session — and the hidden session serving
+// it — reads for the new owner and not the old.
+func TestSessionReassignIsAdminManagement(t *testing.T) {
+	engine, sessions, db := authzRig(t)
+	ctx := context.Background()
+	// The rig resolves bearers to three users that exist only as UserInfo;
+	// the reassign target must be a row.
+	for _, u := range []protocol.UserInfo{adminUser, memberUser, otherUser} {
+		if _, err := db.NewInsert().Model(&store.User{ID: u.ID, Email: u.Email, Role: u.Role}).Exec(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rec := serve(engine, as(memberUser, http.MethodPost, "/api/v1/sessions", `{"name":"mine"}`))
+	var sess store.Session
+	_ = json.Unmarshal(rec.Body.Bytes(), &sess)
+	child := &store.Session{ID: store.NewID(), OwnerID: memberUser.ID, Hidden: true, Name: "task"}
+	if err := sessions.Create(ctx, child); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.NewTaskStore(db).Create(ctx, &store.Task{ID: store.NewID(), RunID: store.NewID(), ParentSessionID: sess.ID, ChildSessionID: child.ID, Status: "completed"}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := `{"user_id":"` + otherUser.ID + `"}`
+	if rec := serve(engine, as(memberUser, http.MethodPut, "/api/v1/sessions/"+sess.ID+"/owner", body)); rec.Code != http.StatusForbidden {
+		t.Fatalf("member reassign = %d, want 403", rec.Code)
+	}
+	if rec := serve(engine, as(adminUser, http.MethodPut, "/api/v1/sessions/"+sess.ID+"/owner", `{"user_id":"nobody"}`)); rec.Code != http.StatusBadRequest {
+		t.Fatalf("reassign to no account = %d, want 400", rec.Code)
+	}
+	if rec := serve(engine, as(adminUser, http.MethodPut, "/api/v1/sessions/"+store.NewID()+"/owner", body)); rec.Code != http.StatusNotFound {
+		t.Fatalf("reassign a missing session = %d, want 404", rec.Code)
+	}
+	if rec := serve(engine, as(adminUser, http.MethodPut, "/api/v1/sessions/"+sess.ID+"/owner", body)); rec.Code != http.StatusOK {
+		t.Fatalf("admin reassign = %d (%s)", rec.Code, rec.Body.String())
+	}
+	if rec := serve(engine, as(otherUser, http.MethodGet, "/api/v1/sessions/"+sess.ID, "")); rec.Code != http.StatusOK {
+		t.Fatalf("new owner GET = %d, want 200", rec.Code)
+	}
+	if rec := serve(engine, as(memberUser, http.MethodGet, "/api/v1/sessions/"+sess.ID, "")); rec.Code != http.StatusNotFound {
+		t.Fatalf("old owner GET = %d, want 404", rec.Code)
+	}
+	if got, _ := sessions.Get(ctx, child.ID); got.OwnerID != otherUser.ID {
+		t.Fatalf("the task's hidden session stayed with %s", got.OwnerID)
 	}
 }
 
