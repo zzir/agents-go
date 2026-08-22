@@ -46,7 +46,7 @@ func (s *McpServerStore) SaveOAuthToken(ctx context.Context, id, tokenJSON strin
 	// updateColumn enforces the row exists, so a token written for a deleted
 	// server surfaces as ErrNotFound instead of a silent no-op the OAuth flow
 	// would mistake for success.
-	return updateColumn(ctx, s.db, (*McpServerConfig)(nil), "mcp server oauth token", id, "oauth_token", sealSecret(tokenJSON))
+	return updateColumn(ctx, s.db, (*McpServerConfig)(nil), "mcp server oauth token", id, "oauth_token", sealSecret(labelMcpOAuthToken, tokenJSON))
 }
 
 // ClearOAuthToken removes the persisted OAuth token for the given server.

@@ -1324,16 +1324,23 @@ never by position; an unmatched mask clears.
 
 **At rest, secrets are sealed under one process key.** Set `AGENTS_SECRET_KEY`
 (or `--secret-key-file`) to a 32-byte key — `openssl rand -base64 32` — and
-every credential column is stored AES-256-GCM encrypted (`enc:v1:…`):
+every credential column is stored AES-256-GCM encrypted
+(`enc:v2:<key id>:…`, the key id being the first bytes of the key's SHA-256):
 provider `api_key` and ChatGPT token, MCP `oauth_token`, `oauth_client_secret`
 and `headers`, SSH sandbox `password`, webhook `secret`, fallback `api_key`s,
 and the settings the registry marks secret. Possession of the database is then
-not possession of every upstream credential. Without a key the server logs one
-warning and stores plaintext — the single-user workbench. Rows written before
-a key was set stay plaintext until their next write, and open either way; a
-sealed row with no key (or the wrong one) is a loud error, never ciphertext
-handed out as a credential. There is no rotation: losing the key loses the
-secrets.
+not possession of every upstream credential. Each value is bound to its place
+— `table.column`, plus the field for a credential inside a JSON column — as
+the cipher's additional data, so a ciphertext moved to another column (a
+provider's key planted as another provider's, or as an MCP header bound for
+someone's endpoint) does not open there; and a value pasted in through the
+API that already looks sealed is sealed again as the text it is, never stored
+as someone else's ciphertext. Without a key the server logs one warning and
+stores plaintext — the single-user workbench. Rows written before a key was
+set stay plaintext until their next write, and open either way; a sealed row
+with no key, or under another key, is a loud error naming the key ids, never
+ciphertext handed out as a credential. There is no rotation: losing the key
+loses the secrets.
 
 ### Health
 

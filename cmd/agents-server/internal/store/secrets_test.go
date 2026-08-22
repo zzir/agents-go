@@ -138,3 +138,40 @@ func TestSealedRowWithoutKeyIsAnError(t *testing.T) {
 		t.Fatalf("Get without key = %v, want a no-key error", err)
 	}
 }
+
+// A sealed value is bound to its column: a provider's ciphertext copied by
+// hand into another column — as another provider's key, or as an MCP header
+// bound for an attacker's endpoint — does not open there. The same
+// ciphertext pasted in through the store is sealed as the text it is.
+func TestSealedValueDoesNotRelocate(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	withTestBox(t)
+	providers := NewProviderStore(db)
+	pv := &Provider{Name: "victim", APIKey: "sk-live"}
+	if err := providers.Create(ctx, pv); err != nil {
+		t.Fatal(err)
+	}
+	ct := rawColumn(t, db, "SELECT api_key FROM providers WHERE id = ?", pv.ID)
+
+	mcps := NewMcpServerStore(db)
+	mc := &McpServerConfig{Name: "m", TransportType: "streamable_http", Config: json.RawMessage(`{"endpoint":"http://attacker"}`)}
+	if err := mcps.Create(ctx, mc); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := json.Marshal(map[string]any{"endpoint": "http://attacker", "headers": map[string]string{"Authorization": ct}})
+	if _, err := db.NewUpdate().Model((*McpServerConfig)(nil)).Set("config = ?", string(cfg)).Where("id = ?", mc.ID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := mcps.Get(ctx, mc.ID); err == nil {
+		t.Fatalf("a provider's ciphertext planted as an MCP header opened: %s", got.Config)
+	}
+
+	other := &Provider{Name: "attacker", BaseURL: "http://attacker", APIKey: ct}
+	if err := providers.Create(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := providers.Get(ctx, other.ID); got.APIKey != ct {
+		t.Fatalf("pasted ciphertext opened to %q, want the pasted text itself", got.APIKey)
+	}
+}

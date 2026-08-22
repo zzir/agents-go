@@ -7,6 +7,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -15,18 +16,26 @@ import (
 	"strings"
 )
 
-// prefix marks a sealed value. A stored value without it is plaintext from
-// before a key was configured and is passed through unchanged — enabling
-// encryption later never locks existing rows out; they seal on their next
-// write.
-const prefix = "enc:v1:"
+// A sealed value is "enc:v2:<kid>:<base64 nonce+ciphertext>": the key id
+// names which key sealed it, so a mismatch says so instead of "wrong key?".
+// A stored value without the prefix is plaintext from before a key was
+// configured and passes through unchanged — enabling encryption later never
+// locks existing rows out; they seal on their next write.
+const (
+	prefix   = "enc:"
+	version  = "v2"
+	kidBytes = 4
+)
 
 // IsSealed reports whether a stored value carries the sealed prefix.
 func IsSealed(stored string) bool { return strings.HasPrefix(stored, prefix) }
 
 // Box seals and opens with AES-256-GCM. A nil *Box is the no-key mode:
 // Seal and Open pass every value through.
-type Box struct{ aead cipher.AEAD }
+type Box struct {
+	aead cipher.AEAD
+	kid  string
+}
 
 // New returns a Box over a 32-byte key.
 func New(key []byte) (*Box, error) {
@@ -41,7 +50,17 @@ func New(key []byte) (*Box, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Box{aead: aead}, nil
+	sum := sha256.Sum256(key)
+	return &Box{aead: aead, kid: hex.EncodeToString(sum[:kidBytes])}, nil
+}
+
+// KeyID names the key: the first bytes of its SHA-256, as stamped into
+// every value it seals. "" for the no-key mode.
+func (b *Box) KeyID() string {
+	if b == nil {
+		return ""
+	}
+	return b.kid
 }
 
 // ParseKey accepts a key as base64 (standard or URL, padded or not) or hex.
@@ -83,28 +102,42 @@ func FromEnvOrFile(env, file string) (*Box, error) {
 	return New(key)
 }
 
-// Seal encrypts plain; "" stays "" (an absent secret is not a secret).
-func (b *Box) Seal(plain string) string {
-	if b == nil || plain == "" || strings.HasPrefix(plain, prefix) {
+// Seal encrypts plain for the named place — "table.column", the additional
+// data the ciphertext is bound to, so a sealed value moved to another column
+// (a provider's key pasted as another provider's, or as an MCP header bound
+// for an attacker's endpoint) does not open there. "" stays "" (an absent
+// secret is not a secret). A value that already looks sealed is sealed
+// again as the text it is: nothing pasted in through the API is ever stored
+// as someone else's ciphertext.
+func (b *Box) Seal(label, plain string) string {
+	if b == nil || plain == "" {
 		return plain
 	}
 	nonce := make([]byte, b.aead.NonceSize())
 	_, _ = rand.Read(nonce)
-	ct := b.aead.Seal(nonce, nonce, []byte(plain), nil)
-	return prefix + base64.RawStdEncoding.EncodeToString(ct)
+	ct := b.aead.Seal(nonce, nonce, []byte(plain), []byte(label))
+	return prefix + version + ":" + b.kid + ":" + base64.RawStdEncoding.EncodeToString(ct)
 }
 
-// Open decrypts a sealed value; an unsealed one passes through. A sealed
-// value with no key, or under the wrong key, is an error — silently reading
-// ciphertext as a credential would fail somewhere far less clear.
-func (b *Box) Open(stored string) (string, error) {
+// Open decrypts a value sealed for label; an unsealed one passes through. A
+// sealed value with no key, or under another key, is an error naming which
+// — silently reading ciphertext as a credential would fail somewhere far
+// less clear.
+func (b *Box) Open(label, stored string) (string, error) {
 	if !strings.HasPrefix(stored, prefix) {
 		return stored, nil
 	}
 	if b == nil {
 		return "", errors.New("secrets: a sealed value but no key configured (AGENTS_SECRET_KEY)")
 	}
-	ct, err := base64.RawStdEncoding.DecodeString(strings.TrimPrefix(stored, prefix))
+	parts := strings.SplitN(stored, ":", 4)
+	if len(parts) != 4 || parts[1] != version {
+		return "", errors.New("secrets: malformed sealed value")
+	}
+	if parts[2] != b.kid {
+		return "", fmt.Errorf("secrets: sealed under key %s, the configured key is %s", parts[2], b.kid)
+	}
+	ct, err := base64.RawStdEncoding.DecodeString(parts[3])
 	if err != nil {
 		return "", fmt.Errorf("secrets: malformed sealed value: %w", err)
 	}
@@ -112,9 +145,9 @@ func (b *Box) Open(stored string) (string, error) {
 	if len(ct) < n {
 		return "", errors.New("secrets: malformed sealed value")
 	}
-	plain, err := b.aead.Open(nil, ct[:n], ct[n:], nil)
+	plain, err := b.aead.Open(nil, ct[:n], ct[n:], []byte(label))
 	if err != nil {
-		return "", errors.New("secrets: cannot open a sealed value — wrong key?")
+		return "", errors.New("secrets: cannot open a sealed value: not sealed for this place")
 	}
 	return string(plain), nil
 }

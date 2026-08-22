@@ -95,7 +95,7 @@ func (s *ProviderStore) Update(ctx context.Context, id string, p *Provider) erro
 // column. The token belongs to the ENDPOINT, so every agent pointed at this
 // provider shares the one login.
 func (s *ProviderStore) SaveChatGPTToken(ctx context.Context, id, tokenJSON string) error {
-	return updateColumn(ctx, s.db, (*Provider)(nil), "provider chatgpt token", id, "chatgpt_token", sealSecret(tokenJSON))
+	return updateColumn(ctx, s.db, (*Provider)(nil), "provider chatgpt token", id, "chatgpt_token", sealSecret(labelProviderChatGPTToken, tokenJSON))
 }
 
 // ClearChatGPTToken removes the stored OAuth token.

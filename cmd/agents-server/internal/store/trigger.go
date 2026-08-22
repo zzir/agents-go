@@ -240,7 +240,7 @@ func (s *TriggerStore) DeleteIfWorkflow(ctx context.Context, id, workflowID stri
 // SetSecret writes a webhook trigger's new secret and nothing else.
 func (s *TriggerStore) SetSecret(ctx context.Context, id, secret string) error {
 	res, err := s.db.NewUpdate().Model((*Trigger)(nil)).
-		Set("secret = ?", sealSecret(secret)).
+		Set("secret = ?", sealSecret(labelTriggerSecret, secret)).
 		Set("updated_at = ?", time.Now().UTC()).
 		Where("id = ?", id).
 		Exec(ctx)

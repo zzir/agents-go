@@ -28,13 +28,13 @@ func (s *SettingStore) SealIf(isSecret func(key string) bool) { s.isSecret = isS
 
 func (s *SettingStore) seal(key, value string) string {
 	if s.isSecret != nil && s.isSecret(key) {
-		return sealSecret(value)
+		return sealSecret(labelSetting, value)
 	}
 	return value
 }
 
 func (s *SettingStore) open(st *Setting) (err error) {
-	st.Value, err = openSecret(st.Value)
+	st.Value, err = openSecret(labelSetting, st.Value)
 	return err
 }
 

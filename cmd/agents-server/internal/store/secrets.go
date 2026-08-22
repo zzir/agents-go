@@ -16,23 +16,26 @@ var secretBox *secrets.Box
 // UseSecretBox installs the process's key for every store.
 func UseSecretBox(b *secrets.Box) { secretBox = b }
 
-func sealSecret(plain string) string { return secretBox.Seal(plain) }
+// sealSecret seals plain for its place, "table.column" (a JSON field inside
+// a column: "table.column.field") — the label the ciphertext is bound to.
+func sealSecret(label, plain string) string { return secretBox.Seal(label, plain) }
 
-func openSecret(stored string) (string, error) { return secretBox.Open(stored) }
+func openSecret(label, stored string) (string, error) { return secretBox.Open(label, stored) }
 
-// sealJSONKeys seals the named top-level string fields of a JSON object; a
-// key whose value is an object (a headers map) has each string value sealed.
-// Absent keys and non-string values are left alone.
-func sealJSONKeys(raw json.RawMessage, keys ...string) (json.RawMessage, error) {
-	return mapJSONKeys(raw, func(s string) (string, error) { return sealSecret(s), nil }, keys...)
+// sealJSONKeys seals the named top-level string fields of a JSON object
+// stored in the column named by label; a key whose value is an object (a
+// headers map) has each string value sealed. Absent keys and non-string
+// values are left alone.
+func sealJSONKeys(label string, raw json.RawMessage, keys ...string) (json.RawMessage, error) {
+	return mapJSONKeys(label, raw, func(l, s string) (string, error) { return sealSecret(l, s), nil }, keys...)
 }
 
 // openJSONKeys is sealJSONKeys's inverse.
-func openJSONKeys(raw json.RawMessage, keys ...string) (json.RawMessage, error) {
-	return mapJSONKeys(raw, openSecret, keys...)
+func openJSONKeys(label string, raw json.RawMessage, keys ...string) (json.RawMessage, error) {
+	return mapJSONKeys(label, raw, openSecret, keys...)
 }
 
-func mapJSONKeys(raw json.RawMessage, fn func(string) (string, error), keys ...string) (json.RawMessage, error) {
+func mapJSONKeys(label string, raw json.RawMessage, fn func(label, s string) (string, error), keys ...string) (json.RawMessage, error) {
 	if len(raw) == 0 || secretBox == nil && !hasSealed(raw) {
 		return raw, nil
 	}
@@ -48,7 +51,7 @@ func mapJSONKeys(raw json.RawMessage, fn func(string) (string, error), keys ...s
 		}
 		var str string
 		if err := json.Unmarshal(v, &str); err == nil {
-			out, err := fn(str)
+			out, err := fn(label+"."+k, str)
 			if err != nil {
 				return nil, fmt.Errorf("field %q: %w", k, err)
 			}
@@ -59,7 +62,7 @@ func mapJSONKeys(raw json.RawMessage, fn func(string) (string, error), keys ...s
 		var m map[string]string
 		if err := json.Unmarshal(v, &m); err == nil && m != nil {
 			for mk, mv := range m {
-				out, err := fn(mv)
+				out, err := fn(label+"."+k, mv)
 				if err != nil {
 					return nil, fmt.Errorf("field %q.%s: %w", k, mk, err)
 				}
@@ -78,5 +81,5 @@ func mapJSONKeys(raw json.RawMessage, fn func(string) (string, error), keys ...s
 // hasSealed reports whether raw contains a sealed value — so plaintext mode
 // still opens (and fails loudly on) rows sealed under a key that is gone.
 func hasSealed(raw json.RawMessage) bool {
-	return strings.Contains(string(raw), `"enc:v1:`)
+	return strings.Contains(string(raw), `"enc:`)
 }
