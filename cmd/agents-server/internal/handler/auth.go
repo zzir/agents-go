@@ -14,17 +14,72 @@ import (
 )
 
 // AuthHandler serves the authentication surface: config for the login page,
-// token login (token mode), the signed-in user's session endpoints, and
-// personal access tokens.
+// token login (token mode), the signed-in user's session endpoints, personal
+// access tokens, and the admin's user management.
 type AuthHandler struct {
 	svc    *authn.Service
 	tokens *store.AuthTokenStore
+	users  *store.UserStore
 }
 
-// NewAuthHandler returns an AuthHandler over the given service and token
-// store (the latter may be nil in tests that never touch PATs).
-func NewAuthHandler(svc *authn.Service, tokens *store.AuthTokenStore) *AuthHandler {
-	return &AuthHandler{svc: svc, tokens: tokens}
+// NewAuthHandler returns an AuthHandler over the given service and stores
+// (either store may be nil in tests that never reach its endpoints).
+func NewAuthHandler(svc *authn.Service, tokens *store.AuthTokenStore, users *store.UserStore) *AuthHandler {
+	return &AuthHandler{svc: svc, tokens: tokens, users: users}
+}
+
+// ListUsers lists every account — the admin's user management view.
+//
+//	@Summary	List users (admin)
+//	@Tags		auth
+//	@Produce	json
+//	@Success	200	{array}		store.User
+//	@Failure	403	{object}	ErrorResponse
+//	@Security	BearerAuth
+//	@Router		/auth/users [get]
+func (h *AuthHandler) ListUsers(c *gin.Context) {
+	list, err := h.users.List(c.Request.Context())
+	if err != nil {
+		internalError(c, err)
+		return
+	}
+	if list == nil {
+		list = []store.User{}
+	}
+	c.JSON(http.StatusOK, list)
+}
+
+// SetUserRole changes an account's role. An admin cannot demote themself —
+// the last admin locking everyone out is the failure this prevents;
+// --bootstrap-admin remains the recovery hatch.
+//
+//	@Summary	Set a user's role (admin)
+//	@Tags		auth
+//	@Accept		json
+//	@Param		id	path	string	true	"User ID"
+//	@Success	204	"role changed"
+//	@Failure	400	{object}	ErrorResponse
+//	@Failure	403	{object}	ErrorResponse
+//	@Failure	404	{object}	ErrorResponse
+//	@Security	BearerAuth
+//	@Router		/auth/users/{id}/role [put]
+func (h *AuthHandler) SetUserRole(c *gin.Context) {
+	var req struct {
+		Role string `json:"role"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || (req.Role != store.RoleAdmin && req.Role != store.RoleMember) {
+		badRequest(c, "role must be admin or member")
+		return
+	}
+	if me, _ := server.CurrentUser(c); me.ID == c.Param("id") && req.Role != store.RoleAdmin {
+		badRequest(c, "you cannot demote yourself")
+		return
+	}
+	if err := h.users.SetRole(c.Request.Context(), c.Param("id"), req.Role); err != nil {
+		storeError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 // requirePATMode gates the PAT endpoints: in token mode a PAT could be minted

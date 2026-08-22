@@ -45,6 +45,7 @@ export function AccountPanel() {
           <Label variant={me.role === 'admin' ? 'accent' : 'secondary'}>{me.role}</Label>
         </Stack>
       ) : null}
+      {me?.role === 'admin' && cfg?.mode === 'oauth' ? <AdminSection me={me} /> : null}
       {cfg?.mode === 'oauth' ? <PatSection /> : cfg ? (
         <Blankslate>
           <Blankslate.Visual><PersonIcon size={24} /></Blankslate.Visual>
@@ -161,6 +162,101 @@ function PatSection() {
               </span>
               <Button size="small" variant="danger" leadingVisual={TrashIcon} onClick={() => { void remove(p); }}>
                 Revoke
+              </Button>
+            </Stack>
+          ))}
+        </Stack>
+      )}
+    </Stack>
+  );
+}
+
+type UserRow = ApiSchemas['store.User'];
+type SessionRow = ApiSchemas['store.Session'];
+
+// AdminSection is the admin's management view: every account with its role,
+// and every owner's sessions — existence and recency only; content stays the
+// owner's. Deleting is management; reading is not offered.
+function AdminSection({ me }: { me: AuthUser }) {
+  const [users, setUsers] = useState<UserRow[]>([]);
+  const [sessions, setSessions] = useState<SessionRow[]>([]);
+  const [error, setError] = useState('');
+  const confirm = useConfirm();
+
+  const reload = useCallback(() => {
+    Promise.all([api.auth.users.list(), api.sessions.listAll()])
+      .then(([u, s]) => { setUsers(u); setSessions(s); })
+      .catch(() => setError('Failed to load the admin view.'));
+  }, []);
+  useEffect(() => { reload(); }, [reload]);
+
+  const emailOf = (ownerId?: string) => users.find(u => u.id === ownerId)?.email || ownerId || '';
+
+  const setRole = useCallback(async (u: UserRow, role: 'admin' | 'member') => {
+    try {
+      await api.auth.users.setRole(u.id || '', role);
+      reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to change the role.');
+    }
+  }, [reload]);
+
+  const removeSession = useCallback(async (s: SessionRow) => {
+    if (!(await confirm({
+      title: 'Delete session?',
+      content: `"${s.name}" (${emailOf(s.owner_id)}) and everything in it will be removed.`,
+      confirmButtonContent: 'Delete',
+      confirmButtonType: 'danger',
+    }))) return;
+    try {
+      await api.sessions.delete(s.id || '');
+      reload();
+    } catch {
+      setError('Failed to delete the session.');
+    }
+  }, [confirm, reload, users]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <Stack gap="normal">
+      <PageHeader role="presentation">
+        <PageHeader.TitleArea variant="medium">
+          <PageHeader.Title>Users</PageHeader.Title>
+        </PageHeader.TitleArea>
+      </PageHeader>
+      {error ? <Flash variant="danger">{error}</Flash> : null}
+      <Stack gap="none" className="account-pat-list">
+        {users.filter(u => u.id !== 'local').map(u => (
+          <Stack key={u.id} direction="horizontal" align="center" gap="condensed" className="account-pat-row">
+            <span className="account-name" style={{ flexGrow: 1 }}>{u.name || u.email}</span>
+            <span className="account-muted">{u.email}</span>
+            <Label variant={u.role === 'admin' ? 'accent' : 'secondary'}>{u.role}</Label>
+            {u.id === me.id ? null : (
+              <Button size="small" onClick={() => { void setRole(u, u.role === 'admin' ? 'member' : 'admin'); }}>
+                {u.role === 'admin' ? 'Make member' : 'Make admin'}
+              </Button>
+            )}
+          </Stack>
+        ))}
+      </Stack>
+      <PageHeader role="presentation">
+        <PageHeader.TitleArea variant="medium">
+          <PageHeader.Title>All sessions</PageHeader.Title>
+        </PageHeader.TitleArea>
+      </PageHeader>
+      <p className="account-muted">
+        Every owner's conversations, by recency. Content is the owner's alone;
+        an admin may delete one.
+      </p>
+      {sessions.length === 0 ? (
+        <span className="account-muted">No sessions.</span>
+      ) : (
+        <Stack gap="none" className="account-pat-list">
+          {sessions.map(s => (
+            <Stack key={s.id} direction="horizontal" align="center" gap="condensed" className="account-pat-row">
+              <span className="account-name" style={{ flexGrow: 1 }}>{s.name}</span>
+              <span className="account-muted">{emailOf(s.owner_id)} · {shortDate(s.updated_at)}</span>
+              <Button size="small" variant="danger" leadingVisual={TrashIcon} onClick={() => { void removeSession(s); }}>
+                Delete
               </Button>
             </Stack>
           ))}

@@ -119,6 +119,12 @@ function crud<T>(base: string): CrudMethods<T> {
 export const api = {
   auth: {
     me: (): Promise<AuthUser> => request('/auth/me'),
+    // Admin: every account, and role changes (an admin cannot demote themself).
+    users: {
+      list: (): Promise<S['store.User'][]> => request('/auth/users'),
+      setRole: (id: string, role: 'admin' | 'member') =>
+        request(`/auth/users/${encodeURIComponent(id)}/role`, { method: 'PUT', body: JSON.stringify({ role }) }),
+    },
     // Personal access tokens (OAuth mode): the create response is the only
     // place a token's plaintext appears.
     pats: {
@@ -130,6 +136,8 @@ export const api = {
   },
   sessions: {
     ...crud<S['store.Session']>('/sessions'),
+    // Admin: every owner's sessions — existence and recency, never content.
+    listAll: (): Promise<S['store.Session'][]> => request('/sessions?all=true'),
     create: (name: string, agentConfigId?: string) => request('/sessions', { method: 'POST', body: JSON.stringify({ name, ...(agentConfigId ? { agent_config_id: agentConfigId } : {}) }) }),
     update: (id: string | number, name: string) => request(`/sessions/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
     // limit/beforeId page BACKWARDS: the newest `limit` entries first, then

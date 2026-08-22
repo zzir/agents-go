@@ -317,7 +317,7 @@ func run(_ *cobra.Command, _ []string) error {
 			Sessions: sessionStore, Tasks: taskStore, Approvals: pendingApprovalStore,
 			Triggers: triggerStore, Hub: runner.Hub(),
 		},
-		Auth:           handler.NewAuthHandler(authSvc, authTokens),
+		Auth:           handler.NewAuthHandler(authSvc, authTokens, userStore),
 		Sessions:       sessionHandler,
 		Runs:           runHandler,
 		Approvals:      approvalHandler,

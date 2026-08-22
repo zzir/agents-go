@@ -19,7 +19,7 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 const TerminalPanel = React.lazy(() =>
   import('@/features/terminal/TerminalPanel').then(m => ({ default: m.TerminalPanel })),
 );
-import { login, checkAuth, getToken, api, authConfig, exchangeCode, type AuthConfig } from '@/lib/api';
+import { login, checkAuth, getToken, api, authConfig, exchangeCode, type AuthConfig, type AuthUser } from '@/lib/api';
 import { EV, TASK_KIND_WORKFLOW } from '@/lib/protocol';
 import { WorkflowsHub, type HubTab } from '@/features/workflows/WorkflowsHub';
 import { WORKFLOW_COMMAND } from '@/features/chat/SlashMenu';
@@ -109,8 +109,12 @@ function TabLoadError() {
   return <Flash variant="danger">Failed to load this panel — reload the page.</Flash>;
 }
 
-function SettingsDialog({ onClose }: { onClose: () => void }) {
-  const [tab, setTab] = useState('providers');
+function SettingsDialog({ onClose, role }: { onClose: () => void; role: string }) {
+  // Shared configuration is admin-written (the server refuses members with
+  // 403); a member's settings are their own account. The tab list reflects
+  // that instead of showing panels whose every Save would be refused.
+  const tabs = useMemo(() => role === 'admin' ? DIALOG_TABS : DIALOG_TABS.filter(t => t.key === 'account'), [role]);
+  const [tab, setTab] = useState(tabs[0].key);
   const [TabComp, setTabComp] = useState<React.ComponentType | null>(null);
 
   useEffect(() => {
@@ -120,7 +124,7 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
     // drops a resolution that no longer matches the selected tab: a slow
     // first-load chunk must not overwrite a faster later click's panel.
     let stale = false;
-    const entry = DIALOG_TABS.find(t => t.key === tab);
+    const entry = tabs.find(t => t.key === tab);
     if (!entry) return;
     entry.load().then(mod => {
       if (!stale) setTabComp(() => mod.default);
@@ -129,7 +133,7 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
       if (!stale) setTabComp(() => TabLoadError);
     });
     return () => { stale = true; };
-  }, [tab]);
+  }, [tab, tabs]);
 
   return (
     <Dialog
@@ -146,7 +150,7 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
       <div className="settings-layout">
         <nav className="settings-nav">
           <PrimerNavList aria-label="Settings sections">
-            {DIALOG_TABS.map(t => (
+            {tabs.map(t => (
               <PrimerNavList.Item
                 key={t.key}
                 aria-current={tab === t.key ? 'page' : undefined}
@@ -346,6 +350,9 @@ function App() {
   const [authFragment] = useState(consumeAuthFragment);
   const [authError, setAuthError] = useState(authFragment.error || '');
   const [authed, setAuthed] = useState(!!getToken());
+  // The signed-in user, fetched once authenticated; the role shapes what the
+  // settings dialog offers.
+  const [me, setMe] = useState<AuthUser | null>(null);
   const [checking, setChecking] = useState(true);
   // The initial auth check failed at the network level (server unreachable), as
   // opposed to resolving "not authenticated". Without this the app would sit on
@@ -410,6 +417,13 @@ function App() {
       // stay stuck in "checking"; show the retry screen below.
       .catch(() => { setChecking(false); setCheckError(true); });
   }, []);
+
+  useEffect(() => {
+    if (!authed) { setMe(null); return; }
+    let stale = false;
+    api.auth.me().then(u => { if (!stale) setMe(u); }).catch(() => {});
+    return () => { stale = true; };
+  }, [authed]);
 
   useEffect(() => {
     // An OAuth callback landed us here: trade the one-time code for the
@@ -1006,7 +1020,7 @@ function App() {
           </React.Suspense>
         )}
       </AppShell>
-      {settingsOpen && <SettingsDialog onClose={() => { setSettingsOpen(false); setSettingsReloadKey(k => k + 1); }} />}
+      {settingsOpen && <SettingsDialog role={me?.role || 'member'} onClose={() => { setSettingsOpen(false); setSettingsReloadKey(k => k + 1); }} />}
       {/* Lost-connection pill: the socket announces a drop here, not only at
           the moment a send fails. */}
       {!connected && <div className="conn-indicator" role="status">Reconnecting…</div>}

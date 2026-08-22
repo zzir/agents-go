@@ -93,6 +93,26 @@ func (s *UserStore) ByID(ctx context.Context, id string) (*User, error) {
 	return u, nil
 }
 
+// List returns every account, oldest first — the admin's user management view.
+func (s *UserStore) List(ctx context.Context) ([]User, error) {
+	var out []User
+	if err := s.db.NewSelect().Model(&out).OrderExpr("created_at ASC").Scan(ctx); err != nil {
+		return nil, fmt.Errorf("listing users: %w", err)
+	}
+	return out, nil
+}
+
+// SetRole changes one account's role; ErrNotFound when absent.
+func (s *UserStore) SetRole(ctx context.Context, id, role string) error {
+	res, err := s.db.NewUpdate().Model((*User)(nil)).
+		Set("role = ?", role).Set("updated_at = ?", time.Now().UTC()).
+		Where("id = ?", id).Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("setting role of user %s: %w", id, err)
+	}
+	return requireRows(res)
+}
+
 // OAuthIdentity is what a login provider reports about the person after a
 // completed code exchange. Email must be one the provider verified.
 type OAuthIdentity struct {

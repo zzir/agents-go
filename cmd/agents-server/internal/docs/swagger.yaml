@@ -1852,6 +1852,25 @@ components:
         workflow_id:
           type: string
       type: object
+    store.User:
+      properties:
+        created_at:
+          type: string
+        email:
+          description: lowercased; unique via idx_users_email
+          type: string
+        id:
+          type: string
+        last_login_at:
+          type: string
+        name:
+          type: string
+        role:
+          description: RoleAdmin | RoleMember
+          type: string
+        updated_at:
+          type: string
+      type: object
     store.Workflow:
       properties:
         budget:
@@ -2509,6 +2528,68 @@ paths:
       security:
       - BearerAuth: []
       summary: Revoke a personal access token
+      tags:
+      - auth
+  /auth/users:
+    get:
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/store.User'
+                type: array
+          description: OK
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Forbidden
+      security:
+      - BearerAuth: []
+      summary: List users (admin)
+      tags:
+      - auth
+  /auth/users/{id}/role:
+    put:
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "204":
+          description: role changed
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+      security:
+      - BearerAuth: []
+      summary: Set a user's role (admin)
       tags:
       - auth
   /guardrails:

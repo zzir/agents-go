@@ -125,6 +125,8 @@ The auth surface under `/api/v1/auth`:
 | POST   | `/auth/exchange`                 | none | Trade the one-time code for `{token, user}` — the only response the session token's plaintext rides |
 | GET    | `/auth/me`                       | yes  | The authenticated caller: `{id, email, name?, role}`     |
 | POST   | `/auth/logout`                   | yes  | Revoke the presented session token (no-op in token mode) |
+| GET    | `/auth/users`                    | admin | Every account with its role                             |
+| PUT    | `/auth/users/:id/role`           | admin | `{role: admin\|member}`; an admin cannot demote themself |
 
 ### OAuth mode
 
@@ -163,6 +165,36 @@ lists labels and dates, never secrets; `DELETE /auth/tokens/:id` revokes. A
 PAT authenticates everywhere a session token does — REST and the WS auth
 frame. In token mode the endpoints answer 400: the static compare is the whole
 check there, so a PAT could be minted but never authenticate.
+
+### Ownership and roles
+
+Two rules, enforced at the routes (`handler/authz.go`), shape who may do what:
+
+- **Shared configuration is read by every member and written by admins
+  only.** Agents, providers, MCP servers, sandboxes (the test endpoint
+  included), settings, skill repos, workflows, guardrails, memories and
+  provider routes: every write changes what runs on the host or whose
+  credentials are spent, so `POST`/`PUT`/`DELETE` on them answer `403` for a
+  member. The web terminal (`/ws/terminal`) is a shell on a sandbox host with
+  the server's stored credentials — admin only.
+- **A session's content belongs to its owner alone.** `sessions.owner_id` is
+  the one ownership column: a task's hidden session inherits its parent's
+  owner, a trigger fires into a session, an approval is filed on one. The
+  `/sessions/:id`, `/runs/:id`, `/tasks/:id`, `/approvals/:tool_call_id` and
+  `/triggers/:id` subtrees are gated on owning that session, and a foreign id
+  answers `404` — the same as a missing one, so ownership is not an oracle for
+  existence. Listings (`/sessions`, `/tasks`, `/triggers`) are the caller's.
+  Running a workflow or creating a trigger is into a session the caller owns.
+  Run events over the WebSocket reach the owner's connections only: the
+  broadcast bus is per owner.
+- **An admin manages, never reads.** `GET /sessions?all=true` lists every
+  owner's sessions (existence and recency), and `DELETE /sessions/:id` works on
+  any of them; opening, reading or running one is the owner's alone. Roles are
+  `admin` and `member`: the first OAuth account and `--bootstrap-admin` sign
+  in as admin; the Account panel lets an admin promote or demote others.
+
+In token mode the one local account is an admin and owns everything, so every
+check passes.
 
 Exempt from auth: the MCP OAuth redirect callback
 (`GET /api/v1/mcp-servers/oauth/callback` — the browser follows it without an
@@ -227,7 +259,7 @@ detail.
 
 | Method | Path                      | Description                                                          |
 |--------|---------------------------|----------------------------------------------------------------------|
-| GET    | `/sessions`               | List sessions                                                        |
+| GET    | `/sessions`               | List sessions — the caller's; `?all=true` every owner's (admin) |
 | POST   | `/sessions`               | Create session (`{name?, agent_config_id?}`)                         |
 | GET    | `/sessions/:id`           | Get session — plus `planning`, whether its next run starts by planning |
 | PATCH  | `/sessions/:id`           | Partial update — `{name?, pinned?}`, returns the updated session |
@@ -2024,6 +2056,14 @@ When a change genuinely doesn't fit, update this list in the same PR.
     rule exists because the guard used to be per-panel and eight of ten
     destructive flows had none.
 
+42. **Ownership is a column on sessions; everything else inherits or is
+    shared.** There is no second owner column: a task's hidden session
+    inherits its parent's owner at creation (`CreateOptions.ParentID`), a
+    trigger's owner is its session's, an approval's is its session's. Shared
+    configuration has no owner and is admin-written. A new per-user thing is
+    either filed on a session or it is shared — not a third category with
+    its own column and its own checks.
+
 ## Database
 
 SQLite in WAL mode with a 5s busy timeout by default — both applied as PRAGMA
@@ -2041,7 +2081,7 @@ Tables are created automatically on startup:
 
 | Table               | Description                                                                         |
 |---------------------|-------------------------------------------------------------------------------------|
-| `sessions`          | Chat sessions                                                                       |
+| `sessions`          | Chat sessions; `owner_id` is the one ownership column (see [Ownership and roles](#ownership-and-roles)) |
 | `entries`           | Session entries (the conversation, annotations and compaction checkpoints)          |
 | `append_points`     | Where each session stands: branch tip + highest sequence number (see invariant 26)  |
 | `agent_configs`     | Agent configurations                                                                |

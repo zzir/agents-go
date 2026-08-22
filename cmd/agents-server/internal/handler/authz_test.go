@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 
+	"github.com/zzir/agents-go/cmd/agents-server/internal/authn"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
@@ -211,5 +212,39 @@ func TestRunEventsStayWithTheOwner(t *testing.T) {
 	_ = json.Unmarshal(refused.Payload, &re)
 	if re.Code != protocol.CodeSessionNotFound {
 		t.Fatalf("stranger run.create answered %q, want session_not_found", re.Code)
+	}
+}
+
+// User management is the admin's: members cannot list or change roles, an
+// admin can promote a member, and no admin can demote themself.
+func TestUserRoleManagement(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := newTestDB(t)
+	for _, u := range []protocol.UserInfo{adminUser, memberUser} {
+		if _, err := db.NewInsert().Model(&store.User{ID: u.ID, Email: u.Email, Role: u.Role}).Exec(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	local := &store.User{ID: store.LocalUserID, Email: "local@localhost", Role: store.RoleAdmin}
+	s := server.New(slog.New(slog.DiscardHandler), usersByToken)
+	s.RegisterAPI(Handlers{Auth: NewAuthHandler(authn.NewStatic("tok", local), nil, store.NewUserStore(db))}.Register)
+	engine := s.Engine
+
+	if rec := serve(engine, as(memberUser, http.MethodGet, "/api/v1/auth/users", "")); rec.Code != http.StatusForbidden {
+		t.Fatalf("member list users = %d, want 403", rec.Code)
+	}
+	rec := serve(engine, as(adminUser, http.MethodGet, "/api/v1/auth/users", ""))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), memberUser.Email) {
+		t.Fatalf("admin list users = %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := serve(engine, as(adminUser, http.MethodPut, "/api/v1/auth/users/"+adminUser.ID+"/role", `{"role":"member"}`)); rec.Code != http.StatusBadRequest {
+		t.Fatalf("self-demotion = %d, want 400", rec.Code)
+	}
+	if rec := serve(engine, as(adminUser, http.MethodPut, "/api/v1/auth/users/"+memberUser.ID+"/role", `{"role":"admin"}`)); rec.Code != http.StatusNoContent {
+		t.Fatalf("promote = %d %s", rec.Code, rec.Body.String())
+	}
+	promoted, err := store.NewUserStore(db).ByID(t.Context(), memberUser.ID)
+	if err != nil || promoted.Role != store.RoleAdmin {
+		t.Fatalf("after promote: %+v %v", promoted, err)
 	}
 }
