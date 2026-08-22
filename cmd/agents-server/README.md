@@ -59,6 +59,7 @@ On startup the server prints an auto-generated auth token. Open
 | `--allowed-domains` / `--allowed-emails` | — | OAuth admission allowlist (comma-separated)  |
 | `--bootstrap-admin`     | —           | Email that signs in as admin; implicitly admitted        |
 | `--audit-retention-days` | `0`        | Prune audit log entries older than N days (0 = keep forever) — see [Audit log](#audit-log) |
+| `--secret-key-file`     | —           | File holding the 32-byte key that seals stored credentials; or env `AGENTS_SECRET_KEY` — see [Secret handling](#secret-handling) |
 
 ### Deployment
 
@@ -1264,6 +1265,19 @@ rejected with 400 (replace the key or clear it) — restoring it would send the
 previous backend's real credential to another endpoint. Fallback entries restore their masked keys strictly by
 `(provider_type, base_url, model)`, never across providers or endpoints and
 never by position; an unmatched mask clears.
+
+**At rest, secrets are sealed under one process key.** Set `AGENTS_SECRET_KEY`
+(or `--secret-key-file`) to a 32-byte key — `openssl rand -base64 32` — and
+every credential column is stored AES-256-GCM encrypted (`enc:v1:…`):
+provider `api_key` and ChatGPT token, MCP `oauth_token`, `oauth_client_secret`
+and `headers`, SSH sandbox `password`, webhook `secret`, fallback `api_key`s,
+and the settings the registry marks secret. Possession of the database is then
+not possession of every upstream credential. Without a key the server logs one
+warning and stores plaintext — the single-user workbench. Rows written before
+a key was set stay plaintext until their next write, and open either way; a
+sealed row with no key (or the wrong one) is a loud error, never ciphertext
+handed out as a credential. There is no rotation: losing the key loses the
+secrets.
 
 ### Health
 

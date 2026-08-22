@@ -21,6 +21,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/docs"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/handler"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/secrets"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
@@ -46,6 +47,7 @@ var (
 	flagAllowedEmails     string
 	flagBootstrapAdmin    string
 	flagAuditRetention    int
+	flagSecretKeyFile     string
 )
 
 var rootCmd = &cobra.Command{
@@ -73,6 +75,7 @@ func init() {
 	rootCmd.Flags().StringVar(&flagAllowedEmails, "allowed-emails", "", "Comma-separated email addresses admitted to OAuth login")
 	rootCmd.Flags().StringVar(&flagBootstrapAdmin, "bootstrap-admin", "", "Email that signs in as admin (implicitly admitted; the recovery hatch)")
 	rootCmd.Flags().IntVar(&flagAuditRetention, "audit-retention-days", 0, "Prune audit log entries older than this many days (0 = keep forever); a process setting, never an API one")
+	rootCmd.Flags().StringVar(&flagSecretKeyFile, "secret-key-file", "", "File holding the 32-byte key (base64 or hex) that seals stored credentials; or env AGENTS_SECRET_KEY")
 }
 
 // buildVersion is the plain version string (without commit/date), surfaced by
@@ -127,6 +130,17 @@ func run(_ *cobra.Command, _ []string) error {
 		}
 	}
 
+	// Stored credentials are sealed under one process key. Without a key they
+	// are plaintext — the single-user workbench — and the log says so once.
+	box, err := secrets.FromEnvOrFile("AGENTS_SECRET_KEY", flagSecretKeyFile)
+	if err != nil {
+		return err
+	}
+	store.UseSecretBox(box)
+	if box == nil {
+		log.Warn("stored credentials are not encrypted at rest; set AGENTS_SECRET_KEY (or --secret-key-file) to seal them")
+	}
+
 	db, err := store.OpenDB(flagDB)
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
@@ -144,6 +158,7 @@ func run(_ *cobra.Command, _ []string) error {
 	mcpServerStore := store.NewMcpServerStore(db)
 	memoryStore := store.NewMemoryStore(db)
 	settingStore := store.NewSettingStore(db)
+	settingStore.SealIf(settings.IsSecret)
 	settingReader := settings.NewReader(settingStore)
 	providerRouteStore := store.NewProviderRouteStore(db)
 	sandboxStore := store.NewSandboxStore(db)

@@ -137,7 +137,7 @@ type TriggerStore struct {
 
 // NewTriggerStore returns a TriggerStore backed by db.
 func NewTriggerStore(db *bun.DB) *TriggerStore {
-	return &TriggerStore{NewCrudStore[Trigger](db, "trigger", "created_at DESC")}
+	return &TriggerStore{NewCrudStore[Trigger](db, "trigger", "created_at DESC").withSecrets(sealTrigger, openTrigger)}
 }
 
 // referencesExist reports whether the target and the session a trigger names
@@ -180,7 +180,11 @@ func (s *TriggerStore) Create(ctx context.Context, t *Trigger) error {
 		if err := referencesExist(ctx, tx, t); err != nil {
 			return err
 		}
-		if _, err := tx.NewInsert().Model(t).Exec(ctx); err != nil {
+		err := sealedWrite(t, sealTrigger, openTrigger, func() error {
+			_, err := tx.NewInsert().Model(t).Exec(ctx)
+			return err
+		})
+		if err != nil {
 			return fmt.Errorf("creating trigger: %w", err)
 		}
 		return nil
@@ -236,7 +240,7 @@ func (s *TriggerStore) DeleteIfWorkflow(ctx context.Context, id, workflowID stri
 // SetSecret writes a webhook trigger's new secret and nothing else.
 func (s *TriggerStore) SetSecret(ctx context.Context, id, secret string) error {
 	res, err := s.db.NewUpdate().Model((*Trigger)(nil)).
-		Set("secret = ?", secret).
+		Set("secret = ?", sealSecret(secret)).
 		Set("updated_at = ?", time.Now().UTC()).
 		Where("id = ?", id).
 		Exec(ctx)
@@ -255,7 +259,17 @@ func (s *TriggerStore) ListByWorkflow(ctx context.Context, workflowID string) ([
 	if err := s.db.NewSelect().Model(&out).Where("workflow_id = ?", workflowID).OrderExpr("created_at DESC").Scan(ctx); err != nil {
 		return nil, fmt.Errorf("listing triggers of workflow %s: %w", workflowID, err)
 	}
-	return out, nil
+	return out, s.openAll(out)
+}
+
+// openAll opens every row's secret after a custom select.
+func (s *TriggerStore) openAll(rows []Trigger) error {
+	for i := range rows {
+		if err := openTrigger(&rows[i]); err != nil {
+			return fmt.Errorf("listing triggers: %w", err)
+		}
+	}
+	return nil
 }
 
 // ListByOwner returns the triggers whose session ownerID owns, newest first;
@@ -272,7 +286,7 @@ func (s *TriggerStore) ListByOwner(ctx context.Context, ownerID, workflowID stri
 	if err := q.OrderExpr("trg.created_at DESC").Scan(ctx); err != nil {
 		return nil, fmt.Errorf("listing triggers: %w", err)
 	}
-	return out, nil
+	return out, s.openAll(out)
 }
 
 // RecordFire writes what a fire did — the task or run it started, or why it

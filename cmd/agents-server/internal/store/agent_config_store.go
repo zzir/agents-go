@@ -18,7 +18,7 @@ type AgentConfigStore struct {
 // uniqueness is enforced by the DB (idx_agent_configs_name); a duplicate
 // surfaces as a UNIQUE-constraint error that handlers map to 409.
 func NewAgentConfigStore(db *bun.DB) *AgentConfigStore {
-	return &AgentConfigStore{CrudStore: NewCrudStore[AgentConfig](db, "agent config", "created_at DESC"), db: db}
+	return &AgentConfigStore{CrudStore: NewCrudStore[AgentConfig](db, "agent config", "created_at DESC").withSecrets(sealAgentConfig, openAgentConfig), db: db}
 }
 
 // Create writes the agent only if its provider still exists, atomically — the
@@ -26,9 +26,11 @@ func NewAgentConfigStore(db *bun.DB) *AgentConfigStore {
 // between the handler's validation and this write cannot leave a dangling
 // provider_id (ErrProviderRef if it does; an empty provider_id is the default).
 func (s *AgentConfigStore) Create(ctx context.Context, ac *AgentConfig) error {
-	return writeReferencingProvider(ctx, s.db, ac.ProviderID, nil, func(ctx context.Context, tx bun.Tx) error {
-		_, err := tx.NewInsert().Model(ac).Exec(ctx)
-		return err
+	return sealedWrite(ac, sealAgentConfig, openAgentConfig, func() error {
+		return writeReferencingProvider(ctx, s.db, ac.ProviderID, nil, func(ctx context.Context, tx bun.Tx) error {
+			_, err := tx.NewInsert().Model(ac).Exec(ctx)
+			return err
+		})
 	})
 }
 
@@ -36,15 +38,17 @@ func (s *AgentConfigStore) Create(ctx context.Context, ac *AgentConfig) error {
 // — re-pointing an agent at a provider races a delete exactly like a create
 // does. Returns an ErrNotFound-wrapping error when the row doesn't exist.
 func (s *AgentConfigStore) Update(ctx context.Context, id string, m *AgentConfig) error {
-	err := writeReferencingProvider(ctx, s.db, m.ProviderID, nil, func(ctx context.Context, tx bun.Tx) error {
-		res, err := tx.NewUpdate().Model(m).
-			ExcludeColumn("id", "created_at").
-			Where("id = ?", id).
-			Exec(ctx)
-		if err == nil {
-			err = requireRows(res)
-		}
-		return err
+	err := sealedWrite(m, sealAgentConfig, openAgentConfig, func() error {
+		return writeReferencingProvider(ctx, s.db, m.ProviderID, nil, func(ctx context.Context, tx bun.Tx) error {
+			res, err := tx.NewUpdate().Model(m).
+				ExcludeColumn("id", "created_at").
+				Where("id = ?", id).
+				Exec(ctx)
+			if err == nil {
+				err = requireRows(res)
+			}
+			return err
+		})
 	})
 	if err != nil {
 		return fmt.Errorf("updating agent config %s: %w", id, err)

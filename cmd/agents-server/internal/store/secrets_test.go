@@ -1,0 +1,140 @@
+package store
+
+import (
+	"context"
+	"encoding/json"
+	"strings"
+	"testing"
+
+	"github.com/uptrace/bun"
+
+	"github.com/zzir/agents-go/cmd/agents-server/internal/secrets"
+)
+
+func withTestBox(t *testing.T) {
+	t.Helper()
+	key := make([]byte, 32)
+	key[0] = 7
+	box, err := secrets.New(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	UseSecretBox(box)
+	t.Cleanup(func() { UseSecretBox(nil) })
+}
+
+// rawColumn reads one column of one row straight from SQL — what a database
+// dump would show.
+func rawColumn(t *testing.T, db *bun.DB, q string, args ...any) string {
+	t.Helper()
+	var v string
+	if err := db.QueryRow(q, args...).Scan(&v); err != nil {
+		t.Fatalf("%s: %v", q, err)
+	}
+	return v
+}
+
+// With a key: the row holds ciphertext, the store hands back plaintext, and
+// the caller's struct is plaintext after every write. Without a key: rows
+// written earlier in plaintext still open.
+func TestSecretsSealedAtRest(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	withTestBox(t)
+
+	providers := NewProviderStore(db)
+	pv := &Provider{Name: "p", APIKey: "sk-live"}
+	if err := providers.Create(ctx, pv); err != nil {
+		t.Fatal(err)
+	}
+	if pv.APIKey != "sk-live" {
+		t.Fatalf("caller's key after Create = %q, want plaintext", pv.APIKey)
+	}
+	if raw := rawColumn(t, db, "SELECT api_key FROM providers WHERE id = ?", pv.ID); !secrets.IsSealed(raw) {
+		t.Fatalf("api_key at rest = %q, want sealed", raw)
+	}
+	got, err := providers.Get(ctx, pv.ID)
+	if err != nil || got.APIKey != "sk-live" {
+		t.Fatalf("Get = %+v %v", got, err)
+	}
+	pv.Name = "p2"
+	if err := providers.Update(ctx, pv.ID, pv); err != nil || pv.APIKey != "sk-live" {
+		t.Fatalf("Update: %v key=%q", err, pv.APIKey)
+	}
+	if err := providers.SaveChatGPTToken(ctx, pv.ID, `{"access":"tok"}`); err != nil {
+		t.Fatal(err)
+	}
+	if raw := rawColumn(t, db, "SELECT chatgpt_token FROM providers WHERE id = ?", pv.ID); !secrets.IsSealed(raw) {
+		t.Fatalf("chatgpt_token at rest = %q", raw)
+	}
+	if got, _ := providers.Get(ctx, pv.ID); got.ChatGPTToken != `{"access":"tok"}` {
+		t.Fatalf("chatgpt token opened = %q", got.ChatGPTToken)
+	}
+
+	// A credential inside a JSON blob: the sandbox SSH password and an MCP
+	// server's headers are sealed field by field; the rest stays readable.
+	sandboxes := NewSandboxStore(db)
+	sb := &SandboxConfig{Name: "ssh", Type: "ssh", Config: json.RawMessage(`{"host":"h","user":"u","password":"hunter2"}`)}
+	if err := sandboxes.Create(ctx, sb); err != nil {
+		t.Fatal(err)
+	}
+	raw := rawColumn(t, db, "SELECT config FROM sandbox_configs WHERE id = ?", sb.ID)
+	if strings.Contains(raw, "hunter2") || !strings.Contains(raw, `"host":"h"`) {
+		t.Fatalf("sandbox config at rest = %s", raw)
+	}
+	if got, _ := sandboxes.Get(ctx, sb.ID); !strings.Contains(string(got.Config), `"password":"hunter2"`) {
+		t.Fatalf("sandbox config opened = %s", got.Config)
+	}
+	mcps := NewMcpServerStore(db)
+	mc := &McpServerConfig{Name: "m", TransportType: "streamable_http", Config: json.RawMessage(`{"endpoint":"http://x","headers":{"Authorization":"Bearer abc"},"oauth_client_secret":"cs"}`)}
+	if err := mcps.Create(ctx, mc); err != nil {
+		t.Fatal(err)
+	}
+	raw = rawColumn(t, db, "SELECT config FROM mcp_servers WHERE id = ?", mc.ID)
+	if strings.Contains(raw, "Bearer abc") || strings.Contains(raw, `"cs"`) || !strings.Contains(raw, "http://x") {
+		t.Fatalf("mcp config at rest = %s", raw)
+	}
+	if got, _ := mcps.Get(ctx, mc.ID); !strings.Contains(string(got.Config), "Bearer abc") {
+		t.Fatalf("mcp config opened = %s", got.Config)
+	}
+
+	// Settings: only the keys the registry calls secret.
+	settingsStore := NewSettingStore(db)
+	settingsStore.SealIf(func(k string) bool { return k == "openai_api_key" })
+	_ = settingsStore.Set(ctx, "openai_api_key", "sk-1")
+	_ = settingsStore.Set(ctx, "theme", "dark")
+	if raw := rawColumn(t, db, "SELECT value FROM settings WHERE key = ?", "openai_api_key"); !secrets.IsSealed(raw) {
+		t.Fatalf("secret setting at rest = %q", raw)
+	}
+	if raw := rawColumn(t, db, "SELECT value FROM settings WHERE key = ?", "theme"); raw != "dark" {
+		t.Fatalf("plain setting at rest = %q", raw)
+	}
+	if got, _ := settingsStore.Get(ctx, "openai_api_key"); got.Value != "sk-1" {
+		t.Fatalf("secret setting opened = %q", got.Value)
+	}
+
+	// Rows written before a key was configured (plaintext) still open.
+	if _, err := db.NewUpdate().Model((*Provider)(nil)).Set("api_key = ?", "legacy-plain").Where("id = ?", pv.ID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := providers.Get(ctx, pv.ID); got.APIKey != "legacy-plain" {
+		t.Fatalf("legacy plaintext = %q", got.APIKey)
+	}
+}
+
+// Without a key, a sealed row is an error — never ciphertext handed out as a
+// credential.
+func TestSealedRowWithoutKeyIsAnError(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	withTestBox(t)
+	providers := NewProviderStore(db)
+	pv := &Provider{Name: "p", APIKey: "sk-live"}
+	if err := providers.Create(ctx, pv); err != nil {
+		t.Fatal(err)
+	}
+	UseSecretBox(nil)
+	if _, err := providers.Get(ctx, pv.ID); err == nil || !strings.Contains(err.Error(), "no key") {
+		t.Fatalf("Get without key = %v, want a no-key error", err)
+	}
+}

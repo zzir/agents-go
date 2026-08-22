@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 
@@ -23,7 +24,7 @@ type SandboxStore struct {
 
 // NewSandboxStore returns a SandboxStore backed by db.
 func NewSandboxStore(db *bun.DB) *SandboxStore {
-	return &SandboxStore{NewCrudStore[SandboxConfig](db, "sandbox config", "created_at DESC")}
+	return &SandboxStore{NewCrudStore[SandboxConfig](db, "sandbox config", "created_at DESC").withSecrets(sealSandbox, openSandbox)}
 }
 
 // Create inserts the config at revision 1 and runtime generation 1 — the two
@@ -59,13 +60,17 @@ func (s *SandboxStore) Update(ctx context.Context, id string, cfg *SandboxConfig
 	if contentChanged {
 		genBump = 1
 	}
-	res, err := s.db.NewUpdate().Model(cfg).
-		ExcludeColumn("id", "created_at", "revision", "runtime_gen").
-		Set("revision = revision + 1").
-		Set("runtime_gen = runtime_gen + ?", genBump).
-		Where("id = ?", id).
-		Where("revision = ?", expectedRevision).
-		Exec(ctx)
+	var res sql.Result
+	err := sealedWrite(cfg, sealSandbox, openSandbox, func() (err error) {
+		res, err = s.db.NewUpdate().Model(cfg).
+			ExcludeColumn("id", "created_at", "revision", "runtime_gen").
+			Set("revision = revision + 1").
+			Set("runtime_gen = runtime_gen + ?", genBump).
+			Where("id = ?", id).
+			Where("revision = ?", expectedRevision).
+			Exec(ctx)
+		return err
+	})
 	if err != nil {
 		return fmt.Errorf("updating sandbox config %s: %w", id, err)
 	}
@@ -111,14 +116,18 @@ func (s *SandboxStore) DeleteIfUnreferenced(ctx context.Context, id string) (ref
 // so the runtime generation bumps unconditionally here.
 func (s *SandboxStore) UpdateIdentityIfUnreferenced(ctx context.Context, id string, cfg *SandboxConfig, expectedRevision int64) (refs int, err error) {
 	cfg.ID = id
-	res, err := s.db.NewUpdate().Model(cfg).
-		ExcludeColumn("id", "created_at", "revision", "runtime_gen").
-		Set("revision = revision + 1").
-		Set("runtime_gen = runtime_gen + 1").
-		Where("id = ?", id).
-		Where("revision = ?", expectedRevision).
-		Where(unreferenced, id).
-		Exec(ctx)
+	var res sql.Result
+	err = sealedWrite(cfg, sealSandbox, openSandbox, func() (err error) {
+		res, err = s.db.NewUpdate().Model(cfg).
+			ExcludeColumn("id", "created_at", "revision", "runtime_gen").
+			Set("revision = revision + 1").
+			Set("runtime_gen = runtime_gen + 1").
+			Where("id = ?", id).
+			Where("revision = ?", expectedRevision).
+			Where(unreferenced, id).
+			Exec(ctx)
+		return err
+	})
 	if err != nil {
 		return 0, fmt.Errorf("updating sandbox config %s: %w", id, err)
 	}

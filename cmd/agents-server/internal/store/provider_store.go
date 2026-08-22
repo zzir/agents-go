@@ -68,20 +68,23 @@ type ProviderStore struct {
 // enforced by the DB (idx_providers_name); a duplicate surfaces as a
 // UNIQUE-constraint error that handlers map to 409.
 func NewProviderStore(db *bun.DB) *ProviderStore {
-	return &ProviderStore{CrudStore: NewCrudStore[Provider](db, "provider", "created_at DESC"), db: db}
+	return &ProviderStore{CrudStore: NewCrudStore[Provider](db, "provider", "created_at DESC").withSecrets(sealProvider, openProvider), db: db}
 }
 
 // Update overwrites the provider but preserves the chatgpt_token column, so
 // editing a name or base URL does not log the endpoint out.
 func (s *ProviderStore) Update(ctx context.Context, id string, p *Provider) error {
 	p.ID = id
-	res, err := s.db.NewUpdate().Model(p).
-		ExcludeColumn("id", "created_at", "chatgpt_token").
-		Where("id = ?", id).
-		Exec(ctx)
-	if err == nil {
-		err = requireRows(res)
-	}
+	err := sealedWrite(p, sealProvider, openProvider, func() error {
+		res, err := s.db.NewUpdate().Model(p).
+			ExcludeColumn("id", "created_at", "chatgpt_token").
+			Where("id = ?", id).
+			Exec(ctx)
+		if err == nil {
+			err = requireRows(res)
+		}
+		return err
+	})
 	if err != nil {
 		return fmt.Errorf("updating provider %s: %w", id, err)
 	}
@@ -92,7 +95,7 @@ func (s *ProviderStore) Update(ctx context.Context, id string, p *Provider) erro
 // column. The token belongs to the ENDPOINT, so every agent pointed at this
 // provider shares the one login.
 func (s *ProviderStore) SaveChatGPTToken(ctx context.Context, id, tokenJSON string) error {
-	return updateColumn(ctx, s.db, (*Provider)(nil), "provider chatgpt token", id, "chatgpt_token", tokenJSON)
+	return updateColumn(ctx, s.db, (*Provider)(nil), "provider chatgpt token", id, "chatgpt_token", sealSecret(tokenJSON))
 }
 
 // ClearChatGPTToken removes the stored OAuth token.

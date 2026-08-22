@@ -12,11 +12,30 @@ import (
 // SettingStore persists key/value server settings.
 type SettingStore struct {
 	db *bun.DB
+	// isSecret says which keys hold credentials, sealed at rest (SealIf). The
+	// registry that knows lives in the settings package, which imports this
+	// one — so it is handed in rather than imported.
+	isSecret func(key string) bool
 }
 
 // NewSettingStore returns a SettingStore backed by db.
 func NewSettingStore(db *bun.DB) *SettingStore {
 	return &SettingStore{db: db}
+}
+
+// SealIf names the keys whose values are sealed at rest.
+func (s *SettingStore) SealIf(isSecret func(key string) bool) { s.isSecret = isSecret }
+
+func (s *SettingStore) seal(key, value string) string {
+	if s.isSecret != nil && s.isSecret(key) {
+		return sealSecret(value)
+	}
+	return value
+}
+
+func (s *SettingStore) open(st *Setting) (err error) {
+	st.Value, err = openSecret(st.Value)
+	return err
 }
 
 // Get returns the setting with the given key, or an ErrNotFound-wrapping
@@ -31,12 +50,15 @@ func (s *SettingStore) Get(ctx context.Context, key string) (*Setting, error) {
 		}
 		return nil, fmt.Errorf("getting setting %s: %w", key, err)
 	}
+	if err := s.open(st); err != nil {
+		return nil, fmt.Errorf("getting setting %s: %w", key, err)
+	}
 	return st, nil
 }
 
 // Set inserts or updates the value for key (upsert on key conflict).
 func (s *SettingStore) Set(ctx context.Context, key, value string) error {
-	st := &Setting{Key: key, Value: value}
+	st := &Setting{Key: key, Value: s.seal(key, value)}
 	if _, err := s.db.NewInsert().Model(st).
 		On("CONFLICT (key) DO UPDATE").
 		Set("value = EXCLUDED.value").
@@ -53,6 +75,11 @@ func (s *SettingStore) List(ctx context.Context) ([]Setting, error) {
 		OrderExpr("key ASC").
 		Scan(ctx); err != nil {
 		return nil, fmt.Errorf("listing settings: %w", err)
+	}
+	for i := range settings {
+		if err := s.open(&settings[i]); err != nil {
+			return nil, fmt.Errorf("listing settings: %w", err)
+		}
 	}
 	return settings, nil
 }
