@@ -245,6 +245,9 @@ func (s *Service) Complete(ctx context.Context, provider, state, code, nonce, pr
 		return fail("not_allowed", errors.New("email "+id.Email+" is not on the allowlist"))
 	}
 	u, err := s.users.ResolveOAuthLogin(ctx, id, s.bootstrapAdmin)
+	if errors.Is(err, store.ErrDisabled) {
+		return fail("disabled", err)
+	}
 	if err != nil {
 		return fail("login_failed", err)
 	}

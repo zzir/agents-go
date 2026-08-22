@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -87,40 +88,101 @@ func (h *AuthHandler) ListUsers(c *gin.Context) {
 	c.JSON(http.StatusOK, list)
 }
 
-// SetUserRole changes an account's role. An admin cannot demote themself —
-// the last admin locking everyone out is the failure this prevents;
-// --bootstrap-admin remains the recovery hatch.
+// PatchUser changes an account's role or switches it off. The store refuses
+// the change that would leave no enabled admin (409); the local account is
+// not a person to manage; an admin acting on themself is refused outright,
+// since a locked-out admin's only recovery is --bootstrap-admin.
 //
-//	@Summary	Set a user's role (admin)
+//	@Summary	Change a user's role or disable them (admin)
 //	@Tags		auth
 //	@Accept		json
-//	@Param		id	path	string	true	"User ID"
-//	@Success	204	"role changed"
-//	@Failure	400	{object}	ErrorResponse
-//	@Failure	403	{object}	ErrorResponse
-//	@Failure	404	{object}	ErrorResponse
+//	@Param		id		path	string				true	"User ID"
+//	@Param		body	body	UserPatchRequest	true	"What to change"
+//	@Success	204		"changed"
+//	@Failure	400		{object}	ErrorResponse
+//	@Failure	403		{object}	ErrorResponse
+//	@Failure	404		{object}	ErrorResponse
+//	@Failure	409		{object}	ErrorResponse	"that would leave no admin"
 //	@Security	BearerAuth
-//	@Router		/auth/users/{id}/role [put]
-func (h *AuthHandler) SetUserRole(c *gin.Context) {
-	var req struct {
-		Role string `json:"role"`
+//	@Router		/auth/users/{id} [patch]
+func (h *AuthHandler) PatchUser(c *gin.Context) {
+	var req UserPatchRequest
+	if err := c.ShouldBindJSON(&req); err != nil || (req.Role == nil && req.Disabled == nil) {
+		badRequest(c, "role and/or disabled are required")
+		return
 	}
-	if err := c.ShouldBindJSON(&req); err != nil || (req.Role != store.RoleAdmin && req.Role != store.RoleMember) {
+	if req.Role != nil && *req.Role != store.RoleAdmin && *req.Role != store.RoleMember {
 		badRequest(c, "role must be admin or member")
 		return
 	}
-	if me, _ := server.CurrentUser(c); me.ID == c.Param("id") && req.Role != store.RoleAdmin {
-		badRequest(c, "you cannot demote yourself")
+	id := c.Param("id")
+	if id == store.LocalUserID {
+		badRequest(c, "the local account is not managed")
 		return
 	}
-	server.SetAuditDetail(c, "role="+req.Role)
-	if err := h.users.SetRole(c.Request.Context(), c.Param("id"), req.Role); err != nil {
+	if me, _ := server.CurrentUser(c); me.ID == id {
+		badRequest(c, "you cannot change your own account")
+		return
+	}
+	var detail []string
+	if req.Role != nil {
+		detail = append(detail, "role="+*req.Role)
+	}
+	if req.Disabled != nil {
+		detail = append(detail, "disabled="+strconv.FormatBool(*req.Disabled))
+	}
+	server.SetAuditDetail(c, strings.Join(detail, " "))
+	err := h.users.Patch(c.Request.Context(), id, store.UserPatch{Role: req.Role, Disabled: req.Disabled})
+	if errors.Is(err, store.ErrLastAdmin) {
+		conflict(c, err.Error())
+		return
+	}
+	if err != nil {
 		storeError(c, err)
 		return
 	}
-	// What the old role opened — a terminal above all — closes; the client
-	// reconnects as what it is now.
-	h.Conns.CloseForUser(c.Param("id"), "role changed")
+	// What the old role or the credentials opened — a terminal above all —
+	// closes; a still-enabled client reconnects as what it is now.
+	h.Conns.CloseForUser(id, "account changed")
+	if req.Disabled != nil && *req.Disabled {
+		if _, err := h.tokens.RevokeAllForUser(c.Request.Context(), id); err != nil {
+			internalError(c, err)
+			return
+		}
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// UserPatchRequest is the body of PATCH /auth/users/:id.
+type UserPatchRequest struct {
+	Role     *string `json:"role,omitempty"`
+	Disabled *bool   `json:"disabled,omitempty"`
+}
+
+// RevokeUserTokens signs one account out everywhere: every session and PAT
+// of theirs is deleted and their live connections closed.
+//
+//	@Summary	Revoke every token of a user (admin)
+//	@Tags		auth
+//	@Param		id	path	string	true	"User ID"
+//	@Success	204	"revoked"
+//	@Failure	403	{object}	ErrorResponse
+//	@Failure	404	{object}	ErrorResponse
+//	@Security	BearerAuth
+//	@Router		/auth/users/{id}/tokens [delete]
+func (h *AuthHandler) RevokeUserTokens(c *gin.Context) {
+	id := c.Param("id")
+	if _, err := h.users.ByID(c.Request.Context(), id); err != nil {
+		storeError(c, err)
+		return
+	}
+	n, err := h.tokens.RevokeAllForUser(c.Request.Context(), id)
+	if err != nil {
+		internalError(c, err)
+		return
+	}
+	server.SetAuditDetail(c, "tokens="+strconv.FormatInt(n, 10))
+	h.Conns.CloseForUser(id, "signed out by an admin")
 	c.Status(http.StatusNoContent)
 }
 

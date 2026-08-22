@@ -132,11 +132,14 @@ function crud<T>(base: string): CrudMethods<T> {
 export const api = {
   auth: {
     me: (): Promise<AuthUser> => request('/auth/me'),
-    // Admin: every account, and role changes (an admin cannot demote themself).
+    // Admin: every account; role changes and disabling (never one's own
+    // account, never the last enabled admin); signing one out everywhere.
     users: {
       list: (): Promise<S['store.User'][]> => request('/auth/users'),
-      setRole: (id: string, role: 'admin' | 'member') =>
-        request(`/auth/users/${encodeURIComponent(id)}/role`, { method: 'PUT', body: JSON.stringify({ role }) }),
+      patch: (id: string, patch: { role?: 'admin' | 'member'; disabled?: boolean }) =>
+        request(`/auth/users/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+      revokeTokens: (id: string) =>
+        request(`/auth/users/${encodeURIComponent(id)}/tokens`, { method: 'DELETE' }),
     },
     // Admin: the audit log, newest first; `before` (RFC 3339) pages older.
     audit: (limit = 50, before?: string): Promise<S['store.AuditEvent'][]> =>

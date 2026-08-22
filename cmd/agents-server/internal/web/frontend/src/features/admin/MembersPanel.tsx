@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActionList, Flash, Label, PageHeader, Stack } from '@primer/react';
+import { ActionList, Flash, Label, PageHeader, Stack, useConfirm } from '@primer/react';
 import { Blankslate, type Column } from '@primer/react/experimental';
 import { PeopleIcon } from '@primer/octicons-react';
 import { UserAvatar, displayName } from '@/components/UserAvatar';
@@ -18,6 +18,7 @@ export function MembersPanel() {
   const [me, setMe] = useState<AuthUser | null>(null);
   const [users, setUsers] = useState<UserRow[] | null>(null);
   const [error, setError] = useState('');
+  const confirm = useConfirm();
 
   const reload = useCallback(() => {
     Promise.all([api.auth.me(), api.auth.users.list()])
@@ -29,14 +30,30 @@ export function MembersPanel() {
   }, []);
   useEffect(() => { reload(); }, [reload]);
 
-  const setRole = useCallback(async (u: UserRow, role: 'admin' | 'member') => {
+  const patch = useCallback(async (u: UserRow, p: { role?: 'admin' | 'member'; disabled?: boolean }) => {
+    setError('');
     try {
-      await api.auth.users.setRole(u.id, role);
+      await api.auth.users.patch(u.id, p);
       reload();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to change the role.');
+      setError(e instanceof Error ? e.message : 'Failed to change the account.');
     }
   }, [reload]);
+
+  const signOutEverywhere = useCallback(async (u: UserRow) => {
+    if (!(await confirm({
+      title: 'Sign out everywhere?',
+      content: `Every session and personal access token of ${displayName(u)} is revoked; they sign in again.`,
+      confirmButtonContent: 'Sign out',
+      confirmButtonType: 'danger',
+    }))) return;
+    setError('');
+    try {
+      await api.auth.users.revokeTokens(u.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to revoke the tokens.');
+    }
+  }, [confirm]);
 
   const columns = useMemo<Column<UserRow>[]>(() => [
     {
@@ -51,20 +68,39 @@ export function MembersPanel() {
         </span>
       ),
     },
-    { header: 'Role', id: 'role', width: 'auto', renderCell: u => <Label variant={u.role === 'admin' ? 'accent' : 'secondary'}>{u.role}</Label> },
+    {
+      header: 'Role', id: 'role', width: 'auto',
+      renderCell: u => (
+        <span className="list-nowrap">
+          <Label variant={u.role === 'admin' ? 'accent' : 'secondary'}>{u.role}</Label>
+          {u.disabled_at ? <> <Label variant="danger">disabled</Label></> : null}
+        </span>
+      ),
+    },
     { header: 'Joined', id: 'joined', width: 'auto', renderCell: u => <span className="list-nowrap">{shortDate(u.created_at)}</span> },
     { header: 'Last sign-in', id: 'seen', width: 'auto', renderCell: u => <span className="list-nowrap">{u.last_login_at ? shortDate(u.last_login_at) : ''}</span> },
-    actionsColumn<UserRow>(u => (
-      <RowMenu label={`Actions for ${displayName(u)}`}>
-        {u.role === 'admin'
-          ? <ActionList.Item disabled={u.id === me?.id} onSelect={() => { void setRole(u, 'member'); }}>
-              Make member
-              {u.id === me?.id && <ActionList.Description variant="block">You cannot demote yourself.</ActionList.Description>}
-            </ActionList.Item>
-          : <ActionList.Item onSelect={() => { void setRole(u, 'admin'); }}>Make admin</ActionList.Item>}
-      </RowMenu>
-    )),
-  ], [me, setRole]);
+    actionsColumn<UserRow>(u => {
+      const self = u.id === me?.id;
+      return (
+        <RowMenu label={`Actions for ${displayName(u)}`}>
+          {u.role === 'admin'
+            ? <ActionList.Item disabled={self} onSelect={() => { void patch(u, { role: 'member' }); }}>
+                Make member
+                {self && <ActionList.Description variant="block">You cannot change your own account.</ActionList.Description>}
+              </ActionList.Item>
+            : <ActionList.Item onSelect={() => { void patch(u, { role: 'admin' }); }}>Make admin</ActionList.Item>}
+          {u.disabled_at
+            ? <ActionList.Item onSelect={() => { void patch(u, { disabled: false }); }}>Enable</ActionList.Item>
+            : <ActionList.Item disabled={self} onSelect={() => { void patch(u, { disabled: true }); }}>
+                Disable
+                <ActionList.Description variant="block">Their credentials stop working until enabled again.</ActionList.Description>
+              </ActionList.Item>}
+          <ActionList.Divider />
+          <ActionList.Item variant="danger" disabled={self} onSelect={() => { void signOutEverywhere(u); }}>Sign out everywhere</ActionList.Item>
+        </RowMenu>
+      );
+    }),
+  ], [me, patch, signOutEverywhere]);
 
   return (
     <Stack gap="normal">

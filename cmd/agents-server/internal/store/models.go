@@ -633,6 +633,9 @@ type User struct {
 	// by the browser; the CSP admits the configured providers' image hosts.
 	AvatarURL string `bun:"avatar_url,nullzero" json:"avatar_url,omitempty"`
 	Role      string `bun:"role,notnull"        json:"role"` // RoleAdmin | RoleMember
+	// DisabledAt, when set, is when an admin switched the account off: no
+	// credential of theirs authenticates until it is cleared.
+	DisabledAt time.Time `bun:"disabled_at,nullzero" json:"disabled_at,omitzero"`
 
 	LastLoginAt time.Time `bun:"last_login_at,nullzero" json:"last_login_at,omitzero"`
 	CreatedAt   time.Time `bun:"created_at,notnull"     json:"created_at"`

@@ -57,7 +57,8 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		auth.POST("/tokens", h.Auth.CreateToken)
 		auth.DELETE("/tokens/:id", h.Auth.DeleteToken)
 		auth.GET("/users", adminOnly(), h.Auth.ListUsers)
-		auth.PUT("/users/:id/role", adminOnly(), h.Auth.SetUserRole)
+		auth.PATCH("/users/:id", adminOnly(), h.Auth.PatchUser)
+		auth.DELETE("/users/:id/tokens", adminOnly(), h.Auth.RevokeUserTokens)
 		auth.GET("/audit", adminOnly(), h.Auth.ListAudit)
 	}
 	// Two rules shape everything below (authz.go): a session's content is its

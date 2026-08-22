@@ -141,8 +141,9 @@ The auth surface under `/api/v1/auth`:
 | GET    | `/auth/me`                       | yes  | The authenticated caller: `{id, email, name?, role, avatar_url?}` |
 | POST   | `/auth/logout`                   | yes  | Revoke the presented session token (no-op in token mode) |
 | GET    | `/auth/audit`                    | admin | The audit log, newest first (`?limit`, `?before=<RFC 3339>`) |
-| GET    | `/auth/users`                    | admin | Every account with its role                             |
-| PUT    | `/auth/users/:id/role`           | admin | `{role: admin\|member}`; an admin cannot demote themself |
+| GET    | `/auth/users`                    | admin | Every account with its role and `disabled_at`            |
+| PATCH  | `/auth/users/:id`                | admin | `{role?: admin\|member, disabled?: bool}`; never one's own account, never the local one; `409` when it would leave no enabled admin; disabling also revokes every token |
+| DELETE | `/auth/users/:id/tokens`         | admin | Sign the account out everywhere: every session and PAT revoked, live connections closed |
 
 ### OAuth mode
 
@@ -180,9 +181,18 @@ and database-backed credentials:
   that, an insider's own callback URL opened in a colleague's browser would
   sign the colleague into the insider's account. The cookie is the login
   flow's alone: API requests authenticate by Bearer, never by cookie.
-- **Sessions are rows, not JWTs**: a 30-day sliding expiry, revoked by
-  `/auth/logout`, cleaned hourly. The callback hands the SPA a one-time code
-  in the URL fragment; the session token itself never appears in a URL.
+- **Sessions are rows, not JWTs**: a 30-day sliding expiry under a 90-day
+  ceiling no amount of use extends, revoked by `/auth/logout`, cleaned hourly.
+  The callback hands the SPA a one-time code in the URL fragment; the session
+  token itself never appears in a URL.
+- **Off-boarding is a switch, not a deletion.** `PATCH /auth/users/:id
+  {disabled: true}` keeps the account and everything it owns but refuses
+  every credential of theirs — sessions, PATs, a fresh OAuth login
+  (`#auth_error=disabled`) — and revokes what they hold; `{disabled: false}`
+  lets them back in. `DELETE /auth/users/:id/tokens` signs one out everywhere
+  without disabling. Neither the local account nor one's own account is
+  managed this way, and the change that would leave no enabled admin is
+  refused — `--bootstrap-admin` remains the recovery hatch.
 - **A revocation reaches live connections.** REST authenticates every
   request; a WebSocket authenticates once, so each inbound frame resolves
   its credential again before acting — a revoked token, an expired session
@@ -242,8 +252,8 @@ Two rules, enforced at the routes (`handler/authz.go`), shape who may do what:
   `admin` and `member`: the first OAuth account and `--bootstrap-admin` sign
   in as admin. In the UI the account menu (sidebar footer: avatar and name)
   holds Settings, Sign out and — for admins — Admin, a dialog of three
-  panels: Members (roles), Sessions (every owner's, delete only) and Audit
-  logs. Settings for a member shows the same configuration panels read-only
+  panels: Members (roles, disabling, signing out everywhere), Sessions
+  (every owner's: reassign or delete, never read) and Audit logs. Settings for a member shows the same configuration panels read-only
   — what the API lets them read, laid out as the admin sees it, with no
   Add, Edit, Delete or Test — plus their Account (profile and PATs).
 

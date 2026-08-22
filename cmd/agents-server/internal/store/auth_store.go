@@ -37,10 +37,19 @@ const LocalUserID = "00000000-0000-0000-0000-000000000001"
 const (
 	// sessionTokenTTL is the sliding window a session stays valid without use.
 	sessionTokenTTL = 30 * 24 * time.Hour
+	// sessionTokenMaxAge is the ceiling sliding cannot pass: a session signs
+	// in again after this, however busy it was.
+	sessionTokenMaxAge = 90 * 24 * time.Hour
 	// tokenSlideEvery caps how often one token's use rewrites its row — the
 	// write budget is what the throttle protects, not correctness.
 	tokenSlideEvery = time.Hour
 )
+
+// ErrLastAdmin refuses the change that would leave no enabled admin.
+var ErrLastAdmin = errors.New("that would leave no admin")
+
+// ErrDisabled is a login by an account an admin switched off.
+var ErrDisabled = errors.New("account disabled")
 
 // Token prefixes make a leaked string identifiable in a log or a paste
 // without revealing anything: the secret part follows the prefix.
@@ -113,15 +122,50 @@ func (s *UserStore) CountReal(ctx context.Context) (int, error) {
 	return n, nil
 }
 
-// SetRole changes one account's role; ErrNotFound when absent.
-func (s *UserStore) SetRole(ctx context.Context, id, role string) error {
-	res, err := s.db.NewUpdate().Model((*User)(nil)).
-		Set("role = ?", role).Set("updated_at = ?", time.Now().UTC()).
-		Where("id = ?", id).Exec(ctx)
-	if err != nil {
-		return fmt.Errorf("setting role of user %s: %w", id, err)
-	}
-	return requireRows(res)
+// UserPatch is what an admin may change about an account; a nil field is
+// left alone.
+type UserPatch struct {
+	Role     *string
+	Disabled *bool
+}
+
+// Patch applies p to one account, in a transaction that refuses to leave no
+// enabled admin (ErrLastAdmin) — the local account, which cannot sign in,
+// does not count as one. ErrNotFound when absent.
+func (s *UserStore) Patch(ctx context.Context, id string, p UserPatch) error {
+	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		u := new(User)
+		if err := tx.NewSelect().Model(u).Where("id = ?", id).Scan(ctx); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrNotFound
+			}
+			return err
+		}
+		if p.Role != nil {
+			u.Role = *p.Role
+		}
+		if p.Disabled != nil {
+			if *p.Disabled && u.DisabledAt.IsZero() {
+				u.DisabledAt = time.Now().UTC()
+			} else if !*p.Disabled {
+				u.DisabledAt = time.Time{}
+			}
+		}
+		if u.Role != RoleAdmin || !u.DisabledAt.IsZero() {
+			n, err := tx.NewSelect().Model((*User)(nil)).
+				Where("id != ? AND id != ? AND role = ? AND disabled_at IS NULL", id, LocalUserID, RoleAdmin).
+				Count(ctx)
+			if err != nil {
+				return err
+			}
+			if n == 0 {
+				return ErrLastAdmin
+			}
+		}
+		u.UpdatedAt = time.Now().UTC()
+		_, err := tx.NewUpdate().Model(u).Column("role", "disabled_at", "updated_at").Where("id = ?", id).Exec(ctx)
+		return err
+	})
 }
 
 // OAuthIdentity is what a login provider reports about the person after a
@@ -161,6 +205,9 @@ func (s *UserStore) resolveOAuthLogin(ctx context.Context, id OAuthIdentity, boo
 		u, err := userForIdentity(ctx, tx, id, email, bootstrapAdmin == "")
 		if err != nil {
 			return err
+		}
+		if !u.DisabledAt.IsZero() {
+			return ErrDisabled
 		}
 		// The provider's view of the person refreshes on every login; the
 		// email does not — it is the merge key, and identity follows subject.
@@ -272,7 +319,11 @@ func (s *AuthTokenStore) Authenticate(ctx context.Context, plaintext string) (*U
 		}
 		return nil, nil, err
 	}
-	if !t.ExpiresAt.IsZero() && now.After(t.ExpiresAt) {
+	expired := !t.ExpiresAt.IsZero() && now.After(t.ExpiresAt)
+	if t.Kind == TokenKindSession && now.Sub(t.CreatedAt) > sessionTokenMaxAge {
+		expired = true
+	}
+	if expired {
 		_, _ = s.db.NewDelete().Model((*AuthToken)(nil)).Where("id = ?", t.ID).Exec(ctx)
 		return nil, nil, ErrNotFound
 	}
@@ -291,7 +342,20 @@ func (s *AuthTokenStore) Authenticate(ctx context.Context, plaintext string) (*U
 	if err := s.db.NewSelect().Model(u).Where("id = ?", t.UserID).Scan(ctx); err != nil {
 		return nil, nil, fmt.Errorf("user for token: %w", err)
 	}
+	if !u.DisabledAt.IsZero() {
+		return nil, nil, ErrNotFound
+	}
 	return u, t, nil
+}
+
+// RevokeAllForUser deletes every token — sessions and PATs — of one user:
+// the admin's "sign them out everywhere".
+func (s *AuthTokenStore) RevokeAllForUser(ctx context.Context, userID string) (int64, error) {
+	res, err := s.db.NewDelete().Model((*AuthToken)(nil)).Where("user_id = ?", userID).Exec(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("revoking tokens of user %s: %w", userID, err)
+	}
+	return res.RowsAffected()
 }
 
 // ListByUser returns one user's tokens of the given kind, newest first.

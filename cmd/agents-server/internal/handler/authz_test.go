@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -266,9 +267,11 @@ func TestRunEventsStayWithTheOwner(t *testing.T) {
 	}
 }
 
-// User management is the admin's: members cannot list or change roles, an
-// admin can promote a member, and no admin can demote themself.
-func TestUserRoleManagement(t *testing.T) {
+// User management is the admin's: members cannot list or change accounts,
+// an admin promotes a member, disables one (whose credentials then stop
+// authenticating) and signs one out everywhere; no admin changes their own
+// account, and the last enabled admin cannot be demoted or disabled.
+func TestUserManagement(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := newTestDB(t)
 	for _, u := range []protocol.UserInfo{adminUser, memberUser} {
@@ -278,8 +281,10 @@ func TestUserRoleManagement(t *testing.T) {
 	}
 	local := &store.User{ID: store.LocalUserID, Email: "local@localhost", Role: store.RoleAdmin}
 	s := server.New(slog.New(slog.DiscardHandler), usersByToken, nil)
-	s.RegisterAPI(Handlers{Auth: NewAuthHandler(authn.NewStatic("tok", local), nil, store.NewUserStore(db), nil)}.Register)
+	users, tokens := store.NewUserStore(db), store.NewAuthTokenStore(db)
+	s.RegisterAPI(Handlers{Auth: NewAuthHandler(authn.NewStatic("tok", local), tokens, users, nil)}.Register)
 	engine := s.Engine
+	ctx := t.Context()
 
 	if rec := serve(engine, as(memberUser, http.MethodGet, "/api/v1/auth/users", "")); rec.Code != http.StatusForbidden {
 		t.Fatalf("member list users = %d, want 403", rec.Code)
@@ -288,14 +293,52 @@ func TestUserRoleManagement(t *testing.T) {
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), memberUser.Email) {
 		t.Fatalf("admin list users = %d %s", rec.Code, rec.Body.String())
 	}
-	if rec := serve(engine, as(adminUser, http.MethodPut, "/api/v1/auth/users/"+adminUser.ID+"/role", `{"role":"member"}`)); rec.Code != http.StatusBadRequest {
+	if rec := serve(engine, as(adminUser, http.MethodPatch, "/api/v1/auth/users/"+adminUser.ID, `{"role":"member"}`)); rec.Code != http.StatusBadRequest {
 		t.Fatalf("self-demotion = %d, want 400", rec.Code)
 	}
-	if rec := serve(engine, as(adminUser, http.MethodPut, "/api/v1/auth/users/"+memberUser.ID+"/role", `{"role":"admin"}`)); rec.Code != http.StatusNoContent {
+	if rec := serve(engine, as(adminUser, http.MethodPatch, "/api/v1/auth/users/"+store.LocalUserID, `{"disabled":true}`)); rec.Code != http.StatusBadRequest {
+		t.Fatalf("disabling the local account = %d, want 400", rec.Code)
+	}
+	if rec := serve(engine, as(adminUser, http.MethodPatch, "/api/v1/auth/users/"+memberUser.ID, `{"role":"admin"}`)); rec.Code != http.StatusNoContent {
 		t.Fatalf("promote = %d %s", rec.Code, rec.Body.String())
 	}
-	promoted, err := store.NewUserStore(db).ByID(t.Context(), memberUser.ID)
-	if err != nil || promoted.Role != store.RoleAdmin {
+	if promoted, err := users.ByID(ctx, memberUser.ID); err != nil || promoted.Role != store.RoleAdmin {
 		t.Fatalf("after promote: %+v %v", promoted, err)
 	}
+
+	// Two admins now. The other one may be demoted and disabled; after that
+	// the one left cannot be.
+	pat, _, err := tokens.Mint(ctx, memberUser.ID, store.TokenKindPAT, "ci", time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := tokens.Authenticate(ctx, pat); err != nil {
+		t.Fatalf("the PAT must authenticate before the account is disabled: %v", err)
+	}
+	if rec := serve(engine, as(adminUser, http.MethodPatch, "/api/v1/auth/users/"+memberUser.ID, `{"role":"member","disabled":true}`)); rec.Code != http.StatusNoContent {
+		t.Fatalf("demote+disable = %d %s", rec.Code, rec.Body.String())
+	}
+	if _, _, err := tokens.Authenticate(ctx, pat); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("a disabled account's PAT authenticated: %v", err)
+	}
+	if rec := serve(engine, as(adminUser, http.MethodPatch, "/api/v1/auth/users/"+memberUser.ID, `{"disabled":false}`)); rec.Code != http.StatusNoContent {
+		t.Fatalf("re-enable = %d %s", rec.Code, rec.Body.String())
+	}
+	if err := users.Patch(ctx, adminUser.ID, store.UserPatch{Disabled: ptr(true)}); !errors.Is(err, store.ErrLastAdmin) {
+		t.Fatalf("disabling the last admin = %v, want ErrLastAdmin", err)
+	}
+	if err := users.Patch(ctx, adminUser.ID, store.UserPatch{Role: ptr(store.RoleMember)}); !errors.Is(err, store.ErrLastAdmin) {
+		t.Fatalf("demoting the last admin = %v, want ErrLastAdmin", err)
+	}
+
+	// Sign out everywhere: every token of the account goes.
+	pat2, _, _ := tokens.Mint(ctx, memberUser.ID, store.TokenKindPAT, "ci", time.Time{})
+	if rec := serve(engine, as(adminUser, http.MethodDelete, "/api/v1/auth/users/"+memberUser.ID+"/tokens", "")); rec.Code != http.StatusNoContent {
+		t.Fatalf("revoke all = %d %s", rec.Code, rec.Body.String())
+	}
+	if _, _, err := tokens.Authenticate(ctx, pat2); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("a token survived the admin's revoke-all: %v", err)
+	}
 }
+
+func ptr[T any](v T) *T { return &v }

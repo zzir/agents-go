@@ -1046,7 +1046,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/auth/users/{id}/role": {
+    "/auth/users/{id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -1054,8 +1054,13 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Set a user's role (admin) */
-        put: {
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Change a user's role or disable them (admin) */
+        patch: {
             parameters: {
                 query?: never;
                 header?: never;
@@ -1065,13 +1070,14 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: {
+            /** @description What to change */
+            requestBody: {
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": Record<string, never> | components["schemas"]["handler.UserPatchRequest"];
                 };
             };
             responses: {
-                /** @description role changed */
+                /** @description changed */
                 204: {
                     headers: {
                         [name: string]: unknown;
@@ -1105,10 +1111,69 @@ export interface paths {
                         "application/json": components["schemas"]["handler.ErrorResponse"];
                     };
                 };
+                /** @description that would leave no admin */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
             };
         };
+        trace?: never;
+    };
+    "/auth/users/{id}/tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
         post?: never;
-        delete?: never;
+        /** Revoke every token of a user (admin) */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description User ID */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description revoked */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Forbidden */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
         options?: never;
         head?: never;
         patch?: never;
@@ -6206,6 +6271,10 @@ export interface components {
             updated_at?: string;
             workflow_id?: string;
         };
+        "handler.UserPatchRequest": {
+            disabled?: boolean;
+            role?: string;
+        };
         "handler.approvalResultResp": {
             run_id?: string;
             status?: string;
@@ -7028,6 +7097,11 @@ export interface components {
              */
             avatar_url?: string;
             created_at?: string;
+            /**
+             * @description DisabledAt, when set, is when an admin switched the account off: no
+             *     credential of theirs authenticates until it is cleared.
+             */
+            disabled_at?: string;
             /** @description lowercased; unique via idx_users_email */
             email?: string;
             id?: string;

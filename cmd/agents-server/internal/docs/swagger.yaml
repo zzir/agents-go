@@ -654,6 +654,13 @@ components:
         workflow_id:
           type: string
       type: object
+    handler.UserPatchRequest:
+      properties:
+        disabled:
+          type: boolean
+        role:
+          type: string
+      type: object
     handler.approvalResultResp:
       properties:
         run_id:
@@ -1894,6 +1901,11 @@ components:
           type: string
         created_at:
           type: string
+        disabled_at:
+          description: |-
+            DisabledAt, when set, is when an admin switched the account off: no
+            credential of theirs authenticates until it is cleared.
+          type: string
         email:
           description: lowercased; unique via idx_users_email
           type: string
@@ -2628,8 +2640,8 @@ paths:
       summary: List users (admin)
       tags:
       - auth
-  /auth/users/{id}/role:
-    put:
+  /auth/users/{id}:
+    patch:
       parameters:
       - description: User ID
         in: path
@@ -2641,10 +2653,16 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.UserPatchRequest'
+                description: What to change
+                summary: body
+        description: What to change
+        required: true
       responses:
         "204":
-          description: role changed
+          description: changed
         "400":
           content:
             application/json:
@@ -2663,9 +2681,44 @@ paths:
               schema:
                 $ref: '#/components/schemas/handler.ErrorResponse'
           description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: that would leave no admin
       security:
       - BearerAuth: []
-      summary: Set a user's role (admin)
+      summary: Change a user's role or disable them (admin)
+      tags:
+      - auth
+  /auth/users/{id}/tokens:
+    delete:
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: revoked
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+      security:
+      - BearerAuth: []
+      summary: Revoke every token of a user (admin)
       tags:
       - auth
   /guardrails:

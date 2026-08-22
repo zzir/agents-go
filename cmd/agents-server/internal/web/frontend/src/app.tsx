@@ -207,6 +207,7 @@ const AUTH_ERROR_TEXT: Record<string, string> = {
   exchange_failed: 'The provider rejected the sign-in — try again.',
   not_allowed: 'This account is not on the allowlist for this server.',
   cancelled: 'The sign-in was cancelled at the provider.',
+  disabled: 'This account has been disabled by an admin.',
   rate_limited: 'Too many sign-in attempts from your address — wait a minute and try again.',
   login_failed: 'Sign-in failed on the server — try again.',
 };
