@@ -39,6 +39,9 @@ func (a *SessionRepoAdapter) Create(ctx context.Context, opts session.CreateOpti
 	owner := LocalUserID
 	if opts.ParentID != "" {
 		parent, err := a.sessions.Get(ctx, opts.ParentID)
+		if errors.Is(err, ErrNotFound) {
+			return nil, fmt.Errorf("creating a served session: parent %s: %w", opts.ParentID, session.ErrNotFound)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("creating a served session: parent: %w", err)
 		}

@@ -1338,8 +1338,14 @@ secrets.
 
 A generated OpenAPI 3.1 document (YAML) is served at `GET /api/v1/openapi.yaml`
 (unauthenticated). It is generated from swag annotations on the handlers via
-`make openapi` in `cmd/agents-server`. There is intentionally no bundled
-Swagger/Redoc UI — import the YAML into your own tool.
+`make openapi` in `cmd/agents-server`, and the frontend's request/response
+types are generated from it in turn (`npm run gen:api` in
+`internal/web/frontend`, writing `src/lib/apiTypes.gen.ts`). CI fails when
+either generated file is stale, and runs `npm run lint` (ESLint: rules of
+hooks, exhaustive deps) on the frontend — so a handler annotation change is
+three commands: `make openapi`, `npm run gen:api`, commit both outputs. There
+is intentionally no bundled Swagger/Redoc UI — import the YAML into your own
+tool.
 
 ## WebSocket protocol
 
@@ -1460,8 +1466,16 @@ cmd/agents-server/
 ├── main.go                     entry point
 ├── cmd/root.go                 CLI flags & server bootstrap
 ├── internal/
-│   ├── server/                 Gin engine, routing, auth middleware, WS upgrade
+│   ├── server/                 Gin engine, routing, WS upgrade + heartbeat
+│   │   ├── auth.go             bearer middleware (AuthFunc), the auth-exempt list
+│   │   ├── ratelimit.go        per-IP budgets; AuthGuard (failed-credential budget)
+│   │   ├── audit.go            the audit middleware (successful mutating requests)
+│   │   └── server.go           engine setup, body cap, CSP, static SPA
+│   ├── authn/                  who is calling: token mode, OAuth (PKCE) login, PATs
+│   ├── secrets/                AES-256-GCM box that seals stored credentials
 │   ├── handler/                HTTP handlers (one file per resource)
+│   │   ├── authz.go            the two authorization rules as route gates
+│   │   └── conn_registry.go    per-owner WebSocket broadcast bus
 │   ├── bridge/                 business logic
 │   │   ├── agent.go            assemble a full agent from DB config
 │   │   ├── runner.go           stream execution, resume after approval
@@ -1470,10 +1484,10 @@ cmd/agents-server/
 │   │   ├── approvals.go        HITL approval persistence & resolution
 │   │   ├── mcp_manager.go      MCP server connection lifecycle
 │   │   ├── sandbox_manager.go  sandbox instance cache
-│   │   ├── retention.go        approval-expiry reaper & trace pruning
+│   │   ├── retention.go        the maintenance loops: approval reaper, trace/audit/token/wake-up pruning
 │   │   └── ...                 tracing, guardrails, proxy, MCP/ChatGPT OAuth
 │   ├── docs/                   generated OpenAPI 3.1 document, swagger.yaml (make openapi)
-│   ├── store/                  SQLite data layer (bun ORM, 12 tables)
+│   ├── store/                  data layer (bun ORM; SQLite or PostgreSQL, 22 tables — see Database)
 │   ├── protocol/               wire types — WS messages + REST error envelope
 │   └── web/                    embedded SPA static files
 └── {workspace}/skills/         agent skills managed via API (runtime dir, not in the repo)
@@ -2205,6 +2219,26 @@ mechanism.
 
 ## Roadmap
 
+- **Multiple instances.** Two processes on one PostgreSQL do not cooperate
+  yet — not even a rolling restart: the truth about a live run is in process
+  memory. What is process-local today, and how it breaks with a second
+  instance: `RunHub` (a run is 404 everywhere but its instance; the
+  one-run-per-session rule holds only by the entries unique index); the
+  orphan sweep at startup fails every `working` task, including the other
+  instance's; the `Waker` reads the local hub, so two instances can wake one
+  session into concurrent runs; `ConnRegistry` broadcasts reach local
+  connections only; the cron table is loaded per instance, so every schedule
+  fires once per instance; the webhook replay guard, the OAuth pending-login
+  and exchange maps, the MCP OAuth callback channel, refresh-token dedup, the
+  sandbox instance cache and terminal fences, exec_command trust, and the
+  rate budgets are all in-memory maps. Already shared through the database:
+  pending approvals, wake-up debts, auth tokens, the audit log, ownership.
+  The direction chosen: shard by user (sticky load-balancing on the user
+  id), an `instance_id` with a heartbeat table and lease-based ownership
+  instead of "is it in my memory", maintenance loops kept idempotent, stdio
+  MCP servers one per instance as a documented limit, SQLite refused for more
+  than one instance — and, before any of it ships, a migration mechanism,
+  because a rolling upgrade is two binaries on one schema.
 - **Guardrail ordering at the approval gate.** The tool stages are configurable
   now (a guardrail's `stages` cover `tool_input` / `tool_output` for every tool
   call), but `RunOptions.PreApprovalToolInputGuardrails` is not exposed as an

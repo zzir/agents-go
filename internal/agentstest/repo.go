@@ -60,6 +60,7 @@ var repoChecks = []struct {
 	{"DirectAndRepoDoNotShareHistory", checkDirectIsolation},
 	{"ListIsNewestFirst", checkListNewestFirst},
 	{"ListHonoursLimit", checkListLimit},
+	{"AServedSessionNeverCreatesItsParent", checkServedSessionParent},
 }
 
 // id resolves a suite-literal session name through IDs.
@@ -117,6 +118,26 @@ func checkOpenUnknown(t *testing.T, r RepoUnderTest) {
 	_, err := r.Repo.Open(context.Background(), r.id("never-created"))
 	if err == nil {
 		t.Fatal("opening an unknown session succeeded")
+	}
+}
+
+// A hidden session names the session it serves; a repo may ignore the name
+// or refuse an unknown one, but it never conjures the parent (spec §2.5e).
+func checkServedSessionParent(t *testing.T, r RepoUnderTest) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := r.Repo.Create(ctx, session.CreateOptions{ID: r.id("parent"), Title: "parent"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Repo.Create(ctx, session.CreateOptions{ID: r.id("child"), Hidden: true, ParentID: r.id("parent")}); err != nil {
+		t.Fatalf("creating a served session under an existing parent: %v", err)
+	}
+	_, err := r.Repo.Create(ctx, session.CreateOptions{ID: r.id("orphan"), Hidden: true, ParentID: r.id("never-created")})
+	if err != nil && !errors.Is(err, session.ErrNotFound) {
+		t.Fatalf("an unknown parent must be ignored or refused with ErrNotFound, got: %v", err)
+	}
+	if _, err := r.Repo.Open(ctx, r.id("never-created")); err == nil {
+		t.Fatal("creating a served session brought its unknown parent into existence")
 	}
 }
 

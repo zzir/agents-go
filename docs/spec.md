@@ -546,7 +546,8 @@ A `SessionRepo` owns which sessions exist, separately from their contents.
   that serves another one (a background task's history) is excluded from
   listings by default, and is created naming the session it serves
   (`CreateOptions.ParentID`) so a repo that attaches facts to sessions — an
-  owner — can inherit them instead of guessing.
+  owner — can inherit them instead of guessing. A repo may ignore the name or
+  refuse an unknown one with `ErrNotFound`; it never creates the parent.
 - **A backend may constrain the shape of the ids it accepts** — the server's
   PostgreSQL backend types every id column `uuid`, so a caller-chosen id must
   be one. The conformance suite routes its literal names through

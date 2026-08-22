@@ -116,8 +116,11 @@ Two things it fixes:
 - **A session exists because it was created**, not because it happens to have
   entries. A fresh conversation is listable before anyone speaks.
 - **`Hidden` marks a session that serves another one** — a background task's
-  private history. Listings exclude them by default, so every caller stops
-  maintaining that filter and stops forgetting it.
+  private history — and `ParentID` names which. Listings exclude hidden
+  sessions by default, so every caller stops maintaining that filter and stops
+  forgetting it; a repo that attaches facts to a session (the server's owner)
+  inherits them from the parent. An unknown parent is ignored or refused with
+  `ErrNotFound` — never created.
 - **Every backend answers a listing the same way** — newest change first, cut
   to `ListOptions.Limit` after the hidden filter, a limit that is not positive
   meaning no limit. A shared conformance suite holds every backend to it, so
