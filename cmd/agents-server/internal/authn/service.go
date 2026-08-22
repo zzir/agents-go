@@ -8,9 +8,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"errors"
-	"io"
 	"log/slog"
-	"net/http"
 	"net/url"
 	"strings"
 	"sync"
@@ -117,7 +115,16 @@ func lowerAll(in []string) []string {
 }
 
 func userInfoOf(u *store.User) protocol.UserInfo {
-	return protocol.UserInfo{ID: u.ID, Email: u.Email, Name: u.Name, Role: u.Role}
+	return protocol.UserInfo{ID: u.ID, Email: u.Email, Name: u.Name, Role: u.Role, AvatarURL: u.AvatarURL}
+}
+
+// AvatarHosts lists every configured provider's picture hosts, for the CSP.
+func (s *Service) AvatarHosts() []string {
+	var out []string
+	for _, name := range s.providerNames {
+		out = append(out, s.providers[name].AvatarHosts()...)
+	}
+	return out
 }
 
 // Mode reports which mode this service runs in (ModeToken or ModeOAuth).
@@ -222,11 +229,6 @@ func (s *Service) Complete(ctx context.Context, provider, state, code string) st
 	if err != nil {
 		return fail("login_failed", err)
 	}
-	// The picture is fetched off the login path: a slow image host must not
-	// delay the redirect, and a failed fetch costs only the picture.
-	if id.AvatarURL != "" {
-		go s.fetchAvatar(u.ID, id.AvatarURL)
-	}
 	oneTime := randomToken()
 	s.mu.Lock()
 	s.sessions[oneTime] = pendingExchange{token: token, user: *u, created: time.Now()}
@@ -289,42 +291,4 @@ func (s *Service) allowed(email string) bool {
 		}
 	}
 	return false
-}
-
-// Avatar limits: the provider's picture is stored, not hot-linked, so the
-// CSP stays at img-src 'self'. A bound keeps a hostile provider from filling
-// the users table.
-const (
-	avatarMaxBytes = 256 << 10
-	avatarTimeout  = 5 * time.Second
-)
-
-// fetchAvatar downloads the provider's picture into the user's row. Any
-// failure is logged and forgotten — the Account panel falls back to initials.
-func (s *Service) fetchAvatar(userID, avatarURL string) {
-	ctx, cancel := context.WithTimeout(context.Background(), avatarTimeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, avatarURL, nil)
-	if err != nil {
-		return
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		s.log.Debug("avatar fetch failed", "user", userID, "error", err)
-		return
-	}
-	defer resp.Body.Close()
-	ctype := resp.Header.Get("Content-Type")
-	if resp.StatusCode != http.StatusOK || !strings.HasPrefix(ctype, "image/") {
-		s.log.Debug("avatar fetch refused", "user", userID, "status", resp.StatusCode, "content_type", ctype)
-		return
-	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, avatarMaxBytes+1))
-	if err != nil || len(data) > avatarMaxBytes {
-		s.log.Debug("avatar too large or unreadable", "user", userID, "bytes", len(data))
-		return
-	}
-	if err := s.users.SetAvatar(ctx, userID, data, ctype); err != nil {
-		s.log.Warn("storing avatar failed", "user", userID, "error", err)
-	}
 }

@@ -127,8 +127,7 @@ The auth surface under `/api/v1/auth`:
 | GET    | `/auth/oauth/:provider/start`    | none | 302 into the provider's authorize flow (PKCE)            |
 | GET    | `/auth/oauth/:provider/callback` | none | Provider redirect target; 302 into the SPA with `#auth_code=<one-time>` on success, `#auth_error=<tag>` on failure |
 | POST   | `/auth/exchange`                 | none | Trade the one-time code for `{token, user}` — the only response the session token's plaintext rides |
-| GET    | `/auth/me`                       | yes  | The authenticated caller: `{id, email, name?, role}`     |
-| GET    | `/auth/me/avatar`                | yes  | The caller's stored picture (image bytes; 404 when none) |
+| GET    | `/auth/me`                       | yes  | The authenticated caller: `{id, email, name?, role, avatar_url?}` |
 | POST   | `/auth/logout`                   | yes  | Revoke the presented session token (no-op in token mode) |
 | GET    | `/auth/audit`                    | admin | The audit log, newest first (`?limit`, `?before=<RFC 3339>`) |
 | GET    | `/auth/users`                    | admin | Every account with its role                             |
@@ -154,10 +153,10 @@ and database-backed credentials:
   ones are members.
 - **Logins with the same verified email merge into one account** across
   providers; the (provider, subject) identity is the primary key of a login.
-- **The provider's picture is fetched by the server at login** (≤256 KB,
-  `image/*`, off the login path) and served same-origin at
-  `GET /auth/me/avatar`; the UI never loads the provider's URL, so the CSP
-  stays at `img-src 'self'`. No picture, or a failed fetch, shows initials.
+- **The provider's picture URL rides `/auth/me` as `avatar_url`** and the
+  browser loads it; the CSP's `img-src` admits each configured provider's
+  picture hosts (Google: `https://*.googleusercontent.com`) and nothing else.
+  No picture shows initials.
 - **Sessions are rows, not JWTs**: a 30-day sliding expiry, revoked by
   `/auth/logout`, cleaned hourly. The callback hands the SPA a one-time code
   in the URL fragment; the session token itself never appears in a URL.

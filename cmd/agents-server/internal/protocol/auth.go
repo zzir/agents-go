@@ -7,6 +7,8 @@ type UserInfo struct {
 	Email string `json:"email"`
 	Name  string `json:"name,omitempty"`
 	Role  string `json:"role"`
+	// AvatarURL is the login provider's picture, when it gave one.
+	AvatarURL string `json:"avatar_url,omitempty"`
 }
 
 // AuthConfig tells the login page how to authenticate: mode "token" renders

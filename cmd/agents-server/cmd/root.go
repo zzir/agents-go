@@ -340,6 +340,7 @@ func run(_ *cobra.Command, _ []string) error {
 	terminalHandler.Audit = recordAudit
 
 	srv := server.New(log, authSvc.Authenticate, recordAudit)
+	srv.SetImageHosts(authSvc.AvatarHosts())
 	if flagTrustedProxies != "" {
 		proxies := strings.Split(flagTrustedProxies, ",")
 		for i := range proxies {

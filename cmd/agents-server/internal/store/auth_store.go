@@ -93,32 +93,6 @@ func (s *UserStore) ByID(ctx context.Context, id string) (*User, error) {
 	return u, nil
 }
 
-// SetAvatar stores a fetched avatar (bytes + content type) for one account.
-func (s *UserStore) SetAvatar(ctx context.Context, id string, data []byte, contentType string) error {
-	res, err := s.db.NewUpdate().Model((*User)(nil)).
-		Set("avatar = ?", data).Set("avatar_type = ?", contentType).Set("updated_at = ?", time.Now().UTC()).
-		Where("id = ?", id).Exec(ctx)
-	if err != nil {
-		return fmt.Errorf("storing the avatar of user %s: %w", id, err)
-	}
-	return requireRows(res)
-}
-
-// Avatar returns one account's stored avatar; ErrNotFound when there is none.
-func (s *UserStore) Avatar(ctx context.Context, id string) ([]byte, string, error) {
-	u := new(User)
-	if err := s.db.NewSelect().Model(u).Column("avatar", "avatar_type").Where("id = ?", id).Scan(ctx); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, "", ErrNotFound
-		}
-		return nil, "", err
-	}
-	if len(u.Avatar) == 0 {
-		return nil, "", ErrNotFound
-	}
-	return u.Avatar, u.AvatarType, nil
-}
-
 // List returns every account, oldest first — the admin's user management view.
 func (s *UserStore) List(ctx context.Context) ([]User, error) {
 	var out []User

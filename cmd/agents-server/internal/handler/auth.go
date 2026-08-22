@@ -294,32 +294,6 @@ func (h *AuthHandler) Check(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-// MyAvatar serves the caller's stored avatar same-origin — the provider's
-// picture is fetched at login, never hot-linked (the CSP stays img-src
-// 'self'). 404 when none was stored; the UI shows initials.
-//
-//	@Summary	Current user's avatar
-//	@Tags		auth
-//	@Produce	image/*
-//	@Success	200	{file}		binary
-//	@Failure	404	{object}	ErrorResponse
-//	@Security	BearerAuth
-//	@Router		/auth/me/avatar [get]
-func (h *AuthHandler) MyAvatar(c *gin.Context) {
-	u, ok := server.CurrentUser(c)
-	if !ok {
-		c.JSON(http.StatusUnauthorized, protocol.NewErrorResponse(protocol.CodeUnauthorized, "unauthorized"))
-		return
-	}
-	data, ctype, err := h.users.Avatar(c.Request.Context(), u.ID)
-	if err != nil {
-		storeError(c, err)
-		return
-	}
-	c.Header("Cache-Control", "private, max-age=300")
-	c.Data(http.StatusOK, ctype, data)
-}
-
 // Me reports the authenticated caller.
 //
 //	@Summary	Current user

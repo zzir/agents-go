@@ -23,6 +23,9 @@ type OAuthProvider interface {
 	Name() string
 	AuthCodeURL(state, verifier, redirectURI string) string
 	Identity(ctx context.Context, code, verifier, redirectURI string) (store.OAuthIdentity, error)
+	// AvatarHosts are the CSP img-src sources the provider's pictures load
+	// from — the one hole the policy opens, per configured provider.
+	AvatarHosts() []string
 }
 
 // Login-flow windows. Pending state is process-local by design (single
@@ -73,6 +76,10 @@ type Google struct {
 
 // Name implements OAuthProvider.
 func (g *Google) Name() string { return "google" }
+
+// AvatarHosts implements OAuthProvider: Google serves pictures from
+// *.googleusercontent.com.
+func (g *Google) AvatarHosts() []string { return []string{"https://*.googleusercontent.com"} }
 
 func (g *Google) config(redirectURI string) *oauth2.Config {
 	authURL := g.authURL

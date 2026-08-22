@@ -787,51 +787,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/auth/me/avatar": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Current user's avatar */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "image/*": Record<string, never>;
-                    };
-                };
-                /** @description Not Found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "image/*": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/auth/oauth/{provider}/callback": {
         parameters: {
             query?: never;
@@ -6392,6 +6347,8 @@ export interface components {
             name?: string;
         };
         "protocol.UserInfo": {
+            /** @description AvatarURL is the login provider's picture, when it gave one. */
+            avatar_url?: string;
             email?: string;
             id?: string;
             name?: string;
@@ -6980,6 +6937,11 @@ export interface components {
             workflow_id?: string;
         };
         "store.User": {
+            /**
+             * @description AvatarURL is the provider's picture URL, carried by /auth/me and loaded
+             *     by the browser; the CSP admits the configured providers' image hosts.
+             */
+            avatar_url?: string;
             created_at?: string;
             /** @description lowercased; unique via idx_users_email */
             email?: string;

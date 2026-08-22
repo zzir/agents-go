@@ -115,7 +115,8 @@ func TestOAuthModeSessionTokens(t *testing.T) {
 // redirect contract, and the one-time exchange.
 type fakeLoginProvider struct{ email string }
 
-func (f *fakeLoginProvider) Name() string { return "fake" }
+func (f *fakeLoginProvider) Name() string          { return "fake" }
+func (f *fakeLoginProvider) AvatarHosts() []string { return nil }
 func (f *fakeLoginProvider) AuthCodeURL(state, _, redirectURI string) string {
 	return "https://idp.example/authorize?state=" + state + "&redirect_uri=" + redirectURI
 }

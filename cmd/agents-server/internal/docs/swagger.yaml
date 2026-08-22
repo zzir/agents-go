@@ -1020,6 +1020,9 @@ components:
       type: object
     protocol.UserInfo:
       properties:
+        avatar_url:
+          description: AvatarURL is the login provider's picture, when it gave one.
+          type: string
         email:
           type: string
         id:
@@ -1879,6 +1882,11 @@ components:
       type: object
     store.User:
       properties:
+        avatar_url:
+          description: |-
+            AvatarURL is the provider's picture URL, carried by /auth/me and loaded
+            by the browser; the CSP admits the configured providers' image hosts.
+          type: string
         created_at:
           type: string
         email:
@@ -2470,26 +2478,6 @@ paths:
       security:
       - BearerAuth: []
       summary: Current user
-      tags:
-      - auth
-  /auth/me/avatar:
-    get:
-      responses:
-        "200":
-          content:
-            image/*:
-              schema:
-                type: file
-          description: OK
-        "404":
-          content:
-            image/*:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Not Found
-      security:
-      - BearerAuth: []
-      summary: Current user's avatar
       tags:
       - auth
   /auth/oauth/{provider}/callback:

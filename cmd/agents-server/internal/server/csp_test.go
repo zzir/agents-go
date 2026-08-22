@@ -40,11 +40,11 @@ func TestInlineScriptHashes(t *testing.T) {
 }
 
 func TestBuildCSP(t *testing.T) {
-	base := buildCSP(nil)
+	base := buildCSP(nil, nil)
 	if !strings.Contains(base, "script-src 'self';") {
 		t.Fatalf("base policy lost script-src 'self': %q", base)
 	}
-	withHash := buildCSP([]string{cspTestHash})
+	withHash := buildCSP([]string{cspTestHash}, nil)
 	if !strings.Contains(withHash, "script-src 'self' 'sha256-"+cspTestHash+"';") {
 		t.Fatalf("hashed policy malformed: %q", withHash)
 	}

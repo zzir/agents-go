@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
@@ -129,22 +128,8 @@ func TestOAuthLoginFlow(t *testing.T) {
 	if _, err := svc.Authenticate(ctx, token); err != nil {
 		t.Fatalf("the minted session must authenticate: %v", err)
 	}
-	// The provider's picture is fetched off the login path and stored for
-	// same-origin serving; wait for the goroutine.
-	users := store.NewUserStore(db)
-	deadline := time.Now().Add(3 * time.Second)
-	for {
-		data, ctype, err := users.Avatar(ctx, user.ID)
-		if err == nil {
-			if string(data) != "PNG-BYTES" || ctype != "image/png" {
-				t.Fatalf("stored avatar = %q %q", data, ctype)
-			}
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("avatar was not stored: %v", err)
-		}
-		time.Sleep(20 * time.Millisecond)
+	if user.AvatarURL == "" {
+		t.Fatal("the provider's picture URL must ride the user info")
 	}
 
 	// Both halves are single-use: the state and the one-time code.

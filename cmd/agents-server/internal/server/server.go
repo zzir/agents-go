@@ -29,8 +29,16 @@ type Server struct {
 	auth   AuthFunc
 	// cspPolicy is the Content-Security-Policy every response carries; base
 	// policy from New, extended by ServeStatic with the hashes of the served
-	// page's inline scripts.
+	// page's inline scripts and by SetImageHosts with the avatar hosts.
 	cspPolicy string
+	imgHosts  []string
+}
+
+// SetImageHosts admits extra img-src sources — the login providers' picture
+// hosts, the one hole the policy opens. Call before ServeStatic.
+func (s *Server) SetImageHosts(hosts []string) {
+	s.imgHosts = hosts
+	s.cspPolicy = buildCSP(nil, hosts)
 }
 
 // maxBodyBytes caps any request body read, matching the WebSocket frame limit
@@ -73,7 +81,7 @@ func New(log *slog.Logger, auth AuthFunc, audit AuditFunc) *Server {
 	engine := gin.New()
 	_ = engine.SetTrustedProxies(nil)
 	engine.Use(gin.Recovery())
-	s := &Server{Engine: engine, auth: auth, cspPolicy: buildCSP(nil)}
+	s := &Server{Engine: engine, auth: auth, cspPolicy: buildCSP(nil, nil)}
 	engine.Use(limitBody(maxBodyBytes))
 	engine.Use(s.cspMiddleware())
 	engine.Use(logMiddleware(log))
@@ -106,7 +114,7 @@ func (s *Server) ServeHealth(version string) {
 // Text assets (.js, .css, .html, .svg, .json) may be pre-compressed as .br files;
 // they are served transparently with Content-Encoding: br.
 func (s *Server) ServeStatic(staticFS fs.FS) {
-	s.cspPolicy = buildCSP(inlineScriptHashes(staticFS))
+	s.cspPolicy = buildCSP(inlineScriptHashes(staticFS), s.imgHosts)
 	httpFS := http.FS(staticFS)
 	s.Engine.NoRoute(func(c *gin.Context) {
 		// Unmatched API paths are client errors, not SPA routes: answer with a
@@ -162,8 +170,9 @@ func serveAsset(c *gin.Context, sfs fs.FS, httpFS http.FileSystem, p string) boo
 }
 
 // buildCSP renders the policy; scriptHashes extends script-src with the
-// sha256 sources of the page's inline scripts.
-func buildCSP(scriptHashes []string) string {
+// sha256 sources of the page's inline scripts, imgHosts extends img-src with
+// the login providers' picture hosts.
+func buildCSP(scriptHashes, imgHosts []string) string {
 	// connect-src is same-origin: the SPA only talks to this server (REST over
 	// http(s), live updates over the ws/wss upgrade of the same origin), so
 	// 'self' already covers same-origin WebSockets in modern browsers.
@@ -171,10 +180,14 @@ func buildCSP(scriptHashes []string) string {
 	for _, h := range scriptHashes {
 		scriptSrc += " 'sha256-" + h + "'"
 	}
+	imgSrc := "img-src 'self' data: blob:"
+	for _, h := range imgHosts {
+		imgSrc += " " + h
+	}
 	return "default-src 'self'; " +
 		scriptSrc + "; " +
 		"style-src 'self' 'unsafe-inline'; " +
-		"img-src 'self' data: blob:; " +
+		imgSrc + "; " +
 		"connect-src 'self'; " +
 		"font-src 'self' data:"
 }
