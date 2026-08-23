@@ -12,15 +12,15 @@ import (
 
 // New opens an in-memory SQLite database with the schema created, closed when
 // the test ends. Each call is its own database.
-func New(t testing.TB) *bun.DB {
-	t.Helper()
+func New(tb testing.TB) *bun.DB {
+	tb.Helper()
 	db, err := store.NewSQLiteDB("file:" + store.NewID() + "?mode=memory&cache=shared")
 	if err != nil {
-		t.Fatalf("open db: %v", err)
+		tb.Fatalf("open db: %v", err)
 	}
-	t.Cleanup(func() { _ = db.Close() })
+	tb.Cleanup(func() { _ = db.Close() })
 	if err := store.CreateSchema(context.Background(), db); err != nil {
-		t.Fatalf("schema: %v", err)
+		tb.Fatalf("schema: %v", err)
 	}
 	return db
 }

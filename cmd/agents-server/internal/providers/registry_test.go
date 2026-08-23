@@ -1,4 +1,4 @@
-package bridge
+package providers
 
 import (
 	"slices"
@@ -13,7 +13,7 @@ func TestProviderRegistryInvariants(t *testing.T) {
 	if len(providerDefs) == 0 {
 		t.Fatal("empty registry")
 	}
-	if providerDefs[0].Type != ProviderTypeOpenAI {
+	if providerDefs[0].Type != TypeOpenAI {
 		t.Errorf("first entry = %q — openai is the default UIs rely on", providerDefs[0].Type)
 	}
 	seen := map[string]bool{}
@@ -32,30 +32,30 @@ func TestProviderRegistryInvariants(t *testing.T) {
 }
 
 func TestProviderDefFor(t *testing.T) {
-	def, err := providerDefFor("")
-	if err != nil || def.Type != ProviderTypeOpenAI {
+	def, err := DefFor("")
+	if err != nil || def.Type != TypeOpenAI {
 		t.Fatalf("empty selector = %q/%v, want openai", def.Type, err)
 	}
-	if _, err := providerDefFor(ProviderTypeAnthropic); err != nil {
+	if _, err := DefFor(TypeAnthropic); err != nil {
 		t.Fatal(err)
 	}
-	_, err = providerDefFor("gemini")
+	_, err = DefFor("gemini")
 	if err == nil || !strings.Contains(err.Error(), "openai, anthropic") {
 		t.Fatalf("unknown selector error = %v, want the valid set named", err)
 	}
 }
 
 func TestProviderTypesServesMachineFacts(t *testing.T) {
-	infos := ProviderTypes()
-	byType := map[string]ProviderTypeInfo{}
+	infos := Types()
+	byType := map[string]TypeInfo{}
 	for _, info := range infos {
 		byType[info.Type] = info
 	}
-	oa := byType[ProviderTypeOpenAI]
+	oa := byType[TypeOpenAI]
 	if !slices.Contains(oa.AuthModes, AuthModeChatGPTLogin) {
 		t.Errorf("openai auth_modes = %v, want chatgpt_login listed", oa.AuthModes)
 	}
-	ant := byType[ProviderTypeAnthropic]
+	ant := byType[TypeAnthropic]
 	if !slices.Contains(ant.Unsupported, "service_tier") {
 		t.Errorf("anthropic unsupported = %v, want the adapter's declaration (service_tier missing)", ant.Unsupported)
 	}

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/providers"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -231,7 +232,7 @@ func DecodeAgentSpec(ac *store.AgentConfig) (*AgentSpec, error) {
 			return nil, fmt.Errorf("fallback_models is invalid: trailing data after the JSON array")
 		}
 		for i, e := range spec.FallbackModels {
-			if err := ValidateProviderType(e.Provider); err != nil {
+			if err := providers.ValidateType(e.Provider); err != nil {
 				return nil, fmt.Errorf("fallback_models[%d].provider_type: %w", i, err)
 			}
 		}

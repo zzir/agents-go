@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/providers"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -49,7 +49,7 @@ func normalizeEndpoint(u string) string {
 // means "keep the key I stored", and the key was stored for that
 // destination, not for wherever the config points now.
 func credentialTargetChanged(prevProvider, prevBaseURL, newProvider, newBaseURL string) bool {
-	return bridge.NormalizeProviderType(prevProvider) != bridge.NormalizeProviderType(newProvider) ||
+	return providers.NormalizeType(prevProvider) != providers.NormalizeType(newProvider) ||
 		normalizeEndpoint(prevBaseURL) != normalizeEndpoint(newBaseURL)
 }
 
@@ -104,7 +104,7 @@ func restoreFallbackModels(incoming, prev string) string {
 		p, _ := e["provider_type"].(string)
 		u, _ := e["base_url"].(string)
 		m, _ := e["model"].(string)
-		return bridge.NormalizeProviderType(p) + "\x00" + normalizeEndpoint(u) + "\x00" + m
+		return providers.NormalizeType(p) + "\x00" + normalizeEndpoint(u) + "\x00" + m
 	}
 	// Keys queue PER IDENTITY and are consumed in order: two same-identity
 	// entries (key rotation against one endpoint) each keep their own key

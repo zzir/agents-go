@@ -7,7 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/providers"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -23,8 +23,8 @@ type ProviderRouteHandler struct {
 }
 
 // NewProviderRouteHandler returns a handler backed by the given stores.
-func NewProviderRouteHandler(s *store.ProviderRouteStore, providers *store.ProviderStore) *ProviderRouteHandler {
-	return &ProviderRouteHandler{store: s, providers: providers}
+func NewProviderRouteHandler(s *store.ProviderRouteStore, providerStore *store.ProviderStore) *ProviderRouteHandler {
+	return &ProviderRouteHandler{store: s, providers: providerStore}
 }
 
 // bind decodes and validates an incoming route body, reporting the failure
@@ -64,7 +64,7 @@ func (h *ProviderRouteHandler) bind(c *gin.Context, pr *store.ProviderRoute) boo
 		// through the full resolve path, which the router does not run, so the
 		// route would silently never work. Refuse it at save rather than show a
 		// dead "saved" route.
-		if pv.AuthMode == bridge.AuthModeChatGPTLogin {
+		if pv.AuthMode == providers.AuthModeChatGPTLogin {
 			badRequest(c, "a chatgpt_login provider cannot be used through a route: its OAuth token only works on the direct path")
 			return false
 		}

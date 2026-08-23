@@ -17,6 +17,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/guardrails"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/providers"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
@@ -37,7 +38,7 @@ type AgentDeps struct {
 	Guardrails       *guardrails.Resolver
 	McpManager       *McpManager
 	SandboxManager   *sandboxes.Manager
-	ChatGPTOAuth     *ChatGPTOAuth
+	ChatGPTOAuth     *providers.ChatGPTOAuth
 	PendingApprovals *store.PendingApprovalStore
 	Tasks            *store.TaskStore
 	ContextProfiles  *store.ContextProfileStore
@@ -485,7 +486,7 @@ func buildHandoffs(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx, agen
 		// time; a different backend would send its model name to the wrong API.
 		if hResult.Provider == nil && hResult.ProviderType != result.ProviderType {
 			targetKey := hResult.ProviderType + "_api_key"
-			if tdef, terr := providerDefFor(hResult.ProviderType); terr == nil {
+			if tdef, terr := providers.DefFor(hResult.ProviderType); terr == nil {
 				targetKey = tdef.SettingKey
 			}
 			return fmt.Errorf(

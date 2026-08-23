@@ -5,7 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/providers"
 )
 
 // ProviderTypeList responds with the registered provider backends — machine
@@ -18,9 +18,9 @@ import (
 //	@Description	The backends agents, fallback entries and provider routes can select via provider_type. "unsupported" lists request features that fail loudly on that backend.
 //	@Tags			provider-routes
 //	@Produce		json
-//	@Success		200	{array}	bridge.ProviderTypeInfo
+//	@Success		200	{array}	providers.TypeInfo
 //	@Security		BearerAuth
 //	@Router			/provider-types [get]
 func ProviderTypeList(c *gin.Context) {
-	c.JSON(http.StatusOK, bridge.ProviderTypes())
+	c.JSON(http.StatusOK, providers.Types())
 }

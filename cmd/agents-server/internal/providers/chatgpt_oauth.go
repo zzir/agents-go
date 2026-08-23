@@ -1,4 +1,4 @@
-package bridge
+package providers
 
 import (
 	"cmp"
@@ -392,7 +392,7 @@ var ErrChatGPTLoginUnavailable = errors.New("chatgpt login unavailable")
 // saveTokens — the row can change during the authorize window, and a token
 // persisted onto a provider that cannot use it has no UI path to revoke it.
 func chatGPTLoginAvailable(pv *store.Provider) error {
-	def, err := providerDefFor(pv.Type)
+	def, err := DefFor(pv.Type)
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrChatGPTLoginUnavailable, err)
 	}

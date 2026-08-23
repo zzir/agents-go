@@ -6,8 +6,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/providers"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -16,11 +16,11 @@ import (
 // /providers/:id/chatgpt/*, because the token is the ENDPOINT credential —
 // every agent pointed at the provider shares the one login.
 type ChatGPTOAuthHandler struct {
-	oauth *bridge.ChatGPTOAuth
+	oauth *providers.ChatGPTOAuth
 }
 
 // NewChatGPTOAuthHandler creates a handler backed by the given OAuth manager.
-func NewChatGPTOAuthHandler(oauth *bridge.ChatGPTOAuth) *ChatGPTOAuthHandler {
+func NewChatGPTOAuthHandler(oauth *providers.ChatGPTOAuth) *ChatGPTOAuthHandler {
 	return &ChatGPTOAuthHandler{oauth: oauth}
 }
 
@@ -32,7 +32,7 @@ func NewChatGPTOAuthHandler(oauth *bridge.ChatGPTOAuth) *ChatGPTOAuthHandler {
 //	@Tags			providers
 //	@Produce		json
 //	@Param			id	path		string	true	"Provider ID"
-//	@Success		200	{object}	bridge.ChatGPTLoginResult
+//	@Success		200	{object}	providers.ChatGPTLoginResult
 //	@Failure		400	{object}	ErrorResponse	"provider does not use chatgpt_login"
 //	@Failure		404	{object}	ErrorResponse
 //	@Failure		500	{object}	ErrorResponse
@@ -47,7 +47,7 @@ func (h *ChatGPTOAuthHandler) Login(c *gin.Context) {
 		}
 		// A backend that doesn't offer chatgpt_login is the caller's
 		// configuration problem, not a server fault.
-		if errors.Is(err, bridge.ErrChatGPTLoginUnavailable) {
+		if errors.Is(err, providers.ErrChatGPTLoginUnavailable) {
 			badRequest(c, err.Error())
 			return
 		}

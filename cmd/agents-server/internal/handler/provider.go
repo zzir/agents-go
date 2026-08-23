@@ -6,7 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/providers"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -51,7 +51,7 @@ func (h *ProviderHandler) bind(c *gin.Context) (*store.Provider, bool) {
 		badRequest(c, err.Error())
 		return nil, false
 	}
-	if err := bridge.ValidateProvider(pv); err != nil {
+	if err := providers.Validate(pv); err != nil {
 		badRequest(c, err.Error())
 		return nil, false
 	}

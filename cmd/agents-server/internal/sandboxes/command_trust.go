@@ -22,6 +22,7 @@ func (t *CommandTrust) trusted(hash string) bool {
 	return t.approveAll || t.approved[hash]
 }
 
+// AllowCommand trusts one exact command (a CommandHash) for the session.
 func (t *CommandTrust) AllowCommand(hash string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -31,6 +32,7 @@ func (t *CommandTrust) AllowCommand(hash string) {
 	t.approved[hash] = true
 }
 
+// AllowAll trusts every command for the session.
 func (t *CommandTrust) AllowAll() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -51,6 +53,7 @@ func NewTrustStore() *TrustStore {
 	return &TrustStore{bySession: make(map[string]*CommandTrust)}
 }
 
+// ForSession returns the session's trust, created empty on first use.
 func (s *TrustStore) ForSession(id string) *CommandTrust {
 	s.mu.Lock()
 	defer s.mu.Unlock()

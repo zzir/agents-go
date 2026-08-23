@@ -7,6 +7,7 @@ import (
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/providers"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -26,7 +27,7 @@ func providerKey(ctx context.Context, deps *AgentDeps, pv *store.Provider) strin
 	if pv.BaseURL != "" {
 		return ""
 	}
-	def, err := providerDefFor(pv.Type)
+	def, err := providers.DefFor(pv.Type)
 	if err != nil {
 		return ""
 	}
@@ -62,16 +63,16 @@ func resolveProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig
 	if err != nil {
 		return nil, "", err
 	}
-	if err := ValidateProvider(&pv); err != nil {
+	if err := providers.Validate(&pv); err != nil {
 		return nil, "", fmt.Errorf("agent %q: %w", ac.Name, err)
 	}
-	def, err := providerDefFor(pv.Type)
+	def, err := providers.DefFor(pv.Type)
 	if err != nil {
 		return nil, "", err // unreachable after validation; fail loud, never default
 	}
 	apiKey := pv.APIKey
-	var chatgptCreds *ChatGPTCredentials
-	if pv.AuthMode == AuthModeChatGPTLogin && deps.ChatGPTOAuth != nil {
+	var chatgptCreds *providers.ChatGPTCredentials
+	if pv.AuthMode == providers.AuthModeChatGPTLogin && deps.ChatGPTOAuth != nil {
 		if creds, err := deps.ChatGPTOAuth.GetCredentials(ctx, pv.ID); err == nil {
 			apiKey = creds.AccessToken
 			chatgptCreds = creds
@@ -94,7 +95,7 @@ func resolveProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig
 	// fills the default; it stays here as the belt to the validation's braces —
 	// the OAuth token never rides to an operator-typed host.
 	if chatgptCreds != nil {
-		baseURL = ChatGPTBaseURL
+		baseURL = providers.ChatGPTBaseURL
 	}
 	provider := def.Build(apiKey, baseURL, chatgptCreds, proxyClient)
 	if ac.Resilience.RetryEnabled {
@@ -102,7 +103,7 @@ func resolveProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig
 	}
 	if len(spec.FallbackModels) > 0 {
 		provider = wrapFallbackProvider(provider, spec.FallbackModels, proxyClient, func(providerType string) string {
-			fdef, ferr := providerDefFor(providerType)
+			fdef, ferr := providers.DefFor(providerType)
 			if ferr != nil {
 				return ""
 			}
@@ -151,7 +152,7 @@ func wrapFallbackProvider(primary agents.ModelProvider, entries []fallbackEntry,
 		if apiKey == "" && e.BaseURL == "" && keyFor != nil {
 			apiKey = keyFor(e.Provider)
 		}
-		fp, err := buildPlainProvider(e.Provider, apiKey, e.BaseURL, proxyClient)
+		fp, err := providers.BuildPlain(e.Provider, apiKey, e.BaseURL, proxyClient)
 		if err != nil {
 			// Unreachable through normal flow — DecodeAgentSpec validates every
 			// entry's provider — and an unbuildable entry must not become an
@@ -200,15 +201,15 @@ func BuildRouterProvider(ctx context.Context, deps *AgentDeps, fallback agents.M
 		}
 		// ChatGPT-login providers can't route: their credential is an OAuth
 		// token fetched (and refreshed) through the full resolveProvider path,
-		// which buildPlainProvider does not run — routing one would send an
+		// which providers.BuildPlain does not run — routing one would send an
 		// empty or wrong key. Skip it loudly rather than authenticate wrongly.
-		if pv.AuthMode == AuthModeChatGPTLogin {
+		if pv.AuthMode == providers.AuthModeChatGPTLogin {
 			logging.Ctx(ctx).Warn("provider route skipped: chatgpt_login providers cannot be used through a route", "prefix", r.Prefix)
 			continue
 		}
 		// An unregistered type must not default to OpenAI — the silent
 		// wrong-backend case — so the route is skipped instead.
-		fp, err := buildPlainProvider(pv.Type, providerKey(ctx, deps, pv), pv.BaseURL, proxyClient)
+		fp, err := providers.BuildPlain(pv.Type, providerKey(ctx, deps, pv), pv.BaseURL, proxyClient)
 		if err != nil {
 			logging.Ctx(ctx).Warn("provider route skipped: invalid provider type", "error", err, "prefix", r.Prefix)
 			continue

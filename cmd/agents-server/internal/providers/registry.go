@@ -1,4 +1,6 @@
-package bridge
+// Package providers is the registry of model-provider backends — their types,
+// auth modes and builders — and the ChatGPT login one of them offers.
+package providers
 
 import (
 	"fmt"
@@ -20,15 +22,15 @@ import (
 // The provider_type values an agent config, fallback entry or provider route
 // may select. Empty means openai — the value predates the field.
 const (
-	ProviderTypeOpenAI    = "openai"
-	ProviderTypeAnthropic = "anthropic"
+	TypeOpenAI    = "openai"
+	TypeAnthropic = "anthropic"
 )
 
 // AuthModeChatGPTLogin is the one auth mode beyond a plain API key, and it is
 // OpenAI-only: its middleware rewrites Responses-shaped request bodies.
 const AuthModeChatGPTLogin = store.AuthModeChatGPTLogin
 
-// providerDef is one backend the server can build providers for. It is an
+// Def is one backend the server can build providers for. It is an
 // INTERNAL table, not a plugin API: everything provider-selection touches —
 // validation, construction, the global key setting, auth modes, capability
 // metadata — derives from this slice, so adding a backend is one entry here
@@ -36,7 +38,7 @@ const AuthModeChatGPTLogin = store.AuthModeChatGPTLogin
 // of a hunt across bridge, handlers and docs. Being internal also means its shape may
 // be reworked freely when a third backend's auth or credential model does not
 // fit the current fields.
-type providerDef struct {
+type Def struct {
 	// Type is the provider_type wire value.
 	Type string
 	// SettingKey is the global fallback API-key setting ("openai_api_key", …),
@@ -52,20 +54,20 @@ type providerDef struct {
 	// routes / fallback-entries path always passes nil.
 	Build func(apiKey, baseURL string, creds *ChatGPTCredentials, proxyClient *http.Client) agents.ModelProvider
 	// Capabilities is the adapter's own unsupported-feature declaration,
-	// served to config UIs via ProviderTypes.
+	// served to config UIs via Types.
 	Capabilities modelkit.Capabilities
 }
 
-var providerDefs = []providerDef{
+var providerDefs = []Def{
 	{
-		Type:         ProviderTypeOpenAI,
+		Type:         TypeOpenAI,
 		SettingKey:   settings.KeyOpenAIAPIKey,
 		AuthModes:    []string{AuthModeChatGPTLogin},
 		Build:        newOpenAIModelProvider,
 		Capabilities: openaiProvider.Capabilities(),
 	},
 	{
-		Type:       ProviderTypeAnthropic,
+		Type:       TypeAnthropic,
 		SettingKey: settings.KeyAnthropicAPIKey,
 		Build: func(apiKey, baseURL string, _ *ChatGPTCredentials, proxyClient *http.Client) agents.ModelProvider {
 			return newAnthropicModelProvider(apiKey, baseURL, proxyClient)
@@ -112,25 +114,25 @@ func newAnthropicModelProvider(apiKey, baseURL string, proxyClient *http.Client)
 	return anthropicProvider.NewProvider(opts...)
 }
 
-func normalizeProviderType(t string) string {
+func normalizeType(t string) string {
 	if t == "" {
-		return ProviderTypeOpenAI
+		return TypeOpenAI
 	}
 	return t
 }
 
-// NormalizeProviderType maps the empty provider selector to its meaning
+// NormalizeType maps the empty provider selector to its meaning
 // ("openai", which predates the field). Exported for the handlers' secret
 // round-tripping: whether a masked key may be restored depends on whether
 // the PROVIDER changed, and that comparison must treat "" and "openai" as
 // the same backend.
-func NormalizeProviderType(t string) string { return normalizeProviderType(t) }
+func NormalizeType(t string) string { return normalizeType(t) }
 
-// providerDefFor resolves a provider selector to its definition. The error
+// DefFor resolves a provider selector to its definition. The error
 // names the valid set, and every construction path handles it rather than
 // defaulting — a value outside the table must never silently run on OpenAI.
-func providerDefFor(t string) (providerDef, error) {
-	t = normalizeProviderType(t)
+func DefFor(t string) (Def, error) {
+	t = normalizeType(t)
 	for _, d := range providerDefs {
 		if d.Type == t {
 			return d, nil
@@ -140,32 +142,32 @@ func providerDefFor(t string) (providerDef, error) {
 	for i, d := range providerDefs {
 		types[i] = d.Type
 	}
-	return providerDef{}, fmt.Errorf("unknown provider %q (valid: %s)", t, strings.Join(types, ", "))
+	return Def{}, fmt.Errorf("unknown provider %q (valid: %s)", t, strings.Join(types, ", "))
 }
 
-// buildPlainProvider is the lookup+Build pairing for routes and fallback
+// BuildPlain is the lookup+Build pairing for routes and fallback
 // entries.
-func buildPlainProvider(providerType, apiKey, baseURL string, proxyClient *http.Client) (agents.ModelProvider, error) {
-	def, err := providerDefFor(providerType)
+func BuildPlain(providerType, apiKey, baseURL string, proxyClient *http.Client) (agents.ModelProvider, error) {
+	def, err := DefFor(providerType)
 	if err != nil {
 		return nil, err
 	}
 	return def.Build(apiKey, baseURL, nil, proxyClient), nil
 }
 
-// ValidateProviderType rejects a provider selector outside the registry. It
+// ValidateType rejects a provider selector outside the registry. It
 // backs both save-time validation and build time, so a value that sneaks past
 // one still fails the other loudly instead of silently running on OpenAI.
-func ValidateProviderType(t string) error {
-	_, err := providerDefFor(t)
+func ValidateType(t string) error {
+	_, err := DefFor(t)
 	return err
 }
 
-// ValidateProvider checks a provider row's cross-field constraints: a
+// Validate checks a provider row's cross-field constraints: a
 // registered type, and an auth_mode the backend actually offers. The zero
 // value passes — it is the built-in default (openai on the global key).
-func ValidateProvider(pv *store.Provider) error {
-	def, err := providerDefFor(pv.Type)
+func Validate(pv *store.Provider) error {
+	def, err := DefFor(pv.Type)
 	if err != nil {
 		return fmt.Errorf("type: %w", err)
 	}
@@ -181,12 +183,12 @@ func ValidateProvider(pv *store.Provider) error {
 	return nil
 }
 
-// ProviderTypeInfo is the machine-readable slice of a provider definition
+// TypeInfo is the machine-readable slice of a provider definition
 // served to config UIs: which backends exist, what auth they offer, which
 // request features fail loudly on them, and where their global fallback key
 // lives. Display copy (labels, placeholders) deliberately stays in the
 // frontend — this is facts, not wording.
-type ProviderTypeInfo struct {
+type TypeInfo struct {
 	Type string `json:"type"`
 	// AuthModes and Unsupported serialize as [] rather than being omitted:
 	// a client caching these facts must be able to tell "this backend has
@@ -197,13 +199,13 @@ type ProviderTypeInfo struct {
 	SettingKey  string   `json:"setting_key"`
 }
 
-// ProviderTypes lists the registered backends. The order is the registry's
+// Types lists the registered backends. The order is the registry's
 // (openai first), which UIs may rely on for a default. Slices are copies —
 // a caller mutating its result must not reach the registry.
-func ProviderTypes() []ProviderTypeInfo {
-	out := make([]ProviderTypeInfo, len(providerDefs))
+func Types() []TypeInfo {
+	out := make([]TypeInfo, len(providerDefs))
 	for i, d := range providerDefs {
-		info := ProviderTypeInfo{
+		info := TypeInfo{
 			Type:        d.Type,
 			AuthModes:   append([]string{}, d.AuthModes...),
 			Unsupported: make([]string, 0, len(d.Capabilities.Unsupported)),

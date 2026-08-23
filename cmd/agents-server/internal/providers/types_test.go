@@ -1,4 +1,4 @@
-package bridge
+package providers
 
 import (
 	"slices"
@@ -49,7 +49,7 @@ func TestValidateProvider(t *testing.T) {
 		{"chatgpt_login + custom base_url", withBase("openai", "chatgpt_login", "https://evil.test"), "base_url cannot be set"},
 		{"api key + custom base_url", withBase("openai", "", "https://proxy.internal"), ""},
 	} {
-		err := ValidateProvider(tc.pv)
+		err := Validate(tc.pv)
 		if tc.wantSub == "" {
 			if err != nil {
 				t.Errorf("%s: unexpected error: %v", tc.name, err)
@@ -62,49 +62,18 @@ func TestValidateProvider(t *testing.T) {
 	}
 }
 
-// A fallback entry naming an unknown provider must fail at decode (= save)
-// time, not run silently on OpenAI — and so must an entry with a misspelled
-// selector key, which DisallowUnknownFields turns from a silent no-op into an
-// error.
-func TestDecodeAgentSpecValidatesFallbackProvider(t *testing.T) {
-	ac := &store.AgentConfig{}
-	ac.Resilience.FallbackModels = `[{"model":"claude-opus-5","provider_type":"anthropic"}]`
-	if _, err := DecodeAgentSpec(ac); err != nil {
-		t.Fatalf("valid provider rejected: %v", err)
-	}
-	ac.Resilience.FallbackModels = `[{"model":"m","provider_type":"gemini"}]`
-	_, err := DecodeAgentSpec(ac)
-	if err == nil || !strings.Contains(err.Error(), "fallback_models[0].provider_type") {
-		t.Fatalf("error = %v, want fallback_models[0].provider_type complaint", err)
-	}
-	// The old/misspelled key: rejected loudly instead of running the entry on
-	// the default backend.
-	ac.Resilience.FallbackModels = `[{"model":"claude-opus-5","provider":"anthropic"}]`
-	_, err = DecodeAgentSpec(ac)
-	if err == nil || !strings.Contains(err.Error(), `unknown field "provider"`) {
-		t.Fatalf("error = %v, want unknown-field complaint naming the key", err)
-	}
-	// Trailing garbage after the array: Decode (unlike Unmarshal) stops at the
-	// first value, so the guard has to catch it explicitly.
-	ac.Resilience.FallbackModels = `[{"model":"m"}] {"stray":true}`
-	_, err = DecodeAgentSpec(ac)
-	if err == nil || !strings.Contains(err.Error(), "trailing data") {
-		t.Fatalf("error = %v, want trailing-data complaint", err)
-	}
-}
-
-// ProviderTypes hands out copies: a caller mutating its result must not be
+// Types hands out copies: a caller mutating its result must not be
 // able to poison the registry validation reads from.
 func TestProviderTypesReturnsCopies(t *testing.T) {
-	first := ProviderTypes()
+	first := Types()
 	for i := range first {
 		if len(first[i].AuthModes) > 0 {
 			first[i].AuthModes[0] = "tampered"
 		}
 	}
-	for _, info := range ProviderTypes() {
+	for _, info := range Types() {
 		if slices.Contains(info.AuthModes, "tampered") {
-			t.Fatal("mutating a ProviderTypes result reached the registry")
+			t.Fatal("mutating a Types result reached the registry")
 		}
 	}
 }

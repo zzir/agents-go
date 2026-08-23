@@ -16,6 +16,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/guardrails"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/handler"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/providers"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
@@ -101,7 +102,7 @@ type services struct {
 	Deps       *bridge.AgentDeps
 	Mcp        *bridge.McpManager
 	OAuth      *bridge.OAuthCoordinator
-	ChatGPT    *bridge.ChatGPTOAuth
+	ChatGPT    *providers.ChatGPTOAuth
 	Sandboxes  *sandboxes.Manager
 	Guardrails *guardrails.Resolver
 	Scheduler  *bridge.TriggerScheduler
@@ -114,7 +115,7 @@ func newBridge(ctx, bgCtx context.Context, db *bun.DB, st *stores, audit protoco
 		Guardrails: guardrails.NewResolver(st.Guardrails),
 		Mcp:        bridge.NewMcpManager(ctx, st.SettingReader),
 		OAuth:      bridge.NewOAuthCoordinator(st.McpServers),
-		ChatGPT:    bridge.NewChatGPTOAuth(st.Providers, st.SettingReader),
+		ChatGPT:    providers.NewChatGPTOAuth(st.Providers, st.SettingReader),
 		Sandboxes:  sandboxes.NewManager(flagWorkspace),
 	}
 	go bridge.ConnectEnabledMcpServers(bgCtx, svc.Mcp, st.McpServers, svc.OAuth)
@@ -241,14 +242,14 @@ func newAuth(ctx context.Context, st *stores, baseURL string, log *slog.Logger) 
 		if googleSecret == "" {
 			googleSecret = os.Getenv("AGENTS_OAUTH_GOOGLE_CLIENT_SECRET")
 		}
-		var providers []authn.OAuthProvider
+		var oauthProviders []authn.OAuthProvider
 		if flagGoogleClientID != "" {
 			if googleSecret == "" {
 				return nil, fmt.Errorf("google login needs --oauth-google-client-secret (or AGENTS_OAUTH_GOOGLE_CLIENT_SECRET)")
 			}
-			providers = append(providers, &authn.Google{ClientID: flagGoogleClientID, ClientSecret: googleSecret})
+			oauthProviders = append(oauthProviders, &authn.Google{ClientID: flagGoogleClientID, ClientSecret: googleSecret})
 		}
-		if len(providers) == 0 {
+		if len(oauthProviders) == 0 {
 			return nil, fmt.Errorf("--auth oauth needs at least one provider (--oauth-google-client-id)")
 		}
 		domains, emails := splitList(flagAllowedDomains), splitList(flagAllowedEmails)
@@ -280,7 +281,7 @@ func newAuth(ctx context.Context, st *stores, baseURL string, log *slog.Logger) 
 		}
 		return authn.NewOAuth(authn.OAuthConfig{
 			Users: st.Users, Tokens: st.AuthTokens,
-			BaseURL: baseURL, Providers: providers,
+			BaseURL: baseURL, Providers: oauthProviders,
 			AllowedDomains: domains, AllowedEmails: emails,
 			BootstrapAdmin: bootstrapAdmin, Log: log,
 		}), nil
