@@ -14,6 +14,7 @@ import (
 	"github.com/zzir/agents-go/agents/middleware"
 	"github.com/zzir/agents-go/agents/tasks"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bravesearch"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/guardrails"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
@@ -33,7 +34,7 @@ type AgentDeps struct {
 	ProviderRoutes   *store.ProviderRouteStore
 	Sessions         *store.SessionStore
 	Traces           *store.TraceStore
-	Guardrails       *GuardrailResolver
+	Guardrails       *guardrails.Resolver
 	McpManager       *McpManager
 	SandboxManager   *sandboxes.Manager
 	ChatGPTOAuth     *ChatGPTOAuth
@@ -372,7 +373,7 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 	// build rather than running unprotected (security config must not silently
 	// no-op).
 	if ac.Guardrails.Guardrails != "" && deps.Guardrails != nil {
-		gs, gerr := deps.Guardrails.BuildGuardrails(ctx, ac.Guardrails.Guardrails)
+		gs, gerr := deps.Guardrails.Build(ctx, ac.Guardrails.Guardrails)
 		if gerr != nil {
 			return nil, fmt.Errorf("agent %q: %w", ac.Name, gerr)
 		}

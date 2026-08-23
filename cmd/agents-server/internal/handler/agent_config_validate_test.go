@@ -9,7 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/guardrails"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
@@ -20,7 +20,7 @@ func newAgentEngine(t *testing.T) (*gin.Engine, *store.McpServerStore) {
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
 	mcpStore := store.NewMcpServerStore(db)
-	h := NewAgentConfigHandler(store.NewAgentConfigStore(db), mcpStore, store.NewProviderStore(db), bridge.NewGuardrailResolver(store.NewGuardrailStore(db)))
+	h := NewAgentConfigHandler(store.NewAgentConfigStore(db), mcpStore, store.NewProviderStore(db), guardrails.NewResolver(store.NewGuardrailStore(db)))
 
 	engine := newTestEngine()
 	engine.POST("/agents", h.Create)

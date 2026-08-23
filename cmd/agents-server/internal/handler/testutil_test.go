@@ -12,7 +12,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/zzir/agents-go/agents"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/guardrails"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
@@ -101,7 +101,7 @@ func testSessionDeps(db *bun.DB, tune ...func(*SessionDeps)) SessionDeps {
 // testAgentConfigHandler wires an AgentConfigHandler over db with every store real.
 func testAgentConfigHandler(db *bun.DB) *AgentConfigHandler {
 	return NewAgentConfigHandler(store.NewAgentConfigStore(db), store.NewMcpServerStore(db), store.NewProviderStore(db),
-		bridge.NewGuardrailResolver(store.NewGuardrailStore(db)))
+		guardrails.NewResolver(store.NewGuardrailStore(db)))
 }
 
 // testSandboxHandler wires a SandboxHandler over the given store and manager,

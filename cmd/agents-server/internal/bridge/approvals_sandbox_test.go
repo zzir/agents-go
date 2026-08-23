@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/guardrails"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
@@ -42,7 +43,7 @@ func TestBuildAgentRegistryIncludesSandboxTools(t *testing.T) {
 		Memories:       store.NewMemoryStore(db),
 		McpServers:     store.NewMcpServerStore(db),
 		ProviderRoutes: store.NewProviderRouteStore(db),
-		Guardrails:     NewGuardrailResolver(store.NewGuardrailStore(db)),
+		Guardrails:     guardrails.NewResolver(store.NewGuardrailStore(db)),
 		McpManager:     NewMcpManager(ctx, settings.NewReader(store.NewSettingStore(db))),
 		SandboxManager: sandboxes.NewManager(t.TempDir()),
 	})

@@ -13,6 +13,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/authn"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/docs"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/guardrails"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/handler"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
@@ -102,7 +103,7 @@ type services struct {
 	OAuth      *bridge.OAuthCoordinator
 	ChatGPT    *bridge.ChatGPTOAuth
 	Sandboxes  *sandboxes.Manager
-	Guardrails *bridge.GuardrailResolver
+	Guardrails *guardrails.Resolver
 	Scheduler  *bridge.TriggerScheduler
 }
 
@@ -110,7 +111,7 @@ type services struct {
 // need nothing above it: MCP auto-connect and trace retention, on bgCtx.
 func newBridge(ctx, bgCtx context.Context, db *bun.DB, st *stores, audit protocol.AuditFunc) *services {
 	svc := &services{
-		Guardrails: bridge.NewGuardrailResolver(st.Guardrails),
+		Guardrails: guardrails.NewResolver(st.Guardrails),
 		Mcp:        bridge.NewMcpManager(ctx, st.SettingReader),
 		OAuth:      bridge.NewOAuthCoordinator(st.McpServers),
 		ChatGPT:    bridge.NewChatGPTOAuth(st.Providers, st.SettingReader),

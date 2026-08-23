@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zzir/agents-go/cmd/agents-server/internal/guardrails"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
@@ -89,7 +90,7 @@ func TestBuildFullAgentHandoffTargetErrorPropagates(t *testing.T) {
 	s := store.NewAgentConfigStore(db)
 	deps := &AgentDeps{
 		AgentConfigs: s, Settings: settings.NewReader(store.NewSettingStore(db)), Memories: store.NewMemoryStore(db),
-		Guardrails: NewGuardrailResolver(store.NewGuardrailStore(db)),
+		Guardrails: guardrails.NewResolver(store.NewGuardrailStore(db)),
 	}
 
 	// Target B has a broken output_schema; A hands off to B.

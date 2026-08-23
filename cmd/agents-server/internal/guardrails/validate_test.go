@@ -1,4 +1,4 @@
-package bridge
+package guardrails
 
 import (
 	"context"
@@ -33,7 +33,7 @@ func TestValidateGuardrailDef(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := ValidateGuardrailDef(&tc.g)
+			err := ValidateDef(&tc.g)
 			if tc.wantSub == "" {
 				if err != nil {
 					t.Fatalf("want valid, got %v", err)

@@ -5,18 +5,18 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/guardrails"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
 // GuardrailHandler serves CRUD and catalog endpoints for guardrails.
 type GuardrailHandler struct {
 	store    *store.GuardrailStore
-	resolver *bridge.GuardrailResolver
+	resolver *guardrails.Resolver
 }
 
 // NewGuardrailHandler returns a guardrail handler backed by the given store and resolver.
-func NewGuardrailHandler(s *store.GuardrailStore, r *bridge.GuardrailResolver) *GuardrailHandler {
+func NewGuardrailHandler(s *store.GuardrailStore, r *guardrails.Resolver) *GuardrailHandler {
 	return &GuardrailHandler{store: s, resolver: r}
 }
 
@@ -27,11 +27,11 @@ func NewGuardrailHandler(s *store.GuardrailStore, r *bridge.GuardrailResolver) *
 //	@Summary	List guardrails
 //	@Tags		guardrails
 //	@Produce	json
-//	@Success	200	{array}	bridge.GuardrailDef
+//	@Success	200	{array}	guardrails.Def
 //	@Security	BearerAuth
 //	@Router		/guardrails [get]
 func (h *GuardrailHandler) List(c *gin.Context) {
-	c.JSON(http.StatusOK, h.resolver.ListGuardrails(c.Request.Context()))
+	c.JSON(http.StatusOK, h.resolver.List(c.Request.Context()))
 }
 
 func validateGuardrail(g *store.Guardrail) string {
@@ -41,7 +41,7 @@ func validateGuardrail(g *store.Guardrail) string {
 	// Enforce the stage/mode enums and the mode's config (regex compiles, etc.)
 	// at save time so a definition can't be stored in a state that only fails
 	// when an agent references it.
-	if err := bridge.ValidateGuardrailDef(g); err != nil {
+	if err := guardrails.ValidateDef(g); err != nil {
 		return err.Error()
 	}
 	return ""

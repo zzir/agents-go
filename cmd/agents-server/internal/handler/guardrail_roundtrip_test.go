@@ -7,7 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/guardrails"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
@@ -21,7 +21,7 @@ func TestGuardrailConfigObjectRoundTrip(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
 	grStore := store.NewGuardrailStore(db)
-	h := NewGuardrailHandler(grStore, bridge.NewGuardrailResolver(grStore))
+	h := NewGuardrailHandler(grStore, guardrails.NewResolver(grStore))
 	engine := newTestEngine()
 	engine.POST("/guardrails", h.Create)
 	engine.GET("/guardrails", h.List)
@@ -45,11 +45,11 @@ func TestGuardrailConfigObjectRoundTrip(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("list: got %d", w.Code)
 	}
-	var defs []bridge.GuardrailDef
+	var defs []guardrails.Def
 	if err := json.Unmarshal(w.Body.Bytes(), &defs); err != nil {
 		t.Fatal(err)
 	}
-	var stored *bridge.GuardrailDef
+	var stored *guardrails.Def
 	for i := range defs {
 		if defs[i].ID != "" {
 			stored = &defs[i]

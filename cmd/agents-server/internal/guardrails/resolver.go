@@ -1,4 +1,6 @@
-package bridge
+// Package guardrails resolves the guardrail names an agent config lists into
+// SDK guardrails: stored definitions first, the built-in set as fallback.
+package guardrails
 
 import (
 	"context"
@@ -10,24 +12,24 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// GuardrailResolver builds SDK guardrails from stored definitions and built-in
+// Resolver builds SDK guardrails from stored definitions and built-in
 // defaults. Names in the agent config that match a stored guardrail's name are
 // resolved from the database; unrecognized names fall back to the hardcoded
 // built-in set for backward compatibility.
-type GuardrailResolver struct {
+type Resolver struct {
 	store *store.GuardrailStore
 }
 
-// NewGuardrailResolver returns a resolver backed by the given store.
-func NewGuardrailResolver(s *store.GuardrailStore) *GuardrailResolver {
-	return &GuardrailResolver{store: s}
+// NewResolver returns a resolver backed by the given store.
+func NewResolver(s *store.GuardrailStore) *Resolver {
+	return &Resolver{store: s}
 }
 
-// BuildGuardrails resolves a JSON array of guardrail names into SDK guardrails.
+// Build resolves a JSON array of guardrail names into SDK guardrails.
 // A malformed list or an unknown name is a config error rather than a silent
 // drop: a guardrail that appears enabled but never runs is a security hole, so
 // the caller fails the build instead.
-func (r *GuardrailResolver) BuildGuardrails(ctx context.Context, namesJSON string) ([]agents.Guardrail, error) {
+func (r *Resolver) Build(ctx context.Context, namesJSON string) ([]agents.Guardrail, error) {
 	var names []string
 	if namesJSON == "" {
 		return nil, nil
@@ -46,11 +48,11 @@ func (r *GuardrailResolver) BuildGuardrails(ctx context.Context, namesJSON strin
 	return out, nil
 }
 
-// ValidateGuardrailDef checks a guardrail definition at save time so a config
+// ValidateDef checks a guardrail definition at save time so a config
 // that would silently no-op (empty/invalid regex, unknown mode, no stages) is
 // rejected up front instead of failing — or resolving to "not found" — only
 // when an agent later references it.
-func ValidateGuardrailDef(g *store.Guardrail) error {
+func ValidateDef(g *store.Guardrail) error {
 	if len(g.Stages) == 0 {
 		return fmt.Errorf("at least one stage is required")
 	}
@@ -94,18 +96,18 @@ func validStage(s string) bool {
 // ValidateNames reports the first guardrail name that is malformed or
 // unresolvable, for save-time rejection of a config that would otherwise run
 // unprotected.
-func (r *GuardrailResolver) ValidateNames(ctx context.Context, namesJSON string) error {
-	_, err := r.BuildGuardrails(ctx, namesJSON)
+func (r *Resolver) ValidateNames(ctx context.Context, namesJSON string) error {
+	_, err := r.Build(ctx, namesJSON)
 	return err
 }
 
-// ListGuardrails returns the combined catalog of stored and built-in guardrails.
-func (r *GuardrailResolver) ListGuardrails(ctx context.Context) []GuardrailDef {
-	var all []GuardrailDef
+// List returns the combined catalog of stored and built-in guardrails.
+func (r *Resolver) List(ctx context.Context) []Def {
+	var all []Def
 	if r.store != nil {
 		stored, _ := r.store.List(ctx)
 		for _, g := range stored {
-			all = append(all, GuardrailDef{
+			all = append(all, Def{
 				ID:          g.ID,
 				Name:        g.Name,
 				Description: g.Description,
@@ -120,7 +122,7 @@ func (r *GuardrailResolver) ListGuardrails(ctx context.Context) []GuardrailDef {
 	return all
 }
 
-func (r *GuardrailResolver) resolve(ctx context.Context, name string) *agents.Guardrail {
+func (r *Resolver) resolve(ctx context.Context, name string) *agents.Guardrail {
 	if r.store != nil {
 		if g := r.findByName(ctx, name); g != nil {
 			return buildFromDef(g)
@@ -129,7 +131,7 @@ func (r *GuardrailResolver) resolve(ctx context.Context, name string) *agents.Gu
 	return builtin(name)
 }
 
-func (r *GuardrailResolver) findByName(ctx context.Context, name string) *store.Guardrail {
+func (r *Resolver) findByName(ctx context.Context, name string) *store.Guardrail {
 	all, err := r.store.List(ctx)
 	if err != nil {
 		return nil
@@ -222,11 +224,11 @@ func buildFromDef(g *store.Guardrail) *agents.Guardrail {
 	}
 }
 
-// GuardrailDef describes an available guardrail for listing via the API. The
+// Def describes an available guardrail for listing via the API. The
 // edit form initializes from list items (the useCrud contract), so stored
 // guardrails must carry every editable field here; built-in defs have fixed
 // behavior and omit Config/Blocking.
-type GuardrailDef struct {
+type Def struct {
 	ID          string          `json:"id,omitempty"`
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
@@ -236,7 +238,7 @@ type GuardrailDef struct {
 	Blocking    bool            `json:"blocking,omitempty"`
 }
 
-var builtinDefs = []GuardrailDef{
+var builtinDefs = []Def{
 	{Name: "content_filter", Description: "Block prompt-injection phrasing in input and tool arguments", Stages: []string{"input", "tool_input"}, Mode: "regex"},
 	{Name: "max_input_length", Description: "Reject input exceeding character limit (default 50000)", Stages: []string{"input"}, Mode: "max_length"},
 	{Name: "max_output_length", Description: "Trip if output exceeds character limit (default 50000)", Stages: []string{"output"}, Mode: "max_length"},

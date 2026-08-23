@@ -6,6 +6,7 @@ import (
 
 	"github.com/zzir/agents-go/agents/middleware"
 	"github.com/zzir/agents-go/agents/session"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/guardrails"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
@@ -76,7 +77,7 @@ func TestRestorePlanPhase(t *testing.T) {
 		Memories:       store.NewMemoryStore(db),
 		McpServers:     store.NewMcpServerStore(db),
 		ProviderRoutes: store.NewProviderRouteStore(db),
-		Guardrails:     NewGuardrailResolver(store.NewGuardrailStore(db)),
+		Guardrails:     guardrails.NewResolver(store.NewGuardrailStore(db)),
 		SandboxManager: sandboxes.NewManager(t.TempDir()),
 	})
 
@@ -141,7 +142,7 @@ func TestRestorePlanPhase(t *testing.T) {
 		Memories:       store.NewMemoryStore(dbBroken),
 		McpServers:     store.NewMcpServerStore(dbBroken),
 		ProviderRoutes: store.NewProviderRouteStore(dbBroken),
-		Guardrails:     NewGuardrailResolver(store.NewGuardrailStore(dbBroken)),
+		Guardrails:     guardrails.NewResolver(store.NewGuardrailStore(dbBroken)),
 		SandboxManager: sandboxes.NewManager(t.TempDir()),
 	})
 	if err := dbBroken.Close(); err != nil {

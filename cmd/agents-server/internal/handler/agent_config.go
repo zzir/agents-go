@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/guardrails"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -19,7 +20,7 @@ type AgentConfigHandler struct {
 	mcpServers *store.McpServerStore
 	// guardrails, when set, lets save-time validation reject unresolvable
 	// guardrail names before they silently no-op at run time.
-	guardrails *bridge.GuardrailResolver
+	guardrails *guardrails.Resolver
 	// providers, when set, lets save-time validation reject a provider_id that
 	// names no row — the write side of referential integrity, whose read side
 	// is ProviderStore.DeleteIfUnreferenced.
@@ -29,7 +30,7 @@ type AgentConfigHandler struct {
 // NewAgentConfigHandler returns a handler over the agent store and the three
 // stores its validation reads (the MCP servers, providers and guardrails a
 // config may name). Every one is required; a nil is a wiring error.
-func NewAgentConfigHandler(s *store.AgentConfigStore, mcpServers *store.McpServerStore, providers *store.ProviderStore, guardrails *bridge.GuardrailResolver) *AgentConfigHandler {
+func NewAgentConfigHandler(s *store.AgentConfigStore, mcpServers *store.McpServerStore, providers *store.ProviderStore, guardrails *guardrails.Resolver) *AgentConfigHandler {
 	if s == nil || mcpServers == nil || providers == nil || guardrails == nil {
 		panic("handler: NewAgentConfigHandler needs every store")
 	}
