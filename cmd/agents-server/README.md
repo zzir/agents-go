@@ -1,8 +1,10 @@
 # agents-server — the agents-go workbench
 
-A local workbench for building, running and debugging AI agents, built on the
-[agents-go](../../README.md) SDK: one binary, one SQLite file, an embedded
-Primer-styled UI. Configure agents, providers, MCP servers, sandboxes,
+**Go agents. Local first.** The Go-native agent workbench you run yourself,
+built on the [agents-go](../../README.md) SDK: one binary, your data (SQLite
+or PostgreSQL), an embedded Primer-styled UI. Run agents and workflows in a
+sandbox, behind tool approvals; debug with traces, replay & fork; solo or as a
+team. Configure agents, providers, MCP servers, sandboxes,
 guardrails, memories, skills and workflows; run conversations with streaming
 output, tool approval, traces, a context lens, replay, interactive sandbox
 terminals and background tasks. This page is the manual — flags, REST API,

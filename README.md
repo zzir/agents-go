@@ -2,11 +2,11 @@
 
 # agents-go workbench
 
-**A local workbench for building, running and debugging AI agents.**
+**Go agents. Local first.**
 
-One binary, one SQLite file, an embedded UI. See exactly what the model saw
-on each turn, replay any generation, fork any turn, approve tools in a real
-sandbox. Built on a Go SDK you can also embed.
+The Go-native agent workbench you run yourself. Run agents and workflows in a
+sandbox, behind tool approvals; debug with traces, replay & fork. One binary,
+your data, embeddable SDK. Solo or as a team.
 
 [![Release](https://img.shields.io/github/v/release/zzir/agents-go)](https://github.com/zzir/agents-go/releases)
 [![CI](https://github.com/zzir/agents-go/actions/workflows/ci.yml/badge.svg)](https://github.com/zzir/agents-go/actions/workflows/ci.yml)
@@ -184,9 +184,10 @@ evolves on its own — see [Architecture](docs/architecture.md), the
 [feature reference](docs/features.md), and
 [Coming from Python?](docs/migration_from_python.md).
 
-Today the workbench runs the agents you configure in it; a program written
-against the SDK runs on its own, with the SDK's session stores and tracing
-exporters.
+The workbench runs the agents you configure in it; the SDK runs agents in
+your own program, with its own session stores and tracing exporters. They
+share the core and nothing else — the SDK does not report to the workbench
+([spec §1.2](docs/spec.md#12-non-goals)).
 
 Nearly every SDK capability has a runnable example under
 [examples/](examples/):

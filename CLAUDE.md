@@ -2,9 +2,12 @@
 
 ## What this is
 
-A local workbench for building, running and debugging AI agents
-(`cmd/agents-server`: one binary, SQLite or PostgreSQL, embedded UI), built on a Go SDK for
-the OpenAI Responses API (the root module) that can also be embedded on its own.
+Go agents, local first: the Go-native agent workbench you run yourself
+(`cmd/agents-server`: one binary, SQLite or PostgreSQL, embedded UI) — run agents
+and workflows in a sandbox behind tool approvals, debug with traces, replay and
+fork, solo or as a team — built on a Go SDK for the OpenAI Responses API (the
+root module) that also embeds on its own. One dependency edge: the workbench
+depends on the SDK, the SDK knows nothing of the workbench (spec §1.2).
 The SDK began as a port of
 [openai-agents-python](https://github.com/openai/openai-agents-python) and shares
 its core concepts (agents, handoffs, guardrails, sessions), but **evolves

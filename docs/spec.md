@@ -34,6 +34,7 @@ from upstream.
 | **Model price or capability tables** | They change constantly and do not belong in an SDK. `Usage` exposes raw token counts; pricing is the caller's concern. |
 | **Realtime and voice** | A different interaction model, out of scope. |
 | **Graph orchestration as the multi-agent primitive** | Handoffs already cover "switch agent at runtime". Graph orchestration, if ever needed, layers *on top* — see [§5.1](#51-handoffs-stay-graph-orchestration-does-not-replace-them). |
+| **The SDK reporting to the workbench** | `cmd/agents-server` (the workbench) depends on the SDK; the SDK knows nothing of the workbench. A program written against the SDK runs on its own, with the SDK's session stores and tracing `Processor`s — no trace-ingest endpoint, no remote `session.Storage` pointing at the server, no "register my program" bridge. The workbench runs the agents configured in it; the SDK runs agents in your program. Two consumers of one core, one dependency edge. Decided 2026-08-24 with the positioning "Go agents. Local first."; revisit only if the workbench's own debug loop (traces, replay, fork) turns out to need data a configured agent cannot produce. |
 
 ---
 
