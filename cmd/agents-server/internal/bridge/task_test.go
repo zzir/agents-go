@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"context"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -65,12 +66,14 @@ func newTaskTestRunner(t *testing.T) (*Runner, *store.SessionStore, *store.TaskS
 // its own run id, and a live hub run carrying the task linkage.
 func TestSpawnTaskCreatesHiddenSessionAndRow(t *testing.T) {
 	ctx := context.Background()
-	runner, sessions, tasks, agentConfigs := newTaskTestRunner(t)
+	// The run must still be live when the hub is inspected below; a model that
+	// never finishes keeps it so until the explicit stop at the end.
+	model := &endlessModel{arrived: make(chan struct{}, 1), gone: make(chan struct{})}
+	srv := httptest.NewServer(model)
+	defer srv.Close()
 
-	ac := &store.AgentConfig{Name: "worker", Model: "gpt-test"}
-	if err := agentConfigs.Create(ctx, ac); err != nil {
-		t.Fatal(err)
-	}
+	runner, sessions, tasks, agentConfigs := newTaskTestRunner(t)
+	fakeModelAgent(t, runner.db, agentConfigs, srv.URL)
 	parent := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "chat"}
 	if err := sessions.Create(ctx, parent); err != nil {
 		t.Fatal(err)
@@ -89,6 +92,11 @@ func TestSpawnTaskCreatesHiddenSessionAndRow(t *testing.T) {
 	}
 	if string(info.Status) != protocol.TaskWorking || info.TaskID == "" {
 		t.Fatalf("info = %+v", info)
+	}
+	select {
+	case <-model.arrived:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the task run never reached the model")
 	}
 
 	task, err := tasks.Get(ctx, info.TaskID)
@@ -127,6 +135,13 @@ func TestSpawnTaskCreatesHiddenSessionAndRow(t *testing.T) {
 	}
 	if runner.Hub().LiveTaskCount(parent.ID) != 1 {
 		t.Fatalf("LiveTaskCount = %d, want 1", runner.Hub().LiveTaskCount(parent.ID))
+	}
+
+	if _, err := runner.StopTask(task.ID, false); err != nil {
+		t.Fatalf("StopTask: %v", err)
+	}
+	if got := awaitTaskStatus(t, tasks, task.ID, 5*time.Second); got != "cancelled" {
+		t.Fatalf("row = %q after the stop, want cancelled", got)
 	}
 }
 
