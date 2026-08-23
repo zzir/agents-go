@@ -298,7 +298,7 @@ func (s *AuthTokenStore) Mint(ctx context.Context, userID, kind, name string, ex
 	secret := newTokenSecret(kind)
 	t := &AuthToken{UserID: userID, Kind: kind, TokenHash: HashToken(secret), Name: name, ExpiresAt: expiresAt}
 	if kind == TokenKindSession {
-		t.ExpiresAt = time.Now().UTC().Add(sessionTokenTTL)
+		t.ExpiresAt = time.Now().UTC().Truncate(time.Microsecond).Add(sessionTokenTTL)
 	}
 	if _, err := s.db.NewInsert().Model(t).Exec(ctx); err != nil {
 		return "", nil, fmt.Errorf("minting a %s token: %w", kind, err)
@@ -311,7 +311,8 @@ func (s *AuthTokenStore) Mint(ctx context.Context, userID, kind, name string, ex
 // slides a session's expiry and stamps last_used_at, at most once per
 // tokenSlideEvery.
 func (s *AuthTokenStore) Authenticate(ctx context.Context, plaintext string) (*User, *AuthToken, error) {
-	now := time.Now().UTC()
+	// Microseconds is the column precision; the returned token must equal the row.
+	now := time.Now().UTC().Truncate(time.Microsecond)
 	t := new(AuthToken)
 	if err := s.db.NewSelect().Model(t).Where("token_hash = ?", HashToken(plaintext)).Scan(ctx); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
