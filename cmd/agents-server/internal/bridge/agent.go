@@ -1,4 +1,7 @@
-// Package bridge adapts stored configuration into live agents-SDK constructs (agents, model providers, MCP servers, sandboxes, guardrails) and drives streamed runs over the WebSocket.
+// Package bridge assembles stored configuration into live SDK agents and runs
+// them: the runner, its hub, approvals, tasks, workflows and triggers. The
+// connections an agent draws on live beside it — mcpservers, sandboxes,
+// providers, guardrails — and know nothing of the runner.
 package bridge
 
 import (
@@ -16,6 +19,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bravesearch"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/guardrails"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/mcpservers"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/providers"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
@@ -36,7 +40,7 @@ type AgentDeps struct {
 	Sessions         *store.SessionStore
 	Traces           *store.TraceStore
 	Guardrails       *guardrails.Resolver
-	McpManager       *McpManager
+	McpManager       *mcpservers.Manager
 	SandboxManager   *sandboxes.Manager
 	ChatGPTOAuth     *providers.ChatGPTOAuth
 	PendingApprovals *store.PendingApprovalStore
@@ -619,7 +623,7 @@ func bucketToolsSince(agent *agents.Agent, mark int, source string, prof *store.
 // itself can attach to an agent in buildAgentFromConfig: the sandbox tools
 // (sandbox.CodeTool + sandbox.FileTools + apply_patch), the Brave Search tool,
 // and the skills reader. MCP tools never appear here — they are prefixed
-// "<server name>__" at connect time (see McpManager.Connect).
+// "<server name>__" at connect time (see mcpservers.Manager.Connect).
 func staticLocalToolNames() []string {
 	return []string{
 		// sandbox (exec + file tools + apply_patch)

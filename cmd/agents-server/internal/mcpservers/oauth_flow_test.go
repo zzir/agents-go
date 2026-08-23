@@ -1,4 +1,4 @@
-package bridge
+package mcpservers
 
 import (
 	"bytes"
@@ -261,7 +261,7 @@ func TestConnectWithOAuthTokenRejectedDoesNotHang(t *testing.T) {
 // drives the "browser" through the authorize redirect, and delivers the code
 // via HandleCallback — returning once the code is in flight. The caller asserts
 // how the attempt then resolves.
-func startInteractiveConnect(t *testing.T, rs *httptest.Server) (*OAuthCoordinator, *McpManager, *store.McpServerStore, *store.McpServerConfig) {
+func startInteractiveConnect(t *testing.T, rs *httptest.Server) (*OAuthCoordinator, *Manager, *store.McpServerStore, *store.McpServerConfig) {
 	t.Helper()
 	db := testdb.New(t)
 	st := store.NewMcpServerStore(db)
@@ -271,7 +271,7 @@ func startInteractiveConnect(t *testing.T, rs *httptest.Server) (*OAuthCoordinat
 	if err := st.Create(context.Background(), cfg); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	mgr := NewMcpManager(context.Background(), nil)
+	mgr := NewManager(context.Background(), nil)
 	t.Cleanup(mgr.CloseAll)
 	c := NewOAuthCoordinator(st)
 

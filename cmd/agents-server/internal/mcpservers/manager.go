@@ -1,4 +1,7 @@
-package bridge
+// Package mcpservers keeps the live connections behind stored MCP server
+// configs — connect, reconcile, heal — and the OAuth flow an HTTP server
+// may demand before it talks.
+package mcpservers
 
 import (
 	"context"
@@ -19,9 +22,9 @@ import (
 	"github.com/zzir/agents-go/mcp"
 )
 
-// McpManager manages MCP server connections. It maintains a map of active
+// Manager manages MCP server connections. It maintains a map of active
 // connections keyed by config ID.
-type McpManager struct {
+type Manager struct {
 	// rootCtx bounds the lifetime of the connections themselves (most
 	// importantly the stdio subprocesses), independent of whichever request
 	// context happened to trigger the connect.
@@ -50,13 +53,13 @@ type connectState struct {
 	gen    uint64
 }
 
-// NewMcpManager returns a new manager with no active connections. rootCtx
+// NewManager returns a new manager with no active connections. rootCtx
 // scopes connection lifetimes: cancelling it stops every stdio subprocess.
-func NewMcpManager(rootCtx context.Context, cfg *settings.Reader) *McpManager {
+func NewManager(rootCtx context.Context, cfg *settings.Reader) *Manager {
 	if rootCtx == nil {
 		rootCtx = context.Background()
 	}
-	return &McpManager{
+	return &Manager{
 		rootCtx:    rootCtx,
 		settings:   cfg,
 		servers:    make(map[string]*mcp.Server),
@@ -78,7 +81,7 @@ const mcpAutoConnectTimeout = 30 * time.Second
 // another goroutine holds the claim. On a nil error with done=false the caller
 // owns the claim and MUST call finishConnect with the returned generation and a
 // handshake bounded by the returned context (which Disconnect can cancel).
-func (m *McpManager) beginConnect(ctx context.Context, id string) (done bool, hctx context.Context, gen uint64, err error) {
+func (m *Manager) beginConnect(ctx context.Context, id string) (done bool, hctx context.Context, gen uint64, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.servers[id]; ok {
@@ -99,7 +102,7 @@ func (m *McpManager) beginConnect(ctx context.Context, id string) (done bool, hc
 // discarded so a reconfigured or disabled server is never left connected with
 // stale config. A server that appeared meanwhile (should not happen given
 // the claim) is likewise closed rather than leaked.
-func (m *McpManager) finishConnect(id string, gen uint64, srv *mcp.Server, connErr error) error {
+func (m *Manager) finishConnect(id string, gen uint64, srv *mcp.Server, connErr error) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	// Clear the slot only if it is still ours: a Disconnect that cancelled us
@@ -127,7 +130,7 @@ func (m *McpManager) finishConnect(id string, gen uint64, srv *mcp.Server, connE
 // If the server is already connected, this is a no-op. ctx only bounds the
 // connection handshake; the connection itself lives until Disconnect,
 // CloseAll, or the manager's root context ends.
-func (m *McpManager) Connect(ctx context.Context, cfg *store.McpServerConfig) error {
+func (m *Manager) Connect(ctx context.Context, cfg *store.McpServerConfig) error {
 	// Validate config before claiming the connect slot so a bad config fails
 	// fast and can't strand the in-progress flag.
 	var cmd *exec.Cmd
@@ -204,7 +207,7 @@ func (m *McpManager) Connect(ctx context.Context, cfg *store.McpServerConfig) er
 // for the user to authorize interactively (only the frontend can drive that).
 // Centralizing this here keeps handlers from imperatively sequencing
 // Disconnect/Connect and getting the order wrong.
-func (m *McpManager) Reconcile(desired *store.McpServerConfig, oauth *OAuthCoordinator) {
+func (m *Manager) Reconcile(desired *store.McpServerConfig, oauth *OAuthCoordinator) {
 	if desired == nil {
 		return
 	}
@@ -261,14 +264,14 @@ func IsOAuthConfig(cfg *store.McpServerConfig) bool {
 	return hc.AuthMode == "oauth"
 }
 
-func (m *McpManager) proxyClient(ctx context.Context) *http.Client {
+func (m *Manager) proxyClient(ctx context.Context) *http.Client {
 	return m.settings.ProxyClient(ctx)
 }
 
 // httpTransport builds the streamable transport for an HTTP server config. The
 // first connect and every re-dial go through it, so a healed connection cannot
 // drift from the original's endpoint, headers, proxy or OAuth handler.
-func (m *McpManager) httpTransport(ctx context.Context, hc *store.HTTPMcpConfig, oauthHandler auth.OAuthHandler) *mcpsdk.StreamableClientTransport {
+func (m *Manager) httpTransport(ctx context.Context, hc *store.HTTPMcpConfig, oauthHandler auth.OAuthHandler) *mcpsdk.StreamableClientTransport {
 	t := &mcpsdk.StreamableClientTransport{Endpoint: hc.Endpoint, OAuthHandler: oauthHandler}
 	t.HTTPClient = httpClientFor(m.proxyClient(ctx), hc.Headers)
 	return t
@@ -310,7 +313,7 @@ func (h *headerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 // ConnectHTTPWithOAuth connects a streamable HTTP MCP server with the given
 // OAuth handler. It is called from OAuthCoordinator in a goroutine and blocks
 // until the OAuth flow completes (or the context is cancelled).
-func (m *McpManager) ConnectHTTPWithOAuth(ctx context.Context, cfg *store.McpServerConfig, hc *store.HTTPMcpConfig, oauthHandler auth.OAuthHandler) error {
+func (m *Manager) ConnectHTTPWithOAuth(ctx context.Context, cfg *store.McpServerConfig, hc *store.HTTPMcpConfig, oauthHandler auth.OAuthHandler) error {
 	done, hctx, gen, err := m.beginConnect(ctx, cfg.ID)
 	if err != nil || done {
 		return err
@@ -361,7 +364,7 @@ func buildMcpOptions(name string, retry store.McpRetryConfig, useStructuredConte
 // installed) and the handshake's context is cancelled (so it releases the
 // connect slot promptly instead of after its own timeout) — the fix for a
 // reconcile racing a slow connect.
-func (m *McpManager) Disconnect(id string) error {
+func (m *Manager) Disconnect(id string) error {
 	m.mu.Lock()
 	m.connectGen[id]++
 	if cs := m.connecting[id]; cs != nil {
@@ -378,7 +381,7 @@ func (m *McpManager) Disconnect(id string) error {
 }
 
 // Get returns a connected server by config ID, or nil if not connected.
-func (m *McpManager) Get(id string) *mcp.Server {
+func (m *Manager) Get(id string) *mcp.Server {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.servers[id]
@@ -388,7 +391,7 @@ func (m *McpManager) Get(id string) *mcp.Server {
 // right now, for a caller sizing its share of an agent's tool surface. It is a
 // live call — MCP tools are the server's, not the agent's — so the caller bounds
 // it with a context deadline.
-func (m *McpManager) ListToolsFor(ctx context.Context, id string) (string, []*agents.Tool, error) {
+func (m *Manager) ListToolsFor(ctx context.Context, id string) (string, []*agents.Tool, error) {
 	srv := m.Get(id)
 	if srv == nil {
 		return "", nil, fmt.Errorf("mcp server %s is not connected", id)
@@ -398,7 +401,7 @@ func (m *McpManager) ListToolsFor(ctx context.Context, id string) (string, []*ag
 }
 
 // IsConnected reports whether a server with the given ID is connected.
-func (m *McpManager) IsConnected(id string) bool {
+func (m *Manager) IsConnected(id string) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	_, ok := m.servers[id]
@@ -409,14 +412,14 @@ func (m *McpManager) IsConnected(id string) bool {
 // flight. Note an interactive OAuth flow holds the connect slot for its whole
 // popup wait, so this stays true throughout — check the OAuth coordinator's
 // IsAuthorizing first when deriving a user-facing state.
-func (m *McpManager) IsConnecting(id string) bool {
+func (m *Manager) IsConnecting(id string) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.connecting[id] != nil
 }
 
 // CloseAll closes all active connections.
-func (m *McpManager) CloseAll() {
+func (m *Manager) CloseAll() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for id, srv := range m.servers {
@@ -425,12 +428,12 @@ func (m *McpManager) CloseAll() {
 	}
 }
 
-// ConnectEnabledMcpServers connects every stored MCP server whose Enabled flag
+// ConnectEnabled connects every stored MCP server whose Enabled flag
 // is true. Disabled servers are skipped. For OAuth servers with a saved token
 // it uses the coordinator to reconnect silently. Failures are logged and
 // skipped so one bad server cannot block the others (or server startup).
 // Intended to be run in a goroutine.
-func ConnectEnabledMcpServers(ctx context.Context, mgr *McpManager, servers *store.McpServerStore, oauth *OAuthCoordinator) {
+func ConnectEnabled(ctx context.Context, mgr *Manager, servers *store.McpServerStore, oauth *OAuthCoordinator) {
 	log := logging.Ctx(ctx)
 	configs, err := servers.List(ctx)
 	if err != nil {

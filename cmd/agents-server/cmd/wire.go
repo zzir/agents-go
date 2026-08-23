@@ -15,6 +15,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/docs"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/guardrails"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/handler"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/mcpservers"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/providers"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
@@ -100,8 +101,8 @@ func auditRecorder(audit *store.AuditStore, log *slog.Logger) protocol.AuditFunc
 type services struct {
 	Runner     *bridge.Runner
 	Deps       *bridge.AgentDeps
-	Mcp        *bridge.McpManager
-	OAuth      *bridge.OAuthCoordinator
+	Mcp        *mcpservers.Manager
+	OAuth      *mcpservers.OAuthCoordinator
 	ChatGPT    *providers.ChatGPTOAuth
 	Sandboxes  *sandboxes.Manager
 	Guardrails *guardrails.Resolver
@@ -113,12 +114,12 @@ type services struct {
 func newBridge(ctx, bgCtx context.Context, db *bun.DB, st *stores, audit protocol.AuditFunc) *services {
 	svc := &services{
 		Guardrails: guardrails.NewResolver(st.Guardrails),
-		Mcp:        bridge.NewMcpManager(ctx, st.SettingReader),
-		OAuth:      bridge.NewOAuthCoordinator(st.McpServers),
+		Mcp:        mcpservers.NewManager(ctx, st.SettingReader),
+		OAuth:      mcpservers.NewOAuthCoordinator(st.McpServers),
 		ChatGPT:    providers.NewChatGPTOAuth(st.Providers, st.SettingReader),
 		Sandboxes:  sandboxes.NewManager(flagWorkspace),
 	}
-	go bridge.ConnectEnabledMcpServers(bgCtx, svc.Mcp, st.McpServers, svc.OAuth)
+	go mcpservers.ConnectEnabled(bgCtx, svc.Mcp, st.McpServers, svc.OAuth)
 	go bridge.RunTraceRetention(bgCtx, st.SettingReader, st.Traces)
 	svc.Deps = &bridge.AgentDeps{
 		AgentConfigs:     st.AgentConfigs,

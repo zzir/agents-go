@@ -1,4 +1,4 @@
-package bridge
+package mcpservers
 
 import (
 	"bytes"
@@ -27,7 +27,7 @@ import (
 // disabled server stays connected with stale config. Disconnect also cancels
 // the in-flight handshake so it releases the connect slot promptly.
 func TestFinishConnectDiscardsSupersededHandshake(t *testing.T) {
-	m := NewMcpManager(context.Background(), nil)
+	m := NewManager(context.Background(), nil)
 
 	done, hctx, gen, err := m.beginConnect(context.Background(), "srv1")
 	if err != nil || done {
@@ -69,7 +69,7 @@ func TestFinishConnectDiscardsSupersededHandshake(t *testing.T) {
 // slot and releases the manager lock (the handshake runs outside it), so
 // Get/IsConnected/Disconnect stay responsive while a slow server connects.
 func TestMcpManagerConnectDoesNotBlockReads(t *testing.T) {
-	m := NewMcpManager(context.Background(), nil)
+	m := NewManager(context.Background(), nil)
 
 	// Simulate a claimed-but-not-finished connect (a slow handshake in flight).
 	done, _, gen, err := m.beginConnect(context.Background(), "srv1")
@@ -116,34 +116,6 @@ func TestMcpManagerConnectDoesNotBlockReads(t *testing.T) {
 	}
 	if done, _, _, err := m.beginConnect(context.Background(), "srv1"); done || err != nil {
 		t.Fatalf("after a failed connect, beginConnect should be claimable again: done=%v err=%v", done, err)
-	}
-}
-
-// LiveRunIDs feeds the WS broadcast bus: a freshly connected browser is
-// attached to exactly the runs still executing — finished and interrupted
-// runs leave the set (resume re-adds and re-attaches via OnRunAttach).
-func TestRunHubLiveRunIDs(t *testing.T) {
-	h := NewRunHub(t.Context())
-	if got := h.LiveRunIDs(); len(got) != 0 {
-		t.Fatalf("empty hub: got %v", got)
-	}
-	if _, _, err := h.register("r1", "s1", "", "", "", "", nil); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := h.register("r2", "s2", "", "", "", "", nil); err != nil {
-		t.Fatal(err)
-	}
-	if got := h.LiveRunIDs(); len(got) != 2 {
-		t.Fatalf("two live runs: got %v", got)
-	}
-	h.finish("r1", false)
-	got := h.LiveRunIDs()
-	if len(got) != 1 || got[0] != "r2" {
-		t.Fatalf("after finish: got %v, want [r2]", got)
-	}
-	h.finish("r2", true) // interrupted also leaves the live set
-	if got := h.LiveRunIDs(); len(got) != 0 {
-		t.Fatalf("after interrupt: got %v", got)
 	}
 }
 
@@ -220,8 +192,8 @@ func TestConnectEnabledMcpServersConcurrent(t *testing.T) {
 	mk("hung", "http://"+hung.Addr().String())
 	mk("fast", fast.URL)
 
-	mgr := NewMcpManager(ctx, settings.NewReader(store.NewSettingStore(db)))
-	go ConnectEnabledMcpServers(ctx, mgr, mcpStore, nil)
+	mgr := NewManager(ctx, settings.NewReader(store.NewSettingStore(db)))
+	go ConnectEnabled(ctx, mgr, mcpStore, nil)
 
 	// The reachable server must be reached well within the hung server's 30s
 	// handshake timeout — proving the two connects run concurrently.
@@ -260,7 +232,7 @@ func (b *syncBuffer) String() string {
 func TestReconcileLogsFailedReconnect(t *testing.T) {
 	var logs syncBuffer
 	ctx := logging.Into(t.Context(), slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})))
-	m := NewMcpManager(ctx, nil)
+	m := NewManager(ctx, nil)
 
 	m.Reconcile(&store.McpServerConfig{
 		ID: store.NewID(), Name: "broken", TransportType: "stdio", Enabled: true,

@@ -1202,7 +1202,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["bridge.GuardrailDef"][];
+                        "application/json": components["schemas"]["guardrails.Def"][];
                     };
                 };
             };
@@ -2455,7 +2455,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["bridge.ProviderTypeInfo"][];
+                        "application/json": components["schemas"]["providers.TypeInfo"][];
                     };
                 };
             };
@@ -2735,7 +2735,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["bridge.ChatGPTLoginResult"];
+                        "application/json": components["schemas"]["providers.ChatGPTLoginResult"];
                     };
                 };
                 /** @description provider does not use chatgpt_login */
@@ -6054,10 +6054,6 @@ export interface components {
          * @enum {string}
          */
         "agents.Verbosity": "low" | "medium" | "high";
-        "bridge.ChatGPTLoginResult": {
-            authorize_url?: string;
-            state?: string;
-        };
         "bridge.Fired": {
             agent?: string;
             /** @description Attempt counts the task's runs: 1 for the original, one more per retry. */
@@ -6081,27 +6077,6 @@ export interface components {
             status?: string;
             summary?: string;
             task_id?: string;
-        };
-        "bridge.GuardrailDef": {
-            blocking?: boolean;
-            config?: number[];
-            description?: string;
-            id?: string;
-            mode?: string;
-            name?: string;
-            stages?: string[];
-        };
-        "bridge.ProviderTypeInfo": {
-            /**
-             * @description AuthModes and Unsupported serialize as [] rather than being omitted:
-             *     a client caching these facts must be able to tell "this backend has
-             *     none" apart from "not fetched yet" — omitempty would make an emptied
-             *     list look like missing data and let a stale local fallback win.
-             */
-            auth_modes?: string[];
-            setting_key?: string;
-            type?: string;
-            unsupported?: string[];
         };
         "bridge.RunInfo": {
             agent_config_id?: string;
@@ -6158,6 +6133,15 @@ export interface components {
             parent_session_id?: string;
             task_id?: string;
             tool_call_id?: string;
+        };
+        "guardrails.Def": {
+            blocking?: boolean;
+            config?: number[];
+            description?: string;
+            id?: string;
+            mode?: string;
+            name?: string;
+            stages?: string[];
         };
         "handler.CompactResponse": {
             after_items?: number;
@@ -6525,6 +6509,22 @@ export interface components {
             id?: string;
             name?: string;
             role?: string;
+        };
+        "providers.ChatGPTLoginResult": {
+            authorize_url?: string;
+            state?: string;
+        };
+        "providers.TypeInfo": {
+            /**
+             * @description AuthModes and Unsupported serialize as [] rather than being omitted:
+             *     a client caching these facts must be able to tell "this backend has
+             *     none" apart from "not fetched yet" — omitempty would make an emptied
+             *     list look like missing data and let a stale local fallback win.
+             */
+            auth_modes?: string[];
+            setting_key?: string;
+            type?: string;
+            unsupported?: string[];
         };
         /** @enum {string} */
         "session.DiagnosticType": "model_retry" | "model_fallback" | "stream_error" | "tool_panic" | "tool_timeout" | "compaction_failed" | "response_truncated" | "context_overflow";

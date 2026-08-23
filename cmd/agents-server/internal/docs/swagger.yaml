@@ -317,13 +317,6 @@ components:
       - VerbosityLow
       - VerbosityMedium
       - VerbosityHigh
-    bridge.ChatGPTLoginResult:
-      properties:
-        authorize_url:
-          type: string
-        state:
-          type: string
-      type: object
     bridge.Fired:
       properties:
         agent:
@@ -357,51 +350,6 @@ components:
           type: string
         task_id:
           type: string
-      type: object
-    bridge.GuardrailDef:
-      properties:
-        blocking:
-          type: boolean
-        config:
-          items:
-            type: integer
-          type: array
-          uniqueItems: false
-        description:
-          type: string
-        id:
-          type: string
-        mode:
-          type: string
-        name:
-          type: string
-        stages:
-          items:
-            type: string
-          type: array
-          uniqueItems: false
-      type: object
-    bridge.ProviderTypeInfo:
-      properties:
-        auth_modes:
-          description: |-
-            AuthModes and Unsupported serialize as [] rather than being omitted:
-            a client caching these facts must be able to tell "this backend has
-            none" apart from "not fetched yet" — omitempty would make an emptied
-            list look like missing data and let a stale local fallback win.
-          items:
-            type: string
-          type: array
-          uniqueItems: false
-        setting_key:
-          type: string
-        type:
-          type: string
-        unsupported:
-          items:
-            type: string
-          type: array
-          uniqueItems: false
       type: object
     bridge.RunInfo:
       properties:
@@ -496,6 +444,29 @@ components:
           type: string
         tool_call_id:
           type: string
+      type: object
+    guardrails.Def:
+      properties:
+        blocking:
+          type: boolean
+        config:
+          items:
+            type: integer
+          type: array
+          uniqueItems: false
+        description:
+          type: string
+        id:
+          type: string
+        mode:
+          type: string
+        name:
+          type: string
+        stages:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
       type: object
     handler.CompactResponse:
       properties:
@@ -1076,6 +1047,35 @@ components:
           type: string
         role:
           type: string
+      type: object
+    providers.ChatGPTLoginResult:
+      properties:
+        authorize_url:
+          type: string
+        state:
+          type: string
+      type: object
+    providers.TypeInfo:
+      properties:
+        auth_modes:
+          description: |-
+            AuthModes and Unsupported serialize as [] rather than being omitted:
+            a client caching these facts must be able to tell "this backend has
+            none" apart from "not fetched yet" — omitempty would make an emptied
+            list look like missing data and let a stale local fallback win.
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        setting_key:
+          type: string
+        type:
+          type: string
+        unsupported:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
       type: object
     session.DiagnosticType:
       enum:
@@ -2715,7 +2715,7 @@ paths:
             application/json:
               schema:
                 items:
-                  $ref: '#/components/schemas/bridge.GuardrailDef'
+                  $ref: '#/components/schemas/guardrails.Def'
                 type: array
           description: OK
       security:
@@ -3577,7 +3577,7 @@ paths:
             application/json:
               schema:
                 items:
-                  $ref: '#/components/schemas/bridge.ProviderTypeInfo'
+                  $ref: '#/components/schemas/providers.TypeInfo'
                 type: array
           description: OK
       security:
@@ -3767,7 +3767,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/bridge.ChatGPTLoginResult'
+                $ref: '#/components/schemas/providers.ChatGPTLoginResult'
           description: OK
         "400":
           content:

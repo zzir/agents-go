@@ -1,4 +1,4 @@
-package bridge
+package mcpservers
 
 import (
 	"context"
@@ -59,7 +59,7 @@ func TestManagerConnectionHealsItself(t *testing.T) {
 	defer endpoint.Close()
 
 	db := testdb.New(t)
-	mgr := NewMcpManager(ctx, settings.NewReader(store.NewSettingStore(db)))
+	mgr := NewManager(ctx, settings.NewReader(store.NewSettingStore(db)))
 	cfg := &store.McpServerConfig{
 		ID: store.NewID(), Name: "healer", TransportType: "streamable_http", Enabled: true,
 		Config: []byte(`{"endpoint":"` + endpoint.URL + `"}`),

@@ -1557,16 +1557,19 @@ cmd/agents-server/
 │   ├── handler/                HTTP handlers (one file per resource)
 │   │   ├── authz.go            the two authorization rules as route gates
 │   │   └── conn_registry.go    per-owner WebSocket broadcast bus
-│   ├── bridge/                 business logic
+│   ├── bridge/                 the runner and what it orchestrates
 │   │   ├── agent.go            assemble a full agent from DB config
 │   │   ├── runner.go           stream execution, resume after approval
 │   │   ├── stream_bridge.go    SDK stream events → protocol envelopes
 │   │   ├── run_hub.go          per-run event hub (buffering, seq resume, status)
 │   │   ├── approvals.go        HITL approval persistence & resolution
-│   │   ├── mcp_manager.go      MCP server connection lifecycle
-│   │   ├── sandbox_manager.go  sandbox instance cache
 │   │   ├── retention.go        the maintenance loops: approval reaper, trace/audit/token/wake-up pruning
-│   │   └── ...                 tracing, guardrails, proxy, MCP/ChatGPT OAuth
+│   │   └── ...                 tasks, workflows, triggers, tracing, provider resolve
+│   ├── mcpservers/             live MCP connections behind stored configs; the MCP OAuth flow
+│   ├── providers/              the registry of model-provider backends; the ChatGPT login
+│   ├── sandboxes/              live sandbox instances behind stored configs; exec_command trust
+│   ├── guardrails/             stored + built-in guardrail definitions → SDK guardrails
+│   ├── settings/               the settings registry and the typed reader (incl. the proxy client)
 │   ├── docs/                   generated OpenAPI 3.1 document, swagger.yaml (make openapi)
 │   ├── store/                  data layer (bun ORM; SQLite or PostgreSQL, 22 tables — see Database)
 │   ├── protocol/               wire types — WS messages, REST error envelope, the audit record
@@ -1675,7 +1678,7 @@ When a change genuinely doesn't fit, update this list in the same PR.
 11. **An OAuth grant persists as a self-contained refreshable unit, through one
     writer.** The stored payload carries the token AND its refresh context —
     token endpoint plus (possibly dynamically registered) client credentials —
-    and every mutation flows through `bridge.persistGrant`: the initial
+    and every mutation flows through `mcpservers.persistGrant`: the initial
     authorize and every later refresh, including a rotated refresh token
     (`persistingTokenSource`). Restored and live connections must use the same
     refreshing `oauth2.TokenSource` machinery — never a static snapshot of the

@@ -9,8 +9,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/mcpservers"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
@@ -18,8 +18,8 @@ import (
 // McpServerHandler serves CRUD and connection endpoints for MCP servers.
 type McpServerHandler struct {
 	store   *store.McpServerStore
-	manager *bridge.McpManager
-	oauth   *bridge.OAuthCoordinator
+	manager *mcpservers.Manager
+	oauth   *mcpservers.OAuthCoordinator
 	// baseURL is the configured public origin (--base-url); empty means derive
 	// from the direct connection.
 	baseURL string
@@ -31,7 +31,7 @@ type McpServerHandler struct {
 const mcpOAuthCallbackPath = "/mcp-servers/oauth/callback"
 
 // NewMcpServerHandler returns a handler backed by the given store and connection manager.
-func NewMcpServerHandler(s *store.McpServerStore, m *bridge.McpManager, oc *bridge.OAuthCoordinator, baseURL string) *McpServerHandler {
+func NewMcpServerHandler(s *store.McpServerStore, m *mcpservers.Manager, oc *mcpservers.OAuthCoordinator, baseURL string) *McpServerHandler {
 	return &McpServerHandler{store: s, manager: m, oauth: oc, baseURL: baseURL}
 }
 
@@ -82,7 +82,7 @@ func (h *McpServerHandler) status(cfg *store.McpServerConfig) string {
 		return mcpStatusAuthorizing
 	case h.manager.IsConnecting(cfg.ID):
 		return mcpStatusConnecting
-	case bridge.IsOAuthConfig(cfg) && cfg.OAuthToken == "":
+	case mcpservers.IsOAuthConfig(cfg) && cfg.OAuthToken == "":
 		return mcpStatusNeedsAuth
 	default:
 		return mcpStatusDisconnected

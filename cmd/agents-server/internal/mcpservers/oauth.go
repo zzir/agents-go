@@ -1,4 +1,4 @@
-package bridge
+package mcpservers
 
 import (
 	"context"
@@ -174,7 +174,7 @@ type ConnectResult struct {
 // request that started it (see connectCtx below).
 func (c *OAuthCoordinator) ConnectWithOAuth(
 	ctx context.Context,
-	mgr *McpManager,
+	mgr *Manager,
 	cfg *store.McpServerConfig,
 	hc *store.HTTPMcpConfig,
 	redirectURI string,

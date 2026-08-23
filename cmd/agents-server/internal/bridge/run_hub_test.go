@@ -544,3 +544,31 @@ func TestInjectRejectsAnUnknownQueue(t *testing.T) {
 		t.Error("an unknown queue was accepted")
 	}
 }
+
+// LiveRunIDs feeds the WS broadcast bus: a freshly connected browser is
+// attached to exactly the runs still executing — finished and interrupted
+// runs leave the set (resume re-adds and re-attaches via OnRunAttach).
+func TestRunHubLiveRunIDs(t *testing.T) {
+	h := NewRunHub(t.Context())
+	if got := h.LiveRunIDs(); len(got) != 0 {
+		t.Fatalf("empty hub: got %v", got)
+	}
+	if _, _, err := h.register("r1", "s1", "", "", "", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := h.register("r2", "s2", "", "", "", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.LiveRunIDs(); len(got) != 2 {
+		t.Fatalf("two live runs: got %v", got)
+	}
+	h.finish("r1", false)
+	got := h.LiveRunIDs()
+	if len(got) != 1 || got[0] != "r2" {
+		t.Fatalf("after finish: got %v, want [r2]", got)
+	}
+	h.finish("r2", true) // interrupted also leaves the live set
+	if got := h.LiveRunIDs(); len(got) != 0 {
+		t.Fatalf("after interrupt: got %v", got)
+	}
+}

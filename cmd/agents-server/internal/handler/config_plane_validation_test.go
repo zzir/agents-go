@@ -8,7 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/mcpservers"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
@@ -88,7 +88,7 @@ func TestSandboxValidation(t *testing.T) {
 func TestMcpServerNameUnique(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
-	h := NewMcpServerHandler(store.NewMcpServerStore(db), bridge.NewMcpManager(t.Context(), settings.NewReader(store.NewSettingStore(db))), nil, "")
+	h := NewMcpServerHandler(store.NewMcpServerStore(db), mcpservers.NewManager(t.Context(), settings.NewReader(store.NewSettingStore(db))), nil, "")
 	engine := newTestEngine()
 	engine.POST("/mcp-servers", h.Create)
 
@@ -107,7 +107,7 @@ func TestMcpServerToolsNotFoundVsNotConnected(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
 	mcpStore := store.NewMcpServerStore(db)
-	h := NewMcpServerHandler(mcpStore, bridge.NewMcpManager(t.Context(), settings.NewReader(store.NewSettingStore(db))), nil, "")
+	h := NewMcpServerHandler(mcpStore, mcpservers.NewManager(t.Context(), settings.NewReader(store.NewSettingStore(db))), nil, "")
 	engine := newTestEngine()
 	engine.GET("/mcp-servers/:id/tools", h.Tools)
 
