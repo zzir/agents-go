@@ -11,12 +11,13 @@ import (
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
 func TestAgentConfigSecretRoundTrip(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx := context.Background()
-	db := newTestDB(t)
+	db := testdb.New(t)
 	st := store.NewAgentConfigStore(db)
 	h := NewAgentConfigHandler(st, store.NewMcpServerStore(db), store.NewProviderStore(db), bridge.NewGuardrailResolver(store.NewGuardrailStore(db)))
 
@@ -112,7 +113,7 @@ func TestSandboxPasswordMasking(t *testing.T) {
 // unchanged — moving the backend or the endpoint must refuse it.
 func TestProviderUpdateRejectsMaskedKeyAcrossDestinationChange(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
+	db := testdb.New(t)
 	h := NewProviderHandler(store.NewProviderStore(db))
 	engine := newTestEngine()
 	engine.POST("/providers", h.Create)

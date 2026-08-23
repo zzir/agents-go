@@ -8,6 +8,7 @@ import (
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
 func mkAgent(t *testing.T, s *store.AgentConfigStore, name string, handoffIDs ...string) string {
@@ -39,7 +40,7 @@ func handoffNames(built *BuildResult) []string {
 // dropped C→D.
 func TestBuildFullAgentDiamondHandoffNotACycle(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB(t)
+	db := testdb.New(t)
 	s := store.NewAgentConfigStore(db)
 	deps := &AgentDeps{AgentConfigs: s, Settings: settings.NewReader(store.NewSettingStore(db)), Memories: store.NewMemoryStore(db)}
 
@@ -84,7 +85,7 @@ func TestBuildFullAgentDiamondHandoffNotACycle(t *testing.T) {
 // configured handoff.
 func TestBuildFullAgentHandoffTargetErrorPropagates(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB(t)
+	db := testdb.New(t)
 	s := store.NewAgentConfigStore(db)
 	deps := &AgentDeps{
 		AgentConfigs: s, Settings: settings.NewReader(store.NewSettingStore(db)), Memories: store.NewMemoryStore(db),
@@ -108,7 +109,7 @@ func TestBuildFullAgentHandoffTargetErrorPropagates(t *testing.T) {
 // back-edge to A is skipped rather than recursing forever.
 func TestBuildFullAgentRealCycleBroken(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB(t)
+	db := testdb.New(t)
 	s := store.NewAgentConfigStore(db)
 	deps := &AgentDeps{AgentConfigs: s, Settings: settings.NewReader(store.NewSettingStore(db)), Memories: store.NewMemoryStore(db)}
 

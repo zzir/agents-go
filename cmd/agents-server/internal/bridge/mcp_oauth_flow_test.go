@@ -21,6 +21,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
 // fakeAS is a minimal OAuth 2.1 authorization server: metadata discovery,
@@ -262,7 +263,7 @@ func TestConnectWithOAuthTokenRejectedDoesNotHang(t *testing.T) {
 // how the attempt then resolves.
 func startInteractiveConnect(t *testing.T, rs *httptest.Server) (*OAuthCoordinator, *McpManager, *store.McpServerStore, *store.McpServerConfig) {
 	t.Helper()
-	db := newTestDB(t)
+	db := testdb.New(t)
 	st := store.NewMcpServerStore(db)
 	hc := store.HTTPMcpConfig{Endpoint: rs.URL + "/mcp", AuthMode: "oauth"}
 	raw, _ := json.Marshal(hc)

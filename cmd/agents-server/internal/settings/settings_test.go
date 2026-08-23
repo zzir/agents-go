@@ -5,28 +5,14 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/uptrace/bun"
-
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
-
-func newTestDB(t *testing.T) *bun.DB {
-	t.Helper()
-	db, err := store.NewSQLiteDB("file:" + t.Name() + "?mode=memory&cache=shared")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if err := store.CreateSchema(t.Context(), db); err != nil {
-		t.Fatal(err)
-	}
-	return db
-}
 
 func newReader(t *testing.T) (*settings.Reader, *store.SettingStore) {
 	t.Helper()
-	s := store.NewSettingStore(newTestDB(t))
+	s := store.NewSettingStore(testdb.New(t))
 	return settings.NewReader(s), s
 }
 

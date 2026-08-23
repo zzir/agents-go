@@ -13,6 +13,7 @@ import (
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
 type swapHandler struct {
@@ -57,7 +58,7 @@ func TestManagerConnectionHealsItself(t *testing.T) {
 	endpoint := httptest.NewServer(swap)
 	defer endpoint.Close()
 
-	db := newTestDB(t)
+	db := testdb.New(t)
 	mgr := NewMcpManager(ctx, settings.NewReader(store.NewSettingStore(db)))
 	cfg := &store.McpServerConfig{
 		ID: store.NewID(), Name: "healer", TransportType: "streamable_http", Enabled: true,

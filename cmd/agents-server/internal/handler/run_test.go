@@ -15,6 +15,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
 // StartRun's failure modes must map to distinct status codes rather than
@@ -112,7 +113,7 @@ func slowModel(t *testing.T, delay time.Duration) *httptest.Server {
 // honored preference.
 func TestCreateRunHonorsPreferWait(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
+	db := testdb.New(t)
 	sessions := store.NewSessionStore(db)
 	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "s"}
 	if err := sessions.Create(t.Context(), sess); err != nil {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
 // Guardrail config must round-trip as a JSON OBJECT (the API-wide contract for
@@ -18,7 +19,7 @@ import (
 // stringified JSON payload and every save failed with 400.
 func TestGuardrailConfigObjectRoundTrip(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
+	db := testdb.New(t)
 	grStore := store.NewGuardrailStore(db)
 	h := NewGuardrailHandler(grStore, bridge.NewGuardrailResolver(grStore))
 	engine := newTestEngine()

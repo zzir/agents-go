@@ -8,6 +8,7 @@ import (
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
 // Malformed or mistyped error_handlers config must fail the save/build loudly:
@@ -53,7 +54,7 @@ func TestDecodeErrorHandlersValidation(t *testing.T) {
 // kinds stay nil (fatal).
 func TestBuildFullAgentBuildsErrorHandlers(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB(t)
+	db := testdb.New(t)
 	s := store.NewAgentConfigStore(db)
 	deps := &AgentDeps{
 		AgentConfigs: s,
@@ -123,7 +124,7 @@ func TestBuildErrorHandlersStructuredFallback(t *testing.T) {
 // DecodeAgentSpec, like every other JSON-encoded config field.
 func TestBuildFullAgentFailsOnBadErrorHandlers(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB(t)
+	db := testdb.New(t)
 	s := store.NewAgentConfigStore(db)
 	deps := &AgentDeps{
 		AgentConfigs: s,

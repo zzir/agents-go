@@ -6,18 +6,19 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
-// The list/get responses advertise which sandboxes can host a web terminal:
+// The list/get responses advertise which sandboxStore can host a web terminal:
 // ssh always, docker only when persistent, local never. The frontend gates
 // the terminal button on this field, so getting it wrong hides (or worse,
 // shows) the feature.
 func TestSandboxList_TerminalCapability(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
-	sandboxes := store.NewSandboxStore(db)
+	db := testdb.New(t)
+	sandboxStore := store.NewSandboxStore(db)
 	seed := []struct {
 		name   string
 		typ    string
@@ -34,16 +35,16 @@ func TestSandboxList_TerminalCapability(t *testing.T) {
 		if s.config != "" {
 			cfg.Config = json.RawMessage(s.config)
 		}
-		if err := sandboxes.Create(t.Context(), cfg); err != nil {
+		if err := sandboxStore.Create(t.Context(), cfg); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	h := testSandboxHandler(sandboxes, nil, t.TempDir())
+	h := testSandboxHandler(sandboxStore, nil, t.TempDir())
 	engine := newTestEngine()
-	engine.GET("/sandboxes", h.List)
+	engine.GET("/sandboxStore", h.List)
 
-	w := doJSON(t, engine, "GET", "/sandboxes", "")
+	w := doJSON(t, engine, "GET", "/sandboxStore", "")
 	if w.Code != 200 {
 		t.Fatalf("status = %d", w.Code)
 	}
@@ -68,8 +69,8 @@ func TestSandboxList_TerminalCapability(t *testing.T) {
 // does nothing (docker) or hides one that works (local/ssh).
 func TestSandboxList_WorkDirDefaults(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
-	sandboxes := store.NewSandboxStore(db)
+	db := testdb.New(t)
+	sandboxStore := store.NewSandboxStore(db)
 	ws := t.TempDir()
 	seed := []struct {
 		name     string
@@ -92,16 +93,16 @@ func TestSandboxList_WorkDirDefaults(t *testing.T) {
 		if s.config != "" {
 			cfg.Config = json.RawMessage(s.config)
 		}
-		if err := sandboxes.Create(t.Context(), cfg); err != nil {
+		if err := sandboxStore.Create(t.Context(), cfg); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	h := testSandboxHandler(sandboxes, nil, ws)
+	h := testSandboxHandler(sandboxStore, nil, ws)
 	engine := newTestEngine()
-	engine.GET("/sandboxes", h.List)
+	engine.GET("/sandboxStore", h.List)
 
-	w := doJSON(t, engine, "GET", "/sandboxes", "")
+	w := doJSON(t, engine, "GET", "/sandboxStore", "")
 	if w.Code != 200 {
 		t.Fatalf("status = %d", w.Code)
 	}
@@ -129,16 +130,16 @@ func TestSandboxList_WorkDirDefaults(t *testing.T) {
 // keeps updating freely.
 func TestSandboxUpdate_FreezesIdentityWhileReferenced(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
-	sandboxes := store.NewSandboxStore(db)
+	db := testdb.New(t)
+	sandboxStore := store.NewSandboxStore(db)
 	sessions := store.NewSessionStore(db)
-	manager := bridge.NewSandboxManager(t.TempDir())
-	h := testSandboxHandler(sandboxes, manager, t.TempDir())
+	manager := sandboxes.NewManager(t.TempDir())
+	h := testSandboxHandler(sandboxStore, manager, t.TempDir())
 	engine := newTestEngine()
-	engine.PUT("/sandboxes/:id", h.Update)
+	engine.PUT("/sandboxStore/:id", h.Update)
 
 	cfg := &store.SandboxConfig{Name: "box", Type: "ssh", Config: json.RawMessage(`{"addr":"h1","user":"u","work_dir":"/srv"}`)}
-	if err := sandboxes.Create(t.Context(), cfg); err != nil {
+	if err := sandboxStore.Create(t.Context(), cfg); err != nil {
 		t.Fatal(err)
 	}
 	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "s"}
@@ -150,19 +151,19 @@ func TestSandboxUpdate_FreezesIdentityWhileReferenced(t *testing.T) {
 	}
 
 	// Identity change (addr) → 409, row untouched.
-	w := doJSON(t, engine, "PUT", "/sandboxes/"+cfg.ID,
+	w := doJSON(t, engine, "PUT", "/sandboxStore/"+cfg.ID,
 		`{"name":"box","type":"ssh","config":{"addr":"h2","user":"u","work_dir":"/srv"}}`)
 	if w.Code != 409 {
 		t.Fatalf("identity update on a referenced sandbox: %d %s, want 409", w.Code, w.Body.String())
 	}
 	// The ssh USER is identity too: user-a@host and user-b@host are different
 	// homes and permission views — a different file system at one address.
-	w = doJSON(t, engine, "PUT", "/sandboxes/"+cfg.ID,
+	w = doJSON(t, engine, "PUT", "/sandboxStore/"+cfg.ID,
 		`{"name":"box","type":"ssh","config":{"addr":"h1","user":"someone-else","work_dir":"/srv"}}`)
 	if w.Code != 409 {
 		t.Fatalf("user change on a referenced sandbox: %d %s, want 409", w.Code, w.Body.String())
 	}
-	got, err := sandboxes.Get(t.Context(), cfg.ID)
+	got, err := sandboxStore.Get(t.Context(), cfg.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,12 +174,12 @@ func TestSandboxUpdate_FreezesIdentityWhileReferenced(t *testing.T) {
 	}
 
 	// Non-identity change (credentials, name) → 200 even while referenced.
-	w = doJSON(t, engine, "PUT", "/sandboxes/"+cfg.ID,
+	w = doJSON(t, engine, "PUT", "/sandboxStore/"+cfg.ID,
 		`{"name":"box-renamed","type":"ssh","config":{"addr":"h1","user":"u","work_dir":"/srv","password":"rotated"}}`)
 	if w.Code != 200 {
 		t.Fatalf("credential update on a referenced sandbox: %d %s, want 200", w.Code, w.Body.String())
 	}
-	got, _ = sandboxes.Get(t.Context(), cfg.ID)
+	got, _ = sandboxStore.Get(t.Context(), cfg.ID)
 	_ = json.Unmarshal(got.Config, &sc)
 	if sc.Password != "rotated" || got.Name != "box-renamed" {
 		t.Fatalf("non-identity update did not land: name=%q password=%q", got.Name, sc.Password)
@@ -188,7 +189,7 @@ func TestSandboxUpdate_FreezesIdentityWhileReferenced(t *testing.T) {
 	if err := sessions.Delete(t.Context(), sess.ID); err != nil {
 		t.Fatal(err)
 	}
-	w = doJSON(t, engine, "PUT", "/sandboxes/"+cfg.ID,
+	w = doJSON(t, engine, "PUT", "/sandboxStore/"+cfg.ID,
 		`{"name":"box-renamed","type":"ssh","config":{"addr":"h2","user":"u","work_dir":"/srv"}}`)
 	if w.Code != 200 {
 		t.Fatalf("identity update after the last session left: %d %s, want 200", w.Code, w.Body.String())

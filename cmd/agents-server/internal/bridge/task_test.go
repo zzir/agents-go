@@ -13,6 +13,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
 func TestTaskStatusForMapsAllStates(t *testing.T) {
@@ -32,7 +33,7 @@ func TestTaskStatusForMapsAllStates(t *testing.T) {
 
 func newTaskTestRunner(t *testing.T) (*Runner, *store.SessionStore, *store.TaskStore, *store.AgentConfigStore) {
 	t.Helper()
-	db := newTestDB(t)
+	db := testdb.New(t)
 	sessions := store.NewSessionStore(db)
 	tasks := store.NewTaskStore(db)
 	agentConfigs := store.NewAgentConfigStore(db)

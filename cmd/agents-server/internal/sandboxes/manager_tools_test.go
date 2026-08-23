@@ -1,4 +1,4 @@
-package bridge
+package sandboxes
 
 import (
 	"context"
@@ -38,7 +38,7 @@ func TestSandboxToolsSessionSchemaPerBackend(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			m := NewSandboxManager(t.TempDir())
+			m := NewManager(t.TempDir())
 			m.buildOverride = func(*store.SandboxConfig, string) (sandbox.Sandbox, error) {
 				return &closeCountingSandbox{}, nil
 			}
@@ -62,7 +62,7 @@ func TestSandboxToolsSessionSchemaPerBackend(t *testing.T) {
 // by SandboxTools closes the pool, so a late session command fails instead of
 // opening a shell nobody will ever close.
 func TestSandboxToolsReleaseClosesSessionPool(t *testing.T) {
-	m := NewSandboxManager(t.TempDir())
+	m := NewManager(t.TempDir())
 	m.buildOverride = func(*store.SandboxConfig, string) (sandbox.Sandbox, error) {
 		return &closeCountingSandbox{}, nil
 	}

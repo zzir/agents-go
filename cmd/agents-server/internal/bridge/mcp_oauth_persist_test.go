@@ -13,13 +13,14 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
 // newOAuthTestStore returns a store with one MCP server row whose saved grant
 // is payload (marshalled), plus the row id.
 func newOAuthTestStore(t *testing.T, payload *tokenPayload) (*store.McpServerStore, string) {
 	t.Helper()
-	s := store.NewMcpServerStore(newTestDB(t))
+	s := store.NewMcpServerStore(testdb.New(t))
 	cfg := &store.McpServerConfig{
 		ID: store.NewID(), Name: "srv", TransportType: "streamable_http", Enabled: true,
 	}

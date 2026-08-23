@@ -16,6 +16,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bravesearch"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/skills"
@@ -34,7 +35,7 @@ type AgentDeps struct {
 	Traces           *store.TraceStore
 	Guardrails       *GuardrailResolver
 	McpManager       *McpManager
-	SandboxManager   *SandboxManager
+	SandboxManager   *sandboxes.Manager
 	ChatGPTOAuth     *ChatGPTOAuth
 	PendingApprovals *store.PendingApprovalStore
 	Tasks            *store.TaskStore
@@ -391,7 +392,7 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 	}
 
 	// Provider + retry/fallback decorators. proxyClient is reused by Brave below.
-	proxyClient := ProxyHTTPClient(ctx, deps.Settings)
+	proxyClient := deps.Settings.ProxyClient(ctx)
 	result.Provider, result.ProviderType, err = resolveProvider(ctx, deps, ac, spec, proxyClient)
 	if err != nil {
 		return nil, err

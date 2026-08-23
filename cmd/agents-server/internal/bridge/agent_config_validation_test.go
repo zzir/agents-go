@@ -10,6 +10,7 @@ import (
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
 // Critical config that fails to parse/resolve must fail the build loudly, not
@@ -18,7 +19,7 @@ import (
 // than fall open to the full skill set.
 func TestBuildFullAgentFailsOnBadCriticalConfig(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB(t)
+	db := testdb.New(t)
 	s := store.NewAgentConfigStore(db)
 	// A workspace with an (empty) skills dir so the skills block is exercised.
 	ws := t.TempDir()
@@ -82,7 +83,7 @@ func TestBuildFullAgentFailsOnBadCriticalConfig(t *testing.T) {
 // handoff to an agent with no guardrails of its own.
 func TestBuildFullAgentPromotesGuardrailsToRunLevel(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB(t)
+	db := testdb.New(t)
 	s := store.NewAgentConfigStore(db)
 	deps := &AgentDeps{
 		AgentConfigs: s,

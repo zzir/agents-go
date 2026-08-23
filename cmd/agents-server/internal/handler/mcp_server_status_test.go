@@ -10,6 +10,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
 // status must collapse config + live state into the one value the UI renders:
@@ -17,7 +18,7 @@ import (
 // authorization, and one WITH a token is merely disconnected (a plain Connect
 // reconnects it silently — no popup, so no needs_auth).
 func TestMcpServerStatusDerivation(t *testing.T) {
-	db := newTestDB(t)
+	db := testdb.New(t)
 	h := NewMcpServerHandler(store.NewMcpServerStore(db), bridge.NewMcpManager(t.Context(), settings.NewReader(store.NewSettingStore(db))), nil, "")
 
 	oauthCfg := json.RawMessage(`{"endpoint":"http://x","auth_mode":"oauth"}`)
@@ -47,7 +48,7 @@ func TestMcpServerStatusDerivation(t *testing.T) {
 // play and silently void the disable switch.
 func TestMcpServerConnectRejectsDisabled(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
+	db := testdb.New(t)
 	mcpStore := store.NewMcpServerStore(db)
 	h := NewMcpServerHandler(mcpStore, bridge.NewMcpManager(t.Context(), settings.NewReader(store.NewSettingStore(db))), nil, "")
 	engine := newTestEngine()
@@ -67,7 +68,7 @@ func TestMcpServerConnectRejectsDisabled(t *testing.T) {
 // Connect button right after disabling).
 func TestMcpServerUpdateDisableReportsDisabled(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
+	db := testdb.New(t)
 	mcpStore := store.NewMcpServerStore(db)
 	h := NewMcpServerHandler(mcpStore, bridge.NewMcpManager(t.Context(), settings.NewReader(store.NewSettingStore(db))), nil, "")
 	engine := newTestEngine()

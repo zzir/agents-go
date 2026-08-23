@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
 // TestRestContract locks the REST API conventions: 404 for writes against
@@ -16,7 +17,7 @@ import (
 // resource, and the {"error": {code, message}} envelope.
 func TestRestContract(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
+	db := testdb.New(t)
 	sessions := store.NewSessionStore(db)
 	sh := NewSessionHandler(testSessionDeps(db, func(d *SessionDeps) { d.Sessions = sessions }))
 	ah := testAgentConfigHandler(db)
@@ -102,7 +103,7 @@ func TestRestContract(t *testing.T) {
 // same conversation over the same file system context, with no CAS of its own.
 func TestForkCopiesSandboxBinding(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
+	db := testdb.New(t)
 	sessions := store.NewSessionStore(db)
 	// BindSandboxIfEmpty refuses a target with no config row (EXISTS).
 	if err := store.NewSandboxStore(db).Create(t.Context(), &store.SandboxConfig{ID: "sb-1", Name: "sb-1", Type: "ssh", Config: json.RawMessage(`{"addr":"h","user":"u","work_dir":"/srv"}`)}); err != nil {
@@ -145,7 +146,7 @@ func TestForkCopiesSandboxBinding(t *testing.T) {
 // projects means starting (or forking into) another session.
 func TestPatchCannotMoveBinding(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
+	db := testdb.New(t)
 	sessions := store.NewSessionStore(db)
 	if err := store.NewSandboxStore(db).Create(t.Context(), &store.SandboxConfig{ID: "sb-1", Name: "sb-1", Type: "ssh", Config: json.RawMessage(`{"addr":"h","user":"u","work_dir":"/srv"}`)}); err != nil {
 		t.Fatal(err)

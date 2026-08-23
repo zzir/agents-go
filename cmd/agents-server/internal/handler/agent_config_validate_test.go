@@ -12,12 +12,13 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
 func newAgentEngine(t *testing.T) (*gin.Engine, *store.McpServerStore) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
+	db := testdb.New(t)
 	mcpStore := store.NewMcpServerStore(db)
 	h := NewAgentConfigHandler(store.NewAgentConfigStore(db), mcpStore, store.NewProviderStore(db), bridge.NewGuardrailResolver(store.NewGuardrailStore(db)))
 

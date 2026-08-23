@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
 // The guards that keep parallel title generation from misfiring: it must not
@@ -12,7 +13,7 @@ import (
 // user message or a provider.
 func TestMaybeGenerateTitleGuards(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB(t)
+	db := testdb.New(t)
 	sessions := store.NewSessionStore(db)
 	runner := NewRunner(ctx, db, &AgentDeps{Sessions: sessions})
 

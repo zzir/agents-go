@@ -9,8 +9,10 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
 // MCP save-time validation rejects an unknown transport and a config missing
@@ -48,8 +50,8 @@ func TestMcpServerReqValidate(t *testing.T) {
 // fails to parse — the latter must not slip a remote-host config past the block.
 func TestSandboxValidation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
-	h := testSandboxHandler(store.NewSandboxStore(db), bridge.NewSandboxManager(t.TempDir()), t.TempDir())
+	db := testdb.New(t)
+	h := testSandboxHandler(store.NewSandboxStore(db), sandboxes.NewManager(t.TempDir()), t.TempDir())
 	engine := newTestEngine()
 	engine.POST("/sandboxes", h.Create)
 
@@ -85,7 +87,7 @@ func TestSandboxValidation(t *testing.T) {
 // namespace, so two servers can't share it.
 func TestMcpServerNameUnique(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
+	db := testdb.New(t)
 	h := NewMcpServerHandler(store.NewMcpServerStore(db), bridge.NewMcpManager(t.Context(), settings.NewReader(store.NewSettingStore(db))), nil, "")
 	engine := newTestEngine()
 	engine.POST("/mcp-servers", h.Create)
@@ -103,7 +105,7 @@ func TestMcpServerNameUnique(t *testing.T) {
 // that exists but isn't connected (409).
 func TestMcpServerToolsNotFoundVsNotConnected(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
+	db := testdb.New(t)
 	mcpStore := store.NewMcpServerStore(db)
 	h := NewMcpServerHandler(mcpStore, bridge.NewMcpManager(t.Context(), settings.NewReader(store.NewSettingStore(db))), nil, "")
 	engine := newTestEngine()
@@ -127,7 +129,7 @@ func TestMcpServerToolsNotFoundVsNotConnected(t *testing.T) {
 // credentials win order-dependent when the router map is built.
 func TestProviderRoutePrefixUnique(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
+	db := testdb.New(t)
 	providers := store.NewProviderStore(db)
 	pv := &store.Provider{Name: "p"}
 	if err := providers.Create(t.Context(), pv); err != nil {

@@ -1,4 +1,4 @@
-package bridge
+package sandboxes
 
 import (
 	"sync"
@@ -14,7 +14,7 @@ import (
 // workdirs on the same config must not share a sandbox, while the same pair
 // keeps hitting the cache. Remove tears down every variant of the id.
 func TestSandboxManagerKeysByWorkdir(t *testing.T) {
-	m := NewSandboxManager(t.TempDir())
+	m := NewManager(t.TempDir())
 	cfg := &store.SandboxConfig{ID: "loc", Name: "local", Type: "local"}
 
 	a1, r1, err := m.Acquire(cfg, "/wd1")
@@ -61,7 +61,7 @@ func TestSandboxManagerKeysByWorkdir(t *testing.T) {
 // a run mid-flight or an open terminal keeps its instance alive — and nothing
 // acquired after the eviction shares the doomed instance.
 func TestSandboxManagerEvictionDefersToHolders(t *testing.T) {
-	m := NewSandboxManager(t.TempDir())
+	m := NewManager(t.TempDir())
 	cfg := &store.SandboxConfig{ID: "loc", Name: "local", Type: "local"}
 
 	inst1, rel1, err := m.acquire(cfg, "/wd")
@@ -112,7 +112,7 @@ func TestSandboxManagerEvictionDefersToHolders(t *testing.T) {
 // An idle instance (no holders) closes immediately on eviction, and releasing
 // an instance that is not doomed keeps it cached for the next acquire.
 func TestSandboxManagerIdleEvictionAndReuse(t *testing.T) {
-	m := NewSandboxManager(t.TempDir())
+	m := NewManager(t.TempDir())
 	cfg := &store.SandboxConfig{ID: "loc", Name: "local", Type: "local"}
 
 	inst, rel, err := m.acquire(cfg, "/wd")
@@ -144,7 +144,7 @@ func TestSandboxManagerIdleEvictionAndReuse(t *testing.T) {
 // instance (the placeholder's ready gate synchronizes them), and the refcount
 // equals the callers.
 func TestSandboxManagerConcurrentAcquireSharesOneBuild(t *testing.T) {
-	m := NewSandboxManager(t.TempDir())
+	m := NewManager(t.TempDir())
 	cfg := &store.SandboxConfig{ID: "loc", Name: "local", Type: "local"}
 
 	const n = 8
@@ -182,7 +182,7 @@ func TestSandboxManagerConcurrentAcquireSharesOneBuild(t *testing.T) {
 // with the error, and the next acquire dials fresh. (The failing config here
 // is a docker one with no image — refused before any daemon contact.)
 func TestSandboxManagerFailedBuildRetries(t *testing.T) {
-	m := NewSandboxManager(t.TempDir())
+	m := NewManager(t.TempDir())
 	bad := &store.SandboxConfig{ID: "sb", Name: "sb", Type: "docker", Config: []byte(`{}`)}
 	if _, _, err := m.acquire(bad, ""); err == nil {
 		t.Fatal("imageless docker build succeeded")
@@ -252,9 +252,9 @@ func (c *closeCountingSandbox) Close() error { c.closes.Add(1); return nil }
 
 // gatedManager returns a manager whose builds block until the returned gate
 // closes, handing each acquire its own countable sandbox.
-func gatedManager(t *testing.T) (*SandboxManager, chan struct{}, *closeCountingSandbox) {
+func gatedManager(t *testing.T) (*Manager, chan struct{}, *closeCountingSandbox) {
 	t.Helper()
-	m := NewSandboxManager(t.TempDir())
+	m := NewManager(t.TempDir())
 	gate := make(chan struct{})
 	sb := &closeCountingSandbox{}
 	m.buildOverride = func(*store.SandboxConfig, string) (sandbox.Sandbox, error) {
@@ -351,7 +351,7 @@ func TestSandboxManagerCloseAllDuringBuild(t *testing.T) {
 // cache keys on the generation: the renamed config keeps sharing the live
 // instance, and nothing retires it over a display-name edit.
 func TestSandboxManagerRenameSharesInstance(t *testing.T) {
-	m := NewSandboxManager(t.TempDir())
+	m := NewManager(t.TempDir())
 	sb := &closeCountingSandbox{}
 	builds := 0
 	m.buildOverride = func(*store.SandboxConfig, string) (sandbox.Sandbox, error) {

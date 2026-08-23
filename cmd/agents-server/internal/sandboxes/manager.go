@@ -1,4 +1,7 @@
-package bridge
+// Package sandboxes keeps the live sandbox instances behind stored sandbox
+// configs — built on demand, shared across a session, retired on edit — and
+// the per-session command trust that gates exec_command.
+package sandboxes
 
 import (
 	"context"
@@ -68,11 +71,11 @@ func (i *sandboxInstance) close() {
 	}
 }
 
-// SandboxManager caches and reuses sandbox instances keyed by (config id,
+// Manager caches and reuses sandbox instances keyed by (config id,
 // runtime generation, workdir), with a reference count per instance: runs and
 // terminals Acquire and release, and eviction defers to the last holder (see
 // sandboxInstance).
-type SandboxManager struct {
+type Manager struct {
 	mu        sync.Mutex
 	instances map[sandboxKey]*sandboxInstance
 	// retired maps a config id to the lowest runtime generation still current
@@ -96,9 +99,9 @@ type SandboxManager struct {
 	trust *TrustStore
 }
 
-// NewSandboxManager creates a SandboxManager that roots local sandboxes at workspace.
-func NewSandboxManager(workspace string) *SandboxManager {
-	return &SandboxManager{
+// NewManager creates a Manager that roots local sandboxes at workspace.
+func NewManager(workspace string) *Manager {
+	return &Manager{
 		instances: make(map[sandboxKey]*sandboxInstance),
 		retired:   make(map[string]int64),
 		workspace: workspace,
@@ -143,12 +146,12 @@ func effectiveWorkDir(cfg *store.SandboxConfig, workDir string) string {
 
 // Trust exposes the session command-trust store so the approval resolver can
 // record "allow this command" / "allow all" grants for a session.
-func (m *SandboxManager) Trust() *TrustStore { return m.trust }
+func (m *Manager) Trust() *TrustStore { return m.trust }
 
 // commandGate is exec_command's per-call approval gate: approval is required
 // unless the run's session has already trusted this exact command (or all
 // commands). The session id rides in RunContext.Context, set by the runner.
-func (m *SandboxManager) commandGate(_ context.Context, rc *agents.RunContext, argsJSON string, _ string) (bool, error) {
+func (m *Manager) commandGate(_ context.Context, rc *agents.RunContext, argsJSON string, _ string) (bool, error) {
 	if rc == nil {
 		return true, nil
 	}
@@ -156,7 +159,7 @@ func (m *SandboxManager) commandGate(_ context.Context, rc *agents.RunContext, a
 	if sid == "" {
 		return true, nil // no session context → be safe, require approval
 	}
-	return !m.trust.forSession(sid).trusted(commandHash(argsJSON)), nil
+	return !m.trust.ForSession(sid).trusted(CommandHash(argsJSON)), nil
 }
 
 // Acquire returns the cached sandbox for (config, workDir), building one if
@@ -166,7 +169,7 @@ func (m *SandboxManager) commandGate(_ context.Context, rc *agents.RunContext, a
 // performs the deferred close when this holder was the last one keeping a
 // doomed instance alive. workDir "" means the config's own default; callers
 // outside a bound session (terminal panel, config test) pass "".
-func (m *SandboxManager) Acquire(cfg *store.SandboxConfig, workDir string) (sandbox.Sandbox, func(), error) {
+func (m *Manager) Acquire(cfg *store.SandboxConfig, workDir string) (sandbox.Sandbox, func(), error) {
 	inst, release, err := m.acquire(cfg, workDir)
 	if err != nil {
 		return nil, nil, err
@@ -183,7 +186,7 @@ func (m *SandboxManager) Acquire(cfg *store.SandboxConfig, workDir string) (sand
 // acquirer installs a placeholder and dials after unlocking; concurrent
 // acquirers of the SAME key find the placeholder, take their reference, and
 // wait on its ready gate — one dial, keyed contention only.
-func (m *SandboxManager) acquire(cfg *store.SandboxConfig, workDir string) (*sandboxInstance, func(), error) {
+func (m *Manager) acquire(cfg *store.SandboxConfig, workDir string) (*sandboxInstance, func(), error) {
 	key := sandboxKey{id: cfg.ID, gen: cfg.RuntimeGen, workDir: effectiveWorkDir(cfg, workDir)}
 	m.mu.Lock()
 	if m.closed {
@@ -253,7 +256,7 @@ func (m *SandboxManager) acquire(cfg *store.SandboxConfig, workDir string) (*san
 // buildFn returns the sandbox builder — the real one, or a test's injected
 // stand-in (the only way to hold a build open while exercising the concurrent
 // eviction and shutdown paths).
-func (m *SandboxManager) buildFn() func(*store.SandboxConfig, string) (sandbox.Sandbox, error) {
+func (m *Manager) buildFn() func(*store.SandboxConfig, string) (sandbox.Sandbox, error) {
 	if m.buildOverride != nil {
 		return m.buildOverride
 	}
@@ -262,7 +265,7 @@ func (m *SandboxManager) buildFn() func(*store.SandboxConfig, string) (sandbox.S
 
 // release drops one holder's reference and closes the instance if it was the
 // last holder of a doomed one.
-func (m *SandboxManager) release(inst *sandboxInstance) {
+func (m *Manager) release(inst *sandboxInstance) {
 	m.mu.Lock()
 	inst.refs--
 	dead := inst.doomed && inst.refs <= 0
@@ -275,7 +278,7 @@ func (m *SandboxManager) release(inst *sandboxInstance) {
 // evictLocked removes an instance from the cache and reports whether the
 // caller should close it now: with holders remaining it is doomed instead,
 // and the last release closes it. Callers hold m.mu.
-func (m *SandboxManager) evictLocked(key sandboxKey) (toClose *sandboxInstance) {
+func (m *Manager) evictLocked(key sandboxKey) (toClose *sandboxInstance) {
 	inst, ok := m.instances[key]
 	if !ok {
 		return nil
@@ -295,7 +298,7 @@ func (m *SandboxManager) evictLocked(key sandboxKey) (toClose *sandboxInstance) 
 // instance (a run mid-flight, an open terminal) keep it alive until their
 // release; the eviction only guarantees no NEW holder joins. Other workdirs
 // on the same config keep their instances.
-func (m *SandboxManager) RemoveInstance(cfg *store.SandboxConfig, workDir string) {
+func (m *Manager) RemoveInstance(cfg *store.SandboxConfig, workDir string) {
 	key := sandboxKey{id: cfg.ID, gen: cfg.RuntimeGen, workDir: effectiveWorkDir(cfg, workDir)}
 	m.mu.Lock()
 	inst := m.evictLocked(key)
@@ -312,7 +315,7 @@ func (m *SandboxManager) RemoveInstance(cfg *store.SandboxConfig, workDir string
 // instance after the eviction swept the cache. With it, that instance is
 // doomed the moment its build lands. In-flight holders finish on what they
 // acquired; only idle instances close immediately.
-func (m *SandboxManager) Retire(id string, minLive int64) {
+func (m *Manager) Retire(id string, minLive int64) {
 	var toClose []*sandboxInstance
 	m.mu.Lock()
 	if m.retired[id] < minLive {
@@ -340,7 +343,7 @@ func (m *SandboxManager) Retire(id string, minLive int64) {
 // instance of a config that no longer exists, with no path ever retiring it.
 // Permanence is safe — ids are random and never reused. In-flight holders
 // finish on what they acquired; only idle instances close immediately.
-func (m *SandboxManager) Remove(id string) {
+func (m *Manager) Remove(id string) {
 	var toClose []*sandboxInstance
 	m.mu.Lock()
 	m.retired[id] = math.MaxInt64
@@ -364,7 +367,7 @@ func (m *SandboxManager) Remove(id string) {
 // release, which is also what keeps this free of the builder's own writes: an
 // instance is only ever closed after its ready gate, never while the dial is
 // in flight.
-func (m *SandboxManager) CloseAll() {
+func (m *Manager) CloseAll() {
 	var toClose []*sandboxInstance
 	m.mu.Lock()
 	m.closed = true
@@ -422,7 +425,7 @@ func TerminalCapable(cfg *store.SandboxConfig) bool {
 // commandApproval is set, exec_command is gated per call through the session
 // command-trust store: a command is approved on first use, then trusted per
 // the user's choice.
-func (m *SandboxManager) SandboxTools(cfg *store.SandboxConfig, workDir string, commandApproval bool) ([]*agents.Tool, func(), error) {
+func (m *Manager) SandboxTools(cfg *store.SandboxConfig, workDir string, commandApproval bool) ([]*agents.Tool, func(), error) {
 	sb, release, err := m.Acquire(cfg, workDir)
 	if err != nil {
 		return nil, nil, err
@@ -452,7 +455,7 @@ func (m *SandboxManager) SandboxTools(cfg *store.SandboxConfig, workDir string, 
 // buildSandbox constructs the SDK sandbox for a config. workDir is the
 // session-bound directory (already normalized by effectiveWorkDir): local and
 // ssh honor it, docker never sees a non-empty value.
-func (m *SandboxManager) buildSandbox(cfg *store.SandboxConfig, workDir string) (sandbox.Sandbox, error) {
+func (m *Manager) buildSandbox(cfg *store.SandboxConfig, workDir string) (sandbox.Sandbox, error) {
 	switch cfg.Type {
 	case "local":
 		var lc store.LocalConfig

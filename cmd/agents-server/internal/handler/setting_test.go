@@ -9,12 +9,13 @@ import (
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
 func newSettingEngine(t *testing.T) (*gin.Engine, *store.SettingStore) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	st := store.NewSettingStore(newTestDB(t))
+	st := store.NewSettingStore(testdb.New(t))
 	h := NewSettingHandler(st)
 	e := newTestEngine()
 	e.GET("/settings", h.List)

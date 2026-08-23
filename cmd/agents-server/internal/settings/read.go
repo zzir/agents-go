@@ -2,6 +2,8 @@ package settings
 
 import (
 	"context"
+	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -84,4 +86,14 @@ func (r *Reader) BoolPtr(ctx context.Context, key string) *bool {
 		return nil
 	}
 	return &v
+}
+
+// ProxyClient returns an *http.Client routed through the proxy_url setting,
+// or nil when none is set.
+func (r *Reader) ProxyClient(ctx context.Context) *http.Client {
+	u, err := url.Parse(r.String(ctx, KeyProxyURL))
+	if err != nil || u.String() == "" {
+		return nil
+	}
+	return &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(u)}}
 }

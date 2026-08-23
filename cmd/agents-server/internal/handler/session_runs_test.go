@@ -11,6 +11,7 @@ import (
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
 // GET /sessions/:id/runs names every run by the question it started from,
@@ -19,7 +20,7 @@ import (
 func TestSessionRunsListsQuestions(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx := context.Background()
-	db := newTestDB(t)
+	db := testdb.New(t)
 	sessions := store.NewSessionStore(db)
 	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "s"}
 	if err := sessions.Create(ctx, sess); err != nil {

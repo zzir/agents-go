@@ -225,7 +225,7 @@ func Validate(key, value string) error {
 	return nil
 }
 
-// validateProxyURL rejects what newProxyClient would drop on the floor: an
+// validateProxyURL rejects what Reader.ProxyClient would drop on the floor: an
 // unparsable proxy, or one with no scheme to dial.
 func validateProxyURL(v string) error {
 	u, err := url.Parse(v)

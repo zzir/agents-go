@@ -262,7 +262,7 @@ func IsOAuthConfig(cfg *store.McpServerConfig) bool {
 }
 
 func (m *McpManager) proxyClient(ctx context.Context) *http.Client {
-	return ProxyHTTPClient(ctx, m.settings)
+	return m.settings.ProxyClient(ctx)
 }
 
 // httpTransport builds the streamable transport for an HTTP server config. The
@@ -471,4 +471,11 @@ func ConnectEnabledMcpServers(ctx context.Context, mgr *McpManager, servers *sto
 		})
 	}
 	wg.Wait()
+}
+
+func unmarshalConfig(raw json.RawMessage, v any) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	return json.Unmarshal(raw, v)
 }

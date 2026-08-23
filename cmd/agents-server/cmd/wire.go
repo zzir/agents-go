@@ -15,6 +15,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/docs"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/handler"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
@@ -100,7 +101,7 @@ type services struct {
 	Mcp        *bridge.McpManager
 	OAuth      *bridge.OAuthCoordinator
 	ChatGPT    *bridge.ChatGPTOAuth
-	Sandboxes  *bridge.SandboxManager
+	Sandboxes  *sandboxes.Manager
 	Guardrails *bridge.GuardrailResolver
 	Scheduler  *bridge.TriggerScheduler
 }
@@ -113,7 +114,7 @@ func newBridge(ctx, bgCtx context.Context, db *bun.DB, st *stores, audit protoco
 		Mcp:        bridge.NewMcpManager(ctx, st.SettingReader),
 		OAuth:      bridge.NewOAuthCoordinator(st.McpServers),
 		ChatGPT:    bridge.NewChatGPTOAuth(st.Providers, st.SettingReader),
-		Sandboxes:  bridge.NewSandboxManager(flagWorkspace),
+		Sandboxes:  sandboxes.NewManager(flagWorkspace),
 	}
 	go bridge.ConnectEnabledMcpServers(bgCtx, svc.Mcp, st.McpServers, svc.OAuth)
 	go bridge.RunTraceRetention(bgCtx, st.SettingReader, st.Traces)

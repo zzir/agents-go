@@ -12,6 +12,7 @@ import (
 	"github.com/zzir/agents-go/agents/middleware"
 	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -525,11 +526,11 @@ func (r *Runner) applyCommandTrust(scope ApprovalScope, item *agents.ToolApprova
 	if item.ToolName != execCommandToolName || sessionID == "" || r.Deps.SandboxManager == nil {
 		return
 	}
-	trust := r.Deps.SandboxManager.Trust().forSession(sessionID)
+	trust := r.Deps.SandboxManager.Trust().ForSession(sessionID)
 	switch scope {
 	case ApprovalSameCommand:
-		trust.allowCommand(commandHash(item.Arguments))
+		trust.AllowCommand(sandboxes.CommandHash(item.Arguments))
 	case ApprovalAll:
-		trust.allowAll()
+		trust.AllowAll()
 	}
 }

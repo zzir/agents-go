@@ -19,6 +19,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 	"github.com/zzir/agents-go/sandbox"
 )
 
@@ -123,7 +124,7 @@ func (p *fakeProvider) Acquire(_ *store.SandboxConfig, workDir string) (sandbox.
 func terminalTestServer(t *testing.T, provider sandboxProvider) (*httptest.Server, *TerminalHandler, string) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
+	db := testdb.New(t)
 	sandboxes := store.NewSandboxStore(db)
 	cfg := &store.SandboxConfig{Name: "box", Type: "ssh", Config: json.RawMessage(`{"addr":"h","user":"u"}`)}
 	if err := sandboxes.Create(t.Context(), cfg); err != nil {
@@ -274,7 +275,7 @@ func TestTerminalWS_EchoResizeExit(t *testing.T) {
 // on a host with the server's stored credentials — admin only.
 func TestTerminalWS_MemberRefused(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
+	db := testdb.New(t)
 	sandboxes := store.NewSandboxStore(db)
 	cfg := &store.SandboxConfig{Name: "box", Type: "ssh", Config: json.RawMessage(`{"addr":"h","user":"u"}`)}
 	if err := sandboxes.Create(t.Context(), cfg); err != nil {
@@ -390,7 +391,7 @@ func TestTerminalWS_CloseSandboxTerminals(t *testing.T) {
 // honestly means the sandbox default.
 func TestTerminalOpen_ValidatesWorkDir(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
+	db := testdb.New(t)
 	sandboxes := store.NewSandboxStore(db)
 	cfg := &store.SandboxConfig{Name: "dock", Type: "docker", Config: json.RawMessage(`{"image":"i","persistent":true}`)}
 	if err := sandboxes.Create(t.Context(), cfg); err != nil {

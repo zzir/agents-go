@@ -11,7 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/sandbox"
 )
@@ -19,7 +19,7 @@ import (
 // SandboxHandler serves CRUD endpoints and code execution for sandboxes.
 type SandboxHandler struct {
 	store             *store.SandboxStore
-	manager           *bridge.SandboxManager
+	manager           *sandboxes.Manager
 	allowLocalSandbox bool
 	terminals         *TerminalHandler
 	// workspaceAbs is the server --workspace directory, absolute — the default
@@ -31,7 +31,7 @@ type SandboxHandler struct {
 // allowLocal controls whether type "local" sandboxes may be created; terminals
 // is the web-terminal registry an update or delete tears down; workspace is
 // the server --workspace directory, reported as each sandbox's default workdir.
-func NewSandboxHandler(s *store.SandboxStore, m *bridge.SandboxManager, allowLocal bool, terminals *TerminalHandler, workspace string) *SandboxHandler {
+func NewSandboxHandler(s *store.SandboxStore, m *sandboxes.Manager, allowLocal bool, terminals *TerminalHandler, workspace string) *SandboxHandler {
 	if s == nil || terminals == nil {
 		panic("handler: NewSandboxHandler needs the sandbox store and the terminal handler")
 	}
@@ -57,7 +57,7 @@ func (h *SandboxHandler) closeSandboxTerminals(id string, minGen int64) {
 // docker it is the container-side /workspace constant, never the host mount
 // source (that is the config's host_dir, a different concept).
 func (h *SandboxHandler) annotate(cfg *store.SandboxConfig) {
-	cfg.Terminal = bridge.TerminalCapable(cfg)
+	cfg.Terminal = sandboxes.TerminalCapable(cfg)
 	switch cfg.Type {
 	case "ssh":
 		var sc store.SSHConfig
@@ -77,7 +77,7 @@ func (h *SandboxHandler) annotate(cfg *store.SandboxConfig) {
 		// may work in a /workspace subtree — so the directory is editable
 		// within that constraint. An ephemeral container has no durable tree
 		// to subdivide.
-		cfg.DefaultWorkDir = bridge.DockerWorkspace
+		cfg.DefaultWorkDir = sandboxes.DockerWorkspace
 		var dc store.DockerConfig
 		if len(cfg.Config) > 0 {
 			_ = json.Unmarshal(cfg.Config, &dc)

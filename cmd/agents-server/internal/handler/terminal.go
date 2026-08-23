@@ -12,6 +12,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
@@ -54,7 +55,7 @@ type TerminalHandler struct {
 	fence map[string]int64
 }
 
-// sandboxProvider is the slice of bridge.SandboxManager the terminal handler
+// sandboxProvider is the slice of sandboxes.Manager the terminal handler
 // depends on; an interface so tests can inject a fake backend.
 type sandboxProvider interface {
 	// Acquire takes a reference on the instance for the terminal's lifetime;
@@ -64,7 +65,7 @@ type sandboxProvider interface {
 	Acquire(cfg *store.SandboxConfig, workDir string) (sandbox.Sandbox, func(), error)
 }
 
-var _ sandboxProvider = (*bridge.SandboxManager)(nil)
+var _ sandboxProvider = (*sandboxes.Manager)(nil)
 
 // liveTerminal pairs a Terminal with its connection so a registry teardown
 // can stop both pumps; gen records the config generation it opened under, so

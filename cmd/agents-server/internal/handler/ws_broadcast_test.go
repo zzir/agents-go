@@ -15,6 +15,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
 const testWSToken = "t"
@@ -63,7 +64,7 @@ func readUntil(t *testing.T, conn *websocket.Conn, typ string) protocol.Envelope
 // contract that lets two browsers watch the same session live.
 func TestRunEventsBroadcastToAllConnections(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
+	db := testdb.New(t)
 	sessions := store.NewSessionStore(db)
 	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "s"}
 	if err := sessions.Create(t.Context(), sess); err != nil {

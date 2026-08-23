@@ -11,11 +11,12 @@ import (
 	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
 func newBareRunner(t *testing.T) (*Runner, *bun.DB) {
 	t.Helper()
-	db := newTestDB(t)
+	db := testdb.New(t)
 	runner := NewRunner(context.Background(), db, &AgentDeps{
 		AgentConfigs:     store.NewAgentConfigStore(db),
 		Sessions:         store.NewSessionStore(db),

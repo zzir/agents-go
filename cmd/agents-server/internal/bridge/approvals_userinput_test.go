@@ -8,6 +8,7 @@ import (
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
 func userInputItems(t *testing.T, raws ...string) []agents.InputItem {
@@ -30,7 +31,7 @@ func userInputItems(t *testing.T, raws ...string) []agents.InputItem {
 // `messages` on completion).
 func TestPersistInterruptionStoresUserInput(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB(t)
+	db := testdb.New(t)
 	approvals := store.NewPendingApprovalStore(db)
 	runner := NewRunner(ctx, db, &AgentDeps{PendingApprovals: approvals})
 

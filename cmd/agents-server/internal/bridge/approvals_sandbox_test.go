@@ -5,8 +5,10 @@ import (
 	"testing"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
 // buildAgentRegistry resolves the names in a serialized RunState back to live
@@ -17,10 +19,10 @@ import (
 // could never be approved).
 func TestBuildAgentRegistryIncludesSandboxTools(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB(t)
+	db := testdb.New(t)
 
 	agentConfigs := store.NewAgentConfigStore(db)
-	sandboxes := store.NewSandboxStore(db)
+	sandboxStore := store.NewSandboxStore(db)
 
 	ac := &store.AgentConfig{Name: "coder", Model: "gpt-test", ProviderID: testProvider(t, db, "p", "sk-x", "")}
 	if err := agentConfigs.Create(ctx, ac); err != nil {
@@ -28,21 +30,21 @@ func TestBuildAgentRegistryIncludesSandboxTools(t *testing.T) {
 	}
 	// A local sandbox needs no daemon, so its tools build in-process.
 	sb := &store.SandboxConfig{ID: store.NewID(), Name: "L", Type: "local", Config: []byte(`{}`)}
-	if err := sandboxes.Create(ctx, sb); err != nil {
+	if err := sandboxStore.Create(ctx, sb); err != nil {
 		t.Fatalf("create sandbox: %v", err)
 	}
 
 	runner := NewRunner(ctx, db, &AgentDeps{
 		AgentConfigs:   agentConfigs,
 		Providers:      store.NewProviderStore(db),
-		SandboxConfigs: sandboxes,
+		SandboxConfigs: sandboxStore,
 		Settings:       settings.NewReader(store.NewSettingStore(db)),
 		Memories:       store.NewMemoryStore(db),
 		McpServers:     store.NewMcpServerStore(db),
 		ProviderRoutes: store.NewProviderRouteStore(db),
 		Guardrails:     NewGuardrailResolver(store.NewGuardrailStore(db)),
 		McpManager:     NewMcpManager(ctx, settings.NewReader(store.NewSettingStore(db))),
-		SandboxManager: NewSandboxManager(t.TempDir()),
+		SandboxManager: sandboxes.NewManager(t.TempDir()),
 	})
 
 	hasExec := func(reg map[string]*agents.Agent) bool {

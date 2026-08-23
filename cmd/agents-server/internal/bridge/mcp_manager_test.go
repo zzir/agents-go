@@ -17,6 +17,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 	"github.com/zzir/agents-go/mcp"
 )
 
@@ -205,7 +206,7 @@ func TestConnectEnabledMcpServersConcurrent(t *testing.T) {
 	}))
 	defer fast.Close()
 
-	db := newTestDB(t)
+	db := testdb.New(t)
 	mcpStore := store.NewMcpServerStore(db)
 	mk := func(name, endpoint string) {
 		cfg := &store.McpServerConfig{

@@ -8,6 +8,7 @@ import (
 	"github.com/zzir/agents-go/agents/middleware"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
 // use_previous_response_id was removed end to end (the server always runs
@@ -17,7 +18,7 @@ import (
 // simply decode past it and build.
 func TestBuildFullAgentIgnoresLegacyUsePreviousResponseID(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB(t)
+	db := testdb.New(t)
 	agentConfigs := store.NewAgentConfigStore(db)
 
 	ac := &store.AgentConfig{Name: "legacy", Model: "gpt-test"}
@@ -53,7 +54,7 @@ func TestBuildFullAgentIgnoresLegacyUsePreviousResponseID(t *testing.T) {
 // session nobody reads is a deliverable nobody can answer.
 func TestBackgroundBuildIsToldNobodyIsReading(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB(t)
+	db := testdb.New(t)
 	agentConfigs := store.NewAgentConfigStore(db)
 	ac := &store.AgentConfig{Name: "worker", Model: "gpt-test", Instructions: "Be helpful."}
 	if err := agentConfigs.Create(ctx, ac); err != nil {
@@ -94,7 +95,7 @@ func TestBackgroundBuildIsToldNobodyIsReading(t *testing.T) {
 // the approved call fails with "tool not found on agent".
 func TestBuildFullAgentAppliesWorkflowModes(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB(t)
+	db := testdb.New(t)
 	agentConfigs := store.NewAgentConfigStore(db)
 
 	ac := &store.AgentConfig{Name: "wf", Model: "gpt-test"}

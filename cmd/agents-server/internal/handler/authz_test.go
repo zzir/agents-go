@@ -20,6 +20,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
 var (
@@ -51,7 +52,7 @@ type rig struct {
 func authzRig(t *testing.T) rig {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
+	db := testdb.New(t)
 	sessions := store.NewSessionStore(db)
 	agents := store.NewAgentConfigStore(db)
 	deps := &bridge.AgentDeps{AgentConfigs: agents, Sessions: sessions, Traces: store.NewTraceStore(db)}
@@ -297,7 +298,7 @@ func TestSessionReassignIsAdminManagement(t *testing.T) {
 // watching the bus hears nothing of a run in a session they do not own.
 func TestRunEventsStayWithTheOwner(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
+	db := testdb.New(t)
 	sessions := store.NewSessionStore(db)
 	sess := &store.Session{OwnerID: memberUser.ID, ID: store.NewID(), Name: "mine"}
 	if err := sessions.Create(t.Context(), sess); err != nil {
@@ -406,7 +407,7 @@ func TestRunEventsStayWithTheOwner(t *testing.T) {
 // account, and the last enabled admin cannot be demoted or disabled.
 func TestUserManagement(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
+	db := testdb.New(t)
 	for _, u := range []protocol.UserInfo{adminUser, memberUser} {
 		if _, err := db.NewInsert().Model(&store.User{ID: u.ID, Email: u.Email, Role: u.Role}).Exec(t.Context()); err != nil {
 			t.Fatal(err)

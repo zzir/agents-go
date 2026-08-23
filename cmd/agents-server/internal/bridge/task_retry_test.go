@@ -9,6 +9,7 @@ import (
 	"github.com/zzir/agents-go/agents/tasks"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
 // The task's OWN agent has to survive the round trip through the row, because
@@ -18,7 +19,7 @@ import (
 // launcher and never reads this one back.
 func TestTaskAdapter_InheritKeepsTheTaskAgent(t *testing.T) {
 	ctx := context.Background()
-	adapter := store.NewTaskAdapter(store.NewTaskStore(newTestDB(t)))
+	adapter := store.NewTaskAdapter(store.NewTaskStore(testdb.New(t)))
 
 	in := &tasks.Task{
 		ID: store.NewID(), RunID: store.NewID(),

@@ -6,8 +6,10 @@ import (
 
 	"github.com/zzir/agents-go/agents/middleware"
 	"github.com/zzir/agents-go/agents/session"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
 // The write half: persisting the unlock (clearing the session's planning
@@ -15,7 +17,7 @@ import (
 // keeps the phase locked instead of letting behavior run ahead of the record.
 func TestPlanUnlockClearsThePhase(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB(t)
+	db := testdb.New(t)
 	sessions := store.NewSessionStore(db)
 	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "s", Planning: true}
 	if err := sessions.Create(ctx, sess); err != nil {
@@ -41,7 +43,7 @@ func TestPlanUnlockClearsThePhase(t *testing.T) {
 	}
 
 	// A failed write fails the unlock and the phase stays planning.
-	db2 := newTestDB(t)
+	db2 := testdb.New(t)
 	ref2 := session.Direct(store.NewID())
 	sa2 := store.NewEntryStoreFor(db2, ref2)
 	if err := db2.Close(); err != nil {
@@ -62,7 +64,7 @@ func TestPlanUnlockClearsThePhase(t *testing.T) {
 // re-asked next turn — replaying without duplicating.
 func TestRestorePlanPhase(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB(t)
+	db := testdb.New(t)
 	sessions := store.NewSessionStore(db)
 	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "s"}
 	if err := sessions.Create(ctx, sess); err != nil {
@@ -75,7 +77,7 @@ func TestRestorePlanPhase(t *testing.T) {
 		McpServers:     store.NewMcpServerStore(db),
 		ProviderRoutes: store.NewProviderRouteStore(db),
 		Guardrails:     NewGuardrailResolver(store.NewGuardrailStore(db)),
-		SandboxManager: NewSandboxManager(t.TempDir()),
+		SandboxManager: sandboxes.NewManager(t.TempDir()),
 	})
 
 	ref0, err := store.RefFor(ctx, db, sess.ID)
@@ -127,7 +129,7 @@ func TestRestorePlanPhase(t *testing.T) {
 	}
 
 	// A failed read surfaces as an error — never a silent planning phase.
-	dbBroken := newTestDB(t)
+	dbBroken := testdb.New(t)
 	sessions2 := store.NewSessionStore(dbBroken)
 	sess2 := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "s2"}
 	if err := sessions2.Create(ctx, sess2); err != nil {
@@ -140,7 +142,7 @@ func TestRestorePlanPhase(t *testing.T) {
 		McpServers:     store.NewMcpServerStore(dbBroken),
 		ProviderRoutes: store.NewProviderRouteStore(dbBroken),
 		Guardrails:     NewGuardrailResolver(store.NewGuardrailStore(dbBroken)),
-		SandboxManager: NewSandboxManager(t.TempDir()),
+		SandboxManager: sandboxes.NewManager(t.TempDir()),
 	})
 	if err := dbBroken.Close(); err != nil {
 		t.Fatalf("close db: %v", err)

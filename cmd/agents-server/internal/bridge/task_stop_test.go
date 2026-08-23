@@ -12,6 +12,7 @@ import (
 
 	"github.com/uptrace/bun"
 	sdktasks "github.com/zzir/agents-go/agents/tasks"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -206,7 +207,7 @@ func TestStopTaskCancelsARunInsideATool(t *testing.T) {
 	runner, sessions, tasks, agentConfigs := newTaskTestRunner(t)
 	workspace := t.TempDir()
 	runner.Deps.SandboxConfigs = store.NewSandboxStore(runner.db)
-	runner.Deps.SandboxManager = NewSandboxManager(workspace)
+	runner.Deps.SandboxManager = sandboxes.NewManager(workspace)
 	sb := &store.SandboxConfig{ID: store.NewID(), Name: "local", Type: "local"}
 	if err := runner.Deps.SandboxConfigs.Create(ctx, sb); err != nil {
 		t.Fatal(err)

@@ -6,26 +6,12 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/uptrace/bun"
-
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
-
-func newTestDB(t *testing.T) *bun.DB {
-	t.Helper()
-	db, err := store.NewSQLiteDB("file:" + store.NewID() + "?mode=memory&cache=shared")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if err := store.CreateSchema(context.Background(), db); err != nil {
-		t.Fatalf("schema: %v", err)
-	}
-	return db
-}
 
 // TestResolveApprovalBusyKeepsPending locks the claim/restore semantics: when
 // the session already has a live run, resolving an approval must fail with
@@ -33,7 +19,7 @@ func newTestDB(t *testing.T) *bun.DB {
 // retried — losing the row would strand the paused run forever.
 func TestResolveApprovalBusyKeepsPending(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB(t)
+	db := testdb.New(t)
 
 	agentConfigs := store.NewAgentConfigStore(db)
 	approvals := store.NewPendingApprovalStore(db)
@@ -129,7 +115,7 @@ func TestResolveApprovalBusyKeepsPending(t *testing.T) {
 // discards the row so it can't wedge the session with a masked 500 on retry.
 func TestResolveApprovalStaleSchemaDiscarded(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB(t)
+	db := testdb.New(t)
 
 	agentConfigs := store.NewAgentConfigStore(db)
 	approvals := store.NewPendingApprovalStore(db)
@@ -186,7 +172,7 @@ func TestResolveApprovalStaleSchemaDiscarded(t *testing.T) {
 // fine, which is exactly the failure this test pins.
 func TestResolveApprovalOlderDecodableSchemaNotDiscarded(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB(t)
+	db := testdb.New(t)
 
 	agentConfigs := store.NewAgentConfigStore(db)
 	approvals := store.NewPendingApprovalStore(db)
@@ -249,7 +235,7 @@ func TestResolveApprovalOlderDecodableSchemaNotDiscarded(t *testing.T) {
 // stranding the paused run forever, which is what the old code did.
 func TestResolveApprovalTaskNotYetInputRequiredKeepsPending(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB(t)
+	db := testdb.New(t)
 
 	agentConfigs := store.NewAgentConfigStore(db)
 	approvals := store.NewPendingApprovalStore(db)

@@ -8,6 +8,7 @@ import (
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
 // deadLister is a manager with no connected servers: every ask fails with no
@@ -22,7 +23,7 @@ func (deadLister) ListToolsFor(context.Context, string) (string, []*agents.Tool,
 // CONFIGURED name from the store — never by its raw id.
 func TestContextMcpBucketNamesDisconnectedServers(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB(t)
+	db := testdb.New(t)
 	mcpStore := store.NewMcpServerStore(db)
 	srv := &store.McpServerConfig{Name: "AgentKey", TransportType: "streamable_http"}
 	if err := mcpStore.Create(ctx, srv); err != nil {

@@ -77,7 +77,7 @@ func NewChatGPTOAuth(providers *store.ProviderStore, cfg *settings.Reader) *Chat
 // httpClient returns a timed HTTP client for the token endpoint, routed through
 // the configured proxy when one is set.
 func (o *ChatGPTOAuth) httpClient(ctx context.Context) *http.Client {
-	if pc := ProxyHTTPClient(ctx, o.settings); pc != nil {
+	if pc := o.settings.ProxyClient(ctx); pc != nil {
 		pc.Timeout = chatgptHTTPTimeout
 		return pc
 	}

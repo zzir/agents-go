@@ -1,4 +1,4 @@
-package bridge
+package sandboxes
 
 import (
 	"crypto/sha256"
@@ -22,7 +22,7 @@ func (t *CommandTrust) trusted(hash string) bool {
 	return t.approveAll || t.approved[hash]
 }
 
-func (t *CommandTrust) allowCommand(hash string) {
+func (t *CommandTrust) AllowCommand(hash string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.approved == nil {
@@ -31,7 +31,7 @@ func (t *CommandTrust) allowCommand(hash string) {
 	t.approved[hash] = true
 }
 
-func (t *CommandTrust) allowAll() {
+func (t *CommandTrust) AllowAll() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.approveAll = true
@@ -51,7 +51,7 @@ func NewTrustStore() *TrustStore {
 	return &TrustStore{bySession: make(map[string]*CommandTrust)}
 }
 
-func (s *TrustStore) forSession(id string) *CommandTrust {
+func (s *TrustStore) ForSession(id string) *CommandTrust {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	t := s.bySession[id]
@@ -62,11 +62,11 @@ func (s *TrustStore) forSession(id string) *CommandTrust {
 	return t
 }
 
-// commandHash canonicalizes an exec_command argsJSON to a stable key, so
+// CommandHash canonicalizes an exec_command argsJSON to a stable key, so
 // "approve this exact command" matches only a byte-identical (cmd, workdir)
 // pair. It is exact, not prefix/substring: approving `go test` never green-lights
 // `go test && rm -rf` — any change re-triggers approval.
-func commandHash(argsJSON string) string {
+func CommandHash(argsJSON string) string {
 	var a struct {
 		Cmd     string `json:"cmd"`
 		Workdir string `json:"workdir"`

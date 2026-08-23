@@ -186,7 +186,7 @@ func BuildRouterProvider(ctx context.Context, deps *AgentDeps, fallback agents.M
 	if len(routes) == 0 {
 		return fallback
 	}
-	proxyClient := ProxyHTTPClient(ctx, deps.Settings)
+	proxyClient := deps.Settings.ProxyClient(ctx)
 	routeMap := make(map[string]agents.ModelProvider, len(routes))
 	for _, r := range routes {
 		pv, err := deps.Providers.Get(ctx, r.ProviderID)

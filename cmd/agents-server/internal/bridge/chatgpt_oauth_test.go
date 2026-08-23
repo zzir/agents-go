@@ -7,6 +7,7 @@ import (
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
 // IsLoggedIn / StartLogin must distinguish a missing provider (ErrNotFound →
@@ -14,7 +15,7 @@ import (
 // the ChatGPT OAuth endpoints have consistent resource semantics.
 func TestChatGPTOAuthMissingProvider(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB(t)
+	db := testdb.New(t)
 	providers := store.NewProviderStore(db)
 	o := NewChatGPTOAuth(providers, settings.NewReader(store.NewSettingStore(db)))
 

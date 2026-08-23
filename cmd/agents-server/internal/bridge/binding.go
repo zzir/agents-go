@@ -11,6 +11,7 @@ import (
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -105,14 +106,14 @@ func ResolveBindingWorkDir(cfg *store.SandboxConfig, workDir string) (string, er
 		// client that echoes the advertised default back must not be refused
 		// over the spelling of "the default".
 		clean := path.Clean(workDir)
-		if clean == DockerWorkspace {
+		if clean == sandboxes.DockerWorkspace {
 			return "", nil
 		}
 		if !dc.Persistent {
 			return "", ErrInvalidBinding{Reason: "an ephemeral docker sandbox always runs in /workspace; leave the directory empty"}
 		}
-		if !strings.HasPrefix(clean, DockerWorkspace+"/") {
-			return "", ErrInvalidBinding{Reason: fmt.Sprintf("docker working directory %q must be %s or a subdirectory of it", workDir, DockerWorkspace)}
+		if !strings.HasPrefix(clean, sandboxes.DockerWorkspace+"/") {
+			return "", ErrInvalidBinding{Reason: fmt.Sprintf("docker working directory %q must be %s or a subdirectory of it", workDir, sandboxes.DockerWorkspace)}
 		}
 		return clean, nil
 	default:

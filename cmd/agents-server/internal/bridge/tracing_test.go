@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 	"github.com/zzir/agents-go/tracing"
 )
 
@@ -88,7 +89,7 @@ func TestSpanDataDropsTheRedundantName(t *testing.T) {
 // (which copies trace rows but not task rows) carries it for free.
 func TestSpanRowsCarryTheRunLineage(t *testing.T) {
 	ctx := context.Background()
-	traces := store.NewTraceStore(newTestDB(t))
+	traces := store.NewTraceStore(testdb.New(t))
 	p := newWSProcessor(ctx, func(string, any) {}, traces, "sess", "run_wake", "run_origin", storedSpanDataJSON)
 
 	now := time.Now()

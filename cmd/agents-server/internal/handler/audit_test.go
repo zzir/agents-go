@@ -15,6 +15,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
 // The audit log attributes every successful mutating request to its caller,
@@ -23,7 +24,7 @@ import (
 // admin reads it back; a member may not.
 func TestAuditLogRecordsMutations(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
+	db := testdb.New(t)
 	audit := store.NewAuditStore(db)
 	var mu sync.Mutex
 	var seen []protocol.AuditRecord

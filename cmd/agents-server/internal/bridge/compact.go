@@ -54,7 +54,7 @@ func (r *Runner) compactSessionAs(ctx context.Context, sessionID string, ac *sto
 	if err != nil {
 		return false, 0, 0, err
 	}
-	provider, providerType, err := resolveProvider(ctx, r.Deps, ac, spec, ProxyHTTPClient(ctx, r.Deps.Settings))
+	provider, providerType, err := resolveProvider(ctx, r.Deps, ac, spec, r.Deps.Settings.ProxyClient(ctx))
 	if err != nil {
 		return false, 0, 0, err
 	}

@@ -14,6 +14,7 @@ import (
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
@@ -22,19 +23,6 @@ import (
 // newTestDB opens an isolated in-memory SQLite database with the full schema
 // created, mirroring the store package's test helper. Each call gets its own
 // database (unique shared-cache name), closed via t.Cleanup.
-func newTestDB(t *testing.T) *bun.DB {
-	t.Helper()
-	db, err := store.NewSQLiteDB("file:" + store.NewID() + "?mode=memory&cache=shared")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if err := store.CreateSchema(context.Background(), db); err != nil {
-		t.Fatalf("schema: %v", err)
-	}
-	return db
-}
-
 // newTestEngine is gin.New() with the local admin signed in, as the auth
 // middleware would have done — every handler reads the caller.
 func newTestEngine() *gin.Engine {
@@ -119,6 +107,6 @@ func testAgentConfigHandler(db *bun.DB) *AgentConfigHandler {
 // testSandboxHandler wires a SandboxHandler over the given store and manager,
 // with a terminal registry over the same pair and the workspace given. Local
 // sandboxes stay refused, as the flag defaults.
-func testSandboxHandler(sandboxes *store.SandboxStore, manager *bridge.SandboxManager, workspace string) *SandboxHandler {
-	return NewSandboxHandler(sandboxes, manager, false, NewTerminalHandler(sandboxes, manager, settings.NewReader(nil)), workspace)
+func testSandboxHandler(sandboxStore *store.SandboxStore, manager *sandboxes.Manager, workspace string) *SandboxHandler {
+	return NewSandboxHandler(sandboxStore, manager, false, NewTerminalHandler(sandboxStore, manager, settings.NewReader(nil)), workspace)
 }

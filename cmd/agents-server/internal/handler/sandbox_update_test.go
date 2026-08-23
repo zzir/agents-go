@@ -6,8 +6,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
 // A rename submitted from the UI must not count as a content change, even
@@ -16,26 +17,26 @@ import (
 // generation is the observable: a content change bumps it, a rename must not.
 func TestSandboxUpdate_UIRenameIsNotAContentChange(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
-	sandboxes := store.NewSandboxStore(db)
+	db := testdb.New(t)
+	sandboxStore := store.NewSandboxStore(db)
 	cfg := &store.SandboxConfig{Name: "old", Type: "ssh",
 		Config: json.RawMessage(`{"addr":"h","user":"u","work_dir":"/srv"}`)}
-	if err := sandboxes.Create(t.Context(), cfg); err != nil {
+	if err := sandboxStore.Create(t.Context(), cfg); err != nil {
 		t.Fatal(err)
 	}
 
-	h := testSandboxHandler(sandboxes, bridge.NewSandboxManager(t.TempDir()), t.TempDir())
+	h := testSandboxHandler(sandboxStore, sandboxes.NewManager(t.TempDir()), t.TempDir())
 	engine := newTestEngine()
-	engine.PUT("/sandboxes/:id", h.Update)
+	engine.PUT("/sandboxStore/:id", h.Update)
 
 	// The exact shape the UI sends for a rename: full field set, explicit
 	// zero values for everything the stored config omitted.
 	rename := `{"name":"new","type":"ssh","config":{"addr":"h","user":"u","use_agent":false,` +
 		`"key_file":"","password":"","known_hosts":"","insecure_host_key":false,"work_dir":"/srv"}}`
-	if w := doJSON(t, engine, "PUT", "/sandboxes/"+cfg.ID, rename); w.Code != 200 {
+	if w := doJSON(t, engine, "PUT", "/sandboxStore/"+cfg.ID, rename); w.Code != 200 {
 		t.Fatalf("rename status = %d: %s", w.Code, w.Body.String())
 	}
-	cur, err := sandboxes.Get(t.Context(), cfg.ID)
+	cur, err := sandboxStore.Get(t.Context(), cfg.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,10 +51,10 @@ func TestSandboxUpdate_UIRenameIsNotAContentChange(t *testing.T) {
 	// flipping use_agent — does move the generation.
 	flip := `{"name":"new","type":"ssh","config":{"addr":"h","user":"u","use_agent":true,` +
 		`"key_file":"","password":"","known_hosts":"","insecure_host_key":false,"work_dir":"/srv"}}`
-	if w := doJSON(t, engine, "PUT", "/sandboxes/"+cfg.ID, flip); w.Code != 200 {
+	if w := doJSON(t, engine, "PUT", "/sandboxStore/"+cfg.ID, flip); w.Code != 200 {
 		t.Fatalf("content-change status = %d: %s", w.Code, w.Body.String())
 	}
-	cur, err = sandboxes.Get(t.Context(), cfg.ID)
+	cur, err = sandboxStore.Get(t.Context(), cfg.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,31 +69,31 @@ func TestSandboxUpdate_UIRenameIsNotAContentChange(t *testing.T) {
 // last-writer-wins behavior for raw API callers.
 func TestSandboxUpdate_StaleClientRevisionConflicts(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
-	sandboxes := store.NewSandboxStore(db)
+	db := testdb.New(t)
+	sandboxStore := store.NewSandboxStore(db)
 	cfg := &store.SandboxConfig{Name: "old", Type: "ssh",
 		Config: json.RawMessage(`{"addr":"h","user":"u","work_dir":"/srv"}`)}
-	if err := sandboxes.Create(t.Context(), cfg); err != nil {
+	if err := sandboxStore.Create(t.Context(), cfg); err != nil {
 		t.Fatal(err)
 	}
 
-	h := testSandboxHandler(sandboxes, bridge.NewSandboxManager(t.TempDir()), t.TempDir())
+	h := testSandboxHandler(sandboxStore, sandboxes.NewManager(t.TempDir()), t.TempDir())
 	engine := newTestEngine()
-	engine.PUT("/sandboxes/:id", h.Update)
+	engine.PUT("/sandboxStore/:id", h.Update)
 
 	body := func(name string, revision string) string {
 		return `{"name":"` + name + `","type":"ssh","config":{"addr":"h","user":"u","work_dir":"/srv"}` + revision + `}`
 	}
 
 	// Tab A saves from the form it loaded at revision 1: lands, row moves on.
-	if w := doJSON(t, engine, "PUT", "/sandboxes/"+cfg.ID, body("a", `,"revision":1`)); w.Code != 200 {
+	if w := doJSON(t, engine, "PUT", "/sandboxStore/"+cfg.ID, body("a", `,"revision":1`)); w.Code != 200 {
 		t.Fatalf("first save status = %d: %s", w.Code, w.Body.String())
 	}
 	// Tab B saves from ITS revision-1 form: the row is at 2 now — refused.
-	if w := doJSON(t, engine, "PUT", "/sandboxes/"+cfg.ID, body("b", `,"revision":1`)); w.Code != 409 {
+	if w := doJSON(t, engine, "PUT", "/sandboxStore/"+cfg.ID, body("b", `,"revision":1`)); w.Code != 409 {
 		t.Fatalf("stale save status = %d, want 409: %s", w.Code, w.Body.String())
 	}
-	cur, err := sandboxes.Get(t.Context(), cfg.ID)
+	cur, err := sandboxStore.Get(t.Context(), cfg.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +101,7 @@ func TestSandboxUpdate_StaleClientRevisionConflicts(t *testing.T) {
 		t.Fatalf("name = %q after refused stale save, want a", cur.Name)
 	}
 	// No revision in the request: last-writer-wins, as before the field existed.
-	if w := doJSON(t, engine, "PUT", "/sandboxes/"+cfg.ID, body("c", "")); w.Code != 200 {
+	if w := doJSON(t, engine, "PUT", "/sandboxStore/"+cfg.ID, body("c", "")); w.Code != 200 {
 		t.Fatalf("revision-less save status = %d: %s", w.Code, w.Body.String())
 	}
 }

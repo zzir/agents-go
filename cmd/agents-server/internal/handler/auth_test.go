@@ -17,6 +17,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/authn"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
 // authEngine mounts the real middleware chain plus the auth routes, the way
@@ -72,7 +73,7 @@ func TestTokenLoginEnvelopes(t *testing.T) {
 // login is refused.
 func TestOAuthModeSessionTokens(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB(t)
+	db := testdb.New(t)
 	users, tokens := store.NewUserStore(db), store.NewAuthTokenStore(db)
 	u, err := users.ResolveOAuthLogin(ctx, store.OAuthIdentity{Provider: "google", Subject: "s1", Email: "a@example.com", Name: "A"}, "")
 	if err != nil {
@@ -129,7 +130,7 @@ func (f *fakeLoginProvider) Identity(_ context.Context, code, _, _ string) (stor
 // redirects into the SPA with a one-time code, exchange yields the session
 // token, and that token opens /auth/me.
 func TestOAuthFlowOverHTTP(t *testing.T) {
-	db := newTestDB(t)
+	db := testdb.New(t)
 	svc := authn.NewOAuth(authn.OAuthConfig{
 		Users: store.NewUserStore(db), Tokens: store.NewAuthTokenStore(db),
 		BaseURL:       "http://app.local",
@@ -234,7 +235,7 @@ func TestOAuthFlowOverHTTP(t *testing.T) {
 // where they could never authenticate.
 func TestPersonalAccessTokens(t *testing.T) {
 	ctx := context.Background()
-	db := newTestDB(t)
+	db := testdb.New(t)
 	users, tokens := store.NewUserStore(db), store.NewAuthTokenStore(db)
 	u, err := users.ResolveOAuthLogin(ctx, store.OAuthIdentity{Provider: "google", Subject: "s1", Email: "a@example.com"}, "")
 	if err != nil {

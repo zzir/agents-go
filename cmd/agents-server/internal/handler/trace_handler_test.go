@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
 // The listing the trace panel opens with leaves the payload out and says so;
@@ -16,7 +17,7 @@ import (
 func TestTraceListingSummaryAndSpan(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx := context.Background()
-	db := newTestDB(t)
+	db := testdb.New(t)
 	traces := store.NewTraceStore(db)
 	gen := &store.TraceEvent{SessionID: "s1", RunID: "r1", Kind: "span", SpanID: "sp1", Name: "generation", Detail: "generation",
 		Data: `{"model":"m","input_tokens":5,"input":[{"role":"user","content":"long"}]}`}

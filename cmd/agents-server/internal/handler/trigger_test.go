@@ -15,6 +15,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
 // fakeFirer records fires and syncs; a name in refuse makes a fire fail.
@@ -47,7 +48,7 @@ func triggerRig(t *testing.T) (*gin.Engine, *fakeFirer, *store.Workflow, *store.
 func triggerRigWithSessions(t *testing.T) (*gin.Engine, *fakeFirer, *store.Workflow, *store.Session, *store.SessionStore) {
 	t.Helper()
 	ctx := context.Background()
-	db := newTestDB(t)
+	db := testdb.New(t)
 	agents := store.NewAgentConfigStore(db)
 	ac := &store.AgentConfig{Name: "a", Model: "m"}
 	if err := agents.Create(ctx, ac); err != nil {
