@@ -268,7 +268,12 @@ func (h *TriggerHandler) Create(c *gin.Context) {
 	// runaway script cannot mint thousands. Fifty is a working team's head
 	// room, not a scheduler.
 	u, _ := server.CurrentUser(c)
-	if existing, err := h.store.ListByOwner(c.Request.Context(), u.ID, ""); err == nil && len(existing) >= maxTriggersPerOwner {
+	existing, err := h.store.ListByOwner(c.Request.Context(), u.ID, "")
+	if err != nil {
+		internalError(c, err) // a cap that cannot be checked refuses (spec §2.13)
+		return
+	}
+	if len(existing) >= maxTriggersPerOwner {
 		conflict(c, fmt.Sprintf("trigger limit reached (%d per user); delete one first", maxTriggersPerOwner))
 		return
 	}

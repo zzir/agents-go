@@ -50,11 +50,14 @@ func IsTerminalTaskStatus(s string) bool { return isTerminalTaskStatus(s) }
 // for these unprompted) fall back to the spawning run's own agent — a config
 // actually named that way still takes precedence.
 func (r *Runner) resolveSpawnAgent(ctx context.Context, parentSessionID, name string) (*store.AgentConfig, error) {
-	// The spawn resolves within the parent session owner's view (spec §5.29).
-	ownerID := ""
-	if sess, err := r.Deps.Sessions.Get(ctx, parentSessionID); err == nil {
-		ownerID = sess.OwnerID
+	// The spawn resolves within the parent session owner's view (spec §5.29);
+	// a lookup that cannot be made refuses — an empty owner would resolve as
+	// the all-seeing internal caller (spec §2.13).
+	sess, err := r.Deps.Sessions.Get(ctx, parentSessionID)
+	if err != nil {
+		return nil, fmt.Errorf("spawn_task: resolving the parent session: %w", err)
 	}
+	ownerID := sess.OwnerID
 	n := strings.TrimSpace(name)
 	alias := n == "" || strings.EqualFold(n, "default") || strings.EqualFold(n, "self") || strings.EqualFold(n, "current")
 	if n != "" {
@@ -72,7 +75,7 @@ func (r *Runner) resolveSpawnAgent(ctx context.Context, parentSessionID, name st
 		}
 	}
 	// No live parent run snapshot (unlikely): the session's bound agent.
-	if sess, err := r.Deps.Sessions.Get(ctx, parentSessionID); err == nil && sess.AgentConfigID != "" {
+	if sess.AgentConfigID != "" {
 		return r.Deps.AgentConfigs.Get(ctx, sess.AgentConfigID)
 	}
 	return nil, fmt.Errorf("spawn_task: agent_name %q not resolvable and no current agent to default to", name)

@@ -62,7 +62,7 @@ func (r *Runner) spawnTool(ctx context.Context, ownerID string) *agents.Tool {
 				return agents.ToolResult{}, fmt.Errorf("spawn_task: no session in the run context")
 			}
 			if name := strings.TrimSpace(args.Workflow); name != "" {
-				return r.spawnWorkflow(ctx, tc, parent, name, strings.TrimSpace(args.Input))
+				return r.spawnWorkflow(ctx, tc, parent, ownerID, name, strings.TrimSpace(args.Input))
 			}
 			info, err := r.tasks.Spawn(ctx, tasks.SpawnRequest{
 				ParentSessionID: parent,
@@ -88,13 +88,9 @@ func (r *Runner) spawnTool(ctx context.Context, ownerID string) *agents.Tool {
 // workflows are read NOW, not from the description's listing: a listing that
 // failed at the turn's start must not read as "this server has none", and one
 // defined since is on offer.
-func (r *Runner) spawnWorkflow(ctx context.Context, tc *agents.ToolContext, parent, name, input string) (agents.ToolResult, error) {
+func (r *Runner) spawnWorkflow(ctx context.Context, tc *agents.ToolContext, parent, ownerID, name, input string) (agents.ToolResult, error) {
 	if r.Deps.Workflows == nil {
 		return agents.TextResult("Workflows are not available on this server. Leave workflow empty for a free-form task."), nil
-	}
-	ownerID := ""
-	if sess, serr := r.Deps.Sessions.Get(ctx, parent); serr == nil {
-		ownerID = sess.OwnerID
 	}
 	offered, err := r.visibleWorkflows(ctx, ownerID)
 	if err != nil {
