@@ -486,6 +486,11 @@ export function AgentConfigPanel() {
   const rowEditable = (a: Agent) => canEditRow(isAdmin, me?.id, a);
   const { items: agents, adding, editing, startAdd, startEdit, cancel, save, saving, remove, reload } =
     useCrud<Agent, AgentFormData & { handoffs: string; tools: string; skills: string; model_settings: string }>(api.agents);
+  // Fork seeds the CREATE form from a row — nothing is written until Save.
+  // Cleared on a plain "+ Add" so a stale seed never leaks into a blank form.
+  const [forkOf, setForkOf] = useState<Agent | null>(null);
+  const startFork = (a: Agent) => { setForkOf(a); startAdd(); };
+  const startBlankAdd = () => { setForkOf(null); startAdd(); };
   const { data: mcpServers } = useApi<McpServer[]>(() => api.mcpServers.list() as Promise<McpServer[]>);
   const { data: skills } = useApi<Skill[]>(() => api.skills.list() as Promise<Skill[]>);
   const { data: providerTypes } = useApi<ProviderTypeInfo[]>(() => api.providerTypes.list() as Promise<ProviderTypeInfo[]>);
@@ -511,7 +516,17 @@ export function AgentConfigPanel() {
     } catch { return all.length; }
   };
 
-  const form = adding ? <AgentForm saving={saving} onSave={save} onCancel={cancel} mcpServers={mcpServers ?? undefined} skills={skills ?? undefined} allAgents={agents} providerTypes={providerTypes ?? undefined} providers={providers ?? undefined} />
+  // The key remounts the form when the seed changes; the fork seed drops the
+  // id (so nothing treats it as the source row), sheds the source's
+  // scope/owner (the copy lands like any create: private, the caller's) and
+  // suffixes the name toward the per-scope unique index.
+  const forkSeed = () => {
+    const { id: _id, scope: _scope, owner_id: _owner, ...rest } = forkOf as Agent;
+    return { ...rest, name: forkOf!.name + '-fork' };
+  };
+  const form = adding ? <AgentForm key={forkOf ? 'fork-' + forkOf.id : 'blank'} saving={saving}
+      initial={forkOf ? forkSeed() : undefined}
+      onSave={save} onCancel={cancel} mcpServers={mcpServers ?? undefined} skills={skills ?? undefined} allAgents={agents} providerTypes={providerTypes ?? undefined} providers={providers ?? undefined} />
     : editing ? <AgentForm saving={saving} initial={editing} onSave={save} onCancel={cancel} onDelete={async () => { if (await remove(editing.id, editing.name)) cancel(); }} mcpServers={mcpServers ?? undefined} skills={skills ?? undefined} allAgents={agents} providerTypes={providerTypes ?? undefined} providers={providers ?? undefined} />
     : null;
 
@@ -519,7 +534,7 @@ export function AgentConfigPanel() {
     // Scoped rows: the form is a disabled view exactly when the opened row is
     // not the caller's to edit (canEditRow), not for every member.
     <ReadOnlyContext value={!!editing && !rowEditable(editing)}>
-      <CrudPanel title="Agents" onAdd={startAdd} onCancel={cancel} form={form} isEmpty={agents.length === 0}
+      <CrudPanel title="Agents" onAdd={startBlankAdd} onCancel={cancel} form={form} isEmpty={agents.length === 0}
         onDelete={editing && canDeleteRow(isAdmin, me?.id, editing)
           ? async () => { if (await remove(editing.id, editing.name)) cancel(); } : null}
         empty="No agents configured. Add one to customize model, provider, and behavior.">
@@ -539,6 +554,7 @@ export function AgentConfigPanel() {
               </>}
               meta={<span>{a.model || 'default model'}</span>}
               actions={<RowActionsMenu name={a.name} editReadOnly={!rowEditable(a)} onEdit={() => startEdit(a)}
+                onFork={() => startFork(a)}
                 scope={isAdmin ? { row: a, setScope: api.agents.setScope, onDone: reload } : undefined} />}
             />
           );

@@ -60,13 +60,17 @@ export function CrudPanel({ title, as, description, onAdd, onCancel, onDelete, f
 
 /** A row's "…" overflow, the one action control a list row carries:
  * Edit ("View" when the form it opens is a disabled view — the dialog is
- * read-only, or `editReadOnly` says this row is not the caller's), the admin's
- * scope flip, and a Delete the caller confirms. Renders nothing when the
- * caller can do none of it. */
-export function RowActionsMenu({ name, onEdit, editReadOnly, scope, onDelete }: {
+ * read-only, or `editReadOnly` says this row is not the caller's), a Fork
+ * (open the CREATE form pre-filled from this row — nothing is written until
+ * Save), the admin's scope flip, and a Delete the caller confirms. Renders
+ * nothing when the caller can do none of it. */
+export function RowActionsMenu({ name, onEdit, editReadOnly, onFork, scope, onDelete }: {
   name: string;
   onEdit?: () => void;
   editReadOnly?: boolean;
+  // Offered on every visible row: forking a global row is how a member gets
+  // an editable private copy.
+  onFork?: () => void;
   // Pass only for admins: the promote/demote item. POST /<entity>/:id/scope,
   // with the server's 400/409 (non-global references, name collisions) as toasts.
   scope?: {
@@ -78,7 +82,7 @@ export function RowActionsMenu({ name, onEdit, editReadOnly, scope, onDelete }: 
   onDelete?: () => void;
 }) {
   const ctx = useReadOnly();
-  if (!onEdit && !scope && !onDelete) return null;
+  if (!onEdit && !onFork && !scope && !onDelete) return null;
   const global = scope?.row.scope === 'global';
   const flip = async () => {
     if (!scope) return;
@@ -92,6 +96,7 @@ export function RowActionsMenu({ name, onEdit, editReadOnly, scope, onDelete }: 
   return (
     <RowMenu label={`Actions for ${name}`}>
       {onEdit && <ActionList.Item onSelect={onEdit}>{(editReadOnly ?? ctx) ? 'View' : 'Edit'}</ActionList.Item>}
+      {onFork && <ActionList.Item onSelect={onFork}>Fork</ActionList.Item>}
       {scope && <ActionList.Item onSelect={() => void flip()}>{global ? 'Make private' : 'Make global'}</ActionList.Item>}
       {onDelete && <ActionList.Item variant="danger" onSelect={onDelete}>Delete</ActionList.Item>}
     </RowMenu>
