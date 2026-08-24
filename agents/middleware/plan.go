@@ -36,7 +36,7 @@ const PlanToolName = "submit_plan"
 // ships no readOnlyHint. todo_write is here so stacking Todo with Plan works
 // in either order — maintaining the list touches nothing outside the run.
 var DefaultReadOnlyTools = []string{
-	"read_file", "list_files", "read_skill_file", "brave_search", "task_status",
+	"read_file", "list_files", "task_status",
 	TodoToolName,
 }
 
