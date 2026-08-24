@@ -11,10 +11,14 @@ import type { Project } from '@/lib/binding';
    deleted); a bump refetches so a picker opened later offers the new project. */
 export function useProjects(
   version: number | undefined,
-): { projects: Project[] | null; reload: () => void } {
-  const { data, reload } = useApi<Project[]>(() => api.projects.list() as Promise<Project[]>);
+): {
+  projects: Project[] | null;
+  reload: () => void;
+  mutate: (fn: (prev: Project[] | null) => Project[] | null) => void;
+} {
+  const { data, reload, mutateData } = useApi<Project[]>(() => api.projects.list() as Promise<Project[]>);
   useEffect(() => {
     if (version) reload();
   }, [version, reload]);
-  return { projects: data, reload };
+  return { projects: data, reload, mutate: mutateData };
 }

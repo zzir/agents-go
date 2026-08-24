@@ -7,7 +7,7 @@ import { CHECK_ICON } from '@/lib/markdownShared';
 import { type TurnPart, type TimelineEntry, type Branches, type WorkflowStartedNote } from '@/lib/timeline';
 import { useScrollToBottom, useApi } from '@/lib/hooks';
 import { loadSessionAgent, saveSessionAgent, loadSessionSandbox, saveSessionSandbox, loadSessionProject, saveSessionProject } from '@/lib/drafts';
-import { composerSandboxView, groupProjects, projectLabel, type SessionBinding } from '@/lib/binding';
+import { composerSandboxView, groupProjects, projectLabel, type Project, type SessionBinding } from '@/lib/binding';
 import { useProjects } from '@/lib/useProjects';
 import { fc } from '@/lib/form';
 import { parseTaskNotification, TASK_KIND_WORKFLOW, type TaskStatus } from '@/lib/protocol';
@@ -215,7 +215,7 @@ export function ChatView({
   const { data: sandboxConfigs, reload: reloadSandboxes } = useApi<SandboxConfig[]>(() => api.sandboxes.list() as Promise<SandboxConfig[]>);
   // The caller's project rows for the picker — the same hook the terminal
   // panel's + menu uses.
-  const { projects, reload: reloadProjects } = useProjects(bindingsVersion);
+  const { projects, reload: reloadProjects, mutate: mutateProjects } = useProjects(bindingsVersion);
 
   useEffect(() => {
     if (!agentConfigs || agentConfigs.length === 0) return;
@@ -680,7 +680,12 @@ export function ChatView({
             if (!projSandbox || !projName.trim() || projSaving) return;
             setProjSaving(true);
             try {
-              const created = await api.projects.create({ name: projName.trim(), sandbox_id: projSandbox.id }) as { id?: string };
+              const created = await api.projects.create({ name: projName.trim(), sandbox_id: projSandbox.id }) as Project;
+              // Seed the cached list before selecting: the stale-id guard
+              // below runs against `projects` on the very next commit, and a
+              // fire-and-forget reload would hand it a list without the new
+              // row — wiping the selection it should protect.
+              mutateProjects(prev => prev ? [...prev.filter(p => p.id !== created.id), created] : [created]);
               setSandboxId(projSandbox.id);
               if (created.id) setProjectId(created.id);
               reloadProjects();
