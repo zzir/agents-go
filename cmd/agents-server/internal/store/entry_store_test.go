@@ -536,33 +536,6 @@ func TestEntryWritesBumpSessionUpdatedAt(t *testing.T) {
 	}
 }
 
-// The DB enforces provider-route prefix uniqueness, and the violation is
-// classified for a 409 by UniqueViolation.
-func TestProviderRoutePrefixUniqueIndex(t *testing.T) {
-	ctx := context.Background()
-	db := newTestDB(t)
-	id := ids(t)
-	// A route now references an existing provider (atomic create), so the
-	// providers must exist before the unique-prefix check can be exercised.
-	providers := NewProviderStore(db)
-	for _, name := range []string{"p1", "p2"} {
-		if err := providers.Create(ctx, &Provider{ID: id(name), Name: name, Type: "openai"}); err != nil {
-			t.Fatalf("seed provider %s: %v", name, err)
-		}
-	}
-	s := NewProviderRouteStore(db)
-	if err := s.Create(ctx, &ProviderRoute{ID: NewID(), Prefix: "gpt", ProviderID: id("p1")}); err != nil {
-		t.Fatalf("first: %v", err)
-	}
-	err := s.Create(ctx, &ProviderRoute{ID: NewID(), Prefix: "gpt", ProviderID: id("p2")})
-	if err == nil {
-		t.Fatal("duplicate prefix must violate the unique index")
-	}
-	if cols, ok := UniqueViolation(err); !ok || cols != "prefix" {
-		t.Errorf("UniqueViolation = %q,%v want \"prefix\",true", cols, ok)
-	}
-}
-
 // ForkSession is atomic: when the session insert fails, the entry copy in the
 // same transaction rolls back too, so no orphan session or entries are left
 // behind (the gap the old create-then-copy handler left open).

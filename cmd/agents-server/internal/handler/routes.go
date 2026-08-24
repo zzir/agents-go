@@ -12,26 +12,25 @@ import (
 // per-endpoint forwarding struct kept in sync across packages.
 type Handlers struct {
 	// Authz resolves ownership for the route gates (see authz.go).
-	Authz          AuthzDeps
-	Auth           *AuthHandler
-	Sessions       *SessionHandler
-	Runs           *RunHandler
-	Approvals      *ApprovalHandler
-	Tasks          *TaskHandler
-	Agents         *AgentConfigHandler
-	McpServers     *McpServerHandler
-	Memories       *MemoryHandler
-	Settings       *SettingHandler
-	Skills         *SkillHandler
-	Providers      *ProviderHandler
-	Workflows      *WorkflowHandler
-	Triggers       *TriggerHandler
-	ProviderRoutes *ProviderRouteHandler
-	Guardrails     *GuardrailHandler
-	Sandboxes      *SandboxHandler
-	Traces         *TraceHandler
-	Playground     *PlaygroundHandler
-	ChatGPT        *ChatGPTOAuthHandler
+	Authz      AuthzDeps
+	Auth       *AuthHandler
+	Sessions   *SessionHandler
+	Runs       *RunHandler
+	Approvals  *ApprovalHandler
+	Tasks      *TaskHandler
+	Agents     *AgentConfigHandler
+	McpServers *McpServerHandler
+	Memories   *MemoryHandler
+	Settings   *SettingHandler
+	Skills     *SkillHandler
+	Providers  *ProviderHandler
+	Workflows  *WorkflowHandler
+	Triggers   *TriggerHandler
+	Guardrails *GuardrailHandler
+	Sandboxes  *SandboxHandler
+	Traces     *TraceHandler
+	Playground *PlaygroundHandler
+	ChatGPT    *ChatGPTOAuthHandler
 	// Server is the start-up configuration, served as read-only facts.
 	Server ServerInfo
 }
@@ -176,13 +175,6 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		providers.POST("/:id/chatgpt/login", admin, h.ChatGPT.Login)
 		providers.POST("/:id/chatgpt/logout", admin, h.ChatGPT.Logout)
 		providers.GET("/:id/chatgpt/status", h.ChatGPT.Status)
-
-		providerRoutes := api.Group("/provider-routes")
-		providerRoutes.GET("", h.ProviderRoutes.List)
-		providerRoutes.POST("", admin, h.ProviderRoutes.Create)
-		providerRoutes.GET("/:id", h.ProviderRoutes.Get)
-		providerRoutes.PUT("/:id", admin, h.ProviderRoutes.Update)
-		providerRoutes.DELETE("/:id", admin, h.ProviderRoutes.Delete)
 	}
 	{
 		workflows := api.Group("/workflows")

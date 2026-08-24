@@ -76,7 +76,6 @@ func TestRestorePlanPhase(t *testing.T) {
 		Settings:       settings.NewReader(store.NewSettingStore(db)),
 		Memories:       store.NewMemoryStore(db),
 		McpServers:     store.NewMcpServerStore(db),
-		ProviderRoutes: store.NewProviderRouteStore(db),
 		Guardrails:     guardrails.NewResolver(store.NewGuardrailStore(db)),
 		SandboxManager: sandboxes.NewManager(t.TempDir()),
 	})
@@ -141,7 +140,6 @@ func TestRestorePlanPhase(t *testing.T) {
 		Settings:       settings.NewReader(store.NewSettingStore(dbBroken)),
 		Memories:       store.NewMemoryStore(dbBroken),
 		McpServers:     store.NewMcpServerStore(dbBroken),
-		ProviderRoutes: store.NewProviderRouteStore(dbBroken),
 		Guardrails:     guardrails.NewResolver(store.NewGuardrailStore(dbBroken)),
 		SandboxManager: sandboxes.NewManager(t.TempDir()),
 	})

@@ -106,8 +106,7 @@ func saveError(c *gin.Context, err error) {
 		return
 	}
 	var rejected badRequestError
-	if errors.Is(err, store.ErrProviderRef) || errors.Is(err, store.ErrProviderNotRoutable) ||
-		errors.Is(err, store.ErrProviderRouted) || errors.As(err, &rejected) {
+	if errors.Is(err, store.ErrProviderRef) || errors.As(err, &rejected) {
 		badRequest(c, err.Error())
 		return
 	}

@@ -330,7 +330,6 @@ export const api = {
     fire: (id: string | number, payload = '') => request(`/triggers/${id}/fire`, { method: 'POST', body: JSON.stringify({ payload }) }),
     rotateSecret: (id: string | number) => request(`/triggers/${id}/rotate-secret`, { method: 'POST' }),
   },
-  providerRoutes: crud<S['store.ProviderRoute']>('/provider-routes'),
   providerTypes: {
     list: () => request('/provider-types'),
   },

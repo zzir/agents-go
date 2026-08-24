@@ -40,7 +40,6 @@ type stores struct {
 	Memories         *store.MemoryStore
 	Settings         *store.SettingStore
 	SettingReader    *settings.Reader
-	ProviderRoutes   *store.ProviderRouteStore
 	Sandboxes        *store.SandboxStore
 	Guardrails       *store.GuardrailStore
 	PendingApprovals *store.PendingApprovalStore
@@ -67,7 +66,6 @@ func newStores(db *bun.DB) *stores {
 		Memories:         store.NewMemoryStore(db),
 		Settings:         settingStore,
 		SettingReader:    settings.NewReader(settingStore),
-		ProviderRoutes:   store.NewProviderRouteStore(db),
 		Sandboxes:        store.NewSandboxStore(db),
 		Guardrails:       store.NewGuardrailStore(db),
 		PendingApprovals: store.NewPendingApprovalStore(db),
@@ -128,7 +126,6 @@ func newBridge(ctx, bgCtx context.Context, db *bun.DB, st *stores, audit protoco
 		SandboxConfigs:   st.Sandboxes,
 		Memories:         st.Memories,
 		Settings:         st.SettingReader,
-		ProviderRoutes:   st.ProviderRoutes,
 		Sessions:         st.Sessions,
 		Traces:           st.Traces,
 		Guardrails:       svc.Guardrails,
@@ -187,23 +184,22 @@ func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL, w
 				Profiles: st.ContextProfiles, MCP: svc.Mcp, MCPServers: st.McpServers, Users: st.Users,
 				Stopper: svc.Runner, Compactor: svc.Runner,
 			}),
-			Runs:           handler.NewRunHandler(svc.Runner),
-			Approvals:      handler.NewApprovalHandler(st.PendingApprovals, svc.Runner),
-			Tasks:          handler.NewTaskHandler(st.Tasks, svc.Runner),
-			Agents:         handler.NewAgentConfigHandler(st.AgentConfigs, st.McpServers, st.Providers, svc.Guardrails),
-			McpServers:     handler.NewMcpServerHandler(st.McpServers, svc.Mcp, svc.OAuth, baseURL),
-			Memories:       handler.NewMemoryHandler(st.Memories),
-			Settings:       handler.NewSettingHandler(st.Settings),
-			Skills:         handler.NewSkillHandler(flagWorkspace),
-			Providers:      handler.NewProviderHandler(st.Providers),
-			Workflows:      handler.NewWorkflowHandler(st.Workflows, st.AgentConfigs, st.Sessions, svc.Runner),
-			Triggers:       handler.NewTriggerHandler(st.Triggers, st.Sessions, svc.Scheduler),
-			ProviderRoutes: handler.NewProviderRouteHandler(st.ProviderRoutes, st.Providers),
-			Guardrails:     handler.NewGuardrailHandler(st.Guardrails, svc.Guardrails),
-			Sandboxes:      handler.NewSandboxHandler(st.Sandboxes, svc.Sandboxes, flagAllowLocalSandbox, terminal, flagWorkspace),
-			Traces:         handler.NewTraceHandler(st.Traces),
-			Playground:     handler.NewPlaygroundHandler(svc.Deps),
-			ChatGPT:        handler.NewChatGPTOAuthHandler(svc.ChatGPT),
+			Runs:       handler.NewRunHandler(svc.Runner),
+			Approvals:  handler.NewApprovalHandler(st.PendingApprovals, svc.Runner),
+			Tasks:      handler.NewTaskHandler(st.Tasks, svc.Runner),
+			Agents:     handler.NewAgentConfigHandler(st.AgentConfigs, st.McpServers, st.Providers, svc.Guardrails),
+			McpServers: handler.NewMcpServerHandler(st.McpServers, svc.Mcp, svc.OAuth, baseURL),
+			Memories:   handler.NewMemoryHandler(st.Memories),
+			Settings:   handler.NewSettingHandler(st.Settings),
+			Skills:     handler.NewSkillHandler(flagWorkspace),
+			Providers:  handler.NewProviderHandler(st.Providers),
+			Workflows:  handler.NewWorkflowHandler(st.Workflows, st.AgentConfigs, st.Sessions, svc.Runner),
+			Triggers:   handler.NewTriggerHandler(st.Triggers, st.Sessions, svc.Scheduler),
+			Guardrails: handler.NewGuardrailHandler(st.Guardrails, svc.Guardrails),
+			Sandboxes:  handler.NewSandboxHandler(st.Sandboxes, svc.Sandboxes, flagAllowLocalSandbox, terminal, flagWorkspace),
+			Traces:     handler.NewTraceHandler(st.Traces),
+			Playground: handler.NewPlaygroundHandler(svc.Deps),
+			ChatGPT:    handler.NewChatGPTOAuthHandler(svc.ChatGPT),
 			Server: handler.ServerInfo{
 				Version:           buildVersion,
 				Workspace:         workspaceAbs,

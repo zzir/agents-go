@@ -15,8 +15,8 @@ import (
 // instead of drifting alongside it.
 //
 //	@Summary		List provider types
-//	@Description	The backends agents, fallback entries and provider routes can select via provider_type. "unsupported" lists request features that fail loudly on that backend.
-//	@Tags			provider-routes
+//	@Description	The backends agents and fallback entries can select via provider_type. "unsupported" lists request features that fail loudly on that backend.
+//	@Tags			providers
 //	@Produce		json
 //	@Success		200	{array}	providers.TypeInfo
 //	@Security		BearerAuth

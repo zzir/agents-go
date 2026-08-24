@@ -2820,6 +2820,19 @@ example), then `NewToolServer`/`ServeStdio` with `examples/mcpserver` (the
 example was their only consumer). The `mcp` module is a client; the workbench
 serves its own MCP endpoint independently.
 
+### 5.24 The workbench has no provider routes
+
+Removed 2026-08-24. The server once mapped model-name prefixes to providers
+(`provider_routes` + a `RouterProvider` over every run). Two selector surfaces
+for one decision — the agent's `provider_id` and a global prefix table that
+silently overrode it — is one too many: an agent names its provider, full
+stop, and cross-provider mixing inside one run is fallback entries
+(`fallback_models`), which are per-agent and visible in its config. The SDK's
+`RouterProvider` decorator stays (it is documented public API for embedders);
+the workbench just no longer builds one. Do not reintroduce a global routing
+table — a future need for shared endpoint selection belongs on the provider
+rows themselves, not a second table that redirects them.
+
 ---
 
 ## 6. Open questions

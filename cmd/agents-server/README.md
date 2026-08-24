@@ -17,7 +17,7 @@ panel/handler pair follows.
 
 - [Quick start](#quick-start) — build, flags, [deployment](#deployment)
 - [Authentication](#authentication)
-- [REST API](#rest-api) — [errors](#errors) · [conventions](#response-conventions) · [sessions](#sessions--apiv1sessions) · [runs / SSE](#runs--apiv1runs) · [approvals](#approvals--apiv1approvals) · [tasks](#tasks--apiv1tasks) · [agents](#agents--apiv1agents) · [MCP servers](#mcp-servers--apiv1mcp-servers) · [memories](#memories--apiv1memories) · [settings](#settings--apiv1settings) · [skills](#skills--apiv1skills-read-only) · [skill repos](#skill-repos--apiv1skill-repos) · [providers](#providers--apiv1providers) · [workflows](#workflows--apiv1workflows) · [provider routes](#provider-routes--apiv1provider-routes) · [guardrails](#guardrails--apiv1guardrails) · [sandboxes](#sandboxes--apiv1sandboxes) · [playground](#playground--apiv1playground) · [secret handling](#secret-handling) · [OpenAPI](#openapi)
+- [REST API](#rest-api) — [errors](#errors) · [conventions](#response-conventions) · [sessions](#sessions--apiv1sessions) · [runs / SSE](#runs--apiv1runs) · [approvals](#approvals--apiv1approvals) · [tasks](#tasks--apiv1tasks) · [agents](#agents--apiv1agents) · [MCP servers](#mcp-servers--apiv1mcp-servers) · [memories](#memories--apiv1memories) · [settings](#settings--apiv1settings) · [skills](#skills--apiv1skills-read-only) · [skill repos](#skill-repos--apiv1skill-repos) · [providers](#providers--apiv1providers) · [workflows](#workflows--apiv1workflows) · [guardrails](#guardrails--apiv1guardrails) · [sandboxes](#sandboxes--apiv1sandboxes) · [playground](#playground--apiv1playground) · [secret handling](#secret-handling) · [OpenAPI](#openapi)
 - [WebSocket protocol](#websocket-protocol)
 - [Architecture](#architecture)
 - [Design invariants](#design-invariants) — the rules every panel/handler pair must follow
@@ -921,8 +921,8 @@ transport are rejected). `sync` replaces the former `PUT /skills/:name`.
 
 One configured endpoint and the credential that reaches it: `name`, `type`
 (`openai` default / `anthropic` — selects the API protocol), `auth_mode`
-(`chatgpt_login` is openai-only), `api_key`, `base_url`. Agents and provider
-routes REFERENCE a provider by id; nothing else stores a model-API key, so this
+(`chatgpt_login` is openai-only), `api_key`, `base_url`. Agents REFERENCE a
+provider by id; nothing else stores a model-API key, so this
 is the one surface a credential crosses (masked on read, `********` keeps the
 stored value — but only while `type` and `base_url` are unchanged, since the
 stored key belongs to that destination).
@@ -937,7 +937,7 @@ endpoint's credential, so every agent pointed at the provider shares one login.
 | POST   | `/providers`      | Create provider                               |
 | GET    | `/providers/:id`  | Get provider                                  |
 | PUT    | `/providers/:id`  | Update provider                               |
-| DELETE | `/providers/:id`  | Delete; 409 while an agent or route uses it   |
+| DELETE | `/providers/:id`  | Delete; 409 while an agent uses it            |
 
 ### Workflows — `/api/v1/workflows`
 
@@ -1166,26 +1166,6 @@ its side effects — under the same attempt ceiling and per-session cap every
 task answers to. A restart fails whatever was running, at the step it reached,
 for the same reason. Deleting a session stops its tasks first — executions
 included — so no step keeps causing side effects after the row is gone.
-
-A route to a `chatgpt_login` provider is refused at save: its OAuth token only
-works on the direct resolve path, so a routed one would silently never work.
-
-### Provider Routes — `/api/v1/provider-routes`
-
-Map model-name prefixes to different endpoints for multi-provider routing: a
-route is a `prefix` plus the `provider_id` it routes to, so
-`anthropic/claude-opus-5` can go to the Messages API while everything else stays
-on the agent's own provider.
-
-| Method | Path                   | Description  |
-|--------|------------------------|--------------|
-| GET    | `/provider-routes`     | List routes  |
-| POST   | `/provider-routes`     | Create route |
-| GET    | `/provider-routes/:id` | Get route    |
-| PUT    | `/provider-routes/:id` | Update route |
-| DELETE | `/provider-routes/:id` | Delete route |
-
-The `api_key` field is masked on read — see [Secret handling](#secret-handling).
 
 `GET /provider-types` (read-only) lists the registered backends as machine
 facts — `type`, `auth_modes`, `unsupported` request features, and the global
@@ -1662,7 +1642,7 @@ When a change genuinely doesn't fit, update this list in the same PR.
    **A mask never round-trips across a destination change**: restoring a
    stored key under a changed `provider_type` OR `base_url` sends one
    backend's real credential to another provider or endpoint, so the update
-   is rejected (agents, routes) and fallback entries restore strictly by
+   is rejected (agents) and fallback entries restore strictly by
    `(normalized provider_type, normalized base_url, model)` — never by
    position; an unmatched mask clears.
    **The mask resolves inside the store's transaction.** The store's `Update`
@@ -2311,13 +2291,12 @@ Tables are created automatically on startup:
 | `mcp_servers`       | MCP server configurations                                                           |
 | `memories`          | Agent memories                                                                      |
 | `settings`          | Global key-value settings                                                           |
-| `provider_routes`   | Model-prefix routing rules                                                          |
 | `sandbox_configs`   | Sandbox configurations                                                              |
 | `guardrails`        | Custom guardrail definitions                                                        |
 | `trace_events`      | Trace spans (agent, generation, function, handoff, compaction) + run lineage; pruned in batches by `trace_retention_days` |
 | `pending_approvals` | Runs paused for human-in-the-loop tool approval (persisted so they survive restart) |
 | `tasks`             | Background tasks — sub-agents spawned via `spawn_task` and workflow executions (`kind`, `state`) — durable identity and status |
-| `providers`         | Model-API endpoints and their credentials; agents and routes reference one |
+| `providers`         | Model-API endpoints and their credentials; agents reference one |
 | `workflows`         | Fixed step sequences (each step: agent + prompt, with a stable id); an execution is a `tasks` row |
 | `audit_events`      | Who did what, to what, when — see [Audit log](#audit-log)                          |
 | `wakeups`           | "This session is owed a turn carrying this" — the debt background work leaves behind; settled rows are pruned after 7 days |

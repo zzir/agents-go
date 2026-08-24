@@ -19,19 +19,6 @@ const AuthModeChatGPTLogin = "chatgpt_login"
 // the 404 a missing target resource gets.
 var ErrProviderRef = errors.New("provider_id names no provider")
 
-// ErrProviderNotRoutable refuses a route pointing at a chatgpt_login provider:
-// its OAuth token is fetched on the direct resolve path only, so the route
-// would silently never work.
-var ErrProviderNotRoutable = errors.New("a chatgpt_login provider cannot be used through a route: its OAuth token only works on the direct path")
-
-// routableProvider is the in-tx half of the route handlers' save-time check.
-func routableProvider(pv *Provider) error {
-	if pv.AuthMode == AuthModeChatGPTLogin {
-		return ErrProviderNotRoutable
-	}
-	return nil
-}
-
 // writeReferencingProvider runs write in ONE transaction that first verifies
 // providerID still exists (and passes check, when given) — closing the
 // check-then-write window where a provider is deleted or rewritten between a
@@ -71,11 +58,6 @@ func NewProviderStore(db *bun.DB) *ProviderStore {
 	return &ProviderStore{CrudStore: NewCrudStore[Provider](db, "provider", "created_at DESC").withSecrets(sealProvider, openProvider), db: db}
 }
 
-// ErrProviderRouted refuses switching a provider to chatgpt_login while a
-// route still points at it: the route would be left dead (ErrProviderNotRoutable
-// is the same rule from the route's side).
-var ErrProviderRouted = errors.New("this provider is used by a route, which cannot use chatgpt_login: remove the route first")
-
 // Update overwrites the provider in one transaction that first reads the
 // stored row (locked) and hands it to prepare, nil to skip — how a masked
 // api_key keeps its stored value. A chatgpt_login provider keeps its
@@ -90,19 +72,7 @@ func (s *ProviderStore) Update(ctx context.Context, id string, p *Provider, prep
 		} else {
 			p.ChatGPTToken = ""
 		}
-		return s.updateFrom(ctx, tx, id, p, func(prev *Provider) error {
-			if p.AuthMode == AuthModeChatGPTLogin && prev.AuthMode != AuthModeChatGPTLogin {
-				if n, err := tx.NewSelect().Model((*ProviderRoute)(nil)).Where("provider_id = ?", id).Count(ctx); err != nil {
-					return err
-				} else if n > 0 {
-					return ErrProviderRouted
-				}
-			}
-			if prepare == nil {
-				return nil
-			}
-			return prepare(prev)
-		}, keep...)
+		return s.updateFrom(ctx, tx, id, p, prepare, keep...)
 	})
 	if err != nil {
 		return fmt.Errorf("updating provider %s: %w", id, err)
@@ -123,9 +93,8 @@ func (s *ProviderStore) ClearChatGPTToken(ctx context.Context, id string) error 
 }
 
 // providerUnreferenced is the clause that keeps a delete from stranding a
-// reference: an agent or a route pointing here blocks it.
-const providerUnreferenced = `NOT EXISTS (SELECT 1 FROM agent_configs WHERE provider_id = ?)
-	AND NOT EXISTS (SELECT 1 FROM provider_routes WHERE provider_id = ?)`
+// reference: an agent pointing here blocks it.
+const providerUnreferenced = `NOT EXISTS (SELECT 1 FROM agent_configs WHERE provider_id = ?)`
 
 // DeleteIfUnreferenced deletes the provider only while nothing references it —
 // one atomic statement, closing the race where an agent is repointed here
@@ -136,7 +105,7 @@ const providerUnreferenced = `NOT EXISTS (SELECT 1 FROM agent_configs WHERE prov
 func (s *ProviderStore) DeleteIfUnreferenced(ctx context.Context, id string) (refs int, err error) {
 	res, err := s.db.NewDelete().Model((*Provider)(nil)).
 		Where("id = ?", id).
-		Where(providerUnreferenced, id, id).
+		Where(providerUnreferenced, id).
 		Exec(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("deleting provider %s: %w", id, err)
@@ -161,20 +130,7 @@ func (s *ProviderStore) explainRefusal(ctx context.Context, id string) (int, err
 	if err != nil {
 		return 0, fmt.Errorf("counting agents on provider %s: %w", id, err)
 	}
-	routes, err := s.RouteRefCount(ctx, id)
-	if err != nil {
-		return 0, err
-	}
-	return agents + routes, nil
-}
-
-// RouteRefCount is how many provider routes point at this provider.
-func (s *ProviderStore) RouteRefCount(ctx context.Context, id string) (int, error) {
-	n, err := s.db.NewSelect().Model((*ProviderRoute)(nil)).Where("provider_id = ?", id).Count(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("counting routes on provider %s: %w", id, err)
-	}
-	return n, nil
+	return agents, nil
 }
 
 // NormalizeProvider trims the fields whose spelling is noise and fills the

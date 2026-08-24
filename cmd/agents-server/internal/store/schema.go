@@ -21,7 +21,6 @@ var schemaModels = []any{
 	(*Provider)(nil),
 	(*Workflow)(nil),
 	(*Trigger)(nil),
-	(*ProviderRoute)(nil),
 	(*SandboxConfig)(nil),
 	(*TraceEvent)(nil),
 	(*Guardrail)(nil),
@@ -219,17 +218,6 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 		IfNotExists().
 		Exec(ctx); err != nil {
 		return fmt.Errorf("creating providers unique name index: %w", err)
-	}
-	// Provider routes map a model-name prefix to a provider; a duplicate prefix
-	// makes which one wins order-dependent (last into the router map).
-	if _, err := db.NewCreateIndex().
-		Model((*ProviderRoute)(nil)).
-		Index("idx_provider_routes_prefix").
-		Unique().
-		Column("prefix").
-		IfNotExists().
-		Exec(ctx); err != nil {
-		return fmt.Errorf("creating provider_routes unique prefix index: %w", err)
 	}
 	// The sidebar lists one owner's sessions by recency of change.
 	if _, err := db.NewCreateIndex().

@@ -124,26 +124,3 @@ func TestMcpServerToolsNotFoundVsNotConnected(t *testing.T) {
 		t.Fatalf("disconnected server: got %d, want 409 (body %s)", w.Code, w.Body.String())
 	}
 }
-
-// Provider routes reject a duplicate prefix (409) — a duplicate would make which
-// credentials win order-dependent when the router map is built.
-func TestProviderRoutePrefixUnique(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	db := testdb.New(t)
-	providers := store.NewProviderStore(db)
-	pv := &store.Provider{Name: "p"}
-	if err := providers.Create(t.Context(), pv); err != nil {
-		t.Fatalf("create provider: %v", err)
-	}
-	h := NewProviderRouteHandler(store.NewProviderRouteStore(db), providers)
-	engine := newTestEngine()
-	engine.POST("/provider-routes", h.Create)
-
-	body := `{"prefix":"gpt","provider_id":"` + pv.ID + `"}`
-	if w := doJSON(t, engine, http.MethodPost, "/provider-routes", body); w.Code != http.StatusCreated {
-		t.Fatalf("first create: got %d (body %s)", w.Code, w.Body.String())
-	}
-	if w := doJSON(t, engine, http.MethodPost, "/provider-routes", body); w.Code != http.StatusConflict {
-		t.Fatalf("duplicate prefix: got %d, want 409 (body %s)", w.Code, w.Body.String())
-	}
-}

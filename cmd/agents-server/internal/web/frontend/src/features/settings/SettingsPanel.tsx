@@ -1,14 +1,9 @@
 import { useState, useCallback, useEffect, type ChangeEvent } from 'react';
-import { Button, TextInput, Textarea, FormControl, Stack, PageHeader, Select, SegmentedControl, Label } from '@primer/react';
+import { Button, TextInput, Textarea, FormControl, Stack, PageHeader, SegmentedControl, Label } from '@primer/react';
 import { SecretInput } from '@/components/SecretInput';
-import { FormActions } from '@/components/FormActions';
-import { CrudPanel, RowEditButton } from '@/components/CrudPanel';
 import { useReadOnly } from '@/lib/access';
-import { ResourceRow } from '@/components/ResourceRow';
-import { fc } from '@/lib/form';
-import { nameOf } from '@/lib/named';
 import { api } from '@/lib/api';
-import { useApi, useCrud } from '@/lib/hooks';
+import { useApi } from '@/lib/hooks';
 import { toast } from '@/lib/toast';
 
 // A stored row. `unknown` marks a key the server's registry no longer defines
@@ -37,11 +32,6 @@ interface ServerInfo {
   allow_local_sandbox: boolean;
   max_tasks: number;
 }
-
-interface ProviderRoute { id: string; prefix: string; provider_id: string }
-
-// The endpoints a route can point at; managed under Providers.
-interface ProviderRef { id: string; name: string }
 
 const GROUP_TITLES: Record<string, string> = {
   network: 'Network',
@@ -127,7 +117,6 @@ export function SettingsPanel() {
       </fieldset>
       {unknown.length > 0 && <UnknownSection rows={unknown} onDelete={readOnly ? null : handleDelete} />}
       <ServerSection />
-      <ProviderRoutesSection />
     </Stack>
   );
 }
@@ -292,65 +281,6 @@ function ServerSection() {
         ))}
       </div>
     </div>
-  );
-}
-
-interface RouteDraft { prefix: string; provider_id: string }
-const EMPTY_ROUTE: RouteDraft = { prefix: '', provider_id: '' };
-
-function RouteForm({ initial, onSave, onCancel, onDelete, saving, providers }: {
-  initial?: RouteDraft;
-  onSave: (d: RouteDraft) => void;
-  onCancel: () => void;
-  onDelete?: () => void;
-  saving?: boolean;
-  providers: ProviderRef[] | null;
-}) {
-  const [draft, setDraft] = useState<RouteDraft>(initial || EMPTY_ROUTE);
-
-  return (
-    <Stack gap="normal">
-      {fc('Prefix', (
-        <TextInput
-          value={draft.prefix}
-          onChange={(e: ChangeEvent<HTMLInputElement>) => setDraft(d => ({ ...d, prefix: e.target.value }))}
-          placeholder="e.g. groq or anthropic"
-          block
-        />
-      ))}
-      {fc('Provider', (
-        <Select value={draft.provider_id} onChange={e => setDraft(d => ({ ...d, provider_id: e.target.value }))} block>
-          <Select.Option value="">Select a provider…</Select.Option>
-          {(providers || []).map(p => <Select.Option key={p.id} value={p.id}>{p.name}</Select.Option>)}
-        </Select>
-      ), 'The endpoint this prefix routes to — its credential lives there')}
-      <FormActions saving={saving} size="small" onSave={() => { if (draft.prefix && draft.provider_id) onSave(draft); }} onCancel={onCancel} onDelete={onDelete} />
-    </Stack>
-  );
-}
-
-function ProviderRoutesSection() {
-  const { items: routes, adding, editing, startAdd, startEdit, cancel, save, saving, remove } =
-    useCrud<ProviderRoute, RouteDraft>(api.providerRoutes);
-  const { data: providers } = useApi<ProviderRef[]>(() => api.providers.list() as Promise<ProviderRef[]>);
-  const providerName = (id: string) => nameOf(providers, id);
-
-  const form = adding ? <RouteForm saving={saving} onSave={save} onCancel={cancel} providers={providers} />
-    : editing ? <RouteForm saving={saving} initial={editing} onSave={save} onCancel={cancel} onDelete={async () => { if (await remove(editing.id, editing.prefix)) cancel(); }} providers={providers} />
-    : null;
-
-  return (
-    <CrudPanel title="Provider Routes" as="section" onAdd={startAdd} onCancel={cancel} form={form}
-      description={<>Route model names by prefix (e.g. &quot;groq/llama-3&quot; &rarr; prefix &quot;groq&quot;). The agent&apos;s own provider is the fallback.</>}
-      isEmpty={routes.length === 0} empty="No provider routes configured.">
-      {routes.map(r => (
-        <ResourceRow key={r.id}
-          title={r.prefix + '/'}
-          badges={<span className="resource-row-sub">&rarr; {providerName(r.provider_id)}</span>}
-          actions={<RowEditButton onClick={() => startEdit(r)} />}
-        />
-      ))}
-    </CrudPanel>
   );
 }
 

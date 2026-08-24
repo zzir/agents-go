@@ -90,7 +90,7 @@ your data, embeddable SDK. Solo or as a team.
   by cron, or by a signed webhook — and, for an agent you opt in, authored
   from the chat, each save reviewed and approved in the conversation.
 - **The configuration surface.** MCP servers (stdio and streamable HTTP, with
-  OAuth), Agent Skills, memories, guardrails, per-model provider routes.
+  OAuth), Agent Skills, memories, guardrails.
 - **Providers.** OpenAI Responses API (API key or ChatGPT sign-in), Anthropic
   Messages API, or any Responses-compatible endpoint by base URL.
 - **A team, when you need one.** `--auth oauth` replaces the single token with

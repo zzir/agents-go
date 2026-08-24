@@ -365,21 +365,6 @@ type Setting struct {
 	Value string `bun:"value"     json:"value"`
 }
 
-// ProviderRoute maps a model-name prefix to the backend, API key and base URL
-// used to reach that provider.
-type ProviderRoute struct {
-	bun.BaseModel `bun:"table:provider_routes,alias:pr"`
-
-	ID     string `bun:"id,pk,type:uuid" json:"id"`
-	Prefix string `bun:"prefix,notnull" json:"prefix"`
-	// ProviderID names the Provider this prefix routes to. A route used to
-	// carry its own type/key/base_url — a third copy of the same credential —
-	// and now references the one row that holds it.
-	ProviderID string    `bun:"provider_id,nullzero,type:uuid" json:"provider_id"`
-	CreatedAt  time.Time `bun:"created_at,notnull" json:"created_at"`
-	UpdatedAt  time.Time `bun:"updated_at,notnull" json:"updated_at"`
-}
-
 // TraceEvent is one persisted tracing record (a trace or span) for a session run.
 type TraceEvent struct {
 	bun.BaseModel `bun:"table:trace_events,alias:te"`
@@ -606,11 +591,6 @@ func (m *Workflow) BeforeAppendModel(_ context.Context, q bun.Query) error {
 
 // BeforeAppendModel stamps the id and timestamps; bun invokes it on insert and update.
 func (m *Provider) BeforeAppendModel(_ context.Context, q bun.Query) error {
-	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
-}
-
-// BeforeAppendModel stamps the id and timestamps; bun invokes it on insert and update.
-func (m *ProviderRoute) BeforeAppendModel(_ context.Context, q bun.Query) error {
 	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
 }
 

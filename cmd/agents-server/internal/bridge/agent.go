@@ -36,7 +36,6 @@ type AgentDeps struct {
 	SandboxConfigs   *store.SandboxStore
 	Memories         *store.MemoryStore
 	Settings         *settings.Reader
-	ProviderRoutes   *store.ProviderRouteStore
 	Sessions         *store.SessionStore
 	Traces           *store.TraceStore
 	Guardrails       *guardrails.Resolver

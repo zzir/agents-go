@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// A route or agent create refuses when its provider does not exist — the atomic
+// An agent create refuses when its provider does not exist — the atomic
 // guard that closes the check-then-write window. An empty provider_id is the
 // built-in default and is always allowed.
 func TestCreateRefusesMissingProvider(t *testing.T) {
@@ -16,14 +16,6 @@ func TestCreateRefusesMissingProvider(t *testing.T) {
 	providers := NewProviderStore(db)
 	if err := providers.Create(ctx, &Provider{ID: id("real"), Name: "real", Type: "openai"}); err != nil {
 		t.Fatal(err)
-	}
-
-	routes := NewProviderRouteStore(db)
-	if err := routes.Create(ctx, &ProviderRoute{ID: NewID(), Prefix: "a", ProviderID: id("ghost")}); !errors.Is(err, ErrProviderRef) {
-		t.Fatalf("route with a missing provider = %v, want ErrProviderRef", err)
-	}
-	if err := routes.Create(ctx, &ProviderRoute{ID: NewID(), Prefix: "b", ProviderID: id("real")}); err != nil {
-		t.Fatalf("route with a real provider: %v", err)
 	}
 
 	agents := NewAgentConfigStore(db)
@@ -36,34 +28,14 @@ func TestCreateRefusesMissingProvider(t *testing.T) {
 }
 
 // An UPDATE that re-points a row at a provider is the same race as a create:
-// the guard covers it, and a route can never be re-pointed at a chatgpt_login
-// provider.
+// the guard covers it.
 func TestUpdateGuardsProviderReferences(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	id := ids(t)
 	providers := NewProviderStore(db)
-	for _, p := range []*Provider{
-		{ID: id("real"), Name: "real", Type: "openai"},
-		{ID: id("chatgpt"), Name: "chatgpt", Type: "openai", AuthMode: AuthModeChatGPTLogin},
-	} {
-		if err := providers.Create(ctx, p); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	routes := NewProviderRouteStore(db)
-	route := &ProviderRoute{ID: NewID(), Prefix: "a", ProviderID: id("real")}
-	if err := routes.Create(ctx, route); err != nil {
+	if err := providers.Create(ctx, &Provider{ID: id("real"), Name: "real", Type: "openai"}); err != nil {
 		t.Fatal(err)
-	}
-	route.ProviderID = id("ghost")
-	if err := routes.Update(ctx, route.ID, route); !errors.Is(err, ErrProviderRef) {
-		t.Fatalf("route update to a missing provider = %v, want ErrProviderRef", err)
-	}
-	route.ProviderID = id("chatgpt")
-	if err := routes.Update(ctx, route.ID, route); !errors.Is(err, ErrProviderNotRoutable) {
-		t.Fatalf("route update to a chatgpt_login provider = %v, want ErrProviderNotRoutable", err)
 	}
 
 	agents := NewAgentConfigStore(db)

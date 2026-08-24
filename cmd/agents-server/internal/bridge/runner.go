@@ -384,9 +384,6 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 		return failTurn(agent.Model, protocol.CodeConfigError, errors.New("no API key configured for this agent"), "", "")
 	}
 
-	// Wrap with router provider if routes exist
-	provider = BuildRouterProvider(ctx, r.Deps, provider)
-
 	if spec.fresh {
 		sendEvent(protocol.EventRunAgentStart, protocol.RunAgentStart{RunID: runID, AgentName: agent.Name})
 	}

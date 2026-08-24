@@ -91,27 +91,6 @@ func TestProviderUpdatePrepareErrorAbortsAndNotFound(t *testing.T) {
 	}
 }
 
-func TestProviderUpdateRefusesChatGPTLoginWhileRouted(t *testing.T) {
-	ctx := context.Background()
-	withTestBox(t)
-	db := newTestDB(t)
-	providers, routes := NewProviderStore(db), NewProviderRouteStore(db)
-	pv := &Provider{Name: "p", Type: "openai", APIKey: "sk-1"}
-	if err := providers.Create(ctx, pv); err != nil {
-		t.Fatal(err)
-	}
-	if err := routes.Create(ctx, &ProviderRoute{Prefix: "gpt-", ProviderID: pv.ID}); err != nil {
-		t.Fatal(err)
-	}
-	err := providers.Update(ctx, pv.ID, &Provider{Name: "p", Type: "openai", AuthMode: AuthModeChatGPTLogin}, nil)
-	if !errors.Is(err, ErrProviderRouted) {
-		t.Fatalf("Update to chatgpt_login with a route = %v, want ErrProviderRouted", err)
-	}
-	if got, _ := providers.Get(ctx, pv.ID); got.AuthMode == AuthModeChatGPTLogin {
-		t.Fatal("the refused auth mode was written")
-	}
-}
-
 // The chatgpt_token column follows the auth mode: kept across an edit that
 // stays chatgpt_login, cleared by one that leaves it.
 func TestProviderUpdateChatGPTTokenFollowsAuthMode(t *testing.T) {

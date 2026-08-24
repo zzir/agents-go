@@ -12,27 +12,8 @@ import (
 )
 
 // How an agent config reaches its model: the provider row it names (or the
-// built-in default), the key that unlocks it, the retry and fallback
-// decorators around it, and the route-based router over all of them.
-
-// providerKey is a provider's own key, or the global per-backend fallback
-// setting when it carries none. The global key is the DEFAULT endpoint's
-// credential, so it is inherited ONLY for a provider on the default base URL —
-// a custom base_url with no key of its own gets nothing, never the global key
-// sent to an operator-typed host.
-func providerKey(ctx context.Context, deps *AgentDeps, pv *store.Provider) string {
-	if pv.APIKey != "" {
-		return pv.APIKey
-	}
-	if pv.BaseURL != "" {
-		return ""
-	}
-	def, err := providers.DefFor(pv.Type)
-	if err != nil {
-		return ""
-	}
-	return deps.Settings.String(ctx, def.SettingKey)
-}
+// built-in default), the key that unlocks it, and the retry and fallback
+// decorators around it.
 
 // AgentProvider loads the endpoint an agent reaches its model through. An
 // empty provider_id yields the ZERO provider, which is the built-in default:
@@ -118,8 +99,8 @@ type fallbackEntry struct {
 	APIKey  string `json:"api_key"`
 	BaseURL string `json:"base_url"`
 	// Provider selects the backend ("openai" / "anthropic"); empty is openai.
-	// The JSON key is provider_type, matching the agent config group and
-	// provider routes — one spelling across all three selector surfaces.
+	// The JSON key is provider_type, matching the agent config group's
+	// spelling of the same selector.
 	Provider string `json:"provider_type"`
 }
 
@@ -165,63 +146,4 @@ func wrapFallbackProvider(primary agents.ModelProvider, entries []fallbackEntry,
 		fallbacks = append(fallbacks, fp)
 	}
 	return agents.NewFallbackProvider(primary, fallbacks...)
-}
-
-// BuildRouterProvider builds a RouterProvider from all stored provider routes.
-func BuildRouterProvider(ctx context.Context, deps *AgentDeps, fallback agents.ModelProvider) agents.ModelProvider {
-	// Routes resolve through the provider store; without one they cannot mean
-	// anything — same guard as AgentProvider, minus the error (there is no
-	// specific agent to blame, and the fallback is the correct answer).
-	if deps.ProviderRoutes == nil || deps.Providers == nil {
-		return fallback
-	}
-	routes, err := deps.ProviderRoutes.List(ctx)
-	if err != nil {
-		// Loud, because the silent version was observed: an unreadable table
-		// (e.g. a pre-provider_type database) would otherwise disable ALL
-		// routing with no signal, and every prefixed model name would fall to
-		// the agent's own provider.
-		logging.Ctx(ctx).Warn("provider routes unavailable; prefix routing disabled for this run", "error", err)
-		return fallback
-	}
-	if len(routes) == 0 {
-		return fallback
-	}
-	proxyClient := deps.Settings.ProxyClient(ctx)
-	routeMap := make(map[string]agents.ModelProvider, len(routes))
-	for _, r := range routes {
-		pv, err := deps.Providers.Get(ctx, r.ProviderID)
-		if err != nil {
-			// Referential integrity refuses to delete a referenced provider, so
-			// this is a row that bypassed the API. Skipped loudly rather than
-			// falling back to the agent's own provider, which would send the
-			// prefixed model name to the wrong backend in silence.
-			logging.Ctx(ctx).Warn("provider route skipped: provider unavailable", "error", err, "prefix", r.Prefix)
-			continue
-		}
-		// ChatGPT-login providers can't route: their credential is an OAuth
-		// token fetched (and refreshed) through the full resolveProvider path,
-		// which providers.BuildPlain does not run — routing one would send an
-		// empty or wrong key. Skip it loudly rather than authenticate wrongly.
-		if pv.AuthMode == providers.AuthModeChatGPTLogin {
-			logging.Ctx(ctx).Warn("provider route skipped: chatgpt_login providers cannot be used through a route", "prefix", r.Prefix)
-			continue
-		}
-		// An unregistered type must not default to OpenAI — the silent
-		// wrong-backend case — so the route is skipped instead.
-		fp, err := providers.BuildPlain(pv.Type, providerKey(ctx, deps, pv), pv.BaseURL, proxyClient)
-		if err != nil {
-			logging.Ctx(ctx).Warn("provider route skipped: invalid provider type", "error", err, "prefix", r.Prefix)
-			continue
-		}
-		routeMap[r.Prefix] = fp
-	}
-	if len(routeMap) == 0 {
-		return fallback
-	}
-	router := agents.NewRouterProvider(routeMap)
-	if fallback != nil {
-		router.WithFallback(fallback)
-	}
-	return router
 }

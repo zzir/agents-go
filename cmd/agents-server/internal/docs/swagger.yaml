@@ -1584,23 +1584,6 @@ components:
         updated_at:
           type: string
       type: object
-    store.ProviderRoute:
-      properties:
-        created_at:
-          type: string
-        id:
-          type: string
-        prefix:
-          type: string
-        provider_id:
-          description: |-
-            ProviderID names the Provider this prefix routes to. A route used to
-            carry its own type/key/base_url — a third copy of the same credential —
-            and now references the one row that holds it.
-          type: string
-        updated_at:
-          type: string
-      type: object
     store.ResilienceGroup:
       properties:
         fallback_models:
@@ -3403,174 +3386,10 @@ paths:
       summary: Playground generate
       tags:
       - playground
-  /provider-routes:
-    get:
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                items:
-                  $ref: '#/components/schemas/store.ProviderRoute'
-                type: array
-          description: OK
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Internal Server Error
-      security:
-      - BearerAuth: []
-      summary: List provider routes
-      tags:
-      - provider-routes
-    post:
-      description: Routes every model name starting with prefix to the named provider.
-      requestBody:
-        content:
-          application/json:
-            schema:
-              oneOf:
-              - type: object
-              - $ref: '#/components/schemas/store.ProviderRoute'
-                description: Provider route
-                summary: route
-        description: Provider route
-        required: true
-      responses:
-        "201":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/store.ProviderRoute'
-          description: Created
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Bad Request
-        "409":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: duplicate prefix
-      security:
-      - BearerAuth: []
-      summary: Create provider route
-      tags:
-      - provider-routes
-  /provider-routes/{id}:
-    delete:
-      parameters:
-      - description: Provider route ID
-        in: path
-        name: id
-        required: true
-        schema:
-          type: string
-      responses:
-        "204":
-          description: deleted
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Not Found
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Internal Server Error
-      security:
-      - BearerAuth: []
-      summary: Delete provider route
-      tags:
-      - provider-routes
-    get:
-      parameters:
-      - description: Provider route ID
-        in: path
-        name: id
-        required: true
-        schema:
-          type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/store.ProviderRoute'
-          description: OK
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Not Found
-      security:
-      - BearerAuth: []
-      summary: Get provider route
-      tags:
-      - provider-routes
-    put:
-      parameters:
-      - description: Provider route ID
-        in: path
-        name: id
-        required: true
-        schema:
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              oneOf:
-              - type: object
-              - $ref: '#/components/schemas/store.ProviderRoute'
-                description: Provider route
-                summary: route
-        description: Provider route
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/store.ProviderRoute'
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Bad Request
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Not Found
-        "409":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: duplicate prefix
-      security:
-      - BearerAuth: []
-      summary: Update provider route
-      tags:
-      - provider-routes
   /provider-types:
     get:
-      description: The backends agents, fallback entries and provider routes can select
-        via provider_type. "unsupported" lists request features that fail loudly on
-        that backend.
+      description: The backends agents and fallback entries can select via provider_type.
+        "unsupported" lists request features that fail loudly on that backend.
       responses:
         "200":
           content:
@@ -3584,7 +3403,7 @@ paths:
       - BearerAuth: []
       summary: List provider types
       tags:
-      - provider-routes
+      - providers
   /providers:
     get:
       responses:
