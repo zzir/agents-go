@@ -27,7 +27,7 @@ type SkillHandler struct {
 }
 
 // NewSkillHandler returns a handler over the skills store; settings supplies
-// the optional GitHub token and the outbound proxy for imports.
+// the outbound proxy for imports.
 func NewSkillHandler(st *store.SkillStore, se *settings.Reader) *SkillHandler {
 	return &SkillHandler{
 		store: st, settings: se,

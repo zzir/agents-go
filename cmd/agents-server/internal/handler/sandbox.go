@@ -104,7 +104,7 @@ func (h *SandboxHandler) validateSandbox(c *gin.Context, req *createSandboxReq) 
 // Create persists a new sandbox configuration from the request body.
 //
 //	@Summary		Create sandbox
-//	@Description	type is "docker". config: image (required), host ("" = local daemon, tcp://, or ssh://user@host with ssh_* auth — ssh_password is write-only, ******** mask semantics), runtime, user, network, memory_mb/cpus caps, persistent, host_dir, container_name, max_read_file_bytes (0 = 8 MiB default).
+//	@Description	type is "docker". config: image (required), host ("" = local daemon, tcp://, or ssh://user@host with ssh_* auth — ssh_password is write-only, ******** mask semantics), runtime, user, network, memory_mb/cpus caps, max_read_file_bytes (0 = 8 MiB default).
 //	@Tags			sandboxes
 //	@Accept			json
 //	@Produce		json

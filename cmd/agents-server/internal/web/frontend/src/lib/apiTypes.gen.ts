@@ -350,6 +350,15 @@ export interface paths {
                         "application/json": components["schemas"]["handler.ErrorResponse"];
                     };
                 };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
             };
         };
         put?: never;
@@ -3130,7 +3139,7 @@ export interface paths {
         put?: never;
         /**
          * Create sandbox
-         * @description type is "docker". config: image (required), host ("" = local daemon, tcp://, or ssh://user@host with ssh_* auth — ssh_password is write-only, ******** mask semantics), runtime, user, network, memory_mb/cpus caps, persistent, host_dir, container_name, max_read_file_bytes (0 = 8 MiB default).
+         * @description type is "docker". config: image (required), host ("" = local daemon, tcp://, or ssh://user@host with ssh_* auth — ssh_password is write-only, ******** mask semantics), runtime, user, network, memory_mb/cpus caps, max_read_file_bytes (0 = 8 MiB default).
          */
         post: {
             parameters: {
@@ -4896,7 +4905,7 @@ export interface paths {
         put?: never;
         /**
          * Import skills from a URL
-         * @description https://github.com/owner/repo imports every SKILL.md in the repo (GitHub API; set the github_token setting for private repos and rate limits). Any other http(s) URL is fetched as a single SKILL.md.
+         * @description https://github.com/owner/repo imports every SKILL.md in the repo (anonymous GitHub API — private repositories are not reachable). Any other http(s) URL is fetched as a single SKILL.md.
          */
         post: {
             parameters: {
@@ -7494,11 +7503,7 @@ export interface components {
             id?: string;
             name?: string;
             owner_id?: string;
-            /**
-             * @description Scope is the row's visibility (spec §5.29): ScopePrivate — the owner's
-             *     alone — or ScopeGlobal, readable by every member and written by admins.
-             *     OwnerID is set exactly when the scope is private.
-             */
+            /** @description Scope/OwnerID: row visibility, owner set iff private — spec §5.29. */
             scope?: string;
             steps?: components["schemas"]["store.WorkflowStep"][];
             updated_at?: string;

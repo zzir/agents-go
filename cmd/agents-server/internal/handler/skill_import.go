@@ -52,7 +52,7 @@ type skillImportResp struct {
 // the same source refreshes rows that were not edited locally.
 //
 //	@Summary		Import skills from a URL
-//	@Description	https://github.com/owner/repo imports every SKILL.md in the repo (GitHub API; set the github_token setting for private repos and rate limits). Any other http(s) URL is fetched as a single SKILL.md.
+//	@Description	https://github.com/owner/repo imports every SKILL.md in the repo (anonymous GitHub API — private repositories are not reachable). Any other http(s) URL is fetched as a single SKILL.md.
 //	@Tags			skills
 //	@Accept			json
 //	@Produce		json

@@ -4103,8 +4103,8 @@ paths:
     post:
       description: 'type is "docker". config: image (required), host ("" = local daemon,
         tcp://, or ssh://user@host with ssh_* auth — ssh_password is write-only, ********
-        mask semantics), runtime, user, network, memory_mb/cpus caps, persistent,
-        host_dir, container_name, max_read_file_bytes (0 = 8 MiB default).'
+        mask semantics), runtime, user, network, memory_mb/cpus caps, max_read_file_bytes
+        (0 = 8 MiB default).'
       requestBody:
         content:
           application/json:
@@ -5315,8 +5315,8 @@ paths:
   /skill-imports:
     post:
       description: https://github.com/owner/repo imports every SKILL.md in the repo
-        (GitHub API; set the github_token setting for private repos and rate limits).
-        Any other http(s) URL is fetched as a single SKILL.md.
+        (anonymous GitHub API — private repositories are not reachable). Any other
+        http(s) URL is fetched as a single SKILL.md.
       requestBody:
         content:
           application/json:
