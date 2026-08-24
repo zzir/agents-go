@@ -1239,9 +1239,12 @@ Built-in: `content_filter` (input + tool_input, regex — jailbreak keywords),
 | POST   | `/sandboxes/:id/containers/:name/stop` | Stop one — the next run starts it again |
 | DELETE | `/sandboxes/:id/containers/:name` | Remove one ("rebuild"): the project tree survives, the next run recreates the container from the current config |
 
-Every sandbox is a Docker container (`type: "docker"` — spec §5.27).
+Every sandbox is a Docker container (`type: "docker"` — spec §5.27), and the
+Docker daemon is the server's ONE external dependency: it shells out to no
+binary — not git (skills import over the GitHub API), not ssh (remote
+daemons over pure-Go SSH), not the docker CLI (the socket API).
 `config.host` picks the daemon: empty for this machine's, `ssh://user@host`
-for a remote daemon reached over SSH (pure Go — the remote needs sshd with
+for a remote daemon reached over SSH (the remote needs sshd with
 streamlocal forwarding and the SSH user in the docker group, no remote docker
 CLI), `tcp://host:port` for a TCP-exposed one. The `ssh_*` fields carry the
 SSH authentication; `ssh_password` is masked on read — see
