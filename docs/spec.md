@@ -3008,8 +3008,10 @@ References across rows split by whether the reference is load-bearing:
   or foreign-owned agents still reference it. The provider leg — the one that
   spends a credential — settles its races in SQL: an agent write locks the
   provider row and re-checks `RefVisible` in the same transaction, a
-  provider demote counts foreign references and flips in one transaction,
-  and run-time resolution re-checks the rule once more, failing the run
+  provider demote counts foreign references and flips in one transaction, a
+  scope flip lands only FROM the other scope (the same-scope 409 is a SQL
+  predicate, so two racing demotes cannot both re-home a row), and run-time
+  resolution re-checks the rule once more, failing the run
   loudly rather than spending a key that became private. The other reference
   kinds stay validation-plus-runtime-filtering; their races strand no
   credential.

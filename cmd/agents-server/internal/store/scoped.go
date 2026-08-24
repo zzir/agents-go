@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -64,22 +65,36 @@ func ListVisibleOf[T any](ctx context.Context, s *CrudStore[T], ownerID string, 
 	return out, nil
 }
 
+// ErrSameScope marks a scope flip refused because the row already holds the
+// target scope — a second demote would silently re-home the row (spec
+// §5.29). Handlers map it to 409.
+var ErrSameScope = errors.New("the row is already in that scope")
+
 // SetScopeOf moves one scoped row between global and private (spec §5.29).
-// The unique name indexes decide collisions: promoting a private "build"
-// beside a global "build" fails with a UNIQUE violation the handler maps to
-// 409.
+// The scope predicate settles the handler's same-scope check in SQL: two
+// racing demotes cannot both re-home the row. The unique name indexes decide
+// collisions (UNIQUE violation -> 409).
 func SetScopeOf[T any](ctx context.Context, s *CrudStore[T], id, scope, ownerID string) error {
 	res, err := s.db.NewUpdate().Model((*T)(nil)).
 		Set("scope = ?", scope).
 		Set("owner_id = ?", uuidOrNull(ownerID)).
 		Set("updated_at = ?", time.Now().UTC()).
 		Where("id = ?", id).
+		Where("scope != ?", scope).
 		Exec(ctx)
-	if err == nil {
-		err = requireRows(res)
-	}
 	if err != nil {
 		return fmt.Errorf("setting %s %s scope: %w", s.label, id, err)
+	}
+	if n, aerr := res.RowsAffected(); aerr == nil && n == 0 {
+		// Row missing or already in the target scope — tell them apart.
+		exists, eerr := s.db.NewSelect().Model((*T)(nil)).Where("id = ?", id).Exists(ctx)
+		if eerr != nil {
+			return fmt.Errorf("setting %s %s scope: %w", s.label, id, eerr)
+		}
+		if !exists {
+			return fmt.Errorf("setting %s %s scope: %w", s.label, id, ErrNotFound)
+		}
+		return fmt.Errorf("setting %s %s scope: %w", s.label, id, ErrSameScope)
 	}
 	return nil
 }

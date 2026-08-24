@@ -101,8 +101,12 @@ func saveError(c *gin.Context, err error) {
 		return
 	}
 	var rejected badRequestError
-	if errors.Is(err, store.ErrProviderRef) || errors.As(err, &rejected) {
+	if errors.Is(err, store.ErrProviderRef) || errors.Is(err, store.ErrProviderScope) || errors.As(err, &rejected) {
 		badRequest(c, err.Error())
+		return
+	}
+	if errors.Is(err, store.ErrSameScope) {
+		conflict(c, err.Error())
 		return
 	}
 	storeError(c, err)

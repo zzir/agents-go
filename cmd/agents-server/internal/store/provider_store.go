@@ -175,6 +175,9 @@ func (s *ProviderStore) DemoteToPrivate(ctx context.Context, id, newOwner string
 		if err := lockRow(ctx, tx, pv, "id = ?", id); err != nil {
 			return err
 		}
+		if pv.Scope != ScopeGlobal {
+			return ErrSameScope // a second racing demote must not re-home the row
+		}
 		n, err := tx.NewSelect().Model((*AgentConfig)(nil)).
 			Where("provider_id = ?", id).
 			Where("(scope = ? OR owner_id IS NULL OR owner_id != ?)", ScopeGlobal, newOwner).
