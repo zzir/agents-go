@@ -1,6 +1,6 @@
 import './chat.css';
 import { useState, useEffect, useCallback, useMemo, useRef, type MouseEvent, type ReactNode } from 'react';
-import { Button, Dialog, IconButton, ActionMenu, ActionList, Select, Stack, TextInput } from '@primer/react';
+import { Button, Dialog, IconButton, ActionMenu, ActionList, Select, Stack, TextInput, useConfirm } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { api } from '@/lib/api';
 import { CHECK_ICON } from '@/lib/markdownShared';
@@ -26,7 +26,7 @@ import { WorkflowStrip } from '@/features/chat/WorkflowStrip';
 import { TraceDrawer, type TraceReveal } from '@/features/chat/TracePanel';
 import { ContextPanel } from '@/features/chat/ContextPanel';
 import { ChatTopBar } from '@/features/chat/ChatTopBar';
-import { ArrowDownIcon, CommentDiscussionIcon, DependabotIcon, FileDirectoryIcon, PlusIcon } from '@primer/octicons-react';
+import { ArrowDownIcon, CommentDiscussionIcon, DependabotIcon, FileDirectoryIcon, PlusIcon, TrashIcon } from '@primer/octicons-react';
 import { toast } from '@/lib/toast';
 
 /* ---------- types ---------- */
@@ -224,6 +224,25 @@ export function ChatView({
       setAgentConfigId(agentConfigs[0].id);
     }
   }, [agentConfigs, agentConfigId, setAgentConfigId]);
+
+  const confirmDialog = useConfirm();
+  const deleteProject = async (p: Project) => {
+    const ok = await confirmDialog({
+      title: `Delete “${p.name}”?`,
+      content: 'Its files stay on the sandbox. Refused while sessions are still bound to it.',
+      confirmButtonContent: 'Delete',
+      confirmButtonType: 'danger',
+    });
+    if (!ok) return;
+    try {
+      await api.projects.delete(p.id);
+      mutateProjects(prev => (prev ? prev.filter(x => x.id !== p.id) : prev));
+      if (projectId === p.id) setProjectId('');
+      reloadProjects();
+    } catch (e) {
+      toast.error((e as Error).message || 'Could not delete the project');
+    }
+  };
 
   // A persisted sandbox may have since been deleted: drop a now-unknown id
   // back to None ('' is a valid choice), so the composer doesn't carry a stale
@@ -659,6 +678,11 @@ export function ChatView({
                         title={projectLabel(p.name, g.sandboxName)}
                       >
                         {p.name}
+                        <ActionList.TrailingAction
+                          icon={TrashIcon}
+                          label={`Delete ${p.name}`}
+                          onClick={(e: MouseEvent) => { e.stopPropagation(); void deleteProject(p); }}
+                        />
                       </ActionList.Item>
                     ))}
                   </ActionList.Group>

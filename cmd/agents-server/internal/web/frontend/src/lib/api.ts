@@ -324,7 +324,13 @@ export const api = {
     ...crud<S['store.Provider']>('/providers'),
     setScope: setScope('/providers'),
   },
-  projects: crud<S['store.Project']>('/projects'),
+  // Projects have no get/update routes: a row is (name, sandbox), immutable
+  // once created — delete refuses (409) while sessions still bind it.
+  projects: {
+    list: () => request<S['store.Project'][]>('/projects'),
+    create: (data: unknown) => request<S['store.Project']>('/projects', { method: 'POST', body: JSON.stringify(data) }),
+    delete: (id: string) => request<null>(`/projects/${id}`, { method: 'DELETE' }),
+  },
   workflows: {
     ...crud<S['store.Workflow']>('/workflows'),
     setScope: setScope('/workflows'),
