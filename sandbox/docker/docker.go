@@ -343,10 +343,11 @@ func (s *Sandbox) createContainer(ctx context.Context) (string, error) {
 		if s.opts.ContainerName != "" && cerrdefs.IsConflict(err) {
 			id, aerr := s.adoptNamed(ctx)
 			if errors.Is(aerr, errStaleOurs) {
-				// RemoveVolumes reaps only the ANONYMOUS /workspace volume —
-				// docker never auto-removes named ones — so a replace leaks
-				// nothing and drops nothing a project keeps.
-				_, _ = s.cli.ContainerRemove(context.WithoutCancel(ctx), s.opts.ContainerName, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
+				// Remove by the INSPECTED id — the name could have changed
+				// hands since. RemoveVolumes reaps only the ANONYMOUS
+				// /workspace volume — docker never auto-removes named ones —
+				// so a replace leaks nothing and drops nothing a project keeps.
+				_, _ = s.cli.ContainerRemove(context.WithoutCancel(ctx), id, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
 				created2, cerr := s.cli.ContainerCreate(ctx, createOpts)
 				if cerr != nil {
 					return "", fmt.Errorf("docker sandbox: recreate after config change: %w", cerr)
@@ -391,7 +392,8 @@ func (s *Sandbox) createContainer(ctx context.Context) (string, error) {
 // adoptNamed takes over the existing container holding our fixed name,
 // provided the fingerprint label proves it OURS from the SAME configuration
 // (spec §5.19). A stopped match is started; ours-from-an-older-config is
-// errStaleOurs (the caller replaces it); a foreign holder is a hard error.
+// errStaleOurs with the stale container's id, so the caller replaces exactly
+// the container it judged; a foreign holder is a hard error.
 func (s *Sandbox) adoptNamed(ctx context.Context) (string, error) {
 	info, err := s.cli.ContainerInspect(ctx, s.opts.ContainerName, client.ContainerInspectOptions{})
 	if err != nil {
@@ -411,12 +413,12 @@ func (s *Sandbox) adoptNamed(ctx context.Context) (string, error) {
 	case "":
 		return "", fmt.Errorf("it was not created by this sandbox (no %s label); remove or rename the container", fingerprintLabel)
 	default:
-		return "", errStaleOurs
+		return c.ID, errStaleOurs // the id rides along so the replace acts on IT, not the name
 	}
 	// Belt to the fingerprint's braces on the two fields a drifted daemon
 	// could disagree about.
 	if c.Config.Image != s.opts.Image {
-		return "", errStaleOurs
+		return c.ID, errStaleOurs
 	}
 	if s.opts.WorkDir != "" {
 		src := ""
@@ -427,7 +429,7 @@ func (s *Sandbox) adoptNamed(ctx context.Context) (string, error) {
 			}
 		}
 		if filepath.Clean(src) != filepath.Clean(s.opts.WorkDir) {
-			return "", errStaleOurs
+			return c.ID, errStaleOurs
 		}
 	}
 	if c.State == nil || !c.State.Running {
