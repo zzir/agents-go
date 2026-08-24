@@ -628,7 +628,7 @@ type readSkillArgs struct {
 // index entry this agent carries are readable: the advertised set is the
 // agent's skill selection, not the whole table.
 func readSkillTool(store *store.SkillStore, advertised map[string]bool, ownerID string) *agents.Tool {
-	return agents.NewTool("read_skill",
+	t := agents.NewTool("read_skill",
 		"Read a skill's full SKILL.md instructions by name.",
 		func(ctx context.Context, _ *agents.ToolContext, args readSkillArgs) (string, error) {
 			if !advertised[args.Name] {
@@ -640,6 +640,8 @@ func readSkillTool(store *store.SkillStore, advertised map[string]bool, ownerID 
 			}
 			return sk.Content, nil
 		})
+	t.ReadOnly = true // consulting a skill must survive plan mode
+	return t
 }
 
 // bucketToolsSince records the tools appended since mark under source, and
@@ -658,39 +660,14 @@ func bucketToolsSince(agent *agents.Agent, mark int, source string, prof *store.
 	return len(agent.Tools)
 }
 
-// staticLocalToolNames returns the fixed names of every tool the bridge
-// itself can attach to an agent in buildAgentFromConfig: the sandbox tools
-// (sandbox.CodeTool + sandbox.FileTools + apply_patch), the Brave Search tool,
-// and the skills reader. MCP tools never appear here — they are prefixed
-// "<server name>__" at connect time (see mcpservers.Manager.Connect).
-func staticLocalToolNames() []string {
-	return []string{
-		// sandbox (exec + file tools + apply_patch)
-		"exec_command", "read_file", "write_file", "list_files", "apply_patch",
-		// brave_api_key setting
-		"brave_search",
-		// skills
-		"read_skill_file",
-	}
-}
-
 // ValidateAgentToolNames simulates the statically knowable part of an agent's
 // final tool list and reports name collisions that the SDK would otherwise
-// reject only at run time (duplicate tool names are a UserError). Statically
-// checkable are the bridge's own fixed tool names and the MCP servers
-// referenced by toolsJSON: every server's tools get the "<name>__" prefix, so
-// selecting the same server twice, or two servers that share a name, is a
-// guaranteed collision. The servers' actual tool lists are only known once
-// connected and cannot be validated here.
+// reject only at run time (duplicate tool names are a UserError). Every MCP
+// server's tools get the "<server name>__" prefix, so selecting the same
+// server twice — or two servers sharing a name, legal since names are unique
+// per SCOPE — is a guaranteed collision. The servers' actual tool lists are
+// only known once connected and cannot be validated here.
 func ValidateAgentToolNames(ctx context.Context, mcpServers *store.McpServerStore, toolsJSON string) error {
-	seen := map[string]bool{}
-	for _, name := range staticLocalToolNames() {
-		if seen[name] {
-			return fmt.Errorf("duplicate built-in tool name %q", name)
-		}
-		seen[name] = true
-	}
-
 	if toolsJSON == "" || mcpServers == nil {
 		return nil
 	}
@@ -700,10 +677,8 @@ func ValidateAgentToolNames(ctx context.Context, mcpServers *store.McpServerStor
 	if err := json.Unmarshal([]byte(toolsJSON), &ids); err != nil {
 		return fmt.Errorf("tools selection is invalid: %w", err)
 	}
-	// Cross-server name collisions can't happen — mcp_servers.name is unique —
-	// so only the same server selected twice needs catching here (that would
-	// duplicate every one of its tools under the same prefix).
 	seenID := map[string]bool{}
+	prefixOwner := map[string]string{}
 	for _, id := range ids {
 		cfg, err := mcpServers.Get(ctx, id)
 		if err != nil {
@@ -713,6 +688,10 @@ func ValidateAgentToolNames(ctx context.Context, mcpServers *store.McpServerStor
 			return fmt.Errorf("MCP server %q is selected twice; each of its tools would appear under the same name twice", cfg.Name)
 		}
 		seenID[id] = true
+		if prev, ok := prefixOwner[cfg.Name]; ok && prev != id {
+			return fmt.Errorf("two selected MCP servers are named %q; their tools would collide under one prefix", cfg.Name)
+		}
+		prefixOwner[cfg.Name] = id
 	}
 	return nil
 }

@@ -116,3 +116,34 @@ func TestBuildFullAgentPromotesGuardrailsToRunLevel(t *testing.T) {
 		t.Errorf("RunGuardrails stages: input=%v output=%v, want both", sawInput, sawOutput)
 	}
 }
+
+// Names are unique per SCOPE, so a private "foo" beside a global "foo" is
+// legal — but one agent selecting both would run two tool sets under the
+// same "foo__" prefix. Save-time validation catches it; the same server
+// selected twice likewise.
+func TestValidateAgentToolNamesCatchesPrefixCollisions(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	servers := store.NewMcpServerStore(db)
+	owner := store.NewID()
+	global := &store.McpServerConfig{Name: "foo", Scope: store.ScopeGlobal}
+	if err := servers.Create(ctx, global); err != nil {
+		t.Fatal(err)
+	}
+	shadow := &store.McpServerConfig{Name: "foo", Scope: store.ScopePrivate, OwnerID: owner}
+	if err := servers.Create(ctx, shadow); err != nil {
+		t.Fatal(err)
+	}
+
+	both := `["` + global.ID + `","` + shadow.ID + `"]`
+	if err := ValidateAgentToolNames(ctx, servers, both); err == nil || !strings.Contains(err.Error(), "foo") {
+		t.Fatalf("same-named pair = %v, want a prefix-collision refusal", err)
+	}
+	twice := `["` + global.ID + `","` + global.ID + `"]`
+	if err := ValidateAgentToolNames(ctx, servers, twice); err == nil || !strings.Contains(err.Error(), "twice") {
+		t.Fatalf("same server twice = %v, want a refusal", err)
+	}
+	if err := ValidateAgentToolNames(ctx, servers, `["`+global.ID+`"]`); err != nil {
+		t.Fatalf("a single selection must pass: %v", err)
+	}
+}
