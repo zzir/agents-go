@@ -13,7 +13,7 @@ import (
 // predicate), so binding tests must create what they bind.
 func createSandboxRow(t *testing.T, db *bun.DB, id string) {
 	t.Helper()
-	cfg := &SandboxConfig{ID: id, Name: id, Type: "ssh", Config: []byte(`{"addr":"h","user":"u","work_dir":"/srv"}`)}
+	cfg := &SandboxConfig{ID: id, Name: id, Type: "docker", Config: []byte(`{"image":"i","host":"ssh://u@h"}`)}
 	if err := NewSandboxStore(db).Create(context.Background(), cfg); err != nil {
 		t.Fatalf("create sandbox config %s: %v", id, err)
 	}
@@ -280,7 +280,7 @@ func TestBindSandboxRefusesAStaleRevision(t *testing.T) {
 	createSandboxRow(t, db, id("sb-1"))
 
 	// The config moves to revision 2 after the caller read revision 1.
-	up := &SandboxConfig{Name: "sb-1", Type: "ssh", Config: []byte(`{"addr":"h2","user":"u","work_dir":"/srv"}`)}
+	up := &SandboxConfig{Name: "sb-1", Type: "docker", Config: []byte(`{"image":"i","host":"ssh://u@h2"}`)}
 	if err := sandboxes.Update(ctx, id("sb-1"), up, 1, true); err != nil {
 		t.Fatal(err)
 	}

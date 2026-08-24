@@ -11,10 +11,9 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
-// The list/get responses advertise which sandboxStore can host a web terminal:
-// ssh always, docker only when persistent, local never. The frontend gates
-// the terminal button on this field, so getting it wrong hides (or worse,
-// shows) the feature.
+// The list/get responses advertise which sandboxes can host a web terminal:
+// only a persistent container can. The frontend gates the terminal button on
+// this field, so getting it wrong hides (or worse, shows) the feature.
 func TestSandboxList_TerminalCapability(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
@@ -25,10 +24,9 @@ func TestSandboxList_TerminalCapability(t *testing.T) {
 		config string
 		want   bool
 	}{
-		{"ssh", "ssh", `{"addr":"h","user":"u"}`, true},
 		{"docker-persistent", "docker", `{"image":"i","persistent":true}`, true},
 		{"docker-ephemeral", "docker", `{"image":"i"}`, false},
-		{"local", "local", ``, false},
+		{"remote-persistent", "docker", `{"image":"i","host":"ssh://u@h","persistent":true}`, true},
 	}
 	for _, s := range seed {
 		cfg := &store.SandboxConfig{Name: s.name, Type: s.typ}
@@ -63,10 +61,11 @@ func TestSandboxList_TerminalCapability(t *testing.T) {
 	}
 }
 
-// The list responses also advertise each sandbox's default workdir and whether
-// a per-session custom workdir is honored — the frontend prefills and gates
-// the workdir picker on these, so getting them wrong offers an editor that
-// does nothing (docker) or hides one that works (local/ssh).
+// The list responses also advertise each sandbox's default workdir and
+// whether a per-session custom workdir is honored — the frontend prefills
+// and gates the workdir picker on these, so getting them wrong offers an
+// editor that does nothing (ephemeral) or hides one that works (persistent
+// /workspace subtrees).
 func TestSandboxList_WorkDirDefaults(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
@@ -79,14 +78,11 @@ func TestSandboxList_WorkDirDefaults(t *testing.T) {
 		wantDir  string
 		editable bool
 	}{
-		{"ssh", "ssh", `{"addr":"h","user":"u","work_dir":"/srv/app"}`, "/srv/app", true},
-		{"ssh-nodir", "ssh", `{"addr":"h","user":"u"}`, "", true},
 		// Docker reports the container-side execution directory — /workspace —
 		// never the host mount source (that is config.host_dir). Persistent
 		// containers may work in a /workspace subtree, so theirs is editable.
 		{"docker-persistent", "docker", `{"image":"i","persistent":true}`, "/workspace", true},
 		{"docker-ephemeral", "docker", `{"image":"i"}`, "/workspace", false},
-		{"local", "local", ``, ws, true},
 	}
 	for _, s := range seed {
 		cfg := &store.SandboxConfig{Name: s.name, Type: s.typ}
@@ -138,7 +134,7 @@ func TestSandboxUpdate_FreezesIdentityWhileReferenced(t *testing.T) {
 	engine := newTestEngine()
 	engine.PUT("/sandboxStore/:id", h.Update)
 
-	cfg := &store.SandboxConfig{Name: "box", Type: "ssh", Config: json.RawMessage(`{"addr":"h1","user":"u","work_dir":"/srv"}`)}
+	cfg := &store.SandboxConfig{Name: "box", Type: "docker", Config: json.RawMessage(`{"image":"i","host":"ssh://u@h1","persistent":true}`)}
 	if err := sandboxStore.Create(t.Context(), cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -146,43 +142,36 @@ func TestSandboxUpdate_FreezesIdentityWhileReferenced(t *testing.T) {
 	if err := sessions.Create(t.Context(), sess); err != nil {
 		t.Fatal(err)
 	}
-	if won, err := sessions.BindSandboxIfEmpty(t.Context(), sess.ID, cfg.ID, "/srv/app", 1); err != nil || !won {
+	if won, err := sessions.BindSandboxIfEmpty(t.Context(), sess.ID, cfg.ID, "/workspace/app", 1); err != nil || !won {
 		t.Fatalf("bind: won=%v err=%v", won, err)
 	}
 
-	// Identity change (addr) → 409, row untouched.
+	// Identity change (the daemon) → 409, row untouched.
 	w := doJSON(t, engine, "PUT", "/sandboxStore/"+cfg.ID,
-		`{"name":"box","type":"ssh","config":{"addr":"h2","user":"u","work_dir":"/srv"}}`)
+		`{"name":"box","type":"docker","config":{"image":"i","host":"ssh://u@h2","persistent":true}}`)
 	if w.Code != 409 {
 		t.Fatalf("identity update on a referenced sandbox: %d %s, want 409", w.Code, w.Body.String())
-	}
-	// The ssh USER is identity too: user-a@host and user-b@host are different
-	// homes and permission views — a different file system at one address.
-	w = doJSON(t, engine, "PUT", "/sandboxStore/"+cfg.ID,
-		`{"name":"box","type":"ssh","config":{"addr":"h1","user":"someone-else","work_dir":"/srv"}}`)
-	if w.Code != 409 {
-		t.Fatalf("user change on a referenced sandbox: %d %s, want 409", w.Code, w.Body.String())
 	}
 	got, err := sandboxStore.Get(t.Context(), cfg.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var sc store.SSHConfig
-	_ = json.Unmarshal(got.Config, &sc)
-	if sc.Addr != "h1" || sc.User != "u" {
-		t.Fatalf("refused update changed the row: addr=%q user=%q", sc.Addr, sc.User)
+	var dc store.DockerConfig
+	_ = json.Unmarshal(got.Config, &dc)
+	if dc.Host != "ssh://u@h1" {
+		t.Fatalf("refused update changed the row: host=%q", dc.Host)
 	}
 
 	// Non-identity change (credentials, name) → 200 even while referenced.
 	w = doJSON(t, engine, "PUT", "/sandboxStore/"+cfg.ID,
-		`{"name":"box-renamed","type":"ssh","config":{"addr":"h1","user":"u","work_dir":"/srv","password":"rotated"}}`)
+		`{"name":"box-renamed","type":"docker","config":{"image":"i","host":"ssh://u@h1","persistent":true,"ssh_password":"rotated"}}`)
 	if w.Code != 200 {
 		t.Fatalf("credential update on a referenced sandbox: %d %s, want 200", w.Code, w.Body.String())
 	}
 	got, _ = sandboxStore.Get(t.Context(), cfg.ID)
-	_ = json.Unmarshal(got.Config, &sc)
-	if sc.Password != "rotated" || got.Name != "box-renamed" {
-		t.Fatalf("non-identity update did not land: name=%q password=%q", got.Name, sc.Password)
+	_ = json.Unmarshal(got.Config, &dc)
+	if dc.SSHPassword != "rotated" || got.Name != "box-renamed" {
+		t.Fatalf("non-identity update did not land: name=%q password=%q", got.Name, dc.SSHPassword)
 	}
 
 	// The session gone, identity moves freely again.
@@ -190,7 +179,7 @@ func TestSandboxUpdate_FreezesIdentityWhileReferenced(t *testing.T) {
 		t.Fatal(err)
 	}
 	w = doJSON(t, engine, "PUT", "/sandboxStore/"+cfg.ID,
-		`{"name":"box-renamed","type":"ssh","config":{"addr":"h2","user":"u","work_dir":"/srv"}}`)
+		`{"name":"box-renamed","type":"docker","config":{"image":"i","host":"ssh://u@h2","persistent":true}}`)
 	if w.Code != 200 {
 		t.Fatalf("identity update after the last session left: %d %s, want 200", w.Code, w.Body.String())
 	}

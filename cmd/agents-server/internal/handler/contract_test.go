@@ -106,7 +106,7 @@ func TestForkCopiesSandboxBinding(t *testing.T) {
 	db := testdb.New(t)
 	sessions := store.NewSessionStore(db)
 	// BindSandboxIfEmpty refuses a target with no config row (EXISTS).
-	if err := store.NewSandboxStore(db).Create(t.Context(), &store.SandboxConfig{ID: "sb-1", Name: "sb-1", Type: "ssh", Config: json.RawMessage(`{"addr":"h","user":"u","work_dir":"/srv"}`)}); err != nil {
+	if err := store.NewSandboxStore(db).Create(t.Context(), &store.SandboxConfig{ID: "sb-1", Name: "sb-1", Type: "docker", Config: json.RawMessage(`{"image":"i","persistent":true}`)}); err != nil {
 		t.Fatal(err)
 	}
 	sh := NewSessionHandler(testSessionDeps(db, func(d *SessionDeps) { d.Sessions = sessions }))
@@ -148,7 +148,7 @@ func TestPatchCannotMoveBinding(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
 	sessions := store.NewSessionStore(db)
-	if err := store.NewSandboxStore(db).Create(t.Context(), &store.SandboxConfig{ID: "sb-1", Name: "sb-1", Type: "ssh", Config: json.RawMessage(`{"addr":"h","user":"u","work_dir":"/srv"}`)}); err != nil {
+	if err := store.NewSandboxStore(db).Create(t.Context(), &store.SandboxConfig{ID: "sb-1", Name: "sb-1", Type: "docker", Config: json.RawMessage(`{"image":"i","persistent":true}`)}); err != nil {
 		t.Fatal(err)
 	}
 	sh := NewSessionHandler(testSessionDeps(db, func(d *SessionDeps) { d.Sessions = sessions }))

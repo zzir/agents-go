@@ -135,32 +135,13 @@ export function groupProjects(projects: ProjectOption[]): Array<{ sandboxId: str
 
 /* Why the given workdir draft could not bind on this sandbox, or null when it
    can — the client-side mirror of the server's ResolveBindingWorkDir, in ONE
-   place so the dialog's validation and the send-time guard cannot drift (they
-   did: the dialog once passed an empty draft over a relative ssh default that
-   the send-time check then refused). The rules:
-     - a backend with a fixed directory (work_dir_editable false) sends no
-       directory claim, so any draft is moot;
-     - docker: /workspace or a subtree of it;
-     - ssh: an absolute remote path is required, from the draft or the
-       config default — a relative one resolves against a movable login home;
-     - local: the draft, when given, must be absolute. */
+   place so the dialog's validation and the send-time guard cannot drift. A
+   sandbox with a fixed directory (work_dir_editable false) sends no directory
+   claim, so any draft is moot; otherwise the draft must be /workspace or a
+   subtree of it. */
 export function bindingWorkDirIssue(cfg: SandboxConfigLite | undefined, draft: string): string | null {
   if (!cfg || !cfg.work_dir_editable) return null;
-  const d = draft.trim();
-  switch (cfg.type) {
-    case 'docker':
-      return workspaceSubdirValid(d) ? null : 'Must be /workspace or a subdirectory of it.';
-    case 'ssh': {
-      const effective = d || cfg.default_work_dir || '';
-      if (!effective) return 'This ssh sandbox has no default directory — an absolute project directory is required so the session\'s files persist between commands.';
-      if (!effective.startsWith('/')) return 'An ssh project directory must be an absolute remote path (starting with /).';
-      return null;
-    }
-    default:
-      // local
-      if (d && !d.startsWith('/')) return 'A local project directory must be an absolute path.';
-      return null;
-  }
+  return workspaceSubdirValid(draft.trim()) ? null : 'Must be /workspace or a subdirectory of it.';
 }
 
 export function composerSandboxView(

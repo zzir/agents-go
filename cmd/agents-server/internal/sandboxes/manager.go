@@ -18,7 +18,6 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/sandbox"
 	dockersb "github.com/zzir/agents-go/sandbox/docker"
-	sshsb "github.com/zzir/agents-go/sandbox/ssh"
 )
 
 // DockerWorkspace is the container-side mount point every docker sandbox
@@ -263,6 +262,13 @@ func (m *Manager) buildFn() func(*store.SandboxConfig, string) (sandbox.Sandbox,
 	return m.buildSandbox
 }
 
+// SetBuildOverride replaces the sandbox constructor — tests (in this package
+// and the bridge's) inject an in-process fake so tool-execution paths run
+// without a Docker daemon.
+func (m *Manager) SetBuildOverride(fn func(*store.SandboxConfig, string) (sandbox.Sandbox, error)) {
+	m.buildOverride = fn
+}
+
 // release drops one holder's reference and closes the instance if it was the
 // last holder of a doomed one.
 func (m *Manager) release(inst *sandboxInstance) {
@@ -392,26 +398,18 @@ const (
 )
 
 // TerminalCapable reports whether a sandbox config can hold an interactive
-// shell open (sandbox.TerminalOpener): ssh always, docker only in persistent
-// mode (an ephemeral container has nothing to attach to between Execs), local
-// never — a PTY on the host process is a bigger grant than
-// --allow-local-sandbox implies. One rule for both consumers: the web-terminal
-// capability flag and exec_command's persistent sessions.
+// shell open (sandbox.TerminalOpener): only a persistent container can — an
+// ephemeral one has nothing to attach to between Execs. One rule for both
+// consumers: the web-terminal capability flag and exec_command's persistent
+// sessions.
 func TerminalCapable(cfg *store.SandboxConfig) bool {
-	switch cfg.Type {
-	case "ssh":
-		return true
-	case "docker":
-		var dc store.DockerConfig
-		if len(cfg.Config) > 0 {
-			if err := json.Unmarshal(cfg.Config, &dc); err != nil {
-				return false
-			}
+	var dc store.DockerConfig
+	if len(cfg.Config) > 0 {
+		if err := json.Unmarshal(cfg.Config, &dc); err != nil {
+			return false
 		}
-		return dc.Persistent
-	default:
-		return false
 	}
+	return dc.Persistent
 }
 
 // SandboxTools returns exec_command plus read_file, write_file, list_files and
@@ -453,94 +451,66 @@ func (m *Manager) SandboxTools(cfg *store.SandboxConfig, workDir string, command
 }
 
 // buildSandbox constructs the SDK sandbox for a config. workDir is the
-// session-bound directory (already normalized by effectiveWorkDir): local and
-// ssh honor it, docker never sees a non-empty value.
+// session's bound working directory ("" = the config's default view); docker
+// is the only backend (spec §5.27).
 func (m *Manager) buildSandbox(cfg *store.SandboxConfig, workDir string) (sandbox.Sandbox, error) {
-	switch cfg.Type {
-	case "local":
-		var lc store.LocalConfig
-		if err := unmarshalConfig(cfg.Config, &lc); err != nil {
-			return nil, fmt.Errorf("local sandbox: invalid config: %w", err)
-		}
-		opts := sandbox.LocalOptions{MaxReadFileBytes: lc.MaxReadFileBytes}
-		switch {
-		case workDir != "":
-			opts.WorkDir = workDir
-		case m.workspace != "":
-			opts.WorkDir = m.workspace
-		}
-		return sandbox.NewLocalWithOptions(opts), nil
-	case "docker":
-		var dc store.DockerConfig
-		if err := unmarshalConfig(cfg.Config, &dc); err != nil {
-			return nil, fmt.Errorf("docker sandbox: invalid config: %w", err)
-		}
-		if dc.Image == "" {
-			return nil, fmt.Errorf("docker sandbox requires an image")
-		}
-		opts := dockersb.Options{
-			Image:            dc.Image,
-			Runtime:          dc.Runtime,
-			User:             dc.User,
-			Network:          dc.Network,
-			Persistent:       dc.Persistent,
-			ContainerName:    dc.ContainerName,
-			MaxReadFileBytes: dc.MaxReadFileBytes,
-		}
-		if dc.Persistent {
-			hostDir := dc.HostDir
-			if hostDir == "" {
-				hostDir = m.workspace
-			}
-			if hostDir != "" {
-				opts.WorkDir = hostDir
-			}
-			// The session's project subtree inside the mount ("" = /workspace
-			// itself). Only meaningful with a workdir per session; ephemeral
-			// containers never get one (effectiveWorkDir).
-			opts.ContainerWorkDir = workDir
-			// A fixed container name belongs to the default instance; a
-			// subtree instance is a SECOND container over the same mount and
-			// must not fight it for the name.
-			if opts.ContainerName != "" && workDir != "" {
-				sum := sha256.Sum256([]byte(workDir))
-				opts.ContainerName = fmt.Sprintf("%s-%x", opts.ContainerName, sum[:4])
-			}
-		}
-		return dockersb.New(opts)
-	case "ssh":
-		var sc store.SSHConfig
-		if err := unmarshalConfig(cfg.Config, &sc); err != nil {
-			return nil, fmt.Errorf("ssh sandbox: invalid config: %w", err)
-		}
-		if sc.Addr == "" {
-			return nil, fmt.Errorf("ssh sandbox requires a host")
-		}
-		if sc.User == "" {
-			return nil, fmt.Errorf("ssh sandbox requires a user")
-		}
-		wd := sc.WorkDir
-		if workDir != "" {
-			wd = workDir
-		}
-		return sshsb.New(sshsb.Options{
-			Addr: sc.Addr,
-			User: sc.User,
-			Auth: sshsb.AuthConfig{
-				UseAgent: sc.UseAgent,
-				KeyFile:  sc.KeyFile,
-				Password: sc.Password,
-			},
-			HostKey: sshsb.HostKeyConfig{
-				KnownHostsFile:        sc.KnownHosts,
-				InsecureIgnoreHostKey: sc.InsecureHostKey,
-			},
-			WorkDir:          wd,
-			MaxReadFileBytes: sc.MaxReadFileBytes,
-		})
-	default:
+	if cfg.Type != "docker" {
 		return nil, fmt.Errorf("unknown sandbox type: %s", cfg.Type)
 	}
+	var dc store.DockerConfig
+	if err := unmarshalConfig(cfg.Config, &dc); err != nil {
+		return nil, fmt.Errorf("docker sandbox: invalid config: %w", err)
+	}
+	if dc.Image == "" {
+		return nil, fmt.Errorf("docker sandbox requires an image")
+	}
+	opts := dockersb.Options{
+		Image:   dc.Image,
+		Host:    dc.Host,
+		Runtime: dc.Runtime,
+		User:    dc.User,
+		Network: dc.Network,
+		Limits: sandbox.Limits{
+			MemoryBytes: dc.MemoryMB << 20,
+			CPUs:        dc.CPUs,
+		},
+		Persistent:       dc.Persistent,
+		ContainerName:    dc.ContainerName,
+		MaxReadFileBytes: dc.MaxReadFileBytes,
+	}
+	if strings.HasPrefix(dc.Host, "ssh://") {
+		opts.SSH = dockersb.SSHAuth{
+			UseAgent:              dc.SSHUseAgent,
+			KeyFile:               dc.SSHKeyFile,
+			Password:              dc.SSHPassword,
+			KnownHostsFile:        dc.SSHKnownHosts,
+			InsecureIgnoreHostKey: dc.SSHInsecureHostKey,
+		}
+	}
+	if dc.Persistent {
+		hostDir := dc.HostDir
+		if hostDir == "" {
+			hostDir = m.workspace
+		}
+		// A bind mount is a LOCAL-daemon feature: the path means nothing on a
+		// remote host. Remote persistent containers keep their own /workspace
+		// volume until projects land.
+		if hostDir != "" && dc.Host == "" {
+			opts.WorkDir = hostDir
+		}
+		// The session's project subtree inside the mount ("" = /workspace
+		// itself). Only meaningful with a workdir per session; ephemeral
+		// containers never get one (effectiveWorkDir).
+		opts.ContainerWorkDir = workDir
+		// A fixed container name belongs to the default instance; a
+		// subtree instance is a SECOND container over the same mount and
+		// must not fight it for the name.
+		if opts.ContainerName != "" && workDir != "" {
+			sum := sha256.Sum256([]byte(workDir))
+			opts.ContainerName = fmt.Sprintf("%s-%x", opts.ContainerName, sum[:4])
+		}
+	}
+	return dockersb.New(opts)
 }
 
 // unmarshalConfig decodes a SandboxConfig.Config payload, treating empty as a

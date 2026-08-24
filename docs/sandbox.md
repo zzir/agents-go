@@ -5,11 +5,11 @@ The `sandbox` packages run **model-generated code** in an isolated environment a
 ```
 agents.Agent ── CodeTool  ──► sandbox.Sandbox (interface)
              ── FileTools ──►   ├── sandbox.LocalSandbox      (dev only, no isolation)
-                                ├── sandbox/docker.Sandbox    (ephemeral / persistent containers)
-                                └── sandbox/ssh.Sandbox       (remote host over SSH)
+                                └── sandbox/docker.Sandbox    (ephemeral / persistent containers,
+                                                               local daemon or remote over SSH)
 ```
 
-The Docker and SSH backends are each a **separate Go module** (`sandbox/docker`, `sandbox/ssh`) so the core module stays dependency-light.
+The Docker backend is a **separate Go module** (`sandbox/docker`) so the core module stays dependency-light.
 
 ## Restricting what may run
 
@@ -159,23 +159,19 @@ Each `Exec` creates a locked-down container and removes it afterwards: no networ
 
 With `Persistent: true` a single container is reused across `Exec` calls (state and installed files survive between calls) and the root filesystem is writable. The default user is still `65534:65534` (nobody), which **cannot install packages**; set `UserUnset: true` to run as the image's default user, or set `User` explicitly. Timeouts are enforced per exec: when the deadline passes the attached connection is closed and the exec's process tree is killed best-effort (exec processes are tagged with an `AGENTS_SANDBOX_EXEC` environment marker and matched via `/proc`; a process that re-execs itself with a scrubbed environment can evade the sweep — the container's PID/memory limits are the backstop).
 
-### SSH (remote host)
+### Remote daemon over SSH
 
 ```go
-import sshsb "github.com/zzir/agents-go/sandbox/ssh"
-
-sb, err := sshsb.New(sshsb.Options{
-	Addr: "dev-box:22",                                  // host[:port]; default port 22
-	User: "sandbox",
-	Auth: sshsb.AuthConfig{KeyFile: "~/.ssh/id_ed25519"}, // or Password / UseAgent / KeyBytes
+sb, err := docker.New(docker.Options{
+	Image: "python:3.12-slim",
+	Host:  "ssh://sandbox@dev-box",                    // ssh://user@host[:port][/socket]
+	SSH:   docker.SSHAuth{KeyFile: "~/.ssh/id_ed25519"}, // or Password / UseAgent / KeyBytes
 })
 ```
 
-Each `Exec` writes the request files to a fresh `/tmp/agents-sandbox-*` directory on the remote host via **SFTP**, runs the command in a new SSH session (`cd … && exec …`, every argument shell-quoted), and removes the directory afterwards. `Stdin` is supported; timeouts close the SSH session and return `TimedOut=true` with exit `-1` — whether the remote process actually dies is **best-effort** (it depends on the sshd implementation and configuration; the command may keep running on the remote host after a timeout).
+`Host: "ssh://…"` reaches a remote daemon's unix socket through SSH, in pure Go: every docker API request opens a `direct-streamlocal` channel on one shared SSH connection — no `ssh` binary locally, no docker CLI on the remote. The remote needs sshd with streamlocal forwarding allowed (the OpenSSH default) and the SSH user able to reach `/var/run/docker.sock` (typically the `docker` group). A severed SSH connection is re-established on the next request. The containers, images and volumes all live on the remote host; everything else about the backend is unchanged.
 
-Authentication methods are tried in order — SSH agent (`UseAgent`), private key (`KeyFile`/`KeyBytes`, optionally `Passphrase`), then `Password`. Host keys are verified against `~/.ssh/known_hosts` by default; `HostKey.InsecureIgnoreHostKey` disables this (dev/test only), and `HostKey.Callback`/`KnownHostsFile` customize it.
-
-> ⚠️ **The SSH backend provides no isolation.** The command runs with the SSH user's full privileges and `sandbox.Limits` are **not** enforced (SSH has no cgroups). Point it at a disposable VM or an already-sandboxed host, never a machine you care about.
+Authentication methods are tried in order — SSH agent (`UseAgent`), private key (`KeyFile`/`KeyBytes`, optionally `Passphrase`), then `Password`. Host keys are verified against `~/.ssh/known_hosts` by default; `InsecureIgnoreHostKey` disables this (dev/test only), and `KnownHostsFile` customizes it.
 
 ## FileTools configuration
 
@@ -218,7 +214,7 @@ type ExecRequest struct {
 	Cmd            []string          // argv, run exactly as given
 	Files          map[string]string // path (relative to the workdir) -> content
 	Env            map[string]string
-	Stdin          string            // local and SSH backends (docker rejects it)
+	Stdin          string            // local backend (docker rejects it)
 	Timeout        time.Duration     // 0 = DefaultTimeout (30s)
 	MaxOutputBytes int64             // per stream; 0 = DefaultMaxOutputBytes (1 MiB)
 }
@@ -237,7 +233,7 @@ type DirEntry struct {
 }
 ```
 
-A backend that assembles `sh -c` command lines should pass every interpolated value — path, argument, environment entry — through `sandbox.ShellQuote`, the same helper the Docker and SSH backends use, so the escaping has one definition rather than one copy per backend.
+A backend that assembles `sh -c` command lines should pass every interpolated value — path, argument, environment entry — through `sandbox.ShellQuote`, the same helper the Docker backend uses, so the escaping has one definition rather than one copy per backend.
 
 ## ExecStreamer (optional)
 
@@ -264,7 +260,7 @@ type TerminalOpener interface {
 type TerminalOptions struct {
 	Cols, Rows int               // initial PTY size; 0 = 80x24
 	Term       string            // TERM value; "" = "xterm-256color"
-	Shell      []string          // nil = backend default (SSH: login shell; docker: bash if present, else sh)
+	Shell      []string          // nil = backend default (bash if present, else sh)
 	Env        map[string]string
 }
 
@@ -275,8 +271,7 @@ type Terminal interface {
 }
 ```
 
-The **SSH** backend always supports it (a new session with `RequestPty` on the
-existing connection, one per terminal). The **docker** backend supports it only
+The **docker** backend supports it only
 in `Persistent` mode — an interactive shell needs a long-lived container to
 attach to — and force-kills the shell's process tree on `Close`. The **local**
 backend does not implement it: handing out a host shell is a deliberately
@@ -285,4 +280,4 @@ bigger grant than running individual commands, so it is excluded by design.
 backend's current configuration cannot host a terminal. The context bounds
 session establishment only; the returned `Terminal` lives until `Close`.
 
-See [examples/sandbox](../examples/sandbox/main.go), [sandbox/docker/example](../sandbox/docker/example/main.go) and [sandbox/ssh/example](../sandbox/ssh/example/main.go) for runnable programs.
+See [examples/sandbox](../examples/sandbox/main.go) and [sandbox/docker/example](../sandbox/docker/example/main.go) for runnable programs.

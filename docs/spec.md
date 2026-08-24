@@ -2879,6 +2879,33 @@ discovery. Consequences, all intended:
 Do not add per-skill file storage back; a skill needing an artifact should
 inline it or instruct the model to fetch it.
 
+### 5.27 The workbench's sandbox is Docker, and SSH is how a remote daemon is reached
+
+Decided 2026-08-24. The server's `local` and `ssh` sandbox types are removed:
+a local sandbox was host execution behind one admin write and one approval
+(and the reason a web terminal had to be special-cased off), and the generic
+SSH sandbox ran commands with a login user's full privileges, no limits, on a
+machine the server merely had credentials to. Every sandbox is now a Docker
+container; what varies is WHERE — `DockerConfig.Host` empty for the local
+daemon, `ssh://user@host` for a remote one, `tcp://` for the exposed case.
+
+The SSH machinery lives on inside `sandbox/docker` as a TRANSPORT: a pure-Go
+dialer (x/crypto/ssh) that opens direct-streamlocal channels to the remote
+`docker.sock` over one shared, self-healing connection. It requires only
+sshd with streamlocal forwarding and socket access for the SSH user — no
+remote docker CLI, no local ssh binary. The `sandbox/ssh` module is deleted,
+not parked: its Sandbox implementation had become the workbench's only
+consumer, and an embedder who wants raw remote exec can use x/crypto/ssh
+directly — the value this repo added was the sandboxing, which SSH never
+provided. The SDK's `sandbox.LocalSandbox` stays (embedders and tests; the
+server just never offers it). A sandbox's identity (§ the binding freeze)
+gains the daemon: changing `Host` moves every container's filesystems, so it
+freezes while sessions are bound.
+
+Do not reintroduce a host-exec sandbox type or a raw remote-exec one; an
+isolation need beyond containers (VMs, gVisor) is a new backend decision
+argued here first — gVisor is already reachable today via `runtime: runsc`.
+
 ---
 
 ## 6. Open questions

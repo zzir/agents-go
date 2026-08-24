@@ -32,7 +32,6 @@ go run ./examples/hello
 | [`examples/prompt`](../examples/prompt/main.go) | Binding an OpenAI stored prompt via `Agent.Prompt` |
 | [`examples/sandbox`](../examples/sandbox/main.go) | An agent that writes and runs code in a local sandbox |
 | [`sandbox/docker/example`](../sandbox/docker/example/main.go) | The Docker sandbox backend (separate module) |
-| [`sandbox/ssh/example`](../sandbox/ssh/example/main.go) | The SSH sandbox backend (separate module) |
 | [`sessions/example`](../sessions/example/main.go) | SQLite-backed session persistence (separate module) |
 | [`skills/example`](../skills/example/main.go) | Wiring `SKILL.md` skills into an agent (separate module) |
 
@@ -49,8 +48,6 @@ Most examples only need `OPENAI_API_KEY`. The exceptions:
 (cd sessions && go run ./example)        # SQLite-backed session
 (cd skills && go run ./example)          # Agent Skills (SKILL.md)
 (cd sandbox/docker && go run ./example)  # needs a running Docker daemon
-(cd sandbox/ssh && SSH_HOST=host SSH_USER=user SSH_KEY=~/.ssh/id_ed25519 \
-	go run ./example)                    # needs a reachable SSH host
 ```
 
 The test suites are also worth reading as usage references — `agents/run_test.go` shows how to script a fake model (`Agent.ModelImpl`) for offline tests of your own agents.

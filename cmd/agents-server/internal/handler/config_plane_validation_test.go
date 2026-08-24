@@ -57,18 +57,19 @@ func TestSandboxValidation(t *testing.T) {
 		want int
 	}{
 		{"valid docker", `{"name":"d","type":"docker","config":{"image":"x"}}`, http.StatusCreated},
+		{"valid remote docker", `{"name":"r","type":"docker","config":{"image":"x","host":"ssh://u@h"}}`, http.StatusCreated},
 		{"unknown type", `{"name":"x","type":"quantum"}`, http.StatusBadRequest},
-		{"remote docker host", `{"name":"x","type":"docker","config":{"host":"remote:2375"}}`, http.StatusBadRequest},
-		{"malformed docker config bypasses host block", `{"name":"x","type":"docker","config":"notanobject"}`, http.StatusBadRequest},
-		{"ssh without addr", `{"name":"x","type":"ssh","config":{"user":"u"}}`, http.StatusBadRequest},
-		{"local disabled", `{"name":"x","type":"local"}`, http.StatusForbidden},
+		{"retired local type", `{"name":"x","type":"local"}`, http.StatusBadRequest},
+		{"retired ssh type", `{"name":"x","type":"ssh","config":{"addr":"h","user":"u"}}`, http.StatusBadRequest},
+		{"bare host refused", `{"name":"x","type":"docker","config":{"image":"x","host":"remote:2375"}}`, http.StatusBadRequest},
+		{"ssh host without user refused", `{"name":"x","type":"docker","config":{"image":"x","host":"ssh://h"}}`, http.StatusBadRequest},
+		{"malformed docker config", `{"name":"x","type":"docker","config":"notanobject"}`, http.StatusBadRequest},
 		// Field-level strictness (store.NormalizeSandboxConfig): a type
 		// mismatch or a missing required field must be refused at save time —
 		// stored as-is it would bind sessions to a config that can never
 		// build (and, once referenced, could never be repaired).
 		{"docker type mismatch", `{"name":"x","type":"docker","config":{"image":"i","persistent":"yes"}}`, http.StatusBadRequest},
 		{"docker without image", `{"name":"x","type":"docker","config":{"persistent":true}}`, http.StatusBadRequest},
-		{"ssh without user", `{"name":"x","type":"ssh","config":{"addr":"h"}}`, http.StatusBadRequest},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -14,6 +14,7 @@ import (
 	sdktasks "github.com/zzir/agents-go/agents/tasks"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/sandbox"
 )
 
 // sseWriter is the little bit of Responses-API shape these tests need: a
@@ -208,12 +209,18 @@ func TestStopTaskCancelsARunInsideATool(t *testing.T) {
 	workspace := t.TempDir()
 	runner.Deps.SandboxConfigs = store.NewSandboxStore(runner.db)
 	runner.Deps.SandboxManager = sandboxes.NewManager(workspace)
-	sb := &store.SandboxConfig{ID: store.NewID(), Name: "local", Type: "local"}
+	// The command must run on THIS host (awaitProcess reads the local process
+	// table), so the docker config's build is overridden with the SDK local
+	// sandbox — the test is about run cancellation, not the backend.
+	runner.Deps.SandboxManager.SetBuildOverride(func(*store.SandboxConfig, string) (sandbox.Sandbox, error) {
+		return sandbox.NewLocalWithOptions(sandbox.LocalOptions{WorkDir: workspace}), nil
+	})
+	sb := &store.SandboxConfig{ID: store.NewID(), Name: "host", Type: "docker", Config: []byte(`{"image":"i"}`)}
 	if err := runner.Deps.SandboxConfigs.Create(ctx, sb); err != nil {
 		t.Fatal(err)
 	}
 	fakeModelAgent(t, runner.db, agentConfigs, srv.URL)
-	parent := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "chat", SandboxID: sb.ID, WorkDir: workspace}
+	parent := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "chat", SandboxID: sb.ID}
 	if err := sessions.Create(ctx, parent); err != nil {
 		t.Fatal(err)
 	}

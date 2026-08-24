@@ -416,11 +416,12 @@ type SandboxConfig struct {
 
 	ID   string `bun:"id,pk,type:uuid" json:"id"`
 	Name string `bun:"name,notnull" json:"name"`
-	Type string `bun:"type,notnull" json:"type"` // local | docker | ssh
+	// Type is "docker" — the only backend (spec §5.27). Kept as a column so a
+	// future backend is a value, not a schema change.
+	Type string `bun:"type,notnull" json:"type"`
 
-	// Config holds the backend-specific settings as JSON: LocalConfig for
-	// "local", DockerConfig for "docker", SSHConfig for "ssh". Stored as TEXT
-	// and sent to/received from the API as a raw JSON object (no
+	// Config holds the backend settings as JSON (DockerConfig). Stored as
+	// TEXT and sent to/received from the API as a raw JSON object (no
 	// double-encoding).
 	Config json.RawMessage `bun:"config,type:text,nullzero" json:"config,omitempty"`
 
@@ -456,19 +457,30 @@ type SandboxConfig struct {
 	UpdatedAt time.Time `bun:"updated_at,notnull" json:"updated_at"`
 }
 
-// LocalConfig is the SandboxConfig.Config payload for Type == "local". It may
-// be empty: every field has a working default.
-type LocalConfig struct {
-	MaxReadFileBytes int64 `json:"max_read_file_bytes,omitempty"` // read_file cap in bytes; 0 = backend default (8 MiB)
-}
-
-// DockerConfig is the SandboxConfig.Config payload for Type == "docker".
+// DockerConfig is the SandboxConfig.Config payload.
 type DockerConfig struct {
-	Image      string `json:"image"`
-	Runtime    string `json:"runtime,omitempty"` // OCI runtime (e.g. "runsc" for gVisor)
-	User       string `json:"user,omitempty"`    // user[:group] the container runs as; "" = backend default (65534 nobody)
-	Network    bool   `json:"network"`
-	Persistent bool   `json:"persistent"`
+	Image string `json:"image"`
+	// Host reaches a remote daemon: "ssh://user@host[:port]" (pure-Go SSH to
+	// the remote's docker socket) or "tcp://host:port". Empty = the local
+	// daemon.
+	Host string `json:"host,omitempty"`
+	// The SSH authentication for an ssh:// Host: methods are tried in order
+	// (agent, key file, password); host keys verify against known_hosts
+	// unless the insecure flag opts out.
+	SSHUseAgent        bool   `json:"ssh_use_agent,omitempty"`
+	SSHKeyFile         string `json:"ssh_key_file,omitempty"`
+	SSHPassword        string `json:"ssh_password,omitempty"` // write-only (mask semantics)
+	SSHKnownHosts      string `json:"ssh_known_hosts,omitempty"`
+	SSHInsecureHostKey bool   `json:"ssh_insecure_host_key,omitempty"`
+
+	Runtime string `json:"runtime,omitempty"` // OCI runtime (e.g. "runsc" for gVisor)
+	User    string `json:"user,omitempty"`    // user[:group] the container runs as; "" = backend default (65534 nobody)
+	Network bool   `json:"network"`
+	// MemoryMB / CPUs cap the container's resources; 0 = unlimited (memory)
+	// and the daemon default (cpus).
+	MemoryMB   int64   `json:"memory_mb,omitempty"`
+	CPUs       float64 `json:"cpus,omitempty"`
+	Persistent bool    `json:"persistent"`
 	// HostDir is the host directory bind-mounted at /workspace inside a
 	// PERSISTENT container (the container-side working directory is always
 	// /workspace). Empty = the server's --workspace. Distinct from a working
@@ -476,19 +488,6 @@ type DockerConfig struct {
 	// where commands run.
 	HostDir          string `json:"host_dir,omitempty"`
 	ContainerName    string `json:"container_name,omitempty"`      // Docker container name (persistent mode only)
-	MaxReadFileBytes int64  `json:"max_read_file_bytes,omitempty"` // read_file cap in bytes; 0 = backend default (8 MiB)
-}
-
-// SSHConfig is the SandboxConfig.Config payload for Type == "ssh".
-type SSHConfig struct {
-	Addr             string `json:"addr"` // remote host[:port]
-	User             string `json:"user"`
-	UseAgent         bool   `json:"use_agent"`
-	KeyFile          string `json:"key_file,omitempty"`
-	Password         string `json:"password,omitempty"`
-	KnownHosts       string `json:"known_hosts,omitempty"`
-	InsecureHostKey  bool   `json:"insecure_host_key"`
-	WorkDir          string `json:"work_dir,omitempty"`            // fixed remote working directory
 	MaxReadFileBytes int64  `json:"max_read_file_bytes,omitempty"` // read_file cap in bytes; 0 = backend default (8 MiB)
 }
 

@@ -23,17 +23,16 @@ func execTool(t *testing.T, tools []*agents.Tool) *agents.Tool {
 }
 
 // exec_command advertises session_id only where a shell can actually be held
-// open — terminal-capable backends (ssh, persistent docker). Elsewhere the
-// schema must not promise persistence the backend cannot deliver.
+// open — a persistent container. Elsewhere the schema must not promise
+// persistence the backend cannot deliver.
 func TestSandboxToolsSessionSchemaPerBackend(t *testing.T) {
 	cases := []struct {
 		name string
 		cfg  *store.SandboxConfig
 		want bool
 	}{
-		{"local", &store.SandboxConfig{ID: "l", Type: "local"}, false},
-		{"ssh", &store.SandboxConfig{ID: "s", Type: "ssh"}, true},
 		{"docker persistent", &store.SandboxConfig{ID: "dp", Type: "docker", Config: json.RawMessage(`{"image":"i","persistent":true}`)}, true},
+		{"remote persistent", &store.SandboxConfig{ID: "rp", Type: "docker", Config: json.RawMessage(`{"image":"i","host":"ssh://u@h","persistent":true}`)}, true},
 		{"docker ephemeral", &store.SandboxConfig{ID: "de", Type: "docker", Config: json.RawMessage(`{"image":"i"}`)}, false},
 	}
 	for _, tc := range cases {
@@ -66,7 +65,7 @@ func TestSandboxToolsReleaseClosesSessionPool(t *testing.T) {
 	m.buildOverride = func(*store.SandboxConfig, string) (sandbox.Sandbox, error) {
 		return &closeCountingSandbox{}, nil
 	}
-	cfg := &store.SandboxConfig{ID: "s", Type: "ssh"}
+	cfg := &store.SandboxConfig{ID: "s", Type: "docker", Config: json.RawMessage(`{"image":"i","persistent":true}`)}
 	tools, release, err := m.SandboxTools(cfg, "", false)
 	if err != nil {
 		t.Fatal(err)

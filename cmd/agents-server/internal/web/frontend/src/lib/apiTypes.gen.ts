@@ -2816,7 +2816,7 @@ export interface paths {
         put?: never;
         /**
          * Create sandbox
-         * @description type: local (requires --allow-local-sandbox), docker, or ssh. config is backend-specific; the SSH password is write-only (******** mask semantics). All backends accept an optional max_read_file_bytes cap for the read_file tool (0 = 8 MiB default).
+         * @description type is "docker". config: image (required), host ("" = local daemon, tcp://, or ssh://user@host with ssh_* auth — ssh_password is write-only, ******** mask semantics), runtime, user, network, memory_mb/cpus caps, persistent, host_dir, container_name, max_read_file_bytes (0 = 8 MiB default).
          */
         post: {
             parameters: {
@@ -2843,15 +2843,6 @@ export interface paths {
                 };
                 /** @description Bad Request */
                 400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-                /** @description local sandbox disabled */
-                403: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -2957,15 +2948,6 @@ export interface paths {
                 };
                 /** @description Bad Request */
                 400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-                /** @description local sandbox disabled */
-                403: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -5890,7 +5872,6 @@ export interface components {
             error?: components["schemas"]["protocol.APIError"];
         };
         "handler.ServerInfo": {
-            allow_local_sandbox?: boolean;
             /**
              * @description MaxTasks is the effective cap, never the raw flag — 0 on the command
              *     line means the built-in default, and reporting the 0 would be a lie.
@@ -6596,9 +6577,8 @@ export interface components {
         };
         "store.SandboxConfig": {
             /**
-             * @description Config holds the backend-specific settings as JSON: LocalConfig for
-             *     "local", DockerConfig for "docker", SSHConfig for "ssh". Stored as TEXT
-             *     and sent to/received from the API as a raw JSON object (no
+             * @description Config holds the backend settings as JSON (DockerConfig). Stored as
+             *     TEXT and sent to/received from the API as a raw JSON object (no
              *     double-encoding).
              */
             config?: number[];
@@ -6629,7 +6609,10 @@ export interface components {
              *     design). Computed per response by the handler, never stored.
              */
             terminal?: boolean;
-            /** @description local | docker | ssh */
+            /**
+             * @description Type is "docker" — the only backend (spec §5.27). Kept as a column so a
+             *     future backend is a value, not a schema change.
+             */
             type?: string;
             updated_at?: string;
             work_dir_editable?: boolean;

@@ -15,8 +15,7 @@ type ServerInfo struct {
 	Version string `json:"version"`
 	// Workspace is absolute: the relative default (".") means nothing to a
 	// browser on another machine.
-	Workspace         string `json:"workspace"`
-	AllowLocalSandbox bool   `json:"allow_local_sandbox"`
+	Workspace string `json:"workspace"`
 	// MaxTasks is the effective cap, never the raw flag — 0 on the command
 	// line means the built-in default, and reporting the 0 would be a lie.
 	MaxTasks int `json:"max_tasks"`

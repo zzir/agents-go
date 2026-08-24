@@ -28,9 +28,8 @@ const (
 // TerminalHandler serves /ws/terminal: one interactive sandbox terminal per
 // WebSocket connection. The client opens with a terminal.open envelope, then
 // binary frames carry the raw byte stream both ways while text envelopes
-// carry control (resize, exit). Local sandboxes are refused by design: a web
-// terminal on the host process is a bigger grant than --allow-local-sandbox
-// implies.
+// carry control (resize, exit). Only a persistent container can host one
+// (sandboxes.TerminalCapable).
 //
 // It also tracks live terminals per sandbox config so config updates and
 // deletes can tear them down (an SSH/docker rebuild would otherwise leave
@@ -225,17 +224,14 @@ func (h *TerminalHandler) open(conn *server.WSConn) (sandbox.Terminal, *store.Sa
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("sandbox %s: %w", msg.SandboxID, err)
 	}
-	if cfg.Type == "local" {
-		return nil, nil, nil, errors.New("local sandboxes do not support web terminals")
+	if !sandboxes.TerminalCapable(cfg) {
+		return nil, nil, nil, errors.New("this sandbox cannot host a terminal; only a persistent container can")
 	}
 	// A NON-empty work_dir passes the same validation a binding does, and the
 	// canonical form is what keys the instance — a value the backend would
-	// silently rewrite (a docker path outside /workspace landing in the
-	// default) must be refused, not displayed as one directory while the
-	// shell runs in another. An empty work_dir stays valid here even where a
-	// binding would refuse it (ssh with no configured default): a terminal is
-	// an interactive shell with no session-files promise, and empty honestly
-	// means the sandbox's own default.
+	// silently rewrite (a path outside /workspace landing in the default)
+	// must be refused, not displayed as one directory while the shell runs in
+	// another. An empty work_dir honestly means the sandbox's own default.
 	workDir := msg.WorkDir
 	if workDir != "" {
 		workDir, err = bridge.ResolveBindingWorkDir(cfg, workDir)

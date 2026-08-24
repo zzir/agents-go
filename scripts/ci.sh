@@ -33,7 +33,6 @@ go test -race ./...
 
 step "Test sandbox backend modules"
 (cd sandbox/docker && go vet ./... && go test ./...)
-(cd sandbox/ssh && go vet ./... && go test ./...)
 
 step "Test sessions module"
 (cd sessions && go vet ./... && go test ./...)
@@ -119,7 +118,7 @@ if command -v golangci-lint >/dev/null; then
   # backend adapter, and it was fully linted for free while it lived in the
   # root module. The support submodules below run formatters only.
   (cd mcp && golangci-lint run)                # mcp: lint + formatters
-  for m in models/anthropic examples/anthropic sandbox/docker sandbox/ssh sessions skills; do
+  for m in models/anthropic examples/anthropic sandbox/docker sessions skills; do
     out=$(cd "$m" && golangci-lint fmt --diff)
     if [ -n "$out" ]; then
       echo "$m is not gofmt/goimports-clean:"; echo "$out"; exit 1

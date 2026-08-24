@@ -80,10 +80,11 @@ your data, embeddable SDK. Solo or as a team.
 - **Replay any generation.** Re-run a traced model call with a different
   prompt, model, settings or tools — streaming, with a diff against the
   original and the attempts kept side by side. No session is touched.
-- **Real sandboxes behind an approval gate.** Docker, SSH or local; the model
+- **Real sandboxes behind an approval gate.** Docker containers — on this
+  machine or a remote daemon over SSH; the model
   reads and edits files (`apply_patch`) and runs commands; approve a command
   once, trust that command, or trust the session; interactive terminals into a
-  Docker or SSH sandbox, in the browser.
+  container, in the browser.
 - **Background tasks, workflows, triggers.** `spawn_task` sub-agents that
   outlive the turn and wake the parent when done (a failed one resumes where it
   stopped); fixed step sequences as workflows, started by the model, by hand,
@@ -175,7 +176,7 @@ guardrails, typed tools, structured output, streaming, approvals. By topic:
   [Testing](docs/testing.md) — a scripted `Model` fake tests agents
   without a key
 
-The core is one small module; MCP, the Docker/SSH sandboxes, SQL sessions,
+The core is one small module; MCP, the Docker sandbox, SQL sessions,
 skills and the Anthropic provider are opt-in submodules
 ([packages](docs/features.md#packages)). Behavior is
 [specified](docs/spec.md), not inherited: the SDK started as a port of the

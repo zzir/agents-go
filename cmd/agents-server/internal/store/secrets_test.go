@@ -74,15 +74,15 @@ func TestSecretsSealedAtRest(t *testing.T) {
 	// A credential inside a JSON blob: the sandbox SSH password and an MCP
 	// server's headers are sealed field by field; the rest stays readable.
 	sandboxes := NewSandboxStore(db)
-	sb := &SandboxConfig{Name: "ssh", Type: "ssh", Config: json.RawMessage(`{"host":"h","user":"u","password":"hunter2"}`)}
+	sb := &SandboxConfig{Name: "remote", Type: "docker", Config: json.RawMessage(`{"image":"i","host":"ssh://u@h","ssh_password":"hunter2"}`)}
 	if err := sandboxes.Create(ctx, sb); err != nil {
 		t.Fatal(err)
 	}
 	raw := rawColumn(t, db, "SELECT config FROM sandbox_configs WHERE id = ?", sb.ID)
-	if strings.Contains(raw, "hunter2") || !strings.Contains(raw, `"host":"h"`) {
+	if strings.Contains(raw, "hunter2") || !strings.Contains(raw, `"host":"ssh://u@h"`) {
 		t.Fatalf("sandbox config at rest = %s", raw)
 	}
-	if got, _ := sandboxes.Get(ctx, sb.ID); !strings.Contains(string(got.Config), `"password":"hunter2"`) {
+	if got, _ := sandboxes.Get(ctx, sb.ID); !strings.Contains(string(got.Config), `"ssh_password":"hunter2"`) {
 		t.Fatalf("sandbox config opened = %s", got.Config)
 	}
 	mcps := NewMcpServerStore(db)

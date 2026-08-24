@@ -229,22 +229,17 @@ func restoreMcpConfig(incoming, prev json.RawMessage) json.RawMessage {
 	return restoreJSONFields(incoming, prev, true, "oauth_client_secret")
 }
 
-// sanitizeSandboxConfig returns cfg with backend secrets masked (the SSH
-// password); local and docker configs carry no secrets.
+// sanitizeSandboxConfig returns cfg with its secret masked: the SSH password
+// of a remote-daemon docker config.
 func sanitizeSandboxConfig(cfg store.SandboxConfig) store.SandboxConfig {
-	if cfg.Type == "ssh" {
-		cfg.Config = maskJSONFields(cfg.Config, false, "password")
-	}
+	cfg.Config = maskJSONFields(cfg.Config, false, "ssh_password")
 	return cfg
 }
 
 // restoreSandboxConfig resolves a masked SSH password in an incoming config
 // against the previously stored config.
-func restoreSandboxConfig(typ string, incoming, prev json.RawMessage) json.RawMessage {
-	if typ != "ssh" {
-		return incoming
-	}
-	return restoreJSONFields(incoming, prev, false, "password")
+func restoreSandboxConfig(_ string, incoming, prev json.RawMessage) json.RawMessage {
+	return restoreJSONFields(incoming, prev, false, "ssh_password")
 }
 
 // sanitizeAgentConfig masks the secret-bearing fields of an agent config for

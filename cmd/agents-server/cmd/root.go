@@ -23,25 +23,24 @@ import (
 )
 
 var (
-	flagHost              string
-	flagPort              int
-	flagDB                string
-	flagWorkspace         string
-	flagToken             string
-	flagAllowLocalSandbox bool
-	flagMaxTasks          int
-	flagLogLevel          string
-	flagLogFormat         string
-	flagBaseURL           string
-	flagTrustedProxies    string
-	flagAuthMode          string
-	flagGoogleClientID    string
-	flagGoogleSecret      string
-	flagAllowedDomains    string
-	flagAllowedEmails     string
-	flagBootstrapAdmin    string
-	flagAuditRetention    int
-	flagSecretKeyFile     string
+	flagHost           string
+	flagPort           int
+	flagDB             string
+	flagWorkspace      string
+	flagToken          string
+	flagMaxTasks       int
+	flagLogLevel       string
+	flagLogFormat      string
+	flagBaseURL        string
+	flagTrustedProxies string
+	flagAuthMode       string
+	flagGoogleClientID string
+	flagGoogleSecret   string
+	flagAllowedDomains string
+	flagAllowedEmails  string
+	flagBootstrapAdmin string
+	flagAuditRetention int
+	flagSecretKeyFile  string
 )
 
 var rootCmd = &cobra.Command{
@@ -56,7 +55,6 @@ func init() {
 	rootCmd.Flags().StringVar(&flagDB, "db", "data.db", "SQLite database path, or a postgres:// DSN")
 	rootCmd.Flags().StringVar(&flagWorkspace, "workspace", ".", "Workspace directory")
 	rootCmd.Flags().StringVar(&flagToken, "token", "", "Authentication token (auto-generated if empty)")
-	rootCmd.Flags().BoolVar(&flagAllowLocalSandbox, "allow-local-sandbox", false, "Allow creating local (non-isolated) sandboxes")
 	rootCmd.Flags().IntVar(&flagMaxTasks, "max-tasks", 0, "Max live background tasks per session (0 = default 6)")
 	rootCmd.Flags().StringVar(&flagLogLevel, "log-level", "info", "Log level: debug, info, warn, error")
 	rootCmd.Flags().StringVar(&flagLogFormat, "log-format", "text", "Log format: text, json")

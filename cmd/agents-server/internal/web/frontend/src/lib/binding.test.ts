@@ -140,20 +140,13 @@ describe('projectBase', () => {
 });
 
 describe('bindingWorkDirIssue', () => {
-  const ssh = { id: 's', name: 's', type: 'ssh', work_dir_editable: true };
-  const sshHome = { ...ssh, default_work_dir: '/srv' };
-  const sshRelHome = { ...ssh, default_work_dir: 'projects' };
   const dockerP = { id: 'd', name: 'd', type: 'docker', default_work_dir: '/workspace', work_dir_editable: true };
   const dockerE = { ...dockerP, work_dir_editable: false };
-  const local = { id: 'l', name: 'l', type: 'local', default_work_dir: '/ws', work_dir_editable: true };
 
   it('passes what the server would bind', () => {
-    expect(bindingWorkDirIssue(sshHome, '')).toBeNull();
-    expect(bindingWorkDirIssue(ssh, '/srv/app')).toBeNull();
     expect(bindingWorkDirIssue(dockerP, '/workspace/proj')).toBeNull();
     expect(bindingWorkDirIssue(dockerP, '')).toBeNull();
-    expect(bindingWorkDirIssue(local, '')).toBeNull();
-    expect(bindingWorkDirIssue(local, '/abs')).toBeNull();
+    expect(bindingWorkDirIssue(dockerP, '/workspace')).toBeNull();
     expect(bindingWorkDirIssue(undefined, 'anything')).toBeNull();
   });
 
@@ -162,12 +155,7 @@ describe('bindingWorkDirIssue', () => {
   });
 
   it('refuses what the server would refuse', () => {
-    expect(bindingWorkDirIssue(ssh, '')).toMatch(/no default directory/);
-    expect(bindingWorkDirIssue(ssh, 'projects/app')).toMatch(/absolute/);
-    // The dialog gap: an empty draft over a RELATIVE config default must be
-    // caught here, not first at send time.
-    expect(bindingWorkDirIssue(sshRelHome, '')).toMatch(/absolute/);
     expect(bindingWorkDirIssue(dockerP, '/tmp/project')).toMatch(/workspace/);
-    expect(bindingWorkDirIssue(local, 'rel/path')).toMatch(/absolute/);
+    expect(bindingWorkDirIssue(dockerP, 'rel/path')).toMatch(/workspace/);
   });
 });

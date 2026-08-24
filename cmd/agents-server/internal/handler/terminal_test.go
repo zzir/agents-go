@@ -126,7 +126,7 @@ func terminalTestServer(t *testing.T, provider sandboxProvider) (*httptest.Serve
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
 	sandboxes := store.NewSandboxStore(db)
-	cfg := &store.SandboxConfig{Name: "box", Type: "ssh", Config: json.RawMessage(`{"addr":"h","user":"u"}`)}
+	cfg := &store.SandboxConfig{Name: "box", Type: "docker", Config: json.RawMessage(`{"image":"i","persistent":true}`)}
 	if err := sandboxes.Create(t.Context(), cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +277,7 @@ func TestTerminalWS_MemberRefused(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
 	sandboxes := store.NewSandboxStore(db)
-	cfg := &store.SandboxConfig{Name: "box", Type: "ssh", Config: json.RawMessage(`{"addr":"h","user":"u"}`)}
+	cfg := &store.SandboxConfig{Name: "box", Type: "docker", Config: json.RawMessage(`{"image":"i","persistent":true}`)}
 	if err := sandboxes.Create(t.Context(), cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -317,10 +317,10 @@ func TestTerminalWS_UnknownSandboxRejected(t *testing.T) {
 	}
 }
 
-func TestTerminalWS_LocalSandboxRefused(t *testing.T) {
+func TestTerminalWS_EphemeralSandboxRefused(t *testing.T) {
 	term := newFakeTerminal()
 	srv, th, _ := terminalTestServer(t, &fakeProvider{sb: &fakeTerminalSandbox{term: term}})
-	cfg := &store.SandboxConfig{Name: "host", Type: "local"}
+	cfg := &store.SandboxConfig{Name: "throwaway", Type: "docker", Config: json.RawMessage(`{"image":"i"}`)}
 	if err := th.store.Create(t.Context(), cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -334,8 +334,8 @@ func TestTerminalWS_LocalSandboxRefused(t *testing.T) {
 	if err := json.Unmarshal(env.Payload, &msg); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(msg.Message, "local") {
-		t.Errorf("error message = %q, want a local-sandbox refusal", msg.Message)
+	if !strings.Contains(msg.Message, "persistent") {
+		t.Errorf("error message = %q, want a persistent-only refusal", msg.Message)
 	}
 }
 

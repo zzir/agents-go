@@ -15,14 +15,14 @@ import (
 // keeps hitting the cache. Remove tears down every variant of the id.
 func TestSandboxManagerKeysByWorkdir(t *testing.T) {
 	m := NewManager(t.TempDir())
-	cfg := &store.SandboxConfig{ID: "loc", Name: "local", Type: "local"}
+	cfg := &store.SandboxConfig{ID: "loc", Name: "local", Type: "docker", Config: []byte(`{"image":"i","persistent":true}`)}
 
-	a1, r1, err := m.Acquire(cfg, "/wd1")
+	a1, r1, err := m.Acquire(cfg, "/workspace/wd1")
 	if err != nil {
 		t.Fatalf("wd1: %v", err)
 	}
 	defer r1()
-	a2, r2, err := m.Acquire(cfg, "/wd2")
+	a2, r2, err := m.Acquire(cfg, "/workspace/wd2")
 	if err != nil {
 		t.Fatalf("wd2: %v", err)
 	}
@@ -30,7 +30,7 @@ func TestSandboxManagerKeysByWorkdir(t *testing.T) {
 	if a1 == a2 {
 		t.Fatal("different workdirs share one sandbox instance")
 	}
-	again, r3, err := m.Acquire(cfg, "/wd1")
+	again, r3, err := m.Acquire(cfg, "/workspace/wd1")
 	if err != nil {
 		t.Fatalf("wd1 again: %v", err)
 	}
@@ -38,8 +38,8 @@ func TestSandboxManagerKeysByWorkdir(t *testing.T) {
 	if again != a1 {
 		t.Fatal("same (id, workdir) pair not served from the cache")
 	}
-	// Trim is part of the key: "  /wd1 " is the same instance as "/wd1".
-	trimmed, r4, err := m.Acquire(cfg, "  /wd1 ")
+	// Trim is part of the key: "  /workspace/wd1 " is the same instance.
+	trimmed, r4, err := m.Acquire(cfg, "  /workspace/wd1 ")
 	if err != nil {
 		t.Fatalf("trimmed wd1: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestSandboxManagerKeysByWorkdir(t *testing.T) {
 // acquired after the eviction shares the doomed instance.
 func TestSandboxManagerEvictionDefersToHolders(t *testing.T) {
 	m := NewManager(t.TempDir())
-	cfg := &store.SandboxConfig{ID: "loc", Name: "local", Type: "local"}
+	cfg := &store.SandboxConfig{ID: "loc", Name: "local", Type: "docker", Config: []byte(`{"image":"i"}`)}
 
 	inst1, rel1, err := m.acquire(cfg, "/wd")
 	if err != nil {
@@ -113,7 +113,7 @@ func TestSandboxManagerEvictionDefersToHolders(t *testing.T) {
 // an instance that is not doomed keeps it cached for the next acquire.
 func TestSandboxManagerIdleEvictionAndReuse(t *testing.T) {
 	m := NewManager(t.TempDir())
-	cfg := &store.SandboxConfig{ID: "loc", Name: "local", Type: "local"}
+	cfg := &store.SandboxConfig{ID: "loc", Name: "local", Type: "docker", Config: []byte(`{"image":"i"}`)}
 
 	inst, rel, err := m.acquire(cfg, "/wd")
 	if err != nil {
@@ -145,7 +145,7 @@ func TestSandboxManagerIdleEvictionAndReuse(t *testing.T) {
 // equals the callers.
 func TestSandboxManagerConcurrentAcquireSharesOneBuild(t *testing.T) {
 	m := NewManager(t.TempDir())
-	cfg := &store.SandboxConfig{ID: "loc", Name: "local", Type: "local"}
+	cfg := &store.SandboxConfig{ID: "loc", Name: "local", Type: "docker", Config: []byte(`{"image":"i"}`)}
 
 	const n = 8
 	insts := make([]*sandboxInstance, n)
@@ -194,7 +194,7 @@ func TestSandboxManagerFailedBuildRetries(t *testing.T) {
 		t.Fatalf("failed build left %d placeholders cached", left)
 	}
 	// Same key, now-valid config: the retry builds.
-	good := &store.SandboxConfig{ID: "sb", Name: "sb", Type: "local"}
+	good := &store.SandboxConfig{ID: "sb", Name: "sb", Type: "docker", Config: []byte(`{"image":"i"}`)}
 	inst, rel, err := m.acquire(good, "")
 	if err != nil {
 		t.Fatalf("retry after a failed build: %v", err)
@@ -207,13 +207,11 @@ func TestSandboxManagerFailedBuildRetries(t *testing.T) {
 
 // Docker's per-session workdir is the CONTAINER-side directory: persistent
 // containers accept /workspace subtrees (/workspace itself normalizes to "",
-// the default instance) and pass anything else through for the SDK to reject;
-// ephemeral containers ignore the value entirely. local/ssh use it verbatim.
+// the default instance) and fall back to the default for anything outside;
+// ephemeral containers ignore the value entirely.
 func TestEffectiveWorkDirPerType(t *testing.T) {
 	persistent := &store.SandboxConfig{Type: "docker", Config: []byte(`{"image":"i","persistent":true}`)}
 	ephemeral := &store.SandboxConfig{Type: "docker", Config: []byte(`{"image":"i"}`)}
-	ssh := &store.SandboxConfig{Type: "ssh"}
-	local := &store.SandboxConfig{Type: "local"}
 
 	if got := effectiveWorkDir(persistent, "/workspace/proj"); got != "/workspace/proj" {
 		t.Fatalf("persistent subdir = %q, want kept", got)
@@ -233,11 +231,8 @@ func TestEffectiveWorkDirPerType(t *testing.T) {
 	if got := effectiveWorkDir(ephemeral, "/workspace/proj"); got != "" {
 		t.Fatalf("ephemeral workdir = %q, want \"\"", got)
 	}
-	if got := effectiveWorkDir(ssh, " /y "); got != "/y" {
-		t.Fatalf("ssh workdir = %q, want trimmed /y", got)
-	}
-	if got := effectiveWorkDir(local, ""); got != "" {
-		t.Fatalf("local empty workdir = %q, want \"\"", got)
+	if got := effectiveWorkDir(persistent, " /workspace/y "); got != "/workspace/y" {
+		t.Fatalf("whitespace workdir = %q, want trimmed /workspace/y", got)
 	}
 }
 
@@ -270,7 +265,7 @@ func gatedManager(t *testing.T) (*Manager, chan struct{}, *closeCountingSandbox)
 // runs.
 func TestSandboxManagerRetireFencesInFlightBuilds(t *testing.T) {
 	m, gate, sb := gatedManager(t)
-	oldCfg := &store.SandboxConfig{ID: "sb", Name: "sb", Type: "local", RuntimeGen: 1}
+	oldCfg := &store.SandboxConfig{ID: "sb", Name: "sb", Type: "docker", Config: []byte(`{"image":"i"}`), RuntimeGen: 1}
 
 	done := make(chan struct{})
 	var rel func()
@@ -309,7 +304,7 @@ func TestSandboxManagerRetireFencesInFlightBuilds(t *testing.T) {
 // owner, which is what deleting the placeholder outright used to do.
 func TestSandboxManagerCloseAllDuringBuild(t *testing.T) {
 	m, gate, sb := gatedManager(t)
-	cfg := &store.SandboxConfig{ID: "sb", Name: "sb", Type: "local", RuntimeGen: 1}
+	cfg := &store.SandboxConfig{ID: "sb", Name: "sb", Type: "docker", Config: []byte(`{"image":"i"}`), RuntimeGen: 1}
 
 	done := make(chan struct{})
 	var rel func()
@@ -359,12 +354,12 @@ func TestSandboxManagerRenameSharesInstance(t *testing.T) {
 		return sb, nil
 	}
 
-	v1 := &store.SandboxConfig{ID: "sb", Name: "old", Type: "local", Revision: 1, RuntimeGen: 1}
+	v1 := &store.SandboxConfig{ID: "sb", Name: "old", Type: "docker", Config: []byte(`{"image":"i"}`), Revision: 1, RuntimeGen: 1}
 	_, rel1, err := m.Acquire(v1, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	renamed := &store.SandboxConfig{ID: "sb", Name: "new", Type: "local", Revision: 2, RuntimeGen: 1}
+	renamed := &store.SandboxConfig{ID: "sb", Name: "new", Type: "docker", Config: []byte(`{"image":"i"}`), Revision: 2, RuntimeGen: 1}
 	_, rel2, err := m.Acquire(renamed, "")
 	if err != nil {
 		t.Fatal(err)
@@ -379,7 +374,7 @@ func TestSandboxManagerRenameSharesInstance(t *testing.T) {
 	}
 
 	// A CONTENT change moves the generation and does key a fresh instance.
-	rotated := &store.SandboxConfig{ID: "sb", Name: "new", Type: "local", Revision: 3, RuntimeGen: 2}
+	rotated := &store.SandboxConfig{ID: "sb", Name: "new", Type: "docker", Config: []byte(`{"image":"i"}`), Revision: 3, RuntimeGen: 2}
 	_, rel3, err := m.Acquire(rotated, "")
 	if err != nil {
 		t.Fatal(err)
@@ -395,7 +390,7 @@ func TestSandboxManagerRenameSharesInstance(t *testing.T) {
 // instance of a deleted config that nothing would ever retire.
 func TestSandboxManagerRemoveFencesLateAcquires(t *testing.T) {
 	m, gate, sb := gatedManager(t)
-	cfg := &store.SandboxConfig{ID: "sb", Name: "sb", Type: "local", RuntimeGen: 1}
+	cfg := &store.SandboxConfig{ID: "sb", Name: "sb", Type: "docker", Config: []byte(`{"image":"i"}`), RuntimeGen: 1}
 
 	done := make(chan struct{})
 	var rel func()

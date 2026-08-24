@@ -62,7 +62,7 @@ See [Tracing](tracing.md), [MCP](mcp.md), [Sandbox agents](sandbox.md),
 |---|---|
 | Tracing | `tracing.NewTracer`, `tracing.NewBatchProcessor`; `RunOptions.Observe.TraceGroupID/TraceMetadata` |
 | MCP | `mcp.NewStdioServer / NewStreamableHTTPServer / NewWithTransport` |
-| Sandbox (code execution) | `sandbox.CodeTool` + Local / Docker / SSH backends |
+| Sandbox (code execution) | `sandbox.CodeTool` + Local / Docker backends (remote daemons over SSH) |
 | File editing | `sandbox.ApplyPatchTool` (Codex-style patches, edits through the sandbox) |
 | Skills | `skills.Parse / RenderIndex` (Agent Skills `SKILL.md` documents; storage is the caller's) |
 
@@ -80,7 +80,6 @@ Core module path: `github.com/zzir/agents-go`.
 | `mcp` | **separate module** — Model Context Protocol client and server (modelcontextprotocol/go-sdk) |
 | `models/anthropic` | **separate module** — Anthropic Messages API backend (translated to Responses) |
 | `sandbox/docker` | **separate module** — Docker sandbox backend |
-| `sandbox/ssh` | **separate module** — remote SSH sandbox backend |
 | `sessions` | **separate module** — SQLite/PostgreSQL session store (uptrace/bun) |
 | `skills` | **separate module** — Agent Skills (`SKILL.md`) parser |
 | `cmd/agents-server` | **separate module** — the workbench: web app (REST + WS + embedded UI) over the SDK |

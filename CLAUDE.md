@@ -45,7 +45,7 @@ root via `replace => ..`:
   seven indirect requirements that came with it; import path unchanged)
 - **`models/anthropic`** — Anthropic Messages API backend (carries
   anthropic-sdk-go; translates to the canonical Responses format, spec §5.10)
-- **`sandbox/docker`**, **`sandbox/ssh`** — sandbox backends
+- **`sandbox/docker`** — Docker sandbox backend (local or SSH-reached remote daemon)
 - **`sessions`** — SQLite/PostgreSQL `Session` backends
 - **`skills`** — Agent Skills (`SKILL.md`) parser
 - **`cmd/agents-server`** — web app (REST + WS + embedded UI)

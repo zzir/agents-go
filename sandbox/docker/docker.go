@@ -91,10 +91,14 @@ func (s *Sandbox) configFingerprint() string {
 type Options struct {
 	// Image is the container image to run. Required.
 	Image string
-	// Host is the Docker daemon address (e.g. "tcp://remote:2375"). When empty,
-	// the standard DOCKER_HOST environment variable (or the platform default
-	// socket) is used.
+	// Host is the Docker daemon address. Empty uses the standard DOCKER_HOST
+	// environment variable (or the platform default socket); "tcp://host:port"
+	// reaches a TCP daemon; "ssh://user@host[:port][/socket]" reaches a remote
+	// daemon's unix socket through SSH (pure Go — see SSHAuth).
 	Host string
+	// SSH configures authentication and host-key verification for an ssh://
+	// Host; ignored otherwise.
+	SSH SSHAuth
 	// Runtime is the OCI runtime to use (e.g. "runsc" for gVisor). When empty,
 	// the daemon's default runtime (usually runc) is used.
 	Runtime string
@@ -157,6 +161,9 @@ type Sandbox struct {
 	pullMu   sync.Mutex
 	pullDone bool
 
+	// sshDial is set for an ssh:// Host and closed with the sandbox.
+	sshDial *sshDialer
+
 	// persistent container state
 	mu          sync.Mutex
 	containerID string
@@ -177,17 +184,31 @@ func New(opts Options) (*Sandbox, error) {
 	}
 	// API-version negotiation is on by default in the moby client.
 	clientOpts := []client.Opt{client.FromEnv}
-	if opts.Host != "" {
+	var sshDial *sshDialer
+	switch {
+	case strings.HasPrefix(opts.Host, "ssh://"):
+		d, err := newSSHDialer(opts.Host, opts.SSH)
+		if err != nil {
+			return nil, err
+		}
+		sshDial = d
+		// The host is a placeholder: every request rides the dialer's channel
+		// to the remote socket (the connhelper pattern).
+		clientOpts = append(clientOpts, client.WithHost("http://docker.invalid"), client.WithDialContext(d.DialContext))
+	case opts.Host != "":
 		clientOpts = append(clientOpts, client.WithHost(opts.Host))
 	}
 	cli, err := client.New(clientOpts...)
 	if err != nil {
+		if sshDial != nil {
+			_ = sshDial.Close()
+		}
 		return nil, fmt.Errorf("docker sandbox: %w", err)
 	}
 	if opts.User == "" && !opts.UserUnset {
 		opts.User = "65534:65534"
 	}
-	return &Sandbox{cli: cli, opts: opts}, nil
+	return &Sandbox{cli: cli, opts: opts, sshDial: sshDial}, nil
 }
 
 // ensureImage pulls the image if it is not available locally. Unlike sync.Once,
@@ -864,7 +885,11 @@ func (s *Sandbox) Close() error {
 	if id != "" {
 		_, _ = s.cli.ContainerRemove(context.Background(), id, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
 	}
-	return s.cli.Close()
+	err := s.cli.Close()
+	if s.sshDial != nil {
+		_ = s.sshDial.Close()
+	}
+	return err
 }
 
 func envSlice(env map[string]string) []string {

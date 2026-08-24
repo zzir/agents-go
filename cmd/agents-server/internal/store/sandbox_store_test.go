@@ -60,14 +60,14 @@ func TestSandboxUpdateIdentityIfUnreferenced(t *testing.T) {
 	sandboxes := NewSandboxStore(db)
 	createSandboxRow(t, db, id("sb-1"))
 
-	moved := &SandboxConfig{Name: "sb-1", Type: "ssh", Config: []byte(`{"addr":"other-host","user":"u","work_dir":"/srv"}`)}
+	moved := &SandboxConfig{Name: "sb-1", Type: "docker", Config: []byte(`{"image":"i","host":"ssh://u@other-host"}`)}
 	refs, err := sandboxes.UpdateIdentityIfUnreferenced(ctx, id("sb-1"), moved, 1)
 	if err != nil || refs != 0 {
 		t.Fatalf("unreferenced identity update: refs=%d err=%v, want success", refs, err)
 	}
 	// A second writer holding the OLD revision loses: proceeding on its stale
 	// identity comparison is exactly the freeze bypass the CAS closes.
-	staleWriter := &SandboxConfig{Name: "sb-1", Type: "ssh", Config: []byte(`{"addr":"h","user":"u","work_dir":"/srv"}`)}
+	staleWriter := &SandboxConfig{Name: "sb-1", Type: "docker", Config: []byte(`{"image":"i","host":"ssh://u@h"}`)}
 	if _, err := sandboxes.UpdateIdentityIfUnreferenced(ctx, id("sb-1"), staleWriter, 1); !errors.Is(err, ErrRevisionConflict) {
 		t.Fatalf("stale identity update: err=%v, want ErrRevisionConflict", err)
 	}
@@ -86,7 +86,7 @@ func TestSandboxUpdateIdentityIfUnreferenced(t *testing.T) {
 	if won, err := sessions.BindSandboxIfEmpty(ctx, sess.ID, id("sb-1"), "/w", cur.Revision); err != nil || !won {
 		t.Fatalf("bind: won=%v err=%v", won, err)
 	}
-	movedAgain := &SandboxConfig{Name: "sb-1", Type: "ssh", Config: []byte(`{"addr":"third-host","user":"u","work_dir":"/srv"}`)}
+	movedAgain := &SandboxConfig{Name: "sb-1", Type: "docker", Config: []byte(`{"image":"i","host":"ssh://u@third-host"}`)}
 	refs, err = sandboxes.UpdateIdentityIfUnreferenced(ctx, id("sb-1"), movedAgain, cur.Revision)
 	if err != nil || refs != 1 {
 		t.Fatalf("referenced identity update: refs=%d err=%v, want a refusal naming 1", refs, err)
@@ -95,7 +95,7 @@ func TestSandboxUpdateIdentityIfUnreferenced(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got.Config) != `{"addr":"other-host","user":"u","work_dir":"/srv"}` {
+	if string(got.Config) != `{"image":"i","host":"ssh://u@other-host"}` {
 		t.Fatalf("refused update changed the row: %s", got.Config)
 	}
 
@@ -125,7 +125,7 @@ func TestSandboxRevisionAndGenerationBumps(t *testing.T) {
 	}
 
 	// A name-only write: revision moves, the generation does not.
-	renamed := &SandboxConfig{Name: "renamed", Type: "ssh", Config: []byte(`{"addr":"h","user":"u","work_dir":"/srv"}`)}
+	renamed := &SandboxConfig{Name: "renamed", Type: "docker", Config: []byte(`{"image":"i","host":"ssh://u@h"}`)}
 	if err := sandboxes.Update(ctx, id("sb-1"), renamed, 1, false); err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestSandboxRevisionAndGenerationBumps(t *testing.T) {
 	}
 
 	// A content write (credential rotation): both move.
-	up := &SandboxConfig{Name: "renamed", Type: "ssh", Config: []byte(`{"addr":"h","user":"u","work_dir":"/srv","password":"rotated"}`)}
+	up := &SandboxConfig{Name: "renamed", Type: "docker", Config: []byte(`{"image":"i","host":"ssh://u@h","ssh_password":"rotated"}`)}
 	if err := sandboxes.Update(ctx, id("sb-1"), up, 2, true); err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestSandboxRevisionAndGenerationBumps(t *testing.T) {
 	}
 
 	// A writer still holding revision 2 must not overwrite the rotation.
-	stale := &SandboxConfig{Name: "renamed", Type: "ssh", Config: []byte(`{"addr":"h","user":"u","work_dir":"/srv"}`)}
+	stale := &SandboxConfig{Name: "renamed", Type: "docker", Config: []byte(`{"image":"i","host":"ssh://u@h"}`)}
 	if err := sandboxes.Update(ctx, id("sb-1"), stale, 2, true); !errors.Is(err, ErrRevisionConflict) {
 		t.Fatalf("stale update: err=%v, want ErrRevisionConflict", err)
 	}
@@ -155,7 +155,7 @@ func TestSandboxRevisionAndGenerationBumps(t *testing.T) {
 	}
 
 	// An identity update bumps both (identity is content by definition).
-	moved := &SandboxConfig{Name: "renamed", Type: "ssh", Config: []byte(`{"addr":"h2","user":"u","work_dir":"/srv"}`)}
+	moved := &SandboxConfig{Name: "renamed", Type: "docker", Config: []byte(`{"image":"i","host":"ssh://u@h2"}`)}
 	if refs, err := sandboxes.UpdateIdentityIfUnreferenced(ctx, id("sb-1"), moved, 3); err != nil || refs != 0 {
 		t.Fatalf("identity update: refs=%d err=%v", refs, err)
 	}

@@ -50,11 +50,6 @@ func unavailable(c *gin.Context, message string) {
 	abortError(c, http.StatusServiceUnavailable, protocol.CodeUnavailable, message)
 }
 
-// forbidden reports a 403 for operations disabled by server policy.
-func forbidden(c *gin.Context, message string) {
-	abortError(c, http.StatusForbidden, protocol.CodeForbidden, message)
-}
-
 // upstreamError reports a 502 for a failing upstream dependency (model
 // provider, MCP server, sandbox host). The upstream message is forwarded —
 // it's what the caller needs to fix the connection.

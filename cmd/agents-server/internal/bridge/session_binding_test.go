@@ -12,15 +12,14 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// createSandboxConfig persists an ssh sandbox config under the given id — a
-// binding now validates that its sandbox exists (and that the workdir is one
-// the backend honors) before it is written, so tests must create what they
-// bind. The config carries a default work_dir, keeping empty-workdir bindings
-// legal for ssh.
+// createSandboxConfig persists a persistent docker config under the given id
+// — a binding now validates that its sandbox exists (and that the workdir is
+// one the backend honors) before it is written, so tests must create what
+// they bind.
 func createSandboxConfig(t *testing.T, r *Runner, id string) {
 	t.Helper()
-	cfg := &store.SandboxConfig{ID: id, Name: id, Type: "ssh",
-		Config: json.RawMessage(`{"addr":"host","user":"u","work_dir":"/srv"}`)}
+	cfg := &store.SandboxConfig{ID: id, Name: id, Type: "docker",
+		Config: json.RawMessage(`{"image":"i","persistent":true}`)}
 	if err := r.Deps.SandboxConfigs.Create(context.Background(), cfg); err != nil {
 		t.Fatalf("create sandbox config %s: %v", id, err)
 	}
@@ -94,24 +93,24 @@ func TestStartRunBindsSessionSandbox(t *testing.T) {
 	createSandboxConfig(t, runner, "sb-1")
 	createSandboxConfig(t, runner, "sb-2")
 
-	run1 := startAndWait(t, runner, sess.ID, "sb-1", "  /w1  ")
+	run1 := startAndWait(t, runner, sess.ID, "sb-1", "  /workspace/w1  ")
 	got, err := runner.Deps.Sessions.Get(ctx, sess.ID)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got.SandboxID != "sb-1" || got.WorkDir != "/w1" {
-		t.Fatalf("bound to (%q,%q), want (sb-1,/w1) — workDir trimmed", got.SandboxID, got.WorkDir)
+	if got.SandboxID != "sb-1" || got.WorkDir != "/workspace/w1" {
+		t.Fatalf("bound to (%q,%q), want (sb-1,/workspace/w1) — workDir trimmed", got.SandboxID, got.WorkDir)
 	}
-	if info, ok := runner.Hub().Info(run1); !ok || info.SandboxID != "sb-1" || info.WorkDir != "/w1" {
+	if info, ok := runner.Hub().Info(run1); !ok || info.SandboxID != "sb-1" || info.WorkDir != "/workspace/w1" {
 		t.Fatalf("run1 info = %+v, want the bound pair", info)
 	}
 
 	// A later run claiming a different sandbox is overridden by the binding.
-	run2 := startAndWait(t, runner, sess.ID, "sb-2", "/w2")
-	if got, _ := runner.Deps.Sessions.Get(ctx, sess.ID); got.SandboxID != "sb-1" || got.WorkDir != "/w1" {
+	run2 := startAndWait(t, runner, sess.ID, "sb-2", "/workspace/w2")
+	if got, _ := runner.Deps.Sessions.Get(ctx, sess.ID); got.SandboxID != "sb-1" || got.WorkDir != "/workspace/w1" {
 		t.Fatalf("binding rewritten to (%q,%q)", got.SandboxID, got.WorkDir)
 	}
-	if info, ok := runner.Hub().Info(run2); !ok || info.SandboxID != "sb-1" || info.WorkDir != "/w1" {
+	if info, ok := runner.Hub().Info(run2); !ok || info.SandboxID != "sb-1" || info.WorkDir != "/workspace/w1" {
 		t.Fatalf("run2 info = %+v, want the binding to override the request", info)
 	}
 
@@ -165,7 +164,7 @@ func TestRefusedRunDoesNotBind(t *testing.T) {
 	}
 	defer runner.hub.unregister("run-live", seg)
 
-	if _, err := runner.StartRun(sess.ID, "", "sb-1", "/w1", "hi", nil, nil); err == nil {
+	if _, err := runner.StartRun(sess.ID, "", "sb-1", "/workspace/w1", "hi", nil, nil); err == nil {
 		t.Fatal("StartRun succeeded on a busy session")
 	}
 	if got, _ := runner.Deps.Sessions.Get(ctx, sess.ID); got.SandboxID != "" {
@@ -184,16 +183,16 @@ func TestInvalidBindingRefusedUnbound(t *testing.T) {
 	if err := runner.Deps.Sessions.Create(ctx, sess); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	// No default work_dir: an empty-workdir ssh binding must be refused.
-	cfg := &store.SandboxConfig{ID: "sb-bare", Name: "sb-bare", Type: "ssh",
-		Config: json.RawMessage(`{"addr":"host","user":"u"}`)}
+	// Ephemeral: any custom workdir binding must be refused.
+	cfg := &store.SandboxConfig{ID: "sb-bare", Name: "sb-bare", Type: "docker",
+		Config: json.RawMessage(`{"image":"i","persistent":true}`)}
 	if err := runner.Deps.SandboxConfigs.Create(ctx, cfg); err != nil {
 		t.Fatalf("create sandbox config: %v", err)
 	}
 
 	for name, req := range map[string]struct{ sandboxID, workDir string }{
-		"unknown sandbox":     {"sb-ghost", "/w"},
-		"ssh with no workdir": {"sb-bare", ""},
+		"unknown sandbox":   {"sb-ghost", "/workspace/w"},
+		"outside workspace": {"sb-bare", "/tmp/elsewhere"},
 	} {
 		_, err := runner.StartRun(sess.ID, "", req.sandboxID, req.workDir, "hi", nil, nil)
 		if _, ok := errorsAsInvalidBinding(err); !ok {
@@ -204,9 +203,9 @@ func TestInvalidBindingRefusedUnbound(t *testing.T) {
 		t.Fatalf("invalid binding landed: %q", got.SandboxID)
 	}
 	// The slot is free: a corrected request binds normally.
-	startAndWait(t, runner, sess.ID, "sb-bare", "/srv/app")
-	if got, _ := runner.Deps.Sessions.Get(ctx, sess.ID); got.SandboxID != "sb-bare" || got.WorkDir != "/srv/app" {
-		t.Fatalf("corrected bind = (%q,%q), want (sb-bare,/srv/app)", got.SandboxID, got.WorkDir)
+	startAndWait(t, runner, sess.ID, "sb-bare", "/workspace/app")
+	if got, _ := runner.Deps.Sessions.Get(ctx, sess.ID); got.SandboxID != "sb-bare" || got.WorkDir != "/workspace/app" {
+		t.Fatalf("corrected bind = (%q,%q), want (sb-bare,/workspace/app)", got.SandboxID, got.WorkDir)
 	}
 }
 
@@ -232,10 +231,10 @@ func TestUndecodableConfigRefusesBinding(t *testing.T) {
 		t.Fatalf("err = %v, want ErrInvalidBinding", err)
 	}
 	_, err = ResolveBindingWorkDir(&store.SandboxConfig{
-		ID: "sb", Type: "ssh",
-		Config: json.RawMessage(`{"addr":"h","user":42}`),
-	}, "/srv/app")
+		ID: "sb", Type: "docker",
+		Config: json.RawMessage(`{"image":42}`),
+	}, "/workspace/app")
 	if !errors.As(err, &invalid) {
-		t.Fatalf("ssh err = %v, want ErrInvalidBinding", err)
+		t.Fatalf("undecodable image err = %v, want ErrInvalidBinding", err)
 	}
 }

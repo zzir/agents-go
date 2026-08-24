@@ -50,7 +50,6 @@ On startup the server prints an auto-generated auth token. Open
 | `--db`                  | `data.db`   | SQLite file path, or a `postgres://` DSN               |
 | `--workspace`           | `.`         | Workspace directory for sandbox file operations        |
 | `--token`               | auto        | Auth token; randomly generated when omitted            |
-| `--allow-local-sandbox` | `false`     | Allow creating local (non-isolated) sandboxes          |
 | `--max-tasks`           | `0`         | Max live background tasks per session (`0` = default 6) |
 | `--log-level`           | `info`      | `debug`, `info`, `warn` or `error`                     |
 | `--log-format`          | `text`      | `text` for a terminal, `json` for a collector          |
@@ -240,7 +239,7 @@ Two rules, enforced at the routes (`handler/authz.go`), shape who may do what:
   call cannot write what the API refuses them.
 - **Using shared configuration is not writing it.** A member runs any agent,
   any workflow, and any sandbox in their own session — and approves their own
-  tool calls there. A shared `ssh` or `local` sandbox is therefore a shared
+  tool calls there. A shared sandbox is therefore a shared
   shell: every member who can pick it can execute on that host, under the
   credentials the server stores. That is the single-workspace model — one
   team, one trust boundary — not an oversight; a host that only admins may
@@ -888,9 +887,9 @@ Known keys:
 |--------|-----------|------------------------------------------|
 | GET    | `/server` | The start-up configuration now in force  |
 
-`{version, workspace, allow_local_sandbox, max_tasks}` — the flags this process
+`{version, workspace, max_tasks}` — the flags this process
 was started with, not settings. They are here because a client that cannot see
-them meets them only as unexplained refusals: "local sandboxes are not allowed"
+them meets them only as unexplained refusals: a task cap with nowhere
 with nowhere to learn that a flag decides it. `workspace` is absolute (`.`
 means nothing to a browser elsewhere) and `max_tasks` is the EFFECTIVE cap, not
 the raw flag — `--max-tasks 0` means the built-in default, and reporting the
@@ -1224,22 +1223,23 @@ Built-in: `content_filter` (input + tool_input, regex — jailbreak keywords),
 | DELETE | `/sandboxes/:id`      | Delete sandbox           |
 | POST   | `/sandboxes/:id/test` | Run health-check command |
 
-Sandbox types: `local` (subprocess — requires `--allow-local-sandbox`), `docker`
-(container), `ssh` (remote host). The `local` and `docker` host restrictions are
-enforced on both create and update. For `ssh` sandboxes the `password` config
-field is masked on read — see [Secret handling](#secret-handling).
+Every sandbox is a Docker container (`type: "docker"` — spec §5.27).
+`config.host` picks the daemon: empty for this machine's, `ssh://user@host`
+for a remote daemon reached over SSH (pure Go — the remote needs sshd with
+streamlocal forwarding and the SSH user in the docker group, no remote docker
+CLI), `tcp://host:port` for a TCP-exposed one. The `ssh_*` fields carry the
+SSH authentication; `ssh_password` is masked on read — see
+[Secret handling](#secret-handling). `memory_mb` / `cpus` cap each
+container's resources.
 
 Create and update validate the config STRICTLY and store it in canonical
 form: a type mismatch on a known field (`persistent: "yes"`) or a missing
-required field (docker `image`, ssh `addr`/`user`) is `400` — accepted, it
-would bind sessions to a config that can never build, and once referenced the
-identity freeze would block its own repair. Canonical means an ssh `addr`
-always carries its port (`host` is stored as `host:22` — the backend dials 22
-either way, and identity comparisons must not read the spelling difference as
-a different machine), paths lose trailing slashes, and unknown keys are
-dropped. One decoder answers every question about a config — save-time
-validation, the content comparison, the identity freeze — so they cannot
-disagree.
+required field (`image`) is `400` — accepted, it would bind sessions to a
+config that can never build, and once referenced the identity freeze would
+block its own repair. Canonical means paths lose trailing slashes and
+unknown keys are dropped. One decoder answers every question about a config
+— save-time validation, the content comparison, the identity freeze — so
+they cannot disagree.
 
 `DELETE` refuses (`409`) while any session is bound to the sandbox: the
 binding is permanent, so removing its target would leave those sessions
@@ -1253,9 +1253,8 @@ draining first: an in-flight run or an open terminal keeps the instance alive
 until it finishes, and only then is the ssh connection or docker container
 closed.)
 
-`PUT` freezes a referenced sandbox's **identity fields** — `type`, ssh
-`addr`/`user`/`work_dir` (the ssh user picks the account: its home and
-permission view are a different file system even at one address), docker
+`PUT` freezes a referenced sandbox's **identity fields** — `type`, `host`
+(the daemon: a different daemon is a different set of filesystems),
 `host_dir`/`persistent`/`container_name`: sessions bound the config id on the
 promise that it keeps meaning the same file system, so an update that would
 move it is `409` while references exist. Everything else stays freely
@@ -1356,8 +1355,8 @@ the plaintext is never sent to a client. On write:
 
 This lets the UI round-trip whole objects without ever seeing the plaintext.
 Masked fields: provider `api_key`, each agent `fallback_models[].api_key`, MCP
-`headers` values and `oauth_client_secret` (`streamable_http` only), SSH sandbox
-`password`, and the `brave_api_key` setting. A model-API key crosses exactly one
+`headers` values and `oauth_client_secret`, the sandbox `ssh_password`, and
+the `brave_api_key` setting. A model-API key crosses exactly one
 surface — the provider — which is what giving providers their own entity bought.
 
 **A masked key round-trips only to the destination it was stored for.**
@@ -1372,7 +1371,7 @@ never by position; an unmatched mask clears.
 every credential column is stored AES-256-GCM encrypted
 (`enc:v2:<key id>:…`, the key id being the first bytes of the key's SHA-256):
 provider `api_key` and ChatGPT token, MCP `oauth_token`, `oauth_client_secret`
-and `headers`, SSH sandbox `password`, webhook `secret`, fallback `api_key`s,
+and `headers`, the sandbox `ssh_password`, webhook `secret`, fallback `api_key`s,
 and the settings the registry marks secret. Possession of the database is then
 not possession of every upstream credential. Each value is bound to its place
 — `table.column`, plus the field for a credential inside a JSON column — as
@@ -1518,14 +1517,14 @@ answers:
 |-------------------|-----------|------------------------------------------------------------------------------|
 | `terminal.open`   | C → S     | Start the session — `{sandbox_id, cols?, rows?}`; must be the first message  |
 | `terminal.ready`  | S → C     | Shell is live; binary frames flow from here                                  |
-| `terminal.error`  | S → C     | Open failed (unknown sandbox, `local` type, non-persistent docker, backend error) |
+| `terminal.error`  | S → C     | Open failed (unknown sandbox, non-persistent container, backend error) |
 | `terminal.resize` | C → S     | PTY resize — `{cols, rows}`                                                  |
 | `terminal.exit`   | S → C     | Shell exited — `{code}` (`-1` when unknown); the server then closes          |
 
 **Binary WebSocket frames carry the terminal byte stream in both directions**
 (client → stdin, PTY output → client); text frames are reserved for the JSON
-control envelopes above. `local` sandboxes are refused server-side regardless
-of `--allow-local-sandbox` — a browser shell on the host process is a bigger
+control envelopes above. Only a persistent container can host one — an
+ephemeral container has nothing to attach to between execs; anything else is a bigger
 grant than that flag implies. Terminals are capped at 4 per sandbox config,
 and updating or deleting a sandbox closes its live terminals.
 
@@ -1925,7 +1924,7 @@ When a change genuinely doesn't fit, update this list in the same PR.
     still referenced by sessions is refused with 409 by the delete statement's
     own `NOT EXISTS` guard, the bind carries the mirror `EXISTS` guard
     (`BindSandboxIfEmpty`), and an update that would change a referenced
-    sandbox's IDENTITY — type, ssh addr/user/work_dir, docker
+    sandbox's IDENTITY — type, the daemon (host), docker
     host_dir/persistent/container_name, the fields that decide where the
     data lives — is refused the same way (`UpdateIdentityIfUnreferenced`),
     while credentials, name and limits stay editable. A bound session whose

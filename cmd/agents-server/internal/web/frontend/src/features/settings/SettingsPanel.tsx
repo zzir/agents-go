@@ -29,7 +29,6 @@ interface SettingDef {
 interface ServerInfo {
   version: string;
   workspace: string;
-  allow_local_sandbox: boolean;
   max_tasks: number;
 }
 
@@ -257,7 +256,6 @@ function ServerSection() {
   const rows: [string, string][] = [
     ['Version', info.version],
     ['Workspace', info.workspace],
-    ['Local sandboxes', info.allow_local_sandbox ? 'Allowed' : 'Refused (start with --allow-local-sandbox)'],
     ['Background tasks per session', String(info.max_tasks)],
   ];
   return (

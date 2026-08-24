@@ -66,12 +66,12 @@ func openMcpServer(m *McpServerConfig) (err error) {
 }
 
 func sealSandbox(c *SandboxConfig) (err error) {
-	c.Config, err = sealJSONKeys(labelSandboxConfig, c.Config, "password")
+	c.Config, err = sealJSONKeys(labelSandboxConfig, c.Config, "ssh_password")
 	return err
 }
 
 func openSandbox(c *SandboxConfig) (err error) {
-	c.Config, err = openJSONKeys(labelSandboxConfig, c.Config, "password")
+	c.Config, err = openJSONKeys(labelSandboxConfig, c.Config, "ssh_password")
 	return err
 }
 

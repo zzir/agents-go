@@ -19,8 +19,8 @@ func TestSandboxUpdate_UIRenameIsNotAContentChange(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
 	sandboxStore := store.NewSandboxStore(db)
-	cfg := &store.SandboxConfig{Name: "old", Type: "ssh",
-		Config: json.RawMessage(`{"addr":"h","user":"u","work_dir":"/srv"}`)}
+	cfg := &store.SandboxConfig{Name: "old", Type: "docker",
+		Config: json.RawMessage(`{"image":"i","host":"ssh://u@h"}`)}
 	if err := sandboxStore.Create(t.Context(), cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -31,8 +31,8 @@ func TestSandboxUpdate_UIRenameIsNotAContentChange(t *testing.T) {
 
 	// The exact shape the UI sends for a rename: full field set, explicit
 	// zero values for everything the stored config omitted.
-	rename := `{"name":"new","type":"ssh","config":{"addr":"h","user":"u","use_agent":false,` +
-		`"key_file":"","password":"","known_hosts":"","insecure_host_key":false,"work_dir":"/srv"}}`
+	rename := `{"name":"new","type":"docker","config":{"image":"i","host":"ssh://u@h","ssh_use_agent":false,` +
+		`"ssh_key_file":"","ssh_password":"","runtime":"","user":"","network":false,"memory_mb":0,"cpus":0,"persistent":false}}`
 	if w := doJSON(t, engine, "PUT", "/sandboxStore/"+cfg.ID, rename); w.Code != 200 {
 		t.Fatalf("rename status = %d: %s", w.Code, w.Body.String())
 	}
@@ -48,9 +48,9 @@ func TestSandboxUpdate_UIRenameIsNotAContentChange(t *testing.T) {
 	}
 
 	// Control through the same path: a real (non-identity) content change —
-	// flipping use_agent — does move the generation.
-	flip := `{"name":"new","type":"ssh","config":{"addr":"h","user":"u","use_agent":true,` +
-		`"key_file":"","password":"","known_hosts":"","insecure_host_key":false,"work_dir":"/srv"}}`
+	// flipping ssh_use_agent — does move the generation.
+	flip := `{"name":"new","type":"docker","config":{"image":"i","host":"ssh://u@h","ssh_use_agent":true,` +
+		`"ssh_key_file":"","ssh_password":"","runtime":"","user":"","network":false,"memory_mb":0,"cpus":0,"persistent":false}}`
 	if w := doJSON(t, engine, "PUT", "/sandboxStore/"+cfg.ID, flip); w.Code != 200 {
 		t.Fatalf("content-change status = %d: %s", w.Code, w.Body.String())
 	}
@@ -71,7 +71,7 @@ func TestSandboxUpdate_StaleClientRevisionConflicts(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
 	sandboxStore := store.NewSandboxStore(db)
-	cfg := &store.SandboxConfig{Name: "old", Type: "ssh",
+	cfg := &store.SandboxConfig{Name: "old", Type: "docker",
 		Config: json.RawMessage(`{"addr":"h","user":"u","work_dir":"/srv"}`)}
 	if err := sandboxStore.Create(t.Context(), cfg); err != nil {
 		t.Fatal(err)
@@ -82,7 +82,7 @@ func TestSandboxUpdate_StaleClientRevisionConflicts(t *testing.T) {
 	engine.PUT("/sandboxStore/:id", h.Update)
 
 	body := func(name string, revision string) string {
-		return `{"name":"` + name + `","type":"ssh","config":{"addr":"h","user":"u","work_dir":"/srv"}` + revision + `}`
+		return `{"name":"` + name + `","type":"docker","config":{"image":"i"}` + revision + `}`
 	}
 
 	// Tab A saves from the form it loaded at revision 1: lands, row moves on.

@@ -66,7 +66,6 @@ var sdkPackages = map[string]string{
 	"sessions":   "sessions",
 	"skills":     "skills",
 	"docker":     "sandbox/docker",
-	"sshsb":      "sandbox/ssh", // a bare ssh. is golang.org/x/crypto/ssh
 }
 
 var (

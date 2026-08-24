@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math"
 	"net/http"
-	"path/filepath"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -18,29 +17,18 @@ import (
 
 // SandboxHandler serves CRUD endpoints and code execution for sandboxes.
 type SandboxHandler struct {
-	store             *store.SandboxStore
-	manager           *sandboxes.Manager
-	allowLocalSandbox bool
-	terminals         *TerminalHandler
-	// workspaceAbs is the server --workspace directory, absolute — the default
-	// workdir reported for local and persistent-docker sandboxes.
-	workspaceAbs string
+	store     *store.SandboxStore
+	manager   *sandboxes.Manager
+	terminals *TerminalHandler
 }
 
-// NewSandboxHandler returns a handler over the sandbox store and manager.
-// allowLocal controls whether type "local" sandboxes may be created; terminals
-// is the web-terminal registry an update or delete tears down; workspace is
-// the server --workspace directory, reported as each sandbox's default workdir.
-func NewSandboxHandler(s *store.SandboxStore, m *sandboxes.Manager, allowLocal bool, terminals *TerminalHandler, workspace string) *SandboxHandler {
+// NewSandboxHandler returns a handler over the sandbox store and manager;
+// terminals is the web-terminal registry an update or delete tears down.
+func NewSandboxHandler(s *store.SandboxStore, m *sandboxes.Manager, terminals *TerminalHandler) *SandboxHandler {
 	if s == nil || terminals == nil {
 		panic("handler: NewSandboxHandler needs the sandbox store and the terminal handler")
 	}
-	// The workspace is reported absolute — each sandbox's default workdir.
-	abs, err := filepath.Abs(workspace)
-	if err != nil {
-		abs = workspace
-	}
-	return &SandboxHandler{store: s, manager: m, allowLocalSandbox: allowLocal, terminals: terminals, workspaceAbs: abs}
+	return &SandboxHandler{store: s, manager: m, terminals: terminals}
 }
 
 // closeSandboxTerminals tears down live web terminals opened under a config
@@ -51,39 +39,21 @@ func (h *SandboxHandler) closeSandboxTerminals(id string, minGen int64) {
 }
 
 // annotate fills the computed, never-stored response fields: terminal
-// capability, plus the default workdir a session binding would use and whether
-// a custom per-session workdir is honored (local/ssh only). The workdir is
-// always the EXECUTION view — the directory commands actually run in — so for
-// docker it is the container-side /workspace constant, never the host mount
-// source (that is the config's host_dir, a different concept).
+// capability, plus the default workdir a session binding would use and
+// whether a custom per-session workdir is honored. The workdir is always the
+// EXECUTION view — the container-side /workspace constant, never the host
+// mount source (that is the config's host_dir, a different concept). The
+// mount point never moves, but a persistent container's session may work in
+// a /workspace subtree; an ephemeral container has no durable tree to
+// subdivide.
 func (h *SandboxHandler) annotate(cfg *store.SandboxConfig) {
 	cfg.Terminal = sandboxes.TerminalCapable(cfg)
-	switch cfg.Type {
-	case "ssh":
-		var sc store.SSHConfig
-		if len(cfg.Config) > 0 {
-			_ = json.Unmarshal(cfg.Config, &sc)
-		}
-		// May be "" — but a session BINDING then requires an explicit directory
-		// (ResolveBindingWorkDir): without a fixed dir, every exec runs in a
-		// throw-away remote temp dir, which breaks session file continuity.
-		cfg.DefaultWorkDir = sc.WorkDir
-		cfg.WorkDirEditable = true
-	case "local":
-		cfg.DefaultWorkDir = h.workspaceAbs
-		cfg.WorkDirEditable = true
-	case "docker":
-		// The mount point never moves, but a persistent container's session
-		// may work in a /workspace subtree — so the directory is editable
-		// within that constraint. An ephemeral container has no durable tree
-		// to subdivide.
-		cfg.DefaultWorkDir = sandboxes.DockerWorkspace
-		var dc store.DockerConfig
-		if len(cfg.Config) > 0 {
-			_ = json.Unmarshal(cfg.Config, &dc)
-		}
-		cfg.WorkDirEditable = dc.Persistent
+	cfg.DefaultWorkDir = sandboxes.DockerWorkspace
+	var dc store.DockerConfig
+	if len(cfg.Config) > 0 {
+		_ = json.Unmarshal(cfg.Config, &dc)
 	}
+	cfg.WorkDirEditable = dc.Persistent
 }
 
 // List responds with all sandbox configurations, secrets masked.
@@ -128,45 +98,21 @@ func (r createSandboxReq) toConfig() *store.SandboxConfig {
 }
 
 // validateSandbox enforces the POLICY layer of a sandbox write: name and
-// type present, local gated behind its flag, remote docker daemons refused.
-// Field-level validation and canonicalization live in
-// store.NormalizeSandboxConfig, which both write handlers run right after
-// this. The docker host check must stay HERE, before normalization: host is
-// not a DockerConfig field, so the canonical re-marshal would silently drop
-// it instead of telling the user it is unsupported.
+// type present, docker the only backend (spec §5.27). Field-level validation
+// and canonicalization live in store.NormalizeSandboxConfig, which both
+// write handlers run right after this.
 func (h *SandboxHandler) validateSandbox(c *gin.Context, req *createSandboxReq) bool {
 	if req.Name == "" {
 		badRequest(c, "name is required")
 		return false
 	}
 	switch req.Type {
-	case "local", "ssh":
-		if req.Type == "local" && !h.allowLocalSandbox {
-			forbidden(c, "local sandbox is disabled; start the server with --allow-local-sandbox to enable it")
-			return false
-		}
 	case "docker":
-		var dc struct {
-			Host string `json:"host"`
-		}
-		if len(req.Config) > 0 {
-			// A malformed docker config must be rejected, not ignored: swallowing
-			// the error would leave dc.Host empty and let a remote-host config
-			// slip past the block below.
-			if err := json.Unmarshal(req.Config, &dc); err != nil {
-				badRequest(c, "config is not valid JSON: "+err.Error())
-				return false
-			}
-		}
-		if dc.Host != "" {
-			badRequest(c, "remote Docker daemon is not supported; use a local daemon or the SSH sandbox for remote hosts")
-			return false
-		}
 	case "":
 		badRequest(c, "type is required")
 		return false
 	default:
-		badRequest(c, "type must be local, docker, or ssh, got "+req.Type)
+		badRequest(c, "type must be docker, got "+req.Type)
 		return false
 	}
 	return true
@@ -175,14 +121,13 @@ func (h *SandboxHandler) validateSandbox(c *gin.Context, req *createSandboxReq) 
 // Create persists a new sandbox configuration from the request body.
 //
 //	@Summary		Create sandbox
-//	@Description	type: local (requires --allow-local-sandbox), docker, or ssh. config is backend-specific; the SSH password is write-only (******** mask semantics). All backends accept an optional max_read_file_bytes cap for the read_file tool (0 = 8 MiB default).
+//	@Description	type is "docker". config: image (required), host ("" = local daemon, tcp://, or ssh://user@host with ssh_* auth — ssh_password is write-only, ******** mask semantics), runtime, user, network, memory_mb/cpus caps, persistent, host_dir, container_name, max_read_file_bytes (0 = 8 MiB default).
 //	@Tags			sandboxes
 //	@Accept			json
 //	@Produce		json
 //	@Param			sandbox	body		createSandboxReq	true	"Sandbox configuration"
 //	@Success		201		{object}	store.SandboxConfig
 //	@Failure		400		{object}	ErrorResponse
-//	@Failure		403		{object}	ErrorResponse	"local sandbox disabled"
 //	@Failure		500		{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/sandboxes [post]
@@ -253,7 +198,6 @@ func (h *SandboxHandler) Get(c *gin.Context) {
 //	@Param			sandbox	body		createSandboxReq	true	"Sandbox configuration"
 //	@Success		200		{object}	store.SandboxConfig
 //	@Failure		400		{object}	ErrorResponse
-//	@Failure		403		{object}	ErrorResponse	"local sandbox disabled"
 //	@Failure		404		{object}	ErrorResponse
 //	@Failure		409		{object}	ErrorResponse	"identity change refused (sessions are bound), or the config changed concurrently — re-read and retry"
 //	@Failure		500		{object}	ErrorResponse

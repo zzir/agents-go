@@ -143,7 +143,7 @@ example: shared adapter plumbing, stdlib-only, so it lives in root.
 | root | — the SDK (including `models/openai` and `models/modelkit`) |
 | `mcp` | the modelcontextprotocol/go-sdk client and the seven indirect requirements it brought with it |
 | `models/anthropic` | the anthropic-sdk-go client |
-| `sandbox/docker`, `sandbox/ssh` | the Docker and SSH client libraries |
+| `sandbox/docker` | the Docker client (and x/crypto/ssh for remote daemons) |
 | `sessions` | the SQL drivers |
 | `skills` | the YAML parser |
 | `cmd/agents-server` | a web application, not a library |

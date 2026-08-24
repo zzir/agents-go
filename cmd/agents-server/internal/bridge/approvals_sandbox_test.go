@@ -30,8 +30,8 @@ func TestBuildAgentRegistryIncludesSandboxTools(t *testing.T) {
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatalf("create agent: %v", err)
 	}
-	// A local sandbox needs no daemon, so its tools build in-process.
-	sb := &store.SandboxConfig{ID: store.NewID(), Name: "L", Type: "local", Config: []byte(`{}`)}
+	// Building tools never contacts the daemon, so a plain docker config works.
+	sb := &store.SandboxConfig{ID: store.NewID(), Name: "L", Type: "docker", Config: []byte(`{"image":"i"}`)}
 	if err := sandboxStore.Create(ctx, sb); err != nil {
 		t.Fatalf("create sandbox: %v", err)
 	}

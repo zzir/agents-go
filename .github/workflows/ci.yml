@@ -43,7 +43,6 @@ jobs:
       - name: Test sandbox backend modules
         run: |
           (cd sandbox/docker && go vet ./... && go test ./...)
-          (cd sandbox/ssh && go vet ./... && go test ./...)
 
       - name: Test sessions module
         run: (cd sessions && go vet ./... && go test ./...)
@@ -180,7 +179,7 @@ jobs:
       # (golangci-lint-action puts the binary on PATH for later steps.)
       - name: Verify formatting (gofmt + goimports)
         run: |
-          for m in models/anthropic examples/anthropic sandbox/docker sandbox/ssh sessions skills; do
+          for m in models/anthropic examples/anthropic sandbox/docker sessions skills; do
             out=$(cd "$m" && golangci-lint fmt --diff)
             if [ -n "$out" ]; then
               echo "::error::$m is not gofmt/goimports-clean"; echo "$out"; exit 1
