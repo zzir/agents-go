@@ -22,6 +22,19 @@ func NewSkillStore(db *bun.DB) *SkillStore {
 	return &SkillStore{CrudStore: NewCrudStore[Skill](db, "skill", "name ASC"), db: db}
 }
 
+// Update overwrites the skill in one transaction that reads the stored row
+// (locked) and hands it to prepare — how scope and owner survive a
+// concurrent scope flip, the same shape every other scoped entity uses.
+func (s *SkillStore) Update(ctx context.Context, id string, m *Skill, prepare func(prev *Skill) error) error {
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		return s.updateFrom(ctx, tx, id, m, prepare)
+	})
+	if err != nil {
+		return fmt.Errorf("updating skill %s: %w", id, err)
+	}
+	return nil
+}
+
 // ListMeta returns the skills ownerID may see (global first, then the
 // caller's own, both by creation time — the scoped-listing order, see
 // ListVisibleOf), without their content — the index the agent build and the
@@ -31,7 +44,8 @@ func (s *SkillStore) ListMeta(ctx context.Context, ownerID string, admin bool) (
 	q := s.db.NewSelect().Model(&out).
 		ExcludeColumn("content").
 		OrderExpr("CASE WHEN scope = ? THEN 0 ELSE 1 END", ScopeGlobal).
-		OrderExpr("created_at ASC")
+		OrderExpr("created_at ASC").
+		OrderExpr("id ASC") // same-instant rows keep one order across reloads
 	q = visibleTo(q, ownerID, admin)
 	if err := q.Scan(ctx); err != nil {
 		return nil, fmt.Errorf("listing skills: %w", err)

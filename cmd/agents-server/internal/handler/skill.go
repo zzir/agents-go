@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -25,6 +26,10 @@ const maxSkillBytes = 256 << 10
 // maxImportSkills caps how many SKILL.md files one import walks, so a huge
 // repo cannot flood the table in one request.
 const maxImportSkills = 200
+
+// errSkillDetached aborts an import's update inside the transaction when the
+// row detached between the read and the write.
+var errSkillDetached = errors.New("edited locally (detached)")
 
 // SkillHandler manages stored SKILL.md documents: CRUD plus import from a
 // GitHub repository or a raw URL (spec §5.26).
@@ -182,13 +187,16 @@ func (h *SkillHandler) Update(c *gin.Context) {
 	if !editableRow(c, prev.Scope, prev.OwnerID) {
 		return
 	}
-	sk := &store.Skill{
-		Name: meta.Name, Description: meta.Description, Content: req.Content,
-		Scope: prev.Scope, OwnerID: prev.OwnerID,
-		SourceRepo: prev.SourceRepo, SourcePath: prev.SourcePath, SourceSHA: prev.SourceSHA,
-		Detached: prev.Detached || (prev.SourceRepo != "" && req.Content != prev.Content),
-	}
-	if err := h.store.Update(ctx, prev.ID, sk); err != nil {
+	sk := &store.Skill{Name: meta.Name, Description: meta.Description, Content: req.Content}
+	// Scope, owner and source lineage come from the row INSIDE the store's
+	// transaction, so a concurrent scope flip is not silently reverted.
+	err = h.store.Update(ctx, prev.ID, sk, func(p *store.Skill) error {
+		sk.Scope, sk.OwnerID = p.Scope, p.OwnerID
+		sk.SourceRepo, sk.SourcePath, sk.SourceSHA = p.SourceRepo, p.SourcePath, p.SourceSHA
+		sk.Detached = p.Detached || (p.SourceRepo != "" && req.Content != p.Content)
+		return nil
+	})
+	if err != nil {
 		saveError(c, err)
 		return
 	}
@@ -536,13 +544,22 @@ func (h *SkillHandler) upsertImported(c *gin.Context, repo, path, sha string, co
 	default:
 		sk := &store.Skill{
 			Name: meta.Name, Description: meta.Description, Content: string(content),
-			Scope: prev.Scope, OwnerID: prev.OwnerID,
 			SourceRepo: repo, SourcePath: path, SourceSHA: sha,
 		}
-		if err := h.store.Update(ctx, prev.ID, sk); err != nil {
-			if _, dup := store.UniqueViolation(err); dup {
+		err := h.store.Update(ctx, prev.ID, sk, func(p *store.Skill) error {
+			if p.Detached {
+				return errSkillDetached // detached between the read and the write
+			}
+			sk.Scope, sk.OwnerID = p.Scope, p.OwnerID
+			return nil
+		})
+		if err != nil {
+			switch _, dup := store.UniqueViolation(err); {
+			case dup:
 				resp.Skipped = append(resp.Skipped, label+": name "+meta.Name+" already in use")
-			} else {
+			case errors.Is(err, errSkillDetached):
+				resp.Skipped = append(resp.Skipped, label+": edited locally (detached)")
+			default:
 				resp.Skipped = append(resp.Skipped, label+": "+err.Error())
 			}
 			return
