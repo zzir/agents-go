@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useState } from 'react';
 import { ActionList, Button, TextInput, Textarea, Label, Stack, PageHeader, useConfirm } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { RowMenu } from '@/components/ListTable';
@@ -9,7 +9,7 @@ import { type Skill, groupBySource } from '@/lib/skills';
 import { BADGE } from '@/lib/badges';
 import { canDeleteRow, canEditRow } from '@/lib/access';
 import { useMe } from '@/lib/me';
-import { ScopeBadge, ScopeButton } from '@/components/CrudPanel';
+import { ScopeBadge } from '@/components/CrudPanel';
 
 const NEW_SKILL_TEMPLATE = `---
 name: my-skill
@@ -45,14 +45,13 @@ function importSummary(r: ImportResult): string {
 // the metadata — no separate name/description fields to drift. readOnly is a
 // skill the caller may not edit (a member's view of a global one); Delete can
 // still show there (an admin may delete what it cannot edit).
-function SkillEditor({ initial, onSave, onCancel, onDelete, saving, readOnly, actions }: {
+function SkillEditor({ initial, onSave, onCancel, onDelete, saving, readOnly }: {
   initial: string;
   onSave: (content: string) => void;
   onCancel: () => void;
   onDelete?: () => void;
   saving: boolean;
   readOnly?: boolean;
-  actions?: ReactNode;
 }) {
   const [content, setContent] = useState(initial);
   return (
@@ -69,7 +68,6 @@ function SkillEditor({ initial, onSave, onCancel, onDelete, saving, readOnly, ac
       <Stack direction="horizontal" gap="condensed">
         {!readOnly && <Button variant="primary" size="small" disabled={saving} onClick={() => onSave(content)}>Save</Button>}
         <Button size="small" onClick={onCancel}>{readOnly ? 'Back' : 'Cancel'}</Button>
-        {actions}
         {onDelete && <Button variant="danger" size="small" onClick={onDelete} style={{ marginLeft: 'auto' }}>Delete</Button>}
       </Stack>
     </Stack>
@@ -240,9 +238,7 @@ export function SkillsPanel() {
           readOnly={!skillEditable(mode.skill)}
           onSave={content => handleUpdate(mode.skill.id, content)}
           onCancel={() => setMode(null)}
-          onDelete={canDeleteRow(isAdmin, me?.id, mode.skill) ? () => handleDelete(mode.skill) : undefined}
-          actions={isAdmin && <ScopeButton row={mode.skill} setScope={api.skills.setScope}
-            onDone={() => { setMode(null); reload(); }} />} />
+          onDelete={canDeleteRow(isAdmin, me?.id, mode.skill) ? () => handleDelete(mode.skill) : undefined} />
       )}
 
       {loading && <div className="resource-row-sub">Loading…</div>}

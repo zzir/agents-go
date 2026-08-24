@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { type ReactNode } from 'react';
 import { ActionList, Button, Label, PageHeader, Stack } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { RowMenu } from '@/components/ListTable';
@@ -111,25 +111,3 @@ export function ScopeBadge({ row, meId }: { row: ScopedRow; meId?: string }) {
   return null;
 }
 
-/** The admin's promote/demote as a standalone button — the skills editor's
- * action row; list rows carry it as a RowActionsMenu item instead. */
-export function ScopeButton({ row, setScope, onDone }: {
-  row: ScopedRow & { id: string | number };
-  setScope: (id: string | number, scope: 'global' | 'private') => Promise<null>;
-  onDone: () => void;
-}) {
-  const [busy, setBusy] = useState(false);
-  const global = row.scope === 'global';
-  const flip = async () => {
-    setBusy(true);
-    try {
-      await setScope(row.id, global ? 'private' : 'global');
-      onDone();
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-  return <Button onClick={flip} size="small" variant="invisible" disabled={busy}>{global ? 'Make private' : 'Make global'}</Button>;
-}
