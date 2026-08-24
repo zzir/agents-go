@@ -206,6 +206,10 @@ func (h *SandboxHandler) Update(c *gin.Context) {
 		return
 	}
 	cfg := req.toConfig()
+	if maskAcrossDestination(cfg.Config, prev.Config, "host") {
+		badRequest(c, "host changed: the stored ssh_password belongs to the previous host — replace it or clear it")
+		return
+	}
 	cfg.Config = restoreSandboxConfig(cfg.Type, cfg.Config, prev.Config)
 	// Normalize AFTER the mask restore: the canonical form must carry the
 	// real secret, not the ******** sentinel.

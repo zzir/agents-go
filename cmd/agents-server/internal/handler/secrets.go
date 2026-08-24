@@ -229,6 +229,24 @@ func restoreMcpConfig(incoming, prev json.RawMessage) json.RawMessage {
 	return restoreJSONFields(incoming, prev, true, "oauth_client_secret")
 }
 
+// maskAcrossDestination reports whether incoming still carries the mask
+// sentinel while the JSON field naming the secret's destination changed —
+// the stored secret belongs to the previous destination and must not ride
+// to a new one (README invariant 9's rule, beyond providers).
+func maskAcrossDestination(incoming, prev json.RawMessage, field string) bool {
+	if !bytes.Contains(incoming, []byte(SecretMask)) {
+		return false
+	}
+	var in, old map[string]any
+	if err := json.Unmarshal(incoming, &in); err != nil {
+		return false
+	}
+	_ = json.Unmarshal(prev, &old)
+	is, _ := in[field].(string)
+	os, _ := old[field].(string)
+	return is != os
+}
+
 // sanitizeSandboxConfig returns cfg with its secret masked: the SSH password
 // of a remote-daemon docker config.
 func sanitizeSandboxConfig(cfg store.SandboxConfig) store.SandboxConfig {

@@ -267,6 +267,9 @@ func (h *McpServerHandler) Update(c *gin.Context) {
 	// update (POST /:id/scope does).
 	err := h.store.Update(ctx, id, cfg, func(prev *store.McpServerConfig) error {
 		cfg.Scope, cfg.OwnerID = prev.Scope, prev.OwnerID
+		if maskAcrossDestination(cfg.Config, prev.Config, "endpoint") {
+			return badRequestError("endpoint changed: the stored secrets belong to the previous endpoint — replace them or clear them")
+		}
 		cfg.Config = restoreMcpConfig(cfg.Config, prev.Config)
 		return nil
 	})
