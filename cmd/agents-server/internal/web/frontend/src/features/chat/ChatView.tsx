@@ -26,7 +26,7 @@ import { WorkflowStrip } from '@/features/chat/WorkflowStrip';
 import { TraceDrawer, type TraceReveal } from '@/features/chat/TracePanel';
 import { ContextPanel } from '@/features/chat/ContextPanel';
 import { ChatTopBar } from '@/features/chat/ChatTopBar';
-import { ArrowDownIcon, CommentDiscussionIcon, DependabotIcon, FileDirectoryIcon, PlusIcon, TrashIcon } from '@primer/octicons-react';
+import { ArrowDownIcon, CommentDiscussionIcon, DependabotIcon, FileDirectoryIcon, PlusIcon } from '@primer/octicons-react';
 import { toast } from '@/lib/toast';
 
 /* ---------- types ---------- */
@@ -678,11 +678,6 @@ export function ChatView({
                         title={projectLabel(p.name, g.sandboxName)}
                       >
                         {p.name}
-                        <ActionList.TrailingAction
-                          icon={TrashIcon}
-                          label={`Delete ${p.name}`}
-                          onClick={(e: MouseEvent) => { e.stopPropagation(); void deleteProject(p); }}
-                        />
                       </ActionList.Item>
                     ))}
                   </ActionList.Group>
@@ -697,6 +692,15 @@ export function ChatView({
                 >
                   New project…
                 </ActionList.Item>
+                {/* A plain menu item, not a per-row trailing action: Primer
+                    forbids ActionList.TrailingAction inside a menu-role list
+                    (it would not render). Deleting acts on the SELECTED
+                    project, behind its own confirm. */}
+                {selectedProject && (
+                  <ActionList.Item variant="danger" onSelect={() => void deleteProject(selectedProject)}>
+                    Delete “{selectedProject.name}”…
+                  </ActionList.Item>
+                )}
               </ActionList>
             </ActionMenu.Overlay>
           </ActionMenu>

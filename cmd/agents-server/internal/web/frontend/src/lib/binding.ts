@@ -55,7 +55,9 @@ export function composerSandboxView(
   if (binding && binding.sandboxId) {
     const cfg = configs?.find(c => c.id === binding.sandboxId);
     const name = cfg?.name || binding.sandboxId;
-    const projectName = projects?.find(p => p.id === binding.projectId)?.name || binding.projectId;
+    // No uuid fallback: while the projects fetch is in flight the title
+    // carries just the sandbox name.
+    const projectName = projects?.find(p => p.id === binding.projectId)?.name || '';
     let title = projectName ? `${name} — ${projectName}` : name;
     if (!cfg) title = `${binding.sandboxId} — this sandbox no longer exists; runs fail until it is restored`;
     return { bound: true, title };

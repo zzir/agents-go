@@ -50,9 +50,9 @@ describe('composerSandboxView', () => {
     expect(v.title).toBe('host — goagents');
   });
 
-  it('bound to a missing project row: raw id in the title', () => {
+  it('bound to a missing project row: sandbox name alone, never a raw id', () => {
     const v = composerSandboxView({ sandboxId: 'sb-a', projectId: 'p-gone' }, projects, configs);
-    expect(v.title).toBe('host — p-gone');
+    expect(v.title).toBe('host');
   });
 
   it('bound to a deleted sandbox: warning title on the raw id', () => {
