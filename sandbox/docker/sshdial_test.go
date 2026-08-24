@@ -1,8 +1,11 @@
 package docker
 
 import (
+	"context"
+	"net"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The ssh:// URL carries everything the dialer needs: user (required), host
@@ -28,6 +31,41 @@ func TestNewSSHDialerParsesHostURL(t *testing.T) {
 		if d.cfg.User != "u" {
 			t.Errorf("%s: user = %q", tc.url, d.cfg.User)
 		}
+	}
+}
+
+// A remote that accepts TCP but never speaks SSH must fail within
+// ConnectTimeout — not hang the handshake (and connect's mutex) forever.
+func TestSSHDialTimeoutCoversHandshake(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			defer conn.Close() // hold open, say nothing
+		}
+	}()
+
+	d, err := newSSHDialer("ssh://u@"+ln.Addr().String(), SSHAuth{
+		Password:              "pw",
+		InsecureIgnoreHostKey: true,
+		ConnectTimeout:        200 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	if _, err := d.connect(context.Background(), false); err == nil {
+		t.Fatal("connect succeeded against a mute server")
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("connect took %v, want ~ConnectTimeout", elapsed)
 	}
 }
 

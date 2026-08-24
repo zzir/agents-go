@@ -115,8 +115,8 @@ func newSSHDialer(hostURL string, auth SSHAuth) (*sshDialer, error) {
 // the SSH transport as needed: a channel-open failure drops the cached client
 // and retries once on a fresh connection, so a severed transport heals
 // without surfacing every queued request's error.
-func (d *sshDialer) DialContext(_ context.Context, _, _ string) (net.Conn, error) {
-	client, err := d.connect(false)
+func (d *sshDialer) DialContext(ctx context.Context, _, _ string) (net.Conn, error) {
+	client, err := d.connect(ctx, false)
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +124,7 @@ func (d *sshDialer) DialContext(_ context.Context, _, _ string) (net.Conn, error
 	if err == nil {
 		return conn, nil
 	}
-	client, rerr := d.connect(true)
+	client, rerr := d.connect(ctx, true)
 	if rerr != nil {
 		return nil, fmt.Errorf("docker sandbox: ssh reconnect after %v: %w", err, rerr)
 	}
@@ -137,7 +137,7 @@ func (d *sshDialer) DialContext(_ context.Context, _, _ string) (net.Conn, error
 
 // connect returns the shared SSH client, dialing when none is cached or when
 // the caller declares the cached one dead (fresh).
-func (d *sshDialer) connect(fresh bool) (*ssh.Client, error) {
+func (d *sshDialer) connect(ctx context.Context, fresh bool) (*ssh.Client, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.client != nil {
@@ -147,12 +147,36 @@ func (d *sshDialer) connect(fresh bool) (*ssh.Client, error) {
 		_ = d.client.Close()
 		d.client = nil
 	}
-	client, err := ssh.Dial("tcp", d.addr, d.cfg)
+	client, err := dialSSH(ctx, d.addr, d.cfg)
 	if err != nil {
 		return nil, fmt.Errorf("docker sandbox: ssh dial %s: %w", d.addr, err)
 	}
 	d.client = client
 	return client, nil
+}
+
+// dialSSH dials and handshakes with cfg.Timeout (or an earlier ctx deadline)
+// bounding the WHOLE exchange — ssh.Dial's Timeout covers only the TCP
+// connect, so a stalled sshd would otherwise hang connect(), and with it every
+// queued request, forever.
+func dialSSH(ctx context.Context, addr string, cfg *ssh.ClientConfig) (*ssh.Client, error) {
+	dialer := net.Dialer{Timeout: cfg.Timeout}
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	deadline := time.Now().Add(cfg.Timeout)
+	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+		deadline = d
+	}
+	_ = conn.SetDeadline(deadline)
+	c, chans, reqs, err := ssh.NewClientConn(conn, addr, cfg)
+	if err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	_ = conn.SetDeadline(time.Time{})
+	return ssh.NewClient(c, chans, reqs), nil
 }
 
 // Close severs the SSH transport and the agent socket, if any.
