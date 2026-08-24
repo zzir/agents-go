@@ -195,6 +195,12 @@ func New(opts Options) (*Sandbox, error) {
 	if opts.Image == "" {
 		return nil, fmt.Errorf("docker sandbox: Image is required")
 	}
+	// A WorkDir bind is resolved by the DAEMON's filesystem while the file
+	// tools and the workdir mkdir run on THIS host — with a remote daemon the
+	// two silently diverge. Use VolumeName for remote daemons.
+	if opts.WorkDir != "" && opts.Host != "" {
+		return nil, fmt.Errorf("docker sandbox: WorkDir needs the local daemon; use VolumeName with Host %q", opts.Host)
+	}
 	if opts.ContainerWorkDir != "" {
 		clean := path.Clean(opts.ContainerWorkDir)
 		if clean != workDir && !strings.HasPrefix(clean, workDir+"/") {
@@ -337,7 +343,10 @@ func (s *Sandbox) createContainer(ctx context.Context) (string, error) {
 		if s.opts.ContainerName != "" && cerrdefs.IsConflict(err) {
 			id, aerr := s.adoptNamed(ctx)
 			if errors.Is(aerr, errStaleOurs) {
-				_, _ = s.cli.ContainerRemove(context.WithoutCancel(ctx), s.opts.ContainerName, client.ContainerRemoveOptions{Force: true, RemoveVolumes: false})
+				// RemoveVolumes reaps only the ANONYMOUS /workspace volume —
+				// docker never auto-removes named ones — so a replace leaks
+				// nothing and drops nothing a project keeps.
+				_, _ = s.cli.ContainerRemove(context.WithoutCancel(ctx), s.opts.ContainerName, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
 				created2, cerr := s.cli.ContainerCreate(ctx, createOpts)
 				if cerr != nil {
 					return "", fmt.Errorf("docker sandbox: recreate after config change: %w", cerr)

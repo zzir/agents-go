@@ -169,7 +169,7 @@ sb, err := docker.New(docker.Options{
 })
 ```
 
-`Host: "ssh://…"` reaches a remote daemon's unix socket through SSH, in pure Go: every docker API request opens a `direct-streamlocal` channel on one shared SSH connection — no `ssh` binary locally, no docker CLI on the remote. The remote needs sshd with streamlocal forwarding allowed (the OpenSSH default) and the SSH user able to reach `/var/run/docker.sock` (typically the `docker` group). A severed SSH connection is re-established on the next request. The containers, images and volumes all live on the remote host; everything else about the backend is unchanged.
+`Host: "ssh://…"` reaches a remote daemon's unix socket through SSH, in pure Go: every docker API request opens a `direct-streamlocal` channel on one shared SSH connection — no `ssh` binary locally, no docker CLI on the remote. The remote needs sshd with streamlocal forwarding allowed (the OpenSSH default) and the SSH user able to reach `/var/run/docker.sock` (typically the `docker` group). A severed SSH connection is re-established on the next request. The containers, images and volumes all live on the remote host; everything else about the backend is unchanged — except `WorkDir`, which `New` rejects with any non-local `Host`: a bind source resolves on the daemon's filesystem while the file tools run here, so remote daemons use `VolumeName`.
 
 Authentication methods are tried in order — SSH agent (`UseAgent`), private key (`KeyFile`/`KeyBytes`, optionally `Passphrase`), then `Password`. Host keys are verified against `~/.ssh/known_hosts` by default; `InsecureIgnoreHostKey` disables this (dev/test only), and `KnownHostsFile` customizes it.
 
