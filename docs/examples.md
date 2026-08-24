@@ -34,7 +34,7 @@ go run ./examples/hello
 | [`sandbox/docker/example`](../sandbox/docker/example/main.go) | The Docker sandbox backend (separate module) |
 | [`sandbox/ssh/example`](../sandbox/ssh/example/main.go) | The SSH sandbox backend (separate module) |
 | [`sessions/example`](../sessions/example/main.go) | SQLite-backed session persistence (separate module) |
-| [`skills/example`](../skills/example/main.go) | Loading `SKILL.md` skills into an agent (separate module) |
+| [`skills/example`](../skills/example/main.go) | Wiring `SKILL.md` skills into an agent (separate module) |
 
 ## Extra setup
 

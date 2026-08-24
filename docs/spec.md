@@ -2847,6 +2847,38 @@ its stdio transport — an embedder spawning a subprocess in their own program
 is their own trust decision. Do not reintroduce stdio configs on the server;
 a sandboxed variant would be a new decision, argued here first.
 
+### 5.26 A skill is one SKILL.md document
+
+Decided 2026-08-24, a deliberate narrowing of the Agent Skills format. A
+skill is the SKILL.md document alone — no bundled `scripts/`, `references/`
+or `assets/`. The full format's file trees forced skills onto a filesystem;
+a single document lives in the workbench's database like every other
+configuration entity, and the SDK's `skills` module shrinks to storage-free
+primitives: `Parse([]byte)` validates a document, `RenderIndex` renders
+discovery. Consequences, all intended:
+
+- **Activation is `read_skill(name)`** — a function tool the RenderIndex
+  wording names and the caller provides (the workbench serves it from the
+  skills table; an embedder from wherever their documents live). There is no
+  path-based file reader any more, and no os.Root confinement to need.
+- **A skill that instructs the model to run bundled scripts does not get
+  them.** Imports keep only SKILL.md files; a body referencing its repo's
+  other files imports as-is and those references dangle. The model can still
+  follow instructions by writing its own code in the sandbox.
+- **The workbench upsert contract**: rows match an import by (source repo,
+  path); a local edit sets `detached` and a detached row is never overwritten
+  by a re-import. Imports traverse GitHub via its REST API pinned at one
+  commit — the server never runs git. An agent's `skills` selection stores
+  skill ids; a deleted id silently drops out of the selection (parity with
+  the old directory model — README frontend invariant 13).
+- **Import URLs are operator-supplied outbound requests** (GitHub API, raw
+  fetches), like provider base URLs and MCP endpoints. No private-address
+  guard is applied — a recorded, accepted risk for the single-operator
+  deployment; revisit before any multi-tenant or public exposure.
+
+Do not add per-skill file storage back; a skill needing an artifact should
+inline it or instruct the model to fetch it.
+
 ---
 
 ## 6. Open questions

@@ -64,7 +64,7 @@ See [Tracing](tracing.md), [MCP](mcp.md), [Sandbox agents](sandbox.md),
 | MCP | `mcp.NewStdioServer / NewStreamableHTTPServer / NewWithTransport` |
 | Sandbox (code execution) | `sandbox.CodeTool` + Local / Docker / SSH backends |
 | File editing | `sandbox.ApplyPatchTool` (Codex-style patches, edits through the sandbox) |
-| Skills | `skills.Load / LoadRecursive / RenderIndex / ReadFileTool` (Agent Skills `SKILL.md`) |
+| Skills | `skills.Parse / RenderIndex` (Agent Skills `SKILL.md` documents; storage is the caller's) |
 
 ## Packages
 
@@ -82,7 +82,7 @@ Core module path: `github.com/zzir/agents-go`.
 | `sandbox/docker` | **separate module** — Docker sandbox backend |
 | `sandbox/ssh` | **separate module** — remote SSH sandbox backend |
 | `sessions` | **separate module** — SQLite/PostgreSQL session store (uptrace/bun) |
-| `skills` | **separate module** — Agent Skills (`SKILL.md`) loader |
+| `skills` | **separate module** — Agent Skills (`SKILL.md`) parser |
 | `cmd/agents-server` | **separate module** — the workbench: web app (REST + WS + embedded UI) over the SDK |
 
 ### Layout notes

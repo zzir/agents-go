@@ -47,7 +47,7 @@ root via `replace => ..`:
   anthropic-sdk-go; translates to the canonical Responses format, spec §5.10)
 - **`sandbox/docker`**, **`sandbox/ssh`** — sandbox backends
 - **`sessions`** — SQLite/PostgreSQL `Session` backends
-- **`skills`** — Agent Skills (`SKILL.md`) loader
+- **`skills`** — Agent Skills (`SKILL.md`) parser
 - **`cmd/agents-server`** — web app (REST + WS + embedded UI)
 - **`examples/anthropic`** — the one example with its own module, for its
   extra dep
