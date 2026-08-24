@@ -87,9 +87,9 @@ func ListManaged(ctx context.Context, opts Options) ([]ManagedContainer, error) 
 // StopManaged stops the named container on the daemon opts describes,
 // refusing one this package did not create.
 func StopManaged(ctx context.Context, opts Options, name string) error {
-	return withManaged(ctx, opts, name, func(cli *client.Client) error {
+	return withManaged(ctx, opts, name, func(cli *client.Client, id string) error {
 		timeout := 10
-		_, err := cli.ContainerStop(ctx, name, client.ContainerStopOptions{Timeout: &timeout})
+		_, err := cli.ContainerStop(ctx, id, client.ContainerStopOptions{Timeout: &timeout})
 		return err
 	})
 }
@@ -98,16 +98,18 @@ func StopManaged(ctx context.Context, opts Options, name string) error {
 // next run recreates it from the current configuration. Refuses a container
 // this package did not create.
 func RemoveManaged(ctx context.Context, opts Options, name string) error {
-	return withManaged(ctx, opts, name, func(cli *client.Client) error {
-		_, err := cli.ContainerRemove(ctx, name, client.ContainerRemoveOptions{Force: true, RemoveVolumes: false})
+	return withManaged(ctx, opts, name, func(cli *client.Client, id string) error {
+		_, err := cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true, RemoveVolumes: false})
 		return err
 	})
 }
 
 // withManaged verifies ownership (the fingerprint label) before act runs —
 // these entry points take a NAME, and must never act on a foreign container
-// that happens to hold it.
-func withManaged(ctx context.Context, opts Options, name string, act func(*client.Client) error) error {
+// that happens to hold it. act receives the inspected container's ID, never
+// the name: IDs are not reused, so a remove+recreate racing the inspect
+// cannot hand the name — and the act — to a foreign container.
+func withManaged(ctx context.Context, opts Options, name string, act func(cli *client.Client, id string) error) error {
 	cli, done, err := managedClient(opts)
 	if err != nil {
 		return err
@@ -125,5 +127,5 @@ func withManaged(ctx context.Context, opts Options, name string, act func(*clien
 	if _, ours := labels[fingerprintLabel]; !ours {
 		return fmt.Errorf("docker sandbox: container %q was not created by this package", name)
 	}
-	return act(cli)
+	return act(cli, c.ID)
 }
