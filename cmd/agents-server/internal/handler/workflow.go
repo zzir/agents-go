@@ -143,7 +143,11 @@ func (h *WorkflowHandler) validateStepAgents(c *gin.Context, wf *store.Workflow)
 			return false
 		}
 		if !store.RefVisible(ac.Scope, ac.OwnerID, wf.Scope, wf.OwnerID) {
-			badRequest(c, "step "+wf.Steps[i].ID+": "+refScopeError("agent", ac.Name, wf.Scope))
+			if !callerSees(c, ac.Scope, ac.OwnerID) {
+				badRequest(c, "step "+wf.Steps[i].ID+": agent_config_id names no agent")
+			} else {
+				badRequest(c, "step "+wf.Steps[i].ID+": "+refScopeError("agent", ac.Name, wf.Scope))
+			}
 			return false
 		}
 	}

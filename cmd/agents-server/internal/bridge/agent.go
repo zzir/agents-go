@@ -567,7 +567,9 @@ func attachSandboxTools(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx,
 // caller can recover afterwards (it is wrapped into one string with every
 // other layer).
 func attachSkills(ctx context.Context, deps *AgentDeps, agent *agents.Agent, spec *AgentSpec, ownerID string) int {
-	if deps.Skills == nil {
+	// No owner, no view (mirror of attachMCPServers) — and an empty owner in
+	// the scoped WHERE is a type error on PostgreSQL's uuid column.
+	if deps.Skills == nil || ownerID == "" {
 		return 0
 	}
 	// The visible set is the session owner's view: global skills plus their

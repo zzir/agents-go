@@ -70,7 +70,11 @@ func (h *AgentConfigHandler) validateAgentConfig(c *gin.Context, ac *store.Agent
 			return false
 		}
 		if !store.RefVisible(pv.Scope, pv.OwnerID, ac.Scope, ac.OwnerID) {
-			badRequest(c, refScopeError("provider", pv.Name, ac.Scope))
+			if !callerSees(c, pv.Scope, pv.OwnerID) {
+				badRequest(c, "provider_id names no provider") // foreign private reads as absent
+			} else {
+				badRequest(c, refScopeError("provider", pv.Name, ac.Scope))
+			}
 			return false
 		}
 	}
@@ -94,6 +98,9 @@ func (h *AgentConfigHandler) validateAgentConfig(c *gin.Context, ac *store.Agent
 	for _, id := range spec.Tools {
 		if ms, err := h.mcpServers.Get(c.Request.Context(), id); err == nil {
 			if !store.RefVisible(ms.Scope, ms.OwnerID, ac.Scope, ac.OwnerID) {
+				if !callerSees(c, ms.Scope, ms.OwnerID) {
+					continue // reads as absent; the run drops it the same way
+				}
 				badRequest(c, refScopeError("MCP server", ms.Name, ac.Scope))
 				return false
 			}
@@ -102,6 +109,9 @@ func (h *AgentConfigHandler) validateAgentConfig(c *gin.Context, ac *store.Agent
 	for _, id := range spec.Skills {
 		if sk, err := h.skills.Get(c.Request.Context(), id); err == nil {
 			if !store.RefVisible(sk.Scope, sk.OwnerID, ac.Scope, ac.OwnerID) {
+				if !callerSees(c, sk.Scope, sk.OwnerID) {
+					continue // reads as absent; the run drops it the same way
+				}
 				badRequest(c, refScopeError("skill", sk.Name, ac.Scope))
 				return false
 			}
@@ -110,6 +120,9 @@ func (h *AgentConfigHandler) validateAgentConfig(c *gin.Context, ac *store.Agent
 	for _, id := range spec.Handoffs {
 		if target, err := h.store.Get(c.Request.Context(), id); err == nil {
 			if !store.RefVisible(target.Scope, target.OwnerID, ac.Scope, ac.OwnerID) {
+				if !callerSees(c, target.Scope, target.OwnerID) {
+					continue // reads as absent; the run drops it the same way
+				}
 				badRequest(c, refScopeError("handoff agent", target.Name, ac.Scope))
 				return false
 			}

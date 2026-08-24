@@ -2359,6 +2359,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/handler.ErrorResponse'
           description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
       security:
       - BearerAuth: []
       summary: Agent tool surface

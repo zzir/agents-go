@@ -310,9 +310,20 @@ func (h *PlaygroundHandler) generateStream(c *gin.Context, model agents.Model, m
 //	@Param			id	path		string	true	"Agent config ID"
 //	@Success		200	{array}		playgroundTool
 //	@Failure		400	{object}	ErrorResponse
+//	@Failure		404	{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/agents/{id}/tools [get]
 func (h *PlaygroundHandler) AgentTools(c *gin.Context) {
+	// Absence answers 404 like the rest of the /agents/:id subtree; only a
+	// real build fault is a 400.
+	ac, err := h.deps.AgentConfigs.Get(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		storeError(c, err)
+		return
+	}
+	if !visibleRow(c, ac.Scope, ac.OwnerID) {
+		return
+	}
 	// The surface as the caller's own runs would get it — a member's
 	// listing does not show the save_workflow their runs never carry.
 	u, _ := server.CurrentUser(c)
