@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
-import { Button, TextInput, Textarea, Label, Stack, PageHeader, useConfirm } from '@primer/react';
+import { ActionList, Button, TextInput, Textarea, Label, Stack, PageHeader, useConfirm } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
+import { RowMenu } from '@/components/ListTable';
 import { api } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { toast } from '@/lib/toast';
@@ -126,6 +127,24 @@ export function SkillsPanel() {
     }
   };
 
+  // Scope flips per GROUP: an import lands a repo's skills together, so
+  // publishing them goes together too. Rows already in the target scope are
+  // skipped; per-row failures (a name taken in the target scope) are
+  // collected, not fatal to the rest.
+  const setGroupScope = async (skillsInGroup: Skill[], scope: 'global' | 'private') => {
+    const targets = skillsInGroup.filter(sk => sk.scope !== scope);
+    const failed: string[] = [];
+    for (const sk of targets) {
+      try {
+        await api.skills.setScope(sk.id, scope);
+      } catch (e) {
+        failed.push(`${sk.name}: ${(e as Error).message}`);
+      }
+    }
+    if (failed.length > 0) toast.error(`${failed.length} of ${targets.length} not changed — ` + failed.join('; '));
+    reload();
+  };
+
   const handleCreate = async (content: string) => {
     setBusy(true);
     try {
@@ -237,18 +256,28 @@ export function SkillsPanel() {
         </Blankslate>
       )}
 
-      {mode === null && grouped.map(group => (
+      {mode === null && grouped.map(group => {
+        // Sync re-imports the repo, updating every row in the group — so it
+        // is offered only when every row is the caller's to update. The scope
+        // flips are the admin's, per group (a repo's skills publish together).
+        const canSync = group.repo !== '' && group.skills.every(skillEditable);
+        const hasPrivate = group.skills.some(sk => sk.scope !== 'global');
+        const hasGlobal = group.skills.some(sk => sk.scope === 'global');
+        const groupItems = (canSync ? 1 : 0) + (isAdmin ? (hasPrivate ? 1 : 0) + (hasGlobal ? 1 : 0) : 0);
+        return (
         <div key={group.repo || 'local'} className="Box">
           <div className="Box-row" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span className="resource-row-title">{group.label}</span>
             <span className="resource-row-sub">{group.skills.length} skill{group.skills.length === 1 ? '' : 's'}</span>
-            {/* Sync re-imports the repo, updating every row in the group — so
-                it shows only when every row is the caller's to update. */}
-            {group.repo !== '' && group.skills.every(skillEditable) && (
-              <Button size="small" style={{ marginLeft: 'auto' }} disabled={syncing === group.repo}
-                onClick={() => handleSync(group.repo)}>
-                {syncing === group.repo ? 'Syncing…' : 'Sync'}
-              </Button>
+            {syncing === group.repo && group.repo !== '' && <span className="resource-row-sub">Syncing…</span>}
+            {groupItems > 0 && (
+              <div style={{ marginLeft: 'auto' }}>
+                <RowMenu label={`Actions for ${group.label}`}>
+                  {canSync && <ActionList.Item disabled={syncing === group.repo} onSelect={() => void handleSync(group.repo)}>Sync</ActionList.Item>}
+                  {isAdmin && hasPrivate && <ActionList.Item onSelect={() => void setGroupScope(group.skills, 'global')}>Make all global</ActionList.Item>}
+                  {isAdmin && hasGlobal && <ActionList.Item onSelect={() => void setGroupScope(group.skills, 'private')}>Make all private</ActionList.Item>}
+                </RowMenu>
+              </div>
             )}
           </div>
           {group.skills.map(sk => (
@@ -264,7 +293,8 @@ export function SkillsPanel() {
             </div>
           ))}
         </div>
-      ))}
+        );
+      })}
     </Stack>
   );
 }
