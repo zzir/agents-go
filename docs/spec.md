@@ -2924,12 +2924,13 @@ sets of files. A session's permanent binding is `(sandbox_id, project_id)`;
 the old free-form working directory is gone — execution is always the
 container's /workspace, which mounts the project's storage:
 
-- **Local daemon**: bind mount of `<workspace>/<user>/<project id>`, where
-  `<user>` is the owner uuid's tail 12 hex chars. Every mount source is
-  SERVER-derived from ids — no user-typed path ever reaches a mount, which
-  retires the old host-side path validation wholesale. (A 12-hex collision
-  between two users merely shares a parent directory; the project segment is
-  the full uuid, so trees never collide.)
+- **Local daemon**: bind mount of `<workspace>/<owner uuid>/<project uuid>`
+  — both segments the FULL uuid (revised 2026-08-24: filesystem names have
+  no docker-style length limits, so nothing justified a truncated,
+  collision-prone tail there; short ids remain only in container and volume
+  names). Every mount source is SERVER-derived from ids — no user-typed path
+  ever reaches a mount, which retires the old host-side path validation
+  wholesale.
 - **Remote daemon**: the named volume `agents-proj-<project id tail>` on that
   daemon. Same rows, different medium; the files are reachable through the
   container (and its terminal), not a host path.

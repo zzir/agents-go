@@ -512,9 +512,11 @@ func ContainerName(sandboxID, projectID string) string {
 }
 
 // UserDirName is the workspace subdirectory holding one user's project trees
-// — the owner uuid's tail 12 hex chars (spec §5.28).
+// — the full owner uuid (spec §5.28): unambiguous and collision-free, unlike
+// a truncated tail. Short ids stay where docker imposes name limits
+// (ContainerName, volume names), not on the filesystem.
 func UserDirName(ownerID string) string {
-	return shortID(ownerID)
+	return ownerID
 }
 
 // ProjectHostDir is the local-daemon bind source for a project's /workspace:
