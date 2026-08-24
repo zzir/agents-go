@@ -496,7 +496,13 @@ export function AgentConfigPanel() {
   // Fork seeds the CREATE form from a row — nothing is written until Save.
   // Cleared on a plain "+ Add" so a stale seed never leaks into a blank form.
   const [forkOf, setForkOf] = useState<Agent | null>(null);
-  const startFork = (a: Agent) => { setForkOf(a); startAdd(); };
+  const startFork = (a: Agent) => {
+    const raw = a as Agent & { resilience?: { fallback_models?: string } };
+    if (raw.resilience?.fallback_models?.includes('********')) {
+      toast.info('Fallback-model keys are not copied to a fork — re-enter them before saving');
+    }
+    setForkOf(a); startAdd();
+  };
   const startBlankAdd = () => { setForkOf(null); startAdd(); };
   const { data: mcpServers } = useApi<McpServer[]>(() => api.mcpServers.list() as Promise<McpServer[]>);
   const { data: skills } = useApi<Skill[]>(() => api.skills.list() as Promise<Skill[]>);
@@ -508,7 +514,18 @@ export function AgentConfigPanel() {
   // scope/owner (the copy lands like any create: private, the caller's) and
   // suffixes the name toward the per-scope unique index.
   const forkSeed = () => {
-    const { id: _id, scope: _scope, owner_id: _owner, ...rest } = forkOf as Agent;
+    const { id: _id, scope: _scope, owner_id: _owner, ...rest } =
+      forkOf as Agent & { resilience?: { fallback_models?: string } };
+    // A fork copies no secrets: on a create the ******** mask resolves to ""
+    // server-side, so strip it and let the form show the truth instead of a
+    // mask that would save as an empty key.
+    if (rest.resilience?.fallback_models?.includes('********')) {
+      try {
+        const models = JSON.parse(rest.resilience.fallback_models) as { api_key?: string }[];
+        for (const m of models) if (m.api_key === '********') delete m.api_key;
+        rest.resilience = { ...rest.resilience, fallback_models: JSON.stringify(models) };
+      } catch { /* malformed JSON: leave it; the form's JSON field surfaces it */ }
+    }
     return { ...rest, name: forkOf!.name + '-fork' };
   };
   const form = adding ? <AgentForm key={forkOf ? 'fork-' + forkOf.id : 'blank'} saving={saving}
