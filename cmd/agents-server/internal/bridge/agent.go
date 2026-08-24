@@ -51,8 +51,7 @@ type AgentDeps struct {
 	Audit protocol.AuditFunc
 	// Users answers the run owner's role; nil withholds the tools only an
 	// admin gets.
-	Users     *store.UserStore
-	Workspace string
+	Users *store.UserStore
 	// MaxTasks overrides the per-session live background-task cap when > 0
 	// (--max-tasks; 0 keeps the built-in default).
 	MaxTasks int

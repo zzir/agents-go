@@ -148,7 +148,6 @@ func newBridge(ctx, bgCtx context.Context, db *bun.DB, st *stores, audit protoco
 		Workflows:        st.Workflows,
 		Users:            st.Users,
 		Wakeups:          st.Wakeups,
-		Workspace:        flagWorkspace,
 		MaxTasks:         flagMaxTasks,
 		Audit:            audit,
 	}

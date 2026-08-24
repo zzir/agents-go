@@ -20,7 +20,6 @@ func TestExecCommandRoutedOffSDKApproveList(t *testing.T) {
 		AgentConfigs: s,
 		Settings:     settings.NewReader(store.NewSettingStore(db)),
 		Memories:     store.NewMemoryStore(db),
-		Workspace:    t.TempDir(),
 	}
 	ac := &store.AgentConfig{Name: "a", Model: "gpt-test", Approval: store.ApprovalGroup{ApproveTools: `["exec_command","other_tool"]`}}
 	if err := s.Create(ctx, ac); err != nil {

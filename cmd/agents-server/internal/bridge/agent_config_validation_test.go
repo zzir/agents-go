@@ -26,7 +26,6 @@ func TestBuildFullAgentFailsOnBadCriticalConfig(t *testing.T) {
 		Skills:       store.NewSkillStore(db),
 		Memories:     store.NewMemoryStore(db),
 		Guardrails:   guardrails.NewResolver(store.NewGuardrailStore(db)),
-		Workspace:    t.TempDir(),
 	}
 
 	cases := []struct {

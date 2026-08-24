@@ -566,18 +566,12 @@ func ContainerName(sandboxID, projectID string) string {
 	return "agents-" + shortID(sandboxID) + "-" + shortID(projectID)
 }
 
-// UserDirName is the workspace subdirectory holding one user's project trees
-// — the full owner uuid (spec §5.28): unambiguous and collision-free, unlike
-// a truncated tail. Short ids stay where docker imposes name limits
-// (ContainerName, volume names), not on the filesystem.
-func UserDirName(ownerID string) string {
-	return ownerID
-}
-
 // ProjectHostDir is the local-daemon bind source for a project's /workspace:
-// <workspace>/<user>/<project id>. Created by the SDK at container create.
+// <workspace>/<full owner uuid>/<project id> (spec §5.28 — short ids stay
+// where docker imposes name limits, not on the filesystem). Created by the
+// SDK at container create.
 func (m *Manager) ProjectHostDir(proj *store.Project) string {
-	return filepath.Join(m.workspace, UserDirName(proj.OwnerID), proj.ID)
+	return filepath.Join(m.workspace, proj.OwnerID, proj.ID)
 }
 
 // unmarshalConfig decodes a SandboxConfig.Config payload, treating empty as a
