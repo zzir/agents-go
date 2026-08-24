@@ -667,8 +667,8 @@ needs no schema change), then a few top-level JSON blobs:
 
 - **Top level**: `name`, `instructions`, `model`, `provider_id` (the endpoint
   this agent reaches its model through — see [providers](#providers--apiv1providers);
-  empty means the built-in default, the openai backend on the global api-key
-  setting), `context_window` (declared, 0 = unknown)
+  empty reaches no credential, so the run fails its pre-flight until the
+  agent names a provider), `context_window` (declared, 0 = unknown)
 - **`behavior`**: `max_turns`, `handoff_description`, `disable_tool_choice_reset`,
   `stop_at_tools` (comma-separated tool names — the run ends after a turn that
   called any of them), `handoff_input_filter`, `max_tool_concurrency`,
@@ -844,22 +844,15 @@ A write names a defined key and carries a value its kind accepts, or it is a
 at read time, and a mistyped key used to become a row nothing would ever read.
 An EMPTY value is always accepted — that is how a setting is returned to its
 default. Reads are laxer than writes on purpose: `GET /settings` lists a key the
-registry no longer defines with `"unknown": true`, and `DELETE` takes it, so a
-value left behind by an older build can be seen and cleared rather than being
-hidden with no way to remove it.
+registry no longer defines with `"unknown": true` and its value masked
+(whether it WAS a secret is unknowable once the def is gone), and `DELETE`
+takes it, so a value left behind by an older build can be seen and cleared
+rather than being hidden with no way to remove it.
 
 Known keys:
 
 - `proxy_url` — HTTP proxy for model and MCP calls
 - `system_prompt` — global system prompt prefix
-- `openai_api_key`, `anthropic_api_key` — fallback keys, one per backend, used
-  by a provider row (or a `fallback_models` entry) that carries none of its own
-  **and no custom `base_url`** — a key must not follow a redirect to an
-  arbitrary endpoint, so a row pointing elsewhere needs its own key — and by an
-  agent with no `provider_id` at all (secret; masked on read — see
-  [Secret handling](#secret-handling))
-- `brave_api_key` — injects a `brave_search` tool into all agents (secret; masked
-  on read — see [Secret handling](#secret-handling))
 - `trace_retention_days` — prune trace events older than N days (checked at
   startup and once a day); default 30, `0` keeps everything. Each generation
   span stores the whole conversation it was given, so the table grows with
@@ -920,10 +913,10 @@ selection (skill ids) restricts both.
 | POST   | `/skill-imports` | Import from a URL — see below; imported rows are the importer's (private) |
 
 `POST /skill-imports` with `{url}` upserts skills from elsewhere:
-`https://github.com/owner/repo` walks the repository via the GitHub API
-(HEAD commit → full tree → every `SKILL.md` at any depth, all pinned to one
-commit; two API calls per import, so the anonymous rate limit goes far — set
-the `github_token` setting for private repos or heavy use). Any other http(s)
+`https://github.com/owner/repo` walks the repository via the GitHub API,
+anonymously (HEAD commit → full tree → every `SKILL.md` at any depth, all
+pinned to one commit; two API calls per import, so the anonymous rate limit
+goes far — private repositories are not reachable). Any other http(s)
 URL is fetched as a single raw `SKILL.md`. The response lists what was
 `created` / `updated` / `unchanged` / `skipped` (each skip with its reason).
 Re-importing the same source refreshes rows that were not edited locally;
@@ -1368,9 +1361,9 @@ the plaintext is never sent to a client. On write:
 
 This lets the UI round-trip whole objects without ever seeing the plaintext.
 Masked fields: provider `api_key`, each agent `fallback_models[].api_key`, MCP
-`headers` values and `oauth_client_secret`, the sandbox `ssh_password`, and
-the `brave_api_key` setting. A model-API key crosses exactly one
-surface — the provider — which is what giving providers their own entity bought.
+`headers` values and `oauth_client_secret`, and the sandbox `ssh_password`.
+A model-API key crosses exactly one surface — the provider — which is what
+giving providers their own entity bought.
 
 **A masked key round-trips only to the destination it was stored for.**
 Changing a provider's `type` OR `base_url` while keeping the `********` mask is

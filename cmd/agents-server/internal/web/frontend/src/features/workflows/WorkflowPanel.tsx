@@ -8,7 +8,7 @@ import { api } from '@/lib/api';
 import { PAGE_SIZE, useApi, useCrud, usePage } from '@/lib/hooks';
 import { canDeleteRow, canEditRow } from '@/lib/access';
 import { useMe } from '@/lib/me';
-import { ScopeBadge, ScopeButton } from '@/components/CrudPanel';
+import { RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
 import { fc } from '@/lib/form';
 import { nameOf } from '@/lib/named';
 import { BADGE } from '@/lib/badges';
@@ -376,11 +376,13 @@ export function WorkflowPanel({ sessionId }: { sessionId: string | null }) {
                 </Button>
                 <Button onClick={() => setTriggersFor(w)} size="small" variant="invisible" leadingVisual={ZapIcon}
                   title="Run it on a schedule or from a webhook">Triggers</Button>
-                {isAdmin && <ScopeButton row={w} setScope={api.workflows.setScope} onDone={reload} />}
-                {rowEditable(w) && <Button onClick={() => startEdit(w)} size="small" variant="invisible">Edit</Button>}
-                {/* Delete without edit: the admin on a foreign private row. */}
-                {!rowEditable(w) && canDeleteRow(isAdmin, me?.id, w) &&
-                  <Button onClick={() => void remove(w.id, w.name)} size="small" variant="invisible">Delete</Button>}
+                <RowActionsMenu name={w.name}
+                  onEdit={rowEditable(w) ? () => startEdit(w) : undefined}
+                  scope={isAdmin ? { row: w, setScope: api.workflows.setScope, onDone: reload } : undefined}
+                  // Delete without edit: the admin on a foreign private row
+                  // (remove carries the confirm dialog).
+                  onDelete={!rowEditable(w) && canDeleteRow(isAdmin, me?.id, w)
+                    ? () => void remove(w.id, w.name) : undefined} />
               </div>
             </>}>
               <div className="hub-row-detail">

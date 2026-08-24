@@ -11,16 +11,15 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// How an agent config reaches its model: the provider row it names (or the
-// built-in default), the key that unlocks it, and the retry and fallback
-// decorators around it.
+// How an agent config reaches its model: the provider row it names, the key
+// that unlocks it, and the retry and fallback decorators around it.
 
 // AgentProvider loads the endpoint an agent reaches its model through. An
-// empty provider_id yields the ZERO provider, which is the built-in default:
-// the openai backend on the global api-key setting, what an agent created
-// before any provider row existed runs on. An agent that NAMES a provider on
-// a host with no provider store is an error, never a silent fall-through to
-// the default — that would run it on the wrong backend with the wrong key.
+// empty provider_id yields the ZERO provider — the openai backend with no
+// credential, so the run fails its pre-flight until the agent names a
+// provider that carries one. An agent that NAMES a provider on a host with
+// no provider store is an error, never a silent fall-through to the default
+// — that would run it on the wrong backend with the wrong key.
 func AgentProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig) (store.Provider, error) {
 	if ac.ProviderID == "" {
 		return store.Provider{}, nil
@@ -61,13 +60,6 @@ func resolveProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig
 			logging.Ctx(ctx).Warn("ChatGPT OAuth token unavailable, falling back to api_key", "error", err)
 		}
 	}
-	// The global per-provider key is the built-in default endpoint's credential,
-	// so it is inherited ONLY when this provider talks to that endpoint. A
-	// provider pointed at a custom base_url must carry its own key — otherwise
-	// the global (e.g. OpenAI) key would be sent to whatever host it names.
-	if apiKey == "" && pv.BaseURL == "" {
-		apiKey = deps.Settings.String(ctx, def.SettingKey)
-	}
 	if apiKey == "" {
 		return nil, def.Type, nil
 	}
@@ -83,13 +75,7 @@ func resolveProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig
 		provider = agents.NewRetryProvider(provider, spec.RetryPolicy)
 	}
 	if len(spec.FallbackModels) > 0 {
-		provider = wrapFallbackProvider(provider, spec.FallbackModels, proxyClient, func(providerType string) string {
-			fdef, ferr := providers.DefFor(providerType)
-			if ferr != nil {
-				return ""
-			}
-			return deps.Settings.String(ctx, fdef.SettingKey)
-		})
+		provider = wrapFallbackProvider(provider, spec.FallbackModels, proxyClient)
 	}
 	return provider, def.Type, nil
 }
@@ -119,21 +105,12 @@ func (f fixedModelProvider) Model(string) (agents.Model, error) {
 
 // wrapFallbackProvider chains one fixed-model provider per decoded fallback
 // entry behind primary. The entries are decoded up front (DecodeAgentSpec), so
-// this is pure construction — callers gate it on len(entries) > 0. keyFor
-// resolves the global per-provider fallback key ("openai_api_key" /
-// "anthropic_api_key") for entries that carry none of their own, the same
-// courtesy the main agent gets.
-func wrapFallbackProvider(primary agents.ModelProvider, entries []fallbackEntry, proxyClient *http.Client, keyFor func(providerType string) string) agents.ModelProvider {
+// this is pure construction — callers gate it on len(entries) > 0. An entry
+// carries its own credential (api_key) or runs keyless.
+func wrapFallbackProvider(primary agents.ModelProvider, entries []fallbackEntry, proxyClient *http.Client) agents.ModelProvider {
 	var fallbacks []agents.ModelProvider
 	for _, e := range entries {
-		apiKey := e.APIKey
-		// Same target-binding rule as the main path: the global key follows a
-		// fallback entry only on the default endpoint, never to a custom
-		// base_url the entry pointed at without a key of its own.
-		if apiKey == "" && e.BaseURL == "" && keyFor != nil {
-			apiKey = keyFor(e.Provider)
-		}
-		fp, err := providers.BuildPlain(e.Provider, apiKey, e.BaseURL, proxyClient)
+		fp, err := providers.BuildPlain(e.Provider, e.APIKey, e.BaseURL, proxyClient)
 		if err != nil {
 			// Unreachable through normal flow — DecodeAgentSpec validates every
 			// entry's provider — and an unbuildable entry must not become an

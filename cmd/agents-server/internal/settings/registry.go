@@ -31,10 +31,6 @@ const (
 const (
 	KeyProxyURL                  = "proxy_url"
 	KeySystemPrompt              = "system_prompt"
-	KeyOpenAIAPIKey              = "openai_api_key"
-	KeyAnthropicAPIKey           = "anthropic_api_key"
-	KeyBraveAPIKey               = "brave_api_key"
-	KeyGitHubToken               = "github_token"
 	KeyTraceRetentionDays        = "trace_retention_days"
 	KeyTraceIncludeSensitiveData = "trace_include_sensitive_data"
 	KeyTraceSpanDataKB           = "trace_span_data_kb"
@@ -46,12 +42,11 @@ const (
 
 // The groups the panel renders as sections, in the order defs are listed.
 const (
-	GroupNetwork     = "network"
-	GroupPrompt      = "prompt"
-	GroupCredentials = "credentials"
-	GroupTracing     = "tracing"
-	GroupLogging     = "logging"
-	GroupLimits      = "limits"
+	GroupNetwork = "network"
+	GroupPrompt  = "prompt"
+	GroupTracing = "tracing"
+	GroupLogging = "logging"
+	GroupLimits  = "limits"
 )
 
 // Def is one global setting: what it is called, what it holds, what it means
@@ -92,34 +87,6 @@ var defs = []Def{{
 	Group:       GroupPrompt,
 	Label:       "System prompt",
 	Placeholder: "Optional instructions prepended to all agents",
-}, {
-	Key:         KeyOpenAIAPIKey,
-	Kind:        KindSecret,
-	Group:       GroupCredentials,
-	Label:       "OpenAI API key (fallback)",
-	Placeholder: "sk-…",
-	Description: "Used by agents and fallback-model entries on the OpenAI provider that have no API key of their own.",
-}, {
-	Key:         KeyAnthropicAPIKey,
-	Kind:        KindSecret,
-	Group:       GroupCredentials,
-	Label:       "Anthropic API key (fallback)",
-	Placeholder: "sk-ant-…",
-	Description: "Used by agents and fallback-model entries on the Anthropic provider that have no API key of their own.",
-}, {
-	Key:         KeyBraveAPIKey,
-	Kind:        KindSecret,
-	Group:       GroupCredentials,
-	Label:       "Brave Search API key",
-	Placeholder: "BSA-xxxxxxxx",
-	Description: "When set, a brave_search tool is injected into all agents. Get a key at brave.com/search/api.",
-}, {
-	Key:         KeyGitHubToken,
-	Kind:        KindSecret,
-	Group:       GroupCredentials,
-	Label:       "GitHub token",
-	Placeholder: "github_pat_xxxxxxxx",
-	Description: "Used by skill imports from github.com: raises the API rate limit and reaches private repositories. Sent only to GitHub's own hosts.",
 }, {
 	// Defaulted: a generation span stores the whole conversation it was
 	// given, so trace_events grows with the square of a session's length —

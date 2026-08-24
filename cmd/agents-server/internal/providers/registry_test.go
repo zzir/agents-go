@@ -22,9 +22,6 @@ func TestProviderRegistryInvariants(t *testing.T) {
 			t.Errorf("type %q is empty or duplicated", d.Type)
 		}
 		seen[d.Type] = true
-		if !strings.HasSuffix(d.SettingKey, "_api_key") {
-			t.Errorf("%s: SettingKey %q must end in _api_key (masked as a secret by convention)", d.Type, d.SettingKey)
-		}
 		if d.Build == nil {
 			t.Errorf("%s: nil constructor", d.Type)
 		}
@@ -58,8 +55,5 @@ func TestProviderTypesServesMachineFacts(t *testing.T) {
 	ant := byType[TypeAnthropic]
 	if !slices.Contains(ant.Unsupported, "service_tier") {
 		t.Errorf("anthropic unsupported = %v, want the adapter's declaration (service_tier missing)", ant.Unsupported)
-	}
-	if oa.SettingKey != "openai_api_key" || ant.SettingKey != "anthropic_api_key" {
-		t.Errorf("setting keys = %q/%q", oa.SettingKey, ant.SettingKey)
 	}
 }

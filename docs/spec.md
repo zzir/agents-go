@@ -2815,9 +2815,10 @@ removed (§1.2). Four cuts in one pass:
   repo's own test files and the nested modules (path-prefix rule) keep
   importing it. Testing user code against the SDK means implementing
   `agents.Model` — the seam is the API, not a shipped fake.
-- **`tools/bravesearch` is `cmd/agents-server/internal/bravesearch`** (with
-  `examples/bravesearch`). Web search is a workbench feature wired to the
-  `brave_api_key` setting, not SDK surface.
+- **`tools/bravesearch` is gone** (with `examples/bravesearch`): web search
+  first left the SDK for the workbench in this pass, and the workbench then
+  retired it too (2026-08-24) — a model-side web tool belongs to an MCP
+  server the operator configures, not a hard-coded vendor integration.
 
 `cmd/verifydocs` and `cmd/verifyexamples` merged into `cmd/verify` in the same
 pass — one CI step, same two checks. A follow-up cut removed the whole MCP
@@ -3013,6 +3014,34 @@ Accepted risk, recorded deliberately: member-supplied URLs (MCP endpoints,
 skill imports) get **no private-network/SSRF defense**. The deployment model
 is one team, one trust boundary (same stance as shared sandboxes); an
 operator who needs egress control applies it outside the server.
+
+---
+
+### 5.30 A credential lives on the row that spends it — no global fallback keys
+
+Decided 2026-08-24, closing out §5.29: with providers per-user, a global
+credential that any keyless row silently inherits is exactly the ambient
+authority the scope model removed, so the settings-level credentials went
+with it.
+
+- **`openai_api_key` / `anthropic_api_key` (fallback keys) are gone.** A
+  provider row (and a `fallback_models` entry) carries its own key or runs
+  keyless; an agent with no `provider_id` reaches no credential and fails
+  its pre-flight ("no API key configured") until it names a provider. No
+  build path reads a key from settings.
+- **`brave_api_key` and the `brave_search` tool are gone.** A hard-coded
+  vendor tool injected into every agent off one global key predates MCP;
+  web search is an MCP server the operator (or member) configures.
+- **`github_token` is gone.** Skill imports call the GitHub API anonymously
+  — two requests per import keeps the anonymous limit comfortable, and
+  private repositories are simply not reachable. A stored token spendable
+  by any member's import was the same ambient-credential shape as above.
+
+Settings retain the secret MACHINERY (KindSecret: masked reads, mask-echo
+writes, sealed at rest) with zero secret keys registered — it is the
+registry contract that stops the next credential setting from shipping
+unmasked, not a per-key feature. Rows left in older databases under the
+removed keys list as `unknown` and are deletable from the panel.
 
 ---
 

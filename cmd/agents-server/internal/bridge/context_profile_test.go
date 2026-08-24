@@ -20,8 +20,8 @@ func TestBucketToolsSinceAttributesOnlyWhatWasAdded(t *testing.T) {
 	mark = bucketToolsSince(agent, mark, store.ToolSourceSkills, &prof)
 
 	// A step that added nothing gets no bucket at all — an empty row would read
-	// as "brave search is attached and costs nothing".
-	mark = bucketToolsSince(agent, mark, store.ToolSourceBrave, &prof)
+	// as "the source is attached and costs nothing".
+	mark = bucketToolsSince(agent, mark, store.ToolSourceTasks, &prof)
 	if mark != len(agent.Tools) {
 		t.Fatalf("mark should track the tool count, got %d of %d", mark, len(agent.Tools))
 	}

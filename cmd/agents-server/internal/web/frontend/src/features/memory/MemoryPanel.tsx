@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { TextInput, Textarea, Label, Select, Stack } from '@primer/react';
 import { FormActions } from '@/components/FormActions';
-import { CrudPanel, RowEditButton } from '@/components/CrudPanel';
+import { CrudPanel, RowActionsMenu } from '@/components/CrudPanel';
 import { ResourceRow } from '@/components/ResourceRow';
 import { api } from '@/lib/api';
 import { nameOf } from '@/lib/named';
@@ -114,7 +114,7 @@ export function MemoryPanel() {
           title={m.key}
           badges={m.agent_config_id && <Label variant={BADGE.ref}>{agentName(m.agent_config_id)}</Label>}
           sub={m.content.substring(0, 120) + (m.content.length > 120 ? '...' : '')}
-          actions={<RowEditButton onClick={() => startEdit(m)} />}
+          actions={<RowActionsMenu name={m.key} onEdit={() => startEdit(m)} />}
         />
       ))}
     </CrudPanel>

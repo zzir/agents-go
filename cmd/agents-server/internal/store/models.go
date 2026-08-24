@@ -382,7 +382,6 @@ type ToolBucket struct {
 // Tool bucket sources.
 const (
 	ToolSourceSandbox = "sandbox"
-	ToolSourceBrave   = "brave"
 	ToolSourceSkills  = "skills"
 	ToolSourceTasks   = "tasks"
 	// ToolSourceWorkflows is the workflow-authoring pair, get_workflow and

@@ -12,7 +12,6 @@ import (
 	"github.com/openai/openai-go/v3/option"
 
 	"github.com/zzir/agents-go/agents"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	anthropicProvider "github.com/zzir/agents-go/models/anthropic"
 	"github.com/zzir/agents-go/models/modelkit"
@@ -41,10 +40,6 @@ const AuthModeChatGPTLogin = store.AuthModeChatGPTLogin
 type Def struct {
 	// Type is the provider_type wire value.
 	Type string
-	// SettingKey is the global fallback API-key setting ("openai_api_key", …),
-	// used when an agent or fallback entry carries no key of its own. Also
-	// derived into handler.secretSettingKeys, so the key is masked on read.
-	SettingKey string
 	// AuthModes lists auth_mode values beyond "" (API key) this backend
 	// accepts. Validation rejects any other combination.
 	AuthModes []string
@@ -61,14 +56,12 @@ type Def struct {
 var providerDefs = []Def{
 	{
 		Type:         TypeOpenAI,
-		SettingKey:   settings.KeyOpenAIAPIKey,
 		AuthModes:    []string{AuthModeChatGPTLogin},
 		Build:        newOpenAIModelProvider,
 		Capabilities: openaiProvider.Capabilities(),
 	},
 	{
-		Type:       TypeAnthropic,
-		SettingKey: settings.KeyAnthropicAPIKey,
+		Type: TypeAnthropic,
 		Build: func(apiKey, baseURL string, _ *ChatGPTCredentials, proxyClient *http.Client) agents.ModelProvider {
 			return newAnthropicModelProvider(apiKey, baseURL, proxyClient)
 		},
@@ -184,10 +177,9 @@ func Validate(pv *store.Provider) error {
 }
 
 // TypeInfo is the machine-readable slice of a provider definition
-// served to config UIs: which backends exist, what auth they offer, which
-// request features fail loudly on them, and where their global fallback key
-// lives. Display copy (labels, placeholders) deliberately stays in the
-// frontend — this is facts, not wording.
+// served to config UIs: which backends exist, what auth they offer, and which
+// request features fail loudly on them. Display copy (labels, placeholders)
+// deliberately stays in the frontend — this is facts, not wording.
 type TypeInfo struct {
 	Type string `json:"type"`
 	// AuthModes and Unsupported serialize as [] rather than being omitted:
@@ -196,7 +188,6 @@ type TypeInfo struct {
 	// list look like missing data and let a stale local fallback win.
 	AuthModes   []string `json:"auth_modes"`
 	Unsupported []string `json:"unsupported"`
-	SettingKey  string   `json:"setting_key"`
 }
 
 // Types lists the registered backends. The order is the registry's
@@ -209,7 +200,6 @@ func Types() []TypeInfo {
 			Type:        d.Type,
 			AuthModes:   append([]string{}, d.AuthModes...),
 			Unsupported: make([]string, 0, len(d.Capabilities.Unsupported)),
-			SettingKey:  d.SettingKey,
 		}
 		for _, f := range d.Capabilities.Unsupported {
 			info.Unsupported = append(info.Unsupported, string(f))

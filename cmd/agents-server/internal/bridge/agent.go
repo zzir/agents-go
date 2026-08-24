@@ -9,13 +9,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/middleware"
 	"github.com/zzir/agents-go/agents/tasks"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/bravesearch"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/guardrails"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/mcpservers"
@@ -403,7 +401,7 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 		})
 	}
 
-	// Provider + retry/fallback decorators. proxyClient is reused by Brave below.
+	// Provider + retry/fallback decorators.
 	proxyClient := deps.Settings.ProxyClient(ctx)
 	result.Provider, result.ProviderType, err = resolveProvider(ctx, deps, ac, spec, proxyClient)
 	if err != nil {
@@ -427,10 +425,6 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 		return nil, err
 	}
 	mark = bucketToolsSince(agent, mark, store.ToolSourceSandbox, &result.Profile)
-
-	// Brave Search
-	attachBraveSearch(ctx, deps, agent, proxyClient)
-	mark = bucketToolsSince(agent, mark, store.ToolSourceBrave, &result.Profile)
 
 	// Skills — loaded from the store; spec may restrict the selection.
 	result.Profile.SkillsIndexChars = attachSkills(ctx, deps, agent, spec, bc.ownerID)
@@ -495,13 +489,9 @@ func buildHandoffs(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx, agen
 		// A keyless target would resolve through the RUN's provider at handoff
 		// time; a different backend would send its model name to the wrong API.
 		if hResult.Provider == nil && hResult.ProviderType != result.ProviderType {
-			targetKey := hResult.ProviderType + "_api_key"
-			if tdef, terr := providers.DefFor(hResult.ProviderType); terr == nil {
-				targetKey = tdef.SettingKey
-			}
 			return fmt.Errorf(
-				"agent %q handoff %q: target is on the %q backend but reaches no API key, so it would inherit this agent's %q provider — point the target at a provider with a key, or set the global %s",
-				ac.Name, hID, hResult.ProviderType, result.ProviderType, targetKey)
+				"agent %q handoff %q: target is on the %q backend but reaches no API key, so it would inherit this agent's %q provider — point the target at a provider with a key",
+				ac.Name, hID, hResult.ProviderType, result.ProviderType)
 		}
 		if hResult.Provider != nil && hResult.Agent.Model != "" && hResult.Agent.ModelImpl == nil {
 			m, merr := hResult.Provider.Model(hResult.Agent.Model)
@@ -539,25 +529,6 @@ func attachMCPServers(ctx context.Context, deps *AgentDeps, agent *agents.Agent,
 		}
 	}
 	return attached
-}
-
-// attachBraveSearch adds the Brave Search tool when a brave_api_key is set; a
-// build failure is logged and skipped, not fatal.
-func attachBraveSearch(ctx context.Context, deps *AgentDeps, agent *agents.Agent, proxyClient *http.Client) {
-	apiKey := deps.Settings.String(ctx, settings.KeyBraveAPIKey)
-	if apiKey == "" {
-		return
-	}
-	bsOpts := bravesearch.Options{APIKey: apiKey}
-	if proxyClient != nil {
-		bsOpts.HTTPClient = proxyClient
-	}
-	bsTool, err := bravesearch.New(bsOpts)
-	if err != nil {
-		logging.Ctx(ctx).Warn("failed to create brave_search tool", "error", err)
-		return
-	}
-	agent.Tools = append(agent.Tools, bsTool)
 }
 
 // attachSandboxTools builds and attaches the bound sandbox's tools when one is

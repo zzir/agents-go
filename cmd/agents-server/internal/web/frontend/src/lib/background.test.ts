@@ -84,12 +84,12 @@ describe('stepProgress', () => {
 describe('backgroundItems', () => {
   it('puts tasks and executions in one list', () => {
     const tasks: Record<string, TaskState> = {
-      t1: { taskId: 't1', label: 'research', status: 'working', lastTool: 'brave_search', createdAt: 5 },
+      t1: { taskId: 't1', label: 'research', status: 'working', lastTool: 'exec_command', createdAt: 5 },
       wf1: workflow(),
     };
     const items = backgroundItems(tasks);
     expect(items.map(i => [i.kind, i.id])).toEqual([['task', 't1'], ['workflow', 'wf1']]);
-    expect(items[0].activity).toBe('brave_search');
+    expect(items[0].activity).toBe('exec_command');
   });
 
   it('is empty for a session with none', () => {

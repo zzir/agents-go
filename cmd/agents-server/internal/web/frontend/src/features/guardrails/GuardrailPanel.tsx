@@ -1,7 +1,7 @@
 import { useState, type ChangeEvent } from 'react';
 import { TextInput, Label, SegmentedControl, Stack, Checkbox, FormControl } from '@primer/react';
 import { FormActions } from '@/components/FormActions';
-import { CrudPanel, RowEditButton } from '@/components/CrudPanel';
+import { CrudPanel, RowActionsMenu } from '@/components/CrudPanel';
 import { ResourceRow } from '@/components/ResourceRow';
 import { api } from '@/lib/api';
 import { useCrud } from '@/lib/hooks';
@@ -166,7 +166,7 @@ export function GuardrailPanel() {
             {[(g.stages || []).map(st => STAGE_LABELS[st] || st).join(', '), g.mode].filter(Boolean).join(' · ')}
             {g.description && (' — ' + g.description)}
           </>}
-          actions={!isBuiltin(g) && <RowEditButton onClick={() => startEdit(g)} />}
+          actions={!isBuiltin(g) && <RowActionsMenu name={g.name} onEdit={() => startEdit(g)} />}
         />
       ))}
     </CrudPanel>

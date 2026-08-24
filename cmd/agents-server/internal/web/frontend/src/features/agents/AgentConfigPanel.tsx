@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { TextInput, Textarea, Label, FormControl, Checkbox, Select, Stack } from '@primer/react';
 import { TokenListInput } from '@/components/TokenListInput';
 import { FormActions } from '@/components/FormActions';
-import { CrudPanel, RowEditButton, ScopeBadge, ScopeButton } from '@/components/CrudPanel';
+import { CrudPanel, RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
 import { ReadOnlyContext, canDeleteRow, canEditRow } from '@/lib/access';
 import { useMe } from '@/lib/me';
 import { ResourceRow } from '@/components/ResourceRow';
@@ -532,16 +532,14 @@ export function AgentConfigPanel() {
             <ResourceRow key={a.id}
               title={a.name}
               badges={<>
-                <Label variant={BADGE.ref}>{rowProvider?.name || pmeta.badge}</Label>
+                <Label variant={pmeta.badgeVariant}>{rowProvider?.name || pmeta.badge}</Label>
                 {mcp > 0 && <Label variant={BADGE.count}>{'MCP·' + mcp}</Label>}
                 {skl > 0 && <Label variant={BADGE.count}>{'Skills·' + skl}</Label>}
                 <ScopeBadge row={a} meId={me?.id} />
               </>}
               meta={<span>{a.model || 'default model'}</span>}
-              actions={<>
-                {isAdmin && <ScopeButton row={a} setScope={api.agents.setScope} onDone={reload} />}
-                <RowEditButton readOnly={!rowEditable(a)} onClick={() => startEdit(a)} />
-              </>}
+              actions={<RowActionsMenu name={a.name} editReadOnly={!rowEditable(a)} onEdit={() => startEdit(a)}
+                scope={isAdmin ? { row: a, setScope: api.agents.setScope, onDone: reload } : undefined} />}
             />
           );
         })}

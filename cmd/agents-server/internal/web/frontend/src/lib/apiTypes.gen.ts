@@ -4701,7 +4701,7 @@ export interface paths {
         };
         /**
          * List settings
-         * @description Every stored key/value. Secrets are masked; a key the registry no longer defines is flagged `unknown` so it can be deleted. The definitions themselves are at /setting-defs.
+         * @description Every stored key/value. Secrets are masked; a key the registry no longer defines is flagged `unknown` with its value masked too (whether it was a secret is unknowable), so it can be deleted. The definitions themselves are at /setting-defs.
          */
         get: {
             parameters: {
@@ -6874,7 +6874,6 @@ export interface components {
              *     list look like missing data and let a stale local fallback win.
              */
             auth_modes?: string[];
-            setting_key?: string;
             type?: string;
             unsupported?: string[];
         };

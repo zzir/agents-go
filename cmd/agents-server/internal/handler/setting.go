@@ -33,7 +33,10 @@ type SettingView struct {
 func settingViewOf(st store.Setting) SettingView {
 	v := SettingView{Key: st.Key, Value: st.Value}
 	if _, known := settings.Lookup(st.Key); !known {
+		// An unknown row exists only to be deleted, and whether it WAS a
+		// secret is unknowable once its def is gone — mask, never leak.
 		v.Unknown = true
+		v.Value = maskSecret(v.Value)
 		return v
 	}
 	if settings.IsSecret(st.Key) {
@@ -45,7 +48,7 @@ func settingViewOf(st store.Setting) SettingView {
 // List responds with all stored settings, secret values masked.
 //
 //	@Summary		List settings
-//	@Description	Every stored key/value. Secrets are masked; a key the registry no longer defines is flagged `unknown` so it can be deleted. The definitions themselves are at /setting-defs.
+//	@Description	Every stored key/value. Secrets are masked; a key the registry no longer defines is flagged `unknown` with its value masked too (whether it was a secret is unknowable), so it can be deleted. The definitions themselves are at /setting-defs.
 //	@Tags			settings
 //	@Produce		json
 //	@Success		200	{array}		SettingView

@@ -1119,8 +1119,6 @@ components:
             type: string
           type: array
           uniqueItems: false
-        setting_key:
-          type: string
         type:
           type: string
         unsupported:
@@ -5175,8 +5173,9 @@ paths:
   /settings:
     get:
       description: Every stored key/value. Secrets are masked; a key the registry
-        no longer defines is flagged `unknown` so it can be deleted. The definitions
-        themselves are at /setting-defs.
+        no longer defines is flagged `unknown` with its value masked too (whether
+        it was a secret is unknowable), so it can be deleted. The definitions themselves
+        are at /setting-defs.
       responses:
         "200":
           content:

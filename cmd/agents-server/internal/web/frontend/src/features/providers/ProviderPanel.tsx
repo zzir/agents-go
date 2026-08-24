@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, TextInput, Label, SegmentedControl, Stack } from '@primer/react';
 import { SecretInput } from '@/components/SecretInput';
 import { FormActions } from '@/components/FormActions';
-import { CrudPanel, RowEditButton, ScopeBadge, ScopeButton } from '@/components/CrudPanel';
+import { CrudPanel, RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
 import { ReadOnlyContext, canDeleteRow, canEditRow } from '@/lib/access';
 import { useMe } from '@/lib/me';
 import { ResourceRow } from '@/components/ResourceRow';
@@ -11,7 +11,6 @@ import { useApi, useCrud } from '@/lib/hooks';
 import { fc, seg } from '@/lib/form';
 import { toast } from '@/lib/toast';
 import { PROVIDERS, providerMeta, providerFacts, type ProviderTypeInfo } from '@/lib/providers';
-import { BADGE } from '@/lib/badges';
 
 // A configured endpoint and its credential. Agents and provider routes point
 // here by id, so this panel is the one place a model-API key is entered.
@@ -206,14 +205,14 @@ export function ProviderPanel() {
                 title={p.chatgpt_logged_in ? 'ChatGPT signed in' : 'ChatGPT not signed in'}
               />}
               title={p.name}
-              badges={<><Label variant={BADGE.type}>{meta.badge}</Label><ScopeBadge row={p} meId={me?.id} /></>}
+              badges={<><Label variant={meta.badgeVariant}>{meta.badge}</Label><ScopeBadge row={p} meId={me?.id} /></>}
               sub={p.base_url || meta.baseURLPlaceholder}
               actions={<>
                 {chatgpt && rowEditable(p) && (p.chatgpt_logged_in
                   ? <Button onClick={() => handleLogout(p.id)} size="small" variant="invisible">Sign out</Button>
                   : <Button onClick={() => handleLogin(p.id)} size="small" variant="invisible" loading={!!signingIn[p.id]}>Sign in</Button>)}
-                {isAdmin && <ScopeButton row={p} setScope={api.providers.setScope} onDone={reload} />}
-                <RowEditButton readOnly={!rowEditable(p)} onClick={() => startEdit(p)} />
+                <RowActionsMenu name={p.name} editReadOnly={!rowEditable(p)} onEdit={() => startEdit(p)}
+                  scope={isAdmin ? { row: p, setScope: api.providers.setScope, onDone: reload } : undefined} />
               </>}
             />
           );

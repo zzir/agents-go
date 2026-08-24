@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
-import { Button, Label, PageHeader, Stack } from '@primer/react';
+import { ActionList, Button, Label, PageHeader, Stack } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
+import { RowMenu } from '@/components/ListTable';
 import { useReadOnly, type ScopedRow } from '@/lib/access';
 import { BADGE } from '@/lib/badges';
 import { toast } from '@/lib/toast';
@@ -57,11 +58,44 @@ export function CrudPanel({ title, as, description, onAdd, onCancel, onDelete, f
   return as === 'section' ? <div className="form-group">{body}</div> : <Stack gap="normal">{body}</Stack>;
 }
 
-/** A row's "Edit" — "View" when the form it opens is a disabled view (the
- * dialog is read-only, or `readOnly` says this row is not the caller's). */
-export function RowEditButton({ onClick, readOnly }: { onClick: () => void; readOnly?: boolean }) {
+/** A row's "…" overflow, the one action control a list row carries:
+ * Edit ("View" when the form it opens is a disabled view — the dialog is
+ * read-only, or `editReadOnly` says this row is not the caller's), the admin's
+ * scope flip, and a Delete the caller confirms. Renders nothing when the
+ * caller can do none of it. */
+export function RowActionsMenu({ name, onEdit, editReadOnly, scope, onDelete }: {
+  name: string;
+  onEdit?: () => void;
+  editReadOnly?: boolean;
+  // Pass only for admins: the promote/demote item. POST /<entity>/:id/scope,
+  // with the server's 400/409 (non-global references, name collisions) as toasts.
+  scope?: {
+    row: ScopedRow & { id: string | number };
+    setScope: (id: string | number, scope: 'global' | 'private') => Promise<null>;
+    onDone: () => void;
+  };
+  // Delete where edit is not offered (the admin on a foreign private row).
+  onDelete?: () => void;
+}) {
   const ctx = useReadOnly();
-  return <Button onClick={onClick} size="small" variant="invisible">{(readOnly ?? ctx) ? 'View' : 'Edit'}</Button>;
+  if (!onEdit && !scope && !onDelete) return null;
+  const global = scope?.row.scope === 'global';
+  const flip = async () => {
+    if (!scope) return;
+    try {
+      await scope.setScope(scope.row.id, global ? 'private' : 'global');
+      scope.onDone();
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
+  return (
+    <RowMenu label={`Actions for ${name}`}>
+      {onEdit && <ActionList.Item onSelect={onEdit}>{(editReadOnly ?? ctx) ? 'View' : 'Edit'}</ActionList.Item>}
+      {scope && <ActionList.Item onSelect={() => void flip()}>{global ? 'Make private' : 'Make global'}</ActionList.Item>}
+      {onDelete && <ActionList.Item variant="danger" onSelect={onDelete}>Delete</ActionList.Item>}
+    </RowMenu>
+  );
 }
 
 /** A scoped row's visibility badge: "Global" for everyone, "Private" only for
@@ -72,8 +106,8 @@ export function ScopeBadge({ row, meId }: { row: ScopedRow; meId?: string }) {
   return null;
 }
 
-/** The admin's promote/demote row action: POST /<entity>/:id/scope, with the
- * server's 400/409 (non-global references, name collisions) as toasts. */
+/** The admin's promote/demote as a standalone button — the skills editor's
+ * action row; list rows carry it as a RowActionsMenu item instead. */
 export function ScopeButton({ row, setScope, onDone }: {
   row: ScopedRow & { id: string | number };
   setScope: (id: string | number, scope: 'global' | 'private') => Promise<null>;

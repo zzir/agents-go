@@ -35,7 +35,6 @@ interface ServerInfo {
 const GROUP_TITLES: Record<string, string> = {
   network: 'Network',
   prompt: 'Prompt',
-  credentials: 'Credentials',
   tracing: 'Tracing',
   logging: 'Logging',
   limits: 'Limits',

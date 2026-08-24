@@ -101,8 +101,6 @@ function argSummary(toolName: string, args: string): { text: string; mono: boole
         return typeof p.path === 'string' && p.path ? { text: p.path, mono: true } : null;
       case 'list_files':
         return { text: typeof p.path === 'string' && p.path ? p.path : 'working dir', mono: true };
-      case 'brave_search':
-        return typeof p.query === 'string' && p.query ? { text: p.query, mono: false } : null;
       case 'todo_write': {
         const todos = Array.isArray(p.todos) ? p.todos : [];
         const done = todos.filter((td: { status?: string }) => td?.status === 'completed').length;

@@ -43,15 +43,13 @@ func TestDefsAreSelfConsistent(t *testing.T) {
 // A secret is a kind, not a hand-kept list — that is what stops a new
 // credential setting from shipping unmasked.
 func TestIsSecretFollowsTheKind(t *testing.T) {
-	for _, k := range []string{settings.KeyOpenAIAPIKey, settings.KeyAnthropicAPIKey, settings.KeyBraveAPIKey} {
-		if !settings.IsSecret(k) {
-			t.Errorf("%s must be masked", k)
+	for _, d := range settings.Defs() {
+		if got := settings.IsSecret(d.Key); got != (d.Kind == settings.KindSecret) {
+			t.Errorf("IsSecret(%s) = %v, want the kind (%s) to decide", d.Key, got, d.Kind)
 		}
 	}
-	for _, k := range []string{settings.KeyProxyURL, settings.KeySystemPrompt, "no_such_key"} {
-		if settings.IsSecret(k) {
-			t.Errorf("%s must not be masked", k)
-		}
+	if settings.IsSecret("no_such_key") {
+		t.Error("an unknown key must not be masked")
 	}
 }
 

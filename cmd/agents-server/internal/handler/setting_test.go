@@ -81,33 +81,6 @@ func TestSetAcceptsValidValues(t *testing.T) {
 	}
 }
 
-// Validation runs AFTER the mask resolves, so echoing the mask back keeps the
-// stored secret instead of being read as a literal value.
-func TestSecretMaskStillRoundTrips(t *testing.T) {
-	e, st := newSettingEngine(t)
-	if w := doJSON(t, e, http.MethodPut, "/settings/"+settings.KeyBraveAPIKey, `{"value":"BSA-real"}`); w.Code != http.StatusOK {
-		t.Fatalf("store: %d %s", w.Code, w.Body)
-	}
-	w := doJSON(t, e, http.MethodPut, "/settings/"+settings.KeyBraveAPIKey, `{"value":"`+SecretMask+`"}`)
-	if w.Code != http.StatusOK {
-		t.Fatalf("mask echo: %d %s", w.Code, w.Body)
-	}
-	var view SettingView
-	if err := json.Unmarshal(w.Body.Bytes(), &view); err != nil {
-		t.Fatal(err)
-	}
-	if view.Value != SecretMask {
-		t.Errorf("response value = %q, want the mask", view.Value)
-	}
-	got, err := st.Get(t.Context(), settings.KeyBraveAPIKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Value != "BSA-real" {
-		t.Errorf("stored secret = %q, want it kept", got.Value)
-	}
-}
-
 // A row the registry no longer names is still listed — and deletable. Hiding
 // it would leave a value nobody can see or clear.
 func TestListFlagsUnknownKeysAndDeleteClearsThem(t *testing.T) {
@@ -128,6 +101,10 @@ func TestListFlagsUnknownKeysAndDeleteClearsThem(t *testing.T) {
 	}
 	if !byKey["retired_key"].Unknown {
 		t.Error("a key the registry dropped must be flagged, not hidden")
+	}
+	// Whether the retired key WAS a secret is unknowable once its def is gone.
+	if byKey["retired_key"].Value != SecretMask {
+		t.Errorf("an unknown row's value must be masked, got %q", byKey["retired_key"].Value)
 	}
 	if byKey[settings.KeyProxyURL].Unknown {
 		t.Error("a defined key must not be flagged unknown")

@@ -3,7 +3,7 @@ import { Button, TextInput, Label, Select, Checkbox, FormControl, Stack, ToggleS
 import { SecretInput } from '@/components/SecretInput';
 import { TokenListInput } from '@/components/TokenListInput';
 import { FormActions } from '@/components/FormActions';
-import { CrudPanel, RowEditButton, ScopeBadge, ScopeButton } from '@/components/CrudPanel';
+import { CrudPanel, RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
 import { ReadOnlyContext, canDeleteRow, canEditRow } from '@/lib/access';
 import { useMe } from '@/lib/me';
 import { ResourceRow } from '@/components/ResourceRow';
@@ -347,9 +347,9 @@ export function McpServerPanel() {
                     style={{ color: 'var(--fgColor-success)', minWidth: 90, textAlign: 'center' }}
                   >{busy[s.id] ? '...' : action.label}</Button>
                 )}
-                {isAdmin && <ScopeButton row={s} setScope={api.mcpServers.setScope} onDone={reload} />}
-                <RowEditButton readOnly={!editable} onClick={() => startEdit(s)} />
                 {editable && <EnabledToggle server={s} onToggle={handleToggleEnabled} />}
+                <RowActionsMenu name={s.name} editReadOnly={!editable} onEdit={() => startEdit(s)}
+                  scope={isAdmin ? { row: s, setScope: api.mcpServers.setScope, onDone: reload } : undefined} />
               </>}
             />
           );

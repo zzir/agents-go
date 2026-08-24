@@ -346,9 +346,8 @@ func (h *SkillHandler) httpClient(ctx context.Context) *http.Client {
 	return http.DefaultClient
 }
 
-// githubGet performs one authenticated GET. The stored github_token rides
-// only to GitHub's own hosts (the callers pass no other), never to an
-// arbitrary import URL.
+// githubGet performs one anonymous GitHub API GET (two calls per import, so
+// the anonymous rate limit goes far).
 func (h *SkillHandler) githubGet(c *gin.Context, url string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, url, nil)
 	if err != nil {
@@ -356,9 +355,6 @@ func (h *SkillHandler) githubGet(c *gin.Context, url string) (*http.Response, er
 	}
 	req.Header.Set("User-Agent", "agents-server")
 	req.Header.Set("Accept", "application/vnd.github+json")
-	if tok := h.settings.String(c.Request.Context(), settings.KeyGitHubToken); tok != "" {
-		req.Header.Set("Authorization", "Bearer "+tok)
-	}
 	return h.httpClient(c.Request.Context()).Do(req)
 }
 

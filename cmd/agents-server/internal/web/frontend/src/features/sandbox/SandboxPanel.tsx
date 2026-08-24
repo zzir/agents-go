@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Button, TextInput, Label, Checkbox, FormControl, Stack } from '@primer/react';
 import { SecretInput } from '@/components/SecretInput';
 import { FormActions } from '@/components/FormActions';
-import { CrudPanel, RowEditButton } from '@/components/CrudPanel';
+import { CrudPanel, RowActionsMenu } from '@/components/CrudPanel';
 import { useReadOnly } from '@/lib/access';
 import { ResourceRow } from '@/components/ResourceRow';
 import { api } from '@/lib/api';
@@ -238,7 +238,7 @@ export function SandboxPanel() {
                 {testingId === s.id ? 'Testing...' : 'Test'}
               </Button>
             )}
-            <RowEditButton onClick={() => startEdit(s)} />
+            <RowActionsMenu name={s.name} onEdit={() => startEdit(s)} />
           </>}
         />
       ))}

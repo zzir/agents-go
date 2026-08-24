@@ -190,7 +190,7 @@ interface ReplayAttempt {
 // instead, so this list only has to track the bridge's own tools.
 const BUILTIN_TOOL_NAMES = new Set([
   'exec_command', 'read_file', 'write_file', 'list_files', 'apply_patch',
-  'brave_search', 'spawn_task', 'task_status', 'task_stop',
+  'spawn_task', 'task_status', 'task_stop',
   // The plan/todo tools the chat build injects.
   'submit_plan', 'todo_write',
 ]);
