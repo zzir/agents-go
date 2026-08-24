@@ -82,7 +82,7 @@ A session that times out is **closed**, not reused: the command may still be
 running, and its output arriving in the middle of the next one is worse than a
 shell startup.
 
-Requires a backend with interactive terminal support (Docker, SSH).
+Requires a backend with interactive terminal support (persistent Docker).
 
 Off by default, because a held-open shell is a resource with a lifetime and a
 caller that never closes one leaks it.
@@ -245,7 +245,7 @@ type ExecStreamer interface {
 }
 ```
 
-Output is written to the provided `io.Writer`s in real time; the returned `ExecResult` contains `ExitCode` and `TimedOut` but its `Stdout`/`Stderr` fields are empty (output went to the writers). All three built-in backends implement this interface.
+Output is written to the provided `io.Writer`s in real time; the returned `ExecResult` contains `ExitCode` and `TimedOut` but its `Stdout`/`Stderr` fields are empty (output went to the writers). Both built-in backends implement this interface.
 
 ## TerminalOpener (optional)
 

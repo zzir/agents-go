@@ -34,7 +34,7 @@ golangci-lint run                     # CI uses golangci-lint v2.13
 
 ## Layout
 
-Go workspace (`go.work`, gitignored) with nine modules. **A submodule exists only
+Go workspace (`go.work`, gitignored) with eight modules. **A submodule exists only
 to keep a heavy dependency out of the core** ([spec.md §5.7](docs/spec.md)) —
 anything dependency-free stays in the root module. Non-root modules `require` the
 root via `replace => ..`:

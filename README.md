@@ -67,9 +67,8 @@ your data, embeddable SDK. Solo or as a team.
 
 - **Zero infrastructure.** One process and one SQLite file hold the agents,
   sessions, traces, approvals and tasks. The one external dependency is the
-  Docker daemon that backs sandboxes; the server itself shells out to nothing
-  — skills import over the GitHub API, remote daemons over pure-Go SSH,
-  Docker over its socket API. No git, ssh or docker binaries needed.
+  Docker daemon that backs sandboxes — the server itself shells out to
+  nothing (details in the [server manual](cmd/agents-server/README.md)).
 - **The transcript is the truth.** A session is an append-only tree: every
   turn is persisted as it completes, so a cancelled or failed run keeps what
   finished and a paused run survives a restart. Regenerate a turn, or fork

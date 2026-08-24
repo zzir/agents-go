@@ -305,20 +305,19 @@ t := &agents.Tool{
 
 ## Web search
 
-Web search is a **workbench** feature, not SDK surface: set `brave_api_key` in
-the agents-server settings and every agent gets a `brave_search` tool backed by
-the [Brave Search API](https://api-dashboard.search.brave.com/api-reference/web/search/get).
-The SDK deliberately does not model provider-hosted search tools; in your own
-embedding, a search tool is an ordinary `NewTool` function that calls whichever
-API you use.
+There is no built-in web-search tool: the SDK deliberately does not model
+provider-hosted search (spec §3), and the workbench's answer is an MCP server
+the operator (or a member) configures ([spec §5.30](spec.md)). In your own
+embedding, a search tool is an ordinary `NewTool` function that calls
+whichever API you use.
 
 ## File editing
 
 File editing is a **sandbox** capability: `apply_patch` (Codex-style multi-file
 patches) edits through the `Sandbox` abstraction, so it targets the same
-filesystem `exec_command` and the file tools use — a local dir, a bind-mounted
-container, or a remote host over SFTP. There is no separate local-path editor
-and no hosted OpenAI `apply_patch`.
+filesystem `exec_command` and the file tools use — a local dir, a container's
+bind mount or volume. There is no separate local-path editor and no hosted
+OpenAI `apply_patch`.
 
 ```go
 tools := []*agents.Tool{sandbox.CodeTool(sb, sandbox.CodeToolConfig{})}

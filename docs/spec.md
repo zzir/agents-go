@@ -1362,15 +1362,15 @@ an activated environment survive between calls.
 - Reading happens on a background goroutine, because `Terminal` has no read
   deadline and a blocked `Read` on the calling goroutine cannot be interrupted
   by any timer.
-- **Opening a shell happens outside the pool lock**, because on the ssh backend
-  it is a network round-trip plus a PTY handshake: under the lock, every OTHER
-  name's command queued behind it. Two callers racing the same new name both
-  open one; the loser closes its own and takes the winner's, so a name still
-  maps to exactly one shell.
+- **Opening a shell happens outside the pool lock**, because on a remote
+  daemon it is a network round-trip plus a PTY handshake: under the lock,
+  every OTHER name's command queued behind it. Two callers racing the same
+  new name both open one; the loser closes its own and takes the winner's,
+  so a name still maps to exactly one shell.
 - **Closing the pool is final.** It is what keeps opening outside the lock safe:
   a shell landing after `Close` emptied the map would be held by a pool nobody
-  closes again — precisely the leaked PTY (a remote ssh session on that backend)
-  that the tool's closer exists to prevent. A named command that arrives
+  closes again — precisely the leaked PTY (on a remote daemon, a live network
+  session) that the tool's closer exists to prevent. A named command that arrives
   afterwards fails instead, rather than opening a shell on a sandbox whose owner
   has already let go of it.
 - **The named shells belong to the tool, not the run.** Two concurrent runs of
@@ -1680,7 +1680,7 @@ was ending:
   span can find the entry) without matching on tool name and arrival order,
   which four identical calls in one turn defeat.
 - Sandbox is instrumented at the **tool** layer, the one place every backend
-  (local, Docker, SSH) is reached through, rather than per backend.
+  (local, Docker) is reached through, rather than per backend.
 
 ### 2.11d Diagnostics
 
@@ -2532,8 +2532,8 @@ The sandbox file operations (`ReadFile`, `WriteFile`, `CreateExclusive`,
 `ListDir`, `RemoveFile`, `Rename`) resolve paths with **shell semantics,
 identical to `exec_command`**: a relative path resolves under the working
 directory, an absolute path is used as-is. The isolation boundary is the
-sandbox itself, not the working directory — for local, ssh and
-docker-persistent, exec already reaches everything on that filesystem, so
+sandbox itself, not the working directory — for local and docker-persistent,
+exec already reaches everything on that filesystem, so
 pinning the file tools inside `WorkDir` adds no protection; it only creates a
 second path universe. The model learns real absolute paths from exec output
 (`pwd`, `ls`, `git status`) and echoes them into the file tools, so the two
@@ -2872,12 +2872,10 @@ discovery. Consequences, all intended:
   them.** Imports keep only SKILL.md files; a body referencing its repo's
   other files imports as-is and those references dangle. The model can still
   follow instructions by writing its own code in the sandbox.
-- **The workbench upsert contract**: rows match an import by (source repo,
-  path); a local edit sets `detached` and a detached row is never overwritten
-  by a re-import. Imports traverse GitHub via its REST API pinned at one
-  commit — the server never runs git. An agent's `skills` selection stores
-  skill ids; a deleted id silently drops out of the selection (parity with
-  the old directory model — README frontend invariant 13).
+- **Local edits win over re-imports**: an edited imported row detaches from
+  its source and is never overwritten by a re-import; imports pin one commit
+  and the server never runs git. The API mechanics live in the server
+  README's Skills section.
 - **Import URLs are operator-supplied outbound requests** (GitHub API, raw
   fetches), like provider base URLs and MCP endpoints. No private-address
   guard is applied — a recorded, accepted risk for the single-operator
@@ -2905,7 +2903,8 @@ not parked: its Sandbox implementation had become the workbench's only
 consumer, and an embedder who wants raw remote exec can use x/crypto/ssh
 directly — the value this repo added was the sandboxing, which SSH never
 provided. The SDK's `sandbox.LocalSandbox` stays (embedders and tests; the
-server just never offers it). A sandbox's identity (§ the binding freeze)
+server just never offers it). A sandbox's identity (the binding freeze —
+README invariant 27)
 gains the daemon: changing `Host` moves every container's filesystems, so it
 freezes while sessions are bound.
 
@@ -3030,7 +3029,8 @@ workflow owned by the run's owner; an existing **global** name is still an
 admin's to change, and a member's save answers with guidance text (pick
 another name), not an error. Signing a provider into ChatGPT (or out) is the
 row's editability — a member connects their own provider; status follows
-visibility. Triggers stay session-scoped (§ trigger ownership) with a cap of
+visibility. Triggers stay session-scoped (the README's trigger section) with
+a cap of
 50 per owner (409 above it) so the shared clock is not one member's to
 exhaust.
 

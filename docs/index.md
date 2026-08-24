@@ -42,10 +42,10 @@ declined.
 go get github.com/zzir/agents-go
 ```
 
-The MCP client, the sandbox backends, SQL sessions and skills live in separate modules so the core stays dependency-light:
+The MCP client, the Docker sandbox, SQL sessions and skills live in separate modules so the core stays dependency-light:
 
 ```bash
-go get github.com/zzir/agents-go/mcp              # optional: MCP client + server
+go get github.com/zzir/agents-go/mcp              # optional: MCP client
 go get github.com/zzir/agents-go/sandbox/docker   # optional
 go get github.com/zzir/agents-go/sessions         # optional: SQLite/Postgres
 go get github.com/zzir/agents-go/skills           # optional: Agent Skills
