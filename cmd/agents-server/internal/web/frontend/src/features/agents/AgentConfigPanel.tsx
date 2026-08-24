@@ -238,7 +238,10 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
         <div className="form-group-title">Provider</div>
         {fc('Endpoint',
           <Select value={form.provider_id} onChange={e => set('provider_id', e.target.value)} block>
-            <Select.Option value="">Default (OpenAI on the global API key)</Select.Option>
+            {/* No built-in default anymore: an empty provider_id reaches no
+                credential and the run fails its pre-flight, so the empty
+                value is a placeholder, not an option that works. */}
+            <Select.Option value="">Select an endpoint…</Select.Option>
             {(providers || []).map(p => (
               <Select.Option key={p.id} value={p.id}>{p.name}</Select.Option>
             ))}
@@ -548,7 +551,11 @@ export function AgentConfigPanel() {
               title={a.name}
               badges={<>
                 <ScopeBadge row={a} meId={me?.id} />
-                <Label variant={pmeta.badgeVariant}>{rowProvider?.name || pmeta.badge}</Label>
+                {/* An unset or vanished provider is not the OpenAI default any
+                    more — it is a row that cannot run; say so, in gray. */}
+                {rowProvider
+                  ? <Label variant={pmeta.badgeVariant}>{rowProvider.name}</Label>
+                  : <Label variant={BADGE.type}>No endpoint</Label>}
                 {mcp > 0 && <Label variant={BADGE.count}>{'MCP·' + mcp}</Label>}
                 {skl > 0 && <Label variant={BADGE.count}>{'Skills·' + skl}</Label>}
               </>}
