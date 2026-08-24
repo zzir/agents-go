@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
@@ -15,12 +16,14 @@ import (
 type ProjectHandler struct {
 	store     *store.ProjectStore
 	sandboxes *store.SandboxStore
+	manager   *sandboxes.Manager
 }
 
 // NewProjectHandler returns a handler over the project store; sandboxes
-// validates the target a new project names.
-func NewProjectHandler(s *store.ProjectStore, sandboxes *store.SandboxStore) *ProjectHandler {
-	return &ProjectHandler{store: s, sandboxes: sandboxes}
+// validates the target a new project names, and m reclaims a deleted
+// project's cached instance.
+func NewProjectHandler(s *store.ProjectStore, sb *store.SandboxStore, m *sandboxes.Manager) *ProjectHandler {
+	return &ProjectHandler{store: s, sandboxes: sb, manager: m}
 }
 
 // List responds with the caller's projects.
@@ -119,6 +122,9 @@ func (h *ProjectHandler) Delete(c *gin.Context) {
 	if refs > 0 {
 		conflict(c, "sessions are still bound to this project; delete them first")
 		return
+	}
+	if h.manager != nil {
+		h.manager.RemoveProject(p.ID) // reclaim the cached instance; storage stays
 	}
 	c.Status(http.StatusNoContent)
 }

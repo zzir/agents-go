@@ -62,15 +62,27 @@ type sandboxInstance struct {
 	// open terminal finishes on the configuration it started with instead of
 	// having its connection torn out from under it. Guarded by mu.
 	doomed bool
+	// expired marks an idle expiry mid-stop: the instance stays under its key
+	// so an acquire waits on gone instead of adopting a stopping container
+	// (which would look dead and be force-recreated, wiping its packages —
+	// spec §5.28). gone closes when the stop finished and the key is free.
+	// Guarded by mu.
+	expired bool
+	gone    chan struct{}
+
+	closeOnce sync.Once
 }
 
-// close tears down the sandbox. Called without the manager lock — teardown can
-// block on I/O. The nil check covers a placeholder whose build never finished
-// (process shutdown mid-dial).
+// close tears down the sandbox, once — the idle expiry and an eviction may
+// both reach it. Called without the manager lock — teardown can block on I/O.
+// The nil check covers a placeholder whose build never finished (process
+// shutdown mid-dial).
 func (i *sandboxInstance) close() {
-	if i.sb != nil {
-		_ = i.sb.Close()
-	}
+	i.closeOnce.Do(func() {
+		if i.sb != nil {
+			_ = i.sb.Close()
+		}
+	})
 }
 
 // Manager caches and reuses sandbox instances keyed by (config id,
@@ -173,6 +185,14 @@ func (m *Manager) acquire(cfg *store.SandboxConfig, proj *store.Project) (*sandb
 		return nil, nil, fmt.Errorf("sandbox manager is shut down")
 	}
 	inst, ok := m.instances[key]
+	if ok && inst.expired {
+		// An idle expiry is stopping this instance's container; wait it out
+		// and take the key fresh (the expiry frees it before closing gone).
+		gone := inst.gone
+		m.mu.Unlock()
+		<-gone
+		return m.acquire(cfg, proj)
+	}
 	if !ok {
 		inst = &sandboxInstance{ready: make(chan struct{}), key: key}
 		inst.refs++
@@ -287,9 +307,19 @@ func (m *Manager) idleExpire(inst *sandboxInstance) {
 		m.mu.Unlock()
 		return
 	}
-	delete(m.instances, inst.key)
+	// Stop the container BEFORE freeing the key: an acquire during the stop
+	// waits on gone rather than adopting a container it would then judge
+	// dead and recreate from scratch.
+	inst.expired = true
+	inst.gone = make(chan struct{})
 	m.mu.Unlock()
 	inst.close()
+	m.mu.Lock()
+	if m.instances[inst.key] == inst {
+		delete(m.instances, inst.key)
+	}
+	close(inst.gone)
+	m.mu.Unlock()
 }
 
 // evictLocked removes an instance from the cache and reports whether the
@@ -321,6 +351,27 @@ func (m *Manager) RemoveInstance(cfg *store.SandboxConfig, projectID string) {
 	inst := m.evictLocked(key)
 	m.mu.Unlock()
 	if inst != nil {
+		inst.close()
+	}
+}
+
+// RemoveProject evicts every cached instance keyed to the project — its row
+// was deleted, so no cached container should idle on for it. The container
+// and its storage stay on the daemon (spec §5.28: data outlives the row);
+// in-flight holders finish on what they hold.
+func (m *Manager) RemoveProject(projectID string) {
+	var toClose []*sandboxInstance
+	m.mu.Lock()
+	for key := range m.instances {
+		if key.projectID != projectID {
+			continue
+		}
+		if inst := m.evictLocked(key); inst != nil {
+			toClose = append(toClose, inst)
+		}
+	}
+	m.mu.Unlock()
+	for _, inst := range toClose {
 		inst.close()
 	}
 }
