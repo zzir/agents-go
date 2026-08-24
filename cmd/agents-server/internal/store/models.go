@@ -209,23 +209,21 @@ type Provider struct {
 	UpdatedAt time.Time `bun:"updated_at,notnull" json:"updated_at"`
 }
 
-// McpServerConfig is the persisted connection definition for an MCP server.
-// Transport-specific settings live in Config (JSON, interpreted per
-// TransportType), so a new transport needs no schema migration.
+// McpServerConfig is the persisted connection definition for an MCP server
+// (streamable HTTP only — spec §5.25); connection settings live in Config.
 type McpServerConfig struct {
 	bun.BaseModel `bun:"table:mcp_servers,alias:ms"`
 
-	ID            string `bun:"id,pk,type:uuid"        json:"id"`
-	Name          string `bun:"name,notnull"           json:"name"`
-	TransportType string `bun:"transport_type,notnull" json:"transport_type"` // stdio | streamable_http
+	ID   string `bun:"id,pk,type:uuid"        json:"id"`
+	Name string `bun:"name,notnull"           json:"name"`
 	// Enabled deliberately carries no bun default tag: with `default:true`,
 	// bun swaps a zero-value false for SQL DEFAULT on insert, silently
 	// enabling a server that was created with enabled=false.
 	Enabled bool `bun:"enabled,notnull"        json:"enabled"`
 
-	// Config holds the transport-specific settings as JSON: StdioMcpConfig for
-	// "stdio", HTTPMcpConfig for "streamable_http". Stored as TEXT and
-	// exchanged with the API as a raw JSON object.
+	// Config holds the connection settings as JSON (HTTPMcpConfig — the
+	// streamable_http transport is the only one the server speaks, spec §5.25).
+	// Stored as TEXT and exchanged with the API as a raw JSON object.
 	Config json.RawMessage `bun:"config,type:text,nullzero" json:"config,omitempty"`
 
 	// OAuthToken is the JSON-serialized OAuth grant obtained during the OAuth
@@ -239,9 +237,9 @@ type McpServerConfig struct {
 	UpdatedAt time.Time `bun:"updated_at,notnull"     json:"updated_at"`
 }
 
-// McpRetryConfig holds the per-request retry settings common to every MCP
-// transport, embedded in the transport-specific config payloads. A single
-// transient failure on list_tools/call_tool otherwise aborts the whole run.
+// McpRetryConfig holds the per-request retry settings, embedded in
+// HTTPMcpConfig. A single transient failure on list_tools/call_tool
+// otherwise aborts the whole run.
 type McpRetryConfig struct {
 	// MaxRetryAttempts retries a failed list_tools/call_tool this many times.
 	// 0 (default) disables retries; -1 retries indefinitely.
@@ -251,19 +249,7 @@ type McpRetryConfig struct {
 	RetryBackoffMs int `json:"retry_backoff_ms,omitempty"`
 }
 
-// StdioMcpConfig is the McpServerConfig.Config payload for TransportType == "stdio".
-type StdioMcpConfig struct {
-	Command        string   `json:"command"`
-	Args           []string `json:"args,omitempty"`
-	McpRetryConfig          // max_retry_attempts / retry_backoff_ms
-	// UseStructuredContent uses a tool result's structuredContent field
-	// exclusively (default: use the content blocks). For servers that only
-	// populate the structured field.
-	UseStructuredContent bool `json:"use_structured_content,omitempty"`
-}
-
-// HTTPMcpConfig is the McpServerConfig.Config payload for the "streamable_http"
-// transport.
+// HTTPMcpConfig is the McpServerConfig.Config payload (streamable HTTP).
 type HTTPMcpConfig struct {
 	Endpoint string `json:"endpoint"`
 	// Headers are added to every HTTP request to the server, e.g. an
@@ -282,8 +268,9 @@ type HTTPMcpConfig struct {
 	OAuthScopes string `json:"oauth_scopes,omitempty"`
 
 	McpRetryConfig // max_retry_attempts / retry_backoff_ms
-	// UseStructuredContent uses a tool result's structuredContent exclusively
-	// (default: the content blocks). See StdioMcpConfig.UseStructuredContent.
+	// UseStructuredContent uses a tool result's structuredContent field
+	// exclusively (default: use the content blocks). For servers that only
+	// populate the structured field.
 	UseStructuredContent bool `json:"use_structured_content,omitempty"`
 }
 

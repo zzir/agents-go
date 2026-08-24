@@ -86,7 +86,7 @@ func TestSecretsSealedAtRest(t *testing.T) {
 		t.Fatalf("sandbox config opened = %s", got.Config)
 	}
 	mcps := NewMcpServerStore(db)
-	mc := &McpServerConfig{Name: "m", TransportType: "streamable_http", Config: json.RawMessage(`{"endpoint":"http://x","headers":{"Authorization":"Bearer abc"},"oauth_client_secret":"cs"}`)}
+	mc := &McpServerConfig{Name: "m", Config: json.RawMessage(`{"endpoint":"http://x","headers":{"Authorization":"Bearer abc"},"oauth_client_secret":"cs"}`)}
 	if err := mcps.Create(ctx, mc); err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +155,7 @@ func TestSealedValueDoesNotRelocate(t *testing.T) {
 	ct := rawColumn(t, db, "SELECT api_key FROM providers WHERE id = ?", pv.ID)
 
 	mcps := NewMcpServerStore(db)
-	mc := &McpServerConfig{Name: "m", TransportType: "streamable_http", Config: json.RawMessage(`{"endpoint":"http://attacker"}`)}
+	mc := &McpServerConfig{Name: "m", Config: json.RawMessage(`{"endpoint":"http://attacker"}`)}
 	if err := mcps.Create(ctx, mc); err != nil {
 		t.Fatal(err)
 	}

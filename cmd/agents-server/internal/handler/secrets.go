@@ -216,22 +216,16 @@ func restoreJSONFields(incoming, prev json.RawMessage, restoreHeaders bool, fiel
 	return out
 }
 
-// sanitizeMcpConfig returns cfg with its transport secrets masked: header
-// values and the OAuth client secret for streamable_http servers. stdio
-// configs carry no secrets and pass through.
+// sanitizeMcpConfig returns cfg with its secrets masked: header values and
+// the OAuth client secret.
 func sanitizeMcpConfig(cfg store.McpServerConfig) store.McpServerConfig {
-	if cfg.TransportType == "streamable_http" {
-		cfg.Config = maskJSONFields(cfg.Config, true, "oauth_client_secret")
-	}
+	cfg.Config = maskJSONFields(cfg.Config, true, "oauth_client_secret")
 	return cfg
 }
 
-// restoreMcpConfig resolves masked transport secrets in an incoming config
-// against the previously stored config.
-func restoreMcpConfig(transportType string, incoming, prev json.RawMessage) json.RawMessage {
-	if transportType != "streamable_http" {
-		return incoming
-	}
+// restoreMcpConfig resolves masked secrets in an incoming config against the
+// previously stored config.
+func restoreMcpConfig(incoming, prev json.RawMessage) json.RawMessage {
 	return restoreJSONFields(incoming, prev, true, "oauth_client_secret")
 }
 

@@ -61,7 +61,7 @@ func TestManagerConnectionHealsItself(t *testing.T) {
 	db := testdb.New(t)
 	mgr := NewManager(ctx, settings.NewReader(store.NewSettingStore(db)))
 	cfg := &store.McpServerConfig{
-		ID: store.NewID(), Name: "healer", TransportType: "streamable_http", Enabled: true,
+		ID: store.NewID(), Name: "healer", Enabled: true,
 		Config: []byte(`{"endpoint":"` + endpoint.URL + `"}`),
 	}
 	if err := mgr.Connect(ctx, cfg); err != nil {

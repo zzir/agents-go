@@ -27,12 +27,11 @@ func TestMcpServerStatusDerivation(t *testing.T) {
 		cfg  store.McpServerConfig
 		want string
 	}{
-		{"disabled stdio", store.McpServerConfig{ID: "a", TransportType: "stdio", Enabled: false}, "disabled"},
-		{"disabled oauth without token", store.McpServerConfig{ID: "b", TransportType: "streamable_http", Config: oauthCfg, Enabled: false}, "disabled"},
-		{"enabled stdio not connected", store.McpServerConfig{ID: "c", TransportType: "stdio", Enabled: true}, "disconnected"},
-		{"oauth without token", store.McpServerConfig{ID: "d", TransportType: "streamable_http", Config: oauthCfg, Enabled: true}, "needs_auth"},
-		{"oauth with saved token", store.McpServerConfig{ID: "e", TransportType: "streamable_http", Config: oauthCfg, OAuthToken: `{"access_token":"t"}`, Enabled: true}, "disconnected"},
-		{"http without oauth", store.McpServerConfig{ID: "f", TransportType: "streamable_http", Config: json.RawMessage(`{"endpoint":"http://x"}`), Enabled: true}, "disconnected"},
+		{"disabled", store.McpServerConfig{ID: "a", Config: json.RawMessage(`{"endpoint":"http://x"}`), Enabled: false}, "disabled"},
+		{"disabled oauth without token", store.McpServerConfig{ID: "b", Config: oauthCfg, Enabled: false}, "disabled"},
+		{"oauth without token", store.McpServerConfig{ID: "d", Config: oauthCfg, Enabled: true}, "needs_auth"},
+		{"oauth with saved token", store.McpServerConfig{ID: "e", Config: oauthCfg, OAuthToken: `{"access_token":"t"}`, Enabled: true}, "disconnected"},
+		{"http without oauth", store.McpServerConfig{ID: "f", Config: json.RawMessage(`{"endpoint":"http://x"}`), Enabled: true}, "disconnected"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -54,7 +53,7 @@ func TestMcpServerConnectRejectsDisabled(t *testing.T) {
 	engine := newTestEngine()
 	engine.POST("/mcp-servers/:id/connect", h.Connect)
 
-	cfg := &store.McpServerConfig{ID: store.NewID(), Name: "fs", TransportType: "stdio", Config: json.RawMessage(`{"command":"true"}`), Enabled: false}
+	cfg := &store.McpServerConfig{ID: store.NewID(), Name: "fs", Config: json.RawMessage(`{"endpoint":"http://x"}`), Enabled: false}
 	if err := mcpStore.Create(t.Context(), cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -74,11 +73,11 @@ func TestMcpServerUpdateDisableReportsDisabled(t *testing.T) {
 	engine := newTestEngine()
 	engine.PUT("/mcp-servers/:id", h.Update)
 
-	cfg := &store.McpServerConfig{ID: store.NewID(), Name: "fs", TransportType: "stdio", Config: json.RawMessage(`{"command":"true"}`), Enabled: true}
+	cfg := &store.McpServerConfig{ID: store.NewID(), Name: "fs", Config: json.RawMessage(`{"endpoint":"http://x"}`), Enabled: true}
 	if err := mcpStore.Create(t.Context(), cfg); err != nil {
 		t.Fatal(err)
 	}
-	body := `{"name":"fs","transport_type":"stdio","enabled":false,"config":{"command":"true"}}`
+	body := `{"name":"fs","enabled":false,"config":{"endpoint":"http://x"}}`
 	w := doJSON(t, engine, http.MethodPut, "/mcp-servers/"+cfg.ID, body)
 	if w.Code != http.StatusOK {
 		t.Fatalf("update: got %d (body %s)", w.Code, w.Body.String())

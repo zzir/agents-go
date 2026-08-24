@@ -66,8 +66,7 @@ func TestAgentConfigSecretRoundTrip(t *testing.T) {
 
 func TestMcpConfigHeaderMasking(t *testing.T) {
 	cfg := store.McpServerConfig{
-		TransportType: "streamable_http",
-		Config:        json.RawMessage(`{"endpoint":"https://x","headers":{"Authorization":"Bearer tok"},"oauth_client_secret":"cs-1"}`),
+		Config: json.RawMessage(`{"endpoint":"https://x","headers":{"Authorization":"Bearer tok"},"oauth_client_secret":"cs-1"}`),
 	}
 	masked := sanitizeMcpConfig(cfg)
 	s := string(masked.Config)
@@ -79,7 +78,7 @@ func TestMcpConfigHeaderMasking(t *testing.T) {
 	}
 
 	// Sending the masked config back restores the stored secrets.
-	restored := restoreMcpConfig("streamable_http", masked.Config, cfg.Config)
+	restored := restoreMcpConfig(masked.Config, cfg.Config)
 	rs := string(restored)
 	if !strings.Contains(rs, "Bearer tok") || !strings.Contains(rs, "cs-1") {
 		t.Fatalf("restore did not resolve masks: %s", rs)
@@ -87,7 +86,7 @@ func TestMcpConfigHeaderMasking(t *testing.T) {
 
 	// A changed header value wins over the stored one; a new header passes through.
 	edited := json.RawMessage(`{"endpoint":"https://x","headers":{"Authorization":"Bearer new","X-K":"v"},"oauth_client_secret":"` + SecretMask + `"}`)
-	rs = string(restoreMcpConfig("streamable_http", edited, cfg.Config))
+	rs = string(restoreMcpConfig(edited, cfg.Config))
 	if !strings.Contains(rs, "Bearer new") || !strings.Contains(rs, `"X-K":"v"`) || !strings.Contains(rs, "cs-1") {
 		t.Fatalf("partial edit resolved wrong: %s", rs)
 	}

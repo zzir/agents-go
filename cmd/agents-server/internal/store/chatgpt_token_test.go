@@ -94,10 +94,10 @@ func TestMcpServerNameUniqueIndex(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	s := NewMcpServerStore(db)
-	if err := s.Create(ctx, &McpServerConfig{ID: NewID(), Name: "fs", TransportType: "stdio"}); err != nil {
+	if err := s.Create(ctx, &McpServerConfig{ID: NewID(), Name: "fs"}); err != nil {
 		t.Fatalf("first: %v", err)
 	}
-	err := s.Create(ctx, &McpServerConfig{ID: NewID(), Name: "fs", TransportType: "stdio"})
+	err := s.Create(ctx, &McpServerConfig{ID: NewID(), Name: "fs"})
 	if err == nil {
 		t.Fatal("duplicate mcp server name must violate the unique index")
 	}
@@ -116,7 +116,7 @@ func TestSaveOAuthTokenNotFound(t *testing.T) {
 		t.Fatalf("SaveOAuthToken(missing) err = %v, want ErrNotFound", err)
 	}
 	// An existing server persists fine.
-	cfg := &McpServerConfig{ID: NewID(), Name: "s", TransportType: "stdio"}
+	cfg := &McpServerConfig{ID: NewID(), Name: "s"}
 	if err := s.Create(ctx, cfg); err != nil {
 		t.Fatalf("create: %v", err)
 	}

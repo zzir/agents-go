@@ -15,23 +15,19 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
-// MCP save-time validation rejects an unknown transport and a config missing
-// the fields its transport needs, instead of letting a broken server sit in the
-// DB until the first connect fails.
+// MCP save-time validation rejects a config missing its endpoint, instead of
+// letting a broken server sit in the DB until the first connect fails.
 func TestMcpServerReqValidate(t *testing.T) {
 	cases := []struct {
 		name    string
 		req     mcpServerReq
 		wantSub string // "" = valid
 	}{
-		{"valid stdio", mcpServerReq{Name: "a", TransportType: "stdio", Config: json.RawMessage(`{"command":"npx"}`)}, ""},
-		{"valid http", mcpServerReq{Name: "a", TransportType: "streamable_http", Config: json.RawMessage(`{"endpoint":"http://x"}`)}, ""},
-		{"no name", mcpServerReq{TransportType: "stdio", Config: json.RawMessage(`{"command":"x"}`)}, "name is required"},
-		{"no transport", mcpServerReq{Name: "a"}, "transport_type is required"},
-		{"unknown transport", mcpServerReq{Name: "a", TransportType: "carrier-pigeon"}, "must be stdio or streamable_http"},
-		{"stdio no command", mcpServerReq{Name: "a", TransportType: "stdio", Config: json.RawMessage(`{}`)}, "requires config.command"},
-		{"http no endpoint", mcpServerReq{Name: "a", TransportType: "streamable_http", Config: json.RawMessage(`{}`)}, "requires config.endpoint"},
-		{"stdio bad config", mcpServerReq{Name: "a", TransportType: "stdio", Config: json.RawMessage(`"notobj"`)}, "not valid JSON"},
+		{"valid http", mcpServerReq{Name: "a", Config: json.RawMessage(`{"endpoint":"http://x"}`)}, ""},
+		{"no name", mcpServerReq{Config: json.RawMessage(`{"endpoint":"http://x"}`)}, "name is required"},
+		{"no config", mcpServerReq{Name: "a"}, "config.endpoint is required"},
+		{"no endpoint", mcpServerReq{Name: "a", Config: json.RawMessage(`{}`)}, "config.endpoint is required"},
+		{"bad config", mcpServerReq{Name: "a", Config: json.RawMessage(`"notobj"`)}, "not valid JSON"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -92,7 +88,7 @@ func TestMcpServerNameUnique(t *testing.T) {
 	engine := newTestEngine()
 	engine.POST("/mcp-servers", h.Create)
 
-	body := `{"name":"fs","transport_type":"stdio","config":{"command":"npx"}}`
+	body := `{"name":"fs","config":{"endpoint":"http://x"}}`
 	if w := doJSON(t, engine, http.MethodPost, "/mcp-servers", body); w.Code != http.StatusCreated {
 		t.Fatalf("first create: got %d (body %s)", w.Code, w.Body.String())
 	}
@@ -116,7 +112,7 @@ func TestMcpServerToolsNotFoundVsNotConnected(t *testing.T) {
 		t.Fatalf("missing server: got %d, want 404 (body %s)", w.Code, w.Body.String())
 	}
 	// Exists but never connected -> 409.
-	cfg := &store.McpServerConfig{ID: store.NewID(), Name: "fs", TransportType: "stdio"}
+	cfg := &store.McpServerConfig{ID: store.NewID(), Name: "fs", Config: json.RawMessage(`{"endpoint":"http://x"}`)}
 	if err := mcpStore.Create(t.Context(), cfg); err != nil {
 		t.Fatal(err)
 	}

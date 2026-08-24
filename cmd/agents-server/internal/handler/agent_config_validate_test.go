@@ -99,7 +99,7 @@ func TestAgentConfigRejectsDoubleSelectedMcpServer(t *testing.T) {
 	engine, mcpStore := newAgentEngine(t)
 	ctx := context.Background()
 
-	s1 := &store.McpServerConfig{Name: "files", TransportType: "stdio"}
+	s1 := &store.McpServerConfig{Name: "files"}
 	if err := mcpStore.Create(ctx, s1); err != nil {
 		t.Fatal(err)
 	}
@@ -123,8 +123,8 @@ func TestAgentConfigAcceptsValidToolSelections(t *testing.T) {
 	engine, mcpStore := newAgentEngine(t)
 	ctx := context.Background()
 
-	s1 := &store.McpServerConfig{Name: "files", TransportType: "stdio"}
-	s2 := &store.McpServerConfig{Name: "search", TransportType: "stdio"}
+	s1 := &store.McpServerConfig{Name: "files"}
+	s2 := &store.McpServerConfig{Name: "search"}
 	if err := mcpStore.Create(ctx, s1); err != nil {
 		t.Fatal(err)
 	}

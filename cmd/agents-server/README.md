@@ -737,8 +737,10 @@ which is where the key lives (the ChatGPT OAuth flow included — see
 | GET    | `/mcp-servers/:id/tools`       | List tools exposed by the server                                  |
 | GET    | `/mcp-servers/oauth/callback`  | OAuth redirect callback                                           |
 
-Transports: `stdio` and `streamable_http`. The HTTP transport supports
-`auth_mode` `header` or `oauth`. Enabled servers are connected automatically on
+The one transport is streamable HTTP (spec §5.25) — `config` is `{endpoint,
+headers, auth_mode, oauth_*}` with `auth_mode` `header` or `oauth`; a local
+stdio-only MCP server can join through a stdio→HTTP proxy such as `mcp-proxy`.
+Enabled servers are connected automatically on
 startup and after create/update; disabling disconnects. A disabled server
 cannot be connected (`409`) — agents pick tools by live connection, so the
 toggle is a hard off switch.
@@ -2323,9 +2325,9 @@ mechanism.
   pending approvals, wake-up debts, auth tokens, the audit log, ownership.
   The direction chosen: shard by user (sticky load-balancing on the user
   id), an `instance_id` with a heartbeat table and lease-based ownership
-  instead of "is it in my memory", maintenance loops kept idempotent, stdio
-  MCP servers one per instance as a documented limit, SQLite refused for more
-  than one instance — and, before any of it ships, a migration mechanism,
+  instead of "is it in my memory", maintenance loops kept idempotent,
+  SQLite refused for more than one instance — and, before any of it ships, a
+  migration mechanism,
   because a rolling upgrade is two binaries on one schema.
 - **Guardrail ordering at the approval gate.** The tool stages are configurable
   now (a guardrail's `stages` cover `tool_input` / `tool_output` for every tool

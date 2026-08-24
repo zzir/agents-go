@@ -22,7 +22,7 @@ func newOAuthTestStore(t *testing.T, payload *tokenPayload) (*store.McpServerSto
 	t.Helper()
 	s := store.NewMcpServerStore(testdb.New(t))
 	cfg := &store.McpServerConfig{
-		ID: store.NewID(), Name: "srv", TransportType: "streamable_http", Enabled: true,
+		ID: store.NewID(), Name: "srv", Enabled: true,
 	}
 	if err := s.Create(context.Background(), cfg); err != nil {
 		t.Fatalf("create config: %v", err)

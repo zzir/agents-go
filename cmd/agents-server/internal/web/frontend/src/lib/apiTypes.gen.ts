@@ -1452,7 +1452,7 @@ export interface paths {
         put?: never;
         /**
          * Create MCP server
-         * @description config is transport-specific: {command, args} for stdio; {endpoint, headers, auth_mode, oauth_*} for streamable_http. Header values and oauth_client_secret are write-only (******** mask semantics).
+         * @description config is {endpoint, headers, auth_mode, oauth_*} (streamable HTTP). Header values and oauth_client_secret are write-only (******** mask semantics).
          */
         post: {
             parameters: {
@@ -6084,9 +6084,9 @@ export interface components {
         };
         "handler.mcpServerListItem": {
             /**
-             * @description Config holds the transport-specific settings as JSON: StdioMcpConfig for
-             *     "stdio", HTTPMcpConfig for "streamable_http". Stored as TEXT and
-             *     exchanged with the API as a raw JSON object.
+             * @description Config holds the connection settings as JSON (HTTPMcpConfig — the
+             *     streamable_http transport is the only one the server speaks, spec §5.25).
+             *     Stored as TEXT and exchanged with the API as a raw JSON object.
              */
             config?: number[];
             created_at?: string;
@@ -6108,19 +6108,13 @@ export interface components {
              *     authorizing, needs_auth, disconnected, or connected.
              */
             status?: string;
-            /** @description stdio | streamable_http */
-            transport_type?: string;
             updated_at?: string;
         };
         "handler.mcpServerReq": {
-            /**
-             * @description Config is the transport-specific settings object, interpreted per
-             *     TransportType (see store.StdioMcpConfig / store.HTTPMcpConfig).
-             */
+            /** @description Config is the connection settings object (store.HTTPMcpConfig). */
             config?: number[];
             enabled?: boolean;
             name?: string;
-            transport_type?: string;
         };
         "handler.mcpToolInfo": {
             description?: string;

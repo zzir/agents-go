@@ -182,7 +182,7 @@ func TestConnectEnabledMcpServersConcurrent(t *testing.T) {
 	mcpStore := store.NewMcpServerStore(db)
 	mk := func(name, endpoint string) {
 		cfg := &store.McpServerConfig{
-			ID: store.NewID(), Name: name, TransportType: "streamable_http", Enabled: true,
+			ID: store.NewID(), Name: name, Enabled: true,
 			Config: []byte(`{"endpoint":"` + endpoint + `"}`),
 		}
 		if err := mcpStore.Create(ctx, cfg); err != nil {
@@ -235,8 +235,8 @@ func TestReconcileLogsFailedReconnect(t *testing.T) {
 	m := NewManager(ctx, nil)
 
 	m.Reconcile(&store.McpServerConfig{
-		ID: store.NewID(), Name: "broken", TransportType: "stdio", Enabled: true,
-		Config: []byte(`{"command":"agents-server-no-such-executable"}`),
+		ID: store.NewID(), Name: "broken", Enabled: true,
+		Config: []byte(`{"endpoint":"http://127.0.0.1:1/mcp"}`),
 	}, nil)
 
 	deadline := time.After(10 * time.Second)

@@ -113,20 +113,17 @@ func (h *McpServerHandler) List(c *gin.Context) {
 
 // mcpServerReq is the request body for both Create and Update.
 type mcpServerReq struct {
-	Name          string `json:"name"`
-	TransportType string `json:"transport_type"`
-	Enabled       bool   `json:"enabled"`
-	// Config is the transport-specific settings object, interpreted per
-	// TransportType (see store.StdioMcpConfig / store.HTTPMcpConfig).
+	Name    string `json:"name"`
+	Enabled bool   `json:"enabled"`
+	// Config is the connection settings object (store.HTTPMcpConfig).
 	Config json.RawMessage `json:"config"`
 }
 
 func (r *mcpServerReq) toModel() *store.McpServerConfig {
 	return &store.McpServerConfig{
-		Name:          r.Name,
-		TransportType: r.TransportType,
-		Enabled:       r.Enabled,
-		Config:        r.Config,
+		Name:    r.Name,
+		Enabled: r.Enabled,
+		Config:  r.Config,
 	}
 }
 
@@ -134,33 +131,16 @@ func (r *mcpServerReq) validate() string {
 	if r.Name == "" {
 		return "name is required"
 	}
-	// Validate transport + its config here so a broken server can't sit in the
-	// DB looking configured until the first connect attempt fails.
-	switch r.TransportType {
-	case "stdio":
-		var sc store.StdioMcpConfig
-		if len(r.Config) > 0 {
-			if err := json.Unmarshal(r.Config, &sc); err != nil {
-				return "config is not valid JSON: " + err.Error()
-			}
+	// Validate the config here so a broken server can't sit in the DB looking
+	// configured until the first connect attempt fails.
+	var hc store.HTTPMcpConfig
+	if len(r.Config) > 0 {
+		if err := json.Unmarshal(r.Config, &hc); err != nil {
+			return "config is not valid JSON: " + err.Error()
 		}
-		if sc.Command == "" {
-			return "stdio transport requires config.command"
-		}
-	case "streamable_http":
-		var hc store.HTTPMcpConfig
-		if len(r.Config) > 0 {
-			if err := json.Unmarshal(r.Config, &hc); err != nil {
-				return "config is not valid JSON: " + err.Error()
-			}
-		}
-		if hc.Endpoint == "" {
-			return "streamable_http transport requires config.endpoint"
-		}
-	case "":
-		return "transport_type is required"
-	default:
-		return "transport_type must be stdio or streamable_http, got " + r.TransportType
+	}
+	if hc.Endpoint == "" {
+		return "config.endpoint is required"
 	}
 	return ""
 }
@@ -168,7 +148,7 @@ func (r *mcpServerReq) validate() string {
 // Create persists a new MCP server configuration from the request body.
 //
 //	@Summary		Create MCP server
-//	@Description	config is transport-specific: {command, args} for stdio; {endpoint, headers, auth_mode, oauth_*} for streamable_http. Header values and oauth_client_secret are write-only (******** mask semantics).
+//	@Description	config is {endpoint, headers, auth_mode, oauth_*} (streamable HTTP). Header values and oauth_client_secret are write-only (******** mask semantics).
 //	@Tags			mcp-servers
 //	@Accept			json
 //	@Produce		json
@@ -190,7 +170,7 @@ func (h *McpServerHandler) Create(c *gin.Context) {
 	}
 	cfg := req.toModel()
 	// No stored config yet: mask sentinels resolve to empty.
-	cfg.Config = restoreMcpConfig(cfg.TransportType, cfg.Config, nil)
+	cfg.Config = restoreMcpConfig(cfg.Config, nil)
 	if err := h.store.Create(c.Request.Context(), cfg); err != nil {
 		saveError(c, err) // duplicate name -> 409
 		return
@@ -255,7 +235,7 @@ func (h *McpServerHandler) Update(c *gin.Context) {
 	// Masked header values / oauth_client_secret round-trip to their stored
 	// values inside the store's transaction.
 	err := h.store.Update(ctx, id, cfg, func(prev *store.McpServerConfig) error {
-		cfg.Config = restoreMcpConfig(cfg.TransportType, cfg.Config, prev.Config)
+		cfg.Config = restoreMcpConfig(cfg.Config, prev.Config)
 		return nil
 	})
 	if err != nil {
@@ -332,25 +312,23 @@ func (h *McpServerHandler) Connect(c *gin.Context) {
 		return
 	}
 
-	if cfg.TransportType == "streamable_http" {
-		var hc store.HTTPMcpConfig
-		if err := json.Unmarshal(cfg.Config, &hc); err == nil && hc.AuthMode == "oauth" {
-			redirectURI := h.externalOrigin(c.Request) + server.APIPrefix + mcpOAuthCallbackPath
-			result, err := h.oauth.ConnectWithOAuth(c.Request.Context(), h.manager, cfg, &hc, redirectURI)
-			if err != nil {
-				upstreamError(c, err)
-				return
-			}
-			if result.Connected {
-				c.JSON(http.StatusOK, mcpConnectResp{Status: "connected"})
-			} else {
-				c.JSON(http.StatusOK, mcpConnectResp{
-					Status:       "authorization_required",
-					AuthorizeURL: result.AuthorizeURL,
-				})
-			}
+	var hc store.HTTPMcpConfig
+	if err := json.Unmarshal(cfg.Config, &hc); err == nil && hc.AuthMode == "oauth" {
+		redirectURI := h.externalOrigin(c.Request) + server.APIPrefix + mcpOAuthCallbackPath
+		result, err := h.oauth.ConnectWithOAuth(c.Request.Context(), h.manager, cfg, &hc, redirectURI)
+		if err != nil {
+			upstreamError(c, err)
 			return
 		}
+		if result.Connected {
+			c.JSON(http.StatusOK, mcpConnectResp{Status: "connected"})
+		} else {
+			c.JSON(http.StatusOK, mcpConnectResp{
+				Status:       "authorization_required",
+				AuthorizeURL: result.AuthorizeURL,
+			})
+		}
+		return
 	}
 
 	if err := h.manager.Connect(c.Request.Context(), cfg); err != nil {

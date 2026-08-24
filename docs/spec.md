@@ -2833,6 +2833,20 @@ the workbench just no longer builds one. Do not reintroduce a global routing
 table — a future need for shared endpoint selection belongs on the provider
 rows themselves, not a second table that redirects them.
 
+### 5.25 The workbench speaks one MCP transport: streamable HTTP
+
+Removed 2026-08-24. A stored stdio MCP server was arbitrary command execution
+on the host as the server's own process user — a standing RCE surface behind
+one admin write, and the blocker for ever letting non-admins configure MCP.
+`McpServerConfig` therefore carries no transport discriminator at all:
+`Config` IS an `HTTPMcpConfig`, and a field that could only ever hold one
+value was removed with the feature. A local stdio-only server joins through a
+stdio→HTTP proxy (mcp-proxy and the like), run and supervised by the
+operator, outside the workbench's authority. The SDK's `mcp` module keeps
+its stdio transport — an embedder spawning a subprocess in their own program
+is their own trust decision. Do not reintroduce stdio configs on the server;
+a sandboxed variant would be a new decision, argued here first.
+
 ---
 
 ## 6. Open questions

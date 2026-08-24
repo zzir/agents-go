@@ -13,7 +13,6 @@ import { fc } from '@/lib/form';
 import { JsonField } from '@/lib/JsonField';
 import { toast } from '@/lib/toast';
 
-const TRANSPORTS = ['stdio', 'streamable_http'] as const;
 const AUTH_MODES = [
   { value: '', label: 'None' },
   { value: 'header', label: 'Static headers' },
@@ -21,8 +20,6 @@ const AUTH_MODES = [
 ] as const;
 
 interface McpServerConfig {
-  command?: string;
-  args?: string[];
   endpoint?: string;
   headers?: Record<string, string>;
   auth_mode?: string;
@@ -41,7 +38,6 @@ type McpStatus = 'disabled' | 'connecting' | 'authorizing' | 'needs_auth' | 'dis
 interface McpServer {
   id: string | number;
   name: string;
-  transport_type: string;
   enabled: boolean;
   status: McpStatus;
   has_oauth_token?: boolean;
@@ -50,10 +46,7 @@ interface McpServer {
 
 interface McpFormData {
   name: string;
-  transport_type: string;
   enabled: boolean;
-  command: string;
-  args: string;
   endpoint: string;
   headers: string;
   auth_mode: string;
@@ -77,9 +70,7 @@ interface McpFormProps {
 function flatten(s: Partial<McpServer>): McpFormData {
   const c = s.config || {};
   return {
-    name: s.name || '', transport_type: s.transport_type || 'stdio', enabled: s.enabled !== false,
-    command: c.command || '',
-    args: Array.isArray(c.args) ? JSON.stringify(c.args) : '',
+    name: s.name || '', enabled: s.enabled !== false,
     endpoint: c.endpoint || '',
     headers: c.headers ? JSON.stringify(c.headers) : '',
     auth_mode: c.auth_mode || '',
@@ -96,41 +87,26 @@ function flatten(s: Partial<McpServer>): McpFormData {
 // the save and surface it — parsing to an empty value and saving anyway
 // silently discarded whatever the user typed.
 function pack(form: McpFormData): Partial<McpServer> {
-  const base: Partial<McpServer> = { name: form.name, transport_type: form.transport_type, enabled: form.enabled };
-  let config: McpServerConfig;
-  if (form.transport_type === 'stdio') {
-    let args: string[] = [];
-    const argsRaw = form.args.trim();
-    if (argsRaw) {
+  const base: Partial<McpServer> = { name: form.name, enabled: form.enabled };
+  const config: McpServerConfig = { endpoint: form.endpoint };
+  if (form.auth_mode === 'header' || !form.auth_mode) {
+    const headersRaw = form.headers.trim();
+    if (headersRaw) {
       let parsed: unknown;
-      try { parsed = JSON.parse(argsRaw); }
-      catch { throw new Error('Args is not valid JSON — fix or clear it before saving'); }
-      if (!Array.isArray(parsed)) throw new Error('Args must be a JSON array, e.g. ["/path/to/dir"]');
-      args = parsed as string[];
-    }
-    config = { command: form.command, args };
-  } else {
-    config = { endpoint: form.endpoint };
-    if (form.auth_mode === 'header' || !form.auth_mode) {
-      const headersRaw = form.headers.trim();
-      if (headersRaw) {
-        let parsed: unknown;
-        try { parsed = JSON.parse(headersRaw); }
-        catch { throw new Error('Headers is not valid JSON — fix or clear it before saving'); }
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Headers must be a JSON object, e.g. {"Authorization": "Bearer <token>"}');
-        if (Object.keys(parsed).length > 0) config.headers = parsed as Record<string, string>;
-      }
-    }
-    if (form.auth_mode === 'oauth') {
-      config.auth_mode = 'oauth';
-      if (form.oauth_client_id) config.oauth_client_id = form.oauth_client_id;
-      if (form.oauth_client_secret) config.oauth_client_secret = form.oauth_client_secret;
-      if (form.oauth_scopes) config.oauth_scopes = form.oauth_scopes;
-    } else if (form.auth_mode === 'header') {
-      config.auth_mode = 'header';
+      try { parsed = JSON.parse(headersRaw); }
+      catch { throw new Error('Headers is not valid JSON — fix or clear it before saving'); }
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Headers must be a JSON object, e.g. {"Authorization": "Bearer <token>"}');
+      if (Object.keys(parsed).length > 0) config.headers = parsed as Record<string, string>;
     }
   }
-  // Common resilience/behavior settings apply to both transports.
+  if (form.auth_mode === 'oauth') {
+    config.auth_mode = 'oauth';
+    if (form.oauth_client_id) config.oauth_client_id = form.oauth_client_id;
+    if (form.oauth_client_secret) config.oauth_client_secret = form.oauth_client_secret;
+    if (form.oauth_scopes) config.oauth_scopes = form.oauth_scopes;
+  } else if (form.auth_mode === 'header') {
+    config.auth_mode = 'header';
+  }
   if (form.max_retry_attempts) config.max_retry_attempts = form.max_retry_attempts;
   if (form.retry_backoff_ms) config.retry_backoff_ms = form.retry_backoff_ms;
   if (form.use_structured_content) config.use_structured_content = true;
@@ -142,10 +118,9 @@ function McpForm({ initial, onSave, onCancel, onDelete, saving, onClearAuth }: M
   const [authCleared, setAuthCleared] = useState(false);
   const [clearing, setClearing] = useState(false);
   const set = (k: keyof McpFormData, v: string | boolean | number) => setForm(prev => ({ ...prev, [k]: v }));
-  const isStdio = form.transport_type === 'stdio';
   const isOAuth = form.auth_mode === 'oauth';
   const isHeader = form.auth_mode === 'header';
-  const canClearAuth = !!onClearAuth && !authCleared && !isStdio && isOAuth && !!initial?.has_oauth_token;
+  const canClearAuth = !!onClearAuth && !authCleared && isOAuth && !!initial?.has_oauth_token;
 
   const handleClearAuth = async () => {
     if (!onClearAuth || clearing) return;
@@ -158,28 +133,21 @@ function McpForm({ initial, onSave, onCancel, onDelete, saving, onClearAuth }: M
   return (
     <Stack gap="normal">
       {fc('Name', <TextInput block value={form.name} onChange={e => set('name', e.target.value)} />)}
-      {fc('Transport',
-        <Select value={form.transport_type} onChange={e => set('transport_type', e.target.value)}>
-          {TRANSPORTS.map(t => <Select.Option key={t} value={t}>{t}</Select.Option>)}
-        </Select>,
-      )}
-      {isStdio && fc('Command', <TextInput block value={form.command} onChange={e => set('command', e.target.value)} placeholder="npx -y @modelcontextprotocol/server-filesystem" />)}
-      {isStdio && <JsonField label="Args (JSON array)" value={form.args} onChange={v => set('args', v)} placeholder='["/path/to/dir"]' />}
-      {!isStdio && fc('Endpoint', <TextInput block value={form.endpoint} onChange={e => set('endpoint', e.target.value)} placeholder="http://localhost:3000/mcp" />)}
-      {!isStdio && fc('Authentication',
+      {fc('Endpoint', <TextInput block value={form.endpoint} onChange={e => set('endpoint', e.target.value)} placeholder="http://localhost:3000/mcp" />)}
+      {fc('Authentication',
         <Select value={form.auth_mode} onChange={e => set('auth_mode', e.target.value)}>
           {AUTH_MODES.map(m => <Select.Option key={m.value} value={m.value}>{m.label}</Select.Option>)}
         </Select>,
       )}
-      {!isStdio && isHeader && <JsonField label="Headers (JSON object)" value={form.headers} onChange={v => set('headers', v)} placeholder='{"Authorization": "Bearer <token>"}' caption="Sent with every request, e.g. an auth or API-key header. Leave empty for none." />}
-      {!isStdio && isOAuth && fc('Client ID',
+      {isHeader && <JsonField label="Headers (JSON object)" value={form.headers} onChange={v => set('headers', v)} placeholder='{"Authorization": "Bearer <token>"}' caption="Sent with every request, e.g. an auth or API-key header. Leave empty for none." />}
+      {isOAuth && fc('Client ID',
         <TextInput block value={form.oauth_client_id} onChange={e => set('oauth_client_id', e.target.value)} placeholder="Leave empty for dynamic registration" monospace />,
         'Pre-registered OAuth client ID. Leave empty to use dynamic client registration (DCR).',
       )}
-      {!isStdio && isOAuth && form.oauth_client_id && fc('Client secret',
+      {isOAuth && form.oauth_client_id && fc('Client secret',
         <SecretInput block value={form.oauth_client_secret} onChange={e => set('oauth_client_secret', e.target.value)} monospace />,
       )}
-      {!isStdio && isOAuth && fc('Scopes',
+      {isOAuth && fc('Scopes',
         <TokenListInput ariaLabel="OAuth scopes" placeholder="read write"
           values={form.oauth_scopes.split(/\s+/).filter(Boolean)}
           onChange={vals => set('oauth_scopes', vals.join(' '))} />,
@@ -355,7 +323,7 @@ export function McpServerPanel() {
             status={<span className="form-status-dot" style={{ background: STATUS_DOT[s.status] || 'var(--fgColor-muted)' }} />}
             title={s.name}
             badges={s.config && s.config.auth_mode === 'oauth' && <Label variant={BADGE.type}>OAuth</Label>}
-            sub={s.transport_type + (s.config && s.config.command ? ': ' + s.config.command : '') + (s.config && s.config.endpoint ? ': ' + s.config.endpoint : '')}
+            sub={(s.config && s.config.endpoint) || ''}
             actions={<>
               {action && !readOnly && (
                 <Button

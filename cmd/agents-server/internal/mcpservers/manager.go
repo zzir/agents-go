@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os/exec"
 	"sync"
 	"time"
 
@@ -26,7 +25,7 @@ import (
 // connections keyed by config ID.
 type Manager struct {
 	// rootCtx bounds the lifetime of the connections themselves (most
-	// importantly the stdio subprocesses), independent of whichever request
+	// importantly any in-flight handshake), independent of whichever request
 	// context happened to trigger the connect.
 	rootCtx  context.Context
 	settings *settings.Reader
@@ -34,7 +33,7 @@ type Manager struct {
 	servers  map[string]*mcp.Server
 	// connecting marks servers whose handshake is in flight, carrying the
 	// handshake's cancel so Disconnect can abort it. The handshake runs OUTSIDE
-	// mu (it does network/subprocess I/O and must not block
+	// mu (it does network I/O and must not block
 	// Get/IsConnected/Disconnect); this map dedups concurrent Connect calls for
 	// the same server without holding the lock across the handshake.
 	connecting map[string]*connectState
@@ -54,7 +53,7 @@ type connectState struct {
 }
 
 // NewManager returns a new manager with no active connections. rootCtx
-// scopes connection lifetimes: cancelling it stops every stdio subprocess.
+// scopes connection lifetimes: cancelling it severs every connection.
 func NewManager(rootCtx context.Context, cfg *settings.Reader) *Manager {
 	if rootCtx == nil {
 		rootCtx = context.Background()
@@ -133,64 +132,32 @@ func (m *Manager) finishConnect(id string, gen uint64, srv *mcp.Server, connErr 
 func (m *Manager) Connect(ctx context.Context, cfg *store.McpServerConfig) error {
 	// Validate config before claiming the connect slot so a bad config fails
 	// fast and can't strand the in-progress flag.
-	var cmd *exec.Cmd
-	var transport *mcpsdk.StreamableClientTransport
-	var retry store.McpRetryConfig
-	var useStructured bool
-	// redial is what makes the connection self-healing: the recipe for
-	// rebuilding this server's transport, which the SDK runs when it finds the
-	// connection dead. The manager owns it because the config lives here.
-	var redial func(context.Context) (mcpsdk.Transport, error)
-	switch cfg.TransportType {
-	case "stdio":
-		var sc store.StdioMcpConfig
-		if cerr := unmarshalConfig(cfg.Config, &sc); cerr != nil {
-			return fmt.Errorf("mcp server %s: invalid config: %w", cfg.Name, cerr)
-		}
-		retry, useStructured = sc.McpRetryConfig, sc.UseStructuredContent
-		// The command context governs the subprocess lifetime — it must be
-		// the manager's root context, NOT the caller's (a request context
-		// would kill the server as soon as the request ends).
-		cmd = exec.CommandContext(m.rootCtx, sc.Command, sc.Args...)
-		redial = func(context.Context) (mcpsdk.Transport, error) {
-			return &mcpsdk.CommandTransport{Command: exec.CommandContext(m.rootCtx, sc.Command, sc.Args...)}, nil
-		}
-	case "streamable_http":
-		var hc store.HTTPMcpConfig
-		if cerr := unmarshalConfig(cfg.Config, &hc); cerr != nil {
-			return fmt.Errorf("mcp server %s: invalid config: %w", cfg.Name, cerr)
-		}
-		retry, useStructured = hc.McpRetryConfig, hc.UseStructuredContent
-		transport = m.httpTransport(ctx, &hc, nil)
-		redial = func(context.Context) (mcpsdk.Transport, error) {
-			// The manager's own context, and the settings as they read NOW: a
-			// re-dial minutes later must not reuse a request context that is
-			// long gone, and picking up a proxy changed since is a bonus, not
-			// a risk — the endpoint and headers are the config this connection
-			// was made from.
-			return m.httpTransport(m.rootCtx, &hc, nil), nil
-		}
-	default:
-		return fmt.Errorf("unknown transport type: %s", cfg.TransportType)
+	var hc store.HTTPMcpConfig
+	if cerr := unmarshalConfig(cfg.Config, &hc); cerr != nil {
+		return fmt.Errorf("mcp server %s: invalid config: %w", cfg.Name, cerr)
 	}
-	opts := buildMcpOptions(cfg.Name, retry, useStructured)
-	opts.Redial = redial
+	transport := m.httpTransport(ctx, &hc, nil)
+	opts := buildMcpOptions(cfg.Name, hc.McpRetryConfig, hc.UseStructuredContent)
+	// Redial is what makes the connection self-healing: the recipe for
+	// rebuilding this server's transport, which the SDK runs when it finds the
+	// connection dead. The manager's own context, and the settings as they
+	// read NOW: a re-dial minutes later must not reuse a request context that
+	// is long gone, and picking up a proxy changed since is a bonus, not a
+	// risk — the endpoint and headers are the config this connection was made
+	// from.
+	opts.Redial = func(context.Context) (mcpsdk.Transport, error) {
+		return m.httpTransport(m.rootCtx, &hc, nil), nil
+	}
 
 	done, hctx, gen, err := m.beginConnect(ctx, cfg.ID)
 	if err != nil || done {
 		return err // already connected (nil) or another connect is in flight
 	}
 
-	// Handshake OUTSIDE the lock, under hctx (which Disconnect can cancel): this
-	// does subprocess spawn / network I/O and a slow server here must not block
+	// Handshake OUTSIDE the lock, under hctx (which Disconnect can cancel):
+	// this does network I/O and a slow server here must not block
 	// Get/IsConnected/Disconnect/Connect.
-	var srv *mcp.Server
-	switch cfg.TransportType {
-	case "stdio":
-		srv, err = mcp.NewStdioServer(hctx, cfg.Name, cmd, opts)
-	case "streamable_http":
-		srv, err = mcp.NewWithTransport(hctx, cfg.Name, transport, opts)
-	}
+	srv, err := mcp.NewWithTransport(hctx, cfg.Name, transport, opts)
 	if err != nil {
 		err = fmt.Errorf("connecting MCP server %s: %w", cfg.Name, err)
 	}
@@ -198,8 +165,8 @@ func (m *Manager) Connect(ctx context.Context, cfg *store.McpServerConfig) error
 }
 
 // Reconcile makes the live connection match a server's desired config after a
-// config write: it always drops the current connection (so a changed endpoint /
-// command / headers can't keep serving stale config) and, for an enabled
+// config write: it always drops the current connection (so a changed endpoint
+// or headers can't keep serving stale config) and, for an enabled
 // server, reconnects in the background under a bounded deadline off the manager
 // root context (the request context is already gone). A disabled server is left
 // disconnected. OAuth servers reconnect through the coordinator's silent path —
@@ -250,13 +217,10 @@ func (m *Manager) Reconcile(desired *store.McpServerConfig, oauth *OAuthCoordina
 	}()
 }
 
-// IsOAuthConfig reports whether cfg is a streamable_http server using OAuth,
-// which must be (re)connected through the OAuth coordinator rather than the
-// plain Connect path.
+// IsOAuthConfig reports whether cfg is a server using OAuth, which must be
+// (re)connected through the OAuth coordinator rather than the plain Connect
+// path.
 func IsOAuthConfig(cfg *store.McpServerConfig) bool {
-	if cfg.TransportType != "streamable_http" {
-		return false
-	}
 	var hc store.HTTPMcpConfig
 	if len(cfg.Config) > 0 {
 		_ = json.Unmarshal(cfg.Config, &hc)
@@ -443,7 +407,7 @@ func ConnectEnabled(ctx context.Context, mgr *Manager, servers *store.McpServerS
 	// Connect concurrently, each under its own handshake timeout: a hung or
 	// unreachable server must not stall the others' auto-connect (it fails its
 	// own deadline and the rest come up regardless). The timeout bounds only
-	// the handshake — a stdio subprocess's lifetime is the manager root context.
+	// the handshake — the connection's lifetime is the manager root context.
 	var wg sync.WaitGroup
 	for i := range configs {
 		cfg := &configs[i]
@@ -453,7 +417,7 @@ func ConnectEnabled(ctx context.Context, mgr *Manager, servers *store.McpServerS
 		wg.Go(func() {
 			cctx, cancel := context.WithTimeout(ctx, mcpAutoConnectTimeout)
 			defer cancel()
-			if cfg.TransportType == "streamable_http" && cfg.OAuthToken != "" {
+			if cfg.OAuthToken != "" {
 				var hc store.HTTPMcpConfig
 				if unmarshalConfig(cfg.Config, &hc) == nil && hc.AuthMode == "oauth" {
 					result, err := oauth.ConnectWithOAuth(cctx, mgr, cfg, &hc, "")
