@@ -228,6 +228,37 @@ func stampCreateScope(c *gin.Context, scope, ownerID *string) bool {
 	return true
 }
 
+// setScopePlain is the /scope POST body shared by entities with no extra
+// validation (skills, MCP servers): bind, refuse the same scope, flip.
+// Entities with more to check (providers' demote guard, agents' and
+// workflows' reference validation) keep their own handlers.
+func setScopePlain[T any](c *gin.Context, s *store.CrudStore[T], kind string, scopeOf func(*T) (scope, owner string)) {
+	scope, ok := bindScope(c)
+	if !ok {
+		return
+	}
+	u, _ := server.CurrentUser(c)
+	ctx, id := c.Request.Context(), c.Param("id")
+	row, err := s.Get(ctx, id)
+	if err != nil {
+		storeError(c, err)
+		return
+	}
+	cur, _ := scopeOf(row)
+	if sameScope(c, kind, cur, scope) {
+		return
+	}
+	owner := ""
+	if scope == store.ScopePrivate {
+		owner = u.ID
+	}
+	if err := store.SetScopeOf(ctx, s, id, scope, owner); err != nil {
+		saveError(c, err) // name collision in the target scope -> 409
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 // callerSees reports whether the caller may see a row — the predicate behind
 // treating foreign private rows as absent in validation messages too.
 func callerSees(c *gin.Context, scope, rowOwner string) bool {

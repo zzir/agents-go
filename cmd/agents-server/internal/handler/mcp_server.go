@@ -334,29 +334,7 @@ func (h *McpServerHandler) Delete(c *gin.Context) {
 //	@Security	BearerAuth
 //	@Router		/mcp-servers/{id}/scope [post]
 func (h *McpServerHandler) SetScope(c *gin.Context) {
-	scope, ok := bindScope(c)
-	if !ok {
-		return
-	}
-	u, _ := server.CurrentUser(c)
-	ctx, id := c.Request.Context(), c.Param("id")
-	srv, err := h.store.Get(ctx, id)
-	if err != nil {
-		storeError(c, err)
-		return
-	}
-	if sameScope(c, "MCP server", srv.Scope, scope) {
-		return
-	}
-	owner := ""
-	if scope == store.ScopePrivate {
-		owner = u.ID
-	}
-	if err := store.SetScopeOf(ctx, h.store.CrudStore, id, scope, owner); err != nil {
-		saveError(c, err)
-		return
-	}
-	c.Status(http.StatusNoContent)
+	setScopePlain(c, h.store.CrudStore, "MCP server", func(m *store.McpServerConfig) (string, string) { return m.Scope, m.OwnerID })
 }
 
 // mcpConnectResp is the Connect response: status "connected", or
