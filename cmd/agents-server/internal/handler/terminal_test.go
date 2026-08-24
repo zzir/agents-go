@@ -275,9 +275,10 @@ func TestTerminalWS_EchoResizeExit(t *testing.T) {
 	}
 }
 
-// A member is refused before the open is even read: the terminal is a shell
-// on a host with the server's stored credentials — admin only.
-func TestTerminalWS_MemberRefused(t *testing.T) {
+// A member opens a shell into their OWN project's container; a foreign
+// project reads as absent and acquires nothing (spec §5.28 — admins reach
+// any project, which the other tests exercise via the local user).
+func TestTerminalWS_ProjectOwnership(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
 	sandboxes := store.NewSandboxStore(db)
@@ -285,9 +286,17 @@ func TestTerminalWS_MemberRefused(t *testing.T) {
 	if err := sandboxes.Create(t.Context(), cfg); err != nil {
 		t.Fatal(err)
 	}
-	provider := &fakeProvider{sb: &fakeTerminalSandbox{term: newFakeTerminal()}}
-	th := NewTerminalHandler(sandboxes, store.NewProjectStore(db), provider, settings.NewReader(nil))
+	projects := store.NewProjectStore(db)
 	member := protocol.UserInfo{ID: store.NewID(), Email: "m@example.com", Role: store.RoleMember}
+	own := &store.Project{OwnerID: member.ID, SandboxID: cfg.ID, Name: "own"}
+	foreign := &store.Project{OwnerID: store.NewID(), SandboxID: cfg.ID, Name: "foreign"}
+	for _, p := range []*store.Project{own, foreign} {
+		if err := projects.Create(t.Context(), p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	provider := &fakeProvider{sb: &fakeTerminalSandbox{term: newFakeTerminal()}}
+	th := NewTerminalHandler(sandboxes, projects, provider, settings.NewReader(nil))
 	asMember := func(_ context.Context, bearer string) (protocol.UserInfo, error) {
 		if bearer != testWSToken {
 			return protocol.UserInfo{}, errors.New("unauthorized")
@@ -300,14 +309,22 @@ func TestTerminalWS_MemberRefused(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	conn := dialTerminalRaw(t, srv)
-	env := readTerminalEnvelope(t, conn)
+	openTerminal(t, conn, cfg.ID, own.ID)
+	if env := readTerminalEnvelope(t, conn); env.Type != protocol.EventTerminalReady {
+		t.Fatalf("member on their own project = %q, want %s", env.Type, protocol.EventTerminalReady)
+	}
+	acquired := len(provider.projects)
+
+	conn2 := dialTerminalRaw(t, srv)
+	openTerminal(t, conn2, cfg.ID, foreign.ID)
+	env := readTerminalEnvelope(t, conn2)
 	var te protocol.TerminalError
 	_ = json.Unmarshal(env.Payload, &te)
-	if env.Type != protocol.EventTerminalError || !strings.Contains(te.Message, "admin") {
-		t.Fatalf("member's first frame = %s %q, want the admin-only refusal", env.Type, te.Message)
+	if env.Type != protocol.EventTerminalError || !strings.Contains(te.Message, "not found") {
+		t.Fatalf("member on a foreign project = %s %q, want a not-found refusal", env.Type, te.Message)
 	}
-	if n := len(provider.projects); n != 0 {
-		t.Fatalf("a refused member's connection acquired a sandbox %d time(s)", n)
+	if len(provider.projects) != acquired {
+		t.Fatal("a refused open acquired a sandbox")
 	}
 }
 

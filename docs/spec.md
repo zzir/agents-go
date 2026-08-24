@@ -2954,7 +2954,12 @@ volume stay on the daemon until the operator removes them); reclaiming space
 is the operator's explicit act. A run naming no project lands in the owner's
 per-sandbox default ("scratch"), created on first use.
 Projects are the first PERSONAL configuration entity: every member manages
-their own; ownership is scoped in the handlers, not the admin gate.
+their own; ownership is scoped in the handlers, not the admin gate. The web
+terminal follows the same line: a member opens a shell into their OWN
+project's container (a foreign project reads as absent), and an admin into
+any — the operator's escape hatch, and a deliberate exception to
+"session content is owner-only": a shell into a member's project tree can
+read files the member's runs wrote.
 
 ---
 

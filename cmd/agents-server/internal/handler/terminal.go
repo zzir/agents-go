@@ -83,15 +83,7 @@ func NewTerminalHandler(s *store.SandboxStore, projects *store.ProjectStore, m s
 // Handle runs one terminal session on an authenticated WebSocket connection.
 func (h *TerminalHandler) Handle(conn *server.WSConn) {
 	log := logging.Ctx(conn.Context())
-	// A terminal is a shell on a sandbox host with the server's stored
-	// credentials — admin-only, like every other write to what runs where.
 	if !conn.Recheck() {
-		return
-	}
-	if conn.User.Role != store.RoleAdmin {
-		_ = conn.WriteJSON(&protocol.Envelope{Type: protocol.EventTerminalError, Payload: mustJSON(protocol.TerminalError{
-			Message: "the terminal requires the admin role",
-		})})
 		return
 	}
 
@@ -227,6 +219,12 @@ func (h *TerminalHandler) open(conn *server.WSConn) (sandbox.Terminal, *store.Sa
 	proj, err := h.projects.Get(ctx, msg.ProjectID)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("project %s: %w", msg.ProjectID, err)
+	}
+	// A member opens a shell into their OWN project's container; an admin
+	// into any (the operator's escape hatch, recorded in spec §5.28). A
+	// foreign project reads as absent.
+	if conn.User.Role != store.RoleAdmin && proj.OwnerID != conn.User.ID {
+		return nil, nil, nil, fmt.Errorf("project %s: %w", msg.ProjectID, store.ErrNotFound)
 	}
 	if proj.SandboxID != cfg.ID {
 		return nil, nil, nil, errors.New("project lives on a different sandbox")

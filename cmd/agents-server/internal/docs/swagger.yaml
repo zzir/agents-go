@@ -2025,10 +2025,8 @@ components:
         owner_id:
           type: string
         scope:
-          description: |-
-            Scope is the row's visibility (spec §5.29): ScopePrivate — the owner's
-            alone — or ScopeGlobal, readable by every member and written by admins.
-            OwnerID is set exactly when the scope is private.
+          description: 'Scope/OwnerID: row visibility, owner set iff private — spec
+            §5.29.'
           type: string
         steps:
           items:
