@@ -594,18 +594,24 @@ func attachSkills(ctx context.Context, deps *AgentDeps, agent *agents.Agent, spe
 		return 0
 	}
 	// Two visible skills can share a name (a private one shadowing a global
-	// one); the owner's wins — ListMeta orders by name, so dedupe keeps the
-	// first owned row per name.
+	// one); the owner's wins: read_skill resolves own-over-global, so the
+	// index entry's description must be the owned row's too, whichever order
+	// ListMeta returned them in.
 	index := make([]skills.Skill, 0, len(stored))
-	advertised := make(map[string]bool, len(stored))
+	pos := make(map[string]int, len(stored))
 	for _, sk := range stored {
-		if advertised[sk.Name] && sk.OwnerID != ownerID {
+		if at, seen := pos[sk.Name]; seen {
+			if sk.OwnerID == ownerID {
+				index[at].Description = sk.Description
+			}
 			continue
 		}
-		if !advertised[sk.Name] {
-			index = append(index, skills.Skill{Name: sk.Name, Description: sk.Description})
-		}
-		advertised[sk.Name] = true
+		pos[sk.Name] = len(index)
+		index = append(index, skills.Skill{Name: sk.Name, Description: sk.Description})
+	}
+	advertised := make(map[string]bool, len(pos))
+	for name := range pos {
+		advertised[name] = true
 	}
 	rendered := skills.RenderIndex(index)
 	agent.Instructions = agents.WrapInstructions(agent.Instructions, "", rendered)

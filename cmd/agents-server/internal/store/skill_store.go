@@ -22,14 +22,17 @@ func NewSkillStore(db *bun.DB) *SkillStore {
 	return &SkillStore{CrudStore: NewCrudStore[Skill](db, "skill", "name ASC"), db: db}
 }
 
-// ListMeta returns the skills ownerID may see, without their content — the
-// index the agent build and the panel list read; a document body rides only
-// on Get/GetByNameFor.
+// ListMeta returns the skills ownerID may see (global first by name, then
+// the caller's own by creation time — the scoped-listing order, see
+// ListVisibleOf), without their content — the index the agent build and the
+// panel list read; a document body rides only on Get/GetByNameFor.
 func (s *SkillStore) ListMeta(ctx context.Context, ownerID string, admin bool) ([]Skill, error) {
 	var out []Skill
 	q := s.db.NewSelect().Model(&out).
 		ExcludeColumn("content").
-		OrderExpr("name ASC")
+		OrderExpr("CASE WHEN scope = ? THEN 0 ELSE 1 END", ScopeGlobal).
+		OrderExpr("CASE WHEN scope = ? THEN lower(name) END", ScopeGlobal).
+		OrderExpr("created_at ASC")
 	q = visibleTo(q, ownerID, admin)
 	if err := q.Scan(ctx); err != nil {
 		return nil, fmt.Errorf("listing skills: %w", err)
