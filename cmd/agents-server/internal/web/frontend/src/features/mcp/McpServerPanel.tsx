@@ -347,6 +347,12 @@ export function McpServerPanel() {
                     style={{ color: 'var(--fgColor-success)', minWidth: 90, textAlign: 'center' }}
                   >{busy[s.id] ? '...' : action.label}</Button>
                 )}
+                {/* Connecting arms a shared credential, so on a global row it
+                    stays the admin's act — tell the member whose move it is
+                    instead of showing a dead status dot. */}
+                {action && !editable && !action.inProgress && (
+                  <span className="resource-row-sub">waiting for an admin to reconnect</span>
+                )}
                 {editable && <EnabledToggle server={s} onToggle={handleToggleEnabled} />}
                 <RowActionsMenu name={s.name} editReadOnly={!editable} onEdit={() => startEdit(s)}
                   scope={isAdmin ? { row: s, setScope: api.mcpServers.setScope, onDone: reload } : undefined} />
