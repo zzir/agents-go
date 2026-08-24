@@ -9,7 +9,7 @@ import (
 )
 
 // ProviderTypeList responds with the registered provider backends — machine
-// facts only (auth modes, unsupported request features, global key setting).
+// facts only (auth modes, unsupported request features).
 // Display copy lives in the frontend; this endpoint exists so capability
 // hints in the UI derive from the same declaration the build enforces,
 // instead of drifting alongside it.

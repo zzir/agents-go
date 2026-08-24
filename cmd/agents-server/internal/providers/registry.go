@@ -18,8 +18,8 @@ import (
 	openaiProvider "github.com/zzir/agents-go/models/openai"
 )
 
-// The provider_type values an agent config, fallback entry or provider route
-// may select. Empty means openai — the value predates the field.
+// The provider_type values an agent config or fallback entry may select.
+// Empty means openai — the value predates the field.
 const (
 	TypeOpenAI    = "openai"
 	TypeAnthropic = "anthropic"
@@ -31,7 +31,7 @@ const AuthModeChatGPTLogin = store.AuthModeChatGPTLogin
 
 // Def is one backend the server can build providers for. It is an
 // INTERNAL table, not a plugin API: everything provider-selection touches —
-// validation, construction, the global key setting, auth modes, capability
+// validation, construction, auth modes, capability
 // metadata — derives from this slice, so adding a backend is one entry here
 // (plus its SDK module and a row in the frontend's PROVIDERS table) instead
 // of a hunt across bridge, handlers and docs. Being internal also means its shape may
@@ -157,7 +157,7 @@ func ValidateType(t string) error {
 
 // Validate checks a provider row's cross-field constraints: a
 // registered type, and an auth_mode the backend actually offers. The zero
-// value passes — it is the built-in default (openai on the global key).
+// value passes — it is the keyless built-in default, which fails pre-flight.
 func Validate(pv *store.Provider) error {
 	def, err := DefFor(pv.Type)
 	if err != nil {
