@@ -341,18 +341,23 @@ export function WorkflowPanel({ sessionId }: { sessionId: string | null }) {
         // the full definition (steps, prompts, gates), like every other
         // scoped panel. FormActions hides itself; Back closes the view.
         <ReadOnlyContext value={!rowEditable(editing)}>
-          <WorkflowForm saving={saving}
-            initial={{
-              name: editing.name,
-              description: editing.description || '',
-              steps: editing.steps || [],
-              budget: editing.budget || {},
-            }}
-            onSave={save}
-            onCancel={cancel}
-            onDelete={async () => { if (await remove(editing.id, editing.name)) cancel(); }}
-            agents={agents}
-          />
+          {/* The disabled fieldset is what actually inertizes the controls —
+              the same mechanism CrudPanel gives the other scoped panels. */}
+          <fieldset disabled={!rowEditable(editing)} className={rowEditable(editing) ? undefined : 'readonly-form'}
+            style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
+            <WorkflowForm saving={saving}
+              initial={{
+                name: editing.name,
+                description: editing.description || '',
+                steps: editing.steps || [],
+                budget: editing.budget || {},
+              }}
+              onSave={save}
+              onCancel={cancel}
+              onDelete={async () => { if (await remove(editing.id, editing.name)) cancel(); }}
+              agents={agents}
+            />
+          </fieldset>
           {!rowEditable(editing) && <div><Button size="small" onClick={cancel}>Back</Button></div>}
         </ReadOnlyContext>
       )}

@@ -258,7 +258,7 @@ export function SkillsPanel() {
           onDelete={canDeleteRow(isAdmin, me?.id, mode.skill) ? () => handleDelete(mode.skill) : undefined} />
       )}
 
-      {loading && <div className="resource-row-sub">Loading…</div>}
+      {loading && !error && <div className="resource-row-sub">Loading…</div>}
       {error && (
         <Blankslate>
           <Blankslate.Heading>Could not load skills</Blankslate.Heading>

@@ -349,8 +349,10 @@ export function McpServerPanel() {
                 )}
                 {/* Connecting arms a shared credential, so on a global row it
                     stays the admin's act — tell the member whose move it is
-                    instead of showing a dead status dot. */}
-                {action && !editable && !action.inProgress && (
+                    instead of showing a dead status dot. Hidden while a flow
+                    is mid-flight, and off private rows (their owner's move). */}
+                {action && !editable && s.scope === 'global' &&
+                  s.status !== 'connecting' && s.status !== 'authorizing' && (
                   <span className="resource-row-sub">waiting for an admin to reconnect</span>
                 )}
                 {editable && <EnabledToggle server={s} onToggle={handleToggleEnabled} />}
