@@ -53,7 +53,8 @@ func ListVisibleOf[T any](ctx context.Context, s *CrudStore[T], ownerID string, 
 	var out []T
 	q := visibleTo(s.db.NewSelect().Model(&out), ownerID, admin).
 		OrderExpr("CASE WHEN scope = ? THEN 0 ELSE 1 END", ScopeGlobal).
-		OrderExpr("created_at ASC")
+		OrderExpr("created_at ASC").
+		OrderExpr("id ASC") // same-instant rows keep one order across reloads
 	if err := q.Scan(ctx); err != nil {
 		return nil, fmt.Errorf("listing %s: %w", s.label, err)
 	}

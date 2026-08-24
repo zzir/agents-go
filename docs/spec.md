@@ -2948,9 +2948,11 @@ Deletion contracts mirror the sandbox binding's: the bind CAS carries an
 EXISTS on the project row, a project delete carries NOT EXISTS over bound
 sessions (races settle in SQL), and deleting a sandbox cascades its
 (necessarily unbound) project rows. **Storage is never deleted by the
-server** — a removed project row leaves its directory or volume in place;
-reclaiming space is the operator's explicit act. A run naming no project
-lands in the owner's per-sandbox default ("scratch"), created on first use.
+server** — a removed project row leaves its directory or volume in place
+(the delete reclaims only the cached instance; the stopped container and its
+volume stay on the daemon until the operator removes them); reclaiming space
+is the operator's explicit act. A run naming no project lands in the owner's
+per-sandbox default ("scratch"), created on first use.
 Projects are the first PERSONAL configuration entity: every member manages
 their own; ownership is scoped in the handlers, not the admin gate.
 
@@ -2983,6 +2985,12 @@ change that collides in the target scope is 409. Everywhere a NAME resolves —
 `read_skill`, the spawn/task agent lookup, workflow matching — resolution is
 **own-over-global**: the caller's private row wins over a global row of the
 same name.
+
+Scoped listings order global rows first, then the caller's own — each group
+by creation time, id the final tiebreaker — so positions never move on a
+rename or a scope flip (a flipped row changes group, keeping its slot within
+it). The skills index deduplicates by name; the owned row's description wins
+outright, matching own-over-global reads.
 
 References across rows split by whether the reference is load-bearing:
 

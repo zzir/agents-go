@@ -216,12 +216,23 @@ func stampCreateScope(c *gin.Context, scope, ownerID *string) bool {
 		notFound(c)
 		return false
 	}
+	if *scope != "" && *scope != store.ScopeGlobal && *scope != store.ScopePrivate {
+		badRequest(c, `scope must be "global" or "private"`)
+		return false
+	}
 	if *scope == store.ScopeGlobal && u.Role != store.RoleAdmin {
 		abortError(c, http.StatusForbidden, protocol.CodeForbidden, "admin role required to create global configuration")
 		return false
 	}
 	*scope, *ownerID = store.NormalizeScope(*scope, u.ID)
 	return true
+}
+
+// callerSees reports whether the caller may see a row — the predicate behind
+// treating foreign private rows as absent in validation messages too.
+func callerSees(c *gin.Context, scope, rowOwner string) bool {
+	u, ok := server.CurrentUser(c)
+	return ok && store.Visible(scope, rowOwner, u.ID, u.Role == store.RoleAdmin)
 }
 
 // visibleRow 404s a row the caller may not see — a foreign private row reads
