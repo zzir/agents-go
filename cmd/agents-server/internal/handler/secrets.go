@@ -229,6 +229,15 @@ func restoreMcpConfig(incoming, prev json.RawMessage) json.RawMessage {
 	return restoreJSONFields(incoming, prev, true, "oauth_client_secret")
 }
 
+// storedSSHPassword reports whether a stored sandbox config actually holds a
+// password — the mask-across-host refusal only applies when there is one.
+func storedSSHPassword(prev json.RawMessage) bool {
+	var cfg struct {
+		SSHPassword string `json:"ssh_password"`
+	}
+	return json.Unmarshal(prev, &cfg) == nil && cfg.SSHPassword != ""
+}
+
 // maskAcrossDestination reports whether incoming still carries the mask
 // sentinel while the JSON field naming the secret's destination changed —
 // the stored secret belongs to the previous destination and must not ride

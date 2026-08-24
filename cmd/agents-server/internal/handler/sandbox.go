@@ -206,7 +206,9 @@ func (h *SandboxHandler) Update(c *gin.Context) {
 		return
 	}
 	cfg := req.toConfig()
-	if maskAcrossDestination(cfg.Config, prev.Config, "host") {
+	// Only refuse when a stored password actually exists — a mask with
+	// nothing behind it resolves to "" and needs no guard.
+	if maskAcrossDestination(cfg.Config, prev.Config, "host") && storedSSHPassword(prev.Config) {
 		badRequest(c, "host changed: the stored ssh_password belongs to the previous host — replace it or clear it")
 		return
 	}
