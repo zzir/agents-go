@@ -163,6 +163,15 @@ func serveAsset(c *gin.Context, sfs fs.FS, httpFS http.FileSystem, p string) boo
 	}
 	if f, err := sfs.Open(p); err == nil {
 		_ = f.Close()
+		// net/http canonicalizes any path ending in /index.html with an
+		// unconditional 301 to "./" — served through FileFromFS that is a
+		// redirect loop, so the index goes out as bytes instead.
+		if p == "index.html" || strings.HasSuffix(p, "/index.html") {
+			if data, err := fs.ReadFile(sfs, p); err == nil {
+				c.Data(http.StatusOK, "text/html; charset=utf-8", data)
+				return true
+			}
+		}
 		c.FileFromFS("/"+p, httpFS)
 		return true
 	}
