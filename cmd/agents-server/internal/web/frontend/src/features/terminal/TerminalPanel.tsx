@@ -37,7 +37,7 @@ interface TerminalPanelProps {
   // One-shot request to start (or focus) a terminal for a (sandbox, project),
   // issued when the top-bar button opens a closed panel with one selected.
   // The nonce marks each request as new.
-  openRequest?: { id: string; name: string; projectId: string; nonce: number } | null;
+  openRequest?: { id: string; name: string; projectId: string; projectName?: string; nonce: number } | null;
 }
 
 // Dragging the top edge below this height collapses the panel to just its
@@ -73,7 +73,7 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
   // The caller's project rows for the + menu — the same hook (and unit) the
   // composer picker uses: opening a project's terminal lands in that
   // project's container.
-  const { projects } = useProjects(bindingsVersion);
+  const { projects, error: projectsError } = useProjects(bindingsVersion);
 
   // A collapsed panel must expand before a terminal can be shown (a new tab
   // mounted into a zero-height body would fit to a bogus grid).
@@ -139,7 +139,10 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
     if (existing) {
       activateTab(existing.id);
     } else {
-      const name = (projects || []).find(p => p.id === openRequest.projectId)?.name || '';
+      // The requester (ChatView) knows the project's name even when this
+      // panel's own projects fetch hasn't landed yet — a tab never opens
+      // nameless.
+      const name = (projects || []).find(p => p.id === openRequest.projectId)?.name || openRequest.projectName || '';
       addTab({ id: openRequest.id, name: openRequest.name }, { id: openRequest.projectId, name });
     }
     // activateTab/addTab close over current state; nonce guards re-runs.
@@ -230,7 +233,8 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
                             list-role ActionLists. */}
                         <ActionList.GroupHeading as="h3">{s.name}</ActionList.GroupHeading>
                         {items.length === 0 ? (
-                          <ActionList.Item disabled>no projects yet</ActionList.Item>
+                          // A failed fetch must not read as an empty account.
+                          <ActionList.Item disabled>{projectsError ? 'projects failed to load' : 'no projects yet'}</ActionList.Item>
                         ) : (
                           items.map(p => (
                             <ActionList.Item

@@ -127,7 +127,7 @@ export interface ChatViewActions {
   // the session is bound to a sandbox its (sandbox, project) is passed along,
   // and a freshly opened panel starts a terminal for it — in the same
   // container the session's runs use.
-  onTerminalOpen?: (sandbox?: { id: string; name: string; projectId: string }) => void;
+  onTerminalOpen?: (sandbox?: { id: string; name: string; projectId: string; projectName?: string }) => void;
 }
 
 interface ChatViewProps {
@@ -215,7 +215,7 @@ export function ChatView({
   const { data: sandboxConfigs, reload: reloadSandboxes } = useApi<SandboxConfig[]>(() => api.sandboxes.list() as Promise<SandboxConfig[]>);
   // The caller's project rows for the picker — the same hook the terminal
   // panel's + menu uses.
-  const { projects, reload: reloadProjects, mutate: mutateProjects } = useProjects(bindingsVersion);
+  const { projects, error: projectsError, reload: reloadProjects, mutate: mutateProjects } = useProjects(bindingsVersion);
 
   useEffect(() => {
     if (!agentConfigs || agentConfigs.length === 0) return;
@@ -571,18 +571,19 @@ export function ChatView({
           // back to the picker's current selection, then the sandbox's first
           // project; a terminal cannot open without a project.
           const bound = sessionBinding ? sandboxConfigs?.find(s => s.id === sessionBinding.sandboxId) : undefined;
+          const nameOf = (pid: string) => projects?.find(p => p.id === pid)?.name || '';
           if (bound && sessionBinding?.projectId) {
-            onTerminalOpen({ id: bound.id, name: bound.name, projectId: sessionBinding.projectId });
+            onTerminalOpen({ id: bound.id, name: bound.name, projectId: sessionBinding.projectId, projectName: nameOf(sessionBinding.projectId) });
           } else if (!sessionBinding && selectedSandbox) {
             const pid = projectId || projects?.find(p => p.sandbox_id === selectedSandbox.id)?.id;
-            onTerminalOpen(pid ? { id: selectedSandbox.id, name: selectedSandbox.name, projectId: pid } : undefined);
+            onTerminalOpen(pid ? { id: selectedSandbox.id, name: selectedSandbox.name, projectId: pid, projectName: nameOf(pid) } : undefined);
           } else {
             onTerminalOpen(undefined);
           }
         }
         : undefined}
       binding={sandboxView.bound && sessionBinding
-        ? { title: sandboxView.title, projectName: projects?.find(p => p.id === sessionBinding.projectId)?.name || sessionBinding.projectId }
+        ? { title: sandboxView.title, projectName: projects?.find(p => p.id === sessionBinding.projectId)?.name || '…' }
         : null}
     />
   );
@@ -641,6 +642,8 @@ export function ChatView({
                   None
                   <ActionList.Description variant="inline">chat only</ActionList.Description>
                 </ActionList.Item>
+                {/* A failed fetch must not read as an empty account. */}
+                {projectsError && <ActionList.Item disabled>projects failed to load</ActionList.Item>}
                 {/* One group per sandbox: the group heading carries the
                     backend, rows carry just the project name. */}
                 {groupProjects(projects, sandboxConfigs).map(g => (

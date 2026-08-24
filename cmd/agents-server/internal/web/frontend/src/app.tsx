@@ -434,11 +434,11 @@ function App() {
   // composer button opens a CLOSED panel with a capable sandbox selected (an
   // already-open panel is left alone). The nonce distinguishes repeat requests
   // for the same sandbox.
-  const [terminalRequest, setTerminalRequest] = useState<{ id: string; name: string; projectId: string; nonce: number } | null>(null);
+  const [terminalRequest, setTerminalRequest] = useState<{ id: string; name: string; projectId: string; projectName?: string; nonce: number } | null>(null);
   const terminalOpenRef = useRef(false);
   terminalOpenRef.current = terminalOpen;
   const terminalNonceRef = useRef(0);
-  const handleTerminalOpen = useCallback((sandbox?: { id: string; name: string; projectId: string }) => {
+  const handleTerminalOpen = useCallback((sandbox?: { id: string; name: string; projectId: string; projectName?: string }) => {
     if (!terminalOpenRef.current && sandbox) {
       setTerminalRequest({ ...sandbox, nonce: ++terminalNonceRef.current });
     }

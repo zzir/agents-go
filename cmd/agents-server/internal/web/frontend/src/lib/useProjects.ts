@@ -13,12 +13,13 @@ export function useProjects(
   version: number | undefined,
 ): {
   projects: Project[] | null;
+  error: string | null;
   reload: () => void;
   mutate: (fn: (prev: Project[] | null) => Project[] | null) => void;
 } {
-  const { data, reload, mutateData } = useApi<Project[]>(() => api.projects.list() as Promise<Project[]>);
+  const { data, error, reload, mutateData } = useApi<Project[]>(() => api.projects.list() as Promise<Project[]>);
   useEffect(() => {
     if (version) reload();
   }, [version, reload]);
-  return { projects: data, reload, mutate: mutateData };
+  return { projects: data, error, reload, mutate: mutateData };
 }
