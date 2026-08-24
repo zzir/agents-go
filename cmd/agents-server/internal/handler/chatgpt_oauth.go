@@ -16,12 +16,25 @@ import (
 // /providers/:id/chatgpt/*, because the token is the ENDPOINT credential —
 // every agent pointed at the provider shares the one login.
 type ChatGPTOAuthHandler struct {
-	oauth *providers.ChatGPTOAuth
+	oauth     *providers.ChatGPTOAuth
+	providers *store.ProviderStore
 }
 
-// NewChatGPTOAuthHandler creates a handler backed by the given OAuth manager.
-func NewChatGPTOAuthHandler(oauth *providers.ChatGPTOAuth) *ChatGPTOAuthHandler {
-	return &ChatGPTOAuthHandler{oauth: oauth}
+// NewChatGPTOAuthHandler creates a handler backed by the given OAuth manager;
+// the provider store answers whose row the login belongs to.
+func NewChatGPTOAuthHandler(oauth *providers.ChatGPTOAuth, providerStore *store.ProviderStore) *ChatGPTOAuthHandler {
+	return &ChatGPTOAuthHandler{oauth: oauth, providers: providerStore}
+}
+
+// editable loads the provider and gates a login/logout on it: signing a
+// private provider into ChatGPT is its owner's act, a global one an admin's.
+func (h *ChatGPTOAuthHandler) editable(c *gin.Context) bool {
+	pv, err := h.providers.Get(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		storeError(c, err)
+		return false
+	}
+	return editableRow(c, pv.Scope, pv.OwnerID)
 }
 
 // Login starts the ChatGPT OAuth flow for the provider identified by the id
@@ -39,6 +52,9 @@ func NewChatGPTOAuthHandler(oauth *providers.ChatGPTOAuth) *ChatGPTOAuthHandler 
 //	@Security		BearerAuth
 //	@Router			/providers/{id}/chatgpt/login [post]
 func (h *ChatGPTOAuthHandler) Login(c *gin.Context) {
+	if !h.editable(c) {
+		return
+	}
 	result, err := h.oauth.StartLogin(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -74,6 +90,14 @@ type chatgptStatusResp struct {
 //	@Security	BearerAuth
 //	@Router		/providers/{id}/chatgpt/status [get]
 func (h *ChatGPTOAuthHandler) Status(c *gin.Context) {
+	pv, err := h.providers.Get(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		storeError(c, err)
+		return
+	}
+	if !visibleRow(c, pv.Scope, pv.OwnerID) {
+		return
+	}
 	loggedIn, err := h.oauth.IsLoggedIn(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		storeError(c, err) // ErrNotFound -> 404, else 500
@@ -93,6 +117,9 @@ func (h *ChatGPTOAuthHandler) Status(c *gin.Context) {
 //	@Security	BearerAuth
 //	@Router		/providers/{id}/chatgpt/logout [post]
 func (h *ChatGPTOAuthHandler) Logout(c *gin.Context) {
+	if !h.editable(c) {
+		return
+	}
 	if err := h.oauth.Logout(c.Request.Context(), c.Param("id")); err != nil {
 		storeError(c, err) // ErrNotFound -> 404, else 500
 		return

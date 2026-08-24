@@ -233,7 +233,7 @@ func TestWorkflowAuthoringToolsAreOptInAndChatOnly(t *testing.T) {
 	}
 
 	// An agent that did not opt in has neither, spawn_task as ever.
-	planner, err := runner.agentConfigByName(ctx, "planner")
+	planner, err := runner.agentConfigByName(ctx, "", "planner")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,8 +287,8 @@ func TestSaveWorkflowCreatesAndUpdatesByName(t *testing.T) {
 	if stored.Description != "Implement a feature end to end, with tests" || stored.Budget.MaxLaps != 2 || len(stored.Steps) != 3 {
 		t.Fatalf("stored = %+v", stored)
 	}
-	coder, _ := runner.agentConfigByName(ctx, "coder")
-	reviewer, _ := runner.agentConfigByName(ctx, "reviewer")
+	coder, _ := runner.agentConfigByName(ctx, "", "coder")
+	reviewer, _ := runner.agentConfigByName(ctx, "", "reviewer")
 	plan, exec, verify := stored.Steps[0], stored.Steps[1], stored.Steps[2]
 	if plan.ID == "" || exec.ID == "" || verify.ID == "" || plan.ID == exec.ID {
 		t.Fatalf("step ids not assigned: %+v", stored.Steps)
@@ -370,7 +370,7 @@ func TestGetWorkflowRoundTrips(t *testing.T) {
 	ctx := context.Background()
 	_, srv := newRecordingModel(t, func(int, []byte) []any { return sayOutput("ok") })
 	runner, _, coder := workflowToolsFixture(t, srv.URL)
-	reviewer, _ := runner.agentConfigByName(ctx, "reviewer")
+	reviewer, _ := runner.agentConfigByName(ctx, "", "reviewer")
 	tools := runner.workflowTools(ctx, store.LocalUserID)
 	get := toolNamed(t, tools, WorkflowGetToolName)
 
@@ -492,9 +492,10 @@ func TestSaveWorkflowIsApprovedThenWritten(t *testing.T) {
 	}
 }
 
-// A member's chat run reads definitions but cannot write one: the admin gate
-// on POST/PUT /workflows holds through the tool surface too.
-func TestSaveWorkflowIsAdminOnly(t *testing.T) {
+// Everyone carries save_workflow now: a member's save lands in their own
+// private set, and editing a GLOBAL definition through the tool stays the
+// admin's act (spec §5.29).
+func TestSaveWorkflowScopes(t *testing.T) {
 	ctx := context.Background()
 	model, srv := newRecordingModel(t, func(int, []byte) []any { return sayOutput("ok") })
 	runner, _, coder := workflowToolsFixture(t, srv.URL)
@@ -514,18 +515,51 @@ func TestSaveWorkflowIsAdminOnly(t *testing.T) {
 	}
 	runChat(t, runner, theirs, coder, "member asks")
 	memberTools := model.toolsOfBody(t, "member asks", time.Second)
-	if slices.Contains(memberTools, WorkflowSaveToolName) || !slices.Contains(memberTools, WorkflowGetToolName) {
-		t.Fatalf("member run tools = %v, want get_workflow without save_workflow", memberTools)
+	if !slices.Contains(memberTools, WorkflowSaveToolName) || !slices.Contains(memberTools, WorkflowGetToolName) {
+		t.Fatalf("member run tools = %v, want both workflow tools", memberTools)
 	}
 
-	// The local admin keeps both.
-	mine := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "admin chat"}
-	if err := runner.Deps.Sessions.Create(ctx, mine); err != nil {
+	// A member's save creates a PRIVATE definition owned by them.
+	spec := workflowSpec{Name: "member-flow", Description: "when the member asks",
+		Steps: []workflowStep{{Name: "one", Agent: "coder", Prompt: "do it"}}}
+	if _, err := runner.saveWorkflow(ctx, member.ID, spec); err != nil {
+		t.Fatalf("member save: %v", err)
+	}
+	list, err := runner.Deps.Workflows.List(ctx)
+	if err != nil {
 		t.Fatal(err)
 	}
-	runChat(t, runner, mine, coder, "admin asks")
-	adminTools := model.toolsOfBody(t, "admin asks", time.Second)
-	if !slices.Contains(adminTools, WorkflowSaveToolName) {
-		t.Fatalf("admin run tools = %v, want save_workflow", adminTools)
+	var saved *store.Workflow
+	for i := range list {
+		if list[i].Name == "member-flow" {
+			saved = &list[i]
+		}
+	}
+	if saved == nil || saved.Scope != store.ScopePrivate || saved.OwnerID != member.ID {
+		t.Fatalf("member save landed as %+v, want private owned by the member", saved)
+	}
+
+	// A GLOBAL definition refuses the member's edit through the tool.
+	global := &store.Workflow{Name: "team-flow", Description: "shared", Scope: store.ScopeGlobal,
+		Steps: store.WorkflowSteps{{ID: store.NewID(), Name: "one", AgentConfigID: saved.Steps[0].AgentConfigID, Prompt: "p"}}}
+	if err := runner.Deps.Workflows.Create(ctx, global); err != nil {
+		t.Fatal(err)
+	}
+	res, err := runner.saveWorkflow(ctx, member.ID, workflowSpec{Name: "team-flow", Description: "hijack",
+		Steps: []workflowStep{{Name: "one", Agent: "coder", Prompt: "changed"}}})
+	if err != nil {
+		t.Fatalf("member save over global: %v", err)
+	}
+	txt := ""
+	if len(res.Content) > 0 {
+		if tt, ok := res.Content[0].(agents.ToolOutputText); ok {
+			txt = tt.Text
+		}
+	}
+	if !strings.Contains(txt, "only an admin") {
+		t.Fatalf("member editing a global workflow = %q, want the admin-only refusal", txt)
+	}
+	if got, _ := runner.Deps.Workflows.Get(ctx, global.ID); got.Description != "shared" {
+		t.Fatalf("the refused save changed the global row: %+v", got)
 	}
 }

@@ -142,6 +142,10 @@ function TabLoadError() {
   return <Flash variant="danger">Failed to load this panel — reload the page.</Flash>;
 }
 
+// The scoped panels: rows carry their own scope/owner, so a member writes
+// there too — the dialog's blanket read-only applies only to the other tabs.
+const SCOPED_TABS = new Set(['providers', 'agents', 'mcp', 'skills']);
+
 // PanelDialog is the tabbed dialog behind both Settings and Admin: a nav of
 // lazily loaded panels, one open at a time. readOnly is a member's Settings:
 // shared configuration is theirs to read (the API allows it) and not to
@@ -207,8 +211,9 @@ function PanelDialog({ title, tabs, readOnly, onClose }: { title: string; tabs: 
         </nav>
         <div className="settings-content">
           {/* The why behind the read-only panels — once, above whichever
-              shared panel is open; Account is the member's own. */}
-          {readOnly && tab !== 'account' && (
+              admin-written panel is open; Account is the member's own, and
+              the scoped panels take member writes. */}
+          {readOnly && tab !== 'account' && !SCOPED_TABS.has(tab) && (
             <Flash variant="default" className="settings-readonly-note">
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                 <LockIcon size={16} />
@@ -217,7 +222,9 @@ function PanelDialog({ title, tabs, readOnly, onClose }: { title: string; tabs: 
             </Flash>
           )}
           {TabComp && readOnly !== null ? (
-            <ReadOnlyContext value={!!readOnly}>
+            // Scoped panels are excluded from the blanket: they gate per row
+            // (canEditRow) and set the context themselves around their form.
+            <ReadOnlyContext value={!!readOnly && !SCOPED_TABS.has(tab)}>
               <ErrorBoundary resetKey={tab}><TabComp /></ErrorBoundary>
             </ReadOnlyContext>
           ) : null}
@@ -1048,7 +1055,7 @@ function App() {
   );
 
   const main = hubTab ? (
-    <WorkflowsHub tab={hubTab} onTabChange={setHubTab} sessionId={activeSession} tasksSig={tasksSig} onOpenRun={handleOpenRun} canEdit={isAdmin} />
+    <WorkflowsHub tab={hubTab} onTabChange={setHubTab} sessionId={activeSession} tasksSig={tasksSig} onOpenRun={handleOpenRun} />
   ) : (
     <MemoizedChatView
       sessionId={activeSession}

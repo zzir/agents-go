@@ -42,10 +42,13 @@ func TestAuditLogRecordsMutations(t *testing.T) {
 	}.Register)
 	engine := s.Engine
 
-	// A read leaves nothing; a refused write leaves nothing; an admin's
-	// create leaves one line naming the created resource.
+	// A read leaves nothing; a refused write leaves nothing; a successful
+	// create leaves one line naming the created resource — the member's own
+	// (private) create included, which is the point of auditing them.
 	serve(engine, as(adminUser, http.MethodGet, "/api/v1/agents", ""))
-	serve(engine, as(memberUser, http.MethodPost, "/api/v1/agents", `{"name":"a1","model":"m"}`))
+	if rec := serve(engine, as(memberUser, http.MethodPost, "/api/v1/agents", `{"name":"a1","model":"m","scope":"global"}`)); rec.Code != http.StatusForbidden {
+		t.Fatalf("member global create = %d, want 403", rec.Code)
+	}
 	rec := serve(engine, as(adminUser, http.MethodPost, "/api/v1/agents", `{"name":"a1","model":"m"}`))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create = %d %s", rec.Code, rec.Body.String())

@@ -2954,6 +2954,68 @@ their own; ownership is scoped in the handlers, not the admin gate.
 
 ---
 
+### 5.29 Configuration is scoped per row: private to its owner or global
+
+Decided 2026-08-24. The five configuration entities members compose runs from
+— agent configs, providers, MCP servers, skills, workflows — carry
+`scope ∈ {private, global}` plus `owner_id` (set when private). A **global**
+row is the old shared semantics: every member reads it, only an admin writes
+it. A **private** row is its owner's alone: a member creates it (`POST`
+defaults to private; claiming `global` in a create body is admin-only, 403),
+edits and deletes it, and other members never see it — foreign private ids
+answer 404 and are absent from listings, so scope is not an existence oracle,
+mirroring sessions. An admin sees every row and **manages but does not
+author**: they may delete a member's private row, yet editing it is 403 —
+a config an admin could silently rewrite under a member's name would blur
+whose credentials and instructions a run carries.
+
+Scope changes are their own admin-only endpoint, `POST /<entity>/:id/scope`
+with `{scope}`: promote publishes a private row, demote re-homes a global row
+to the acting admin. Name uniqueness is **per scope** (partial unique
+indexes: global names unique among global rows, `(owner, name)` unique among
+private ones), so shadowing a global name with one's own is legal and a scope
+change that collides in the target scope is 409. Everywhere a NAME resolves —
+`read_skill`, the spawn/task agent lookup, workflow matching — resolution is
+**own-over-global**: the caller's private row wins over a global row of the
+same name.
+
+References across rows split by whether the reference is load-bearing:
+
+- **Write-time validation** where a dangling or hidden reference breaks the
+  holder: an agent's provider, MCP selection, skills selection and handoffs,
+  and a workflow's step agents. The rule is `RefVisible`: a private holder
+  may reference global rows and its owner's private rows; a **global holder
+  may reference only global rows** — otherwise promoting it would publish a
+  config whose parts most members cannot see. Promote re-validates the row
+  as its target scope, and demoting a provider is refused (409) while global
+  or foreign-owned agents still reference it.
+- **Runtime filtering** where the set is advisory: attaching MCP servers and
+  skills at agent build drops rows the run's owner cannot see instead of
+  failing the run — the same config yields each member their visible subset.
+
+Direct DB writes (internal writers, tests) that leave scope empty land
+**global** — `stampScope` in `BeforeAppendModel` preserves the legacy shared
+semantics without touching every fixture; private-without-owner is an error.
+The API always stamps scope explicitly, so empty scope never crosses a
+handler.
+
+The model's tools follow the same contract instead of the old admin gate:
+`save_workflow` rides every owner's run now — a new name saves a private
+workflow owned by the run's owner; an existing **global** name is still an
+admin's to change, and a member's save answers with guidance text (pick
+another name), not an error. Signing a provider into ChatGPT (or out) is the
+row's editability — a member connects their own provider; status follows
+visibility. Triggers stay session-scoped (§ trigger ownership) with a cap of
+50 per owner (409 above it) so the shared clock is not one member's to
+exhaust.
+
+Accepted risk, recorded deliberately: member-supplied URLs (MCP endpoints,
+skill imports) get **no private-network/SSRF defense**. The deployment model
+is one team, one trust boundary (same stance as shared sandboxes); an
+operator who needs egress control applies it outside the server.
+
+---
+
 ## 6. Open questions
 
 ### 6.1 What a v1.0.0 promise means while openai-go's major can move

@@ -213,7 +213,7 @@ func TestSpawnToolListsWorkflowsOnlyWhenThereAreAny(t *testing.T) {
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatal(err)
 	}
-	tool := runner.spawnTool(ctx)
+	tool := runner.spawnTool(ctx, "")
 	if tool == nil || tool.Name != SpawnToolName || strings.Contains(tool.Description, "Available:") {
 		t.Fatalf("no workflows: tool = %v, want spawn_task with no workflow list", tool)
 	}
@@ -224,7 +224,7 @@ func TestSpawnToolListsWorkflowsOnlyWhenThereAreAny(t *testing.T) {
 	if err := runner.Deps.Workflows.Create(ctx, wf); err != nil {
 		t.Fatal(err)
 	}
-	tool = runner.spawnTool(ctx)
+	tool = runner.spawnTool(ctx, "")
 	if !strings.Contains(tool.Description, "- deploy: ship it") {
 		t.Fatalf("a workflow exists: the description must list it, got %q", tool.Description)
 	}

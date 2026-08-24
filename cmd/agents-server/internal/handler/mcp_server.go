@@ -99,7 +99,11 @@ func (h *McpServerHandler) status(cfg *store.McpServerConfig) string {
 //	@Security	BearerAuth
 //	@Router		/mcp-servers [get]
 func (h *McpServerHandler) List(c *gin.Context) {
-	configs, err := h.store.List(c.Request.Context())
+	ownerID, admin, ok := callerScope(c)
+	if !ok {
+		return
+	}
+	configs, err := store.ListVisibleOf(c.Request.Context(), h.store.CrudStore, ownerID, admin)
 	if err != nil {
 		internalError(c, err)
 		return
@@ -117,6 +121,8 @@ type mcpServerReq struct {
 	Enabled bool   `json:"enabled"`
 	// Config is the connection settings object (store.HTTPMcpConfig).
 	Config json.RawMessage `json:"config"`
+	// Scope on create only: "global" (admin) or the "private" default.
+	Scope string `json:"scope,omitempty"`
 }
 
 func (r *mcpServerReq) toModel() *store.McpServerConfig {
@@ -124,6 +130,7 @@ func (r *mcpServerReq) toModel() *store.McpServerConfig {
 		Name:    r.Name,
 		Enabled: r.Enabled,
 		Config:  r.Config,
+		Scope:   r.Scope,
 	}
 }
 
@@ -169,6 +176,9 @@ func (h *McpServerHandler) Create(c *gin.Context) {
 		return
 	}
 	cfg := req.toModel()
+	if !stampCreateScope(c, &cfg.Scope, &cfg.OwnerID) {
+		return
+	}
 	// No stored config yet: mask sentinels resolve to empty.
 	cfg.Config = restoreMcpConfig(cfg.Config, nil)
 	if err := h.store.Create(c.Request.Context(), cfg); err != nil {
@@ -198,7 +208,24 @@ func (h *McpServerHandler) Get(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
+	if !visibleRow(c, cfg.Scope, cfg.OwnerID) {
+		return
+	}
 	c.JSON(http.StatusOK, h.listItem(cfg))
+}
+
+// editable loads the row and gates a write on it, answering the refusal
+// itself.
+func (h *McpServerHandler) editable(c *gin.Context, id string) (*store.McpServerConfig, bool) {
+	cfg, err := h.store.Get(c.Request.Context(), id)
+	if err != nil {
+		storeError(c, err)
+		return nil, false
+	}
+	if !editableRow(c, cfg.Scope, cfg.OwnerID) {
+		return nil, false
+	}
+	return cfg, true
 }
 
 // Update overwrites the MCP server configuration identified by the id path
@@ -231,10 +258,15 @@ func (h *McpServerHandler) Update(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 	id := c.Param("id")
+	if _, ok := h.editable(c, id); !ok {
+		return
+	}
 	cfg := req.toModel()
 	// Masked header values / oauth_client_secret round-trip to their stored
-	// values inside the store's transaction.
+	// values inside the store's transaction; scope and owner never move on an
+	// update (POST /:id/scope does).
 	err := h.store.Update(ctx, id, cfg, func(prev *store.McpServerConfig) error {
+		cfg.Scope, cfg.OwnerID = prev.Scope, prev.OwnerID
 		cfg.Config = restoreMcpConfig(cfg.Config, prev.Config)
 		return nil
 	})
@@ -266,6 +298,14 @@ func (h *McpServerHandler) Update(c *gin.Context) {
 //	@Router		/mcp-servers/{id} [delete]
 func (h *McpServerHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
+	cur, err := h.store.Get(c.Request.Context(), id)
+	if err != nil {
+		storeError(c, err)
+		return
+	}
+	if !deletableRow(c, cur.Scope, cur.OwnerID) {
+		return
+	}
 	// Delete the row first, then disconnect: a failed delete must not leave a
 	// persisted server whose live connection has already been torn down.
 	if err := h.store.Delete(c.Request.Context(), id); err != nil {
@@ -273,6 +313,42 @@ func (h *McpServerHandler) Delete(c *gin.Context) {
 		return
 	}
 	_ = h.manager.Disconnect(id)
+	c.Status(http.StatusNoContent)
+}
+
+// SetScope promotes an MCP server to global or demotes it to the acting
+// admin's private set. Agents still referencing a demoted server lose its
+// tools at their next build (filtered with a visible count, like a delete).
+//
+//	@Summary	Change an MCP server's scope
+//	@Tags		mcp-servers
+//	@Accept		json
+//	@Param		id		path	string		true	"MCP server ID"
+//	@Param		scope	body	scopeReq	true	"global or private"
+//	@Success	204
+//	@Failure	400	{object}	ErrorResponse
+//	@Failure	409	{object}	ErrorResponse	"name collision in the target scope"
+//	@Security	BearerAuth
+//	@Router		/mcp-servers/{id}/scope [post]
+func (h *McpServerHandler) SetScope(c *gin.Context) {
+	scope, ok := bindScope(c)
+	if !ok {
+		return
+	}
+	u, _ := server.CurrentUser(c)
+	ctx, id := c.Request.Context(), c.Param("id")
+	if _, err := h.store.Get(ctx, id); err != nil {
+		storeError(c, err)
+		return
+	}
+	owner := ""
+	if scope == store.ScopePrivate {
+		owner = u.ID
+	}
+	if err := store.SetScopeOf(ctx, h.store.CrudStore, id, scope, owner); err != nil {
+		saveError(c, err)
+		return
+	}
 	c.Status(http.StatusNoContent)
 }
 
@@ -299,9 +375,8 @@ type mcpConnectResp struct {
 //	@Security		BearerAuth
 //	@Router			/mcp-servers/{id}/connect [post]
 func (h *McpServerHandler) Connect(c *gin.Context) {
-	cfg, err := h.store.Get(c.Request.Context(), c.Param("id"))
-	if err != nil {
-		storeError(c, err)
+	cfg, ok := h.editable(c, c.Param("id"))
+	if !ok {
 		return
 	}
 	// A disabled server must never gain a live connection: agents pick tools by
@@ -368,7 +443,7 @@ func (h *McpServerHandler) externalOrigin(r *http.Request) string {
 //	@Router		/mcp-servers/{id}/oauth-token [delete]
 func (h *McpServerHandler) ClearOAuth(c *gin.Context) {
 	id := c.Param("id")
-	if !requireResource(c, h.store.Get, id) {
+	if _, ok := h.editable(c, id); !ok {
 		return
 	}
 	if err := h.manager.Disconnect(id); err != nil {
@@ -476,7 +551,12 @@ func (h *McpServerHandler) Tools(c *gin.Context) {
 	id := c.Param("id")
 	// Distinguish "no such server" (404) from "exists but not connected" (409):
 	// querying the manager alone can't tell them apart.
-	if !requireResource(c, h.store.Get, id) {
+	cfg, err := h.store.Get(c.Request.Context(), id)
+	if err != nil {
+		storeError(c, err)
+		return
+	}
+	if !visibleRow(c, cfg.Scope, cfg.OwnerID) {
 		return
 	}
 	srv := h.manager.Get(id)

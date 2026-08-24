@@ -6,6 +6,9 @@ import { Blankslate } from '@primer/react/experimental';
 import { ChevronUpIcon, ChevronDownIcon, TrashIcon, PlayIcon, ZapIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
 import { PAGE_SIZE, useApi, useCrud, usePage } from '@/lib/hooks';
+import { canDeleteRow, canEditRow } from '@/lib/access';
+import { useMe } from '@/lib/me';
+import { ScopeBadge, ScopeButton } from '@/components/CrudPanel';
 import { fc } from '@/lib/form';
 import { nameOf } from '@/lib/named';
 import { BADGE } from '@/lib/badges';
@@ -299,8 +302,14 @@ function RunDialog({ workflow, sessionId, onClose }: { workflow: Workflow; sessi
   );
 }
 
-export function WorkflowPanel({ sessionId, canEdit }: { sessionId: string | null; canEdit: boolean | null }) {
-  const { items: workflows, adding, editing, startAdd, startEdit, cancel, save, saving, remove } =
+export function WorkflowPanel({ sessionId }: { sessionId: string | null }) {
+  // Scoped rows: any member creates (the row lands private, theirs); editing
+  // follows canEditRow per row. While /auth/me loads, no write affordances.
+  const { me, loading: meLoading } = useMe();
+  const isAdmin = me?.role === 'admin';
+  const canCreate = !meLoading;
+  const rowEditable = (w: Workflow) => canEditRow(isAdmin, me?.id, w);
+  const { items: workflows, adding, editing, startAdd, startEdit, cancel, save, saving, remove, reload } =
     useCrud<Workflow, WorkflowFormData>(api.workflows);
   const { data: agents } = useApi<AgentRef[]>(() => api.agents.list() as Promise<AgentRef[]>);
   // A template pre-fills the add form; cleared when the form closes.
@@ -323,7 +332,7 @@ export function WorkflowPanel({ sessionId, canEdit }: { sessionId: string | null
           background, in a session of its own — started by the agent when a request matches its
           description, by you with a brief, or by a trigger.
         </div>
-        {canEdit && !adding && !editing && <Button onClick={startAdd} variant="primary" size="small">+ Add</Button>}
+        {canCreate && !adding && !editing && <Button onClick={startAdd} variant="primary" size="small">+ Add</Button>}
       </div>
 
       {adding && <WorkflowForm saving={saving} initial={template} onSave={f => { setTemplate(null); save(f); }} onCancel={closeForm} agents={agents} />}
@@ -354,6 +363,7 @@ export function WorkflowPanel({ sessionId, canEdit }: { sessionId: string | null
                 <div className="resource-row-head">
                   <span className="resource-row-title">{w.name}</span>
                   <Label variant={BADGE.count}>{'Steps·' + (w.steps || []).length}</Label>
+                  <ScopeBadge row={w} meId={me?.id} />
                 </div>
                 <div className="resource-row-sub">
                   {(w.steps || []).map(stepName).join(' → ')}
@@ -366,7 +376,11 @@ export function WorkflowPanel({ sessionId, canEdit }: { sessionId: string | null
                 </Button>
                 <Button onClick={() => setTriggersFor(w)} size="small" variant="invisible" leadingVisual={ZapIcon}
                   title="Run it on a schedule or from a webhook">Triggers</Button>
-                {canEdit && <Button onClick={() => startEdit(w)} size="small" variant="invisible">Edit</Button>}
+                {isAdmin && <ScopeButton row={w} setScope={api.workflows.setScope} onDone={reload} />}
+                {rowEditable(w) && <Button onClick={() => startEdit(w)} size="small" variant="invisible">Edit</Button>}
+                {/* Delete without edit: the admin on a foreign private row. */}
+                {!rowEditable(w) && canDeleteRow(isAdmin, me?.id, w) &&
+                  <Button onClick={() => void remove(w.id, w.name)} size="small" variant="invisible">Delete</Button>}
               </div>
             </>}>
               <div className="hub-row-detail">
@@ -379,9 +393,9 @@ export function WorkflowPanel({ sessionId, canEdit }: { sessionId: string | null
             <Blankslate>
               <Blankslate.Description>
                 No workflows yet. A workflow runs a fixed sequence of agents on one session — plan, then execute,
-                then verify, each on the model you choose for it.{canEdit ? ' Start from a shape:' : canEdit === false ? ' An admin defines them.' : ''}
+                then verify, each on the model you choose for it.{canCreate ? ' Start from a shape:' : ''}
               </Blankslate.Description>
-              {canEdit && <div className="wf-templates">
+              {canCreate && <div className="wf-templates">
                 {TEMPLATES.map(t => (
                   <Button key={t.key} size="small" onClick={() => { setTemplate(t.form()); startAdd(); }}>{t.label}</Button>
                 ))}

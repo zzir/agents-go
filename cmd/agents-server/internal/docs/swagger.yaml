@@ -755,6 +755,14 @@ components:
           type: string
         name:
           type: string
+        owner_id:
+          type: string
+        scope:
+          description: |-
+            Scope is the row's visibility (spec §5.29): ScopePrivate — the owner's
+            alone — or ScopeGlobal, readable by every member and written by admins.
+            OwnerID is set exactly when the scope is private.
+          type: string
         status:
           description: |-
             Status is the single derived lifecycle state: disabled, connecting,
@@ -774,6 +782,9 @@ components:
         enabled:
           type: boolean
         name:
+          type: string
+        scope:
+          description: 'Scope on create only: "global" (admin) or the "private" default.'
           type: string
       type: object
     handler.mcpToolInfo:
@@ -895,6 +906,11 @@ components:
           type: string
         name:
           type: string
+        scope:
+          description: |-
+            Scope on create only: "global" (admin) or the "private" default; an
+            update never moves it (POST /:id/scope does).
+          type: string
         type:
           type: string
       type: object
@@ -926,6 +942,13 @@ components:
           type: string
         ok:
           type: boolean
+      type: object
+    handler.scopeReq:
+      properties:
+        scope:
+          type: string
+      required:
+      - scope
       type: object
     handler.sessionCreateReq:
       properties:
@@ -988,6 +1011,9 @@ components:
     handler.skillReq:
       properties:
         content:
+          type: string
+        scope:
+          description: 'Scope on create only: "global" (admin) or the "private" default.'
           type: string
       required:
       - content
@@ -1253,6 +1279,8 @@ components:
           type: string
         name:
           type: string
+        owner_id:
+          type: string
         provider_id:
           description: |-
             ProviderID names the Provider row this agent reaches its model through —
@@ -1264,6 +1292,12 @@ components:
           type: string
         resilience:
           $ref: '#/components/schemas/store.ResilienceGroup'
+        scope:
+          description: |-
+            Scope is the row's visibility (spec §5.29): ScopePrivate — the owner's
+            alone — or ScopeGlobal, readable by every member and written by admins.
+            OwnerID is set exactly when the scope is private.
+          type: string
         session:
           $ref: '#/components/schemas/store.SessionGroup'
         skills:
@@ -1620,6 +1654,14 @@ components:
           type: string
         name:
           type: string
+        owner_id:
+          type: string
+        scope:
+          description: |-
+            Scope is the row's visibility (spec §5.29): ScopePrivate — the owner's
+            alone — or ScopeGlobal, readable by every member and written by admins.
+            OwnerID is set exactly when the scope is private.
+          type: string
         type:
           description: |-
             Type selects the backend (bridge.ProviderType*). Empty means openai, the
@@ -1764,6 +1806,14 @@ components:
           type: string
         name:
           description: unique via idx_skills_name
+          type: string
+        owner_id:
+          type: string
+        scope:
+          description: |-
+            Scope is the row's visibility (spec §5.29): ScopePrivate — the owner's
+            alone — or ScopeGlobal, readable by every member and written by admins.
+            OwnerID is set exactly when the scope is private.
           type: string
         source_path:
           type: string
@@ -1968,6 +2018,14 @@ components:
         id:
           type: string
         name:
+          type: string
+        owner_id:
+          type: string
+        scope:
+          description: |-
+            Scope is the row's visibility (spec §5.29): ScopePrivate — the owner's
+            alone — or ScopeGlobal, readable by every member and written by admins.
+            OwnerID is set exactly when the scope is private.
           type: string
         steps:
           items:
@@ -2229,6 +2287,46 @@ paths:
       security:
       - BearerAuth: []
       summary: Update agent
+      tags:
+      - agents
+  /agents/{id}/scope:
+    post:
+      parameters:
+      - description: Agent ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.scopeReq'
+                description: global or private
+                summary: scope
+        description: global or private
+        required: true
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: a promote holds non-global references
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: name collision in the target scope
+      security:
+      - BearerAuth: []
+      summary: Change an agent's scope
       tags:
       - agents
   /agents/{id}/tools:
@@ -3161,6 +3259,46 @@ paths:
       summary: Clear MCP OAuth token
       tags:
       - mcp-servers
+  /mcp-servers/{id}/scope:
+    post:
+      parameters:
+      - description: MCP server ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.scopeReq'
+                description: global or private
+                summary: scope
+        description: global or private
+        required: true
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: name collision in the target scope
+      security:
+      - BearerAuth: []
+      summary: Change an MCP server's scope
+      tags:
+      - mcp-servers
   /mcp-servers/{id}/tools:
     get:
       parameters:
@@ -3797,6 +3935,47 @@ paths:
       security:
       - BearerAuth: []
       summary: ChatGPT login status
+      tags:
+      - providers
+  /providers/{id}/scope:
+    post:
+      parameters:
+      - description: Provider ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.scopeReq'
+                description: global or private
+                summary: scope
+        description: global or private
+        required: true
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: name collision in the target scope, or referencing agents block
+            the demote
+      security:
+      - BearerAuth: []
+      summary: Change a provider's scope
       tags:
       - providers
   /runs/{id}:
@@ -5317,6 +5496,46 @@ paths:
       summary: Update skill
       tags:
       - skills
+  /skills/{id}/scope:
+    post:
+      parameters:
+      - description: Skill id
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.scopeReq'
+                description: global or private
+                summary: scope
+        description: global or private
+        required: true
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: name collision in the target scope
+      security:
+      - BearerAuth: []
+      summary: Change a skill's scope
+      tags:
+      - skills
   /tasks:
     get:
       description: One page of the tasks of every live session, newest first, each
@@ -5941,6 +6160,46 @@ paths:
       security:
       - BearerAuth: []
       summary: Run a workflow (optionally binding the session's project first)
+      tags:
+      - workflows
+  /workflows/{id}/scope:
+    post:
+      parameters:
+      - description: Workflow ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.scopeReq'
+                description: global or private
+                summary: scope
+        description: global or private
+        required: true
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: a promote holds non-global step agents
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: name collision in the target scope
+      security:
+      - BearerAuth: []
+      summary: Change a workflow's scope
       tags:
       - workflows
 servers:

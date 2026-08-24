@@ -22,24 +22,33 @@ func NewSkillStore(db *bun.DB) *SkillStore {
 	return &SkillStore{CrudStore: NewCrudStore[Skill](db, "skill", "name ASC"), db: db}
 }
 
-// ListMeta returns every skill without its content — the index the agent
-// build and the panel list read; a document body rides only on Get/GetByName.
-func (s *SkillStore) ListMeta(ctx context.Context) ([]Skill, error) {
+// ListMeta returns the skills ownerID may see, without their content — the
+// index the agent build and the panel list read; a document body rides only
+// on Get/GetByNameFor.
+func (s *SkillStore) ListMeta(ctx context.Context, ownerID string, admin bool) ([]Skill, error) {
 	var out []Skill
-	if err := s.db.NewSelect().Model(&out).
+	q := s.db.NewSelect().Model(&out).
 		ExcludeColumn("content").
-		OrderExpr("name ASC").
-		Scan(ctx); err != nil {
+		OrderExpr("name ASC")
+	q = visibleTo(q, ownerID, admin)
+	if err := q.Scan(ctx); err != nil {
 		return nil, fmt.Errorf("listing skills: %w", err)
 	}
 	return out, nil
 }
 
-// GetByName returns the skill with the given name — the read_skill tool's
-// lookup. ErrNotFound-wrapping error when it doesn't exist.
-func (s *SkillStore) GetByName(ctx context.Context, name string) (*Skill, error) {
+// GetByNameFor returns the skill the given name resolves to FOR ownerID —
+// their own over a global one sharing the name (spec §5.29), the read_skill
+// tool's lookup. ErrNotFound-wrapping error when neither exists.
+func (s *SkillStore) GetByNameFor(ctx context.Context, name, ownerID string) (*Skill, error) {
 	m := new(Skill)
-	if err := s.db.NewSelect().Model(m).Where("name = ?", name).Scan(ctx); err != nil {
+	err := s.db.NewSelect().Model(m).
+		Where("name = ?", name).
+		Where("(scope = ? OR owner_id = ?)", ScopeGlobal, ownerID).
+		OrderExpr("CASE WHEN owner_id = ? THEN 0 ELSE 1 END", ownerID).
+		Limit(1).
+		Scan(ctx)
+	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			err = ErrNotFound
 		}
@@ -48,16 +57,23 @@ func (s *SkillStore) GetByName(ctx context.Context, name string) (*Skill, error)
 	return m, nil
 }
 
-// FindBySource returns the skill imported from (repo, path), or nil when none
-// was — how a re-import matches the row it refreshes.
-func (s *SkillStore) FindBySource(ctx context.Context, repo, path string) (*Skill, error) {
+// FindBySource returns the skill imported from (repo, path) that this import
+// may refresh: the caller's own row (an admin's import also matches a global
+// one). Nil when none — the import creates instead. Scoped so two users
+// importing one repo keep separate rows.
+func (s *SkillStore) FindBySource(ctx context.Context, repo, path, ownerID string, admin bool) (*Skill, error) {
 	m := new(Skill)
 	// COALESCE: a raw-URL import stores no path, and the nullzero column
 	// holds NULL where a plain = '' would never match.
-	err := s.db.NewSelect().Model(m).
+	q := s.db.NewSelect().Model(m).
 		Where("source_repo = ?", repo).
-		Where("COALESCE(source_path, '') = ?", path).
-		Scan(ctx)
+		Where("COALESCE(source_path, '') = ?", path)
+	if admin {
+		q = q.Where("(owner_id = ? OR scope = ?)", ownerID, ScopeGlobal)
+	} else {
+		q = q.Where("owner_id = ?", ownerID)
+	}
+	err := q.OrderExpr("CASE WHEN owner_id = ? THEN 0 ELSE 1 END", ownerID).Limit(1).Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

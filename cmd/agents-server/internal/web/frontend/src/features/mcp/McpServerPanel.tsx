@@ -3,8 +3,9 @@ import { Button, TextInput, Label, Select, Checkbox, FormControl, Stack, ToggleS
 import { SecretInput } from '@/components/SecretInput';
 import { TokenListInput } from '@/components/TokenListInput';
 import { FormActions } from '@/components/FormActions';
-import { CrudPanel, RowEditButton } from '@/components/CrudPanel';
-import { useReadOnly } from '@/lib/access';
+import { CrudPanel, RowEditButton, ScopeBadge, ScopeButton } from '@/components/CrudPanel';
+import { ReadOnlyContext, canDeleteRow, canEditRow } from '@/lib/access';
+import { useMe } from '@/lib/me';
 import { ResourceRow } from '@/components/ResourceRow';
 import { api } from '@/lib/api';
 import { BADGE } from '@/lib/badges';
@@ -42,6 +43,8 @@ interface McpServer {
   status: McpStatus;
   has_oauth_token?: boolean;
   config?: McpServerConfig;
+  scope?: string;
+  owner_id?: string;
 }
 
 interface McpFormData {
@@ -236,7 +239,9 @@ const MUTATION_GRACE_MS = 8000;
 const POLL_INTERVAL_MS = 1500;
 
 export function McpServerPanel() {
-  const readOnly = useReadOnly();
+  const { me } = useMe();
+  const isAdmin = me?.role === 'admin';
+  const rowEditable = (s: McpServer) => canEditRow(isAdmin, me?.id, s);
   const { items: servers, reload, adding, editing, startAdd, startEdit, cancel, save, saving, remove } = useCrud<McpServer, Partial<McpServer>>(api.mcpServers);
   // busy covers only the POST /connect round-trip; every longer-lived state
   // (connecting, authorizing) is reported by the backend via status.
@@ -315,31 +320,42 @@ export function McpServerPanel() {
     : null;
 
   return (
-    <CrudPanel title="MCP Servers" onAdd={startAdd} onCancel={cancel} form={form} isEmpty={servers.length === 0} empty="No MCP servers configured.">
-      {servers.map(s => {
-        const action = STATUS_ACTION[s.status];
-        return (
-          <ResourceRow key={s.id}
-            status={<span className="form-status-dot" style={{ background: STATUS_DOT[s.status] || 'var(--fgColor-muted)' }} />}
-            title={s.name}
-            badges={s.config && s.config.auth_mode === 'oauth' && <Label variant={BADGE.type}>OAuth</Label>}
-            sub={(s.config && s.config.endpoint) || ''}
-            actions={<>
-              {action && !readOnly && (
-                <Button
-                  onClick={() => handleConnect(s.id)}
-                  disabled={action.inProgress || busy[s.id]}
-                  size="small"
-                  style={{ color: 'var(--fgColor-success)', minWidth: 90, textAlign: 'center' }}
-                >{busy[s.id] ? '...' : action.label}</Button>
-              )}
-              <RowEditButton onClick={() => startEdit(s)} />
-              {!readOnly && <EnabledToggle server={s} onToggle={handleToggleEnabled} />}
-            </>}
-          />
-        );
-      })}
-    </CrudPanel>
+    // Scoped rows: the form is a disabled view exactly when the opened row is
+    // not the caller's to edit (canEditRow), not for every member.
+    <ReadOnlyContext value={!!editing && !rowEditable(editing)}>
+      <CrudPanel title="MCP Servers" onAdd={startAdd} onCancel={cancel} form={form} isEmpty={servers.length === 0} empty="No MCP servers configured."
+        onDelete={editing && canDeleteRow(isAdmin, me?.id, editing)
+          ? async () => { if (await remove(editing.id, editing.name)) cancel(); } : null}>
+        {servers.map(s => {
+          const action = STATUS_ACTION[s.status];
+          const editable = rowEditable(s);
+          return (
+            <ResourceRow key={s.id}
+              status={<span className="form-status-dot" style={{ background: STATUS_DOT[s.status] || 'var(--fgColor-muted)' }} />}
+              title={s.name}
+              badges={<>
+                {s.config && s.config.auth_mode === 'oauth' && <Label variant={BADGE.type}>OAuth</Label>}
+                <ScopeBadge row={s} meId={me?.id} />
+              </>}
+              sub={(s.config && s.config.endpoint) || ''}
+              actions={<>
+                {action && editable && (
+                  <Button
+                    onClick={() => handleConnect(s.id)}
+                    disabled={action.inProgress || busy[s.id]}
+                    size="small"
+                    style={{ color: 'var(--fgColor-success)', minWidth: 90, textAlign: 'center' }}
+                  >{busy[s.id] ? '...' : action.label}</Button>
+                )}
+                {isAdmin && <ScopeButton row={s} setScope={api.mcpServers.setScope} onDone={reload} />}
+                <RowEditButton readOnly={!editable} onClick={() => startEdit(s)} />
+                {editable && <EnabledToggle server={s} onToggle={handleToggleEnabled} />}
+              </>}
+            />
+          );
+        })}
+      </CrudPanel>
+    </ReadOnlyContext>
   );
 }
 

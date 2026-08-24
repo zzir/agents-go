@@ -23,4 +23,7 @@ export const BADGE = {
   /** A reference to another configured entity, shown by its name. A row with
    * no reference (a global memory) carries NO badge — the default is silence. */
   ref: 'accent',
+  /** A scoped row's visibility: Global, or a foreign Private row in the
+   * admin's cross-user view. An own private row carries NO badge. */
+  scope: 'secondary',
 } as const;

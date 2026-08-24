@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -44,15 +45,22 @@ type TriggerFirer interface {
 // of an agent — without a conversation asking, and the webhook endpoint they
 // are called through.
 type TriggerHandler struct {
-	store    *store.TriggerStore
-	sessions *store.SessionStore
-	firer    TriggerFirer
-	replays  replayGuard
+	store     *store.TriggerStore
+	sessions  *store.SessionStore
+	workflows *store.WorkflowStore
+	agents    *store.AgentConfigStore
+	firer     TriggerFirer
+	replays   replayGuard
 }
 
-// NewTriggerHandler returns a handler over the stores and the firer.
-func NewTriggerHandler(s *store.TriggerStore, sessions *store.SessionStore, firer TriggerFirer) *TriggerHandler {
-	return &TriggerHandler{store: s, sessions: sessions, firer: firer, replays: replayGuard{seen: map[string]time.Time{}}}
+// maxTriggersPerOwner caps how many triggers one user may hold — unattended
+// starts are spend.
+const maxTriggersPerOwner = 50
+
+// NewTriggerHandler returns a handler over the stores and the firer; the
+// workflow and agent stores back the target-visibility checks.
+func NewTriggerHandler(s *store.TriggerStore, sessions *store.SessionStore, workflows *store.WorkflowStore, agents *store.AgentConfigStore, firer TriggerFirer) *TriggerHandler {
+	return &TriggerHandler{store: s, sessions: sessions, workflows: workflows, agents: agents, firer: firer, replays: replayGuard{seen: map[string]time.Time{}}}
 }
 
 // replayGuard remembers each delivery accepted within the timestamp window —
@@ -174,6 +182,24 @@ func (h *TriggerHandler) bind(c *gin.Context) (*store.Trigger, bool) {
 		badRequest(c, "session_id names a task's own session; a trigger reports to a conversation")
 		return nil, false
 	}
+	// A workflow target must be one the session's owner may see (spec §5.29)
+	// — the execution will run under their identity, so a foreign private
+	// definition reads as absent.
+	if t.WorkflowID != "" && h.workflows != nil {
+		wf, err := h.workflows.Get(ctx, t.WorkflowID)
+		if err != nil || !store.Visible(wf.Scope, wf.OwnerID, sess.OwnerID, false) {
+			badRequest(c, "workflow_id names no workflow")
+			return nil, false
+		}
+	}
+	// An agent target follows the same rule.
+	if t.AgentConfigID != "" && h.agents != nil {
+		ac, err := h.agents.Get(ctx, t.AgentConfigID)
+		if err != nil || !store.Visible(ac.Scope, ac.OwnerID, sess.OwnerID, false) {
+			badRequest(c, "agent_config_id names no agent")
+			return nil, false
+		}
+	}
 	return t, true
 }
 
@@ -236,6 +262,14 @@ func (h *TriggerHandler) Get(c *gin.Context) {
 func (h *TriggerHandler) Create(c *gin.Context) {
 	t, ok := h.bind(c)
 	if !ok {
+		return
+	}
+	// The per-owner cap: unattended cron (and webhook) starts are spend, so a
+	// runaway script cannot mint thousands. Fifty is a working team's head
+	// room, not a scheduler.
+	u, _ := server.CurrentUser(c)
+	if existing, err := h.store.ListByOwner(c.Request.Context(), u.ID, ""); err == nil && len(existing) >= maxTriggersPerOwner {
+		conflict(c, fmt.Sprintf("trigger limit reached (%d per user); delete one first", maxTriggersPerOwner))
 		return
 	}
 	minted := ""

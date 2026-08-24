@@ -151,3 +151,19 @@ func NormalizeProvider(p *Provider) error {
 	}
 	return nil
 }
+
+// ForeignAgentRefs counts the agents referencing this provider that a
+// demotion to newOwner would strand: global agents (which may only reference
+// global providers) and other owners' private ones — the guard that keeps a
+// demote from letting one user's runs spend a credential that just became
+// somebody's private key.
+func (s *ProviderStore) ForeignAgentRefs(ctx context.Context, id, newOwner string) (int, error) {
+	n, err := s.db.NewSelect().Model((*AgentConfig)(nil)).
+		Where("provider_id = ?", id).
+		Where("(scope = ? OR owner_id IS NULL OR owner_id != ?)", ScopeGlobal, newOwner).
+		Count(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("counting agents on provider %s: %w", id, err)
+	}
+	return n, nil
+}

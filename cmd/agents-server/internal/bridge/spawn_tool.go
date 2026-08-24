@@ -32,10 +32,10 @@ type spawnArgs struct {
 // is built per run because the workflows on offer change without a restart;
 // the description lists them only when there are any, so a server without
 // workflows offers the plain tool.
-func (r *Runner) spawnTool(ctx context.Context) *agents.Tool {
+func (r *Runner) spawnTool(ctx context.Context, ownerID string) *agents.Tool {
 	var offered []store.Workflow
 	if r.Deps.Workflows != nil {
-		list, err := r.Deps.Workflows.List(ctx)
+		list, err := r.visibleWorkflows(ctx, ownerID)
 		if err != nil {
 			logging.Ctx(ctx).Warn("spawn_task: listing workflows for the description", "error", err)
 		}
@@ -92,15 +92,16 @@ func (r *Runner) spawnWorkflow(ctx context.Context, tc *agents.ToolContext, pare
 	if r.Deps.Workflows == nil {
 		return agents.TextResult("Workflows are not available on this server. Leave workflow empty for a free-form task."), nil
 	}
-	offered, err := r.Deps.Workflows.List(ctx)
+	ownerID := ""
+	if sess, serr := r.Deps.Sessions.Get(ctx, parent); serr == nil {
+		ownerID = sess.OwnerID
+	}
+	offered, err := r.visibleWorkflows(ctx, ownerID)
 	if err != nil {
 		return agents.TextResult(fmt.Sprintf("Could not look up workflows right now: %s. Try again, or leave workflow empty for a free-form task.", err.Error())), nil
 	}
-	for i := range offered {
-		if !strings.EqualFold(offered[i].Name, name) {
-			continue
-		}
-		info, err := r.StartWorkflow(ctx, offered[i].ID, parent, input, tc.ToolCallID)
+	if wf := matchWorkflow(offered, ownerID, name); wf != nil {
+		info, err := r.StartWorkflow(ctx, wf.ID, parent, input, tc.ToolCallID)
 		if err != nil {
 			// The refusal is the model's to read and relay — a budget that is
 			// full or an agent that was deleted is something the person can
@@ -112,7 +113,7 @@ func (r *Runner) spawnWorkflow(ctx context.Context, tc *agents.ToolContext, pare
 		// this call in the transcript; the text leads with what was set going.
 		res := tasks.ToolResult(info, r.tasks.Progress(info))
 		res.Content = append([]agents.ToolOutputContent{
-			agents.ToolOutputText{Text: startedMessage(ctx, r, parent, info, len(offered[i].Steps))},
+			agents.ToolOutputText{Text: startedMessage(ctx, r, parent, info, len(wf.Steps))},
 		}, res.Content...)
 		return res, nil
 	}

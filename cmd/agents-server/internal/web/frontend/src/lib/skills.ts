@@ -6,6 +6,8 @@ export interface Skill {
   source_repo?: string;
   source_path?: string;
   detached?: boolean;
+  scope?: string;
+  owner_id?: string;
 }
 
 export interface SkillGroup {

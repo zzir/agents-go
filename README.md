@@ -96,8 +96,9 @@ your data, embeddable SDK. Solo or as a team.
 - **Providers.** OpenAI Responses API (API key or ChatGPT sign-in), Anthropic
   Messages API, or any Responses-compatible endpoint by base URL.
 - **A team, when you need one.** `--auth oauth` replaces the single token with
-  Google sign-in and an allowlist: each person's sessions are their own, the
-  shared configuration is written by admins and read by members, every
+  Google sign-in and an allowlist: each person's sessions are their own,
+  agents, providers, MCP servers, skills and workflows are per person with
+  admin-published global rows, host configuration is admin-written, every
   change lands in an audit log, personal access tokens serve scripts, and
   stored credentials are sealed at rest with a key only the process holds.
   Details: [Authentication](cmd/agents-server/README.md#authentication).

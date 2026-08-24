@@ -2,7 +2,9 @@ import React, { useState } from 'react';
 import { TextInput, Textarea, Label, FormControl, Checkbox, Select, Stack } from '@primer/react';
 import { TokenListInput } from '@/components/TokenListInput';
 import { FormActions } from '@/components/FormActions';
-import { CrudPanel, RowEditButton } from '@/components/CrudPanel';
+import { CrudPanel, RowEditButton, ScopeBadge, ScopeButton } from '@/components/CrudPanel';
+import { ReadOnlyContext, canDeleteRow, canEditRow } from '@/lib/access';
+import { useMe } from '@/lib/me';
 import { ResourceRow } from '@/components/ResourceRow';
 import { api } from '@/lib/api';
 import { useApi, useCrud } from '@/lib/hooks';
@@ -103,6 +105,8 @@ interface Agent {
   tools: string;
   // Empty/absent means "not customized" -> the agent gets every installed skill.
   skills?: string;
+  scope?: string;
+  owner_id?: string;
 }
 
 // The referenced endpoints, for the picker and the list badge. Name and type
@@ -477,7 +481,10 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
 }
 
 export function AgentConfigPanel() {
-  const { items: agents, adding, editing, startAdd, startEdit, cancel, save, saving, remove } =
+  const { me } = useMe();
+  const isAdmin = me?.role === 'admin';
+  const rowEditable = (a: Agent) => canEditRow(isAdmin, me?.id, a);
+  const { items: agents, adding, editing, startAdd, startEdit, cancel, save, saving, remove, reload } =
     useCrud<Agent, AgentFormData & { handoffs: string; tools: string; skills: string; model_settings: string }>(api.agents);
   const { data: mcpServers } = useApi<McpServer[]>(() => api.mcpServers.list() as Promise<McpServer[]>);
   const { data: skills } = useApi<Skill[]>(() => api.skills.list() as Promise<Skill[]>);
@@ -509,27 +516,37 @@ export function AgentConfigPanel() {
     : null;
 
   return (
-    <CrudPanel title="Agents" onAdd={startAdd} onCancel={cancel} form={form} isEmpty={agents.length === 0}
-      empty="No agents configured. Add one to customize model, provider, and behavior.">
-      {agents.map(a => {
-        const mcp = mcpCount(a.tools);
-        const skl = skillCount(a.skills);
-        const rowProvider = (providers || []).find(p => p.id === a.provider_id);
-        const pmeta = providerMeta(rowProvider?.type ?? '');
-        return (
-          <ResourceRow key={a.id}
-            title={a.name}
-            badges={<>
-              <Label variant={BADGE.ref}>{rowProvider?.name || pmeta.badge}</Label>
-              {mcp > 0 && <Label variant={BADGE.count}>{'MCP·' + mcp}</Label>}
-              {skl > 0 && <Label variant={BADGE.count}>{'Skills·' + skl}</Label>}
-            </>}
-            meta={<span>{a.model || 'default model'}</span>}
-            actions={<RowEditButton onClick={() => startEdit(a)} />}
-          />
-        );
-      })}
-    </CrudPanel>
+    // Scoped rows: the form is a disabled view exactly when the opened row is
+    // not the caller's to edit (canEditRow), not for every member.
+    <ReadOnlyContext value={!!editing && !rowEditable(editing)}>
+      <CrudPanel title="Agents" onAdd={startAdd} onCancel={cancel} form={form} isEmpty={agents.length === 0}
+        onDelete={editing && canDeleteRow(isAdmin, me?.id, editing)
+          ? async () => { if (await remove(editing.id, editing.name)) cancel(); } : null}
+        empty="No agents configured. Add one to customize model, provider, and behavior.">
+        {agents.map(a => {
+          const mcp = mcpCount(a.tools);
+          const skl = skillCount(a.skills);
+          const rowProvider = (providers || []).find(p => p.id === a.provider_id);
+          const pmeta = providerMeta(rowProvider?.type ?? '');
+          return (
+            <ResourceRow key={a.id}
+              title={a.name}
+              badges={<>
+                <Label variant={BADGE.ref}>{rowProvider?.name || pmeta.badge}</Label>
+                {mcp > 0 && <Label variant={BADGE.count}>{'MCP·' + mcp}</Label>}
+                {skl > 0 && <Label variant={BADGE.count}>{'Skills·' + skl}</Label>}
+                <ScopeBadge row={a} meId={me?.id} />
+              </>}
+              meta={<span>{a.model || 'default model'}</span>}
+              actions={<>
+                {isAdmin && <ScopeButton row={a} setScope={api.agents.setScope} onDone={reload} />}
+                <RowEditButton readOnly={!rowEditable(a)} onClick={() => startEdit(a)} />
+              </>}
+            />
+          );
+        })}
+      </CrudPanel>
+    </ReadOnlyContext>
   );
 }
 

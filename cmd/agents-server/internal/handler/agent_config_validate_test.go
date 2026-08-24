@@ -20,7 +20,7 @@ func newAgentEngine(t *testing.T) (*gin.Engine, *store.McpServerStore) {
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
 	mcpStore := store.NewMcpServerStore(db)
-	h := NewAgentConfigHandler(store.NewAgentConfigStore(db), mcpStore, store.NewProviderStore(db), guardrails.NewResolver(store.NewGuardrailStore(db)))
+	h := NewAgentConfigHandler(store.NewAgentConfigStore(db), mcpStore, store.NewProviderStore(db), store.NewSkillStore(db), guardrails.NewResolver(store.NewGuardrailStore(db)))
 
 	engine := newTestEngine()
 	engine.POST("/agents", h.Create)

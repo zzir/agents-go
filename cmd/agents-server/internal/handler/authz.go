@@ -202,3 +202,80 @@ func (d AuthzDeps) triggerGate() gin.HandlerFunc {
 		c.Next()
 	}
 }
+
+// The scoped-configuration gates (spec §5.29). Providers, agents, MCP
+// servers, skills and workflows carry a scope: global rows are every
+// member's to read and admins' to write; private rows belong to their owner.
+
+// stampCreateScope applies the caller to a new scoped row: an explicit
+// global claim needs the admin role, anything else lands private and owned.
+// False means the response is written.
+func stampCreateScope(c *gin.Context, scope, ownerID *string) bool {
+	u, ok := server.CurrentUser(c)
+	if !ok {
+		notFound(c)
+		return false
+	}
+	if *scope == store.ScopeGlobal && u.Role != store.RoleAdmin {
+		abortError(c, http.StatusForbidden, protocol.CodeForbidden, "admin role required to create global configuration")
+		return false
+	}
+	*scope, *ownerID = store.NormalizeScope(*scope, u.ID)
+	return true
+}
+
+// visibleRow 404s a row the caller may not see — a foreign private row reads
+// as absent, never as forbidden (ownership is not an oracle for existence).
+func visibleRow(c *gin.Context, scope, rowOwner string) bool {
+	u, ok := server.CurrentUser(c)
+	if !ok || !store.Visible(scope, rowOwner, u.ID, u.Role == store.RoleAdmin) {
+		notFound(c)
+		return false
+	}
+	return true
+}
+
+// editableRow gates an UPDATE: the owner edits their private row, an admin
+// edits global ones. An admin does NOT edit a member's private row —
+// management is delete and scope change, not authorship. Invisibility answers
+// 404 first, a visible-but-not-yours row 403.
+func editableRow(c *gin.Context, scope, rowOwner string) bool {
+	if !visibleRow(c, scope, rowOwner) {
+		return false
+	}
+	u, _ := server.CurrentUser(c)
+	admin := u.Role == store.RoleAdmin
+	if scope == store.ScopeGlobal && !admin {
+		abortError(c, http.StatusForbidden, protocol.CodeForbidden, "admin role required to modify global configuration")
+		return false
+	}
+	if scope == store.ScopePrivate && rowOwner != u.ID {
+		abortError(c, http.StatusForbidden, protocol.CodeForbidden, "this configuration belongs to another user")
+		return false
+	}
+	return true
+}
+
+// deletableRow gates a DELETE: everything editableRow allows, plus an admin
+// removing any row (management).
+func deletableRow(c *gin.Context, scope, rowOwner string) bool {
+	if !visibleRow(c, scope, rowOwner) {
+		return false
+	}
+	u, _ := server.CurrentUser(c)
+	if u.Role == store.RoleAdmin {
+		return true
+	}
+	return editableRow(c, scope, rowOwner)
+}
+
+// callerScope answers the caller's (id, admin) pair for visibility-filtered
+// listings.
+func callerScope(c *gin.Context) (string, bool, bool) {
+	u, ok := server.CurrentUser(c)
+	if !ok {
+		notFound(c)
+		return "", false, false
+	}
+	return u.ID, u.Role == store.RoleAdmin, true
+}

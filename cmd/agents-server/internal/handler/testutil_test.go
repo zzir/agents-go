@@ -100,7 +100,7 @@ func testSessionDeps(db *bun.DB, tune ...func(*SessionDeps)) SessionDeps {
 
 // testAgentConfigHandler wires an AgentConfigHandler over db with every store real.
 func testAgentConfigHandler(db *bun.DB) *AgentConfigHandler {
-	return NewAgentConfigHandler(store.NewAgentConfigStore(db), store.NewMcpServerStore(db), store.NewProviderStore(db),
+	return NewAgentConfigHandler(store.NewAgentConfigStore(db), store.NewMcpServerStore(db), store.NewProviderStore(db), store.NewSkillStore(db),
 		guardrails.NewResolver(store.NewGuardrailStore(db)))
 }
 

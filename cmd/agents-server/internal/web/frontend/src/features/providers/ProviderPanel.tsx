@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, TextInput, Label, SegmentedControl, Stack } from '@primer/react';
 import { SecretInput } from '@/components/SecretInput';
 import { FormActions } from '@/components/FormActions';
-import { CrudPanel, RowEditButton } from '@/components/CrudPanel';
-import { useReadOnly } from '@/lib/access';
+import { CrudPanel, RowEditButton, ScopeBadge, ScopeButton } from '@/components/CrudPanel';
+import { ReadOnlyContext, canDeleteRow, canEditRow } from '@/lib/access';
+import { useMe } from '@/lib/me';
 import { ResourceRow } from '@/components/ResourceRow';
 import { api } from '@/lib/api';
 import { useApi, useCrud } from '@/lib/hooks';
@@ -22,6 +23,8 @@ interface Provider {
   api_key?: string;
   base_url?: string;
   chatgpt_logged_in?: boolean;
+  scope?: string;
+  owner_id?: string;
 }
 
 interface ProviderFormData {
@@ -108,7 +111,9 @@ function ProviderForm({ initial, onSave, onCancel, onDelete, saving, providerTyp
 }
 
 export function ProviderPanel() {
-  const readOnly = useReadOnly();
+  const { me } = useMe();
+  const isAdmin = me?.role === 'admin';
+  const rowEditable = (p: Provider) => canEditRow(isAdmin, me?.id, p);
   const { items: providers, adding, editing, startAdd, startEdit, cancel, save, saving, remove, reload } =
     useCrud<Provider, ProviderFormData>(api.providers);
   const { data: providerTypes } = useApi<ProviderTypeInfo[]>(() => api.providerTypes.list() as Promise<ProviderTypeInfo[]>);
@@ -181,33 +186,40 @@ export function ProviderPanel() {
     ) : null;
 
   return (
-    <CrudPanel title="Providers" onAdd={startAdd} onCancel={cancel} form={form} isEmpty={providers.length === 0}
-      empty="No providers yet. An agent without one runs on the built-in default: the OpenAI backend on the global API key from Settings.">
-      {providers.map(p => {
-        const meta = providerMeta(p.type || '');
-        const chatgpt = p.auth_mode === 'chatgpt_login';
-        return (
-          <ResourceRow key={p.id}
-            /* Login state is STATUS, so it is the dot the MCP list uses, not
-               a Label; the Sign in/out action names the next move. */
-            status={chatgpt && <span
-              className="form-status-dot"
-              style={{ background: p.chatgpt_logged_in ? 'var(--fgColor-success)' : 'var(--fgColor-attention)' }}
-              title={p.chatgpt_logged_in ? 'ChatGPT signed in' : 'ChatGPT not signed in'}
-            />}
-            title={p.name}
-            badges={<Label variant={BADGE.type}>{meta.badge}</Label>}
-            sub={p.base_url || meta.baseURLPlaceholder}
-            actions={<>
-              {chatgpt && !readOnly && (p.chatgpt_logged_in
-                ? <Button onClick={() => handleLogout(p.id)} size="small" variant="invisible">Sign out</Button>
-                : <Button onClick={() => handleLogin(p.id)} size="small" variant="invisible" loading={!!signingIn[p.id]}>Sign in</Button>)}
-              <RowEditButton onClick={() => startEdit(p)} />
-            </>}
-          />
-        );
-      })}
-    </CrudPanel>
+    // Scoped rows: the form is a disabled view exactly when the opened row is
+    // not the caller's to edit (canEditRow), not for every member.
+    <ReadOnlyContext value={!!editing && !rowEditable(editing)}>
+      <CrudPanel title="Providers" onAdd={startAdd} onCancel={cancel} form={form} isEmpty={providers.length === 0}
+        onDelete={editing && canDeleteRow(isAdmin, me?.id, editing)
+          ? async () => { if (await remove(editing.id, editing.name)) cancel(); } : null}
+        empty="No providers yet. An agent without one runs on the built-in default: the OpenAI backend on the global API key from Settings.">
+        {providers.map(p => {
+          const meta = providerMeta(p.type || '');
+          const chatgpt = p.auth_mode === 'chatgpt_login';
+          return (
+            <ResourceRow key={p.id}
+              /* Login state is STATUS, so it is the dot the MCP list uses, not
+                 a Label; the Sign in/out action names the next move. */
+              status={chatgpt && <span
+                className="form-status-dot"
+                style={{ background: p.chatgpt_logged_in ? 'var(--fgColor-success)' : 'var(--fgColor-attention)' }}
+                title={p.chatgpt_logged_in ? 'ChatGPT signed in' : 'ChatGPT not signed in'}
+              />}
+              title={p.name}
+              badges={<><Label variant={BADGE.type}>{meta.badge}</Label><ScopeBadge row={p} meId={me?.id} /></>}
+              sub={p.base_url || meta.baseURLPlaceholder}
+              actions={<>
+                {chatgpt && rowEditable(p) && (p.chatgpt_logged_in
+                  ? <Button onClick={() => handleLogout(p.id)} size="small" variant="invisible">Sign out</Button>
+                  : <Button onClick={() => handleLogin(p.id)} size="small" variant="invisible" loading={!!signingIn[p.id]}>Sign in</Button>)}
+                {isAdmin && <ScopeButton row={p} setScope={api.providers.setScope} onDone={reload} />}
+                <RowEditButton readOnly={!rowEditable(p)} onClick={() => startEdit(p)} />
+              </>}
+            />
+          );
+        })}
+      </CrudPanel>
+    </ReadOnlyContext>
   );
 }
 

@@ -58,6 +58,33 @@ type getWorkflowArgs struct {
 	Name string `json:"name" jsonschema:"The workflow's name"`
 }
 
+// visibleWorkflows lists what ownerID may see (their own plus the global
+// set); an empty ownerID — an internal caller with no user — sees everything.
+func (r *Runner) visibleWorkflows(ctx context.Context, ownerID string) ([]store.Workflow, error) {
+	if ownerID == "" {
+		return r.Deps.Workflows.List(ctx)
+	}
+	return store.ListVisibleOf(ctx, r.Deps.Workflows.CrudStore, ownerID, false)
+}
+
+// matchWorkflow picks what name resolves to for ownerID: their own row over a
+// global one sharing the name (spec §5.29). Nil when nothing matches.
+func matchWorkflow(list []store.Workflow, ownerID, name string) *store.Workflow {
+	var match *store.Workflow
+	for i := range list {
+		if !strings.EqualFold(list[i].Name, name) {
+			continue
+		}
+		if list[i].OwnerID == ownerID && ownerID != "" {
+			return &list[i]
+		}
+		if match == nil {
+			match = &list[i]
+		}
+	}
+	return match
+}
+
 // errInvalidWorkflowSpec marks a save the model can fix. A store fault is not
 // one — that distinction decides whether a person is asked (see workflowTools).
 var errInvalidWorkflowSpec = errors.New("invalid workflow")
@@ -73,11 +100,11 @@ func (r *Runner) workflowTools(ctx context.Context, ownerID string) []*agents.To
 	get := agents.NewTool(WorkflowGetToolName,
 		"Read a workflow definition by name, in the shape save_workflow takes. Read one before changing it.",
 		func(ctx context.Context, _ *agents.ToolContext, args getWorkflowArgs) (agents.ToolResult, error) {
-			return r.getWorkflow(ctx, args.Name)
+			return r.getWorkflow(ctx, ownerID, args.Name)
 		})
 	get.ReadOnly = true
 
-	save := agents.NewTool(WorkflowSaveToolName, r.saveWorkflowDescription(ctx),
+	save := agents.NewTool(WorkflowSaveToolName, r.saveWorkflowDescription(ctx, ownerID),
 		func(ctx context.Context, _ *agents.ToolContext, spec workflowSpec) (agents.ToolResult, error) {
 			return r.saveWorkflow(ctx, ownerID, spec)
 		})
@@ -91,7 +118,7 @@ func (r *Runner) workflowTools(ctx context.Context, ownerID string) []*agents.To
 		var spec workflowSpec
 		err := json.Unmarshal([]byte(argsJSON), &spec)
 		if err == nil {
-			_, _, err = r.resolveWorkflowSpec(ctx, spec)
+			_, _, err = r.resolveWorkflowSpec(ctx, ownerID, spec)
 		} else {
 			err = invalidWorkflowf("%s", err.Error()) // undecodable: the call fails on the model, writing nothing
 		}
@@ -102,14 +129,14 @@ func (r *Runner) workflowTools(ctx context.Context, ownerID string) []*agents.To
 
 // saveWorkflowDescription is the save tool's description: what a definition
 // is, what a save does, and the agents a step may name.
-func (r *Runner) saveWorkflowDescription(ctx context.Context) string {
+func (r *Runner) saveWorkflowDescription(ctx context.Context, ownerID string) string {
 	var b strings.Builder
 	b.WriteString("Create or update a workflow definition: a fixed sequence of steps, each an ordinary turn by a named agent, " +
 		"that spawn_task(workflow=<name>) runs in the background. Saving under a name that exists replaces that definition " +
 		"(executions in flight keep their snapshot). Steps, agents and edges are named, not numbered. " +
 		"Every save is shown to the person for approval before it is written; a definition that would not save is refused to you at once instead.")
 	if r.Deps.AgentConfigs != nil {
-		list, err := r.Deps.AgentConfigs.List(ctx)
+		list, err := r.visibleAgentConfigs(ctx, ownerID)
 		if err != nil {
 			logging.Ctx(ctx).Warn("save_workflow: listing agents for the description", "error", err)
 		}
@@ -127,18 +154,18 @@ func (r *Runner) saveWorkflowDescription(ctx context.Context) string {
 
 // getWorkflow answers get_workflow: the definition in the model's shape, or
 // what there is to choose from.
-func (r *Runner) getWorkflow(ctx context.Context, name string) (agents.ToolResult, error) {
+func (r *Runner) getWorkflow(ctx context.Context, ownerID, name string) (agents.ToolResult, error) {
 	if r.Deps.Workflows == nil {
 		return agents.TextResult("Workflows are not available on this server."), nil
 	}
-	list, err := r.Deps.Workflows.List(ctx)
+	list, err := r.visibleWorkflows(ctx, ownerID)
 	if err != nil {
 		return agents.ToolResult{}, err
 	}
 	name = strings.TrimSpace(name)
-	for i := range list {
-		if name != "" && strings.EqualFold(list[i].Name, name) {
-			spec := r.specOfWorkflow(ctx, &list[i])
+	if name != "" {
+		if wf := matchWorkflow(list, ownerID, name); wf != nil {
+			spec := r.specOfWorkflow(ctx, wf)
 			out, err := json.MarshalIndent(spec, "", "  ")
 			if err != nil {
 				return agents.ToolResult{}, err
@@ -159,7 +186,7 @@ func (r *Runner) getWorkflow(ctx context.Context, name string) (agents.ToolResul
 // the gate ran, then the write. A same-named definition created while the
 // approval waited turns the create into an update of it.
 func (r *Runner) saveWorkflow(ctx context.Context, ownerID string, spec workflowSpec) (agents.ToolResult, error) {
-	wf, existing, err := r.resolveWorkflowSpec(ctx, spec)
+	wf, existing, err := r.resolveWorkflowSpec(ctx, ownerID, spec)
 	if errors.Is(err, errInvalidWorkflowSpec) {
 		return agents.TextResult("Nothing was saved: " + strings.TrimPrefix(err.Error(), errInvalidWorkflowSpec.Error()+": ") + "."), nil
 	}
@@ -167,14 +194,23 @@ func (r *Runner) saveWorkflow(ctx context.Context, ownerID string, spec workflow
 		return agents.ToolResult{}, err
 	}
 	if existing == nil {
+		// A new definition is the saver's own (spec §5.29); an admin promotes
+		// it over REST if the team should run it.
+		wf.Scope, wf.OwnerID = store.ScopePrivate, ownerID
 		err = r.Deps.Workflows.Create(ctx, wf)
 		if _, dup := store.UniqueViolation(err); dup {
-			if wf, existing, err = r.resolveWorkflowSpec(ctx, spec); err == nil && existing == nil {
+			if wf, existing, err = r.resolveWorkflowSpec(ctx, ownerID, spec); err == nil && existing == nil {
 				err = errors.New("save_workflow: the name is taken but names no workflow")
 			}
 		}
 	}
 	if err == nil && existing != nil {
+		// Editing a GLOBAL definition through the tool stays an admin's act —
+		// the REST gate holds here too.
+		if existing.Scope == store.ScopeGlobal && !ownerIsAdmin(ctx, r.Deps, ownerID) {
+			return agents.TextResult(fmt.Sprintf("Nothing was saved: %q is a global workflow only an admin may change. Pick another name to save your own.", existing.Name)), nil
+		}
+		wf.Scope, wf.OwnerID = existing.Scope, existing.OwnerID
 		err = r.Deps.Workflows.Update(ctx, existing.ID, wf)
 	}
 	if err != nil {
@@ -236,7 +272,7 @@ func stepCount(n int) string {
 // keeps its id (what a retry and an execution in flight name). existing is the
 // definition the name already denotes, nil for a new one. A fixable problem
 // is an errInvalidWorkflowSpec; anything else is a store fault.
-func (r *Runner) resolveWorkflowSpec(ctx context.Context, spec workflowSpec) (wf, existing *store.Workflow, err error) {
+func (r *Runner) resolveWorkflowSpec(ctx context.Context, ownerID string, spec workflowSpec) (wf, existing *store.Workflow, err error) {
 	if r.Deps.Workflows == nil {
 		return nil, nil, errors.New("workflows are not available on this server")
 	}
@@ -244,16 +280,11 @@ func (r *Runner) resolveWorkflowSpec(ctx context.Context, spec workflowSpec) (wf
 	if name == "" {
 		return nil, nil, invalidWorkflowf("name is required")
 	}
-	list, err := r.Deps.Workflows.List(ctx)
+	list, err := r.visibleWorkflows(ctx, ownerID)
 	if err != nil {
 		return nil, nil, err
 	}
-	for i := range list {
-		if strings.EqualFold(list[i].Name, name) {
-			existing = &list[i]
-			break
-		}
-	}
+	existing = matchWorkflow(list, ownerID, name)
 
 	// The names the existing steps go by — a nameless one by its position, as
 	// get_workflow reported it — so a read saved back keeps every id.
@@ -291,7 +322,7 @@ func (r *Runner) resolveWorkflowSpec(ctx context.Context, spec workflowSpec) (wf
 		if agentName == "" {
 			return nil, nil, invalidWorkflowf("step %d (%s): agent is required", i+1, stepName)
 		}
-		ac, aerr := r.agentConfigByName(ctx, agentName)
+		ac, aerr := r.agentConfigByName(ctx, ownerID, agentName)
 		if errors.Is(aerr, errNoSuchAgent) {
 			return nil, nil, invalidWorkflowf("step %d (%s): %s", i+1, stepName, aerr.Error())
 		}

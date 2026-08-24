@@ -135,6 +135,14 @@ function crud<T>(base: string): CrudMethods<T> {
   };
 }
 
+// Admin: moves a scoped row between private and global (a demote re-homes it
+// to the acting admin); 400/409 report non-global references or a name
+// collision in the target scope.
+function setScope(base: string) {
+  return (id: string | number, scope: 'global' | 'private') =>
+    request<null>(`${base}/${id}/scope`, { method: 'POST', body: JSON.stringify({ scope }) });
+}
+
 export const api = {
   auth: {
     me: () => request<AuthUser>('/auth/me'),
@@ -207,6 +215,7 @@ export const api = {
   },
   agents: {
     ...crud<S['store.AgentConfig']>('/agents'),
+    setScope: setScope('/agents'),
     // The agent's CURRENT tool surface as schema-only definitions — what the
     // bridge would hand the model right now (sandbox tools excluded). Backs
     // the Replay dialog's tool picker.
@@ -214,6 +223,7 @@ export const api = {
   },
   mcpServers: {
     ...crud<S['handler.mcpServerListItem']>('/mcp-servers'),
+    setScope: setScope('/mcp-servers'),
     connect: (id: string | number) => request(`/mcp-servers/${id}/connect`, { method: 'POST' }),
     clearOAuth: (id: string | number) => request(`/mcp-servers/${id}/oauth-token`, { method: 'DELETE' }),
     tools: (id: string | number) => request(`/mcp-servers/${id}/tools`),
@@ -302,6 +312,7 @@ export const api = {
   },
   skills: {
     ...crud<S['store.Skill']>('/skills'),
+    setScope: setScope('/skills'),
     // Import walks a GitHub repo (or fetches one raw SKILL.md) and upserts.
     import: (url: string) => request('/skill-imports', { method: 'POST', body: JSON.stringify({ url }) }),
   },
@@ -309,10 +320,14 @@ export const api = {
     ...crud<S['store.Guardrail']>('/guardrails'),
     list: () => request('/guardrails'),
   },
-  providers: crud<S['store.Provider']>('/providers'),
+  providers: {
+    ...crud<S['store.Provider']>('/providers'),
+    setScope: setScope('/providers'),
+  },
   projects: crud<S['store.Project']>('/projects'),
   workflows: {
     ...crud<S['store.Workflow']>('/workflows'),
+    setScope: setScope('/workflows'),
     // A person's own run of a workflow: the brief they wrote, for the session
     // the result comes back to.
     // sandbox_id/project_id bind a still-unbound session first, so the

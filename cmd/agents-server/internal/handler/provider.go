@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/providers"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -32,10 +33,13 @@ type providerReq struct {
 	// APIKey is write-only: the ******** mask keeps the stored key.
 	APIKey  string `json:"api_key,omitempty"`
 	BaseURL string `json:"base_url,omitempty"`
+	// Scope on create only: "global" (admin) or the "private" default; an
+	// update never moves it (POST /:id/scope does).
+	Scope string `json:"scope,omitempty"`
 }
 
 func (r *providerReq) toModel() *store.Provider {
-	return &store.Provider{Name: r.Name, Type: r.Type, AuthMode: r.AuthMode, APIKey: r.APIKey, BaseURL: r.BaseURL}
+	return &store.Provider{Name: r.Name, Type: r.Type, AuthMode: r.AuthMode, APIKey: r.APIKey, BaseURL: r.BaseURL, Scope: r.Scope}
 }
 
 // bind decodes and validates an incoming provider body, reporting the failure
@@ -68,7 +72,11 @@ func (h *ProviderHandler) bind(c *gin.Context) (*store.Provider, bool) {
 //	@Security	BearerAuth
 //	@Router		/providers [get]
 func (h *ProviderHandler) List(c *gin.Context) {
-	list, err := h.store.List(c.Request.Context())
+	ownerID, admin, ok := callerScope(c)
+	if !ok {
+		return
+	}
+	list, err := store.ListVisibleOf(c.Request.Context(), h.store.CrudStore, ownerID, admin)
 	if err != nil {
 		internalError(c, err)
 		return
@@ -95,8 +103,73 @@ func (h *ProviderHandler) Get(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
+	if !visibleRow(c, pv.Scope, pv.OwnerID) {
+		return
+	}
 	sanitizeProvider(pv)
 	c.JSON(http.StatusOK, pv)
+}
+
+// scopeReq is the body of every POST /:id/scope — the promotion/demotion act
+// (spec §5.29), admin only.
+type scopeReq struct {
+	Scope string `json:"scope" binding:"required"`
+}
+
+// bindScope decodes and validates a scope-change body.
+func bindScope(c *gin.Context) (string, bool) {
+	var req scopeReq
+	if err := c.ShouldBindJSON(&req); err != nil || (req.Scope != store.ScopeGlobal && req.Scope != store.ScopePrivate) {
+		badRequest(c, `scope must be "global" or "private"`)
+		return "", false
+	}
+	return req.Scope, true
+}
+
+// SetScope promotes a provider to global or demotes it to the acting admin's
+// private set. A demote is refused while any global or foreign agent still
+// references the provider — their runs would spend a credential that just
+// became somebody's private key.
+//
+//	@Summary	Change a provider's scope
+//	@Tags		providers
+//	@Accept		json
+//	@Param		id		path	string		true	"Provider ID"
+//	@Param		scope	body	scopeReq	true	"global or private"
+//	@Success	204
+//	@Failure	400	{object}	ErrorResponse
+//	@Failure	409	{object}	ErrorResponse	"name collision in the target scope, or referencing agents block the demote"
+//	@Security	BearerAuth
+//	@Router		/providers/{id}/scope [post]
+func (h *ProviderHandler) SetScope(c *gin.Context) {
+	scope, ok := bindScope(c)
+	if !ok {
+		return
+	}
+	u, _ := server.CurrentUser(c)
+	ctx, id := c.Request.Context(), c.Param("id")
+	if _, err := h.store.Get(ctx, id); err != nil {
+		storeError(c, err)
+		return
+	}
+	owner := ""
+	if scope == store.ScopePrivate {
+		owner = u.ID
+		refs, err := h.store.ForeignAgentRefs(ctx, id, owner)
+		if err != nil {
+			internalError(c, err)
+			return
+		}
+		if refs > 0 {
+			conflict(c, fmt.Sprintf("%d agent(s) outside your private set still reference this provider; repoint them first", refs))
+			return
+		}
+	}
+	if err := store.SetScopeOf(ctx, h.store.CrudStore, id, scope, owner); err != nil {
+		saveError(c, err) // name collision in the target scope -> 409
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 // Create stores a new provider.
@@ -114,6 +187,9 @@ func (h *ProviderHandler) Get(c *gin.Context) {
 func (h *ProviderHandler) Create(c *gin.Context) {
 	pv, ok := h.bind(c)
 	if !ok {
+		return
+	}
+	if !stampCreateScope(c, &pv.Scope, &pv.OwnerID) {
 		return
 	}
 	// There is no stored value yet, so a mask sentinel resolves to empty.
@@ -147,9 +223,19 @@ func (h *ProviderHandler) Update(c *gin.Context) {
 		return
 	}
 	ctx, id := c.Request.Context(), c.Param("id")
+	cur, err := h.store.Get(ctx, id)
+	if err != nil {
+		storeError(c, err)
+		return
+	}
+	if !editableRow(c, cur.Scope, cur.OwnerID) {
+		return
+	}
 	// The mask resolves against the stored row inside the store's transaction,
 	// and only for the destination the key was stored for — README invariant 9.
-	err := h.store.Update(ctx, id, pv, func(prev *store.Provider) error {
+	// Scope and owner never move on an update (POST /:id/scope does).
+	err = h.store.Update(ctx, id, pv, func(prev *store.Provider) error {
+		pv.Scope, pv.OwnerID = prev.Scope, prev.OwnerID
 		if pv.APIKey == SecretMask && prev.APIKey != "" &&
 			credentialTargetChanged(prev.Type, prev.BaseURL, pv.Type, pv.BaseURL) {
 			return badRequestError("type or base_url changed: the stored api_key belongs to the previous destination — replace it or clear it")
@@ -182,6 +268,14 @@ func (h *ProviderHandler) Update(c *gin.Context) {
 //	@Security		BearerAuth
 //	@Router			/providers/{id} [delete]
 func (h *ProviderHandler) Delete(c *gin.Context) {
+	cur, err := h.store.Get(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		storeError(c, err)
+		return
+	}
+	if !deletableRow(c, cur.Scope, cur.OwnerID) {
+		return
+	}
 	refs, err := h.store.DeleteIfUnreferenced(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		storeError(c, err)

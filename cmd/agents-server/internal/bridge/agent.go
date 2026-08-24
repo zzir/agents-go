@@ -67,7 +67,7 @@ type AgentDeps struct {
 	// because the workflows on offer change as they are edited, with no
 	// restart. Attached beside the manager's TaskTools; never on a background
 	// run.
-	SpawnTool func(ctx context.Context) *agents.Tool
+	SpawnTool func(ctx context.Context, ownerID string) *agents.Tool
 	// WorkflowTools is set by NewRunner and builds the run's get_workflow /
 	// save_workflow — per run, like SpawnTool, because the save tool's
 	// description names the agents on offer. Attached only when the config
@@ -204,6 +204,7 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandbox
 		stack:     make(map[string]bool),
 		cache:     make(map[string]*BuildResult),
 		projectID: projectID,
+		ownerID:   ownerID,
 	}
 	result, err := buildAgentFromConfig(ctx, deps, agentConfigID, sandboxID, bc)
 	if err == nil {
@@ -219,7 +220,7 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandbox
 		// one conversation could spawn tasks onto another.
 		mark := len(result.Agent.Tools)
 		if deps.SpawnTool != nil {
-			result.Agent.Tools = append(result.Agent.Tools, deps.SpawnTool(ctx))
+			result.Agent.Tools = append(result.Agent.Tools, deps.SpawnTool(ctx, ownerID))
 		} else {
 			result.Agent.Tools = append(result.Agent.Tools, deps.TaskManager.SpawnTool(nil))
 		}
@@ -231,14 +232,10 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandbox
 	// (README invariant 39).
 	if err == nil && !background && result.Behavior.WorkflowAuthoring && deps.WorkflowTools != nil {
 		mark := len(result.Agent.Tools)
-		// A member reads definitions (as the API lets them) but cannot write
-		// one: the REST gate holds through the tool as well.
-		admin := ownerIsAdmin(ctx, deps, ownerID)
-		for _, tool := range deps.WorkflowTools(ctx, ownerID) {
-			if tool.ReadOnly || admin {
-				result.Agent.Tools = append(result.Agent.Tools, tool)
-			}
-		}
+		// Every owner may save now — a member's save lands in their private
+		// set; only a global workflow's edit stays the admin's (saveWorkflow
+		// decides per call, mirroring the REST gate).
+		result.Agent.Tools = append(result.Agent.Tools, deps.WorkflowTools(ctx, ownerID)...)
 		bucketToolsSince(result.Agent, mark, store.ToolSourceWorkflows, &result.Profile)
 	}
 	if err != nil {
@@ -314,6 +311,9 @@ type agentBuildCtx struct {
 	// sandbox toolset built for this run — handoff-target agents included, so
 	// one run sees one file system context throughout.
 	projectID string
+	// ownerID is the session owner every built config must be visible to
+	// (spec §5.29); empty skips the check (internal callers with no user).
+	ownerID string
 	// releases collects the sandbox-instance references every build in this
 	// recursion acquired (the entry agent's and each handoff target's).
 	// Collected on the CONTEXT, not the per-agent results: only the top-level
@@ -342,6 +342,12 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 
 	ac, err := deps.AgentConfigs.Get(ctx, configID)
 	if err != nil {
+		return nil, fmt.Errorf("agent config %q not found — create one in Settings > Agents", configID)
+	}
+	// A foreign private config reads as absent (spec §5.29): a run must never
+	// execute — and spend the credentials of — another user's agent. Handoff
+	// targets pass through here too, so the whole registry is covered.
+	if bc.ownerID != "" && !store.Visible(ac.Scope, ac.OwnerID, bc.ownerID, false) {
 		return nil, fmt.Errorf("agent config %q not found — create one in Settings > Agents", configID)
 	}
 
@@ -412,7 +418,7 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 	// MCP servers — an id whose server is not currently connected is skipped.
 	// Their tools are not measured here: they live on the server, and asking it
 	// is a network call the build must not make (see the Context handler).
-	result.Profile.MCPServerIDs = attachMCPServers(ctx, deps, agent, spec)
+	result.Profile.MCPServerIDs = attachMCPServers(ctx, deps, agent, spec, bc.ownerID)
 
 	mark := len(agent.Tools)
 
@@ -427,7 +433,7 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 	mark = bucketToolsSince(agent, mark, store.ToolSourceBrave, &result.Profile)
 
 	// Skills — loaded from the store; spec may restrict the selection.
-	result.Profile.SkillsIndexChars = attachSkills(ctx, deps, agent, spec)
+	result.Profile.SkillsIndexChars = attachSkills(ctx, deps, agent, spec, bc.ownerID)
 	bucketToolsSince(agent, mark, store.ToolSourceSkills, &result.Profile)
 
 	// Handoffs — recursively built; a target with its own provider gets its model
@@ -510,12 +516,21 @@ func buildHandoffs(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx, agen
 }
 
 // attachMCPServers wires the config's selected MCP servers onto the agent,
-// skipping any whose server is not currently connected. It returns the ids it
-// attached — the profile records the decision actually made, not a re-derivation
-// that could race a reconnect.
-func attachMCPServers(ctx context.Context, deps *AgentDeps, agent *agents.Agent, spec *AgentSpec) []string {
+// skipping any whose server is not currently connected — or no longer
+// visible to the session owner (spec §5.29: a demoted server drops out like
+// a deleted one, never serving another user's credentialed connection). It
+// returns the ids it attached — the profile records the decision actually
+// made, not a re-derivation that could race a reconnect.
+func attachMCPServers(ctx context.Context, deps *AgentDeps, agent *agents.Agent, spec *AgentSpec, ownerID string) []string {
 	var attached []string
 	for _, id := range spec.Tools {
+		if ownerID != "" && deps.McpServers != nil {
+			cfg, err := deps.McpServers.Get(ctx, id)
+			if err != nil || !store.Visible(cfg.Scope, cfg.OwnerID, ownerID, false) {
+				logging.Ctx(ctx).Debug("MCP server not visible to this session, skipping", "mcp_id", id)
+				continue
+			}
+		}
 		if srv := deps.McpManager.Get(id); srv != nil {
 			agent.MCPServers = append(agent.MCPServers, srv)
 			attached = append(attached, id)
@@ -580,11 +595,14 @@ func attachSandboxTools(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx,
 // fatal. Returns the size of the index it added to the instructions, which no
 // caller can recover afterwards (it is wrapped into one string with every
 // other layer).
-func attachSkills(ctx context.Context, deps *AgentDeps, agent *agents.Agent, spec *AgentSpec) int {
+func attachSkills(ctx context.Context, deps *AgentDeps, agent *agents.Agent, spec *AgentSpec, ownerID string) int {
 	if deps.Skills == nil {
 		return 0
 	}
-	stored, err := deps.Skills.ListMeta(ctx)
+	// The visible set is the session owner's view: global skills plus their
+	// own (spec §5.29) — a selection id pointing outside it simply drops out,
+	// the same as a deleted skill.
+	stored, err := deps.Skills.ListMeta(ctx, ownerID, false)
 	if err != nil {
 		return 0
 	}
@@ -604,15 +622,23 @@ func attachSkills(ctx context.Context, deps *AgentDeps, agent *agents.Agent, spe
 	if len(stored) == 0 {
 		return 0
 	}
-	index := make([]skills.Skill, len(stored))
+	// Two visible skills can share a name (a private one shadowing a global
+	// one); the owner's wins — ListMeta orders by name, so dedupe keeps the
+	// first owned row per name.
+	index := make([]skills.Skill, 0, len(stored))
 	advertised := make(map[string]bool, len(stored))
-	for i, sk := range stored {
-		index[i] = skills.Skill{Name: sk.Name, Description: sk.Description}
+	for _, sk := range stored {
+		if advertised[sk.Name] && sk.OwnerID != ownerID {
+			continue
+		}
+		if !advertised[sk.Name] {
+			index = append(index, skills.Skill{Name: sk.Name, Description: sk.Description})
+		}
 		advertised[sk.Name] = true
 	}
 	rendered := skills.RenderIndex(index)
 	agent.Instructions = agents.WrapInstructions(agent.Instructions, "", rendered)
-	agent.Tools = append(agent.Tools, readSkillTool(deps.Skills, advertised))
+	agent.Tools = append(agent.Tools, readSkillTool(deps.Skills, advertised, ownerID))
 	return len(rendered)
 }
 
@@ -624,14 +650,14 @@ type readSkillArgs struct {
 // content is fetched at call time, never captured at build. Only skills whose
 // index entry this agent carries are readable: the advertised set is the
 // agent's skill selection, not the whole table.
-func readSkillTool(store *store.SkillStore, advertised map[string]bool) *agents.Tool {
+func readSkillTool(store *store.SkillStore, advertised map[string]bool, ownerID string) *agents.Tool {
 	return agents.NewTool("read_skill",
 		"Read a skill's full SKILL.md instructions by name.",
 		func(ctx context.Context, _ *agents.ToolContext, args readSkillArgs) (string, error) {
 			if !advertised[args.Name] {
 				return "", fmt.Errorf("no skill named %q", args.Name)
 			}
-			sk, err := store.GetByName(ctx, args.Name)
+			sk, err := store.GetByNameFor(ctx, args.Name, ownerID)
 			if err != nil {
 				return "", fmt.Errorf("no skill named %q", args.Name)
 			}

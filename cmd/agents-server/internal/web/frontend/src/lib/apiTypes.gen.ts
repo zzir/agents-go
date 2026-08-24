@@ -249,6 +249,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agents/{id}/scope": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Change an agent's scope */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Agent ID */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            /** @description global or private */
+            requestBody: {
+                content: {
+                    "application/json": Record<string, never> | components["schemas"]["handler.scopeReq"];
+                };
+            };
+            responses: {
+                /** @description No Content */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description a promote holds non-global references */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description name collision in the target scope */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agents/{id}/tools": {
         parameters: {
             query?: never;
@@ -1781,6 +1841,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/mcp-servers/{id}/scope": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Change an MCP server's scope */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description MCP server ID */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            /** @description global or private */
+            requestBody: {
+                content: {
+                    "application/json": Record<string, never> | components["schemas"]["handler.scopeReq"];
+                };
+            };
+            responses: {
+                /** @description No Content */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description name collision in the target scope */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/mcp-servers/{id}/tools": {
         parameters: {
             query?: never;
@@ -2753,6 +2873,66 @@ export interface paths {
         };
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/providers/{id}/scope": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Change a provider's scope */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Provider ID */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            /** @description global or private */
+            requestBody: {
+                content: {
+                    "application/json": Record<string, never> | components["schemas"]["handler.scopeReq"];
+                };
+            };
+            responses: {
+                /** @description No Content */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description name collision in the target scope, or referencing agents block the demote */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -4982,6 +5162,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/skills/{id}/scope": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Change a skill's scope */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Skill id */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            /** @description global or private */
+            requestBody: {
+                content: {
+                    "application/json": Record<string, never> | components["schemas"]["handler.scopeReq"];
+                };
+            };
+            responses: {
+                /** @description No Content */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description name collision in the target scope */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks": {
         parameters: {
             query?: never;
@@ -5871,6 +6111,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/workflows/{id}/scope": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Change a workflow's scope */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Workflow ID */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            /** @description global or private */
+            requestBody: {
+                content: {
+                    "application/json": Record<string, never> | components["schemas"]["handler.scopeReq"];
+                };
+            };
+            responses: {
+                /** @description No Content */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description a promote holds non-global step agents */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description name collision in the target scope */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -6366,6 +6666,13 @@ export interface components {
             has_oauth_token?: boolean;
             id?: string;
             name?: string;
+            owner_id?: string;
+            /**
+             * @description Scope is the row's visibility (spec §5.29): ScopePrivate — the owner's
+             *     alone — or ScopeGlobal, readable by every member and written by admins.
+             *     OwnerID is set exactly when the scope is private.
+             */
+            scope?: string;
             /**
              * @description Status is the single derived lifecycle state: disabled, connecting,
              *     authorizing, needs_auth, disconnected, or connected.
@@ -6378,6 +6685,8 @@ export interface components {
             config?: number[];
             enabled?: boolean;
             name?: string;
+            /** @description Scope on create only: "global" (admin) or the "private" default. */
+            scope?: string;
         };
         "handler.mcpToolInfo": {
             description?: string;
@@ -6448,6 +6757,11 @@ export interface components {
             auth_mode?: string;
             base_url?: string;
             name?: string;
+            /**
+             * @description Scope on create only: "global" (admin) or the "private" default; an
+             *     update never moves it (POST /:id/scope does).
+             */
+            scope?: string;
             type?: string;
         };
         "handler.rejectReq": {
@@ -6467,6 +6781,9 @@ export interface components {
         "handler.sandboxTestResp": {
             detail?: string;
             ok?: boolean;
+        };
+        "handler.scopeReq": {
+            scope: string;
         };
         "handler.sessionCreateReq": {
             /** @description AgentConfigID optionally binds the session to an agent up front. */
@@ -6498,6 +6815,8 @@ export interface components {
         };
         "handler.skillReq": {
             content: string;
+            /** @description Scope on create only: "global" (admin) or the "private" default. */
+            scope?: string;
         };
         "handler.taskStopReq": {
             graceful?: boolean;
@@ -6627,6 +6946,7 @@ export interface components {
             /** @description The following are already single JSON blobs, kept as their own columns. */
             model_settings?: string;
             name?: string;
+            owner_id?: string;
             /**
              * @description ProviderID names the Provider row this agent reaches its model through —
              *     a COLUMN rather than a field in a JSON group, because it is a reference
@@ -6637,6 +6957,12 @@ export interface components {
              */
             provider_id?: string;
             resilience?: components["schemas"]["store.ResilienceGroup"];
+            /**
+             * @description Scope is the row's visibility (spec §5.29): ScopePrivate — the owner's
+             *     alone — or ScopeGlobal, readable by every member and written by admins.
+             *     OwnerID is set exactly when the scope is private.
+             */
+            scope?: string;
             session?: components["schemas"]["store.SessionGroup"];
             skills?: string;
             tools?: string;
@@ -6888,6 +7214,13 @@ export interface components {
             created_at?: string;
             id?: string;
             name?: string;
+            owner_id?: string;
+            /**
+             * @description Scope is the row's visibility (spec §5.29): ScopePrivate — the owner's
+             *     alone — or ScopeGlobal, readable by every member and written by admins.
+             *     OwnerID is set exactly when the scope is private.
+             */
+            scope?: string;
             /**
              * @description Type selects the backend (bridge.ProviderType*). Empty means openai, the
              *     value that predates the field.
@@ -6998,6 +7331,13 @@ export interface components {
             id?: string;
             /** @description unique via idx_skills_name */
             name?: string;
+            owner_id?: string;
+            /**
+             * @description Scope is the row's visibility (spec §5.29): ScopePrivate — the owner's
+             *     alone — or ScopeGlobal, readable by every member and written by admins.
+             *     OwnerID is set exactly when the scope is private.
+             */
+            scope?: string;
             source_path?: string;
             /**
              * @description Source records where an imported skill came from — the repo or raw URL,
@@ -7149,6 +7489,13 @@ export interface components {
             description?: string;
             id?: string;
             name?: string;
+            owner_id?: string;
+            /**
+             * @description Scope is the row's visibility (spec §5.29): ScopePrivate — the owner's
+             *     alone — or ScopeGlobal, readable by every member and written by admins.
+             *     OwnerID is set exactly when the scope is private.
+             */
+            scope?: string;
             steps?: components["schemas"]["store.WorkflowStep"][];
             updated_at?: string;
         };

@@ -19,7 +19,7 @@ func TestAgentConfigSecretRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	st := store.NewAgentConfigStore(db)
-	h := NewAgentConfigHandler(st, store.NewMcpServerStore(db), store.NewProviderStore(db), guardrails.NewResolver(store.NewGuardrailStore(db)))
+	h := NewAgentConfigHandler(st, store.NewMcpServerStore(db), store.NewProviderStore(db), store.NewSkillStore(db), guardrails.NewResolver(store.NewGuardrailStore(db)))
 
 	engine := newTestEngine()
 	engine.POST("/agents", h.Create)

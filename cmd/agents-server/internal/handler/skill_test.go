@@ -187,7 +187,7 @@ func TestSkillImportGitHubLifecycle(t *testing.T) {
 	if len(resp.Created) != 2 {
 		t.Fatalf("created = %v", resp)
 	}
-	sk, err := st.GetByName(t.Context(), "docx")
+	sk, err := st.GetByNameFor(t.Context(), "docx", store.LocalUserID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func TestSkillImportGitHubLifecycle(t *testing.T) {
 	if len(resp.Skipped) != 1 || !strings.Contains(resp.Skipped[0], "detached") {
 		t.Fatalf("detached skill was not protected: %+v", resp)
 	}
-	sk, _ = st.GetByName(t.Context(), "docx")
+	sk, _ = st.GetByNameFor(t.Context(), "docx", store.LocalUserID)
 	if sk.Content != local || !sk.Detached {
 		t.Fatalf("local edit lost: %+v", sk)
 	}
@@ -251,7 +251,7 @@ func TestSkillImportRawURL(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("raw import: got %d (body %s)", w.Code, w.Body.String())
 	}
-	sk, err := st.GetByName(t.Context(), "pdf-processing")
+	sk, err := st.GetByNameFor(t.Context(), "pdf-processing", store.LocalUserID)
 	if err != nil {
 		t.Fatal(err)
 	}

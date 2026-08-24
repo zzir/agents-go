@@ -50,10 +50,15 @@ func IsTerminalTaskStatus(s string) bool { return isTerminalTaskStatus(s) }
 // for these unprompted) fall back to the spawning run's own agent — a config
 // actually named that way still takes precedence.
 func (r *Runner) resolveSpawnAgent(ctx context.Context, parentSessionID, name string) (*store.AgentConfig, error) {
+	// The spawn resolves within the parent session owner's view (spec §5.29).
+	ownerID := ""
+	if sess, err := r.Deps.Sessions.Get(ctx, parentSessionID); err == nil {
+		ownerID = sess.OwnerID
+	}
 	n := strings.TrimSpace(name)
 	alias := n == "" || strings.EqualFold(n, "default") || strings.EqualFold(n, "self") || strings.EqualFold(n, "current")
 	if n != "" {
-		cfg, err := r.agentConfigByName(ctx, n)
+		cfg, err := r.agentConfigByName(ctx, ownerID, n)
 		if err == nil {
 			return cfg, nil
 		}
@@ -76,22 +81,43 @@ func (r *Runner) resolveSpawnAgent(ctx context.Context, parentSessionID, name st
 // errNoSuchAgent is agentConfigByName's not-found, distinct from a store fault.
 var errNoSuchAgent = errors.New("no agent")
 
-// agentConfigByName resolves an agent by config name (or id); the not-found
-// error lists what exists, for the model to pick from.
-func (r *Runner) agentConfigByName(ctx context.Context, name string) (*store.AgentConfig, error) {
-	if cfg, err := r.Deps.AgentConfigs.Get(ctx, name); err == nil {
-		return cfg, nil
+// visibleAgentConfigs lists what ownerID may see; empty ownerID (an internal
+// caller with no user) sees everything.
+func (r *Runner) visibleAgentConfigs(ctx context.Context, ownerID string) ([]store.AgentConfig, error) {
+	if ownerID == "" {
+		return r.Deps.AgentConfigs.List(ctx)
 	}
-	cfgs, err := r.Deps.AgentConfigs.List(ctx)
+	return store.ListVisibleOf(ctx, r.Deps.AgentConfigs.CrudStore, ownerID, false)
+}
+
+// agentConfigByName resolves an agent by config name (or id) within ownerID's
+// view — their own over a global one sharing the name; the not-found error
+// lists what exists, for the model to pick from.
+func (r *Runner) agentConfigByName(ctx context.Context, ownerID, name string) (*store.AgentConfig, error) {
+	if cfg, err := r.Deps.AgentConfigs.Get(ctx, name); err == nil {
+		if ownerID == "" || store.Visible(cfg.Scope, cfg.OwnerID, ownerID, false) {
+			return cfg, nil
+		}
+	}
+	cfgs, err := r.visibleAgentConfigs(ctx, ownerID)
 	if err != nil {
 		return nil, err
 	}
+	var match *store.AgentConfig
 	names := make([]string, 0, len(cfgs))
 	for i := range cfgs {
 		if strings.EqualFold(cfgs[i].Name, name) {
-			return &cfgs[i], nil
+			if ownerID != "" && cfgs[i].OwnerID == ownerID {
+				return &cfgs[i], nil
+			}
+			if match == nil {
+				match = &cfgs[i]
+			}
 		}
 		names = append(names, cfgs[i].Name)
+	}
+	if match != nil {
+		return match, nil
 	}
 	slices.Sort(names)
 	return nil, fmt.Errorf("%w named %q (available: %s)", errNoSuchAgent, name, strings.Join(names, ", "))

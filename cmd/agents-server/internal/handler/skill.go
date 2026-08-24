@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/skills"
@@ -50,6 +51,8 @@ func NewSkillHandler(st *store.SkillStore, se *settings.Reader) *SkillHandler {
 // frontmatter is the metadata.
 type skillReq struct {
 	Content string `json:"content" binding:"required"`
+	// Scope on create only: "global" (admin) or the "private" default.
+	Scope string `json:"scope,omitempty"`
 }
 
 // List responds with every stored skill's metadata (no content).
@@ -61,7 +64,11 @@ type skillReq struct {
 //	@Security	BearerAuth
 //	@Router		/skills [get]
 func (h *SkillHandler) List(c *gin.Context) {
-	out, err := h.store.ListMeta(c.Request.Context())
+	ownerID, admin, ok := callerScope(c)
+	if !ok {
+		return
+	}
+	out, err := h.store.ListMeta(c.Request.Context(), ownerID, admin)
 	if err != nil {
 		storeError(c, err)
 		return
@@ -83,6 +90,9 @@ func (h *SkillHandler) Get(c *gin.Context) {
 	sk, err := h.store.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		storeError(c, err)
+		return
+	}
+	if !visibleRow(c, sk.Scope, sk.OwnerID) {
 		return
 	}
 	c.JSON(http.StatusOK, sk)
@@ -126,7 +136,10 @@ func (h *SkillHandler) Create(c *gin.Context) {
 	if !ok {
 		return
 	}
-	sk := &store.Skill{Name: meta.Name, Description: meta.Description, Content: req.Content}
+	sk := &store.Skill{Name: meta.Name, Description: meta.Description, Content: req.Content, Scope: req.Scope}
+	if !stampCreateScope(c, &sk.Scope, &sk.OwnerID) {
+		return
+	}
 	if err := h.store.Create(c.Request.Context(), sk); err != nil {
 		saveError(c, err)
 		return
@@ -166,8 +179,12 @@ func (h *SkillHandler) Update(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
+	if !editableRow(c, prev.Scope, prev.OwnerID) {
+		return
+	}
 	sk := &store.Skill{
 		Name: meta.Name, Description: meta.Description, Content: req.Content,
+		Scope: prev.Scope, OwnerID: prev.OwnerID,
 		SourceRepo: prev.SourceRepo, SourcePath: prev.SourcePath, SourceSHA: prev.SourceSHA,
 		Detached: prev.Detached || (prev.SourceRepo != "" && req.Content != prev.Content),
 	}
@@ -190,8 +207,52 @@ func (h *SkillHandler) Update(c *gin.Context) {
 //	@Security	BearerAuth
 //	@Router		/skills/{id} [delete]
 func (h *SkillHandler) Delete(c *gin.Context) {
+	cur, err := h.store.Get(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		storeError(c, err)
+		return
+	}
+	if !deletableRow(c, cur.Scope, cur.OwnerID) {
+		return
+	}
 	if err := h.store.Delete(c.Request.Context(), c.Param("id")); err != nil {
 		storeError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// SetScope promotes a skill to global or demotes it to the acting admin's
+// private set. Agents still selecting a demoted skill stop advertising it —
+// same as a delete.
+//
+//	@Summary	Change a skill's scope
+//	@Tags		skills
+//	@Accept		json
+//	@Param		id		path	string		true	"Skill id"
+//	@Param		scope	body	scopeReq	true	"global or private"
+//	@Success	204
+//	@Failure	400	{object}	ErrorResponse
+//	@Failure	409	{object}	ErrorResponse	"name collision in the target scope"
+//	@Security	BearerAuth
+//	@Router		/skills/{id}/scope [post]
+func (h *SkillHandler) SetScope(c *gin.Context) {
+	scope, ok := bindScope(c)
+	if !ok {
+		return
+	}
+	u, _ := server.CurrentUser(c)
+	ctx, id := c.Request.Context(), c.Param("id")
+	if _, err := h.store.Get(ctx, id); err != nil {
+		storeError(c, err)
+		return
+	}
+	owner := ""
+	if scope == store.ScopePrivate {
+		owner = u.ID
+	}
+	if err := store.SetScopeOf(ctx, h.store.CrudStore, id, scope, owner); err != nil {
+		saveError(c, err)
 		return
 	}
 	c.Status(http.StatusNoContent)
@@ -443,7 +504,11 @@ func (h *SkillHandler) upsertImported(c *gin.Context, repo, path, sha string, co
 		return
 	}
 	ctx := c.Request.Context()
-	prev, err := h.store.FindBySource(ctx, repo, path)
+	ownerID, admin, ok := callerScope(c)
+	if !ok {
+		return
+	}
+	prev, err := h.store.FindBySource(ctx, repo, path, ownerID, admin)
 	if err != nil {
 		resp.Skipped = append(resp.Skipped, label+": "+err.Error())
 		return
@@ -452,6 +517,7 @@ func (h *SkillHandler) upsertImported(c *gin.Context, repo, path, sha string, co
 	case prev == nil:
 		sk := &store.Skill{
 			Name: meta.Name, Description: meta.Description, Content: string(content),
+			Scope: store.ScopePrivate, OwnerID: ownerID,
 			SourceRepo: repo, SourcePath: path, SourceSHA: sha,
 		}
 		if err := h.store.Create(ctx, sk); err != nil {
@@ -470,6 +536,7 @@ func (h *SkillHandler) upsertImported(c *gin.Context, repo, path, sha string, co
 	default:
 		sk := &store.Skill{
 			Name: meta.Name, Description: meta.Description, Content: string(content),
+			Scope: prev.Scope, OwnerID: prev.OwnerID,
 			SourceRepo: repo, SourcePath: path, SourceSHA: sha,
 		}
 		if err := h.store.Update(ctx, prev.ID, sk); err != nil {

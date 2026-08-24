@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Button, TextInput, Textarea, Label, Stack, PageHeader, useConfirm } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { api } from '@/lib/api';
@@ -6,7 +6,9 @@ import { useApi } from '@/lib/hooks';
 import { toast } from '@/lib/toast';
 import { type Skill, groupBySource } from '@/lib/skills';
 import { BADGE } from '@/lib/badges';
-import { useReadOnly } from '@/lib/access';
+import { canDeleteRow, canEditRow } from '@/lib/access';
+import { useMe } from '@/lib/me';
+import { ScopeBadge, ScopeButton } from '@/components/CrudPanel';
 
 const NEW_SKILL_TEMPLATE = `---
 name: my-skill
@@ -39,13 +41,17 @@ function importSummary(r: ImportResult): string {
 }
 
 // The editor is one Textarea: the document is the skill, its frontmatter is
-// the metadata — no separate name/description fields to drift.
-function SkillEditor({ initial, onSave, onCancel, onDelete, saving }: {
+// the metadata — no separate name/description fields to drift. readOnly is a
+// skill the caller may not edit (a member's view of a global one); Delete can
+// still show there (an admin may delete what it cannot edit).
+function SkillEditor({ initial, onSave, onCancel, onDelete, saving, readOnly, actions }: {
   initial: string;
   onSave: (content: string) => void;
   onCancel: () => void;
   onDelete?: () => void;
   saving: boolean;
+  readOnly?: boolean;
+  actions?: ReactNode;
 }) {
   const [content, setContent] = useState(initial);
   return (
@@ -53,14 +59,16 @@ function SkillEditor({ initial, onSave, onCancel, onDelete, saving }: {
       <Textarea
         value={content}
         onChange={e => setContent(e.target.value)}
+        readOnly={readOnly}
         rows={18}
         block
         resize="vertical"
         style={{ fontFamily: 'var(--fontStack-monospace)', fontSize: 12 }}
       />
       <Stack direction="horizontal" gap="condensed">
-        <Button variant="primary" size="small" disabled={saving} onClick={() => onSave(content)}>Save</Button>
-        <Button size="small" onClick={onCancel}>Cancel</Button>
+        {!readOnly && <Button variant="primary" size="small" disabled={saving} onClick={() => onSave(content)}>Save</Button>}
+        <Button size="small" onClick={onCancel}>{readOnly ? 'Back' : 'Cancel'}</Button>
+        {actions}
         {onDelete && <Button variant="danger" size="small" onClick={onDelete} style={{ marginLeft: 'auto' }}>Delete</Button>}
       </Stack>
     </Stack>
@@ -73,7 +81,9 @@ type Mode =
   | { kind: 'edit'; skill: Skill };
 
 export function SkillsPanel() {
-  const readOnly = useReadOnly();
+  const { me } = useMe();
+  const isAdmin = me?.role === 'admin';
+  const skillEditable = (sk: Skill) => canEditRow(isAdmin, me?.id, sk);
   const confirmDialog = useConfirm();
   const { data: skills, loading, error, reload } = useApi<Skill[]>(() => api.skills.list() as Promise<Skill[]>);
   const [mode, setMode] = useState<Mode | null>(null);
@@ -176,7 +186,9 @@ export function SkillsPanel() {
         <PageHeader.TitleArea>
           <PageHeader.Title>Skills</PageHeader.Title>
         </PageHeader.TitleArea>
-        {!mode && !readOnly && (
+        {/* Creating is every member's: a new or imported skill lands private,
+            owned by them. */}
+        {!mode && (
           <PageHeader.Actions>
             <Button onClick={() => setMode({ kind: 'import' })} size="small">Import</Button>
             <Button onClick={() => setMode({ kind: 'new' })} variant="primary" size="small">+ New</Button>
@@ -206,9 +218,12 @@ export function SkillsPanel() {
       )}
       {mode?.kind === 'edit' && (
         <SkillEditor initial={mode.skill.content || ''} saving={busy}
+          readOnly={!skillEditable(mode.skill)}
           onSave={content => handleUpdate(mode.skill.id, content)}
           onCancel={() => setMode(null)}
-          onDelete={readOnly ? undefined : () => handleDelete(mode.skill)} />
+          onDelete={canDeleteRow(isAdmin, me?.id, mode.skill) ? () => handleDelete(mode.skill) : undefined}
+          actions={isAdmin && <ScopeButton row={mode.skill} setScope={api.skills.setScope}
+            onDone={() => { setMode(null); reload(); }} />} />
       )}
 
       {loading && <div className="resource-row-sub">Loading…</div>}
@@ -227,7 +242,9 @@ export function SkillsPanel() {
           <div className="Box-row" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span className="resource-row-title">{group.label}</span>
             <span className="resource-row-sub">{group.skills.length} skill{group.skills.length === 1 ? '' : 's'}</span>
-            {group.repo !== '' && !readOnly && (
+            {/* Sync re-imports the repo, updating every row in the group — so
+                it shows only when every row is the caller's to update. */}
+            {group.repo !== '' && group.skills.every(skillEditable) && (
               <Button size="small" style={{ marginLeft: 'auto' }} disabled={syncing === group.repo}
                 onClick={() => handleSync(group.repo)}>
                 {syncing === group.repo ? 'Syncing…' : 'Sync'}
@@ -240,6 +257,7 @@ export function SkillsPanel() {
                 <div className="resource-row-head">
                   <span className="resource-row-title">{sk.name}</span>
                   {sk.detached && <Label variant={BADGE.type}>edited</Label>}
+                  <ScopeBadge row={sk} meId={me?.id} />
                 </div>
                 <div className="resource-row-sub">{sk.description}</div>
               </div>

@@ -10,6 +10,7 @@ import (
 
 	"github.com/zzir/agents-go/agents/tasks"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -71,8 +72,17 @@ func (h *WorkflowHandler) Run(c *gin.Context) {
 		badRequest(c, err.Error())
 		return
 	}
-	// Into a session the caller owns; a foreign one reads as absent.
+	// Into a session the caller owns; a foreign one reads as absent — and a
+	// workflow the caller may not see reads the same way.
 	if _, ok := requireOwnedSession(c, h.sessions, req.SessionID); !ok {
+		return
+	}
+	wf, err := h.store.Get(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		storeError(c, err)
+		return
+	}
+	if !visibleRow(c, wf.Scope, wf.OwnerID) {
 		return
 	}
 	if req.SandboxID != "" {
@@ -115,13 +125,25 @@ func (h *WorkflowHandler) bind(c *gin.Context, wf *store.Workflow) bool {
 		badRequest(c, err.Error())
 		return false
 	}
+	return true
+}
+
+// validateStepAgents checks each step's agent exists AND is one this
+// workflow's scope may reference (spec §5.29). Runs after the scope is
+// stamped, so a promote re-uses it too.
+func (h *WorkflowHandler) validateStepAgents(c *gin.Context, wf *store.Workflow) bool {
 	for i := range wf.Steps {
-		if _, err := h.agents.Get(c.Request.Context(), wf.Steps[i].AgentConfigID); err != nil {
+		ac, err := h.agents.Get(c.Request.Context(), wf.Steps[i].AgentConfigID)
+		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				badRequest(c, "step "+wf.Steps[i].ID+": agent_config_id names no agent")
 			} else {
 				internalError(c, err)
 			}
+			return false
+		}
+		if !store.RefVisible(ac.Scope, ac.OwnerID, wf.Scope, wf.OwnerID) {
+			badRequest(c, "step "+wf.Steps[i].ID+": "+refScopeError("agent", ac.Name, wf.Scope))
 			return false
 		}
 	}
@@ -138,7 +160,11 @@ func (h *WorkflowHandler) bind(c *gin.Context, wf *store.Workflow) bool {
 //	@Security	BearerAuth
 //	@Router		/workflows [get]
 func (h *WorkflowHandler) List(c *gin.Context) {
-	list, err := h.store.List(c.Request.Context())
+	ownerID, admin, ok := callerScope(c)
+	if !ok {
+		return
+	}
+	list, err := store.ListVisibleOf(c.Request.Context(), h.store.CrudStore, ownerID, admin)
 	if err != nil {
 		internalError(c, err)
 		return
@@ -160,6 +186,9 @@ func (h *WorkflowHandler) Get(c *gin.Context) {
 	wf, err := h.store.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		storeError(c, err)
+		return
+	}
+	if !visibleRow(c, wf.Scope, wf.OwnerID) {
 		return
 	}
 	c.JSON(http.StatusOK, wf)
@@ -184,6 +213,12 @@ func (h *WorkflowHandler) Create(c *gin.Context) {
 		return
 	}
 	wf.ID = "" // server-owned
+	if !stampCreateScope(c, &wf.Scope, &wf.OwnerID) {
+		return
+	}
+	if !h.validateStepAgents(c, &wf) {
+		return
+	}
 	if err := h.store.Create(c.Request.Context(), &wf); err != nil {
 		saveError(c, err) // duplicate name -> 409
 		return
@@ -212,6 +247,18 @@ func (h *WorkflowHandler) Update(c *gin.Context) {
 		return
 	}
 	ctx, id := c.Request.Context(), c.Param("id")
+	cur, err := h.store.Get(ctx, id)
+	if err != nil {
+		storeError(c, err)
+		return
+	}
+	if !editableRow(c, cur.Scope, cur.OwnerID) {
+		return
+	}
+	wf.Scope, wf.OwnerID = cur.Scope, cur.OwnerID
+	if !h.validateStepAgents(c, &wf) {
+		return
+	}
 	if err := h.store.Update(ctx, id, &wf); err != nil {
 		saveError(c, err)
 		return
@@ -235,8 +282,56 @@ func (h *WorkflowHandler) Update(c *gin.Context) {
 //	@Security		BearerAuth
 //	@Router			/workflows/{id} [delete]
 func (h *WorkflowHandler) Delete(c *gin.Context) {
+	cur, err := h.store.Get(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		storeError(c, err)
+		return
+	}
+	if !deletableRow(c, cur.Scope, cur.OwnerID) {
+		return
+	}
 	if err := h.store.Delete(c.Request.Context(), c.Param("id")); err != nil {
 		storeError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// SetScope promotes a workflow to global — after checking every step's agent
+// is global too — or demotes it to the acting admin's private set.
+//
+//	@Summary	Change a workflow's scope
+//	@Tags		workflows
+//	@Accept		json
+//	@Param		id		path	string		true	"Workflow ID"
+//	@Param		scope	body	scopeReq	true	"global or private"
+//	@Success	204
+//	@Failure	400	{object}	ErrorResponse	"a promote holds non-global step agents"
+//	@Failure	409	{object}	ErrorResponse	"name collision in the target scope"
+//	@Security	BearerAuth
+//	@Router		/workflows/{id}/scope [post]
+func (h *WorkflowHandler) SetScope(c *gin.Context) {
+	scope, ok := bindScope(c)
+	if !ok {
+		return
+	}
+	u, _ := server.CurrentUser(c)
+	ctx, id := c.Request.Context(), c.Param("id")
+	wf, err := h.store.Get(ctx, id)
+	if err != nil {
+		storeError(c, err)
+		return
+	}
+	owner := ""
+	if scope == store.ScopePrivate {
+		owner = u.ID
+	}
+	wf.Scope, wf.OwnerID = scope, owner
+	if !h.validateStepAgents(c, wf) {
+		return
+	}
+	if err := store.SetScopeOf(ctx, h.store.CrudStore, id, scope, owner); err != nil {
+		saveError(c, err)
 		return
 	}
 	c.Status(http.StatusNoContent)

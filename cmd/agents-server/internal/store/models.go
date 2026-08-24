@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -133,6 +134,11 @@ const TaskKindWorkflow = "workflow"
 type AgentConfig struct {
 	bun.BaseModel `bun:"table:agent_configs,alias:ac"`
 
+	// Scope is the row's visibility (spec §5.29): ScopePrivate — the owner's
+	// alone — or ScopeGlobal, readable by every member and written by admins.
+	// OwnerID is set exactly when the scope is private.
+	Scope        string `bun:"scope,notnull"                 json:"scope"`
+	OwnerID      string `bun:"owner_id,nullzero,type:uuid"   json:"owner_id,omitempty"`
 	ID           string `bun:"id,pk,type:uuid" json:"id"`
 	Name         string `bun:"name,notnull"   json:"name"`
 	Instructions string `bun:"instructions"   json:"instructions"`
@@ -185,8 +191,13 @@ type AgentConfig struct {
 type Provider struct {
 	bun.BaseModel `bun:"table:providers,alias:pv"`
 
-	ID   string `bun:"id,pk,type:uuid" json:"id"`
-	Name string `bun:"name,notnull" json:"name"`
+	// Scope is the row's visibility (spec §5.29): ScopePrivate — the owner's
+	// alone — or ScopeGlobal, readable by every member and written by admins.
+	// OwnerID is set exactly when the scope is private.
+	Scope   string `bun:"scope,notnull"                 json:"scope"`
+	OwnerID string `bun:"owner_id,nullzero,type:uuid"   json:"owner_id,omitempty"`
+	ID      string `bun:"id,pk,type:uuid" json:"id"`
+	Name    string `bun:"name,notnull" json:"name"`
 	// Type selects the backend (bridge.ProviderType*). Empty means openai, the
 	// value that predates the field.
 	Type string `bun:"type"      json:"type,omitempty"`
@@ -215,8 +226,13 @@ type Provider struct {
 type McpServerConfig struct {
 	bun.BaseModel `bun:"table:mcp_servers,alias:ms"`
 
-	ID   string `bun:"id,pk,type:uuid"        json:"id"`
-	Name string `bun:"name,notnull"           json:"name"`
+	// Scope is the row's visibility (spec §5.29): ScopePrivate — the owner's
+	// alone — or ScopeGlobal, readable by every member and written by admins.
+	// OwnerID is set exactly when the scope is private.
+	Scope   string `bun:"scope,notnull"                 json:"scope"`
+	OwnerID string `bun:"owner_id,nullzero,type:uuid"   json:"owner_id,omitempty"`
+	ID      string `bun:"id,pk,type:uuid"        json:"id"`
+	Name    string `bun:"name,notnull"           json:"name"`
 	// Enabled deliberately carries no bun default tag: with `default:true`,
 	// bun swaps a zero-value false for SQL DEFAULT on insert, silently
 	// enabling a server that was created with enabled=false.
@@ -281,6 +297,11 @@ type HTTPMcpConfig struct {
 type Skill struct {
 	bun.BaseModel `bun:"table:skills,alias:sk"`
 
+	// Scope is the row's visibility (spec §5.29): ScopePrivate — the owner's
+	// alone — or ScopeGlobal, readable by every member and written by admins.
+	// OwnerID is set exactly when the scope is private.
+	Scope       string `bun:"scope,notnull"                 json:"scope"`
+	OwnerID     string `bun:"owner_id,nullzero,type:uuid"   json:"owner_id,omitempty"`
 	ID          string `bun:"id,pk,type:uuid" json:"id"`
 	Name        string `bun:"name,notnull"    json:"name"` // unique via idx_skills_name
 	Description string `bun:"description,notnull" json:"description"`
@@ -584,18 +605,45 @@ func (m *Guardrail) BeforeAppendModel(_ context.Context, q bun.Query) error {
 	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
 }
 
-// BeforeAppendModel stamps the id and timestamps; bun invokes it on insert and update.
+// BeforeAppendModel stamps the id, timestamps and scope; bun invokes it on insert and update.
 func (m *AgentConfig) BeforeAppendModel(_ context.Context, q bun.Query) error {
+	if err := stampScope(q, &m.Scope, m.OwnerID); err != nil {
+		return err
+	}
 	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
 }
 
-// BeforeAppendModel stamps the id and timestamps; bun invokes it on insert and update.
+// BeforeAppendModel stamps the id, timestamps and scope; bun invokes it on insert and update.
 func (m *McpServerConfig) BeforeAppendModel(_ context.Context, q bun.Query) error {
+	if err := stampScope(q, &m.Scope, m.OwnerID); err != nil {
+		return err
+	}
 	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
 }
 
-// BeforeAppendModel stamps the id and timestamps; bun invokes it on insert and update.
+// stampScope pins the scope/owner invariant on INSERT for scoped entities: an
+// unstamped direct write (internal callers, tests) lands GLOBAL — the shared
+// semantics every row had before scopes existed — while the API layer stamps
+// explicitly (private by default; see NormalizeScope). A private row without
+// its owner is never allowed to land.
+func stampScope(q bun.Query, scope *string, ownerID string) error {
+	if _, ok := q.(*bun.InsertQuery); !ok {
+		return nil
+	}
+	if *scope == "" {
+		*scope = ScopeGlobal
+	}
+	if *scope == ScopePrivate && ownerID == "" {
+		return fmt.Errorf("a private row needs an owner")
+	}
+	return nil
+}
+
+// BeforeAppendModel stamps the id, timestamps and scope; bun invokes it on insert and update.
 func (m *Skill) BeforeAppendModel(_ context.Context, q bun.Query) error {
+	if err := stampScope(q, &m.Scope, m.OwnerID); err != nil {
+		return err
+	}
 	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
 }
 
@@ -604,13 +652,19 @@ func (m *Memory) BeforeAppendModel(_ context.Context, q bun.Query) error {
 	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
 }
 
-// BeforeAppendModel stamps the id and timestamps; bun invokes it on insert and update.
+// BeforeAppendModel stamps the id, timestamps and scope; bun invokes it on insert and update.
 func (m *Workflow) BeforeAppendModel(_ context.Context, q bun.Query) error {
+	if err := stampScope(q, &m.Scope, m.OwnerID); err != nil {
+		return err
+	}
 	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
 }
 
-// BeforeAppendModel stamps the id and timestamps; bun invokes it on insert and update.
+// BeforeAppendModel stamps the id, timestamps and scope; bun invokes it on insert and update.
 func (m *Provider) BeforeAppendModel(_ context.Context, q bun.Query) error {
+	if err := stampScope(q, &m.Scope, m.OwnerID); err != nil {
+		return err
+	}
 	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
 }
 

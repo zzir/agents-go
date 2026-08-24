@@ -44,6 +44,8 @@ export interface Workflow {
   description?: string;
   steps: WorkflowStep[];
   budget?: WorkflowBudget;
+  scope?: string;
+  owner_id?: string;
 }
 
 // END is the reserved edge target that stops the execution (mirrors

@@ -66,7 +66,7 @@ func authzRig(t *testing.T) rig {
 		Agents:    testAgentConfigHandler(db),
 		Tasks:     NewTaskHandler(tasks, runner),
 		Approvals: NewApprovalHandler(approvals, runner),
-		Triggers:  NewTriggerHandler(triggers, sessions, &fakeFirer{}),
+		Triggers:  NewTriggerHandler(triggers, sessions, store.NewWorkflowStore(db), store.NewAgentConfigStore(db), &fakeFirer{}),
 		Workflows: NewWorkflowHandler(store.NewWorkflowStore(db), agents, sessions, runner),
 	}.Register)
 	return rig{engine: s.Engine, sessions: sessions, db: db, runner: runner}
@@ -176,19 +176,67 @@ func serve(engine *gin.Engine, req *http.Request) *httptest.ResponseRecorder {
 	return rec
 }
 
-// Shared configuration: every member reads, only admins write.
-func TestSharedConfigWritesAreAdminOnly(t *testing.T) {
+// Scoped configuration (spec §5.29): a member's create lands private and
+// owned; claiming global needs the admin role; a foreign private row reads
+// as absent to another member and refuses the admin's edit (management is
+// delete and scope change, not authorship); host configuration (sandboxes)
+// stays admin-write.
+func TestScopedConfigWrites(t *testing.T) {
 	engine := authzRig(t).engine
 	body := `{"name":"a1","model":"gpt-5.5"}`
 
-	if rec := serve(engine, as(memberUser, http.MethodPost, "/api/v1/agents", body)); rec.Code != http.StatusForbidden {
-		t.Fatalf("member create agent = %d, want 403 (%s)", rec.Code, rec.Body.String())
+	rec := serve(engine, as(memberUser, http.MethodPost, "/api/v1/agents", body))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("member create agent = %d, want 201 (%s)", rec.Code, rec.Body.String())
 	}
-	if rec := serve(engine, as(memberUser, http.MethodGet, "/api/v1/agents", "")); rec.Code != http.StatusOK {
-		t.Fatalf("member list agents = %d, want 200", rec.Code)
+	var ac store.AgentConfig
+	_ = json.Unmarshal(rec.Body.Bytes(), &ac)
+	if ac.Scope != store.ScopePrivate || ac.OwnerID != memberUser.ID {
+		t.Fatalf("member create landed as (%s, %s), want private/owned", ac.Scope, ac.OwnerID)
 	}
-	if rec := serve(engine, as(adminUser, http.MethodPost, "/api/v1/agents", body)); rec.Code != http.StatusCreated {
-		t.Fatalf("admin create agent = %d, want 201 (%s)", rec.Code, rec.Body.String())
+
+	// Global is an explicit, admin-only claim.
+	if rec := serve(engine, as(memberUser, http.MethodPost, "/api/v1/agents", `{"name":"g1","model":"m","scope":"global"}`)); rec.Code != http.StatusForbidden {
+		t.Fatalf("member global create = %d, want 403", rec.Code)
+	}
+	rec = serve(engine, as(adminUser, http.MethodPost, "/api/v1/agents", `{"name":"g1","model":"m","scope":"global"}`))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("admin global create = %d (%s)", rec.Code, rec.Body.String())
+	}
+	var global store.AgentConfig
+	_ = json.Unmarshal(rec.Body.Bytes(), &global)
+
+	// The member's private row: absent to another member, listed for its owner.
+	if rec := serve(engine, as(otherUser, http.MethodGet, "/api/v1/agents/"+ac.ID, "")); rec.Code != http.StatusNotFound {
+		t.Fatalf("other GET foreign private agent = %d, want 404", rec.Code)
+	}
+	if rec := serve(engine, as(otherUser, http.MethodGet, "/api/v1/agents", "")); rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), ac.ID) {
+		t.Fatalf("other's list leaks the private row: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := serve(engine, as(memberUser, http.MethodGet, "/api/v1/agents", "")); !strings.Contains(rec.Body.String(), ac.ID) || !strings.Contains(rec.Body.String(), global.ID) {
+		t.Fatalf("owner's list must carry their own and the global row: %s", rec.Body.String())
+	}
+
+	// Writes: a member edits their own, not a global; an admin edits the
+	// global, deletes-but-does-not-edit the member's.
+	if rec := serve(engine, as(memberUser, http.MethodPut, "/api/v1/agents/"+ac.ID, `{"name":"a1","model":"m2"}`)); rec.Code != http.StatusOK {
+		t.Fatalf("owner update = %d (%s)", rec.Code, rec.Body.String())
+	}
+	if rec := serve(engine, as(memberUser, http.MethodPut, "/api/v1/agents/"+global.ID, `{"name":"g1","model":"m2"}`)); rec.Code != http.StatusForbidden {
+		t.Fatalf("member update global = %d, want 403", rec.Code)
+	}
+	if rec := serve(engine, as(adminUser, http.MethodPut, "/api/v1/agents/"+ac.ID, `{"name":"a1","model":"m3"}`)); rec.Code != http.StatusForbidden {
+		t.Fatalf("admin update member's private = %d, want 403", rec.Code)
+	}
+	// Scope change is the admin's act, and it re-homes the row.
+	if rec := serve(engine, as(memberUser, http.MethodPost, "/api/v1/agents/"+ac.ID+"/scope", `{"scope":"global"}`)); rec.Code != http.StatusForbidden {
+		t.Fatalf("member scope change = %d, want 403", rec.Code)
+	}
+	if rec := serve(engine, as(adminUser, http.MethodPost, "/api/v1/agents/"+ac.ID+"/scope", `{"scope":"global"}`)); rec.Code != http.StatusNoContent {
+		t.Fatalf("admin promote = %d (%s)", rec.Code, rec.Body.String())
+	}
+	if rec := serve(engine, as(otherUser, http.MethodGet, "/api/v1/agents/"+ac.ID, "")); rec.Code != http.StatusOK {
+		t.Fatalf("promoted row must be readable by every member: %d", rec.Code)
 	}
 }
 

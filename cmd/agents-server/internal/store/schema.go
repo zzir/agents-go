@@ -137,18 +137,42 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 		Exec(ctx); err != nil {
 		return fmt.Errorf("creating sessions updated_at index: %w", err)
 	}
-	// Agent names must be unique — HITL run state serializes the current agent
-	// by name, so a duplicate would resolve an approval resume to the wrong
-	// config. Enforce it at the DB so concurrent writes and direct store access
-	// can't produce duplicates behind the handler-level check.
-	if _, err := db.NewCreateIndex().
-		Model((*AgentConfig)(nil)).
-		Index("idx_agent_configs_name").
-		Unique().
-		Column("name").
-		IfNotExists().
-		Exec(ctx); err != nil {
-		return fmt.Errorf("creating agent_configs unique name index: %w", err)
+	// Scoped-entity names are unique per visibility context (spec §5.29): one
+	// namespace for the global rows, one per owner for the private ones — a
+	// member's private name may SHADOW a global one (resolution prefers own),
+	// but two rows a single caller could both see under one name must not
+	// exist. Two partial indexes per table express exactly that. For agent
+	// configs this is load-bearing beyond display: HITL run state serializes
+	// the current agent by name.
+	for _, t := range []struct {
+		model any
+		table string
+	}{
+		{(*AgentConfig)(nil), "agent_configs"},
+		{(*Provider)(nil), "providers"},
+		{(*McpServerConfig)(nil), "mcp_servers"},
+		{(*Skill)(nil), "skills"},
+	} {
+		if _, err := db.NewCreateIndex().
+			Model(t.model).
+			Index("idx_" + t.table + "_name_global").
+			Unique().
+			Column("name").
+			Where("scope = 'global'").
+			IfNotExists().
+			Exec(ctx); err != nil {
+			return fmt.Errorf("creating %s global name index: %w", t.table, err)
+		}
+		if _, err := db.NewCreateIndex().
+			Model(t.model).
+			Index("idx_"+t.table+"_name_private").
+			Unique().
+			Column("owner_id", "name").
+			Where("scope = 'private'").
+			IfNotExists().
+			Exec(ctx); err != nil {
+			return fmt.Errorf("creating %s private name index: %w", t.table, err)
+		}
 	}
 	// Guardrails are referenced by name within a type; a duplicate (type, name)
 	// makes an agent's reference order-dependent. Enforce uniqueness at the DB.
@@ -165,32 +189,32 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 	// two servers sharing a name are ambiguous. The name is thus an identity —
 	// enforce it unique at the DB (this also makes the agent-config validator's
 	// cross-server name-collision check unreachable, since no two servers can
-	// share a name).
-	if _, err := db.NewCreateIndex().
-		Model((*McpServerConfig)(nil)).
-		Index("idx_mcp_servers_name").
-		Unique().
-		Column("name").
-		IfNotExists().
-		Exec(ctx); err != nil {
-		return fmt.Errorf("creating mcp_servers unique name index: %w", err)
-	}
-	// A workflow's name is how a person picks it to run; two sharing one make
-	// the choice a coin flip. Case-insensitive because the tool matches the
-	// name with EqualFold — "Build" and "build" must not both exist, or the
-	// model naming one hits whichever the listing happens to return.
+	// Workflow names follow the same per-scope rule, case-insensitively —
+	// the tool matches names with EqualFold, so "Build" and "build" must not
+	// both exist in one visibility context.
 	workflowName := "name COLLATE NOCASE"
 	if db.Dialect().Name() == dialect.PG {
 		workflowName = "lower(name)"
 	}
 	if _, err := db.NewCreateIndex().
 		Model((*Workflow)(nil)).
-		Index("idx_workflows_name").
+		Index("idx_workflows_name_global").
 		Unique().
 		ColumnExpr(workflowName).
+		Where("scope = 'global'").
 		IfNotExists().
 		Exec(ctx); err != nil {
-		return fmt.Errorf("creating workflows unique name index: %w", err)
+		return fmt.Errorf("creating workflows global name index: %w", err)
+	}
+	if _, err := db.NewCreateIndex().
+		Model((*Workflow)(nil)).
+		Index("idx_workflows_name_private").
+		Unique().
+		ColumnExpr("owner_id, " + workflowName).
+		Where("scope = 'private'").
+		IfNotExists().
+		Exec(ctx); err != nil {
+		return fmt.Errorf("creating workflows private name index: %w", err)
 	}
 	// Draining asks for one session's debts, and the restart sweep asks for
 	// every session owed one; the hourly prune asks for the settled ones by age.
@@ -210,28 +234,7 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 		Exec(ctx); err != nil {
 		return fmt.Errorf("creating wakeups prune index: %w", err)
 	}
-	// A provider's name is how a person picks it in every config UI, so two
-	// sharing one make the choice a coin flip. Enforce it at the DB.
-	if _, err := db.NewCreateIndex().
-		Model((*Provider)(nil)).
-		Index("idx_providers_name").
-		Unique().
-		Column("name").
-		IfNotExists().
-		Exec(ctx); err != nil {
-		return fmt.Errorf("creating providers unique name index: %w", err)
-	}
 	// A skill's name is what the model activates it by (read_skill) and what
-	// an agent's selection shows; two sharing one make activation ambiguous.
-	if _, err := db.NewCreateIndex().
-		Model((*Skill)(nil)).
-		Index("idx_skills_name").
-		Unique().
-		Column("name").
-		IfNotExists().
-		Exec(ctx); err != nil {
-		return fmt.Errorf("creating skills unique name index: %w", err)
-	}
 	// A project's name is how a person picks it per (owner, sandbox); two
 	// sharing one make the choice a coin flip — and EnsureDefault's insert
 	// race resolves through this index.

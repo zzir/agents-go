@@ -61,10 +61,14 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		auth.DELETE("/users/:id/tokens", adminOnly(), h.Auth.RevokeUserTokens)
 		auth.GET("/audit", adminOnly(), h.Auth.ListAudit)
 	}
-	// Two rules shape everything below (authz.go): a session's content is its
-	// owner's alone — the :id subtrees are gated on ownership, and a foreign
-	// id reads as absent; shared configuration is read by every member and
-	// written by admins only.
+	// Three rules shape everything below (authz.go, spec §5.29): a session's
+	// content is its owner's alone — the :id subtrees are gated on ownership,
+	// and a foreign id reads as absent. SCOPED configuration (agents,
+	// providers, MCP servers, skills, workflows) is per-row: global rows are
+	// every member's to read and admins' to write, private rows their
+	// owner's; the gates live in the handlers, and the scope-change routes
+	// are admin-only. HOST configuration (sandboxes, settings, guardrails,
+	// memories) stays read-everyone, write-admin.
 	admin := adminOnly()
 	{
 		sessions := api.Group("/sessions")
@@ -110,25 +114,27 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 	{
 		agents := api.Group("/agents")
 		agents.GET("", h.Agents.List)
-		agents.POST("", admin, h.Agents.Create)
+		agents.POST("", h.Agents.Create)
 		agents.GET("/:id", h.Agents.Get)
 		// The tool surface is assembled by BuildFullAgent, which lives with
 		// the playground handler's deps — not a CRUD concern.
 		agents.GET("/:id/tools", h.Playground.AgentTools)
-		agents.PUT("/:id", admin, h.Agents.Update)
-		agents.DELETE("/:id", admin, h.Agents.Delete)
+		agents.PUT("/:id", h.Agents.Update)
+		agents.DELETE("/:id", h.Agents.Delete)
+		agents.POST("/:id/scope", admin, h.Agents.SetScope)
 	}
 	{
 		mcpServers := api.Group("/mcp-servers")
 		mcpServers.GET("", h.McpServers.List)
-		mcpServers.POST("", admin, h.McpServers.Create)
+		mcpServers.POST("", h.McpServers.Create)
 		api.GET(mcpOAuthCallbackPath, h.McpServers.OAuthCallback)
 		mcpServers.GET("/:id", h.McpServers.Get)
-		mcpServers.PUT("/:id", admin, h.McpServers.Update)
-		mcpServers.DELETE("/:id", admin, h.McpServers.Delete)
-		mcpServers.POST("/:id/connect", admin, h.McpServers.Connect)
-		mcpServers.DELETE("/:id/oauth-token", admin, h.McpServers.ClearOAuth)
+		mcpServers.PUT("/:id", h.McpServers.Update)
+		mcpServers.DELETE("/:id", h.McpServers.Delete)
+		mcpServers.POST("/:id/connect", h.McpServers.Connect)
+		mcpServers.DELETE("/:id/oauth-token", h.McpServers.ClearOAuth)
 		mcpServers.GET("/:id/tools", h.McpServers.Tools)
+		mcpServers.POST("/:id/scope", admin, h.McpServers.SetScope)
 	}
 	{
 		memories := api.Group("/memories")
@@ -149,12 +155,13 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		skills := api.Group("/skills")
 		skills.GET("", h.Skills.List)
 		skills.GET("/:id", h.Skills.Get)
-		skills.POST("", admin, h.Skills.Create)
-		skills.PUT("/:id", admin, h.Skills.Update)
-		skills.DELETE("/:id", admin, h.Skills.Delete)
+		skills.POST("", h.Skills.Create)
+		skills.PUT("/:id", h.Skills.Update)
+		skills.DELETE("/:id", h.Skills.Delete)
+		skills.POST("/:id/scope", admin, h.Skills.SetScope)
 		// Import is its own resource, not a /skills subpath: gin cannot mix a
 		// literal segment with the :id parameter above.
-		api.POST("/skill-imports", admin, h.Skills.Import)
+		api.POST("/skill-imports", h.Skills.Import)
 	}
 	// The two registries a config UI renders from, so a panel never keeps its
 	// own copy of what the server accepts: provider machine facts (types, auth
@@ -167,22 +174,25 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 	{
 		providers := api.Group("/providers")
 		providers.GET("", h.Providers.List)
-		providers.POST("", admin, h.Providers.Create)
+		providers.POST("", h.Providers.Create)
 		providers.GET("/:id", h.Providers.Get)
-		providers.PUT("/:id", admin, h.Providers.Update)
-		providers.DELETE("/:id", admin, h.Providers.Delete)
-		// The OAuth flow belongs to the endpoint, not to any one agent.
-		providers.POST("/:id/chatgpt/login", admin, h.ChatGPT.Login)
-		providers.POST("/:id/chatgpt/logout", admin, h.ChatGPT.Logout)
+		providers.PUT("/:id", h.Providers.Update)
+		providers.DELETE("/:id", h.Providers.Delete)
+		providers.POST("/:id/scope", admin, h.Providers.SetScope)
+		// The OAuth flow belongs to the endpoint, not to any one agent —
+		// signing a private provider into ChatGPT is its owner's act.
+		providers.POST("/:id/chatgpt/login", h.ChatGPT.Login)
+		providers.POST("/:id/chatgpt/logout", h.ChatGPT.Logout)
 		providers.GET("/:id/chatgpt/status", h.ChatGPT.Status)
 	}
 	{
 		workflows := api.Group("/workflows")
 		workflows.GET("", h.Workflows.List)
-		workflows.POST("", admin, h.Workflows.Create)
+		workflows.POST("", h.Workflows.Create)
 		workflows.GET("/:id", h.Workflows.Get)
-		workflows.PUT("/:id", admin, h.Workflows.Update)
-		workflows.DELETE("/:id", admin, h.Workflows.Delete)
+		workflows.PUT("/:id", h.Workflows.Update)
+		workflows.DELETE("/:id", h.Workflows.Delete)
+		workflows.POST("/:id/scope", admin, h.Workflows.SetScope)
 		// Running one is a member's act, into a session they own (checked in
 		// the handler — the session id rides the body).
 		workflows.POST("/:id/runs", h.Workflows.Run)

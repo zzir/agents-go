@@ -54,7 +54,7 @@ func TestRunPanicFailsTheRunWithAnError(t *testing.T) {
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatal(err)
 	}
-	runner.Deps.SpawnTool = func(context.Context) *agents.Tool { panic("build exploded") }
+	runner.Deps.SpawnTool = func(context.Context, string) *agents.Tool { panic("build exploded") }
 
 	var outcome *RunOutcome
 	done := make(chan struct{})

@@ -225,25 +225,36 @@ check there, so a PAT could be minted but never authenticate.
 
 ### Ownership and roles
 
-Two rules, enforced at the routes (`handler/authz.go`), shape who may do what:
+Three rules, enforced at the routes and handlers (`handler/authz.go`,
+spec §5.29), shape who may do what:
 
-- **Shared configuration is read by every member and written by admins
-  only.** Agents, providers, MCP servers, sandboxes (the test endpoint
-  included), settings, skills, workflows, guardrails, memories and
-  provider routes: every write changes what runs on the host or whose
-  credentials are spent, so `POST`/`PUT`/`DELETE` on them answer `403` for a
-  member. The web terminal (`/ws/terminal`) is a shell on a sandbox host with
-  the server's stored credentials — admin only. The gate holds through the
-  model's tools as well: `save_workflow` rides only an admin's run (a member's
-  agent still gets `get_workflow`), so a member approving their own agent's
-  call cannot write what the API refuses them.
-- **Using shared configuration is not writing it.** A member runs any agent,
-  any workflow, and any sandbox in their own session — and approves their own
-  tool calls there. A shared sandbox is therefore a shared
-  shell: every member who can pick it can execute on that host, under the
-  credentials the server stores. That is the single-workspace model — one
-  team, one trust boundary — not an oversight; a host that only admins may
-  touch is a host that is not configured as a sandbox here.
+- **Scoped configuration is per row: private to its owner or global.**
+  Agents, providers, MCP servers, skills and workflows carry
+  `scope: private | global`. Any member creates (the row lands private,
+  theirs; claiming `global` on create is admin-only, `403`), edits and
+  deletes their own private rows, and other members never see them — a
+  foreign private id answers `404` like a missing one. A global row is every
+  member's to read and use, an admin's to write. An admin sees all rows and
+  manages but does not author: deleting a member's private row works, editing
+  it is `403`. `POST /<entity>/:id/scope` (admin) promotes/demotes; names are
+  unique per scope, so shadowing a global name with your own is legal and
+  your row wins the lookup (own-over-global). A global row may reference only
+  global rows (an agent's provider/MCP/skills/handoffs, a workflow's step
+  agents — checked at write and at promote); at run build, MCP servers and
+  skills the run's owner cannot see are simply dropped. The model's tools
+  follow suit: `save_workflow` rides every owner's run — a new name saves a
+  private workflow, an existing global name stays an admin's to change.
+  Signing a provider into ChatGPT is its owner's act.
+- **Host configuration stays read-everyone, write-admin.** Sandboxes (the
+  test and container endpoints included), settings, guardrails and memories
+  change what runs on the host or whose host credentials are spent, so
+  `POST`/`PUT`/`DELETE` answer `403` for a member. The web terminal
+  (`/ws/terminal`) is a shell on a sandbox host — admin only. And using
+  configuration is not writing it: a member runs any agent, workflow or
+  sandbox they can see, in their own session, approving their own tool
+  calls. A shared sandbox is a shared shell — every member who can pick it
+  executes on that host under the credentials the server stores. That is the
+  single-workspace model — one team, one trust boundary — not an oversight.
 - **A session's content belongs to its owner alone.** `sessions.owner_id` is
   the one ownership column: a task's hidden session inherits its parent's
   owner, a trigger fires into a session, an approval is filed on one. The
@@ -261,9 +272,11 @@ Two rules, enforced at the routes (`handler/authz.go`), shape who may do what:
   in as admin. In the UI the account menu (sidebar footer: avatar and name)
   holds Settings, Sign out and — for admins — Admin, a dialog of three
   panels: Members (roles, disabling, signing out everywhere), Sessions
-  (every owner's: reassign or delete, never read) and Audit logs. Settings for a member shows the same configuration panels read-only
-  — what the API lets them read, laid out as the admin sees it, with no
-  Add, Edit, Delete or Test — plus their Account (profile and PATs). The
+  (every owner's: reassign or delete, never read) and Audit logs. Settings
+  for a member shows the scoped panels writable — their own rows editable,
+  global rows marked and read-only — and the host panels (sandboxes,
+  settings, guardrails, memories) read-only, plus their Account (profile
+  and PATs). The
   Terminal button is shown to admins only, as `/ws/terminal` is admin-only
   server-side; nothing else in the UI hides what the server would allow.
 
@@ -305,9 +318,9 @@ an account with `PUT /sessions/:id/owner` — or delete it.
 
   A person's manual fire (`POST /triggers/:id/fire`) is the request's line;
   the clock's and a webhook's have no request, so the scheduler writes
-  theirs. A `save_workflow` is the one write to shared configuration that
-  happens through a tool, so the tool writes it — the approval line alone
-  would read like any other `exec_command`.
+  theirs. A `save_workflow` is the one configuration write that happens
+  through a tool, so the tool writes it — the approval line alone would read
+  like any other `exec_command`.
 
 Retention is the process's `--audit-retention-days` (default 0 = keep
 forever), deliberately not a setting: the log of configuration changes must
@@ -645,6 +658,7 @@ behind like a spawn.
 | GET    | `/agents/:id`                | Get agent                                |
 | PUT    | `/agents/:id`                | Update agent                             |
 | DELETE | `/agents/:id`                | Delete agent                             |
+| POST   | `/agents/:id/scope`          | admin — `{scope: private\|global}`; promote requires all-global references, `409` on a name collision in the target scope |
 | GET    | `/agents/:id/tools`          | The agent's current tool surface as schema-only definitions (`{name, description?, parameters?}`) — built-ins, connected MCP servers' tools, the read_skill tool; sandbox tools excluded (no sandbox is selected). Nothing here executes; backs the Replay dialog's tool picker |
 
 Agent config shape — three top-level scalars, then the knobs as **grouped
@@ -726,6 +740,7 @@ which is where the key lives (the ChatGPT OAuth flow included — see
 | DELETE | `/mcp-servers/:id/oauth-token` | Disconnect and clear the saved OAuth token ("sign out")           |
 | GET    | `/mcp-servers/:id/tools`       | List tools exposed by the server                                  |
 | GET    | `/mcp-servers/oauth/callback`  | OAuth redirect callback                                           |
+| POST   | `/mcp-servers/:id/scope`       | admin — `{scope: private\|global}`; `409` on a name collision     |
 
 The one transport is streamable HTTP (spec §5.25) — `config` is `{endpoint,
 headers, auth_mode, oauth_*}` with `auth_mode` `header` or `oauth`; a local
@@ -901,7 +916,8 @@ selection (skill ids) restricts both.
 | POST   | `/skills`      | Create — body `{content}`; `409` on a duplicate name   |
 | PUT    | `/skills/:id`  | Update content (name/description follow its frontmatter) |
 | DELETE | `/skills/:id`  | Delete                                                 |
-| POST   | `/skill-imports` | Import from a URL — see below                        |
+| POST   | `/skills/:id/scope` | admin — `{scope: private\|global}`; `409` on a name collision |
+| POST   | `/skill-imports` | Import from a URL — see below; imported rows are the importer's (private) |
 
 `POST /skill-imports` with `{url}` upserts skills from elsewhere:
 `https://github.com/owner/repo` walks the repository via the GitHub API
@@ -936,6 +952,7 @@ endpoint's credential, so every agent pointed at the provider shares one login.
 | GET    | `/providers/:id`  | Get provider                                  |
 | PUT    | `/providers/:id`  | Update provider                               |
 | DELETE | `/providers/:id`  | Delete; 409 while an agent uses it            |
+| POST   | `/providers/:id/scope` | admin — `{scope: private\|global}`; demote is refused (`409`) while global or foreign agents reference it |
 
 ### Workflows — `/api/v1/workflows`
 
@@ -1036,8 +1053,12 @@ updates one, in a shape the model can hold — steps, their agents and their
 edges by NAME, never by id (`{name, description, steps: [{name, agent,
 prompt, gate, gate_pass, gate_fail, pause_before, compact_before, on_success,
 on_failure}], budget}`, edges naming a step or `end`; the save tool's
-description lists the agents on offer). Saving under a name that exists
-replaces that definition — an update, not a second workflow — and a step that
+description lists the agents on offer). Both tools see what the run's owner
+sees, names resolve own-over-global, and a new name saves a private workflow
+owned by them; an existing global name is an admin's to change — a member's
+save answers with guidance (pick another name), not an error. Saving under a
+name that exists replaces that definition — an update, not a second
+workflow — and a step that
 keeps its name keeps its id, so a retry and an execution in flight still name
 the same step; a nameless step reads back as `Step N`, which is what saving it
 back then stores. Because names are the model's handles, the store holds every
@@ -1130,9 +1151,10 @@ re-pointed.
 | GET    | `/workflows/:id`            | Get definition                                   |
 | PUT    | `/workflows/:id`            | Update definition                                |
 | DELETE | `/workflows/:id`            | Delete definition (executions keep their snapshot) |
+| POST   | `/workflows/:id/scope`      | admin — `{scope: private\|global}`; promote requires all-global step agents, `409` on a name collision |
 | POST   | `/workflows/:id/runs`       | Start an execution for `session_id` with the brief `input`, optionally binding a still-unbound session first (`sandbox_id?`, `project_id?` — the same first-run bind a run makes, so the steps have the composer's project) — 201 with the task; 400 no runnable steps / agent gone / an invalid binding, 404 unknown workflow or session, 409 the session's background-task cap or a bind that keeps losing to concurrent config edits (retry) |
 | GET    | `/triggers`                 | List triggers (`?workflow_id=` for one workflow's); secrets never shown, only their tail |
-| POST   | `/triggers`                 | Create — `{target, workflow_id | agent_config_id, session_id, kind, schedule?, brief, enabled}` (target inferred from the id when omitted); a webhook's `secret` is in this response only |
+| POST   | `/triggers`                 | Create — `{target, workflow_id | agent_config_id, session_id, kind, schedule?, brief, enabled}` (target inferred from the id when omitted); a webhook's `secret` is in this response only; `409` past 50 triggers per owner |
 | GET    | `/triggers/:id`             | Get one                                          |
 | PUT    | `/triggers/:id`             | Update (the kind cannot change; secret and fire record are kept) |
 | DELETE | `/triggers/:id`             | Delete (off the clock at once)                   |
@@ -2219,13 +2241,14 @@ When a change genuinely doesn't fit, update this list in the same PR.
     rule exists because the guard used to be per-panel and eight of ten
     destructive flows had none.
 
-42. **Ownership is a column on sessions; everything else inherits or is
-    shared.** There is no second owner column: a task's hidden session
-    inherits its parent's owner at creation (`CreateOptions.ParentID`), a
-    trigger's owner is its session's, an approval's is its session's. Shared
-    configuration has no owner and is admin-written. A new per-user thing is
-    either filed on a session or it is shared — not a third category with
-    its own column and its own checks.
+42. **Ownership is a column on sessions or a scope on configuration —
+    nothing invents a third scheme.** A task's hidden session inherits its
+    parent's owner at creation (`CreateOptions.ParentID`), a trigger's owner
+    is its session's, an approval's is its session's. Configuration is
+    either host-owned and admin-written (sandboxes, settings, guardrails,
+    memories) or row-scoped `private | global` with `owner_id`
+    (spec §5.29). A new per-user thing is filed on a session, or it takes
+    the scope pair — not its own column and its own checks.
 
 43. **Shutdown is ordered, and every waiter is told.** On SIGINT/SIGTERM:
     the clock stops (a tick during the drain would start a run the drain

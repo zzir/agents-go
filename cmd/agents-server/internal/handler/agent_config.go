@@ -9,6 +9,7 @@ import (
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/guardrails"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -25,16 +26,18 @@ type AgentConfigHandler struct {
 	// names no row — the write side of referential integrity, whose read side
 	// is ProviderStore.DeleteIfUnreferenced.
 	providers *store.ProviderStore
+	// skills backs the reference-scope validation of the skills selection.
+	skills *store.SkillStore
 }
 
 // NewAgentConfigHandler returns a handler over the agent store and the three
 // stores its validation reads (the MCP servers, providers and guardrails a
 // config may name). Every one is required; a nil is a wiring error.
-func NewAgentConfigHandler(s *store.AgentConfigStore, mcpServers *store.McpServerStore, providers *store.ProviderStore, guardrails *guardrails.Resolver) *AgentConfigHandler {
-	if s == nil || mcpServers == nil || providers == nil || guardrails == nil {
+func NewAgentConfigHandler(s *store.AgentConfigStore, mcpServers *store.McpServerStore, providers *store.ProviderStore, skills *store.SkillStore, guardrails *guardrails.Resolver) *AgentConfigHandler {
+	if s == nil || mcpServers == nil || providers == nil || skills == nil || guardrails == nil {
 		panic("handler: NewAgentConfigHandler needs every store")
 	}
-	return &AgentConfigHandler{store: s, mcpServers: mcpServers, providers: providers, guardrails: guardrails}
+	return &AgentConfigHandler{store: s, mcpServers: mcpServers, providers: providers, skills: skills, guardrails: guardrails}
 }
 
 // validateAgentConfig checks an incoming Create/Update body against the
@@ -53,15 +56,21 @@ func (h *AgentConfigHandler) validateAgentConfig(c *gin.Context, ac *store.Agent
 		badRequest(c, "model is required")
 		return false
 	}
-	// An agent naming a provider that does not exist would fail at run time
-	// with a confusing "provider not found" mid-stream; refuse at save.
+	// An agent naming a provider that does not exist — or one its scope may
+	// not reference (spec §5.29) — would fail at run time with a confusing
+	// error mid-stream; refuse at save.
 	if ac.ProviderID != "" {
-		if _, err := h.providers.Get(c.Request.Context(), ac.ProviderID); err != nil {
+		pv, err := h.providers.Get(c.Request.Context(), ac.ProviderID)
+		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				badRequest(c, "provider_id names no provider")
 			} else {
 				internalError(c, err)
 			}
+			return false
+		}
+		if !store.RefVisible(pv.Scope, pv.OwnerID, ac.Scope, ac.OwnerID) {
+			badRequest(c, refScopeError("provider", pv.Name, ac.Scope))
 			return false
 		}
 	}
@@ -73,9 +82,38 @@ func (h *AgentConfigHandler) validateAgentConfig(c *gin.Context, ac *store.Agent
 	// silently no-op'ing at run time (a guardrail or output schema that "looks
 	// enabled" but never runs is the dangerous case). The same decode backs the
 	// build, so the structural contract lives in exactly one place.
-	if _, err := bridge.DecodeAgentSpec(ac); err != nil {
+	spec, err := bridge.DecodeAgentSpec(ac)
+	if err != nil {
 		badRequest(c, err.Error())
 		return false
+	}
+	// The referenced MCP servers, skills and handoff targets must be ones
+	// this agent's scope may name. Missing ids stay TOLERATED here (deletes
+	// are, and the run filters them loudly); only a visible-but-forbidden
+	// reference is refused.
+	for _, id := range spec.Tools {
+		if ms, err := h.mcpServers.Get(c.Request.Context(), id); err == nil {
+			if !store.RefVisible(ms.Scope, ms.OwnerID, ac.Scope, ac.OwnerID) {
+				badRequest(c, refScopeError("MCP server", ms.Name, ac.Scope))
+				return false
+			}
+		}
+	}
+	for _, id := range spec.Skills {
+		if sk, err := h.skills.Get(c.Request.Context(), id); err == nil {
+			if !store.RefVisible(sk.Scope, sk.OwnerID, ac.Scope, ac.OwnerID) {
+				badRequest(c, refScopeError("skill", sk.Name, ac.Scope))
+				return false
+			}
+		}
+	}
+	for _, id := range spec.Handoffs {
+		if target, err := h.store.Get(c.Request.Context(), id); err == nil {
+			if !store.RefVisible(target.Scope, target.OwnerID, ac.Scope, ac.OwnerID) {
+				badRequest(c, refScopeError("handoff agent", target.Name, ac.Scope))
+				return false
+			}
+		}
 	}
 	if err := h.guardrails.ValidateNames(c.Request.Context(), ac.Guardrails.Guardrails); err != nil {
 		badRequest(c, err.Error())
@@ -94,7 +132,11 @@ func (h *AgentConfigHandler) validateAgentConfig(c *gin.Context, ac *store.Agent
 //	@Security	BearerAuth
 //	@Router		/agents [get]
 func (h *AgentConfigHandler) List(c *gin.Context) {
-	configs, err := h.store.List(c.Request.Context())
+	ownerID, admin, ok := callerScope(c)
+	if !ok {
+		return
+	}
+	configs, err := store.ListVisibleOf(c.Request.Context(), h.store.CrudStore, ownerID, admin)
 	if err != nil {
 		internalError(c, err)
 		return
@@ -126,6 +168,9 @@ func (h *AgentConfigHandler) Create(c *gin.Context) {
 	}
 	// id/timestamps are server-owned (BeforeAppendModel stamps them).
 	ac.ID = ""
+	if !stampCreateScope(c, &ac.Scope, &ac.OwnerID) {
+		return
+	}
 	if !h.validateAgentConfig(c, &ac) {
 		return
 	}
@@ -157,6 +202,9 @@ func (h *AgentConfigHandler) Get(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
+	if !visibleRow(c, ac.Scope, ac.OwnerID) {
+		return
+	}
 	sanitizeAgentConfig(ac)
 	c.JSON(http.StatusOK, ac)
 }
@@ -184,14 +232,26 @@ func (h *AgentConfigHandler) Update(c *gin.Context) {
 		badRequest(c, err.Error())
 		return
 	}
+	ctx := c.Request.Context()
+	id := c.Param("id")
+	cur, err := h.store.Get(ctx, id)
+	if err != nil {
+		storeError(c, err)
+		return
+	}
+	if !editableRow(c, cur.Scope, cur.OwnerID) {
+		return
+	}
+	// Scope and owner never move on an update (POST /:id/scope does); the
+	// validation runs with the row's real scope.
+	ac.Scope, ac.OwnerID = cur.Scope, cur.OwnerID
 	if !h.validateAgentConfig(c, &ac) {
 		return
 	}
-	ctx := c.Request.Context()
-	id := c.Param("id")
 	// The masked fallback-model keys round-trip to their stored values inside
 	// the store's transaction.
-	err := h.store.Update(ctx, id, &ac, func(prev *store.AgentConfig) error {
+	err = h.store.Update(ctx, id, &ac, func(prev *store.AgentConfig) error {
+		ac.Scope, ac.OwnerID = prev.Scope, prev.OwnerID
 		ac.Resilience.FallbackModels = restoreFallbackModels(ac.Resilience.FallbackModels, prev.Resilience.FallbackModels)
 		return nil
 	})
@@ -219,9 +279,69 @@ func (h *AgentConfigHandler) Update(c *gin.Context) {
 //	@Security	BearerAuth
 //	@Router		/agents/{id} [delete]
 func (h *AgentConfigHandler) Delete(c *gin.Context) {
+	cur, err := h.store.Get(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		storeError(c, err)
+		return
+	}
+	if !deletableRow(c, cur.Scope, cur.OwnerID) {
+		return
+	}
 	if err := h.store.Delete(c.Request.Context(), c.Param("id")); err != nil {
 		storeError(c, err)
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+// SetScope promotes an agent to global — after checking every reference it
+// holds is global too — or demotes it to the acting admin's private set.
+// Entities still referencing a demoted agent fail loudly at their next use.
+//
+//	@Summary	Change an agent's scope
+//	@Tags		agents
+//	@Accept		json
+//	@Param		id		path	string		true	"Agent ID"
+//	@Param		scope	body	scopeReq	true	"global or private"
+//	@Success	204
+//	@Failure	400	{object}	ErrorResponse	"a promote holds non-global references"
+//	@Failure	409	{object}	ErrorResponse	"name collision in the target scope"
+//	@Security	BearerAuth
+//	@Router		/agents/{id}/scope [post]
+func (h *AgentConfigHandler) SetScope(c *gin.Context) {
+	scope, ok := bindScope(c)
+	if !ok {
+		return
+	}
+	u, _ := server.CurrentUser(c)
+	ctx, id := c.Request.Context(), c.Param("id")
+	ac, err := h.store.Get(ctx, id)
+	if err != nil {
+		storeError(c, err)
+		return
+	}
+	owner := ""
+	if scope == store.ScopePrivate {
+		owner = u.ID
+	}
+	// A promote re-runs the reference validation AS the target scope: a
+	// global agent may only name global providers, servers, skills and
+	// handoff targets.
+	ac.Scope, ac.OwnerID = scope, owner
+	if !h.validateAgentConfig(c, ac) {
+		return
+	}
+	if err := store.SetScopeOf(ctx, h.store.CrudStore, id, scope, owner); err != nil {
+		saveError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// refScopeError words a refused cross-scope reference.
+func refScopeError(kind, name, holderScope string) string {
+	if holderScope == store.ScopeGlobal {
+		return "a global agent can only reference global configuration; " + kind + " " + name + " is private"
+	}
+	return kind + " " + name + " belongs to another user"
 }
