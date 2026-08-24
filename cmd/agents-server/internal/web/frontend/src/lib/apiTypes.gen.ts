@@ -6676,11 +6676,7 @@ export interface components {
             id?: string;
             name?: string;
             owner_id?: string;
-            /**
-             * @description Scope is the row's visibility (spec §5.29): ScopePrivate — the owner's
-             *     alone — or ScopeGlobal, readable by every member and written by admins.
-             *     OwnerID is set exactly when the scope is private.
-             */
+            /** @description Scope/OwnerID: row visibility, owner set iff private — spec §5.29. */
             scope?: string;
             /**
              * @description Status is the single derived lifecycle state: disabled, connecting,
@@ -6970,11 +6966,7 @@ export interface components {
              */
             provider_id?: string;
             resilience?: components["schemas"]["store.ResilienceGroup"];
-            /**
-             * @description Scope is the row's visibility (spec §5.29): ScopePrivate — the owner's
-             *     alone — or ScopeGlobal, readable by every member and written by admins.
-             *     OwnerID is set exactly when the scope is private.
-             */
+            /** @description Scope/OwnerID: row visibility, owner set iff private — spec §5.29. */
             scope?: string;
             session?: components["schemas"]["store.SessionGroup"];
             skills?: string;
@@ -7228,11 +7220,7 @@ export interface components {
             id?: string;
             name?: string;
             owner_id?: string;
-            /**
-             * @description Scope is the row's visibility (spec §5.29): ScopePrivate — the owner's
-             *     alone — or ScopeGlobal, readable by every member and written by admins.
-             *     OwnerID is set exactly when the scope is private.
-             */
+            /** @description Scope/OwnerID: row visibility, owner set iff private — spec §5.29. */
             scope?: string;
             /**
              * @description Type selects the backend (bridge.ProviderType*). Empty means openai, the
@@ -7270,10 +7258,7 @@ export interface components {
              *     at the next run.
              */
             revision?: number;
-            /**
-             * @description Type is "docker" — the only backend (spec §5.27). Kept as a column so a
-             *     future backend is a value, not a schema change.
-             */
+            /** @description Type is "docker" — the only backend (spec §5.27). */
             type?: string;
             updated_at?: string;
         };
@@ -7312,12 +7297,9 @@ export interface components {
             planning?: boolean;
             project_id?: string;
             /**
-             * @description SandboxID/ProjectID are the session's PERMANENT sandbox binding: the
-             *     first run that carries a sandbox writes them (compare-and-set, see
-             *     BindSandboxIfEmpty) and they are never rewritten — the session's file
-             *     system context must not change under a conversation that already
-             *     touched it. The project names the working tree the sandbox's container
-             *     mounts (spec §5.28).
+             * @description SandboxID/ProjectID are the session's PERMANENT binding: the first
+             *     sandbox-carrying run CAS-writes them (BindSandboxIfEmpty) and they are
+             *     never rewritten — spec §5.28.
              */
             sandbox_id?: string;
             updated_at?: string;
@@ -7342,14 +7324,10 @@ export interface components {
              */
             detached?: boolean;
             id?: string;
-            /** @description unique via idx_skills_name */
+            /** @description unique per scope (spec §5.29) */
             name?: string;
             owner_id?: string;
-            /**
-             * @description Scope is the row's visibility (spec §5.29): ScopePrivate — the owner's
-             *     alone — or ScopeGlobal, readable by every member and written by admins.
-             *     OwnerID is set exactly when the scope is private.
-             */
+            /** @description Scope/OwnerID: row visibility, owner set iff private — spec §5.29. */
             scope?: string;
             source_path?: string;
             /**
