@@ -41,7 +41,7 @@ func NewAuditStore(db *bun.DB) *AuditStore { return &AuditStore{db: db} }
 // Record appends one event, stamping id and time.
 func (s *AuditStore) Record(ctx context.Context, e *AuditEvent) error {
 	if e.ID == "" {
-		e.ID = NewID()
+		e.ID = NewTimeID() // append-heavy table: time-ordered ids (see NewTimeID)
 	}
 	if e.CreatedAt.IsZero() {
 		e.CreatedAt = time.Now().UTC()

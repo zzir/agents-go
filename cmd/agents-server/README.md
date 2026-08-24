@@ -665,7 +665,9 @@ Agent config shape — three top-level scalars, then the knobs as **grouped
 nested objects** (each group is one JSON column in the table, so a new knob
 needs no schema change), then a few top-level JSON blobs:
 
-- **Top level**: `name`, `instructions`, `model`, `provider_id` (the endpoint
+- **Top level**: `name`, `description` (what the agent is FOR, in a sentence
+  — the text an automatic agent picker matches a request against; never sent
+  to the model), `instructions`, `model`, `provider_id` (the endpoint
   this agent reaches its model through — see [providers](#providers--apiv1providers);
   empty reaches no credential, so the run fails its pre-flight until the
   agent names a provider), `context_window` (declared, 0 = unknown)
@@ -1309,8 +1311,8 @@ output at 32 KiB per stream (truncation keeps head and tail).
 
 A project is one user's working tree on one sandbox (spec §5.28): the unit a
 session binds and the unit a container mounts at `/workspace`. On a
-local-daemon sandbox the tree is `<workspace>/<user>/<project id>` on the
-server host; on a remote daemon it is the named volume
+local-daemon sandbox the tree is `<workspace>/<owner uuid>/<project uuid>`
+(both full uuids) on the server host; on a remote daemon it is the named volume
 `agents-proj-<project id tail>` there. Containers are one per
 (sandbox, project), named `agents-<sandbox tail>-<project tail>`, kept
 (stopped, not removed) across restarts, with `/tmp` a RAM-backed tmpfs
@@ -2271,10 +2273,14 @@ is capped at 16 connections:
 ./agents-server --db 'postgres://user:pass@localhost:5432/agents?sslmode=disable'
 ```
 
-Every id column — primary keys, the foreign keys that reference them, and the
-row ids of `entries` and `trace_events` — is typed `uuid` and holds a UUIDv7
-(`store.NewID`): time-ordered, so inserts land at the right edge of an index
-and rows created together sit together; 16 bytes a key on PostgreSQL. Order
+Every id column — primary keys and the foreign keys that reference them — is
+typed `uuid`; 16 bytes a key on PostgreSQL. Ordinary entities hold a UUIDv4
+(`store.NewID`) — their row counts never make index locality matter. The
+APPEND-HEAVY tables — `entries`, `trace_events`, `audit_events` — hold a
+UUIDv7 (`store.NewTimeID`): time-ordered, so inserts land at the right edge
+of an index and rows created together sit together as those tables grow into
+the millions; their ids are also the pagination cursors (`before_id` /
+`before`), which read order off the id. Elsewhere order
 is never read off the id where it matters: a session's entries are read,
 paged, forked and compacted in `seq` order — the append position the SDK
 assigns, which a clock stepping backwards or a second process cannot

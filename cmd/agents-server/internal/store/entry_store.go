@@ -60,7 +60,7 @@ type entryRow struct {
 // BeforeAppendModel mints the id on insert; bun invokes it on insert and update.
 func (r *entryRow) BeforeAppendModel(_ context.Context, q bun.Query) error {
 	if _, ok := q.(*bun.InsertQuery); ok && r.ID == "" {
-		r.ID = NewID()
+		r.ID = NewTimeID() // append-heavy table: time-ordered ids (see NewTimeID)
 	}
 	return nil
 }
