@@ -6,7 +6,7 @@ import { Blankslate } from '@primer/react/experimental';
 import { ChevronUpIcon, ChevronDownIcon, TrashIcon, PlayIcon, ZapIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
 import { PAGE_SIZE, useApi, useCrud, usePage } from '@/lib/hooks';
-import { canDeleteRow, canEditRow } from '@/lib/access';
+import { ReadOnlyContext, canDeleteRow, canEditRow } from '@/lib/access';
 import { useMe } from '@/lib/me';
 import { RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
 import { fc } from '@/lib/form';
@@ -337,18 +337,24 @@ export function WorkflowPanel({ sessionId }: { sessionId: string | null }) {
 
       {adding && <WorkflowForm saving={saving} initial={template} onSave={f => { setTemplate(null); save(f); }} onCancel={closeForm} agents={agents} />}
       {editing && (
-        <WorkflowForm saving={saving}
-          initial={{
-            name: editing.name,
-            description: editing.description || '',
-            steps: editing.steps || [],
-            budget: editing.budget || {},
-          }}
-          onSave={save}
-          onCancel={cancel}
-          onDelete={async () => { if (await remove(editing.id, editing.name)) cancel(); }}
-          agents={agents}
-        />
+        // A row the caller may not edit still opens — as a read-only view of
+        // the full definition (steps, prompts, gates), like every other
+        // scoped panel. FormActions hides itself; Back closes the view.
+        <ReadOnlyContext value={!rowEditable(editing)}>
+          <WorkflowForm saving={saving}
+            initial={{
+              name: editing.name,
+              description: editing.description || '',
+              steps: editing.steps || [],
+              budget: editing.budget || {},
+            }}
+            onSave={save}
+            onCancel={cancel}
+            onDelete={async () => { if (await remove(editing.id, editing.name)) cancel(); }}
+            agents={agents}
+          />
+          {!rowEditable(editing) && <div><Button size="small" onClick={cancel}>Back</Button></div>}
+        </ReadOnlyContext>
       )}
 
       {!adding && !editing && <Paged page={page} total={workflows.length} label="Workflow pages">
@@ -377,7 +383,7 @@ export function WorkflowPanel({ sessionId }: { sessionId: string | null }) {
                 <Button onClick={() => setTriggersFor(w)} size="small" variant="invisible" leadingVisual={ZapIcon}
                   title="Run it on a schedule or from a webhook">Triggers</Button>
                 <RowActionsMenu name={w.name}
-                  onEdit={rowEditable(w) ? () => startEdit(w) : undefined}
+                  onEdit={() => startEdit(w)} editReadOnly={!rowEditable(w)}
                   scope={isAdmin ? { row: w, setScope: api.workflows.setScope, onDone: reload } : undefined}
                   // Delete without edit: the admin on a foreign private row
                   // (remove carries the confirm dialog).
