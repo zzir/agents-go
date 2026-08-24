@@ -224,12 +224,10 @@ func scanJSONColumn(src, dst any, what string) error {
 type Workflow struct {
 	bun.BaseModel `bun:"table:workflows,alias:wfl"`
 
-	ID string `bun:"id,pk,type:uuid" json:"id"`
-	// Scope is the row's visibility (spec §5.29): ScopePrivate — the owner's
-	// alone — or ScopeGlobal, readable by every member and written by admins.
-	// OwnerID is set exactly when the scope is private.
+	// Scope/OwnerID: row visibility, owner set iff private — spec §5.29.
 	Scope   string `bun:"scope,notnull"               json:"scope"`
 	OwnerID string `bun:"owner_id,nullzero,type:uuid" json:"owner_id,omitempty"`
+	ID      string `bun:"id,pk,type:uuid" json:"id"`
 	Name    string `bun:"name,notnull" json:"name"`
 	// Description says WHEN to run this, in one line. An agent matching a
 	// request against it is the only way a workflow starts, so it is required.
