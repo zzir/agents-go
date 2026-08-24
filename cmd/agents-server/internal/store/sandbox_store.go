@@ -95,14 +95,28 @@ func (s *SandboxStore) Update(ctx context.Context, id string, cfg *SandboxConfig
 // config is ErrNotFound — a different answer from refused, and the handler
 // maps them to 404 vs 409.
 func (s *SandboxStore) DeleteIfUnreferenced(ctx context.Context, id string) (refs int, err error) {
-	res, err := s.db.NewDelete().Model((*SandboxConfig)(nil)).
-		Where("id = ?", id).
-		Where(unreferenced, id).
-		Exec(ctx)
+	var n int64
+	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		res, derr := tx.NewDelete().Model((*SandboxConfig)(nil)).
+			Where("id = ?", id).
+			Where(unreferenced, id).
+			Exec(ctx)
+		if derr != nil {
+			return derr
+		}
+		if n, derr = res.RowsAffected(); derr != nil || n == 0 {
+			return derr
+		}
+		// The sandbox's projects die with it: only UNBOUND ones can remain (a
+		// bound session blocks the delete above), and a project row without
+		// its sandbox could never build. Storage is left alone, as always.
+		_, derr = tx.NewDelete().Model((*Project)(nil)).Where("sandbox_id = ?", id).Exec(ctx)
+		return derr
+	})
 	if err != nil {
 		return 0, fmt.Errorf("deleting sandbox config %s: %w", id, err)
 	}
-	if n, aerr := res.RowsAffected(); aerr == nil && n > 0 {
+	if n > 0 {
 		return 0, nil
 	}
 	return s.explainRefusal(ctx, id)

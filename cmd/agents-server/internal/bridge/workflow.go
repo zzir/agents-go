@@ -331,7 +331,7 @@ func (r *Runner) startWorkflowStep(ctx context.Context, req tasks.LaunchRequest,
 	// working directory with the conversation that asked; the agent is the
 	// step's own.
 	in := store.DecodeInherit(req.Inherit)
-	_, err = r.startRunWithID(req.RunID, req.SessionID, step.AgentConfigID, in.SandboxID, in.WorkDir, req.Input, "", nil, nil)
+	_, err = r.startRunWithID(req.RunID, req.SessionID, step.AgentConfigID, in.SandboxID, in.ProjectID, req.Input, "", nil, nil)
 	return err
 }
 
@@ -360,7 +360,7 @@ func (r *Runner) pauseWorkflowStep(ctx context.Context, req tasks.LaunchRequest,
 	// the launch settles, which is what tells every client to ask.
 	won, err := r.Deps.Tasks.Pause(ctx, req.TaskID, req.RunID, st.Encode(), &store.PendingApproval{
 		RunID: req.RunID, SessionID: req.SessionID, Kind: store.ApprovalKindStep,
-		AgentConfigID: step.AgentConfigID, SandboxID: in.SandboxID, WorkDir: in.WorkDir,
+		AgentConfigID: step.AgentConfigID, SandboxID: in.SandboxID, ProjectID: in.ProjectID,
 		ToolCalls: calls,
 	})
 	if err != nil {
@@ -453,7 +453,7 @@ func (r *Runner) resolveStepApproval(ctx context.Context, pending *store.Pending
 		TaskID: row.ID, Kind: row.Kind, State: row.State, RunID: pending.RunID, SessionID: row.ChildSessionID,
 		Input: st.PendingInput,
 		Inherit: store.EncodeInherit(store.Inherit{
-			AgentConfigID: row.ParentAgentConfigID, SandboxID: row.ParentSandboxID, WorkDir: row.ParentWorkDir,
+			AgentConfigID: row.ParentAgentConfigID, SandboxID: row.ParentSandboxID, ProjectID: row.ParentProjectID,
 		}),
 	}
 	if lerr := r.startWorkflowStep(mctx, req, st, step); lerr != nil {

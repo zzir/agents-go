@@ -9,7 +9,6 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
@@ -39,6 +38,7 @@ type TerminalHandler struct {
 	// host is the act most worth a line. Wired at bootstrap.
 	Audit    protocol.AuditFunc
 	store    *store.SandboxStore
+	projects *store.ProjectStore
 	manager  sandboxProvider
 	settings *settings.Reader
 
@@ -61,7 +61,7 @@ type sandboxProvider interface {
 	// the returned release drops it when the connection ends, so an instance
 	// evicted meanwhile (config update, last bound session deleted) stays
 	// alive under the open terminal and closes only after it.
-	Acquire(cfg *store.SandboxConfig, workDir string) (sandbox.Sandbox, func(), error)
+	Acquire(cfg *store.SandboxConfig, proj *store.Project) (sandbox.Sandbox, func(), error)
 }
 
 var _ sandboxProvider = (*sandboxes.Manager)(nil)
@@ -75,9 +75,9 @@ type liveTerminal struct {
 	gen  int64
 }
 
-// NewTerminalHandler returns a handler backed by the given store and sandbox manager.
-func NewTerminalHandler(s *store.SandboxStore, m sandboxProvider, cfg *settings.Reader) *TerminalHandler {
-	return &TerminalHandler{store: s, manager: m, settings: cfg, live: map[string]map[*liveTerminal]struct{}{}, fence: map[string]int64{}}
+// NewTerminalHandler returns a handler backed by the given stores and sandbox manager.
+func NewTerminalHandler(s *store.SandboxStore, projects *store.ProjectStore, m sandboxProvider, cfg *settings.Reader) *TerminalHandler {
+	return &TerminalHandler{store: s, projects: projects, manager: m, settings: cfg, live: map[string]map[*liveTerminal]struct{}{}, fence: map[string]int64{}}
 }
 
 // Handle runs one terminal session on an authenticated WebSocket connection.
@@ -215,8 +215,8 @@ func (h *TerminalHandler) open(conn *server.WSConn) (sandbox.Terminal, *store.Sa
 	if err := json.Unmarshal(env.Payload, &msg); err != nil {
 		return nil, nil, nil, fmt.Errorf("invalid terminal.open payload: %w", err)
 	}
-	if msg.SandboxID == "" {
-		return nil, nil, nil, errors.New("terminal.open requires sandbox_id")
+	if msg.SandboxID == "" || msg.ProjectID == "" {
+		return nil, nil, nil, errors.New("terminal.open requires sandbox_id and project_id")
 	}
 
 	ctx := conn.Context()
@@ -224,20 +224,12 @@ func (h *TerminalHandler) open(conn *server.WSConn) (sandbox.Terminal, *store.Sa
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("sandbox %s: %w", msg.SandboxID, err)
 	}
-	if !sandboxes.TerminalCapable(cfg) {
-		return nil, nil, nil, errors.New("this sandbox cannot host a terminal; only a persistent container can")
+	proj, err := h.projects.Get(ctx, msg.ProjectID)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("project %s: %w", msg.ProjectID, err)
 	}
-	// A NON-empty work_dir passes the same validation a binding does, and the
-	// canonical form is what keys the instance — a value the backend would
-	// silently rewrite (a path outside /workspace landing in the default)
-	// must be refused, not displayed as one directory while the shell runs in
-	// another. An empty work_dir honestly means the sandbox's own default.
-	workDir := msg.WorkDir
-	if workDir != "" {
-		workDir, err = bridge.ResolveBindingWorkDir(cfg, workDir)
-		if err != nil {
-			return nil, nil, nil, err
-		}
+	if proj.SandboxID != cfg.ID {
+		return nil, nil, nil, errors.New("project lives on a different sandbox")
 	}
 	// From here no read happens until the shell is up — an ssh dial, a
 	// first-time image pull — so the heartbeat's deadline is lifted for the
@@ -245,7 +237,7 @@ func (h *TerminalHandler) open(conn *server.WSConn) (sandbox.Terminal, *store.Sa
 	// no pong could have extended.
 	conn.PauseHeartbeat()
 	defer conn.ResumeHeartbeat()
-	sb, release, err := h.manager.Acquire(cfg, workDir)
+	sb, release, err := h.manager.Acquire(cfg, proj)
 	if err != nil {
 		return nil, nil, nil, err
 	}

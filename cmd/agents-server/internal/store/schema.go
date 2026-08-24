@@ -23,6 +23,7 @@ var schemaModels = []any{
 	(*Workflow)(nil),
 	(*Trigger)(nil),
 	(*SandboxConfig)(nil),
+	(*Project)(nil),
 	(*TraceEvent)(nil),
 	(*Guardrail)(nil),
 	(*PendingApproval)(nil),
@@ -230,6 +231,18 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 		IfNotExists().
 		Exec(ctx); err != nil {
 		return fmt.Errorf("creating skills unique name index: %w", err)
+	}
+	// A project's name is how a person picks it per (owner, sandbox); two
+	// sharing one make the choice a coin flip — and EnsureDefault's insert
+	// race resolves through this index.
+	if _, err := db.NewCreateIndex().
+		Model((*Project)(nil)).
+		Index("idx_projects_owner_sandbox_name").
+		Unique().
+		Column("owner_id", "sandbox_id", "name").
+		IfNotExists().
+		Exec(ctx); err != nil {
+		return fmt.Errorf("creating projects unique name index: %w", err)
 	}
 	// The sidebar lists one owner's sessions by recency of change.
 	if _, err := db.NewCreateIndex().

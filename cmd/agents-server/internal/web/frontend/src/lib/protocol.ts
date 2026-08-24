@@ -43,7 +43,7 @@ export const EV = {
   runGap: 'run.gap',
   sessionTitleUpdated: 'session.title_updated',
   // The session's first sandbox-carrying run permanently bound
-  // (sandbox_id, work_dir) — published once, by the run that won the bind.
+  // (sandbox_id, project_id) — published once, by the run that won the bind.
   sessionSandboxBound: 'session.sandbox_bound',
   // One of a session's background tasks changed state — spawned, paused,
   // moved to its next run (a workflow step), ended. Rides the task run's

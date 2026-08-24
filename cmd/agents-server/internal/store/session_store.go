@@ -168,7 +168,7 @@ func (s *SessionStore) BindAgentIfEmpty(ctx context.Context, id, agentConfigID s
 	return nil
 }
 
-// BindSandboxIfEmpty permanently binds (sandbox_id, work_dir) to the session,
+// BindSandboxIfEmpty permanently binds (sandbox_id, project_id) to the session,
 // unless it is already bound: the first sandbox-carrying run wins and the
 // binding is never rewritten — the session's file system context must not
 // change under a conversation that already touched it. It reports whether THIS
@@ -185,16 +185,17 @@ func (s *SessionStore) BindAgentIfEmpty(ctx context.Context, id, agentConfigID s
 // bindable later). A missing session is (false, nil) — the caller's own
 // existence check owns that error. Like BindAgentIfEmpty, it leaves updated_at
 // alone: the conversation did not change.
-func (s *SessionStore) BindSandboxIfEmpty(ctx context.Context, id, sandboxID, workDir string, revision int64) (bool, error) {
+func (s *SessionStore) BindSandboxIfEmpty(ctx context.Context, id, sandboxID, projectID string, revision int64) (bool, error) {
 	if sandboxID == "" {
 		return false, nil
 	}
 	res, err := s.db.NewUpdate().Model((*Session)(nil)).
 		Set("sandbox_id = ?", sandboxID).
-		Set("work_dir = ?", workDir).
+		Set("project_id = ?", projectID).
 		Where("id = ?", id).
 		Where("sandbox_id IS NULL").
 		Where("EXISTS (SELECT 1 FROM sandbox_configs WHERE id = ? AND revision = ?)", sandboxID, revision).
+		Where("EXISTS (SELECT 1 FROM projects WHERE id = ?)", projectID).
 		Exec(ctx)
 	if err != nil {
 		return false, fmt.Errorf("binding session %s to sandbox %s: %w", id, sandboxID, err)
@@ -207,15 +208,15 @@ func (s *SessionStore) BindSandboxIfEmpty(ctx context.Context, id, sandboxID, wo
 }
 
 // CountBindingRefs reports how many sessions are bound to exactly (sandboxID,
-// workDir) — the unit the SandboxManager caches an instance per. Zero after a
+// projectID) — the unit the SandboxManager caches an instance per. Zero after a
 // session delete means the pair's cached instance has no caller left.
-func (s *SessionStore) CountBindingRefs(ctx context.Context, sandboxID, workDir string) (int, error) {
+func (s *SessionStore) CountBindingRefs(ctx context.Context, sandboxID, projectID string) (int, error) {
 	n, err := s.db.NewSelect().Model((*Session)(nil)).
 		Where("sandbox_id = ?", sandboxID).
-		Where("work_dir = ?", workDir).
+		Where("project_id = ?", projectID).
 		Count(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("counting sessions bound to sandbox %s workdir %q: %w", sandboxID, workDir, err)
+		return 0, fmt.Errorf("counting sessions bound to sandbox %s workdir %q: %w", sandboxID, projectID, err)
 	}
 	return n, nil
 }

@@ -83,7 +83,7 @@ func (r *Runner) persistInterruption(result *RunOutcome) error {
 		SessionID:     result.SessionID,
 		AgentConfigID: result.AgentConfigID,
 		SandboxID:     result.SandboxID,
-		WorkDir:       result.WorkDir,
+		ProjectID:     result.ProjectID,
 		State:         string(stateJSON),
 		ToolCalls:     callsJSON,
 		// The user-authored text of the paused turn's new input, so the UI can
@@ -116,8 +116,8 @@ func (r *Runner) persistInterruption(result *RunOutcome) error {
 // agent the SDK re-runs, so omitting the sandbox here strips its
 // sandbox-backed tools (exec_command, read_file, …) and the approved call
 // fails with "tool not found on agent".
-func (r *Runner) buildAgentRegistry(ctx context.Context, agentConfigID, sandboxID, workDir string, background bool, ownerID string) (map[string]*agents.Agent, *BuildResult, error) {
-	built, err := buildFullAgent(ctx, r.Deps, agentConfigID, sandboxID, workDir, background, ownerID)
+func (r *Runner) buildAgentRegistry(ctx context.Context, agentConfigID, sandboxID, projectID string, background bool, ownerID string) (map[string]*agents.Agent, *BuildResult, error) {
+	built, err := buildFullAgent(ctx, r.Deps, agentConfigID, sandboxID, projectID, background, ownerID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -291,7 +291,7 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 	if err != nil {
 		return "", pending.SessionID, err
 	}
-	registry, rebuilt, err := r.buildAgentRegistry(ctx, pending.AgentConfigID, pending.SandboxID, pending.WorkDir, taskMeta != nil, sess.OwnerID)
+	registry, rebuilt, err := r.buildAgentRegistry(ctx, pending.AgentConfigID, pending.SandboxID, pending.ProjectID, taskMeta != nil, sess.OwnerID)
 	if err != nil {
 		return "", pending.SessionID, fmt.Errorf("rebuilding agent: %w", err)
 	}
@@ -415,7 +415,7 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 		}
 		return nil
 	}
-	runID, err = r.ResumeRun(pending.RunID, state, pending.SessionID, pending.AgentConfigID, pending.SandboxID, pending.WorkDir, verify, resumeDone)
+	runID, err = r.ResumeRun(pending.RunID, state, pending.SessionID, pending.AgentConfigID, pending.SandboxID, pending.ProjectID, verify, resumeDone)
 	if errors.Is(err, errResumeStopped) {
 		// The work was stopped in the window between the claim and the launch.
 		// The approval is void and the run never started — nothing to restore,

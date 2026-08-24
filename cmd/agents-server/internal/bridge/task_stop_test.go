@@ -208,19 +208,24 @@ func TestStopTaskCancelsARunInsideATool(t *testing.T) {
 	runner, sessions, tasks, agentConfigs := newTaskTestRunner(t)
 	workspace := t.TempDir()
 	runner.Deps.SandboxConfigs = store.NewSandboxStore(runner.db)
+	runner.Deps.Projects = store.NewProjectStore(runner.db)
 	runner.Deps.SandboxManager = sandboxes.NewManager(workspace)
 	// The command must run on THIS host (awaitProcess reads the local process
 	// table), so the docker config's build is overridden with the SDK local
 	// sandbox — the test is about run cancellation, not the backend.
-	runner.Deps.SandboxManager.SetBuildOverride(func(*store.SandboxConfig, string) (sandbox.Sandbox, error) {
+	runner.Deps.SandboxManager.SetBuildOverride(func(*store.SandboxConfig, *store.Project) (sandbox.Sandbox, error) {
 		return sandbox.NewLocalWithOptions(sandbox.LocalOptions{WorkDir: workspace}), nil
 	})
 	sb := &store.SandboxConfig{ID: store.NewID(), Name: "host", Type: "docker", Config: []byte(`{"image":"i"}`)}
 	if err := runner.Deps.SandboxConfigs.Create(ctx, sb); err != nil {
 		t.Fatal(err)
 	}
+	proj := &store.Project{OwnerID: store.LocalUserID, SandboxID: sb.ID, Name: "p"}
+	if err := runner.Deps.Projects.Create(ctx, proj); err != nil {
+		t.Fatal(err)
+	}
 	fakeModelAgent(t, runner.db, agentConfigs, srv.URL)
-	parent := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "chat", SandboxID: sb.ID}
+	parent := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "chat", SandboxID: sb.ID, ProjectID: proj.ID}
 	if err := sessions.Create(ctx, parent); err != nil {
 		t.Fatal(err)
 	}

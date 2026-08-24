@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/uptrace/bun"
 
@@ -42,6 +43,7 @@ type stores struct {
 	Settings         *store.SettingStore
 	SettingReader    *settings.Reader
 	Sandboxes        *store.SandboxStore
+	Projects         *store.ProjectStore
 	Guardrails       *store.GuardrailStore
 	PendingApprovals *store.PendingApprovalStore
 	Tasks            *store.TaskStore
@@ -69,6 +71,7 @@ func newStores(db *bun.DB) *stores {
 		Settings:         settingStore,
 		SettingReader:    settings.NewReader(settingStore),
 		Sandboxes:        store.NewSandboxStore(db),
+		Projects:         store.NewProjectStore(db),
 		Guardrails:       store.NewGuardrailStore(db),
 		PendingApprovals: store.NewPendingApprovalStore(db),
 		Tasks:            store.NewTaskStore(db),
@@ -119,6 +122,9 @@ func newBridge(ctx, bgCtx context.Context, db *bun.DB, st *stores, audit protoco
 		ChatGPT:    providers.NewChatGPTOAuth(st.Providers, st.SettingReader),
 		Sandboxes:  sandboxes.NewManager(flagWorkspace),
 	}
+	svc.Sandboxes.SetIdleTimeout(func() time.Duration {
+		return time.Duration(st.SettingReader.Int(context.Background(), settings.KeySandboxIdleMinutes)) * time.Minute
+	})
 	go mcpservers.ConnectEnabled(bgCtx, svc.Mcp, st.McpServers, svc.OAuth)
 	go bridge.RunTraceRetention(bgCtx, st.SettingReader, st.Traces)
 	svc.Deps = &bridge.AgentDeps{
@@ -126,6 +132,7 @@ func newBridge(ctx, bgCtx context.Context, db *bun.DB, st *stores, audit protoco
 		Providers:        st.Providers,
 		McpServers:       st.McpServers,
 		SandboxConfigs:   st.Sandboxes,
+		Projects:         st.Projects,
 		Skills:           st.Skills,
 		Memories:         st.Memories,
 		Settings:         st.SettingReader,
@@ -170,7 +177,7 @@ type handlers struct {
 // is left for newServer: it needs the auth service and the server's
 // connection registry.
 func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL, workspaceAbs string) *handlers {
-	terminal := handler.NewTerminalHandler(st.Sandboxes, svc.Sandboxes, st.SettingReader)
+	terminal := handler.NewTerminalHandler(st.Sandboxes, st.Projects, svc.Sandboxes, st.SettingReader)
 	terminal.Audit = audit
 	ws := handler.NewWSHandler(svc.Runner, st.Sessions, st.PendingApprovals)
 	ws.Audit = audit
@@ -200,6 +207,7 @@ func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL, w
 			Triggers:   handler.NewTriggerHandler(st.Triggers, st.Sessions, svc.Scheduler),
 			Guardrails: handler.NewGuardrailHandler(st.Guardrails, svc.Guardrails),
 			Sandboxes:  handler.NewSandboxHandler(st.Sandboxes, svc.Sandboxes, terminal),
+			Projects:   handler.NewProjectHandler(st.Projects, st.Sandboxes),
 			Traces:     handler.NewTraceHandler(st.Traces),
 			Playground: handler.NewPlaygroundHandler(svc.Deps),
 			ChatGPT:    handler.NewChatGPTOAuthHandler(svc.ChatGPT),

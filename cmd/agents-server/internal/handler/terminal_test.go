@@ -103,47 +103,51 @@ type fakeProvider struct {
 	// releases counts how often the acquired reference was dropped — the
 	// terminal must release exactly once when its connection ends.
 	releases atomic.Int64
-	// workDirs records what each Acquire was asked for, so tests can assert
-	// the canonicalized value reached the manager.
+	// projects records what each Acquire was asked for.
 	mu       sync.Mutex
-	workDirs []string
+	projects []string
 }
 
-func (p *fakeProvider) Acquire(_ *store.SandboxConfig, workDir string) (sandbox.Sandbox, func(), error) {
+func (p *fakeProvider) Acquire(_ *store.SandboxConfig, proj *store.Project) (sandbox.Sandbox, func(), error) {
 	if p.err != nil {
 		return nil, nil, p.err
 	}
 	p.mu.Lock()
-	p.workDirs = append(p.workDirs, workDir)
+	p.projects = append(p.projects, proj.ID)
 	p.mu.Unlock()
 	return p.sb, func() { p.releases.Add(1) }, nil
 }
 
-// terminalTestServer stands up /ws/terminal with a fake sandbox backend and a
-// stored ssh sandbox config, returning the pieces tests need.
-func terminalTestServer(t *testing.T, provider sandboxProvider) (*httptest.Server, *TerminalHandler, string) {
+// terminalTestServer stands up /ws/terminal with a fake sandbox backend, a
+// stored docker config and a project on it, returning the pieces tests need.
+func terminalTestServer(t *testing.T, provider sandboxProvider) (*httptest.Server, *TerminalHandler, string, string) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
 	sandboxes := store.NewSandboxStore(db)
-	cfg := &store.SandboxConfig{Name: "box", Type: "docker", Config: json.RawMessage(`{"image":"i","persistent":true}`)}
+	projects := store.NewProjectStore(db)
+	cfg := &store.SandboxConfig{Name: "box", Type: "docker", Config: json.RawMessage(`{"image":"i"}`)}
 	if err := sandboxes.Create(t.Context(), cfg); err != nil {
 		t.Fatal(err)
 	}
-	th := NewTerminalHandler(sandboxes, provider, settings.NewReader(nil))
+	proj := &store.Project{OwnerID: store.LocalUserID, SandboxID: cfg.ID, Name: "p"}
+	if err := projects.Create(t.Context(), proj); err != nil {
+		t.Fatal(err)
+	}
+	th := NewTerminalHandler(sandboxes, projects, provider, settings.NewReader(nil))
 	engine := newTestEngine()
 	engine.GET("/ws/terminal", server.HandleWSWithAuth(th.Handle, testAuthFunc(testWSToken), nil, nil))
 	srv := httptest.NewServer(engine)
 	t.Cleanup(srv.Close)
-	return srv, th, cfg.ID
+	return srv, th, cfg.ID, proj.ID
 }
 
 // dialTerminal connects, authenticates and completes the terminal.open
 // handshake, returning the connection after terminal.ready.
-func dialTerminal(t *testing.T, srv *httptest.Server, sandboxID string) *websocket.Conn {
+func dialTerminal(t *testing.T, srv *httptest.Server, sandboxID, projectID string) *websocket.Conn {
 	t.Helper()
 	conn := dialTerminalRaw(t, srv)
-	openTerminal(t, conn, sandboxID)
+	openTerminal(t, conn, sandboxID, projectID)
 	env := readTerminalEnvelope(t, conn)
 	if env.Type != protocol.EventTerminalReady {
 		t.Fatalf("handshake reply = %q, want %s", env.Type, protocol.EventTerminalReady)
@@ -171,10 +175,10 @@ func dialTerminalRaw(t *testing.T, srv *httptest.Server) *websocket.Conn {
 	return conn
 }
 
-func openTerminal(t *testing.T, conn *websocket.Conn, sandboxID string) {
+func openTerminal(t *testing.T, conn *websocket.Conn, sandboxID, projectID string) {
 	t.Helper()
 	if err := conn.WriteJSON(&protocol.Envelope{Type: protocol.EventTerminalOpen, Payload: mustJSON(protocol.TerminalOpen{
-		SandboxID: sandboxID, Cols: 100, Rows: 30,
+		SandboxID: sandboxID, ProjectID: projectID, Cols: 100, Rows: 30,
 	})}); err != nil {
 		t.Fatalf("send terminal.open: %v", err)
 	}
@@ -225,8 +229,8 @@ func readBinaryUntil(t *testing.T, conn *websocket.Conn, want string) {
 // and an exit notification once the shell terminates.
 func TestTerminalWS_EchoResizeExit(t *testing.T) {
 	term := newFakeTerminal()
-	srv, _, id := terminalTestServer(t, &fakeProvider{sb: &fakeTerminalSandbox{term: term}})
-	conn := dialTerminal(t, srv, id)
+	srv, _, id, pid := terminalTestServer(t, &fakeProvider{sb: &fakeTerminalSandbox{term: term}})
+	conn := dialTerminal(t, srv, id, pid)
 
 	// The open handshake carried 100x30.
 	if cols, rows := term.size(); cols != 100 || rows != 30 {
@@ -282,7 +286,7 @@ func TestTerminalWS_MemberRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider := &fakeProvider{sb: &fakeTerminalSandbox{term: newFakeTerminal()}}
-	th := NewTerminalHandler(sandboxes, provider, settings.NewReader(nil))
+	th := NewTerminalHandler(sandboxes, store.NewProjectStore(db), provider, settings.NewReader(nil))
 	member := protocol.UserInfo{ID: store.NewID(), Email: "m@example.com", Role: store.RoleMember}
 	asMember := func(_ context.Context, bearer string) (protocol.UserInfo, error) {
 		if bearer != testWSToken {
@@ -302,50 +306,28 @@ func TestTerminalWS_MemberRefused(t *testing.T) {
 	if env.Type != protocol.EventTerminalError || !strings.Contains(te.Message, "admin") {
 		t.Fatalf("member's first frame = %s %q, want the admin-only refusal", env.Type, te.Message)
 	}
-	if n := len(provider.workDirs); n != 0 {
+	if n := len(provider.projects); n != 0 {
 		t.Fatalf("a refused member's connection acquired a sandbox %d time(s)", n)
 	}
 }
 
 func TestTerminalWS_UnknownSandboxRejected(t *testing.T) {
-	srv, _, _ := terminalTestServer(t, &fakeProvider{sb: &fakeTerminalSandbox{term: newFakeTerminal()}})
+	srv, _, _, pid := terminalTestServer(t, &fakeProvider{sb: &fakeTerminalSandbox{term: newFakeTerminal()}})
 	conn := dialTerminalRaw(t, srv)
-	openTerminal(t, conn, "no-such-id")
+	openTerminal(t, conn, "no-such-id", pid)
 	env := readTerminalEnvelope(t, conn)
 	if env.Type != protocol.EventTerminalError {
 		t.Fatalf("type = %q, want %s", env.Type, protocol.EventTerminalError)
-	}
-}
-
-func TestTerminalWS_EphemeralSandboxRefused(t *testing.T) {
-	term := newFakeTerminal()
-	srv, th, _ := terminalTestServer(t, &fakeProvider{sb: &fakeTerminalSandbox{term: term}})
-	cfg := &store.SandboxConfig{Name: "throwaway", Type: "docker", Config: json.RawMessage(`{"image":"i"}`)}
-	if err := th.store.Create(t.Context(), cfg); err != nil {
-		t.Fatal(err)
-	}
-	conn := dialTerminalRaw(t, srv)
-	openTerminal(t, conn, cfg.ID)
-	env := readTerminalEnvelope(t, conn)
-	if env.Type != protocol.EventTerminalError {
-		t.Fatalf("type = %q, want %s", env.Type, protocol.EventTerminalError)
-	}
-	var msg protocol.TerminalError
-	if err := json.Unmarshal(env.Payload, &msg); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(msg.Message, "persistent") {
-		t.Errorf("error message = %q, want a persistent-only refusal", msg.Message)
 	}
 }
 
 func TestTerminalWS_OpenErrorReported(t *testing.T) {
-	srv, _, id := terminalTestServer(t, &fakeProvider{sb: &fakeTerminalSandbox{
+	srv, _, id, pid := terminalTestServer(t, &fakeProvider{sb: &fakeTerminalSandbox{
 		term:    newFakeTerminal(),
 		openErr: errors.New("attach failed"),
 	}})
 	conn := dialTerminalRaw(t, srv)
-	openTerminal(t, conn, id)
+	openTerminal(t, conn, id, pid)
 	env := readTerminalEnvelope(t, conn)
 	if env.Type != protocol.EventTerminalError {
 		t.Fatalf("type = %q, want %s", env.Type, protocol.EventTerminalError)
@@ -356,8 +338,8 @@ func TestTerminalWS_OpenErrorReported(t *testing.T) {
 // observes the shell dying (exit envelope and/or socket close).
 func TestTerminalWS_CloseSandboxTerminals(t *testing.T) {
 	term := newFakeTerminal()
-	srv, th, id := terminalTestServer(t, &fakeProvider{sb: &fakeTerminalSandbox{term: term}})
-	conn := dialTerminal(t, srv, id)
+	srv, th, id, pid := terminalTestServer(t, &fakeProvider{sb: &fakeTerminalSandbox{term: term}})
+	conn := dialTerminal(t, srv, id, pid)
 
 	// The update's new generation retires everything below it (the test
 	// config sits at generation 1).
@@ -384,53 +366,66 @@ func TestTerminalWS_CloseSandboxTerminals(t *testing.T) {
 	}
 }
 
-// terminal.open validates a NON-empty work_dir like a binding does and hands
-// the manager the canonical form: a value the backend would silently rewrite
-// (docker outside /workspace) is refused instead of opening a shell in a
-// different directory than the client displays. Empty stays valid — it
-// honestly means the sandbox default.
-func TestTerminalOpen_ValidatesWorkDir(t *testing.T) {
+// terminal.open resolves its project and refuses a mismatched pair: the
+// shell must land in the exact (sandbox, project) container the sessions on
+// that pair use.
+func TestTerminalOpen_ValidatesProject(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
 	sandboxes := store.NewSandboxStore(db)
-	cfg := &store.SandboxConfig{Name: "dock", Type: "docker", Config: json.RawMessage(`{"image":"i","persistent":true}`)}
+	projects := store.NewProjectStore(db)
+	cfg := &store.SandboxConfig{Name: "dock", Type: "docker", Config: json.RawMessage(`{"image":"i"}`)}
 	if err := sandboxes.Create(t.Context(), cfg); err != nil {
 		t.Fatal(err)
 	}
+	other := &store.SandboxConfig{Name: "dock2", Type: "docker", Config: json.RawMessage(`{"image":"i"}`)}
+	if err := sandboxes.Create(t.Context(), other); err != nil {
+		t.Fatal(err)
+	}
+	mine := &store.Project{OwnerID: store.LocalUserID, SandboxID: cfg.ID, Name: "mine"}
+	if err := projects.Create(t.Context(), mine); err != nil {
+		t.Fatal(err)
+	}
+	elsewhere := &store.Project{OwnerID: store.LocalUserID, SandboxID: other.ID, Name: "elsewhere"}
+	if err := projects.Create(t.Context(), elsewhere); err != nil {
+		t.Fatal(err)
+	}
 	provider := &fakeProvider{sb: &fakeTerminalSandbox{term: newFakeTerminal()}}
-	th := NewTerminalHandler(sandboxes, provider, settings.NewReader(nil))
+	th := NewTerminalHandler(sandboxes, projects, provider, settings.NewReader(nil))
 	engine := newTestEngine()
 	engine.GET("/ws/terminal", server.HandleWSWithAuth(th.Handle, testAuthFunc(testWSToken), nil, nil))
 	srv := httptest.NewServer(engine)
 	t.Cleanup(srv.Close)
 
-	open := func(workDir string) protocol.Envelope {
+	open := func(projectID string) protocol.Envelope {
 		conn := dialTerminalRaw(t, srv)
 		if err := conn.WriteJSON(&protocol.Envelope{Type: protocol.EventTerminalOpen, Payload: mustJSON(protocol.TerminalOpen{
-			SandboxID: cfg.ID, WorkDir: workDir, Cols: 80, Rows: 24,
+			SandboxID: cfg.ID, ProjectID: projectID, Cols: 80, Rows: 24,
 		})}); err != nil {
 			t.Fatal(err)
 		}
 		return readTerminalEnvelope(t, conn)
 	}
 
-	// Outside /workspace: refused up front, the manager never sees it.
-	if env := open("/tmp/project"); env.Type != protocol.EventTerminalError {
-		t.Fatalf("out-of-workspace open: %s, want %s", env.Type, protocol.EventTerminalError)
+	// No project, an unknown one, and one on a different sandbox: refused.
+	if env := open(""); env.Type != protocol.EventTerminalError {
+		t.Fatalf("projectless open: %s, want %s", env.Type, protocol.EventTerminalError)
 	}
-	// A subtree opens, canonicalized before it keys the instance.
-	if env := open("/workspace//proj/"); env.Type != protocol.EventTerminalReady {
-		t.Fatalf("subtree open: %s, want %s", env.Type, protocol.EventTerminalReady)
+	if env := open(store.NewID()); env.Type != protocol.EventTerminalError {
+		t.Fatalf("unknown-project open: %s, want %s", env.Type, protocol.EventTerminalError)
 	}
-	// Empty is the sandbox default, no validation to fail.
-	if env := open(""); env.Type != protocol.EventTerminalReady {
-		t.Fatalf("empty open: %s, want %s", env.Type, protocol.EventTerminalReady)
+	if env := open(elsewhere.ID); env.Type != protocol.EventTerminalError {
+		t.Fatalf("cross-sandbox open: %s, want %s", env.Type, protocol.EventTerminalError)
+	}
+	// The matching pair opens, and the manager saw exactly it.
+	if env := open(mine.ID); env.Type != protocol.EventTerminalReady {
+		t.Fatalf("valid open: %s, want %s", env.Type, protocol.EventTerminalReady)
 	}
 	provider.mu.Lock()
-	got := append([]string(nil), provider.workDirs...)
+	got := append([]string(nil), provider.projects...)
 	provider.mu.Unlock()
-	if len(got) != 2 || got[0] != "/workspace/proj" || got[1] != "" {
-		t.Fatalf("manager saw workdirs %q, want [/workspace/proj \"\"]", got)
+	if len(got) != 1 || got[0] != mine.ID {
+		t.Fatalf("manager saw projects %q, want [%s]", got, mine.ID)
 	}
 }
 
@@ -439,8 +434,8 @@ func TestTerminalOpen_ValidatesWorkDir(t *testing.T) {
 // would pin an evicted instance forever) and not twice.
 func TestTerminalWS_ReleasesInstanceOnClose(t *testing.T) {
 	p := &fakeProvider{sb: &fakeTerminalSandbox{term: newFakeTerminal()}}
-	srv, _, id := terminalTestServer(t, p)
-	conn := dialTerminal(t, srv, id)
+	srv, _, id, pid := terminalTestServer(t, p)
+	conn := dialTerminal(t, srv, id, pid)
 	_ = conn.Close()
 
 	deadline := time.Now().Add(5 * time.Second)
@@ -456,7 +451,7 @@ func TestTerminalWS_ReleasesInstanceOnClose(t *testing.T) {
 // generation is refused at register — the sweep that retired it ran while
 // this terminal was still dialing and could not see it.
 func TestTerminalRegisterFence(t *testing.T) {
-	th := NewTerminalHandler(nil, nil, settings.NewReader(nil))
+	th := NewTerminalHandler(nil, nil, nil, settings.NewReader(nil))
 	th.CloseSandboxTerminals("sb", 2)
 
 	if ok, stale := th.register("sb", &liveTerminal{gen: 1}, 4); ok || !stale {

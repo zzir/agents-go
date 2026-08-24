@@ -106,7 +106,7 @@ type RunInfo struct {
 	OwnerID       string    `json:"-"`
 	AgentConfigID string    `json:"agent_config_id,omitempty"`
 	SandboxID     string    `json:"sandbox_id,omitempty"`
-	WorkDir       string    `json:"work_dir,omitempty"`
+	ProjectID     string    `json:"project_id,omitempty"`
 	Status        RunStatus `json:"status"`
 	LastSeq       int       `json:"last_seq"`
 	// GracefulStop records that StopAfterTurn was requested: a clean finish
@@ -368,7 +368,7 @@ func (e ErrTaskLimit) Error() string {
 // root (not any connection). The goroutine MUST call seg.finalize() exactly
 // once when it ends. It fails with ErrSessionBusy if the session already has a
 // live run, or ErrSessionDeleting if the session is being torn down.
-func (h *RunHub) register(runID, sessionID, ownerID, agentConfigID, sandboxID, workDir string, task *TaskMeta) (*runSegment, context.Context, error) {
+func (h *RunHub) register(runID, sessionID, ownerID, agentConfigID, sandboxID, projectID string, task *TaskMeta) (*runSegment, context.Context, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.draining {
@@ -386,7 +386,7 @@ func (h *RunHub) register(runID, sessionID, ownerID, agentConfigID, sandboxID, w
 	ctx, cancel := context.WithCancel(h.rootCtx)
 	seg := &runSegment{done: make(chan struct{}), cancel: cancel}
 	rec := &runRecord{
-		info:   RunInfo{RunID: runID, SessionID: sessionID, OwnerID: ownerID, AgentConfigID: agentConfigID, SandboxID: sandboxID, WorkDir: workDir, Status: RunRunning, Task: task},
+		info:   RunInfo{RunID: runID, SessionID: sessionID, OwnerID: ownerID, AgentConfigID: agentConfigID, SandboxID: sandboxID, ProjectID: projectID, Status: RunRunning, Task: task},
 		cancel: seg.cancel,
 		done:   seg.done,
 		fanout: newRunFanout(),
@@ -444,7 +444,7 @@ func (h *RunHub) liveTaskCountLocked(parentSessionID string) int {
 // goroutine owns the returned segment and MUST call seg.finalize() when it
 // ends. Fails with ErrSessionBusy, ErrSessionDeleting, or ErrRunNotResumable
 // (record not paused).
-func (h *RunHub) resume(runID, sessionID, ownerID, agentConfigID, sandboxID, workDir string, task *TaskMeta) (seg *runSegment, ctx context.Context, reopened bool, err error) {
+func (h *RunHub) resume(runID, sessionID, ownerID, agentConfigID, sandboxID, projectID string, task *TaskMeta) (seg *runSegment, ctx context.Context, reopened bool, err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.draining {
@@ -461,7 +461,7 @@ func (h *RunHub) resume(runID, sessionID, ownerID, agentConfigID, sandboxID, wor
 	rec := h.runs[runID]
 	if rec == nil {
 		rec = &runRecord{
-			info:   RunInfo{RunID: runID, SessionID: sessionID, OwnerID: ownerID, AgentConfigID: agentConfigID, SandboxID: sandboxID, WorkDir: workDir, Status: RunRunning, Task: task},
+			info:   RunInfo{RunID: runID, SessionID: sessionID, OwnerID: ownerID, AgentConfigID: agentConfigID, SandboxID: sandboxID, ProjectID: projectID, Status: RunRunning, Task: task},
 			cancel: seg.cancel,
 			done:   seg.done,
 			fanout: newRunFanout(),

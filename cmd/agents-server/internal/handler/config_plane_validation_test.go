@@ -68,7 +68,7 @@ func TestSandboxValidation(t *testing.T) {
 		// mismatch or a missing required field must be refused at save time —
 		// stored as-is it would bind sessions to a config that can never
 		// build (and, once referenced, could never be repaired).
-		{"docker type mismatch", `{"name":"x","type":"docker","config":{"image":"i","persistent":"yes"}}`, http.StatusBadRequest},
+		{"docker type mismatch", `{"name":"x","type":"docker","config":{"image":"i","network":"yes"}}`, http.StatusBadRequest},
 		{"docker without image", `{"name":"x","type":"docker","config":{"persistent":true}}`, http.StatusBadRequest},
 	}
 	for _, tc := range cases {

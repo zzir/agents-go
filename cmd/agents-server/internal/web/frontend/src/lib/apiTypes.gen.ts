@@ -2196,6 +2196,140 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/projects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List my projects */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["store.Project"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Create project */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            /** @description Name and sandbox */
+            requestBody: {
+                content: {
+                    "application/json": Record<string, never> | components["schemas"]["handler.projectReq"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["store.Project"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description name already in use on this sandbox */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete project */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Project id */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description deleted */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description sessions still bound */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/provider-types": {
         parameters: {
             query?: never;
@@ -3034,6 +3168,177 @@ export interface paths {
                 };
             };
         };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sandboxes/{id}/containers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the sandbox's managed containers */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Sandbox id */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["docker.ManagedContainer"][];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description Bad Gateway */
+                502: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sandboxes/{id}/containers/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove a managed container (rebuild) */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Sandbox id */
+                    id: string;
+                    /** @description Container name (agents-…) */
+                    name: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description removed */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description Bad Gateway */
+                502: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sandboxes/{id}/containers/{name}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Stop a managed container */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Sandbox id */
+                    id: string;
+                    /** @description Container name (agents-…) */
+                    name: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description stopped */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description Bad Gateway */
+                502: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -5801,12 +6106,12 @@ export interface components {
         "bridge.RunInfo": {
             agent_config_id?: string;
             last_seq?: number;
+            project_id?: string;
             run_id?: string;
             sandbox_id?: string;
             session_id?: string;
             status?: components["schemas"]["bridge.RunStatus"];
             task?: components["schemas"]["bridge.TaskMeta"];
-            work_dir?: string;
         };
         /** @enum {string} */
         "bridge.RunStatus": "running" | "interrupted" | "completed" | "error" | "cancelled";
@@ -5854,6 +6159,15 @@ export interface components {
             task_id?: string;
             tool_call_id?: string;
         };
+        "docker.ManagedContainer": {
+            created?: string;
+            image?: string;
+            name?: string;
+            /** @description running | exited | ... */
+            state?: string;
+            /** @description human-readable, e.g. "Up 2 hours" */
+            status?: string;
+        };
         "guardrails.Def": {
             blocking?: boolean;
             config?: number[];
@@ -5894,6 +6208,7 @@ export interface components {
              *     execution).
              */
             kind?: string;
+            project_id?: string;
             run_id?: string;
             sandbox_id?: string;
             session_id?: string;
@@ -5911,7 +6226,6 @@ export interface components {
              *     reconstructs the user bubble from it on reload.
              */
             user_input?: string;
-            work_dir?: string;
         };
         "handler.SetOwnerRequest": {
             user_id?: string;
@@ -5999,13 +6313,13 @@ export interface components {
              *     out of it (false); absent leaves the phase as it stands.
              */
             plan?: boolean;
-            sandbox_id?: string;
             /**
-             * @description WorkDir only matters until the session's first sandbox-carrying run
-             *     permanently binds (sandbox_id, work_dir); after that the server uses the
+             * @description ProjectID only matters until the session's first sandbox-carrying run
+             *     permanently binds (sandbox_id, project_id); after that the server uses the
              *     bound values and ignores both fields.
              */
-            work_dir?: string;
+            project_id?: string;
+            sandbox_id?: string;
         };
         "handler.createRunResp": {
             run_id?: string;
@@ -6124,6 +6438,10 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        "handler.projectReq": {
+            name: string;
+            sandbox_id: string;
+        };
         "handler.providerReq": {
             /** @description APIKey is write-only: the ******** mask keeps the stored key. */
             api_key?: string;
@@ -6137,14 +6455,14 @@ export interface components {
         };
         "handler.runWorkflowReq": {
             input?: string;
+            project_id?: string;
             /**
-             * @description SandboxID/WorkDir bind a still-unbound session first — the project the
+             * @description SandboxID/ProjectID bind a still-unbound session first — the project the
              *     composer had picked, or the dialog's — so the execution has its file and
              *     command tools; a bound session ignores them, as a run request's does.
              */
             sandbox_id?: string;
             session_id: string;
-            work_dir?: string;
         };
         "handler.sandboxTestResp": {
             detail?: string;
@@ -6517,6 +6835,18 @@ export interface components {
             metadata?: string;
             updated_at?: string;
         };
+        "store.Project": {
+            created_at?: string;
+            id?: string;
+            /**
+             * @description Name is display only — the storage is keyed by ID, so a rename moves
+             *     nothing. Unique per (owner, sandbox) via idx_projects_owner_sandbox_name.
+             */
+            name?: string;
+            owner_id?: string;
+            sandbox_id?: string;
+            updated_at?: string;
+        };
         /**
          * @description Prompt is what the session's last build put in front of the conversation
          *     — the instruction layers and the tool surface, in the same estimated
@@ -6583,15 +6913,6 @@ export interface components {
              */
             config?: number[];
             created_at?: string;
-            /**
-             * @description DefaultWorkDir is the directory a session binding to this sandbox would
-             *     use when the user picks none — always the EXECUTION view (where commands
-             *     run: docker reports the container-side /workspace, never the host mount
-             *     source). WorkDirEditable reports whether a custom per-session workdir is
-             *     honored (local/ssh only). Both computed per response by the handler,
-             *     never stored.
-             */
-            default_work_dir?: string;
             id?: string;
             name?: string;
             /**
@@ -6604,18 +6925,11 @@ export interface components {
              */
             revision?: number;
             /**
-             * @description Terminal reports whether this sandbox can host an interactive web
-             *     terminal (ssh always; docker only in persistent mode; local never, by
-             *     design). Computed per response by the handler, never stored.
-             */
-            terminal?: boolean;
-            /**
              * @description Type is "docker" — the only backend (spec §5.27). Kept as a column so a
              *     future backend is a value, not a schema change.
              */
             type?: string;
             updated_at?: string;
-            work_dir_editable?: boolean;
         };
         "store.Session": {
             agent_config_id?: string;
@@ -6650,16 +6964,17 @@ export interface components {
              *     inherits the phase it forked in.
              */
             planning?: boolean;
+            project_id?: string;
             /**
-             * @description SandboxID/WorkDir are the session's PERMANENT sandbox binding: the first
-             *     run that carries a sandbox writes them (compare-and-set, see
+             * @description SandboxID/ProjectID are the session's PERMANENT sandbox binding: the
+             *     first run that carries a sandbox writes them (compare-and-set, see
              *     BindSandboxIfEmpty) and they are never rewritten — the session's file
-             *     system context must not change under a conversation that already touched
-             *     it. An empty WorkDir means "the sandbox's own default".
+             *     system context must not change under a conversation that already
+             *     touched it. The project names the working tree the sandbox's container
+             *     mounts (spec §5.28).
              */
             sandbox_id?: string;
             updated_at?: string;
-            work_dir?: string;
         };
         "store.SessionGroup": {
             /** @description HistoryLimit caps how many recent session items each turn loads (0 = all). */

@@ -5,14 +5,15 @@ package sandboxes
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
 	"math"
-	"path"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
@@ -20,28 +21,30 @@ import (
 	dockersb "github.com/zzir/agents-go/sandbox/docker"
 )
 
-// DockerWorkspace is the container-side mount point every docker sandbox
-// executes under — the execution view of a docker workdir is always this tree.
-const DockerWorkspace = "/workspace"
-
 // sandboxKey identifies one live sandbox instance: a config id, the RUNTIME
 // GENERATION it was built from (store.SandboxConfig.RuntimeGen — bumped by
 // content changes only, so a rename never splits the cache or retires a
-// container), and the (normalized) working directory. Sessions bound to
-// different workdirs on the same config must not share an instance — the
-// workdir is baked in at build time — and the generation keeps a run that
-// read the config just before a content update from re-installing an
-// old-credential instance under the key runs on the new generation hit.
+// container), and the PROJECT whose tree the container mounts. Sessions bound
+// to different projects on one config must not share an instance — the mount
+// is baked in at build time — and the generation keeps a run that read the
+// config just before a content update from re-installing an old-credential
+// instance under the key runs on the new generation hit.
 type sandboxKey struct {
-	id      string
-	gen     int64
-	workDir string
+	id        string
+	gen       int64
+	projectID string
 }
 
 // sandboxInstance is one live sandbox plus everything scoped to its lifetime:
 // how many holders still use it (runs and terminals, via Acquire) and whether
 // an eviction is waiting for the last holder.
 type sandboxInstance struct {
+	// key is where the instance lives in the cache — the idle timer needs it
+	// to evict exactly itself.
+	key sandboxKey
+	// idle, when set, fires the idle-stop: armed by the release that dropped
+	// the last reference, disarmed by the next acquire. Guarded by mu.
+	idle *time.Timer
 	// ready closes once the build finished — sb or buildErr is set from then
 	// on. An instance enters the cache as a PLACEHOLDER before its sandbox is
 	// dialed (see acquire), so concurrent acquirers of one key wait on this
@@ -91,12 +94,21 @@ type Manager struct {
 	closed bool
 	// buildOverride, when set (tests only), replaces buildSandbox — see
 	// buildFn.
-	buildOverride func(*store.SandboxConfig, string) (sandbox.Sandbox, error)
+	buildOverride func(*store.SandboxConfig, *store.Project) (sandbox.Sandbox, error)
 	workspace     string
 	// trust holds per-session exec_command approval grants, consulted by the
 	// commandGate and updated by the approval resolver.
 	trust *TrustStore
+	// idleAfter, when set, returns how long an unreferenced instance lives
+	// before the idle-stop evicts it (0 = never). Read per release so a
+	// settings change applies without a restart. The eviction closes the
+	// instance; KeepOnClose makes that a container STOP, and the next
+	// acquire re-adopts it (spec §5.28).
+	idleAfter func() time.Duration
 }
+
+// SetIdleTimeout installs the idle-stop duration provider (see idleAfter).
+func (m *Manager) SetIdleTimeout(fn func() time.Duration) { m.idleAfter = fn }
 
 // NewManager creates a Manager that roots local sandboxes at workspace.
 func NewManager(workspace string) *Manager {
@@ -106,41 +118,6 @@ func NewManager(workspace string) *Manager {
 		workspace: workspace,
 		trust:     NewTrustStore(),
 	}
-}
-
-// effectiveWorkDir normalizes a per-session workdir for one config — the
-// single point where the cache key and the build agree. local/ssh use the
-// value (trimmed) as the execution directory. Docker reads it as the
-// CONTAINER-side working directory: the /workspace mount point never moves,
-// but a persistent container's session may work in a subdirectory of it
-// (/workspace itself normalizes to "", the default instance); ephemeral
-// containers ignore it entirely.
-//
-// New bindings are validated and canonicalized up front by
-// ResolveBindingWorkDir, so run time normally sees only legal values. The
-// out-of-tree fallback (a value outside /workspace lands in the default
-// instance) stays because a binding legal when written can be wrong by the time
-// it runs — a bind validated against one config revision can land beside an
-// update to the next — so such runs degrade to the default directory rather than
-// being bricked. Docker subtrees return path.Clean so equivalent spellings key
-// one cache entry, not one instance each.
-func effectiveWorkDir(cfg *store.SandboxConfig, workDir string) string {
-	workDir = strings.TrimSpace(workDir)
-	if cfg.Type != "docker" {
-		return workDir
-	}
-	var dc store.DockerConfig
-	if len(cfg.Config) > 0 {
-		_ = json.Unmarshal(cfg.Config, &dc)
-	}
-	if !dc.Persistent || workDir == "" {
-		return ""
-	}
-	clean := path.Clean(workDir)
-	if clean == DockerWorkspace || !strings.HasPrefix(clean, DockerWorkspace+"/") {
-		return ""
-	}
-	return clean
 }
 
 // Trust exposes the session command-trust store so the approval resolver can
@@ -164,12 +141,12 @@ func (m *Manager) commandGate(_ context.Context, rc *agents.RunContext, argsJSON
 // Acquire returns the cached sandbox for (config, workDir), building one if
 // absent, and takes a reference on it. The returned release MUST be called
 // exactly once when the holder is done — a run's teardown, a terminal's
-// close, a health check's end. It is idempotent (extra calls are no-ops) and
-// performs the deferred close when this holder was the last one keeping a
-// doomed instance alive. workDir "" means the config's own default; callers
-// outside a bound session (terminal panel, config test) pass "".
-func (m *Manager) Acquire(cfg *store.SandboxConfig, workDir string) (sandbox.Sandbox, func(), error) {
-	inst, release, err := m.acquire(cfg, workDir)
+// close. It is idempotent (extra calls are no-ops) and performs the deferred
+// close when this holder was the last one keeping a doomed instance alive.
+// proj is the working tree the instance's container mounts; every acquire
+// carries one.
+func (m *Manager) Acquire(cfg *store.SandboxConfig, proj *store.Project) (sandbox.Sandbox, func(), error) {
+	inst, release, err := m.acquire(cfg, proj)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -185,8 +162,11 @@ func (m *Manager) Acquire(cfg *store.SandboxConfig, workDir string) (sandbox.San
 // acquirer installs a placeholder and dials after unlocking; concurrent
 // acquirers of the SAME key find the placeholder, take their reference, and
 // wait on its ready gate — one dial, keyed contention only.
-func (m *Manager) acquire(cfg *store.SandboxConfig, workDir string) (*sandboxInstance, func(), error) {
-	key := sandboxKey{id: cfg.ID, gen: cfg.RuntimeGen, workDir: effectiveWorkDir(cfg, workDir)}
+func (m *Manager) acquire(cfg *store.SandboxConfig, proj *store.Project) (*sandboxInstance, func(), error) {
+	if proj == nil {
+		return nil, nil, fmt.Errorf("sandbox acquire needs a project")
+	}
+	key := sandboxKey{id: cfg.ID, gen: cfg.RuntimeGen, projectID: proj.ID}
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
@@ -194,12 +174,12 @@ func (m *Manager) acquire(cfg *store.SandboxConfig, workDir string) (*sandboxIns
 	}
 	inst, ok := m.instances[key]
 	if !ok {
-		inst = &sandboxInstance{ready: make(chan struct{})}
+		inst = &sandboxInstance{ready: make(chan struct{}), key: key}
 		inst.refs++
 		m.instances[key] = inst
 		m.mu.Unlock()
 
-		sb, err := m.buildFn()(cfg, key.workDir)
+		sb, err := m.buildFn()(cfg, proj)
 
 		m.mu.Lock()
 		inst.sb, inst.buildErr = sb, err
@@ -237,6 +217,10 @@ func (m *Manager) acquire(cfg *store.SandboxConfig, workDir string) (*sandboxIns
 		return inst, func() { once.Do(func() { m.release(inst) }) }, nil
 	}
 	inst.refs++
+	if inst.idle != nil {
+		inst.idle.Stop()
+		inst.idle = nil
+	}
 	m.mu.Unlock()
 
 	// Usually a closed gate (any built instance); a placeholder's waiters
@@ -255,7 +239,7 @@ func (m *Manager) acquire(cfg *store.SandboxConfig, workDir string) (*sandboxIns
 // buildFn returns the sandbox builder — the real one, or a test's injected
 // stand-in (the only way to hold a build open while exercising the concurrent
 // eviction and shutdown paths).
-func (m *Manager) buildFn() func(*store.SandboxConfig, string) (sandbox.Sandbox, error) {
+func (m *Manager) buildFn() func(*store.SandboxConfig, *store.Project) (sandbox.Sandbox, error) {
 	if m.buildOverride != nil {
 		return m.buildOverride
 	}
@@ -265,7 +249,7 @@ func (m *Manager) buildFn() func(*store.SandboxConfig, string) (sandbox.Sandbox,
 // SetBuildOverride replaces the sandbox constructor — tests (in this package
 // and the bridge's) inject an in-process fake so tool-execution paths run
 // without a Docker daemon.
-func (m *Manager) SetBuildOverride(fn func(*store.SandboxConfig, string) (sandbox.Sandbox, error)) {
+func (m *Manager) SetBuildOverride(fn func(*store.SandboxConfig, *store.Project) (sandbox.Sandbox, error)) {
 	m.buildOverride = fn
 }
 
@@ -275,10 +259,33 @@ func (m *Manager) release(inst *sandboxInstance) {
 	m.mu.Lock()
 	inst.refs--
 	dead := inst.doomed && inst.refs <= 0
+	if !dead && inst.refs <= 0 && !m.closed && m.idleAfter != nil {
+		if d := m.idleAfter(); d > 0 {
+			if inst.idle != nil {
+				inst.idle.Stop()
+			}
+			inst.idle = time.AfterFunc(d, func() { m.idleExpire(inst) })
+		}
+	}
 	m.mu.Unlock()
 	if dead {
 		inst.close()
 	}
+}
+
+// idleExpire is the idle timer's body: evict and close the instance — unless
+// a new holder arrived (the acquire disarms the timer, but a fire already in
+// flight loses this race and must check) or a successor replaced it under
+// the key.
+func (m *Manager) idleExpire(inst *sandboxInstance) {
+	m.mu.Lock()
+	if m.instances[inst.key] != inst || inst.refs > 0 {
+		m.mu.Unlock()
+		return
+	}
+	delete(m.instances, inst.key)
+	m.mu.Unlock()
+	inst.close()
 }
 
 // evictLocked removes an instance from the cache and reports whether the
@@ -297,15 +304,15 @@ func (m *Manager) evictLocked(key sandboxKey) (toClose *sandboxInstance) {
 	return inst
 }
 
-// RemoveInstance evicts the one cached instance serving (config, workDir) —
+// RemoveInstance evicts the one cached instance serving (config, project) —
 // the session-scoped release: when the last session bound to that pair is
-// deleted, its ssh connection or docker container has no caller left, and
-// only a process restart would otherwise reclaim it. Holders still using the
-// instance (a run mid-flight, an open terminal) keep it alive until their
-// release; the eviction only guarantees no NEW holder joins. Other workdirs
-// on the same config keep their instances.
-func (m *Manager) RemoveInstance(cfg *store.SandboxConfig, workDir string) {
-	key := sandboxKey{id: cfg.ID, gen: cfg.RuntimeGen, workDir: effectiveWorkDir(cfg, workDir)}
+// deleted, its container has no caller left, and only a process restart
+// would otherwise reclaim the instance. Holders still using it (a run
+// mid-flight, an open terminal) keep it alive until their release; the
+// eviction only guarantees no NEW holder joins. Other projects on the same
+// config keep their instances.
+func (m *Manager) RemoveInstance(cfg *store.SandboxConfig, projectID string) {
+	key := sandboxKey{id: cfg.ID, gen: cfg.RuntimeGen, projectID: projectID}
 	m.mu.Lock()
 	inst := m.evictLocked(key)
 	m.mu.Unlock()
@@ -397,43 +404,26 @@ const (
 	execToolMaxOutputBytes = 32768
 )
 
-// TerminalCapable reports whether a sandbox config can hold an interactive
-// shell open (sandbox.TerminalOpener): only a persistent container can — an
-// ephemeral one has nothing to attach to between Execs. One rule for both
-// consumers: the web-terminal capability flag and exec_command's persistent
-// sessions.
-func TerminalCapable(cfg *store.SandboxConfig) bool {
-	var dc store.DockerConfig
-	if len(cfg.Config) > 0 {
-		if err := json.Unmarshal(cfg.Config, &dc); err != nil {
-			return false
-		}
-	}
-	return dc.Persistent
-}
-
 // SandboxTools returns exec_command plus read_file, write_file, list_files and
 // apply_patch tools for the given sandbox config, holding a reference on the
 // backing instance that the returned release drops (see Acquire — the caller
 // releases when the run using the tools is over). apply_patch (Codex-style
 // multi-file edits) and the file tools all edit through the same Sandbox, so
-// they target the same filesystem exec_command runs in. On terminal-capable
-// backends exec_command offers persistent named shells (session_id); they are
-// scoped to this toolset, so the release also closes any the run opened. When
-// commandApproval is set, exec_command is gated per call through the session
-// command-trust store: a command is approved on first use, then trusted per
-// the user's choice.
-func (m *Manager) SandboxTools(cfg *store.SandboxConfig, workDir string, commandApproval bool) ([]*agents.Tool, func(), error) {
-	sb, release, err := m.Acquire(cfg, workDir)
+// they target the same filesystem exec_command runs in. Every container is
+// persistent, so exec_command always offers named shells (session_id); they
+// are scoped to this toolset, so the release also closes any the run opened.
+// When commandApproval is set, exec_command is gated per call through the
+// session command-trust store: a command is approved on first use, then
+// trusted per the user's choice.
+func (m *Manager) SandboxTools(cfg *store.SandboxConfig, proj *store.Project, commandApproval bool) ([]*agents.Tool, func(), error) {
+	sb, release, err := m.Acquire(cfg, proj)
 	if err != nil {
 		return nil, nil, err
 	}
 	codeCfg := sandbox.CodeToolConfig{MaxOutputBytes: execToolMaxOutputBytes}
 	var pools []io.Closer
-	if TerminalCapable(cfg) {
-		codeCfg.Sessions = true
-		codeCfg.RegisterCloser = func(c io.Closer) { pools = append(pools, c) }
-	}
+	codeCfg.Sessions = true
+	codeCfg.RegisterCloser = func(c io.Closer) { pools = append(pools, c) }
 	if commandApproval {
 		codeCfg.NeedsApprovalFunc = m.commandGate
 	}
@@ -450,10 +440,12 @@ func (m *Manager) SandboxTools(cfg *store.SandboxConfig, workDir string, command
 	return tools, releaseTools, nil
 }
 
-// buildSandbox constructs the SDK sandbox for a config. workDir is the
-// session's bound working directory ("" = the config's default view); docker
-// is the only backend (spec §5.27).
-func (m *Manager) buildSandbox(cfg *store.SandboxConfig, workDir string) (sandbox.Sandbox, error) {
+// buildSandbox constructs the SDK sandbox for (config, project): one
+// persistent container per pair, name derived from the two ids, mounting the
+// project's tree — a host directory under <workspace>/<user>/<project> on the
+// local daemon, the named volume agents-proj-<project> on a remote one (spec
+// §5.28). Docker is the only backend (spec §5.27).
+func (m *Manager) buildSandbox(cfg *store.SandboxConfig, proj *store.Project) (sandbox.Sandbox, error) {
 	if cfg.Type != "docker" {
 		return nil, fmt.Errorf("unknown sandbox type: %s", cfg.Type)
 	}
@@ -474,9 +466,10 @@ func (m *Manager) buildSandbox(cfg *store.SandboxConfig, workDir string) (sandbo
 			MemoryBytes: dc.MemoryMB << 20,
 			CPUs:        dc.CPUs,
 		},
-		Persistent:       dc.Persistent,
-		ContainerName:    dc.ContainerName,
-		MaxReadFileBytes: dc.MaxReadFileBytes,
+		Persistent:    true,
+		KeepOnClose:   true,
+		TmpfsSize:     "1g",
+		ContainerName: ContainerName(cfg.ID, proj.ID),
 	}
 	if strings.HasPrefix(dc.Host, "ssh://") {
 		opts.SSH = dockersb.SSHAuth{
@@ -487,30 +480,47 @@ func (m *Manager) buildSandbox(cfg *store.SandboxConfig, workDir string) (sandbo
 			InsecureIgnoreHostKey: dc.SSHInsecureHostKey,
 		}
 	}
-	if dc.Persistent {
-		hostDir := dc.HostDir
-		if hostDir == "" {
-			hostDir = m.workspace
+	if dc.Host == "" {
+		opts.WorkDir = m.ProjectHostDir(proj)
+		// Bind-mounted files should belong to the user running the server,
+		// not nobody — unless the config names its own user.
+		if dc.User == "" {
+			opts.User = fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())
 		}
-		// A bind mount is a LOCAL-daemon feature: the path means nothing on a
-		// remote host. Remote persistent containers keep their own /workspace
-		// volume until projects land.
-		if hostDir != "" && dc.Host == "" {
-			opts.WorkDir = hostDir
-		}
-		// The session's project subtree inside the mount ("" = /workspace
-		// itself). Only meaningful with a workdir per session; ephemeral
-		// containers never get one (effectiveWorkDir).
-		opts.ContainerWorkDir = workDir
-		// A fixed container name belongs to the default instance; a
-		// subtree instance is a SECOND container over the same mount and
-		// must not fight it for the name.
-		if opts.ContainerName != "" && workDir != "" {
-			sum := sha256.Sum256([]byte(workDir))
-			opts.ContainerName = fmt.Sprintf("%s-%x", opts.ContainerName, sum[:4])
-		}
+	} else {
+		opts.VolumeName = "agents-proj-" + shortID(proj.ID)
 	}
+	opts.MaxReadFileBytes = dc.MaxReadFileBytes
 	return dockersb.New(opts)
+}
+
+// shortID is a uuid's tail 12 hex chars — enough to tell ids apart in names
+// docker and filesystems must carry.
+func shortID(id string) string {
+	id = strings.ReplaceAll(id, "-", "")
+	if len(id) > 12 {
+		id = id[len(id)-12:]
+	}
+	return id
+}
+
+// ContainerName derives the docker container name serving (sandbox, project).
+// Deterministic, so a restarted server (or an idle-stopped container) is
+// re-adopted by fingerprint instead of duplicated.
+func ContainerName(sandboxID, projectID string) string {
+	return "agents-" + shortID(sandboxID) + "-" + shortID(projectID)
+}
+
+// UserDirName is the workspace subdirectory holding one user's project trees
+// — the owner uuid's tail 12 hex chars (spec §5.28).
+func UserDirName(ownerID string) string {
+	return shortID(ownerID)
+}
+
+// ProjectHostDir is the local-daemon bind source for a project's /workspace:
+// <workspace>/<user>/<project id>. Created by the SDK at container create.
+func (m *Manager) ProjectHostDir(proj *store.Project) string {
+	return filepath.Join(m.workspace, UserDirName(proj.OwnerID), proj.ID)
 }
 
 // unmarshalConfig decodes a SandboxConfig.Config payload, treating empty as a

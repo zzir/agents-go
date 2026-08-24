@@ -333,12 +333,12 @@ const sessionTeardownWait = 5 * time.Second
 // session and its task children. Best-effort: on any doubt (the count failed),
 // the instance stays — an idle instance is a smaller cost than tearing one out
 // from under a session still using it.
-func (r *Runner) ReleaseSessionBinding(sandboxID, workDir string) {
+func (r *Runner) ReleaseSessionBinding(sandboxID, projectID string) {
 	if sandboxID == "" {
 		return
 	}
 	ctx := r.hub.rootCtx
-	n, err := r.Deps.Sessions.CountBindingRefs(ctx, sandboxID, workDir)
+	n, err := r.Deps.Sessions.CountBindingRefs(ctx, sandboxID, projectID)
 	if err != nil {
 		logging.Ctx(ctx).Warn("counting sandbox binding refs", "error", err, "sandbox_id", sandboxID)
 		return
@@ -351,5 +351,5 @@ func (r *Runner) ReleaseSessionBinding(sandboxID, workDir string) {
 		// Config already gone: its Delete removed every cached instance.
 		return
 	}
-	r.Deps.SandboxManager.RemoveInstance(cfg, workDir)
+	r.Deps.SandboxManager.RemoveInstance(cfg, projectID)
 }

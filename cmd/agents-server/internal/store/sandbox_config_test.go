@@ -17,17 +17,17 @@ func TestNormalizeSandboxConfig(t *testing.T) {
 		wantErr string
 	}{
 		{"docker minimal", "docker", `{"image":"i"}`,
-			`{"image":"i","network":false,"persistent":false}`, ""},
-		{"docker type mismatch refused", "docker", `{"image":"i","persistent":"yes"}`,
+			`{"image":"i","network":false}`, ""},
+		{"docker type mismatch refused", "docker", `{"image":"i","network":"yes"}`,
 			"", "docker config"},
-		{"docker missing image", "docker", `{"persistent":true}`,
+		{"docker missing image", "docker", `{"network":true}`,
 			"", "requires config.image"},
-		{"docker host dir cleaned", "docker", `{"image":"i","persistent":true,"host_dir":"/data/proj/"}`,
-			`{"image":"i","network":false,"persistent":true,"host_dir":"/data/proj"}`, ""},
+		{"docker retired keys dropped", "docker", `{"image":"i","persistent":true,"host_dir":"/data/proj/"}`,
+			`{"image":"i","network":false}`, ""},
 		{"docker ssh host kept", "docker", `{"image":"i","host":"ssh://u@h"}`,
-			`{"image":"i","host":"ssh://u@h","network":false,"persistent":false}`, ""},
+			`{"image":"i","host":"ssh://u@h","network":false}`, ""},
 		{"docker tcp host kept", "docker", `{"image":"i","host":"tcp://h:2375"}`,
-			`{"image":"i","host":"tcp://h:2375","network":false,"persistent":false}`, ""},
+			`{"image":"i","host":"tcp://h:2375","network":false}`, ""},
 		{"docker ssh host without user refused", "docker", `{"image":"i","host":"ssh://h"}`,
 			"", "must carry its user"},
 		{"docker bare host refused", "docker", `{"image":"i","host":"remote:2375"}`,
@@ -71,12 +71,10 @@ func TestContentEqual(t *testing.T) {
 		// zeros, the raw API writes only the non-zero ones.
 		{"omitted vs explicit zero fields",
 			`{"image":"i"}`,
-			`{"image":"i","host":"","runtime":"","user":"","network":false,"memory_mb":0,"cpus":0,"persistent":false}`,
+			`{"image":"i","host":"","runtime":"","user":"","network":false,"memory_mb":0,"cpus":0}`,
 			true},
 		{"key order and whitespace",
-			`{"image":"i","persistent":true}`, `{ "persistent": true, "image": "i" }`, true},
-		{"host dir trailing slash",
-			`{"image":"i","host_dir":"/data/"}`, `{"image":"i","host_dir":"/data"}`, true},
+			`{"image":"i","network":true}`, `{ "network": true, "image": "i" }`, true},
 		{"unknown key ignored",
 			`{"image":"i"}`, `{"image":"i","future_field":1}`, true},
 		{"network flip is a change",
@@ -121,14 +119,12 @@ func TestIdentityChanged(t *testing.T) {
 		{"ssh credential rotation is not identity",
 			sb("docker", `{"image":"i","host":"ssh://u@h","ssh_password":"old"}`),
 			sb("docker", `{"image":"i","host":"ssh://u@h","ssh_password":"new"}`), false},
-		{"host dir slash spelling", sb("docker", `{"image":"i","host_dir":"/d/"}`), sb("docker", `{"image":"i","host_dir":"/d"}`), false},
-		{"persistent flip", sb("docker", `{"image":"i"}`), sb("docker", `{"image":"i","persistent":true}`), true},
 		{"image swap is not identity", sb("docker", `{"image":"a"}`), sb("docker", `{"image":"b"}`), false},
 		{"limits change is not identity", sb("docker", `{"image":"i"}`), sb("docker", `{"image":"i","memory_mb":512,"cpus":2}`), false},
 		// A stored config that no longer decodes cannot be moved OFF of
 		// without this reading false: fixing it is the bound sessions' only
 		// way out.
-		{"undecodable prev allows the repair", sb("docker", `{"image":"i","persistent":"yes"}`), sb("docker", `{"image":"i","persistent":true}`), false},
+		{"undecodable prev allows the repair", sb("docker", `{"image":"i","network":"yes"}`), sb("docker", `{"image":"i","network":true}`), false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

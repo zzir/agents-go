@@ -5,24 +5,23 @@ import { PlusIcon, QuoteIcon, SyncIcon, TerminalIcon, XIcon } from '@primer/octi
 import { api } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { insertIntoComposer, quoteAsCodeBlock } from '@/lib/composer';
-import { workDirBasename } from '@/lib/binding';
-import { useRecentProjects } from '@/lib/useRecentProjects';
+import { useProjects } from '@/lib/useProjects';
 import { toast } from '@/lib/toast';
 import { TerminalView, type TerminalViewHandle, type TermStatus } from '@/features/terminal/TerminalView';
 
 interface SandboxConfig {
   id: string;
   name: string;
-  terminal?: boolean;
 }
 
 interface TerminalTab {
   id: number;
   sandboxId: string;
   sandboxName: string;
-  // The sandbox-instance workdir the shell opened in ('' = default) — a
-  // bound session's request lands the terminal in its own project instance.
-  workDir: string;
+  // The project whose container the shell opened into — a bound session's
+  // request lands the terminal in its own project container.
+  projectId: string;
+  projectName: string;
   // gen forces a fresh session (remount) on restart.
   gen: number;
   status: TermStatus;
@@ -33,12 +32,12 @@ interface TerminalPanelProps {
   onClose: () => void;
   settingsReloadKey?: number;
   // Bumped by the app when the set of session bindings changed; refreshes the
-  // + menu's recent-projects aggregation.
+  // + menu's project list.
   bindingsVersion?: number;
-  // One-shot request to start (or focus) a terminal for a sandbox, issued
-  // when the top-bar button opens a closed panel with a capable sandbox
-  // selected. The nonce marks each request as new.
-  openRequest?: { id: string; name: string; workDir?: string; nonce: number } | null;
+  // One-shot request to start (or focus) a terminal for a (sandbox, project),
+  // issued when the top-bar button opens a closed panel with one selected.
+  // The nonce marks each request as new.
+  openRequest?: { id: string; name: string; projectId: string; nonce: number } | null;
 }
 
 // Dragging the top edge below this height collapses the panel to just its
@@ -71,19 +70,18 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
   useEffect(() => {
     if (settingsReloadKey) reloadSandboxes();
   }, [settingsReloadKey, reloadSandboxes]);
-  const capable = (sandboxes || []).filter(s => s.terminal);
-  // Bound sessions aggregated into "recent projects" for the + menu — the
-  // same hook (and unit) the composer picker uses: opening a project's
-  // terminal lands in that project's sandbox instance and directory.
-  const projects = useRecentProjects(capable, bindingsVersion);
+  // The caller's project rows for the + menu — the same hook (and unit) the
+  // composer picker uses: opening a project's terminal lands in that
+  // project's container.
+  const { projects } = useProjects(bindingsVersion);
 
   // A collapsed panel must expand before a terminal can be shown (a new tab
   // mounted into a zero-height body would fit to a bogus grid).
   const expand = () => setCollapsed(false);
 
-  const addTab = (s: SandboxConfig, workDir = '') => {
+  const addTab = (s: SandboxConfig, project: { id: string; name: string }) => {
     const id = nextId.current++;
-    setTabs(t => [...t, { id, sandboxId: s.id, sandboxName: s.name, workDir, gen: 0, status: 'connecting' }]);
+    setTabs(t => [...t, { id, sandboxId: s.id, sandboxName: s.name, projectId: project.id, projectName: project.name, gen: 0, status: 'connecting' }]);
     setActiveId(id);
     expand();
   };
@@ -136,13 +134,13 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
   useEffect(() => {
     if (!openRequest || openRequest.nonce === consumedRequestNonce.current) return;
     consumedRequestNonce.current = openRequest.nonce;
-    const wanted = openRequest.workDir || '';
-    const matching = tabs.filter(t => t.sandboxId === openRequest.id && t.workDir === wanted);
+    const matching = tabs.filter(t => t.sandboxId === openRequest.id && t.projectId === openRequest.projectId);
     const existing = matching[matching.length - 1];
     if (existing) {
       activateTab(existing.id);
     } else {
-      addTab({ id: openRequest.id, name: openRequest.name }, wanted);
+      const name = (projects || []).find(p => p.id === openRequest.projectId)?.name || '';
+      addTab({ id: openRequest.id, name: openRequest.name }, { id: openRequest.projectId, name });
     }
     // activateTab/addTab close over current state; nonce guards re-runs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -199,8 +197,8 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
               onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') activateTab(tab.id); }}
             >
               <TerminalIcon size={12} />
-              <span className="terminal-tab-name" title={tab.workDir || undefined}>
-                {tab.workDir ? `${tab.sandboxName} · ${workDirBasename(tab.workDir)}` : tab.sandboxName}
+              <span className="terminal-tab-name" title={tab.projectName || undefined}>
+                {tab.projectName ? `${tab.sandboxName} · ${tab.projectName}` : tab.sandboxName}
               </span>
               {(tab.status === 'exited' || tab.status === 'error') && (
                 <span className="terminal-tab-status">{tab.status === 'exited' ? 'exited' : 'lost'}</span>
@@ -221,26 +219,28 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
             </ActionMenu.Anchor>
             <ActionMenu.Overlay>
               <ActionList>
-                {capable.length === 0 ? (
-                  <ActionList.Item disabled>No terminal-capable sandboxes (ssh, or docker with persistent on)</ActionList.Item>
+                {(sandboxes || []).length === 0 ? (
+                  <ActionList.Item disabled>No sandboxes configured</ActionList.Item>
                 ) : (
-                  capable.map(s => {
-                    const items = projects.filter(p => p.sandboxId === s.id && p.workDir);
+                  (sandboxes || []).map(s => {
+                    const items = (projects || []).filter(p => p.sandbox_id === s.id);
                     return (
                       <ActionList.Group key={s.id}>
                         {/* Primer requires an explicit heading level on
                             list-role ActionLists. */}
                         <ActionList.GroupHeading as="h3">{s.name}</ActionList.GroupHeading>
-                        <ActionList.Item onSelect={() => addTab(s)}>default directory</ActionList.Item>
-                        {items.map(p => (
-                          <ActionList.Item
-                            key={p.sandboxId + ' ' + p.workDir}
-                            title={p.title}
-                            onSelect={() => addTab(s, p.workDir)}
-                          >
-                            {p.base}
-                          </ActionList.Item>
-                        ))}
+                        {items.length === 0 ? (
+                          <ActionList.Item disabled>no projects yet</ActionList.Item>
+                        ) : (
+                          items.map(p => (
+                            <ActionList.Item
+                              key={p.id}
+                              onSelect={() => addTab(s, { id: p.id, name: p.name })}
+                            >
+                              {p.name}
+                            </ActionList.Item>
+                          ))
+                        )}
                       </ActionList.Group>
                     );
                   })
@@ -289,7 +289,7 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
                 else viewRefs.current.delete(tab.id);
               }}
               sandboxId={tab.sandboxId}
-              workDir={tab.workDir || undefined}
+              projectId={tab.projectId}
               hidden={tab.id !== activeId}
               onStatus={s => setTabStatus(tab.id, s)}
               onSelection={has => {

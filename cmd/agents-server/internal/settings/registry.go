@@ -41,6 +41,7 @@ const (
 	KeyLogSensitiveData          = "log_sensitive_data"
 	KeyApprovalTTLMinutes        = "approval_ttl_minutes"
 	KeyMaxTerminalsPerSandbox    = "max_terminals_per_sandbox"
+	KeySandboxIdleMinutes        = "sandbox_idle_minutes"
 )
 
 // The groups the panel renders as sections, in the order defs are listed.
@@ -174,7 +175,14 @@ var defs = []Def{{
 	Default:     "4",
 	Min:         1,
 	Max:         32,
-}}
+}, {
+	Key:         KeySandboxIdleMinutes,
+	Kind:        KindInt,
+	Group:       GroupLimits,
+	Label:       "Sandbox idle stop (minutes)",
+	Default:     "30",
+	Min:         0,
+	Description: "Stop a (sandbox, project) container after this many minutes with no run or terminal using it; 0 disables. The next run starts it again."}}
 
 // Defs returns the registry in panel order.
 func Defs() []Def { return defs }

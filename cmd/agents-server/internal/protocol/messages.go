@@ -58,7 +58,7 @@ const (
 	EventRunGap              = "run.gap"
 	EventSessionTitleUpdated = "session.title_updated"
 	// EventSessionSandboxBound announces that a session's first sandbox-carrying
-	// run permanently bound (sandbox_id, work_dir) to it — published exactly
+	// run permanently bound (sandbox_id, project_id) to it — published exactly
 	// once, by the run that won the bind.
 	EventSessionSandboxBound = "session.sandbox_bound"
 	// EventTaskUpdated tells a parent session's subscribers that one of its
@@ -114,7 +114,7 @@ func NewEnvelope(typ string, payload any) (*Envelope, error) {
 // Client → Server messages
 
 // RunCreate is the client request to start a new run within a session.
-// SandboxID/WorkDir only matter until the session's first sandbox-carrying run
+// SandboxID/ProjectID only matter until the session's first sandbox-carrying run
 // binds them permanently; after that the server uses the bound values and
 // ignores what the client sends.
 type RunCreate struct {
@@ -122,7 +122,7 @@ type RunCreate struct {
 	Input         string `json:"input"`
 	AgentConfigID string `json:"agent_config_id,omitempty"`
 	SandboxID     string `json:"sandbox_id,omitempty"`
-	WorkDir       string `json:"work_dir,omitempty"`
+	ProjectID     string `json:"project_id,omitempty"`
 	// Plan is what this request asks of the session's plan phase: true runs it
 	// read-only until a plan is approved, false leaves planning, and ABSENT
 	// leaves the phase as it stands — a client that knows nothing about plan
@@ -183,12 +183,11 @@ type ToolReject struct {
 // use the backend defaults (80x24).
 type TerminalOpen struct {
 	SandboxID string `json:"sandbox_id"`
-	// WorkDir selects the sandbox instance to open the shell in — a bound
-	// session's terminal lands in the session's working directory (for
-	// docker: its /workspace subtree container), not the default instance.
-	WorkDir string `json:"work_dir,omitempty"`
-	Cols    int    `json:"cols,omitempty"`
-	Rows    int    `json:"rows,omitempty"`
+	// ProjectID selects the container to open the shell in — a shell lands in
+	// the (sandbox, project) container a session on that pair uses.
+	ProjectID string `json:"project_id"`
+	Cols      int    `json:"cols,omitempty"`
+	Rows      int    `json:"rows,omitempty"`
 }
 
 // TerminalResize is the client request to change the PTY size.
@@ -446,12 +445,12 @@ type SessionTitleUpdated struct {
 }
 
 // SessionSandboxBound notifies the client that the session is now permanently
-// bound to (sandbox_id, work_dir). An empty work_dir means the sandbox's own
+// bound to (sandbox_id, project_id). An empty project_id means the sandbox's own
 // default directory.
 type SessionSandboxBound struct {
 	SessionID string `json:"session_id"`
 	SandboxID string `json:"sandbox_id"`
-	WorkDir   string `json:"work_dir,omitempty"`
+	ProjectID string `json:"project_id,omitempty"`
 }
 
 // TaskUpdated is a task's state as its parent session's subscribers should

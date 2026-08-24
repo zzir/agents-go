@@ -10,42 +10,39 @@ import (
 	"github.com/zzir/agents-go/sandbox"
 )
 
-// One live instance per (config id, workdir): sessions bound to different
-// workdirs on the same config must not share a sandbox, while the same pair
-// keeps hitting the cache. Remove tears down every variant of the id.
-func TestSandboxManagerKeysByWorkdir(t *testing.T) {
-	m := NewManager(t.TempDir())
-	cfg := &store.SandboxConfig{ID: "loc", Name: "local", Type: "docker", Config: []byte(`{"image":"i","persistent":true}`)}
+// testProject is an in-memory project row for manager tests: the manager
+// only reads its ids.
+func testProject(id string) *store.Project {
+	return &store.Project{ID: id, OwnerID: "owner-1", SandboxID: "loc", Name: id}
+}
 
-	a1, r1, err := m.Acquire(cfg, "/workspace/wd1")
+// One live instance per (config id, project): sessions bound to different
+// projects on the same config must not share a sandbox, while the same pair
+// keeps hitting the cache. Remove tears down every variant of the id.
+func TestSandboxManagerKeysByProject(t *testing.T) {
+	m := NewManager(t.TempDir())
+	cfg := &store.SandboxConfig{ID: "loc", Name: "local", Type: "docker", Config: []byte(`{"image":"i"}`)}
+
+	a1, r1, err := m.Acquire(cfg, testProject("p1"))
 	if err != nil {
-		t.Fatalf("wd1: %v", err)
+		t.Fatalf("p1: %v", err)
 	}
 	defer r1()
-	a2, r2, err := m.Acquire(cfg, "/workspace/wd2")
+	a2, r2, err := m.Acquire(cfg, testProject("p2"))
 	if err != nil {
-		t.Fatalf("wd2: %v", err)
+		t.Fatalf("p2: %v", err)
 	}
 	defer r2()
 	if a1 == a2 {
-		t.Fatal("different workdirs share one sandbox instance")
+		t.Fatal("different projects share one sandbox instance")
 	}
-	again, r3, err := m.Acquire(cfg, "/workspace/wd1")
+	again, r3, err := m.Acquire(cfg, testProject("p1"))
 	if err != nil {
-		t.Fatalf("wd1 again: %v", err)
+		t.Fatalf("p1 again: %v", err)
 	}
 	defer r3()
 	if again != a1 {
-		t.Fatal("same (id, workdir) pair not served from the cache")
-	}
-	// Trim is part of the key: "  /workspace/wd1 " is the same instance.
-	trimmed, r4, err := m.Acquire(cfg, "  /workspace/wd1 ")
-	if err != nil {
-		t.Fatalf("trimmed wd1: %v", err)
-	}
-	defer r4()
-	if trimmed != a1 {
-		t.Fatal("untrimmed workdir minted a duplicate instance")
+		t.Fatal("same (id, project) pair not served from the cache")
 	}
 
 	m.Remove("loc")
@@ -64,16 +61,16 @@ func TestSandboxManagerEvictionDefersToHolders(t *testing.T) {
 	m := NewManager(t.TempDir())
 	cfg := &store.SandboxConfig{ID: "loc", Name: "local", Type: "docker", Config: []byte(`{"image":"i"}`)}
 
-	inst1, rel1, err := m.acquire(cfg, "/wd")
+	inst1, rel1, err := m.acquire(cfg, testProject("wd"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, rel2, err := m.acquire(cfg, "/wd")
+	_, rel2, err := m.acquire(cfg, testProject("wd"))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	m.RemoveInstance(cfg, "/wd")
+	m.RemoveInstance(cfg, "wd")
 	m.mu.Lock()
 	doomed, refs := inst1.doomed, inst1.refs
 	m.mu.Unlock()
@@ -82,7 +79,7 @@ func TestSandboxManagerEvictionDefersToHolders(t *testing.T) {
 	}
 
 	// A fresh acquire builds a NEW instance — the doomed one is out of the cache.
-	inst2, rel3, err := m.acquire(cfg, "/wd")
+	inst2, rel3, err := m.acquire(cfg, testProject("wd"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,14 +112,14 @@ func TestSandboxManagerIdleEvictionAndReuse(t *testing.T) {
 	m := NewManager(t.TempDir())
 	cfg := &store.SandboxConfig{ID: "loc", Name: "local", Type: "docker", Config: []byte(`{"image":"i"}`)}
 
-	inst, rel, err := m.acquire(cfg, "/wd")
+	inst, rel, err := m.acquire(cfg, testProject("wd"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	rel()
 
 	// Not doomed: the released instance stays cached and is reused.
-	inst2, rel2, err := m.acquire(cfg, "/wd")
+	inst2, rel2, err := m.acquire(cfg, testProject("wd"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +128,7 @@ func TestSandboxManagerIdleEvictionAndReuse(t *testing.T) {
 	}
 	rel2()
 
-	m.RemoveInstance(cfg, "/wd")
+	m.RemoveInstance(cfg, "wd")
 	m.mu.Lock()
 	left := len(m.instances)
 	m.mu.Unlock()
@@ -153,7 +150,7 @@ func TestSandboxManagerConcurrentAcquireSharesOneBuild(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := range n {
 		wg.Go(func() {
-			inst, rel, err := m.acquire(cfg, "/wd")
+			inst, rel, err := m.acquire(cfg, testProject("wd"))
 			if err != nil {
 				t.Error(err)
 				return
@@ -184,7 +181,7 @@ func TestSandboxManagerConcurrentAcquireSharesOneBuild(t *testing.T) {
 func TestSandboxManagerFailedBuildRetries(t *testing.T) {
 	m := NewManager(t.TempDir())
 	bad := &store.SandboxConfig{ID: "sb", Name: "sb", Type: "docker", Config: []byte(`{}`)}
-	if _, _, err := m.acquire(bad, ""); err == nil {
+	if _, _, err := m.acquire(bad, testProject("p")); err == nil {
 		t.Fatal("imageless docker build succeeded")
 	}
 	m.mu.Lock()
@@ -195,44 +192,13 @@ func TestSandboxManagerFailedBuildRetries(t *testing.T) {
 	}
 	// Same key, now-valid config: the retry builds.
 	good := &store.SandboxConfig{ID: "sb", Name: "sb", Type: "docker", Config: []byte(`{"image":"i"}`)}
-	inst, rel, err := m.acquire(good, "")
+	inst, rel, err := m.acquire(good, testProject("p"))
 	if err != nil {
 		t.Fatalf("retry after a failed build: %v", err)
 	}
 	defer rel()
 	if inst.sb == nil {
 		t.Fatal("retry returned a sandbox-less instance")
-	}
-}
-
-// Docker's per-session workdir is the CONTAINER-side directory: persistent
-// containers accept /workspace subtrees (/workspace itself normalizes to "",
-// the default instance) and fall back to the default for anything outside;
-// ephemeral containers ignore the value entirely.
-func TestEffectiveWorkDirPerType(t *testing.T) {
-	persistent := &store.SandboxConfig{Type: "docker", Config: []byte(`{"image":"i","persistent":true}`)}
-	ephemeral := &store.SandboxConfig{Type: "docker", Config: []byte(`{"image":"i"}`)}
-
-	if got := effectiveWorkDir(persistent, "/workspace/proj"); got != "/workspace/proj" {
-		t.Fatalf("persistent subdir = %q, want kept", got)
-	}
-	if got := effectiveWorkDir(persistent, "/workspace"); got != "" {
-		t.Fatalf("persistent /workspace = %q, want normalized to \"\"", got)
-	}
-	// A binding legal when written can be out-of-tree by run time (a config
-	// identity update landing beside the bind) — it falls back to the default
-	// instance instead of tripping the SDK validation forever.
-	if got := effectiveWorkDir(persistent, "/tmp/test"); got != "" {
-		t.Fatalf("persistent out-of-workspace = %q, want normalized to \"\"", got)
-	}
-	if got := effectiveWorkDir(persistent, "/workspace/../etc"); got != "" {
-		t.Fatalf("persistent escaping path = %q, want normalized to \"\"", got)
-	}
-	if got := effectiveWorkDir(ephemeral, "/workspace/proj"); got != "" {
-		t.Fatalf("ephemeral workdir = %q, want \"\"", got)
-	}
-	if got := effectiveWorkDir(persistent, " /workspace/y "); got != "/workspace/y" {
-		t.Fatalf("whitespace workdir = %q, want trimmed /workspace/y", got)
 	}
 }
 
@@ -252,7 +218,7 @@ func gatedManager(t *testing.T) (*Manager, chan struct{}, *closeCountingSandbox)
 	m := NewManager(t.TempDir())
 	gate := make(chan struct{})
 	sb := &closeCountingSandbox{}
-	m.buildOverride = func(*store.SandboxConfig, string) (sandbox.Sandbox, error) {
+	m.buildOverride = func(*store.SandboxConfig, *store.Project) (sandbox.Sandbox, error) {
 		<-gate
 		return sb, nil
 	}
@@ -271,7 +237,7 @@ func TestSandboxManagerRetireFencesInFlightBuilds(t *testing.T) {
 	var rel func()
 	go func() {
 		defer close(done)
-		_, r, err := m.acquire(oldCfg, "")
+		_, r, err := m.acquire(oldCfg, testProject("p"))
 		if err != nil {
 			t.Error(err)
 			return
@@ -310,7 +276,7 @@ func TestSandboxManagerCloseAllDuringBuild(t *testing.T) {
 	var rel func()
 	go func() {
 		defer close(done)
-		_, r, err := m.acquire(cfg, "")
+		_, r, err := m.acquire(cfg, testProject("p"))
 		if err != nil {
 			t.Error(err)
 			return
@@ -337,7 +303,7 @@ func TestSandboxManagerCloseAllDuringBuild(t *testing.T) {
 		t.Fatalf("closes = %d after shutdown + release, want 1 — the dialed resource leaked", sb.closes.Load())
 	}
 	// The latch refuses new acquires.
-	if _, _, err := m.acquire(cfg, ""); err == nil {
+	if _, _, err := m.acquire(cfg, testProject("p")); err == nil {
 		t.Fatal("acquire succeeded on a closed manager")
 	}
 }
@@ -349,18 +315,18 @@ func TestSandboxManagerRenameSharesInstance(t *testing.T) {
 	m := NewManager(t.TempDir())
 	sb := &closeCountingSandbox{}
 	builds := 0
-	m.buildOverride = func(*store.SandboxConfig, string) (sandbox.Sandbox, error) {
+	m.buildOverride = func(*store.SandboxConfig, *store.Project) (sandbox.Sandbox, error) {
 		builds++
 		return sb, nil
 	}
 
 	v1 := &store.SandboxConfig{ID: "sb", Name: "old", Type: "docker", Config: []byte(`{"image":"i"}`), Revision: 1, RuntimeGen: 1}
-	_, rel1, err := m.Acquire(v1, "")
+	_, rel1, err := m.Acquire(v1, testProject("p"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	renamed := &store.SandboxConfig{ID: "sb", Name: "new", Type: "docker", Config: []byte(`{"image":"i"}`), Revision: 2, RuntimeGen: 1}
-	_, rel2, err := m.Acquire(renamed, "")
+	_, rel2, err := m.Acquire(renamed, testProject("p"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -375,7 +341,7 @@ func TestSandboxManagerRenameSharesInstance(t *testing.T) {
 
 	// A CONTENT change moves the generation and does key a fresh instance.
 	rotated := &store.SandboxConfig{ID: "sb", Name: "new", Type: "docker", Config: []byte(`{"image":"i"}`), Revision: 3, RuntimeGen: 2}
-	_, rel3, err := m.Acquire(rotated, "")
+	_, rel3, err := m.Acquire(rotated, testProject("p"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -396,7 +362,7 @@ func TestSandboxManagerRemoveFencesLateAcquires(t *testing.T) {
 	var rel func()
 	go func() {
 		defer close(done)
-		_, r, err := m.acquire(cfg, "")
+		_, r, err := m.acquire(cfg, testProject("p"))
 		if err != nil {
 			t.Error(err)
 			return
@@ -421,5 +387,54 @@ func TestSandboxManagerRemoveFencesLateAcquires(t *testing.T) {
 	rel()
 	if sb.closes.Load() != 1 {
 		t.Fatalf("closes = %d after the last release, want 1", sb.closes.Load())
+	}
+}
+
+// The idle-stop: the release that drops the last reference arms a timer that
+// evicts and closes the instance; a new acquire before it fires disarms it.
+func TestSandboxManagerIdleStop(t *testing.T) {
+	m := NewManager(t.TempDir())
+	m.SetIdleTimeout(func() time.Duration { return 20 * time.Millisecond })
+	closed := &closeCountingSandbox{}
+	m.buildOverride = func(*store.SandboxConfig, *store.Project) (sandbox.Sandbox, error) {
+		return closed, nil
+	}
+	cfg := &store.SandboxConfig{ID: "sb", Name: "sb", Type: "docker", Config: []byte(`{"image":"i"}`)}
+
+	inst, rel, err := m.acquire(cfg, testProject("p"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Re-acquire inside the idle window disarms the timer.
+	rel()
+	_, rel2, err := m.acquire(cfg, testProject("p"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(40 * time.Millisecond)
+	m.mu.Lock()
+	still := m.instances[inst.key] == inst
+	m.mu.Unlock()
+	if !still {
+		t.Fatal("held instance was idle-stopped")
+	}
+
+	// The final release arms it; the fire evicts and closes.
+	rel2()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		m.mu.Lock()
+		gone := len(m.instances) == 0
+		m.mu.Unlock()
+		if gone {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("idle instance never evicted")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if closed.closes.Load() != 1 {
+		t.Fatalf("closes = %d, want 1", closed.closes.Load())
 	}
 }

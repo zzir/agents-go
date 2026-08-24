@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 )
 
@@ -18,11 +17,10 @@ import (
 // NormalizeSandboxConfig strictly decodes raw ("docker" is the only backend
 // — spec §5.27), enforces the fields the sandbox cannot run without, and
 // returns the canonical payload to store. It gates the API write path: a
-// payload that decodes here builds later, where a stored type mismatch
-// (persistent:"yes") would read as its zero value at binding time and
-// permanently bind a session to a config that can never build. Canonical
-// means fields re-marshaled in struct order, paths cleaned of trailing
-// slashes, and unknown keys dropped (nothing consumes them).
+// payload that decodes here builds later — a stored type mismatch would
+// otherwise read as its zero value at build time. Canonical means fields
+// re-marshaled in struct order and unknown keys dropped (nothing consumes
+// them).
 func NormalizeSandboxConfig(typ string, raw json.RawMessage) (json.RawMessage, error) {
 	if typ != "docker" {
 		return nil, fmt.Errorf("sandbox type must be docker, got %q", typ)
@@ -49,7 +47,6 @@ func NormalizeSandboxConfig(typ string, raw json.RawMessage) (json.RawMessage, e
 	if dc.MemoryMB < 0 || dc.CPUs < 0 {
 		return nil, errors.New("memory_mb and cpus cannot be negative")
 	}
-	canonicalizeDocker(&dc)
 	return json.Marshal(dc)
 }
 
@@ -65,18 +62,18 @@ func NormalizeSandboxConfig(typ string, raw json.RawMessage) (json.RawMessage, e
 // keeps old credentials serving. A TYPE change is a content change by
 // definition; callers short-circuit it before asking here.
 func ContentEqual(_ string, a, b json.RawMessage) bool {
-	return canonicalEqual(a, b, canonicalizeDocker)
+	return canonicalEqual(a, b, func(*DockerConfig) {})
 }
 
 // IdentityChanged reports whether an update moves the sandbox's IDENTITY —
-// the fields that decide where a binding's files live: the backend type, the
-// DAEMON the containers run on (Host — a different daemon is a different set
-// of filesystems even under identical mount spellings), the mount source,
-// mode and adopted container. Sessions bind a config id permanently on the
-// promise that it keeps meaning the same file system, so these fields freeze
-// while any session references the config; everything else — name, SSH
-// credentials, image, network, runtime, limits, the exec user — changes the
-// execution environment, not where the data is, and stays freely editable.
+// the fields that decide where a binding's files live: the backend type and
+// the DAEMON the containers run on (Host — a different daemon is a different
+// set of filesystems; every project of this sandbox stores there). Sessions
+// bind a config id permanently on the promise that it keeps meaning the same
+// file system, so these freeze while any session references the config;
+// everything else — name, SSH credentials, image, network, runtime, limits,
+// the exec user — changes the execution environment, not where the data is,
+// and stays freely editable.
 //
 // A prev that no longer decodes is NOT a change: sessions bound to it hold a
 // config that cannot build, and fixing it is their only way out. (An
@@ -93,17 +90,7 @@ func IdentityChanged(prev, next *SandboxConfig) bool {
 	if unmarshalConfigJSON(next.Config, &n) != nil {
 		return true
 	}
-	canonicalizeDocker(&p)
-	canonicalizeDocker(&n)
-	return p.Host != n.Host || p.HostDir != n.HostDir || p.Persistent != n.Persistent || p.ContainerName != n.ContainerName
-}
-
-// canonicalizeDocker rewrites a docker config's path spellings to canonical
-// form. The host dir is a HOST path (filepath semantics).
-func canonicalizeDocker(dc *DockerConfig) {
-	if dc.HostDir != "" {
-		dc.HostDir = filepath.Clean(dc.HostDir)
-	}
+	return p.Host != n.Host
 }
 
 // canonicalEqual compares two raw payloads through T, canonicalized. The

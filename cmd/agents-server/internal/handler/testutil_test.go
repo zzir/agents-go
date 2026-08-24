@@ -107,6 +107,6 @@ func testAgentConfigHandler(db *bun.DB) *AgentConfigHandler {
 // testSandboxHandler wires a SandboxHandler over the given store and manager,
 // with a terminal registry over the same pair and the workspace given. Local
 // sandboxes stay refused, as the flag defaults.
-func testSandboxHandler(sandboxStore *store.SandboxStore, manager *sandboxes.Manager, workspace string) *SandboxHandler {
-	return NewSandboxHandler(sandboxStore, manager, NewTerminalHandler(sandboxStore, manager, settings.NewReader(nil)))
+func testSandboxHandler(sandboxStore *store.SandboxStore, manager *sandboxes.Manager, _ string) *SandboxHandler {
+	return NewSandboxHandler(sandboxStore, manager, NewTerminalHandler(sandboxStore, nil, manager, settings.NewReader(nil)))
 }

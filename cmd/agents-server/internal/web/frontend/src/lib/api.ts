@@ -310,13 +310,14 @@ export const api = {
     list: () => request('/guardrails'),
   },
   providers: crud<S['store.Provider']>('/providers'),
+  projects: crud<S['store.Project']>('/projects'),
   workflows: {
     ...crud<S['store.Workflow']>('/workflows'),
     // A person's own run of a workflow: the brief they wrote, for the session
     // the result comes back to.
-    // sandbox_id/work_dir bind a still-unbound session first, so the
+    // sandbox_id/project_id bind a still-unbound session first, so the
     // execution has its file and command tools; a bound session ignores them.
-    run: (id: string | number, body: { session_id: string; input: string; sandbox_id?: string; work_dir?: string }) =>
+    run: (id: string | number, body: { session_id: string; input: string; sandbox_id?: string; project_id?: string }) =>
       request(`/workflows/${id}/runs`, { method: 'POST', body: JSON.stringify(body) }),
   },
   // Triggers start a workflow without a conversation asking: on a cron

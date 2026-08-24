@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -13,6 +14,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/sandbox"
+	dockersb "github.com/zzir/agents-go/sandbox/docker"
 )
 
 // SandboxHandler serves CRUD endpoints and code execution for sandboxes.
@@ -38,24 +40,6 @@ func (h *SandboxHandler) closeSandboxTerminals(id string, minGen int64) {
 	h.terminals.CloseSandboxTerminals(id, minGen)
 }
 
-// annotate fills the computed, never-stored response fields: terminal
-// capability, plus the default workdir a session binding would use and
-// whether a custom per-session workdir is honored. The workdir is always the
-// EXECUTION view — the container-side /workspace constant, never the host
-// mount source (that is the config's host_dir, a different concept). The
-// mount point never moves, but a persistent container's session may work in
-// a /workspace subtree; an ephemeral container has no durable tree to
-// subdivide.
-func (h *SandboxHandler) annotate(cfg *store.SandboxConfig) {
-	cfg.Terminal = sandboxes.TerminalCapable(cfg)
-	cfg.DefaultWorkDir = sandboxes.DockerWorkspace
-	var dc store.DockerConfig
-	if len(cfg.Config) > 0 {
-		_ = json.Unmarshal(cfg.Config, &dc)
-	}
-	cfg.WorkDirEditable = dc.Persistent
-}
-
 // List responds with all sandbox configurations, secrets masked.
 //
 //	@Summary	List sandboxes
@@ -73,7 +57,6 @@ func (h *SandboxHandler) List(c *gin.Context) {
 	}
 	for i := range configs {
 		configs[i] = sanitizeSandboxConfig(configs[i])
-		h.annotate(&configs[i])
 	}
 	c.JSON(http.StatusOK, configs)
 }
@@ -154,7 +137,6 @@ func (h *SandboxHandler) Create(c *gin.Context) {
 		return
 	}
 	view := sanitizeSandboxConfig(*cfg)
-	h.annotate(&view)
 	created(c, view.ID, view)
 }
 
@@ -177,7 +159,6 @@ func (h *SandboxHandler) Get(c *gin.Context) {
 		return
 	}
 	out := sanitizeSandboxConfig(*cfg)
-	h.annotate(&out)
 	c.JSON(http.StatusOK, out)
 }
 
@@ -278,7 +259,6 @@ func (h *SandboxHandler) Update(c *gin.Context) {
 		return
 	}
 	out := sanitizeSandboxConfig(*updated)
-	h.annotate(&out)
 	c.JSON(http.StatusOK, out)
 }
 
@@ -340,19 +320,22 @@ func (h *SandboxHandler) Test(c *gin.Context) {
 		return
 	}
 
-	sb, release, err := h.manager.Acquire(cfg, "")
+	// The health check runs in a throw-away EPHEMERAL container, bypassing
+	// the manager: a test needs no project tree, and must not leave a
+	// persistent container behind.
+	sb, err := h.testSandbox(cfg)
 	if err != nil {
 		upstreamError(c, err)
 		return
 	}
-	defer release()
+	defer func() { _ = sb.Close() }()
 
 	timeout := sandbox.DefaultTimeout
 	ctx, cancel := context.WithTimeout(c.Request.Context(), timeout+5*time.Second)
 	defer cancel()
 
 	res, err := sb.Exec(ctx, sandbox.ExecRequest{
-		Cmd:     []string{"bash", "-c", "echo ok"},
+		Cmd:     []string{"sh", "-c", "echo ok"},
 		Timeout: timeout,
 	})
 	if err != nil {
@@ -368,6 +351,153 @@ func (h *SandboxHandler) Test(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, sandboxTestResp{OK: true})
+}
+
+// daemonOptions assembles the SDK options reaching cfg's daemon — shared by
+// the ephemeral health check and the managed-container admin calls.
+func daemonOptions(cfg *store.SandboxConfig) (dockersb.Options, error) {
+	var dc store.DockerConfig
+	if len(cfg.Config) > 0 {
+		if err := json.Unmarshal(cfg.Config, &dc); err != nil {
+			return dockersb.Options{}, fmt.Errorf("invalid config: %w", err)
+		}
+	}
+	if dc.Image == "" {
+		return dockersb.Options{}, fmt.Errorf("docker sandbox requires an image")
+	}
+	opts := dockersb.Options{
+		Image:   dc.Image,
+		Host:    dc.Host,
+		Runtime: dc.Runtime,
+		User:    dc.User,
+		Network: dc.Network,
+		Limits:  sandbox.Limits{MemoryBytes: dc.MemoryMB << 20, CPUs: dc.CPUs},
+	}
+	if strings.HasPrefix(dc.Host, "ssh://") {
+		opts.SSH = dockersb.SSHAuth{
+			UseAgent:              dc.SSHUseAgent,
+			KeyFile:               dc.SSHKeyFile,
+			Password:              dc.SSHPassword,
+			KnownHostsFile:        dc.SSHKnownHosts,
+			InsecureIgnoreHostKey: dc.SSHInsecureHostKey,
+		}
+	}
+	return opts, nil
+}
+
+// testSandbox builds a throw-away ephemeral SDK sandbox from cfg — same
+// image, daemon and limits as the real containers, no name, no mount.
+func (h *SandboxHandler) testSandbox(cfg *store.SandboxConfig) (sandbox.Sandbox, error) {
+	opts, err := daemonOptions(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return dockersb.New(opts)
+}
+
+// Containers lists this package's containers on the sandbox's daemon —
+// running and stopped, foreign containers never included.
+//
+//	@Summary	List the sandbox's managed containers
+//	@Tags		sandboxes
+//	@Produce	json
+//	@Param		id	path		string	true	"Sandbox id"
+//	@Success	200	{array}		dockersb.ManagedContainer
+//	@Failure	404	{object}	ErrorResponse
+//	@Failure	502	{object}	ErrorResponse
+//	@Security	BearerAuth
+//	@Router		/sandboxes/{id}/containers [get]
+func (h *SandboxHandler) Containers(c *gin.Context) {
+	cfg, err := h.store.Get(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		storeError(c, err)
+		return
+	}
+	opts, err := daemonOptions(cfg)
+	if err != nil {
+		badRequest(c, err.Error())
+		return
+	}
+	out, err := dockersb.ListManaged(c.Request.Context(), opts)
+	if err != nil {
+		upstreamError(c, err)
+		return
+	}
+	if out == nil {
+		out = []dockersb.ManagedContainer{}
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+// containerAct resolves the sandbox and the (prefix-checked) container name
+// for the stop/remove endpoints, answering the error when either fails.
+func (h *SandboxHandler) containerAct(c *gin.Context) (dockersb.Options, string, bool) {
+	cfg, err := h.store.Get(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		storeError(c, err)
+		return dockersb.Options{}, "", false
+	}
+	name := c.Param("name")
+	// The SDK re-verifies ownership by label; the prefix check just refuses
+	// obviously-foreign names before a daemon round-trip.
+	if !strings.HasPrefix(name, "agents-") {
+		badRequest(c, "not a managed container name")
+		return dockersb.Options{}, "", false
+	}
+	opts, err := daemonOptions(cfg)
+	if err != nil {
+		badRequest(c, err.Error())
+		return dockersb.Options{}, "", false
+	}
+	return opts, name, true
+}
+
+// StopContainer stops one managed container; the next run starts it again.
+//
+//	@Summary	Stop a managed container
+//	@Tags		sandboxes
+//	@Param		id		path	string	true	"Sandbox id"
+//	@Param		name	path	string	true	"Container name (agents-…)"
+//	@Success	204		"stopped"
+//	@Failure	400		{object}	ErrorResponse
+//	@Failure	502		{object}	ErrorResponse
+//	@Security	BearerAuth
+//	@Router		/sandboxes/{id}/containers/{name}/stop [post]
+func (h *SandboxHandler) StopContainer(c *gin.Context) {
+	opts, name, ok := h.containerAct(c)
+	if !ok {
+		return
+	}
+	if err := dockersb.StopManaged(c.Request.Context(), opts, name); err != nil {
+		upstreamError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// RemoveContainer force-removes one managed container — the rebuild act: the
+// project's tree (bind mount or volume) survives, and the next run recreates
+// the container from the current configuration.
+//
+//	@Summary	Remove a managed container (rebuild)
+//	@Tags		sandboxes
+//	@Param		id		path	string	true	"Sandbox id"
+//	@Param		name	path	string	true	"Container name (agents-…)"
+//	@Success	204		"removed"
+//	@Failure	400		{object}	ErrorResponse
+//	@Failure	502		{object}	ErrorResponse
+//	@Security	BearerAuth
+//	@Router		/sandboxes/{id}/containers/{name} [delete]
+func (h *SandboxHandler) RemoveContainer(c *gin.Context) {
+	opts, name, ok := h.containerAct(c)
+	if !ok {
+		return
+	}
+	if err := dockersb.RemoveManaged(c.Request.Context(), opts, name); err != nil {
+		upstreamError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 // sandboxTestResp is the Test response: whether the health-check command

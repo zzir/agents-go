@@ -28,7 +28,7 @@ func TestTaskAdapter_InheritKeepsTheTaskAgent(t *testing.T) {
 		Inherit: store.EncodeInherit(store.Inherit{
 			AgentConfigID: "parent-agent",
 			SandboxID:     "sandbox-1",
-			WorkDir:       "/srv/project",
+			ProjectID:     "proj-1",
 			TaskAgentID:   "task-agent",
 		}),
 	}
@@ -43,7 +43,7 @@ func TestTaskAdapter_InheritKeepsTheTaskAgent(t *testing.T) {
 	if inherit.TaskAgentID != "task-agent" {
 		t.Errorf("task agent = %q, want it preserved — a retry launches from this snapshot", inherit.TaskAgentID)
 	}
-	if inherit.AgentConfigID != "parent-agent" || inherit.SandboxID != "sandbox-1" || inherit.WorkDir != "/srv/project" {
+	if inherit.AgentConfigID != "parent-agent" || inherit.SandboxID != "sandbox-1" || inherit.ProjectID != "proj-1" {
 		t.Errorf("inherit = %+v, want the spawning run's setup too", inherit)
 	}
 }

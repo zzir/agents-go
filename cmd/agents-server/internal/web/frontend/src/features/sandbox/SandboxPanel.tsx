@@ -36,9 +36,6 @@ interface FlatForm {
   runtime: string;
   user: string;
   network: boolean;
-  persistent: boolean;
-  host_dir: string;
-  container_name: string;
   // SSH auth for an ssh:// host
   ssh_key_file: string;
   ssh_password: string;
@@ -66,9 +63,6 @@ interface SandboxConfigShape {
   runtime?: string;
   user?: string;
   network?: boolean;
-  persistent?: boolean;
-  host_dir?: string;
-  container_name?: string;
   ssh_key_file?: string;
   ssh_password?: string;
   ssh_use_agent?: boolean;
@@ -86,8 +80,7 @@ function flatten(s: Partial<SandboxConfig>): FlatForm {
   return {
     name: s.name || '',
     image: c.image || 'ghcr.io/zzir/sandbox:latest', host: c.host || '', runtime: c.runtime || '',
-    user: c.user || '', network: !!c.network, persistent: !!c.persistent,
-    host_dir: c.host_dir || '', container_name: c.container_name || '',
+    user: c.user || '', network: !!c.network,
     ssh_key_file: c.ssh_key_file || '', ssh_password: c.ssh_password || '',
     ssh_use_agent: !!c.ssh_use_agent, ssh_known_hosts: c.ssh_known_hosts || '',
     ssh_insecure_host_key: !!c.ssh_insecure_host_key,
@@ -102,8 +95,7 @@ function flatten(s: Partial<SandboxConfig>): FlatForm {
 function pack(form: FlatForm): PackedForm {
   const config: Record<string, unknown> = {
     image: form.image, host: form.host, runtime: form.runtime, user: form.user,
-    network: form.network, persistent: form.persistent,
-    host_dir: form.host_dir, container_name: form.container_name,
+    network: form.network,
   };
   if (form.host.startsWith('ssh://')) {
     config.ssh_use_agent = form.ssh_use_agent;
@@ -180,18 +172,6 @@ function SandboxForm({ initial, onSave, onCancel, onDelete, saving }: SandboxFor
         <Checkbox checked={form.network} onChange={e => set('network', e.target.checked)} />
         <FormControl.Label>Allow network access</FormControl.Label>
       </FormControl>
-      <FormControl>
-        <Checkbox checked={form.persistent} onChange={e => set('persistent', e.target.checked)} />
-        <FormControl.Label>Persistent container (reuse across executions)</FormControl.Label>
-      </FormControl>
-      {form.persistent && !remote && fc('Host directory',
-        <TextInput block value={form.host_dir} onChange={e => set('host_dir', e.target.value)} placeholder="/path/on/host" />,
-        'Host directory mounted at /workspace inside the container (commands always run in /workspace). Leave empty for the server --workspace. Local daemon only.',
-      )}
-      {form.persistent && fc('Container name',
-        <TextInput block value={form.container_name} onChange={e => set('container_name', e.target.value)} placeholder="e.g. sandbox-dev" />,
-        'Docker container name. Leave empty for a random name.',
-      )}
       {fc('Memory limit (MB)',
         <TextInput block type="number" value={form.memory_mb} onChange={e => set('memory_mb', e.target.value)} placeholder="unlimited" />,
         'Hard memory cap per container. Empty = unlimited.',

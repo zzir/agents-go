@@ -34,6 +34,7 @@ type AgentDeps struct {
 	McpServers       *store.McpServerStore
 	SandboxConfigs   *store.SandboxStore
 	Skills           *store.SkillStore
+	Projects         *store.ProjectStore
 	Memories         *store.MemoryStore
 	Settings         *settings.Reader
 	Sessions         *store.SessionStore
@@ -186,7 +187,7 @@ was. Your final message is the only account of this turn that leaves here — en
 with the outcome, not with a question.`
 
 // buildFullAgent is BuildFullAgent with the run-scoped extras: the session's
-// bound workDir for the sandbox tools, BACKGROUND awareness, and the owner
+// bound project for the sandbox tools, BACKGROUND awareness, and the owner
 // whose role gates save_workflow ("" = ungated, the full surface).
 //
 // A background run is one nobody is sitting in front of — a task's, a workflow
@@ -195,14 +196,14 @@ with the outcome, not with a question.`
 // cannot start a sequence either, since a workflow is what spawn_task starts
 // when told a name), and no plan or todo mode, because a plan review is an
 // approval nobody would ever answer.
-func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandboxID, workDir string, background bool, ownerID string) (*BuildResult, error) {
+func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandboxID, projectID string, background bool, ownerID string) (*BuildResult, error) {
 	if agentConfigID == "" {
 		return nil, fmt.Errorf("agent_config_id is required")
 	}
 	bc := &agentBuildCtx{
-		stack:   make(map[string]bool),
-		cache:   make(map[string]*BuildResult),
-		workDir: workDir,
+		stack:     make(map[string]bool),
+		cache:     make(map[string]*BuildResult),
+		projectID: projectID,
 	}
 	result, err := buildAgentFromConfig(ctx, deps, agentConfigID, sandboxID, bc)
 	if err == nil {
@@ -309,10 +310,10 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandbox
 type agentBuildCtx struct {
 	stack map[string]bool
 	cache map[string]*BuildResult
-	// workDir is the session's bound working directory, applied to every
+	// projectID is the session's bound project, applied to every
 	// sandbox toolset built for this run — handoff-target agents included, so
 	// one run sees one file system context throughout.
-	workDir string
+	projectID string
 	// releases collects the sandbox-instance references every build in this
 	// recursion acquired (the entry agent's and each handoff target's).
 	// Collected on the CONTEXT, not the per-agent results: only the top-level
@@ -556,7 +557,14 @@ func attachSandboxTools(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx,
 	if err != nil {
 		return fmt.Errorf("sandbox %s: %w", sandboxID, err)
 	}
-	tools, release, err := deps.SandboxManager.SandboxTools(sbCfg, bc.workDir, approveCommands)
+	if deps.Projects == nil {
+		return fmt.Errorf("sandbox %q: no project store is wired", sbCfg.Name)
+	}
+	proj, err := deps.Projects.Get(ctx, bc.projectID)
+	if err != nil {
+		return fmt.Errorf("sandbox %q: project %s: %w", sbCfg.Name, bc.projectID, err)
+	}
+	tools, release, err := deps.SandboxManager.SandboxTools(sbCfg, proj, approveCommands)
 	if err != nil {
 		return fmt.Errorf("sandbox %q: building tools: %w", sbCfg.Name, err)
 	}

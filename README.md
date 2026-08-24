@@ -53,9 +53,10 @@ your data, embeddable SDK. Solo or as a team.
    ```
 
    It listens on `http://127.0.0.1:9527` and prints an auth token at startup;
-   paste the token into the login screen. State lives in `data.db` in the
-   directory you ran it from (`--db`; a `postgres://` DSN uses PostgreSQL
-   instead); skills and file tools use `--workspace` (default `.`). All
+   paste the token into the login screen. A Docker daemon is required for
+   sandboxes (local, or a remote one over SSH). State lives in `data.db` in
+   the directory you ran it from (`--db`; a `postgres://` DSN uses PostgreSQL
+   instead); project trees live under `--workspace` (default `.`). All
    flags: [manual](cmd/agents-server/README.md#flags).
 
 3. **Add a provider, create an agent, chat.** Settings → Providers: an OpenAI

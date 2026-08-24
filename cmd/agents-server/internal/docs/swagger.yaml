@@ -357,6 +357,8 @@ components:
           type: string
         last_seq:
           type: integer
+        project_id:
+          type: string
         run_id:
           type: string
         sandbox_id:
@@ -367,8 +369,6 @@ components:
           $ref: '#/components/schemas/bridge.RunStatus'
         task:
           $ref: '#/components/schemas/bridge.TaskMeta'
-        work_dir:
-          type: string
       type: object
     bridge.RunStatus:
       enum:
@@ -445,6 +445,21 @@ components:
         tool_call_id:
           type: string
       type: object
+    docker.ManagedContainer:
+      properties:
+        created:
+          type: string
+        image:
+          type: string
+        name:
+          type: string
+        state:
+          description: running | exited | ...
+          type: string
+        status:
+          description: human-readable, e.g. "Up 2 hours"
+          type: string
+      type: object
     guardrails.Def:
       properties:
         blocking:
@@ -510,6 +525,8 @@ components:
             start (no run exists yet — approving launches it, rejecting cancels the
             execution).
           type: string
+        project_id:
+          type: string
         run_id:
           type: string
         sandbox_id:
@@ -534,8 +551,6 @@ components:
             SDK only persists the turn to `messages` on completion, so during the
             pause this is the only place the user's prompt is stored — the UI
             reconstructs the user bubble from it on reload.
-          type: string
-        work_dir:
           type: string
       type: object
     handler.SetOwnerRequest:
@@ -663,13 +678,13 @@ components:
             Plan asks the session to start this run in the planning phase (true) or
             out of it (false); absent leaves the phase as it stands.
           type: boolean
-        sandbox_id:
-          type: string
-        work_dir:
+        project_id:
           description: |-
-            WorkDir only matters until the session's first sandbox-carrying run
-            permanently binds (sandbox_id, work_dir); after that the server uses the
+            ProjectID only matters until the session's first sandbox-carrying run
+            permanently binds (sandbox_id, project_id); after that the server uses the
             bound values and ignores both fields.
+          type: string
+        sandbox_id:
           type: string
       type: object
     handler.createRunResp:
@@ -859,6 +874,16 @@ components:
           additionalProperties: {}
           type: object
       type: object
+    handler.projectReq:
+      properties:
+        name:
+          type: string
+        sandbox_id:
+          type: string
+      required:
+      - name
+      - sandbox_id
+      type: object
     handler.providerReq:
       properties:
         api_key:
@@ -882,15 +907,15 @@ components:
       properties:
         input:
           type: string
+        project_id:
+          type: string
         sandbox_id:
           description: |-
-            SandboxID/WorkDir bind a still-unbound session first — the project the
+            SandboxID/ProjectID bind a still-unbound session first — the project the
             composer had picked, or the dialog's — so the execution has its file and
             command tools; a bound session ignores them, as a run request's does.
           type: string
         session_id:
-          type: string
-        work_dir:
           type: string
       required:
       - session_id
@@ -1518,6 +1543,24 @@ components:
         updated_at:
           type: string
       type: object
+    store.Project:
+      properties:
+        created_at:
+          type: string
+        id:
+          type: string
+        name:
+          description: |-
+            Name is display only — the storage is keyed by ID, so a rename moves
+            nothing. Unique per (owner, sandbox) via idx_projects_owner_sandbox_name.
+          type: string
+        owner_id:
+          type: string
+        sandbox_id:
+          type: string
+        updated_at:
+          type: string
+      type: object
     store.PromptProfile:
       description: |-
         Prompt is what the session's last build put in front of the conversation
@@ -1616,15 +1659,6 @@ components:
           uniqueItems: false
         created_at:
           type: string
-        default_work_dir:
-          description: |-
-            DefaultWorkDir is the directory a session binding to this sandbox would
-            use when the user picks none — always the EXECUTION view (where commands
-            run: docker reports the container-side /workspace, never the host mount
-            source). WorkDirEditable reports whether a custom per-session workdir is
-            honored (local/ssh only). Both computed per response by the handler,
-            never stored.
-          type: string
         id:
           type: string
         name:
@@ -1638,12 +1672,6 @@ components:
             revision). Nothing keeps old revisions runnable: updates apply to everyone
             at the next run.
           type: integer
-        terminal:
-          description: |-
-            Terminal reports whether this sandbox can host an interactive web
-            terminal (ssh always; docker only in persistent mode; local never, by
-            design). Computed per response by the handler, never stored.
-          type: boolean
         type:
           description: |-
             Type is "docker" — the only backend (spec §5.27). Kept as a column so a
@@ -1651,8 +1679,6 @@ components:
           type: string
         updated_at:
           type: string
-        work_dir_editable:
-          type: boolean
       type: object
     store.Session:
       properties:
@@ -1693,17 +1719,18 @@ components:
             approved submit_plan clears it. A fork copies it, so a branched session
             inherits the phase it forked in.
           type: boolean
+        project_id:
+          type: string
         sandbox_id:
           description: |-
-            SandboxID/WorkDir are the session's PERMANENT sandbox binding: the first
-            run that carries a sandbox writes them (compare-and-set, see
+            SandboxID/ProjectID are the session's PERMANENT sandbox binding: the
+            first run that carries a sandbox writes them (compare-and-set, see
             BindSandboxIfEmpty) and they are never rewritten — the session's file
-            system context must not change under a conversation that already touched
-            it. An empty WorkDir means "the sandbox's own default".
+            system context must not change under a conversation that already
+            touched it. The project names the working tree the sandbox's container
+            mounts (spec §5.28).
           type: string
         updated_at:
-          type: string
-        work_dir:
           type: string
       type: object
     store.SessionGroup:
@@ -3422,6 +3449,87 @@ paths:
       summary: Playground generate
       tags:
       - playground
+  /projects:
+    get:
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/store.Project'
+                type: array
+          description: OK
+      security:
+      - BearerAuth: []
+      summary: List my projects
+      tags:
+      - projects
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.projectReq'
+                description: Name and sandbox
+                summary: project
+        description: Name and sandbox
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.Project'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: name already in use on this sandbox
+      security:
+      - BearerAuth: []
+      summary: Create project
+      tags:
+      - projects
+  /projects/{id}:
+    delete:
+      parameters:
+      - description: Project id
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: deleted
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: sessions still bound
+      security:
+      - BearerAuth: []
+      summary: Delete project
+      tags:
+      - projects
   /provider-types:
     get:
       description: The backends agents and fallback entries can select via provider_type.
@@ -3970,6 +4078,111 @@ paths:
       security:
       - BearerAuth: []
       summary: Update sandbox
+      tags:
+      - sandboxes
+  /sandboxes/{id}/containers:
+    get:
+      parameters:
+      - description: Sandbox id
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/docker.ManagedContainer'
+                type: array
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Gateway
+      security:
+      - BearerAuth: []
+      summary: List the sandbox's managed containers
+      tags:
+      - sandboxes
+  /sandboxes/{id}/containers/{name}:
+    delete:
+      parameters:
+      - description: Sandbox id
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - description: Container name (agents-…)
+        in: path
+        name: name
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: removed
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Gateway
+      security:
+      - BearerAuth: []
+      summary: Remove a managed container (rebuild)
+      tags:
+      - sandboxes
+  /sandboxes/{id}/containers/{name}/stop:
+    post:
+      parameters:
+      - description: Sandbox id
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - description: Container name (agents-…)
+        in: path
+        name: name
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: stopped
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Gateway
+      security:
+      - BearerAuth: []
+      summary: Stop a managed container
       tags:
       - sandboxes
   /sandboxes/{id}/test:

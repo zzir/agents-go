@@ -22,26 +22,24 @@ func execTool(t *testing.T, tools []*agents.Tool) *agents.Tool {
 	return nil
 }
 
-// exec_command advertises session_id only where a shell can actually be held
-// open — a persistent container. Elsewhere the schema must not promise
-// persistence the backend cannot deliver.
+// exec_command always advertises session_id: every container is persistent,
+// so a named shell can be held open on any sandbox.
 func TestSandboxToolsSessionSchemaPerBackend(t *testing.T) {
 	cases := []struct {
 		name string
 		cfg  *store.SandboxConfig
 		want bool
 	}{
-		{"docker persistent", &store.SandboxConfig{ID: "dp", Type: "docker", Config: json.RawMessage(`{"image":"i","persistent":true}`)}, true},
-		{"remote persistent", &store.SandboxConfig{ID: "rp", Type: "docker", Config: json.RawMessage(`{"image":"i","host":"ssh://u@h","persistent":true}`)}, true},
-		{"docker ephemeral", &store.SandboxConfig{ID: "de", Type: "docker", Config: json.RawMessage(`{"image":"i"}`)}, false},
+		{"local daemon", &store.SandboxConfig{ID: "dp", Type: "docker", Config: json.RawMessage(`{"image":"i"}`)}, true},
+		{"remote daemon", &store.SandboxConfig{ID: "rp", Type: "docker", Config: json.RawMessage(`{"image":"i","host":"ssh://u@h"}`)}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			m := NewManager(t.TempDir())
-			m.buildOverride = func(*store.SandboxConfig, string) (sandbox.Sandbox, error) {
+			m.buildOverride = func(*store.SandboxConfig, *store.Project) (sandbox.Sandbox, error) {
 				return &closeCountingSandbox{}, nil
 			}
-			tools, release, err := m.SandboxTools(tc.cfg, "", false)
+			tools, release, err := m.SandboxTools(tc.cfg, testProject("p"), false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -62,11 +60,11 @@ func TestSandboxToolsSessionSchemaPerBackend(t *testing.T) {
 // opening a shell nobody will ever close.
 func TestSandboxToolsReleaseClosesSessionPool(t *testing.T) {
 	m := NewManager(t.TempDir())
-	m.buildOverride = func(*store.SandboxConfig, string) (sandbox.Sandbox, error) {
+	m.buildOverride = func(*store.SandboxConfig, *store.Project) (sandbox.Sandbox, error) {
 		return &closeCountingSandbox{}, nil
 	}
 	cfg := &store.SandboxConfig{ID: "s", Type: "docker", Config: json.RawMessage(`{"image":"i","persistent":true}`)}
-	tools, release, err := m.SandboxTools(cfg, "", false)
+	tools, release, err := m.SandboxTools(cfg, testProject("p"), false)
 	if err != nil {
 		t.Fatal(err)
 	}

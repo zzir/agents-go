@@ -57,9 +57,9 @@ export interface TerminalViewHandle {
 
 interface TerminalViewProps {
   sandboxId: string;
-  // The sandbox-instance working directory this shell opens in ('' = the
-  // sandbox default) — a bound session's terminal follows its binding.
-  workDir?: string;
+  // The project whose (sandbox, project) container this shell opens into —
+  // required by terminal.open; a bound session's terminal follows its binding.
+  projectId: string;
   // Hidden tabs stay mounted so their session (xterm buffer + WebSocket)
   // survives tab switches; only the active tab is displayed.
   hidden: boolean;
@@ -71,7 +71,7 @@ interface TerminalViewProps {
 // session's lifetime is the component's: unmounting (closing the tab) ends
 // the shell.
 export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(function TerminalView(
-  { sandboxId, workDir, hidden, onStatus, onSelection }: TerminalViewProps,
+  { sandboxId, projectId, hidden, onStatus, onSelection }: TerminalViewProps,
   ref,
 ) {
   const mountRef = useRef<HTMLDivElement>(null);
@@ -161,7 +161,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
         case EV.authOk:
           ws.send(JSON.stringify({
             type: EV.terminalOpen,
-            payload: { sandbox_id: sandboxId, ...(workDir ? { work_dir: workDir } : {}), cols: term.cols, rows: term.rows },
+            payload: { sandbox_id: sandboxId, project_id: projectId, cols: term.cols, rows: term.rows },
           }));
           break;
         case EV.terminalReady:
@@ -230,8 +230,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
       webglRef.current = null;
       term.dispose(); // disposes loaded addons (fit, webgl) with it
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sandboxId]);
+  }, [sandboxId, projectId]);
 
   // WebGL renderer as progressive enhancement, attached ONLY to the visible
   // tab: hugely faster on output floods, but it must not run on hidden

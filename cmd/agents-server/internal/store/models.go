@@ -32,13 +32,14 @@ type Session struct {
 	// had to teach it a second special case.
 	Hidden        bool   `bun:"hidden"               json:"hidden,omitempty"`
 	AgentConfigID string `bun:"agent_config_id,nullzero,type:uuid" json:"agent_config_id,omitempty"`
-	// SandboxID/WorkDir are the session's PERMANENT sandbox binding: the first
-	// run that carries a sandbox writes them (compare-and-set, see
+	// SandboxID/ProjectID are the session's PERMANENT sandbox binding: the
+	// first run that carries a sandbox writes them (compare-and-set, see
 	// BindSandboxIfEmpty) and they are never rewritten — the session's file
-	// system context must not change under a conversation that already touched
-	// it. An empty WorkDir means "the sandbox's own default".
+	// system context must not change under a conversation that already
+	// touched it. The project names the working tree the sandbox's container
+	// mounts (spec §5.28).
 	SandboxID string `bun:"sandbox_id,nullzero,type:uuid" json:"sandbox_id,omitempty"`
-	WorkDir   string `bun:"work_dir"             json:"work_dir,omitempty"`
+	ProjectID string `bun:"project_id,nullzero,type:uuid" json:"project_id,omitempty"`
 	// Planning is the session's plan phase: true means its next run starts
 	// read-only until a plan is approved. It is materialized here — not derived
 	// from the entry log — because it is read on every run and every session GET,
@@ -98,12 +99,12 @@ type Task struct {
 	// recreates its schema rather than altering it, so no pre-attempt rows
 	// survive an upgrade.)
 	Attempt int `bun:"attempt" json:"attempt,omitempty"`
-	// ParentAgentConfigID / ParentSandboxID / ParentWorkDir snapshot the
+	// ParentAgentConfigID / ParentSandboxID / ParentProjectID snapshot the
 	// spawning run's configuration so the completion notification (and a retry)
 	// can start a run with the same setup.
 	ParentAgentConfigID string `bun:"parent_agent_config_id,nullzero,type:uuid" json:"-"`
 	ParentSandboxID     string `bun:"parent_sandbox_id,nullzero,type:uuid" json:"-"`
-	ParentWorkDir       string `bun:"parent_work_dir"        json:"-"`
+	ParentProjectID     string `bun:"parent_project_id,nullzero,type:uuid" json:"-"`
 	Status              string `bun:"status,notnull"     json:"status"`
 	Summary             string `bun:"summary,nullzero"   json:"summary,omitempty"`
 	// Result is the task's full final output. The row summary (and the wake
@@ -439,20 +440,6 @@ type SandboxConfig struct {
 	// retire instances or sever terminals over a rename.
 	RuntimeGen int64 `bun:"runtime_gen,notnull,default:1" json:"-"`
 
-	// Terminal reports whether this sandbox can host an interactive web
-	// terminal (ssh always; docker only in persistent mode; local never, by
-	// design). Computed per response by the handler, never stored.
-	Terminal bool `bun:"-" json:"terminal"`
-
-	// DefaultWorkDir is the directory a session binding to this sandbox would
-	// use when the user picks none — always the EXECUTION view (where commands
-	// run: docker reports the container-side /workspace, never the host mount
-	// source). WorkDirEditable reports whether a custom per-session workdir is
-	// honored (local/ssh only). Both computed per response by the handler,
-	// never stored.
-	DefaultWorkDir  string `bun:"-" json:"default_work_dir"`
-	WorkDirEditable bool   `bun:"-" json:"work_dir_editable"`
-
 	CreatedAt time.Time `bun:"created_at,notnull" json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,notnull" json:"updated_at"`
 }
@@ -478,18 +465,32 @@ type DockerConfig struct {
 	Network bool   `json:"network"`
 	// MemoryMB / CPUs cap the container's resources; 0 = unlimited (memory)
 	// and the daemon default (cpus).
-	MemoryMB   int64   `json:"memory_mb,omitempty"`
-	CPUs       float64 `json:"cpus,omitempty"`
-	Persistent bool    `json:"persistent"`
-	// HostDir is the host directory bind-mounted at /workspace inside a
-	// PERSISTENT container (the container-side working directory is always
-	// /workspace). Empty = the server's --workspace. Distinct from a working
-	// directory on purpose: it says where the data lives on the host, not
-	// where commands run.
-	HostDir          string `json:"host_dir,omitempty"`
-	ContainerName    string `json:"container_name,omitempty"`      // Docker container name (persistent mode only)
-	MaxReadFileBytes int64  `json:"max_read_file_bytes,omitempty"` // read_file cap in bytes; 0 = backend default (8 MiB)
+	MemoryMB         int64   `json:"memory_mb,omitempty"`
+	CPUs             float64 `json:"cpus,omitempty"`
+	MaxReadFileBytes int64   `json:"max_read_file_bytes,omitempty"` // read_file cap in bytes; 0 = backend default (8 MiB)
 }
+
+// Project is one user's working tree on one sandbox target (spec §5.28): the
+// unit a session binds and the container the sandbox's daemon runs for it
+// mounts at /workspace — a host directory under the server workspace for a
+// local daemon, a named volume on a remote one. The storage is derived from
+// the ids, never stored.
+type Project struct {
+	bun.BaseModel `bun:"table:projects,alias:pj"`
+
+	ID        string `bun:"id,pk,type:uuid"               json:"id"`
+	OwnerID   string `bun:"owner_id,notnull,type:uuid"    json:"owner_id"`
+	SandboxID string `bun:"sandbox_id,notnull,type:uuid"  json:"sandbox_id"`
+	// Name is display only — the storage is keyed by ID, so a rename moves
+	// nothing. Unique per (owner, sandbox) via idx_projects_owner_sandbox_name.
+	Name      string    `bun:"name,notnull"                json:"name"`
+	CreatedAt time.Time `bun:"created_at,notnull"          json:"created_at"`
+	UpdatedAt time.Time `bun:"updated_at,notnull"          json:"updated_at"`
+}
+
+// DefaultProjectName is the per-(owner, sandbox) project a run lands in when
+// none is picked — created on first use (ProjectStore.EnsureDefault).
+const DefaultProjectName = "scratch"
 
 // Guardrail is a stored guardrail definition. Mode selects the check logic:
 // "regex" uses Config.Pattern; "max_length" uses Config.MaxLength.
@@ -536,7 +537,7 @@ type PendingApproval struct {
 	Kind          string `bun:"kind"                   json:"kind,omitempty"`
 	AgentConfigID string `bun:"agent_config_id,nullzero,type:uuid" json:"agent_config_id,omitempty"`
 	SandboxID     string `bun:"sandbox_id,nullzero,type:uuid" json:"sandbox_id,omitempty"`
-	WorkDir       string `bun:"work_dir"               json:"work_dir,omitempty"`
+	ProjectID     string `bun:"project_id,nullzero,type:uuid" json:"project_id,omitempty"`
 	// State is the JSON from agents.RunState.MarshalJSON. Hidden from the API.
 	State string `bun:"state,type:text,notnull" json:"-"`
 	// ToolCalls is the JSON array of pending tool calls ([]PendingToolCall)
@@ -615,6 +616,11 @@ func (m *Provider) BeforeAppendModel(_ context.Context, q bun.Query) error {
 
 // BeforeAppendModel stamps the id and timestamps; bun invokes it on insert and update.
 func (m *SandboxConfig) BeforeAppendModel(_ context.Context, q bun.Query) error {
+	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
+}
+
+// BeforeAppendModel stamps the id and timestamps; bun invokes it on insert and update.
+func (m *Project) BeforeAppendModel(_ context.Context, q bun.Query) error {
 	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
 }
 

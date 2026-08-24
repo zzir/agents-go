@@ -31,10 +31,10 @@ type createRunReq struct {
 	Input         string `json:"input"`
 	AgentConfigID string `json:"agent_config_id"`
 	SandboxID     string `json:"sandbox_id"`
-	// WorkDir only matters until the session's first sandbox-carrying run
-	// permanently binds (sandbox_id, work_dir); after that the server uses the
+	// ProjectID only matters until the session's first sandbox-carrying run
+	// permanently binds (sandbox_id, project_id); after that the server uses the
 	// bound values and ignores both fields.
-	WorkDir string `json:"work_dir"`
+	ProjectID string `json:"project_id"`
 	// Plan asks the session to start this run in the planning phase (true) or
 	// out of it (false); absent leaves the phase as it stands.
 	Plan *bool `json:"plan"`
@@ -83,7 +83,7 @@ func (h *RunHandler) Create(c *gin.Context) {
 		return
 	}
 
-	runID, err := h.runner.StartRun(sessionID, req.AgentConfigID, req.SandboxID, req.WorkDir, req.Input, req.Plan, nil)
+	runID, err := h.runner.StartRun(sessionID, req.AgentConfigID, req.SandboxID, req.ProjectID, req.Input, req.Plan, nil)
 	if err != nil {
 		h.startError(c, err)
 		return
@@ -129,7 +129,7 @@ func (h *RunHandler) createAndWait(c *gin.Context, sessionID string, req createR
 	// just marshaled. Buffered so the callback never blocks if the client
 	// hangs up first.
 	done := make(chan *bridge.RunOutcome, 1)
-	runID, err := h.runner.StartRun(sessionID, req.AgentConfigID, req.SandboxID, req.WorkDir, req.Input, req.Plan, func(res *bridge.RunOutcome) {
+	runID, err := h.runner.StartRun(sessionID, req.AgentConfigID, req.SandboxID, req.ProjectID, req.Input, req.Plan, func(res *bridge.RunOutcome) {
 		done <- res
 	})
 	if err != nil {

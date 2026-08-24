@@ -2721,10 +2721,16 @@ fingerprint hashes **effective** values (the resolved user, the applied PIDs
 default), so equivalent spellings of one configuration still adopt.
 `ContainerWorkDir` is excluded on purpose — persistent mode passes the working
 directory per exec, so it does not change what the container *is*. A container
-without the label (foreign, or created before the label existed) is a hard
-error naming the remedy: remove or rename it. That cost lands once per legacy
-container and buys the guarantee that adoption can never widen a sandbox's
-blast radius.
+without the label (foreign) is a hard error naming the remedy: remove or
+rename it.
+
+Revised 2026-08-24 with derived container names (§5.28): a container that
+carries our label but a DIFFERENT fingerprint is ours from an older
+configuration — a config edit since it was created — and is **replaced**
+(removed, recreated) instead of erroring. With `KeepOnClose` the containers
+outlive the process and every config edit would otherwise strand its old
+container on the derived name forever. The ownership rule is unchanged: only
+the label decides ours-vs-foreign, and a foreign holder is never touched.
 
 ### 5.20 A shared connection is not a caller's to cancel
 
@@ -2905,6 +2911,46 @@ freezes while sessions are bound.
 Do not reintroduce a host-exec sandbox type or a raw remote-exec one; an
 isolation need beyond containers (VMs, gVisor) is a new backend decision
 argued here first — gVisor is already reachable today via `runtime: runsc`.
+
+### 5.28 A project is the unit of working storage, and containers are per (sandbox, project)
+
+Decided 2026-08-24. A **project** is one user's working tree on one sandbox
+target: `projects(id, owner_id, sandbox_id, name)`, name unique per (owner,
+sandbox) and display-only — storage is keyed by id, so a rename moves
+nothing. The sandbox affinity is deliberate: a tree lives on one daemon, and
+a project that could "move" between daemons would silently be two different
+sets of files. A session's permanent binding is `(sandbox_id, project_id)`;
+the old free-form working directory is gone — execution is always the
+container's /workspace, which mounts the project's storage:
+
+- **Local daemon**: bind mount of `<workspace>/<user>/<project id>`, where
+  `<user>` is the owner uuid's tail 12 hex chars. Every mount source is
+  SERVER-derived from ids — no user-typed path ever reaches a mount, which
+  retires the old host-side path validation wholesale. (A 12-hex collision
+  between two users merely shares a parent directory; the project segment is
+  the full uuid, so trees never collide.)
+- **Remote daemon**: the named volume `agents-proj-<project id tail>` on that
+  daemon. Same rows, different medium; the files are reachable through the
+  container (and its terminal), not a host path.
+
+**Containers are persistent-only, one per (sandbox, project)**, named
+`agents-<sandbox tail>-<project tail>` — deterministic, so restarts re-adopt
+by fingerprint (§5.19) instead of duplicating. `KeepOnClose` stops rather
+than removes on teardown: installed packages survive idle and restarts; a
+config edit replaces the container via the stale-ours adoption rule. /tmp is
+a tmpfs capped at 1g (RAM-backed — size accordingly), and on the local
+daemon an unset container user defaults to the server process's uid:gid so
+bind-mounted files belong to the operator, not nobody.
+
+Deletion contracts mirror the sandbox binding's: the bind CAS carries an
+EXISTS on the project row, a project delete carries NOT EXISTS over bound
+sessions (races settle in SQL), and deleting a sandbox cascades its
+(necessarily unbound) project rows. **Storage is never deleted by the
+server** — a removed project row leaves its directory or volume in place;
+reclaiming space is the operator's explicit act. A run naming no project
+lands in the owner's per-sandbox default ("scratch"), created on first use.
+Projects are the first PERSONAL configuration entity: every member manages
+their own; ownership is scoped in the handlers, not the admin gate.
 
 ---
 

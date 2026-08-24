@@ -33,7 +33,7 @@ type RunStopper interface {
 	// deleted session's (sandbox, workdir) binding when no other session
 	// references the pair — the instance (an ssh connection, a docker
 	// container) would otherwise live until process exit.
-	ReleaseSessionBinding(sandboxID, workDir string)
+	ReleaseSessionBinding(sandboxID, projectID string)
 	// SessionBusy reports whether a run is live on the session.
 	SessionBusy(sessionID string) bool
 }
@@ -213,7 +213,7 @@ func (h *SessionHandler) Get(c *gin.Context) {
 }
 
 // sessionPatchReq is the request body for Patch; absent fields are unchanged.
-// The sandbox binding is deliberately NOT patchable: (sandbox_id, work_dir) is
+// The sandbox binding is deliberately NOT patchable: (sandbox_id, project_id) is
 // fixed by the first sandbox-carrying run and never rewritten — switching
 // projects means starting (or forking into) another session.
 type sessionPatchReq struct {
@@ -332,7 +332,7 @@ func (h *SessionHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
 	// The binding, read before the cascade erases it: releasing the cached
 	// sandbox instance afterwards needs to know which pair this session held.
-	var boundSandbox, boundWorkDir string
+	var boundSandbox, boundProject string
 	sess, err := h.sessions.Get(c.Request.Context(), id)
 	if err != nil {
 		storeError(c, err)
@@ -343,7 +343,7 @@ func (h *SessionHandler) Delete(c *gin.Context) {
 		notFound(c)
 		return
 	}
-	boundSandbox, boundWorkDir = sess.SandboxID, sess.WorkDir
+	boundSandbox, boundProject = sess.SandboxID, sess.ProjectID
 	// Stop the session's live run and all its background tasks (bounded wait)
 	// BEFORE the cascade: a task still executing would keep writing entries
 	// and traces into rows this delete is about to remove.
@@ -356,7 +356,7 @@ func (h *SessionHandler) Delete(c *gin.Context) {
 	// After the cascade: the reference count the release consults no longer
 	// includes this session (or its cascade-deleted task children).
 	if boundSandbox != "" {
-		h.stopper.ReleaseSessionBinding(boundSandbox, boundWorkDir)
+		h.stopper.ReleaseSessionBinding(boundSandbox, boundProject)
 	}
 	c.Status(http.StatusNoContent)
 }
@@ -414,7 +414,7 @@ func (h *SessionHandler) Fork(c *gin.Context) {
 		// The sandbox binding is copied, not re-bound: a fork continues the
 		// same conversation over the same file system context.
 		SandboxID: src.SandboxID,
-		WorkDir:   src.WorkDir,
+		ProjectID: src.ProjectID,
 		// The plan phase carries over: a fork of a session mid-planning inherits
 		// the planning it forked in (what the entry-marker approach gave for
 		// free before the phase was materialized).

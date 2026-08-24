@@ -123,7 +123,10 @@ func TestForkCopiesSandboxBinding(t *testing.T) {
 		ID string `json:"id"`
 	}
 	_ = json.Unmarshal(w.Body.Bytes(), &src)
-	if won, err := sessions.BindSandboxIfEmpty(t.Context(), src.ID, "sb-1", "/srv/app", 1); err != nil || !won {
+	if err := store.NewProjectStore(db).Create(t.Context(), &store.Project{ID: "p-1", OwnerID: store.LocalUserID, SandboxID: "sb-1", Name: "p-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if won, err := sessions.BindSandboxIfEmpty(t.Context(), src.ID, "sb-1", "p-1", 1); err != nil || !won {
 		t.Fatalf("bind: won=%v err=%v", won, err)
 	}
 
@@ -133,16 +136,16 @@ func TestForkCopiesSandboxBinding(t *testing.T) {
 	}
 	var forked struct {
 		SandboxID string `json:"sandbox_id"`
-		WorkDir   string `json:"work_dir"`
+		ProjectID string `json:"project_id"`
 	}
 	_ = json.Unmarshal(w.Body.Bytes(), &forked)
-	if forked.SandboxID != "sb-1" || forked.WorkDir != "/srv/app" {
-		t.Fatalf("fork binding = (%q,%q), want the source's (sb-1,/srv/app)", forked.SandboxID, forked.WorkDir)
+	if forked.SandboxID != "sb-1" || forked.ProjectID != "p-1" {
+		t.Fatalf("fork binding = (%q,%q), want the source's (sb-1,p-1)", forked.SandboxID, forked.ProjectID)
 	}
 }
 
-// A session's (sandbox_id, work_dir) binding is immutable: PATCH carries no
-// binding fields, so a request naming work_dir changes nothing — switching
+// A session's (sandbox_id, project_id) binding is immutable: PATCH carries
+// no binding fields, so a request naming one changes nothing — switching
 // projects means starting (or forking into) another session.
 func TestPatchCannotMoveBinding(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -163,23 +166,26 @@ func TestPatchCannotMoveBinding(t *testing.T) {
 	}
 	_ = json.Unmarshal(w.Body.Bytes(), &sess)
 
-	if won, err := sessions.BindSandboxIfEmpty(t.Context(), sess.ID, "sb-1", "/w1", 1); err != nil || !won {
+	if err := store.NewProjectStore(db).Create(t.Context(), &store.Project{ID: "p-1", OwnerID: store.LocalUserID, SandboxID: "sb-1", Name: "p-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if won, err := sessions.BindSandboxIfEmpty(t.Context(), sess.ID, "sb-1", "p-1", 1); err != nil || !won {
 		t.Fatalf("bind: won=%v err=%v", won, err)
 	}
-	w = doJSON(t, engine, http.MethodPatch, "/sessions/"+sess.ID, `{"name":"renamed","work_dir":"/elsewhere"}`)
+	w = doJSON(t, engine, http.MethodPatch, "/sessions/"+sess.ID, `{"name":"renamed","project_id":"elsewhere"}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("patch: %d %s", w.Code, w.Body.String())
 	}
 	var patched struct {
 		Name      string `json:"name"`
 		SandboxID string `json:"sandbox_id"`
-		WorkDir   string `json:"work_dir"`
+		ProjectID string `json:"project_id"`
 	}
 	_ = json.Unmarshal(w.Body.Bytes(), &patched)
 	if patched.Name != "renamed" {
 		t.Fatalf("rename lost: %q", patched.Name)
 	}
-	if patched.SandboxID != "sb-1" || patched.WorkDir != "/w1" {
-		t.Fatalf("binding moved to (%q,%q), want (sb-1,/w1) untouched", patched.SandboxID, patched.WorkDir)
+	if patched.SandboxID != "sb-1" || patched.ProjectID != "p-1" {
+		t.Fatalf("binding moved to (%q,%q), want (sb-1,p-1) untouched", patched.SandboxID, patched.ProjectID)
 	}
 }

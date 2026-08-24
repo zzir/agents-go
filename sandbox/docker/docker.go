@@ -81,9 +81,10 @@ func (s *Sandbox) configFingerprint() string {
 		user = ""
 	}
 	h := sha256.New()
-	fmt.Fprintf(h, "image=%s\nruntime=%s\nuser=%s\nuserUnset=%t\nnetwork=%t\nworkdir=%s\nmemory=%d\ncpus=%v\npids=%d\n",
+	fmt.Fprintf(h, "image=%s\nruntime=%s\nuser=%s\nuserUnset=%t\nnetwork=%t\nworkdir=%s\nvolume=%s\ntmpfs=%s\nmemory=%d\ncpus=%v\npids=%d\n",
 		s.opts.Image, s.opts.Runtime, user, s.opts.UserUnset, s.opts.Network,
-		filepath.Clean(s.opts.WorkDir), s.opts.Limits.MemoryBytes, s.opts.Limits.CPUs, pids)
+		filepath.Clean(s.opts.WorkDir), s.opts.VolumeName, s.tmpfsSize(),
+		s.opts.Limits.MemoryBytes, s.opts.Limits.CPUs, pids)
 	return hex.EncodeToString(h.Sum(nil)[:16])
 }
 
@@ -122,6 +123,17 @@ type Options struct {
 	// When set, it replaces the anonymous volume so the container sees (and can
 	// modify) the host files directly. Typically used with Persistent mode.
 	WorkDir string
+	// VolumeName mounts the named Docker volume at /workspace instead of a
+	// host directory or an anonymous volume — durable storage on a REMOTE
+	// daemon, where a host path means nothing. Ignored when WorkDir is set.
+	VolumeName string
+	// TmpfsSize is the /tmp tmpfs size (e.g. "1g"); empty = "64m". RAM-backed.
+	TmpfsSize string
+	// KeepOnClose leaves the persistent container (stopped, not removed) on
+	// Close, so a later Sandbox with the same ContainerName and configuration
+	// adopts it — packages and files in the container survive process
+	// restarts and idle teardowns. Ignored in ephemeral mode.
+	KeepOnClose bool
 	// ContainerWorkDir is the working directory commands run in INSIDE the
 	// container: /workspace itself (the default when empty) or a subdirectory
 	// of it — the mount point never moves, but a session may work in one
@@ -133,6 +145,14 @@ type Options struct {
 	// with sandbox.ErrReadLimitExceeded instead of being loaded into host
 	// memory. Zero (or negative) means sandbox.DefaultMaxReadFileBytes.
 	MaxReadFileBytes int64
+}
+
+// tmpfsSize is the /tmp tmpfs size option: Options.TmpfsSize or the 64m default.
+func (s *Sandbox) tmpfsSize() string {
+	if s.opts.TmpfsSize != "" {
+		return s.opts.TmpfsSize
+	}
+	return "64m"
 }
 
 // containerWorkDir is the directory commands run in inside the container:
@@ -311,17 +331,27 @@ func (s *Sandbox) createContainer(ctx context.Context) (string, error) {
 	if err != nil {
 		// A fixed ContainerName can collide with a container WE left behind —
 		// a previous process run, or another Sandbox instance sharing the
-		// name. Adopt it when it matches what we would have created; a
-		// mismatched holder stays a hard error.
+		// name. Adopt it when it matches what we would have created; replace
+		// it when it is ours from an older configuration (a config edit);
+		// a foreign holder stays a hard error.
 		if s.opts.ContainerName != "" && cerrdefs.IsConflict(err) {
 			id, aerr := s.adoptNamed(ctx)
-			if aerr != nil {
+			if errors.Is(aerr, errStaleOurs) {
+				_, _ = s.cli.ContainerRemove(context.WithoutCancel(ctx), s.opts.ContainerName, client.ContainerRemoveOptions{Force: true, RemoveVolumes: false})
+				created2, cerr := s.cli.ContainerCreate(ctx, createOpts)
+				if cerr != nil {
+					return "", fmt.Errorf("docker sandbox: recreate after config change: %w", cerr)
+				}
+				created, err = created2, nil
+			} else if aerr != nil {
 				return "", fmt.Errorf("docker sandbox: create: %w (name %q held by an incompatible container: %v)", err, s.opts.ContainerName, aerr)
+			} else {
+				s.containerID = id
+				return id, nil
 			}
-			s.containerID = id
-			return id, nil
+		} else {
+			return "", fmt.Errorf("docker sandbox: create: %w", err)
 		}
-		return "", fmt.Errorf("docker sandbox: create: %w", err)
 	}
 	id := created.ID
 
@@ -365,12 +395,25 @@ func (s *Sandbox) adoptNamed(ctx context.Context) (string, error) {
 		return "", err
 	}
 	c := info.Container
-	if c.Config == nil || c.Config.Image != s.opts.Image {
-		image := ""
-		if c.Config != nil {
-			image = c.Config.Image
-		}
-		return "", fmt.Errorf("it runs image %q, want %q", image, s.opts.Image)
+	// Ownership first: a container without our label is FOREIGN and stays a
+	// hard error; one with our label but a different fingerprint is a stale
+	// build of ours (a config edit since it was created) and is replaced.
+	label := ""
+	if c.Config != nil {
+		label = c.Config.Labels[fingerprintLabel]
+	}
+	switch label {
+	case s.configFingerprint():
+		// Ours, same configuration.
+	case "":
+		return "", fmt.Errorf("it was not created by this sandbox (no %s label); remove or rename the container", fingerprintLabel)
+	default:
+		return "", errStaleOurs
+	}
+	// Belt to the fingerprint's braces on the two fields a drifted daemon
+	// could disagree about.
+	if c.Config.Image != s.opts.Image {
+		return "", errStaleOurs
 	}
 	if s.opts.WorkDir != "" {
 		src := ""
@@ -381,16 +424,8 @@ func (s *Sandbox) adoptNamed(ctx context.Context) (string, error) {
 			}
 		}
 		if filepath.Clean(src) != filepath.Clean(s.opts.WorkDir) {
-			return "", fmt.Errorf("it mounts %q at %s, want %q", src, workDir, s.opts.WorkDir)
+			return "", errStaleOurs
 		}
-	}
-	switch got := c.Config.Labels[fingerprintLabel]; got {
-	case s.configFingerprint():
-		// Ours, same configuration.
-	case "":
-		return "", fmt.Errorf("it was not created by this sandbox (no %s label); remove or rename the container", fingerprintLabel)
-	default:
-		return "", fmt.Errorf("it was created from a different configuration (network, user, runtime or limits changed); remove the container to recreate it under the current one")
 	}
 	if c.State == nil || !c.State.Running {
 		if _, err := s.cli.ContainerStart(ctx, c.ID, client.ContainerStartOptions{}); err != nil {
@@ -399,6 +434,10 @@ func (s *Sandbox) adoptNamed(ctx context.Context) (string, error) {
 	}
 	return c.ID, nil
 }
+
+// errStaleOurs marks a name conflict with a container THIS package created
+// from an older configuration: safe to replace, unlike a foreign holder.
+var errStaleOurs = errors.New("held by our container from a different configuration")
 
 // Exec implements sandbox.Sandbox.
 func (s *Sandbox) Exec(ctx context.Context, req sandbox.ExecRequest) (*sandbox.ExecResult, error) {
@@ -718,9 +757,12 @@ func (s *Sandbox) buildHostConfig(persistent bool) *container.HostConfig {
 		netMode = container.NetworkMode("default")
 	}
 	var mounts []mount.Mount
-	if s.opts.WorkDir != "" {
+	switch {
+	case s.opts.WorkDir != "":
 		mounts = []mount.Mount{{Type: mount.TypeBind, Source: s.opts.WorkDir, Target: workDir}}
-	} else {
+	case s.opts.VolumeName != "":
+		mounts = []mount.Mount{{Type: mount.TypeVolume, Source: s.opts.VolumeName, Target: workDir}}
+	default:
 		mounts = []mount.Mount{{Type: mount.TypeVolume, Target: workDir}}
 	}
 	hostCfg := &container.HostConfig{
@@ -730,7 +772,7 @@ func (s *Sandbox) buildHostConfig(persistent bool) *container.HostConfig {
 		CapDrop:        []string{"ALL"},
 		SecurityOpt:    []string{"no-new-privileges"},
 		Mounts:         mounts,
-		Tmpfs:          map[string]string{"/tmp": "rw,noexec,size=64m,mode=1777"},
+		Tmpfs:          map[string]string{"/tmp": "rw,noexec,size=" + s.tmpfsSize() + ",mode=1777"},
 		// Cap the container log on disk: without this, a flooding command
 		// ("yes" and friends) can write gigabytes into the daemon's log
 		// directory within a single timeout window.
@@ -883,7 +925,12 @@ func (s *Sandbox) Close() error {
 	s.containerID = ""
 	s.mu.Unlock()
 	if id != "" {
-		_, _ = s.cli.ContainerRemove(context.Background(), id, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
+		if s.opts.Persistent && s.opts.KeepOnClose {
+			timeout := 10
+			_, _ = s.cli.ContainerStop(context.Background(), id, client.ContainerStopOptions{Timeout: &timeout})
+		} else {
+			_, _ = s.cli.ContainerRemove(context.Background(), id, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
+		}
 	}
 	err := s.cli.Close()
 	if s.sshDial != nil {

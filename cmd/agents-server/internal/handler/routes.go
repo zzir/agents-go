@@ -28,6 +28,7 @@ type Handlers struct {
 	Triggers   *TriggerHandler
 	Guardrails *GuardrailHandler
 	Sandboxes  *SandboxHandler
+	Projects   *ProjectHandler
 	Traces     *TraceHandler
 	Playground *PlaygroundHandler
 	ChatGPT    *ChatGPTOAuthHandler
@@ -188,6 +189,14 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		h.registerTriggers(api)
 	}
 	{
+		// Projects are personal working trees: every member manages their own
+		// (the handlers scope by owner), so no admin gate here.
+		projects := api.Group("/projects")
+		projects.GET("", h.Projects.List)
+		projects.POST("", h.Projects.Create)
+		projects.DELETE("/:id", h.Projects.Delete)
+	}
+	{
 		guardrails := api.Group("/guardrails")
 		guardrails.GET("", h.Guardrails.List)
 		guardrails.POST("", admin, h.Guardrails.Create)
@@ -203,6 +212,9 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		sandboxes.PUT("/:id", admin, h.Sandboxes.Update)
 		sandboxes.DELETE("/:id", admin, h.Sandboxes.Delete)
 		sandboxes.POST("/:id/test", admin, h.Sandboxes.Test)
+		sandboxes.GET("/:id/containers", admin, h.Sandboxes.Containers)
+		sandboxes.POST("/:id/containers/:name/stop", admin, h.Sandboxes.StopContainer)
+		sandboxes.DELETE("/:id/containers/:name", admin, h.Sandboxes.RemoveContainer)
 	}
 	api.POST("/playground/generate", h.Playground.Generate)
 }

@@ -14,7 +14,7 @@ import { EdgeGraph, END, stepLabel, type Workflow, type WorkflowBudget, type Wor
 import { Disclosure } from '@/components/Disclosure';
 import { TriggersDialog } from '@/features/workflows/TriggersDialog';
 import { SessionPicker } from '@/features/sessions/SessionPicker';
-import { bindingWorkDirIssue, type SandboxConfigLite } from '@/lib/binding';
+import { projectLabel, type Project, type SandboxConfigLite } from '@/lib/binding';
 import '@/features/chat/workflow.css';
 import './workflow-panel.css';
 import './hub.css';
@@ -253,19 +253,17 @@ function RunDialog({ workflow, sessionId, onClose }: { workflow: Workflow; sessi
   const { data: targetSession } = useApi<{ sandbox_id?: string } | null>(
     () => (target ? api.sessions.get(target) as Promise<{ sandbox_id?: string }> : Promise.resolve(null)), [target]);
   const { data: sandboxes } = useApi<SandboxConfigLite[]>(() => api.sandboxes.list() as Promise<SandboxConfigLite[]>);
-  const [sandboxId, setSandboxId] = useState('');
-  const [workDir, setWorkDir] = useState('');
+  const { data: projects } = useApi<Project[]>(() => api.projects.list() as Promise<Project[]>);
+  const [projectId, setProjectId] = useState('');
   const unbound = !!target && !!targetSession && !targetSession.sandbox_id;
-  const sandbox = (sandboxes || []).find(sb => sb.id === sandboxId);
-  const editable = !!sandbox?.work_dir_editable;
-  const workDirIssue = sandboxId ? bindingWorkDirIssue(sandbox, workDir) : null;
+  const project = (projects || []).find(p => p.id === projectId);
   const run = async () => {
     setBusy(true);
     try {
-      const body: { session_id: string; input: string; sandbox_id?: string; work_dir?: string } = { session_id: target, input: input.trim() };
-      if (unbound && sandboxId) {
-        body.sandbox_id = sandboxId;
-        if (editable && workDir.trim()) body.work_dir = workDir.trim();
+      const body: { session_id: string; input: string; sandbox_id?: string; project_id?: string } = { session_id: target, input: input.trim() };
+      if (unbound && project) {
+        body.sandbox_id = project.sandbox_id;
+        body.project_id = project.id;
       }
       await api.workflows.run(workflow.id, body);
       toast.success(`Started "${workflow.name}" in the background — the result comes back to the conversation`);
@@ -280,7 +278,7 @@ function RunDialog({ workflow, sessionId, onClose }: { workflow: Workflow; sessi
     <Dialog title={`Run "${workflow.name}"`} onClose={onClose} width="large"
       footerButtons={[
         { buttonType: 'default', content: 'Cancel', onClick: onClose },
-        { buttonType: 'primary', content: busy ? 'Starting…' : 'Run', onClick: run, disabled: busy || !target || !!workDirIssue },
+        { buttonType: 'primary', content: busy ? 'Starting…' : 'Run', onClick: run, disabled: busy || !target },
       ]}>
       <Stack gap="condensed">
         <div className="wf-run-hint">
@@ -288,15 +286,11 @@ function RunDialog({ workflow, sessionId, onClose }: { workflow: Workflow; sessi
         </div>
         {fc('Conversation', <SessionPicker value={target} onChange={setTarget} />, 'Where the result comes back')}
         {unbound && (
-          <>
-            {fc('Project', <Select block value={sandboxId} onChange={e => { setSandboxId(e.target.value); setWorkDir((sandboxes || []).find(sb => sb.id === e.target.value)?.default_work_dir || ''); }}>
-              <Select.Option value="">None — chat only, no file or command tools</Select.Option>
-              {(sandboxes || []).map(sb => <Select.Option key={sb.id} value={sb.id}>{sb.name}{sb.type ? ` (${sb.type})` : ''}</Select.Option>)}
-            </Select>, 'This conversation has no project bound yet; the one picked here becomes its binding, as a first message\'s would')}
-            {sandboxId && editable && fc('Directory', <TextInput block value={workDir} onChange={e => setWorkDir(e.target.value)}
-              placeholder={sandbox?.default_work_dir || ''} validationStatus={workDirIssue ? 'error' : undefined} />,
-              workDirIssue || 'The project directory the steps work in')}
-          </>
+          fc('Project', <Select block value={projectId} onChange={e => setProjectId(e.target.value)}>
+            <Select.Option value="">None — chat only, no file or command tools</Select.Option>
+            {(projects || []).filter(p => (sandboxes || []).some(sb => sb.id === p.sandbox_id))
+              .map(p => <Select.Option key={p.id} value={p.id}>{projectLabel(p.name, nameOf(sandboxes, p.sandbox_id))}</Select.Option>)}
+          </Select>, 'This conversation has no project bound yet; the one picked here becomes its binding, as a first message\'s would')
         )}
         <Textarea block rows={6} value={input} onChange={e => setInput(e.target.value)} autoFocus
           placeholder="What this run is about — the brief that leads the first step" />

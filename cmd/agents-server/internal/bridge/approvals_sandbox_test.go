@@ -46,7 +46,12 @@ func TestBuildAgentRegistryIncludesSandboxTools(t *testing.T) {
 		Guardrails:     guardrails.NewResolver(store.NewGuardrailStore(db)),
 		McpManager:     mcpservers.NewManager(ctx, settings.NewReader(store.NewSettingStore(db))),
 		SandboxManager: sandboxes.NewManager(t.TempDir()),
+		Projects:       store.NewProjectStore(db),
 	})
+	proj := &store.Project{OwnerID: store.LocalUserID, SandboxID: sb.ID, Name: "p"}
+	if err := runner.Deps.Projects.Create(ctx, proj); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
 
 	hasExec := func(reg map[string]*agents.Agent) bool {
 		a := reg["coder"]
@@ -62,7 +67,7 @@ func TestBuildAgentRegistryIncludesSandboxTools(t *testing.T) {
 	}
 
 	// With the sandbox id: the resolved agent must carry exec_command.
-	withSb, _, err := runner.buildAgentRegistry(ctx, ac.ID, sb.ID, "", false, "")
+	withSb, _, err := runner.buildAgentRegistry(ctx, ac.ID, sb.ID, proj.ID, false, "")
 	if err != nil {
 		t.Fatalf("buildAgentRegistry(sandbox, false): %v", err)
 	}

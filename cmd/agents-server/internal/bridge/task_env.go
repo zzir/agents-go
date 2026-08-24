@@ -31,17 +31,17 @@ func (t taskResolver) Resolve(ctx context.Context, parentSessionID, name string)
 	// Snapshot the SPAWNING run's setup, not the task's: this payload comes
 	// back when the parent is woken, and the wake-up must use the agent the
 	// parent was talking to.
-	var parentAgentConfigID, parentSandboxID, parentWorkDir string
+	var parentAgentConfigID, parentSandboxID, parentProjectID string
 	if rid, ok := t.r.hub.ActiveRunForSession(parentSessionID); ok {
 		if info, ok := t.r.hub.Info(rid); ok {
-			parentAgentConfigID, parentSandboxID, parentWorkDir = info.AgentConfigID, info.SandboxID, info.WorkDir
+			parentAgentConfigID, parentSandboxID, parentProjectID = info.AgentConfigID, info.SandboxID, info.ProjectID
 		}
 	}
 	if parentAgentConfigID == "" {
 		if sess, err := t.r.Deps.Sessions.Get(ctx, parentSessionID); err == nil {
 			parentAgentConfigID = sess.AgentConfigID
 			if parentSandboxID == "" {
-				parentSandboxID, parentWorkDir = sess.SandboxID, sess.WorkDir
+				parentSandboxID, parentProjectID = sess.SandboxID, sess.ProjectID
 			}
 		}
 	}
@@ -57,7 +57,7 @@ func (t taskResolver) Resolve(ctx context.Context, parentSessionID, name string)
 		Inherit: store.EncodeInherit(store.Inherit{
 			AgentConfigID: parentAgentConfigID,
 			SandboxID:     parentSandboxID,
-			WorkDir:       parentWorkDir,
+			ProjectID:     parentProjectID,
 			TaskAgentID:   cfg.ID,
 		}),
 	}, nil
@@ -82,13 +82,13 @@ func (t taskLauncher) Launch(ctx context.Context, req tasks.LaunchRequest) error
 		if in.AgentConfigID == "" {
 			return fmt.Errorf("task notification undeliverable: no agent config for session %s", req.SessionID)
 		}
-		_, err := t.r.StartWakeRun(req.SessionID, in.AgentConfigID, in.SandboxID, in.WorkDir, req.Input, req.ParentRunID, nil)
+		_, err := t.r.StartWakeRun(req.SessionID, in.AgentConfigID, in.SandboxID, in.ProjectID, req.Input, req.ParentRunID, nil)
 		return err
 	}
 	// The task's own run. It shares the parent's sandbox (and workdir), and
 	// thereby its command-trust scope; the child's first run CAS-binds its
 	// hidden session with the same pair.
-	_, err := t.r.startRunWithID(req.RunID, req.SessionID, in.TaskAgentID, in.SandboxID, in.WorkDir, req.Input, "", nil, nil)
+	_, err := t.r.startRunWithID(req.RunID, req.SessionID, in.TaskAgentID, in.SandboxID, in.ProjectID, req.Input, "", nil, nil)
 	return err
 }
 

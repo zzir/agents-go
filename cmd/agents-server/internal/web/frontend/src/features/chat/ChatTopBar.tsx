@@ -3,7 +3,6 @@ import { FileDirectoryIcon, MeterIcon, PulseIcon, StackIcon, TerminalIcon } from
 import type { ReactElement } from 'react';
 import type { InspectorPanel } from '@/features/chat/ChatView';
 import { useChatSession } from '@/features/chat/ChatSessionContext';
-import { projectBase } from '@/lib/binding';
 import { useIsAdmin } from '@/lib/me';
 
 interface ChatTopBarProps {
@@ -16,9 +15,8 @@ interface ChatTopBarProps {
      the title once the first sandbox-carrying run has fixed it. The binding is
      permanent — switching projects means starting a new session (the
      composer's Project picker), so there is nothing to edit here. Shows only
-     the workdir basename; the full path and sandbox name live in the hover
-     title. */
-  binding?: { title: string; workDir: string } | null;
+     the project name; the sandbox name lives in the hover title. */
+  binding?: { title: string; projectName: string } | null;
 }
 
 export function ChatTopBar({
@@ -38,12 +36,12 @@ export function ChatTopBar({
       <div className="chat-topbar-info">
         <div className="chat-topbar-title">{sessionName}</div>
         {binding && (
-          // Quiet metadata next to the title: just the directory's basename —
-          // the name a person knows the project by — in muted text.
+          // Quiet metadata next to the title: just the project's name — the
+          // name a person knows it by — in muted text.
           <span className="chat-topbar-binding" title={binding.title}>
             <FileDirectoryIcon size={12} />
             <span className="chat-topbar-binding-path">
-              {projectBase(binding.workDir)}
+              {binding.projectName}
             </span>
           </span>
         )}

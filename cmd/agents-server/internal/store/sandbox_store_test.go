@@ -21,7 +21,8 @@ func TestSandboxDeleteIfUnreferenced(t *testing.T) {
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatal(err)
 	}
-	if won, err := sessions.BindSandboxIfEmpty(ctx, sess.ID, id("sb-1"), "/w", 1); err != nil || !won {
+	createProjectRow(t, db, id("p-1"), id("sb-1"))
+	if won, err := sessions.BindSandboxIfEmpty(ctx, sess.ID, id("sb-1"), id("p-1"), 1); err != nil || !won {
 		t.Fatalf("bind: won=%v err=%v", won, err)
 	}
 
@@ -83,7 +84,8 @@ func TestSandboxUpdateIdentityIfUnreferenced(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if won, err := sessions.BindSandboxIfEmpty(ctx, sess.ID, id("sb-1"), "/w", cur.Revision); err != nil || !won {
+	createProjectRow(t, db, id("p-1"), id("sb-1"))
+	if won, err := sessions.BindSandboxIfEmpty(ctx, sess.ID, id("sb-1"), id("p-1"), cur.Revision); err != nil || !won {
 		t.Fatalf("bind: won=%v err=%v", won, err)
 	}
 	movedAgain := &SandboxConfig{Name: "sb-1", Type: "docker", Config: []byte(`{"image":"i","host":"ssh://u@third-host"}`)}

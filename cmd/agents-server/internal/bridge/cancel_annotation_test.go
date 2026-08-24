@@ -24,6 +24,7 @@ func newBareRunner(t *testing.T) (*Runner, *bun.DB) {
 		Memories:         store.NewMemoryStore(db),
 		PendingApprovals: store.NewPendingApprovalStore(db),
 		SandboxConfigs:   store.NewSandboxStore(db),
+		Projects:         store.NewProjectStore(db),
 	})
 	return runner, db
 }

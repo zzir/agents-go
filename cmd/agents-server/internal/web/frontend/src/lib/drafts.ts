@@ -26,14 +26,14 @@ export const saveSessionAgent = (sessionId: string, agentConfigId: string): void
 export const loadSessionSandbox = (sessionId: string): string => loadKey('sandbox', sessionId);
 export const saveSessionSandbox = (sessionId: string, sandboxId: string): void => saveKey('sandbox', sessionId, sandboxId);
 
-// The user's pre-binding workdir choice; once the first run binds the session,
+// The user's pre-binding project choice; once the first run binds the session,
 // the server value wins and this draft stops mattering.
-export const loadSessionWorkdir = (sessionId: string): string => loadKey('workdir', sessionId);
-export const saveSessionWorkdir = (sessionId: string, workDir: string): void => saveKey('workdir', sessionId, workDir);
+export const loadSessionProject = (sessionId: string): string => loadKey('project', sessionId);
+export const saveSessionProject = (sessionId: string, projectId: string): void => saveKey('project', sessionId, projectId);
 
 export function clearSessionPrefs(sessionId: string): void {
   saveKey('draft', sessionId, '');
   saveKey('agent', sessionId, '');
   saveKey('sandbox', sessionId, '');
-  saveKey('workdir', sessionId, '');
+  saveKey('project', sessionId, '');
 }

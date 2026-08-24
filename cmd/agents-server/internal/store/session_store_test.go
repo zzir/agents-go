@@ -19,6 +19,16 @@ func createSandboxRow(t *testing.T, db *bun.DB, id string) {
 	}
 }
 
+// createProjectRow persists a project on the given sandbox — a bind's target
+// project must exist (the EXISTS guard mirrors ProjectStore.DeleteIfUnreferenced).
+func createProjectRow(t *testing.T, db *bun.DB, id, sandboxID string) {
+	t.Helper()
+	p := &Project{ID: id, OwnerID: LocalUserID, SandboxID: sandboxID, Name: id}
+	if err := NewProjectStore(db).Create(context.Background(), p); err != nil {
+		t.Fatalf("create project %s: %v", id, err)
+	}
+}
+
 // deleting a task's hidden child session directly must remove the owning
 // task row too, so no orphan tasks row is left pointing at a deleted session.
 func TestSessionDeleteRemovesOwningTask(t *testing.T) {
@@ -101,11 +111,13 @@ func TestBindSandboxIfEmptyKeepsTheFirstBinding(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	won, err := sessions.BindSandboxIfEmpty(ctx, sess.ID, id("sb-1"), "/w1", 1)
+	createProjectRow(t, db, id("p-1"), id("sb-1"))
+	createProjectRow(t, db, id("p-2"), id("sb-2"))
+	won, err := sessions.BindSandboxIfEmpty(ctx, sess.ID, id("sb-1"), id("p-1"), 1)
 	if err != nil || !won {
 		t.Fatalf("first bind: won=%v err=%v, want a win", won, err)
 	}
-	won, err = sessions.BindSandboxIfEmpty(ctx, sess.ID, id("sb-2"), "/w2", 1)
+	won, err = sessions.BindSandboxIfEmpty(ctx, sess.ID, id("sb-2"), id("p-2"), 1)
 	if err != nil || won {
 		t.Fatalf("second bind: won=%v err=%v, want a silent loss", won, err)
 	}
@@ -113,33 +125,33 @@ func TestBindSandboxIfEmptyKeepsTheFirstBinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got.SandboxID != id("sb-1") || got.WorkDir != "/w1" {
-		t.Fatalf("bound to (%q,%q), want the first binding (sb-1,/w1)", got.SandboxID, got.WorkDir)
+	if got.SandboxID != id("sb-1") || got.ProjectID != id("p-1") {
+		t.Fatalf("bound to (%q,%q), want the first binding (sb-1,p-1)", got.SandboxID, got.ProjectID)
 	}
 
 	// Binding nothing and binding a missing session are quiet non-events.
-	if won, err := sessions.BindSandboxIfEmpty(ctx, sess.ID, "", "/x", 1); err != nil || won {
+	if won, err := sessions.BindSandboxIfEmpty(ctx, sess.ID, "", id("p-1"), 1); err != nil || won {
 		t.Fatalf("empty sandbox: won=%v err=%v, want a no-op", won, err)
 	}
-	if won, err := sessions.BindSandboxIfEmpty(ctx, NewID(), id("sb-3"), "", 1); err != nil || won {
+	if won, err := sessions.BindSandboxIfEmpty(ctx, NewID(), id("sb-1"), id("p-1"), 1); err != nil || won {
 		t.Fatalf("missing session: won=%v err=%v, want a no-op", won, err)
 	}
 
-	// An empty workDir is a valid binding value ("the sandbox's own default").
+	// A vanished PROJECT loses the same way a vanished config does.
 	other := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "o"}
 	if err := sessions.Create(ctx, other); err != nil {
 		t.Fatalf("create other: %v", err)
 	}
-	if won, err := sessions.BindSandboxIfEmpty(ctx, other.ID, id("sb-1"), "", 1); err != nil || !won {
-		t.Fatalf("empty-workdir bind: won=%v err=%v, want a win", won, err)
+	if won, err := sessions.BindSandboxIfEmpty(ctx, other.ID, id("sb-1"), NewID(), 1); err != nil || won {
+		t.Fatalf("vanished-project bind: won=%v err=%v, want a quiet loss", won, err)
 	}
-	if won, err := sessions.BindSandboxIfEmpty(ctx, other.ID, id("sb-1"), "/late", 1); err != nil || won {
-		t.Fatalf("rebind after empty-workdir bind: won=%v err=%v, want a loss", won, err)
+	if won, err := sessions.BindSandboxIfEmpty(ctx, other.ID, id("sb-1"), id("p-1"), 1); err != nil || !won {
+		t.Fatalf("valid bind after the loss: won=%v err=%v, want a win", won, err)
 	}
 }
 
 // The reference count behind "may this cached instance be released": exact
-// (config, workdir) pairs, dropping to zero when the last bound session goes.
+// (config, project) pairs, dropping to zero when the last bound session goes.
 func TestCountBindingRefs(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
@@ -148,25 +160,28 @@ func TestCountBindingRefs(t *testing.T) {
 	createSandboxRow(t, db, id("sb-1"))
 	createSandboxRow(t, db, id("sb-2"))
 
-	mk := func(sandboxID, workDir string) *Session {
+	createProjectRow(t, db, id("p-1"), id("sb-1"))
+	createProjectRow(t, db, id("p-2"), id("sb-1"))
+	createProjectRow(t, db, id("p-3"), id("sb-2"))
+	mk := func(sandboxID, projectID string) *Session {
 		s := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "s"}
 		if err := sessions.Create(ctx, s); err != nil {
 			t.Fatalf("create: %v", err)
 		}
 		if sandboxID != "" {
-			if won, err := sessions.BindSandboxIfEmpty(ctx, s.ID, sandboxID, workDir, 1); err != nil || !won {
+			if won, err := sessions.BindSandboxIfEmpty(ctx, s.ID, sandboxID, projectID, 1); err != nil || !won {
 				t.Fatalf("bind: won=%v err=%v", won, err)
 			}
 		}
 		return s
 	}
-	a := mk(id("sb-1"), "/w1")
-	mk(id("sb-1"), "/w2")
-	mk(id("sb-2"), "/w1")
+	a := mk(id("sb-1"), id("p-1"))
+	mk(id("sb-1"), id("p-2"))
+	mk(id("sb-2"), id("p-3"))
 	mk("", "")
 
-	if n, err := sessions.CountBindingRefs(ctx, id("sb-1"), "/w1"); err != nil || n != 1 {
-		t.Fatalf("CountBindingRefs(sb-1,/w1) = %d, %v; want 1", n, err)
+	if n, err := sessions.CountBindingRefs(ctx, id("sb-1"), id("p-1")); err != nil || n != 1 {
+		t.Fatalf("CountBindingRefs(sb-1,p-1) = %d, %v; want 1", n, err)
 	}
 	if n, err := sessions.CountBindingRefs(ctx, NewID(), ""); err != nil || n != 0 {
 		t.Fatalf("CountBindingRefs(sb-none) = %d, %v; want 0", n, err)
@@ -174,7 +189,7 @@ func TestCountBindingRefs(t *testing.T) {
 	if err := sessions.Delete(ctx, a.ID); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	if n, err := sessions.CountBindingRefs(ctx, id("sb-1"), "/w1"); err != nil || n != 0 {
+	if n, err := sessions.CountBindingRefs(ctx, id("sb-1"), id("p-1")); err != nil || n != 0 {
 		t.Fatalf("CountBindingRefs after delete = %d, %v; want 0", n, err)
 	}
 }
@@ -192,7 +207,7 @@ func TestBindSandboxRefusesVanishedTarget(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	// No sandbox config row at all — the delete already landed.
-	won, err := sessions.BindSandboxIfEmpty(ctx, sess.ID, NewID(), "/w", 1)
+	won, err := sessions.BindSandboxIfEmpty(ctx, sess.ID, NewID(), NewID(), 1)
 	if err != nil || won {
 		t.Fatalf("bind to a vanished config: won=%v err=%v, want a quiet loss", won, err)
 	}
@@ -209,21 +224,22 @@ func TestBindSandboxIfEmptyRace(t *testing.T) {
 	sessions := NewSessionStore(db)
 	createSandboxRow(t, db, id("sb-a"))
 	createSandboxRow(t, db, id("sb-b"))
+	createProjectRow(t, db, id("p-a"), id("sb-a"))
+	createProjectRow(t, db, id("p-b"), id("sb-b"))
 
 	sess := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "s"}
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	results := make(chan bool, 2)
-	for i, wd := range []string{"/a", "/b"} {
-		go func(sb, wd string) {
-			won, err := sessions.BindSandboxIfEmpty(ctx, sess.ID, sb, wd, 1)
+	for _, n := range []string{"a", "b"} {
+		go func(sb, pj string) {
+			won, err := sessions.BindSandboxIfEmpty(ctx, sess.ID, sb, pj, 1)
 			if err != nil {
 				t.Errorf("bind %s: %v", sb, err)
 			}
 			results <- won
-		}(id("sb-"+wd[1:]), wd)
-		_ = i
+		}(id("sb-"+n), id("p-"+n))
 	}
 	wins := 0
 	for range 2 {
@@ -267,7 +283,7 @@ func TestSessionDeleteParentCascadesTask(t *testing.T) {
 	}
 }
 
-// The bind CAS matches the revision its workdir was validated against: a
+// The bind CAS matches the revision its plan was validated against: a
 // config updated between the plan's read and the write makes the bind lose —
 // the re-plan then validates against the new revision — instead of fixing a
 // workdir vetted against values that no longer hold.
@@ -278,6 +294,7 @@ func TestBindSandboxRefusesAStaleRevision(t *testing.T) {
 	sessions := NewSessionStore(db)
 	sandboxes := NewSandboxStore(db)
 	createSandboxRow(t, db, id("sb-1"))
+	createProjectRow(t, db, id("p-1"), id("sb-1"))
 
 	// The config moves to revision 2 after the caller read revision 1.
 	up := &SandboxConfig{Name: "sb-1", Type: "docker", Config: []byte(`{"image":"i","host":"ssh://u@h2"}`)}
@@ -289,14 +306,14 @@ func TestBindSandboxRefusesAStaleRevision(t *testing.T) {
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatal(err)
 	}
-	if won, err := sessions.BindSandboxIfEmpty(ctx, sess.ID, id("sb-1"), "/w", 1); err != nil || won {
+	if won, err := sessions.BindSandboxIfEmpty(ctx, sess.ID, id("sb-1"), id("p-1"), 1); err != nil || won {
 		t.Fatalf("stale-revision bind: won=%v err=%v, want a quiet loss", won, err)
 	}
 	if got, _ := sessions.Get(ctx, sess.ID); got.SandboxID != "" {
 		t.Fatalf("session bound at a stale revision: %q", got.SandboxID)
 	}
 	// The re-read revision binds.
-	if won, err := sessions.BindSandboxIfEmpty(ctx, sess.ID, id("sb-1"), "/w", 2); err != nil || !won {
+	if won, err := sessions.BindSandboxIfEmpty(ctx, sess.ID, id("sb-1"), id("p-1"), 2); err != nil || !won {
 		t.Fatalf("current-revision bind: won=%v err=%v", won, err)
 	}
 }
