@@ -137,18 +137,21 @@ type AgentConfig struct {
 	// Scope is the row's visibility (spec §5.29): ScopePrivate — the owner's
 	// alone — or ScopeGlobal, readable by every member and written by admins.
 	// OwnerID is set exactly when the scope is private.
-	Scope        string `bun:"scope,notnull"                 json:"scope"`
-	OwnerID      string `bun:"owner_id,nullzero,type:uuid"   json:"owner_id,omitempty"`
-	ID           string `bun:"id,pk,type:uuid" json:"id"`
-	Name         string `bun:"name,notnull"   json:"name"`
+	Scope   string `bun:"scope,notnull"                 json:"scope"`
+	OwnerID string `bun:"owner_id,nullzero,type:uuid"   json:"owner_id,omitempty"`
+	ID      string `bun:"id,pk,type:uuid" json:"id"`
+	Name    string `bun:"name,notnull"   json:"name"`
+	// Description is what this agent is FOR, in a sentence — the text an
+	// automatic agent picker will match a request against (not the model-facing
+	// instructions).
+	Description  string `bun:"description,nullzero" json:"description,omitempty"`
 	Instructions string `bun:"instructions"   json:"instructions"`
 	Model        string `bun:"model"          json:"model"`
 	// ProviderID names the Provider row this agent reaches its model through —
 	// a COLUMN rather than a field in a JSON group, because it is a reference
 	// and referential integrity has to be expressible in SQL (the same reason
-	// sessions.sandbox_id is one). Empty means the built-in default: the
-	// openai backend on the global api-key setting, which is what an agent
-	// created before any provider existed runs on.
+	// sessions.sandbox_id is one). Empty reaches no credential: the run fails
+	// its pre-flight until the agent names a provider (spec §5.30).
 	ProviderID string `bun:"provider_id,nullzero,type:uuid" json:"provider_id,omitempty"`
 	// ContextWindow is the model's window in tokens, declared rather than
 	// discovered — no provider reports it on a response. It sits beside Model
@@ -749,7 +752,7 @@ func (m *AuthToken) BeforeAppendModel(_ context.Context, q bun.Query) error {
 // BeforeAppendModel mints the id on insert; bun invokes it on insert and update.
 func (m *TraceEvent) BeforeAppendModel(_ context.Context, q bun.Query) error {
 	if _, ok := q.(*bun.InsertQuery); ok && m.ID == "" {
-		m.ID = NewID()
+		m.ID = NewTimeID() // append-heavy table: time-ordered ids (see NewTimeID)
 	}
 	return nil
 }

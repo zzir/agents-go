@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { TextInput, Textarea, Label, FormControl, Checkbox, Select, Stack } from '@primer/react';
+import { TextInput, Textarea, FormControl, Checkbox, Select, Stack } from '@primer/react';
 import { TokenListInput } from '@/components/TokenListInput';
 import { FormActions } from '@/components/FormActions';
 import { CrudPanel, RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
@@ -14,7 +14,6 @@ import { toast } from '@/lib/toast';
 import { Disclosure } from '@/components/Disclosure';
 import { type Skill, type SkillGroup, groupBySource } from '@/lib/skills';
 import { providerMeta, providerFacts, type ProviderTypeInfo } from '@/lib/providers';
-import { BADGE } from '@/lib/badges';
 
 // The agent-config REST payload nests these scalar settings under JSON group
 // objects. The form state stays flat, so flattenConfig lifts a loaded config's
@@ -55,6 +54,7 @@ function nestConfig(flat: Record<string, unknown>): Record<string, unknown> {
 
 interface AgentFormData {
   name: string;
+  description: string;
   instructions: string;
   model: string;
   provider_id: string;
@@ -98,6 +98,7 @@ interface McpServer {
 interface Agent {
   id: string | number;
   name: string;
+  description?: string;
   model: string;
   provider_id?: string;
   instructions: string;
@@ -150,7 +151,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
   };
   const initMs = parseModelSettings() as { reasoning?: { effort?: string }; service_tier?: string; extra_body?: Record<string, unknown>; temperature?: number; top_p?: number; max_tokens?: number };
   const [form, setForm] = useState<AgentFormData>({
-    name: '', instructions: '', model: 'gpt-5.5',
+    name: '', description: '', instructions: '', model: 'gpt-5.5',
     provider_id: '', context_window: 0,
     max_turns: 0, handoff_description: '',
     disable_tool_choice_reset: false, stop_at_tools: '',
@@ -231,6 +232,9 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
   return (
     <Stack gap="normal">
       {fc('Name', <TextInput value={form.name} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('name', e.target.value)} placeholder="e.g. Code Assistant" block />)}
+      {fc('Description',
+        <TextInput value={form.description} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('description', e.target.value)} placeholder="What this agent is for, in a sentence" block />,
+        'Used to pick the right agent automatically — not sent to the model as instructions')}
 
       {/* The endpoint is a reference: its backend, credential and base URL
           live on the provider row, which is also where a key is entered. */}
@@ -499,26 +503,6 @@ export function AgentConfigPanel() {
   const { data: providerTypes } = useApi<ProviderTypeInfo[]>(() => api.providerTypes.list() as Promise<ProviderTypeInfo[]>);
   const { data: providers } = useApi<ProviderRef[]>(() => api.providers.list() as Promise<ProviderRef[]>);
 
-  // Number of MCP servers this agent references that still exist.
-  const mcpCount = (toolsJson: string): number => {
-    if (!mcpServers) return 0;
-    try {
-      const ids: (string | number)[] = JSON.parse(toolsJson || '[]');
-      return ids.filter(id => mcpServers.some(s => s.id === id)).length;
-    } catch { return 0; }
-  };
-
-  // Number of skills enabled for this agent. An empty/absent skills field means
-  // "not customized" -> every installed skill (mirrors AgentForm's effectiveSkills).
-  const skillCount = (skillsJson?: string): number => {
-    const all = skills || [];
-    if (!skillsJson) return all.length;
-    try {
-      const ids: string[] = JSON.parse(skillsJson);
-      return ids.filter(id => all.some(sk => sk.id === id)).length;
-    } catch { return all.length; }
-  };
-
   // The key remounts the form when the seed changes; the fork seed drops the
   // id (so nothing treats it as the source row), sheds the source's
   // scope/owner (the copy lands like any create: private, the caller's) and
@@ -542,24 +526,15 @@ export function AgentConfigPanel() {
           ? async () => { if (await remove(editing.id, editing.name)) cancel(); } : null}
         empty="No agents configured. Add one to customize model, provider, and behavior.">
         {agents.map(a => {
-          const mcp = mcpCount(a.tools);
-          const skl = skillCount(a.skills);
           const rowProvider = (providers || []).find(p => p.id === a.provider_id);
-          const pmeta = providerMeta(rowProvider?.type ?? '');
           return (
             <ResourceRow key={a.id}
               title={a.name}
-              badges={<>
-                <ScopeBadge row={a} meId={me?.id} />
-                {/* An unset or vanished provider is not the OpenAI default any
-                    more — it is a row that cannot run; say so, in gray. */}
-                {rowProvider
-                  ? <Label variant={pmeta.badgeVariant}>{rowProvider.name}</Label>
-                  : <Label variant={BADGE.type}>No endpoint</Label>}
-                {mcp > 0 && <Label variant={BADGE.count}>{'MCP·' + mcp}</Label>}
-                {skl > 0 && <Label variant={BADGE.count}>{'Skills·' + skl}</Label>}
-              </>}
-              meta={<span>{a.model || 'default model'}</span>}
+              badges={<ScopeBadge row={a} meId={me?.id} />}
+              sub={a.description || undefined}
+              // One meta line instead of a strip of labels: model@endpoint. An
+              // unset or vanished provider is a row that cannot run — say so.
+              meta={<span>{(a.model || 'no model') + (rowProvider ? '@' + rowProvider.name : ' · no endpoint')}</span>}
               actions={<RowActionsMenu name={a.name} editReadOnly={!rowEditable(a)} onEdit={() => startEdit(a)}
                 onFork={() => startFork(a)}
                 scope={isAdmin ? { row: a, setScope: api.agents.setScope, onDone: reload } : undefined} />}

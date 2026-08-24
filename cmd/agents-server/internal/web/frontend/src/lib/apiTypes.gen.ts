@@ -6931,6 +6931,12 @@ export interface components {
             context_window?: number;
             created_at?: string;
             /**
+             * @description Description is what this agent is FOR, in a sentence — the text an
+             *     automatic agent picker will match a request against (not the model-facing
+             *     instructions).
+             */
+            description?: string;
+            /**
              * @description ErrorHandlers is a JSON object keyed by error kind (max_turns /
              *     model_refusal / invalid_final_output), each entry carrying a static
              *     final_output (a JSON value) and an optional exclude_from_history flag.
@@ -6950,9 +6956,8 @@ export interface components {
              * @description ProviderID names the Provider row this agent reaches its model through —
              *     a COLUMN rather than a field in a JSON group, because it is a reference
              *     and referential integrity has to be expressible in SQL (the same reason
-             *     sessions.sandbox_id is one). Empty means the built-in default: the
-             *     openai backend on the global api-key setting, which is what an agent
-             *     created before any provider existed runs on.
+             *     sessions.sandbox_id is one). Empty reaches no credential: the run fails
+             *     its pre-flight until the agent names a provider (spec §5.30).
              */
             provider_id?: string;
             resilience?: components["schemas"]["store.ResilienceGroup"];
