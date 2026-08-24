@@ -16,6 +16,9 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  /* Anchor absolute descendants (Primer's VisuallyHidden) so they scroll and
+     clip with the pane instead of extending the document. */
+  position: relative;
   padding: var(--base-size-24);
 }
 

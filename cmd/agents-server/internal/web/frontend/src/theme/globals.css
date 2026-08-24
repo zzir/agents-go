@@ -87,6 +87,9 @@ a:hover {
     flex-direction: column;
     height: 100vh;
     overflow: hidden;
+    /* Positioned so an absolute stray inside any pane clips here instead of
+       giving the document scroll range (the window must never scroll). */
+    position: relative;
 }
 
 /* Primer portals its overlays into this root and orders them by DOM position,
