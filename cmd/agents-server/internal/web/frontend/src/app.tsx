@@ -184,8 +184,10 @@ function PanelDialog({ title, tabs, readOnly, onClose }: { title: string; tabs: 
       // Both sides scale with the viewport and cap, so the dialog stays a
       // landscape box on a large screen instead of a column (a capped width
       // under an uncapped height); Primer's own max-* still clamp small ones.
-      // A narrow screen takes Primer's fullscreen instead.
-      style={narrow ? undefined : { width: 'clamp(960px, 80dvw, 1600px)', height: 'clamp(560px, 85dvh, 1000px)' }}
+      // The width cap is the nav plus the 1100px content column plus margins
+      // — wider only adds blank space. A narrow screen takes Primer's
+      // fullscreen instead.
+      style={narrow ? undefined : { width: 'clamp(960px, 80dvw, 1360px)', height: 'clamp(560px, 85dvh, 1000px)' }}
       renderBody={({ children }) => (
         <Dialog.Body className="settings-body" style={{ padding: 0 }}>
           {children}

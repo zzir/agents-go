@@ -397,11 +397,19 @@ a:hover {
 }
 
 /* A centered content column, like the Workflows hub's: lists and tables
-   take its width, a form its own 768px on the column's left edge. Side
-   margins (not padding) so the scrollbar sits at the dialog's edge. */
+   take its width. Side margins (not padding) so the scrollbar sits at the
+   dialog's edge. */
 .settings-content > * {
     max-width: 1100px;
     margin-inline: max(var(--base-size-24), calc((100% - 1100px) / 2));
+}
+
+/* A pure-form page (it renders a .settings-form) narrows the whole column
+   to the form's reading width and keeps it centered — symmetric margins
+   instead of a lopsided gap on the form's right. */
+.settings-content:has(.settings-form) > * {
+    max-width: 768px;
+    margin-inline: max(var(--base-size-24), calc((100% - 768px) / 2));
 }
 
 .settings-readonly-note {
