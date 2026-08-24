@@ -45,6 +45,12 @@ func TestConfigFingerprint(t *testing.T) {
 	if fp(same) != fp(base) {
 		t.Error("the default PIDs limit spelled explicitly changed the fingerprint")
 	}
+	// The default tmpfs size spelled explicitly is the same container.
+	same = base
+	same.TmpfsSize = "64m"
+	if fp(same) != fp(base) {
+		t.Error("the default tmpfs size spelled explicitly changed the fingerprint")
+	}
 	// UserUnset makes any User value moot (the container runs the image
 	// default either way), so a leftover User must not split the fingerprint.
 	unsetA, unsetB := base, base
@@ -82,6 +88,13 @@ func TestConfigFingerprint(t *testing.T) {
 	o = base
 	o.Limits.PIDs = 64
 	diff["pids"] = o
+	o = base
+	o.WorkDir = ""
+	o.VolumeName = "proj-vol"
+	diff["volumeName"] = o
+	o = base
+	o.TmpfsSize = "1g"
+	diff["tmpfsSize"] = o
 	for name, opt := range diff {
 		if fp(opt) == fp(base) {
 			t.Errorf("changing %s did not change the fingerprint", name)
