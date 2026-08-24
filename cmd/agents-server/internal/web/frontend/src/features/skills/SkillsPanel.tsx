@@ -88,18 +88,24 @@ export function SkillsPanel() {
   const [mode, setMode] = useState<Mode | null>(null);
   const [importUrl, setImportUrl] = useState('');
   const [busy, setBusy] = useState(false);
-  const [syncing, setSyncing] = useState('');
+  const [syncing, setSyncing] = useState<Set<string>>(new Set());
 
   const runImport = async (url: string) => {
     const result = (await api.skills.import(url)) as ImportResult;
-    for (const s of result.skipped || []) toast.error('Skipped ' + s);
+    // One toast, not one per file: a repo with many bad SKILL.md's would
+    // otherwise flood the stack.
+    const skipped = result.skipped || [];
+    if (skipped.length > 0) {
+      const head = skipped.slice(0, 3).join('; ');
+      toast.error(`Skipped ${skipped.length}: ${head}${skipped.length > 3 ? '; …' : ''}`);
+    }
     if (result.truncated) toast.error('Repository listing was truncated — files past the cut were not seen');
     toast.info(importSummary(result));
   };
 
   const handleImport = async () => {
     const url = importUrl.trim();
-    if (!url) return;
+    if (!url || busy) return;
     setBusy(true);
     try {
       await runImport(url);
@@ -114,14 +120,14 @@ export function SkillsPanel() {
   };
 
   const handleSync = async (repo: string) => {
-    setSyncing(repo);
+    setSyncing(prev => new Set(prev).add(repo));
     try {
       await runImport(repo);
       reload();
     } catch (e) {
       toast.error((e as Error).message || 'Sync failed');
     } finally {
-      setSyncing('');
+      setSyncing(prev => { const next = new Set(prev); next.delete(repo); return next; });
     }
   };
 
@@ -242,7 +248,13 @@ export function SkillsPanel() {
       )}
 
       {loading && <div className="resource-row-sub">Loading…</div>}
-      {error && <div className="resource-row-sub">{error}</div>}
+      {error && (
+        <Blankslate>
+          <Blankslate.Heading>Could not load skills</Blankslate.Heading>
+          <Blankslate.Description>{error}</Blankslate.Description>
+          <Blankslate.PrimaryAction onClick={() => reload()}>Retry</Blankslate.PrimaryAction>
+        </Blankslate>
+      )}
       {!loading && !error && grouped.length === 0 && mode === null && (
         <Blankslate>
           <Blankslate.Heading>No skills installed</Blankslate.Heading>
@@ -265,11 +277,11 @@ export function SkillsPanel() {
           <div className="Box-row" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span className="resource-row-title">{group.label}</span>
             <span className="resource-row-sub">{group.skills.length} skill{group.skills.length === 1 ? '' : 's'}</span>
-            {syncing === group.repo && group.repo !== '' && <span className="resource-row-sub">Syncing…</span>}
+            {syncing.has(group.repo) && group.repo !== '' && <span className="resource-row-sub">Syncing…</span>}
             {groupItems > 0 && (
               <div style={{ marginLeft: 'auto' }}>
                 <RowMenu label={`Actions for ${group.label}`}>
-                  {canSync && <ActionList.Item disabled={syncing === group.repo} onSelect={() => void handleSync(group.repo)}>Sync</ActionList.Item>}
+                  {canSync && <ActionList.Item disabled={syncing.has(group.repo)} onSelect={() => void handleSync(group.repo)}>Sync</ActionList.Item>}
                   {isAdmin && hasPrivate && <ActionList.Item onSelect={() => void setGroupScope(group.skills, 'global')}>Make all global</ActionList.Item>}
                   {isAdmin && hasGlobal && <ActionList.Item onSelect={() => void setGroupScope(group.skills, 'private')}>Make all private</ActionList.Item>}
                 </RowMenu>
@@ -277,7 +289,9 @@ export function SkillsPanel() {
             )}
           </div>
           {group.skills.map(sk => (
-            <div key={sk.id} className="Box-row" style={{ cursor: 'pointer' }} onClick={() => void openEditor(sk)}>
+            <div key={sk.id} className="Box-row" style={{ cursor: 'pointer' }} role="button" tabIndex={0}
+              onClick={() => void openEditor(sk)}
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); void openEditor(sk); } }}>
               <div className="resource-row-main">
                 <div className="resource-row-head">
                   <span className="resource-row-title">{sk.name}</span>
