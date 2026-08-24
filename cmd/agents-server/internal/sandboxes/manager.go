@@ -256,16 +256,20 @@ func (m *Manager) SetBuildOverride(fn func(*store.SandboxConfig, *store.Project)
 // release drops one holder's reference and closes the instance if it was the
 // last holder of a doomed one.
 func (m *Manager) release(inst *sandboxInstance) {
+	// The idle window is a settings read (uncached DB I/O) — resolve it
+	// before taking the lock that serializes every acquire and eviction.
+	var idle time.Duration
+	if m.idleAfter != nil {
+		idle = m.idleAfter()
+	}
 	m.mu.Lock()
 	inst.refs--
 	dead := inst.doomed && inst.refs <= 0
-	if !dead && inst.refs <= 0 && !m.closed && m.idleAfter != nil {
-		if d := m.idleAfter(); d > 0 {
-			if inst.idle != nil {
-				inst.idle.Stop()
-			}
-			inst.idle = time.AfterFunc(d, func() { m.idleExpire(inst) })
+	if !dead && inst.refs <= 0 && !m.closed && idle > 0 {
+		if inst.idle != nil {
+			inst.idle.Stop()
 		}
+		inst.idle = time.AfterFunc(idle, func() { m.idleExpire(inst) })
 	}
 	m.mu.Unlock()
 	if dead {
