@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"path/filepath"
 	"strings"
 
 	"github.com/zzir/agents-go/agents"
@@ -34,6 +33,7 @@ type AgentDeps struct {
 	Providers        *store.ProviderStore
 	McpServers       *store.McpServerStore
 	SandboxConfigs   *store.SandboxStore
+	Skills           *store.SkillStore
 	Memories         *store.MemoryStore
 	Settings         *settings.Reader
 	Sessions         *store.SessionStore
@@ -425,8 +425,8 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 	attachBraveSearch(ctx, deps, agent, proxyClient)
 	mark = bucketToolsSince(agent, mark, store.ToolSourceBrave, &result.Profile)
 
-	// Skills — loaded from <workspace>/skills; spec may restrict the selection.
-	result.Profile.SkillsIndexChars = attachSkills(deps, agent, spec)
+	// Skills — loaded from the store; spec may restrict the selection.
+	result.Profile.SkillsIndexChars = attachSkills(ctx, deps, agent, spec)
 	bucketToolsSince(agent, mark, store.ToolSourceSkills, &result.Profile)
 
 	// Handoffs — recursively built; a target with its own provider gets its model
@@ -565,41 +565,70 @@ func attachSandboxTools(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx,
 	return nil
 }
 
-// attachSkills loads skills from <workspace>/skills and, when spec restricts the
-// selection, filters to the advertised ones; the rendered index and ReadFileTool
-// share the skills root so relative paths resolve. Best-effort: a load error is
-// skipped, not fatal. Returns the size of the index it added to the
-// instructions, which no caller can recover afterwards (it is wrapped into one
-// string with every other layer).
-func attachSkills(deps *AgentDeps, agent *agents.Agent, spec *AgentSpec) int {
-	if deps.Workspace == "" {
+// attachSkills loads the stored skills and, when spec restricts the selection
+// (by skill id), filters to the advertised ones; the rendered index pairs with
+// a read_skill tool that reads the document back from the store by name,
+// confined to the advertised set. Best-effort: a load error is skipped, not
+// fatal. Returns the size of the index it added to the instructions, which no
+// caller can recover afterwards (it is wrapped into one string with every
+// other layer).
+func attachSkills(ctx context.Context, deps *AgentDeps, agent *agents.Agent, spec *AgentSpec) int {
+	if deps.Skills == nil {
 		return 0
 	}
-	skillsDir := filepath.Join(deps.Workspace, "skills")
-	loadedSkills, err := skills.LoadRecursive(skillsDir)
+	stored, err := deps.Skills.ListMeta(ctx)
 	if err != nil {
 		return 0
 	}
 	if spec.SkillsSet {
 		allowed := make(map[string]bool, len(spec.Skills))
-		for _, p := range spec.Skills {
-			allowed[p] = true
+		for _, id := range spec.Skills {
+			allowed[id] = true
 		}
-		filtered := loadedSkills[:0]
-		for _, sk := range loadedSkills {
-			if allowed[sk.Dir] {
+		filtered := stored[:0]
+		for _, sk := range stored {
+			if allowed[sk.ID] {
 				filtered = append(filtered, sk)
 			}
 		}
-		loadedSkills = filtered
+		stored = filtered
 	}
-	if len(loadedSkills) == 0 {
+	if len(stored) == 0 {
 		return 0
 	}
-	index := skills.RenderIndex(loadedSkills)
-	agent.Instructions = agents.WrapInstructions(agent.Instructions, "", index)
-	agent.Tools = append(agent.Tools, skills.ReadFileTool(skillsDir))
-	return len(index)
+	index := make([]skills.Skill, len(stored))
+	advertised := make(map[string]bool, len(stored))
+	for i, sk := range stored {
+		index[i] = skills.Skill{Name: sk.Name, Description: sk.Description}
+		advertised[sk.Name] = true
+	}
+	rendered := skills.RenderIndex(index)
+	agent.Instructions = agents.WrapInstructions(agent.Instructions, "", rendered)
+	agent.Tools = append(agent.Tools, readSkillTool(deps.Skills, advertised))
+	return len(rendered)
+}
+
+type readSkillArgs struct {
+	Name string `json:"name" jsonschema:"the skill's name from the skills index, e.g. pdf-processing"`
+}
+
+// readSkillTool serves a skill's full SKILL.md from the store by name —
+// content is fetched at call time, never captured at build. Only skills whose
+// index entry this agent carries are readable: the advertised set is the
+// agent's skill selection, not the whole table.
+func readSkillTool(store *store.SkillStore, advertised map[string]bool) *agents.Tool {
+	return agents.NewTool("read_skill",
+		"Read a skill's full SKILL.md instructions by name.",
+		func(ctx context.Context, _ *agents.ToolContext, args readSkillArgs) (string, error) {
+			if !advertised[args.Name] {
+				return "", fmt.Errorf("no skill named %q", args.Name)
+			}
+			sk, err := store.GetByName(ctx, args.Name)
+			if err != nil {
+				return "", fmt.Errorf("no skill named %q", args.Name)
+			}
+			return sk.Content, nil
+		})
 }
 
 // bucketToolsSince records the tools appended since mark under source, and

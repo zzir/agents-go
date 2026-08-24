@@ -16,7 +16,7 @@ func TestBucketToolsSinceAttributesOnlyWhatWasAdded(t *testing.T) {
 
 	agent.Tools = append(agent.Tools, &agents.Tool{Name: "exec_command"}, &agents.Tool{Name: "read_file"})
 	mark := bucketToolsSince(agent, 0, store.ToolSourceSandbox, &prof)
-	agent.Tools = append(agent.Tools, &agents.Tool{Name: "read_skill_file"})
+	agent.Tools = append(agent.Tools, &agents.Tool{Name: "read_skill"})
 	mark = bucketToolsSince(agent, mark, store.ToolSourceSkills, &prof)
 
 	// A step that added nothing gets no bucket at all — an empty row would read

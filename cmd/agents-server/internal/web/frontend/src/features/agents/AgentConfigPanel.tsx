@@ -10,7 +10,7 @@ import { fc, seg } from '@/lib/form';
 import { JsonField } from '@/lib/JsonField';
 import { toast } from '@/lib/toast';
 import { Disclosure } from '@/components/Disclosure';
-import { type Skill, type SkillGroup, groupByRepo } from '@/lib/skills';
+import { type Skill, type SkillGroup, groupBySource } from '@/lib/skills';
 import { providerMeta, providerFacts, type ProviderTypeInfo } from '@/lib/providers';
 import { BADGE } from '@/lib/badges';
 
@@ -194,19 +194,19 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
   };
   // null selectedSkills = not customized yet -> effectively "every installed skill".
   // Computed from the live `skills` prop (not stale state) so it's correct even
-  // before any effect/interaction has run.
-  const allSkillPaths = (skills || []).map(sk => sk.path);
-  const effectiveSkills = selectedSkills ?? allSkillPaths;
-  const toggleSkill = (path: string) => {
+  // before any effect/interaction has run. The selection stores skill IDS.
+  const allSkillIds = (skills || []).map(sk => sk.id);
+  const effectiveSkills = selectedSkills ?? allSkillIds;
+  const toggleSkill = (id: string) => {
     setSelectedSkills(prev => {
-      const base = prev ?? allSkillPaths;
-      return base.includes(path) ? base.filter(x => x !== path) : [...base, path];
+      const base = prev ?? allSkillIds;
+      return base.includes(id) ? base.filter(x => x !== id) : [...base, id];
     });
   };
-  // Skills are grouped by their top-level directory (a cloned repo can bundle
-  // dozens of skills) so the list stays manageable — collapsed by default,
-  // with a group-level checkbox to select/deselect the whole directory at once.
-  const skillGroups = groupByRepo(skills || []);
+  // Skills are grouped by their import source (a repo can bundle dozens) so
+  // the list stays manageable — collapsed by default, with a group-level
+  // checkbox to select/deselect the whole source at once.
+  const skillGroups = groupBySource(skills || []);
   const [expandedSkillRepos, setExpandedSkillRepos] = useState<Set<string>>(new Set());
   const toggleSkillRepoExpanded = (repo: string) => {
     setExpandedSkillRepos(prev => {
@@ -216,11 +216,11 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
     });
   };
   const toggleSkillGroup = (group: SkillGroup) => {
-    const paths = group.skills.map(sk => sk.path);
-    const allSelected = paths.every(p => effectiveSkills.includes(p));
+    const ids = group.skills.map(sk => sk.id);
+    const allSelected = ids.every(id => effectiveSkills.includes(id));
     setSelectedSkills(prev => {
-      const base = prev ?? allSkillPaths;
-      return allSelected ? base.filter(p => !paths.includes(p)) : Array.from(new Set([...base, ...paths]));
+      const base = prev ?? allSkillIds;
+      return allSelected ? base.filter(id => !ids.includes(id)) : Array.from(new Set([...base, ...ids]));
     });
   };
 
@@ -310,30 +310,30 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
         <div className="form-group-title">Skills</div>
         <div className="form-checkbox-group">
           {skillGroups.map(group => {
-            const paths = group.skills.map(sk => sk.path);
-            const selectedCount = paths.filter(p => effectiveSkills.includes(p)).length;
-            const allSelected = selectedCount === paths.length;
+            const ids = group.skills.map(sk => sk.id);
+            const selectedCount = ids.filter(id => effectiveSkills.includes(id)).length;
+            const allSelected = selectedCount === ids.length;
             const expanded = expandedSkillRepos.has(group.repo);
             return (
-              <div key={group.repo} className="checkbox-group-header">
+              <div key={group.repo || 'local'} className="checkbox-group-header">
                 <Checkbox
                   checked={allSelected}
                   indeterminate={!allSelected && selectedCount > 0}
-                  aria-label={`Select all skills in ${group.repo}`}
+                  aria-label={`Select all skills in ${group.label}`}
                   onChange={() => toggleSkillGroup(group)}
                 />
-                <Disclosure variant="plain" className="checkbox-group-toggle" label={group.repo} open={expanded} onToggle={() => toggleSkillRepoExpanded(group.repo)}>
+                <Disclosure variant="plain" className="checkbox-group-toggle" label={group.label} open={expanded} onToggle={() => toggleSkillRepoExpanded(group.repo)}>
                   <div className="checkbox-group-body">
                     {group.skills.map(sk => (
-                      <FormControl key={sk.path}>
-                        <Checkbox checked={effectiveSkills.includes(sk.path)} onChange={() => toggleSkill(sk.path)} />
+                      <FormControl key={sk.id}>
+                        <Checkbox checked={effectiveSkills.includes(sk.id)} onChange={() => toggleSkill(sk.id)} />
                         <FormControl.Label>{sk.name}</FormControl.Label>
                         {sk.description && <FormControl.Caption>{sk.description}</FormControl.Caption>}
                       </FormControl>
                     ))}
                   </div>
                 </Disclosure>
-                <span className="checkbox-group-header-count">{selectedCount}/{paths.length}</span>
+                <span className="checkbox-group-header-count">{selectedCount}/{ids.length}</span>
               </div>
             );
           })}
@@ -499,8 +499,8 @@ export function AgentConfigPanel() {
     const all = skills || [];
     if (!skillsJson) return all.length;
     try {
-      const paths: string[] = JSON.parse(skillsJson);
-      return paths.filter(p => all.some(sk => sk.path === p)).length;
+      const ids: string[] = JSON.parse(skillsJson);
+      return ids.filter(id => all.some(sk => sk.id === id)).length;
     } catch { return all.length; }
   };
 

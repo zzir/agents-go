@@ -31,8 +31,9 @@ type AgentSpec struct {
 	ApproveTools []string
 	// Tools is the selected MCP server id list (nil when unset).
 	Tools []string
-	// Skills is the per-agent skill selection. SkillsSet distinguishes an unset
-	// selection (get every installed skill) from an explicit empty one.
+	// Skills is the per-agent skill selection: stored skill ids. SkillsSet
+	// distinguishes an unset selection (get every stored skill) from an
+	// explicit empty one.
 	Skills    []string
 	SkillsSet bool
 	// Handoffs is the handoff target agent-id list (nil when unset).

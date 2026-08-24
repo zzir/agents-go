@@ -16,6 +16,7 @@ var schemaModels = []any{
 	(*appendPointRow)(nil),
 	(*AgentConfig)(nil),
 	(*McpServerConfig)(nil),
+	(*Skill)(nil),
 	(*Memory)(nil),
 	(*Setting)(nil),
 	(*Provider)(nil),
@@ -218,6 +219,17 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 		IfNotExists().
 		Exec(ctx); err != nil {
 		return fmt.Errorf("creating providers unique name index: %w", err)
+	}
+	// A skill's name is what the model activates it by (read_skill) and what
+	// an agent's selection shows; two sharing one make activation ambiguous.
+	if _, err := db.NewCreateIndex().
+		Model((*Skill)(nil)).
+		Index("idx_skills_name").
+		Unique().
+		Column("name").
+		IfNotExists().
+		Exec(ctx); err != nil {
+		return fmt.Errorf("creating skills unique name index: %w", err)
 	}
 	// The sidebar lists one owner's sessions by recency of change.
 	if _, err := db.NewCreateIndex().

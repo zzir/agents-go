@@ -2,8 +2,6 @@ package bridge
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -22,17 +20,13 @@ func TestBuildFullAgentFailsOnBadCriticalConfig(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	s := store.NewAgentConfigStore(db)
-	// A workspace with an (empty) skills dir so the skills block is exercised.
-	ws := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(ws, "skills"), 0o755); err != nil {
-		t.Fatalf("mkdir skills: %v", err)
-	}
 	deps := &AgentDeps{
 		AgentConfigs: s,
 		Settings:     settings.NewReader(store.NewSettingStore(db)),
+		Skills:       store.NewSkillStore(db),
 		Memories:     store.NewMemoryStore(db),
 		Guardrails:   guardrails.NewResolver(store.NewGuardrailStore(db)),
-		Workspace:    ws,
+		Workspace:    t.TempDir(),
 	}
 
 	cases := []struct {

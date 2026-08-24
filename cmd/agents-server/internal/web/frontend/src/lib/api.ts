@@ -301,12 +301,9 @@ export const api = {
     delete: (key: string) => request(`/settings/${key}`, { method: 'DELETE' }),
   },
   skills: {
-    list: () => request('/skills'),
-    get: (path: string) => request(`/skills/${path}`),
-    // Management operates on whole repos under /skill-repos.
-    clone: (url: string) => request('/skill-repos', { method: 'POST', body: JSON.stringify({ url }) }),
-    update: (name: string) => request(`/skill-repos/${name}/sync`, { method: 'POST' }),
-    delete: (name: string) => request(`/skill-repos/${name}`, { method: 'DELETE' }),
+    ...crud<S['store.Skill']>('/skills'),
+    // Import walks a GitHub repo (or fetches one raw SKILL.md) and upserts.
+    import: (url: string) => request('/skill-imports', { method: 'POST', body: JSON.stringify({ url }) }),
   },
   guardrails: {
     ...crud<S['store.Guardrail']>('/guardrails'),

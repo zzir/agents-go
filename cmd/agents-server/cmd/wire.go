@@ -37,6 +37,7 @@ type stores struct {
 	Traces           *store.TraceStore
 	AgentConfigs     *store.AgentConfigStore
 	McpServers       *store.McpServerStore
+	Skills           *store.SkillStore
 	Memories         *store.MemoryStore
 	Settings         *store.SettingStore
 	SettingReader    *settings.Reader
@@ -63,6 +64,7 @@ func newStores(db *bun.DB) *stores {
 		Traces:           store.NewTraceStore(db),
 		AgentConfigs:     store.NewAgentConfigStore(db),
 		McpServers:       store.NewMcpServerStore(db),
+		Skills:           store.NewSkillStore(db),
 		Memories:         store.NewMemoryStore(db),
 		Settings:         settingStore,
 		SettingReader:    settings.NewReader(settingStore),
@@ -124,6 +126,7 @@ func newBridge(ctx, bgCtx context.Context, db *bun.DB, st *stores, audit protoco
 		Providers:        st.Providers,
 		McpServers:       st.McpServers,
 		SandboxConfigs:   st.Sandboxes,
+		Skills:           st.Skills,
 		Memories:         st.Memories,
 		Settings:         st.SettingReader,
 		Sessions:         st.Sessions,
@@ -191,7 +194,7 @@ func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL, w
 			McpServers: handler.NewMcpServerHandler(st.McpServers, svc.Mcp, svc.OAuth, baseURL),
 			Memories:   handler.NewMemoryHandler(st.Memories),
 			Settings:   handler.NewSettingHandler(st.Settings),
-			Skills:     handler.NewSkillHandler(flagWorkspace),
+			Skills:     handler.NewSkillHandler(st.Skills, st.SettingReader),
 			Providers:  handler.NewProviderHandler(st.Providers),
 			Workflows:  handler.NewWorkflowHandler(st.Workflows, st.AgentConfigs, st.Sessions, svc.Runner),
 			Triggers:   handler.NewTriggerHandler(st.Triggers, st.Sessions, svc.Scheduler),

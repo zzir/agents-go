@@ -1,176 +1,273 @@
 package handler
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
-// skillCtx builds a gin context carrying a single:name path parameter, the way
-// the /skill-repos/:name routes deliver it. gin URL-decodes params before they
-// reach the handler, so a request path of "%2E" arrives here as ".".
-func skillCtx(method, name string) (*gin.Context, *httptest.ResponseRecorder) {
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(method, "/", nil)
-	c.Params = gin.Params{{Key: "name", Value: name}}
-	return c, w
-}
+const pdfSkillDoc = `---
+name: pdf-processing
+description: Extract text and fill PDF forms.
+---
 
-// DELETE/POST-sync of a repo name that resolves back to the skills root
-// (".", "", "/", or an escape) must be rejected — never RemoveAll / git-reset
-// the entire skills tree. "." is also the decoded form of the "%2E" URL input.
-func TestSkillRepoRootDeleteGuard(t *testing.T) {
+# PDF processing
+Step 1.
+`
+
+// skillTestEnv mounts the skill routes the way routes.go does and returns the
+// handler for endpoint overrides.
+func skillTestEnv(t *testing.T) (*gin.Engine, *SkillHandler, *store.SkillStore) {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
-	ws := t.TempDir()
-	h := NewSkillHandler(ws)
-	skillsDir := filepath.Join(ws, "skills")
-
-	// A decoy repo whose survival proves the root was not wiped.
-	decoy := filepath.Join(skillsDir, "keep")
-	if err := os.MkdirAll(decoy, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	for _, name := range []string{".", "..", "", "/", "../", "./"} {
-		c, w := skillCtx(http.MethodDelete, name)
-		h.Delete(c)
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("Delete(name=%q): status = %d, want 400", name, w.Code)
-		}
-		c, w = skillCtx(http.MethodPost, name)
-		h.Sync(c)
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("Sync(name=%q): status = %d, want 400", name, w.Code)
-		}
-	}
-
-	if _, err := os.Stat(skillsDir); err != nil {
-		t.Fatalf("skills root was removed by a guarded op: %v", err)
-	}
-	if _, err := os.Stat(decoy); err != nil {
-		t.Fatalf("decoy repo was removed by a guarded op: %v", err)
-	}
-}
-
-// A legitimate single-segment repo name still deletes normally (the guard must
-// not over-reject). Routed through an engine so gin flushes the status-only 204.
-func TestSkillRepoDeleteValid(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	ws := t.TempDir()
-	h := NewSkillHandler(ws)
-	repo := filepath.Join(ws, "skills", "myrepo")
-	if err := os.MkdirAll(repo, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	db := testdb.New(t)
+	st := store.NewSkillStore(db)
+	h := NewSkillHandler(st, settings.NewReader(store.NewSettingStore(db)))
 	engine := newTestEngine()
-	engine.DELETE("/skill-repos/:name", h.Delete)
-	req := httptest.NewRequest(http.MethodDelete, "/skill-repos/myrepo", nil)
-	w := httptest.NewRecorder()
-	engine.ServeHTTP(w, req)
-	if w.Code != http.StatusNoContent {
-		t.Fatalf("Delete(valid): status = %d, want 204", w.Code)
-	}
-	if _, err := os.Stat(repo); !os.IsNotExist(err) {
-		t.Fatalf("valid repo was not removed: err = %v", err)
-	}
+	engine.GET("/skills", h.List)
+	engine.GET("/skills/:id", h.Get)
+	engine.POST("/skills", h.Create)
+	engine.PUT("/skills/:id", h.Update)
+	engine.DELETE("/skills/:id", h.Delete)
+	engine.POST("/skill-imports", h.Import)
+	return engine, h, st
 }
 
-// via the real router: the "%2E"-encoded "." must not wipe the skills root.
-func TestSkillRepoRootDeleteGuardRouted(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	ws := t.TempDir()
-	h := NewSkillHandler(ws)
-	skillsDir := filepath.Join(ws, "skills")
-	if err := os.MkdirAll(filepath.Join(skillsDir, "keep"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	engine := newTestEngine()
-	engine.DELETE("/skill-repos/:name", h.Delete)
-
-	for _, target := range []string{"/skill-repos/%2E", "/skill-repos/."} {
-		req := httptest.NewRequest(http.MethodDelete, target, nil)
-		w := httptest.NewRecorder()
-		engine.ServeHTTP(w, req)
-		if w.Code >= 200 && w.Code < 300 {
-			t.Errorf("DELETE %s: status = %d, want non-2xx", target, w.Code)
-		}
-	}
-	if _, err := os.Stat(skillsDir); err != nil {
-		t.Fatalf("skills root was removed via routed request: %v", err)
-	}
+func skillBody(content string) string {
+	b, _ := json.Marshal(map[string]string{"content": content})
+	return string(b)
 }
 
-// a SKILL.md that is a symlink escaping the repo (e.g. -> a file outside
-// the skills tree) must not be read by Get, and the escaping skill must not
-// surface in the listing — no external file content leaks either way.
-func TestSkillSymlinkEscapeRefused(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	ws := t.TempDir()
-	// A secret file OUTSIDE the skills tree.
-	secret := filepath.Join(ws, "secret.txt")
-	if err := os.WriteFile(secret, []byte("TOPSECRET-DO-NOT-LEAK"), 0o600); err != nil {
+// Create parses the document's frontmatter into the row; List answers without
+// content; Get returns the full document; Update follows the new frontmatter.
+func TestSkillCrud(t *testing.T) {
+	engine, _, _ := skillTestEnv(t)
+
+	w := doJSON(t, engine, http.MethodPost, "/skills", skillBody(pdfSkillDoc))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: got %d (body %s)", w.Code, w.Body.String())
+	}
+	var sk store.Skill
+	if err := json.Unmarshal(w.Body.Bytes(), &sk); err != nil {
 		t.Fatal(err)
 	}
-	h := NewSkillHandler(ws)
-	skillsDir := filepath.Join(ws, "skills")
+	if sk.Name != "pdf-processing" || !strings.HasPrefix(sk.Description, "Extract text") {
+		t.Fatalf("frontmatter not parsed into row: %+v", sk)
+	}
 
-	// A legit skill, and an "evil" one whose SKILL.md symlinks to the secret.
-	good := filepath.Join(skillsDir, "good")
-	if err := os.MkdirAll(good, 0o755); err != nil {
+	if w := doJSON(t, engine, http.MethodPost, "/skills", skillBody(pdfSkillDoc)); w.Code != http.StatusConflict {
+		t.Fatalf("duplicate name: got %d, want 409", w.Code)
+	}
+
+	w = doJSON(t, engine, http.MethodGet, "/skills", "")
+	var list []store.Skill
+	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(good, "SKILL.md"), []byte("---\ndescription: real skill\n---\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	evil := filepath.Join(skillsDir, "evil")
-	if err := os.MkdirAll(evil, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(secret, filepath.Join(evil, "SKILL.md")); err != nil {
-		t.Skipf("symlinks unsupported on this platform: %v", err)
+	if len(list) != 1 || list[0].Content != "" {
+		t.Fatalf("list must carry metadata only: %+v", list)
 	}
 
-	// Get on the escaping skill: 404, and the secret must not appear in the body.
-	c, w := skillCtx(http.MethodGet, "")
-	c.Params = gin.Params{{Key: "path", Value: "/evil"}}
-	h.Get(c)
-	if w.Code != http.StatusNotFound {
-		t.Errorf("Get(evil): status = %d, want 404", w.Code)
-	}
-	if strings.Contains(w.Body.String(), "TOPSECRET") {
-		t.Errorf("Get leaked the escaping symlink target: %s", w.Body.String())
+	w = doJSON(t, engine, http.MethodGet, "/skills/"+sk.ID, "")
+	var got store.Skill
+	_ = json.Unmarshal(w.Body.Bytes(), &got)
+	if got.Content != pdfSkillDoc {
+		t.Fatalf("get lost the content: %q", got.Content)
 	}
 
-	// Listing skips the escaping symlink and never reads its target.
-	skills := findAllSkills(skillsDir)
-	names := map[string]bool{}
-	for _, s := range skills {
-		names[s.Name] = true
-		if strings.Contains(s.Description, "TOPSECRET") {
-			t.Errorf("findAllSkills leaked the symlink target in a description: %+v", s)
-		}
-	}
-	if !names["good"] {
-		t.Errorf("findAllSkills dropped the legit skill: %+v", skills)
-	}
-	if names["evil"] {
-		t.Errorf("findAllSkills listed the escaping symlink skill: %+v", skills)
-	}
-
-	// The legit skill still reads back through the rooted path.
-	c, w = skillCtx(http.MethodGet, "")
-	c.Params = gin.Params{{Key: "path", Value: "/good"}}
-	h.Get(c)
+	renamed := strings.Replace(pdfSkillDoc, "pdf-processing", "pdf-tools", 1)
+	w = doJSON(t, engine, http.MethodPut, "/skills/"+sk.ID, skillBody(renamed))
 	if w.Code != http.StatusOK {
-		t.Fatalf("Get(good): status = %d, want 200", w.Code)
+		t.Fatalf("update: got %d (body %s)", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "real skill") {
-		t.Errorf("Get(good) body missing content: %s", w.Body.String())
+	var upd store.Skill
+	_ = json.Unmarshal(w.Body.Bytes(), &upd)
+	if upd.Name != "pdf-tools" || upd.Detached {
+		t.Fatalf("update result wrong (a local skill never detaches): %+v", upd)
+	}
+
+	if w := doJSON(t, engine, http.MethodDelete, "/skills/"+sk.ID, ""); w.Code != http.StatusNoContent {
+		t.Fatalf("delete: got %d", w.Code)
+	}
+	if w := doJSON(t, engine, http.MethodGet, "/skills/"+sk.ID, ""); w.Code != http.StatusNotFound {
+		t.Fatalf("get after delete: got %d, want 404", w.Code)
+	}
+}
+
+// Save-time validation: a document that is not a valid SKILL.md, or over the
+// size cap, never lands in the table.
+func TestSkillCreateRejectsInvalid(t *testing.T) {
+	engine, _, _ := skillTestEnv(t)
+	cases := []struct {
+		name    string
+		content string
+		wantSub string
+	}{
+		{"no frontmatter", "# nope", "invalid SKILL.md"},
+		{"bad name", "---\nname: NOPE\ndescription: d\n---\nx", "invalid SKILL.md"},
+		{"oversize", "---\nname: big\ndescription: d\n---\n" + strings.Repeat("x", maxSkillBytes), "exceeds"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := doJSON(t, engine, http.MethodPost, "/skills", skillBody(tc.content))
+			if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), tc.wantSub) {
+				t.Fatalf("got %d %s", w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+// fakeGitHub serves the three endpoints an import walks: HEAD commit, tree
+// listing, raw file content. files maps repo path -> SKILL.md content.
+func fakeGitHub(t *testing.T, sha string, files map[string]string) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/o/r/commits/HEAD", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{"sha": sha})
+	})
+	mux.HandleFunc("/repos/o/r/git/trees/"+sha, func(w http.ResponseWriter, _ *http.Request) {
+		var tree []map[string]string
+		for p := range files {
+			tree = append(tree, map[string]string{"path": p, "type": "blob"})
+		}
+		tree = append(tree, map[string]string{"path": "README.md", "type": "blob"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"tree": tree, "truncated": false})
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// raw.githubusercontent form: /o/r/<sha>/<path>
+		prefix := "/o/r/" + sha + "/"
+		if strings.HasPrefix(r.URL.Path, prefix) {
+			if content, ok := files[strings.TrimPrefix(r.URL.Path, prefix)]; ok {
+				_, _ = fmt.Fprint(w, content)
+				return
+			}
+		}
+		http.NotFound(w, r)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func importGitHub(t *testing.T, engine *gin.Engine) skillImportResp {
+	t.Helper()
+	w := doJSON(t, engine, http.MethodPost, "/skill-imports", `{"url":"https://github.com/o/r"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("import: got %d (body %s)", w.Code, w.Body.String())
+	}
+	var resp skillImportResp
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
+// A GitHub repo import walks the tree for SKILL.md files at any depth,
+// creates rows with their source, refreshes an unedited row on re-import,
+// and never overwrites one edited locally (detached).
+func TestSkillImportGitHubLifecycle(t *testing.T) {
+	engine, h, st := skillTestEnv(t)
+	files := map[string]string{
+		"pdf/SKILL.md":         pdfSkillDoc,
+		"nested/docx/SKILL.md": "---\nname: docx\ndescription: Word documents.\n---\nBody v1.\n",
+	}
+	gh := fakeGitHub(t, "sha1", files)
+	h.githubAPI, h.githubRaw = gh.URL, gh.URL
+
+	resp := importGitHub(t, engine)
+	if len(resp.Created) != 2 {
+		t.Fatalf("created = %v", resp)
+	}
+	sk, err := st.GetByName(t.Context(), "docx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sk.SourceRepo != "https://github.com/o/r" || sk.SourcePath != "nested/docx/SKILL.md" || sk.SourceSHA != "sha1" {
+		t.Fatalf("source not recorded: %+v", sk)
+	}
+
+	// Unchanged re-import touches nothing.
+	resp = importGitHub(t, engine)
+	if len(resp.Unchanged) != 2 || len(resp.Created)+len(resp.Updated) != 0 {
+		t.Fatalf("re-import = %+v", resp)
+	}
+
+	// Upstream change refreshes the row.
+	files["nested/docx/SKILL.md"] = "---\nname: docx\ndescription: Word documents.\n---\nBody v2.\n"
+	resp = importGitHub(t, engine)
+	if len(resp.Updated) != 1 || resp.Updated[0] != "docx" {
+		t.Fatalf("after upstream change = %+v", resp)
+	}
+
+	// A local edit detaches; the next import must not overwrite it.
+	local := "---\nname: docx\ndescription: Word documents.\n---\nMY EDIT.\n"
+	if w := doJSON(t, engine, http.MethodPut, "/skills/"+sk.ID, skillBody(local)); w.Code != http.StatusOK {
+		t.Fatalf("edit: %d %s", w.Code, w.Body.String())
+	}
+	files["nested/docx/SKILL.md"] = "---\nname: docx\ndescription: Word documents.\n---\nBody v3.\n"
+	resp = importGitHub(t, engine)
+	if len(resp.Skipped) != 1 || !strings.Contains(resp.Skipped[0], "detached") {
+		t.Fatalf("detached skill was not protected: %+v", resp)
+	}
+	sk, _ = st.GetByName(t.Context(), "docx")
+	if sk.Content != local || !sk.Detached {
+		t.Fatalf("local edit lost: %+v", sk)
+	}
+}
+
+// A name collision with an existing skill from elsewhere is skipped with a
+// reason, not an overwrite and not a hard failure for the rest of the import.
+func TestSkillImportNameCollision(t *testing.T) {
+	engine, h, _ := skillTestEnv(t)
+	if w := doJSON(t, engine, http.MethodPost, "/skills", skillBody(pdfSkillDoc)); w.Code != http.StatusCreated {
+		t.Fatalf("seed: %d", w.Code)
+	}
+	gh := fakeGitHub(t, "sha1", map[string]string{"pdf/SKILL.md": pdfSkillDoc})
+	h.githubAPI, h.githubRaw = gh.URL, gh.URL
+	resp := importGitHub(t, engine)
+	if len(resp.Skipped) != 1 || !strings.Contains(resp.Skipped[0], "already in use") {
+		t.Fatalf("collision = %+v", resp)
+	}
+}
+
+// Any non-repo http(s) URL imports as a single raw SKILL.md.
+func TestSkillImportRawURL(t *testing.T) {
+	engine, _, st := skillTestEnv(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, pdfSkillDoc)
+	}))
+	t.Cleanup(srv.Close)
+
+	w := doJSON(t, engine, http.MethodPost, "/skill-imports", `{"url":"`+srv.URL+`/pdf/SKILL.md"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("raw import: got %d (body %s)", w.Code, w.Body.String())
+	}
+	sk, err := st.GetByName(t.Context(), "pdf-processing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sk.SourceRepo != srv.URL+"/pdf/SKILL.md" || sk.SourcePath != "" {
+		t.Fatalf("raw source not recorded: %+v", sk)
+	}
+}
+
+// A repository with no SKILL.md anywhere is the caller's mistake (400), not a
+// silent empty success.
+func TestSkillImportEmptyRepo(t *testing.T) {
+	engine, h, _ := skillTestEnv(t)
+	gh := fakeGitHub(t, "sha1", nil)
+	h.githubAPI, h.githubRaw = gh.URL, gh.URL
+	w := doJSON(t, engine, http.MethodPost, "/skill-imports", `{"url":"https://github.com/o/r"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("empty repo: got %d (body %s)", w.Code, w.Body.String())
 	}
 }

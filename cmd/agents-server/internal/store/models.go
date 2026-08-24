@@ -274,6 +274,34 @@ type HTTPMcpConfig struct {
 	UseStructuredContent bool `json:"use_structured_content,omitempty"`
 }
 
+// Skill is one stored SKILL.md document (spec §5.26). Name and Description
+// are denormalized from the content's frontmatter at save time — the content
+// is the document, the columns are its index entry.
+type Skill struct {
+	bun.BaseModel `bun:"table:skills,alias:sk"`
+
+	ID          string `bun:"id,pk,type:uuid" json:"id"`
+	Name        string `bun:"name,notnull"    json:"name"` // unique via idx_skills_name
+	Description string `bun:"description,notnull" json:"description"`
+	// Content is the full SKILL.md; capped at write time (maxSkillBytes) and
+	// omitted from list responses (ListMeta).
+	Content string `bun:"content,notnull,type:text" json:"content,omitempty"`
+
+	// Source records where an imported skill came from — the repo or raw URL,
+	// the path inside the repo, and the commit it was fetched at — so a
+	// re-import can match and refresh it. All empty for a skill authored in
+	// the workbench.
+	SourceRepo string `bun:"source_repo,nullzero" json:"source_repo,omitempty"`
+	SourcePath string `bun:"source_path,nullzero" json:"source_path,omitempty"`
+	SourceSHA  string `bun:"source_sha,nullzero"  json:"source_sha,omitempty"`
+	// Detached marks an imported skill edited in the workbench: a re-import
+	// skips it instead of overwriting the local edit.
+	Detached bool `bun:"detached,notnull" json:"detached,omitempty"`
+
+	CreatedAt time.Time `bun:"created_at,notnull" json:"created_at"`
+	UpdatedAt time.Time `bun:"updated_at,notnull" json:"updated_at"`
+}
+
 // Memory is a stored key/content fact, either global or scoped to an agent config.
 type Memory struct {
 	bun.BaseModel `bun:"table:memories,alias:mem"`
@@ -563,6 +591,11 @@ func (m *AgentConfig) BeforeAppendModel(_ context.Context, q bun.Query) error {
 
 // BeforeAppendModel stamps the id and timestamps; bun invokes it on insert and update.
 func (m *McpServerConfig) BeforeAppendModel(_ context.Context, q bun.Query) error {
+	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
+}
+
+// BeforeAppendModel stamps the id and timestamps; bun invokes it on insert and update.
+func (m *Skill) BeforeAppendModel(_ context.Context, q bun.Query) error {
 	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
 }
 

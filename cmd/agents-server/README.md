@@ -17,7 +17,7 @@ panel/handler pair follows.
 
 - [Quick start](#quick-start) — build, flags, [deployment](#deployment)
 - [Authentication](#authentication)
-- [REST API](#rest-api) — [errors](#errors) · [conventions](#response-conventions) · [sessions](#sessions--apiv1sessions) · [runs / SSE](#runs--apiv1runs) · [approvals](#approvals--apiv1approvals) · [tasks](#tasks--apiv1tasks) · [agents](#agents--apiv1agents) · [MCP servers](#mcp-servers--apiv1mcp-servers) · [memories](#memories--apiv1memories) · [settings](#settings--apiv1settings) · [skills](#skills--apiv1skills-read-only) · [skill repos](#skill-repos--apiv1skill-repos) · [providers](#providers--apiv1providers) · [workflows](#workflows--apiv1workflows) · [guardrails](#guardrails--apiv1guardrails) · [sandboxes](#sandboxes--apiv1sandboxes) · [playground](#playground--apiv1playground) · [secret handling](#secret-handling) · [OpenAPI](#openapi)
+- [REST API](#rest-api) — [errors](#errors) · [conventions](#response-conventions) · [sessions](#sessions--apiv1sessions) · [runs / SSE](#runs--apiv1runs) · [approvals](#approvals--apiv1approvals) · [tasks](#tasks--apiv1tasks) · [agents](#agents--apiv1agents) · [MCP servers](#mcp-servers--apiv1mcp-servers) · [memories](#memories--apiv1memories) · [settings](#settings--apiv1settings) · [skills](#skills--apiv1skills) · [providers](#providers--apiv1providers) · [workflows](#workflows--apiv1workflows) · [guardrails](#guardrails--apiv1guardrails) · [sandboxes](#sandboxes--apiv1sandboxes) · [playground](#playground--apiv1playground) · [secret handling](#secret-handling) · [OpenAPI](#openapi)
 - [WebSocket protocol](#websocket-protocol)
 - [Architecture](#architecture)
 - [Design invariants](#design-invariants) — the rules every panel/handler pair must follow
@@ -48,7 +48,7 @@ On startup the server prints an auto-generated auth token. Open
 | `--host`                | `127.0.0.1` | Bind address (use `0.0.0.0` for LAN access)            |
 | `--port`                | `9527`      | HTTP listen port                                       |
 | `--db`                  | `data.db`   | SQLite file path, or a `postgres://` DSN               |
-| `--workspace`           | `.`         | Workspace directory for skills and file operations     |
+| `--workspace`           | `.`         | Workspace directory for sandbox file operations        |
 | `--token`               | auto        | Auth token; randomly generated when omitted            |
 | `--allow-local-sandbox` | `false`     | Allow creating local (non-isolated) sandboxes          |
 | `--max-tasks`           | `0`         | Max live background tasks per session (`0` = default 6) |
@@ -230,7 +230,7 @@ Two rules, enforced at the routes (`handler/authz.go`), shape who may do what:
 
 - **Shared configuration is read by every member and written by admins
   only.** Agents, providers, MCP servers, sandboxes (the test endpoint
-  included), settings, skill repos, workflows, guardrails, memories and
+  included), settings, skills, workflows, guardrails, memories and
   provider routes: every write changes what runs on the host or whose
   credentials are spent, so `POST`/`PUT`/`DELETE` on them answer `403` for a
   member. The web terminal (`/ws/terminal`) is a shell on a sandbox host with
@@ -655,7 +655,7 @@ behind like a spawn.
 | GET    | `/agents/:id`                | Get agent                                |
 | PUT    | `/agents/:id`                | Update agent                             |
 | DELETE | `/agents/:id`                | Delete agent                             |
-| GET    | `/agents/:id/tools`          | The agent's current tool surface as schema-only definitions (`{name, description?, parameters?}`) — built-ins, connected MCP servers' tools, the skills reader; sandbox tools excluded (no sandbox is selected). Nothing here executes; backs the Replay dialog's tool picker |
+| GET    | `/agents/:id/tools`          | The agent's current tool surface as schema-only definitions (`{name, description?, parameters?}`) — built-ins, connected MCP servers' tools, the read_skill tool; sandbox tools excluded (no sandbox is selected). Nothing here executes; backs the Replay dialog's tool picker |
 
 Agent config shape — three top-level scalars, then the knobs as **grouped
 nested objects** (each group is one JSON column in the table, so a new knob
@@ -896,28 +896,34 @@ means nothing to a browser elsewhere) and `max_tasks` is the EFFECTIVE cap, not
 the raw flag — `--max-tasks 0` means the built-in default, and reporting the
 zero would be a lie.
 
-### Skills — `/api/v1/skills` (read-only)
+### Skills — `/api/v1/skills`
 
-Discover skills under `{workspace}/skills/` and read their `SKILL.md`. This
-resource is read-only; repo management lives under `/skill-repos`.
+A skill is one stored `SKILL.md` document (spec §5.26): `content` is the
+input, `name` and `description` are read from its frontmatter at save time.
+The model discovers skills through an index in the agent's instructions and
+reads a document on demand with the `read_skill` tool; an agent's `skills`
+selection (skill ids) restricts both.
 
-| Method | Path            | Description                                                      |
-|--------|-----------------|------------------------------------------------------------------|
-| GET    | `/skills`       | Discover skills under `{workspace}/skills/`                      |
-| GET    | `/skills/*path` | Get SKILL.md content (path may be nested, e.g. `repo/sub-skill`) |
+| Method | Path           | Description                                            |
+|--------|----------------|--------------------------------------------------------|
+| GET    | `/skills`      | List skills (metadata only, no content)                |
+| GET    | `/skills/:id`  | Get one skill, content included                        |
+| POST   | `/skills`      | Create — body `{content}`; `409` on a duplicate name   |
+| PUT    | `/skills/:id`  | Update content (name/description follow its frontmatter) |
+| DELETE | `/skills/:id`  | Delete                                                 |
+| POST   | `/skill-imports` | Import from a URL — see below                        |
 
-### Skill repos — `/api/v1/skill-repos`
-
-Clone and maintain whole git repositories of skills.
-
-| Method | Path                      | Description                                                                                          |
-|--------|---------------------------|------------------------------------------------------------------------------------------------------|
-| POST   | `/skill-repos`            | Clone — body `{url}` (http(s) only); `git clone --depth=1`, returns `201` with the discovered skills |
-| POST   | `/skill-repos/:name/sync` | `git fetch && git reset --hard origin/HEAD` to update (discards local changes)                       |
-| DELETE | `/skill-repos/:name`      | Remove the repo directory                                                                            |
-
-Only `http(s)` remotes are accepted (`file://`, `ssh`, and git's `ext::`
-transport are rejected). `sync` replaces the former `PUT /skills/:name`.
+`POST /skill-imports` with `{url}` upserts skills from elsewhere:
+`https://github.com/owner/repo` walks the repository via the GitHub API
+(HEAD commit → full tree → every `SKILL.md` at any depth, all pinned to one
+commit; two API calls per import, so the anonymous rate limit goes far — set
+the `github_token` setting for private repos or heavy use). Any other http(s)
+URL is fetched as a single raw `SKILL.md`. The response lists what was
+`created` / `updated` / `unchanged` / `skipped` (each skip with its reason).
+Re-importing the same source refreshes rows that were not edited locally;
+editing an imported skill **detaches** it, and a detached skill is never
+overwritten by an import. Documents are capped at 256 KiB, imports at 200
+skills per repository.
 
 ### Providers — `/api/v1/providers`
 
@@ -1555,10 +1561,9 @@ cmd/agents-server/
 │   ├── guardrails/             stored + built-in guardrail definitions → SDK guardrails
 │   ├── settings/               the settings registry and the typed reader (incl. the proxy client)
 │   ├── docs/                   generated OpenAPI 3.1 document, swagger.yaml (make openapi)
-│   ├── store/                  data layer (bun ORM; SQLite or PostgreSQL, 22 tables — see Database)
+│   ├── store/                  data layer (bun ORM; SQLite or PostgreSQL, 23 tables — see Database)
 │   ├── protocol/               wire types — WS messages, REST error envelope, the audit record
 │   └── web/                    embedded SPA static files
-└── {workspace}/skills/         agent skills managed via API (runtime dir, not in the repo)
 ```
 
 ### Request flow
@@ -2221,7 +2226,7 @@ When a change genuinely doesn't fit, update this list in the same PR.
     panel's Delete goes through `useCrud.remove`, which asks (Primer
     `useConfirm`) before calling the API — a new panel gets the guard by
     construction rather than by remembering to add it. Deletes that live
-    outside `useCrud` (conversations, skill repos, background tasks, triggers) use the same
+    outside `useCrud` (conversations, skills, background tasks, triggers) use the same
     `useConfirm` dialog, never `window.confirm` and never a bare button. The
     rule exists because the guard used to be per-panel and eight of ten
     destructive flows had none.
@@ -2291,6 +2296,7 @@ Tables are created automatically on startup:
 | `append_points`     | Where each session stands: branch tip + highest sequence number (see invariant 26)  |
 | `agent_configs`     | Agent configurations                                                                |
 | `mcp_servers`       | MCP server configurations                                                           |
+| `skills`            | Stored `SKILL.md` documents (name/description denormalized from frontmatter)        |
 | `memories`          | Agent memories                                                                      |
 | `settings`          | Global key-value settings                                                           |
 | `sandbox_configs`   | Sandbox configurations                                                              |

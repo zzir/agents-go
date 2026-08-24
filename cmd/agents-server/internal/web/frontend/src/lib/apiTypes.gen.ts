@@ -4418,7 +4418,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/skill-repos": {
+    "/skill-imports": {
         parameters: {
             query?: never;
             header?: never;
@@ -4428,8 +4428,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Clone skill repo
-         * @description git clone --depth=1 of an http(s) repository containing SKILL.md files.
+         * Import skills from a URL
+         * @description https://github.com/owner/repo imports every SKILL.md in the repo (GitHub API; set the github_token setting for private repos and rate limits). Any other http(s) URL is fetched as a single SKILL.md.
          */
         post: {
             parameters: {
@@ -4438,145 +4438,12 @@ export interface paths {
                 path?: never;
                 cookie?: never;
             };
-            /** @description Repository URL (http/https only) */
+            /** @description Repository or raw SKILL.md URL */
             requestBody: {
                 content: {
-                    "application/json": Record<string, never> | components["schemas"]["handler.cloneRequest"];
+                    "application/json": Record<string, never> | components["schemas"]["handler.skillImportReq"];
                 };
             };
-            responses: {
-                /** @description Created */
-                201: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.skillRepoResp"];
-                    };
-                };
-                /** @description Bad Request */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-                /** @description directory already exists */
-                409: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-                /** @description git clone failed */
-                502: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/skill-repos/{name}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /** Delete skill repo */
-        delete: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description Repo directory name */
-                    name: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description deleted */
-                204: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Bad Request */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-                /** @description Not Found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-                /** @description Internal Server Error */
-                500: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-            };
-        };
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/skill-repos/{name}/sync": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Sync skill repo
-         * @description git fetch + reset --hard origin/HEAD; local changes in the repo are discarded.
-         */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description Repo directory name */
-                    name: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
             responses: {
                 /** @description OK */
                 200: {
@@ -4584,7 +4451,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["handler.skillRepoResp"];
+                        "application/json": components["schemas"]["handler.skillImportResp"];
                     };
                 };
                 /** @description Bad Request */
@@ -4596,25 +4463,7 @@ export interface paths {
                         "application/json": components["schemas"]["handler.ErrorResponse"];
                     };
                 };
-                /** @description Not Found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-                /** @description not a git repository */
-                409: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-                /** @description git fetch failed */
+                /** @description fetch failed */
                 502: {
                     headers: {
                         [name: string]: unknown;
@@ -4654,34 +4503,80 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["handler.skillEntry"][];
+                        "application/json": components["schemas"]["store.Skill"][];
                     };
                 };
             };
         };
         put?: never;
-        post?: never;
+        /**
+         * Create skill
+         * @description content is a full SKILL.md document; name and description are read from its frontmatter.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            /** @description SKILL.md content */
+            requestBody: {
+                content: {
+                    "application/json": Record<string, never> | components["schemas"]["handler.skillReq"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["store.Skill"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description name already in use */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/skills/{path}": {
+    "/skills/{id}": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Get skill content */
+        /** Get skill */
         get: {
             parameters: {
                 query?: never;
                 header?: never;
                 path: {
-                    /** @description Skill path (may be nested, e.g. repo/sub-skill) */
-                    path: string;
+                    /** @description Skill id */
+                    id: string;
                 };
                 cookie?: never;
             };
@@ -4693,7 +4588,45 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["handler.skillContentResp"];
+                        "application/json": components["schemas"]["store.Skill"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        /** Update skill */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Skill id */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            /** @description SKILL.md content */
+            requestBody: {
+                content: {
+                    "application/json": Record<string, never> | components["schemas"]["handler.skillReq"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["store.Skill"];
                     };
                 };
                 /** @description Bad Request */
@@ -4714,11 +4647,49 @@ export interface paths {
                         "application/json": components["schemas"]["handler.ErrorResponse"];
                     };
                 };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
             };
         };
-        put?: never;
         post?: never;
-        delete?: never;
+        /** Delete skill */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Skill id */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description deleted */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
         options?: never;
         head?: never;
         patch?: never;
@@ -6039,9 +6010,6 @@ export interface components {
         "handler.chatgptStatusResp": {
             logged_in?: boolean;
         };
-        "handler.cloneRequest": {
-            url: string;
-        };
         "handler.createRunReq": {
             agent_config_id?: string;
             input?: string;
@@ -6213,19 +6181,24 @@ export interface components {
         "handler.setSettingReq": {
             value?: string;
         };
-        "handler.skillContentResp": {
-            content?: string;
-            name?: string;
-            path?: string;
+        "handler.skillImportReq": {
+            url: string;
         };
-        "handler.skillEntry": {
-            description?: string;
-            name?: string;
-            path?: string;
+        "handler.skillImportResp": {
+            created?: string[];
+            repo?: string;
+            skipped?: string[];
+            /**
+             * @description Truncated reports that GitHub's tree listing was cut off (a very large
+             *     repo): everything listed was imported, but files past the cut were not
+             *     seen at all.
+             */
+            truncated?: boolean;
+            unchanged?: string[];
+            updated?: string[];
         };
-        "handler.skillRepoResp": {
-            name?: string;
-            skills?: components["schemas"]["handler.skillEntry"][];
+        "handler.skillReq": {
+            content: string;
         };
         "handler.taskStopReq": {
             graceful?: boolean;
@@ -6710,6 +6683,33 @@ export interface components {
             history_limit?: number;
             prompt_id?: string;
             prompt_version?: string;
+        };
+        "store.Skill": {
+            /**
+             * @description Content is the full SKILL.md; capped at write time (maxSkillBytes) and
+             *     omitted from list responses (ListMeta).
+             */
+            content?: string;
+            created_at?: string;
+            description?: string;
+            /**
+             * @description Detached marks an imported skill edited in the workbench: a re-import
+             *     skips it instead of overwriting the local edit.
+             */
+            detached?: boolean;
+            id?: string;
+            /** @description unique via idx_skills_name */
+            name?: string;
+            source_path?: string;
+            /**
+             * @description Source records where an imported skill came from — the repo or raw URL,
+             *     the path inside the repo, and the commit it was fetched at — so a
+             *     re-import can match and refresh it. All empty for a skill authored in
+             *     the workbench.
+             */
+            source_repo?: string;
+            source_sha?: string;
+            updated_at?: string;
         };
         /**
          * @description Gate makes the step a CHECK: its final output decides which edge is taken

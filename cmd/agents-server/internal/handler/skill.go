@@ -1,427 +1,485 @@
 package handler
 
 import (
-	"bufio"
-	"errors"
+	"context"
+	"encoding/json"
+	"fmt"
 	"io"
-	"io/fs"
 	"net/http"
-	"os"
-	"os/exec"
-	"path"
-	"path/filepath"
+	"net/url"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/skills"
 )
 
-// SkillHandler manages skill directories, supporting listing, cloning, updating, and deletion.
+// maxSkillBytes caps one stored SKILL.md, matching what a model read should
+// ever inject into context.
+const maxSkillBytes = 256 << 10
+
+// maxImportSkills caps how many SKILL.md files one import walks, so a huge
+// repo cannot flood the table in one request.
+const maxImportSkills = 200
+
+// SkillHandler manages stored SKILL.md documents: CRUD plus import from a
+// GitHub repository or a raw URL (spec §5.26).
 type SkillHandler struct {
-	skillsDir string
+	store    *store.SkillStore
+	settings *settings.Reader
+	// githubAPI / githubRaw are the GitHub endpoints; tests point them at a
+	// local fake.
+	githubAPI string
+	githubRaw string
 }
 
-// NewSkillHandler returns a handler that stores skills under a "skills" directory within workspace.
-func NewSkillHandler(workspace string) *SkillHandler {
-	dir := filepath.Join(workspace, "skills")
-	_ = os.MkdirAll(dir, 0o755) // best-effort; skill ops surface errors on use
-	return &SkillHandler{skillsDir: dir}
+// NewSkillHandler returns a handler over the skills store; settings supplies
+// the optional GitHub token and the outbound proxy for imports.
+func NewSkillHandler(st *store.SkillStore, se *settings.Reader) *SkillHandler {
+	return &SkillHandler{
+		store: st, settings: se,
+		githubAPI: "https://api.github.com",
+		githubRaw: "https://raw.githubusercontent.com",
+	}
 }
 
-type skillEntry struct {
-	Name        string `json:"name"`
-	Path        string `json:"path"`
-	Description string `json:"description"`
+// skillReq is the Create/Update request body: the document is the input, its
+// frontmatter is the metadata.
+type skillReq struct {
+	Content string `json:"content" binding:"required"`
 }
 
-// List responds with all discovered skills under the root directory.
+// List responds with every stored skill's metadata (no content).
 //
 //	@Summary	List skills
 //	@Tags		skills
 //	@Produce	json
-//	@Success	200	{array}	skillEntry
+//	@Success	200	{array}	store.Skill
 //	@Security	BearerAuth
 //	@Router		/skills [get]
 func (h *SkillHandler) List(c *gin.Context) {
-	skills := findAllSkills(h.skillsDir)
-	c.JSON(http.StatusOK, skills)
+	out, err := h.store.ListMeta(c.Request.Context())
+	if err != nil {
+		storeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
 }
 
-// Get responds with the SKILL.md contents for the skill at the requested path.
+// Get responds with one skill, content included.
 //
-//	@Summary	Get skill content
+//	@Summary	Get skill
 //	@Tags		skills
 //	@Produce	json
-//	@Param		path	path		string	true	"Skill path (may be nested, e.g. repo/sub-skill)"
-//	@Success	200		{object}	skillContentResp
-//	@Failure	400		{object}	ErrorResponse
-//	@Failure	404		{object}	ErrorResponse
+//	@Param		id	path		string	true	"Skill id"
+//	@Success	200	{object}	store.Skill
+//	@Failure	404	{object}	ErrorResponse
 //	@Security	BearerAuth
-//	@Router		/skills/{path} [get]
+//	@Router		/skills/{id} [get]
 func (h *SkillHandler) Get(c *gin.Context) {
-	relPath := c.Param("path")
-	relPath = strings.TrimPrefix(relPath, "/")
-	clean := filepath.Clean(relPath)
-	if strings.Contains(clean, "..") || filepath.IsAbs(clean) {
-		badRequest(c, "invalid skill path")
-		return
-	}
-	// Read SKILL.md through an os.Root confined to skillsDir. Lexical traversal is
-	// already rejected above; os.Root additionally refuses symlink escapes, so a
-	// repo containing SKILL.md -> /etc/passwd (or a symlinked parent directory)
-	// cannot leak a file from outside the skills tree.
-	data, err := readUnderRoot(h.skillsDir, filepath.Join(clean, "SKILL.md"))
+	sk, err := h.store.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		notFound(c)
+		storeError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, skillContentResp{
-		Name:    filepath.Base(clean),
-		Path:    clean,
-		Content: string(data),
-	})
+	c.JSON(http.StatusOK, sk)
 }
 
-type cloneRequest struct {
-	URL string `json:"url" binding:"required"`
+// parseSkillContent validates a document for storage: size cap plus the
+// SKILL.md frontmatter rules. Reports to c and returns ok=false on failure.
+func parseSkillContent(c *gin.Context, content string) (skills.Skill, bool) {
+	if len(content) > maxSkillBytes {
+		badRequest(c, fmt.Sprintf("content exceeds %d KiB", maxSkillBytes>>10))
+		return skills.Skill{}, false
+	}
+	meta, err := skills.Parse([]byte(content))
+	if err != nil {
+		badRequest(c, "invalid SKILL.md: "+err.Error())
+		return skills.Skill{}, false
+	}
+	return meta, true
 }
 
-// skillRepoResp is the Clone/Sync response: the repo name and the skills
-// discovered inside it.
-type skillRepoResp struct {
-	Name   string       `json:"name"`
-	Skills []skillEntry `json:"skills"`
-}
-
-// skillContentResp is the Get response: one skill's SKILL.md contents.
-type skillContentResp struct {
-	Name    string `json:"name"`
-	Path    string `json:"path"`
-	Content string `json:"content"`
-}
-
-// Clone shallow-clones a git repository of skills into the root directory.
-// It responds with 201 and the discovered skills.
+// Create stores a new skill authored in the workbench.
 //
-//	@Summary		Clone skill repo
-//	@Description	git clone --depth=1 of an http(s) repository containing SKILL.md files.
-//	@Tags			skill-repos
+//	@Summary		Create skill
+//	@Description	content is a full SKILL.md document; name and description are read from its frontmatter.
+//	@Tags			skills
 //	@Accept			json
 //	@Produce		json
-//	@Param			repo	body		cloneRequest	true	"Repository URL (http/https only)"
-//	@Success		201		{object}	skillRepoResp
+//	@Param			skill	body		skillReq	true	"SKILL.md content"
+//	@Success		201		{object}	store.Skill
 //	@Failure		400		{object}	ErrorResponse
-//	@Failure		409		{object}	ErrorResponse	"directory already exists"
-//	@Failure		502		{object}	ErrorResponse	"git clone failed"
+//	@Failure		409		{object}	ErrorResponse	"name already in use"
 //	@Security		BearerAuth
-//	@Router			/skill-repos [post]
-func (h *SkillHandler) Clone(c *gin.Context) {
-	var req cloneRequest
+//	@Router			/skills [post]
+func (h *SkillHandler) Create(c *gin.Context) {
+	var req skillReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		badRequest(c, "url is required")
+		badRequest(c, "content is required")
 		return
 	}
-
-	repoURL := strings.TrimSpace(req.URL)
-	if repoURL == "" {
-		badRequest(c, "url is required")
+	meta, ok := parseSkillContent(c, req.Content)
+	if !ok {
 		return
 	}
-	// Only plain http(s) remotes: rejects file://, ssh, and git's ext::
-	// command transport, and (starting with a scheme) can't be mistaken for a
-	// git flag.
-	lower := strings.ToLower(repoURL)
-	if !strings.HasPrefix(lower, "https://") && !strings.HasPrefix(lower, "http://") {
-		badRequest(c, "only http(s) repository URLs are supported")
+	sk := &store.Skill{Name: meta.Name, Description: meta.Description, Content: req.Content}
+	if err := h.store.Create(c.Request.Context(), sk); err != nil {
+		saveError(c, err)
 		return
 	}
-
-	name := repoNameFromURL(repoURL)
-	if name == "" {
-		badRequest(c, "cannot determine repo name from url")
-		return
-	}
-
-	dest := filepath.Join(h.skillsDir, name)
-	if _, err := os.Stat(dest); err == nil {
-		conflict(c, "directory already exists: "+name)
-		return
-	}
-
-	// Clone into a private temp directory and publish it with a single atomic
-	// rename, so two concurrent clones of the same name cannot delete each
-	// other's tree: the rename is the one point that makes the repo visible, and
-	// cleanup only ever touches this request's own scratch dir. The temp dir
-	// lives inside skillsDir so the rename stays on one filesystem (truly atomic,
-	// no cross-device copy).
-	tmp, err := os.MkdirTemp(h.skillsDir, ".clone-*")
-	if err != nil {
-		internalError(c, err)
-		return
-	}
-	defer func() { _ = os.RemoveAll(tmp) }() // best-effort; a no-op once a successful rename empties it
-	cloneDir := filepath.Join(tmp, name)
-
-	cmd := exec.CommandContext(c.Request.Context(), "git", "clone", "--depth=1", "--", repoURL, cloneDir)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		abortError(c, http.StatusBadGateway, protocol.CodeUpstream, "git clone failed: "+string(output))
-		return
-	}
-
-	skills := findAllSkills(cloneDir)
-	if len(skills) == 0 {
-		badRequest(c, "cloned repo does not contain any SKILL.md")
-		return
-	}
-
-	// Publish atomically. If a concurrent clone of the same name won the race,
-	// dest now exists and the rename fails — report that as the conflict; the
-	// scratch dir is removed by the deferred cleanup.
-	if err := os.Rename(cloneDir, dest); err != nil {
-		if _, statErr := os.Stat(dest); statErr == nil {
-			conflict(c, "directory already exists: "+name)
-			return
-		}
-		internalError(c, err)
-		return
-	}
-
-	created(c, name, skillRepoResp{Name: name, Skills: skills})
+	created(c, sk.ID, sk)
 }
 
-// repoDir validates the repo name path parameter and resolves it inside the
-// skills directory. It reports the failure to c and returns "" when invalid.
-func (h *SkillHandler) repoDir(c *gin.Context) string {
-	name := c.Param("name")
-	clean := filepath.Clean(name)
-	// Reject anything that isn't a single in-tree segment: "" and "." (Clean maps
-	// both to "."), ".." escapes, and absolute paths. The "." guard is critical —
-	// without it filepath.Join(skillsDir, ".") collapses to the skills root
-	// itself, so Delete's RemoveAll would wipe EVERY repo and Sync would
-	// git-reset the whole tree. This also blocks the "%2E" url-encoded "." that
-	// gin decodes to "." before it reaches here.
-	if clean == "." || clean == ".." || strings.Contains(clean, "..") || filepath.IsAbs(clean) {
-		badRequest(c, "invalid skill repo name")
-		return ""
-	}
-	target := filepath.Join(h.skillsDir, clean)
-	// Defense in depth: the resolved path must live strictly inside the skills
-	// root, never equal it. The trailing separator also blocks a sibling-prefix
-	// escape (e.g. a root of "<skills>" vs a target of "<skills>-evil").
-	if target == h.skillsDir || !strings.HasPrefix(target, h.skillsDir+string(filepath.Separator)) {
-		badRequest(c, "invalid skill repo name")
-		return ""
-	}
-	return target
-}
-
-// Delete removes the skill repo directory identified by the name path parameter.
+// Update overwrites a skill's content; name and description follow the new
+// frontmatter. Editing an imported skill detaches it from its source, so a
+// later re-import cannot overwrite the local edit.
 //
-//	@Summary	Delete skill repo
-//	@Tags		skill-repos
-//	@Param		name	path	string	true	"Repo directory name"
-//	@Success	204		"deleted"
+//	@Summary	Update skill
+//	@Tags		skills
+//	@Accept		json
+//	@Produce	json
+//	@Param		id		path		string		true	"Skill id"
+//	@Param		skill	body		skillReq	true	"SKILL.md content"
+//	@Success	200		{object}	store.Skill
 //	@Failure	400		{object}	ErrorResponse
 //	@Failure	404		{object}	ErrorResponse
-//	@Failure	500		{object}	ErrorResponse
+//	@Failure	409		{object}	ErrorResponse
 //	@Security	BearerAuth
-//	@Router		/skill-repos/{name} [delete]
+//	@Router		/skills/{id} [put]
+func (h *SkillHandler) Update(c *gin.Context) {
+	var req skillReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		badRequest(c, "content is required")
+		return
+	}
+	meta, ok := parseSkillContent(c, req.Content)
+	if !ok {
+		return
+	}
+	ctx := c.Request.Context()
+	prev, err := h.store.Get(ctx, c.Param("id"))
+	if err != nil {
+		storeError(c, err)
+		return
+	}
+	sk := &store.Skill{
+		Name: meta.Name, Description: meta.Description, Content: req.Content,
+		SourceRepo: prev.SourceRepo, SourcePath: prev.SourcePath, SourceSHA: prev.SourceSHA,
+		Detached: prev.Detached || (prev.SourceRepo != "" && req.Content != prev.Content),
+	}
+	if err := h.store.Update(ctx, prev.ID, sk); err != nil {
+		saveError(c, err)
+		return
+	}
+	sk.ID, sk.CreatedAt = prev.ID, prev.CreatedAt
+	c.JSON(http.StatusOK, sk)
+}
+
+// Delete removes a skill. An agent whose selection still names the id simply
+// stops advertising it — same as the skill never having been installed.
+//
+//	@Summary	Delete skill
+//	@Tags		skills
+//	@Param		id	path	string	true	"Skill id"
+//	@Success	204	"deleted"
+//	@Failure	404	{object}	ErrorResponse
+//	@Security	BearerAuth
+//	@Router		/skills/{id} [delete]
 func (h *SkillHandler) Delete(c *gin.Context) {
-	target := h.repoDir(c)
-	if target == "" {
-		return
-	}
-	if _, err := os.Stat(target); err != nil {
-		notFound(c)
-		return
-	}
-	if err := os.RemoveAll(target); err != nil {
-		internalError(c, err)
+	if err := h.store.Delete(c.Request.Context(), c.Param("id")); err != nil {
+		storeError(c, err)
 		return
 	}
 	c.Status(http.StatusNoContent)
 }
 
-// Sync fetches and hard-resets the skill git repository identified by the
-// name path parameter, then responds with the refreshed skill list.
+type skillImportReq struct {
+	URL string `json:"url" binding:"required"`
+}
+
+// skillImportResp reports what one import did, per SKILL.md it saw. Skipped
+// entries carry their reason ("path: why"), so nothing is dropped silently.
+type skillImportResp struct {
+	Repo      string   `json:"repo"`
+	Created   []string `json:"created,omitempty"`
+	Updated   []string `json:"updated,omitempty"`
+	Unchanged []string `json:"unchanged,omitempty"`
+	Skipped   []string `json:"skipped,omitempty"`
+	// Truncated reports that GitHub's tree listing was cut off (a very large
+	// repo): everything listed was imported, but files past the cut were not
+	// seen at all.
+	Truncated bool `json:"truncated,omitempty"`
+}
+
+// Import fetches SKILL.md documents from a URL and upserts them: a GitHub
+// repository URL is traversed via the GitHub API (every SKILL.md at any
+// depth), any other http(s) URL is fetched as one raw SKILL.md. Re-importing
+// the same source refreshes rows that were not edited locally.
 //
-//	@Summary		Sync skill repo
-//	@Description	git fetch + reset --hard origin/HEAD; local changes in the repo are discarded.
-//	@Tags			skill-repos
+//	@Summary		Import skills from a URL
+//	@Description	https://github.com/owner/repo imports every SKILL.md in the repo (GitHub API; set the github_token setting for private repos and rate limits). Any other http(s) URL is fetched as a single SKILL.md.
+//	@Tags			skills
+//	@Accept			json
 //	@Produce		json
-//	@Param			name	path		string	true	"Repo directory name"
-//	@Success		200		{object}	skillRepoResp
+//	@Param			import	body		skillImportReq	true	"Repository or raw SKILL.md URL"
+//	@Success		200		{object}	skillImportResp
 //	@Failure		400		{object}	ErrorResponse
-//	@Failure		404		{object}	ErrorResponse
-//	@Failure		409		{object}	ErrorResponse	"not a git repository"
-//	@Failure		502		{object}	ErrorResponse	"git fetch failed"
+//	@Failure		502		{object}	ErrorResponse	"fetch failed"
 //	@Security		BearerAuth
-//	@Router			/skill-repos/{name}/sync [post]
-func (h *SkillHandler) Sync(c *gin.Context) {
-	target := h.repoDir(c)
-	if target == "" {
+//	@Router			/skill-imports [post]
+func (h *SkillHandler) Import(c *gin.Context) {
+	var req skillImportReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		badRequest(c, "url is required")
 		return
 	}
-	if _, err := os.Stat(target); err != nil {
+	rawURL := strings.TrimSpace(req.URL)
+	lower := strings.ToLower(rawURL)
+	if !strings.HasPrefix(lower, "https://") && !strings.HasPrefix(lower, "http://") {
+		badRequest(c, "only http(s) URLs are supported")
+		return
+	}
+	var resp *skillImportResp
+	var err error
+	if owner, repo, ok := parseGitHubRepoURL(rawURL); ok {
+		resp, err = h.importGitHubRepo(c, owner, repo)
+	} else {
+		resp, err = h.importRawURL(c, rawURL)
+	}
+	if err != nil {
+		abortError(c, http.StatusBadGateway, protocol.CodeUpstream, err.Error())
+		return
+	}
+	if resp == nil {
+		return // the importer already answered (a 4xx)
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+// parseGitHubRepoURL recognizes a repository home URL —
+// https://github.com/{owner}/{repo}, optional .git or trailing slash. Deeper
+// paths (a file, a tree) are not repo imports and fall through to the raw
+// fetch.
+func parseGitHubRepoURL(raw string) (owner, repo string, ok bool) {
+	u, err := url.Parse(raw)
+	if err != nil || !strings.EqualFold(u.Host, "github.com") {
+		return "", "", false
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", false
+	}
+	return parts[0], strings.TrimSuffix(parts[1], ".git"), true
+}
+
+// httpClient is the import fetcher: the proxy_url client when one is set,
+// the default client otherwise (ProxyClient returns nil for "no proxy").
+func (h *SkillHandler) httpClient(ctx context.Context) *http.Client {
+	if c := h.settings.ProxyClient(ctx); c != nil {
+		return c
+	}
+	return http.DefaultClient
+}
+
+// githubGet performs one authenticated GET. The stored github_token rides
+// only to GitHub's own hosts (the callers pass no other), never to an
+// arbitrary import URL.
+func (h *SkillHandler) githubGet(c *gin.Context, url string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "agents-server")
+	req.Header.Set("Accept", "application/vnd.github+json")
+	if tok := h.settings.String(c.Request.Context(), settings.KeyGitHubToken); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	return h.httpClient(c.Request.Context()).Do(req)
+}
+
+// readBody drains a response up to maxSkillBytes, reporting oversize as an
+// explicit error rather than a truncated document.
+func readBody(resp *http.Response) ([]byte, error) {
+	defer func() { _ = resp.Body.Close() }()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxSkillBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxSkillBytes {
+		return nil, fmt.Errorf("larger than %d KiB", maxSkillBytes>>10)
+	}
+	return data, nil
+}
+
+// importGitHubRepo walks a repository pinned at its HEAD commit: one call for
+// the commit sha, one for the full tree, then a raw fetch per SKILL.md — all
+// at the same commit, so a push mid-import cannot mix versions.
+func (h *SkillHandler) importGitHubRepo(c *gin.Context, owner, repo string) (*skillImportResp, error) {
+	api := h.githubAPI + "/repos/" + owner + "/" + repo
+	head, err := h.githubGet(c, api+"/commits/HEAD")
+	if err != nil {
+		return nil, fmt.Errorf("github: %w", err)
+	}
+	if head.StatusCode == http.StatusNotFound {
+		_ = head.Body.Close()
 		notFound(c)
-		return
+		return nil, nil
 	}
-	if _, err := os.Stat(filepath.Join(target, ".git")); err != nil {
-		conflict(c, "not a git repository")
-		return
+	if head.StatusCode != http.StatusOK {
+		_ = head.Body.Close()
+		return nil, fmt.Errorf("github: HEAD lookup answered %s", head.Status)
 	}
-
-	ctx := c.Request.Context()
-	fetch := exec.CommandContext(ctx, "git", "-C", target, "fetch", "--depth=1")
-	if out, err := fetch.CombinedOutput(); err != nil {
-		abortError(c, http.StatusBadGateway, protocol.CodeUpstream, "git fetch failed: "+string(out))
-		return
+	var commit struct {
+		SHA string `json:"sha"`
 	}
-	reset := exec.CommandContext(ctx, "git", "-C", target, "reset", "--hard", "origin/HEAD")
-	if out, err := reset.CombinedOutput(); err != nil {
-		internalError(c, errors.New("git reset failed: "+string(out)))
-		return
+	data, err := readBody(head)
+	if err == nil {
+		err = json.Unmarshal(data, &commit)
 	}
-
-	skills := findAllSkills(target)
-	c.JSON(http.StatusOK, skillRepoResp{Name: c.Param("name"), Skills: skills})
-}
-
-// readUnderRoot reads rel (a path relative to rootDir) through an os.Root
-// confined to rootDir, so symlinks that resolve outside the root are refused.
-func readUnderRoot(rootDir, rel string) ([]byte, error) {
-	root, err := os.OpenRoot(rootDir)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("github: reading HEAD commit: %w", err)
 	}
-	defer root.Close()
-	f, err := root.Open(rel)
-	if err != nil {
-		return nil, err
+	if commit.SHA == "" {
+		return nil, fmt.Errorf("github: HEAD commit response carries no sha")
 	}
-	defer f.Close()
-	return io.ReadAll(f)
-}
 
-func findAllSkills(rootDir string) []skillEntry {
-	skills := []skillEntry{}
-	// Confine discovery to rootDir via os.Root: WalkDir traversal never follows
-	// symlinks, and file reads go back through this rooted FS, so a symlinked
-	// SKILL.md pointing outside the repo (e.g. -> /etc/passwd) is refused rather
-	// than leaking an external file into the description. A missing/unreadable
-	// root simply yields no skills.
-	root, err := os.OpenRoot(rootDir)
+	tree, err := h.githubGet(c, api+"/git/trees/"+commit.SHA+"?recursive=1")
 	if err != nil {
-		return skills
+		return nil, fmt.Errorf("github: %w", err)
 	}
-	defer root.Close()
-	rfs := root.FS()
+	if tree.StatusCode != http.StatusOK {
+		_ = tree.Body.Close()
+		return nil, fmt.Errorf("github: tree listing answered %s", tree.Status)
+	}
+	var listing struct {
+		Tree []struct {
+			Path string `json:"path"`
+			Type string `json:"type"`
+		} `json:"tree"`
+		Truncated bool `json:"truncated"`
+	}
+	defer func() { _ = tree.Body.Close() }()
+	if err := json.NewDecoder(tree.Body).Decode(&listing); err != nil {
+		return nil, fmt.Errorf("github: reading tree: %w", err)
+	}
 
-	// WalkDir only errors if the callback does; ours never returns a non-nil
-	// error (unreadable entries are skipped), so the return is ignored.
-	_ = fs.WalkDir(rfs, ".", func(p string, d fs.DirEntry, err error) error {
+	repoURL := "https://github.com/" + owner + "/" + repo
+	resp := &skillImportResp{Repo: repoURL, Truncated: listing.Truncated}
+	seen := 0
+	for _, e := range listing.Tree {
+		if e.Type != "blob" || (e.Path != "SKILL.md" && !strings.HasSuffix(e.Path, "/SKILL.md")) {
+			continue
+		}
+		if seen++; seen > maxImportSkills {
+			resp.Skipped = append(resp.Skipped, e.Path+": over the per-import cap of "+fmt.Sprint(maxImportSkills))
+			continue
+		}
+		raw, err := h.githubGet(c, h.githubRaw+"/"+owner+"/"+repo+"/"+commit.SHA+"/"+e.Path)
 		if err != nil {
-			return nil //nolint:nilerr // skip unreadable entries, keep walking
+			resp.Skipped = append(resp.Skipped, e.Path+": "+err.Error())
+			continue
 		}
-		if d.IsDir() {
-			// Skip VCS/dependency dirs and any hidden dir (which also hides the
-			// .clone-* scratch a concurrent Clone may momentarily leave in the
-			// skills root) — but never the walk root itself.
-			if p != "." && (d.Name() == ".git" || d.Name() == "node_modules" || strings.HasPrefix(d.Name(), ".")) {
-				return fs.SkipDir
-			}
-			return nil
+		if raw.StatusCode != http.StatusOK {
+			status := raw.Status
+			_ = raw.Body.Close()
+			resp.Skipped = append(resp.Skipped, e.Path+": fetch answered "+status)
+			continue
 		}
-		// Only a real regular file counts: a symlinked SKILL.md is skipped (it
-		// would be refused on read and isn't a legitimate skill file anyway).
-		if d.Type().IsRegular() && d.Name() == "SKILL.md" {
-			dir := path.Dir(p) // forward-slash, relative to rootDir
-			name := filepath.Base(rootDir)
-			rel := name
-			if dir != "." {
-				name = path.Base(dir)
-				rel = filepath.FromSlash(dir)
-			}
-			skills = append(skills, skillEntry{
-				Name:        name,
-				Path:        rel,
-				Description: extractDescription(rfs, p),
-			})
+		content, err := readBody(raw)
+		if err != nil {
+			resp.Skipped = append(resp.Skipped, e.Path+": "+err.Error())
+			continue
 		}
-		return nil
-	})
-	return skills
+		h.upsertImported(c, repoURL, e.Path, commit.SHA, content, resp)
+	}
+	if seen == 0 {
+		badRequest(c, "repository contains no SKILL.md")
+		return nil, nil
+	}
+	return resp, nil
 }
 
-func extractDescription(rfs fs.FS, name string) string {
-	f, err := rfs.Open(name)
+// importRawURL fetches one SKILL.md from any http(s) URL — the escape hatch
+// for skills hosted outside GitHub. No stored token rides along.
+func (h *SkillHandler) importRawURL(c *gin.Context, rawURL string) (*skillImportResp, error) {
+	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, rawURL, nil)
 	if err != nil {
-		return ""
+		badRequest(c, "invalid url: "+err.Error())
+		return nil, nil //nolint:nilerr // the 400 above is the answer; nil,nil = "already responded"
 	}
-	defer f.Close()
-
-	scanner := bufio.NewScanner(f)
-	inFrontmatter := false
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-
-		if line == "---" {
-			if !inFrontmatter {
-				inFrontmatter = true
-				continue
-			}
-			// End of frontmatter — fall through to read first content line
-			inFrontmatter = false
-			continue
-		}
-
-		if inFrontmatter {
-			if after, ok := strings.CutPrefix(line, "description:"); ok {
-				desc := strings.TrimSpace(after)
-				desc = strings.Trim(desc, ">")
-				desc = strings.TrimSpace(desc)
-				if desc != "" {
-					return desc
-				}
-				// Folded/multi-line description (e.g. "description: >"): return the
-				// first non-blank continuation line, skipping blanks; stop at the
-				// frontmatter end or the next "key:" line.
-				for scanner.Scan() {
-					next := strings.TrimSpace(scanner.Text())
-					if next == "" {
-						continue
-					}
-					if next == "---" || strings.Contains(next, ":") {
-						break
-					}
-					return next
-				}
-			}
-			continue
-		}
-
-		if line == "" {
-			continue
-		}
-		// First non-empty line after frontmatter (or no frontmatter)
-		return strings.TrimLeft(line, "# ")
+	req.Header.Set("User-Agent", "agents-server")
+	raw, err := h.httpClient(c.Request.Context()).Do(req)
+	if err != nil {
+		return nil, err
 	}
-	return ""
+	if raw.StatusCode != http.StatusOK {
+		_ = raw.Body.Close()
+		return nil, fmt.Errorf("fetch answered %s", raw.Status)
+	}
+	content, err := readBody(raw)
+	if err != nil {
+		return nil, err
+	}
+	resp := &skillImportResp{Repo: rawURL}
+	h.upsertImported(c, rawURL, "", "", content, resp)
+	return resp, nil
 }
 
-func repoNameFromURL(url string) string {
-	url = strings.TrimSuffix(url, ".git")
-	url = strings.TrimRight(url, "/")
-	parts := strings.Split(url, "/")
-	if len(parts) == 0 {
-		return ""
+// upsertImported lands one fetched SKILL.md: matched by (source repo, path),
+// created when new, refreshed when unedited, skipped when detached — a local
+// edit is never overwritten by an import.
+func (h *SkillHandler) upsertImported(c *gin.Context, repo, path, sha string, content []byte, resp *skillImportResp) {
+	label := path
+	if label == "" {
+		label = repo
 	}
-	name := parts[len(parts)-1]
-	name = filepath.Clean(name)
-	if name == "" || name == "." || name == ".." {
-		return ""
+	meta, err := skills.Parse(content)
+	if err != nil {
+		resp.Skipped = append(resp.Skipped, label+": "+err.Error())
+		return
 	}
-	return name
+	ctx := c.Request.Context()
+	prev, err := h.store.FindBySource(ctx, repo, path)
+	if err != nil {
+		resp.Skipped = append(resp.Skipped, label+": "+err.Error())
+		return
+	}
+	switch {
+	case prev == nil:
+		sk := &store.Skill{
+			Name: meta.Name, Description: meta.Description, Content: string(content),
+			SourceRepo: repo, SourcePath: path, SourceSHA: sha,
+		}
+		if err := h.store.Create(ctx, sk); err != nil {
+			if _, dup := store.UniqueViolation(err); dup {
+				resp.Skipped = append(resp.Skipped, label+": name "+meta.Name+" already in use")
+			} else {
+				resp.Skipped = append(resp.Skipped, label+": "+err.Error())
+			}
+			return
+		}
+		resp.Created = append(resp.Created, meta.Name)
+	case prev.Detached:
+		resp.Skipped = append(resp.Skipped, label+": edited locally (detached)")
+	case prev.Content == string(content):
+		resp.Unchanged = append(resp.Unchanged, meta.Name)
+	default:
+		sk := &store.Skill{
+			Name: meta.Name, Description: meta.Description, Content: string(content),
+			SourceRepo: repo, SourcePath: path, SourceSHA: sha,
+		}
+		if err := h.store.Update(ctx, prev.ID, sk); err != nil {
+			if _, dup := store.UniqueViolation(err); dup {
+				resp.Skipped = append(resp.Skipped, label+": name "+meta.Name+" already in use")
+			} else {
+				resp.Skipped = append(resp.Skipped, label+": "+err.Error())
+			}
+			return
+		}
+		resp.Updated = append(resp.Updated, meta.Name)
+	}
 }

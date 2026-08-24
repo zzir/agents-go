@@ -654,13 +654,6 @@ components:
         logged_in:
           type: boolean
       type: object
-    handler.cloneRequest:
-      properties:
-        url:
-          type: string
-      required:
-      - url
-      type: object
     handler.createRunReq:
       properties:
         agent_config_id:
@@ -931,33 +924,50 @@ components:
         value:
           type: string
       type: object
-    handler.skillContentResp:
+    handler.skillImportReq:
+      properties:
+        url:
+          type: string
+      required:
+      - url
+      type: object
+    handler.skillImportResp:
+      properties:
+        created:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        repo:
+          type: string
+        skipped:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        truncated:
+          description: |-
+            Truncated reports that GitHub's tree listing was cut off (a very large
+            repo): everything listed was imported, but files past the cut were not
+            seen at all.
+          type: boolean
+        unchanged:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        updated:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+      type: object
+    handler.skillReq:
       properties:
         content:
           type: string
-        name:
-          type: string
-        path:
-          type: string
-      type: object
-    handler.skillEntry:
-      properties:
-        description:
-          type: string
-        name:
-          type: string
-        path:
-          type: string
-      type: object
-    handler.skillRepoResp:
-      properties:
-        name:
-          type: string
-        skills:
-          items:
-            $ref: '#/components/schemas/handler.skillEntry'
-          type: array
-          uniqueItems: false
+      required:
+      - content
       type: object
     handler.taskStopReq:
       properties:
@@ -1706,6 +1716,41 @@ components:
         prompt_id:
           type: string
         prompt_version:
+          type: string
+      type: object
+    store.Skill:
+      properties:
+        content:
+          description: |-
+            Content is the full SKILL.md; capped at write time (maxSkillBytes) and
+            omitted from list responses (ListMeta).
+          type: string
+        created_at:
+          type: string
+        description:
+          type: string
+        detached:
+          description: |-
+            Detached marks an imported skill edited in the workbench: a re-import
+            skips it instead of overwriting the local edit.
+          type: boolean
+        id:
+          type: string
+        name:
+          description: unique via idx_skills_name
+          type: string
+        source_path:
+          type: string
+        source_repo:
+          description: |-
+            Source records where an imported skill came from — the repo or raw URL,
+            the path inside the repo, and the commit it was fetched at — so a
+            re-import can match and refresh it. All empty for a skill authored in
+            the workbench.
+          type: string
+        source_sha:
+          type: string
+        updated_at:
           type: string
       type: object
     store.StepGate:
@@ -4880,27 +4925,82 @@ paths:
       summary: Set setting
       tags:
       - settings
-  /skill-repos:
+  /skill-imports:
     post:
-      description: git clone --depth=1 of an http(s) repository containing SKILL.md
-        files.
+      description: https://github.com/owner/repo imports every SKILL.md in the repo
+        (GitHub API; set the github_token setting for private repos and rate limits).
+        Any other http(s) URL is fetched as a single SKILL.md.
       requestBody:
         content:
           application/json:
             schema:
               oneOf:
               - type: object
-              - $ref: '#/components/schemas/handler.cloneRequest'
-                description: Repository URL (http/https only)
-                summary: repo
-        description: Repository URL (http/https only)
+              - $ref: '#/components/schemas/handler.skillImportReq'
+                description: Repository or raw SKILL.md URL
+                summary: import
+        description: Repository or raw SKILL.md URL
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.skillImportResp'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: fetch failed
+      security:
+      - BearerAuth: []
+      summary: Import skills from a URL
+      tags:
+      - skills
+  /skills:
+    get:
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/store.Skill'
+                type: array
+          description: OK
+      security:
+      - BearerAuth: []
+      summary: List skills
+      tags:
+      - skills
+    post:
+      description: content is a full SKILL.md document; name and description are read
+        from its frontmatter.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.skillReq'
+                description: SKILL.md content
+                summary: skill
+        description: SKILL.md content
         required: true
       responses:
         "201":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/handler.skillRepoResp'
+                $ref: '#/components/schemas/store.Skill'
           description: Created
         "400":
           content:
@@ -4913,61 +5013,40 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/handler.ErrorResponse'
-          description: directory already exists
-        "502":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: git clone failed
+          description: name already in use
       security:
       - BearerAuth: []
-      summary: Clone skill repo
+      summary: Create skill
       tags:
-      - skill-repos
-  /skill-repos/{name}:
+      - skills
+  /skills/{id}:
     delete:
       parameters:
-      - description: Repo directory name
+      - description: Skill id
         in: path
-        name: name
+        name: id
         required: true
         schema:
           type: string
       responses:
         "204":
           description: deleted
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Bad Request
         "404":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/handler.ErrorResponse'
           description: Not Found
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Internal Server Error
       security:
       - BearerAuth: []
-      summary: Delete skill repo
+      summary: Delete skill
       tags:
-      - skill-repos
-  /skill-repos/{name}/sync:
-    post:
-      description: git fetch + reset --hard origin/HEAD; local changes in the repo
-        are discarded.
+      - skills
+    get:
       parameters:
-      - description: Repo directory name
+      - description: Skill id
         in: path
-        name: name
+        name: id
         required: true
         schema:
           type: string
@@ -4976,7 +5055,44 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/handler.skillRepoResp'
+                $ref: '#/components/schemas/store.Skill'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+      security:
+      - BearerAuth: []
+      summary: Get skill
+      tags:
+      - skills
+    put:
+      parameters:
+      - description: Skill id
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.skillReq'
+                description: SKILL.md content
+                summary: skill
+        description: SKILL.md content
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.Skill'
           description: OK
         "400":
           content:
@@ -4995,65 +5111,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/handler.ErrorResponse'
-          description: not a git repository
-        "502":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: git fetch failed
+          description: Conflict
       security:
       - BearerAuth: []
-      summary: Sync skill repo
-      tags:
-      - skill-repos
-  /skills:
-    get:
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                items:
-                  $ref: '#/components/schemas/handler.skillEntry'
-                type: array
-          description: OK
-      security:
-      - BearerAuth: []
-      summary: List skills
-      tags:
-      - skills
-  /skills/{path}:
-    get:
-      parameters:
-      - description: Skill path (may be nested, e.g. repo/sub-skill)
-        in: path
-        name: path
-        required: true
-        schema:
-          type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.skillContentResp'
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Bad Request
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Not Found
-      security:
-      - BearerAuth: []
-      summary: Get skill content
+      summary: Update skill
       tags:
       - skills
   /tasks:

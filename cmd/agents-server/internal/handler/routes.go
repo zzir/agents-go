@@ -145,16 +145,15 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		settings.DELETE("/:key", admin, h.Settings.Delete)
 	}
 	{
-		// Skills are read-only resources; management (clone/sync/delete)
-		// operates on whole repos under /skill-repos.
 		skills := api.Group("/skills")
 		skills.GET("", h.Skills.List)
-		skills.GET("/*path", h.Skills.Get)
-
-		repos := api.Group("/skill-repos", admin)
-		repos.POST("", h.Skills.Clone)
-		repos.POST("/:name/sync", h.Skills.Sync)
-		repos.DELETE("/:name", h.Skills.Delete)
+		skills.GET("/:id", h.Skills.Get)
+		skills.POST("", admin, h.Skills.Create)
+		skills.PUT("/:id", admin, h.Skills.Update)
+		skills.DELETE("/:id", admin, h.Skills.Delete)
+		// Import is its own resource, not a /skills subpath: gin cannot mix a
+		// literal segment with the :id parameter above.
+		api.POST("/skill-imports", admin, h.Skills.Import)
 	}
 	// The two registries a config UI renders from, so a panel never keeps its
 	// own copy of what the server accepts: provider machine facts (types, auth
