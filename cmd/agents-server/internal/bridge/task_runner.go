@@ -355,7 +355,7 @@ func (r *Runner) StopSessionTree(sessionID string) {
 const sessionTeardownWait = 5 * time.Second
 
 // ReleaseSessionBinding releases the cached sandbox instance behind a deleted
-// session's (sandbox, workdir) binding, but only when no remaining session
+// session's (sandbox, project) binding, but only when no remaining session
 // references the pair — the instance may be a live ssh connection or a docker
 // container, and sessions sharing a project must not lose it under a sibling's
 // delete. Called AFTER the delete cascade, so the count excludes the deleted

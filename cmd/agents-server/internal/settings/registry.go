@@ -72,7 +72,7 @@ type Def struct {
 }
 
 // defs is the table. Order is panel order: network and prompt first (what
-// every agent inherits), credentials next, then the diagnostics and the caps.
+// every agent inherits), then the diagnostics and the caps.
 var defs = []Def{{
 	Key:         KeyProxyURL,
 	Kind:        KindString,

@@ -52,9 +52,8 @@ type SSHAuth struct {
 
 // sshDialer reaches a remote Docker daemon's unix socket through SSH: every
 // docker API request opens a direct-streamlocal channel on one shared SSH
-// connection (pure Go — no ssh binary, no docker CLI on the remote; the
-// remote sshd must allow streamlocal forwarding and the SSH user must reach
-// the socket). A dead connection is re-established on the next dial.
+// connection (docs/sandbox.md "Remote daemon"). A dead connection is
+// re-established on the next dial.
 type sshDialer struct {
 	addr    string // host:port
 	socket  string // remote unix socket path

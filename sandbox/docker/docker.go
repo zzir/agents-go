@@ -389,15 +389,9 @@ func (s *Sandbox) createContainer(ctx context.Context) (string, error) {
 }
 
 // adoptNamed takes over the existing container holding our fixed name,
-// provided it proves to be OURS from the SAME configuration: the fingerprint
-// label createContainer stamps must match the current options exactly. Image
-// and bind-mount are still checked first for their specific diagnostics; the
-// fingerprint then covers everything else that decides what the container is
-// security-wise (network, user, runtime, limits) — adopting on image+mount
-// alone would let a container created under a laxer policy (network on, root
-// user, no limits) silently serve a config that no longer allows any of it.
-// The container's own WorkingDir does not matter — persistent mode passes the
-// working directory per exec. A stopped match is started.
+// provided the fingerprint label proves it OURS from the SAME configuration
+// (spec §5.19). A stopped match is started; ours-from-an-older-config is
+// errStaleOurs (the caller replaces it); a foreign holder is a hard error.
 func (s *Sandbox) adoptNamed(ctx context.Context) (string, error) {
 	info, err := s.cli.ContainerInspect(ctx, s.opts.ContainerName, client.ContainerInspectOptions{})
 	if err != nil {

@@ -61,8 +61,8 @@ type ProviderStore struct {
 	db *bun.DB
 }
 
-// NewProviderStore returns a ProviderStore backed by db. Name uniqueness is
-// enforced by the DB (idx_providers_name); a duplicate surfaces as a
+// NewProviderStore returns a ProviderStore backed by db. Names are unique
+// per scope (partial indexes, spec §5.29); a duplicate surfaces as a
 // UNIQUE-constraint error that handlers map to 409.
 func NewProviderStore(db *bun.DB) *ProviderStore {
 	return &ProviderStore{CrudStore: NewCrudStore[Provider](db, "provider", "created_at DESC").withSecrets(sealProvider, openProvider), db: db}

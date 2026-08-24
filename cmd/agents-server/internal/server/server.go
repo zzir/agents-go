@@ -134,8 +134,8 @@ func (s *Server) ServeHealth(version string) {
 }
 
 // ServeStatic serves files from staticFS, falling back to index.html for unmatched routes (SPA support).
-// Text assets (.js, .css, .html, .svg, .json) may be pre-compressed as .br files;
-// they are served transparently with Content-Encoding: br.
+// Assets may be pre-compressed as .gz files; they are served transparently
+// with Content-Encoding: gzip (decompressed for a client that accepts none).
 func (s *Server) ServeStatic(staticFS fs.FS) {
 	s.cspPolicy = buildCSP(inlineScriptHashes(staticFS), s.imgHosts)
 	httpFS := http.FS(staticFS)

@@ -12,14 +12,9 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// Authorization, in two rules (README "Ownership and roles"):
-//
-//   - Shared configuration — agents, providers, MCP servers, sandboxes,
-//     settings, skills, workflows, guardrails, memories, routes — is readable
-//     by every member and written only by admins. Every such write is a
-//     change to what runs on the host or whose credentials are spent.
-//   - A session's content belongs to its owner alone; an admin may list, stop
-//     and delete one (management), never read it.
+// Authorization gates: session content is owner-only, scoped configuration
+// gates per row, host configuration is read-everyone/write-admin — spec
+// §5.29, README "Ownership and roles".
 
 // requireAdmin answers 403 unless the caller is an admin; false means the
 // response is written and the handler must return.
@@ -203,9 +198,7 @@ func (d AuthzDeps) triggerGate() gin.HandlerFunc {
 	}
 }
 
-// The scoped-configuration gates (spec §5.29). Providers, agents, MCP
-// servers, skills and workflows carry a scope: global rows are every
-// member's to read and admins' to write; private rows belong to their owner.
+// The scoped-configuration gates (spec §5.29).
 
 // stampCreateScope applies the caller to a new scoped row: an explicit
 // global claim needs the admin role, anything else lands private and owned.

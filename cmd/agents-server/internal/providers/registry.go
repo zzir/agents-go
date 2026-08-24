@@ -138,8 +138,7 @@ func DefFor(t string) (Def, error) {
 	return Def{}, fmt.Errorf("unknown provider %q (valid: %s)", t, strings.Join(types, ", "))
 }
 
-// BuildPlain is the lookup+Build pairing for routes and fallback
-// entries.
+// BuildPlain is the lookup+Build pairing for fallback entries.
 func BuildPlain(providerType, apiKey, baseURL string, proxyClient *http.Client) (agents.ModelProvider, error) {
 	def, err := DefFor(providerType)
 	if err != nil {

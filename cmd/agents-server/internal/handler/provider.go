@@ -139,9 +139,7 @@ func sameScope(c *gin.Context, kind, current, requested string) bool {
 }
 
 // SetScope promotes a provider to global or demotes it to the acting admin's
-// private set. A demote is refused while any global or foreign agent still
-// references the provider — their runs would spend a credential that just
-// became somebody's private key.
+// private set; DemoteToPrivate carries the foreign-reference guard.
 //
 //	@Summary	Change a provider's scope
 //	@Tags		providers
@@ -260,7 +258,7 @@ func (h *ProviderHandler) Update(c *gin.Context) {
 		return nil
 	})
 	if err != nil {
-		saveError(c, err) // duplicate name -> 409, not-found -> 404, routed chatgpt_login -> 400
+		saveError(c, err) // duplicate name -> 409, not-found -> 404
 		return
 	}
 	updated, err := h.store.Get(ctx, id)
@@ -298,7 +296,7 @@ func (h *ProviderHandler) Delete(c *gin.Context) {
 		return
 	}
 	if refs > 0 {
-		conflict(c, fmt.Sprintf("%d agent(s) or route(s) still use this provider; repoint them first", refs))
+		conflict(c, fmt.Sprintf("%d agent(s) still use this provider; repoint them first", refs))
 		return
 	}
 	c.Status(http.StatusNoContent)

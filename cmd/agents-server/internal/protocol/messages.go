@@ -445,8 +445,7 @@ type SessionTitleUpdated struct {
 }
 
 // SessionSandboxBound notifies the client that the session is now permanently
-// bound to (sandbox_id, project_id). An empty project_id means the sandbox's own
-// default directory.
+// bound to (sandbox_id, project_id).
 type SessionSandboxBound struct {
 	SessionID string `json:"session_id"`
 	SandboxID string `json:"sandbox_id"`

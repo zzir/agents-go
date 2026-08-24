@@ -85,7 +85,7 @@ func (t taskLauncher) Launch(ctx context.Context, req tasks.LaunchRequest) error
 		_, err := t.r.StartWakeRun(req.SessionID, in.AgentConfigID, in.SandboxID, in.ProjectID, req.Input, req.ParentRunID, nil)
 		return err
 	}
-	// The task's own run. It shares the parent's sandbox (and workdir), and
+	// The task's own run. It shares the parent's sandbox (and project), and
 	// thereby its command-trust scope; the child's first run CAS-binds its
 	// hidden session with the same pair.
 	_, err := t.r.startRunWithID(req.RunID, req.SessionID, in.TaskAgentID, in.SandboxID, in.ProjectID, req.Input, "", nil, nil)

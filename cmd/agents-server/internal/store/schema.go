@@ -137,13 +137,10 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 		Exec(ctx); err != nil {
 		return fmt.Errorf("creating sessions updated_at index: %w", err)
 	}
-	// Scoped-entity names are unique per visibility context (spec §5.29): one
-	// namespace for the global rows, one per owner for the private ones — a
-	// member's private name may SHADOW a global one (resolution prefers own),
-	// but two rows a single caller could both see under one name must not
-	// exist. Two partial indexes per table express exactly that. For agent
-	// configs this is load-bearing beyond display: HITL run state serializes
-	// the current agent by name.
+	// Scoped-entity names: unique per visibility context via two partial
+	// indexes per table — one global namespace, one per owner (spec §5.29).
+	// Load-bearing for agent configs: HITL run state serializes the current
+	// agent by name.
 	for _, t := range []struct {
 		model any
 		table string
@@ -185,10 +182,6 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 		Exec(ctx); err != nil {
 		return fmt.Errorf("creating guardrails unique name index: %w", err)
 	}
-	// An MCP server's name is its tool-prefix namespace ("<name>__<tool>"), so
-	// two servers sharing a name are ambiguous. The name is thus an identity —
-	// enforce it unique at the DB (this also makes the agent-config validator's
-	// cross-server name-collision check unreachable, since no two servers can
 	// Workflow names follow the same per-scope rule, case-insensitively —
 	// the tool matches names with EqualFold, so "Build" and "build" must not
 	// both exist in one visibility context.
@@ -234,7 +227,6 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 		Exec(ctx); err != nil {
 		return fmt.Errorf("creating wakeups prune index: %w", err)
 	}
-	// A skill's name is what the model activates it by (read_skill) and what
 	// A project's name is how a person picks it per (owner, sandbox); two
 	// sharing one make the choice a coin flip — and EnsureDefault's insert
 	// race resolves through this index.

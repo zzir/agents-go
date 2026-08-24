@@ -15,8 +15,8 @@ type SkillStore struct {
 	db *bun.DB
 }
 
-// NewSkillStore returns a SkillStore backed by db. Name uniqueness is
-// enforced by the DB (idx_skills_name); a duplicate surfaces as a
+// NewSkillStore returns a SkillStore backed by db. Names are unique per
+// scope (partial indexes, spec §5.29); a duplicate surfaces as a
 // UNIQUE-constraint error that handlers map to 409.
 func NewSkillStore(db *bun.DB) *SkillStore {
 	return &SkillStore{CrudStore: NewCrudStore[Skill](db, "skill", "name ASC"), db: db}

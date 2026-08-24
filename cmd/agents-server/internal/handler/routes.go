@@ -61,14 +61,9 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		auth.DELETE("/users/:id/tokens", adminOnly(), h.Auth.RevokeUserTokens)
 		auth.GET("/audit", adminOnly(), h.Auth.ListAudit)
 	}
-	// Three rules shape everything below (authz.go, spec §5.29): a session's
-	// content is its owner's alone — the :id subtrees are gated on ownership,
-	// and a foreign id reads as absent. SCOPED configuration (agents,
-	// providers, MCP servers, skills, workflows) is per-row: global rows are
-	// every member's to read and admins' to write, private rows their
-	// owner's; the gates live in the handlers, and the scope-change routes
-	// are admin-only. HOST configuration (sandboxes, settings, guardrails,
-	// memories) stays read-everyone, write-admin.
+	// Route-level authz: session content is owner-only, scoped config gates
+	// per row in the handlers, host config is read-everyone/write-admin —
+	// authz.go, spec §5.29.
 	admin := adminOnly()
 	{
 		sessions := api.Group("/sessions")

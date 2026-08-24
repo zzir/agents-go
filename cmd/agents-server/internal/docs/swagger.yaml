@@ -758,10 +758,8 @@ components:
         owner_id:
           type: string
         scope:
-          description: |-
-            Scope is the row's visibility (spec §5.29): ScopePrivate — the owner's
-            alone — or ScopeGlobal, readable by every member and written by admins.
-            OwnerID is set exactly when the scope is private.
+          description: 'Scope/OwnerID: row visibility, owner set iff private — spec
+            §5.29.'
           type: string
         status:
           description: |-
@@ -1296,10 +1294,8 @@ components:
         resilience:
           $ref: '#/components/schemas/store.ResilienceGroup'
         scope:
-          description: |-
-            Scope is the row's visibility (spec §5.29): ScopePrivate — the owner's
-            alone — or ScopeGlobal, readable by every member and written by admins.
-            OwnerID is set exactly when the scope is private.
+          description: 'Scope/OwnerID: row visibility, owner set iff private — spec
+            §5.29.'
           type: string
         session:
           $ref: '#/components/schemas/store.SessionGroup'
@@ -1660,10 +1656,8 @@ components:
         owner_id:
           type: string
         scope:
-          description: |-
-            Scope is the row's visibility (spec §5.29): ScopePrivate — the owner's
-            alone — or ScopeGlobal, readable by every member and written by admins.
-            OwnerID is set exactly when the scope is private.
+          description: 'Scope/OwnerID: row visibility, owner set iff private — spec
+            §5.29.'
           type: string
         type:
           description: |-
@@ -1718,9 +1712,7 @@ components:
             at the next run.
           type: integer
         type:
-          description: |-
-            Type is "docker" — the only backend (spec §5.27). Kept as a column so a
-            future backend is a value, not a schema change.
+          description: Type is "docker" — the only backend (spec §5.27).
           type: string
         updated_at:
           type: string
@@ -1768,12 +1760,9 @@ components:
           type: string
         sandbox_id:
           description: |-
-            SandboxID/ProjectID are the session's PERMANENT sandbox binding: the
-            first run that carries a sandbox writes them (compare-and-set, see
-            BindSandboxIfEmpty) and they are never rewritten — the session's file
-            system context must not change under a conversation that already
-            touched it. The project names the working tree the sandbox's container
-            mounts (spec §5.28).
+            SandboxID/ProjectID are the session's PERMANENT binding: the first
+            sandbox-carrying run CAS-writes them (BindSandboxIfEmpty) and they are
+            never rewritten — spec §5.28.
           type: string
         updated_at:
           type: string
@@ -1808,15 +1797,13 @@ components:
         id:
           type: string
         name:
-          description: unique via idx_skills_name
+          description: unique per scope (spec §5.29)
           type: string
         owner_id:
           type: string
         scope:
-          description: |-
-            Scope is the row's visibility (spec §5.29): ScopePrivate — the owner's
-            alone — or ScopeGlobal, readable by every member and written by admins.
-            OwnerID is set exactly when the scope is private.
+          description: 'Scope/OwnerID: row visibility, owner set iff private — spec
+            §5.29.'
           type: string
         source_path:
           type: string

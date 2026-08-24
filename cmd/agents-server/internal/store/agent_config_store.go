@@ -1,4 +1,5 @@
-// Package store is the SQLite-backed persistence layer (bun ORM) for sessions, messages, agent configs, MCP servers, memories, settings, provider routes, sandboxes, and trace events.
+// Package store is the persistence layer (bun ORM; SQLite or PostgreSQL) for
+// sessions, configuration entities, tasks, traces and audit events.
 package store
 
 import (
@@ -14,17 +15,16 @@ type AgentConfigStore struct {
 	db *bun.DB
 }
 
-// NewAgentConfigStore returns an AgentConfigStore backed by db. Agent-name
-// uniqueness is enforced by the DB (idx_agent_configs_name); a duplicate
-// surfaces as a UNIQUE-constraint error that handlers map to 409.
+// NewAgentConfigStore returns an AgentConfigStore backed by db. Names are
+// unique per scope (partial indexes, spec §5.29); a duplicate surfaces as a
+// UNIQUE-constraint error that handlers map to 409.
 func NewAgentConfigStore(db *bun.DB) *AgentConfigStore {
 	return &AgentConfigStore{CrudStore: NewCrudStore[AgentConfig](db, "agent config", "created_at DESC").withSecrets(sealAgentConfig, openAgentConfig), db: db}
 }
 
-// Create writes the agent only if its provider still exists, atomically — the
-// same check-then-write guard the route store has, so a provider deleted
-// between the handler's validation and this write cannot leave a dangling
-// provider_id (ErrProviderRef if it does; an empty provider_id is the default).
+// Create writes the agent in the provider-guarded transaction: a provider
+// deleted or re-scoped between the handler's validation and this write is
+// refused (ErrProviderRef / ErrProviderScope; empty provider_id skips it).
 func (s *AgentConfigStore) Create(ctx context.Context, ac *AgentConfig) error {
 	return sealedWrite(ac, sealAgentConfig, openAgentConfig, func() error {
 		return writeReferencingProvider(ctx, s.db, ac.ProviderID, func(ctx context.Context, tx bun.Tx, pv *Provider) error {

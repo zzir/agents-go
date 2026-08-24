@@ -242,9 +242,9 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
         <div className="form-group-title">Provider</div>
         {fc('Endpoint',
           <Select value={form.provider_id} onChange={e => set('provider_id', e.target.value)} block>
-            {/* No built-in default anymore: an empty provider_id reaches no
-                credential and the run fails its pre-flight, so the empty
-                value is a placeholder, not an option that works. */}
+            {/* An empty provider_id reaches no credential and the run fails
+                its pre-flight, so the empty value is a placeholder, not an
+                option that works. */}
             <Select.Option value="">Select an endpoint…</Select.Option>
             {(providers || []).map(p => (
               <Select.Option key={p.id} value={p.id}>{p.name}</Select.Option>

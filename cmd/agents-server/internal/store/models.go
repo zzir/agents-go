@@ -33,12 +33,9 @@ type Session struct {
 	// had to teach it a second special case.
 	Hidden        bool   `bun:"hidden"               json:"hidden,omitempty"`
 	AgentConfigID string `bun:"agent_config_id,nullzero,type:uuid" json:"agent_config_id,omitempty"`
-	// SandboxID/ProjectID are the session's PERMANENT sandbox binding: the
-	// first run that carries a sandbox writes them (compare-and-set, see
-	// BindSandboxIfEmpty) and they are never rewritten — the session's file
-	// system context must not change under a conversation that already
-	// touched it. The project names the working tree the sandbox's container
-	// mounts (spec §5.28).
+	// SandboxID/ProjectID are the session's PERMANENT binding: the first
+	// sandbox-carrying run CAS-writes them (BindSandboxIfEmpty) and they are
+	// never rewritten — spec §5.28.
 	SandboxID string `bun:"sandbox_id,nullzero,type:uuid" json:"sandbox_id,omitempty"`
 	ProjectID string `bun:"project_id,nullzero,type:uuid" json:"project_id,omitempty"`
 	// Planning is the session's plan phase: true means its next run starts
@@ -134,9 +131,7 @@ const TaskKindWorkflow = "workflow"
 type AgentConfig struct {
 	bun.BaseModel `bun:"table:agent_configs,alias:ac"`
 
-	// Scope is the row's visibility (spec §5.29): ScopePrivate — the owner's
-	// alone — or ScopeGlobal, readable by every member and written by admins.
-	// OwnerID is set exactly when the scope is private.
+	// Scope/OwnerID: row visibility, owner set iff private — spec §5.29.
 	Scope   string `bun:"scope,notnull"                 json:"scope"`
 	OwnerID string `bun:"owner_id,nullzero,type:uuid"   json:"owner_id,omitempty"`
 	ID      string `bun:"id,pk,type:uuid" json:"id"`
@@ -194,9 +189,7 @@ type AgentConfig struct {
 type Provider struct {
 	bun.BaseModel `bun:"table:providers,alias:pv"`
 
-	// Scope is the row's visibility (spec §5.29): ScopePrivate — the owner's
-	// alone — or ScopeGlobal, readable by every member and written by admins.
-	// OwnerID is set exactly when the scope is private.
+	// Scope/OwnerID: row visibility, owner set iff private — spec §5.29.
 	Scope   string `bun:"scope,notnull"                 json:"scope"`
 	OwnerID string `bun:"owner_id,nullzero,type:uuid"   json:"owner_id,omitempty"`
 	ID      string `bun:"id,pk,type:uuid" json:"id"`
@@ -229,9 +222,7 @@ type Provider struct {
 type McpServerConfig struct {
 	bun.BaseModel `bun:"table:mcp_servers,alias:ms"`
 
-	// Scope is the row's visibility (spec §5.29): ScopePrivate — the owner's
-	// alone — or ScopeGlobal, readable by every member and written by admins.
-	// OwnerID is set exactly when the scope is private.
+	// Scope/OwnerID: row visibility, owner set iff private — spec §5.29.
 	Scope   string `bun:"scope,notnull"                 json:"scope"`
 	OwnerID string `bun:"owner_id,nullzero,type:uuid"   json:"owner_id,omitempty"`
 	ID      string `bun:"id,pk,type:uuid"        json:"id"`
@@ -300,13 +291,11 @@ type HTTPMcpConfig struct {
 type Skill struct {
 	bun.BaseModel `bun:"table:skills,alias:sk"`
 
-	// Scope is the row's visibility (spec §5.29): ScopePrivate — the owner's
-	// alone — or ScopeGlobal, readable by every member and written by admins.
-	// OwnerID is set exactly when the scope is private.
+	// Scope/OwnerID: row visibility, owner set iff private — spec §5.29.
 	Scope       string `bun:"scope,notnull"                 json:"scope"`
 	OwnerID     string `bun:"owner_id,nullzero,type:uuid"   json:"owner_id,omitempty"`
 	ID          string `bun:"id,pk,type:uuid" json:"id"`
-	Name        string `bun:"name,notnull"    json:"name"` // unique via idx_skills_name
+	Name        string `bun:"name,notnull"    json:"name"` // unique per scope (spec §5.29)
 	Description string `bun:"description,notnull" json:"description"`
 	// Content is the full SKILL.md; capped at write time (maxSkillBytes) and
 	// omitted from list responses (ListMeta).
@@ -440,8 +429,7 @@ type SandboxConfig struct {
 
 	ID   string `bun:"id,pk,type:uuid" json:"id"`
 	Name string `bun:"name,notnull" json:"name"`
-	// Type is "docker" — the only backend (spec §5.27). Kept as a column so a
-	// future backend is a value, not a schema change.
+	// Type is "docker" — the only backend (spec §5.27).
 	Type string `bun:"type,notnull" json:"type"`
 
 	// Config holds the backend settings as JSON (DockerConfig). Stored as
@@ -601,7 +589,6 @@ func (p *PendingApproval) ParsedToolCalls() []PendingToolCall {
 	return out
 }
 
-// BeforeAppendModel stamps id/timestamps for each CrudStore-backed entity via
 // BeforeAppendModel stamps the id and timestamps; bun invokes it on insert and update.
 func (m *Guardrail) BeforeAppendModel(_ context.Context, q bun.Query) error {
 	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
@@ -623,11 +610,9 @@ func (m *McpServerConfig) BeforeAppendModel(_ context.Context, q bun.Query) erro
 	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
 }
 
-// stampScope pins the scope/owner invariant on INSERT for scoped entities: an
-// unstamped direct write (internal callers, tests) lands GLOBAL — the shared
-// semantics every row had before scopes existed — while the API layer stamps
-// explicitly (private by default; see NormalizeScope). A private row without
-// its owner is never allowed to land.
+// stampScope pins the scope/owner invariant on INSERT: an unstamped direct
+// write lands global, a private row without its owner is refused — see
+// NormalizeScope and spec §5.29.
 func stampScope(q bun.Query, scope *string, ownerID string) error {
 	if _, ok := q.(*bun.InsertQuery); !ok {
 		return nil

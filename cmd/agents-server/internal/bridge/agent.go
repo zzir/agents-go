@@ -68,8 +68,8 @@ type AgentDeps struct {
 	// WorkflowTools is set by NewRunner and builds the run's get_workflow /
 	// save_workflow — per run, like SpawnTool, because the save tool's
 	// description names the agents on offer. Attached only when the config
-	// opts in (behavior.workflow_authoring); never on a background run, and
-	// save_workflow only on an admin's run (README "Ownership and roles").
+	// opts in (behavior.workflow_authoring); never on a background run.
+	// save_workflow gates per call (spec §5.29).
 	WorkflowTools func(ctx context.Context, ownerID string) []*agents.Tool
 }
 
@@ -559,12 +559,11 @@ func attachSandboxTools(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx,
 }
 
 // attachSkills loads the stored skills and, when spec restricts the selection
-// (by skill id), filters to the advertised ones; the rendered index pairs with
-// a read_skill tool that reads the document back from the store by name,
-// confined to the advertised set. Best-effort: a load error is skipped, not
-// fatal. Returns the size of the index it added to the instructions, which no
-// caller can recover afterwards (it is wrapped into one string with every
-// other layer).
+// (by skill id), filters to the advertised ones; the rendered index pairs
+// with a read_skill tool. read_skill gates on the advertised NAMES but
+// resolves them own-over-global (spec §5.29), so a same-named row of the
+// owner's outside the selection can serve the content. Best-effort: a load
+// error is skipped, not fatal. Returns the size of the index it added.
 func attachSkills(ctx context.Context, deps *AgentDeps, agent *agents.Agent, spec *AgentSpec, ownerID string) int {
 	// No owner, no view (mirror of attachMCPServers) — and an empty owner in
 	// the scoped WHERE is a type error on PostgreSQL's uuid column.

@@ -43,12 +43,10 @@ func NormalizeScope(scope, ownerID string) (string, string) {
 	return ScopePrivate, ownerID
 }
 
-// ListVisibleOf returns the scoped-entity rows ownerID may see: the global
-// rows first, then the caller's own — both groups by CREATION TIME, oldest
-// first. Positions never move on a rename or a scope flip (a flipped row
-// only changes group, keeping its slot within it). ONLY for the five scoped
-// tables (they all spell the scope/owner columns the same); a table without
-// them fails the query loudly.
+// ListVisibleOf returns the scoped-entity rows ownerID may see, in the
+// listing order spec §5.29 promises (global first, both groups by creation
+// time). ONLY for the five scoped tables; a table without the scope/owner
+// columns fails the query loudly.
 func ListVisibleOf[T any](ctx context.Context, s *CrudStore[T], ownerID string, admin bool) ([]T, error) {
 	var out []T
 	q := visibleTo(s.db.NewSelect().Model(&out), ownerID, admin).
@@ -86,10 +84,9 @@ func SetScopeOf[T any](ctx context.Context, s *CrudStore[T], id, scope, ownerID 
 	return nil
 }
 
-// RefVisible reports whether a holder row may REFERENCE the given row (spec
-// §5.29): a global holder only global rows — anything less would hand every
-// member a private credential — and a private holder global rows plus its
-// owner's own.
+// RefVisible reports whether a holder row may REFERENCE the given row: a
+// global holder only global rows, a private holder global rows plus its
+// owner's own — spec §5.29.
 func RefVisible(refScope, refOwner, holderScope, holderOwner string) bool {
 	if holderScope == ScopeGlobal {
 		return refScope == ScopeGlobal

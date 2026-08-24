@@ -51,34 +51,19 @@ func NormalizeSandboxConfig(typ string, raw json.RawMessage) (json.RawMessage, e
 }
 
 // ContentEqual reports whether two sandbox config payloads mean the same
-// runtime CONTENT — the predicate behind contentChanged, which bumps
-// RuntimeGen, retires live instances and severs web terminals. Typed decoding
-// plus canonicalization keeps representation noise from counting as a change:
-// an omitted field equals its explicit zero (the UI round-trips every field
-// with explicit zeros — compared as maps, a mere rename of a
-// minimally-written config would tear down a docker container), and unknown
-// keys are ignored. A payload that cannot decode compares unequal on the safe
-// side: retiring too much rebuilds an environment, while the opposite miss
-// keeps old credentials serving. A TYPE change is a content change by
-// definition; callers short-circuit it before asking here.
+// runtime CONTENT — the predicate behind contentChanged (RuntimeGen bump,
+// instance retirement). Canonical typed comparison keeps representation
+// noise — omitted-vs-zero fields, unknown keys — from tearing down a
+// container; a payload that cannot decode compares UNEQUAL, the safe side.
 func ContentEqual(_ string, a, b json.RawMessage) bool {
 	return canonicalEqual(a, b, func(*DockerConfig) {})
 }
 
 // IdentityChanged reports whether an update moves the sandbox's IDENTITY —
-// the fields that decide where a binding's files live: the backend type and
-// the DAEMON the containers run on (Host — a different daemon is a different
-// set of filesystems; every project of this sandbox stores there). Sessions
-// bind a config id permanently on the promise that it keeps meaning the same
-// file system, so these freeze while any session references the config;
-// everything else — name, SSH credentials, image, network, runtime, limits,
-// the exec user — changes the execution environment, not where the data is,
-// and stays freely editable.
-//
-// A prev that no longer decodes is NOT a change: sessions bound to it hold a
-// config that cannot build, and fixing it is their only way out. (An
-// undecodable NEXT counts as one — pure defense; normalization upstream
-// refuses those payloads.)
+// type and daemon Host, the fields that decide where a binding's files live;
+// they freeze while sessions bind the config (README invariant 27). An
+// undecodable prev is NOT a change — fixing it is a bound session's only way
+// out; an undecodable next counts as one, pure defense.
 func IdentityChanged(prev, next *SandboxConfig) bool {
 	if prev.Type != next.Type {
 		return true

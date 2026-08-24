@@ -12,18 +12,15 @@ import (
 	"github.com/uptrace/bun/dialect"
 )
 
-// NewID returns a UUIDv4 — the primary key of ordinary entities, whose row
-// counts stay small enough that index locality buys nothing. Secrets —
-// tokens, states, the webhook secret — are NOT ids and keep 256-bit
-// crypto/rand.
+// NewID returns a UUIDv4 — the primary key of ordinary entities (README
+// "Database"). Secrets are NOT ids and keep 256-bit crypto/rand.
 func NewID() string {
 	return uuid.NewV4().String()
 }
 
-// NewTimeID returns a UUIDv7 — for the APPEND-HEAVY tables only
-// (trace_events, entries, audit_events), where time-ordered ids keep inserts
-// at the right edge of the B-tree index and rows made together sitting
-// together instead of churning random pages as the table grows.
+// NewTimeID returns a UUIDv7 — for the append-heavy tables only
+// (trace_events, entries, audit_events), whose ids double as pagination
+// cursors (README "Database").
 func NewTimeID() string {
 	return uuid.NewV7().String()
 }

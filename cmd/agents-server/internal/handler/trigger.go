@@ -264,9 +264,6 @@ func (h *TriggerHandler) Create(c *gin.Context) {
 	if !ok {
 		return
 	}
-	// The per-owner cap: unattended cron (and webhook) starts are spend, so a
-	// runaway script cannot mint thousands. Fifty is a working team's head
-	// room, not a scheduler.
 	u, _ := server.CurrentUser(c)
 	existing, err := h.store.ListByOwner(c.Request.Context(), u.ID, "")
 	if err != nil {

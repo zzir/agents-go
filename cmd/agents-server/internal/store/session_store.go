@@ -216,7 +216,7 @@ func (s *SessionStore) CountBindingRefs(ctx context.Context, sandboxID, projectI
 		Where("project_id = ?", projectID).
 		Count(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("counting sessions bound to sandbox %s workdir %q: %w", sandboxID, projectID, err)
+		return 0, fmt.Errorf("counting sessions bound to sandbox %s project %s: %w", sandboxID, projectID, err)
 	}
 	return n, nil
 }

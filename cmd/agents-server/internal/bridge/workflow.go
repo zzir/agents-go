@@ -327,9 +327,8 @@ func (r *Runner) startWorkflowStep(ctx context.Context, req tasks.LaunchRequest,
 			logging.Ctx(rootCtx).Warn("workflow: compact before step did not run", "error", cerr, "task_id", req.TaskID, "step_id", step.ID)
 		}
 	}
-	// The sandbox comes from the PARENT (Inherit) — every step shares one
-	// working directory with the conversation that asked; the agent is the
-	// step's own.
+	// The sandbox comes from the PARENT (Inherit) — every step shares the
+	// project of the conversation that asked; the agent is the step's own.
 	in := store.DecodeInherit(req.Inherit)
 	_, err = r.startRunWithID(req.RunID, req.SessionID, step.AgentConfigID, in.SandboxID, in.ProjectID, req.Input, "", nil, nil)
 	return err

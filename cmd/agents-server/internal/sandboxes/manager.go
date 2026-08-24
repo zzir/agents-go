@@ -21,14 +21,11 @@ import (
 	dockersb "github.com/zzir/agents-go/sandbox/docker"
 )
 
-// sandboxKey identifies one live sandbox instance: a config id, the RUNTIME
-// GENERATION it was built from (store.SandboxConfig.RuntimeGen — bumped by
-// content changes only, so a rename never splits the cache or retires a
-// container), and the PROJECT whose tree the container mounts. Sessions bound
-// to different projects on one config must not share an instance — the mount
-// is baked in at build time — and the generation keeps a run that read the
-// config just before a content update from re-installing an old-credential
-// instance under the key runs on the new generation hit.
+// sandboxKey identifies one live sandbox instance: config id, the RUNTIME
+// GENERATION it was built from (content changes only — a rename never splits
+// the cache), and the PROJECT whose tree the container mounts. Different
+// projects must not share an instance (the mount is baked in at build) —
+// see the retired fence for the generation's role.
 type sandboxKey struct {
 	id        string
 	gen       int64
@@ -86,7 +83,7 @@ func (i *sandboxInstance) close() {
 }
 
 // Manager caches and reuses sandbox instances keyed by (config id,
-// runtime generation, workdir), with a reference count per instance: runs and
+// runtime generation, project), with a reference count per instance: runs and
 // terminals Acquire and release, and eviction defers to the last holder (see
 // sandboxInstance).
 type Manager struct {
@@ -122,7 +119,7 @@ type Manager struct {
 // SetIdleTimeout installs the idle-stop duration provider (see idleAfter).
 func (m *Manager) SetIdleTimeout(fn func() time.Duration) { m.idleAfter = fn }
 
-// NewManager creates a Manager that roots local sandboxes at workspace.
+// NewManager creates a Manager that roots local-daemon project trees at workspace.
 func NewManager(workspace string) *Manager {
 	return &Manager{
 		instances: make(map[sandboxKey]*sandboxInstance),
@@ -150,7 +147,7 @@ func (m *Manager) commandGate(_ context.Context, rc *agents.RunContext, argsJSON
 	return !m.trust.ForSession(sid).trusted(CommandHash(argsJSON)), nil
 }
 
-// Acquire returns the cached sandbox for (config, workDir), building one if
+// Acquire returns the cached sandbox for (config, project), building one if
 // absent, and takes a reference on it. The returned release MUST be called
 // exactly once when the holder is done — a run's teardown, a terminal's
 // close. It is idempotent (extra calls are no-ops) and performs the deferred
@@ -404,7 +401,7 @@ func (m *Manager) Retire(id string, minLive int64) {
 }
 
 // Remove evicts every cached instance of the config id — all generations and
-// workdir variants — and fences the id permanently: the config was deleted,
+// project variants — and fences the id permanently: the config was deleted,
 // so nothing may serve it again. The tombstone covers callers who READ the
 // config before the delete (a terminal open or config test reads, dials,
 // then acquires): without it their late build would enter the cache as an

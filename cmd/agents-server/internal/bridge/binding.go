@@ -11,7 +11,7 @@ import (
 )
 
 // ErrBindingContention reports a first-run bind that lost its validation race
-// repeatedly: every attempt re-validated the working directory against the
+// repeatedly: every attempt re-validated the project against the
 // sandbox config's then-current revision, and the config had moved again by
 // the time the bind's CAS landed. Transient by construction — the config is
 // being actively edited; the client retries once it settles. Handlers map it
@@ -63,9 +63,9 @@ type bindingPlan struct {
 	sandboxID string
 	projectID string
 	needBind  bool
-	// revision is the config revision the workdir was validated against; the
-	// bind CAS matches it, so a config updated between plan and write makes the
-	// bind lose and re-plan rather than land a stale workdir.
+	// revision is the config revision the project was validated against; the
+	// bind CAS matches it, so a config updated between plan and write makes
+	// the bind lose and re-plan rather than land a stale binding.
 	revision int64
 }
 
@@ -96,7 +96,7 @@ func (r *Runner) planSandboxBinding(ctx context.Context, sess *store.Session, sa
 	return bindingPlan{sandboxID: sandboxID, projectID: proj.ID, needBind: true, revision: cfg.Revision}, nil
 }
 
-// BindSessionSandbox binds a still-unbound session to (sandboxID, workDir)
+// BindSessionSandbox binds a still-unbound session to (sandbox, project)
 // with no run of its own — for a start that is not a message but carries the
 // composer's project: a workflow into a fresh conversation. Same plan and CAS
 // as a run's first bind, and the same announcement, broadcast since there is
