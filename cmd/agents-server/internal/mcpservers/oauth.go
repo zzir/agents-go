@@ -19,6 +19,11 @@ import (
 
 const oauthPendingTimeout = 5 * time.Minute
 
+// silentRedirectURL satisfies the SDK handler constructor on non-interactive
+// (saved-token) connects; those return before any authorization starts, so it
+// is never sent anywhere.
+const silentRedirectURL = "http://127.0.0.1/mcp-oauth-silent-reconnect"
+
 // oauthHTTPTimeout bounds each OAuth HTTP request (metadata discovery, client
 // registration, code exchange, token refresh). Refreshes run on a background
 // context — the oauth2 library retains the context passed at TokenSource
@@ -188,6 +193,12 @@ func (c *OAuthCoordinator) ConnectWithOAuth(
 	interactive := redirectURI != ""
 	if interactive {
 		c.supersedeInflight(cfg.ID)
+	} else {
+		// The SDK's handler constructor demands a redirect URL even though the
+		// silent saved-token path below never starts an authorization — a
+		// non-interactive call returns before any browser flow or dynamic
+		// registration, so this placeholder never leaves the process.
+		redirectURI = silentRedirectURL
 	}
 	var preregistered *oauthex.ClientCredentials
 	if hc.OAuthClientID != "" {

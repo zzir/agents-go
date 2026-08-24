@@ -305,3 +305,43 @@ func startInteractiveConnect(t *testing.T, rs *httptest.Server) (*OAuthCoordinat
 	}
 	return c, mgr, st, cfg
 }
+
+// A restart's auto-connect is non-interactive (empty redirect URI) and must
+// reconnect silently on the saved grant — the handler construction cannot
+// demand the redirect URL only an HTTP request could supply.
+func TestConnectWithOAuthSilentReconnectAfterRestart(t *testing.T) {
+	as := newFakeAS(t)
+	rs := newProtectedMCP(t, as, nil, nil)
+	c, mgr, st, cfg := startInteractiveConnect(t, rs)
+	deadline := time.Now().Add(15 * time.Second)
+	for !mgr.IsConnected(cfg.ID) {
+		if time.Now().After(deadline) {
+			t.Fatalf("interactive flow never connected: authorizing=%v", c.IsAuthorizing(cfg.ID))
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	mgr.CloseAll()
+
+	// "Restart": fresh manager and coordinator, config re-read from the store
+	// so it carries the persisted grant.
+	cfg2, err := st.Get(context.Background(), cfg.ID)
+	if err != nil {
+		t.Fatalf("re-read config: %v", err)
+	}
+	if cfg2.OAuthToken == "" {
+		t.Fatal("no grant persisted by the interactive flow")
+	}
+	var hc store.HTTPMcpConfig
+	if err := json.Unmarshal(cfg2.Config, &hc); err != nil {
+		t.Fatal(err)
+	}
+	mgr2 := NewManager(context.Background(), nil)
+	t.Cleanup(mgr2.CloseAll)
+	res, err := NewOAuthCoordinator(st).ConnectWithOAuth(context.Background(), mgr2, cfg2, &hc, "")
+	if err != nil {
+		t.Fatalf("silent reconnect: %v", err)
+	}
+	if !res.Connected || !mgr2.IsConnected(cfg2.ID) {
+		t.Fatalf("silent reconnect must come up on the saved grant, got %+v", res)
+	}
+}
