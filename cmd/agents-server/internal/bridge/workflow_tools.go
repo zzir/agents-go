@@ -267,6 +267,21 @@ func stepCount(n int) string {
 	return fmt.Sprintf("%d steps", n)
 }
 
+// globalAgentByName finds the GLOBAL agent config going by name in the
+// caller's view; nil (no error) when none does.
+func (r *Runner) globalAgentByName(ctx context.Context, ownerID, name string) (*store.AgentConfig, error) {
+	cfgs, err := r.visibleAgentConfigs(ctx, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range cfgs {
+		if cfgs[i].Scope == store.ScopeGlobal && strings.EqualFold(cfgs[i].Name, name) {
+			return &cfgs[i], nil
+		}
+	}
+	return nil, nil
+}
+
 // resolveWorkflowSpec turns the model's spec into a stored definition: agents
 // and edges named become ids, and on an update every step that keeps its name
 // keeps its id (what a retry and an execution in flight name). existing is the
@@ -328,6 +343,19 @@ func (r *Runner) resolveWorkflowSpec(ctx context.Context, ownerID string, spec w
 		}
 		if aerr != nil {
 			return nil, nil, aerr
+		}
+		// Updating a GLOBAL definition resolves steps AS a global holder
+		// (spec §5.29): the saver's private shadow must not become a step
+		// most members cannot see — mirror of the REST validateStepAgents.
+		if existing != nil && existing.Scope == store.ScopeGlobal && ac.Scope != store.ScopeGlobal {
+			g, gerr := r.globalAgentByName(ctx, ownerID, agentName)
+			if gerr != nil {
+				return nil, nil, gerr
+			}
+			if g == nil {
+				return nil, nil, invalidWorkflowf("step %d (%s): agent %q is private; a global workflow may reference only global agents", i+1, stepName, agentName)
+			}
+			ac = g
 		}
 		if !s.Gate && (strings.TrimSpace(s.GatePass) != "" || strings.TrimSpace(s.GateFail) != "") {
 			return nil, nil, invalidWorkflowf("step %d (%s): gate_pass / gate_fail need gate true", i+1, stepName)

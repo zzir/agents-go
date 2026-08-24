@@ -563,3 +563,63 @@ func TestSaveWorkflowScopes(t *testing.T) {
 		t.Fatalf("the refused save changed the global row: %+v", got)
 	}
 }
+
+// Updating a GLOBAL workflow through save_workflow resolves step agents AS a
+// global holder (spec §5.29): the admin's private shadow of a global agent
+// name must not become a step most members cannot see, and a private-only
+// agent refuses the save outright — the mirror of REST's validateStepAgents.
+func TestSaveWorkflowGlobalUpdateResolvesGlobalAgents(t *testing.T) {
+	ctx := context.Background()
+	_, srv := newRecordingModel(t, func(int, []byte) []any { return sayOutput("ok") })
+	runner, _, coder := workflowToolsFixture(t, srv.URL)
+	users := store.NewUserStore(runner.db)
+	runner.Deps.Users = users
+	admin := &store.User{ID: store.NewID(), Email: "a@example.com", Role: store.RoleAdmin}
+	if _, err := runner.db.NewInsert().Model(admin).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	agentConfigs := runner.Deps.AgentConfigs
+	// The admin's private shadow of the global "coder", and a private-only agent.
+	shadow := &store.AgentConfig{Name: "coder", Model: "gpt-test", Scope: store.ScopePrivate, OwnerID: admin.ID}
+	if err := agentConfigs.Create(ctx, shadow); err != nil {
+		t.Fatal(err)
+	}
+	private := &store.AgentConfig{Name: "solo", Model: "gpt-test", Scope: store.ScopePrivate, OwnerID: admin.ID}
+	if err := agentConfigs.Create(ctx, private); err != nil {
+		t.Fatal(err)
+	}
+	global := &store.Workflow{Name: "team-flow", Description: "shared", Scope: store.ScopeGlobal,
+		Steps: store.WorkflowSteps{{ID: store.NewID(), Name: "one", AgentConfigID: coder.ID, Prompt: "p"}}}
+	if err := runner.Deps.Workflows.Create(ctx, global); err != nil {
+		t.Fatal(err)
+	}
+
+	// "coder" resolves to the GLOBAL row, not the admin's shadow.
+	if _, err := runner.saveWorkflow(ctx, admin.ID, workflowSpec{Name: "team-flow", Description: "shared",
+		Steps: []workflowStep{{Name: "one", Agent: "coder", Prompt: "p2"}}}); err != nil {
+		t.Fatalf("admin update: %v", err)
+	}
+	got, err := runner.Deps.Workflows.Get(ctx, global.ID)
+	if err != nil || got.Steps[0].AgentConfigID != coder.ID {
+		t.Fatalf("step agent = %s, want the global coder %s (err %v)", got.Steps[0].AgentConfigID, coder.ID, err)
+	}
+
+	// A private-only agent refuses the save with guidance, changing nothing.
+	res, err := runner.saveWorkflow(ctx, admin.ID, workflowSpec{Name: "team-flow", Description: "shared",
+		Steps: []workflowStep{{Name: "one", Agent: "solo", Prompt: "p3"}}})
+	if err != nil {
+		t.Fatalf("refused save errored instead of guiding: %v", err)
+	}
+	txt := ""
+	if len(res.Content) > 0 {
+		if tt, ok := res.Content[0].(agents.ToolOutputText); ok {
+			txt = tt.Text
+		}
+	}
+	if !strings.Contains(txt, "global") {
+		t.Fatalf("private-only step agent = %q, want the global-only refusal", txt)
+	}
+	if got, _ := runner.Deps.Workflows.Get(ctx, global.ID); got.Steps[0].Prompt != "p2" {
+		t.Fatalf("the refused save changed the global row: %+v", got.Steps)
+	}
+}
