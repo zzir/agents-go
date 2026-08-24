@@ -126,6 +126,18 @@ func bindScope(c *gin.Context) (string, bool) {
 	return req.Scope, true
 }
 
+// sameScope refuses a /scope request naming the scope the row already holds:
+// "private → private" is no change but a silent re-home of the row (and any
+// credential on it) to the acting admin — spec §5.29 defines a demote on
+// global rows only. Writes the 409 and returns true when refused.
+func sameScope(c *gin.Context, kind, current, requested string) bool {
+	if current == requested {
+		conflict(c, kind+" is already "+requested)
+		return true
+	}
+	return false
+}
+
 // SetScope promotes a provider to global or demotes it to the acting admin's
 // private set. A demote is refused while any global or foreign agent still
 // references the provider — their runs would spend a credential that just
@@ -148,24 +160,28 @@ func (h *ProviderHandler) SetScope(c *gin.Context) {
 	}
 	u, _ := server.CurrentUser(c)
 	ctx, id := c.Request.Context(), c.Param("id")
-	if _, err := h.store.Get(ctx, id); err != nil {
+	pv, err := h.store.Get(ctx, id)
+	if err != nil {
 		storeError(c, err)
 		return
 	}
-	owner := ""
+	if sameScope(c, "provider", pv.Scope, scope) {
+		return
+	}
 	if scope == store.ScopePrivate {
-		owner = u.ID
-		refs, err := h.store.ForeignAgentRefs(ctx, id, owner)
+		refs, err := h.store.DemoteToPrivate(ctx, id, u.ID)
 		if err != nil {
-			internalError(c, err)
+			saveError(c, err) // name collision in the target scope -> 409
 			return
 		}
 		if refs > 0 {
 			conflict(c, fmt.Sprintf("%d agent(s) outside your private set still reference this provider; repoint them first", refs))
 			return
 		}
+		c.Status(http.StatusNoContent)
+		return
 	}
-	if err := store.SetScopeOf(ctx, h.store.CrudStore, id, scope, owner); err != nil {
+	if err := store.SetScopeOf(ctx, h.store.CrudStore, id, scope, ""); err != nil {
 		saveError(c, err) // name collision in the target scope -> 409
 		return
 	}

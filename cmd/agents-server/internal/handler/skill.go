@@ -243,8 +243,12 @@ func (h *SkillHandler) SetScope(c *gin.Context) {
 	}
 	u, _ := server.CurrentUser(c)
 	ctx, id := c.Request.Context(), c.Param("id")
-	if _, err := h.store.Get(ctx, id); err != nil {
+	sk, err := h.store.Get(ctx, id)
+	if err != nil {
 		storeError(c, err)
+		return
+	}
+	if sameScope(c, "skill", sk.Scope, scope) {
 		return
 	}
 	owner := ""

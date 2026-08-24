@@ -320,6 +320,9 @@ func (h *AgentConfigHandler) SetScope(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
+	if sameScope(c, "agent", ac.Scope, scope) {
+		return
+	}
 	owner := ""
 	if scope == store.ScopePrivate {
 		owner = u.ID

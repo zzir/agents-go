@@ -48,3 +48,72 @@ func TestUpdateGuardsProviderReferences(t *testing.T) {
 		t.Fatalf("agent update to a missing provider = %v, want ErrProviderRef", err)
 	}
 }
+
+// The reference rule runs INSIDE the write transaction: a global agent (or a
+// foreign private one) naming a private provider is refused at the store, so
+// a scope flip cannot slip between a handler's validation and the row
+// landing (spec §5.29).
+func TestWritesRefuseOutOfScopeProvider(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	id := ids(t)
+	providers := NewProviderStore(db)
+	private := &Provider{ID: id("pv"), Name: "pv", Type: "openai", Scope: ScopePrivate, OwnerID: id("alice")}
+	if err := providers.Create(ctx, private); err != nil {
+		t.Fatal(err)
+	}
+
+	agents := NewAgentConfigStore(db)
+	global := &AgentConfig{ID: NewID(), Name: "g", Model: "m", ProviderID: private.ID, Scope: ScopeGlobal}
+	if err := agents.Create(ctx, global); !errors.Is(err, ErrProviderScope) {
+		t.Fatalf("global agent on a private provider = %v, want ErrProviderScope", err)
+	}
+	foreign := &AgentConfig{ID: NewID(), Name: "f", Model: "m", ProviderID: private.ID, Scope: ScopePrivate, OwnerID: id("bob")}
+	if err := agents.Create(ctx, foreign); !errors.Is(err, ErrProviderScope) {
+		t.Fatalf("foreign private ref = %v, want ErrProviderScope", err)
+	}
+	own := &AgentConfig{ID: NewID(), Name: "o", Model: "m", ProviderID: private.ID, Scope: ScopePrivate, OwnerID: id("alice")}
+	if err := agents.Create(ctx, own); err != nil {
+		t.Fatalf("the owner's own ref must pass: %v", err)
+	}
+}
+
+// DemoteToPrivate counts and flips in one transaction: foreign references
+// refuse the flip and leave the row untouched; with none, the row lands in
+// the caller's private set.
+func TestDemoteToPrivateGuardsReferences(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	id := ids(t)
+	providers := NewProviderStore(db)
+	pv := &Provider{ID: id("pv"), Name: "shared", Type: "openai", Scope: ScopeGlobal}
+	if err := providers.Create(ctx, pv); err != nil {
+		t.Fatal(err)
+	}
+	agents := NewAgentConfigStore(db)
+	ref := &AgentConfig{ID: NewID(), Name: "g", Model: "m", ProviderID: pv.ID, Scope: ScopeGlobal}
+	if err := agents.Create(ctx, ref); err != nil {
+		t.Fatal(err)
+	}
+
+	refs, err := providers.DemoteToPrivate(ctx, pv.ID, id("admin"))
+	if err != nil || refs != 1 {
+		t.Fatalf("demote with a global ref = (%d, %v), want (1, nil)", refs, err)
+	}
+	got, err := providers.Get(ctx, pv.ID)
+	if err != nil || got.Scope != ScopeGlobal {
+		t.Fatalf("refused demote must leave the row global: (%+v, %v)", got, err)
+	}
+
+	if err := agents.Delete(ctx, ref.ID); err != nil {
+		t.Fatal(err)
+	}
+	refs, err = providers.DemoteToPrivate(ctx, pv.ID, id("admin"))
+	if err != nil || refs != 0 {
+		t.Fatalf("unblocked demote = (%d, %v), want (0, nil)", refs, err)
+	}
+	got, err = providers.Get(ctx, pv.ID)
+	if err != nil || got.Scope != ScopePrivate || got.OwnerID != id("admin") {
+		t.Fatalf("demoted row = (%s, %s), want the admin's private set", got.Scope, got.OwnerID)
+	}
+}

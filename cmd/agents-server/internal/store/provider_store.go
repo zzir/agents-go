@@ -2,10 +2,10 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/uptrace/bun"
 )
@@ -19,30 +19,40 @@ const AuthModeChatGPTLogin = "chatgpt_login"
 // the 404 a missing target resource gets.
 var ErrProviderRef = errors.New("provider_id names no provider")
 
-// writeReferencingProvider runs write in ONE transaction that first verifies
-// providerID still exists (and passes check, when given) — closing the
-// check-then-write window where a provider is deleted or rewritten between a
-// handler's validation and the row landing. Inserts and updates alike: a
-// re-point races the same delete. An empty providerID is the built-in default
-// and skips the check.
-func writeReferencingProvider(ctx context.Context, db *bun.DB, providerID string, check func(*Provider) error, write func(context.Context, bun.Tx) error) error {
+// ErrProviderScope marks a write refused because the provider it references
+// sits outside the holder's reach (spec §5.29). Handlers map it to 400.
+var ErrProviderScope = errors.New("provider_id names a provider outside the agent's scope")
+
+// writeReferencingProvider runs write in ONE transaction that first reads —
+// and on PostgreSQL locks — the provider row the write references, closing
+// the window where the provider is deleted or re-scoped between a handler's
+// validation and the row landing. write receives the locked row (nil when
+// providerID is empty, the no-provider default) and refuses what it cannot
+// accept.
+func writeReferencingProvider(ctx context.Context, db *bun.DB, providerID string, write func(ctx context.Context, tx bun.Tx, pv *Provider) error) error {
 	return db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		var pv *Provider
 		if providerID != "" {
-			pv := new(Provider)
-			if err := tx.NewSelect().Model(pv).Where("id = ?", providerID).Scan(ctx); err != nil {
-				if errors.Is(err, sql.ErrNoRows) {
+			pv = new(Provider)
+			if err := lockRow(ctx, tx, pv, "id = ?", providerID); err != nil {
+				if errors.Is(err, ErrNotFound) {
 					return ErrProviderRef
 				}
 				return err
 			}
-			if check != nil {
-				if err := check(pv); err != nil {
-					return err
-				}
-			}
 		}
-		return write(ctx, tx)
+		return write(ctx, tx, pv)
 	})
+}
+
+// refProviderScope is the in-transaction half of the reference rule (spec
+// §5.29): the holder must be able to SEE the provider it names. A nil pv (no
+// provider) always passes.
+func refProviderScope(pv *Provider, holderScope, holderOwner string) error {
+	if pv != nil && !RefVisible(pv.Scope, pv.OwnerID, holderScope, holderOwner) {
+		return ErrProviderScope
+	}
+	return nil
 }
 
 // ProviderStore persists provider endpoints and their credentials.
@@ -152,18 +162,43 @@ func NormalizeProvider(p *Provider) error {
 	return nil
 }
 
-// ForeignAgentRefs counts the agents referencing this provider that a
-// demotion to newOwner would strand: global agents (which may only reference
-// global providers) and other owners' private ones — the guard that keeps a
-// demote from letting one user's runs spend a credential that just became
-// somebody's private key.
-func (s *ProviderStore) ForeignAgentRefs(ctx context.Context, id, newOwner string) (int, error) {
-	n, err := s.db.NewSelect().Model((*AgentConfig)(nil)).
-		Where("provider_id = ?", id).
-		Where("(scope = ? OR owner_id IS NULL OR owner_id != ?)", ScopeGlobal, newOwner).
-		Count(ctx)
+// DemoteToPrivate flips the provider into newOwner's private set, refusing
+// while any agent a demote would strand — a global agent, or another owner's
+// private one — still references it. Count and flip share one transaction
+// with the row locked, so a racing agent write cannot pin a global agent to a
+// just-privatized key (spec §5.29). Returns the foreign count, non-zero
+// meaning nothing was flipped; ErrNotFound when the row is gone.
+func (s *ProviderStore) DemoteToPrivate(ctx context.Context, id, newOwner string) (int, error) {
+	var refs int
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		pv := new(Provider)
+		if err := lockRow(ctx, tx, pv, "id = ?", id); err != nil {
+			return err
+		}
+		n, err := tx.NewSelect().Model((*AgentConfig)(nil)).
+			Where("provider_id = ?", id).
+			Where("(scope = ? OR owner_id IS NULL OR owner_id != ?)", ScopeGlobal, newOwner).
+			Count(ctx)
+		if err != nil {
+			return err
+		}
+		if n > 0 {
+			refs = n
+			return nil
+		}
+		res, err := tx.NewUpdate().Model((*Provider)(nil)).
+			Set("scope = ?", ScopePrivate).
+			Set("owner_id = ?", uuidOrNull(newOwner)).
+			Set("updated_at = ?", time.Now().UTC()).
+			Where("id = ?", id).
+			Exec(ctx)
+		if err == nil {
+			err = requireRows(res)
+		}
+		return err
+	})
 	if err != nil {
-		return 0, fmt.Errorf("counting agents on provider %s: %w", id, err)
+		return 0, fmt.Errorf("demoting provider %s: %w", id, err)
 	}
-	return n, nil
+	return refs, nil
 }

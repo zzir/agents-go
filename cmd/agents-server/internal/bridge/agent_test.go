@@ -126,3 +126,29 @@ func TestBuildFullAgentAppliesWorkflowModes(t *testing.T) {
 		t.Fatal("a fresh build must start in the planning phase")
 	}
 }
+
+// Run-time provider resolution re-checks the reference rule: a demote that
+// slipped past the write-time guards must fail the build loudly, never spend
+// a key that became somebody's private credential (spec §5.29).
+func TestAgentProviderRechecksScope(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	providers := store.NewProviderStore(db)
+	pv := &store.Provider{Name: "shared", Type: "openai", APIKey: "sk-x", Scope: store.ScopeGlobal}
+	if err := providers.Create(ctx, pv); err != nil {
+		t.Fatal(err)
+	}
+	agentConfigs := store.NewAgentConfigStore(db)
+	ac := &store.AgentConfig{Name: "g", Model: "m", ProviderID: pv.ID, Scope: store.ScopeGlobal}
+	if err := agentConfigs.Create(ctx, ac); err != nil {
+		t.Fatal(err)
+	}
+	// Slip a demote past the guards by writing the columns directly.
+	if _, err := db.ExecContext(ctx, `UPDATE providers SET scope = 'private', owner_id = ? WHERE id = ?`,
+		store.NewID(), pv.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AgentProvider(ctx, &AgentDeps{Providers: providers}, ac); err == nil || !strings.Contains(err.Error(), "scope") {
+		t.Fatalf("global agent on a demoted provider = %v, want a scope refusal", err)
+	}
+}

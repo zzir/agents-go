@@ -337,8 +337,12 @@ func (h *McpServerHandler) SetScope(c *gin.Context) {
 	}
 	u, _ := server.CurrentUser(c)
 	ctx, id := c.Request.Context(), c.Param("id")
-	if _, err := h.store.Get(ctx, id); err != nil {
+	srv, err := h.store.Get(ctx, id)
+	if err != nil {
 		storeError(c, err)
+		return
+	}
+	if sameScope(c, "MCP server", srv.Scope, scope) {
 		return
 	}
 	owner := ""

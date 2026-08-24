@@ -322,6 +322,9 @@ func (h *WorkflowHandler) SetScope(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
+	if sameScope(c, "workflow", wf.Scope, scope) {
+		return
+	}
 	owner := ""
 	if scope == store.ScopePrivate {
 		owner = u.ID

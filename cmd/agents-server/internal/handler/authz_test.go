@@ -524,3 +524,32 @@ func TestUserManagement(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// A /scope request naming the row's current scope is refused: on a private
+// row it would otherwise silently re-home the row — and any credential on it
+// — to the acting admin (spec §5.29 defines a demote on global rows only).
+func TestSetScopeSameScopeRefused(t *testing.T) {
+	engine := authzRig(t).engine
+
+	rec := serve(engine, as(memberUser, http.MethodPost, "/api/v1/agents", `{"name":"own-ag","model":"m"}`))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("member create = %d (%s)", rec.Code, rec.Body.String())
+	}
+	var ac store.AgentConfig
+	_ = json.Unmarshal(rec.Body.Bytes(), &ac)
+
+	if rec := serve(engine, as(adminUser, http.MethodPost, "/api/v1/agents/"+ac.ID+"/scope", `{"scope":"private"}`)); rec.Code != http.StatusConflict {
+		t.Fatalf("private->private = %d, want 409", rec.Code)
+	}
+	// The row is still the member's, not the admin's.
+	if rec := serve(engine, as(memberUser, http.MethodGet, "/api/v1/agents/"+ac.ID, "")); rec.Code != http.StatusOK {
+		t.Fatalf("owner lost the row after a refused re-home: %d", rec.Code)
+	}
+
+	if rec := serve(engine, as(adminUser, http.MethodPost, "/api/v1/agents/"+ac.ID+"/scope", `{"scope":"global"}`)); rec.Code != http.StatusNoContent {
+		t.Fatalf("promote = %d (%s)", rec.Code, rec.Body.String())
+	}
+	if rec := serve(engine, as(adminUser, http.MethodPost, "/api/v1/agents/"+ac.ID+"/scope", `{"scope":"global"}`)); rec.Code != http.StatusConflict {
+		t.Fatalf("global->global = %d, want 409", rec.Code)
+	}
+}

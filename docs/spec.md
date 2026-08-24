@@ -2973,7 +2973,10 @@ whose credentials and instructions a run carries.
 
 Scope changes are their own admin-only endpoint, `POST /<entity>/:id/scope`
 with `{scope}`: promote publishes a private row, demote re-homes a global row
-to the acting admin. Name uniqueness is **per scope** (partial unique
+to the acting admin. A request naming the row's **current** scope is refused
+(409) — "private → private" is defined nowhere and would silently re-home a
+member's row, credential included, to the acting admin. Name uniqueness is
+**per scope** (partial unique
 indexes: global names unique among global rows, `(owner, name)` unique among
 private ones), so shadowing a global name with one's own is legal and a scope
 change that collides in the target scope is 409. Everywhere a NAME resolves —
@@ -2990,7 +2993,14 @@ References across rows split by whether the reference is load-bearing:
   may reference only global rows** — otherwise promoting it would publish a
   config whose parts most members cannot see. Promote re-validates the row
   as its target scope, and demoting a provider is refused (409) while global
-  or foreign-owned agents still reference it.
+  or foreign-owned agents still reference it. The provider leg — the one that
+  spends a credential — settles its races in SQL: an agent write locks the
+  provider row and re-checks `RefVisible` in the same transaction, a
+  provider demote counts foreign references and flips in one transaction,
+  and run-time resolution re-checks the rule once more, failing the run
+  loudly rather than spending a key that became private. The other reference
+  kinds stay validation-plus-runtime-filtering; their races strand no
+  credential.
 - **Runtime filtering** where the set is advisory: attaching MCP servers and
   skills at agent build drops rows the run's owner cannot see instead of
   failing the run — the same config yields each member their visible subset.
