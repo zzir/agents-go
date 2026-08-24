@@ -334,8 +334,8 @@ export function McpServerPanel() {
               status={<span className="form-status-dot" style={{ background: STATUS_DOT[s.status] || 'var(--fgColor-muted)' }} />}
               title={s.name}
               badges={<>
-                {s.config && s.config.auth_mode === 'oauth' && <Label variant={BADGE.type}>OAuth</Label>}
                 <ScopeBadge row={s} meId={me?.id} />
+                {s.config && s.config.auth_mode === 'oauth' && <Label variant={BADGE.type}>OAuth</Label>}
               </>}
               sub={(s.config && s.config.endpoint) || ''}
               actions={<>

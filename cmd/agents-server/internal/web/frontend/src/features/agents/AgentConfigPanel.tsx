@@ -532,10 +532,10 @@ export function AgentConfigPanel() {
             <ResourceRow key={a.id}
               title={a.name}
               badges={<>
+                <ScopeBadge row={a} meId={me?.id} />
                 <Label variant={pmeta.badgeVariant}>{rowProvider?.name || pmeta.badge}</Label>
                 {mcp > 0 && <Label variant={BADGE.count}>{'MCP·' + mcp}</Label>}
                 {skl > 0 && <Label variant={BADGE.count}>{'Skills·' + skl}</Label>}
-                <ScopeBadge row={a} meId={me?.id} />
               </>}
               meta={<span>{a.model || 'default model'}</span>}
               actions={<RowActionsMenu name={a.name} editReadOnly={!rowEditable(a)} onEdit={() => startEdit(a)}

@@ -362,8 +362,8 @@ export function WorkflowPanel({ sessionId }: { sessionId: string | null }) {
               <div className="resource-row-main">
                 <div className="resource-row-head">
                   <span className="resource-row-title">{w.name}</span>
-                  <Label variant={BADGE.count}>{'Steps·' + (w.steps || []).length}</Label>
                   <ScopeBadge row={w} meId={me?.id} />
+                  <Label variant={BADGE.count}>{'Steps·' + (w.steps || []).length}</Label>
                 </div>
                 <div className="resource-row-sub">
                   {(w.steps || []).map(stepName).join(' → ')}

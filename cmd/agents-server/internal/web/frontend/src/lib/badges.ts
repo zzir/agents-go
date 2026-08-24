@@ -18,6 +18,9 @@
 //              status is not a Label at all: it renders as the colored dot
 //              beside the row title (form-status-dot), the way the MCP and
 //              provider lists show connection/login state.
+// Badge ORDER on a row is fixed too: scope first (whose row is this), then
+// the type/reference axis (what it runs on), counts last — semantics from
+// ownership down to metadata, color weight following the same gradient.
 export const BADGE = {
   /** How many sub-items a row holds, always written "Thing·N" — MCP·2, Steps·3. */
   count: 'secondary',

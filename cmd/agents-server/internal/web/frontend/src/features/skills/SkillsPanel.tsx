@@ -256,8 +256,8 @@ export function SkillsPanel() {
               <div className="resource-row-main">
                 <div className="resource-row-head">
                   <span className="resource-row-title">{sk.name}</span>
-                  {sk.detached && <Label variant={BADGE.type}>edited</Label>}
                   <ScopeBadge row={sk} meId={me?.id} />
+                  {sk.detached && <Label variant={BADGE.type}>edited</Label>}
                 </div>
                 <div className="resource-row-sub">{sk.description}</div>
               </div>

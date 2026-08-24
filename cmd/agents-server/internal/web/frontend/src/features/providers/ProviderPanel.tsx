@@ -205,7 +205,7 @@ export function ProviderPanel() {
                 title={p.chatgpt_logged_in ? 'ChatGPT signed in' : 'ChatGPT not signed in'}
               />}
               title={p.name}
-              badges={<><Label variant={meta.badgeVariant}>{meta.badge}</Label><ScopeBadge row={p} meId={me?.id} /></>}
+              badges={<><ScopeBadge row={p} meId={me?.id} /><Label variant={meta.badgeVariant}>{meta.badge}</Label></>}
               sub={p.base_url || meta.baseURLPlaceholder}
               actions={<>
                 {chatgpt && rowEditable(p) && (p.chatgpt_logged_in
