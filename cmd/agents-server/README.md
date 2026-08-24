@@ -2,12 +2,11 @@
 
 **Go agents. Local first.** The Go-native agent workbench you run yourself,
 built on the [agents-go](../../README.md) SDK: one binary, your data (SQLite
-or PostgreSQL), an embedded Primer-styled UI. Run agents and workflows in a
-sandbox, behind tool approvals; debug with traces, replay & fork; solo or as a
-team. Configure agents, providers, MCP servers, sandboxes,
-guardrails, memories, skills and workflows; run conversations with streaming
-output, tool approval, traces, a context lens, replay, interactive sandbox
-terminals and background tasks. This page is the manual — flags, REST API,
+or PostgreSQL), an embedded Primer-styled UI. Configure agents, providers,
+MCP servers, sandboxes, projects, guardrails, memories, skills, workflows and
+triggers; run conversations with streaming output, tool approvals, traces, a
+context lens, replay & fork, interactive sandbox terminals and background
+tasks — solo or as a team. This page is the manual — flags, REST API,
 WebSocket protocol, architecture, and the design invariants every
 panel/handler pair follows.
 
@@ -236,20 +235,21 @@ spec §5.29), shape who may do what:
   foreign private id answers `404` like a missing one. A global row is every
   member's to read and use, an admin's to write. An admin sees all rows and
   manages but does not author: deleting a member's private row works, editing
-  it is `403`. `POST /<entity>/:id/scope` (admin) promotes/demotes; names are
-  unique per scope, so shadowing a global name with your own is legal and
-  your row wins the lookup (own-over-global). A global row may reference only
-  global rows (an agent's provider/MCP/skills/handoffs, a workflow's step
-  agents — checked at write and at promote); at run build, MCP servers and
-  skills the run's owner cannot see are simply dropped. The model's tools
-  follow suit: `save_workflow` rides every owner's run — a new name saves a
-  private workflow, an existing global name stays an admin's to change.
-  Signing a provider into ChatGPT is its owner's act.
+  it is `403`. `POST /<entity>/:id/scope` (admin) promotes/demotes — the
+  row's current scope is refused with `409`, as is a demote that collides
+  with a name in the target scope or strands a provider's referencing
+  agents. The reference and name-resolution rules (own-over-global,
+  global-references-global, runtime filtering) are spec §5.29's; the model's
+  tools follow suit — `save_workflow` rides every owner's run, a new name
+  saving a private workflow while an existing global name stays an admin's
+  to change — and signing a provider into ChatGPT is its owner's act.
 - **Host configuration stays read-everyone, write-admin.** Sandboxes (the
   test and container endpoints included), settings, guardrails and memories
   change what runs on the host or whose host credentials are spent, so
   `POST`/`PUT`/`DELETE` answer `403` for a member. The web terminal
-  (`/ws/terminal`) is a shell on a sandbox host — admin only. And using
+  (`/ws/terminal`) follows project ownership: a member opens a shell into
+  their OWN project's container (a foreign project reads as absent), an
+  admin into any (spec §5.28). And using
   configuration is not writing it: a member runs any agent, workflow or
   sandbox they can see, in their own session, approving their own tool
   calls. A shared sandbox is a shared shell — every member who can pick it
@@ -276,9 +276,7 @@ spec §5.29), shape who may do what:
   for a member shows the scoped panels writable — their own rows editable,
   global rows marked and read-only — and the host panels (sandboxes,
   settings, guardrails, memories) read-only, plus their Account (profile
-  and PATs). The
-  Terminal button is shown to admins only, as `/ws/terminal` is admin-only
-  server-side; nothing else in the UI hides what the server would allow.
+  and PATs). Nothing in the UI hides what the server would allow.
 
 In token mode the one local account is an admin and owns everything, so every
 check passes.
@@ -809,8 +807,8 @@ rather than hanging, and the next connect returns an authorize URL. Use the
 `oauth-token` DELETE endpoint — the "Clear auth" button in the server's edit
 form — to drop the saved grant, e.g. to re-authorize with a different account.
 
-For `streamable_http` servers, the secret-bearing config fields are masked on
-read — see [Secret handling](#secret-handling): every `headers` value and
+The secret-bearing config fields are masked on read — see
+[Secret handling](#secret-handling): every `headers` value and
 `oauth_client_secret`.
 
 ### Memories — `/api/v1/memories`
@@ -881,6 +879,9 @@ Known keys:
   before it expires (default `1440` = 24h; `0` disables expiry)
 - `max_terminals_per_sandbox` — concurrent interactive terminals allowed on one
   sandbox (default `4`, max `32`) — a fat-finger guard, not a scheduler
+- `sandbox_idle_minutes` — stop an unreferenced project container after N
+  minutes idle (default `30`, `0` never stops); the next run restarts it,
+  installed packages intact
 
 ### Server info — `/api/v1/server` (read-only)
 
@@ -889,12 +890,12 @@ Known keys:
 | GET    | `/server` | The start-up configuration now in force  |
 
 `{version, workspace, max_tasks}` — the flags this process
-was started with, not settings. They are here because a client that cannot see
-them meets them only as unexplained refusals: a task cap with nowhere
-with nowhere to learn that a flag decides it. `workspace` is absolute (`.`
-means nothing to a browser elsewhere) and `max_tasks` is the EFFECTIVE cap, not
-the raw flag — `--max-tasks 0` means the built-in default, and reporting the
-zero would be a lie.
+was started with, not settings. They are here because a client that cannot
+see them meets them only as unexplained refusals — a task cap with nowhere
+to learn that a flag decides it. `workspace` is absolute (`.` means nothing
+to a browser elsewhere) and `max_tasks` is the EFFECTIVE cap, not the raw
+flag — `--max-tasks 0` means the built-in default, and reporting the zero
+would be a lie.
 
 ### Skills — `/api/v1/skills`
 
@@ -948,6 +949,13 @@ endpoint's credential, so every agent pointed at the provider shares one login.
 | PUT    | `/providers/:id`  | Update provider                               |
 | DELETE | `/providers/:id`  | Delete; 409 while an agent uses it            |
 | POST   | `/providers/:id/scope` | admin — `{scope: private\|global}`; demote is refused (`409`) while global or foreign agents reference it |
+
+`GET /provider-types` (read-only) lists the registered backends as machine
+facts — `type`, `auth_modes`, `unsupported` request features — straight from
+the server's provider registry, which is also what validation and provider
+construction derive from. The UI's capability hints read this endpoint, so
+they cannot drift from what the build enforces; adding a backend is one
+registry entry plus a frontend metadata row.
 
 ### Workflows — `/api/v1/workflows`
 
@@ -1182,13 +1190,6 @@ task answers to. A restart fails whatever was running, at the step it reached,
 for the same reason. Deleting a session stops its tasks first — executions
 included — so no step keeps causing side effects after the row is gone.
 
-`GET /provider-types` (read-only) lists the registered backends as machine
-facts — `type`, `auth_modes`, `unsupported` request features, and the global
-key `setting_key` — straight from the server's provider registry, which is
-also what validation and provider construction derive from. The UI's
-capability hints read this endpoint, so they cannot drift from what the build
-enforces; adding a backend is one registry entry plus a frontend metadata row.
-
 ### Guardrails — `/api/v1/guardrails`
 
 | Method | Path              | Description                             |
@@ -1339,11 +1340,12 @@ removed, so installed packages survive and the next run starts it again.
 
 ### ChatGPT OAuth
 
-Login, logout, and status are per-agent, under the agent resource — see
-[Agents](#agents--apiv1agents). The browser OAuth redirect lands on a temporary
-listener at the fixed ChatGPT port (localhost:1455), not on an API route.
+Login, logout, and status are per-provider, under the provider resource —
+see [Providers](#providers--apiv1providers). The browser OAuth redirect lands
+on a temporary listener at the fixed ChatGPT port (localhost:1455), not on an
+API route.
 
-A `chatgpt_login` agent talks to the Codex backend
+A `chatgpt_login` provider talks to the Codex backend
 (`chatgpt.com/backend-api/codex`), which differs from the standard API in two
 ways the bridge absorbs: request bodies are rewritten (`store: false`, no
 `previous_response_id`, input sanitized to the fields the backend accepts),
@@ -1525,16 +1527,16 @@ answers:
 |-------------------|-----------|------------------------------------------------------------------------------|
 | `terminal.open`   | C → S     | Start the session — `{sandbox_id, project_id, cols?, rows?}`; must be the first message  |
 | `terminal.ready`  | S → C     | Shell is live; binary frames flow from here                                  |
-| `terminal.error`  | S → C     | Open failed (unknown sandbox, non-persistent container, backend error) |
+| `terminal.error`  | S → C     | Open failed (unknown sandbox or project, foreign project, backend error) |
 | `terminal.resize` | C → S     | PTY resize — `{cols, rows}`                                                  |
 | `terminal.exit`   | S → C     | Shell exited — `{code}` (`-1` when unknown); the server then closes          |
 
 **Binary WebSocket frames carry the terminal byte stream in both directions**
 (client → stdin, PTY output → client); text frames are reserved for the JSON
-control envelopes above. Only a persistent container can host one — an
-ephemeral container has nothing to attach to between execs; anything else is a bigger
-grant than that flag implies. Terminals are capped at 4 per sandbox config,
-and updating or deleting a sandbox closes its live terminals.
+control envelopes above. The shell opens in the (sandbox, project) container
+the session's runs use; a member reaches their own projects, an admin any
+(spec §5.28). Terminals are capped per `max_terminals_per_sandbox` (default
+4), and updating or deleting a sandbox closes its live terminals.
 
 ## Architecture
 
@@ -1552,7 +1554,7 @@ cmd/agents-server/
 │   ├── authn/                  who is calling: token mode, OAuth (PKCE) login, PATs
 │   ├── secrets/                AES-256-GCM box that seals stored credentials
 │   ├── handler/                HTTP handlers (one file per resource)
-│   │   ├── authz.go            the two authorization rules as route gates
+│   │   ├── authz.go            the authorization rules as route gates (spec §5.29)
 │   │   └── conn_registry.go    per-owner WebSocket broadcast bus
 │   ├── bridge/                 the runner and what it orchestrates
 │   │   ├── agent.go            assemble a full agent from DB config
@@ -1568,7 +1570,7 @@ cmd/agents-server/
 │   ├── guardrails/             stored + built-in guardrail definitions → SDK guardrails
 │   ├── settings/               the settings registry and the typed reader (incl. the proxy client)
 │   ├── docs/                   generated OpenAPI 3.1 document, swagger.yaml (make openapi)
-│   ├── store/                  data layer (bun ORM; SQLite or PostgreSQL, 24 tables — see Database)
+│   ├── store/                  data layer (bun ORM; SQLite or PostgreSQL, 23 tables — see Database)
 │   ├── protocol/               wire types — WS messages, REST error envelope, the audit record
 │   └── web/                    embedded SPA static files
 ```
@@ -2323,6 +2325,10 @@ Tables are created automatically on startup:
 | `audit_events`      | Who did what, to what, when — see [Audit log](#audit-log)                          |
 | `wakeups`           | "This session is owed a turn carrying this" — the debt background work leaves behind; settled rows are pruned after 7 days |
 | `context_profiles`  | One row per session: what its last build put in front of the conversation (prompt layers, tool surface) |
+| `users`             | Accounts and roles (see [Ownership and roles](#ownership-and-roles))                |
+| `identities`        | OAuth identities linked to a user                                                   |
+| `auth_tokens`       | Session tokens and personal access tokens (hashes only)                             |
+| `triggers`          | Cron and webhook starts filed on a session (see [Workflows](#workflows--apiv1workflows)) |
 
 The database file can be deleted and recreated freely — there is no migration
 mechanism.
