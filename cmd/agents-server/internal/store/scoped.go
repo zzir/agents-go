@@ -44,16 +44,15 @@ func NormalizeScope(scope, ownerID string) (string, string) {
 }
 
 // ListVisibleOf returns the scoped-entity rows ownerID may see: the global
-// rows first (a published directory, by name), then the caller's own by
-// CREATION TIME — a name sort there would reshuffle the list whenever a row
-// is renamed or a scope flips. ONLY for the five scoped tables (they all
-// spell the scope/owner columns the same); a table without them fails the
-// query loudly.
+// rows first, then the caller's own — both groups by CREATION TIME, oldest
+// first. Positions never move on a rename or a scope flip (a flipped row
+// only changes group, keeping its slot within it). ONLY for the five scoped
+// tables (they all spell the scope/owner columns the same); a table without
+// them fails the query loudly.
 func ListVisibleOf[T any](ctx context.Context, s *CrudStore[T], ownerID string, admin bool) ([]T, error) {
 	var out []T
 	q := visibleTo(s.db.NewSelect().Model(&out), ownerID, admin).
 		OrderExpr("CASE WHEN scope = ? THEN 0 ELSE 1 END", ScopeGlobal).
-		OrderExpr("CASE WHEN scope = ? THEN lower(name) END", ScopeGlobal).
 		OrderExpr("created_at ASC")
 	if err := q.Scan(ctx); err != nil {
 		return nil, fmt.Errorf("listing %s: %w", s.label, err)
