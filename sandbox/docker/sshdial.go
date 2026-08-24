@@ -56,17 +56,22 @@ type SSHAuth struct {
 // remote sshd must allow streamlocal forwarding and the SSH user must reach
 // the socket). A dead connection is re-established on the next dial.
 type sshDialer struct {
-	addr   string // host:port
-	socket string // remote unix socket path
-	cfg    *ssh.ClientConfig
+	addr    string // host:port
+	socket  string // remote unix socket path
+	user    string
+	auth    SSHAuth
+	hostKey ssh.HostKeyCallback
+	timeout time.Duration
 
 	mu        sync.Mutex
+	closed    bool
 	client    *ssh.Client
 	agentConn net.Conn
 }
 
-// newSSHDialer parses an ssh://user@host[:port][/socket] URL and prepares the
-// dialer; the SSH connection itself is established lazily on first use.
+// newSSHDialer parses an ssh://user@host[:port][/socket] URL and validates
+// the auth config; the SSH connection itself is established lazily on first
+// use.
 func newSSHDialer(hostURL string, auth SSHAuth) (*sshDialer, error) {
 	u, err := url.Parse(hostURL)
 	if err != nil {
@@ -75,23 +80,30 @@ func newSSHDialer(hostURL string, auth SSHAuth) (*sshDialer, error) {
 	if u.User == nil || u.User.Username() == "" {
 		return nil, fmt.Errorf("docker sandbox: ssh host %q must carry a user (ssh://user@host)", hostURL)
 	}
-	addr := u.Host
-	if _, _, err := net.SplitHostPort(addr); err != nil {
-		addr = net.JoinHostPort(addr, "22")
+	host := u.Hostname()
+	if host == "" {
+		return nil, fmt.Errorf("docker sandbox: ssh host %q must name a host", hostURL)
+	}
+	port := u.Port()
+	if port == "" {
+		port = "22"
 	}
 	socket := defaultSSHSocket
 	if u.Path != "" && u.Path != "/" {
 		socket = u.Path
 	}
+	// Fail fast on an unusable auth config; the real methods are rebuilt per
+	// connect, so an SSH agent restarted later heals on the next dial.
 	methods, agentConn, err := buildSSHAuthMethods(auth)
 	if err != nil {
 		return nil, err
 	}
+	_ = methods
+	if agentConn != nil {
+		_ = agentConn.Close()
+	}
 	hostKey, err := buildSSHHostKeyCallback(auth)
 	if err != nil {
-		if agentConn != nil {
-			_ = agentConn.Close()
-		}
 		return nil, err
 	}
 	timeout := auth.ConnectTimeout
@@ -99,15 +111,12 @@ func newSSHDialer(hostURL string, auth SSHAuth) (*sshDialer, error) {
 		timeout = defaultSSHConnectTimeout
 	}
 	return &sshDialer{
-		addr:   addr,
-		socket: socket,
-		cfg: &ssh.ClientConfig{
-			User:            u.User.Username(),
-			Auth:            methods,
-			HostKeyCallback: hostKey,
-			Timeout:         timeout,
-		},
-		agentConn: agentConn,
+		addr:    net.JoinHostPort(host, port),
+		socket:  socket,
+		user:    u.User.Username(),
+		auth:    auth,
+		hostKey: hostKey,
+		timeout: timeout,
 	}, nil
 }
 
@@ -116,7 +125,7 @@ func newSSHDialer(hostURL string, auth SSHAuth) (*sshDialer, error) {
 // and retries once on a fresh connection, so a severed transport heals
 // without surfacing every queued request's error.
 func (d *sshDialer) DialContext(ctx context.Context, _, _ string) (net.Conn, error) {
-	client, err := d.connect(ctx, false)
+	client, err := d.connect(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +133,7 @@ func (d *sshDialer) DialContext(ctx context.Context, _, _ string) (net.Conn, err
 	if err == nil {
 		return conn, nil
 	}
-	client, rerr := d.connect(ctx, true)
+	client, rerr := d.connect(ctx, client)
 	if rerr != nil {
 		return nil, fmt.Errorf("docker sandbox: ssh reconnect after %v: %w", err, rerr)
 	}
@@ -136,18 +145,36 @@ func (d *sshDialer) DialContext(ctx context.Context, _, _ string) (net.Conn, err
 }
 
 // connect returns the shared SSH client, dialing when none is cached or when
-// the caller declares the cached one dead (fresh).
-func (d *sshDialer) connect(ctx context.Context, fresh bool) (*ssh.Client, error) {
+// the caller hands back the client that just failed it. Only that exact
+// client is discarded: concurrent retries after one transport drop land on
+// the first replacement instead of serially killing each other's fresh dials.
+func (d *sshDialer) connect(ctx context.Context, failed *ssh.Client) (*ssh.Client, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.closed {
+		return nil, errors.New("docker sandbox: ssh dialer is closed")
+	}
 	if d.client != nil {
-		if !fresh {
+		if failed == nil || d.client != failed {
 			return d.client, nil
 		}
 		_ = d.client.Close()
 		d.client = nil
 	}
-	client, err := dialSSH(ctx, d.addr, d.cfg)
+	methods, agentConn, err := buildSSHAuthMethods(d.auth)
+	if err != nil {
+		return nil, err
+	}
+	if d.agentConn != nil {
+		_ = d.agentConn.Close()
+	}
+	d.agentConn = agentConn
+	client, err := dialSSH(ctx, d.addr, &ssh.ClientConfig{
+		User:            d.user,
+		Auth:            methods,
+		HostKeyCallback: d.hostKey,
+		Timeout:         d.timeout,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("docker sandbox: ssh dial %s: %w", d.addr, err)
 	}
@@ -179,10 +206,12 @@ func dialSSH(ctx context.Context, addr string, cfg *ssh.ClientConfig) (*ssh.Clie
 	return ssh.NewClient(c, chans, reqs), nil
 }
 
-// Close severs the SSH transport and the agent socket, if any.
+// Close severs the SSH transport and the agent socket, if any. The dialer
+// stays closed: an in-flight request racing Close reconnects nowhere.
 func (d *sshDialer) Close() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	d.closed = true
 	if d.client != nil {
 		_ = d.client.Close()
 		d.client = nil

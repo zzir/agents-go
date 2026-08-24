@@ -28,9 +28,24 @@ func TestNewSSHDialerParsesHostURL(t *testing.T) {
 		if d.addr != tc.addr || d.socket != tc.sock {
 			t.Errorf("%s: (addr, socket) = (%q, %q), want (%q, %q)", tc.url, d.addr, d.socket, tc.addr, tc.sock)
 		}
-		if d.cfg.User != "u" {
-			t.Errorf("%s: user = %q", tc.url, d.cfg.User)
+		if d.user != "u" {
+			t.Errorf("%s: user = %q", tc.url, d.user)
 		}
+	}
+}
+
+// A bracketed IPv6 host must produce a dialable host:port; an empty host is
+// refused rather than silently dialing localhost.
+func TestNewSSHDialerHostEdgeCases(t *testing.T) {
+	d, err := newSSHDialer("ssh://u@[::1]", SSHAuth{Password: "pw"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.addr != "[::1]:22" {
+		t.Errorf("ipv6 addr = %q, want %q", d.addr, "[::1]:22")
+	}
+	if _, err := newSSHDialer("ssh://u@", SSHAuth{Password: "pw"}); err == nil {
+		t.Fatal("empty host must be refused")
 	}
 }
 
@@ -61,7 +76,7 @@ func TestSSHDialTimeoutCoversHandshake(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := time.Now()
-	if _, err := d.connect(context.Background(), false); err == nil {
+	if _, err := d.connect(context.Background(), nil); err == nil {
 		t.Fatal("connect succeeded against a mute server")
 	}
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
