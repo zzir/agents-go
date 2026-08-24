@@ -438,3 +438,114 @@ func TestSandboxManagerIdleStop(t *testing.T) {
 		t.Fatalf("closes = %d, want 1", closed.closes.Load())
 	}
 }
+
+// blockingCloseSandbox holds Close open until released — the idle-expiry
+// window an acquire must wait out instead of adopting a stopping container.
+type blockingCloseSandbox struct {
+	sandbox.Sandbox
+	closing chan struct{} // closed when Close was entered
+	release chan struct{} // Close returns when this closes
+	closes  atomic.Int64
+}
+
+func (b *blockingCloseSandbox) Close() error {
+	close(b.closing)
+	<-b.release
+	b.closes.Add(1)
+	return nil
+}
+
+// An acquire racing the idle expiry waits until the stop finished and then
+// takes the key fresh — it must never join the stopping instance.
+func TestSandboxManagerAcquireWaitsOutIdleExpiry(t *testing.T) {
+	m := NewManager(t.TempDir())
+	m.SetIdleTimeout(func() time.Duration { return 5 * time.Millisecond })
+	blocking := &blockingCloseSandbox{closing: make(chan struct{}), release: make(chan struct{})}
+	fresh := &closeCountingSandbox{}
+	first := true
+	m.buildOverride = func(*store.SandboxConfig, *store.Project) (sandbox.Sandbox, error) {
+		if first {
+			first = false
+			return blocking, nil
+		}
+		return fresh, nil
+	}
+	cfg := &store.SandboxConfig{ID: "sb", Name: "sb", Type: "docker", Config: []byte(`{"image":"i"}`)}
+
+	old, rel, err := m.acquire(cfg, testProject("p"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel() // arms the idle timer
+	<-blocking.closing
+
+	// The expiry is now mid-stop. A concurrent acquire must block on gone.
+	got := make(chan *sandboxInstance, 1)
+	go func() {
+		inst, r, err := m.acquire(cfg, testProject("p"))
+		if err != nil {
+			t.Error(err)
+			got <- nil
+			return
+		}
+		defer r()
+		got <- inst
+	}()
+	select {
+	case <-got:
+		t.Fatal("acquire returned while the idle stop was still in flight")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(blocking.release)
+	select {
+	case inst := <-got:
+		if inst == nil || inst == old || inst.sb != fresh {
+			t.Fatalf("acquire after the stop must build fresh, got %+v", inst)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("acquire never returned after the stop finished")
+	}
+	if blocking.closes.Load() != 1 {
+		t.Fatalf("old instance closes = %d, want 1", blocking.closes.Load())
+	}
+}
+
+// RemoveProject evicts every cached instance keyed to the project — idle ones
+// close now — and leaves other projects' instances alone.
+func TestSandboxManagerRemoveProject(t *testing.T) {
+	m := NewManager(t.TempDir())
+	mine := &closeCountingSandbox{}
+	other := &closeCountingSandbox{}
+	m.buildOverride = func(_ *store.SandboxConfig, p *store.Project) (sandbox.Sandbox, error) {
+		if p.ID == "p1" {
+			return mine, nil
+		}
+		return other, nil
+	}
+	cfg := &store.SandboxConfig{ID: "sb", Name: "sb", Type: "docker", Config: []byte(`{"image":"i"}`)}
+	_, r1, err := m.Acquire(cfg, testProject("p1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r1()
+	_, r2, err := m.Acquire(cfg, testProject("p2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r2()
+
+	m.RemoveProject("p1")
+	if mine.closes.Load() != 1 {
+		t.Fatalf("removed project's instance closes = %d, want 1", mine.closes.Load())
+	}
+	if other.closes.Load() != 0 {
+		t.Fatal("another project's instance was closed")
+	}
+	m.mu.Lock()
+	_, still := m.instances[sandboxKey{id: "sb", gen: cfg.RuntimeGen, projectID: "p1"}]
+	m.mu.Unlock()
+	if still {
+		t.Fatal("removed project's key still cached")
+	}
+}
