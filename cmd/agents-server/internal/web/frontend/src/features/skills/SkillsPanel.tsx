@@ -5,7 +5,7 @@ import { RowMenu } from '@/components/ListTable';
 import { api } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { toast } from '@/lib/toast';
-import { type Skill, groupBySource } from '@/lib/skills';
+import { type Skill, groupBySource, splitLocalByOwner } from '@/lib/skills';
 import { BADGE } from '@/lib/badges';
 import { canDeleteRow, canEditRow } from '@/lib/access';
 import { useMe } from '@/lib/me';
@@ -201,7 +201,18 @@ export function SkillsPanel() {
     }
   };
 
-  const grouped = groupBySource(skills || []);
+  // Admin listings see every user's rows; splitting the Local bucket per
+  // owner keeps a group flip's blast radius honest. Emails come from the
+  // admin-only users listing; a short id fills in while it loads.
+  const { data: users } = useApi<{ id: string; email?: string }[]>(
+    () => (isAdmin ? (api.auth.users.list() as Promise<{ id: string; email?: string }[]>) : Promise.resolve([])),
+    [isAdmin],
+  );
+  const labelFor = (ownerId: string) =>
+    users?.find(u => u.id === ownerId)?.email || ownerId.slice(0, 8);
+  const grouped = isAdmin
+    ? splitLocalByOwner(groupBySource(skills || []), me?.id, labelFor)
+    : groupBySource(skills || []);
 
   return (
     <Stack gap="normal">
@@ -273,7 +284,7 @@ export function SkillsPanel() {
         const hasGlobal = group.skills.some(sk => sk.scope === 'global');
         const groupItems = (canSync ? 1 : 0) + (isAdmin ? (hasPrivate ? 1 : 0) + (hasGlobal ? 1 : 0) : 0);
         return (
-        <div key={group.repo || 'local'} className="Box">
+        <div key={group.key || group.repo || 'local'} className="Box">
           <div className="Box-row" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span className="resource-row-title">{group.label}</span>
             <span className="resource-row-sub">{group.skills.length} skill{group.skills.length === 1 ? '' : 's'}</span>
