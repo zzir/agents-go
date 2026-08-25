@@ -243,14 +243,15 @@ Both store one row per entry in an `agent_entries` table — the whole entry ser
 
 ### OpenAI Conversations (server-side)
 
-`openai.ConversationsSession` stores history **server-side** under an OpenAI conversation ID — there is no local store at all. It is the server-side counterpart of a local session (`OpenAIConversationsSession`. The conversation is created lazily on first use unless you attach an existing one:
+`openai.ConversationsSession` stores history **server-side** under an OpenAI conversation ID — there is no local store at all. It is the server-side counterpart of a local session. The conversation is created lazily on first use unless you attach an existing one:
 
 ```go
 import "github.com/zzir/agents-go/models/openai"
 
-sess := openai.NewConversationsSession() // reads OPENAI_API_KEY; or pass option.WithAPIKey(...)
-// sess.SetConversationID("conv_existing")             // resume a known conversation
-// id, _ := sess.ConversationID(ctx)                   // read/create the server-side ID
+conv := openai.NewConversationsSession() // reads OPENAI_API_KEY; or pass option.WithAPIKey(...)
+// conv.SetConversationID("conv_existing")             // resume a known conversation
+// id, _ := conv.ConversationID(ctx)                   // read/create the server-side ID
+sess := session.NewSession(conv)                       // it is a Storage; a run takes a *session.Session
 
 agents.Run(ctx, agent, "remember my name is Ada",
 	agents.RunOptions{Conversation: agents.ConversationOptions{Session: sess}, Model: agents.ModelOptions{Provider: openai.NewProvider()}})
@@ -343,11 +344,12 @@ combine with a local `Session`.
 import "github.com/zzir/agents-go/models/openai"
 
 base := session.NewInMemorySession() // or sessions.New, …
-sess, err := openai.NewCompactionSession(base, openai.CompactionOptions{
+compacting, err := openai.NewCompactionSession(base, openai.CompactionOptions{
 	Model:     "gpt-4.1",  // OpenAI model used for compaction (default gpt-4.1)
 	Threshold: 20,         // compact when ≥20 candidate items accumulate (default 10)
 	// Mode / ShouldCompact override the defaults if needed.
 }, /* option.WithAPIKey(...) */)
+sess := session.NewSession(compacting) // the decorator is a Storage; wrap it for the run
 
 agents.Run(ctx, agent, "…", agents.RunOptions{Conversation: agents.ConversationOptions{Session: sess}, Model: agents.ModelOptions{Provider: openai.NewProvider()}})
 ```
@@ -480,7 +482,7 @@ session.Fork(ctx, src, dst)
 // entry, then replace the destination's contents with it.
 entries, _ := src.Entries(ctx, session.Cursor{})
 path := session.PathToLeaf(entries, "sess-1-e5")
-session.ReplaceEntries(ctx, branch.Storage(), path...)
+session.ReplaceEntries(ctx, dst.Storage(), path...)
 ```
 
 The fork point is an **entry id**, not a position. Positions shift when

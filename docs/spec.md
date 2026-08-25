@@ -266,12 +266,15 @@ It is one place in the code, and its step order is the contract:
 1. flush the turn to the session
 2. ask `ShouldStopAfterTurn`
 3. compact ([§2.5f](#25f-compaction)), rebuilding the context from the log
-4. call `PrepareNextTurn`
+4. drain the steer and next-turn queues ([§2.11b](#211b-run-control))
+5. call `PrepareNextTurn`
 
 Persisting first is what makes the rest safe: a run that stops at step 2, or
 whose context is rewritten at step 3, has its history already written. Asking
 to stop before compacting means the decision is made against the turn that
-actually happened rather than a shortened view of it.
+actually happened rather than a shortened view of it. Draining after step 3,
+never before, is what keeps injected input out of the pass that ran before it
+arrived — compacted away in the same breath it was delivered.
 
 A **handoff** reaches only step 1 and 2. The next turn belongs to a different
 agent, so its snapshot is resolved fresh, and its context is about to be

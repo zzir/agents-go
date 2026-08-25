@@ -293,8 +293,8 @@ t := &agents.Tool{
 	ParamsJSONSchema: map[string]any{"type": "object", "properties": map[string]any{"text": map[string]any{"type": "string"}}, "required": []any{"text"}, "additionalProperties": false},
 	Strict:           true,
 	FailureErrorFunction: agents.DefaultToolErrorFunction,
-	OnInvoke: func(ctx context.Context, tc *agents.ToolContext, argsJSON string) (any, error) {
-		return argsJSON, nil
+	OnInvoke: func(ctx context.Context, tc *agents.ToolContext, argsJSON string) (agents.ToolResult, error) {
+		return agents.TextResult(argsJSON), nil
 	},
 }
 ```
