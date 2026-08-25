@@ -84,3 +84,68 @@ func TestSpanHandle_IgnoresWritesAfterFinish(t *testing.T) {
 		t.Errorf("Error = %+v, want none: it was recorded after Finish", sp.Span.Error)
 	}
 }
+
+// exportingProc mimics a background exporter: it keeps reading the span's data
+// after OnSpanEnd returns, which is what BatchProcessor's goroutine does.
+type exportingProc struct {
+	got  chan *Span
+	stop chan struct{}
+	done chan struct{}
+}
+
+func (p *exportingProc) OnTraceStart(*Trace) {}
+func (p *exportingProc) OnTraceEnd(*Trace)   {}
+func (p *exportingProc) OnSpanStart(*Span)   {}
+func (p *exportingProc) OnSpanEnd(s *Span) {
+	p.got <- s
+	go func() {
+		defer close(p.done)
+		for {
+			select {
+			case <-p.stop:
+				return
+			default:
+			}
+			for k, v := range s.Data {
+				_, _ = k, v
+			}
+			_ = s.Error
+		}
+	}()
+}
+func (p *exportingProc) ForceFlush()              {}
+func (p *exportingProc) Shutdown(context.Context) {}
+
+// The finished flag is read before the write it guards, so an annotation can
+// pass the check and land after the span has been handed over. Data is a map,
+// where that is a process-killing fatal rather than a stale value — so the
+// handover takes the same lock the annotations do. Under -race this test is
+// the assertion.
+func TestSpanHandle_AnnotatingRacesFinish(t *testing.T) {
+	proc := &exportingProc{got: make(chan *Span, 1), stop: make(chan struct{}), done: make(chan struct{})}
+	tr := NewTracer(proc).StartTrace("wf")
+	defer tr.Finish()
+	sp := tr.StartAgentSpan("a", "")
+	sp.Set("before", 1)
+
+	writing := make(chan struct{})
+	go func() {
+		close(writing)
+		for i := range 2000 {
+			sp.Set("k", i)
+			sp.SetError("boom", nil)
+		}
+	}()
+	<-writing
+	sp.Finish()
+
+	exported := <-proc.got
+	if exported.Data["before"] != 1 {
+		t.Fatalf("the export lost data set before Finish: %v", exported.Data)
+	}
+	if exported.EndedAt.IsZero() {
+		t.Fatal("the exported span was not stamped")
+	}
+	close(proc.stop)
+	<-proc.done
+}

@@ -2,6 +2,7 @@ package tracing
 
 import (
 	"maps"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -34,6 +35,12 @@ type SpanHandle struct {
 	tracer *Tracer
 	// finished is atomic for the same reason as TraceHandle.finished.
 	finished atomic.Bool
+	// mu guards the span's mutable fields against Finish's handover. The
+	// finished flag alone cannot: it is read before the write, so a Set can
+	// pass the check and land while the processor already holds the span —
+	// and Data is a map, where that is a runtime fatal rather than a stale
+	// value.
+	mu sync.Mutex
 }
 
 // TraceOption customizes a Trace before it is handed to the processor.
@@ -149,11 +156,19 @@ func (h *SpanHandle) StartSpan(name string) *SpanHandle {
 	return &SpanHandle{Span: sp, tracer: h.tracer}
 }
 
-// Set attaches a key/value to the span's data. It is ignored after Finish:
-// the finished Span belongs to the processor, and writing to it would race the
-// background export that reads it.
+// Set attaches a key/value to the span's data. It is ignored after Finish: the
+// finished Span belongs to the processor. Safe to call while another goroutine
+// finishes the span — the annotation is then simply dropped.
+//
+// Writing through the exported Span field instead is not: it bypasses this and
+// races the export, the same way mutating a Trace after StartTrace does.
 func (h *SpanHandle) Set(key string, value any) {
-	if h == nil || h.Span == nil || h.finished.Load() {
+	if h == nil || h.Span == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.finished.Load() {
 		return
 	}
 	if h.Span.Data == nil {
@@ -164,7 +179,12 @@ func (h *SpanHandle) Set(key string, value any) {
 
 // SetError records an error on the span. Like Set, it is ignored after Finish.
 func (h *SpanHandle) SetError(message string, data map[string]any) {
-	if h == nil || h.Span == nil || h.finished.Load() {
+	if h == nil || h.Span == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.finished.Load() {
 		return
 	}
 	h.Span.Error = &SpanError{Message: message, Data: data}
@@ -176,7 +196,12 @@ func (h *SpanHandle) Finish() {
 	if h == nil || h.tracer == nil || h.Span == nil || !h.finished.CompareAndSwap(false, true) {
 		return
 	}
+	// Under mu, so an annotation still in flight lands before the handover or
+	// is dropped by the finished check — never half-applied, and never written
+	// to a map the processor has already started reading.
+	h.mu.Lock()
 	h.Span.EndedAt = Now()
+	h.mu.Unlock()
 	h.tracer.proc.OnSpanEnd(h.Span)
 }
 

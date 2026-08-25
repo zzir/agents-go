@@ -1637,7 +1637,13 @@ by kind, and only two kinds may extend a run that was ending:
 - **A finished span belongs to the processor.** `Set` and `SetError` after
   `Finish` are ignored, not applied: from that moment the background exporter
   reads the span, so a late write would be a data race rather than a
-  correction.
+  correction. The handover takes the same lock the annotations do — a flag on
+  its own is read *before* the write it guards, so an annotation could pass the
+  check and land in a map the exporter had already started reading, which the
+  runtime answers with a fatal rather than a stale value. Annotating from
+  another goroutine is therefore safe and simply drops; writing through the
+  exported `Span` field bypasses this and races, exactly as mutating a `Trace`
+  after `StartTrace` does.
 - **A dropped span is announced through `BatchProcessorOptions.OnDrop`.** The
   processor's queue is bounded, so telemetry is lost under load and after
   `Shutdown`; the SDK does not write to `slog.Default()` on its own

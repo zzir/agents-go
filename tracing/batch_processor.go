@@ -133,6 +133,10 @@ func (p *BatchProcessor) flush() {
 		n := min(len(p.queue), p.opts.MaxBatchSize)
 		batch := make([]Item, n)
 		copy(batch, p.queue[:n])
+		// Release the exported items: reslicing alone leaves them reachable
+		// through the backing array, so a queue that once held a burst of
+		// content-carrying spans keeps them alive long after they shipped.
+		clear(p.queue[:n])
 		p.queue = p.queue[n:]
 		p.mu.Unlock()
 		if p.exporter != nil {
