@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -107,13 +108,21 @@ func parseGitHubRepoURL(raw string) (owner, repo string, ok bool) {
 	return parts[0], strings.TrimSuffix(parts[1], ".git"), true
 }
 
+// skillFetchTimeout bounds one import fetch, connect through body read: a
+// target that accepts and stalls must not hold the handler's goroutine and
+// connection open for as long as the client cares to wait.
+const skillFetchTimeout = 30 * time.Second
+
 // httpClient is the import fetcher: the proxy_url client when one is set,
-// the default client otherwise (ProxyClient returns nil for "no proxy").
+// a plain client otherwise (ProxyClient returns nil for "no proxy") — either
+// way bounded by skillFetchTimeout.
 func (h *SkillHandler) httpClient(ctx context.Context) *http.Client {
-	if c := h.settings.ProxyClient(ctx); c != nil {
-		return c
+	c := h.settings.ProxyClient(ctx)
+	if c == nil {
+		c = &http.Client{}
 	}
-	return http.DefaultClient
+	c.Timeout = skillFetchTimeout
+	return c
 }
 
 // githubGet performs one anonymous GitHub API GET (two calls per import, so

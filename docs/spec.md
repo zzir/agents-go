@@ -2879,7 +2879,10 @@ discovery. Consequences, all intended:
 - **Import URLs are operator-supplied outbound requests** (GitHub API, raw
   fetches), like provider base URLs and MCP endpoints. No private-address
   guard is applied — a recorded, accepted risk for the single-operator
-  deployment; revisit before any multi-tenant or public exposure.
+  deployment; revisit before any multi-tenant or public exposure. Each
+  fetch is bounded by a 30-second timeout, connect through body read
+  (revised 2026-08-25) — a stalling target must not hold the handler's
+  connection open indefinitely.
 
 Do not add per-skill file storage back; a skill needing an artifact should
 inline it or instruct the model to fetch it.
