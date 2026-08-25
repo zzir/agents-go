@@ -50,7 +50,7 @@ func validateGuardrail(g *store.Guardrail) string {
 // Create persists a new guardrail definition.
 //
 //	@Summary		Create guardrail
-//	@Description	type: input|output; mode: regex|max_length; config: {pattern} or {max_length}.
+//	@Description	stages: any of input|output|tool_input|tool_output; mode: regex|max_length; config: {pattern} or {max_length}.
 //	@Tags			guardrails
 //	@Accept			json
 //	@Produce		json

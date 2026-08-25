@@ -273,7 +273,7 @@ func (h *ProviderHandler) Update(c *gin.Context) {
 // Delete removes a provider nothing references.
 //
 //	@Summary		Delete a provider
-//	@Description	Refuses with 409 while an agent or a provider route still references it — repoint or delete those first.
+//	@Description	Refuses with 409 while an agent still references it — repoint or delete those first.
 //	@Tags			providers
 //	@Param			id	path	string	true	"Provider ID"
 //	@Success		204

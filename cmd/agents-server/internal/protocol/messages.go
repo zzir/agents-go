@@ -453,9 +453,10 @@ type SessionSandboxBound struct {
 }
 
 // TaskUpdated is a task's state as its parent session's subscribers should
-// now show it — the same shape as a row of GET /sessions/{id}/tasks, minus
-// the fields only a person sets (dismissed). A client merges it under the
-// task id, with the same no-move-backwards rule the durable row gets.
+// now show it — the same shape as a row of GET /sessions/{id}/tasks,
+// Dismissed included so a dismissal made in one window reaches the others.
+// A client merges it under the task id, with the same no-move-backwards
+// rule the durable row gets.
 type TaskUpdated struct {
 	TaskID          string          `json:"task_id"`
 	ParentSessionID string          `json:"parent_session_id"`

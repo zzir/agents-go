@@ -1279,7 +1279,7 @@ export interface paths {
         put?: never;
         /**
          * Create guardrail
-         * @description type: input|output; mode: regex|max_length; config: {pattern} or {max_length}.
+         * @description stages: any of input|output|tool_input|tool_output; mode: regex|max_length; config: {pattern} or {max_length}.
          */
         post: {
             parameters: {
@@ -2688,7 +2688,7 @@ export interface paths {
         post?: never;
         /**
          * Delete a provider
-         * @description Refuses with 409 while an agent or a provider route still references it — repoint or delete those first.
+         * @description Refuses with 409 while an agent still references it — repoint or delete those first.
          */
         delete: {
             parameters: {

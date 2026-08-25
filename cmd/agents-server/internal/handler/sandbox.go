@@ -165,9 +165,9 @@ func (h *SandboxHandler) Get(c *gin.Context) {
 // Update overwrites the sandbox configuration identified by the id path
 // parameter and responds with the updated configuration. A masked SSH
 // password keeps the stored value. An update that would change the sandbox's
-// identity (type, ssh addr/work_dir, docker host_dir/persistent/
-// container_name) is refused with 409 while sessions are bound to it — their
-// binding is permanent, and rewriting what the id points at would switch a
+// identity (type, daemon host — see IdentityChanged) is refused with 409
+// while sessions are bound or project rows live on it — the binding is
+// permanent, and rewriting what the id points at would switch a
 // conversation's file system under it. Non-identity fields update freely.
 //
 //	@Summary		Update sandbox
