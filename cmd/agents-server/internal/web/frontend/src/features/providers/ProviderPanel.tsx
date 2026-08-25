@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, TextInput, Label, SegmentedControl, Stack } from '@primer/react';
 import { SecretInput } from '@/components/SecretInput';
 import { FormActions } from '@/components/FormActions';
-import { CrudPanel, RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
-import { ReadOnlyContext, canDeleteRow, canEditRow } from '@/lib/access';
+import { CrudPanel, OwnerBadge, RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
+import { ReadOnlyContext, canDeleteRow, canDemoteRow, canEditRow } from '@/lib/access';
+import { useOwnerLabels } from '@/lib/owners';
 import { useMe } from '@/lib/me';
 import { ResourceRow } from '@/components/ResourceRow';
 import { api } from '@/lib/api';
@@ -112,6 +113,7 @@ function ProviderForm({ initial, onSave, onCancel, onDelete, saving, providerTyp
 export function ProviderPanel() {
   const { me } = useMe();
   const isAdmin = me?.role === 'admin';
+  const { labelFor } = useOwnerLabels();
   const rowEditable = (p: Provider) => canEditRow(isAdmin, me?.id, p);
   const { items: providers, adding, editing, startAdd, startEdit, cancel, save, saving, remove, reload } =
     useCrud<Provider, ProviderFormData>(api.providers);
@@ -191,7 +193,7 @@ export function ProviderPanel() {
       <CrudPanel title="Providers" onAdd={startAdd} onCancel={cancel} form={form} isEmpty={providers.length === 0}
         onDelete={editing && canDeleteRow(isAdmin, me?.id, editing)
           ? async () => { if (await remove(editing.id, editing.name)) cancel(); } : null}
-        empty="No providers yet. An agent without one runs on the built-in default: the OpenAI backend on the global API key from Settings.">
+        empty="No providers yet. A provider carries the endpoint and the API key that reaches it; an agent naming none has no credential and fails its pre-flight.">
         {providers.map(p => {
           const meta = providerMeta(p.type || '');
           const chatgpt = p.auth_mode === 'chatgpt_login';
@@ -205,14 +207,14 @@ export function ProviderPanel() {
                 title={p.chatgpt_logged_in ? 'ChatGPT signed in' : 'ChatGPT not signed in'}
               />}
               title={p.name}
-              badges={<><ScopeBadge row={p} meId={me?.id} /><Label variant={meta.badgeVariant}>{meta.badge}</Label></>}
+              badges={<><ScopeBadge row={p} meId={me?.id} /><OwnerBadge row={p} meId={me?.id} labelFor={labelFor} /><Label variant={meta.badgeVariant}>{meta.badge}</Label></>}
               sub={p.base_url || meta.baseURLPlaceholder}
               actions={<>
                 {chatgpt && rowEditable(p) && (p.chatgpt_logged_in
                   ? <Button onClick={() => handleLogout(p.id)} size="small" variant="invisible">Sign out</Button>
                   : <Button onClick={() => handleLogin(p.id)} size="small" variant="invisible" loading={!!signingIn[p.id]}>Sign in</Button>)}
                 <RowActionsMenu name={p.name} editReadOnly={!rowEditable(p)} onEdit={() => startEdit(p)}
-                  scope={isAdmin ? { row: p, setScope: api.providers.setScope, onDone: reload } : undefined} />
+                  scope={{ row: p, setScope: api.providers.setScope, canPromote: isAdmin, canDemote: canDemoteRow(isAdmin, me?.id, p), onDone: reload }} />
               </>}
             />
           );

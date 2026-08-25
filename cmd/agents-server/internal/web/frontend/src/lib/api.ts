@@ -135,12 +135,19 @@ function crud<T>(base: string): CrudMethods<T> {
   };
 }
 
-// Admin: moves a scoped row between private and global (a demote re-homes it
-// to the acting admin); 400/409 report non-global references or a name
-// collision in the target scope.
+// Moves a scoped row between private and global: promote is the admin's act,
+// demote the admin's or the owner's (the row returns to its author); 400/409
+// report non-global references or a name collision in the target scope.
 function setScope(base: string) {
   return (id: string | number, scope: 'global' | 'private') =>
     request<null>(`${base}/${id}/scope`, { method: 'POST', body: JSON.stringify({ scope }) });
+}
+
+// Admin: transfers a scoped row to another account; scope stays put. 409 on a
+// name collision in the target owner's namespace.
+function setOwner(base: string) {
+  return (id: string | number, userId: string) =>
+    request<null>(`${base}/${id}/owner`, { method: 'PUT', body: JSON.stringify({ user_id: userId }) });
 }
 
 export const api = {
@@ -155,6 +162,8 @@ export const api = {
       revokeTokens: (id: string) =>
         request<null>(`/auth/users/${encodeURIComponent(id)}/tokens`, { method: 'DELETE' }),
     },
+    // The id→person directory any member reads to label row owners.
+    userLabels: () => request<{ id: string; name?: string; email: string }[]>('/auth/user-labels'),
     // Admin: the audit log, newest first; `before` (an event id) pages older.
     audit: (limit = 50, before?: string) =>
       request<S['store.AuditEvent'][]>(`/auth/audit?limit=${limit}${before ? `&before=${encodeURIComponent(before)}` : ''}`),
@@ -216,6 +225,7 @@ export const api = {
   agents: {
     ...crud<S['store.AgentConfig']>('/agents'),
     setScope: setScope('/agents'),
+    setOwner: setOwner('/agents'),
     // The agent's CURRENT tool surface as schema-only definitions — what the
     // bridge would hand the model right now (sandbox tools excluded). Backs
     // the Replay dialog's tool picker.
@@ -224,6 +234,7 @@ export const api = {
   mcpServers: {
     ...crud<S['handler.mcpServerListItem']>('/mcp-servers'),
     setScope: setScope('/mcp-servers'),
+    setOwner: setOwner('/mcp-servers'),
     connect: (id: string | number) => request(`/mcp-servers/${id}/connect`, { method: 'POST' }),
     clearOAuth: (id: string | number) => request(`/mcp-servers/${id}/oauth-token`, { method: 'DELETE' }),
     tools: (id: string | number) => request(`/mcp-servers/${id}/tools`),
@@ -312,9 +323,17 @@ export const api = {
   },
   skills: {
     ...crud<S['store.Skill']>('/skills'),
+    // Per-row scope flips are for workbench-authored skills only; an imported
+    // repo flips as one group via setRepoScope.
     setScope: setScope('/skills'),
+    setRepoScope: (repo: string, scope: 'global' | 'private', ownerId?: string) =>
+      request<null>('/skill-repos/scope', { method: 'POST', body: JSON.stringify({ repo, scope, ...(ownerId ? { owner_id: ownerId } : {}) }) }),
+    setOwner: setOwner('/skills'),
     // Import walks a GitHub repo (or fetches one raw SKILL.md) and upserts.
-    import: (url: string) => request('/skill-imports', { method: 'POST', body: JSON.stringify({ url }) }),
+    // ownerId names WHICH group a sync refreshes — an admin syncing somebody
+    // else's published repository; omitted, it is the caller's own group.
+    import: (url: string, ownerId?: string) =>
+      request('/skill-imports', { method: 'POST', body: JSON.stringify({ url, ...(ownerId ? { owner_id: ownerId } : {}) }) }),
   },
   guardrails: {
     ...crud<S['store.Guardrail']>('/guardrails'),
@@ -323,6 +342,7 @@ export const api = {
   providers: {
     ...crud<S['store.Provider']>('/providers'),
     setScope: setScope('/providers'),
+    setOwner: setOwner('/providers'),
   },
   // Projects have no get/update routes: a row is (name, sandbox), immutable
   // once created — delete refuses (409) while sessions still bind it.
@@ -336,6 +356,7 @@ export const api = {
   workflows: {
     ...crud<S['store.Workflow']>('/workflows'),
     setScope: setScope('/workflows'),
+    setOwner: setOwner('/workflows'),
     // A person's own run of a workflow: the brief they wrote, for the session
     // the result comes back to.
     // sandbox_id/project_id bind a still-unbound session first, so the

@@ -3,8 +3,9 @@ import { Button, TextInput, Label, Select, Checkbox, FormControl, Stack, ToggleS
 import { SecretInput } from '@/components/SecretInput';
 import { TokenListInput } from '@/components/TokenListInput';
 import { FormActions } from '@/components/FormActions';
-import { CrudPanel, RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
-import { ReadOnlyContext, canDeleteRow, canEditRow } from '@/lib/access';
+import { CrudPanel, OwnerBadge, RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
+import { ReadOnlyContext, canDeleteRow, canDemoteRow, canEditRow } from '@/lib/access';
+import { useOwnerLabels } from '@/lib/owners';
 import { useMe } from '@/lib/me';
 import { ResourceRow } from '@/components/ResourceRow';
 import { api } from '@/lib/api';
@@ -241,6 +242,7 @@ const POLL_INTERVAL_MS = 1500;
 export function McpServerPanel() {
   const { me } = useMe();
   const isAdmin = me?.role === 'admin';
+  const { labelFor } = useOwnerLabels();
   const rowEditable = (s: McpServer) => canEditRow(isAdmin, me?.id, s);
   const { items: servers, reload, adding, editing, startAdd, startEdit, cancel, save, saving, remove } = useCrud<McpServer, Partial<McpServer>>(api.mcpServers);
   // busy covers only the POST /connect round-trip; every longer-lived state
@@ -334,7 +336,7 @@ export function McpServerPanel() {
               status={<span className="form-status-dot" style={{ background: STATUS_DOT[s.status] || 'var(--fgColor-muted)' }} />}
               title={s.name}
               badges={<>
-                <ScopeBadge row={s} meId={me?.id} />
+                <ScopeBadge row={s} meId={me?.id} /><OwnerBadge row={s} meId={me?.id} labelFor={labelFor} />
                 {s.config && s.config.auth_mode === 'oauth' && <Label variant={BADGE.type}>OAuth</Label>}
               </>}
               sub={(s.config && s.config.endpoint) || ''}
@@ -357,7 +359,7 @@ export function McpServerPanel() {
                 )}
                 {editable && <EnabledToggle server={s} onToggle={handleToggleEnabled} />}
                 <RowActionsMenu name={s.name} editReadOnly={!editable} onEdit={() => startEdit(s)}
-                  scope={isAdmin ? { row: s, setScope: api.mcpServers.setScope, onDone: reload } : undefined} />
+                  scope={{ row: s, setScope: api.mcpServers.setScope, canPromote: isAdmin, canDemote: canDemoteRow(isAdmin, me?.id, s), onDone: reload }} />
               </>}
             />
           );

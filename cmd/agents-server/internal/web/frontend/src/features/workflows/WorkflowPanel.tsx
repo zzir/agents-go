@@ -6,9 +6,10 @@ import { Blankslate } from '@primer/react/experimental';
 import { ChevronUpIcon, ChevronDownIcon, TrashIcon, PlayIcon, ZapIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
 import { PAGE_SIZE, useApi, useCrud, usePage } from '@/lib/hooks';
-import { ReadOnlyContext, canDeleteRow, canEditRow } from '@/lib/access';
+import { ReadOnlyContext, canDeleteRow, canDemoteRow, canEditRow } from '@/lib/access';
+import { useOwnerLabels } from '@/lib/owners';
 import { useMe } from '@/lib/me';
-import { RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
+import { OwnerBadge, RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
 import { fc } from '@/lib/form';
 import { nameOf } from '@/lib/named';
 import { BADGE } from '@/lib/badges';
@@ -307,6 +308,7 @@ export function WorkflowPanel({ sessionId }: { sessionId: string | null }) {
   // follows canEditRow per row. While /auth/me loads, no write affordances.
   const { me, loading: meLoading } = useMe();
   const isAdmin = me?.role === 'admin';
+  const { labelFor } = useOwnerLabels();
   const canCreate = !meLoading;
   const rowEditable = (w: Workflow) => canEditRow(isAdmin, me?.id, w);
   const { items: workflows, adding, editing, startAdd, startEdit, cancel, save, saving, remove, reload } =
@@ -373,7 +375,7 @@ export function WorkflowPanel({ sessionId }: { sessionId: string | null }) {
               <div className="resource-row-main">
                 <div className="resource-row-head">
                   <span className="resource-row-title">{w.name}</span>
-                  <ScopeBadge row={w} meId={me?.id} />
+                  <ScopeBadge row={w} meId={me?.id} /><OwnerBadge row={w} meId={me?.id} labelFor={labelFor} />
                   <Label variant={BADGE.count}>{'Steps·' + (w.steps || []).length}</Label>
                 </div>
                 <div className="resource-row-sub">
@@ -389,7 +391,7 @@ export function WorkflowPanel({ sessionId }: { sessionId: string | null }) {
                   title="Run it on a schedule or from a webhook">Triggers</Button>
                 <RowActionsMenu name={w.name}
                   onEdit={() => startEdit(w)} editReadOnly={!rowEditable(w)}
-                  scope={isAdmin ? { row: w, setScope: api.workflows.setScope, onDone: reload } : undefined}
+                  scope={{ row: w, setScope: api.workflows.setScope, canPromote: isAdmin, canDemote: canDemoteRow(isAdmin, me?.id, w), onDone: reload }}
                   // Delete without edit: the admin on a foreign private row
                   // (remove carries the confirm dialog).
                   onDelete={!rowEditable(w) && canDeleteRow(isAdmin, me?.id, w)

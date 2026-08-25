@@ -2,8 +2,9 @@ import React, { useState } from 'react';
 import { TextInput, Textarea, FormControl, Checkbox, Select, Stack } from '@primer/react';
 import { TokenListInput } from '@/components/TokenListInput';
 import { FormActions } from '@/components/FormActions';
-import { CrudPanel, RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
-import { ReadOnlyContext, canDeleteRow, canEditRow } from '@/lib/access';
+import { CrudPanel, OwnerBadge, RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
+import { ReadOnlyContext, canDeleteRow, canDemoteRow, canEditRow, canReference } from '@/lib/access';
+import { useOwnerLabels } from '@/lib/owners';
 import { useMe } from '@/lib/me';
 import { ResourceRow } from '@/components/ResourceRow';
 import { api } from '@/lib/api';
@@ -12,7 +13,7 @@ import { fc, seg } from '@/lib/form';
 import { JsonField } from '@/lib/JsonField';
 import { toast } from '@/lib/toast';
 import { Disclosure } from '@/components/Disclosure';
-import { type Skill, type SkillGroup, groupBySource } from '@/lib/skills';
+import { type Skill, type SkillGroup, groupSkills, qualifiedName } from '@/lib/skills';
 import { providerMeta, providerFacts, type ProviderTypeInfo } from '@/lib/providers';
 
 // The agent-config REST payload nests these scalar settings under JSON group
@@ -93,6 +94,8 @@ interface McpServer {
   id: string | number;
   name: string;
   status?: string;
+  scope?: string;
+  owner_id?: string;
 }
 
 interface Agent {
@@ -116,10 +119,12 @@ interface ProviderRef {
   id: string;
   name: string;
   type?: string;
+  scope?: string;
+  owner_id?: string;
 }
 
 interface AgentFormProps {
-  initial?: Partial<AgentFormData> & { id?: string | number };
+  initial?: Partial<AgentFormData> & { id?: string | number; scope?: string; owner_id?: string };
   onSave: (form: AgentFormData & { handoffs: string; tools: string; skills: string; model_settings: string }) => void;
   onCancel?: () => void;
   onDelete?: () => void;
@@ -132,6 +137,9 @@ interface AgentFormProps {
 }
 
 function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, skills, allAgents, providerTypes, providers }: AgentFormProps) {
+  const { me } = useMe();
+  const meId = me?.id;
+  const { labelFor } = useOwnerLabels();
   const initHandoffs = (): (string | number)[] => {
     try { return JSON.parse((initial && initial.handoffs) || '[]'); } catch { return []; }
   };
@@ -190,7 +198,21 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
   const providerHint = unsupported.length > 0
     ? `Fails loudly on this backend — leave unset: ${unsupported.slice(0, 6).join(', ')}${unsupported.length > 6 ? ` +${unsupported.length - 6} more` : ''}`
     : 'Endpoints and their API keys are managed under Providers';
-  const handoffTargets = (allAgents || []).filter(a => a.id !== initial?.id);
+  // Every picker offers only what this agent may REFERENCE (spec §5.29): a
+  // private agent sees global rows plus its owner's, a global one only global
+  // rows. Without this an admin's all-rows listing would offer a foreign
+  // private row the save then refuses.
+  // A create — blank or a fork seed, which sheds scope/owner — will land
+  // private and the caller's, so it references as such; only an EDIT takes
+  // the stored row's pair.
+  const holder = initial?.scope
+    ? { scope: initial.scope, owner_id: initial.owner_id }
+    : { scope: 'private', owner_id: meId };
+  const refOK = (row: { scope?: string; owner_id?: string }) => canReference(holder, row);
+  const visibleProviders = (providers || []).filter(refOK);
+  const visibleMcp = (mcpServers || []).filter(refOK);
+  const visibleSkills = (skills || []).filter(refOK);
+  const handoffTargets = (allAgents || []).filter(a => a.id !== initial?.id && refOK(a));
   const toggleHandoff = (id: string | number) => {
     setSelectedHandoffs(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
@@ -200,7 +222,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
   // null selectedSkills = not customized yet -> effectively "every installed skill".
   // Computed from the live `skills` prop (not stale state) so it's correct even
   // before any effect/interaction has run. The selection stores skill IDS.
-  const allSkillIds = (skills || []).map(sk => sk.id);
+  const allSkillIds = visibleSkills.map(sk => sk.id);
   const effectiveSkills = selectedSkills ?? allSkillIds;
   const toggleSkill = (id: string) => {
     setSelectedSkills(prev => {
@@ -211,7 +233,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
   // Skills are grouped by their import source (a repo can bundle dozens) so
   // the list stays manageable — collapsed by default, with a group-level
   // checkbox to select/deselect the whole source at once.
-  const skillGroups = groupBySource(skills || []);
+  const skillGroups = groupSkills(visibleSkills, meId, labelFor);
   const [expandedSkillRepos, setExpandedSkillRepos] = useState<Set<string>>(new Set());
   const toggleSkillRepoExpanded = (repo: string) => {
     setExpandedSkillRepos(prev => {
@@ -246,7 +268,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
                 its pre-flight, so the empty value is a placeholder, not an
                 option that works. */}
             <Select.Option value="">Select an endpoint…</Select.Option>
-            {(providers || []).map(p => (
+            {visibleProviders.map(p => (
               <Select.Option key={p.id} value={p.id}>{p.name}</Select.Option>
             ))}
           </Select>,
@@ -296,10 +318,10 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
         {fc('Instructions', <Textarea value={form.instructions} onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('instructions', e.target.value)} rows={5} placeholder="System prompt / instructions for this agent..." block style={{ fontFamily: 'var(--fontStack-monospace)' }} />, null, { hideLabel: true })}
       </div>
 
-      {mcpServers && mcpServers.length > 0 && <div className="form-group">
+      {visibleMcp.length > 0 && <div className="form-group">
         <div className="form-group-title">MCP Servers</div>
         <div className="form-checkbox-group">
-          {mcpServers.map(s => {
+          {visibleMcp.map(s => {
             const usable = s.status === 'connected';
             return (
               <FormControl key={s.id} disabled={!usable}>
@@ -317,28 +339,28 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
         <div className="FormControl-caption">Select which MCP servers this agent can use — greyed-out servers are disabled or not currently connected</div>
       </div>}
 
-      {skills && skills.length > 0 && <div className="form-group">
+      {visibleSkills.length > 0 && <div className="form-group">
         <div className="form-group-title">Skills</div>
         <div className="form-checkbox-group">
           {skillGroups.map(group => {
             const ids = group.skills.map(sk => sk.id);
             const selectedCount = ids.filter(id => effectiveSkills.includes(id)).length;
             const allSelected = selectedCount === ids.length;
-            const expanded = expandedSkillRepos.has(group.repo);
+            const expanded = expandedSkillRepos.has(group.key);
             return (
-              <div key={group.repo || 'local'} className="checkbox-group-header">
+              <div key={group.key} className="checkbox-group-header">
                 <Checkbox
                   checked={allSelected}
                   indeterminate={!allSelected && selectedCount > 0}
                   aria-label={`Select all skills in ${group.label}`}
                   onChange={() => toggleSkillGroup(group)}
                 />
-                <Disclosure variant="plain" className="checkbox-group-toggle" label={group.label} open={expanded} onToggle={() => toggleSkillRepoExpanded(group.repo)}>
+                <Disclosure variant="plain" className="checkbox-group-toggle" label={group.label} open={expanded} onToggle={() => toggleSkillRepoExpanded(group.key)}>
                   <div className="checkbox-group-body">
                     {group.skills.map(sk => (
                       <FormControl key={sk.id}>
                         <Checkbox checked={effectiveSkills.includes(sk.id)} onChange={() => toggleSkill(sk.id)} />
-                        <FormControl.Label>{sk.name}</FormControl.Label>
+                        <FormControl.Label>{qualifiedName(sk)}</FormControl.Label>
                         {sk.description && <FormControl.Caption>{sk.description}</FormControl.Caption>}
                       </FormControl>
                     ))}
@@ -490,6 +512,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
 export function AgentConfigPanel() {
   const { me } = useMe();
   const isAdmin = me?.role === 'admin';
+  const { labelFor } = useOwnerLabels();
   const rowEditable = (a: Agent) => canEditRow(isAdmin, me?.id, a);
   const { items: agents, adding, editing, startAdd, startEdit, cancel, save, saving, remove, reload } =
     useCrud<Agent, AgentFormData & { handoffs: string; tools: string; skills: string; model_settings: string }>(api.agents);
@@ -547,14 +570,14 @@ export function AgentConfigPanel() {
           return (
             <ResourceRow key={a.id}
               title={a.name}
-              badges={<ScopeBadge row={a} meId={me?.id} />}
+              badges={<><ScopeBadge row={a} meId={me?.id} /><OwnerBadge row={a} meId={me?.id} labelFor={labelFor} /></>}
               sub={a.description || undefined}
               // One meta line instead of a strip of labels: model@endpoint. An
               // unset or vanished provider is a row that cannot run — say so.
               meta={<span>{(a.model || 'no model') + (rowProvider ? '@' + rowProvider.name : ' · no endpoint')}</span>}
               actions={<RowActionsMenu name={a.name} editReadOnly={!rowEditable(a)} onEdit={() => startEdit(a)}
                 onFork={() => startFork(a)}
-                scope={isAdmin ? { row: a, setScope: api.agents.setScope, onDone: reload } : undefined} />}
+                scope={{ row: a, setScope: api.agents.setScope, canPromote: isAdmin, canDemote: canDemoteRow(isAdmin, me?.id, a), onDone: reload }} />}
             />
           );
         })}

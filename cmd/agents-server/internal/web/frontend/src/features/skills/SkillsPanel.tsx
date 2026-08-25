@@ -5,11 +5,12 @@ import { RowMenu } from '@/components/ListTable';
 import { api } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { toast } from '@/lib/toast';
-import { type Skill, groupBySource, splitLocalByOwner } from '@/lib/skills';
+import { type Skill, type SkillGroup, groupSkills } from '@/lib/skills';
 import { BADGE } from '@/lib/badges';
-import { canDeleteRow, canEditRow } from '@/lib/access';
+import { canDeleteRow, canDemoteRow, canEditRow } from '@/lib/access';
 import { useMe } from '@/lib/me';
-import { ScopeBadge } from '@/components/CrudPanel';
+import { useOwnerLabels } from '@/lib/owners';
+import { OwnerBadge, ScopeBadge } from '@/components/CrudPanel';
 
 const NEW_SKILL_TEMPLATE = `---
 name: my-skill
@@ -90,8 +91,8 @@ export function SkillsPanel() {
   const [busy, setBusy] = useState(false);
   const [syncing, setSyncing] = useState<Set<string>>(new Set());
 
-  const runImport = async (url: string) => {
-    const result = (await api.skills.import(url)) as ImportResult;
+  const runImport = async (url: string, ownerId?: string) => {
+    const result = (await api.skills.import(url, ownerId)) as ImportResult;
     // One toast, not one per file: a repo with many bad SKILL.md's would
     // otherwise flood the stack.
     const skipped = result.skipped || [];
@@ -119,24 +120,37 @@ export function SkillsPanel() {
     }
   };
 
-  const handleSync = async (repo: string) => {
-    setSyncing(prev => new Set(prev).add(repo));
+  // A sync names the GROUP it refreshes, not just the repo: the same
+  // repository can be two groups (one published, one somebody's private
+  // copy), and a sync must land in the one whose row was clicked (§5.31).
+  const handleSync = async (group: SkillGroup) => {
+    setSyncing(prev => new Set(prev).add(group.key));
     try {
-      await runImport(repo);
+      await runImport(group.repo, group.ownerId || undefined);
       reload();
     } catch (e) {
       toast.error((e as Error).message || 'Sync failed');
     } finally {
-      setSyncing(prev => { const next = new Set(prev); next.delete(repo); return next; });
+      setSyncing(prev => { const next = new Set(prev); next.delete(group.key); return next; });
     }
   };
 
-  // Scope flips per GROUP: an import lands a repo's skills together, so
-  // publishing them goes together too. Rows already in the target scope are
-  // skipped; per-row failures (a name taken in the target scope) are
-  // collected, not fatal to the rest.
-  const setGroupScope = async (skillsInGroup: Skill[], scope: 'global' | 'private') => {
-    const targets = skillsInGroup.filter(sk => sk.scope !== scope);
+  // An imported repo flips as ONE group, server-side and all-or-nothing —
+  // a repo's skills publish together, so the group is never half-published
+  // (spec §5.29). A workbench-authored skill flips on its own row.
+  const setGroupScope = async (group: SkillGroup, scope: 'global' | 'private') => {
+    if (group.repo !== '') {
+      try {
+        await api.skills.setRepoScope(group.repo, scope, group.ownerId || undefined);
+      } catch (e) {
+        toast.error((e as Error).message || 'Scope change failed');
+      }
+      reload();
+      return;
+    }
+    // The Local bucket is not a group: each row flips on its own, so one
+    // refusal (a name taken in the target scope) must not abort the rest.
+    const targets = group.skills.filter(sk => sk.scope !== scope);
     const failed: string[] = [];
     for (const sk of targets) {
       try {
@@ -201,18 +215,11 @@ export function SkillsPanel() {
     }
   };
 
-  // Admin listings see every user's rows; splitting the Local bucket per
-  // owner keeps a group flip's blast radius honest. Emails come from the
-  // admin-only users listing; a short id fills in while it loads.
-  const { data: users } = useApi<{ id: string; email?: string }[]>(
-    () => (isAdmin ? (api.auth.users.list() as Promise<{ id: string; email?: string }[]>) : Promise.resolve([])),
-    [isAdmin],
-  );
-  const labelFor = (ownerId: string) =>
-    users?.find(u => u.id === ownerId)?.email || ownerId.slice(0, 8);
-  const grouped = isAdmin
-    ? splitLocalByOwner(groupBySource(skills || []), me?.id, labelFor)
-    : groupBySource(skills || []);
+  // Groups are (repo, owner): a listing carrying other people's rows — the
+  // admin's, or a published repo — names whose each group is, and a group
+  // flip's blast radius is exactly what its heading says.
+  const { labelFor } = useOwnerLabels();
+  const grouped = groupSkills(skills || [], me?.id, labelFor);
 
   return (
     <Stack gap="normal">
@@ -277,24 +284,33 @@ export function SkillsPanel() {
 
       {mode === null && grouped.map(group => {
         // Sync re-imports the repo, updating every row in the group — so it
-        // is offered only when every row is the caller's to update. The scope
-        // flips are the admin's, per group (a repo's skills publish together).
+        // is offered only when every row is the caller's to update. Publishing
+        // a group is the admin's; unpublishing is theirs or its author's.
         const canSync = group.repo !== '' && group.skills.every(skillEditable);
-        const hasPrivate = group.skills.some(sk => sk.scope !== 'global');
-        const hasGlobal = group.skills.some(sk => sk.scope === 'global');
-        const groupItems = (canSync ? 1 : 0) + (isAdmin ? (hasPrivate ? 1 : 0) + (hasGlobal ? 1 : 0) : 0);
+        const owner = { scope: group.scope, owner_id: group.ownerId };
+        const isRepo = group.repo !== '';
+        // A Local bucket flips per row, so it offers both directions while it
+        // holds rows to move; a repo group has one scope and one direction.
+        const canPublish = isAdmin && (isRepo ? group.scope !== 'global' : group.skills.some(sk => sk.scope !== 'global'));
+        const canUnpublish = isRepo
+          ? group.scope === 'global' && canDemoteRow(isAdmin, me?.id, owner)
+          : group.skills.some(sk => sk.scope === 'global' && canDemoteRow(isAdmin, me?.id, sk));
+        const groupItems = (canSync ? 1 : 0) + (canPublish ? 1 : 0) + (canUnpublish ? 1 : 0);
         return (
-        <div key={group.key || group.repo || 'local'} className="Box">
+        <div key={group.key} className="Box">
           <div className="Box-row" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span className="resource-row-title">{group.label}</span>
+            {/* Scope and author sit on the GROUP: a repo publishes as one. */}
+            {group.scope && <ScopeBadge row={owner} meId={me?.id} />}
+            <OwnerBadge row={owner} meId={me?.id} labelFor={labelFor} />
             <span className="resource-row-sub">{group.skills.length} skill{group.skills.length === 1 ? '' : 's'}</span>
-            {syncing.has(group.repo) && group.repo !== '' && <span className="resource-row-sub">Syncing…</span>}
+            {syncing.has(group.key) && <span className="resource-row-sub">Syncing…</span>}
             {groupItems > 0 && (
               <div style={{ marginLeft: 'auto' }}>
                 <RowMenu label={`Actions for ${group.label}`}>
-                  {canSync && <ActionList.Item disabled={syncing.has(group.repo)} onSelect={() => void handleSync(group.repo)}>Sync</ActionList.Item>}
-                  {isAdmin && hasPrivate && <ActionList.Item onSelect={() => void setGroupScope(group.skills, 'global')}>Make all global</ActionList.Item>}
-                  {isAdmin && hasGlobal && <ActionList.Item onSelect={() => void setGroupScope(group.skills, 'private')}>Make all private</ActionList.Item>}
+                  {canSync && <ActionList.Item disabled={syncing.has(group.key)} onSelect={() => void handleSync(group)}>Sync</ActionList.Item>}
+                  {canPublish && <ActionList.Item onSelect={() => void setGroupScope(group, 'global')}>{isRepo ? 'Make global' : 'Make all global'}</ActionList.Item>}
+                  {canUnpublish && <ActionList.Item onSelect={() => void setGroupScope(group, 'private')}>{isRepo ? 'Make private' : 'Make all private'}</ActionList.Item>}
                 </RowMenu>
               </div>
             )}
@@ -306,7 +322,9 @@ export function SkillsPanel() {
               <div className="resource-row-main">
                 <div className="resource-row-head">
                   <span className="resource-row-title">{sk.name}</span>
-                  <ScopeBadge row={sk} meId={me?.id} />
+                  {/* A Local bucket can hold both scopes; a repo group's scope
+                      is on its heading, so the row stays quiet. */}
+                  {!group.scope && <ScopeBadge row={sk} meId={me?.id} />}
                   {sk.detached && <Label variant={BADGE.type}>edited</Label>}
                 </div>
                 <div className="resource-row-sub">{sk.description}</div>

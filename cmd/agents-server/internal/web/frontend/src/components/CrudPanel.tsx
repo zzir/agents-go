@@ -71,19 +71,24 @@ export function RowActionsMenu({ name, onEdit, editReadOnly, onFork, scope, onDe
   // Offered on every visible row: forking a global row is how a member gets
   // an editable private copy.
   onFork?: () => void;
-  // Pass only for admins: the promote/demote item. POST /<entity>/:id/scope,
-  // with the server's 400/409 (non-global references, name collisions) as toasts.
+  // The promote/demote item — pass `canPromote`/`canDemote` from the caller's
+  // role and the row's author (publishing is the admin's, unpublishing the
+  // admin's or the author's). POST /<entity>/:id/scope, with the server's
+  // 400/409 (non-global references, name collisions) as toasts.
   scope?: {
     row: ScopedRow & { id: string | number };
     setScope: (id: string | number, scope: 'global' | 'private') => Promise<null>;
+    canPromote: boolean;
+    canDemote: boolean;
     onDone: () => void;
   };
   // Delete where edit is not offered (the admin on a foreign private row).
   onDelete?: () => void;
 }) {
   const ctx = useReadOnly();
-  if (!onEdit && !onFork && !scope && !onDelete) return null;
   const global = scope?.row.scope === 'global';
+  const showScope = !!scope && (global ? scope.canDemote : scope.canPromote);
+  if (!onEdit && !onFork && !showScope && !onDelete) return null;
   const flip = async () => {
     if (!scope) return;
     try {
@@ -97,7 +102,7 @@ export function RowActionsMenu({ name, onEdit, editReadOnly, onFork, scope, onDe
     <RowMenu label={`Actions for ${name}`}>
       {onEdit && <ActionList.Item onSelect={onEdit}>{(editReadOnly ?? ctx) ? 'View' : 'Edit'}</ActionList.Item>}
       {onFork && <ActionList.Item onSelect={onFork}>Fork</ActionList.Item>}
-      {scope && <ActionList.Item onSelect={() => void flip()}>{global ? 'Make private' : 'Make global'}</ActionList.Item>}
+      {showScope && <ActionList.Item onSelect={() => void flip()}>{global ? 'Make private' : 'Make global'}</ActionList.Item>}
       {onDelete && <ActionList.Item variant="danger" onSelect={onDelete}>Delete</ActionList.Item>}
     </RowMenu>
   );
@@ -109,5 +114,14 @@ export function ScopeBadge({ row, meId }: { row: ScopedRow; meId?: string }) {
   if (row.scope === 'global') return <Label variant={BADGE.scope}>Global</Label>;
   if (meId && row.owner_id && row.owner_id !== meId) return <Label variant={BADGE.scope}>Private</Label>;
   return null;
+}
+
+/** Who authored a row — shown on rows that are not the caller's own, so a
+ * shared listing says whose configuration (and whose credentials) it is. */
+export function OwnerBadge({ row, meId, labelFor }: {
+  row: ScopedRow; meId?: string; labelFor: (ownerId?: string) => string;
+}) {
+  if (!row.owner_id || row.owner_id === meId) return null;
+  return <Label variant={BADGE.owner}>{labelFor(row.owner_id)}</Label>;
 }
 
