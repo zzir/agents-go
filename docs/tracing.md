@@ -77,7 +77,7 @@ agents.Run(ctx, agent, input, agents.RunOptions{
 When the option is nil, the `OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA`
 environment variable decides: anything but `false` means include. Opting out keeps ids and token usage, drops content.
 
-IDs are `trace_<32 hex>` / `span_<24 hex>`, the shape trace backends already parse, generated from `crypto/rand`.
+IDs are `trace_<32 hex>` / `span_<16 hex>`, the shape trace backends already parse, generated from `crypto/rand`.
 
 ## Pipeline
 

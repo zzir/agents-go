@@ -4,14 +4,18 @@
 
 ```go
 type RunResult struct {
-	Input         []InputItem // first model call's input (history + new input; may be rewritten by handoff filters)
-	NewItems      []RunItem            // everything generated during the run
-	RawResponses  []*ModelResponse     // raw model responses, in order
-	FinalOutput   any                  // string for plain-text agents, decoded value for OutputType agents
-	LastAgent     *Agent               // the agent that produced the final output
-	Usage         *Usage               // aggregated token usage
-	Interruptions []*ToolApprovalItem  // pending tool approvals (HITL), empty for completed runs
-	State         *RunState            // resumable state when paused for approvals, else nil
+	Input               []InputItem            // first model call's input (history + new input; may be rewritten by handoff filters)
+	NewItems            []*RunItem             // everything generated during the run
+	RawResponses        []*ModelResponse       // raw model responses, in order
+	FinalOutput         any                    // string for plain-text agents, decoded value for OutputType agents
+	LastAgent           *Agent                 // the agent that produced the final output
+	Usage               *Usage                 // aggregated token usage (a detached copy)
+	GuardrailResults    []GuardrailResult      // every guardrail result, all stages, allowing decisions included
+	Interruptions       []*ToolApprovalItem    // pending tool approvals (HITL), empty for completed runs
+	State               *RunState              // resumable state when paused for approvals, else nil
+	Diagnostics         []Diagnostic           // trouble the run survived: retries, a fallback model, a compaction that gave up
+	AgentToolInvocation *AgentToolInvocation   // the parent tool call, when this result came from an agent-as-tool run
+	StoppedEarly        bool                   // ended at a turn boundary because StopAfterTurn was requested
 }
 ```
 

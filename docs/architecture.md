@@ -132,8 +132,8 @@ is `cp := *tool`. See [spec.md §2.7c](spec.md#27c-tool-capabilities-are-fields)
 
 ## Module boundaries
 
-The repository is a Go workspace of twelve modules (three of them example
-modules with their own heavy deps). **A submodule exists only to keep a heavy
+The repository is a Go workspace of eight modules (one of them an example
+module with its own heavy dep). **A submodule exists only to keep a heavy
 dependency out of the core.** Anything dependency-free stays in the root
 module, no matter how peripheral it feels — `models/modelkit` is the standing
 example: shared adapter plumbing, stdlib-only, so it lives in root.
@@ -153,9 +153,10 @@ CI builds each module standalone with `GOWORK=off`, so a workspace-only fix
 cannot hide a missing `go.mod` require.
 
 This is also why tracing is vendor-neutral in the core: a span is a `Type` tag
-plus a `Data map[string]any`, and the OpenTelemetry mapping lives in a separate
-module. Adding the OTel dependency to the core would tax every user for a
-capability most do not enable.
+plus a `Data map[string]any`, and mapping it onto a vendor's model is the
+consumer's `Processor` to write ([spec.md §5.6b](spec.md#56b-tracing-stays-vendor-neutral-otel-export-is-the-consumers-job)).
+Adding an OTel dependency to the core would tax every user for a capability
+most do not enable.
 
 ---
 

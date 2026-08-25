@@ -130,9 +130,8 @@ rather than failing the run; every other incomplete reason still fails.
 
 ## Steering a run in flight
 
-`Run` returns a `RunControl` next to the stream. Besides `StopAfterTurn` and the
-progress accessors, it has three ways to put input into a run that is already
-going:
+`Run` returns a `RunControl` next to the stream. Besides `StopAfterTurn` and
+`Pending`, it has three ways to put input into a run that is already going:
 
 ```go
 stream, ctrl := agents.Run(ctx, agent, "research this", opts)

@@ -90,7 +90,7 @@ Because Go functions don't serialize, `RunStateFromJSON` needs a **registry** ma
 
 The state round-trips whole: input queued through `RunControl` before the pause, deferred tools already disclosed to the model, and the server-conversation cursor (`UsePreviousResponseID` / `ConversationID` deltas) all survive the JSON trip, so a cross-process resume behaves exactly like an in-process one.
 
-The state also carries the original run's `MaxTurns`, so a run started with a raised budget (say 20) that pauses on turn 12 resumes under the same budget even in a fresh process — `ResumeRun` uses `opts.MaxTurns` when set, else the serialized budget, else the default. Note that on a resumed result, `NewItems` items carry their replayed input form rather than the original model item: `Kind` and `Display()` survive, `Raw` is nil.
+The state also carries the original run's `MaxTurns`, so a run started with a raised budget (say 20) that pauses on turn 12 resumes under the same budget even in a fresh process. The serialized budget always wins: `ResumeRun` ignores `RunOptions.Exec.MaxTurns` and falls back to the default only when the state carries a zero. Note that on a resumed result, `NewItems` items carry their replayed input form rather than the original model item: `Kind` and `Display()` survive, `Raw` is nil.
 
 ### Rebuilding transformed agents
 

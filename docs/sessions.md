@@ -467,7 +467,7 @@ in the *same* one. Reach for a fork when the two conversations should be listed
 and managed separately, and for [branching](#branching) when they are two
 answers to the same question.
 
-`ForkSession` clones a conversation's active branch. It takes `*Session`, so
+`session.Fork` clones a conversation's active branch. It takes `*Session`, so
 any combination of source and destination backends works — fork a SQLite
 session into an in-memory one, for instance:
 
