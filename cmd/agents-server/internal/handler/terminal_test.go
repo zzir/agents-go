@@ -409,6 +409,13 @@ func TestTerminalOpen_ValidatesProject(t *testing.T) {
 	}
 	provider := &fakeProvider{sb: &fakeTerminalSandbox{term: newFakeTerminal()}}
 	th := NewTerminalHandler(sandboxes, projects, provider, settings.NewReader(nil))
+	var auditMu sync.Mutex
+	var audited []protocol.AuditRecord
+	th.Audit = func(_ context.Context, r protocol.AuditRecord) {
+		auditMu.Lock()
+		defer auditMu.Unlock()
+		audited = append(audited, r)
+	}
 	engine := newTestEngine()
 	engine.GET("/ws/terminal", server.HandleWSWithAuth(th.Handle, testAuthFunc(testWSToken), nil, nil))
 	srv := httptest.NewServer(engine)
@@ -443,6 +450,17 @@ func TestTerminalOpen_ValidatesProject(t *testing.T) {
 	provider.mu.Unlock()
 	if len(got) != 1 || got[0] != mine.ID {
 		t.Fatalf("manager saw projects %q, want [%s]", got, mine.ID)
+	}
+	// Only the successful open leaves an audit line, and it names the project
+	// and its owner — the sandbox id alone cannot say whose data was reached.
+	auditMu.Lock()
+	records := append([]protocol.AuditRecord(nil), audited...)
+	auditMu.Unlock()
+	if len(records) != 1 || records[0].Resource != cfg.ID {
+		t.Fatalf("audit records = %+v, want one for sandbox %s", records, cfg.ID)
+	}
+	if d := records[0].Detail; !strings.Contains(d, mine.ID) || !strings.Contains(d, store.LocalUserID) {
+		t.Fatalf("audit detail %q does not name the project and owner", d)
 	}
 }
 

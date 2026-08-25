@@ -87,10 +87,14 @@ func (h *TerminalHandler) Handle(conn *server.WSConn) {
 		return
 	}
 
-	term, opened, release, err := h.open(conn)
+	term, opened, proj, release, err := h.open(conn)
 	if err == nil && h.Audit != nil {
+		// Detail names the project and its owner: an admin may open a shell
+		// into a member's tree (spec §5.28), and the log must answer whose
+		// data was reached — the sandbox id alone cannot.
 		h.Audit(context.WithoutCancel(conn.Context()), protocol.AuditRecord{
 			Actor: conn.User, Action: "terminal.open", Resource: opened.ID,
+			Detail: "project " + proj.ID + " (owner " + proj.OwnerID + ")",
 		})
 	}
 	if err != nil {
@@ -193,41 +197,42 @@ func (h *TerminalHandler) Handle(conn *server.WSConn) {
 
 // open reads the terminal.open handshake frame and builds the Terminal,
 // returning the config it opened under (its id and runtime generation gate
-// registration). The returned release drops the instance reference open
+// registration) and the project whose tree the shell reaches (the audit
+// line names it). The returned release drops the instance reference open
 // acquired; the caller owns it once err is nil.
-func (h *TerminalHandler) open(conn *server.WSConn) (sandbox.Terminal, *store.SandboxConfig, func(), error) {
+func (h *TerminalHandler) open(conn *server.WSConn) (sandbox.Terminal, *store.SandboxConfig, *store.Project, func(), error) {
 	var env protocol.Envelope
 	if err := conn.ReadJSON(&env); err != nil {
-		return nil, nil, nil, fmt.Errorf("read terminal.open: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("read terminal.open: %w", err)
 	}
 	if env.Type != protocol.EventTerminalOpen {
-		return nil, nil, nil, fmt.Errorf("expected %s as first message, got %q", protocol.EventTerminalOpen, env.Type)
+		return nil, nil, nil, nil, fmt.Errorf("expected %s as first message, got %q", protocol.EventTerminalOpen, env.Type)
 	}
 	var msg protocol.TerminalOpen
 	if err := json.Unmarshal(env.Payload, &msg); err != nil {
-		return nil, nil, nil, fmt.Errorf("invalid terminal.open payload: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("invalid terminal.open payload: %w", err)
 	}
 	if msg.SandboxID == "" || msg.ProjectID == "" {
-		return nil, nil, nil, errors.New("terminal.open requires sandbox_id and project_id")
+		return nil, nil, nil, nil, errors.New("terminal.open requires sandbox_id and project_id")
 	}
 
 	ctx := conn.Context()
 	cfg, err := h.store.Get(ctx, msg.SandboxID)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("sandbox %s: %w", msg.SandboxID, err)
+		return nil, nil, nil, nil, fmt.Errorf("sandbox %s: %w", msg.SandboxID, err)
 	}
 	proj, err := h.projects.Get(ctx, msg.ProjectID)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("project %s: %w", msg.ProjectID, err)
+		return nil, nil, nil, nil, fmt.Errorf("project %s: %w", msg.ProjectID, err)
 	}
 	// A member opens a shell into their OWN project's container; an admin
 	// into any (the operator's escape hatch, recorded in spec §5.28). A
 	// foreign project reads as absent.
 	if conn.User.Role != store.RoleAdmin && proj.OwnerID != conn.User.ID {
-		return nil, nil, nil, fmt.Errorf("project %s: %w", msg.ProjectID, store.ErrNotFound)
+		return nil, nil, nil, nil, fmt.Errorf("project %s: %w", msg.ProjectID, store.ErrNotFound)
 	}
 	if proj.SandboxID != cfg.ID {
-		return nil, nil, nil, errors.New("project lives on a different sandbox")
+		return nil, nil, nil, nil, errors.New("project lives on a different sandbox")
 	}
 	// From here no read happens until the shell is up — an ssh dial, a
 	// first-time image pull — so the heartbeat's deadline is lifted for the
@@ -237,19 +242,19 @@ func (h *TerminalHandler) open(conn *server.WSConn) (sandbox.Terminal, *store.Sa
 	defer conn.ResumeHeartbeat()
 	sb, release, err := h.manager.Acquire(cfg, proj)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	opener, ok := sb.(sandbox.TerminalOpener)
 	if !ok {
 		release()
-		return nil, nil, nil, fmt.Errorf("%s sandbox: %w", cfg.Type, sandbox.ErrTerminalUnsupported)
+		return nil, nil, nil, nil, fmt.Errorf("%s sandbox: %w", cfg.Type, sandbox.ErrTerminalUnsupported)
 	}
 	term, err := opener.OpenTerminal(ctx, sandbox.TerminalOptions{Cols: msg.Cols, Rows: msg.Rows})
 	if err != nil {
 		release()
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
-	return term, cfg, release, nil
+	return term, cfg, proj, release, nil
 }
 
 // register adds a live terminal, enforcing the per-sandbox cap and the

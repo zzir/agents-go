@@ -309,7 +309,7 @@ an account with `PUT /sessions/:id/owner` — or delete it.
   |-----------------|-----------------------------------------|-------------------|---------------------------------|
   | `ws.run.create` | the connection's user                   | session id        |                                 |
   | `ws.approval`   | the connection's user                   | tool call id      | verdict, scope, tool            |
-  | `terminal.open` | the connection's user                   | sandbox id        |                                 |
+  | `terminal.open` | the connection's user                   | sandbox id        | `project <id> (owner <id>)`     |
   | `workflow.save` | the session's owner (who approved it)   | workflow id       | `tool=save_workflow created`    |
   | `trigger.fire`  | the owner of the session it fired into  | trigger id        | `source=cron\|webhook started=` |
   | `POST /auth/login`, `POST /auth/exchange` | the account that signed in | | |
