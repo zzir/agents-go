@@ -44,16 +44,20 @@ func (s *ProjectStore) Create(ctx context.Context, p *Project) error {
 }
 
 // List returns one user's projects, or every owner's for EveryOwner (the
-// admin listing). Each row carries its bound-session count.
+// admin listing). Each row carries its bound-session count. The two orders
+// answer two questions: a person PICKS from their own, so those sort by name;
+// an admin WATCHES what appears across the team, so those sort newest first.
 func (s *ProjectStore) List(ctx context.Context, ownerID string) ([]Project, error) {
 	var out []Project
 	q := s.db.NewSelect().Model(&out).
 		ColumnExpr("pj.*").
 		ColumnExpr("(SELECT count(*) FROM sessions WHERE project_id = pj.id) AS session_count")
+	order := "created_at DESC, id DESC"
 	if ownerID != EveryOwner {
 		q = q.Where("owner_id = ?", ownerID)
+		order = "name ASC, id ASC"
 	}
-	if err := q.OrderExpr("name ASC, id ASC").Scan(ctx); err != nil {
+	if err := q.OrderExpr(order).Scan(ctx); err != nil {
 		return nil, fmt.Errorf("listing projects: %w", err)
 	}
 	return out, nil

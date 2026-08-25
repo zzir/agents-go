@@ -4,7 +4,7 @@ import { SecretInput } from '@/components/SecretInput';
 import {
   DependabotIcon, McpIcon, ShieldCheckIcon, SparkleIcon, CpuIcon, PlugIcon,
   ContainerIcon, DatabaseIcon, FileDirectoryIcon, GearIcon, PersonIcon, PeopleIcon, CommentDiscussionIcon, LogIcon, LockIcon,
-  XCircleFillIcon, AlertFillIcon, CheckCircleFillIcon, InfoIcon, XIcon,
+  XCircleFillIcon, AlertFillIcon, CheckCircleFillIcon, InfoIcon, XIcon, WorkflowIcon,
 } from '@primer/octicons-react';
 import type { Icon } from '@primer/octicons-react';
 import { ThemeProvider } from '@/theme/ThemeProvider';
@@ -131,12 +131,22 @@ const SETTINGS_TABS: DialogTab[] = [
 ];
 
 
-// The Admin dialog: people and what they own, then the record of it all.
+// The Admin dialog: people, then each configuration plane on its own tab (the
+// same order Settings lists them in, so one mental map serves both), then what
+// members own, then the record of it all.
+const scoped = (name: 'AdminAgents' | 'AdminProviders' | 'AdminMcpServers' | 'AdminSkills' | 'AdminWorkflows') =>
+  () => import('@/features/admin/ScopedRowsPanel').then(m => ({ default: m[name] }));
+
 const ADMIN_TABS: DialogTab[] = [
-  { key: 'members',  label: 'Members',    icon: PeopleIcon,            load: () => import('@/features/admin/MembersPanel') },
-  { key: 'sessions', label: 'Sessions',   icon: CommentDiscussionIcon, load: () => import('@/features/admin/SessionsPanel') },
-  { key: 'projects', label: 'Projects',   icon: FileDirectoryIcon,     load: () => import('@/features/admin/ProjectsPanel') },
-  { key: 'audit',    label: 'Audit logs', icon: LogIcon,               load: () => import('@/features/admin/AuditPanel') },
+  { key: 'members',   label: 'Members',     icon: PeopleIcon,            load: () => import('@/features/admin/MembersPanel') },
+  { key: 'providers', label: 'Providers',   icon: CpuIcon,               load: scoped('AdminProviders'), dividerBefore: true },
+  { key: 'agents',    label: 'Agents',      icon: DependabotIcon,        load: scoped('AdminAgents') },
+  { key: 'mcp',       label: 'MCP',         icon: McpIcon,               load: scoped('AdminMcpServers') },
+  { key: 'skills',    label: 'Skills',      icon: SparkleIcon,           load: scoped('AdminSkills') },
+  { key: 'workflows', label: 'Workflows',   icon: WorkflowIcon,          load: scoped('AdminWorkflows') },
+  { key: 'sessions',  label: 'Sessions',    icon: CommentDiscussionIcon, load: () => import('@/features/admin/SessionsPanel'), dividerBefore: true },
+  { key: 'projects',  label: 'Projects',    icon: FileDirectoryIcon,     load: () => import('@/features/admin/ProjectsPanel') },
+  { key: 'audit',     label: 'Audit logs',  icon: LogIcon,               load: () => import('@/features/admin/AuditPanel') },
 ];
 
 function TabLoadError() {

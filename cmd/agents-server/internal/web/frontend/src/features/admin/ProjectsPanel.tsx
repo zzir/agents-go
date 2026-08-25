@@ -4,23 +4,26 @@ import { Blankslate, type Column } from '@primer/react/experimental';
 import { FileDirectoryIcon } from '@primer/octicons-react';
 import { ListTable, RowMenu, actionsColumn } from '@/components/ListTable';
 import { api, type ApiSchemas } from '@/lib/api';
+import { shortTime } from '@/lib/format';
+import { OwnerName, useOwnerLabels } from '@/lib/owners';
 
-type ProjectRow = Omit<ApiSchemas['store.Project'], 'id'> & { id: string; owner: string; sandbox: string };
+type ProjectRow = Omit<ApiSchemas['store.Project'], 'id'> & { id: string; sandbox: string };
 
 // ProjectsPanel: every owner's working trees and where their files live —
 // the operator's map of what a delete leaves behind (storage outlives the
-// row; reclaiming it happens on the daemon, not here).
+// row; reclaiming it happens on the daemon, not here). Newest first: what an
+// admin watches here is what has just appeared.
 export function ProjectsPanel() {
   const [projects, setProjects] = useState<ProjectRow[] | null>(null);
   const [error, setError] = useState('');
   const confirm = useConfirm();
+  const { ownerOf, labelFor } = useOwnerLabels();
 
   const reload = useCallback(() => {
-    Promise.all([api.auth.users.list(), api.sandboxes.list(), api.projects.listAll()])
-      .then(([users, sandboxes, rows]) => {
-        const email = (id?: string) => (users ?? []).find(u => u.id === id)?.email || id || '';
+    Promise.all([api.sandboxes.list(), api.projects.listAll()])
+      .then(([sandboxes, rows]) => {
         const sbName = (id?: string) => (sandboxes ?? []).find(s => s.id === id)?.name || id || '';
-        setProjects((rows ?? []).map(p => ({ ...p, id: p.id || '', owner: email(p.owner_id), sandbox: sbName(p.sandbox_id) })));
+        setProjects((rows ?? []).map(p => ({ ...p, id: p.id || '', sandbox: sbName(p.sandbox_id) })));
         setError('');
       })
       .catch(() => setError('Failed to load projects.'));
@@ -46,16 +49,18 @@ export function ProjectsPanel() {
 
   const columns = useMemo<Column<ProjectRow>[]>(() => [
     { header: 'Project', id: 'name', rowHeader: true, width: 'growCollapse', minWidth: 120, renderCell: p => <span className="list-clip" title={p.name}>{p.name}</span> },
-    { header: 'Owner', id: 'owner', width: 'growCollapse', minWidth: 100, maxWidth: 220, renderCell: p => <span className="list-clip" title={p.owner}>{p.owner}</span> },
+    { header: 'Owner', id: 'owner', width: 'growCollapse', minWidth: 100, maxWidth: 220, renderCell: p => <OwnerName owner={ownerOf(p.owner_id)} fallback={labelFor(p.owner_id)} /> },
     { header: 'Sandbox', id: 'sandbox', width: 'growCollapse', minWidth: 90, maxWidth: 180, renderCell: p => <span className="list-clip" title={p.sandbox}>{p.sandbox}</span> },
     { header: 'Storage', id: 'storage', width: 'growCollapse', minWidth: 140, renderCell: p => <span className="list-clip" title={p.storage_hint}>{p.storage_hint}</span> },
     { header: 'Sessions', id: 'sessions', width: 'auto', renderCell: p => <span className="list-nowrap">{p.session_count ?? 0}</span> },
+    // The list is newest first, so the date it sorts on is on the row.
+    { header: 'Created', id: 'created', width: 'auto', renderCell: p => <span className="list-nowrap">{p.created_at ? shortTime(p.created_at) : ''}</span> },
     actionsColumn<ProjectRow>(p => (
       <RowMenu label={`Actions for ${p.name}`}>
         <ActionList.Item variant="danger" onSelect={() => { void remove(p); }}>Delete</ActionList.Item>
       </RowMenu>
     )),
-  ], [remove]);
+  ], [remove, ownerOf, labelFor]);
 
   return (
     <Stack gap="normal">
@@ -75,7 +80,7 @@ export function ProjectsPanel() {
         rows={projects ?? []}
         columns={columns}
         loading={projects === null}
-        search={{ placeholder: 'Search projects', match: (p, q) => `${p.name || ''} ${p.owner} ${p.sandbox} ${p.storage_hint || ''}`.toLowerCase().includes(q) }}
+        search={{ placeholder: 'Search projects', match: (p, q) => `${p.name || ''} ${labelFor(p.owner_id)} ${p.sandbox} ${p.storage_hint || ''}`.toLowerCase().includes(q) }}
         empty={(
           <Blankslate>
             <Blankslate.Visual><FileDirectoryIcon size={24} /></Blankslate.Visual>

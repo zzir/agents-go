@@ -6,32 +6,28 @@ import { ListTable, RowMenu, actionsColumn } from '@/components/ListTable';
 import { api, type ApiSchemas } from '@/lib/api';
 import { shortTime } from '@/lib/format';
 import { useMe } from '@/lib/me';
+import { OwnerName, useOwnerLabels, type UserLabel } from '@/lib/owners';
 import { LOCAL_USER_ID } from '@/features/admin/MembersPanel';
 import { SESSION_REMOVED } from '@/features/sessions/SessionPicker';
 
-type UserRow = Omit<ApiSchemas['store.User'], 'id'> & { id: string };
-type SessionRow = Omit<ApiSchemas['store.Session'], 'id'> & { id: string; owner: string };
+type SessionRow = Omit<ApiSchemas['store.Session'], 'id'> & { id: string };
 
 // SessionsPanel: every owner's conversations — existence and recency only;
 // content stays the owner's. Deleting and reassigning are management;
 // reading is not offered.
 export function SessionsPanel() {
   const [sessions, setSessions] = useState<SessionRow[] | null>(null);
-  const [users, setUsers] = useState<UserRow[]>([]);
   const [reassigning, setReassigning] = useState<SessionRow | null>(null);
   const [error, setError] = useState('');
   const confirm = useConfirm();
   const { me } = useMe();
+  // The shared directory, resolved at render: a listing that folded the
+  // owner's label into its rows would reload the moment it arrived.
+  const { users, ownerOf, labelFor } = useOwnerLabels();
 
   const reload = useCallback(() => {
-    Promise.all([api.auth.users.list(), api.sessions.listAll()])
-      .then(([u, s]) => {
-        const rows = (u ?? []).filter(x => x.id).map(x => ({ ...x, id: x.id || '' }));
-        setUsers(rows);
-        const email = (ownerId?: string) => rows.find(x => x.id === ownerId)?.email || ownerId || '';
-        setSessions((s ?? []).map(row => ({ ...row, id: row.id || '', owner: email(row.owner_id) })));
-        setError('');
-      })
+    api.sessions.listAll()
+      .then(s => { setSessions((s ?? []).map(row => ({ ...row, id: row.id || '' }))); setError(''); })
       .catch(() => setError('Failed to load sessions.'));
   }, []);
   useEffect(() => { reload(); }, [reload]);
@@ -39,7 +35,7 @@ export function SessionsPanel() {
   const remove = useCallback(async (s: SessionRow) => {
     if (!(await confirm({
       title: 'Delete session?',
-      content: `"${s.name}" (${s.owner}) and everything in it will be removed.`,
+      content: `"${s.name}" (${labelFor(s.owner_id)}) and everything in it will be removed.`,
       confirmButtonContent: 'Delete',
       confirmButtonType: 'danger',
     }))) return;
@@ -52,11 +48,11 @@ export function SessionsPanel() {
     } catch {
       setError('Failed to delete the session.');
     }
-  }, [confirm, reload]);
+  }, [confirm, reload, labelFor]);
 
   const columns = useMemo<Column<SessionRow>[]>(() => [
     { header: 'Session', id: 'name', rowHeader: true, width: 'growCollapse', minWidth: 160, renderCell: s => <span className="list-clip" title={s.name}>{s.name}</span> },
-    { header: 'Owner', id: 'owner', width: 'growCollapse', minWidth: 120, maxWidth: 260, renderCell: s => <span className="list-clip" title={s.owner}>{s.owner}</span> },
+    { header: 'Owner', id: 'owner', width: 'growCollapse', minWidth: 120, maxWidth: 260, renderCell: s => <OwnerName owner={ownerOf(s.owner_id)} fallback={labelFor(s.owner_id)} /> },
     { header: 'Updated', id: 'updated', width: 'auto', renderCell: s => <span className="list-nowrap">{shortTime(s.updated_at)}</span> },
     actionsColumn<SessionRow>(s => (
       <RowMenu label={`Actions for ${s.name}`}>
@@ -64,7 +60,7 @@ export function SessionsPanel() {
         <ActionList.Item variant="danger" onSelect={() => { void remove(s); }}>Delete</ActionList.Item>
       </RowMenu>
     )),
-  ], [remove]);
+  ], [remove, ownerOf, labelFor]);
 
   return (
     <Stack gap="normal">
@@ -84,7 +80,7 @@ export function SessionsPanel() {
         rows={sessions ?? []}
         columns={columns}
         loading={sessions === null}
-        search={{ placeholder: 'Search sessions', match: (s, q) => `${s.name || ''} ${s.owner}`.toLowerCase().includes(q) }}
+        search={{ placeholder: 'Search sessions', match: (s, q) => `${s.name || ''} ${labelFor(s.owner_id)}`.toLowerCase().includes(q) }}
         empty={(
           <Blankslate>
             <Blankslate.Visual><CommentDiscussionIcon size={24} /></Blankslate.Visual>
@@ -96,6 +92,7 @@ export function SessionsPanel() {
       {reassigning ? (
         <ReassignDialog
           session={reassigning}
+          owner={labelFor(reassigning.owner_id)}
           users={users.filter(u => u.id !== LOCAL_USER_ID && u.id !== reassigning.owner_id)}
           onClose={() => setReassigning(null)}
           onDone={userId => {
@@ -111,8 +108,8 @@ export function SessionsPanel() {
 }
 
 // ReassignDialog picks the account a session (and its task sessions) moves to.
-function ReassignDialog({ session, users, onClose, onDone }: {
-  session: SessionRow; users: UserRow[]; onClose: () => void; onDone: (userId: string) => void;
+function ReassignDialog({ session, owner, users, onClose, onDone }: {
+  session: SessionRow; owner: string; users: UserLabel[]; onClose: () => void; onDone: (userId: string) => void;
 }) {
   const [userId, setUserId] = useState(users[0]?.id || '');
   const [busy, setBusy] = useState(false);
@@ -145,7 +142,7 @@ function ReassignDialog({ session, users, onClose, onDone }: {
         <FormControl required>
           <FormControl.Label>New owner</FormControl.Label>
           <FormControl.Caption>
-            &quot;{session.name}&quot; ({session.owner}) and the task sessions serving it become theirs. A session with a run in progress is refused.
+            &quot;{session.name}&quot; ({owner}) and the task sessions serving it become theirs. A session with a run in progress is refused.
           </FormControl.Caption>
           <Select block value={userId} onChange={e => setUserId(e.target.value)}>
             {users.length === 0 ? <Select.Option value="">No other account</Select.Option> : null}
