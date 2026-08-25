@@ -43,14 +43,17 @@ func (s *ProjectStore) Create(ctx context.Context, p *Project) error {
 	return nil
 }
 
-// ListByOwner returns one user's projects — a project is personal, so no
-// listing crosses owners.
-func (s *ProjectStore) ListByOwner(ctx context.Context, ownerID string) ([]Project, error) {
+// List returns one user's projects, or every owner's for EveryOwner (the
+// admin listing). Each row carries its bound-session count.
+func (s *ProjectStore) List(ctx context.Context, ownerID string) ([]Project, error) {
 	var out []Project
-	if err := s.db.NewSelect().Model(&out).
-		Where("owner_id = ?", ownerID).
-		OrderExpr("name ASC").
-		Scan(ctx); err != nil {
+	q := s.db.NewSelect().Model(&out).
+		ColumnExpr("pj.*").
+		ColumnExpr("(SELECT count(*) FROM sessions WHERE project_id = pj.id) AS session_count")
+	if ownerID != EveryOwner {
+		q = q.Where("owner_id = ?", ownerID)
+	}
+	if err := q.OrderExpr("name ASC, id ASC").Scan(ctx); err != nil {
 		return nil, fmt.Errorf("listing projects: %w", err)
 	}
 	return out, nil

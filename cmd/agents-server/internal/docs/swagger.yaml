@@ -1591,12 +1591,17 @@ components:
           type: string
         sandbox_id:
           type: string
+        session_count:
+          description: |-
+            SessionCount is how many sessions bind this project — filled by List
+            (scanonly), so a delete knows whether it will be refused.
+          type: integer
         storage_hint:
           description: |-
             StorageHint names where the files live — the local daemon's host
             directory or the remote daemon's volume. Derived per response by the
-            handler, never stored: deleting the row keeps the storage (spec §5.28),
-            so the UI can say where.
+            handler for admins only, never stored: deleting the row keeps the
+            storage (spec §5.28), so the UI can say where.
           type: string
         updated_at:
           type: string
@@ -3040,8 +3045,9 @@ paths:
       tags:
       - mcp-servers
     post:
-      description: config is {endpoint, headers, auth_mode, oauth_*} (streamable HTTP).
-        Header values and oauth_client_secret are write-only (******** mask semantics).
+      description: config is {endpoint, headers, auth_mode, oauth_*} (streamable HTTP);
+        endpoint must be an absolute http(s) URL. Header values and oauth_client_secret
+        are write-only (******** mask semantics).
       requestBody:
         content:
           application/json:
@@ -3590,6 +3596,14 @@ paths:
       - playground
   /projects:
     get:
+      description: Every row carries session_count. storage_hint (where the files
+        live) is reported to admins only.
+      parameters:
+      - description: 'admin: every owner''s projects'
+        in: query
+        name: all
+        schema:
+          type: boolean
       responses:
         "200":
           content:
@@ -3599,9 +3613,15 @@ paths:
                   $ref: '#/components/schemas/store.Project'
                 type: array
           description: OK
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: all=true by a member
       security:
       - BearerAuth: []
-      summary: List my projects
+      summary: List projects
       tags:
       - projects
     post:
@@ -3642,6 +3662,8 @@ paths:
       - projects
   /projects/{id}:
     delete:
+      description: The owner deletes their own; an admin deletes any (management,
+        spec §5.29).
       parameters:
       - description: Project id
         in: path

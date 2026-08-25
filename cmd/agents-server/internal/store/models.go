@@ -499,9 +499,12 @@ type Project struct {
 	UpdatedAt time.Time `bun:"updated_at,notnull"          json:"updated_at"`
 	// StorageHint names where the files live — the local daemon's host
 	// directory or the remote daemon's volume. Derived per response by the
-	// handler, never stored: deleting the row keeps the storage (spec §5.28),
-	// so the UI can say where.
+	// handler for admins only, never stored: deleting the row keeps the
+	// storage (spec §5.28), so the UI can say where.
 	StorageHint string `bun:"-" json:"storage_hint,omitempty"`
+	// SessionCount is how many sessions bind this project — filled by List
+	// (scanonly), so a delete knows whether it will be refused.
+	SessionCount int `bun:"session_count,scanonly" json:"session_count,omitempty"`
 }
 
 // DefaultProjectName is the per-(owner, sandbox) project a run lands in when

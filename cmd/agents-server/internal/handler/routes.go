@@ -194,8 +194,9 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		h.registerTriggers(api)
 	}
 	{
-		// Projects are personal working trees: every member manages their own
-		// (the handlers scope by owner), so no admin gate here.
+		// Projects are personal working trees: every member manages their own;
+		// the admin surface (?all=true listing, foreign delete) is checked in
+		// the handlers, so no route-level gate here.
 		projects := api.Group("/projects")
 		projects.GET("", h.Projects.List)
 		projects.POST("", h.Projects.Create)

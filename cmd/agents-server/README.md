@@ -1289,7 +1289,12 @@ local-daemon sandbox the tree is `<workspace>/<owner uuid>/<project uuid>`
 capped at 1g.
 
 Projects are **personal**: every member manages their own; the routes scope
-by owner rather than the admin gate.
+by owner rather than the admin gate. An admin additionally manages the
+plane (spec §5.29's manage-not-author line): `?all=true` lists every
+owner's rows — the Admin dialog's Projects tab, and the operator's map of
+what storage a delete leaves behind — and delete works on any project.
+Listings carry each row's `session_count`; `storage_hint` (the host
+directory or volume name) is reported to admins only.
 
 An unreferenced container is **idle-stopped** — configurable via
 `sandbox_idle_minutes` — with no run or terminal using it: stopped, not
@@ -1297,14 +1302,9 @@ removed, so installed packages survive and the next run starts it again.
 
 | Method | Path            | Description                                              |
 |--------|-----------------|----------------------------------------------------------|
-| GET    | `/projects`     | List my projects                                         |
+| GET    | `/projects`     | List my projects; `?all=true` (admin) every owner's      |
 | POST   | `/projects`     | Create — `{name, sandbox_id}`; `409` duplicate name      |
-| DELETE | `/projects/:id` | Delete the row; `409` while sessions are bound. The tree/volume is left in place — data outlives the row on purpose |
-
-Each listed row (and the create response) carries a derived `storage_hint` —
-where the files live: the host directory on a local-daemon sandbox,
-`docker volume agents-proj-<tail> on <host>` on a remote one — so a delete
-can say what it leaves behind.
+| DELETE | `/projects/:id` | Delete the row (owner, or any as admin); `409` while sessions are bound. The tree/volume is left in place — data outlives the row on purpose |
 
 ### Playground — `/api/v1/playground`
 

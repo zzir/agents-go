@@ -7,13 +7,13 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
 // ProjectHandler manages projects — per-user working trees on a sandbox
-// (spec §5.28). Projects are PERSONAL: every route acts on the caller's own
-// rows, so none of these carry the admin gate shared configuration does.
+// (spec §5.28). Projects are PERSONAL: routes act on the caller's own rows;
+// an admin additionally lists every owner's (?all=true) and may delete any —
+// management, not authoring (spec §5.29).
 type ProjectHandler struct {
 	store     *store.ProjectStore
 	sandboxes *store.SandboxStore
@@ -27,36 +27,52 @@ func NewProjectHandler(s *store.ProjectStore, sb *store.SandboxStore, m *sandbox
 	return &ProjectHandler{store: s, sandboxes: sb, manager: m}
 }
 
-// List responds with the caller's projects.
+// List responds with the caller's projects; `?all=true` is the admin's
+// listing of every owner's.
 //
-//	@Summary	List my projects
-//	@Tags		projects
-//	@Produce	json
-//	@Success	200	{array}	store.Project
-//	@Security	BearerAuth
-//	@Router		/projects [get]
+//	@Summary		List projects
+//	@Description	Every row carries session_count. storage_hint (where the files live) is reported to admins only.
+//	@Tags			projects
+//	@Produce		json
+//	@Param			all	query		bool	false	"admin: every owner's projects"
+//	@Success		200	{array}		store.Project
+//	@Failure		403	{object}	ErrorResponse	"all=true by a member"
+//	@Security		BearerAuth
+//	@Router			/projects [get]
 func (h *ProjectHandler) List(c *gin.Context) {
-	u, ok := server.CurrentUser(c)
+	ownerID, admin, ok := callerScope(c)
 	if !ok {
-		notFound(c)
 		return
 	}
-	out, err := h.store.ListByOwner(c.Request.Context(), u.ID)
+	owner := ownerID
+	if c.Query("all") == "true" {
+		if !requireAdmin(c) {
+			return
+		}
+		owner = store.EveryOwner
+	}
+	out, err := h.store.List(c.Request.Context(), owner)
 	if err != nil {
 		storeError(c, err)
 		return
 	}
-	hosts := map[string]string{}
-	for i := range out {
-		out[i].StorageHint = h.storageHint(c, hosts, &out[i])
+	if out == nil {
+		out = []store.Project{}
+	}
+	if admin {
+		hosts := map[string]string{}
+		for i := range out {
+			out[i].StorageHint = h.storageHint(c, hosts, &out[i])
+		}
 	}
 	c.JSON(http.StatusOK, out)
 }
 
 // storageHint derives where p's files live — the workspace directory on the
 // local daemon, the named volume on a remote one — so the UI can say what a
-// delete leaves behind (spec §5.28: storage outlives the row). hosts caches
-// sandbox→host across one response; empty when the hint cannot be derived.
+// delete leaves behind (spec §5.28: storage outlives the row). Admin-only: a
+// host path is a server-side fact a member's container never sees. hosts
+// caches sandbox→host across one response; empty when it cannot be derived.
 func (h *ProjectHandler) storageHint(c *gin.Context, hosts map[string]string, p *store.Project) string {
 	if h.manager == nil {
 		return ""
@@ -96,9 +112,8 @@ type projectReq struct {
 //	@Security	BearerAuth
 //	@Router		/projects [post]
 func (h *ProjectHandler) Create(c *gin.Context) {
-	u, ok := server.CurrentUser(c)
+	ownerID, admin, ok := callerScope(c)
 	if !ok {
-		notFound(c)
 		return
 	}
 	var req projectReq
@@ -108,31 +123,33 @@ func (h *ProjectHandler) Create(c *gin.Context) {
 	}
 	// The sandbox's existence is the create's own guard (the store locks the
 	// row), so a missing target 404s from the insert itself — no pre-check.
-	p := &store.Project{OwnerID: u.ID, SandboxID: req.SandboxID, Name: req.Name}
+	p := &store.Project{OwnerID: ownerID, SandboxID: req.SandboxID, Name: req.Name}
 	if err := h.store.Create(c.Request.Context(), p); err != nil {
 		saveError(c, err)
 		return
 	}
-	p.StorageHint = h.storageHint(c, map[string]string{}, p)
+	if admin {
+		p.StorageHint = h.storageHint(c, map[string]string{}, p)
+	}
 	created(c, p.ID, p)
 }
 
-// Delete removes the caller's project while no session binds it. The
-// project's files (host directory or remote volume) are left in place — data
-// outlives the row on purpose.
+// Delete removes the caller's project — an admin's: any project — while no
+// session binds it. The project's files (host directory or remote volume)
+// are left in place — data outlives the row on purpose.
 //
-//	@Summary	Delete project
-//	@Tags		projects
-//	@Param		id	path	string	true	"Project id"
-//	@Success	204	"deleted"
-//	@Failure	404	{object}	ErrorResponse
-//	@Failure	409	{object}	ErrorResponse	"sessions still bound"
-//	@Security	BearerAuth
-//	@Router		/projects/{id} [delete]
+//	@Summary		Delete project
+//	@Description	The owner deletes their own; an admin deletes any (management, spec §5.29).
+//	@Tags			projects
+//	@Param			id	path	string	true	"Project id"
+//	@Success		204	"deleted"
+//	@Failure		404	{object}	ErrorResponse
+//	@Failure		409	{object}	ErrorResponse	"sessions still bound"
+//	@Security		BearerAuth
+//	@Router			/projects/{id} [delete]
 func (h *ProjectHandler) Delete(c *gin.Context) {
-	u, ok := server.CurrentUser(c)
+	ownerID, admin, ok := callerScope(c)
 	if !ok {
-		notFound(c)
 		return
 	}
 	p, err := h.store.Get(c.Request.Context(), c.Param("id"))
@@ -140,7 +157,7 @@ func (h *ProjectHandler) Delete(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
-	if p.OwnerID != u.ID {
+	if p.OwnerID != ownerID && !admin {
 		notFound(c) // a foreign project reads as absent
 		return
 	}

@@ -1521,7 +1521,7 @@ export interface paths {
         put?: never;
         /**
          * Create MCP server
-         * @description config is {endpoint, headers, auth_mode, oauth_*} (streamable HTTP). Header values and oauth_client_secret are write-only (******** mask semantics).
+         * @description config is {endpoint, headers, auth_mode, oauth_*} (streamable HTTP); endpoint must be an absolute http(s) URL. Header values and oauth_client_secret are write-only (******** mask semantics).
          */
         post: {
             parameters: {
@@ -2332,10 +2332,16 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List my projects */
+        /**
+         * List projects
+         * @description Every row carries session_count. storage_hint (where the files live) is reported to admins only.
+         */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description admin: every owner's projects */
+                    all?: boolean;
+                };
                 header?: never;
                 path?: never;
                 cookie?: never;
@@ -2349,6 +2355,15 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["store.Project"][];
+                    };
+                };
+                /** @description all=true by a member */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
                     };
                 };
             };
@@ -2414,7 +2429,10 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Delete project */
+        /**
+         * Delete project
+         * @description The owner deletes their own; an admin deletes any (management, spec §5.29).
+         */
         delete: {
             parameters: {
                 query?: never;
@@ -7177,10 +7195,15 @@ export interface components {
             owner_id?: string;
             sandbox_id?: string;
             /**
+             * @description SessionCount is how many sessions bind this project — filled by List
+             *     (scanonly), so a delete knows whether it will be refused.
+             */
+            session_count?: number;
+            /**
              * @description StorageHint names where the files live — the local daemon's host
              *     directory or the remote daemon's volume. Derived per response by the
-             *     handler, never stored: deleting the row keeps the storage (spec §5.28),
-             *     so the UI can say where.
+             *     handler for admins only, never stored: deleting the row keeps the
+             *     storage (spec §5.28), so the UI can say where.
              */
             storage_hint?: string;
             updated_at?: string;

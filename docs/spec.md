@@ -2927,7 +2927,14 @@ until the operator removes them); reclaiming space is the operator's explicit
 act. A run naming no project lands in the owner's per-sandbox default
 ("scratch"), created on first use.
 Projects are the first PERSONAL configuration entity: every member manages
-their own; ownership is scoped in the handlers, not the admin gate. The web
+their own; ownership is scoped in the handlers, not the admin gate. An admin
+additionally MANAGES the plane (revised 2026-08-25, §5.29's
+manage-not-author line): `?all=true` lists every owner's rows and an admin
+may delete any project — the operator's reclaim map, since a deleted row's
+storage stays behind. Listings carry each row's bound-session count;
+`storage_hint` (the host directory or volume name) is reported to admins
+only — a host path is a server-side fact a member's container never sees,
+so the member's delete dialog says files remain without naming where. The web
 terminal follows the same line: a member opens a shell into their OWN
 project's container (a foreign project reads as absent), and an admin into
 any — the operator's escape hatch, and a deliberate exception to
