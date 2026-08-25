@@ -42,7 +42,7 @@ func (c FileToolConfig) effectiveTimeout() time.Duration {
 // which the model has no business seeing.
 func fileToolError(op, reqPath string, err error) string {
 	var kind string
-	var pathErr *fs.PathError
+	pathErr, isPathErr := errors.AsType[*fs.PathError](err)
 	switch {
 	case errors.Is(err, ErrReadLimitExceeded):
 		kind = "file exceeds read limit"
@@ -58,7 +58,7 @@ func fileToolError(op, reqPath string, err error) string {
 		kind = "already exists"
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
 		kind = "timed out"
-	case errors.As(err, &pathErr):
+	case isPathErr:
 		// Keep the underlying errno text ("is a directory", ...) which carries
 		// no path, and drop the path-bearing wrapper.
 		kind = pathErr.Err.Error()

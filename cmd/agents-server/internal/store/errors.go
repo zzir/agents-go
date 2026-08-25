@@ -38,8 +38,7 @@ func UniqueViolation(err error) (string, bool) {
 	if err == nil {
 		return "", false
 	}
-	var pgErr pgdriver.Error
-	if errors.As(err, &pgErr) && pgErr.Field('C') == "23505" {
+	if pgErr, ok := errors.AsType[pgdriver.Error](err); ok && pgErr.Field('C') == "23505" {
 		// DETAIL reads `Key (col[, col...])=(...) already exists.`; fall back
 		// to the constraint name when the server withholds it.
 		detail := pgErr.Field('D')
@@ -106,6 +105,6 @@ func updateColumn(ctx context.Context, db *bun.DB, model any, label, id, column 
 // /sessions/abc. SQLite stores anything, so only PostgreSQL raises it; handlers
 // answer 400 rather than 500.
 func IsMalformedID(err error) bool {
-	var pgErr pgdriver.Error
-	return errors.As(err, &pgErr) && pgErr.Field('C') == "22P02"
+	pgErr, ok := errors.AsType[pgdriver.Error](err)
+	return ok && pgErr.Field('C') == "22P02"
 }

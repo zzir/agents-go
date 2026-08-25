@@ -53,18 +53,19 @@ func TestCallModelInputFilter_EditsInputAndInstructions(t *testing.T) {
 }
 
 func TestMaxToolConcurrency_LimitsParallelism(t *testing.T) {
-	var inflight, peak int32
+	var inflight atomic.Int32
+	var peak int32
 	var mu sync.Mutex
 	slow := NewTool("slow", "slow tool",
 		func(_ context.Context, _ *ToolContext, _ struct{}) (string, error) {
-			n := atomic.AddInt32(&inflight, 1)
+			n := inflight.Add(1)
 			mu.Lock()
 			if n > peak {
 				peak = n
 			}
 			mu.Unlock()
 			time.Sleep(20 * time.Millisecond)
-			atomic.AddInt32(&inflight, -1)
+			inflight.Add(-1)
 			return "ok", nil
 		})
 	agent := &Agent{Name: "a", Tools: []*Tool{slow}}

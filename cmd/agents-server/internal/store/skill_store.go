@@ -93,8 +93,8 @@ func (s *SkillStore) ListMeta(ctx context.Context, ownerID string, admin bool) (
 // ErrNotFound-wrapping error when none matches.
 func (s *SkillStore) GetByNameFor(ctx context.Context, qualified, ownerID string) (*Skill, error) {
 	short := qualified
-	if i := strings.LastIndex(qualified, ":"); i >= 0 {
-		short = qualified[i+1:]
+	if _, after, ok := strings.CutLast(qualified, ":"); ok {
+		short = after
 	}
 	var rows []Skill
 	err := s.db.NewSelect().Model(&rows).

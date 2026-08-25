@@ -99,8 +99,8 @@ func saveError(c *gin.Context, err error) {
 		conflict(c, "already in use: "+cols)
 		return
 	}
-	var rejected badRequestError
-	if errors.Is(err, store.ErrProviderRef) || errors.Is(err, store.ErrProviderScope) || errors.As(err, &rejected) {
+	_, rejected := errors.AsType[badRequestError](err)
+	if errors.Is(err, store.ErrProviderRef) || errors.Is(err, store.ErrProviderScope) || rejected {
 		badRequest(c, err.Error())
 		return
 	}

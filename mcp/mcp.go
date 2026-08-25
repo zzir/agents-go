@@ -19,7 +19,7 @@ import (
 	"math"
 	"math/rand/v2"
 	"os/exec"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -589,8 +589,7 @@ func retryable(err error) bool {
 	if errors.Is(err, errServerClosed) {
 		return false
 	}
-	var wire *jsonrpc.Error
-	if errors.As(err, &wire) {
+	if wire, ok := errors.AsType[*jsonrpc.Error](err); ok {
 		switch wire.Code {
 		case codeParseError, codeInvalidRequest, codeMethodNotFound,
 			codeInvalidParams, codeClientClosing, codeRejected:
@@ -763,7 +762,7 @@ func validateRequiredArgs(serverName, toolName string, required []string, args m
 	if len(missing) == 0 {
 		return nil
 	}
-	sort.Strings(missing)
+	slices.Sort(missing)
 	return agents.NewUserError("Failed to call tool %q on MCP server %q: missing required parameters: %s",
 		toolName, serverName, strings.Join(missing, ", "))
 }

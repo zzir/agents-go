@@ -13,8 +13,8 @@ import (
 // unwrapAPIError extracts the openai-go API error from err's chain, for the
 // shared modelkit retry classification.
 func unwrapAPIError(err error) (int, http.Header, bool) {
-	var apiErr *oai.Error
-	if !errors.As(err, &apiErr) {
+	apiErr, ok := errors.AsType[*oai.Error](err)
+	if !ok {
 		return 0, nil, false
 	}
 	var h http.Header

@@ -104,12 +104,13 @@ func (h *TaskHandler) Retry(c *gin.Context) {
 // than a fault, and its reason goes on the wire because the caller can act on
 // it.
 func (h *TaskHandler) retryError(c *gin.Context, err error) {
+	_, notRetryable := errors.AsType[tasks.ErrNotRetryable](err)
+	_, retryLimit := errors.AsType[tasks.ErrRetryLimit](err)
+	_, taskLimit := errors.AsType[tasks.ErrTaskLimit](err)
 	switch {
 	case errors.Is(err, tasks.ErrNotFound), errors.Is(err, store.ErrNotFound):
 		notFound(c)
-	case errors.As(err, new(tasks.ErrNotRetryable)),
-		errors.As(err, new(tasks.ErrRetryLimit)),
-		errors.As(err, new(tasks.ErrTaskLimit)),
+	case notRetryable, retryLimit, taskLimit,
 		errors.Is(err, tasks.ErrRetryConflict),
 		errors.Is(err, store.ErrBudgetExhausted),
 		errors.Is(err, store.ErrStepCeiling),

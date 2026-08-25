@@ -87,8 +87,9 @@ func (h *WorkflowHandler) Run(c *gin.Context) {
 	}
 	if req.SandboxID != "" {
 		if _, err := h.starter.BindSessionSandbox(c.Request.Context(), req.SessionID, req.SandboxID, req.ProjectID); err != nil {
+			_, invalidBinding := errors.AsType[bridge.ErrInvalidBinding](err)
 			switch {
-			case errors.As(err, new(bridge.ErrInvalidBinding)):
+			case invalidBinding:
 				badRequest(c, err.Error())
 			case errors.Is(err, bridge.ErrBindingContention): // transient: the config is being edited, retry
 				conflict(c, err.Error())
@@ -100,10 +101,11 @@ func (h *WorkflowHandler) Run(c *gin.Context) {
 	}
 	info, err := h.starter.RunWorkflow(c.Request.Context(), c.Param("id"), req.SessionID, strings.TrimSpace(req.Input), store.WorkflowOrigin{Kind: store.OriginPerson})
 	if err != nil {
+		_, taskLimit := errors.AsType[tasks.ErrTaskLimit](err)
 		switch {
 		case errors.Is(err, bridge.ErrWorkflowUnavailable):
 			badRequest(c, err.Error())
-		case errors.As(err, new(tasks.ErrTaskLimit)):
+		case taskLimit:
 			conflict(c, err.Error())
 		default:
 			storeError(c, err) // not-found (workflow or session) -> 404, anything else -> 500

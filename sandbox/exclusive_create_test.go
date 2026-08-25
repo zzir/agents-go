@@ -22,9 +22,7 @@ func TestCreateExclusiveConcurrentOnlyOneWins(t *testing.T) {
 	var mu sync.Mutex
 	ok, exist, other := 0, 0, 0
 	for i := range n {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
+		wg.Go(func() {
 			err := sb.CreateExclusive(ctx, "race.txt", []byte{byte('a' + i)})
 			mu.Lock()
 			switch {
@@ -36,7 +34,7 @@ func TestCreateExclusiveConcurrentOnlyOneWins(t *testing.T) {
 				other++
 			}
 			mu.Unlock()
-		}(i)
+		})
 	}
 	wg.Wait()
 

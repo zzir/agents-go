@@ -13,8 +13,8 @@ import (
 // unwrapAPIError extracts the anthropic-sdk-go API error from err's chain, for
 // the shared modelkit retry classification.
 func unwrapAPIError(err error) (int, http.Header, bool) {
-	var apiErr *ant.Error
-	if !errors.As(err, &apiErr) {
+	apiErr, ok := errors.AsType[*ant.Error](err)
+	if !ok {
 		return 0, nil, false
 	}
 	var h http.Header

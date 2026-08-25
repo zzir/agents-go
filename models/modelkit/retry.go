@@ -60,8 +60,8 @@ func RetryableError(err error, unwrap UnwrapAPIError) bool {
 	if errors.Is(err, io.ErrUnexpectedEOF) {
 		return true
 	}
-	var netErr net.Error
-	return errors.As(err, &netErr)
+	_, isNet := errors.AsType[net.Error](err)
+	return isNet
 }
 
 // RetryAfter extracts a server-suggested delay from an API error's response

@@ -77,7 +77,7 @@ var buildVersion = "dev"
 // splitList parses a comma-separated flag into trimmed, non-empty entries.
 func splitList(raw string) []string {
 	var out []string
-	for _, v := range strings.Split(raw, ",") {
+	for v := range strings.SplitSeq(raw, ",") {
 		if v = strings.TrimSpace(v); v != "" {
 			out = append(out, v)
 		}

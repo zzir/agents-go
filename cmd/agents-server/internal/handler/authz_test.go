@@ -678,10 +678,10 @@ func TestUserManagement(t *testing.T) {
 	if rec := serve(engine, as(adminUser, http.MethodPatch, "/api/v1/auth/users/"+memberUser.ID, `{"disabled":false}`)); rec.Code != http.StatusNoContent {
 		t.Fatalf("re-enable = %d %s", rec.Code, rec.Body.String())
 	}
-	if err := users.Patch(ctx, adminUser.ID, store.UserPatch{Disabled: ptr(true)}); !errors.Is(err, store.ErrLastAdmin) {
+	if err := users.Patch(ctx, adminUser.ID, store.UserPatch{Disabled: new(true)}); !errors.Is(err, store.ErrLastAdmin) {
 		t.Fatalf("disabling the last admin = %v, want ErrLastAdmin", err)
 	}
-	if err := users.Patch(ctx, adminUser.ID, store.UserPatch{Role: ptr(store.RoleMember)}); !errors.Is(err, store.ErrLastAdmin) {
+	if err := users.Patch(ctx, adminUser.ID, store.UserPatch{Role: new(store.RoleMember)}); !errors.Is(err, store.ErrLastAdmin) {
 		t.Fatalf("demoting the last admin = %v, want ErrLastAdmin", err)
 	}
 
@@ -694,8 +694,6 @@ func TestUserManagement(t *testing.T) {
 		t.Fatalf("a token survived the admin's revoke-all: %v", err)
 	}
 }
-
-func ptr[T any](v T) *T { return &v }
 
 // A /scope request naming the row's current scope is refused: a flip is
 // defined FROM the other scope only (spec §5.29), so a repeat is a 409 rather

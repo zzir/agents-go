@@ -65,8 +65,7 @@ func NewBatchProcessor(exporter Exporter, opts BatchProcessorOptions) *BatchProc
 		flushNow: make(chan struct{}, 1),
 		done:     make(chan struct{}),
 	}
-	p.wg.Add(1)
-	go p.run()
+	p.wg.Go(p.run)
 	return p
 }
 
@@ -106,7 +105,6 @@ func (p *BatchProcessor) OnSpanStart(*Span) {}
 func (p *BatchProcessor) OnSpanEnd(s *Span) { p.enqueue(s) }
 
 func (p *BatchProcessor) run() {
-	defer p.wg.Done()
 	ticker := time.NewTicker(p.opts.FlushInterval)
 	defer ticker.Stop()
 	for {

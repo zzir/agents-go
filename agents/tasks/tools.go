@@ -193,8 +193,7 @@ func (m *Manager) TaskTools(sessionID SessionIDFrom) []*agents.Tool {
 				// A stop of something already finished is news, not a failure:
 				// the model should hear the terminal state rather than an error
 				// it might retry.
-				var final ErrAlreadyFinal
-				if info != nil && errors.As(err, &final) {
+				if _, ok := errors.AsType[ErrAlreadyFinal](err); info != nil && ok {
 					r := m.toolResult(info)
 					r.IsError = true
 					return r, nil
