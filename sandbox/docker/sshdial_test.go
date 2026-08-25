@@ -11,7 +11,10 @@ import (
 // The ssh:// URL carries everything the dialer needs: user (required), host
 // (port defaults to 22), and optionally the remote socket path.
 func TestNewSSHDialerParsesHostURL(t *testing.T) {
-	auth := SSHAuth{Password: "pw"}
+	// Parsing is what is under test, so host-key verification is switched off:
+	// its default reads ~/.ssh/known_hosts, which would make this depend on
+	// whether the machine running it has ever used SSH.
+	auth := SSHAuth{Password: "pw", InsecureIgnoreHostKey: true}
 	cases := []struct {
 		url        string
 		addr, sock string
@@ -37,14 +40,15 @@ func TestNewSSHDialerParsesHostURL(t *testing.T) {
 // A bracketed IPv6 host must produce a dialable host:port; an empty host is
 // refused rather than silently dialing localhost.
 func TestNewSSHDialerHostEdgeCases(t *testing.T) {
-	d, err := newSSHDialer("ssh://u@[::1]", SSHAuth{Password: "pw"})
+	auth := SSHAuth{Password: "pw", InsecureIgnoreHostKey: true} // parsing only; see above
+	d, err := newSSHDialer("ssh://u@[::1]", auth)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if d.addr != "[::1]:22" {
 		t.Errorf("ipv6 addr = %q, want %q", d.addr, "[::1]:22")
 	}
-	if _, err := newSSHDialer("ssh://u@", SSHAuth{Password: "pw"}); err == nil {
+	if _, err := newSSHDialer("ssh://u@", auth); err == nil {
 		t.Fatal("empty host must be refused")
 	}
 }
