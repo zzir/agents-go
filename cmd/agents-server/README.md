@@ -15,8 +15,8 @@ panel/handler pair follows.
 ## Contents
 
 - [Quick start](#quick-start) — build, flags, [deployment](#deployment)
-- [Authentication](#authentication)
-- [REST API](#rest-api) — [errors](#errors) · [conventions](#response-conventions) · [sessions](#sessions--apiv1sessions) · [runs / SSE](#runs--apiv1runs) · [approvals](#approvals--apiv1approvals) · [tasks](#tasks--apiv1tasks) · [agents](#agents--apiv1agents) · [MCP servers](#mcp-servers--apiv1mcp-servers) · [memories](#memories--apiv1memories) · [settings](#settings--apiv1settings) · [skills](#skills--apiv1skills) · [providers](#providers--apiv1providers) · [workflows](#workflows--apiv1workflows) · [guardrails](#guardrails--apiv1guardrails) · [sandboxes](#sandboxes--apiv1sandboxes) · [projects](#projects--apiv1projects) · [playground](#playground--apiv1playground) · [secret handling](#secret-handling) · [OpenAPI](#openapi)
+- [Authentication](#authentication) — [OAuth mode](#oauth-mode) · [Ownership and roles](#ownership-and-roles) · [Audit log](#audit-log)
+- [REST API](#rest-api) — [errors](#errors) · [conventions](#response-conventions) · [sessions](#sessions--apiv1sessions) · [runs / SSE](#runs--apiv1runs) · [approvals](#approvals--apiv1approvals) · [tasks](#tasks--apiv1tasks) · [agents](#agents--apiv1agents) · [MCP servers](#mcp-servers--apiv1mcp-servers) · [memories](#memories--apiv1memories) · [settings](#settings--apiv1settings) · [server info](#server-info--apiv1server-read-only) · [skills](#skills--apiv1skills) · [providers](#providers--apiv1providers) · [workflows](#workflows--apiv1workflows) · [guardrails](#guardrails--apiv1guardrails) · [sandboxes](#sandboxes--apiv1sandboxes) · [projects](#projects--apiv1projects) · [playground](#playground--apiv1playground) · [ChatGPT OAuth](#chatgpt-oauth) · [secret handling](#secret-handling) · [health](#health) · [OpenAPI](#openapi)
 - [WebSocket protocol](#websocket-protocol)
 - [Architecture](#architecture)
 - [Design invariants](#design-invariants) — the rules every panel/handler pair must follow
@@ -28,8 +28,8 @@ panel/handler pair follows.
 Grab a prebuilt binary for your platform from the
 [Releases](https://github.com/zzir/agents-go/releases) page, or build from
 source. The web UI is compiled into the binary via `go:embed`, and the built
-`frontend/dist` is not checked in — so a source build must build the frontend
-first; `make build` does both (npm required):
+`internal/web/frontend/dist` is not checked in — so a source build must build
+the frontend first; `make build` does both (npm required):
 
 ```bash
 cd cmd/agents-server
@@ -46,7 +46,7 @@ On startup the server prints an auto-generated auth token. Open
 |-------------------------|-------------|--------------------------------------------------------|
 | `--host`                | `127.0.0.1` | Bind address (use `0.0.0.0` for LAN access)            |
 | `--port`                | `9527`      | HTTP listen port                                       |
-| `--db`                  | `data.db`   | SQLite file path, or a `postgres://` DSN               |
+| `--db`                  | `data.db`   | SQLite file path, or a `postgres://` / `postgresql://` DSN |
 | `--workspace`           | `.`         | Root of the per-user project trees local-daemon containers mount |
 | `--token`               | auto        | Auth token; randomly generated when omitted            |
 | `--max-tasks`           | `0`         | Max live background tasks per session (`0` = default 6) |
@@ -66,7 +66,8 @@ On startup the server prints an auto-generated auth token. Open
 Standing alone on localhost, no flags are needed. Behind a TLS-terminating
 reverse proxy, two things change:
 
-- **`--base-url` is required for OAuth flows** (MCP server OAuth today). Every
+- **`--base-url` is required for OAuth flows** — MCP server OAuth, and
+  `--auth oauth` refuses to start without it. Every
   externally visible URL — an OAuth `redirect_uri` must match what the browser
   loaded — is derived from it. Forwarding headers (`Forwarded`,
   `X-Forwarded-*`) are deliberately never consulted for URL construction: a
@@ -123,9 +124,9 @@ REST requests authenticate with a Bearer token in the `Authorization` header:
 
 - `Authorization: Bearer <token>`
 
-The `?token=<token>` query parameter is no longer accepted for REST — it leaked
-into browser history and proxy logs. The WebSocket instead authenticates at the
-application level, via its first message (see [WebSocket protocol](#websocket-protocol)),
+A `?token=<token>` query parameter is not accepted for REST — a token in a URL
+leaks into browser history and proxy logs. The WebSocket instead authenticates
+at the application level, via its first message (see [WebSocket protocol](#websocket-protocol)),
 resolved by the same credential check as REST.
 
 The auth surface under `/api/v1/auth`:
@@ -136,13 +137,16 @@ The auth surface under `/api/v1/auth`:
 | POST   | `/auth/login`                    | none | Validate the static token (token mode; 400 in OAuth mode) |
 | GET    | `/auth/check`                    | yes  | The SPA's stored-credential probe: `{ok}` for a valid Bearer, `401` otherwise |
 | GET    | `/auth/oauth/:provider/start`    | none | 302 into the provider's authorize flow (PKCE); sets the login cookie |
-| GET    | `/auth/oauth/:provider/callback` | none | Provider redirect target; 302 into the SPA with `#auth_code=<one-time>` on success, `#auth_error=<tag>` on failure (`state_mismatch`, `cancelled`, `exchange_failed`, `not_allowed`, `login_failed`) |
+| GET    | `/auth/oauth/:provider/callback` | none | Provider redirect target; 302 into the SPA with `#auth_code=<one-time>` on success, `#auth_error=<tag>` on failure (`state_mismatch`, `cancelled`, `exchange_failed`, `not_allowed`, `disabled`, `login_failed`) |
 | POST   | `/auth/exchange`                 | none | Trade the one-time code for `{token, user}` — the only response the session token's plaintext rides |
 | GET    | `/auth/me`                       | yes  | The authenticated caller: `{id, email, name?, role, avatar_url?}` |
 | POST   | `/auth/logout`                   | yes  | Revoke the presented session token (no-op in token mode) |
+| GET    | `/auth/tokens`                   | yes  | List the caller's personal access tokens — labels and dates, never secrets |
+| POST   | `/auth/tokens`                   | yes  | Mint a PAT — `{name, expires_in_days?}` (`0` = never expires); the plaintext (`ags_p_…`) rides this response only |
+| DELETE | `/auth/tokens/:id`               | yes  | Revoke the PAT                                           |
 | GET    | `/auth/audit`                    | admin | The audit log, newest first (`?limit` ≤ 500, `?before=<event id>`) |
 | GET    | `/auth/users`                    | admin | Every account with its role and `disabled_at`            |
-| PATCH  | `/auth/users/:id`                | admin | `{role?: admin\|member, disabled?: bool}`; never one's own account, never the local one; `409` when it would leave no enabled admin; disabling also revokes every token |
+| PATCH  | `/auth/users/:id`                | admin | `{role?: admin\|member, disabled?: bool}`; never one's own account, never the local one; `409` when it would leave no enabled admin; disabling also revokes every token; answers `204` with no body |
 | DELETE | `/auth/users/:id/tokens`         | admin | Sign the account out everywhere: every session and PAT revoked, live connections closed |
 
 ### OAuth mode
@@ -215,16 +219,14 @@ and database-backed credentials:
   the database.
 
 **Personal access tokens** are OAuth mode's programmatic credential (curl,
-scripts, CI): `POST /auth/tokens {name, expires_in_days?}` answers with the
-plaintext exactly once (`ags_p_…`, 0 days = never expires); `GET /auth/tokens`
-lists labels and dates, never secrets; `DELETE /auth/tokens/:id` revokes. A
-PAT authenticates everywhere a session token does — REST and the WS auth
-frame. In token mode the endpoints answer 400: the static compare is the whole
+scripts, CI) — the `/auth/tokens` routes in the table above. A PAT
+authenticates everywhere a session token does — REST and the WS auth frame.
+In token mode the endpoints answer 400: the static compare is the whole
 check there, so a PAT could be minted but never authenticate.
 
 ### Ownership and roles
 
-Three rules, enforced at the routes and handlers (`handler/authz.go`,
+Four rules, enforced at the routes and handlers (`handler/authz.go`,
 spec §5.29), shape who may do what:
 
 - **Scoped configuration is per row: private to its owner or global.**
@@ -302,7 +304,9 @@ an account with `PUT /sessions/:id/owner` — or delete it.
   approval the verdict, the scope and the tool (`approve scope=all
   tool=exec_command` is the one to notice). Never a request body, never a
   secret. Failures and reads leave nothing. The line is written on its own
-  goroutine after the response.
+  goroutine after the response. `POST /auth/login` and `POST /auth/exchange`
+  are requests like any other — no credential precedes them, so the handler
+  names the account that signed in as the actor (`SetAuditActor`).
 - **An act that is not a request**, named by what it is:
 
   | Action          | Who is the actor                        | Resource          | Detail                          |
@@ -312,7 +316,6 @@ an account with `PUT /sessions/:id/owner` — or delete it.
   | `terminal.open` | the connection's user                   | sandbox id        | `project <id> (owner <id>)`     |
   | `workflow.save` | the session's owner (who approved it)   | workflow id       | `tool=save_workflow created`    |
   | `trigger.fire`  | the owner of the session it fired into  | trigger id        | `source=cron\|webhook started=` |
-  | `POST /auth/login`, `POST /auth/exchange` | the account that signed in | | |
 
   A person's manual fire (`POST /triggers/:id/fire`) is the request's line;
   the clock's and a webhook's have no request, so the scheduler writes
@@ -376,7 +379,7 @@ detail.
 |----------------|------|-------------------------------------------------------------------------------|
 | `validation`   | 400  | Malformed request body or invalid parameter                                   |
 | `unauthorized` | 401  | Missing or invalid Bearer token                                               |
-| `forbidden`    | 403  | Operation disabled by server policy                                           |
+| `forbidden`    | 403  | Refused for who the caller is: admin role required, the row belongs to another user, or a member writing admin-only configuration |
 | `not_found`    | 404  | No such resource                                                              |
 | `conflict`     | 409  | Resource is in the wrong state for the request                                |
 | `upstream`     | 502  | A failing upstream dependency (model provider, MCP server, sandbox host, git) |
@@ -387,7 +390,8 @@ detail.
 ### Response conventions
 
 - **Create** returns `201 Created` with the created resource.
-- **Update** (`PUT`/`PATCH`) returns `200 OK` with the full updated resource.
+- **Update** (`PUT`/`PATCH`) returns `200 OK` with the full updated resource —
+  except `PATCH /auth/users/:id`, which answers `204` with no body.
 - **Delete** returns `204 No Content`.
 - A write (update or delete) against a missing resource returns `404`.
 - Secret fields are write-only — see [Secret handling](#secret-handling).
@@ -415,9 +419,9 @@ detail.
 | GET    | `/sessions/:id/tasks`     | List background tasks spawned from the session (see [Tasks](#tasks--apiv1tasks)) |
 
 `POST /sessions` accepts an optional `agent_config_id` to bind the session to an
-agent at creation (it must reference an existing agent). Rename and pin are a
-single `PATCH /sessions/:id` accepting a partial `{name?, pinned?}` body; both
-the separate `PUT` rename and `PATCH /sessions/:id/pin` endpoints are gone.
+agent at creation. It must reference an agent VISIBLE to the caller — a foreign
+private id reads as absent and answers `400`. Rename and pin are a single
+`PATCH /sessions/:id` accepting a partial `{name?, pinned?}` body.
 
 Session responses also carry `sandbox_id?` / `project_id?` — the session's
 sandbox binding, written by its first sandbox-carrying run (see
@@ -497,8 +501,8 @@ fold). 409 while a run is executing — the run compacts at its own boundaries;
 400 when the session's agent has compaction disabled or no usable provider.
 
 **Pagination** — `messages` and `traces` accept optional `?limit=` and
-`?before_id=`. Without `limit` the full list is returned (oldest-first),
-backward-compatible with older clients. With `limit`, the newest `limit` items
+`?before_id=`. Without `limit` the full list is returned (oldest-first).
+With `limit`, the newest `limit` items
 are returned; page backwards by passing the smallest id you received as
 `before_id` (an exclusive upper bound). Row ids are UUIDv7 strings and order
 by insertion — `NewV7` is monotonic within a process — so "smallest" is the
@@ -519,7 +523,7 @@ up without loss.
 
 | Method | Path                 | Description                                            |
 |--------|----------------------|--------------------------------------------------------|
-| POST   | `/sessions/:id/runs` | Start a run — `{input, agent_config_id?, sandbox_id?, project_id?}`                |
+| POST   | `/sessions/:id/runs` | Start a run — `{input, agent_config_id?, sandbox_id?, project_id?, plan?}`         |
 | GET    | `/runs/:id`          | Get run status                                                                     |
 | GET    | `/runs/:id/events`   | Stream run events (Server-Sent Events)                                             |
 | POST   | `/runs/:id/cancel`   | Cancel the run — `204`; `?mode=graceful` finishes the current turn, default aborts |
@@ -535,7 +539,9 @@ first it returns `202` with `{run_id, session_id, status: "running"}` and the
 run keeps going — follow it on `/runs/:id/events`. `Preference-Applied: wait=N`
 marks the honored wait; there is no unbounded form, and N is capped at ten
 minutes (`MaxPreferWait`) — a longer wait is the events stream's job. It returns `409` if the
-session already has an active run.
+session already has an active run. `plan` (a bool) asks the session to enter
+(`true`) or leave (`false`) the planning phase with this run; absent leaves
+the phase as it stands ([invariant 33](#design-invariants)).
 
 The first run that carries a `sandbox_id` **permanently binds**
 `(sandbox_id, project_id)` to the session (compare-and-set; the winner
@@ -553,7 +559,9 @@ use. A request that fails validation is `400` and leaves the session
 unbound.
 
 `GET /runs/:id` returns `{run_id, session_id, status, last_seq, agent_config_id?,
-sandbox_id?, project_id?}`. `status` is one of `running`, `interrupted`, `completed`, `error`,
+sandbox_id?, project_id?, task?}` — `task` is present only for a background
+task's run, carrying the parent linkage the matching `run.started` event does.
+`status` is one of `running`, `interrupted`, `completed`, `error`,
 or `cancelled`. Finished runs stay queryable and replayable for **15 minutes**
 after they end, then `GET /runs/:id` returns 404 (the conversation itself is
 always in `/sessions/:id/messages`).
@@ -771,10 +779,12 @@ which line is missing:
 - **No callback line at all** (only the panel's `GET /mcp-servers` poll repeats):
   the browser never reached the callback. The authorization server rejected the
   `redirect_uri` — a pre-registered `oauth_client_id` whose allowed callback does
-  not list this exact path — or the browser cannot reach this origin (a reverse
-  proxy or non-loopback host, so `redirect_uri` resolves elsewhere;
-  `externalOrigin` derives it from the request's `Forwarded` / `X-Forwarded-*`
-  headers, then the direct host). A callback that arrives but cannot be matched
+  not list this exact path — or the browser cannot reach the origin the
+  `redirect_uri` names: `externalOrigin` builds it from `--base-url` when set,
+  otherwise from the direct request's scheme and host — forwarding headers
+  (`Forwarded`, `X-Forwarded-*`) are deliberately never consulted, so behind a
+  reverse proxy without `--base-url` the URI names the backend, not what the
+  browser loaded. A callback that arrives but cannot be matched
   logs `callback: could not deliver authorization code` with the reason.
 - **`code delivered`, then `ended without connecting` with `authorization
   completed but was not accepted`**: the browser round-trip worked, but the
@@ -909,7 +919,7 @@ selection (skill ids) restricts both.
 |--------|----------------|--------------------------------------------------------|
 | GET    | `/skills`      | List skills (metadata only, no content)                |
 | GET    | `/skills/:id`  | Get one skill, content included                        |
-| POST   | `/skills`      | Create — body `{content}`; `409` on a duplicate name   |
+| POST   | `/skills`      | Create — body `{content, scope?}` (`scope` is create-only; claiming `global` is admin-only); `409` on a duplicate name |
 | PUT    | `/skills/:id`  | Update content (name/description follow its frontmatter) |
 | DELETE | `/skills/:id`  | Delete                                                 |
 | POST   | `/skills/:id/scope` | admin — `{scope: private\|global}`; `409` on a name collision |
@@ -918,10 +928,15 @@ selection (skill ids) restricts both.
 `POST /skill-imports` with `{url}` upserts skills from elsewhere:
 `https://github.com/owner/repo` walks the repository via the GitHub API,
 anonymously (HEAD commit → full tree → every `SKILL.md` at any depth, all
-pinned to one commit; two API calls per import, so the anonymous rate limit
-goes far — private repositories are not reachable). Any other http(s)
-URL is fetched as a single raw `SKILL.md`. The response lists what was
-`created` / `updated` / `unchanged` / `skipped` (each skip with its reason).
+pinned to one commit; two API calls plus one raw fetch per `SKILL.md` — up to
+~202 requests at the 200-skill cap — private repositories are not reachable).
+Any other http(s) URL is fetched as a single raw `SKILL.md`. Each fetch is
+bounded by a 30-second timeout and the whole import by a five-minute budget
+(files past an expired budget land in `skipped`); a failed fetch answers
+`502`. The response names the `repo` and lists what was
+`created` / `updated` / `unchanged` / `skipped` (each skip with its reason);
+`truncated` reports that GitHub's tree listing was cut off — files past the
+cut were not seen at all.
 Re-importing the same source refreshes rows that were not edited locally;
 editing an imported skill **detaches** it, and a detached skill is never
 overwritten by an import. Documents are capped at 256 KiB, imports at 200
@@ -1097,7 +1112,7 @@ every model call on the execution's session, minutes the step runs' own time
 (a pause on a person's approval costs nothing), laps the times one backward
 edge is taken. Each is checked when the driver is about to launch the next
 step and again before a retry, never mid-run: over any bound the execution
-stops, failed with the reason (`budget exhausted: 4 of 3 tokens`), and a
+stops, failed with the reason (`budget exhausted: 4 of 3 steps`), and a
 retry is refused before it runs anything. The budget is snapshotted into the
 state with the steps.
 
@@ -1242,19 +1257,26 @@ daemons over pure-Go SSH), not the docker CLI (the socket API).
 `config.host` picks the daemon: empty for this machine's, `ssh://user@host`
 for a remote daemon reached over SSH (the remote needs sshd with
 streamlocal forwarding and the SSH user in the docker group, no remote docker
-CLI), `tcp://host:port` for a TCP-exposed one. The `ssh_*` fields carry the
-SSH authentication; `ssh_password` is masked on read — see
+CLI), `tcp://host:port` for a TCP-exposed one. An empty `host` means the
+server's LOCAL daemon and its filesystem — the bind mounts are local
+directories. If the server process's `DOCKER_HOST` points at a non-local
+daemon (any scheme other than `unix://` or `npipe://`), building the sandbox
+is refused with an error naming it: a foreign daemon would silently split the
+view — file tools on this filesystem, containers on that one. The `ssh_*`
+fields carry the SSH authentication; `ssh_password` is masked on read — see
 [Secret handling](#secret-handling). `memory_mb` / `cpus` cap each
-container's resources.
+container's resources. `max_read_file_bytes` caps how large a file the read
+tool will load at all (`0` = the 8 MiB default) — a guard on the read itself,
+distinct from the 64 KiB cap below on what the model is SHOWN of it.
 
 Create and update validate the config STRICTLY and store it in canonical
 form: a type mismatch on a known field (`network: "yes"`) or a missing
 required field (`image`) is `400` — accepted, it would bind sessions to a
 config that can never build, and once referenced the identity freeze would
-block its own repair. Canonical means paths lose trailing slashes and
-unknown keys are dropped. One decoder answers every question about a config
-— save-time validation, the content comparison, the identity freeze — so
-they cannot disagree.
+block its own repair. Canonical means unknown keys are dropped and the
+fields re-marshalled in struct order. One decoder answers every question
+about a config — save-time validation, the content comparison, the identity
+freeze — so they cannot disagree.
 
 `DELETE` refuses (`409`) while any session is bound to the sandbox: the
 binding is permanent, so removing its target would leave those sessions
@@ -1271,8 +1293,11 @@ closed.)
 `PUT` freezes a referenced sandbox's **identity fields** — `type` and `host`
 (the daemon: a different daemon is a different set of filesystems, and every
 project of this sandbox stores there): sessions bound the config id on the
-promise that it keeps meaning the same file system, so an update that would
-move it is `409` while references exist. Everything else stays freely
+promise that it keeps meaning the same file system, and a project row ALONE
+pins it too — its tree lives on that daemon before any session binds — so an
+update that would move it is `409` while either exists, the refusal counting
+both ("N session(s) and M project(s)"; [invariant 27](#design-invariants)
+holds the full contract). Everything else stays freely
 editable — `name`, credentials (key rotation is routine), `image`, `network`,
 the docker exec `user`, `runtime` and limits change the execution
 environment, not where the data lives.
@@ -1331,6 +1356,11 @@ removed, so installed packages survive and the next run starts it again.
 | GET    | `/projects`     | List my projects                                         |
 | POST   | `/projects`     | Create — `{name, sandbox_id}`; `409` duplicate name      |
 | DELETE | `/projects/:id` | Delete the row; `409` while sessions are bound. The tree/volume is left in place — data outlives the row on purpose |
+
+Each listed row (and the create response) carries a derived `storage_hint` —
+where the files live: the host directory on a local-daemon sandbox,
+`docker volume agents-proj-<tail> on <host>` on a remote one — so a delete
+can say what it leaves behind.
 
 ### Playground — `/api/v1/playground`
 
@@ -1464,7 +1494,7 @@ a run streams live again instead of showing the session idle until it ends).
 
 | type            | Description                                                                                                     |
 |-----------------|-----------------------------------------------------------------------------------------------------------------|
-| `run.create`    | Start a run — `{session_id, input, agent_config_id?, sandbox_id?, project_id?}` (sandbox/project matter only until the session's first sandbox-carrying run binds them) |
+| `run.create`    | Start a run — `{session_id, input, agent_config_id?, sandbox_id?, project_id?, plan?}` (sandbox/project matter only until the session's first sandbox-carrying run binds them; `plan` as in the REST body) |
 | `run.subscribe` | (Re)attach to a run's event stream — `{run_id, from_seq?}` (omit `from_seq` or `0` replays everything retained) |
 | `run.cancel`    | Cancel an in-flight run — `{run_id, mode?}`; `mode: "graceful"` finishes the current turn, default aborts       |
 | `run.inject`    | Inject input into the live run — `{run_id, queue, input}`; `queue: "steer"` changes course inside the current exchange, `"next_turn"` is consumed at the next turn boundary, `"follow_up"` starts a new exchange once this one finishes |
@@ -1509,9 +1539,10 @@ session run to tens of MB), so the panel opens with the SUMMARY listing
 one span whole (`GET /sessions/:id/traces/:span_id`) when it is opened —
 what a session's history costs to open no longer grows with what its model
 calls carried. Payloads past `trace_span_data_kb` are replaced with a
-truncation marker in the row itself; set
-`OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA=false` to keep conversation
-content out of traces entirely.
+truncation marker in the row itself. The `trace_include_sensitive_data`
+setting keeps conversation content out of traces entirely. Unset, that key
+defers to the SDK's `OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA` environment
+variable.
 
 ### Terminal endpoint — `GET /ws/terminal`
 
@@ -1550,7 +1581,8 @@ cmd/agents-server/
 │   │   ├── auth.go             bearer middleware (AuthFunc), the auth-exempt list
 │   │   ├── ratelimit.go        per-IP budgets; AuthGuard (failed-credential budget)
 │   │   ├── audit.go            the audit middleware (successful mutating requests)
-│   │   └── server.go           engine setup, body cap, CSP, static SPA
+│   │   ├── server.go           engine setup, body cap, CSP, static SPA
+│   │   └── ws.go               WS upgrade + heartbeat
 │   ├── authn/                  who is calling: token mode, OAuth (PKCE) login, PATs
 │   ├── secrets/                AES-256-GCM box that seals stored credentials
 │   ├── handler/                HTTP handlers (one file per resource)
@@ -1569,6 +1601,7 @@ cmd/agents-server/
 │   ├── sandboxes/              live sandbox instances behind stored configs; exec_command trust
 │   ├── guardrails/             stored + built-in guardrail definitions → SDK guardrails
 │   ├── settings/               the settings registry and the typed reader (incl. the proxy client)
+│   ├── logging/                structured logging + context propagation
 │   ├── docs/                   generated OpenAPI 3.1 document, swagger.yaml (make openapi)
 │   ├── store/                  data layer (bun ORM; SQLite or PostgreSQL, 23 tables — see Database)
 │   ├── protocol/               wire types — WS messages, REST error envelope, the audit record
@@ -2229,7 +2262,8 @@ When a change genuinely doesn't fit, update this list in the same PR.
     the key set used to live in four places at once — backend literals, a
     masking map, the provider table, and a `DEFAULT_KEYS` array in the
     frontend — and `approval_ttl_minutes` is what that cost: read by the
-    reaper, documented here, and invisible in the UI for want of a fifth edit.
+    reaper, documented here, and invisible in the UI until the registry
+    named it.
     A default lives in the registry, never in a `const` beside its one reader:
     a default the panel cannot show is one the operator has to read the source
     to learn.
@@ -2243,14 +2277,17 @@ When a change genuinely doesn't fit, update this list in the same PR.
     rule exists because the guard used to be per-panel and eight of ten
     destructive flows had none.
 
-42. **Ownership is a column on sessions or a scope on configuration —
-    nothing invents a third scheme.** A task's hidden session inherits its
-    parent's owner at creation (`CreateOptions.ParentID`), a trigger's owner
-    is its session's, an approval's is its session's. Configuration is
-    either host-owned and admin-written (sandboxes, settings, guardrails,
-    memories) or row-scoped `private | global` with `owner_id`
-    (spec §5.29). A new per-user thing is filed on a session, or it takes
-    the scope pair — not its own column and its own checks.
+42. **Ownership is sessions' owner column, configuration scope, or projects'
+    per-user ownership — nothing invents a fourth scheme.** A task's hidden
+    session inherits its parent's owner at creation
+    (`CreateOptions.ParentID`), a trigger's owner is its session's, an
+    approval's is its session's. Configuration is either host-owned and
+    admin-written (sandboxes, settings, guardrails, memories) or row-scoped
+    `private | global` with `owner_id` (spec §5.29). Projects are the third,
+    recorded form: per-user working trees keyed by (owner, sandbox), with no
+    scope column (spec §5.28). A new per-user thing is filed on a session,
+    takes the scope pair, or — when it is a working tree — is a project;
+    never its own column and its own checks.
 
 43. **Shutdown is ordered, and every waiter is told.** On SIGINT/SIGTERM:
     the clock stops (a tick during the drain would start a run the drain
@@ -2366,10 +2403,13 @@ mechanism.
   does not model; it would need a `Stages`-like selector keyed by tool name.
 - **Renderer hints on tool-call cards.** PROTOCOL.md F4 reserves a
   `display.renderer` hint ("terminal", "diff", "table") on the structured
-  display projection. The card does not consume any such hint today: live
-  progress renders as a `<pre>` regardless, and a finished result as plain
-  text — a multimodal result (an image, a file: the Responses content list,
-  see `run.tool_result`) is the one shape it renders by content rather than
-  by hint. Wiring a renderer field end to end (SDK `ToolResult.Display` is a
-  plain string today) — a terminal view for shell output, a diff view for a
-  patch — is the remaining half of the streaming partial-results work.
+  display projection, and the hint is wired end to end: the SDK's
+  `ToolResult.Display` names the renderer, it lands in the session's stored
+  display JSON and reaches the frontend timeline on both the live and the
+  replay path, with tests pinning each. What remains is the card:
+  `ToolCallCard` does not branch on the value yet — live progress renders as
+  a `<pre>` regardless, and a finished result as plain text; a multimodal
+  result (an image, a file: the Responses content list, see
+  `run.tool_result`) is the one shape it renders by content. A terminal view
+  for shell output, a diff view for a patch — that branching is the
+  remaining work.
