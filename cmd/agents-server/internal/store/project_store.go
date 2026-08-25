@@ -22,6 +22,27 @@ func NewProjectStore(db *bun.DB) *ProjectStore {
 	return &ProjectStore{CrudStore: NewCrudStore[Project](db, "project", "name ASC"), db: db}
 }
 
+// Create inserts the project while its sandbox row still exists: the sandbox
+// row is locked (lockRow) for the insert's duration, so a racing sandbox
+// delete either cascades this row or arrives first and refuses the create —
+// never an orphan project (spec §5.28). ErrNotFound names the sandbox.
+func (s *ProjectStore) Create(ctx context.Context, p *Project) error {
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockRow(ctx, tx, &SandboxConfig{}, "id = ?", p.SandboxID); err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return fmt.Errorf("sandbox %s: %w", p.SandboxID, err)
+			}
+			return err
+		}
+		_, err := tx.NewInsert().Model(p).Exec(ctx)
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("creating project: %w", err)
+	}
+	return nil
+}
+
 // ListByOwner returns one user's projects — a project is personal, so no
 // listing crosses owners.
 func (s *ProjectStore) ListByOwner(ctx context.Context, ownerID string) ([]Project, error) {

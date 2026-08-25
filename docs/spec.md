@@ -2906,7 +2906,9 @@ provided. The SDK's `sandbox.LocalSandbox` stays (embedders and tests; the
 server just never offers it). A sandbox's identity (the binding freeze —
 README invariant 27)
 gains the daemon: changing `Host` moves every container's filesystems, so it
-freezes while sessions are bound.
+freezes while sessions are bound — or project rows live on the config
+(revised 2026-08-25: a project's tree exists without any session, a terminal
+may already have written it, and §5.28 pins that tree to one daemon).
 
 Do not reintroduce a host-exec sandbox type or a raw remote-exec one; an
 isolation need beyond containers (VMs, gVisor) is a new backend decision
@@ -2946,7 +2948,12 @@ bind-mounted files belong to the operator, not nobody.
 Deletion contracts mirror the sandbox binding's: the bind CAS carries an
 EXISTS on the project row, a project delete carries NOT EXISTS over bound
 sessions (races settle in SQL), and deleting a sandbox cascades its
-(necessarily unbound) project rows. **Storage is never deleted by the
+(necessarily unbound) project rows. A sandbox identity update carries the
+mirror NOT EXISTS over project rows too: a project pins its sandbox to one
+daemon even before any session binds, and the project create locks the
+sandbox row for the insert's duration, so a racing sandbox delete either
+cascades the new row or refuses the create — never an orphan (both revised
+2026-08-25). **Storage is never deleted by the
 server** — a removed project row leaves its directory or volume in place
 (the delete reclaims only the cached instance; the stopped container and its
 volume stay on the daemon until the operator removes them); reclaiming space

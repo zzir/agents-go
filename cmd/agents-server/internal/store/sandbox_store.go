@@ -47,6 +47,12 @@ func (s *SandboxStore) Create(ctx context.Context, cfg *SandboxConfig) error {
 // window.
 const unreferenced = "NOT EXISTS (SELECT 1 FROM sessions WHERE sandbox_id = ?)"
 
+// noProjects is the identity update's second guard: a project row pins the
+// sandbox's identity even before any session binds — its tree (a terminal
+// may already have written files) lives on this daemon (spec §5.28). The
+// delete does NOT share it: deleting a sandbox cascades its project rows.
+const noProjects = "NOT EXISTS (SELECT 1 FROM projects WHERE sandbox_id = ?)"
+
 // Update overwrites the config, shadowing the generic CrudStore update with
 // the two counters and a compare-and-set: the write lands only while the row
 // is still at expectedRevision — the revision the caller read, compared its
@@ -123,12 +129,13 @@ func (s *SandboxStore) DeleteIfUnreferenced(ctx context.Context, id string) (ref
 }
 
 // UpdateIdentityIfUnreferenced overwrites the config only while no session
-// is bound to it AND the row is still at expectedRevision — the write path
-// for updates that move the sandbox's IDENTITY (see IdentityChanged). A
-// referenced config refuses with the blocking count; a moved revision is
-// ErrRevisionConflict. An identity change is by definition a content change,
-// so the runtime generation bumps unconditionally here.
-func (s *SandboxStore) UpdateIdentityIfUnreferenced(ctx context.Context, id string, cfg *SandboxConfig, expectedRevision int64) (refs int, err error) {
+// is bound to it, no project row lives on it, AND the row is still at
+// expectedRevision — the write path for updates that move the sandbox's
+// IDENTITY (see IdentityChanged). A referenced config refuses with the
+// blocking counts; a moved revision is ErrRevisionConflict. An identity
+// change is by definition a content change, so the runtime generation bumps
+// unconditionally here.
+func (s *SandboxStore) UpdateIdentityIfUnreferenced(ctx context.Context, id string, cfg *SandboxConfig, expectedRevision int64) (sessions, projects int, err error) {
 	cfg.ID = id
 	var res sql.Result
 	err = sealedWrite(cfg, sealSandbox, openSandbox, func() (err error) {
@@ -139,14 +146,15 @@ func (s *SandboxStore) UpdateIdentityIfUnreferenced(ctx context.Context, id stri
 			Where("id = ?", id).
 			Where("revision = ?", expectedRevision).
 			Where(unreferenced, id).
+			Where(noProjects, id).
 			Exec(ctx)
 		return err
 	})
 	if err != nil {
-		return 0, fmt.Errorf("updating sandbox config %s: %w", id, err)
+		return 0, 0, fmt.Errorf("updating sandbox config %s: %w", id, err)
 	}
 	if n, aerr := res.RowsAffected(); aerr == nil && n > 0 {
-		return 0, nil
+		return 0, 0, nil
 	}
 	return s.explainIdentityRefusal(ctx, id, expectedRevision)
 }
@@ -173,18 +181,29 @@ func (s *SandboxStore) explainRefusal(ctx context.Context, id string) (int, erro
 
 // explainIdentityRefusal adds the revision dimension: missing, moved revision
 // (conflict), or referenced — three different answers for three different
-// remedies.
-func (s *SandboxStore) explainIdentityRefusal(ctx context.Context, id string, expectedRevision int64) (int, error) {
+// remedies. Referenced reports sessions and projects separately, so the
+// refusal can name what to remove.
+func (s *SandboxStore) explainIdentityRefusal(ctx context.Context, id string, expectedRevision int64) (sessions, projects int, err error) {
 	cur, err := s.Get(ctx, id)
 	if err != nil {
-		return 0, err // ErrNotFound included
+		return 0, 0, err // ErrNotFound included
 	}
 	if cur.Revision != expectedRevision {
-		return 0, ErrRevisionConflict
+		return 0, 0, ErrRevisionConflict
 	}
-	n, err := s.db.NewSelect().Model((*Session)(nil)).Where("sandbox_id = ?", id).Count(ctx)
+	sessions, err = s.db.NewSelect().Model((*Session)(nil)).Where("sandbox_id = ?", id).Count(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("counting sessions bound to sandbox %s: %w", id, err)
+		return 0, 0, fmt.Errorf("counting sessions bound to sandbox %s: %w", id, err)
 	}
-	return max(n, 1), nil
+	projects, err = s.db.NewSelect().Model((*Project)(nil)).Where("sandbox_id = ?", id).Count(ctx)
+	if err != nil {
+		return 0, 0, fmt.Errorf("counting projects on sandbox %s: %w", id, err)
+	}
+	if sessions == 0 && projects == 0 {
+		// The reference could have vanished between the write and this read;
+		// report at least one so the caller still refuses rather than
+		// inventing success.
+		sessions = 1
+	}
+	return sessions, projects, nil
 }

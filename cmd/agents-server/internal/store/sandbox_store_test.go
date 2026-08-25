@@ -50,9 +50,10 @@ func TestSandboxDeleteIfUnreferenced(t *testing.T) {
 	}
 }
 
-// The conditional identity update: applied while unreferenced, refused with
-// the blocking count once a session is bound — the id must keep meaning the
-// same file system for as long as anything points at it.
+// The conditional identity update: applied while unreferenced, refused once a
+// project row lives on the config — even before any session binds — and
+// refused with both counts once one does. The id must keep meaning the same
+// file system for as long as anything points at it.
 func TestSandboxUpdateIdentityIfUnreferenced(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
@@ -62,36 +63,40 @@ func TestSandboxUpdateIdentityIfUnreferenced(t *testing.T) {
 	createSandboxRow(t, db, id("sb-1"))
 
 	moved := &SandboxConfig{Name: "sb-1", Type: "docker", Config: []byte(`{"image":"i","host":"ssh://u@other-host"}`)}
-	refs, err := sandboxes.UpdateIdentityIfUnreferenced(ctx, id("sb-1"), moved, 1)
-	if err != nil || refs != 0 {
-		t.Fatalf("unreferenced identity update: refs=%d err=%v, want success", refs, err)
+	sessRefs, projRefs, err := sandboxes.UpdateIdentityIfUnreferenced(ctx, id("sb-1"), moved, 1)
+	if err != nil || sessRefs != 0 || projRefs != 0 {
+		t.Fatalf("unreferenced identity update: refs=(%d,%d) err=%v, want success", sessRefs, projRefs, err)
 	}
 	// A second writer holding the OLD revision loses: proceeding on its stale
 	// identity comparison is exactly the freeze bypass the CAS closes.
 	staleWriter := &SandboxConfig{Name: "sb-1", Type: "docker", Config: []byte(`{"image":"i","host":"ssh://u@h"}`)}
-	if _, err := sandboxes.UpdateIdentityIfUnreferenced(ctx, id("sb-1"), staleWriter, 1); !errors.Is(err, ErrRevisionConflict) {
+	if _, _, err := sandboxes.UpdateIdentityIfUnreferenced(ctx, id("sb-1"), staleWriter, 1); !errors.Is(err, ErrRevisionConflict) {
 		t.Fatalf("stale identity update: err=%v, want ErrRevisionConflict", err)
+	}
+
+	// A project row alone pins the identity: its tree (a terminal may have
+	// written files) already lives on this daemon, session or not.
+	cur, err := sandboxes.Get(ctx, id("sb-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	createProjectRow(t, db, id("p-1"), id("sb-1"))
+	movedAgain := &SandboxConfig{Name: "sb-1", Type: "docker", Config: []byte(`{"image":"i","host":"ssh://u@third-host"}`)}
+	sessRefs, projRefs, err = sandboxes.UpdateIdentityIfUnreferenced(ctx, id("sb-1"), movedAgain, cur.Revision)
+	if err != nil || sessRefs != 0 || projRefs != 1 {
+		t.Fatalf("project-held identity update: refs=(%d,%d) err=%v, want (0,1)", sessRefs, projRefs, err)
 	}
 
 	sess := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "s"}
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatal(err)
 	}
-	// Bind at the row's ACTUAL revision (the identity update above bumped it)
-	// — a magic number here is exactly the stale-revision loss the CAS exists
-	// to produce.
-	cur, err := sandboxes.Get(ctx, id("sb-1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	createProjectRow(t, db, id("p-1"), id("sb-1"))
 	if won, err := sessions.BindSandboxIfEmpty(ctx, sess.ID, id("sb-1"), id("p-1"), cur.Revision); err != nil || !won {
 		t.Fatalf("bind: won=%v err=%v", won, err)
 	}
-	movedAgain := &SandboxConfig{Name: "sb-1", Type: "docker", Config: []byte(`{"image":"i","host":"ssh://u@third-host"}`)}
-	refs, err = sandboxes.UpdateIdentityIfUnreferenced(ctx, id("sb-1"), movedAgain, cur.Revision)
-	if err != nil || refs != 1 {
-		t.Fatalf("referenced identity update: refs=%d err=%v, want a refusal naming 1", refs, err)
+	sessRefs, projRefs, err = sandboxes.UpdateIdentityIfUnreferenced(ctx, id("sb-1"), movedAgain, cur.Revision)
+	if err != nil || sessRefs != 1 || projRefs != 1 {
+		t.Fatalf("referenced identity update: refs=(%d,%d) err=%v, want (1,1)", sessRefs, projRefs, err)
 	}
 	got, err := sandboxes.Get(ctx, id("sb-1"))
 	if err != nil {
@@ -101,7 +106,7 @@ func TestSandboxUpdateIdentityIfUnreferenced(t *testing.T) {
 		t.Fatalf("refused update changed the row: %s", got.Config)
 	}
 
-	if _, err := sandboxes.UpdateIdentityIfUnreferenced(ctx, NewID(), moved, 1); !errors.Is(err, ErrNotFound) {
+	if _, _, err := sandboxes.UpdateIdentityIfUnreferenced(ctx, NewID(), moved, 1); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing config: err=%v, want ErrNotFound", err)
 	}
 }
@@ -158,8 +163,8 @@ func TestSandboxRevisionAndGenerationBumps(t *testing.T) {
 
 	// An identity update bumps both (identity is content by definition).
 	moved := &SandboxConfig{Name: "renamed", Type: "docker", Config: []byte(`{"image":"i","host":"ssh://u@h2"}`)}
-	if refs, err := sandboxes.UpdateIdentityIfUnreferenced(ctx, id("sb-1"), moved, 3); err != nil || refs != 0 {
-		t.Fatalf("identity update: refs=%d err=%v", refs, err)
+	if s, p, err := sandboxes.UpdateIdentityIfUnreferenced(ctx, id("sb-1"), moved, 3); err != nil || s != 0 || p != 0 {
+		t.Fatalf("identity update: refs=(%d,%d) err=%v", s, p, err)
 	}
 	if got, _ = sandboxes.Get(ctx, id("sb-1")); got.Revision != 4 || got.RuntimeGen != 3 {
 		t.Fatalf("after identity update (revision, gen) = (%d, %d), want (4, 3)", got.Revision, got.RuntimeGen)

@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -110,18 +109,6 @@ func saveError(c *gin.Context, err error) {
 		return
 	}
 	storeError(c, err)
-}
-
-// requireResource loads a parent resource by id before a sub-resource handler
-// acts on it, so a missing parent is a 404 (via storeError) instead of a
-// misleading downstream status (e.g. "not connected"). It returns false and has
-// already written the error when the resource is missing or the lookup failed.
-func requireResource[T any](c *gin.Context, get func(context.Context, string) (T, error), id string) bool {
-	if _, err := get(c.Request.Context(), id); err != nil {
-		storeError(c, err)
-		return false
-	}
-	return true
 }
 
 // pageParams reads the backwards-pagination query parameters shared by the

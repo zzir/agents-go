@@ -76,9 +76,8 @@ func (h *ProjectHandler) Create(c *gin.Context) {
 		badRequest(c, "name and sandbox_id are required")
 		return
 	}
-	if !requireResource(c, h.sandboxes.Get, req.SandboxID) {
-		return
-	}
+	// The sandbox's existence is the create's own guard (the store locks the
+	// row), so a missing target 404s from the insert itself — no pre-check.
 	p := &store.Project{OwnerID: u.ID, SandboxID: req.SandboxID, Name: req.Name}
 	if err := h.store.Create(c.Request.Context(), p); err != nil {
 		saveError(c, err)

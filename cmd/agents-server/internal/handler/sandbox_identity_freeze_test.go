@@ -70,13 +70,24 @@ func TestSandboxUpdate_FreezesIdentityWhileReferenced(t *testing.T) {
 		t.Fatalf("non-identity update did not land: name=%q password=%q", got.Name, dc.SSHPassword)
 	}
 
-	// The session gone, identity moves freely again.
+	// The session gone, the project row still pins the identity: its tree
+	// lives on this daemon whether or not a session is bound.
 	if err := sessions.Delete(t.Context(), sess.ID); err != nil {
 		t.Fatal(err)
 	}
 	w = doJSON(t, engine, "PUT", "/sandboxStore/"+cfg.ID,
 		`{"name":"box-renamed","type":"docker","config":{"image":"i","host":"ssh://u@h2","persistent":true}}`)
+	if w.Code != 409 {
+		t.Fatalf("identity update with a project row left: %d %s, want 409", w.Code, w.Body.String())
+	}
+
+	// Project gone too, identity moves freely again.
+	if refs, err := store.NewProjectStore(db).DeleteIfUnreferenced(t.Context(), proj.ID); err != nil || refs != 0 {
+		t.Fatalf("delete project: refs=%d err=%v", refs, err)
+	}
+	w = doJSON(t, engine, "PUT", "/sandboxStore/"+cfg.ID,
+		`{"name":"box-renamed","type":"docker","config":{"image":"i","host":"ssh://u@h2","persistent":true}}`)
 	if w.Code != 200 {
-		t.Fatalf("identity update after the last session left: %d %s, want 200", w.Code, w.Body.String())
+		t.Fatalf("identity update after the last project left: %d %s, want 200", w.Code, w.Body.String())
 	}
 }

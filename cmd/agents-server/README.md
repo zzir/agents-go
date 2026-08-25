@@ -1934,11 +1934,13 @@ When a change genuinely doesn't fit, update this list in the same PR.
     with 409 by the delete statement's own `NOT EXISTS` guard, the bind
     carries the mirror `EXISTS` guards over both the config (with its
     revision) and the project row, a project delete carries `NOT EXISTS`
-    over bound sessions, and an update that would change a referenced
-    sandbox's IDENTITY — type and the daemon (host), the fields that decide
-    where the data lives — is refused the same way
-    (`UpdateIdentityIfUnreferenced`), while credentials, name and limits
-    stay editable. A bound session whose sandbox cannot be resolved or built
+    over bound sessions, a project create locks the sandbox row so a racing
+    sandbox delete cascades the new row or refuses the create, and an
+    update that would change a sandbox's IDENTITY — type and the daemon
+    (host), the fields that decide where the data lives — is refused the
+    same way while sessions are bound OR project rows live on the config
+    (`UpdateIdentityIfUnreferenced`; a project's tree exists without any
+    session), while credentials, name and limits stay editable. A bound session whose sandbox cannot be resolved or built
     fails the run loudly rather than degrading to a chat with no tools.
     Sandbox instances are cached per
     `(config id, runtime generation, project id)` with a REFERENCE COUNT

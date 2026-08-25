@@ -180,7 +180,7 @@ func (h *SandboxHandler) Get(c *gin.Context) {
 //	@Success		200		{object}	store.SandboxConfig
 //	@Failure		400		{object}	ErrorResponse
 //	@Failure		404		{object}	ErrorResponse
-//	@Failure		409		{object}	ErrorResponse	"identity change refused (sessions are bound), or the config changed concurrently — re-read and retry"
+//	@Failure		409		{object}	ErrorResponse	"identity change refused (sessions or projects live on it), or the config changed concurrently — re-read and retry"
 //	@Failure		500		{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/sandboxes/{id} [put]
@@ -235,13 +235,13 @@ func (h *SandboxHandler) Update(c *gin.Context) {
 	}
 	contentChanged := prev.Type != cfg.Type || !store.ContentEqual(cfg.Type, prev.Config, cfg.Config)
 	if store.IdentityChanged(prev, cfg) {
-		refs, uerr := h.store.UpdateIdentityIfUnreferenced(ctx, id, cfg, expected)
+		sessions, projects, uerr := h.store.UpdateIdentityIfUnreferenced(ctx, id, cfg, expected)
 		if uerr != nil {
 			storeError(c, uerr)
 			return
 		}
-		if refs > 0 {
-			conflict(c, fmt.Sprintf("%d session(s) are bound to this sandbox; its type, machine, directory and container are frozen — credentials, name and limits stay editable, or create a new sandbox for the new location", refs))
+		if sessions+projects > 0 {
+			conflict(c, fmt.Sprintf("%d session(s) and %d project(s) live on this sandbox; its type, machine, directory and container are frozen — credentials, name and limits stay editable, or create a new sandbox for the new location", sessions, projects))
 			return
 		}
 	} else if err := h.store.Update(ctx, id, cfg, expected, contentChanged); err != nil {

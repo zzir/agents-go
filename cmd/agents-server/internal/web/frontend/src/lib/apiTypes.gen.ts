@@ -3287,7 +3287,7 @@ export interface paths {
                         "application/json": components["schemas"]["handler.ErrorResponse"];
                     };
                 };
-                /** @description identity change refused (sessions are bound), or the config changed concurrently — re-read and retry */
+                /** @description identity change refused (sessions or projects live on it), or the config changed concurrently — re-read and retry */
                 409: {
                     headers: {
                         [name: string]: unknown;
