@@ -61,8 +61,7 @@ from upstream.
   `*UserError` instead of anything else: the run body lives inside the
   iterator, so a second range would re-execute it — model billed again, tools
   re-running their side effects, the session taking duplicates — and it would
-  do so silently, which is how "break out early, then Collect()" once
-  duplicated a run.
+  do so silently.
 - **The result is the stream's terminal event** (`RunCompletedEvent`), emitted
   exactly once on a run that ends without error. A failing run ends with a
   non-nil error and emits no completion — an outcome can never reach one channel
@@ -114,9 +113,8 @@ for turn := 1; ; turn++ {
    wrapped in a `*RunError` carrying the turns that did complete. A
    cancellation noticed inside the loop is a failure like any other; only
    failures from *before* the loop are returned bare.
-2. Budget exhausted → with `ToolLoop.FinalTurnWithoutTools`, call the model
-   once more **without tools** so it can close out in prose. Otherwise return
-   `*MaxTurnsError`.
+2. Budget exhausted → `*MaxTurnsError`, unless `ToolLoop.FinalTurnWithoutTools`
+   buys one last tool-free model call ([§2.7d](#27d-tool-loop-safety-valves)).
 3. HITL interruption → return a `RunResult` carrying `Interruptions` and `State`.
 4. The model produced a final output → see [§2.3](#23-deciding-the-final-output).
 
@@ -161,12 +159,9 @@ reinterprets one must raise the floor to itself. See [§5.18](#518-a-runstate-de
 **`RunItem` is one struct with a `Kind`, not an interface.** The kinds are a
 closed set the runner produces — message, tool call, tool output, handoff
 call/output, reasoning, injected input, unknown — and a caller cannot add one,
-which is the definition of a union, not of a polymorphic seam. As an interface
-it took seven near-identical implementations (five were `{Agent, Raw}` plus a
-tag) restating six methods each, and serialization still had to flatten them:
-a stored `RunState` holds `{type, agent, input, source, display}`, and reading
-it back required an eighth, unexported implementation whose only job was to
-carry those fields. The struct IS that shape, live and stored.
+which is the definition of a union, not of a polymorphic seam. A stored
+`RunState` holds `{type, agent, input, source, display}`, and the struct IS
+that shape, live and stored — serialization flattens nothing.
 
 Consumers switch on `Kind` and must treat an unrecognized kind as opaque —
 render it via `Display()`, never fail — so the set can grow without breaking
@@ -184,9 +179,8 @@ Beyond its payload, every item reports two things:
   own: input the caller injected after the last model call is external and is
   still off the chain.
 
-  This replaced a sentinel response id (`__fake_id__`) stamped on synthesized
-  items, which every consumer that cared had to know and string-compare.
-  Provenance is not an id.
+  Provenance is a field, not a sentinel response id stamped on synthesized
+  items that every consumer would have to know and string-compare.
 
 - **`Display()` — the projection a renderer needs**, produced by the SDK, which
   knows the wire format. It is a **hint**: a consumer that ignores it entirely
@@ -392,13 +386,8 @@ outputs after resume.
 This guarantee does not survive an abnormal process exit; a `RecoveryPolicy`
 repairs dangling state when the session is reopened.
 
-**Entries are append-only.** An entry's display may need
-updating long after the turn that produced it has ended — a background task
-card, a late diagnostic. That is expressed as a **new update entry** naming its
-target, folded in at projection time; entries are never rewritten in place.
-Multiple updates to one target merge in sequence order. An update whose target
-does not exist is ignored, not an error — the target may have been folded away
-by compaction.
+**Entries are append-only** — a display that settles late is a new update
+entry folded in at read time, never a rewrite ([§2.5b](#25b-session-entries)).
 
 ### 2.5b Session entries
 
@@ -416,11 +405,8 @@ compaction checkpoint, terminal output).
   `RunOptions.Conversation.Projectors` overrides this per kind.
 - **A compaction summary projects as a *system* message**, not a user one:
   nobody said it, and attributing it to the user would put words in their mouth.
-- **A checkpoint copies nothing.** It NAMES what it folded (`ExcludedIDs`) and
-  carries only content that exists nowhere else — the summary, and stand-ins
-  for folded groups (`CompactionFold`). The entries a pass kept are never
-  inside it: a copy of a live entry has to be kept in step with the tree —
-  falling out of step is why the earlier self-contained shape was removed.
+- **A checkpoint copies nothing** — it names what it folded and carries only
+  content that exists nowhere else ([§2.5f](#25f-compaction)).
 
 **Entries are append-only.** Nothing is rewritten in place; that is what lets
 a session be forked, shared and read concurrently without a writer invalidating
@@ -525,9 +511,9 @@ An entry names its parent, so a session is a walk rather than a pile.
   through one helper (`ActiveBranchOf`).
 - **A walk does NOT stop at a compaction checkpoint.** The walk answers "which
   entries are on this branch", and a folded entry is still on the branch it was
-  written to; what the model sees is projection's question. Stopping the walk
-  at a checkpoint is how the kept entries once became unreachable to a pop
-  while the model could still see them. A missing parent ends the walk (a
+  written to; what the model sees is projection's question. A walk stopped at
+  a checkpoint would hide the kept entries from a branch-scoped reader while
+  the model could still see them. A missing parent ends the walk (a
   filtered view may have dropped an ancestor), and a repeated id does too, so a
   corrupt session reads short instead of hanging.
 
@@ -572,10 +558,9 @@ A `SessionRepo` owns which sessions exist, separately from their contents.
 ### 2.5e2 The entry lifecycle contract
 
 Everything above describes what a session *is*. This describes what happens to
-an entry over its life — minted, addressed, walked, removed — and it exists as
-one section because the alternative was tried: these rules were decided one at a
-time, in whichever backend a defect was reported against, and four
-implementations drifted apart on every one of them.
+an entry over its life — minted, addressed, walked, removed — in one section,
+because rules decided one at a time, in whichever backend a defect surfaces,
+drift apart across implementations.
 
 **The rule this section is really about: none of it is a backend's decision.**
 Each item below names who implements it. Where that is "shared", a backend that
@@ -648,10 +633,6 @@ next backend will answer differently.
   N (a negative limit) is unaffected; resuming from `AfterSeq` is best-effort
   there. *Per backend.*
 
-#### The tree
-
-- **Parent links are assigned by the minting code**, which is the only layer
-  that knows the ids it is about to hand out.
 #### The change record
 
 - **Every change moves a session in its listing**, not just an append:
@@ -833,9 +814,9 @@ is abandoned every run while the log grows. Pinning the chain mode and
 configuring a read window is a conflict only the caller can resolve, by dropping
 one of the two — which is why the window half is measured rather than assumed,
 so a log that never reached its window is never mistaken for that conflict.
-**The runner does not decide this by skipping the pass.** It used to, and that
-took the decision away from a storage with no chain to be wrong about: an agent
-that always finishes through a terminating tool never compacted at all.
+**The runner does not decide this by skipping the pass**: a runner-side skip
+would take the decision away from a storage with no chain to be wrong about —
+an agent that always finishes through a terminating tool would never compact.
 
 **That rewrite is guarded by the sequence number it read.** Reading the history
 and writing the replacement are separated by a network round trip, and an entry
@@ -1140,13 +1121,9 @@ being called is a **field** on it: `OnInvoke`, `Description`,
 `FailureErrorFunction = nil`. It is expressible because it is a field — an
 absence a wrapper could not have represented.
 
-**Why fields and not an interface with optional side interfaces:** that was the
-previous design, and it had exactly one concrete implementation
-(`*Tool`) plus eight wrapper shells whose only job was to set what were
-already fields on it. The wrappers required a `ToolAs[T]` unwrap walker, and a
-bare type assertion through a wrapper silently reported that a tool needing
-approval needed none — a trap the design created and then had to specify around.
-A field cannot hide behind a wrapper.
+**Why fields and not an interface with optional side interfaces:** wrappers
+hide capabilities — a bare type assertion through a wrapper silently reports
+that a tool needing approval needs none. A field cannot hide behind a wrapper.
 
 ### 2.7d Tool-loop safety valves
 
@@ -1185,9 +1162,9 @@ A response the provider marks `status="incomplete"` with reason
 - **Truncation is not failure.** It is fed back to the model rather than
   failing the run, which would throw a turn's work away over a length limit.
   Every other incomplete reason still fails.
-- Both model paths report it. The blocking path used to drop `Status` while the
-  streaming path read it, so the same response was a hard failure when streamed
-  and a silent partial answer when not.
+- Both model paths report it: `Status` reaches the loop from the blocking call
+  and the stream alike, so a response classifies the same way however it
+  arrived.
 - **None of its tool calls PAUSE, either.** A truncated call never becomes an
   approval interruption: pausing puts a doomed call in front of a human, and an
   approval serialized into a `RunState` and resumed elsewhere would execute
@@ -1225,9 +1202,9 @@ A response the provider marks `status="incomplete"` with reason
 Tool arguments, handoff input and structured outputs are validated against the
 **whole** JSON Schema, not a root-level `required` check.
 
-- Nested `required`, nested type mismatches, enums and bounds are enforced.
-  The old check meant `{"config":{"host":"x"}}` satisfied a schema requiring
-  `config.port`, and the tool received a zero value it had no way to notice.
+- Nested `required`, nested type mismatches, enums and bounds are enforced. A
+  root-only check would let `{"config":{"host":"x"}}` satisfy a schema
+  requiring `config.port`, handing the tool a zero value it cannot notice.
 - Errors carry a **JSON-pointer path**, which is what a model needs to correct
   its own output.
 - Schema `default` values are applied before decoding. A schema that advertises
@@ -1445,17 +1422,15 @@ how they compose) are undecided.
   classification.** The typed errors carry their data fields and nothing
   else; `CodeOf` maps type → code, so an error built as a struct literal
   classifies identically to a constructed one, and a mismatch between a code
-  field and a type cannot exist because there is no code field. (The previous
-  design carried both, and they disagreed exactly as often as a constructor
-  was bypassed — `CodeOf` needed a rescue path for it.)
+  field and a type cannot exist because there is no code field.
 - **A run that fails after its loop started returns a `*RunError`** wrapping
   the cause and carrying the partial progress as a `*RunResult` (nil
   `FinalOutput`): input, generated items, raw responses, usage, guardrail
   results, diagnostics. One shape for finished and failed runs — a failed run
   is a run without an answer, not a different kind of object. It wraps
   UNCONDITIONALLY: a plain error from a hook or a session write carries the
-  progress too, where the previous details-on-the-base design silently dropped
-  it for any cause that was not an SDK-typed error. Errors from before the
+  progress too — wrapping keyed to the cause's type would silently drop it
+  for any cause that is not an SDK-typed error. Errors from before the
   loop (bad options, unresolvable model) are returned bare — there is no
   progress to report.
 - `Classify(code, err)` tags an error **without hiding it**: `errors.Is` and
@@ -1489,13 +1464,10 @@ their interactions are pinned, not emergent:
   agent-end hook, then **output guardrails**, then persistence. A guardrail's
   Replace rewrites a fallback like any other output; a tripwire fails the
   recovery. There is no side door to "finished" that skips the checks.
-- **An overflow retry moves no other counter.** It does not spend the turn
-  budget ([§2.5g](#25g-context-overflow)), and it does not touch the tool-loop
-  valve either: `ToolLoop` counts turns whose TOOL RESULTS all failed, and an
-  overflow turn produced no tool results — the counter neither advances nor
-  resets across the retry.
-- **The tool-loop valve counts only tool turns.** A turn with no tool calls
-  neither advances nor resets it; any single successful tool call resets it.
+- Overflow retries spend no turn budget and, having produced no tool results,
+  move the tool-loop valve neither way — [§2.5g](#25g-context-overflow).
+- Only tool-calling turns count toward `MaxConsecutiveErrorTurns` —
+  [§2.7d](#27d-tool-loop-safety-valves).
 - **`ToolLoopError` has no handler.** `ErrorHandlers` covers max turns, model
   refusal and invalid final output; a tripped tool-loop valve is always fatal —
   it exists to stop a run that is demonstrably not progressing, and a fallback
@@ -1509,11 +1481,8 @@ their interactions are pinned, not emergent:
   continuation happens INSTEAD of `finishRun`, and the turn budget keeps
   counting across it. `MaxTurns` still bounds the continued run, and its
   handler can still recover the overrun.
-- **`ShouldStopAfterTurn` is consulted at turn boundaries only** — after the
-  turn's items are persisted, including the handoff boundary — so a stop never
-  needs unwinding; `PrepareNextTurn` runs at the same boundary and shapes the
-  turn that follows, so the two compose by order: stop is asked first, prepare
-  only runs if the answer was "continue".
+- `ShouldStopAfterTurn` is asked at turn boundaries, before `PrepareNextTurn`
+  — [§2.3a](#23a-the-save-point)'s step order, [§2.3c](#23c-stopping-early).
 
 ---
 
@@ -1580,13 +1549,11 @@ consumer on its own, so per-subscriber buffering is needed either way.
 `Run` returns a `RunControl` alongside the stream. It is safe to use from
 another goroutine, including before ranging begins.
 
-RunControl is stop + injection + pending, nothing more. An introspection trio
-(`Phase`/`CurrentAgent`/`CurrentTurn`) shipped here for a while and was removed
-with zero consumers: every real host renders progress from the stream's own
-events, which carry strictly more information. Beyond `StopAfterTurn`, it has
-three **injection methods** feeding one arrival-ordered queue; the two
-consumption points filter by kind, and only two kinds may extend a run that
-was ending:
+RunControl is stop + injection + pending, nothing more — no introspection
+surface: a host renders progress from the stream's own events, which carry
+strictly more information. Beyond `StopAfterTurn`, it has three **injection
+methods** feeding one arrival-ordered queue; the two consumption points filter
+by kind, and only two kinds may extend a run that was ending:
 
 | | Consumed at | Extends a finishing run |
 |---|---|---|
@@ -1687,11 +1654,9 @@ A `Diagnostic` records trouble a run went through **and survived**.
   to it), and on `session.Entry.Diagnostics`.
 - **Each is attached to the turn it happened in**, on that batch's last entry,
   not repeated on every turn after.
-- **The sink travels on the `context.Context`**, because a `Model` receives one
-  and nothing else that belongs to the run. A sink passed by field would need
-  every decorator in the chain to forward it, and the one that forgot would
-  swallow silently. `RecordDiagnostic` is a no-op without a sink, so a
-  decorator used outside a run still works.
+- **The sink travels on the `context.Context`**, for the same reason the span
+  parent does ([§2.11e](#211e-span-coverage)). `RecordDiagnostic` is a no-op
+  without a sink, so a decorator used outside a run still works.
 - `DiagnosticType` is an **open vocabulary**: an unknown type is displayed
   generically, never rejected.
 
@@ -1712,9 +1677,9 @@ A `Diagnostic` records trouble a run went through **and survived**.
   without each call site repeating the attribute.
 - **The logger's handler sets the level floor.** Most of what the SDK says is
   `Debug`; hand it a dedicated logger whose handler enables Debug to see it
-  without enabling Debug application-wide. (A `Level` override field existed
-  and was removed: it ANDed with the handler's own gate, so it could only
-  tighten — the loosening its doc promised was impossible.)
+  without enabling Debug application-wide. (There is no `Level` override
+  field: ANDed with the handler's own gate it could only tighten, never
+  loosen.)
 - Logging and tracing are configured separately, as are their sensitive-data
   switches: exporting spans and writing log lines are different exposures.
 
@@ -1913,43 +1878,45 @@ below are behavior, not implementation detail — see [tasks.md](tasks.md).
   are recorded here instead.
 - **A task is the ONE shape of background work, and its work may span several
   runs.** A job of a fixed step sequence, or a loop until a check passes, is a
-  task whose runs are chained rather than a second lifecycle beside tasks:
-  `Config.Continue` is asked when a run of the current attempt completes or
-  fails — only when the outcome NAMES the run (an outcome without a run id
+  task whose runs are chained rather than a second lifecycle beside tasks.
+  Everything else — the hidden session, stop, retry, the restart sweep, the
+  approval pause, the cap, the wake-up — is then written once.
+- **`Config.Continue` is asked when a run of the current attempt completes or
+  fails** — only when the outcome NAMES the run (an outcome without a run id
   can only finalize the attempt the row names, never advance it: a duplicate
   delivery would otherwise bind to whichever run is current and advance
   twice) and only while the row is still working on it (a row paused for an
-  approval is not moved on: its run is not over) — and a `Continuation` moves
-  the task to its next run through
-  `Store.Advance` — run id and the host's `State` replaced in ONE
-  compare-and-set, only while the task is working on the run the hook was
-  asked about (a nil `State` keeps the recorded one, as `Finalize` does) — or,
-  without an `Input`, ends it, its final `State` written in
-  the same `Finalize` as the ending (`Store.Finalize` carries it), so the
-  record of a job's last run and its status are one write. Everything else — the hidden session, stop, retry, the restart
-  sweep, the approval pause, the cap, the wake-up — is then written once. The
-  hook is never asked about a cancellation (a person's stop ends the task
-  whatever the host would do next) nor about a superseded attempt's outcome
-  (it would lose the transition anyway); an error from it ends the task failed
-  with that reason, and a next run that fails to launch ends it failed too,
-  reported like any ending. A transition the claim does NOT win is finalized
+  approval is not moved on: its run is not over). The hook is never asked
+  about a cancellation (a person's stop ends the task whatever the host would
+  do next) nor about a superseded attempt's outcome (it would lose the
+  transition anyway); an error from it ends the task failed with that reason,
+  and a next run that fails to launch ends it failed too, reported like any
+  ending.
+- **A `Continuation` moves the task to its next run through `Store.Advance`**
+  — run id and the host's `State` replaced in ONE compare-and-set, only while
+  the task is working on the run the hook was asked about (a nil `State`
+  keeps the recorded one, as `Finalize` does). Without an `Input` it ends the
+  task instead, its final `State` written in the same `Finalize` as the
+  ending (`Store.Finalize` carries it), so the record of a job's last run and
+  its status are one write. A transition the claim does NOT win is finalized
   on the run that ended, failed — `Finalize`'s own predicate then decides: a
   stop, a sweep or a retry that moved the row wins as before, while a row a
   pause report of that same run put back to `input_required` inside the
   hook's window (an ordering the store contract allows) ends rather than
-  strands on a run nobody will resume. The chain is bounded:
-  `Config.MaxContinuations` (default 50) is how many further runs the hook
-  may chain under one task since the spawn or the last retry — a hook still
-  asking at the bound ends the task failed, the ceiling on a loop no check
-  ever ends — the same posture as `MaxAttemptsPerTask` and `MaxDepth`: every
-  axis a task can grow along has one. `Task.Kind` and `Task.State` are the host's
-  vocabulary and record, opaque to the SDK (`Config.DescribeState` is how a
-  host says where a job of its kind stands, in one line the task tools show)
-  — which is the layering: the SDK
-  owns the durable multi-run job, the host owns what a job of a given kind IS
-  (a workflow's definition, its steps, its edges). `Advance` with the same run
-  id on both sides rewrites State under the CAS, which is how a launcher
-  records the run it is about to start beside no second write.
+  strands on a run nobody will resume. `Advance` with the same run id on both
+  sides rewrites `State` under the CAS, which is how a launcher records the
+  run it is about to start beside no second write.
+- **The chain is bounded.** `Config.MaxContinuations` (default 50) is how
+  many further runs the hook may chain under one task since the spawn or the
+  last retry — a hook still asking at the bound ends the task failed, the
+  ceiling on a loop no check ever ends — the same posture as
+  `MaxAttemptsPerTask` and `MaxDepth`: every axis a task can grow along has
+  one.
+- **`Task.Kind` and `Task.State` are the host's vocabulary and record, opaque
+  to the SDK** (`Config.DescribeState` is how a host says where a job of its
+  kind stands, in one line the task tools show) — which is the layering: the
+  SDK owns the durable multi-run job, the host owns what a job of a given
+  kind IS (a workflow's definition, its steps, its edges).
 - **One cap governs every kind of background work** — a consequence of the
   above: every kind is a task, so `MaxConcurrentPerParent` counts them all,
   and nothing can hide behind a count of its own.
@@ -2090,10 +2057,10 @@ below are behavior, not implementation detail — see [tasks.md](tasks.md).
   that has not, so a caller offering a retry needs the ceiling — `MaxAttempts`
   hands over the parameter, and the caller derives the answer from the status
   and attempt it already tracks, so its offer moves with the state rather than
-  lag a round trip behind it. The parameter is the WHOLE api on purpose: a
-  precomputed per-task boolean was tried and died unread — every consumer
-  (server relay, web UI, the model tools) preferred deriving from state in
-  hand. **Capacity is deliberately excluded**: the parent's live-task limit
+  lag a round trip behind it. The parameter is the WHOLE api on purpose:
+  every consumer (server relay, web UI, the model tools) derives from state
+  in hand, and a precomputed per-task boolean would go unread.
+  **Capacity is deliberately excluded**: the parent's live-task limit
   can change between an offer being rendered and someone taking it, so a
   precomputed answer would be wrong as often as right — that refusal arrives
   as `ErrTaskLimit` at call time, which explains itself; a retry that loses
@@ -2112,14 +2079,14 @@ below are behavior, not implementation detail — see [tasks.md](tasks.md).
   just started and report what the task actually is. The second half is what
   covers the terminators that never speak to the host at all: an approval
   reaper, a restart sweep.
-- **Every attempt-scoped write names its attempt.** `Finalize` always did;
-  `MarkInputRequired` and `ReclaimWorking` once ran unbound on
-  the argument that a non-terminal state can only belong to the current
-  attempt. An APPROVAL breaks that argument: persisted before the pause lands
-  on the task row, it can outlive its attempt across a crash, a `FailOrphans`
-  sweep and a retry — and an unbound writer acting for it would pause, reclaim
-  or (through the expiry reaper) cancel the attempt that replaced its own. All
-  four transitions now carry the run-id predicate; a stale approval's write is
+- **Every attempt-scoped write names its attempt** — `Finalize`,
+  `MarkInputRequired` and `ReclaimWorking` alike. "A non-terminal state can
+  only belong to the current attempt" is no argument for an unbound writer,
+  because an APPROVAL breaks it: persisted before the pause lands on the task
+  row, it can outlive its attempt across a crash, a `FailOrphans` sweep and a
+  retry — and an unbound writer acting for it would pause, reclaim or
+  (through the expiry reaper) cancel the attempt that replaced its own. All
+  four transitions carry the run-id predicate; a stale approval's write is
   a silent no-op, its resolve is refused as stale (and discarded, not retried
   — restored it would refuse forever), and the reaper finalizes against the
   expired approval's OWN run id, never the row's current one.
@@ -2869,11 +2836,8 @@ discovery. Consequences, all intended:
 - **Import URLs are member-supplied outbound requests** (GitHub API, raw
   fetches), like provider base URLs and MCP endpoints — the absence of an
   SSRF defense is §5.29's recorded accepted risk. Each fetch is bounded by
-  a 30-second timeout, connect through body read, and the whole import by a
-  five-minute budget (both revised 2026-08-25) — a stalling target must not
-  hold the handler's connection open indefinitely, and per-fetch bounds
-  alone would let a ~200-file walk of stalling fetches stretch into hours.
-  Files past an expired budget land in `skipped` with the deadline error.
+  a 30-second timeout, connect through body read (revised 2026-08-25) — a
+  stalling target must not hold the handler's connection open indefinitely.
 
 Do not add per-skill file storage back; a skill needing an artifact should
 inline it or instruct the model to fetch it.
