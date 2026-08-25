@@ -2836,8 +2836,12 @@ discovery. Consequences, all intended:
 - **Import URLs are member-supplied outbound requests** (GitHub API, raw
   fetches), like provider base URLs and MCP endpoints — the absence of an
   SSRF defense is §5.29's recorded accepted risk. Each fetch is bounded by
-  a 30-second timeout, connect through body read (revised 2026-08-25) — a
-  stalling target must not hold the handler's connection open indefinitely.
+  a 30-second timeout, connect through body read, and the whole import by
+  a five-minute budget (both revised 2026-08-25) — a stalling target must
+  not hold the handler's connection open indefinitely, and per-fetch bounds
+  alone would let a ~200-file walk of stalling fetches stretch into hours.
+  Files past an expired budget land in `skipped` with the deadline error,
+  never dropped silently.
 
 Do not add per-skill file storage back; a skill needing an artifact should
 inline it or instruct the model to fetch it.

@@ -75,6 +75,12 @@ func (h *SkillHandler) Import(c *gin.Context) {
 		badRequest(c, "only http(s) URLs are supported")
 		return
 	}
+	// One deadline over the whole import: a GitHub walk is up to ~202 serial
+	// fetches, and per-fetch timeouts alone would let a stalling target
+	// stretch that into hours (spec §5.26).
+	ctx, cancel := context.WithTimeout(c.Request.Context(), skillImportBudget)
+	defer cancel()
+	c.Request = c.Request.WithContext(ctx)
 	var resp *skillImportResp
 	var err error
 	if owner, repo, ok := parseGitHubRepoURL(rawURL); ok {
@@ -112,6 +118,10 @@ func parseGitHubRepoURL(raw string) (owner, repo string, ok bool) {
 // target that accepts and stalls must not hold the handler's goroutine and
 // connection open for as long as the client cares to wait.
 const skillFetchTimeout = 30 * time.Second
+
+// skillImportBudget bounds one whole import, fetches and writes together.
+// Files past an expired budget land in skipped with the deadline error.
+const skillImportBudget = 5 * time.Minute
 
 // httpClient is the import fetcher: the proxy_url client when one is set,
 // a plain client otherwise (ProxyClient returns nil for "no proxy") — either
