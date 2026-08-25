@@ -15,8 +15,9 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
-// MCP save-time validation rejects a config missing its endpoint, instead of
-// letting a broken server sit in the DB until the first connect fails.
+// MCP save-time validation rejects a config that cannot connect — a missing
+// or non-URL endpoint, an unknown auth mode, out-of-range retry settings —
+// instead of letting a broken server sit in the DB until the first connect fails.
 func TestMcpServerReqValidate(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -24,10 +25,19 @@ func TestMcpServerReqValidate(t *testing.T) {
 		wantSub string // "" = valid
 	}{
 		{"valid http", mcpServerReq{Name: "a", Config: json.RawMessage(`{"endpoint":"http://x"}`)}, ""},
+		{"valid https oauth", mcpServerReq{Name: "a", Config: json.RawMessage(`{"endpoint":"https://x/mcp","auth_mode":"oauth"}`)}, ""},
+		{"valid header mode", mcpServerReq{Name: "a", Config: json.RawMessage(`{"endpoint":"http://x","auth_mode":"header"}`)}, ""},
+		{"valid unlimited retries", mcpServerReq{Name: "a", Config: json.RawMessage(`{"endpoint":"http://x","max_retry_attempts":-1,"retry_backoff_ms":500}`)}, ""},
 		{"no name", mcpServerReq{Config: json.RawMessage(`{"endpoint":"http://x"}`)}, "name is required"},
 		{"no config", mcpServerReq{Name: "a"}, "config.endpoint is required"},
 		{"no endpoint", mcpServerReq{Name: "a", Config: json.RawMessage(`{}`)}, "config.endpoint is required"},
 		{"bad config", mcpServerReq{Name: "a", Config: json.RawMessage(`"notobj"`)}, "not valid JSON"},
+		{"not a url", mcpServerReq{Name: "a", Config: json.RawMessage(`{"endpoint":"not-a-url"}`)}, "absolute http(s) URL"},
+		{"wrong scheme", mcpServerReq{Name: "a", Config: json.RawMessage(`{"endpoint":"ftp://x/mcp"}`)}, "absolute http(s) URL"},
+		{"no host", mcpServerReq{Name: "a", Config: json.RawMessage(`{"endpoint":"http:///mcp"}`)}, "absolute http(s) URL"},
+		{"unknown auth mode", mcpServerReq{Name: "a", Config: json.RawMessage(`{"endpoint":"http://x","auth_mode":"basic"}`)}, "auth_mode"},
+		{"retries below -1", mcpServerReq{Name: "a", Config: json.RawMessage(`{"endpoint":"http://x","max_retry_attempts":-2}`)}, "max_retry_attempts"},
+		{"negative backoff", mcpServerReq{Name: "a", Config: json.RawMessage(`{"endpoint":"http://x","retry_backoff_ms":-1}`)}, "retry_backoff_ms"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

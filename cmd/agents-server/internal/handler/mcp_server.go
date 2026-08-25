@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"html"
 	"net/http"
+	"net/url"
 
 	"github.com/gin-gonic/gin"
 
@@ -149,13 +150,27 @@ func (r *mcpServerReq) validate() string {
 	if hc.Endpoint == "" {
 		return "config.endpoint is required"
 	}
+	if u, err := url.Parse(hc.Endpoint); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "config.endpoint must be an absolute http(s) URL"
+	}
+	switch hc.AuthMode {
+	case "", "header", "oauth":
+	default:
+		return `config.auth_mode must be "header" or "oauth"`
+	}
+	if hc.MaxRetryAttempts < -1 {
+		return "config.max_retry_attempts must be -1 (unlimited), 0 (off), or a retry count"
+	}
+	if hc.RetryBackoffMs < 0 {
+		return "config.retry_backoff_ms cannot be negative"
+	}
 	return ""
 }
 
 // Create persists a new MCP server configuration from the request body.
 //
 //	@Summary		Create MCP server
-//	@Description	config is {endpoint, headers, auth_mode, oauth_*} (streamable HTTP). Header values and oauth_client_secret are write-only (******** mask semantics).
+//	@Description	config is {endpoint, headers, auth_mode, oauth_*} (streamable HTTP); endpoint must be an absolute http(s) URL. Header values and oauth_client_secret are write-only (******** mask semantics).
 //	@Tags			mcp-servers
 //	@Accept			json
 //	@Produce		json
