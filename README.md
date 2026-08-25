@@ -26,25 +26,12 @@ your data, embeddable SDK. Solo or as a team.
 
 ## Get started
 
-1. **Get the binary.** From [Releases](https://github.com/zzir/agents-go/releases):
-   download the archive for your OS and CPU (macOS, Linux, Windows; amd64,
-   arm64) and extract it — the `agents-server` binary is at the top level. For
-   example, on an Apple-silicon Mac with the GitHub CLI:
-
-   ```bash
-   gh release download --repo zzir/agents-go --pattern '*_darwin_arm64.tar.gz'
-   tar xzf agents-server_*_darwin_arm64.tar.gz
-   ```
-
-   (A browser download on macOS is quarantined and Gatekeeper refuses the
-   unsigned binary; `xattr -d com.apple.quarantine ./agents-server` clears
-   it.) Or build from source — Go 1.27+ and npm, the UI is compiled into the
-   binary:
-
-   ```bash
-   git clone https://github.com/zzir/agents-go && cd agents-go/cmd/agents-server
-   make build
-   ```
+1. **Get the binary.** Download the archive for your OS and CPU from
+   [Releases](https://github.com/zzir/agents-go/releases) and extract it — the
+   `agents-server` binary is at the top level. (On macOS, Gatekeeper refuses
+   the unsigned binary; `xattr -d com.apple.quarantine ./agents-server`
+   clears it.) Or build from source: see the manual's
+   [Quick start](cmd/agents-server/README.md#quick-start).
 
 2. **Run it.**
 
@@ -54,10 +41,11 @@ your data, embeddable SDK. Solo or as a team.
 
    It listens on `http://127.0.0.1:9527` and prints an auth token at startup;
    paste the token into the login screen. A Docker daemon is required for
-   sandboxes (local, or a remote one over SSH). State lives in `data.db` in
-   the directory you ran it from (`--db`; a `postgres://` DSN uses PostgreSQL
-   instead); project trees live under `--workspace` (default `.`). All
-   flags: [manual](cmd/agents-server/README.md#flags).
+   sandboxes — on this machine, or a remote daemon (SSH or TCP). State lives
+   in `data.db` in the directory you ran it from (`--db`; a `postgres://` DSN
+   uses PostgreSQL instead); with a local daemon, project trees live under
+   `--workspace` (default `.`). All flags:
+   [manual](cmd/agents-server/README.md#flags).
 
 3. **Add a provider, create an agent, chat.** Settings → Providers: an OpenAI
    or Anthropic API key, or sign in with ChatGPT. Settings → Agents: name,
@@ -65,8 +53,9 @@ your data, embeddable SDK. Solo or as a team.
 
 ## What you get
 
-- **Zero infrastructure.** One process and one SQLite file hold the agents,
-  sessions, traces, approvals and tasks. The one external dependency is the
+- **Zero infrastructure.** One process and one database — a single SQLite
+  file by default, or your own PostgreSQL — hold the agents, sessions,
+  traces, approvals and tasks. The one external dependency is the
   Docker daemon that backs sandboxes — the server itself shells out to
   nothing (details in the [server manual](cmd/agents-server/README.md)).
 - **The transcript is the truth.** A session is an append-only tree: every
@@ -78,13 +67,13 @@ your data, embeddable SDK. Solo or as a team.
   the token cost of each, how much of the window is in use, cache hits,
   growth per call, and how far to the next auto-compaction. Compact on demand.
 - **Traces without a backend.** Agent / generation / tool / sandbox / handoff /
-  guardrail spans with tokens and latency, in a panel beside the conversation.
-  No collector to run.
+  guardrail / compaction spans with tokens and latency, in a panel beside the
+  conversation. No collector to run.
 - **Replay any generation.** Re-run a traced model call with a different
   prompt, model, settings or tools — streaming, with a diff against the
   original and the attempts kept side by side. No session is touched.
 - **Real sandboxes behind an approval gate.** Docker containers — on this
-  machine or a remote daemon over SSH; the model
+  machine, or a remote daemon (SSH or TCP); the model
   reads and edits files (`apply_patch`) and runs commands; approve a command
   once, trust that command, or trust the session; interactive terminals into a
   container, in the browser.
@@ -94,7 +83,7 @@ your data, embeddable SDK. Solo or as a team.
   by cron, or by a signed webhook — and, for an agent you opt in, authored
   from the chat, each save reviewed and approved in the conversation.
 - **The configuration surface.** MCP servers (streamable HTTP, with OAuth),
-  Agent Skills, memories, guardrails.
+  Agent Skills, sandboxes, projects, memories, guardrails.
 - **Providers.** OpenAI Responses API (API key or ChatGPT sign-in), Anthropic
   Messages API, or any Responses-compatible endpoint by base URL.
 - **A team, when you need one.** `--auth oauth` replaces the single token with
@@ -105,13 +94,8 @@ your data, embeddable SDK. Solo or as a team.
   stored credentials are sealed at rest with a key only the process holds.
   Details: [Authentication](cmd/agents-server/README.md#authentication).
 
-## The debug loop
-
-Look at what the model saw — the transcript, the Trace panel, the Context
-lens. Change something — the prompt, tools or model in Settings, or the traced
-request itself in Replay. Re-run — Replay for one call with no side effects,
-Regenerate for the last turn, fork to branch from any earlier turn. Compare —
-the Replay diff, or two forks side by side.
+Together these close the debug loop: see what the model saw, change it,
+re-run — one call, one turn, or a fork — and diff the results.
 
 ## Built on agents-go, a Go SDK you can embed
 
@@ -122,13 +106,10 @@ you can do from your own code:
 go get github.com/zzir/agents-go
 ```
 
-> **Pre-1.0 API notice.** Until v1.0.0, a minor release may rename or remove
-> exported identifiers. Breaks are batched into as few releases as possible,
-> and every one is recorded in the
-> [release notes](https://github.com/zzir/agents-go/releases) with the old
-> spelling beside the new. If you embed the SDK in production: pin the
-> version, and when you bump it, hand the release notes to your coding agent —
-> they are written to work as a migration map.
+> **Pre-1.0 API notice.** Until v1.0.0 a minor release may rename or remove
+> exported identifiers — pin the version. Breaking renames are batched, and the
+> [release notes](https://github.com/zzir/agents-go/releases) carry every old
+> spelling beside the new.
 
 ```go
 package main
@@ -180,18 +161,11 @@ guardrails, typed tools, structured output, streaming, approvals. By topic:
   [Testing](docs/testing.md) — a scripted `Model` fake tests agents
   without a key
 
-The core is one small module; MCP, the Docker sandbox, SQL sessions,
-skills and the Anthropic provider are opt-in submodules
-([packages](docs/features.md#packages)). Behavior is
-[specified](docs/spec.md), not inherited: the SDK started as a port of the
-[OpenAI Agents SDK](https://github.com/openai/openai-agents-python) and now
-evolves on its own — see [Architecture](docs/architecture.md), the
-[feature reference](docs/features.md), and
-[Coming from Python?](docs/migration_from_python.md).
+The core is one small module; the heavier capabilities are opt-in submodules
+([packages](docs/features.md#packages)). Arriving from the OpenAI Agents SDK?
+Start at [Coming from Python?](docs/migration_from_python.md).
 
-The workbench runs the agents you configure in it; the SDK runs agents in
-your own program, with its own session stores and tracing exporters. They
-share the core and nothing else — the SDK does not report to the workbench
+The SDK stands alone — it never depends on or reports to the workbench
 ([spec §1.2](docs/spec.md#12-non-goals)).
 
 Nearly every SDK capability has a runnable example under
@@ -203,8 +177,6 @@ go run ./examples/hello      # minimal agent
 go run ./examples/handoffs   # triage agent → specialists
 go run ./examples/hitl       # pause, approve, resume
 ```
-
-See [docs/examples.md](docs/examples.md) for all of them.
 
 ## License
 
