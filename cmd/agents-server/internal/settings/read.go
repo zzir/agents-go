@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
@@ -16,9 +17,12 @@ import (
 //
 // Reads are not cached: every consumer reads per run, per connect or per tick,
 // never per token, and a cache would owe an invalidation contract nobody asked
-// for.
+// for. ProxyClient pools the client it BUILDS from a read, which is a
+// different thing — the key is the value, so there is nothing to invalidate.
 type Reader struct {
 	store *store.SettingStore
+	// clients pools one *http.Client per proxy URL; see ProxyClient.
+	clients sync.Map
 }
 
 // NewReader returns a Reader over s. A nil store is valid and reads defaults.
@@ -90,10 +94,26 @@ func (r *Reader) BoolPtr(ctx context.Context, key string) *bool {
 
 // ProxyClient returns an *http.Client routed through the proxy_url setting,
 // or nil when none is set.
+//
+// The setting is read every call, as everything here is; what is pooled is the
+// client, keyed by the URL it was built for. A fresh http.Transport per call
+// is a fresh connection pool per call, and the callers are every agent build,
+// every compaction, every MCP transport and every token refresh — so with a
+// proxy configured, nothing was ever reused. Keying on the URL is also the
+// whole invalidation story: an edited setting lands on a different key.
+//
+// A nil Reader reads no store, and proxy_url has no default, so it proxies
+// nothing — and has no pool to key a client on either.
 func (r *Reader) ProxyClient(ctx context.Context) *http.Client {
 	u, err := url.Parse(r.String(ctx, KeyProxyURL))
-	if err != nil || u.String() == "" {
+	if r == nil || err != nil || u.String() == "" {
 		return nil
 	}
-	return &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(u)}}
+	key := u.String()
+	if c, ok := r.clients.Load(key); ok {
+		return c.(*http.Client)
+	}
+	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(u)}}
+	actual, _ := r.clients.LoadOrStore(key, client)
+	return actual.(*http.Client)
 }

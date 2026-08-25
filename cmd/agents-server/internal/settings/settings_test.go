@@ -148,3 +148,40 @@ func TestTraceSensitiveStaysTriState(t *testing.T) {
 		t.Fatalf("an unusable value must defer to the SDK, got %v", *got)
 	}
 }
+
+// A fresh http.Transport is a fresh connection pool, and ProxyClient is called
+// per agent build, per compaction, per MCP transport and per token refresh —
+// so with a proxy configured nothing was reused. The client is pooled, keyed
+// by the URL, which is also the whole invalidation story.
+func TestProxyClientIsPooledPerURL(t *testing.T) {
+	r, s := newReader(t)
+	ctx := context.Background()
+
+	if c := r.ProxyClient(ctx); c != nil {
+		t.Fatal("no proxy set: want nil")
+	}
+	if err := s.Set(ctx, settings.KeyProxyURL, "http://127.0.0.1:7890"); err != nil {
+		t.Fatal(err)
+	}
+
+	first := r.ProxyClient(ctx)
+	if first == nil {
+		t.Fatal("proxy set: want a client")
+	}
+	if again := r.ProxyClient(ctx); again != first {
+		t.Error("the same proxy URL built a second client")
+	}
+
+	if err := s.Set(ctx, settings.KeyProxyURL, "socks5://127.0.0.1:1080"); err != nil {
+		t.Fatal(err)
+	}
+	changed := r.ProxyClient(ctx)
+	if changed == nil || changed == first {
+		t.Error("an edited proxy URL must produce a different client")
+	}
+
+	var nilReader *settings.Reader
+	if c := nilReader.ProxyClient(ctx); c != nil {
+		t.Error("a nil Reader must proxy nothing")
+	}
+}
