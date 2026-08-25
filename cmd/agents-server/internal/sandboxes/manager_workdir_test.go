@@ -1,6 +1,7 @@
 package sandboxes
 
 import (
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -200,6 +201,27 @@ func TestSandboxManagerFailedBuildRetries(t *testing.T) {
 	if inst.sb == nil {
 		t.Fatal("retry returned a sandbox-less instance")
 	}
+}
+
+// An empty Host means the LOCAL daemon: a DOCKER_HOST pointing elsewhere
+// would silently split file tools (this host's filesystem) from containers
+// (that daemon's), so the build refuses it. A unix:// socket stays local
+// and passes.
+func TestSandboxManagerRejectsForeignDockerHost(t *testing.T) {
+	m := NewManager(t.TempDir())
+	cfg := &store.SandboxConfig{ID: "loc", Name: "local", Type: "docker", Config: []byte(`{"image":"i"}`)}
+
+	t.Setenv("DOCKER_HOST", "tcp://10.0.0.9:2375")
+	if _, _, err := m.acquire(cfg, testProject("p")); err == nil || !strings.Contains(err.Error(), "DOCKER_HOST") {
+		t.Fatalf("acquire with a foreign DOCKER_HOST: err=%v, want a refusal naming it", err)
+	}
+
+	t.Setenv("DOCKER_HOST", "unix:///var/run/docker.sock")
+	_, rel, err := m.acquire(cfg, testProject("p"))
+	if err != nil {
+		t.Fatalf("acquire with a local-socket DOCKER_HOST: %v", err)
+	}
+	rel()
 }
 
 // closeCountingSandbox records Close calls; everything else panics loudly via

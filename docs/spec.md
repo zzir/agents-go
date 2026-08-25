@@ -2893,6 +2893,11 @@ SSH sandbox ran commands with a login user's full privileges, no limits, on a
 machine the server merely had credentials to. Every sandbox is now a Docker
 container; what varies is WHERE — `DockerConfig.Host` empty for the local
 daemon, `ssh://user@host` for a remote one, `tcp://` for the exposed case.
+Empty means THIS machine and its filesystem: the SDK client honors
+`DOCKER_HOST` when no Host is given, so the server refuses to build an
+empty-Host sandbox while that variable points at another daemon (`unix://`
+and `npipe://` sockets pass — local by construction; revised 2026-08-25) —
+file tools would otherwise act on a filesystem the containers never see.
 
 The SSH machinery lives on inside `sandbox/docker` as a TRANSPORT: a pure-Go
 dialer (x/crypto/ssh) that opens direct-streamlocal channels to the remote

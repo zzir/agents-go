@@ -533,6 +533,13 @@ func (m *Manager) buildSandbox(cfg *store.SandboxConfig, proj *store.Project) (s
 		}
 	}
 	if dc.Host == "" {
+		// An empty Host means THIS machine: the bind source below is a local
+		// directory. The SDK client honors DOCKER_HOST when no Host is given,
+		// so an environment pointing it at another daemon would silently split
+		// the view — file tools on this filesystem, containers on that one.
+		if env := os.Getenv("DOCKER_HOST"); env != "" && !strings.HasPrefix(env, "unix://") && !strings.HasPrefix(env, "npipe://") {
+			return nil, fmt.Errorf("docker sandbox: DOCKER_HOST=%q points at another daemon while this config's empty host mounts local directories; set the sandbox's host explicitly or unset DOCKER_HOST", env)
+		}
 		opts.WorkDir = m.ProjectHostDir(proj)
 		// Bind-mounted files should belong to the user running the server,
 		// not nobody — unless the config names its own user.
@@ -540,7 +547,7 @@ func (m *Manager) buildSandbox(cfg *store.SandboxConfig, proj *store.Project) (s
 			opts.User = fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())
 		}
 	} else {
-		opts.VolumeName = "agents-proj-" + shortID(proj.ID)
+		opts.VolumeName = ProjectVolumeName(proj.ID)
 	}
 	opts.MaxReadFileBytes = dc.MaxReadFileBytes
 	return dockersb.New(opts)
@@ -561,6 +568,12 @@ func shortID(id string) string {
 // re-adopted by fingerprint instead of duplicated.
 func ContainerName(sandboxID, projectID string) string {
 	return "agents-" + shortID(sandboxID) + "-" + shortID(projectID)
+}
+
+// ProjectVolumeName is the named volume serving a project's /workspace on a
+// remote daemon (spec §5.28).
+func ProjectVolumeName(projectID string) string {
+	return "agents-proj-" + shortID(projectID)
 }
 
 // ProjectHostDir is the local-daemon bind source for a project's /workspace:
