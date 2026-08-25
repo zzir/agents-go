@@ -248,10 +248,10 @@ spec §5.29), shape who may do what:
 - **Host configuration stays read-everyone, write-admin.** Sandboxes (the
   test and container endpoints included), settings, guardrails and memories
   change what runs on the host or whose host credentials are spent, so
-  `POST`/`PUT`/`DELETE` answer `403` for a member. The web terminal
-  (`/ws/terminal`) follows project ownership: a member opens a shell into
-  their OWN project's container (a foreign project reads as absent), an
-  admin into any (spec §5.28). And using
+  `POST`/`PUT`/`DELETE` answer `403` for a member. The web terminal follows
+  project ownership — a member into their own project's container, an admin
+  into any (see the
+  [Terminal endpoint](#terminal-endpoint--get-wsterminal)). And using
   configuration is not writing it: a member runs any agent, workflow or
   sandbox they can see, in their own session, approving their own tool
   calls. A shared sandbox is a shared shell — every member who can pick it
@@ -464,16 +464,16 @@ walk over every entry, rather than showing a bare run id.
 `/sessions/:id/context` reports what the session's ACTIVE branch occupies of its
 model's context window — the Context panel's whole payload, recomputed per call
 from the entries (there is no live event for it; the panel refetches when a run
-ends). `input_tokens` is the LAST model call's input: the history, prompt and
-tool schemas in the window right now — not `session_input_tokens`, which totals
-every call and so counts re-sent history once per turn. `context_window` is the
-agent config's declared window (`provider.context_window`; 0 when unset, and the
-panel then shows occupancy without a denominator) and `conversation_tokens` is
-the estimated size of the transcript still in context — every active,
-uncompacted entry summed, the row the "In the window" section shows beside the
-prompt layers. Compacted and off-path entries keep their usage — the call
-happened — but leave `conversation_tokens` and `compaction_tokens`, because the
-model no longer sees them.
+ends). The fields: `input_tokens`, the LAST model call's input (not
+`session_input_tokens`, which totals every call and so counts re-sent history
+once per turn); `context_window`, the agent config's declared window
+(`provider.context_window`; 0 when unset, and the panel then shows occupancy
+without a denominator); `conversation_tokens`, the transcript still in context
+(every active, uncompacted entry summed); and `compaction_tokens`. Compacted
+and off-path entries keep their usage — the call happened — but leave the last
+two, because the model no longer sees them. Which ruler each figure is on — a
+provider count or a character estimate — and why they never mix is
+[invariant 28](#design-invariants).
 
 The report costs the session's ROW COUNT, not its size: `entries` carries the
 usage and the character estimate of each entry as lifted columns (written by
@@ -508,8 +508,7 @@ are returned; page backwards by passing the smallest id you received as
 by insertion — `NewV7` is monotonic within a process — so "smallest" is the
 first one in a page. For `messages` the limit counts the
 ENTRIES a client receives, not table rows — update entries are folded into
-their targets first, so a page is never short of what was asked for. The web UI
-loads the newest 200 and offers "Load earlier messages".
+their targets first, so a page is never short of what was asked for.
 
 ### Runs — `/api/v1/runs`
 
@@ -544,19 +543,14 @@ session already has an active run. `plan` (a bool) asks the session to enter
 the phase as it stands ([invariant 33](#design-invariants)).
 
 The first run that carries a `sandbox_id` **permanently binds**
-`(sandbox_id, project_id)` to the session (compare-and-set; the winner
-announces it with a `session.sandbox_bound` event). From then on the server
-uses the bound values and ignores whatever the client sends — the
-conversation's file system context never changes. Runs without a sandbox
-never bind, so a chat-only session can still pick one later.
-
-A new binding is **validated before it is written**, and only after the run
-has been accepted (a run refused as busy/deleting/draining binds nothing).
-The sandbox must exist, and the project must be the caller's own on that
-sandbox ([Projects](#projects--apiv1projects)); an empty `project_id` lands
-in the owner's per-sandbox default project ("scratch"), created on first
-use. A request that fails validation is `400` and leaves the session
-unbound.
+`(sandbox_id, project_id)` to the session — validated first (the sandbox
+must exist, and the project must be the caller's own on that sandbox, an
+empty `project_id` landing in the owner's per-sandbox default project,
+"scratch", created on first use; a request that fails validation is `400`
+and leaves the session unbound), announced once with a
+`session.sandbox_bound` event, and runs without a sandbox never bind. From
+then on the server uses the bound values and ignores whatever the client
+sends — [invariant 27](#design-invariants) holds the full contract.
 
 `GET /runs/:id` returns `{run_id, session_id, status, last_seq, agent_config_id?,
 sandbox_id?, project_id?, task?}` — `task` is present only for a background
@@ -618,10 +612,10 @@ interrupt/resume and resets on restart. The WebSocket `tool.approve` message
 carries the same `scope` field. Matching is exact, so approving `go test` never
 green-lights `go test && rm -rf`.
 
-Unanswered approvals expire after the `approval_ttl_minutes` setting (default
-`1440` = 24h; `0` disables expiry). On timeout the pending record is dropped and
-an error annotation is written to the session so the timeout is visible rather
-than silently vanishing.
+Unanswered approvals expire — configurable via the `approval_ttl_minutes`
+setting. On timeout the pending record is dropped and an error annotation is
+written to the session so the timeout is visible rather than silently
+vanishing.
 
 ### Tasks — `/api/v1/tasks`
 
@@ -683,17 +677,15 @@ needs no schema change), then a few top-level JSON blobs:
   `tool_not_found_behavior` (unset feeds a tool name the agent does not have
   back to the model so it can correct itself; `error` ends the run instead),
   `reasoning_item_id_policy` (`preserve` / `omit`), `workflow_authoring`
-  (gives the agent's chat runs `get_workflow` / `save_workflow`, every save
-  approved — see [workflows](#workflows--apiv1workflows))
+  (gives the agent's chat runs `get_workflow` / `save_workflow` — off by
+  default; see [invariant 39](#design-invariants))
 
   Plan and todo mode are NOT here. `todo_write` is on every chat agent — when a
   job is worth tracking is the model's judgement, like any other tool. Plan mode
   is a restraint, so it belongs to the session and the person: it rides on the
   run request (`plan`), and the session reports it as `planning`. Workflow
-  authoring IS here, and off by default, for two reasons that do not apply to
-  todo: its save schema rides on every request of the agent that carries it,
-  and writing definitions is one agent's job — the builder's — not something
-  every coding agent should be offered ([invariant 39](#design-invariants)).
+  authoring IS here, and off by default — see
+  [invariant 39](#design-invariants).
 - **`resilience`**: `retry_enabled`, `retry_policy`, `fallback_models` (JSON
   array of `{model, provider_type, api_key, base_url}`; `provider_type`
   defaults to `openai`, and unknown keys are rejected)
@@ -732,8 +724,8 @@ needs no schema change), then a few top-level JSON blobs:
 
 An agent body carries no model-API credential at all — it names a provider,
 which is where the key lives (the ChatGPT OAuth flow included — see
-[providers](#providers--apiv1providers)). What is still masked here is each
-`resilience.fallback_models[].api_key` (see [Secret handling](#secret-handling)).
+[providers](#providers--apiv1providers)); its remaining credential fields come
+back masked — see [Secret handling](#secret-handling).
 
 ### MCP Servers — `/api/v1/mcp-servers`
 
@@ -817,9 +809,8 @@ rather than hanging, and the next connect returns an authorize URL. Use the
 `oauth-token` DELETE endpoint — the "Clear auth" button in the server's edit
 form — to drop the saved grant, e.g. to re-authorize with a different account.
 
-The secret-bearing config fields are masked on read — see
-[Secret handling](#secret-handling): every `headers` value and
-`oauth_client_secret`.
+The secret-bearing config fields come back masked — see
+[Secret handling](#secret-handling).
 
 ### Memories — `/api/v1/memories`
 
@@ -859,39 +850,17 @@ registry no longer defines with `"unknown": true` and its value masked
 takes it, so a value left behind by an older build can be seen and cleared
 rather than being hidden with no way to remove it.
 
-Known keys:
+Known keys, by panel group (what each does, its default and its bounds are the
+registry's — read them at `GET /setting-defs`):
 
-- `proxy_url` — HTTP proxy for model and MCP calls
-- `system_prompt` — global system prompt prefix
-- `trace_retention_days` — prune trace events older than N days (checked at
-  startup and once a day); default 30, `0` keeps everything. Each generation
-  span stores the whole conversation it was given, so the table grows with
-  the square of a session's length — keeping everything is a choice
-- `trace_include_sensitive_data` — `false` keeps prompts, outputs and tool
-  arguments out of stored traces (generation spans carry only timing/usage
-  metadata; the trace panel's Replay then has nothing to seed from). Empty or
-  `true` records everything (the default). Applies to new runs
-- `trace_span_data_kb` — how much of a span's payload (model request, response,
-  tool schemas) is STORED, in kilobytes; empty or `0` uses the default 8192.
-  Past it the bulky fields are replaced with a marker and a Replay of that call
-  has nothing to seed from, so raise it if you replay large turns and can pay
-  the disk (a 74k-token request is roughly 300KB–1MB per generation span;
-  `trace_retention_days` is the other half of that budget). What travels over
-  the WEBSOCKET is a separate, fixed 256KB — the browser holds every span of
-  the session at once, and anything it drops (`payload_omitted`) is still in
-  the row, which the panel fetches when the span is opened. Applies to new runs
-- `log_sensitive_data` — include prompts, tool arguments and model output in
-  the SDK's own log records. Deliberately separate from
-  `trace_include_sensitive_data`: traces go into the database, logs go to
-  stderr and whatever collects it, so they are different decisions. Off by
-  default, and visible only at `--log-level debug`. Applies to new runs
-- `approval_ttl_minutes` — how long a pending tool approval may sit unanswered
-  before it expires (default `1440` = 24h; `0` disables expiry)
-- `max_terminals_per_sandbox` — concurrent interactive terminals allowed on one
-  sandbox (default `4`, max `32`) — a fat-finger guard, not a scheduler
-- `sandbox_idle_minutes` — stop an unreferenced project container after N
-  minutes idle (default `30`, `0` never stops); the next run restarts it,
-  installed packages intact
+- **network**: `proxy_url` · **prompt**: `system_prompt`
+- **tracing**: `trace_retention_days` (also checked at startup),
+  `trace_include_sensitive_data`, `trace_span_data_kb` — span size is a disk
+  budget: a 74k-token request is roughly 300KB–1MB per generation span, and
+  `trace_retention_days` is the other half of that budget
+- **logging**: `log_sensitive_data`
+- **limits**: `approval_ttl_minutes` · `max_terminals_per_sandbox` ·
+  `sandbox_idle_minutes`
 
 ### Server info — `/api/v1/server` (read-only)
 
@@ -931,9 +900,8 @@ anonymously (HEAD commit → full tree → every `SKILL.md` at any depth, all
 pinned to one commit; two API calls plus one raw fetch per `SKILL.md` — up to
 ~202 requests at the 200-skill cap — private repositories are not reachable).
 Any other http(s) URL is fetched as a single raw `SKILL.md`. Each fetch is
-bounded by a 30-second timeout and the whole import by a five-minute budget
-(files past an expired budget land in `skipped`); a failed fetch answers
-`502`. The response names the `repo` and lists what was
+bounded by a 30-second timeout, and a failed fetch answers `502`. The
+response names the `repo` and lists what was
 `created` / `updated` / `unchanged` / `skipped` (each skip with its reason);
 `truncated` reports that GitHub's tree listing was cut off — files past the
 cut were not seen at all.
@@ -948,9 +916,9 @@ One configured endpoint and the credential that reaches it: `name`, `type`
 (`openai` default / `anthropic` — selects the API protocol), `auth_mode`
 (`chatgpt_login` is openai-only), `api_key`, `base_url`. Agents REFERENCE a
 provider by id; nothing else stores a model-API key, so this
-is the one surface a credential crosses (masked on read, `********` keeps the
-stored value — but only while `type` and `base_url` are unchanged, since the
-stored key belongs to that destination).
+is the one surface a credential crosses (masked on read; a mask round-trips
+only to the destination it was stored for — see
+[Secret handling](#secret-handling)).
 
 The ChatGPT OAuth flow lives here too, for the same reason: the token is this
 endpoint's credential, so every agent pointed at the provider shares one login.
@@ -998,10 +966,10 @@ background work). Later steps read what earlier ones did, with no data
 plumbing between them — the conversation is the data flow.
 
 A workflow carries a required `description`: it is what an agent matches a
-request against — `spawn_task` lists the workflows on offer, name and
-description, and the agent starts one by naming it — and an agent doing so is
-how a workflow usually starts (see [invariant 30](#design-invariants)); a
-person can start one too, with a brief of their own (`POST /workflows/:id/runs`). A step may set `compact_before`,
+request against when `spawn_task` lists the workflows on offer, and an agent
+naming one is how a workflow usually starts; a person starts one with a brief
+of their own — the `POST` start in the table below ([invariant
+30](#design-invariants) holds the brief contract). A step may set `compact_before`,
 folding the conversation into a summary before it runs — with the step's own
 agent's compaction settings, since that agent is the one about to read the
 summary (an agent whose compaction is off leaves the transcript as it is,
@@ -1064,35 +1032,19 @@ whole vocabulary for background WORK is the four task verbs: `spawn_task` (with
 no separate "run a workflow" tool to choose between.
 
 A workflow DEFINITION can also be written from the chat, by an agent that has
-opted in (`behavior.workflow_authoring` — off by default; see [invariant
-39](#design-invariants) for why this one is a switch when `todo_write` is not):
-`get_workflow(name)` reads a definition and `save_workflow(...)` creates or
-updates one, in a shape the model can hold — steps, their agents and their
-edges by NAME, never by id (`{name, description, steps: [{name, agent,
-prompt, gate, gate_pass, gate_fail, pause_before, compact_before, on_success,
-on_failure}], budget}`, edges naming a step or `end`; the save tool's
-description lists the agents on offer). Both tools see what the run's owner
-sees, names resolve own-over-global, and a new name saves a private workflow
-owned by them; an existing global name is an admin's to change — a member's
-save answers with guidance (pick another name), not an error. Saving under a
-name that exists replaces that definition — an update, not a second
-workflow — and a step that
-keeps its name keeps its id, so a retry and an execution in flight still name
-the same step; a nameless step reads back as `Step N`, which is what saving it
-back then stores. Because names are the model's handles, the store holds every
-definition to them — the hub editor's included: a step name denotes one step
-(case-insensitively) and `end` is not one (`NormalizeWorkflow`), so what the
-hub saves is always something the model can read back and edit. Every save is
-APPROVED first: the tool is approval-gated on
-its own (not through the agent's `approve_tools`), and the approval card in the
-chat is the review — the definition, drawn as in the hub, and, when it replaces
-one, the stored definition diffed line by line. A save that would not land
-(an unknown agent, a duplicate step name, an edge to nowhere, no description)
-never reaches the person: it is refused to the model at once, as text, and
-nothing is written. A saved workflow can be started in the same turn —
+opted in (`behavior.workflow_authoring` — off by default): `get_workflow(name)`
+reads a definition and `save_workflow(...)` creates or updates one — steps,
+agents and edges by NAME, never by id (`{name, description, steps: [{name,
+agent, prompt, gate, gate_pass, gate_fail, pause_before, compact_before,
+on_success, on_failure}], budget}`, edges naming a step or `end`; the save
+tool's description lists the agents on offer). Saving under a name that exists
+replaces that definition — an update, not a second workflow — and every save
+is APPROVED first: the approval card in the chat is the review, the definition
+drawn as in the hub and, on an update, the stored definition diffed line by
+line. A saved workflow can be started in the same turn —
 `spawn_task(workflow=name)` reads the store, not its own listing — and, like
-any edit, changes nothing already in flight. Neither tool exists on a
-background run: a step cannot write definitions.
+any edit, changes nothing already in flight. The gate, the name-keyed shape
+and who may write what are [invariant 39](#design-invariants)'s.
 
 Each step carries a STABLE id, so inserting a step above another does not
 renumber what a run in flight, a retry, or a record of what happened is naming.
@@ -1194,16 +1146,12 @@ From a conversation, `/workflow <name> <brief>` in the composer (typing `/`
 offers the commands, walked with the arrow keys) starts one into it, the same
 start `Run…` makes.
 
-Executions are tasks: `GET /sessions/:id/tasks` lists them (`kind:
-"workflow"`), `GET /tasks?kind=workflow` lists them across sessions, and
-`/tasks/:id/stop`, `/retry`, `/dismiss` act on them — a stop
-ends the whole sequence, not just the running step, and a retry resumes from
-the step it stopped at, keeping the steps that already succeeded. Only a
-FAILED execution retries — re-running a completed or cancelled one would repeat
-its side effects — under the same attempt ceiling and per-session cap every
-task answers to. A restart fails whatever was running, at the step it reached,
-for the same reason. Deleting a session stops its tasks first — executions
-included — so no step keeps causing side effects after the row is gone.
+Executions are tasks, acted on through the [Tasks API](#tasks--apiv1tasks).
+Only a FAILED execution retries — re-running a completed or cancelled one
+would repeat its side effects — a restart fails whatever was running, at the
+step it reached, for the same reason, and deleting a session stops its tasks
+first — executions included — so no step keeps causing side effects after the
+row is gone.
 
 ### Guardrails — `/api/v1/guardrails`
 
@@ -1263,7 +1211,7 @@ directories. If the server process's `DOCKER_HOST` points at a non-local
 daemon (any scheme other than `unix://` or `npipe://`), building the sandbox
 is refused with an error naming it: a foreign daemon would silently split the
 view — file tools on this filesystem, containers on that one. The `ssh_*`
-fields carry the SSH authentication; `ssh_password` is masked on read — see
+fields carry the SSH authentication and come back masked — see
 [Secret handling](#secret-handling). `memory_mb` / `cpus` cap each
 container's resources. `max_read_file_bytes` caps how large a file the read
 tool will load at all (`0` = the 8 MiB default) — a guard on the read itself,
@@ -1320,10 +1268,6 @@ old credentials, an old image or an old mount. Integers, deliberately not a
 version-history table: nothing keeps old generations runnable — updates
 apply to everyone at their next run.
 
-`terminal.open` names a `(sandbox_id, project_id)` pair and the shell opens
-in exactly the container sessions on that pair use (`/workspace` mounts the
-project's tree); a project on a different sandbox is refused.
-
 Every sandbox can host a web terminal and `exec_command`'s **persistent
 shells** — every container is persistent. The tool schema offers a
 `session_id`, and a named shell is held open between calls so `cd`, exported
@@ -1347,8 +1291,8 @@ capped at 1g.
 Projects are **personal**: every member manages their own; the routes scope
 by owner rather than the admin gate.
 
-An unreferenced container is **idle-stopped** after `sandbox_idle_minutes`
-(default 30, 0 disables) with no run or terminal using it — stopped, not
+An unreferenced container is **idle-stopped** — configurable via
+`sandbox_idle_minutes` — with no run or terminal using it: stopped, not
 removed, so installed packages survive and the next run starts it again.
 
 | Method | Path            | Description                                              |
@@ -1564,10 +1508,12 @@ answers:
 
 **Binary WebSocket frames carry the terminal byte stream in both directions**
 (client → stdin, PTY output → client); text frames are reserved for the JSON
-control envelopes above. The shell opens in the (sandbox, project) container
-the session's runs use; a member reaches their own projects, an admin any
-(spec §5.28). Terminals are capped per `max_terminals_per_sandbox` (default
-4), and updating or deleting a sandbox closes its live terminals.
+control envelopes above. The shell opens in exactly the (sandbox, project)
+container the session's runs use (`/workspace` mounts the project's tree); a
+member reaches their OWN projects (a foreign project reads as absent), an
+admin any, and a project on a different sandbox is refused (spec §5.28).
+Terminals are capped per the `max_terminals_per_sandbox` setting, and
+updating or deleting a sandbox closes its live terminals.
 
 ## Architecture
 
@@ -1629,9 +1575,10 @@ cmd/agents-server/
 
 ## Design invariants
 
-Cross-cutting rules every resource (panel + handler + store + bridge consumer)
-must follow. Each exists because its violation shipped a real bug; the fix for
-a new feature is to fit these shapes, not to add a one-off patch beside them.
+Cross-cutting rules — and, from 29 on, recorded per-feature decisions — every
+panel/handler/store change must respect. Each exists because its violation
+shipped a real bug; the fix for a new feature is to fit these shapes, not to
+add a one-off patch beside them.
 When a change genuinely doesn't fit, update this list in the same PR.
 
 **API shape**
@@ -1877,10 +1824,9 @@ When a change genuinely doesn't fit, update this list in the same PR.
     unambiguous: once the run's context is cancelled, every stage that notices
     it — including a session lookup that never got to answer — reports
     `run.cancelled`, never a `config_error` or `session_not_found` the user did
-    not cause, and the task's status follows that event. Cancellations consume
-    their own wake-up debt (the user did it; completed / failed are the states
-    worth waking the parent for). Deleting a session stops its run tree first
-    (cancel + bounded wait on the done gate) so no write can land after the
+    not cause, and the task's status follows that event. Deleting a session
+    stops its run tree first (cancel + bounded wait on the done gate) so no
+    write can land after the
     cascade — which then removes the whole tree, every hidden session at any
     depth, walking LIVE edges only (a stale row's child id may since belong to
     an unrelated session).
@@ -1949,33 +1895,26 @@ When a change genuinely doesn't fit, update this list in the same PR.
 27. **A session's `(sandbox_id, project_id)` binding is immutable and
     server-authoritative.** The first sandbox-carrying run binds it
     (`BindSandboxIfEmpty`) and nothing changes it afterwards: there is no
-    unbind, no rebind, and no PATCH — switching projects means starting (or
-    forking into) another session, which is the composer Project picker's
-    flow. From then on `startRunWithID` overrides whatever the client sends
-    with the bound values; the top bar shows the binding as a read-only badge.
-    A new binding is validated first and written only after the run is
-    accepted: `planSandboxBinding` resolves and checks the pair (the config
-    must exist; `resolveBindingProject` requires the caller's own project on
-    that sandbox, or lands the empty case in the per-sandbox default;
-    violations are 400 and bind nothing), then `hub.register` claims the
-    session slot, and only then does the CAS write land — a run refused as
-    busy/deleting/draining has NOT silently fixed the session's file system
-    context (`hub.unregister` withdraws a registration whose bind failed).
-    Runs with no sandbox never bind, so a chat-only session can still pick
-    one later. The binding's target is protected in both directions,
-    atomically: deleting a sandbox still referenced by sessions is refused
-    with 409 by the delete statement's own `NOT EXISTS` guard, the bind
-    carries the mirror `EXISTS` guards over both the config (with its
-    revision) and the project row, a project delete carries `NOT EXISTS`
-    over bound sessions, a project create locks the sandbox row so a racing
-    sandbox delete cascades the new row or refuses the create, and an
-    update that would change a sandbox's IDENTITY — type and the daemon
-    (host), the fields that decide where the data lives — is refused the
-    same way while sessions are bound OR project rows live on the config
-    (`UpdateIdentityIfUnreferenced`; a project's tree exists without any
-    session), while credentials, name and limits stay editable. A bound session whose sandbox cannot be resolved or built
-    fails the run loudly rather than degrading to a chat with no tools.
-    Sandbox instances are cached per
+    unbind, no rebind, and no PATCH. From then on `startRunWithID` overrides
+    whatever the client sends with the bound values; the top bar shows the
+    binding as a read-only badge. The write order is what keeps a refusal
+    side-effect-free: `planSandboxBinding` resolves and validates the pair,
+    then `hub.register` claims the session slot, and only then does the CAS
+    write land — a run refused as busy/deleting/draining has NOT silently
+    fixed the session's file system context (`hub.unregister` withdraws a
+    registration whose bind failed). The binding's target is protected in
+    both directions, atomically: the delete refusals live in the delete
+    statements themselves and the bind carries the mirror `EXISTS` guards
+    over both the config (at its validated revision) and the project row
+    (the operational surface is [Sandboxes](#sandboxes--apiv1sandboxes) and
+    [Projects](#projects--apiv1projects)); a project create locks the
+    sandbox row so a racing sandbox delete cascades the new row or refuses
+    the create; and an update that would change a sandbox's IDENTITY — type
+    and the daemon (host) — is refused while sessions are bound OR project
+    rows live on the config (`UpdateIdentityIfUnreferenced`; a project's
+    tree exists without any session). A bound session whose sandbox cannot
+    be resolved or built fails the run loudly rather than degrading to a
+    chat with no tools. Sandbox instances are cached per
     `(config id, runtime generation, project id)` with a REFERENCE COUNT
     (`SandboxManager.Acquire`):
     runs and terminals hold their instance for exactly their lifetime, and an
@@ -2022,23 +1961,19 @@ When a change genuinely doesn't fit, update this list in the same PR.
     parent's context is the result text, counted like any other tool output.
 
 29. **A workflow execution is a TASK, and it advances from the run's
-    TEARDOWN, never from the callback of the run that started it.** An
-    execution is a task of kind `workflow`; the SDK's task manager owns its
-    lifecycle, and this server is the driver it calls back into (`Continue`:
-    which step a finished run leads to; the launcher: how a step's run starts).
-    A step is an ordinary run; when it ends, `postRun` — which every segment
-    reaches, fresh or resumed — hands the outcome to the manager, which asks
-    the driver and only then starts the next step. Hanging the advance off the
-    starting call's own callback loses the sequence at the first approval: a
-    paused step's run ends, the approval endpoint resumes it with NO callback,
+    TEARDOWN, never from the callback of the run that started it.** A step
+    is an ordinary run; when it ends, `postRun` — which every segment
+    reaches, fresh or resumed — hands the outcome to the SDK's task manager,
+    which asks the driver and only then starts the next step. Hanging the
+    advance off the starting call's own callback loses the sequence at the
+    first approval: a paused step's run ends, the approval endpoint resumes
+    it with NO callback,
     and that resumed ending is the one that may move the sequence on. The
     advance is the SDK's `Store.Advance` — a compare-and-set on
     `(status = working, run_id = the run that finished)` that lands the new
     state in the same write — so a superseded attempt's late callback cannot
     drive it, a stop that got there first wins, and an INTERRUPTED outcome
-    advances nothing — it is a pause, not an ending. Because it is a task,
-    stop, retry, the restart sweep, the approval expiry, the session-delete
-    teardown, the cap and the wake-up debt are the task's, written once.
+    advances nothing — it is a pause, not an ending.
 
 30. **A workflow runs OFF the conversation that asked for it, and starts only
     with a BRIEF written by someone who read that conversation.** The steps
@@ -2052,15 +1987,14 @@ When a change genuinely doesn't fit, update this list in the same PR.
     session cannot see the conversation, so someone has to write its brief:
     the agent, through `spawn_task(workflow=name, input)` — a workflow's
     `description`, what the agent matches a request against, is required for
-    that — the person, through `POST /workflows/:id/runs {session_id,
-    input}` — or a trigger, whose author wrote the brief in advance for every
+    that — the person, through the manual start in the
+    [Workflows API](#workflows--apiv1workflows) — or a trigger, whose author
+    wrote the brief in advance for every
     fire (a webhook's payload rides along with it). What there is not is a
     bare button: nothing starts an execution without saying what it is about.
     The tool call's card is the execution's
     card: the task carries the `tool_call_id`, so the sequence's state follows
-    the call in the transcript, as a spawned task's does. Which step runs next
-    is the DEFINITION's answer, never the model's: a gate step reports a
-    verdict, the edges decide.
+    the call in the transcript, as a spawned task's does.
 
 31. **An execution's state keeps a log of every step LAUNCHED.** The task row
     names only the CURRENT step and run, so without the log a finished
@@ -2088,15 +2022,15 @@ When a change genuinely doesn't fit, update this list in the same PR.
     and every debt carries `inherit`, the configuration the turn runs under,
     snapshotted from the agent that ASKED (the spawning run's), so a session
     re-pointed at another agent mid-sequence still returns the result through
-    the one that started it. A crash never loses a debt: the terminal write and
-    its `wakeups` row land in ONE transaction (the store's `Finalize`).
-    The SDK's task manager keeps no debt of its own — it reports endings
+    the one that started it. The SDK's task manager keeps no debt of its
+    own — it reports endings
     through `OnFinished` and deliveries through `OnResultDelivered`, because
     when a session may be interrupted is a host policy. A task's debt is written
     where its terminal state is: the store's `Finalize` (and the restart sweep's
     `FailOrphans`) records the `wakeups` row IN THE SAME TRANSACTION as the
     status, so a crash can never leave a completed task whose parent is never
-    told — a completed/failed task owes, a cancelled one does not. `OnFinished`
+    told — a completed/failed task owes, a cancelled one does not (the user
+    did it). `OnFinished`
     then only DRAINS (pays now if it can); losing that call loses nothing, since
     the debt already exists and the next boundary settles it. The debt's inherit
     strips the task's own agent (`TaskAgentID`): the drain GROUPS debts by the
@@ -2150,23 +2084,17 @@ When a change genuinely doesn't fit, update this list in the same PR.
 
 35. **A step's approval is answerable from the conversation that asked.**
     `GET /sessions/:id/approvals` returns the approvals paused inside this
-    session's tasks — a workflow step's included, tagged with the task they
-    belong to — so the chat is the one approval surface; approve/reject is
-    keyed by tool call id, so answering works from anywhere. The startup sweep
-    and the approval reaper treat an execution as the task it is: one PAUSED
-    on an approval is not an orphan and is left alone, one whose run died with
-    the process is failed at the step it reached, and one whose approval
-    expires unanswered is cancelled — otherwise the row stays working with
-    nothing left that could finish it.
+    session's tasks too — a workflow step's included, tagged with the task
+    they belong to — so the chat is the one approval surface. Everything else
+    about the pause — the reaper, the restart sweep, a stop — is invariant
+    37's.
 
 36. **A finished piece of background work leaves the transcript and enters the
-    panel.** The turn a wake-up injects carries the notification prefix, and a
-    prefixed user message never renders as a bubble — it is the model's input,
-    not something the person said. What a reader gets instead is the Tasks
-    panel, which holds tasks and workflow executions in ONE list — one list
-    because they are one thing, tasks: work running in a session nobody is
-    sitting in, reporting back the same way, stopped and retried the same way.
-    The list is the socket's task state: the durable rows seed it and
+    panel.** The Tasks panel holds tasks and workflow executions in ONE
+    list — one list because they are one thing, tasks: work running in a
+    session nobody is sitting in, reporting back the same way, stopped and
+    retried the same way (the notification's rendering rule is invariant
+    21's). The list is the socket's task state: the durable rows seed it and
     `task.updated` keeps it current — a workflow's status is the TASK's, told
     by that event, since its step runs end without ending it. Its detail lens
     is the child session's own transcript and trace, so drilling into a
@@ -2217,38 +2145,39 @@ When a change genuinely doesn't fit, update this list in the same PR.
 
 39. **A workflow definition the model writes lands only through an approved
     `save_workflow`, names steps rather than ids, and never reaches a
-    background run.** Authoring is a WRITE to configuration, so its gate is not
-    the model's to switch off: `save_workflow` carries `NeedsApproval` itself
-    (like `submit_plan`), not through the agent's `approve_tools`, and its
-    approval card is the review — the definition as the hub draws it and, on
-    an update, the stored definition diffed line by line. The gate's other
-    half is `NeedsApprovalFunc`: the same resolve the write does runs before
-    anyone is asked, and a proposal that would not save — an unknown agent, a
-    duplicate or reserved step name, an edge to no step, no description, a
-    gate whose words collide — needs no approval and executes at once into a
-    refusal the model reads; only a fixable fault skips the person, a store
-    fault still asks, so no write ever lands unapproved. The model's shape has
-    no ids: steps, agents and edges are NAMED (`bridge.workflowSpec`), the
-    server owns the ids — assigning them, and on an update reusing the id of a
-    step whose name (or, for a nameless one, its `Step N` as `get_workflow`
-    reports it) is kept, which is what keeps a retry and an execution in
-    flight naming the same step across a model's edit. Same name means the
-    same workflow (`EqualFold`, as the unique index is `NOCASE`): a save is an
-    upsert, and its result says which it did. Names being the handles, the
-    STORE enforces them for every writer (`NormalizeWorkflow`: a step name is
-    unique per definition, case-insensitively, and `end` is reserved), so a
-    definition the hub saved is one the model can read back and edit; and the
-    approval card lays the proposal out as the server would store it — trimmed,
-    gate words as `Verdict` compares them, edges resolved to the step's own
-    spelling — so its chart and its diff against the stored definition show
-    the save, not the model's spelling of it. The pair is per-agent opt-in
-    (`behavior.workflow_authoring`) — a save schema on every request of every
-    agent would be paid for by agents that never author — and attached only
-    where the task tools are, on a chat run: a background run has nobody to
+    background run.** Two claims. (a) Only an approved save writes. Authoring
+    is a WRITE to configuration, so its gate is not the model's to switch
+    off: `save_workflow` carries `NeedsApproval` itself (like `submit_plan`),
+    not through the agent's `approve_tools`, and its approval card lays the
+    proposal out as the server would store it — trimmed, gate words as
+    `Verdict` compares them, edges resolved to the step's own spelling — so
+    its chart and its diff against the stored definition show the save, not
+    the model's spelling of it. The gate's other half is `NeedsApprovalFunc`:
+    the same resolve the write does runs before anyone is asked, and a
+    proposal that would not save — an unknown agent, a duplicate or reserved
+    step name, an edge to no step, no description, a gate whose words
+    collide — needs no approval and executes at once into a refusal the
+    model reads; only a fixable fault skips the person, a store fault still
+    asks, so no write ever lands unapproved. (The pair is per-agent opt-in,
+    `behavior.workflow_authoring` — a save schema on every request of every
+    agent would be paid for by agents that never author, and writing
+    definitions is one agent's job, the builder's — and attached only where
+    the task tools are, on a chat run: a background run has nobody to
     approve, and a step that could write definitions would be a sequence
-    editing sequences. `get_workflow` is `ReadOnly`, so plan mode reads
-    definitions and withholds saves; the Context panel meters the pair as its
-    own bucket (`tools · workflows`).
+    editing sequences.) (b) The model addresses workflows by NAME; the
+    server owns the ids. Steps, agents and edges are NAMED
+    (`bridge.workflowSpec`); the server assigns the ids, and on an update
+    reuses the id of a step whose name (or, for a nameless one, its `Step N`
+    as `get_workflow` reports it) is kept, which is what keeps a retry and
+    an execution in flight naming the same step across a model's edit. Same
+    name means the same workflow (`EqualFold`, as the unique index is
+    `NOCASE`): a save is an upsert, and its result says which it did. Names
+    being the handles, the STORE enforces them for every writer
+    (`NormalizeWorkflow`: a step name is unique per definition,
+    case-insensitively, and `end` is reserved), so a definition the hub
+    saved is one the model can read back and edit. (`get_workflow` is
+    `ReadOnly`, so plan mode reads definitions and withholds saves; the
+    Context panel meters the pair as its own bucket, `tools · workflows`.)
 
 **Configuration**
 
