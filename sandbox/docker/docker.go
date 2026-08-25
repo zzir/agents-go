@@ -546,6 +546,14 @@ func (s *Sandbox) execPersistent(ctx context.Context, req sandbox.ExecRequest, s
 	cerr := copyAttached(ectx, attached.Reader, attached.Close, stdout, stderr)
 
 	res := &sandbox.ExecResult{}
+	// The CALLER's ending is checked first. ectx inherits it, deadline included,
+	// so asking ectx first would report a deadline the caller set as this
+	// command's own timeout — and TimedOut means "killed for exceeding the
+	// request timeout", nothing else (spec §2.7m).
+	if err := ctx.Err(); err != nil {
+		s.killExec(context.WithoutCancel(ctx), id, marker)
+		return nil, err
+	}
 	if ectx.Err() == context.DeadlineExceeded {
 		res.TimedOut = true
 		res.ExitCode = -1
@@ -553,12 +561,10 @@ func (s *Sandbox) execPersistent(ctx context.Context, req sandbox.ExecRequest, s
 		s.killExec(context.WithoutCancel(ctx), id, marker)
 		return res, nil
 	}
-	if err := ctx.Err(); err != nil {
-		// The caller's context was canceled; clean up the exec process too.
-		s.killExec(context.WithoutCancel(ctx), id, marker)
-		return nil, err
-	}
 	if cerr != nil {
+		// The stream broke with the process still running, and this container
+		// outlives the call — leaving it would leak a process per failure.
+		s.killExec(context.WithoutCancel(ctx), id, marker)
 		return nil, fmt.Errorf("docker sandbox: exec read: %w", cerr)
 	}
 

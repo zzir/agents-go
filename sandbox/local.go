@@ -119,6 +119,13 @@ func (s *LocalSandbox) exec(ctx context.Context, req ExecRequest, stdout, stderr
 		// WaitDelay; treat it as a normal exit.
 		runErr = nil
 	}
+	// The CALLER's ending is checked first. cctx inherits it, deadline included,
+	// so asking cctx first would report a deadline the caller set as this
+	// command's own timeout, and a cancelled run would come back as an ordinary
+	// nonzero exit (spec §2.7m).
+	if runErr != nil && ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	if runErr != nil && cctx.Err() == context.DeadlineExceeded {
 		// Only a failed run that coincides with the deadline is a timeout: a
 		// command that completed successfully is never reported as timed out.

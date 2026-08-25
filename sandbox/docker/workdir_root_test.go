@@ -2,9 +2,11 @@ package docker
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -268,5 +270,66 @@ func TestBindMount_AbsolutePathsUnderMountPoint(t *testing.T) {
 	}
 	if err := s.WriteFile(ctx, "/tmp/x", []byte("x")); !errors.Is(err, sandbox.ErrOutsideWorkDir) {
 		t.Fatalf("WriteFile(/tmp/x) = %v; want ErrOutsideWorkDir", err)
+	}
+}
+
+// TestExclusiveCreateScripts_ExitCodes runs the generated script under the
+// host's /bin/sh — the only daemon-free way to see what it actually reports.
+//
+// The outcome has to travel as an exit code. Reading "exists" out of ln's
+// stderr reads whichever ln the image ships (GNU, BusyBox) in whichever locale
+// it runs, and when that guess misses, apply_patch's "Add over a file that is
+// already there" stops being fs.ErrExist and becomes a generic failure.
+func TestExclusiveCreateScripts_ExitCodes(t *testing.T) {
+	// The script decodes with base64(1); a host whose build has no -d cannot say
+	// anything about the script's logic either way.
+	if err := exec.Command("/bin/sh", "-c", "printf %s aGk= | base64 -d").Run(); err != nil {
+		t.Skip("host base64 does not support -d")
+	}
+	run := func(t *testing.T, target, tmp string) int {
+		t.Helper()
+		create, _, _ := exclusiveCreateScripts(target, tmp, base64.StdEncoding.EncodeToString([]byte("hi")))
+		err := exec.Command("/bin/sh", "-c", create).Run()
+		if err == nil {
+			return 0
+		}
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			return ee.ExitCode()
+		}
+		t.Fatalf("running the create script: %v", err)
+		return -1
+	}
+	dir := t.TempDir()
+
+	if code := run(t, filepath.Join(dir, "new.txt"), filepath.Join(dir, ".ap.1")); code != 0 {
+		t.Fatalf("creating a fresh file: exit %d", code)
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, "new.txt")); err != nil || string(b) != "hi" {
+		t.Fatalf("content: %q err=%v", b, err)
+	}
+
+	if code := run(t, filepath.Join(dir, "new.txt"), filepath.Join(dir, ".ap.2")); code != exitTargetExists {
+		t.Fatalf("creating over an existing file: exit %d, want %d", code, exitTargetExists)
+	}
+
+	// A DANGLING symlink is "already there" too: ln refuses it, and [ -e ]
+	// cannot see it — which is why the script also asks [ -L ].
+	link := filepath.Join(dir, "dangling")
+	if err := os.Symlink(filepath.Join(dir, "nowhere"), link); err != nil {
+		t.Fatal(err)
+	}
+	if code := run(t, link, filepath.Join(dir, ".ap.3")); code != exitTargetExists {
+		t.Fatalf("creating over a dangling symlink: exit %d, want %d", code, exitTargetExists)
+	}
+
+	// An unwritable directory is a plain failure, not EEXIST.
+	locked := filepath.Join(dir, "locked")
+	if err := os.Mkdir(locked, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+	if code := run(t, filepath.Join(locked, "x.txt"), filepath.Join(locked, ".ap.4")); code != 1 {
+		t.Fatalf("creating in an unwritable directory: exit %d, want 1", code)
 	}
 }

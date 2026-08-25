@@ -17,6 +17,12 @@ var _ sandbox.TerminalOpener = (*Sandbox)(nil)
 // after output EOF; Docker has no exec-wait API.
 const terminalWaitPoll = 2 * time.Second
 
+// terminalOpTimeout bounds one daemon call made by a Terminal method. The
+// interface takes no context — these are keystroke-scale operations — so the
+// bound is self-imposed: a daemon that stops answering must not turn a resize
+// or a close into a goroutine parked forever.
+const terminalOpTimeout = 10 * time.Second
+
 // OpenTerminal implements sandbox.TerminalOpener. Persistent mode only: an
 // interactive shell needs a long-lived container to attach to; in ephemeral
 // mode there is no container between Exec calls.
@@ -88,7 +94,9 @@ func (t *terminal) Read(p []byte) (int, error)  { return t.hijack.Reader.Read(p)
 func (t *terminal) Write(p []byte) (int, error) { return t.hijack.Conn.Write(p) }
 
 func (t *terminal) Resize(cols, rows int) error {
-	_, err := t.sb.cli.ExecResize(context.Background(), t.execID, client.ExecResizeOptions{
+	ctx, cancel := context.WithTimeout(context.Background(), terminalOpTimeout)
+	defer cancel()
+	_, err := t.sb.cli.ExecResize(ctx, t.execID, client.ExecResizeOptions{
 		Height: uint(rows),
 		Width:  uint(cols),
 	})
@@ -100,7 +108,9 @@ func (t *terminal) Resize(cols, rows int) error {
 // concurrent Read.
 func (t *terminal) Close() error {
 	t.closeOnce.Do(func() {
-		t.sb.killExec(context.Background(), t.containerID, t.marker)
+		ctx, cancel := context.WithTimeout(context.Background(), terminalOpTimeout)
+		defer cancel()
+		t.sb.killExec(ctx, t.containerID, t.marker)
 		t.hijack.Close()
 	})
 	return nil
@@ -108,19 +118,26 @@ func (t *terminal) Close() error {
 
 // Wait resolves the exit code after output EOF by polling ExecInspect briefly;
 // -1 when the process is still reported running when the poll window closes.
+// The window bounds the daemon calls as well as the sleeping, so a daemon that
+// stops answering ends the wait unresolved instead of holding it forever.
 func (t *terminal) Wait() (int, error) {
-	deadline := time.Now().Add(terminalWaitPoll)
+	ctx, cancel := context.WithTimeout(context.Background(), terminalWaitPoll)
+	defer cancel()
 	for {
-		inspect, err := t.sb.cli.ExecInspect(context.Background(), t.execID, client.ExecInspectOptions{})
+		inspect, err := t.sb.cli.ExecInspect(ctx, t.execID, client.ExecInspectOptions{})
 		if err != nil {
+			if ctx.Err() != nil {
+				return -1, nil // the window closed, same as still-running
+			}
 			return -1, fmt.Errorf("docker sandbox: exec inspect: %w", err)
 		}
 		if !inspect.Running {
 			return inspect.ExitCode, nil
 		}
-		if time.Now().After(deadline) {
+		select {
+		case <-ctx.Done():
 			return -1, nil
+		case <-time.After(100 * time.Millisecond):
 		}
-		time.Sleep(100 * time.Millisecond)
 	}
 }

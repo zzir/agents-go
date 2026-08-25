@@ -104,7 +104,7 @@ func (s *Sandbox) createExclusiveContainer(ctx context.Context, p string, conten
 	// temp file, so it's non-fatal.
 	_, _ = s.Exec(cleanupCtx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", rmTmpScript}})
 	if res.ExitCode != 0 {
-		if strings.Contains(res.Stderr, "exists") {
+		if res.ExitCode == exitTargetExists {
 			return fmt.Errorf("docker sandbox: create %q: %w", p, fs.ErrExist)
 		}
 		return fmt.Errorf("docker sandbox: create %q: %s", p, res.Stderr)
@@ -196,11 +196,26 @@ func (s *Sandbox) containerPath(p string) string {
 //     target that ln may have published (same inode as tmp), then drop tmp,
 //     propagating any rm failure to the exit code.
 //   - rmTmp: drop just the temp link after a completed Exec (non-fatal).
+//
+// exitTargetExists is the create script's exit code for "the target is already
+// there": EEXIST's number, picked only because it is recognizable.
+const exitTargetExists = 17
+
 func exclusiveCreateScripts(fullPath, tmpPath, b64 string) (create, cleanup, rmTmp string) {
 	target := sandbox.ShellQuote(fullPath)
 	dirQ := sandbox.ShellQuote(path.Dir(fullPath))
 	tmpQ := sandbox.ShellQuote(tmpPath)
-	create = "mkdir -p " + dirQ + " && printf %s " + sandbox.ShellQuote(b64) + " | base64 -d > " + tmpQ + " && ln " + tmpQ + " " + target + "; exit $?"
+	// "Already there" leaves as an exit CODE, not as a phrase in ln's stderr:
+	// the wording is the image's to choose (GNU ln, BusyBox ln, any locale),
+	// and a create that silently stopped reporting fs.ErrExist would turn
+	// apply_patch's Add-over-an-existing-file conflict into a generic failure.
+	// -L as well as -e, or a dangling symlink — which ln refuses and -e does
+	// not see — would read as "not there".
+	create = "mkdir -p " + dirQ + " || exit 1\n" +
+		"printf %s " + sandbox.ShellQuote(b64) + " | base64 -d > " + tmpQ + " || exit 1\n" +
+		"if ln " + tmpQ + " " + target + "; then exit 0; fi\n" +
+		"if [ -e " + target + " ] || [ -L " + target + " ]; then exit " + strconv.Itoa(exitTargetExists) + "; fi\n" +
+		"exit 1"
 	cleanup = "rc=0; if [ " + target + " -ef " + tmpQ + " ]; then rm -f " + target + " || rc=1; fi; rm -f " + tmpQ + " || rc=1; exit $rc"
 	rmTmp = "rm -f " + tmpQ
 	return

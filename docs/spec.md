@@ -1393,6 +1393,20 @@ Three rules keep one from costing more than the call:
 - The approval gate treats undecodable arguments like a policy veto (§2.7j): a
   call `OnInvoke` will refuse as text never reaches a human.
 
+### 2.7m A sandbox reports its own timeout, never the caller's ending
+
+`ExecResult.TimedOut` means one thing: the process was killed for exceeding
+`ExecRequest.Timeout`. Every backend derives its per-command deadline from the
+caller's context, and a derived context inherits the parent's error — so a
+`DeadlineExceeded` read off the derived one may be the CALLER's deadline
+arriving, not the command's. The caller's ending is therefore checked first,
+and a context that ended for the caller's own reason — cancelled, or a deadline
+the caller set — is returned as that error, with no result.
+
+The two backends answer the same way, which is the point: a tool that reads
+`TimedOut` to tell the model "that command took too long" must not say it about
+a run the human just cancelled.
+
 ### 2.8 Nested agent-as-tool attribution
 
 | Aspect | Attribution |
