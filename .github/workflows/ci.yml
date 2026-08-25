@@ -86,13 +86,6 @@ jobs:
           AGENTS_PG_TEST_DSN: postgres://postgres:test@localhost:5432/agents_test?sslmode=disable
         run: (cd cmd/agents-server && go test ./internal/store/)
 
-      # go build proves nothing about either half: docs snippets are uncompiled
-      # text that kept naming renamed symbols, and an example can compile then
-      # panic or hang. One command checks doc names and runs every example
-      # against fake model APIs.
-      - name: Docs and examples verify
-        run: go run ./cmd/verify
-
       # Stale means "regenerating changes the file" — compared by content, so
       # a fresh-but-uncommitted regeneration passes locally and a clean CI
       # checkout still catches a forgotten commit.

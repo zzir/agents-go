@@ -28,7 +28,6 @@ Requires Go 1.27+.
 ./scripts/ci.sh                       # full CI locally: gofmt, vet, build, race tests, every submodule (GOWORK=off)
 go test -race ./...                   # race detector is ON in CI — keep it green
 go test -race ./agents -run TestName  # single test
-go run ./cmd/verify                   # docs name things that exist + every example runs (fake model APIs)
 golangci-lint run                     # CI uses golangci-lint v2.13
 ```
 
@@ -155,11 +154,26 @@ The full list, with reasons, lives in [docs/spec.md](docs/spec.md) §1.2 (non-go
   exactly this. The bulk of the older test files are internal
   (`package agents`) with their own unexported `fakeModel`; they stay where
   they are.
-- **Docs track the code.** Any functional change must update the relevant
-  `docs/` page — and `README.md` when it affects the feature set or
-  quick-start. New public capabilities get a runnable example under
-  `examples/`. `cmd/verify` checks that doc snippets still name things that
-  exist; it runs in CI, so a rename that leaves the prose behind fails there.
+- **Docs track the code, in the same change.** A change to a package updates
+  that package's `docs/` page in the same commit — and `README.md` when it
+  affects the feature set or the quick-start. New public capabilities get a
+  runnable example under `examples/`.
+
+  **Nothing checks this.** There is no docs linter and no CI gate: a doc
+  snippet is uncompiled text, so a renamed field, a changed signature or a
+  changed return type leaves prose that still reads fine and no longer works.
+  Syncing is a step *inside* the change, not a sweep afterwards — before
+  finishing, for every symbol you renamed, removed, re-typed or gave a new
+  default:
+
+  ```bash
+  grep -rn "OldName" docs/ README.md cmd/agents-server/README.md
+  ```
+
+  and read the snippets around each hit rather than only the prose. The pages
+  a package owns are the ones that name it; the pages that own a *decision*
+  are `docs/spec.md` (invariants and recorded decisions) and
+  `docs/architecture.md` (module boundaries).
 
 ## Principles
 

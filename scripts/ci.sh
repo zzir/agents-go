@@ -68,12 +68,6 @@ else
   step "Test agents-server store on PostgreSQL (skipped: AGENTS_PG_TEST_DSN unset)"
 fi
 
-step "Docs and examples verify"
-# go build proves nothing about either: docs snippets are uncompiled text that
-# kept naming renamed symbols, and an example can compile then panic or hang.
-# One command checks doc names and runs every example against fake model APIs.
-go run ./cmd/verify
-
 step "govulncheck"
 if command -v govulncheck >/dev/null; then
   govulncheck ./...

@@ -2831,7 +2831,15 @@ removed (§1.2). Four cuts in one pass:
   server the operator configures, not a hard-coded vendor integration.
 
 `cmd/verifydocs` and `cmd/verifyexamples` merged into `cmd/verify` in the same
-pass — one CI step, same two checks. A follow-up cut removed the whole MCP
+pass — one CI step, two checks — and **`cmd/verify` was removed entirely**
+(2026-08-26). Documentation is kept correct by syncing it inside the change
+that moved the code, not by a checker run afterwards: a name check passes
+snippets that no longer compile, and the attempt to close that gap by
+compiling them wanted a wrapper, an import table and a per-snippet opt-in —
+machinery to maintain in place of the discipline it was standing in for.
+Removing it also gives up running every example against fake model APIs on
+each build; `go vet ./...` and `go build ./...` still compile them, so what is
+lost is catching an example that compiles and then panics or hangs. A follow-up cut removed the whole MCP
 serve direction — `NewAgentServer` (nothing consumed it, not even the
 example), then `NewToolServer`/`ServeStdio` with `examples/mcpserver` (the
 example was their only consumer). The `mcp` module is a client; the workbench
