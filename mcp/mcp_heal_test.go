@@ -188,3 +188,44 @@ func TestSessionOutlivesItsConnectContext(t *testing.T) {
 		t.Errorf("the watcher redialed %d times on a healthy connection whose connect context was cancelled", n)
 	}
 }
+
+// TestRedialContextOutlivesTheCall locks what Options.Redial promises: the
+// context it receives is the CONNECTION's, so anything bound to it — the
+// subprocess of a stdio server, above all — lives as long as the connection
+// does. A context cancelled when redial returns would let a stdio server
+// reconnect and be killed in the same breath, and the symptom (healed, then
+// immediately dead again) points nowhere near the cause.
+func TestRedialContextOutlivesTheCall(t *testing.T) {
+	endpoint := httptest.NewServer(mcpHandlerWith("ping"))
+	t.Cleanup(endpoint.Close)
+
+	var got context.Context
+	server, err := NewWithTransport(context.Background(), "healer",
+		&mcpsdk.StreamableClientTransport{Endpoint: endpoint.URL},
+		Options{
+			Redial: func(ctx context.Context) (mcpsdk.Transport, error) {
+				got = ctx
+				return &mcpsdk.StreamableClientTransport{Endpoint: endpoint.URL}, nil
+			},
+		})
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(func() { _ = server.Close() })
+
+	if !server.redial(server.session.Load()) {
+		t.Fatal("redial did not replace the session")
+	}
+	if got == nil {
+		t.Fatal("Redial was never called")
+	}
+	if err := got.Err(); err != nil {
+		t.Fatalf("the redial context was cancelled on return: %v", err)
+	}
+
+	// It ends with the server, which is the other half of "the connection's own".
+	_ = server.Close()
+	if got.Err() == nil {
+		t.Fatal("the redial context outlived Close")
+	}
+}

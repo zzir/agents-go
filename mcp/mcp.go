@@ -16,6 +16,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"math/rand/v2"
 	"os/exec"
 	"sort"
 	"strings"
@@ -24,6 +26,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/auth"
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/zzir/agents-go/agents"
@@ -278,21 +281,20 @@ func (s *Server) redial(failed *mcpsdk.ClientSession) bool {
 		return false
 	}
 	s.lastDial = time.Now()
-	// Derived from the connection's own context — a session re-established on
-	// a caller's context would be that caller's to kill — and BOUNDED, because
-	// this runs under dialMu: an unreachable endpoint holding TCP retries for
-	// minutes would hold the lock too, and with it every failed caller waiting
-	// in healed() to report an error. Cancelling after connect is safe: a
-	// session's lifetime is independent of the context it was connected under
-	// (the auto-connect path has always cancelled its handshake context right
-	// after Connect returns).
-	dctx, cancel := context.WithTimeout(s.rpcCtx, redialConnectTimeout)
-	defer cancel()
-	transport, err := s.opts.Redial(dctx)
+	// Redial gets the connection's own context, which is what its contract
+	// promises: a transport that binds a subprocess to it must outlive this
+	// call, or the shell reconnects and is killed in the same breath. The
+	// HANDSHAKE is bounded separately because it runs under dialMu — an
+	// unreachable endpoint holding TCP retries for minutes would hold the lock
+	// too, and with it every failed caller waiting in healed() to report an
+	// error.
+	transport, err := s.opts.Redial(s.rpcCtx)
 	if err != nil {
 		return false
 	}
-	session, err := s.newClient().Connect(dctx, transport, nil)
+	hctx, cancel := context.WithTimeout(s.rpcCtx, redialConnectTimeout)
+	defer cancel()
+	session, err := s.newClient().Connect(hctx, transport, nil)
 	if err != nil {
 		return false
 	}
@@ -469,7 +471,7 @@ func (s *Server) toolList(ctx context.Context) ([]cachedTool, error) {
 		return nil, agents.Classify(agents.CodeMCP, fmt.Errorf("mcp: server %q is not connected", s.name))
 	}
 	if s.closed.Load() {
-		return nil, agents.Classify(agents.CodeMCP, fmt.Errorf("mcp: server %q is closed", s.name))
+		return nil, agents.Classify(agents.CodeMCP, fmt.Errorf("mcp: server %q: %w", s.name, errServerClosed))
 	}
 	// Fast path: a cached list is served under a short critical section, never
 	// while a network call is in flight.
@@ -556,9 +558,64 @@ func (s *Server) toolList(ctx context.Context) ([]cachedTool, error) {
 	return list, nil
 }
 
-// runWithRetries invokes fn, retrying failures up to MaxRetryAttempts times
-// with exponential backoff (RetryBackoffBase * 2^(attempt-1)).
-// MaxRetryAttempts == -1 retries indefinitely; 0 disables retries.
+// maxRetryBackoff caps the delay between retries — the same cap and the same
+// equal jitter as the model-side RetryPolicy, so the two feel like one system.
+const maxRetryBackoff = 30 * time.Second
+
+// JSON-RPC codes that mean the request was understood and refused, so sending
+// the same bytes again produces the same refusal. Written as numbers because
+// the go-sdk exports these as error values from an internal package, not as
+// constants: -32005 is its ErrRejected ("invalid in the current context", and
+// explicitly not a broken connection) and -32003 its ErrClientClosing.
+const (
+	codeParseError     = -32700
+	codeInvalidRequest = -32600
+	codeMethodNotFound = -32601
+	codeInvalidParams  = -32602
+	codeClientClosing  = -32003
+	codeRejected       = -32005
+)
+
+// errServerClosed marks a call made after Close.
+var errServerClosed = errors.New("server is closed")
+
+// retryable reports whether err is worth another attempt.
+//
+// A transport failure is: each attempt reloads the session, so one the watcher
+// healed in the background carries the next try. An answer the server sent is
+// not — it already understood the request — and neither is a call made after
+// Close, which no amount of waiting turns into a live connection.
+func retryable(err error) bool {
+	if errors.Is(err, errServerClosed) {
+		return false
+	}
+	var wire *jsonrpc.Error
+	if errors.As(err, &wire) {
+		switch wire.Code {
+		case codeParseError, codeInvalidRequest, codeMethodNotFound,
+			codeInvalidParams, codeClientClosing, codeRejected:
+			return false
+		}
+	}
+	return true
+}
+
+// retryBackoff is the delay before the attempt after this one: the base
+// doubled per attempt, capped at maxRetryBackoff, then jittered into
+// [d/2, d] so servers shared by many runs are not retried in lockstep.
+func retryBackoff(base time.Duration, attempt int) time.Duration {
+	d := float64(base) * math.Pow(2, float64(attempt-1))
+	if d > float64(maxRetryBackoff) {
+		d = float64(maxRetryBackoff)
+	}
+	half := d / 2
+	return time.Duration(half + rand.Float64()*half)
+}
+
+// runWithRetries invokes fn, retrying RETRYABLE failures up to
+// MaxRetryAttempts times with capped, jittered exponential backoff.
+// MaxRetryAttempts == -1 retries indefinitely; 0 disables retries. An error
+// retryable rejects is returned on the spot, however many attempts remain.
 func (s *Server) runWithRetries(ctx context.Context, fn func() error) error {
 	base := s.opts.RetryBackoffBase
 	if base <= 0 {
@@ -571,16 +628,16 @@ func (s *Server) runWithRetries(ctx context.Context, fn func() error) error {
 			return nil
 		}
 		attempts++
+		if !retryable(err) {
+			return err
+		}
 		if s.opts.MaxRetryAttempts != -1 && attempts > s.opts.MaxRetryAttempts {
 			return err
 		}
-		// Cap the shift so an unbounded retry loop cannot overflow the exponent.
-		shift := min(attempts-1, 30)
-		backoff := base * time.Duration(int64(1)<<shift)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(backoff):
+		case <-time.After(retryBackoff(base, attempts)):
 		}
 	}
 }
@@ -659,7 +716,7 @@ func (s *Server) toolFor(mt *mcpsdk.Tool, exposedName string) *agents.Tool {
 			if err := s.runWithRetries(ctx, func() error {
 				var e error
 				if s.closed.Load() {
-					return agents.Classify(agents.CodeMCP, fmt.Errorf("mcp: server %q is closed", s.name))
+					return agents.Classify(agents.CodeMCP, fmt.Errorf("mcp: server %q: %w", s.name, errServerClosed))
 				}
 				result, e = callSession(ctx, s, func(rpc context.Context) (*mcpsdk.CallToolResult, error) {
 					return s.session.Load().CallTool(rpc, params)

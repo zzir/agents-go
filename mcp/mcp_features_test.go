@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/zzir/agents-go/agents"
@@ -60,6 +62,78 @@ func TestMCP_RunWithRetries_Infinite(t *testing.T) {
 	})
 	if err != nil || calls != 6 {
 		t.Fatalf("infinite retry: err=%v calls=%d", err, calls)
+	}
+}
+
+// TestMCP_RunWithRetries_StopsOnRefusal locks the half that is not about
+// attempt counts: a JSON-RPC error is the server's ANSWER, so replaying the
+// same bytes replays the same refusal. Before this, an infinite policy spun on
+// one forever.
+func TestMCP_RunWithRetries_StopsOnRefusal(t *testing.T) {
+	for _, code := range []int64{codeParseError, codeInvalidRequest, codeMethodNotFound,
+		codeInvalidParams, codeClientClosing, codeRejected} {
+		s := newServer("t", Options{MaxRetryAttempts: -1, RetryBackoffBase: time.Microsecond})
+		calls := 0
+		err := s.runWithRetries(context.Background(), func() error {
+			calls++
+			return fmt.Errorf("wrapped: %w", &jsonrpc.Error{Code: code, Message: "nope"})
+		})
+		if err == nil {
+			t.Fatalf("code %d: expected the refusal to surface", code)
+		}
+		if calls != 1 {
+			t.Fatalf("code %d: retried a refusal %d times", code, calls)
+		}
+	}
+}
+
+// TestMCP_RunWithRetries_RetriesServerSideFailure is the other side: -32603 is
+// the server saying it broke, not that the request was wrong.
+func TestMCP_RunWithRetries_RetriesServerSideFailure(t *testing.T) {
+	s := newServer("t", Options{MaxRetryAttempts: 3, RetryBackoffBase: time.Microsecond})
+	calls := 0
+	err := s.runWithRetries(context.Background(), func() error {
+		calls++
+		if calls < 3 {
+			return &jsonrpc.Error{Code: -32603, Message: "internal error"}
+		}
+		return nil
+	})
+	if err != nil || calls != 3 {
+		t.Fatalf("internal error should retry: err=%v calls=%d", err, calls)
+	}
+}
+
+// TestMCP_RunWithRetries_StopsOnClosedServer: a Close mid-loop is terminal, and
+// an infinite policy used to spin on it until the caller's context died.
+func TestMCP_RunWithRetries_StopsOnClosedServer(t *testing.T) {
+	s := newServer("t", Options{MaxRetryAttempts: -1, RetryBackoffBase: time.Microsecond})
+	calls := 0
+	err := s.runWithRetries(context.Background(), func() error {
+		calls++
+		return agents.Classify(agents.CodeMCP, fmt.Errorf("mcp: server %q: %w", "t", errServerClosed))
+	})
+	if err == nil || calls != 1 {
+		t.Fatalf("closed server should not retry: err=%v calls=%d", err, calls)
+	}
+}
+
+// TestMCP_RetryBackoff_Capped: without the cap, a one-second base reaches
+// half-hour sleeps by the twelfth attempt, and an infinite policy is
+// indistinguishable from a hang long before the exponent could overflow.
+func TestMCP_RetryBackoff_Capped(t *testing.T) {
+	for _, attempt := range []int{1, 12, 40, 1000} {
+		d := retryBackoff(time.Second, attempt)
+		if d > maxRetryBackoff {
+			t.Fatalf("attempt %d: backoff %v exceeds the %v cap", attempt, d, maxRetryBackoff)
+		}
+		if d <= 0 {
+			t.Fatalf("attempt %d: backoff %v is not positive", attempt, d)
+		}
+	}
+	// Equal jitter: the delay lands in [d/2, d], never above the cap.
+	if d := retryBackoff(time.Second, 40); d < maxRetryBackoff/2 {
+		t.Fatalf("a capped backoff should still be at least half the cap, got %v", d)
 	}
 }
 

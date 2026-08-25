@@ -2741,6 +2741,36 @@ transport: an `*exec.Cmd` is spent once, an endpoint needs its headers, proxy
 and OAuth handler. Without `Redial` the old behavior stands — the failure is
 reported, not repaired.
 
+### 5.21b An MCP retry waits on the transport, never on an answer
+
+`MaxRetryAttempts` retries a failed `list_tools` / `call_tool`. What that may
+wait for is bounded twice.
+
+**By kind.** A transport failure is worth another attempt: each one reloads the
+session, so a connection the watcher healed in the background ([§5.21](#521-a-dead-shared-connection-repairs-itself-and-a-tool-call-is-not-repeated))
+carries the next try. An answer the server *sent* is not — a JSON-RPC parse
+error, invalid request, unknown method, invalid params, or the transport's own
+"rejected" all mean it understood the request and refused it, and the same
+bytes earn the same refusal. Neither is a call made after `Close`: no amount
+of waiting turns a closed server into a live connection.
+
+**By time.** The delay doubles per attempt but is capped at 30s and jittered
+into `[d/2, d]` — the same cap and the same equal jitter as the model layer's
+`RetryPolicy`, so a server shared by many runs is not retried in lockstep. The
+cap is what keeps the exponent honest: uncapped, a one-second base is sleeping
+half an hour by the twelfth attempt, and the run is indistinguishable from
+hung long before the exponent could overflow.
+
+The two bounds are what let `-1` stay a real setting rather than a footgun:
+"indefinitely" means one attempt every 30s until the caller's context ends,
+and the errors that could never succeed leave on the first try.
+
+Sharing the model layer's `RetryPolicy` was rejected. The timing is the part
+worth matching, and it is matched; the **classification** is the part that
+differs, and `DefaultRetryIf` — retry everything except context cancellation —
+is exactly the policy that made an infinite MCP retry indistinguishable from a
+hang. One knob with two different defaults is an abstraction serving neither.
+
 ### 5.22 Retry policy lives in one layer
 
 Both official clients retry transient failures on their own (2 attempts by
