@@ -86,16 +86,28 @@ func wsSink(conn *server.WSConn) bridge.EventSink {
 // cancel closure SubscribeSeq returned — so they can all be detached when the
 // socket closes.
 type connSubs struct {
-	mu   sync.Mutex
-	subs map[string]func() // runID -> detach
+	mu     sync.Mutex
+	subs   map[string]func() // runID -> detach
+	closed bool
 }
 
 // add records the connection's subscription for runID, detaching any previous
 // subscription to the same run first so re-subscribing (reconnect with a new
 // from_seq, approval resume) never leaves a duplicate hub sink delivering
 // every event twice.
+//
+// After closeAll it detaches on the spot instead of recording: AttachAll
+// subscribes from a snapshot of the registry, so a socket can close between
+// the snapshot and the subscribe, and a subscription recorded then has nobody
+// left to detach it — it would feed a dead connection until the run's fanout
+// closed, which is minutes after the browser went away.
 func (cs *connSubs) add(runID string, cancel func()) {
 	cs.mu.Lock()
+	if cs.closed {
+		cs.mu.Unlock()
+		cancel()
+		return
+	}
 	prev := cs.subs[runID]
 	cs.subs[runID] = cancel
 	cs.mu.Unlock()
@@ -112,13 +124,18 @@ func (cs *connSubs) has(runID string) bool {
 	return ok
 }
 
+// closeAll detaches every subscription and closes the set, so a subscribe
+// still in flight detaches itself rather than outliving the connection.
 func (cs *connSubs) closeAll() {
 	cs.mu.Lock()
-	defer cs.mu.Unlock()
-	for _, cancel := range cs.subs {
+	subs := cs.subs
+	cs.subs, cs.closed = map[string]func(){}, true
+	cs.mu.Unlock()
+	// Outside the lock: detaching reaches into the hub, and add already
+	// cancels its predecessor unlocked.
+	for _, cancel := range subs {
 		cancel()
 	}
-	cs.subs = map[string]func(){}
 }
 
 // Handle reads and dispatches WebSocket messages on conn until the connection closes.
