@@ -186,6 +186,12 @@ func TestCountBindingRefs(t *testing.T) {
 	if n, err := sessions.CountBindingRefs(ctx, NewID(), ""); err != nil || n != 0 {
 		t.Fatalf("CountBindingRefs(sb-none) = %d, %v; want 0", n, err)
 	}
+	// An unset half is stored as NULL, so it is asked for as NULL: the pair
+	// ("", "") is the unbound sessions, not a syntax error (PostgreSQL refuses
+	// "" as a uuid) and not silently nothing (what SQLite would answer).
+	if n, err := sessions.CountBindingRefs(ctx, "", ""); err != nil || n != 1 {
+		t.Fatalf("CountBindingRefs(unbound) = %d, %v; want the one unbound session", n, err)
+	}
 	if err := sessions.Delete(ctx, a.ID); err != nil {
 		t.Fatalf("delete: %v", err)
 	}

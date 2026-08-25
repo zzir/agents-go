@@ -209,16 +209,29 @@ func (s *SessionStore) BindSandboxIfEmpty(ctx context.Context, id, sandboxID, pr
 
 // CountBindingRefs reports how many sessions are bound to exactly (sandboxID,
 // projectID) — the unit the SandboxManager caches an instance per. Zero after a
-// session delete means the pair's cached instance has no caller left.
+// session delete means the pair's cached instance has no caller left. Either
+// half may be unset, which the columns store as NULL (see boundTo).
 func (s *SessionStore) CountBindingRefs(ctx context.Context, sandboxID, projectID string) (int, error) {
-	n, err := s.db.NewSelect().Model((*Session)(nil)).
-		Where("sandbox_id = ?", sandboxID).
-		Where("project_id = ?", projectID).
-		Count(ctx)
+	q := s.db.NewSelect().Model((*Session)(nil))
+	q = boundTo(q, "sandbox_id", sandboxID)
+	q = boundTo(q, "project_id", projectID)
+	n, err := q.Count(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("counting sessions bound to sandbox %s project %s: %w", sandboxID, projectID, err)
 	}
 	return n, nil
+}
+
+// boundTo narrows a nullable uuid column to one id — or, for the empty id, to
+// the rows that carry none. An unset binding is stored as NULL (the nullzero
+// tag), never as "", and PostgreSQL refuses "" as a uuid outright; SQLite
+// merely matches nothing, which reads as a passing test until it runs on the
+// other backend.
+func boundTo(q *bun.SelectQuery, column, id string) *bun.SelectQuery {
+	if id == "" {
+		return q.Where("? IS NULL", bun.Ident(column))
+	}
+	return q.Where("? = ?", bun.Ident(column), id)
 }
 
 // Delete removes the session with the given id together with all of its
