@@ -7176,6 +7176,13 @@ export interface components {
             name?: string;
             owner_id?: string;
             sandbox_id?: string;
+            /**
+             * @description StorageHint names where the files live — the local daemon's host
+             *     directory or the remote daemon's volume. Derived per response by the
+             *     handler, never stored: deleting the row keeps the storage (spec §5.28),
+             *     so the UI can say where.
+             */
+            storage_hint?: string;
             updated_at?: string;
         };
         /**

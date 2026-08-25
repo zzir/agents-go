@@ -12,6 +12,9 @@ export interface Project {
   id: string;
   name: string;
   sandbox_id: string;
+  /* Where the files live (host directory or remote volume) — shown by the
+     delete dialog, since storage outlives the row. */
+  storage_hint?: string;
 }
 
 /* The session's permanent (sandbox_id, project_id) binding, or null while unbound. */

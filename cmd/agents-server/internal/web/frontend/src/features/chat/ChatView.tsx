@@ -229,7 +229,9 @@ export function ChatView({
   const deleteProject = async (p: Project) => {
     const ok = await confirmDialog({
       title: `Delete “${p.name}”?`,
-      content: 'Its files stay on the sandbox. Refused while sessions are still bound to it.',
+      content: p.storage_hint
+        ? `Its files stay on the sandbox, in ${p.storage_hint}. Refused while sessions are still bound to it.`
+        : 'Its files stay on the sandbox. Refused while sessions are still bound to it.',
       confirmButtonContent: 'Delete',
       confirmButtonType: 'danger',
     });

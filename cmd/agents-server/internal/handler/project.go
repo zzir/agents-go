@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -45,7 +46,36 @@ func (h *ProjectHandler) List(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
+	hosts := map[string]string{}
+	for i := range out {
+		out[i].StorageHint = h.storageHint(c, hosts, &out[i])
+	}
 	c.JSON(http.StatusOK, out)
+}
+
+// storageHint derives where p's files live — the workspace directory on the
+// local daemon, the named volume on a remote one — so the UI can say what a
+// delete leaves behind (spec §5.28: storage outlives the row). hosts caches
+// sandbox→host across one response; empty when the hint cannot be derived.
+func (h *ProjectHandler) storageHint(c *gin.Context, hosts map[string]string, p *store.Project) string {
+	if h.manager == nil {
+		return ""
+	}
+	host, ok := hosts[p.SandboxID]
+	if !ok {
+		cfg, err := h.sandboxes.Get(c.Request.Context(), p.SandboxID)
+		if err != nil {
+			return ""
+		}
+		var dc store.DockerConfig
+		_ = json.Unmarshal(cfg.Config, &dc)
+		host = dc.Host
+		hosts[p.SandboxID] = host
+	}
+	if host == "" {
+		return h.manager.ProjectHostDir(p)
+	}
+	return "docker volume " + sandboxes.ProjectVolumeName(p.ID) + " on " + host
 }
 
 type projectReq struct {
@@ -83,6 +113,7 @@ func (h *ProjectHandler) Create(c *gin.Context) {
 		saveError(c, err)
 		return
 	}
+	p.StorageHint = h.storageHint(c, map[string]string{}, p)
 	created(c, p.ID, p)
 }
 

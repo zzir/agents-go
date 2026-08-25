@@ -497,6 +497,11 @@ type Project struct {
 	Name      string    `bun:"name,notnull"                json:"name"`
 	CreatedAt time.Time `bun:"created_at,notnull"          json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,notnull"          json:"updated_at"`
+	// StorageHint names where the files live — the local daemon's host
+	// directory or the remote daemon's volume. Derived per response by the
+	// handler, never stored: deleting the row keeps the storage (spec §5.28),
+	// so the UI can say where.
+	StorageHint string `bun:"-" json:"storage_hint,omitempty"`
 }
 
 // DefaultProjectName is the per-(owner, sandbox) project a run lands in when

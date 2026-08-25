@@ -1591,6 +1591,13 @@ components:
           type: string
         sandbox_id:
           type: string
+        storage_hint:
+          description: |-
+            StorageHint names where the files live — the local daemon's host
+            directory or the remote daemon's volume. Derived per response by the
+            handler, never stored: deleting the row keeps the storage (spec §5.28),
+            so the UI can say where.
+          type: string
         updated_at:
           type: string
       type: object
