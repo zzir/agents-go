@@ -170,13 +170,18 @@ func (h *SessionHandler) Create(c *gin.Context) {
 	}
 	req.Name = cmp.Or(req.Name, store.DefaultSessionName)
 	ctx := c.Request.Context()
+	u, _ := server.CurrentUser(c)
 	if req.AgentConfigID != "" {
-		if _, err := h.agents.Get(ctx, req.AgentConfigID); err != nil {
+		// A foreign private agent reads as absent — the same rule the run-time
+		// build applies (spec §5.29), admin included: a binding the owner's
+		// runs would refuse must not be created, and the answer must not act
+		// as an existence oracle.
+		ac, err := h.agents.Get(ctx, req.AgentConfigID)
+		if err != nil || !store.Visible(ac.Scope, ac.OwnerID, u.ID, false) {
 			badRequest(c, "agent_config_id does not reference an existing agent")
 			return
 		}
 	}
-	u, _ := server.CurrentUser(c)
 	sess := &store.Session{
 		ID:            store.NewID(),
 		OwnerID:       u.ID,

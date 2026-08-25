@@ -553,3 +553,29 @@ func TestSetScopeSameScopeRefused(t *testing.T) {
 		t.Fatalf("global->global = %d, want 409", rec.Code)
 	}
 }
+
+// Session create's agent binding follows run visibility (spec §5.29): a
+// foreign private agent id answers the same 400 an unknown id gets — admin
+// included, since the owner's runs would refuse it — so the binding can
+// never name an agent its runs cannot build, and the answer is no
+// existence oracle.
+func TestSessionCreateHidesForeignPrivateAgents(t *testing.T) {
+	r := authzRig(t)
+	ctx := context.Background()
+
+	private := &store.AgentConfig{Name: "theirs", Model: "m", Scope: store.ScopePrivate, OwnerID: memberUser.ID}
+	if err := store.NewAgentConfigStore(r.db).Create(ctx, private); err != nil {
+		t.Fatal(err)
+	}
+
+	body := `{"agent_config_id":"` + private.ID + `"}`
+	if rec := serve(r.engine, as(otherUser, http.MethodPost, "/api/v1/sessions", body)); rec.Code != http.StatusBadRequest {
+		t.Fatalf("other member binding a foreign private agent = %d, want 400", rec.Code)
+	}
+	if rec := serve(r.engine, as(adminUser, http.MethodPost, "/api/v1/sessions", body)); rec.Code != http.StatusBadRequest {
+		t.Fatalf("admin binding a member's private agent = %d, want 400", rec.Code)
+	}
+	if rec := serve(r.engine, as(memberUser, http.MethodPost, "/api/v1/sessions", body)); rec.Code != http.StatusCreated {
+		t.Fatalf("owner binding their own agent = %d, want 201 (%s)", rec.Code, rec.Body.String())
+	}
+}
