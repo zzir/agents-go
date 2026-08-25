@@ -19,6 +19,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
@@ -68,6 +69,7 @@ func authzRig(t *testing.T) rig {
 		Approvals: NewApprovalHandler(approvals, runner),
 		Triggers:  NewTriggerHandler(triggers, sessions, store.NewWorkflowStore(db), store.NewAgentConfigStore(db), &fakeFirer{}),
 		Workflows: NewWorkflowHandler(store.NewWorkflowStore(db), agents, sessions, runner),
+		Skills:    NewSkillHandler(store.NewSkillStore(db), settings.NewReader(store.NewSettingStore(db))),
 	}.Register)
 	return rig{engine: s.Engine, sessions: sessions, db: db, runner: runner}
 }
@@ -97,7 +99,7 @@ func TestSessionSubtreesAreTheOwnersAlone(t *testing.T) {
 	if err := approvals.Save(ctx, pending); err != nil {
 		t.Fatal(err)
 	}
-	wf := &store.Workflow{Name: "build", Steps: store.WorkflowSteps{{Prompt: "do"}}}
+	wf := &store.Workflow{Name: "build", OwnerID: memberUser.ID, Steps: store.WorkflowSteps{{Prompt: "do"}}}
 	if err := store.NewWorkflowStore(db).Create(ctx, wf); err != nil {
 		t.Fatal(err)
 	}
@@ -217,26 +219,196 @@ func TestScopedConfigWrites(t *testing.T) {
 		t.Fatalf("owner's list must carry their own and the global row: %s", rec.Body.String())
 	}
 
-	// Writes: a member edits their own, not a global; an admin edits the
-	// global, deletes-but-does-not-edit the member's.
+	// Writes: the owner edits their own; a non-owner member never edits a
+	// global row; an admin edits a global row but not a member's private one
+	// (management is delete, scope change and transfer — not authorship).
 	if rec := serve(engine, as(memberUser, http.MethodPut, "/api/v1/agents/"+ac.ID, `{"name":"a1","model":"m2"}`)); rec.Code != http.StatusOK {
 		t.Fatalf("owner update = %d (%s)", rec.Code, rec.Body.String())
 	}
 	if rec := serve(engine, as(memberUser, http.MethodPut, "/api/v1/agents/"+global.ID, `{"name":"g1","model":"m2"}`)); rec.Code != http.StatusForbidden {
-		t.Fatalf("member update global = %d, want 403", rec.Code)
+		t.Fatalf("non-owner member update global = %d, want 403", rec.Code)
 	}
 	if rec := serve(engine, as(adminUser, http.MethodPut, "/api/v1/agents/"+ac.ID, `{"name":"a1","model":"m3"}`)); rec.Code != http.StatusForbidden {
 		t.Fatalf("admin update member's private = %d, want 403", rec.Code)
 	}
-	// Scope change is the admin's act, and it re-homes the row.
+	// Publishing is the admin's act; the row KEEPS its author (spec §5.29).
 	if rec := serve(engine, as(memberUser, http.MethodPost, "/api/v1/agents/"+ac.ID+"/scope", `{"scope":"global"}`)); rec.Code != http.StatusForbidden {
-		t.Fatalf("member scope change = %d, want 403", rec.Code)
+		t.Fatalf("member promote = %d, want 403", rec.Code)
 	}
 	if rec := serve(engine, as(adminUser, http.MethodPost, "/api/v1/agents/"+ac.ID+"/scope", `{"scope":"global"}`)); rec.Code != http.StatusNoContent {
 		t.Fatalf("admin promote = %d (%s)", rec.Code, rec.Body.String())
 	}
 	if rec := serve(engine, as(otherUser, http.MethodGet, "/api/v1/agents/"+ac.ID, "")); rec.Code != http.StatusOK {
 		t.Fatalf("promoted row must be readable by every member: %d", rec.Code)
+	}
+	var promoted store.AgentConfig
+	rec = serve(engine, as(memberUser, http.MethodGet, "/api/v1/agents/"+ac.ID, ""))
+	_ = json.Unmarshal(rec.Body.Bytes(), &promoted)
+	if promoted.OwnerID != memberUser.ID {
+		t.Fatalf("promote lost the author: owner = %q, want %q", promoted.OwnerID, memberUser.ID)
+	}
+	// The author still edits what they published; another member does not.
+	if rec := serve(engine, as(memberUser, http.MethodPut, "/api/v1/agents/"+ac.ID, `{"name":"a1","model":"m4"}`)); rec.Code != http.StatusOK {
+		t.Fatalf("author update of their published row = %d (%s)", rec.Code, rec.Body.String())
+	}
+	if rec := serve(engine, as(otherUser, http.MethodPut, "/api/v1/agents/"+ac.ID, `{"name":"a1","model":"m5"}`)); rec.Code != http.StatusForbidden {
+		t.Fatalf("non-author member update of a global row = %d, want 403", rec.Code)
+	}
+	// Unpublishing is the admin's or the author's, and returns the row to the
+	// author — never to the acting admin.
+	if rec := serve(engine, as(otherUser, http.MethodPost, "/api/v1/agents/"+ac.ID+"/scope", `{"scope":"private"}`)); rec.Code != http.StatusForbidden {
+		t.Fatalf("non-author member demote = %d, want 403", rec.Code)
+	}
+	if rec := serve(engine, as(adminUser, http.MethodPost, "/api/v1/agents/"+ac.ID+"/scope", `{"scope":"private"}`)); rec.Code != http.StatusNoContent {
+		t.Fatalf("admin demote = %d (%s)", rec.Code, rec.Body.String())
+	}
+	var demoted store.AgentConfig
+	rec = serve(engine, as(memberUser, http.MethodGet, "/api/v1/agents/"+ac.ID, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the author lost their demoted row: %d", rec.Code)
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &demoted)
+	if demoted.Scope != store.ScopePrivate || demoted.OwnerID != memberUser.ID {
+		t.Fatalf("demoted row = (%s, %s), want the author's private set", demoted.Scope, demoted.OwnerID)
+	}
+	// The author may unpublish their own row too.
+	if rec := serve(engine, as(memberUser, http.MethodPost, "/api/v1/agents/"+ac.ID+"/scope", `{"scope":"global"}`)); rec.Code != http.StatusForbidden {
+		t.Fatalf("member re-promote = %d, want 403", rec.Code)
+	}
+	_ = serve(engine, as(adminUser, http.MethodPost, "/api/v1/agents/"+ac.ID+"/scope", `{"scope":"global"}`))
+	if rec := serve(engine, as(memberUser, http.MethodPost, "/api/v1/agents/"+ac.ID+"/scope", `{"scope":"private"}`)); rec.Code != http.StatusNoContent {
+		t.Fatalf("author demote of their own published row = %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// An edit authorized against one owner must not land after a transfer moved
+// the row: the check is re-run inside the write transaction, so the late
+// write answers 409 instead of editing under a permission that is gone — and
+// a workflow's write-back cannot restore the old owner (spec §5.29).
+func TestUpdateRefusedAfterATransfer(t *testing.T) {
+	r := authzRig(t)
+	engine, ctx := r.engine, context.Background()
+	for _, u := range []protocol.UserInfo{memberUser, otherUser} {
+		if _, err := r.db.NewInsert().Model(&store.User{ID: u.ID, Email: u.Email, Role: u.Role}).Exec(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	agents := store.NewAgentConfigStore(r.db)
+	workflows := store.NewWorkflowStore(r.db)
+
+	ac := &store.AgentConfig{Name: "movable", Model: "m", Scope: store.ScopePrivate, OwnerID: memberUser.ID}
+	if err := agents.Create(ctx, ac); err != nil {
+		t.Fatal(err)
+	}
+	wf := &store.Workflow{Name: "movable-flow", Description: "d", Scope: store.ScopePrivate, OwnerID: memberUser.ID,
+		Steps: store.WorkflowSteps{{ID: store.NewID(), Name: "one", AgentConfigID: ac.ID, Prompt: "p"}}}
+	if err := workflows.Create(ctx, wf); err != nil {
+		t.Fatal(err)
+	}
+	// The transfer lands between the caller's authorization and their write —
+	// modelled by moving the rows, then issuing the edit the old owner had
+	// already been allowed to make.
+	if err := store.SetOwnerOf(ctx, agents.CrudStore, ac.ID, otherUser.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetOwnerOf(ctx, workflows.CrudStore, wf.ID, otherUser.ID); err != nil {
+		t.Fatal(err)
+	}
+	if rec := serve(engine, as(memberUser, http.MethodPut, "/api/v1/agents/"+ac.ID, `{"name":"movable","model":"m2"}`)); rec.Code != http.StatusNotFound {
+		t.Fatalf("the former owner's late agent edit = %d, want 404", rec.Code)
+	}
+	body := `{"name":"movable-flow","description":"d","steps":[{"id":"` + wf.Steps[0].ID + `","name":"one","agent_config_id":"` + ac.ID + `","prompt":"p2"}]}`
+	if rec := serve(engine, as(memberUser, http.MethodPut, "/api/v1/workflows/"+wf.ID, body)); rec.Code != http.StatusNotFound {
+		t.Fatalf("the former owner's late workflow edit = %d, want 404", rec.Code)
+	}
+	// The new owner still holds them, unchanged by the refused writes.
+	got, err := workflows.Get(ctx, wf.ID)
+	if err != nil || got.OwnerID != otherUser.ID || got.Steps[0].Prompt != "p" {
+		t.Fatalf("workflow after the refused edit = (%s, %+v), want the new owner and the old steps", got.OwnerID, got.Steps)
+	}
+
+	// And the INTERLEAVING itself: a write authorized against the old pair,
+	// reaching the store after the transfer, is refused inside the
+	// transaction rather than landing (the outer check above cannot see a
+	// transfer that lands after it ran).
+	late := *got
+	late.Steps[0].Prompt = "p3"
+	err = workflows.Update(ctx, wf.ID, &late, ownershipGuard(store.ScopePrivate, memberUser.ID,
+		func(w *store.Workflow) (string, string) { return w.Scope, w.OwnerID }, nil))
+	if !errors.Is(err, store.ErrOwnershipChanged) {
+		t.Fatalf("a write authorized against the former owner = %v, want ErrOwnershipChanged", err)
+	}
+	if after, _ := workflows.Get(ctx, wf.ID); after.Steps[0].Prompt != "p" {
+		t.Fatalf("the refused late write landed: %+v", after.Steps)
+	}
+}
+
+// A scope request on a row the caller may not see answers 404 whatever else
+// is wrong with it: the imported/authored refusal must not tell a member that
+// somebody else's private skill exists (spec §5.29 — scope is no oracle).
+func TestSkillScopeIsNoExistenceOracle(t *testing.T) {
+	r := authzRig(t)
+	ctx := context.Background()
+	skills := store.NewSkillStore(r.db)
+
+	authored := &store.Skill{Name: "theirs", Description: "d", Content: "c",
+		Scope: store.ScopePrivate, OwnerID: memberUser.ID}
+	imported := &store.Skill{Name: "imported", Description: "d", Content: "c",
+		Scope: store.ScopePrivate, OwnerID: memberUser.ID, SourceRepo: "https://github.com/o/r"}
+	for _, sk := range []*store.Skill{authored, imported} {
+		if err := skills.Create(ctx, sk); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, id := range map[string]string{
+		"unknown":          store.NewID(),
+		"foreign authored": authored.ID,
+		"foreign imported": imported.ID,
+	} {
+		rec := serve(r.engine, as(otherUser, http.MethodPost, "/api/v1/skills/"+id+"/scope", `{"scope":"global"}`))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s = %d, want 404 (%s)", name, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+// Transferring a scoped row is the admin's: the new owner edits it, the old
+// one no longer sees it, and a member cannot transfer anything (spec §5.29).
+func TestScopedConfigOwnerTransfer(t *testing.T) {
+	r := authzRig(t)
+	engine := r.engine
+	ctx := context.Background()
+	users := store.NewUserStore(r.db)
+	for _, u := range []protocol.UserInfo{memberUser, otherUser} {
+		if _, err := r.db.NewInsert().Model(&store.User{ID: u.ID, Email: u.Email, Role: u.Role}).Exec(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := users.ByID(ctx, otherUser.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := serve(engine, as(memberUser, http.MethodPost, "/api/v1/agents", `{"name":"movable","model":"m"}`))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create = %d (%s)", rec.Code, rec.Body.String())
+	}
+	var ac store.AgentConfig
+	_ = json.Unmarshal(rec.Body.Bytes(), &ac)
+
+	if rec := serve(engine, as(memberUser, http.MethodPut, "/api/v1/agents/"+ac.ID+"/owner", `{"user_id":"`+otherUser.ID+`"}`)); rec.Code != http.StatusForbidden {
+		t.Fatalf("member transfer = %d, want 403", rec.Code)
+	}
+	if rec := serve(engine, as(adminUser, http.MethodPut, "/api/v1/agents/"+ac.ID+"/owner", `{"user_id":"nobody"}`)); rec.Code != http.StatusBadRequest {
+		t.Fatalf("transfer to an unknown account = %d, want 400", rec.Code)
+	}
+	if rec := serve(engine, as(adminUser, http.MethodPut, "/api/v1/agents/"+ac.ID+"/owner", `{"user_id":"`+otherUser.ID+`"}`)); rec.Code != http.StatusNoContent {
+		t.Fatalf("admin transfer = %d (%s)", rec.Code, rec.Body.String())
+	}
+	if rec := serve(engine, as(otherUser, http.MethodPut, "/api/v1/agents/"+ac.ID, `{"name":"movable","model":"m2"}`)); rec.Code != http.StatusOK {
+		t.Fatalf("the new owner cannot edit their row: %d (%s)", rec.Code, rec.Body.String())
+	}
+	if rec := serve(engine, as(memberUser, http.MethodGet, "/api/v1/agents/"+ac.ID, "")); rec.Code != http.StatusNotFound {
+		t.Fatalf("the former owner still sees the row: %d", rec.Code)
 	}
 }
 
@@ -525,9 +697,9 @@ func TestUserManagement(t *testing.T) {
 
 func ptr[T any](v T) *T { return &v }
 
-// A /scope request naming the row's current scope is refused: on a private
-// row it would otherwise silently re-home the row — and any credential on it
-// — to the acting admin (spec §5.29 defines a demote on global rows only).
+// A /scope request naming the row's current scope is refused: a flip is
+// defined FROM the other scope only (spec §5.29), so a repeat is a 409 rather
+// than a silent no-op the caller reads as success.
 func TestSetScopeSameScopeRefused(t *testing.T) {
 	engine := authzRig(t).engine
 

@@ -123,7 +123,7 @@ func TestMcpServerToolsNotFoundVsNotConnected(t *testing.T) {
 		t.Fatalf("missing server: got %d, want 404 (body %s)", w.Code, w.Body.String())
 	}
 	// Exists but never connected -> 409.
-	cfg := &store.McpServerConfig{ID: store.NewID(), Name: "fs", Config: json.RawMessage(`{"endpoint":"http://x"}`)}
+	cfg := &store.McpServerConfig{ID: store.NewID(), Name: "fs", OwnerID: store.LocalUserID, Config: json.RawMessage(`{"endpoint":"http://x"}`)}
 	if err := mcpStore.Create(t.Context(), cfg); err != nil {
 		t.Fatal(err)
 	}

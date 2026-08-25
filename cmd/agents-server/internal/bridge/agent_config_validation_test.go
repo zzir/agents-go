@@ -50,7 +50,7 @@ func TestBuildFullAgentFailsOnBadCriticalConfig(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			ac := &store.AgentConfig{Name: "a-" + tc.name, Model: "gpt-test"}
+			ac := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "a-" + tc.name, Model: "gpt-test"}
 			tc.mutate(ac)
 			if err := s.Create(ctx, ac); err != nil {
 				t.Fatalf("create: %v", err)
@@ -63,7 +63,7 @@ func TestBuildFullAgentFailsOnBadCriticalConfig(t *testing.T) {
 	}
 
 	// A built-in guardrail name resolves and builds fine.
-	ok := &store.AgentConfig{Name: "ok", Model: "gpt-test", Guardrails: store.GuardrailGroup{Guardrails: `["content_filter"]`}}
+	ok := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "ok", Model: "gpt-test", Guardrails: store.GuardrailGroup{Guardrails: `["content_filter"]`}}
 	if err := s.Create(ctx, ok); err != nil {
 		t.Fatalf("create ok: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestBuildFullAgentPromotesGuardrailsToRunLevel(t *testing.T) {
 		Memories:     store.NewMemoryStore(db),
 		Guardrails:   guardrails.NewResolver(store.NewGuardrailStore(db)),
 	}
-	ac := &store.AgentConfig{
+	ac := &store.AgentConfig{OwnerID: store.LocalUserID,
 		Name:  "guarded",
 		Model: "gpt-test",
 		Guardrails: store.GuardrailGroup{
@@ -125,7 +125,7 @@ func TestValidateAgentToolNamesCatchesPrefixCollisions(t *testing.T) {
 	db := testdb.New(t)
 	servers := store.NewMcpServerStore(db)
 	owner := store.NewID()
-	global := &store.McpServerConfig{Name: "foo", Scope: store.ScopeGlobal}
+	global := &store.McpServerConfig{OwnerID: store.LocalUserID, Name: "foo", Scope: store.ScopeGlobal}
 	if err := servers.Create(ctx, global); err != nil {
 		t.Fatal(err)
 	}

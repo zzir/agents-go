@@ -638,6 +638,15 @@ components:
         workflow_id:
           type: string
       type: object
+    handler.UserLabel:
+      properties:
+        email:
+          type: string
+        id:
+          type: string
+        name:
+          type: string
+      type: object
     handler.UserPatchRequest:
       properties:
         disabled:
@@ -758,8 +767,8 @@ components:
         owner_id:
           type: string
         scope:
-          description: 'Scope/OwnerID: row visibility, owner set iff private — spec
-            §5.29.'
+          description: 'Scope/OwnerID: row visibility and its permanent creator —
+            spec §5.29.'
           type: string
         status:
           description: |-
@@ -917,6 +926,18 @@ components:
         reason:
           type: string
       type: object
+    handler.repoScopeReq:
+      properties:
+        owner_id:
+          type: string
+        repo:
+          type: string
+        scope:
+          type: string
+      required:
+      - repo
+      - scope
+      type: object
     handler.runWorkflowReq:
       properties:
         input:
@@ -970,6 +991,12 @@ components:
       type: object
     handler.skillImportReq:
       properties:
+        owner_id:
+          description: |-
+            OwnerID names WHICH group this import refreshes — a sync of somebody
+            else's published repository, for an admin. Empty means the caller's own
+            group, the only one a first import may create (spec §5.31).
+          type: string
         url:
           type: string
       required:
@@ -1294,8 +1321,8 @@ components:
         resilience:
           $ref: '#/components/schemas/store.ResilienceGroup'
         scope:
-          description: 'Scope/OwnerID: row visibility, owner set iff private — spec
-            §5.29.'
+          description: 'Scope/OwnerID: row visibility and its permanent creator —
+            spec §5.29.'
           type: string
         session:
           $ref: '#/components/schemas/store.SessionGroup'
@@ -1668,8 +1695,8 @@ components:
         owner_id:
           type: string
         scope:
-          description: 'Scope/OwnerID: row visibility, owner set iff private — spec
-            §5.29.'
+          description: 'Scope/OwnerID: row visibility and its permanent creator —
+            spec §5.29.'
           type: string
         type:
           description: |-
@@ -1813,9 +1840,18 @@ components:
           type: string
         owner_id:
           type: string
+        repo_label:
+          description: |-
+            RepoLabel is SourceRepo reduced to the prefix of the model-facing name
+            ("owner/repo", or the host). Materialized at write time (BeforeAppendModel)
+            because it is what the unique name indexes key on: two source URLs can
+            reduce to one label, and the index must refuse that collision — a
+            duplicate qualified name would make read_skill's answer a coin flip
+            (spec §5.31).
+          type: string
         scope:
-          description: 'Scope/OwnerID: row visibility, owner set iff private — spec
-            §5.29.'
+          description: 'Scope/OwnerID: row visibility and its permanent creator —
+            spec §5.29.'
           type: string
         source_path:
           type: string
@@ -2024,8 +2060,8 @@ components:
         owner_id:
           type: string
         scope:
-          description: 'Scope/OwnerID: row visibility, owner set iff private — spec
-            §5.29.'
+          description: 'Scope/OwnerID: row visibility and its permanent creator —
+            spec §5.29.'
           type: string
         steps:
           items:
@@ -2287,6 +2323,46 @@ paths:
       security:
       - BearerAuth: []
       summary: Update agent
+      tags:
+      - agents
+  /agents/{id}/owner:
+    put:
+      parameters:
+      - description: Agent ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.SetOwnerRequest'
+                description: The new owner
+                summary: body
+        description: The new owner
+        required: true
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: malformed body, or no such user
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: name collision in the target owner's namespace
+      security:
+      - BearerAuth: []
+      summary: Reassign an agent's owner (admin)
       tags:
       - agents
   /agents/{id}/scope:
@@ -2753,6 +2829,22 @@ paths:
       security:
       - BearerAuth: []
       summary: Revoke a personal access token
+      tags:
+      - auth
+  /auth/user-labels:
+    get:
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/handler.UserLabel'
+                type: array
+          description: OK
+      security:
+      - BearerAuth: []
+      summary: List user labels (id, name, email) for owner display
       tags:
       - auth
   /auth/users:
@@ -3264,6 +3356,46 @@ paths:
       security:
       - BearerAuth: []
       summary: Clear MCP OAuth token
+      tags:
+      - mcp-servers
+  /mcp-servers/{id}/owner:
+    put:
+      parameters:
+      - description: MCP server ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.SetOwnerRequest'
+                description: The new owner
+                summary: body
+        description: The new owner
+        required: true
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: malformed body, or no such user
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: name collision in the target owner's namespace
+      security:
+      - BearerAuth: []
+      summary: Reassign an MCP server's owner (admin)
       tags:
       - mcp-servers
   /mcp-servers/{id}/scope:
@@ -3958,6 +4090,46 @@ paths:
       security:
       - BearerAuth: []
       summary: ChatGPT login status
+      tags:
+      - providers
+  /providers/{id}/owner:
+    put:
+      parameters:
+      - description: Provider ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.SetOwnerRequest'
+                description: The new owner
+                summary: body
+        description: The new owner
+        required: true
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: malformed body, or no such user
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: name collision, or referencing agents block the transfer
+      security:
+      - BearerAuth: []
+      summary: Reassign a provider's owner (admin)
       tags:
       - providers
   /providers/{id}/scope:
@@ -5368,6 +5540,45 @@ paths:
       summary: Import skills from a URL
       tags:
       - skills
+  /skill-repos/scope:
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.repoScopeReq'
+                description: Repo, target scope, and (promote, admin) whose group
+                summary: body
+        description: Repo, target scope, and (promote, admin) whose group
+        required: true
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: no such repo group
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: already in that scope, or a name collision in the target scope
+      security:
+      - BearerAuth: []
+      summary: Change an imported repo's scope (all of its skills at once)
+      tags:
+      - skills
   /skills:
     get:
       responses:
@@ -5520,6 +5731,47 @@ paths:
       summary: Update skill
       tags:
       - skills
+  /skills/{id}/owner:
+    put:
+      parameters:
+      - description: Skill id
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.SetOwnerRequest'
+                description: The new owner
+                summary: body
+        description: The new owner
+        required: true
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: malformed body, or no such user
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: name collision in the target owner's namespace
+      security:
+      - BearerAuth: []
+      summary: Reassign a skill's owner (admin); an imported skill moves with its
+        repo
+      tags:
+      - skills
   /skills/{id}/scope:
     post:
       parameters:
@@ -5548,7 +5800,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Bad Request
+          description: an imported skill flips with its repo
         "409":
           content:
             application/json:
@@ -6128,6 +6380,46 @@ paths:
       security:
       - BearerAuth: []
       summary: Update a workflow
+      tags:
+      - workflows
+  /workflows/{id}/owner:
+    put:
+      parameters:
+      - description: Workflow ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.SetOwnerRequest'
+                description: The new owner
+                summary: body
+        description: The new owner
+        required: true
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: malformed body, or no such user
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: name collision in the target owner's namespace
+      security:
+      - BearerAuth: []
+      summary: Reassign a workflow's owner (admin)
       tags:
       - workflows
   /workflows/{id}/runs:

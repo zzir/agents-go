@@ -43,7 +43,7 @@ func TestSecretsSealedAtRest(t *testing.T) {
 	withTestBox(t)
 
 	providers := NewProviderStore(db)
-	pv := &Provider{Name: "p", APIKey: "sk-live"}
+	pv := &Provider{Name: "p", APIKey: "sk-live", OwnerID: NewID()}
 	if err := providers.Create(ctx, pv); err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestSecretsSealedAtRest(t *testing.T) {
 		t.Fatalf("sandbox config opened = %s", got.Config)
 	}
 	mcps := NewMcpServerStore(db)
-	mc := &McpServerConfig{Name: "m", Config: json.RawMessage(`{"endpoint":"http://x","headers":{"Authorization":"Bearer abc"},"oauth_client_secret":"cs"}`)}
+	mc := &McpServerConfig{Name: "m", OwnerID: NewID(), Config: json.RawMessage(`{"endpoint":"http://x","headers":{"Authorization":"Bearer abc"},"oauth_client_secret":"cs"}`)}
 	if err := mcps.Create(ctx, mc); err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestSealedRowWithoutKeyIsAnError(t *testing.T) {
 	db := newTestDB(t)
 	withTestBox(t)
 	providers := NewProviderStore(db)
-	pv := &Provider{Name: "p", APIKey: "sk-live"}
+	pv := &Provider{Name: "p", APIKey: "sk-live", OwnerID: NewID()}
 	if err := providers.Create(ctx, pv); err != nil {
 		t.Fatal(err)
 	}
@@ -148,14 +148,14 @@ func TestSealedValueDoesNotRelocate(t *testing.T) {
 	db := newTestDB(t)
 	withTestBox(t)
 	providers := NewProviderStore(db)
-	pv := &Provider{Name: "victim", APIKey: "sk-live"}
+	pv := &Provider{Name: "victim", APIKey: "sk-live", OwnerID: NewID()}
 	if err := providers.Create(ctx, pv); err != nil {
 		t.Fatal(err)
 	}
 	ct := rawColumn(t, db, "SELECT api_key FROM providers WHERE id = ?", pv.ID)
 
 	mcps := NewMcpServerStore(db)
-	mc := &McpServerConfig{Name: "m", Config: json.RawMessage(`{"endpoint":"http://attacker"}`)}
+	mc := &McpServerConfig{Name: "m", OwnerID: NewID(), Config: json.RawMessage(`{"endpoint":"http://attacker"}`)}
 	if err := mcps.Create(ctx, mc); err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestSealedValueDoesNotRelocate(t *testing.T) {
 		t.Fatalf("a provider's ciphertext planted as an MCP header opened: %s", got.Config)
 	}
 
-	other := &Provider{Name: "attacker", BaseURL: "http://attacker", APIKey: ct}
+	other := &Provider{Name: "attacker", BaseURL: "http://attacker", APIKey: ct, OwnerID: NewID()}
 	if err := providers.Create(ctx, other); err != nil {
 		t.Fatal(err)
 	}

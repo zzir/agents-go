@@ -131,7 +131,7 @@ const TaskKindWorkflow = "workflow"
 type AgentConfig struct {
 	bun.BaseModel `bun:"table:agent_configs,alias:ac"`
 
-	// Scope/OwnerID: row visibility, owner set iff private — spec §5.29.
+	// Scope/OwnerID: row visibility and its permanent creator — spec §5.29.
 	Scope   string `bun:"scope,notnull"                 json:"scope"`
 	OwnerID string `bun:"owner_id,nullzero,type:uuid"   json:"owner_id,omitempty"`
 	ID      string `bun:"id,pk,type:uuid" json:"id"`
@@ -189,7 +189,7 @@ type AgentConfig struct {
 type Provider struct {
 	bun.BaseModel `bun:"table:providers,alias:pv"`
 
-	// Scope/OwnerID: row visibility, owner set iff private — spec §5.29.
+	// Scope/OwnerID: row visibility and its permanent creator — spec §5.29.
 	Scope   string `bun:"scope,notnull"                 json:"scope"`
 	OwnerID string `bun:"owner_id,nullzero,type:uuid"   json:"owner_id,omitempty"`
 	ID      string `bun:"id,pk,type:uuid" json:"id"`
@@ -222,7 +222,7 @@ type Provider struct {
 type McpServerConfig struct {
 	bun.BaseModel `bun:"table:mcp_servers,alias:ms"`
 
-	// Scope/OwnerID: row visibility, owner set iff private — spec §5.29.
+	// Scope/OwnerID: row visibility and its permanent creator — spec §5.29.
 	Scope   string `bun:"scope,notnull"                 json:"scope"`
 	OwnerID string `bun:"owner_id,nullzero,type:uuid"   json:"owner_id,omitempty"`
 	ID      string `bun:"id,pk,type:uuid"        json:"id"`
@@ -291,7 +291,7 @@ type HTTPMcpConfig struct {
 type Skill struct {
 	bun.BaseModel `bun:"table:skills,alias:sk"`
 
-	// Scope/OwnerID: row visibility, owner set iff private — spec §5.29.
+	// Scope/OwnerID: row visibility and its permanent creator — spec §5.29.
 	Scope       string `bun:"scope,notnull"                 json:"scope"`
 	OwnerID     string `bun:"owner_id,nullzero,type:uuid"   json:"owner_id,omitempty"`
 	ID          string `bun:"id,pk,type:uuid" json:"id"`
@@ -308,6 +308,13 @@ type Skill struct {
 	SourceRepo string `bun:"source_repo,nullzero" json:"source_repo,omitempty"`
 	SourcePath string `bun:"source_path,nullzero" json:"source_path,omitempty"`
 	SourceSHA  string `bun:"source_sha,nullzero"  json:"source_sha,omitempty"`
+	// RepoLabel is SourceRepo reduced to the prefix of the model-facing name
+	// ("owner/repo", or the host). Materialized at write time (BeforeAppendModel)
+	// because it is what the unique name indexes key on: two source URLs can
+	// reduce to one label, and the index must refuse that collision — a
+	// duplicate qualified name would make read_skill's answer a coin flip
+	// (spec §5.31).
+	RepoLabel string `bun:"repo_label,nullzero" json:"repo_label,omitempty"`
 	// Detached marks an imported skill edited in the workbench: a re-import
 	// skips it instead of overwriting the local edit.
 	Detached bool `bun:"detached,notnull" json:"detached,omitempty"`
@@ -619,17 +626,15 @@ func (m *McpServerConfig) BeforeAppendModel(_ context.Context, q bun.Query) erro
 }
 
 // stampScope pins the scope/owner invariant on INSERT: an unstamped direct
-// write lands global, a private row without its owner is refused — see
-// NormalizeScope and spec §5.29.
+// write lands private, and every row records its creator — see NormalizeScope
+// and spec §5.29.
 func stampScope(q bun.Query, scope *string, ownerID string) error {
 	if _, ok := q.(*bun.InsertQuery); !ok {
 		return nil
 	}
-	if *scope == "" {
-		*scope = ScopeGlobal
-	}
-	if *scope == ScopePrivate && ownerID == "" {
-		return fmt.Errorf("a private row needs an owner")
+	*scope = NormalizeScope(*scope)
+	if ownerID == "" {
+		return fmt.Errorf("a scoped row needs an owner")
 	}
 	return nil
 }
@@ -639,6 +644,9 @@ func (m *Skill) BeforeAppendModel(_ context.Context, q bun.Query) error {
 	if err := stampScope(q, &m.Scope, m.OwnerID); err != nil {
 		return err
 	}
+	// The label is derived, never supplied: it is what the unique name indexes
+	// key on, so it must follow SourceRepo on every write (spec §5.31).
+	m.RepoLabel = repoLabelOf(m.SourceRepo)
 	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
 }
 

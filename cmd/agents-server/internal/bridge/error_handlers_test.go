@@ -62,7 +62,7 @@ func TestBuildFullAgentBuildsErrorHandlers(t *testing.T) {
 		Memories:     store.NewMemoryStore(db),
 	}
 
-	ac := &store.AgentConfig{
+	ac := &store.AgentConfig{OwnerID: store.LocalUserID,
 		Name:  "recovering",
 		Model: "gpt-test",
 		ErrorHandlers: `{
@@ -132,7 +132,7 @@ func TestBuildFullAgentFailsOnBadErrorHandlers(t *testing.T) {
 		Memories:     store.NewMemoryStore(db),
 	}
 
-	ac := &store.AgentConfig{
+	ac := &store.AgentConfig{OwnerID: store.LocalUserID,
 		Name:          "broken",
 		Model:         "gpt-test",
 		ErrorHandlers: `{"max_turns":{"final_output":{"not":"a string"}}}`, // plain-text agent

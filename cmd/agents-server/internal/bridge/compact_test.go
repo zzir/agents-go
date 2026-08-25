@@ -44,7 +44,7 @@ func TestCompactSessionFoldsOutsideARun(t *testing.T) {
 	defer srv.Close()
 
 	runner, sessions, _, agentConfigs := newTaskTestRunner(t)
-	ac := &store.AgentConfig{
+	ac := &store.AgentConfig{OwnerID: store.LocalUserID,
 		Name:       "worker",
 		Model:      "gpt-test",
 		ProviderID: testProvider(t, runner.db, "sum", "k", srv.URL),
@@ -107,7 +107,7 @@ func TestCompactSessionGuards(t *testing.T) {
 	runner, sessions, _, agentConfigs := newTaskTestRunner(t)
 
 	// Compaction disabled on the agent.
-	ac := &store.AgentConfig{
+	ac := &store.AgentConfig{OwnerID: store.LocalUserID,
 		Name:       "worker",
 		Model:      "gpt-test",
 		ProviderID: testProvider(t, runner.db, "keyed", "k", ""),

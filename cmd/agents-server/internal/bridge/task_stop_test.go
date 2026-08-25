@@ -113,7 +113,7 @@ func (m *toolThenSilence) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // fakeModelAgent registers an agent config whose provider points at srv.
 func fakeModelAgent(t *testing.T, db *bun.DB, configs *store.AgentConfigStore, url string) {
 	t.Helper()
-	ac := &store.AgentConfig{
+	ac := &store.AgentConfig{OwnerID: store.LocalUserID,
 		Name:       "worker",
 		Model:      "gpt-test",
 		ProviderID: testProvider(t, db, "worker-endpoint", "k", url),

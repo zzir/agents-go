@@ -593,21 +593,24 @@ func attachSkills(ctx context.Context, deps *AgentDeps, agent *agents.Agent, spe
 	if len(stored) == 0 {
 		return 0
 	}
-	// Two visible skills can share a name (a private one shadowing a global
-	// one); the owner's wins: read_skill resolves own-over-global, so the
-	// index entry's description must be the owned row's too, whichever order
-	// ListMeta returned them in.
+	// The index advertises MODEL-FACING names: "owner/repo:name" for imported
+	// skills, the bare name for workbench-authored ones. Two visible skills can
+	// still share one (the caller's private import shadowing the same repo's
+	// global group); the owner's wins: read_skill resolves own-over-global, so
+	// the index entry's description must be the owned row's too, whichever
+	// order ListMeta returned them in.
 	index := make([]skills.Skill, 0, len(stored))
 	pos := make(map[string]int, len(stored))
 	for _, sk := range stored {
-		if at, seen := pos[sk.Name]; seen {
-			if sk.OwnerID == ownerID {
+		name := sk.QualifiedName()
+		if at, seen := pos[name]; seen {
+			if store.Shadows(sk.Scope, sk.OwnerID, ownerID) {
 				index[at].Description = sk.Description
 			}
 			continue
 		}
-		pos[sk.Name] = len(index)
-		index = append(index, skills.Skill{Name: sk.Name, Description: sk.Description})
+		pos[name] = len(index)
+		index = append(index, skills.Skill{Name: name, Description: sk.Description})
 	}
 	advertised := make(map[string]bool, len(pos))
 	for name := range pos {
@@ -620,7 +623,7 @@ func attachSkills(ctx context.Context, deps *AgentDeps, agent *agents.Agent, spe
 }
 
 type readSkillArgs struct {
-	Name string `json:"name" jsonschema:"the skill's name from the skills index, e.g. pdf-processing"`
+	Name string `json:"name" jsonschema:"the skill's name exactly as the skills index lists it, e.g. pdf-processing or anthropics/skills:pdf-processing"`
 }
 
 // readSkillTool serves a skill's full SKILL.md from the store by name —

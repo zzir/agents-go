@@ -79,6 +79,36 @@ func (h *AuthHandler) ListUsers(c *gin.Context) {
 	c.JSON(http.StatusOK, list)
 }
 
+// UserLabel is one entry of the id→person directory every member may read.
+type UserLabel struct {
+	ID    string `json:"id"`
+	Name  string `json:"name,omitempty"`
+	Email string `json:"email"`
+}
+
+// ListUserLabels serves the minimal id→label directory any authenticated
+// member reads to render row owners (one team, one trust boundary — spec
+// §5.29). Roles, timestamps and account state stay admin-only (ListUsers).
+//
+//	@Summary	List user labels (id, name, email) for owner display
+//	@Tags		auth
+//	@Produce	json
+//	@Success	200	{array}	UserLabel
+//	@Security	BearerAuth
+//	@Router		/auth/user-labels [get]
+func (h *AuthHandler) ListUserLabels(c *gin.Context) {
+	list, err := h.users.List(c.Request.Context())
+	if err != nil {
+		internalError(c, err)
+		return
+	}
+	labels := make([]UserLabel, 0, len(list))
+	for _, u := range list {
+		labels = append(labels, UserLabel{ID: u.ID, Name: u.Name, Email: u.Email})
+	}
+	c.JSON(http.StatusOK, labels)
+}
+
 // PatchUser changes an account's role or switches it off. The store refuses
 // the change that would leave no enabled admin (409); the local account is
 // not a person to manage; an admin acting on themself is refused outright,

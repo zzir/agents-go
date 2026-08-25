@@ -263,11 +263,15 @@ func (h *AgentConfigHandler) Update(c *gin.Context) {
 	}
 	// The masked fallback-model keys round-trip to their stored values inside
 	// the store's transaction.
-	err = h.store.Update(ctx, id, &ac, func(prev *store.AgentConfig) error {
-		ac.Scope, ac.OwnerID = prev.Scope, prev.OwnerID
-		ac.Resilience.FallbackModels = restoreFallbackModels(ac.Resilience.FallbackModels, prev.Resilience.FallbackModels)
-		return nil
-	})
+	// ownershipGuard re-checks the pair editableRow authorized against, now
+	// inside the transaction: a transfer that landed since answers 409.
+	err = h.store.Update(ctx, id, &ac, ownershipGuard(cur.Scope, cur.OwnerID,
+		func(a *store.AgentConfig) (string, string) { return a.Scope, a.OwnerID },
+		func(prev *store.AgentConfig) error {
+			ac.Scope, ac.OwnerID = prev.Scope, prev.OwnerID
+			ac.Resilience.FallbackModels = restoreFallbackModels(ac.Resilience.FallbackModels, prev.Resilience.FallbackModels)
+			return nil
+		}))
 	if err != nil {
 		saveError(c, err) // duplicate name -> 409, not-found -> 404
 		return
@@ -300,15 +304,15 @@ func (h *AgentConfigHandler) Delete(c *gin.Context) {
 	if !deletableRow(c, cur.Scope, cur.OwnerID) {
 		return
 	}
-	if err := h.store.Delete(c.Request.Context(), c.Param("id")); err != nil {
-		storeError(c, err)
+	if err := store.DeleteOwnedBy(c.Request.Context(), h.store.CrudStore, c.Param("id"), cur.OwnerID); err != nil {
+		saveError(c, err) // moved since the check -> 409
 		return
 	}
 	c.Status(http.StatusNoContent)
 }
 
 // SetScope promotes an agent to global — after checking every reference it
-// holds is global too — or demotes it to the acting admin's private set.
+// holds is global too — or demotes it back to its author's private set.
 // Entities still referencing a demoted agent fail loudly at their next use.
 //
 //	@Summary	Change an agent's scope
@@ -326,31 +330,82 @@ func (h *AgentConfigHandler) SetScope(c *gin.Context) {
 	if !ok {
 		return
 	}
-	u, _ := server.CurrentUser(c)
 	ctx, id := c.Request.Context(), c.Param("id")
 	ac, err := h.store.Get(ctx, id)
 	if err != nil {
 		storeError(c, err)
 		return
 	}
-	if sameScope(c, "agent", ac.Scope, scope) {
+	if !scopeChangeAllowed(c, scope, ac.Scope, ac.OwnerID) {
 		return
 	}
-	owner := ""
-	if scope == store.ScopePrivate {
-		owner = u.ID
+	if sameScope(c, "agent", ac.Scope, scope) {
+		return
 	}
 	// A promote re-runs the reference validation AS the target scope: a
 	// global agent may only name global providers, servers, skills and
 	// handoff targets.
-	ac.Scope, ac.OwnerID = scope, owner
+	ac.Scope = scope
 	if !h.validateAgentConfig(c, ac) {
 		return
 	}
-	if err := store.SetScopeOf(ctx, h.store.CrudStore, id, scope, owner); err != nil {
+	// The store re-checks the provider leg as the target scope inside its
+	// transaction, so a demote landing between the validation above and this
+	// write cannot leave a global agent on a private key.
+	if err := h.store.SetScope(ctx, id, scope); err != nil {
 		saveError(c, err)
 		return
 	}
+	c.Status(http.StatusNoContent)
+}
+
+// SetOwner transfers the agent to another account (admin).
+//
+//	@Summary	Reassign an agent's owner (admin)
+//	@Tags		agents
+//	@Accept		json
+//	@Param		id		path	string			true	"Agent ID"
+//	@Param		body	body	SetOwnerRequest	true	"The new owner"
+//	@Success	204
+//	@Failure	400	{object}	ErrorResponse	"malformed body, or no such user"
+//	@Failure	409	{object}	ErrorResponse	"name collision in the target owner's namespace"
+//	@Security	BearerAuth
+//	@Router		/agents/{id}/owner [put]
+func (h *AgentConfigHandler) SetOwner(c *gin.Context) {
+	if !requireAdmin(c) {
+		return
+	}
+	var req SetOwnerRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.UserID == "" {
+		badRequest(c, "user_id is required")
+		return
+	}
+	ctx, id := c.Request.Context(), c.Param("id")
+	ac, err := h.store.Get(ctx, id)
+	if err != nil {
+		storeError(c, err)
+		return
+	}
+	// The references are re-validated AS THE NEW OWNER: handing over an agent
+	// that names the old owner's private provider or MCP server would answer
+	// 204 and then fail every run — the state a save refuses (spec §5.29).
+	// The provider leg re-checks again inside the store's transaction.
+	ac.OwnerID = req.UserID
+	if !h.validateAgentConfig(c, ac) {
+		return
+	}
+	if err := h.store.TransferOwner(ctx, id, req.UserID); err != nil {
+		switch {
+		case errors.Is(err, store.ErrNoSuchUser):
+			badRequest(c, "no such user")
+		case errors.Is(err, store.ErrProviderScope):
+			badRequest(c, "the new owner cannot see this agent's provider; repoint or publish it first")
+		default:
+			saveError(c, err)
+		}
+		return
+	}
+	server.SetAuditDetail(c, "owner="+req.UserID)
 	c.Status(http.StatusNoContent)
 }
 

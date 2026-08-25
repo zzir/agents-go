@@ -263,7 +263,16 @@ func (h *WorkflowHandler) Update(c *gin.Context) {
 	if !h.validateStepAgents(c, &wf) {
 		return
 	}
-	if err := h.store.Update(ctx, id, &wf); err != nil {
+	// Scope and owner come from the row inside the transaction, and the pair
+	// editableRow authorized against is re-checked there: a transfer that
+	// landed since must not be written back by this edit (409).
+	err = h.store.Update(ctx, id, &wf, ownershipGuard(cur.Scope, cur.OwnerID,
+		func(w *store.Workflow) (string, string) { return w.Scope, w.OwnerID },
+		func(prev *store.Workflow) error {
+			wf.Scope, wf.OwnerID = prev.Scope, prev.OwnerID
+			return nil
+		}))
+	if err != nil {
 		saveError(c, err)
 		return
 	}
@@ -294,15 +303,15 @@ func (h *WorkflowHandler) Delete(c *gin.Context) {
 	if !deletableRow(c, cur.Scope, cur.OwnerID) {
 		return
 	}
-	if err := h.store.Delete(c.Request.Context(), c.Param("id")); err != nil {
-		storeError(c, err)
+	if err := h.store.DeleteOwnedBy(c.Request.Context(), c.Param("id"), cur.OwnerID); err != nil {
+		saveError(c, err) // moved since the check -> 409
 		return
 	}
 	c.Status(http.StatusNoContent)
 }
 
 // SetScope promotes a workflow to global — after checking every step's agent
-// is global too — or demotes it to the acting admin's private set.
+// is global too — or demotes it back to its author's private set.
 //
 //	@Summary	Change a workflow's scope
 //	@Tags		workflows
@@ -319,27 +328,71 @@ func (h *WorkflowHandler) SetScope(c *gin.Context) {
 	if !ok {
 		return
 	}
-	u, _ := server.CurrentUser(c)
 	ctx, id := c.Request.Context(), c.Param("id")
 	wf, err := h.store.Get(ctx, id)
 	if err != nil {
 		storeError(c, err)
 		return
 	}
+	if !scopeChangeAllowed(c, scope, wf.Scope, wf.OwnerID) {
+		return
+	}
 	if sameScope(c, "workflow", wf.Scope, scope) {
 		return
 	}
-	owner := ""
-	if scope == store.ScopePrivate {
-		owner = u.ID
-	}
-	wf.Scope, wf.OwnerID = scope, owner
+	wf.Scope = scope
 	if !h.validateStepAgents(c, wf) {
 		return
 	}
-	if err := store.SetScopeOf(ctx, h.store.CrudStore, id, scope, owner); err != nil {
+	if err := store.SetScopeOf(ctx, h.store.CrudStore, id, scope, wf.OwnerID); err != nil {
 		saveError(c, err)
 		return
 	}
+	c.Status(http.StatusNoContent)
+}
+
+// SetOwner transfers the workflow to another account (admin).
+//
+//	@Summary	Reassign a workflow's owner (admin)
+//	@Tags		workflows
+//	@Accept		json
+//	@Param		id		path	string			true	"Workflow ID"
+//	@Param		body	body	SetOwnerRequest	true	"The new owner"
+//	@Success	204
+//	@Failure	400	{object}	ErrorResponse	"malformed body, or no such user"
+//	@Failure	409	{object}	ErrorResponse	"name collision in the target owner's namespace"
+//	@Security	BearerAuth
+//	@Router		/workflows/{id}/owner [put]
+func (h *WorkflowHandler) SetOwner(c *gin.Context) {
+	if !requireAdmin(c) {
+		return
+	}
+	var req SetOwnerRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.UserID == "" {
+		badRequest(c, "user_id is required")
+		return
+	}
+	ctx, id := c.Request.Context(), c.Param("id")
+	wf, err := h.store.Get(ctx, id)
+	if err != nil {
+		storeError(c, err)
+		return
+	}
+	// Step agents are re-validated AS THE NEW OWNER: a workflow whose steps
+	// name the old owner's private agents would answer 204 and then fail at
+	// its next start — the state a save refuses (spec §5.29).
+	wf.OwnerID = req.UserID
+	if !h.validateStepAgents(c, wf) {
+		return
+	}
+	if err := store.SetOwnerOf(ctx, h.store.CrudStore, id, req.UserID); err != nil {
+		if errors.Is(err, store.ErrNoSuchUser) {
+			badRequest(c, "no such user")
+			return
+		}
+		saveError(c, err)
+		return
+	}
+	server.SetAuditDetail(c, "owner="+req.UserID)
 	c.Status(http.StatusNoContent)
 }

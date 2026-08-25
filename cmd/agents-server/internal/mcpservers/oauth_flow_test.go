@@ -267,7 +267,7 @@ func startInteractiveConnect(t *testing.T, rs *httptest.Server) (*OAuthCoordinat
 	st := store.NewMcpServerStore(db)
 	hc := store.HTTPMcpConfig{Endpoint: rs.URL + "/mcp", AuthMode: "oauth"}
 	raw, _ := json.Marshal(hc)
-	cfg := &store.McpServerConfig{ID: store.NewID(), Name: "srv", Enabled: true, Config: raw}
+	cfg := &store.McpServerConfig{ID: store.NewID(), Name: "srv", Enabled: true, OwnerID: store.NewID(), Config: raw}
 	if err := st.Create(context.Background(), cfg); err != nil {
 		t.Fatalf("create: %v", err)
 	}

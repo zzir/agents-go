@@ -2945,36 +2945,73 @@ read files the member's runs wrote.
 
 ### 5.29 Configuration is scoped per row: private to its owner or global
 
-Decided 2026-08-24. The five configuration entities members compose runs from
-— agent configs, providers, MCP servers, skills, workflows — carry
-`scope ∈ {private, global}` plus `owner_id` (set when private). A **global**
-row is the old shared semantics: every member reads it, only an admin writes
-it. A **private** row is its owner's alone: a member creates it (`POST`
-defaults to private; claiming `global` in a create body is admin-only, 403),
-edits and deletes it, and other members never see it — foreign private ids
-answer 404 and are absent from listings, so scope is not an existence oracle,
-mirroring sessions. An admin sees every row and **manages but does not
-author**: they may delete a member's private row, yet editing it is 403 —
-a config an admin could silently rewrite under a member's name would blur
-whose credentials and instructions a run carries.
+Decided 2026-08-24, owner semantics revised 2026-08-25. The five
+configuration entities members compose runs from — agent configs, providers,
+MCP servers, skills, workflows — carry two independent columns: `scope ∈
+{private, global}` decides **who sees** the row, and `owner_id` names **who
+wrote** it. The owner is permanent: it is stamped at create, survives every
+scope flip, and changes only through an explicit transfer. Every scoped row
+has one — a write leaving it empty is an error, not a legacy global default.
 
-Scope changes are their own admin-only endpoint, `POST /<entity>/:id/scope`
-with `{scope}`: promote publishes a private row, demote re-homes a global row
-to the acting admin. A request naming the row's **current** scope is refused
-(409) — "private → private" is defined nowhere and would silently re-home a
-member's row, credential included, to the acting admin. Name uniqueness is
-**per scope** (partial unique indexes: global names unique among global rows,
-`(owner, name)` unique among private ones), so shadowing a global name with
-one's own is legal and a scope change that collides in the target scope is
-409. Everywhere a NAME resolves — `read_skill`, the spawn/task agent lookup,
-workflow matching — resolution is **own-over-global**: the caller's private
-row wins over a global row of the same name.
+A **global** row is readable by every member; a **private** row is its
+owner's alone, and other members never see it — foreign private ids answer
+404 and are absent from listings, so scope is not an existence oracle,
+mirroring sessions. A create defaults to private; claiming `global` in a
+create body is admin-only (403).
 
-Scoped listings order global rows first, then the caller's own — each group
-by creation time, id the final tiebreaker — so positions never move on a
-rename or a scope flip (a flipped row changes group, keeping its slot within
-it). The skills index deduplicates by name; the owned row's description wins
-outright, matching own-over-global reads.
+The write matrix follows from the two columns:
+
+- **Edit** — the author edits what they wrote, private *or* published; an
+  admin additionally edits any global row. An admin does **not** edit a
+  member's private row (403): a config an admin could silently rewrite under
+  a member's name would blur whose credentials and instructions a run
+  carries. Deliberately accepted with this shape: a member's published row
+  stays theirs to change after the admin approved it — one team, one trust
+  boundary, the same stance as the SSRF note below.
+- **Delete** — the author, or an admin (management, on any row).
+- **Publish** (`POST /<entity>/:id/scope` with `{"scope":"global"}`) — the
+  admin's alone. Publishing to every member is the review point, so it is the
+  role that reviews.
+- **Unpublish** (`{"scope":"private"}`) — the admin's *or the author's*. The
+  row returns to its author, never to the acting admin, because the author
+  never left it. A request naming the row's **current** scope is refused
+  (409): a flip is defined FROM the other scope only.
+- **Transfer** (`PUT /<entity>/:id/owner` with `{"user_id"}`) — the admin's
+  alone, for handing a row (credential included) to another account. Scope is
+  untouched; an unknown account is 400 and a name already taken in the target
+  owner's namespace is 409. **A transfer re-validates the row's references AS
+  THE NEW OWNER**, exactly as a save does: an agent whose provider, MCP
+  server, skill or handoff target the new owner cannot see is refused (400),
+  and so is a workflow whose step agents they cannot see — handing over a
+  config that answers 204 and then fails every run is the state a save
+  already rejects. A provider's transfer additionally carries the demote's
+  guard: refused (409) while an agent outside the NEW owner's private set
+  would be stranded, because moving the credential and hiding it are one
+  event for a run. Skills transfer per repo group (§5.31).
+
+Name uniqueness is **per visibility context**, by partial unique indexes:
+unique among global rows, and unique per `owner_id` among private ones. So
+shadowing a global name with one's own is legal, and a flip or transfer that
+collides in the target namespace is 409. **Skills add the import source to
+that key** — see §5.31. Everywhere a NAME resolves — `read_skill`, the
+spawn/task agent lookup, workflow matching — resolution is
+**own-over-global**: the caller's PRIVATE row wins over a global row of the
+same name. Owning the global row is not shadowing (`store.Shadows`): an
+author who published a name still gets their own private row of it, since
+scope, not authorship, is what "own" means here.
+
+Scoped listings use ONE order everywhere — the settings panels, the admin
+plane, and the sets a run is built from: **global rows first, then each group
+newest first** (`created_at DESC`, id the final tiebreaker). Shared rows lead
+because they are what a member picks from; newest leads within a group
+because what somebody just made is where they look for it. The sort key is
+creation time alone, never a name or a scope, so a rename never moves a row
+and a scope flip only moves it between the two groups. The skills panel groups
+by repository and keeps that same order — published groups first, the rest as
+the rows arrived. The skills index deduplicates by model-facing name; the
+owned row's description wins outright, matching own-over-global reads. Every
+authenticated member may read `GET /auth/user-labels` (id, name, email) so a
+listing can say whose each row is; roles and account state stay admin-only.
 
 References across rows split by whether the reference is load-bearing:
 
@@ -2990,7 +3027,7 @@ References across rows split by whether the reference is load-bearing:
   provider row and re-checks `RefVisible` in the same transaction, a
   provider demote counts foreign references and flips in one transaction, a
   scope flip lands only FROM the other scope (the same-scope 409 is a SQL
-  predicate, so two racing demotes cannot both re-home a row), and run-time
+  predicate, so two racing demotes cannot both flip a row), and run-time
   resolution re-checks the rule once more, failing the run
   loudly rather than spending a key that became private. The other reference
   kinds stay validation-plus-runtime-filtering; their races strand no
@@ -2999,11 +3036,32 @@ References across rows split by whether the reference is load-bearing:
   skills at agent build drops rows the run's owner cannot see instead of
   failing the run — the same config yields each member their visible subset.
 
+**Authorization is re-checked inside the write.** A handler authorizes
+against the `(scope, owner)` pair it read, and a transfer or scope flip can
+land between that read and the write. So EVERY scoped mutation carries that
+pair into its write and refuses when it no longer holds (409,
+`ErrOwnershipChanged`): an update compares it against the locked row
+(`save_workflow` included), a scope flip and a delete carry it as a SQL
+`WHERE` predicate, and a skill import re-reads its group under lock. None of
+them is an edit made under a permission that is already gone, and none
+writes back a stale owner.
+
+**A write that moves a row between visibility contexts re-checks the
+credential leg in its own transaction.** Promoting an agent, and transferring
+one, both re-run `RefVisible` against the LOCKED provider with the pair the
+row is about to hold — so a provider demote landing between a handler's
+validation and the flip cannot leave a global agent on somebody's private
+key. Both take the provider lock before the agent's, the order every agent
+write uses, because two writes that disagree on lock order deadlock under
+PostgreSQL (a test asserts the order by racing them). The advisory legs — MCP
+servers, skills, handoff targets, a workflow's step agents — stay
+validation-plus-runtime-filtering, as above: their races strand no
+credential.
+
 Direct DB writes (internal writers, tests) that leave scope empty land
-**global** — `stampScope` in `BeforeAppendModel` preserves the legacy shared
-semantics without touching every fixture; private-without-owner is an error.
-The API always stamps scope explicitly, so empty scope never crosses a
-handler.
+**private** — `stampScope` in `BeforeAppendModel` applies the same default a
+create does; a row without an owner is an error, whatever its scope. The API
+always stamps both explicitly, so neither ever reaches the DB unset.
 
 The model's tools follow the same contract instead of the old admin gate:
 `save_workflow` rides every owner's run now — a new name saves a private
@@ -3047,6 +3105,83 @@ writes, sealed at rest) with zero secret keys registered — it is the
 registry contract that stops the next credential setting from shipping
 unmasked, not a per-key feature. Rows left in older databases under the
 removed keys list as `unknown` and are deletable from the panel.
+
+---
+
+### 5.31 A skill's identity carries its repository; a repo publishes as one group
+
+Decided 2026-08-25, refining §5.29 for skills alone. An import lands a whole
+repository's `SKILL.md` files at once, and two repositories may each ship a
+`review`. Two consequences:
+
+**The repo is part of the name.** A skill's model-facing name is
+`<repo label>:<frontmatter name>` — `owner/repo` for a `github.com` source,
+the host for any other URL, and no prefix at all for a skill authored in the
+workbench. The rendered skills index and `read_skill` both use that qualified
+name, so a model naming `anthropics/skills:pdf` cannot reach a different
+repo's `pdf`. Uniqueness follows the same key: unique on
+`(source_repo, name)` among global rows and on `(owner_id, source_repo,
+name)` among private ones. Importing a repo whose skill shares a name with a
+local one is therefore not a collision — both exist, under different names —
+while two files of ONE repo claiming one name still is (the second is
+skipped with a reason, the rest of the import proceeds).
+
+The label is **materialized on the row** (`repo_label`, derived from
+`source_repo` on every write) because it is what the indexes key on: two
+source URLs can reduce to one label — a repo walk of
+`https://github.com/o/r` and a raw import of a blob URL under it both label
+`o/r` — and a duplicate qualified name would make `read_skill`'s answer a
+coin flip. Keying on the raw URL would let that pair through.
+
+**A repo group is one scope, and one owner.** Both move per
+`(source_repo, owner_id)` group: scope through `POST /skill-repos/scope` with
+`{repo, scope}`, ownership through `PUT /skills/:id/owner` on any of its rows.
+Each is one SQL statement, all or nothing, so a name taken in the target
+namespace fails the whole move (409) rather than leaving the group split. A
+transfer into an owner who ALREADY holds a group for that repository is
+refused (409): merging two groups is how a mixed-scope pile would form, and
+the unique indexes cannot see it — they partition BY scope, so a global row
+and a private one never collide.
+
+**Every operation on a group NAMES it** — `(repo, owner)`, the owner
+defaulting to the caller — rather than searching for a plausible one. A sync
+(`POST /skill-imports` with `{url, owner_id?}`) refreshes exactly the named
+group: naming another owner is an admin's act (403 for a member) against
+that owner's **published** group — a member's private group is not an
+admin's to write, so it answers 404 exactly as the row reads elsewhere, and
+so does a group that does not exist (a first import may only create the
+caller's own). Without the naming, an admin holding a private copy of a
+repository somebody else published would refresh their own copy while
+believing they synced the published one.
+
+**An import fetches everything, then writes it in one transaction.** The
+fetch is up to the whole import budget — minutes of network — and the group
+could be transferred, emptied or flipped inside that window. So nothing is
+written during it: the documents are collected (bounded by a total-size
+budget as well as the per-document cap), and `ApplyImport` then re-reads the
+group under lock, refuses the whole apply when its `(owner, scope)` no
+longer matches what the caller resolved before fetching (409, nothing
+written), and lands every document against that one reading. That is what
+makes the group an aggregate without being a table: the invariant needs one
+consistent instant, not a persisted root, because a group's identity is
+`(source_repo, owner_id)` — data the rows already carry — and only the WRITE
+needs to be serialized.
+`POST /skills/:id/scope` refuses an imported skill (400) and serves only
+workbench-authored rows, which are each their own group. Authorization is
+§5.29's: publish is the admin's, unpublish the admin's or the group owner's,
+transfer the admin's. A later sync's NEW files inherit the group's scope and
+owner instead of landing private to whoever ran the sync — otherwise a
+published repo would split itself on every upstream addition. **The
+consequence is deliberate**: the author of a published repo can therefore add
+global skills by pushing upstream and syncing, without a second admin act —
+accepted on the one-team trust boundary this server assumes (the same stance
+as the SSRF note in §5.29), because a group whose scope stays coherent is
+worth more than a review of each added file. The same repo imported by two
+people is two independent groups, each moving alone; the qualified names
+collide and resolve own-over-global, exactly as §5.29 says.
+
+The UI mirrors the invariant: the visibility and owner badges sit on a repo
+group's heading rather than on each row, because the group is what moves.
 
 ---
 

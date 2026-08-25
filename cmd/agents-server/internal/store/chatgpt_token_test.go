@@ -19,7 +19,7 @@ func TestSaveChatGPTTokenMissingProviderIsNotFound(t *testing.T) {
 	}
 
 	// A real provider saves and clears fine.
-	pv := &Provider{Name: "a"}
+	pv := &Provider{Name: "a", OwnerID: NewID()}
 	if err := s.Create(ctx, pv); err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -41,10 +41,10 @@ func TestProviderNameUniqueIndex(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	s := NewProviderStore(db)
-	if err := s.Create(ctx, &Provider{Name: "dup"}); err != nil {
+	if err := s.Create(ctx, &Provider{Name: "dup", Scope: ScopeGlobal, OwnerID: NewID()}); err != nil {
 		t.Fatalf("first create: %v", err)
 	}
-	if _, ok := UniqueViolation(s.Create(ctx, &Provider{Name: "dup"})); !ok {
+	if _, ok := UniqueViolation(s.Create(ctx, &Provider{Name: "dup", Scope: ScopeGlobal, OwnerID: NewID()})); !ok {
 		t.Error("duplicate provider name must violate the unique index")
 	}
 }
@@ -57,10 +57,10 @@ func TestAgentConfigNameUniqueIndex(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	s := NewAgentConfigStore(db)
-	if err := s.Create(ctx, &AgentConfig{Name: "dup", Model: "m"}); err != nil {
+	if err := s.Create(ctx, &AgentConfig{Name: "dup", Model: "m", Scope: ScopeGlobal, OwnerID: NewID()}); err != nil {
 		t.Fatalf("first create: %v", err)
 	}
-	err := s.Create(ctx, &AgentConfig{Name: "dup", Model: "m2"})
+	err := s.Create(ctx, &AgentConfig{Name: "dup", Model: "m2", Scope: ScopeGlobal, OwnerID: NewID()})
 	if err == nil {
 		t.Fatal("second create with duplicate name must violate the unique index")
 	}
@@ -94,10 +94,10 @@ func TestMcpServerNameUniqueIndex(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	s := NewMcpServerStore(db)
-	if err := s.Create(ctx, &McpServerConfig{ID: NewID(), Name: "fs"}); err != nil {
+	if err := s.Create(ctx, &McpServerConfig{ID: NewID(), Name: "fs", Scope: ScopeGlobal, OwnerID: NewID()}); err != nil {
 		t.Fatalf("first: %v", err)
 	}
-	err := s.Create(ctx, &McpServerConfig{ID: NewID(), Name: "fs"})
+	err := s.Create(ctx, &McpServerConfig{ID: NewID(), Name: "fs", Scope: ScopeGlobal, OwnerID: NewID()})
 	if err == nil {
 		t.Fatal("duplicate mcp server name must violate the unique index")
 	}
@@ -116,7 +116,7 @@ func TestSaveOAuthTokenNotFound(t *testing.T) {
 		t.Fatalf("SaveOAuthToken(missing) err = %v, want ErrNotFound", err)
 	}
 	// An existing server persists fine.
-	cfg := &McpServerConfig{ID: NewID(), Name: "s"}
+	cfg := &McpServerConfig{ID: NewID(), Name: "s", OwnerID: NewID()}
 	if err := s.Create(ctx, cfg); err != nil {
 		t.Fatalf("create: %v", err)
 	}

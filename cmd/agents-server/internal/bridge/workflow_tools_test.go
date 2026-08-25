@@ -133,7 +133,7 @@ func workflowToolsFixture(t *testing.T, modelURL string) (runner *Runner, sess *
 	runner.Deps.Workflows = store.NewWorkflowStore(runner.db)
 	pid := testProvider(t, runner.db, "endpoint", "k", modelURL)
 	for _, name := range []string{"planner", "coder", "reviewer"} {
-		ac := &store.AgentConfig{Name: name, Model: "gpt-test", ProviderID: pid}
+		ac := &store.AgentConfig{OwnerID: store.LocalUserID, Scope: store.ScopeGlobal, Name: name, Model: "gpt-test", ProviderID: pid}
 		if name == "coder" {
 			ac.Behavior.WorkflowAuthoring = true
 			coder = ac
@@ -205,7 +205,7 @@ func TestWorkflowAuthoringToolsAreOptInAndChatOnly(t *testing.T) {
 	})
 	runner, sess, coder := workflowToolsFixture(t, srv.URL)
 	// A one-step workflow whose step runs the opted-in agent.
-	wf := &store.Workflow{Name: "build", Description: "Build it", Steps: store.WorkflowSteps{{AgentConfigID: coder.ID, Prompt: "Do it."}}}
+	wf := &store.Workflow{OwnerID: store.LocalUserID, Name: "build", Description: "Build it", Steps: store.WorkflowSteps{{AgentConfigID: coder.ID, Prompt: "Do it."}}}
 	if err := store.NormalizeWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
@@ -381,7 +381,7 @@ func TestGetWorkflowRoundTrips(t *testing.T) {
 	review := store.WorkflowStep{ID: "s-review", AgentConfigID: reviewer.ID, Prompt: "Review.", Gate: &store.StepGate{Pass: "LGTM", Fail: "NOPE"}}
 	fix := store.WorkflowStep{ID: "s-fix", Name: "fix", AgentConfigID: coder.ID, Prompt: "Fix.", OnSuccess: "s-review"}
 	review.OnSuccess, review.OnFailure = store.WorkflowStepEnd, "s-fix"
-	wf := &store.Workflow{Name: "review", Description: "Review then fix", Steps: store.WorkflowSteps{review, fix}, Budget: store.WorkflowBudget{MaxLaps: 5}}
+	wf := &store.Workflow{OwnerID: store.LocalUserID, Name: "review", Description: "Review then fix", Steps: store.WorkflowSteps{review, fix}, Budget: store.WorkflowBudget{MaxLaps: 5}}
 	if err := store.NormalizeWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
@@ -539,8 +539,9 @@ func TestSaveWorkflowScopes(t *testing.T) {
 		t.Fatalf("member save landed as %+v, want private owned by the member", saved)
 	}
 
-	// A GLOBAL definition refuses the member's edit through the tool.
-	global := &store.Workflow{Name: "team-flow", Description: "shared", Scope: store.ScopeGlobal,
+	// A definition somebody ELSE authored refuses the member's edit through the
+	// tool, published or not — the REST edit gate, in the tool (spec §5.29).
+	global := &store.Workflow{OwnerID: store.LocalUserID, Name: "team-flow", Description: "shared", Scope: store.ScopeGlobal,
 		Steps: store.WorkflowSteps{{ID: store.NewID(), Name: "one", AgentConfigID: saved.Steps[0].AgentConfigID, Prompt: "p"}}}
 	if err := runner.Deps.Workflows.Create(ctx, global); err != nil {
 		t.Fatal(err)
@@ -556,11 +557,25 @@ func TestSaveWorkflowScopes(t *testing.T) {
 			txt = tt.Text
 		}
 	}
-	if !strings.Contains(txt, "only an admin") {
-		t.Fatalf("member editing a global workflow = %q, want the admin-only refusal", txt)
+	if !strings.Contains(txt, "somebody else's") {
+		t.Fatalf("member editing another author's workflow = %q, want the not-yours refusal", txt)
 	}
 	if got, _ := runner.Deps.Workflows.Get(ctx, global.ID); got.Description != "shared" {
 		t.Fatalf("the refused save changed the global row: %+v", got)
+	}
+
+	// The AUTHOR of a published definition still edits it through the tool.
+	mine := &store.Workflow{OwnerID: member.ID, Name: "member-published", Description: "theirs", Scope: store.ScopeGlobal,
+		Steps: store.WorkflowSteps{{ID: store.NewID(), Name: "one", AgentConfigID: saved.Steps[0].AgentConfigID, Prompt: "p"}}}
+	if err := runner.Deps.Workflows.Create(ctx, mine); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runner.saveWorkflow(ctx, member.ID, workflowSpec{Name: "member-published", Description: "updated",
+		Steps: []workflowStep{{Name: "one", Agent: "coder", Prompt: "p2"}}}); err != nil {
+		t.Fatalf("author save over their own published workflow: %v", err)
+	}
+	if got, _ := runner.Deps.Workflows.Get(ctx, mine.ID); got.Description != "updated" || got.Scope != store.ScopeGlobal {
+		t.Fatalf("author's save = %+v, want the update kept and still published", got)
 	}
 }
 
@@ -588,7 +603,7 @@ func TestSaveWorkflowGlobalUpdateResolvesGlobalAgents(t *testing.T) {
 	if err := agentConfigs.Create(ctx, private); err != nil {
 		t.Fatal(err)
 	}
-	global := &store.Workflow{Name: "team-flow", Description: "shared", Scope: store.ScopeGlobal,
+	global := &store.Workflow{OwnerID: store.LocalUserID, Name: "team-flow", Description: "shared", Scope: store.ScopeGlobal,
 		Steps: store.WorkflowSteps{{ID: store.NewID(), Name: "one", AgentConfigID: coder.ID, Prompt: "p"}}}
 	if err := runner.Deps.Workflows.Create(ctx, global); err != nil {
 		t.Fatal(err)

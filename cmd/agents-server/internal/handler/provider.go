@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -111,7 +112,7 @@ func (h *ProviderHandler) Get(c *gin.Context) {
 }
 
 // scopeReq is the body of every POST /:id/scope — the promotion/demotion act
-// (spec §5.29), admin only.
+// (spec §5.29): promote is admin-only, demote is the admin's or the owner's.
 type scopeReq struct {
 	Scope string `json:"scope" binding:"required"`
 }
@@ -126,10 +127,9 @@ func bindScope(c *gin.Context) (string, bool) {
 	return req.Scope, true
 }
 
-// sameScope refuses a /scope request naming the scope the row already holds:
-// "private → private" is no change but a silent re-home of the row (and any
-// credential on it) to the acting admin — spec §5.29 defines a demote on
-// global rows only. Writes the 409 and returns true when refused.
+// sameScope refuses a /scope request naming the scope the row already holds
+// — spec §5.29 defines a flip FROM the other scope only. Writes the 409 and
+// returns true when refused.
 func sameScope(c *gin.Context, kind, current, requested string) bool {
 	if current == requested {
 		conflict(c, kind+" is already "+requested)
@@ -138,7 +138,7 @@ func sameScope(c *gin.Context, kind, current, requested string) bool {
 	return false
 }
 
-// SetScope promotes a provider to global or demotes it to the acting admin's
+// SetScope promotes a provider to global or demotes it back to its author's
 // private set; DemoteToPrivate carries the foreign-reference guard.
 //
 //	@Summary	Change a provider's scope
@@ -156,33 +156,75 @@ func (h *ProviderHandler) SetScope(c *gin.Context) {
 	if !ok {
 		return
 	}
-	u, _ := server.CurrentUser(c)
 	ctx, id := c.Request.Context(), c.Param("id")
 	pv, err := h.store.Get(ctx, id)
 	if err != nil {
 		storeError(c, err)
 		return
 	}
+	if !scopeChangeAllowed(c, scope, pv.Scope, pv.OwnerID) {
+		return
+	}
 	if sameScope(c, "provider", pv.Scope, scope) {
 		return
 	}
 	if scope == store.ScopePrivate {
-		refs, err := h.store.DemoteToPrivate(ctx, id, u.ID)
+		refs, err := h.store.DemoteToPrivate(ctx, id)
 		if err != nil {
 			saveError(c, err) // name collision in the target scope -> 409
 			return
 		}
 		if refs > 0 {
-			conflict(c, fmt.Sprintf("%d agent(s) outside your private set still reference this provider; repoint them first", refs))
+			conflict(c, fmt.Sprintf("%d agent(s) outside the owner's private set still reference this provider; repoint them first", refs))
 			return
 		}
 		c.Status(http.StatusNoContent)
 		return
 	}
-	if err := store.SetScopeOf(ctx, h.store.CrudStore, id, scope, ""); err != nil {
+	if err := store.SetScopeOf(ctx, h.store.CrudStore, id, scope, pv.OwnerID); err != nil {
 		saveError(c, err) // name collision in the target scope -> 409
 		return
 	}
+	c.Status(http.StatusNoContent)
+}
+
+// SetOwner transfers the provider — credential included — to another account
+// (admin). Refused while the move would strand an agent that references it,
+// the guard a demote carries for the same reason.
+//
+//	@Summary	Reassign a provider's owner (admin)
+//	@Tags		providers
+//	@Accept		json
+//	@Param		id		path	string			true	"Provider ID"
+//	@Param		body	body	SetOwnerRequest	true	"The new owner"
+//	@Success	204
+//	@Failure	400	{object}	ErrorResponse	"malformed body, or no such user"
+//	@Failure	409	{object}	ErrorResponse	"name collision, or referencing agents block the transfer"
+//	@Security	BearerAuth
+//	@Router		/providers/{id}/owner [put]
+func (h *ProviderHandler) SetOwner(c *gin.Context) {
+	if !requireAdmin(c) {
+		return
+	}
+	var req SetOwnerRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.UserID == "" {
+		badRequest(c, "user_id is required")
+		return
+	}
+	refs, err := h.store.TransferOwner(c.Request.Context(), c.Param("id"), req.UserID)
+	if err != nil {
+		if errors.Is(err, store.ErrNoSuchUser) {
+			badRequest(c, "no such user")
+			return
+		}
+		saveError(c, err)
+		return
+	}
+	if refs > 0 {
+		conflict(c, fmt.Sprintf("%d agent(s) outside the new owner's private set reference this provider; repoint them first", refs))
+		return
+	}
+	server.SetAuditDetail(c, "owner="+req.UserID)
 	c.Status(http.StatusNoContent)
 }
 
@@ -248,15 +290,17 @@ func (h *ProviderHandler) Update(c *gin.Context) {
 	// The mask resolves against the stored row inside the store's transaction,
 	// and only for the destination the key was stored for — README invariant 9.
 	// Scope and owner never move on an update (POST /:id/scope does).
-	err = h.store.Update(ctx, id, pv, func(prev *store.Provider) error {
-		pv.Scope, pv.OwnerID = prev.Scope, prev.OwnerID
-		if pv.APIKey == SecretMask && prev.APIKey != "" &&
-			credentialTargetChanged(prev.Type, prev.BaseURL, pv.Type, pv.BaseURL) {
-			return badRequestError("type or base_url changed: the stored api_key belongs to the previous destination — replace it or clear it")
-		}
-		pv.APIKey = resolveSecret(pv.APIKey, prev.APIKey)
-		return nil
-	})
+	err = h.store.Update(ctx, id, pv, ownershipGuard(cur.Scope, cur.OwnerID,
+		func(p *store.Provider) (string, string) { return p.Scope, p.OwnerID },
+		func(prev *store.Provider) error {
+			pv.Scope, pv.OwnerID = prev.Scope, prev.OwnerID
+			if pv.APIKey == SecretMask && prev.APIKey != "" &&
+				credentialTargetChanged(prev.Type, prev.BaseURL, pv.Type, pv.BaseURL) {
+				return badRequestError("type or base_url changed: the stored api_key belongs to the previous destination — replace it or clear it")
+			}
+			pv.APIKey = resolveSecret(pv.APIKey, prev.APIKey)
+			return nil
+		}))
 	if err != nil {
 		saveError(c, err) // duplicate name -> 409, not-found -> 404
 		return
@@ -290,7 +334,7 @@ func (h *ProviderHandler) Delete(c *gin.Context) {
 	if !deletableRow(c, cur.Scope, cur.OwnerID) {
 		return
 	}
-	refs, err := h.store.DeleteIfUnreferenced(c.Request.Context(), c.Param("id"))
+	refs, err := h.store.DeleteIfUnreferenced(c.Request.Context(), c.Param("id"), cur.OwnerID)
 	if err != nil {
 		storeError(c, err)
 		return

@@ -224,7 +224,7 @@ func scanJSONColumn(src, dst any, what string) error {
 type Workflow struct {
 	bun.BaseModel `bun:"table:workflows,alias:wfl"`
 
-	// Scope/OwnerID: row visibility, owner set iff private — spec §5.29.
+	// Scope/OwnerID: row visibility and its permanent creator — spec §5.29.
 	Scope   string `bun:"scope,notnull"               json:"scope"`
 	OwnerID string `bun:"owner_id,nullzero,type:uuid" json:"owner_id,omitempty"`
 	ID      string `bun:"id,pk,type:uuid" json:"id"`
@@ -672,10 +672,42 @@ func NewWorkflowStore(db *bun.DB) *WorkflowStore {
 	return &WorkflowStore{NewCrudStore[Workflow](db, "workflow", "created_at DESC")}
 }
 
+// Update overwrites the definition in one transaction that reads the stored
+// row (locked) and hands it to prepare (nil to skip) — how scope and owner
+// come from the row rather than from a read that may be stale, the shape
+// every scoped entity uses.
+func (s *WorkflowStore) Update(ctx context.Context, id string, m *Workflow, prepare func(prev *Workflow) error) error {
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		return s.updateFrom(ctx, tx, id, m, prepare)
+	})
+	if err != nil {
+		return fmt.Errorf("updating workflow %s: %w", id, err)
+	}
+	return nil
+}
+
 // Delete removes a definition and the triggers that fire it — a trigger with
 // no workflow could only fail. Executions keep their snapshot.
 func (s *WorkflowStore) Delete(ctx context.Context, id string) error {
+	return s.DeleteOwnedBy(ctx, id, "")
+}
+
+// DeleteOwnedBy removes the definition and its triggers only while it still
+// belongs to expectOwner — the pair the caller was authorized against (spec
+// §5.29); an empty expectOwner skips the check, for internal callers with no
+// authorization to carry. The triggers go in the same transaction: one that
+// outlived its workflow could only fail.
+func (s *WorkflowStore) DeleteOwnedBy(ctx context.Context, id, expectOwner string) error {
 	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if expectOwner != "" {
+			wf := new(Workflow)
+			if err := lockRow(ctx, tx, wf, "id = ?", id); err != nil {
+				return fmt.Errorf("deleting workflow %s: %w", id, err)
+			}
+			if wf.OwnerID != expectOwner {
+				return fmt.Errorf("deleting workflow %s: %w", id, ErrOwnershipChanged)
+			}
+		}
 		if _, err := tx.NewDelete().Model((*Trigger)(nil)).Where("workflow_id = ?", id).Exec(ctx); err != nil {
 			return fmt.Errorf("deleting triggers of workflow %s: %w", id, err)
 		}

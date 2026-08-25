@@ -249,6 +249,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agents/{id}/owner": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Reassign an agent's owner (admin) */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Agent ID */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            /** @description The new owner */
+            requestBody: {
+                content: {
+                    "application/json": Record<string, never> | components["schemas"]["handler.SetOwnerRequest"];
+                };
+            };
+            responses: {
+                /** @description No Content */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description malformed body, or no such user */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description name collision in the target owner's namespace */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agents/{id}/scope": {
         parameters: {
             query?: never;
@@ -1070,6 +1130,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/user-labels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List user labels (id, name, email) for owner display */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.UserLabel"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/users": {
         parameters: {
             query?: never;
@@ -1845,6 +1941,66 @@ export interface paths {
                 };
             };
         };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/mcp-servers/{id}/owner": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Reassign an MCP server's owner (admin) */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description MCP server ID */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            /** @description The new owner */
+            requestBody: {
+                content: {
+                    "application/json": Record<string, never> | components["schemas"]["handler.SetOwnerRequest"];
+                };
+            };
+            responses: {
+                /** @description No Content */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description malformed body, or no such user */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description name collision in the target owner's namespace */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -2899,6 +3055,66 @@ export interface paths {
             };
         };
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/providers/{id}/owner": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Reassign a provider's owner (admin) */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Provider ID */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            /** @description The new owner */
+            requestBody: {
+                content: {
+                    "application/json": Record<string, never> | components["schemas"]["handler.SetOwnerRequest"];
+                };
+            };
+            responses: {
+                /** @description No Content */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description malformed body, or no such user */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description name collision, or referencing agents block the transfer */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
         post?: never;
         delete?: never;
         options?: never;
@@ -4974,6 +5190,72 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/skill-repos/scope": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Change an imported repo's scope (all of its skills at once) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            /** @description Repo, target scope, and (promote, admin) whose group */
+            requestBody: {
+                content: {
+                    "application/json": Record<string, never> | components["schemas"]["handler.repoScopeReq"];
+                };
+            };
+            responses: {
+                /** @description No Content */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description no such repo group */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description already in that scope, or a name collision in the target scope */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/skills": {
         parameters: {
             query?: never;
@@ -5189,6 +5471,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/skills/{id}/owner": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Reassign a skill's owner (admin); an imported skill moves with its repo */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Skill id */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            /** @description The new owner */
+            requestBody: {
+                content: {
+                    "application/json": Record<string, never> | components["schemas"]["handler.SetOwnerRequest"];
+                };
+            };
+            responses: {
+                /** @description No Content */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description malformed body, or no such user */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description name collision in the target owner's namespace */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/skills/{id}/scope": {
         parameters: {
             query?: never;
@@ -5223,7 +5565,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description Bad Request */
+                /** @description an imported skill flips with its repo */
                 400: {
                     headers: {
                         [name: string]: unknown;
@@ -6064,6 +6406,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/workflows/{id}/owner": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Reassign a workflow's owner (admin) */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Workflow ID */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            /** @description The new owner */
+            requestBody: {
+                content: {
+                    "application/json": Record<string, never> | components["schemas"]["handler.SetOwnerRequest"];
+                };
+            };
+            responses: {
+                /** @description No Content */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description malformed body, or no such user */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description name collision in the target owner's namespace */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/workflows/{id}/runs": {
         parameters: {
             query?: never;
@@ -6615,6 +7017,11 @@ export interface components {
             updated_at?: string;
             workflow_id?: string;
         };
+        "handler.UserLabel": {
+            email?: string;
+            id?: string;
+            name?: string;
+        };
         "handler.UserPatchRequest": {
             disabled?: boolean;
             role?: string;
@@ -6694,7 +7101,7 @@ export interface components {
             id?: string;
             name?: string;
             owner_id?: string;
-            /** @description Scope/OwnerID: row visibility, owner set iff private — spec §5.29. */
+            /** @description Scope/OwnerID: row visibility and its permanent creator — spec §5.29. */
             scope?: string;
             /**
              * @description Status is the single derived lifecycle state: disabled, connecting,
@@ -6790,6 +7197,11 @@ export interface components {
         "handler.rejectReq": {
             reason?: string;
         };
+        "handler.repoScopeReq": {
+            owner_id?: string;
+            repo: string;
+            scope: string;
+        };
         "handler.runWorkflowReq": {
             input?: string;
             project_id?: string;
@@ -6821,6 +7233,12 @@ export interface components {
             value?: string;
         };
         "handler.skillImportReq": {
+            /**
+             * @description OwnerID names WHICH group this import refreshes — a sync of somebody
+             *     else's published repository, for an admin. Empty means the caller's own
+             *     group, the only one a first import may create (spec §5.31).
+             */
+            owner_id?: string;
             url: string;
         };
         "handler.skillImportResp": {
@@ -6984,7 +7402,7 @@ export interface components {
              */
             provider_id?: string;
             resilience?: components["schemas"]["store.ResilienceGroup"];
-            /** @description Scope/OwnerID: row visibility, owner set iff private — spec §5.29. */
+            /** @description Scope/OwnerID: row visibility and its permanent creator — spec §5.29. */
             scope?: string;
             session?: components["schemas"]["store.SessionGroup"];
             skills?: string;
@@ -7250,7 +7668,7 @@ export interface components {
             id?: string;
             name?: string;
             owner_id?: string;
-            /** @description Scope/OwnerID: row visibility, owner set iff private — spec §5.29. */
+            /** @description Scope/OwnerID: row visibility and its permanent creator — spec §5.29. */
             scope?: string;
             /**
              * @description Type selects the backend (bridge.ProviderType*). Empty means openai, the
@@ -7357,7 +7775,16 @@ export interface components {
             /** @description unique per scope (spec §5.29) */
             name?: string;
             owner_id?: string;
-            /** @description Scope/OwnerID: row visibility, owner set iff private — spec §5.29. */
+            /**
+             * @description RepoLabel is SourceRepo reduced to the prefix of the model-facing name
+             *     ("owner/repo", or the host). Materialized at write time (BeforeAppendModel)
+             *     because it is what the unique name indexes key on: two source URLs can
+             *     reduce to one label, and the index must refuse that collision — a
+             *     duplicate qualified name would make read_skill's answer a coin flip
+             *     (spec §5.31).
+             */
+            repo_label?: string;
+            /** @description Scope/OwnerID: row visibility and its permanent creator — spec §5.29. */
             scope?: string;
             source_path?: string;
             /**
@@ -7511,7 +7938,7 @@ export interface components {
             id?: string;
             name?: string;
             owner_id?: string;
-            /** @description Scope/OwnerID: row visibility, owner set iff private — spec §5.29. */
+            /** @description Scope/OwnerID: row visibility and its permanent creator — spec §5.29. */
             scope?: string;
             steps?: components["schemas"]["store.WorkflowStep"][];
             updated_at?: string;

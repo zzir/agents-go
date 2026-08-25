@@ -153,7 +153,7 @@ func TestDrainTaskNotificationsQueuesWhileBusy(t *testing.T) {
 	ctx := context.Background()
 	runner, sessions, tasks, agentConfigs := newTaskTestRunner(t)
 
-	ac := &store.AgentConfig{Name: "chat-agent", Model: "gpt-test"}
+	ac := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "chat-agent", Model: "gpt-test"}
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +239,7 @@ func TestStartupSweepDeliversPendingNotifications(t *testing.T) {
 	ctx := context.Background()
 	runner, sessions, tasks, agentConfigs := newTaskTestRunner(t)
 
-	ac := &store.AgentConfig{Name: "chat-agent", Model: "gpt-test"}
+	ac := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "chat-agent", Model: "gpt-test"}
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatal(err)
 	}
@@ -288,7 +288,7 @@ func TestBuildFullAgentTaskDepthCap(t *testing.T) {
 	ctx := context.Background()
 	runner, _, _, agentConfigs := newTaskTestRunner(t)
 
-	ac := &store.AgentConfig{Name: "worker", Model: "gpt-test"}
+	ac := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "worker", Model: "gpt-test"}
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatal(err)
 	}
@@ -335,7 +335,7 @@ func mustRef(t *testing.T, db *bun.DB, id string) session.Ref {
 // that need a working endpoint.
 func testProvider(t *testing.T, db *bun.DB, name, apiKey, baseURL string) string {
 	t.Helper()
-	pv := &store.Provider{Name: name, APIKey: apiKey, BaseURL: baseURL}
+	pv := &store.Provider{OwnerID: store.LocalUserID, Scope: store.ScopeGlobal, Name: name, APIKey: apiKey, BaseURL: baseURL}
 	if err := store.NewProviderStore(db).Create(context.Background(), pv); err != nil {
 		t.Fatalf("create provider: %v", err)
 	}

@@ -57,6 +57,7 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		auth.POST("/tokens", h.Auth.CreateToken)
 		auth.DELETE("/tokens/:id", h.Auth.DeleteToken)
 		auth.GET("/users", adminOnly(), h.Auth.ListUsers)
+		auth.GET("/user-labels", h.Auth.ListUserLabels)
 		auth.PATCH("/users/:id", adminOnly(), h.Auth.PatchUser)
 		auth.DELETE("/users/:id/tokens", adminOnly(), h.Auth.RevokeUserTokens)
 		auth.GET("/audit", adminOnly(), h.Auth.ListAudit)
@@ -116,7 +117,10 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		agents.GET("/:id/tools", h.Playground.AgentTools)
 		agents.PUT("/:id", h.Agents.Update)
 		agents.DELETE("/:id", h.Agents.Delete)
-		agents.POST("/:id/scope", admin, h.Agents.SetScope)
+		// Scope flips authorize in the handler: promote is admin-only, demote
+		// is the admin's or the owner's (scopeChangeAllowed).
+		agents.POST("/:id/scope", h.Agents.SetScope)
+		agents.PUT("/:id/owner", admin, h.Agents.SetOwner)
 	}
 	{
 		mcpServers := api.Group("/mcp-servers")
@@ -129,7 +133,8 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		mcpServers.POST("/:id/connect", h.McpServers.Connect)
 		mcpServers.DELETE("/:id/oauth-token", h.McpServers.ClearOAuth)
 		mcpServers.GET("/:id/tools", h.McpServers.Tools)
-		mcpServers.POST("/:id/scope", admin, h.McpServers.SetScope)
+		mcpServers.POST("/:id/scope", h.McpServers.SetScope)
+		mcpServers.PUT("/:id/owner", admin, h.McpServers.SetOwner)
 	}
 	{
 		memories := api.Group("/memories")
@@ -153,10 +158,13 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		skills.POST("", h.Skills.Create)
 		skills.PUT("/:id", h.Skills.Update)
 		skills.DELETE("/:id", h.Skills.Delete)
-		skills.POST("/:id/scope", admin, h.Skills.SetScope)
-		// Import is its own resource, not a /skills subpath: gin cannot mix a
-		// literal segment with the :id parameter above.
+		skills.POST("/:id/scope", h.Skills.SetScope)
+		skills.PUT("/:id/owner", admin, h.Skills.SetOwner)
+		// Import and the repo-group scope flip are their own resources, not
+		// /skills subpaths: gin cannot mix a literal segment with the :id
+		// parameter above.
 		api.POST("/skill-imports", h.Skills.Import)
+		api.POST("/skill-repos/scope", h.Skills.SetRepoScope)
 	}
 	// The two registries a config UI renders from, so a panel never keeps its
 	// own copy of what the server accepts: provider machine facts (types, auth
@@ -173,7 +181,8 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		providers.GET("/:id", h.Providers.Get)
 		providers.PUT("/:id", h.Providers.Update)
 		providers.DELETE("/:id", h.Providers.Delete)
-		providers.POST("/:id/scope", admin, h.Providers.SetScope)
+		providers.POST("/:id/scope", h.Providers.SetScope)
+		providers.PUT("/:id/owner", admin, h.Providers.SetOwner)
 		// The OAuth flow belongs to the endpoint, not to any one agent —
 		// signing a private provider into ChatGPT is its owner's act.
 		providers.POST("/:id/chatgpt/login", h.ChatGPT.Login)
@@ -187,7 +196,8 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		workflows.GET("/:id", h.Workflows.Get)
 		workflows.PUT("/:id", h.Workflows.Update)
 		workflows.DELETE("/:id", h.Workflows.Delete)
-		workflows.POST("/:id/scope", admin, h.Workflows.SetScope)
+		workflows.POST("/:id/scope", h.Workflows.SetScope)
+		workflows.PUT("/:id/owner", admin, h.Workflows.SetOwner)
 		// Running one is a member's act, into a session they own (checked in
 		// the handler — the session id rides the body).
 		workflows.POST("/:id/runs", h.Workflows.Run)

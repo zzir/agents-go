@@ -14,15 +14,15 @@ func TestCreateRefusesMissingProvider(t *testing.T) {
 	db := newTestDB(t)
 	id := ids(t)
 	providers := NewProviderStore(db)
-	if err := providers.Create(ctx, &Provider{ID: id("real"), Name: "real", Type: "openai"}); err != nil {
+	if err := providers.Create(ctx, &Provider{ID: id("real"), Name: "real", Type: "openai", OwnerID: id("u")}); err != nil {
 		t.Fatal(err)
 	}
 
 	agents := NewAgentConfigStore(db)
-	if err := agents.Create(ctx, &AgentConfig{ID: NewID(), Name: "ghost-ref", Model: "m", ProviderID: id("ghost")}); !errors.Is(err, ErrProviderRef) {
+	if err := agents.Create(ctx, &AgentConfig{ID: NewID(), Name: "ghost-ref", Model: "m", ProviderID: id("ghost"), OwnerID: id("u")}); !errors.Is(err, ErrProviderRef) {
 		t.Fatalf("agent with a missing provider = %v, want ErrProviderRef", err)
 	}
-	if err := agents.Create(ctx, &AgentConfig{ID: NewID(), Name: "default-ref", Model: "m"}); err != nil {
+	if err := agents.Create(ctx, &AgentConfig{ID: NewID(), Name: "default-ref", Model: "m", OwnerID: id("u")}); err != nil {
 		t.Fatalf("agent on the default provider: %v", err)
 	}
 }
@@ -34,12 +34,12 @@ func TestUpdateGuardsProviderReferences(t *testing.T) {
 	db := newTestDB(t)
 	id := ids(t)
 	providers := NewProviderStore(db)
-	if err := providers.Create(ctx, &Provider{ID: id("real"), Name: "real", Type: "openai"}); err != nil {
+	if err := providers.Create(ctx, &Provider{ID: id("real"), Name: "real", Type: "openai", OwnerID: id("u")}); err != nil {
 		t.Fatal(err)
 	}
 
 	agents := NewAgentConfigStore(db)
-	ac := &AgentConfig{ID: NewID(), Name: "ag", Model: "m", ProviderID: id("real")}
+	ac := &AgentConfig{ID: NewID(), Name: "ag", Model: "m", ProviderID: id("real"), OwnerID: id("u")}
 	if err := agents.Create(ctx, ac); err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestWritesRefuseOutOfScopeProvider(t *testing.T) {
 	}
 
 	agents := NewAgentConfigStore(db)
-	global := &AgentConfig{ID: NewID(), Name: "g", Model: "m", ProviderID: private.ID, Scope: ScopeGlobal}
+	global := &AgentConfig{ID: NewID(), Name: "g", Model: "m", ProviderID: private.ID, Scope: ScopeGlobal, OwnerID: id("admin")}
 	if err := agents.Create(ctx, global); !errors.Is(err, ErrProviderScope) {
 		t.Fatalf("global agent on a private provider = %v, want ErrProviderScope", err)
 	}
@@ -79,24 +79,24 @@ func TestWritesRefuseOutOfScopeProvider(t *testing.T) {
 }
 
 // DemoteToPrivate counts and flips in one transaction: foreign references
-// refuse the flip and leave the row untouched; with none, the row lands in
-// the caller's private set.
+// refuse the flip and leave the row untouched; with none, the row returns to
+// its author's private set.
 func TestDemoteToPrivateGuardsReferences(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	id := ids(t)
 	providers := NewProviderStore(db)
-	pv := &Provider{ID: id("pv"), Name: "shared", Type: "openai", Scope: ScopeGlobal}
+	pv := &Provider{ID: id("pv"), Name: "shared", Type: "openai", Scope: ScopeGlobal, OwnerID: id("alice")}
 	if err := providers.Create(ctx, pv); err != nil {
 		t.Fatal(err)
 	}
 	agents := NewAgentConfigStore(db)
-	ref := &AgentConfig{ID: NewID(), Name: "g", Model: "m", ProviderID: pv.ID, Scope: ScopeGlobal}
+	ref := &AgentConfig{ID: NewID(), Name: "g", Model: "m", ProviderID: pv.ID, Scope: ScopeGlobal, OwnerID: id("admin")}
 	if err := agents.Create(ctx, ref); err != nil {
 		t.Fatal(err)
 	}
 
-	refs, err := providers.DemoteToPrivate(ctx, pv.ID, id("admin"))
+	refs, err := providers.DemoteToPrivate(ctx, pv.ID)
 	if err != nil || refs != 1 {
 		t.Fatalf("demote with a global ref = (%d, %v), want (1, nil)", refs, err)
 	}
@@ -108,12 +108,12 @@ func TestDemoteToPrivateGuardsReferences(t *testing.T) {
 	if err := agents.Delete(ctx, ref.ID); err != nil {
 		t.Fatal(err)
 	}
-	refs, err = providers.DemoteToPrivate(ctx, pv.ID, id("admin"))
+	refs, err = providers.DemoteToPrivate(ctx, pv.ID)
 	if err != nil || refs != 0 {
 		t.Fatalf("unblocked demote = (%d, %v), want (0, nil)", refs, err)
 	}
 	got, err = providers.Get(ctx, pv.ID)
-	if err != nil || got.Scope != ScopePrivate || got.OwnerID != id("admin") {
-		t.Fatalf("demoted row = (%s, %s), want the admin's private set", got.Scope, got.OwnerID)
+	if err != nil || got.Scope != ScopePrivate || got.OwnerID != id("alice") {
+		t.Fatalf("demoted row = (%s, %s), want the author's private set", got.Scope, got.OwnerID)
 	}
 }

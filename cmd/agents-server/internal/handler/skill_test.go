@@ -187,7 +187,8 @@ func TestSkillImportGitHubLifecycle(t *testing.T) {
 	if len(resp.Created) != 2 {
 		t.Fatalf("created = %v", resp)
 	}
-	sk, err := st.GetByNameFor(t.Context(), "docx", store.LocalUserID)
+	// The model-facing name of an imported skill carries its repo (spec §5.29).
+	sk, err := st.GetByNameFor(t.Context(), "o/r:docx", store.LocalUserID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,24 +219,49 @@ func TestSkillImportGitHubLifecycle(t *testing.T) {
 	if len(resp.Skipped) != 1 || !strings.Contains(resp.Skipped[0], "detached") {
 		t.Fatalf("detached skill was not protected: %+v", resp)
 	}
-	sk, _ = st.GetByNameFor(t.Context(), "docx", store.LocalUserID)
+	sk, _ = st.GetByNameFor(t.Context(), "o/r:docx", store.LocalUserID)
 	if sk.Content != local || !sk.Detached {
 		t.Fatalf("local edit lost: %+v", sk)
 	}
 }
 
-// A name collision with an existing skill from elsewhere is skipped with a
-// reason, not an overwrite and not a hard failure for the rest of the import.
-func TestSkillImportNameCollision(t *testing.T) {
-	engine, h, _ := skillTestEnv(t)
+// A repo is its skills' namespace: an import whose frontmatter name matches a
+// workbench-authored skill lands beside it rather than colliding, and the two
+// answer to different model-facing names (spec §5.29).
+func TestSkillImportNamespacedByRepo(t *testing.T) {
+	engine, h, st := skillTestEnv(t)
 	if w := doJSON(t, engine, http.MethodPost, "/skills", skillBody(pdfSkillDoc)); w.Code != http.StatusCreated {
 		t.Fatalf("seed: %d", w.Code)
 	}
 	gh := fakeGitHub(t, "sha1", map[string]string{"pdf/SKILL.md": pdfSkillDoc})
 	h.githubAPI, h.githubRaw = gh.URL, gh.URL
 	resp := importGitHub(t, engine)
-	if len(resp.Skipped) != 1 || !strings.Contains(resp.Skipped[0], "already in use") {
-		t.Fatalf("collision = %+v", resp)
+	if len(resp.Created) != 1 || len(resp.Skipped) != 0 {
+		t.Fatalf("import beside a same-named local skill = %+v", resp)
+	}
+	local, err := st.GetByNameFor(t.Context(), "pdf-processing", store.LocalUserID)
+	if err != nil || local.SourceRepo != "" {
+		t.Fatalf("bare name must resolve to the workbench-authored skill: (%+v, %v)", local, err)
+	}
+	imported, err := st.GetByNameFor(t.Context(), "o/r:pdf-processing", store.LocalUserID)
+	if err != nil || imported.SourceRepo != "https://github.com/o/r" {
+		t.Fatalf("qualified name must resolve to the imported skill: (%+v, %v)", imported, err)
+	}
+}
+
+// Two skills of one repo sharing a frontmatter name DO collide — the repo is
+// the namespace, so the second is skipped with a reason rather than
+// overwriting the first or failing the whole import.
+func TestSkillImportNameCollisionWithinRepo(t *testing.T) {
+	engine, h, _ := skillTestEnv(t)
+	gh := fakeGitHub(t, "sha1", map[string]string{
+		"pdf/SKILL.md":   pdfSkillDoc,
+		"other/SKILL.md": pdfSkillDoc,
+	})
+	h.githubAPI, h.githubRaw = gh.URL, gh.URL
+	resp := importGitHub(t, engine)
+	if len(resp.Created) != 1 || len(resp.Skipped) != 1 || !strings.Contains(resp.Skipped[0], "already in use") {
+		t.Fatalf("collision within one repo = %+v", resp)
 	}
 }
 
@@ -251,7 +277,9 @@ func TestSkillImportRawURL(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("raw import: got %d (body %s)", w.Code, w.Body.String())
 	}
-	sk, err := st.GetByNameFor(t.Context(), "pdf-processing", store.LocalUserID)
+	// A raw-URL import is namespaced by its host, not an owner/repo pair.
+	host := strings.TrimPrefix(srv.URL, "http://")
+	sk, err := st.GetByNameFor(t.Context(), host+":pdf-processing", store.LocalUserID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,5 +297,151 @@ func TestSkillImportEmptyRepo(t *testing.T) {
 	w := doJSON(t, engine, http.MethodPost, "/skill-imports", `{"url":"https://github.com/o/r"}`)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("empty repo: got %d (body %s)", w.Code, w.Body.String())
+	}
+}
+
+// A repo group is one scope: publishing flips every one of its skills at
+// once, an imported skill refuses a flip of its own, and a later sync's NEW
+// files join the group rather than splitting it (spec §5.29).
+func TestSkillRepoScopeGroup(t *testing.T) {
+	engine, h, st := skillTestEnv(t)
+	engine.POST("/skills/:id/scope", h.SetScope)
+	engine.POST("/skill-repos/scope", h.SetRepoScope)
+	files := map[string]string{
+		"pdf/SKILL.md":  pdfSkillDoc,
+		"docx/SKILL.md": "---\nname: docx\ndescription: Word documents.\n---\nBody.\n",
+	}
+	gh := fakeGitHub(t, "sha1", files)
+	h.githubAPI, h.githubRaw = gh.URL, gh.URL
+	if resp := importGitHub(t, engine); len(resp.Created) != 2 {
+		t.Fatalf("import = %+v", resp)
+	}
+
+	// One imported skill cannot leave its group alone.
+	one, err := st.GetByNameFor(t.Context(), "o/r:docx", store.LocalUserID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := doJSON(t, engine, http.MethodPost, "/skills/"+one.ID+"/scope", `{"scope":"global"}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("per-row flip of an imported skill = %d, want 400 (%s)", w.Code, w.Body.String())
+	}
+
+	// The group flips together, authors kept.
+	body := `{"repo":"https://github.com/o/r","scope":"global"}`
+	if w := doJSON(t, engine, http.MethodPost, "/skill-repos/scope", body); w.Code != http.StatusNoContent {
+		t.Fatalf("promote repo = %d (%s)", w.Code, w.Body.String())
+	}
+	rows, err := st.ListMeta(t.Context(), store.LocalUserID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sk := range rows {
+		if sk.Scope != store.ScopeGlobal || sk.OwnerID != store.LocalUserID {
+			t.Fatalf("after promote %s = (%s, %s), want global and its author", sk.Name, sk.Scope, sk.OwnerID)
+		}
+	}
+	// A second promote is a no-op the caller should hear about.
+	if w := doJSON(t, engine, http.MethodPost, "/skill-repos/scope", body); w.Code != http.StatusConflict {
+		t.Fatalf("re-promote = %d, want 409", w.Code)
+	}
+
+	// A sync's new file joins the published group instead of landing private.
+	files["xlsx/SKILL.md"] = "---\nname: xlsx\ndescription: Spreadsheets.\n---\nBody.\n"
+	gh2 := fakeGitHub(t, "sha2", files)
+	h.githubAPI, h.githubRaw = gh2.URL, gh2.URL
+	if resp := importGitHub(t, engine); len(resp.Created) != 1 || resp.Created[0] != "xlsx" {
+		t.Fatalf("sync = %+v", resp)
+	}
+	fresh, err := st.GetByNameFor(t.Context(), "o/r:xlsx", store.LocalUserID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fresh.Scope != store.ScopeGlobal {
+		t.Fatalf("a sync's new file = %s, want the group's global scope", fresh.Scope)
+	}
+
+	// Unpublishing returns the whole group to its author.
+	if w := doJSON(t, engine, http.MethodPost, "/skill-repos/scope", `{"repo":"https://github.com/o/r","scope":"private"}`); w.Code != http.StatusNoContent {
+		t.Fatalf("demote repo = %d (%s)", w.Code, w.Body.String())
+	}
+	rows, _ = st.ListMeta(t.Context(), store.LocalUserID, false)
+	for _, sk := range rows {
+		if sk.Scope != store.ScopePrivate || sk.OwnerID != store.LocalUserID {
+			t.Fatalf("after demote %s = (%s, %s), want the author's private set", sk.Name, sk.Scope, sk.OwnerID)
+		}
+	}
+}
+
+// A sync names the GROUP it refreshes, not just the repo. With two groups for
+// one repository — a member's published one and the admin's own private copy
+// — syncing the published one must update THAT group, never quietly refresh
+// the caller's instead (spec §5.31).
+func TestSkillSyncTargetsTheNamedGroup(t *testing.T) {
+	engine, h, st := skillTestEnv(t)
+	engine.POST("/skill-repos/scope", h.SetRepoScope)
+	files := map[string]string{"pdf/SKILL.md": pdfSkillDoc}
+	gh := fakeGitHub(t, "sha1", files)
+	h.githubAPI, h.githubRaw = gh.URL, gh.URL
+
+	// The caller (an admin, in this rig) holds their own private group.
+	if resp := importGitHub(t, engine); len(resp.Created) != 1 {
+		t.Fatalf("import = %+v", resp)
+	}
+	// A second, foreign group for the same repository, one version behind:
+	// PUBLISHED, so an admin may sync it (a member's private group is not an
+	// admin's to write — asserted below).
+	const foreign = "u-foreign"
+	theirs := &store.Skill{Name: "pdf-processing", Description: "old", Content: "OLD BODY",
+		Scope: store.ScopeGlobal, OwnerID: foreign,
+		SourceRepo: "https://github.com/o/r", SourcePath: "pdf/SKILL.md", SourceSHA: "sha0"}
+	if err := st.Create(t.Context(), theirs); err != nil {
+		t.Fatal(err)
+	}
+
+	// Syncing the FOREIGN group updates it, and leaves the caller's alone.
+	files["pdf/SKILL.md"] = strings.Replace(pdfSkillDoc, "Step 1.", "Step 2.", 1)
+	gh2 := fakeGitHub(t, "sha2", files)
+	h.githubAPI, h.githubRaw = gh2.URL, gh2.URL
+	w := doJSON(t, engine, http.MethodPost, "/skill-imports",
+		`{"url":"https://github.com/o/r","owner_id":"`+foreign+`"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("sync of the foreign group = %d (%s)", w.Code, w.Body.String())
+	}
+	got, err := st.Get(t.Context(), theirs.ID)
+	if err != nil || !strings.Contains(got.Content, "Step 2.") {
+		t.Fatalf("the named group was not refreshed: %+v (%v)", got, err)
+	}
+	mine, err := st.FindBySource(t.Context(), "https://github.com/o/r", "pdf/SKILL.md", store.LocalUserID)
+	if err != nil || mine == nil {
+		t.Fatalf("the caller's own row vanished: %+v (%v)", mine, err)
+	}
+	if strings.Contains(mine.Content, "Step 2.") {
+		t.Fatal("syncing another group refreshed the caller's own rows")
+	}
+
+	// A group nobody holds is a 404, not a fresh group under their name.
+	w = doJSON(t, engine, http.MethodPost, "/skill-imports",
+		`{"url":"https://github.com/o/r","owner_id":"u-nobody"}`)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("sync of a group that does not exist = %d, want 404", w.Code)
+	}
+
+	// A member's PRIVATE group is not an admin's to write: management is
+	// delete and scope change, not authorship (spec §5.29). It reads as
+	// absent, exactly as the row does elsewhere.
+	const shy = "u-shy"
+	private := &store.Skill{Name: "pdf-processing", Description: "theirs", Content: "PRIVATE",
+		Scope: store.ScopePrivate, OwnerID: shy,
+		SourceRepo: "https://github.com/o/r", SourcePath: "other/SKILL.md", SourceSHA: "sha0"}
+	if err := st.Create(t.Context(), private); err != nil {
+		t.Fatal(err)
+	}
+	w = doJSON(t, engine, http.MethodPost, "/skill-imports",
+		`{"url":"https://github.com/o/r","owner_id":"`+shy+`"}`)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("admin syncing a member's private group = %d, want 404", w.Code)
+	}
+	if got, _ := st.Get(t.Context(), private.ID); got.Content != "PRIVATE" {
+		t.Fatalf("the member's private row was written: %q", got.Content)
 	}
 }

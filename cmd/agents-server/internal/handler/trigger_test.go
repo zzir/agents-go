@@ -50,12 +50,12 @@ func triggerRigWithSessions(t *testing.T) (*gin.Engine, *fakeFirer, *store.Workf
 	ctx := context.Background()
 	db := testdb.New(t)
 	agents := store.NewAgentConfigStore(db)
-	ac := &store.AgentConfig{Name: "a", Model: "m"}
+	ac := &store.AgentConfig{Name: "a", Model: "m", OwnerID: store.LocalUserID}
 	if err := agents.Create(ctx, ac); err != nil {
 		t.Fatal(err)
 	}
 	workflows := store.NewWorkflowStore(db)
-	wf := &store.Workflow{Name: "nightly", Description: "d", Steps: store.WorkflowSteps{{AgentConfigID: ac.ID, Prompt: "p"}}}
+	wf := &store.Workflow{Name: "nightly", Description: "d", OwnerID: store.LocalUserID, Steps: store.WorkflowSteps{{AgentConfigID: ac.ID, Prompt: "p"}}}
 	if err := store.NormalizeWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}

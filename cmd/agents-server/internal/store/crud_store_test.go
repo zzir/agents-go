@@ -11,7 +11,7 @@ func TestCrudStoreRoundTrip(t *testing.T) {
 	s := NewAgentConfigStore(newTestDB(t))
 
 	// Create stamps id + timestamps via the BeforeAppendModel hook.
-	ac := &AgentConfig{Name: "first", Model: "gpt-5.5", Behavior: BehaviorGroup{MaxTurns: 5}, Resilience: ResilienceGroup{RetryEnabled: true}}
+	ac := &AgentConfig{Name: "first", Model: "gpt-5.5", OwnerID: NewID(), Behavior: BehaviorGroup{MaxTurns: 5}, Resilience: ResilienceGroup{RetryEnabled: true}}
 	if err := s.Create(ctx, ac); err != nil {
 		t.Fatalf("create: %v", err)
 	}

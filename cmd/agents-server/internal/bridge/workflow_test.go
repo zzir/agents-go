@@ -67,13 +67,13 @@ func workflowFixture(t *testing.T, modelURL string) (*Runner, *store.Session, *s
 
 	var steps store.WorkflowSteps
 	for _, name := range []string{"plan", "exec", "verify"} {
-		ac := &store.AgentConfig{Name: name, Model: "gpt-test", ProviderID: providerID}
+		ac := &store.AgentConfig{OwnerID: store.LocalUserID, Name: name, Model: "gpt-test", ProviderID: providerID}
 		if err := agentConfigs.Create(ctx, ac); err != nil {
 			t.Fatal(err)
 		}
 		steps = append(steps, store.WorkflowStep{Name: name, AgentConfigID: ac.ID, Prompt: "do the " + name})
 	}
-	wf := &store.Workflow{Name: "review", Description: "review the work", Steps: steps}
+	wf := &store.Workflow{OwnerID: store.LocalUserID, Name: "review", Description: "review the work", Steps: steps}
 	if err := store.NormalizeWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
@@ -301,7 +301,7 @@ func TestWorkflowFailureEdgeLoopsBackAndCompletes(t *testing.T) {
 		{ID: "recover", Name: "recover", AgentConfigID: wf.Steps[1].AgentConfigID, Prompt: "clean up",
 			OnSuccess: "work"},
 	}
-	if err := runner.Deps.Workflows.Update(ctx, wf.ID, wf); err != nil {
+	if err := runner.Deps.Workflows.Update(ctx, wf.ID, wf, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -452,7 +452,7 @@ func TestWorkflowTokenBudgetIsMeasuredOnTheSession(t *testing.T) {
 	defer srv.Close()
 	runner, sess, wf := workflowFixture(t, srv.URL)
 	wf.Budget = store.WorkflowBudget{MaxTokens: 3}
-	if err := runner.Deps.Workflows.Update(ctx, wf.ID, wf); err != nil {
+	if err := runner.Deps.Workflows.Update(ctx, wf.ID, wf, nil); err != nil {
 		t.Fatal(err)
 	}
 	info, err := runner.StartWorkflow(ctx, wf.ID, sess.ID, "spend wisely", "")
@@ -568,7 +568,7 @@ func TestWorkflowInterruptedByRestartFailsAtItsStep(t *testing.T) {
 // is inserted, and a run in flight, a retry and the record of what happened all
 // keep naming the same step.
 func TestNormalizeWorkflowFillsStableStepIDs(t *testing.T) {
-	wf := &store.Workflow{Name: "w", Description: "d", Steps: store.WorkflowSteps{
+	wf := &store.Workflow{OwnerID: store.LocalUserID, Name: "w", Description: "d", Steps: store.WorkflowSteps{
 		{AgentConfigID: "a1", Prompt: "one"},
 		{ID: "kept", AgentConfigID: "a2", Prompt: "two"},
 	}}
@@ -579,7 +579,7 @@ func TestNormalizeWorkflowFillsStableStepIDs(t *testing.T) {
 		t.Fatalf("ids wrong: %+v", wf.Steps)
 	}
 	// A duplicate id would make "retry from here" ambiguous.
-	dup := &store.Workflow{Name: "w", Description: "d", Steps: store.WorkflowSteps{
+	dup := &store.Workflow{OwnerID: store.LocalUserID, Name: "w", Description: "d", Steps: store.WorkflowSteps{
 		{ID: "same", AgentConfigID: "a1", Prompt: "one"},
 		{ID: "same", AgentConfigID: "a2", Prompt: "two"},
 	}}
@@ -587,7 +587,7 @@ func TestNormalizeWorkflowFillsStableStepIDs(t *testing.T) {
 		t.Fatal("duplicate step ids must be refused")
 	}
 	// A step with no prompt has nothing to run.
-	empty := &store.Workflow{Name: "w", Steps: store.WorkflowSteps{{AgentConfigID: "a1"}}}
+	empty := &store.Workflow{OwnerID: store.LocalUserID, Name: "w", Steps: store.WorkflowSteps{{AgentConfigID: "a1"}}}
 	if err := store.NormalizeWorkflow(empty); err == nil {
 		t.Fatal("a step without a prompt must be refused")
 	}
@@ -605,12 +605,12 @@ func TestWorkflowCompactsBeforeAStep(t *testing.T) {
 	runner.Deps.Workflows = store.NewWorkflowStore(runner.db)
 	providerID := testProvider(t, runner.db, "endpoint", "k", srv.URL)
 
-	ac := &store.AgentConfig{Name: "worker", Model: "gpt-test", ProviderID: providerID}
+	ac := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "worker", Model: "gpt-test", ProviderID: providerID}
 	ac.Compaction = store.CompactionGroup{Enabled: true, Threshold: 1, Window: 1}
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatal(err)
 	}
-	wf := &store.Workflow{Name: "folding", Description: "fold between steps", Steps: store.WorkflowSteps{
+	wf := &store.Workflow{OwnerID: store.LocalUserID, Name: "folding", Description: "fold between steps", Steps: store.WorkflowSteps{
 		{Name: "one", AgentConfigID: ac.ID, Prompt: "first"},
 		{Name: "two", AgentConfigID: ac.ID, Prompt: "second", CompactBefore: true},
 	}}
@@ -856,7 +856,7 @@ func TestWorkflowGateDrivesTheFixLoop(t *testing.T) {
 			Gate: &store.StepGate{}, OnSuccess: store.WorkflowStepEnd, OnFailure: "fix"},
 		{ID: "fix", Name: "fix", AgentConfigID: wf.Steps[2].AgentConfigID, Prompt: "fix it", OnSuccess: "check"},
 	}
-	if err := runner.Deps.Workflows.Update(ctx, wf.ID, wf); err != nil {
+	if err := runner.Deps.Workflows.Update(ctx, wf.ID, wf, nil); err != nil {
 		t.Fatal(err)
 	}
 	info, err := runner.StartWorkflow(ctx, wf.ID, sess.ID, "", "")
@@ -888,7 +888,7 @@ func pausedFixture(t *testing.T, modelURL string) (*Runner, *store.Session, *tas
 	ctx := context.Background()
 	runner, sess, wf := workflowFixture(t, modelURL)
 	wf.Steps[1].PauseBefore = true
-	if err := runner.Deps.Workflows.Update(ctx, wf.ID, wf); err != nil {
+	if err := runner.Deps.Workflows.Update(ctx, wf.ID, wf, nil); err != nil {
 		t.Fatal(err)
 	}
 	info, err := runner.StartWorkflow(ctx, wf.ID, sess.ID, "the brief", "")
@@ -937,7 +937,7 @@ func TestPausedStepIsAnnouncedWithoutARun(t *testing.T) {
 	}
 	ctx := context.Background()
 	wf.Steps[1].PauseBefore = true
-	if err := runner.Deps.Workflows.Update(ctx, wf.ID, wf); err != nil {
+	if err := runner.Deps.Workflows.Update(ctx, wf.ID, wf, nil); err != nil {
 		t.Fatal(err)
 	}
 	info, err := runner.StartWorkflow(ctx, wf.ID, sess.ID, "the brief", "")

@@ -112,9 +112,10 @@ const providerUnreferenced = `NOT EXISTS (SELECT 1 FROM agent_configs WHERE prov
 // provider that no longer exists). It returns how many references blocked the
 // delete: 0 with a nil error means deleted. A missing provider is ErrNotFound,
 // a different answer from refused, and the handler maps them to 404 vs 409.
-func (s *ProviderStore) DeleteIfUnreferenced(ctx context.Context, id string) (refs int, err error) {
+func (s *ProviderStore) DeleteIfUnreferenced(ctx context.Context, id, expectOwner string) (refs int, err error) {
 	res, err := s.db.NewDelete().Model((*Provider)(nil)).
 		Where("id = ?", id).
+		Where("owner_id = ?", expectOwner). // the pair the caller was authorized against
 		Where(providerUnreferenced, id).
 		Exec(ctx)
 	if err != nil {
@@ -122,6 +123,10 @@ func (s *ProviderStore) DeleteIfUnreferenced(ctx context.Context, id string) (re
 	}
 	if n, aerr := res.RowsAffected(); aerr == nil && n > 0 {
 		return 0, nil
+	}
+	cur, gerr := s.Get(ctx, id)
+	if gerr == nil && cur.OwnerID != expectOwner {
+		return 0, fmt.Errorf("deleting provider %s: %w", id, ErrOwnershipChanged)
 	}
 	return s.explainRefusal(ctx, id)
 }
@@ -162,13 +167,14 @@ func NormalizeProvider(p *Provider) error {
 	return nil
 }
 
-// DemoteToPrivate flips the provider into newOwner's private set, refusing
-// while any agent a demote would strand — a global agent, or another owner's
-// private one — still references it. Count and flip share one transaction
-// with the row locked, so a racing agent write cannot pin a global agent to a
-// just-privatized key (spec §5.29). Returns the foreign count, non-zero
-// meaning nothing was flipped; ErrNotFound when the row is gone.
-func (s *ProviderStore) DemoteToPrivate(ctx context.Context, id, newOwner string) (int, error) {
+// DemoteToPrivate flips the provider back into its author's private set,
+// refusing while any agent a demote would strand — a global agent, or another
+// owner's private one — still references it. Count and flip share one
+// transaction with the row locked, so a racing agent write cannot pin a
+// global agent to a just-privatized key (spec §5.29). Returns the foreign
+// count, non-zero meaning nothing was flipped; ErrNotFound when the row is
+// gone.
+func (s *ProviderStore) DemoteToPrivate(ctx context.Context, id string) (int, error) {
 	var refs int
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		pv := new(Provider)
@@ -176,12 +182,9 @@ func (s *ProviderStore) DemoteToPrivate(ctx context.Context, id, newOwner string
 			return err
 		}
 		if pv.Scope != ScopeGlobal {
-			return ErrSameScope // a second racing demote must not re-home the row
+			return ErrSameScope // a second racing demote must not flip twice
 		}
-		n, err := tx.NewSelect().Model((*AgentConfig)(nil)).
-			Where("provider_id = ?", id).
-			Where("(scope = ? OR owner_id IS NULL OR owner_id != ?)", ScopeGlobal, newOwner).
-			Count(ctx)
+		n, err := countStrandedRefs(ctx, tx, id, pv.OwnerID)
 		if err != nil {
 			return err
 		}
@@ -191,7 +194,6 @@ func (s *ProviderStore) DemoteToPrivate(ctx context.Context, id, newOwner string
 		}
 		res, err := tx.NewUpdate().Model((*Provider)(nil)).
 			Set("scope = ?", ScopePrivate).
-			Set("owner_id = ?", uuidOrNull(newOwner)).
 			Set("updated_at = ?", time.Now().UTC()).
 			Where("id = ?", id).
 			Exec(ctx)
@@ -202,6 +204,61 @@ func (s *ProviderStore) DemoteToPrivate(ctx context.Context, id, newOwner string
 	})
 	if err != nil {
 		return 0, fmt.Errorf("demoting provider %s: %w", id, err)
+	}
+	return refs, nil
+}
+
+// countStrandedRefs counts the agents that would lose this provider were it
+// private to owner: a global agent, or one another member owns (spec §5.29's
+// RefVisible, as a query).
+func countStrandedRefs(ctx context.Context, tx bun.Tx, providerID, owner string) (int, error) {
+	return tx.NewSelect().Model((*AgentConfig)(nil)).
+		Where("provider_id = ?", providerID).
+		Where("(scope = ? OR owner_id != ?)", ScopeGlobal, owner).
+		Count(ctx)
+}
+
+// TransferOwner hands the provider — credential included — to newOwner. A
+// PRIVATE provider carries its references with it, so the transfer is refused
+// while any agent would be stranded (the same guard a demote carries: a key
+// must not silently vanish from under a run — spec §5.29). Returns the
+// stranded count, non-zero meaning nothing moved.
+func (s *ProviderStore) TransferOwner(ctx context.Context, id, newOwner string) (int, error) {
+	var refs int
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		exists, err := tx.NewSelect().Model((*User)(nil)).Where("id = ?", newOwner).Exists(ctx)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return ErrNoSuchUser
+		}
+		pv := new(Provider)
+		if err := lockRow(ctx, tx, pv, "id = ?", id); err != nil {
+			return err
+		}
+		if pv.Scope == ScopePrivate {
+			n, err := countStrandedRefs(ctx, tx, id, newOwner)
+			if err != nil {
+				return err
+			}
+			if n > 0 {
+				refs = n
+				return nil
+			}
+		}
+		res, err := tx.NewUpdate().Model((*Provider)(nil)).
+			Set("owner_id = ?", newOwner).
+			Set("updated_at = ?", time.Now().UTC()).
+			Where("id = ?", id).
+			Exec(ctx)
+		if err == nil {
+			err = requireRows(res)
+		}
+		return err
+	})
+	if err != nil {
+		return 0, fmt.Errorf("transferring provider %s: %w", id, err)
 	}
 	return refs, nil
 }

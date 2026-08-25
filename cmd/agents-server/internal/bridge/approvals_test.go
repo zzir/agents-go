@@ -27,7 +27,7 @@ func TestResolveApprovalBusyKeepsPending(t *testing.T) {
 
 	// The agent config the registry is rebuilt from; its Name must match the
 	// serialized state's current agent.
-	ac := &store.AgentConfig{Name: "approver", Model: "gpt-test"}
+	ac := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "approver", Model: "gpt-test"}
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatalf("create agent config: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestResolveApprovalStaleSchemaDiscarded(t *testing.T) {
 	approvals := store.NewPendingApprovalStore(db)
 	sessions := store.NewSessionStore(db)
 
-	ac := &store.AgentConfig{Name: "approver", Model: "gpt-test"}
+	ac := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "approver", Model: "gpt-test"}
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatalf("create agent config: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestResolveApprovalOlderDecodableSchemaNotDiscarded(t *testing.T) {
 	approvals := store.NewPendingApprovalStore(db)
 	sessions := store.NewSessionStore(db)
 
-	ac := &store.AgentConfig{Name: "approver", Model: "gpt-test"}
+	ac := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "approver", Model: "gpt-test"}
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatalf("create agent config: %v", err)
 	}
@@ -242,7 +242,7 @@ func TestResolveApprovalTaskNotYetInputRequiredKeepsPending(t *testing.T) {
 	sessions := store.NewSessionStore(db)
 	tasks := store.NewTaskStore(db)
 
-	ac := &store.AgentConfig{Name: "approver", Model: "gpt-test"}
+	ac := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "approver", Model: "gpt-test"}
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatalf("create agent config: %v", err)
 	}

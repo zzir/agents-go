@@ -75,7 +75,7 @@ func matchWorkflow(list []store.Workflow, ownerID, name string) *store.Workflow 
 		if !strings.EqualFold(list[i].Name, name) {
 			continue
 		}
-		if list[i].OwnerID == ownerID && ownerID != "" {
+		if store.Shadows(list[i].Scope, list[i].OwnerID, ownerID) {
 			return &list[i]
 		}
 		if match == nil {
@@ -205,13 +205,22 @@ func (r *Runner) saveWorkflow(ctx context.Context, ownerID string, spec workflow
 		}
 	}
 	if err == nil && existing != nil {
-		// Editing a GLOBAL definition through the tool stays an admin's act —
-		// the REST gate holds here too.
-		if existing.Scope == store.ScopeGlobal && !ownerIsAdmin(ctx, r.Deps, ownerID) {
-			return agents.TextResult(fmt.Sprintf("Nothing was saved: %q is a global workflow only an admin may change. Pick another name to save your own.", existing.Name)), nil
+		// The REST edit gate holds here too: a published definition is its
+		// AUTHOR's to change, and an admin's — nobody else's (spec §5.29).
+		if existing.OwnerID != ownerID && !ownerIsAdmin(ctx, r.Deps, ownerID) {
+			return agents.TextResult(fmt.Sprintf("Nothing was saved: %q is somebody else's workflow. Pick another name to save your own.", existing.Name)), nil
 		}
-		wf.Scope, wf.OwnerID = existing.Scope, existing.OwnerID
-		err = r.Deps.Workflows.Update(ctx, existing.ID, wf)
+		// Scope and owner come from the row inside the transaction, and the
+		// pair this save was authorized against is re-checked there: a
+		// transfer landing mid-save must not be written back (spec §5.29).
+		want := *existing
+		err = r.Deps.Workflows.Update(ctx, existing.ID, wf, func(prev *store.Workflow) error {
+			if prev.Scope != want.Scope || prev.OwnerID != want.OwnerID {
+				return store.ErrOwnershipChanged
+			}
+			wf.Scope, wf.OwnerID = prev.Scope, prev.OwnerID
+			return nil
+		})
 	}
 	if err != nil {
 		return agents.ToolResult{}, err

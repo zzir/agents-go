@@ -46,7 +46,7 @@ func TestRunPanicFailsTheRunWithAnError(t *testing.T) {
 	runner, sessions, _, agentConfigs := newTaskTestRunner(t)
 	_, srv := newRecordingModel(t, func(int, []byte) []any { return sayOutput("ok") })
 	pid := testProvider(t, runner.db, "endpoint", "k", srv.URL)
-	ac := &store.AgentConfig{Name: "worker", Model: "gpt-test", ProviderID: pid}
+	ac := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "worker", Model: "gpt-test", ProviderID: pid}
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatal(err)
 	}

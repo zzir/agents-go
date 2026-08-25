@@ -145,6 +145,7 @@ The auth surface under `/api/v1/auth`:
 | POST   | `/auth/tokens`                   | yes  | Mint a PAT — `{name, expires_in_days?}` (`0` = never expires); the plaintext (`ags_p_…`) rides this response only |
 | DELETE | `/auth/tokens/:id`               | yes  | Revoke the PAT                                           |
 | GET    | `/auth/audit`                    | admin | The audit log, newest first (`?limit` ≤ 500, `?before=<event id>`) |
+| GET    | `/auth/user-labels`              | yes  | The id→person directory (`id`, `name`, `email`) that labels row owners |
 | GET    | `/auth/users`                    | admin | Every account with its role and `disabled_at`            |
 | PATCH  | `/auth/users/:id`                | admin | `{role?: admin\|member, disabled?: bool}`; never one's own account, never the local one; `409` when it would leave no enabled admin; disabling also revokes every token; answers `204` with no body |
 | DELETE | `/auth/users/:id/tokens`         | admin | Sign the account out everywhere: every session and PAT revoked, live connections closed |
@@ -229,22 +230,29 @@ check there, so a PAT could be minted but never authenticate.
 Four rules, enforced at the routes and handlers (`handler/authz.go`,
 spec §5.29), shape who may do what:
 
-- **Scoped configuration is per row: private to its owner or global.**
+- **Scoped configuration carries two facts: who sees it, and who wrote it.**
   Agents, providers, MCP servers, skills and workflows carry
-  `scope: private | global`. Any member creates (the row lands private,
-  theirs; claiming `global` on create is admin-only, `403`), edits and
-  deletes their own private rows, and other members never see them — a
-  foreign private id answers `404` like a missing one. A global row is every
-  member's to read and use, an admin's to write. An admin sees all rows and
-  manages but does not author: deleting a member's private row works, editing
-  it is `403`. `POST /<entity>/:id/scope` (admin) promotes/demotes — the
-  row's current scope is refused with `409`, as is a demote that collides
-  with a name in the target scope or strands a provider's referencing
-  agents. The reference and name-resolution rules (own-over-global,
-  global-references-global, runtime filtering) are spec §5.29's; the model's
-  tools follow suit — `save_workflow` rides every owner's run, a new name
-  saving a private workflow while an existing global name stays an admin's
-  to change — and signing a provider into ChatGPT is its owner's act.
+  `scope: private | global` (visibility) and `owner_id` (the author —
+  permanent, kept across scope changes). Any member creates (the row lands
+  private, theirs; claiming `global` on create is admin-only, `403`) and a
+  foreign private row answers `404` like a missing one. Who may write:
+  | Act | Who |
+  |---|---|
+  | Edit | the author (private *or* published) — plus an admin on any global row; never an admin on a member's private row (`403`) |
+  | Delete | the author, or an admin (any row) |
+  | Publish (`POST /<entity>/:id/scope` `{"scope":"global"}`) | an admin |
+  | Unpublish (`{"scope":"private"}`) | an admin, or the author — the row returns to its author |
+  | Transfer (`PUT /<entity>/:id/owner` `{"user_id"}`) | an admin — references are re-validated as the NEW owner (400 when they cannot see one); a provider's is also refused while agents would be stranded; a skill's moves its whole repo group |
+
+  A flip naming the row's current scope answers `409`, as does one colliding
+  with a name in the target namespace or a demote stranding a provider's
+  referencing agents. The reference and name-resolution rules
+  (own-over-global, global-references-global, runtime filtering) are spec
+  §5.29's; **skills additionally namespace by repository** — see
+  [skills](#skills--apiv1skills). The model's tools follow suit —
+  `save_workflow` rides every owner's run, a new name saving a private
+  workflow while an existing global name stays an admin's to change — and
+  signing a provider into ChatGPT is its owner's act.
 - **Host configuration stays read-everyone, write-admin.** Sandboxes (the
   test and container endpoints included), settings, guardrails and memories
   change what runs on the host or whose host credentials are spent, so
@@ -272,13 +280,16 @@ spec §5.29), shape who may do what:
   any of them; opening, reading or running one is the owner's alone. Roles are
   `admin` and `member`: the first OAuth account and `--bootstrap-admin` sign
   in as admin. In the UI the account menu (sidebar footer: avatar and name)
-  holds Settings, Sign out and — for admins — Admin, a dialog of three
-  panels: Members (roles, disabling, signing out everywhere), Sessions
-  (every owner's: reassign or delete, never read) and Audit logs. Settings
-  for a member shows the scoped panels writable — their own rows editable,
-  global rows marked and read-only — and the host panels (sandboxes,
-  settings, guardrails, memories) read-only, plus their Account (profile
-  and PATs). Nothing in the UI hides what the server would allow.
+  holds Settings, Sign out and — for admins — Admin, a dialog with a tab per
+  plane: Members (roles, disabling, signing out everywhere); then Providers,
+  Agents, MCP, Skills and Workflows, each listing every member's rows with
+  their author, for publish/unpublish and transfer — never edit, which stays
+  with the author under Settings; then Sessions (every owner's: reassign or
+  delete, never read), Projects (newest first) and Audit logs. Settings for a member shows the scoped
+  panels writable — their own rows editable, others' marked with their
+  author and read-only — and the host panels (sandboxes, settings,
+  guardrails, memories) read-only, plus their Account (profile and PATs).
+  Nothing in the UI hides what the server would allow.
 
 In token mode the one local account is an admin and owns everything, so every
 check passes.
@@ -658,7 +669,8 @@ behind like a spawn.
 | GET    | `/agents/:id`                | Get agent                                |
 | PUT    | `/agents/:id`                | Update agent                             |
 | DELETE | `/agents/:id`                | Delete agent                             |
-| POST   | `/agents/:id/scope`          | admin — `{scope: private\|global}`; promote requires all-global references, `409` on a name collision in the target scope |
+| POST   | `/agents/:id/scope`          | `{scope: private\|global}` — publish is an admin's, unpublish an admin's or the author's; promote requires all-global references, `409` on a name collision in the target scope |
+| PUT    | `/agents/:id/owner`          | admin — transfer to `{user_id}` |
 | GET    | `/agents/:id/tools`          | The agent's current tool surface as schema-only definitions (`{name, description?, parameters?}`) — built-ins, connected MCP servers' tools, the read_skill tool; sandbox tools excluded (no sandbox is selected). Nothing here executes; backs the Replay dialog's tool picker |
 
 Agent config shape — three top-level scalars, then the knobs as **grouped
@@ -740,7 +752,8 @@ back masked — see [Secret handling](#secret-handling).
 | DELETE | `/mcp-servers/:id/oauth-token` | Disconnect and clear the saved OAuth token ("sign out")           |
 | GET    | `/mcp-servers/:id/tools`       | List tools exposed by the server                                  |
 | GET    | `/mcp-servers/oauth/callback`  | OAuth redirect callback                                           |
-| POST   | `/mcp-servers/:id/scope`       | admin — `{scope: private\|global}`; `409` on a name collision     |
+| POST   | `/mcp-servers/:id/scope`       | `{scope: private\|global}` — publish admin, unpublish admin or author; `409` on a name collision |
+| PUT    | `/mcp-servers/:id/owner`       | admin — transfer to `{user_id}`                                  |
 
 The one transport is streamable HTTP (spec §5.25) — `config` is `{endpoint,
 headers, auth_mode, oauth_*}` with `auth_mode` `header` or `oauth`; a local
@@ -884,6 +897,20 @@ The model discovers skills through an index in the agent's instructions and
 reads a document on demand with the `read_skill` tool; an agent's `skills`
 selection (skill ids) restricts both.
 
+**A skill's identity carries its repository** (spec §5.31). The model-facing
+name is `owner/repo:name` for a GitHub import, `host:name` for another URL,
+and the bare frontmatter name for a skill authored in the workbench — so two
+repositories may each ship a `review`, and uniqueness is per
+`(repo label, name)` within a visibility context rather than per name (the
+label is stored as `repo_label`, so two source URLs reducing to one label
+collide as they should). A name collision therefore only happens within one
+repository — or between two sources sharing a label — and the second file is
+skipped with a reason.
+
+**A repository's skills publish as one group.** Scope moves per
+`(source_repo, owner)` group, all or nothing; `POST /skills/:id/scope`
+serves workbench-authored rows only.
+
 | Method | Path           | Description                                            |
 |--------|----------------|--------------------------------------------------------|
 | GET    | `/skills`      | List skills (metadata only, no content)                |
@@ -891,8 +918,10 @@ selection (skill ids) restricts both.
 | POST   | `/skills`      | Create — body `{content, scope?}` (`scope` is create-only; claiming `global` is admin-only); `409` on a duplicate name |
 | PUT    | `/skills/:id`  | Update content (name/description follow its frontmatter) |
 | DELETE | `/skills/:id`  | Delete                                                 |
-| POST   | `/skills/:id/scope` | admin — `{scope: private\|global}`; `409` on a name collision |
-| POST   | `/skill-imports` | Import from a URL — see below; imported rows are the importer's (private) |
+| POST   | `/skills/:id/scope` | `{scope: private\|global}` — workbench-authored skills only (`400` for an imported one); `409` on a name collision |
+| POST   | `/skill-repos/scope` | Flip a whole imported repo — `{repo, scope, owner_id?}`; `404` unknown group, `409` already there or a name collision |
+| PUT    | `/skills/:id/owner` | admin — transfer to `{user_id}`; an imported skill moves with its whole repo group, and `409` when the new owner already holds that repository |
+| POST   | `/skill-imports` | Import/sync from a URL — `{url, owner_id?}`; `owner_id` names WHICH group to refresh (an admin syncing a member's **published** repo; `404` for a private one or none), omitted it is the caller's own — a new repo lands private to the importer. Everything is fetched first and written in one transaction: a group transferred or re-scoped mid-fetch answers `409` with nothing written |
 
 `POST /skill-imports` with `{url}` upserts skills from elsewhere:
 `https://github.com/owner/repo` walks the repository via the GitHub API,
@@ -907,8 +936,9 @@ response names the `repo` and lists what was
 cut were not seen at all.
 Re-importing the same source refreshes rows that were not edited locally;
 editing an imported skill **detaches** it, and a detached skill is never
-overwritten by an import. Documents are capped at 256 KiB, imports at 200
-skills per repository.
+overwritten by an import. A sync's NEW files inherit the group's scope and
+owner, so a published repository never splits itself on an upstream addition.
+Documents are capped at 256 KiB, imports at 200 skills per repository.
 
 ### Providers — `/api/v1/providers`
 
@@ -931,7 +961,8 @@ endpoint's credential, so every agent pointed at the provider shares one login.
 | GET    | `/providers/:id`  | Get provider                                  |
 | PUT    | `/providers/:id`  | Update provider                               |
 | DELETE | `/providers/:id`  | Delete; 409 while an agent uses it            |
-| POST   | `/providers/:id/scope` | admin — `{scope: private\|global}`; demote is refused (`409`) while global or foreign agents reference it |
+| POST   | `/providers/:id/scope` | `{scope: private\|global}` — publish admin, unpublish admin or author; demote is refused (`409`) while global or foreign agents reference it |
+| PUT    | `/providers/:id/owner` | admin — transfer the endpoint AND its credential to `{user_id}`; `409` while agents outside the new owner's set reference it |
 
 `GET /provider-types` (read-only) lists the registered backends as machine
 facts — `type`, `auth_modes`, `unsupported` request features — straight from
@@ -1121,7 +1152,8 @@ re-pointed.
 | GET    | `/workflows/:id`            | Get definition                                   |
 | PUT    | `/workflows/:id`            | Update definition                                |
 | DELETE | `/workflows/:id`            | Delete definition (executions keep their snapshot) |
-| POST   | `/workflows/:id/scope`      | admin — `{scope: private\|global}`; promote requires all-global step agents, `409` on a name collision |
+| POST   | `/workflows/:id/scope`      | `{scope: private\|global}` — publish admin, unpublish admin or author; promote requires all-global step agents, `409` on a name collision |
+| PUT    | `/workflows/:id/owner`      | admin — transfer to `{user_id}` |
 | POST   | `/workflows/:id/runs`       | Start an execution for `session_id` with the brief `input`, optionally binding a still-unbound session first (`sandbox_id?`, `project_id?` — the same first-run bind a run makes, so the steps have the composer's project) — 201 with the task; 400 no runnable steps / agent gone / an invalid binding, 404 unknown workflow or session, 409 the session's background-task cap or a bind that keeps losing to concurrent config edits (retry) |
 | GET    | `/triggers`                 | List triggers (`?workflow_id=` for one workflow's); secrets never shown, only their tail |
 | POST   | `/triggers`                 | Create — `{target, workflow_id | agent_config_id, session_id, kind, schedule?, brief, enabled}` (target inferred from the id when omitted); a webhook's `secret` is in this response only; `409` past 50 triggers per owner |
@@ -2211,12 +2243,19 @@ When a change genuinely doesn't fit, update this list in the same PR.
     session inherits its parent's owner at creation
     (`CreateOptions.ParentID`), a trigger's owner is its session's, an
     approval's is its session's. Configuration is either host-owned and
-    admin-written (sandboxes, settings, guardrails, memories) or row-scoped
-    `private | global` with `owner_id` (spec §5.29). Projects are the third,
-    recorded form: per-user working trees keyed by (owner, sandbox), with no
-    scope column (spec §5.28). A new per-user thing is filed on a session,
-    takes the scope pair, or — when it is a working tree — is a project;
-    never its own column and its own checks.
+    admin-written (sandboxes, settings, guardrails, memories) or row-scoped:
+    `scope: private | global` for **visibility** and `owner_id` for
+    **authorship**, two independent facts — the owner is stamped at create
+    and survives every scope flip, changing only through an admin transfer
+    (spec §5.29). Projects are the third, recorded form: per-user working
+    trees keyed by (owner, sandbox), with no scope column (spec §5.28). A new
+    per-user thing is filed on a session, takes the scope/owner pair, or —
+    when it is a working tree — is a project; never its own column and its
+    own checks. Whatever the entity, EVERY mutation re-checks the pair it was
+    authorized against as it writes (`409` on a mismatch) — an update against
+    the locked row, a scope flip and a delete as a SQL predicate, a skill
+    import against its group under lock: a transfer landing between the check
+    and the write must never be overwritten by the operation it raced.
 
 43. **Shutdown is ordered, and every waiter is told.** On SIGINT/SIGTERM:
     the clock stops (a tick during the drain would start a run the drain

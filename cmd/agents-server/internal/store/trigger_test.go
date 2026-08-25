@@ -63,7 +63,7 @@ func TestTriggerAgentTargetIsChecked(t *testing.T) {
 	if err := triggers.Create(ctx, ghost); !errors.Is(err, ErrTriggerRef) {
 		t.Fatalf("create with a ghost agent: %v, want ErrTriggerRef", err)
 	}
-	ac := &AgentConfig{Name: "reviewer", Model: "m"}
+	ac := &AgentConfig{Name: "reviewer", Model: "m", OwnerID: NewID()}
 	if err := NewAgentConfigStore(db).Create(ctx, ac); err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestTriggerAgentTargetIsChecked(t *testing.T) {
 func seedRefs(t *testing.T, db *bun.DB) (*Workflow, *Session) {
 	t.Helper()
 	ctx := context.Background()
-	wf := &Workflow{Name: NewID()[:8], Description: "d", Steps: WorkflowSteps{{ID: "a", AgentConfigID: "x", Prompt: "p"}}}
+	wf := &Workflow{Name: NewID()[:8], Description: "d", OwnerID: NewID(), Steps: WorkflowSteps{{ID: "a", AgentConfigID: "x", Prompt: "p"}}}
 	if err := NewWorkflowStore(db).Create(ctx, wf); err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestTriggersAreDeletedWithTheirWorkflowAndSession(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	workflows, sessions, triggers := NewWorkflowStore(db), NewSessionStore(db), NewTriggerStore(db)
-	wf := &Workflow{Name: "w", Description: "d", Steps: WorkflowSteps{{ID: "a", AgentConfigID: "x", Prompt: "p"}}}
+	wf := &Workflow{Name: "w", Description: "d", OwnerID: NewID(), Steps: WorkflowSteps{{ID: "a", AgentConfigID: "x", Prompt: "p"}}}
 	if err := workflows.Create(ctx, wf); err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +205,7 @@ func TestTriggersAreDeletedWithTheirWorkflowAndSession(t *testing.T) {
 // A budget is non-negative and cannot promise more steps than the ceiling.
 func TestNormalizeWorkflowChecksTheBudget(t *testing.T) {
 	base := func() *Workflow {
-		return &Workflow{Name: "w", Description: "d", Steps: WorkflowSteps{{ID: "a", AgentConfigID: "x", Prompt: "p"}}}
+		return &Workflow{Name: "w", Description: "d", OwnerID: NewID(), Steps: WorkflowSteps{{ID: "a", AgentConfigID: "x", Prompt: "p"}}}
 	}
 	wf := base()
 	wf.Budget = WorkflowBudget{MaxSteps: 5, MaxTokens: 1000, MaxMinutes: 30}

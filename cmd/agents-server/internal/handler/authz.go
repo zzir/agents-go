@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -217,39 +218,100 @@ func stampCreateScope(c *gin.Context, scope, ownerID *string) bool {
 		abortError(c, http.StatusForbidden, protocol.CodeForbidden, "admin role required to create global configuration")
 		return false
 	}
-	*scope, *ownerID = store.NormalizeScope(*scope, u.ID)
+	*scope, *ownerID = store.NormalizeScope(*scope), u.ID
+	return true
+}
+
+// scopeChangeAllowed authorizes a scope flip on a row the caller must first
+// be able to see (404 otherwise): promoting — publishing to every member —
+// is an admin's act; demoting is the admin's or the author's (the row
+// returns to its owner). False means the response is written.
+func scopeChangeAllowed(c *gin.Context, target, rowScope, rowOwner string) bool {
+	if !visibleRow(c, rowScope, rowOwner) {
+		return false
+	}
+	u, _ := server.CurrentUser(c)
+	admin := u.Role == store.RoleAdmin
+	if target == store.ScopeGlobal && !admin {
+		abortError(c, http.StatusForbidden, protocol.CodeForbidden, "admin role required to publish configuration")
+		return false
+	}
+	if target == store.ScopePrivate && !admin && rowOwner != u.ID {
+		abortError(c, http.StatusForbidden, protocol.CodeForbidden, "only an admin or the owner may unpublish this configuration")
+		return false
+	}
 	return true
 }
 
 // setScopePlain is the /scope POST body shared by entities with no extra
-// validation (skills, MCP servers): bind, refuse the same scope, flip.
+// validation (MCP servers): bind, authorize, refuse the same scope, flip.
 // Entities with more to check (providers' demote guard, agents' and
-// workflows' reference validation) keep their own handlers.
+// workflows' reference validation, skills' repo grouping) keep their own
+// handlers.
 func setScopePlain[T any](c *gin.Context, s *store.CrudStore[T], kind string, scopeOf func(*T) (scope, owner string)) {
 	scope, ok := bindScope(c)
 	if !ok {
 		return
 	}
-	u, _ := server.CurrentUser(c)
 	ctx, id := c.Request.Context(), c.Param("id")
 	row, err := s.Get(ctx, id)
 	if err != nil {
 		storeError(c, err)
 		return
 	}
-	cur, _ := scopeOf(row)
-	if sameScope(c, kind, cur, scope) {
+	cur, owner := scopeOf(row)
+	if !scopeChangeAllowed(c, scope, cur, owner) {
 		return
 	}
-	owner := ""
-	if scope == store.ScopePrivate {
-		owner = u.ID
+	if sameScope(c, kind, cur, scope) {
+		return
 	}
 	if err := store.SetScopeOf(ctx, s, id, scope, owner); err != nil {
 		saveError(c, err) // name collision in the target scope -> 409
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+// setOwnerPlain is the /owner PUT body shared by the scoped entities: an
+// admin transfers a row to another account; scope stays put. A name already
+// taken in the target owner's private namespace answers 409.
+func setOwnerPlain[T any](c *gin.Context, s *store.CrudStore[T]) {
+	if !requireAdmin(c) {
+		return
+	}
+	var req SetOwnerRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.UserID == "" {
+		badRequest(c, "user_id is required")
+		return
+	}
+	if err := store.SetOwnerOf(c.Request.Context(), s, c.Param("id"), req.UserID); err != nil {
+		if errors.Is(err, store.ErrNoSuchUser) {
+			badRequest(c, "no such user")
+			return
+		}
+		saveError(c, err) // name collision in the target owner's namespace -> 409
+		return
+	}
+	server.SetAuditDetail(c, "owner="+req.UserID)
+	c.Status(http.StatusNoContent)
+}
+
+// ownershipGuard folds the authorization check INTO the write transaction:
+// the returned hook runs against the LOCKED row, so a transfer or scope flip
+// that landed since editableRow ran turns the write into a 409 instead of an
+// edit by somebody who may no longer make it (spec §5.29). next is the
+// entity's own prepare hook, run after the check.
+func ownershipGuard[T any](scope, owner string, scopeOf func(*T) (string, string), next func(*T) error) func(*T) error {
+	return func(prev *T) error {
+		if s, o := scopeOf(prev); s != scope || o != owner {
+			return store.ErrOwnershipChanged
+		}
+		if next != nil {
+			return next(prev)
+		}
+		return nil
+	}
 }
 
 // callerSees reports whether the caller may see a row — the predicate behind
@@ -270,25 +332,28 @@ func visibleRow(c *gin.Context, scope, rowOwner string) bool {
 	return true
 }
 
-// editableRow gates an UPDATE: the owner edits their private row, an admin
-// edits global ones. An admin does NOT edit a member's private row —
-// management is delete and scope change, not authorship. Invisibility answers
-// 404 first, a visible-but-not-yours row 403.
+// editableRow gates an UPDATE: the owner edits what they created — private
+// or published — and an admin additionally edits any global row. An admin
+// does NOT edit a member's private row — management is delete, scope change
+// and transfer, not authorship. Invisibility answers 404 first, a
+// visible-but-not-yours row 403.
 func editableRow(c *gin.Context, scope, rowOwner string) bool {
 	if !visibleRow(c, scope, rowOwner) {
 		return false
 	}
 	u, _ := server.CurrentUser(c)
-	admin := u.Role == store.RoleAdmin
-	if scope == store.ScopeGlobal && !admin {
-		abortError(c, http.StatusForbidden, protocol.CodeForbidden, "admin role required to modify global configuration")
+	if rowOwner == u.ID {
+		return true
+	}
+	if scope == store.ScopeGlobal {
+		if u.Role == store.RoleAdmin {
+			return true
+		}
+		abortError(c, http.StatusForbidden, protocol.CodeForbidden, "only an admin or the owner may modify global configuration")
 		return false
 	}
-	if scope == store.ScopePrivate && rowOwner != u.ID {
-		abortError(c, http.StatusForbidden, protocol.CodeForbidden, "this configuration belongs to another user")
-		return false
-	}
-	return true
+	abortError(c, http.StatusForbidden, protocol.CodeForbidden, "this configuration belongs to another user")
+	return false
 }
 
 // deletableRow gates a DELETE: everything editableRow allows, plus an admin

@@ -182,7 +182,7 @@ func TestConnectEnabledMcpServersConcurrent(t *testing.T) {
 	mcpStore := store.NewMcpServerStore(db)
 	mk := func(name, endpoint string) {
 		cfg := &store.McpServerConfig{
-			ID: store.NewID(), Name: name, Enabled: true,
+			ID: store.NewID(), Name: name, Enabled: true, OwnerID: store.NewID(),
 			Config: []byte(`{"endpoint":"` + endpoint + `"}`),
 		}
 		if err := mcpStore.Create(ctx, cfg); err != nil {

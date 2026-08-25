@@ -121,12 +121,12 @@ func TestCreateRunHonorsPreferWait(t *testing.T) {
 	}
 	srv := slowModel(t, 1500*time.Millisecond)
 	t.Cleanup(srv.Close)
-	pv := &store.Provider{Name: "endpoint", APIKey: "k", BaseURL: srv.URL}
+	pv := &store.Provider{Name: "endpoint", APIKey: "k", BaseURL: srv.URL, OwnerID: store.LocalUserID}
 	if err := store.NewProviderStore(db).Create(t.Context(), pv); err != nil {
 		t.Fatal(err)
 	}
 	agents := store.NewAgentConfigStore(db)
-	ac := &store.AgentConfig{Name: "a", Model: "gpt-test", ProviderID: pv.ID}
+	ac := &store.AgentConfig{Name: "a", Model: "gpt-test", ProviderID: pv.ID, OwnerID: store.LocalUserID}
 	if err := agents.Create(t.Context(), ac); err != nil {
 		t.Fatal(err)
 	}

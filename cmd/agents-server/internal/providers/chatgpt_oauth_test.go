@@ -28,7 +28,7 @@ func TestChatGPTOAuthMissingProvider(t *testing.T) {
 	}
 
 	// Existing provider with no token -> (false, nil), a real "not logged in".
-	pv := &store.Provider{Name: "a"}
+	pv := &store.Provider{Name: "a", OwnerID: store.NewID()}
 	if err := providers.Create(ctx, pv); err != nil {
 		t.Fatalf("create: %v", err)
 	}

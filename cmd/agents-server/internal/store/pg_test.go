@@ -46,10 +46,10 @@ func TestPGUniqueViolation(t *testing.T) {
 	ctx := context.Background()
 	db := pgTestDB(t)
 	agents := NewAgentConfigStore(db)
-	if err := agents.Create(ctx, &AgentConfig{Name: "dup"}); err != nil {
+	if err := agents.Create(ctx, &AgentConfig{Name: "dup", Scope: ScopeGlobal, OwnerID: NewID()}); err != nil {
 		t.Fatal(err)
 	}
-	err := agents.Create(ctx, &AgentConfig{Name: "dup"})
+	err := agents.Create(ctx, &AgentConfig{Name: "dup", Scope: ScopeGlobal, OwnerID: NewID()})
 	if err == nil {
 		t.Fatal("duplicate agent name inserted without error")
 	}
@@ -103,10 +103,10 @@ func TestPGWorkflowNameCaseInsensitive(t *testing.T) {
 	ctx := context.Background()
 	db := pgTestDB(t)
 	workflows := NewWorkflowStore(db)
-	if err := workflows.Create(ctx, &Workflow{Name: "Build"}); err != nil {
+	if err := workflows.Create(ctx, &Workflow{Name: "Build", Scope: ScopeGlobal, OwnerID: NewID()}); err != nil {
 		t.Fatal(err)
 	}
-	err := workflows.Create(ctx, &Workflow{Name: "build"})
+	err := workflows.Create(ctx, &Workflow{Name: "build", Scope: ScopeGlobal, OwnerID: NewID()})
 	if err == nil {
 		t.Fatal("case-variant workflow name inserted without error")
 	}

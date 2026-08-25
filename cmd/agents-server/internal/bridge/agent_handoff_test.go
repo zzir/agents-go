@@ -14,7 +14,7 @@ import (
 
 func mkAgent(t *testing.T, s *store.AgentConfigStore, name string, handoffIDs ...string) string {
 	t.Helper()
-	ac := &store.AgentConfig{Name: name, Model: "gpt-test"}
+	ac := &store.AgentConfig{OwnerID: store.LocalUserID, Name: name, Model: "gpt-test"}
 	if len(handoffIDs) > 0 {
 		raw, _ := json.Marshal(handoffIDs)
 		ac.HandoffsJSON = string(raw)
@@ -94,7 +94,7 @@ func TestBuildFullAgentHandoffTargetErrorPropagates(t *testing.T) {
 	}
 
 	// Target B has a broken output_schema; A hands off to B.
-	bad := &store.AgentConfig{Name: "B", Model: "gpt-test", Guardrails: store.GuardrailGroup{OutputSchema: "{not json"}}
+	bad := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "B", Model: "gpt-test", Guardrails: store.GuardrailGroup{OutputSchema: "{not json"}}
 	if err := s.Create(ctx, bad); err != nil {
 		t.Fatalf("create B: %v", err)
 	}

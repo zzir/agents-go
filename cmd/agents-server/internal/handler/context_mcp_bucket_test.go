@@ -26,7 +26,7 @@ func TestContextMcpBucketNamesDisconnectedServers(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	mcpStore := store.NewMcpServerStore(db)
-	srv := &store.McpServerConfig{Name: "AgentKey", Config: json.RawMessage(`{"endpoint":"http://x"}`)}
+	srv := &store.McpServerConfig{Name: "AgentKey", OwnerID: store.LocalUserID, Config: json.RawMessage(`{"endpoint":"http://x"}`)}
 	if err := mcpStore.Create(ctx, srv); err != nil {
 		t.Fatal(err)
 	}

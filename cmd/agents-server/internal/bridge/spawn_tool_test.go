@@ -101,14 +101,14 @@ func TestModelStartsAWorkflow(t *testing.T) {
 
 	runner, sessions, _, agentConfigs := newTaskTestRunner(t)
 	runner.Deps.Workflows = store.NewWorkflowStore(runner.db)
-	ac := &store.AgentConfig{
+	ac := &store.AgentConfig{OwnerID: store.LocalUserID,
 		Name: "chat", Model: "gpt-test",
 		ProviderID: testProvider(t, runner.db, "endpoint", "k", srv.URL),
 	}
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatal(err)
 	}
-	wf := &store.Workflow{
+	wf := &store.Workflow{OwnerID: store.LocalUserID,
 		Name: "codegen", Description: "Implement a feature end to end",
 		Steps: store.WorkflowSteps{{AgentConfigID: ac.ID, Prompt: "Write the code."}},
 	}
@@ -209,7 +209,7 @@ func TestSpawnToolListsWorkflowsOnlyWhenThereAreAny(t *testing.T) {
 	ctx := context.Background()
 	runner, _, _, agentConfigs := newTaskTestRunner(t)
 	runner.Deps.Workflows = store.NewWorkflowStore(runner.db)
-	ac := &store.AgentConfig{Name: "chat", Model: "gpt-test"}
+	ac := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "chat", Model: "gpt-test"}
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +217,7 @@ func TestSpawnToolListsWorkflowsOnlyWhenThereAreAny(t *testing.T) {
 	if tool == nil || tool.Name != SpawnToolName || strings.Contains(tool.Description, "Available:") {
 		t.Fatalf("no workflows: tool = %v, want spawn_task with no workflow list", tool)
 	}
-	wf := &store.Workflow{Name: "deploy", Description: "ship it", Steps: store.WorkflowSteps{{AgentConfigID: ac.ID, Prompt: "ship"}}}
+	wf := &store.Workflow{OwnerID: store.LocalUserID, Name: "deploy", Description: "ship it", Steps: store.WorkflowSteps{{AgentConfigID: ac.ID, Prompt: "ship"}}}
 	if err := store.NormalizeWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
@@ -285,14 +285,14 @@ func TestWorkflowStepIsBuiltAsABackgroundRun(t *testing.T) {
 
 	runner, sessions, _, agentConfigs := newTaskTestRunner(t)
 	runner.Deps.Workflows = store.NewWorkflowStore(runner.db)
-	ac := &store.AgentConfig{
+	ac := &store.AgentConfig{OwnerID: store.LocalUserID,
 		Name: "planner", Model: "gpt-test",
 		ProviderID: testProvider(t, runner.db, "endpoint", "k", srv.URL),
 	}
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatal(err)
 	}
-	wf := &store.Workflow{
+	wf := &store.Workflow{OwnerID: store.LocalUserID,
 		Name: "codegen", Description: "write it",
 		Steps: store.WorkflowSteps{{AgentConfigID: ac.ID, Prompt: "Write the code."}},
 	}

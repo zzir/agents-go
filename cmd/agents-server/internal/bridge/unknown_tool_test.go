@@ -52,7 +52,7 @@ func TestInventedToolNameDoesNotEndTheRun(t *testing.T) {
 	defer srv.Close()
 
 	runner, sessions, _, agentConfigs := newTaskTestRunner(t)
-	ac := &store.AgentConfig{
+	ac := &store.AgentConfig{OwnerID: store.LocalUserID,
 		Name: "coder", Model: "gpt-test",
 		ProviderID: testProvider(t, runner.db, "endpoint", "k", srv.URL),
 	}

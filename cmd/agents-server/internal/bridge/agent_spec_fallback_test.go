@@ -12,7 +12,7 @@ import (
 // selector key, which DisallowUnknownFields turns from a silent no-op into an
 // error.
 func TestDecodeAgentSpecValidatesFallbackProvider(t *testing.T) {
-	ac := &store.AgentConfig{}
+	ac := &store.AgentConfig{OwnerID: store.LocalUserID}
 	ac.Resilience.FallbackModels = `[{"model":"claude-opus-5","provider_type":"anthropic"}]`
 	if _, err := DecodeAgentSpec(ac); err != nil {
 		t.Fatalf("valid provider rejected: %v", err)

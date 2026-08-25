@@ -104,7 +104,7 @@ func saveError(c *gin.Context, err error) {
 		badRequest(c, err.Error())
 		return
 	}
-	if errors.Is(err, store.ErrSameScope) {
+	if errors.Is(err, store.ErrSameScope) || errors.Is(err, store.ErrOwnershipChanged) || errors.Is(err, store.ErrGroupExists) {
 		conflict(c, err.Error())
 		return
 	}

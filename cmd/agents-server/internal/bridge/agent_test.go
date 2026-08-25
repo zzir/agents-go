@@ -21,7 +21,7 @@ func TestBuildFullAgentIgnoresLegacyUsePreviousResponseID(t *testing.T) {
 	db := testdb.New(t)
 	agentConfigs := store.NewAgentConfigStore(db)
 
-	ac := &store.AgentConfig{Name: "legacy", Model: "gpt-test"}
+	ac := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "legacy", Model: "gpt-test"}
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatalf("create agent config: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestBackgroundBuildIsToldNobodyIsReading(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	agentConfigs := store.NewAgentConfigStore(db)
-	ac := &store.AgentConfig{Name: "worker", Model: "gpt-test", Instructions: "Be helpful."}
+	ac := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "worker", Model: "gpt-test", Instructions: "Be helpful."}
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestBuildFullAgentAppliesWorkflowModes(t *testing.T) {
 	db := testdb.New(t)
 	agentConfigs := store.NewAgentConfigStore(db)
 
-	ac := &store.AgentConfig{Name: "wf", Model: "gpt-test"}
+	ac := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "wf", Model: "gpt-test"}
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatalf("create agent config: %v", err)
 	}
@@ -134,12 +134,12 @@ func TestAgentProviderRechecksScope(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	providers := store.NewProviderStore(db)
-	pv := &store.Provider{Name: "shared", Type: "openai", APIKey: "sk-x", Scope: store.ScopeGlobal}
+	pv := &store.Provider{OwnerID: store.LocalUserID, Name: "shared", Type: "openai", APIKey: "sk-x", Scope: store.ScopeGlobal}
 	if err := providers.Create(ctx, pv); err != nil {
 		t.Fatal(err)
 	}
 	agentConfigs := store.NewAgentConfigStore(db)
-	ac := &store.AgentConfig{Name: "g", Model: "m", ProviderID: pv.ID, Scope: store.ScopeGlobal}
+	ac := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "g", Model: "m", ProviderID: pv.ID, Scope: store.ScopeGlobal}
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatal(err)
 	}

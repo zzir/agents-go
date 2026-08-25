@@ -161,7 +161,7 @@ func TestRestorePlanPhase(t *testing.T) {
 func TestPlanIntentIsNotAppliedWhenTheRunIsRefused(t *testing.T) {
 	ctx := context.Background()
 	runner, sessions, _, agentConfigs := newTaskTestRunner(t)
-	ac := &store.AgentConfig{Name: "a", Model: "gpt-test"}
+	ac := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "a", Model: "gpt-test"}
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatal(err)
 	}

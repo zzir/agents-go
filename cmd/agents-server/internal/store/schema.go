@@ -148,7 +148,6 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 		{(*AgentConfig)(nil), "agent_configs"},
 		{(*Provider)(nil), "providers"},
 		{(*McpServerConfig)(nil), "mcp_servers"},
-		{(*Skill)(nil), "skills"},
 	} {
 		if _, err := db.NewCreateIndex().
 			Model(t.model).
@@ -170,6 +169,33 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 			Exec(ctx); err != nil {
 			return fmt.Errorf("creating %s private name index: %w", t.table, err)
 		}
+	}
+	// Skills carry the import source in their identity — "owner/repo:name" is
+	// the model-facing name — so uniqueness is per (visibility context, repo
+	// LABEL): two repos may both ship a "review", and two source URLs that
+	// reduce to one label may not. Keying on the materialized label rather than
+	// source_repo is what makes the index refuse the second case. COALESCE
+	// because the nullzero column holds NULL for workbench-authored rows, and
+	// NULLs never collide in a unique index.
+	if _, err := db.NewCreateIndex().
+		Model((*Skill)(nil)).
+		Index("idx_skills_name_global").
+		Unique().
+		ColumnExpr("COALESCE(repo_label, ''), name").
+		Where("scope = 'global'").
+		IfNotExists().
+		Exec(ctx); err != nil {
+		return fmt.Errorf("creating skills global name index: %w", err)
+	}
+	if _, err := db.NewCreateIndex().
+		Model((*Skill)(nil)).
+		Index("idx_skills_name_private").
+		Unique().
+		ColumnExpr("owner_id, COALESCE(repo_label, ''), name").
+		Where("scope = 'private'").
+		IfNotExists().
+		Exec(ctx); err != nil {
+		return fmt.Errorf("creating skills private name index: %w", err)
 	}
 	// Guardrails are referenced by name within a type; a duplicate (type, name)
 	// makes an agent's reference order-dependent. Enforce uniqueness at the DB.

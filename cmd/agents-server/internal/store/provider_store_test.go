@@ -15,7 +15,7 @@ func TestProviderUpdateSerializesConcurrentEdits(t *testing.T) {
 	ctx := context.Background()
 	withTestBox(t)
 	providers := NewProviderStore(newTestDB(t))
-	pv := &Provider{Name: "p", Type: "openai", APIKey: "sk-old"}
+	pv := &Provider{Name: "p", Type: "openai", APIKey: "sk-old", OwnerID: NewID()}
 	if err := providers.Create(ctx, pv); err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestProviderUpdatePrepareErrorAbortsAndNotFound(t *testing.T) {
 	ctx := context.Background()
 	withTestBox(t)
 	providers := NewProviderStore(newTestDB(t))
-	pv := &Provider{Name: "p", Type: "openai", APIKey: "sk-1"}
+	pv := &Provider{Name: "p", Type: "openai", APIKey: "sk-1", OwnerID: NewID()}
 	if err := providers.Create(ctx, pv); err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestProviderUpdateChatGPTTokenFollowsAuthMode(t *testing.T) {
 	ctx := context.Background()
 	withTestBox(t)
 	providers := NewProviderStore(newTestDB(t))
-	pv := &Provider{Name: "p", Type: "openai", AuthMode: AuthModeChatGPTLogin}
+	pv := &Provider{Name: "p", Type: "openai", AuthMode: AuthModeChatGPTLogin, OwnerID: NewID()}
 	if err := providers.Create(ctx, pv); err != nil {
 		t.Fatal(err)
 	}

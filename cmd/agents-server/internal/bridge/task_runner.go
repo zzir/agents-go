@@ -110,7 +110,7 @@ func (r *Runner) agentConfigByName(ctx context.Context, ownerID, name string) (*
 	names := make([]string, 0, len(cfgs))
 	for i := range cfgs {
 		if strings.EqualFold(cfgs[i].Name, name) {
-			if ownerID != "" && cfgs[i].OwnerID == ownerID {
+			if store.Shadows(cfgs[i].Scope, cfgs[i].OwnerID, ownerID) {
 				return &cfgs[i], nil
 			}
 			if match == nil {

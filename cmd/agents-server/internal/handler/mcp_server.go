@@ -273,21 +273,24 @@ func (h *McpServerHandler) Update(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 	id := c.Param("id")
-	if _, ok := h.editable(c, id); !ok {
+	cur, ok := h.editable(c, id)
+	if !ok {
 		return
 	}
 	cfg := req.toModel()
 	// Masked header values / oauth_client_secret round-trip to their stored
 	// values inside the store's transaction; scope and owner never move on an
 	// update (POST /:id/scope does).
-	err := h.store.Update(ctx, id, cfg, func(prev *store.McpServerConfig) error {
-		cfg.Scope, cfg.OwnerID = prev.Scope, prev.OwnerID
-		if maskAcrossDestination(cfg.Config, prev.Config, "endpoint") {
-			return badRequestError("endpoint changed: the stored secrets belong to the previous endpoint — replace them or clear them")
-		}
-		cfg.Config = restoreMcpConfig(cfg.Config, prev.Config)
-		return nil
-	})
+	err := h.store.Update(ctx, id, cfg, ownershipGuard(cur.Scope, cur.OwnerID,
+		func(m *store.McpServerConfig) (string, string) { return m.Scope, m.OwnerID },
+		func(prev *store.McpServerConfig) error {
+			cfg.Scope, cfg.OwnerID = prev.Scope, prev.OwnerID
+			if maskAcrossDestination(cfg.Config, prev.Config, "endpoint") {
+				return badRequestError("endpoint changed: the stored secrets belong to the previous endpoint — replace them or clear them")
+			}
+			cfg.Config = restoreMcpConfig(cfg.Config, prev.Config)
+			return nil
+		}))
 	if err != nil {
 		saveError(c, err) // duplicate name -> 409, not-found -> 404
 		return
@@ -326,16 +329,16 @@ func (h *McpServerHandler) Delete(c *gin.Context) {
 	}
 	// Delete the row first, then disconnect: a failed delete must not leave a
 	// persisted server whose live connection has already been torn down.
-	if err := h.store.Delete(c.Request.Context(), id); err != nil {
-		storeError(c, err)
+	if err := store.DeleteOwnedBy(c.Request.Context(), h.store.CrudStore, id, cur.OwnerID); err != nil {
+		saveError(c, err) // moved since the check -> 409
 		return
 	}
 	_ = h.manager.Disconnect(id)
 	c.Status(http.StatusNoContent)
 }
 
-// SetScope promotes an MCP server to global or demotes it to the acting
-// admin's private set. Agents still referencing a demoted server lose its
+// SetScope promotes an MCP server to global or demotes it back to its
+// author's private set. Agents still referencing a demoted server lose its
 // tools at their next build (filtered with a visible count, like a delete).
 //
 //	@Summary	Change an MCP server's scope
@@ -350,6 +353,22 @@ func (h *McpServerHandler) Delete(c *gin.Context) {
 //	@Router		/mcp-servers/{id}/scope [post]
 func (h *McpServerHandler) SetScope(c *gin.Context) {
 	setScopePlain(c, h.store.CrudStore, "MCP server", func(m *store.McpServerConfig) (string, string) { return m.Scope, m.OwnerID })
+}
+
+// SetOwner transfers the MCP server to another account (admin).
+//
+//	@Summary	Reassign an MCP server's owner (admin)
+//	@Tags		mcp-servers
+//	@Accept		json
+//	@Param		id		path	string			true	"MCP server ID"
+//	@Param		body	body	SetOwnerRequest	true	"The new owner"
+//	@Success	204
+//	@Failure	400	{object}	ErrorResponse	"malformed body, or no such user"
+//	@Failure	409	{object}	ErrorResponse	"name collision in the target owner's namespace"
+//	@Security	BearerAuth
+//	@Router		/mcp-servers/{id}/owner [put]
+func (h *McpServerHandler) SetOwner(c *gin.Context) {
+	setOwnerPlain(c, h.store.CrudStore)
 }
 
 // mcpConnectResp is the Connect response: status "connected", or
