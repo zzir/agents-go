@@ -79,8 +79,8 @@ from upstream.
 ### 2.0b Option grouping
 
 `RunOptions` groups its fields by what they configure — `Model`,
-`Conversation`, `Exec`, `Observe` — rather than listing them flat. The zero
-value stays usable.
+`Conversation`, `Exec`, `Compaction`, `Observe`, `Log` — rather than listing
+them flat. The zero value stays usable.
 
 The grouping is not cosmetic. `Conversation` collects options that **constrain
 each other**: a local `Session`, `UsePreviousResponseID` and `ConversationID`
@@ -94,7 +94,7 @@ it triggers (tool execution, handoff).
 
 ```
 for turn := 1; ; turn++ {
-    check budget (turns; 🚧 tokens / deadline)
+    check turn budget
     check ctx cancellation
     resolve model / instructions / prompt / tools / handoffs / output schema
     build model input
@@ -122,20 +122,21 @@ for turn := 1; ; turn++ {
 
 **A `RunState` round-trips whole.** Everything a resume consumes is in the
 wire format — the pending injected input, the disclosed deferred tools, the
-server-conversation cursor and the off-chain-history flag included — pinned by a
-full-field round-trip test (`RunStateSchemaVersion` 1.5). The in-process resume
-passing the live pointer must never be the only path that works; the serialized
-surface IS the contract. The cursor in particular rides along so a resumed run
-keeps sending deltas: the resumed turn re-processes a response the restored
-cursor already accounts for and does not advance it — re-deriving the cursor
-there marked pre-pause sibling tool outputs as already served, and a
-server-managed conversation never received them.
+server-conversation cursor, the off-chain-history flag and the host extra map
+(`Extra`) included — pinned by a full-field round-trip test
+(`RunStateSchemaVersion` 1.6). The in-process resume passing the live pointer
+must never be the only path that works; the serialized surface IS the
+contract. The cursor in particular rides along so a resumed run keeps sending
+deltas: the resumed turn re-processes a response the restored cursor already
+accounts for and does not advance it — re-deriving the cursor there marked
+pre-pause sibling tool outputs as already served, and a server-managed
+conversation never received them.
 
 **And it round-trips the run's full past, deliberately.** The serialized state
 carries every raw response and generated item so far, so its size grows with
 the run. That is the cost of a contract, not an oversight: a resumed run's
 `RunResult` must report the same `RawResponses` (and therefore the same
-`UsageByRequest`) as one that never paused, and the max-turns handler's
+`UsageByResponse()`) as one that never paused, and the max-turns handler's
 snapshot promises "every response so far". Trimming the state to the
 interrupted response alone would make pausing observable in the result.
 
@@ -236,7 +237,7 @@ reordered.
   goroutine finished first, and never a sibling's `context.Canceled` echo of
   the failure that cancelled it. Cancellation surfaces only when it is all
   there is (the consumer abandoned the run mid-batch).
-- A tool declaring `SequentialTool` forces the whole batch to run serially.
+- A tool declaring `Sequential` forces the whole batch to run serially.
 
 ### 2.3 Deciding the final output
 
@@ -520,8 +521,8 @@ An entry names its parent, so a session is a walk rather than a pile.
   off-branch, since branching needs links. The walk to the leaf is extended
   over the linkless prefix ahead of its root, so the first LINKED append to
   such a session does not drop everything written before it. Every
-  branch-scoped view (`ContextEntries`, `PathEntries`, the pop selection)
-  shares this rule through one helper (`ActiveBranchOf`).
+  branch-scoped view (`ContextEntries`, `PathEntries`) shares this rule
+  through one helper (`ActiveBranchOf`).
 - **A walk does NOT stop at a compaction checkpoint.** The walk answers "which
   entries are on this branch", and a folded entry is still on the branch it was
   written to; what the model sees is projection's question. Stopping the walk
@@ -843,15 +844,15 @@ silently, with no copy left anywhere. So the swap goes through
 `GuardedReplacer`: the store compares its highest sequence number back and
 writes only while it still matches, comparison and write in ONE step, taken
 under whatever already serializes that store's appends. The number compared is
-the highest the store HOLDS, not the highest it ever issued — a session emptied
-by a pop would otherwise refuse every replace forever — and zero for a log read
-empty. **A pass that loses the comparison is abandoned**, not retried and not
-merged: nothing is written, the reason is recorded on the `compaction` span as
-`abandoned`, and the next pass starts from the history as it then stands, since
-compaction is housekeeping and one skipped pass costs size alone. A store
-without the capability keeps the unguarded swap: refusing to compact for it
-would take the feature away from every third-party store rather than from the
-race.
+the highest the store HOLDS, not the highest it ever issued — a session
+emptied outside the SDK (a workbench deletion) would otherwise refuse every
+replace forever — and zero for a log read empty. **A pass that loses the
+comparison is abandoned**, not retried and not merged: nothing is written, the
+reason is recorded on the `compaction` span as `abandoned`, and the next pass
+starts from the history as it then stands, since compaction is housekeeping
+and one skipped pass costs size alone. A store without the capability keeps
+the unguarded swap: refusing to compact for it would take the feature away
+from every third-party store rather than from the race.
 
 **The rewrite keeps the ids of the entries it carries over.** An update entry
 names its target by id, so re-minting on the way through leaves it pointing at
@@ -1057,8 +1058,8 @@ An empty result with no error is a **success with no output**, not a failure.
 - A tool panic follows the same path, with the stack attached.
 - Malformed argument JSON gets dedicated wording that prompts the model to resend
   valid JSON.
-- `ToolLoopPolicy.MaxConsecutiveFailures` trips a circuit breaker when that
-  many turns in a row have every tool fail, and aborts the run.
+- Consecutive all-failed turns abort the run — see
+  [§2.7d](#27d-tool-loop-safety-valves).
 
 #### Approval
 
@@ -1111,8 +1112,8 @@ wrapped automatically, so the ordinary tool is unchanged.
 `*Tool` is the only tool type, and everything a tool can do beyond
 being called is a **field** on it: `OnInvoke`, `Description`,
 `ParamsJSONSchema`, `Strict`, `NeedsApproval` / `NeedsApprovalFunc`,
-`Guardrails`, `Timeout`, `Sequential`, `IsEnabled`, `FailureErrorFunction`,
-`Deferred`, `RetrySafe`.
+`Guardrails`, `Timeout`, `Sequential`, `IsEnabled`, `ReadOnly`,
+`FailureErrorFunction`, `Deferred`, `RetrySafe`.
 
 - The runner reads them directly. There is no capability lookup, so there is
   nothing to get wrong: a tool's timeout is `tool.Timeout` whether the tool was
@@ -1430,22 +1431,10 @@ not interact.
 
 ### 2.9 Budgets 🚧
 
-🚧 Only the turn dimension ships today; tokens and deadline are not
-implemented. The three dimensions are **OR**-ed: whichever trips first stops
-the run.
-
-| Dimension | How it is counted |
-|---|---|
-| `MaxTurns` | **Model calls.** Not reset by handoffs. A HITL resume continues accumulating. |
-| `MaxTokens` | Cumulative `Usage.TotalTokens`. Nested agent-as-tool usage **counts**, because it folds into the parent `Usage`. |
-| `Deadline` | A `time.Duration` measured from the start of the run. |
-
-🚧 LLM calls made by compaction itself **count toward `MaxTokens`** but
-**not toward `MaxTurns`**.
-
-When a budget trips mid-turn, the current tool batch is allowed to finish before
-the run stops. Stopping mid-batch would leave dangling calls, which
-[§2.5](#25-session-persistence-boundaries) forbids.
+`MaxTurns` is the one budget dimension implemented — it counts model calls;
+its counting rule across handoffs lives in [§2.4](#24-handoffs). 🚧 Token
+and deadline dimensions are unimplemented, and their semantics (what counts,
+how they compose) are undecided.
 
 ### 2.10 Errors and recovery
 
@@ -1796,10 +1785,11 @@ middleware and every one outside it.
 
 **The public `ResumeRun` applies `opts.Middlewares` exactly as `Run` does.** A
 caller resuming with the options it ran with gets the wrapping it ran with —
-logging still logs, `Retry` still retries, `Approval` still resolves further
-pauses. (The rule above is what keeps the two from compounding: an in-chain
-resume passes stripped options.) The paused state's agent and input are
-already decided; a middleware's edits to those fields do not apply on resume.
+`Loop` still evaluates, `Retry` still retries, `Approval` still resolves
+further pauses. (The rule above is what keeps the two from compounding: an
+in-chain resume passes stripped options.) The paused state's agent and input
+are already decided; a middleware's edits to those fields do not apply on
+resume.
 
 **Workflow middlewares (`Plan`, `Todo`)** rewrite the ENTRY agent only —
 handoff targets keep their own toolset, the same scoping as every
@@ -2214,8 +2204,8 @@ orchestration, not replacing agent switching.
 
 A name earns a rename only when it misdescribes or violates a Go rule — never
 to "look less like Python". `RunItem`, `RunResult`, `RunContext` and friends
-read fine as Go and stay. What did not, and was renamed in the pre-v0.2
-breaking batch:
+read fine as Go and stay. What did not, and was renamed in the breaking
+commits after v0.2.1 (the v0.3.0 window):
 
 - `Get`-prefixed methods: `Model.GetResponse` → `Respond` (an action, so a
   verb), `ModelProvider.GetModel` → `Model` (a lookup, so the accessor form).
@@ -2231,9 +2221,9 @@ breaking batch:
   tool, and the qualifier distinguished nothing.
 
 The rule that survives for the future: **a rename is a breaking change and is
-batched into a window users absorb once** — this batch rode the v0.2 window
-alongside the structural collapses; the next one is the openai-go v4 bump
-([§5.5b](#55b-the-wire-types-couple-our-compatibility-to-openai-gos)).
+batched into a window users absorb once** — this batch rode the v0.3.0
+window alongside the structural collapses; the next one is the openai-go v4
+bump ([§5.5b](#55b-the-wire-types-couple-our-compatibility-to-openai-gos)).
 
 ### 5.3 `Instructions` and `Prompt` both stay; both are func types
 
@@ -2294,9 +2284,9 @@ This is accepted, not overlooked:
   until we take one deliberately.
 - **When a bump does come, it is the merge window** for every other
   API-surface change on the shelf, so users absorb one deprecation cycle
-  (§5.8), not two. (The `T`-prefix renames once parked here were taken in the
-  pre-v0.2 batch instead — that window was already breaking these exact
-  signatures.)
+  (§5.8), not two. (The `T`-prefix renames once parked here were taken in
+  the breaking commits after v0.2.1 instead — the v0.3.0 window was already
+  breaking these exact signatures.)
 
 ### 5.6 Background work runs in-process, not in isolated processes
 
@@ -2340,11 +2330,11 @@ and anything dependency-free stay in the root module regardless of how
 self-contained they are.
 
 `mcp` is a module for that reason and no other: `modelcontextprotocol/go-sdk`
-brought seven of the root module's eleven indirect requirements with it
-(uritemplate, `x/oauth2`, `x/time`, `x/tools`, `x/sys` and the segmentio pair),
-taxing every build that never speaks MCP. The core does not import it —
-`agents.MCPServer` is the inversion that lets an `Agent` hold servers without
-the dependency — so the split cost one `go.mod` and moved no import path.
+brought a raft of indirect requirements with it (uritemplate, `x/oauth2`,
+`x/time`, `x/sys` and the segmentio pair among them), taxing every build that
+never speaks MCP. The core does not import it — `agents.MCPServer` is the
+inversion that lets an `Agent` hold servers without the dependency — so the
+split cost one `go.mod` and moved no import path.
 
 ### 5.8 Public API compatibility begins at v1.0.0
 
@@ -2354,8 +2344,8 @@ batched into as few releases as the work allows, so a user absorbs one migration
 rather than a drip.
 
 **This section used to promise a deprecation cycle from v0.2.0 onward, and the
-promise was not kept**: the eleven breaking commits after v0.2.1 — the tool and
-item collapses, the naming batch, the `agents/session` split — each renamed or
+promise was not kept**: the breaking commits after v0.2.1 — the tool and item
+collapses, the naming batch, the `agents/session` split — each renamed or
 removed outright. Keeping a rule nobody follows is worse than not having it,
 because it teaches the next reader that this document describes intentions
 rather than behavior. The API is still finding its shape; the deprecation cycle
@@ -2876,13 +2866,14 @@ discovery. Consequences, all intended:
   its source and is never overwritten by a re-import; imports pin one commit
   and the server never runs git. The API mechanics live in the server
   README's Skills section.
-- **Import URLs are operator-supplied outbound requests** (GitHub API, raw
-  fetches), like provider base URLs and MCP endpoints. No private-address
-  guard is applied — a recorded, accepted risk for the single-operator
-  deployment; revisit before any multi-tenant or public exposure. Each
-  fetch is bounded by a 30-second timeout, connect through body read
-  (revised 2026-08-25) — a stalling target must not hold the handler's
-  connection open indefinitely.
+- **Import URLs are member-supplied outbound requests** (GitHub API, raw
+  fetches), like provider base URLs and MCP endpoints — the absence of an
+  SSRF defense is §5.29's recorded accepted risk. Each fetch is bounded by
+  a 30-second timeout, connect through body read, and the whole import by a
+  five-minute budget (both revised 2026-08-25) — a stalling target must not
+  hold the handler's connection open indefinitely, and per-fetch bounds
+  alone would let a ~200-file walk of stalling fetches stretch into hours.
+  Files past an expired budget land in `skipped` with the deadline error.
 
 Do not add per-skill file storage back; a skill needing an artifact should
 inline it or instruct the model to fetch it.
@@ -2912,11 +2903,11 @@ consumer, and an embedder who wants raw remote exec can use x/crypto/ssh
 directly — the value this repo added was the sandboxing, which SSH never
 provided. The SDK's `sandbox.LocalSandbox` stays (embedders and tests; the
 server just never offers it). A sandbox's identity (the binding freeze —
-README invariant 27)
-gains the daemon: changing `Host` moves every container's filesystems, so it
-freezes while sessions are bound — or project rows live on the config
-(revised 2026-08-25: a project's tree exists without any session, a terminal
-may already have written it, and §5.28 pins that tree to one daemon).
+README invariant 27) gains the daemon: changing `Host` moves every
+container's filesystems, so it freezes while any session is bound or any
+project row lives on the config (revised 2026-08-25: a project's tree exists
+without any session — a terminal may already have written it — and §5.28
+pins it to one daemon).
 
 Do not reintroduce a host-exec sandbox type or a raw remote-exec one; an
 isolation need beyond containers (VMs, gVisor) is a new backend decision
@@ -2961,12 +2952,12 @@ mirror NOT EXISTS over project rows too: a project pins its sandbox to one
 daemon even before any session binds, and the project create locks the
 sandbox row for the insert's duration, so a racing sandbox delete either
 cascades the new row or refuses the create — never an orphan (both revised
-2026-08-25). **Storage is never deleted by the
-server** — a removed project row leaves its directory or volume in place
-(the delete reclaims only the cached instance; the stopped container and its
-volume stay on the daemon until the operator removes them); reclaiming space
-is the operator's explicit act. A run naming no project lands in the owner's
-per-sandbox default ("scratch"), created on first use.
+2026-08-25). **Storage is never deleted by the server** — a removed project
+row leaves its directory or volume in place (the delete reclaims only the
+cached instance; the stopped container and its volume stay on the daemon
+until the operator removes them); reclaiming space is the operator's explicit
+act. A run naming no project lands in the owner's per-sandbox default
+("scratch"), created on first use.
 Projects are the first PERSONAL configuration entity: every member manages
 their own; ownership is scoped in the handlers, not the admin gate. The web
 terminal follows the same line: a member opens a shell into their OWN
@@ -2997,13 +2988,12 @@ with `{scope}`: promote publishes a private row, demote re-homes a global row
 to the acting admin. A request naming the row's **current** scope is refused
 (409) — "private → private" is defined nowhere and would silently re-home a
 member's row, credential included, to the acting admin. Name uniqueness is
-**per scope** (partial unique
-indexes: global names unique among global rows, `(owner, name)` unique among
-private ones), so shadowing a global name with one's own is legal and a scope
-change that collides in the target scope is 409. Everywhere a NAME resolves —
-`read_skill`, the spawn/task agent lookup, workflow matching — resolution is
-**own-over-global**: the caller's private row wins over a global row of the
-same name.
+**per scope** (partial unique indexes: global names unique among global rows,
+`(owner, name)` unique among private ones), so shadowing a global name with
+one's own is legal and a scope change that collides in the target scope is
+409. Everywhere a NAME resolves — `read_skill`, the spawn/task agent lookup,
+workflow matching — resolution is **own-over-global**: the caller's private
+row wins over a global row of the same name.
 
 Scoped listings order global rows first, then the caller's own — each group
 by creation time, id the final tiebreaker — so positions never move on a
@@ -3047,9 +3037,8 @@ admin's to change, and a member's save answers with guidance text (pick
 another name), not an error. Signing a provider into ChatGPT (or out) is the
 row's editability — a member connects their own provider; status follows
 visibility. Triggers stay session-scoped (the README's trigger section) with
-a cap of
-50 per owner (409 above it) so the shared clock is not one member's to
-exhaust.
+a cap of 50 per owner (409 above it) so the shared clock is not one member's
+to exhaust.
 
 Accepted risk, recorded deliberately: member-supplied URLs (MCP endpoints,
 skill imports) get **no private-network/SSRF defense**. The deployment model
@@ -3112,9 +3101,16 @@ happen. Three answers, none chosen yet:
 
 Whichever is taken, it belongs in §5 before v1.0.0 is tagged, not after.
 
+### 6.2 The `skills` module fails §5.7's own test
+
+The `skills` module's only non-root direct dependency is `gopkg.in/yaml.v3`,
+which brings zero transitive requirements — not the heavy dependency §5.7
+makes the sole justification for a submodule. Folding `skills` back into the
+root module is the consistent move, but it is a breaking module change
+(import paths move), so it waits for a breaking window. Open until decided.
+
 When a new case comes up that this document does not answer, add it here with
-the options under consideration. Implementing it means moving it out of this
-section and into §2 in the same change.
+the options under consideration.
 
 ---
 
