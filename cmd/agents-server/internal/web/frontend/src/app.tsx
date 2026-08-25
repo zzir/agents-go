@@ -3,7 +3,7 @@ import { Dialog, NavList as PrimerNavList, Flash, Button, IconButton } from '@pr
 import { SecretInput } from '@/components/SecretInput';
 import {
   DependabotIcon, McpIcon, ShieldCheckIcon, SparkleIcon, CpuIcon, PlugIcon,
-  ContainerIcon, DatabaseIcon, GearIcon, PersonIcon, PeopleIcon, CommentDiscussionIcon, LogIcon, LockIcon,
+  ContainerIcon, DatabaseIcon, FileDirectoryIcon, GearIcon, PersonIcon, PeopleIcon, CommentDiscussionIcon, LogIcon, LockIcon,
   XCircleFillIcon, AlertFillIcon, CheckCircleFillIcon, InfoIcon, XIcon,
 } from '@primer/octicons-react';
 import type { Icon } from '@primer/octicons-react';
@@ -135,6 +135,7 @@ const SETTINGS_TABS: DialogTab[] = [
 const ADMIN_TABS: DialogTab[] = [
   { key: 'members',  label: 'Members',    icon: PeopleIcon,            load: () => import('@/features/admin/MembersPanel') },
   { key: 'sessions', label: 'Sessions',   icon: CommentDiscussionIcon, load: () => import('@/features/admin/SessionsPanel') },
+  { key: 'projects', label: 'Projects',   icon: FileDirectoryIcon,     load: () => import('@/features/admin/ProjectsPanel') },
   { key: 'audit',    label: 'Audit logs', icon: LogIcon,               load: () => import('@/features/admin/AuditPanel') },
 ];
 

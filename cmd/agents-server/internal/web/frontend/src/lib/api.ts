@@ -328,6 +328,8 @@ export const api = {
   // once created — delete refuses (409) while sessions still bind it.
   projects: {
     list: () => request<S['store.Project'][]>('/projects'),
+    // Admin: every owner's projects, storage hints included.
+    listAll: () => request<S['store.Project'][]>('/projects?all=true'),
     create: (data: unknown) => request<S['store.Project']>('/projects', { method: 'POST', body: JSON.stringify(data) }),
     delete: (id: string) => request<null>(`/projects/${id}`, { method: 'DELETE' }),
   },
