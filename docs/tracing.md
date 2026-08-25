@@ -130,7 +130,7 @@ Spans record names, timing, error messages and small attributes such as `respons
 Two shapes an exporter can rely on ([spec.md §5.6b](spec.md)):
 
 - **Span ids are 8 bytes and trace ids 16** (`tracing.NewSpanID`,
-  `tracing.NewTraceID`) — the OTel widths, so an OTel-shaped consumer never
+  `tracing.NewTraceID`) — the OTel widths ([spec §5.6b](spec.md#56b-tracing-stays-vendor-neutral-otel-export-is-the-consumers-job)), so an OTel-shaped consumer never
   truncates.
 - **A trace has a root span per agent**, not one per trace: a handoff ends the
   current agent span and starts the next one at the top level, so an exporter

@@ -77,7 +77,7 @@ Core module path: `github.com/zzir/agents-go`.
 | `models/modelkit` | Dependency-free toolkit for model adapters + `conformancetest` golden matrix |
 | `tracing` | Traces, spans, processors and exporters |
 | `sandbox` | `Sandbox` interface + `CodeTool` + `apply_patch` + local backend |
-| `mcp` | **separate module** — Model Context Protocol client and server (modelcontextprotocol/go-sdk) |
+| `mcp` | **separate module** — Model Context Protocol client (modelcontextprotocol/go-sdk) |
 | `models/anthropic` | **separate module** — Anthropic Messages API backend (translated to Responses) |
 | `sandbox/docker` | **separate module** — Docker sandbox backend |
 | `sessions` | **separate module** — SQLite/PostgreSQL session store (uptrace/bun) |
@@ -85,6 +85,10 @@ Core module path: `github.com/zzir/agents-go`.
 | `cmd/agents-server` | **separate module** — the workbench: web app (REST + WS + embedded UI) over the SDK |
 
 ### Layout notes
+
+Which packages are separate **modules**, and why each one is, is settled in
+[architecture.md](architecture.md#module-boundaries) — this table names them
+so you know what to import.
 
 The core lives in a single `agents/` package. The original plan split it further
 into `tools/`, `outputs/` and `models/`, but in Go those would form an import

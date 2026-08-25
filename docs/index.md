@@ -42,11 +42,13 @@ declined.
 go get github.com/zzir/agents-go
 ```
 
-The MCP client, the Docker sandbox, SQL sessions and skills live in separate modules so the core stays dependency-light:
+Anything with a heavy dependency lives in its own module, so the core stays
+dependency-light ([why, module by module](architecture.md#module-boundaries)):
 
 ```bash
 go get github.com/zzir/agents-go/mcp              # optional: MCP client
-go get github.com/zzir/agents-go/sandbox/docker   # optional
+go get github.com/zzir/agents-go/models/anthropic # optional: Anthropic backend
+go get github.com/zzir/agents-go/sandbox/docker   # optional: Docker sandbox
 go get github.com/zzir/agents-go/sessions         # optional: SQLite/Postgres
 go get github.com/zzir/agents-go/skills           # optional: Agent Skills
 ```
