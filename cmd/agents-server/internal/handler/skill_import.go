@@ -19,7 +19,7 @@ import (
 )
 
 // Skill imports: walking a GitHub repository or fetching one raw SKILL.md,
-// anonymously and pinned to one commit (spec §5.26).
+// anonymously and pinned to one commit (decisions §5.26).
 
 // maxImportSkills caps how many SKILL.md files one import walks, so a huge
 // repo cannot flood the table in one request.
@@ -29,7 +29,7 @@ type skillImportReq struct {
 	URL string `json:"url" binding:"required"`
 	// OwnerID names WHICH group this import refreshes — a sync of somebody
 	// else's published repository, for an admin. Empty means the caller's own
-	// group, the only one a first import may create (spec §5.31).
+	// group, the only one a first import may create (decisions §5.31).
 	OwnerID string `json:"owner_id,omitempty"`
 }
 
@@ -63,7 +63,7 @@ type importGroup struct {
 // the caller may write it. Empty owner_id is the caller's own group — the
 // only one a first import may create. Naming another owner targets their
 // PUBLISHED group: an admin manages shared configuration but never edits a
-// member's private rows (spec §5.29), so a foreign private group answers 404
+// member's private rows (decisions §5.29), so a foreign private group answers 404
 // exactly as it reads elsewhere, and so does one that does not exist. False
 // means the response is written.
 func (h *SkillHandler) resolveImportTarget(c *gin.Context, repo, wantOwner string) bool {
@@ -140,7 +140,7 @@ func (h *SkillHandler) Import(c *gin.Context) {
 	}
 	// One deadline over the whole import: a GitHub walk is up to ~202 serial
 	// fetches, and per-fetch timeouts alone would let a stalling target
-	// stretch that into hours (spec §5.26).
+	// stretch that into hours (decisions §5.26).
 	ctx, cancel := context.WithTimeout(c.Request.Context(), skillImportBudget)
 	defer cancel()
 	c.Request = c.Request.WithContext(ctx)
@@ -378,7 +378,7 @@ func collect(docs *[]store.ImportDoc, resp *skillImportResp, path, sha string, c
 }
 
 // apply lands the fetched batch in ONE transaction against the group resolved
-// before the fetch (spec §5.31). Everything up to here was network I/O, up to
+// before the fetch (decisions §5.31). Everything up to here was network I/O, up to
 // the whole import budget; a transfer or scope flip that landed meanwhile
 // refuses the apply outright (409) rather than writing part of it.
 func (h *SkillHandler) apply(c *gin.Context, repo string, docs []store.ImportDoc, resp *skillImportResp) bool {

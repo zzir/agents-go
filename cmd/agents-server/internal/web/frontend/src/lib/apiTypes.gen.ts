@@ -2587,7 +2587,7 @@ export interface paths {
         post?: never;
         /**
          * Delete project
-         * @description The owner deletes their own; an admin deletes any (management, spec §5.29).
+         * @description The owner deletes their own; an admin deletes any (management, decisions §5.29).
          */
         delete: {
             parameters: {
@@ -7082,7 +7082,7 @@ export interface components {
         "handler.mcpServerListItem": {
             /**
              * @description Config holds the connection settings as JSON (HTTPMcpConfig — the
-             *     streamable_http transport is the only one the server speaks, spec §5.25).
+             *     streamable_http transport is the only one the server speaks, decisions §5.25).
              *     Stored as TEXT and exchanged with the API as a raw JSON object.
              */
             config?: number[];
@@ -7101,7 +7101,7 @@ export interface components {
             id?: string;
             name?: string;
             owner_id?: string;
-            /** @description Scope/OwnerID: row visibility and its permanent creator — spec §5.29. */
+            /** @description Scope/OwnerID: row visibility and its permanent creator — decisions §5.29. */
             scope?: string;
             /**
              * @description Status is the single derived lifecycle state: disabled, connecting,
@@ -7236,7 +7236,7 @@ export interface components {
             /**
              * @description OwnerID names WHICH group this import refreshes — a sync of somebody
              *     else's published repository, for an admin. Empty means the caller's own
-             *     group, the only one a first import may create (spec §5.31).
+             *     group, the only one a first import may create (decisions §5.31).
              */
             owner_id?: string;
             url: string;
@@ -7398,11 +7398,11 @@ export interface components {
              *     a COLUMN rather than a field in a JSON group, because it is a reference
              *     and referential integrity has to be expressible in SQL (the same reason
              *     sessions.sandbox_id is one). Empty reaches no credential: the run fails
-             *     its pre-flight until the agent names a provider (spec §5.30).
+             *     its pre-flight until the agent names a provider (decisions §5.30).
              */
             provider_id?: string;
             resilience?: components["schemas"]["store.ResilienceGroup"];
-            /** @description Scope/OwnerID: row visibility and its permanent creator — spec §5.29. */
+            /** @description Scope/OwnerID: row visibility and its permanent creator — decisions §5.29. */
             scope?: string;
             session?: components["schemas"]["store.SessionGroup"];
             skills?: string;
@@ -7455,7 +7455,7 @@ export interface components {
             tool_not_found_behavior?: string;
             /**
              * @description WorkflowAuthoring gives the agent's chat runs get_workflow / save_workflow
-             *     (README invariant 39). Off by default: the save schema costs every request.
+             *     (workbench invariant 39). Off by default: the save schema costs every request.
              */
             workflow_authoring?: boolean;
         };
@@ -7621,7 +7621,7 @@ export interface components {
              * @description StorageHint names where the files live — the local daemon's host
              *     directory or the remote daemon's volume. Derived per response by the
              *     handler for admins only, never stored: deleting the row keeps the
-             *     storage (spec §5.28), so the UI can say where.
+             *     storage (decisions §5.28), so the UI can say where.
              */
             storage_hint?: string;
             updated_at?: string;
@@ -7668,7 +7668,7 @@ export interface components {
             id?: string;
             name?: string;
             owner_id?: string;
-            /** @description Scope/OwnerID: row visibility and its permanent creator — spec §5.29. */
+            /** @description Scope/OwnerID: row visibility and its permanent creator — decisions §5.29. */
             scope?: string;
             /**
              * @description Type selects the backend (bridge.ProviderType*). Empty means openai, the
@@ -7706,7 +7706,7 @@ export interface components {
              *     at the next run.
              */
             revision?: number;
-            /** @description Type is "docker" — the only backend (spec §5.27). */
+            /** @description Type is "docker" — the only backend (decisions §5.27). */
             type?: string;
             updated_at?: string;
         };
@@ -7747,7 +7747,7 @@ export interface components {
             /**
              * @description SandboxID/ProjectID are the session's PERMANENT binding: the first
              *     sandbox-carrying run CAS-writes them (BindSandboxIfEmpty) and they are
-             *     never rewritten — spec §5.28.
+             *     never rewritten — decisions §5.28.
              */
             sandbox_id?: string;
             updated_at?: string;
@@ -7772,7 +7772,7 @@ export interface components {
              */
             detached?: boolean;
             id?: string;
-            /** @description unique per scope (spec §5.29) */
+            /** @description unique per scope (decisions §5.29) */
             name?: string;
             owner_id?: string;
             /**
@@ -7781,10 +7781,10 @@ export interface components {
              *     because it is what the unique name indexes key on: two source URLs can
              *     reduce to one label, and the index must refuse that collision — a
              *     duplicate qualified name would make read_skill's answer a coin flip
-             *     (spec §5.31).
+             *     (decisions §5.31).
              */
             repo_label?: string;
-            /** @description Scope/OwnerID: row visibility and its permanent creator — spec §5.29. */
+            /** @description Scope/OwnerID: row visibility and its permanent creator — decisions §5.29. */
             scope?: string;
             source_path?: string;
             /**
@@ -7938,7 +7938,7 @@ export interface components {
             id?: string;
             name?: string;
             owner_id?: string;
-            /** @description Scope/OwnerID: row visibility and its permanent creator — spec §5.29. */
+            /** @description Scope/OwnerID: row visibility and its permanent creator — decisions §5.29. */
             scope?: string;
             steps?: components["schemas"]["store.WorkflowStep"][];
             updated_at?: string;

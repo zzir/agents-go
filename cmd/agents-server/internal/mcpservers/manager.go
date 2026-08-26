@@ -138,7 +138,7 @@ func (m *Manager) Connect(ctx context.Context, cfg *store.McpServerConfig) error
 	}
 	transport := m.httpTransport(ctx, &hc, nil)
 	opts := buildMcpOptions(cfg.Name, hc.McpRetryConfig, hc.UseStructuredContent)
-	// Redial makes the connection self-healing (spec §5.21): rebuilt on the
+	// Redial makes the connection self-healing (decisions §5.21): rebuilt on the
 	// manager's own context — a re-dial minutes later must not reuse a
 	// request context that is long gone.
 	opts.Redial = func(context.Context) (mcpsdk.Transport, error) {

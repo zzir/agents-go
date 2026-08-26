@@ -13,7 +13,7 @@ type McpServerStore struct {
 }
 
 // NewMcpServerStore returns an McpServerStore backed by db. Names (the
-// tool-prefix namespace) are unique per scope (partial indexes, spec §5.29);
+// tool-prefix namespace) are unique per scope (partial indexes, decisions §5.29);
 // a duplicate surfaces as a UNIQUE-constraint error that handlers map to 409.
 func NewMcpServerStore(db *bun.DB) *McpServerStore {
 	return &McpServerStore{NewCrudStore[McpServerConfig](db, "mcp server config", "created_at DESC").withSecrets(sealMcpServer, openMcpServer)}

@@ -81,7 +81,7 @@ func (r createSandboxReq) toConfig() *store.SandboxConfig {
 }
 
 // validateSandbox enforces the POLICY layer of a sandbox write: name and
-// type present, docker the only backend (spec §5.27). Field-level validation
+// type present, docker the only backend (decisions §5.27). Field-level validation
 // and canonicalization live in store.NormalizeSandboxConfig, which both
 // write handlers run right after this.
 func (h *SandboxHandler) validateSandbox(c *gin.Context, req *createSandboxReq) bool {

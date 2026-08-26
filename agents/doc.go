@@ -3,7 +3,7 @@
 // human-in-the-loop approval and tracing.
 //
 // It began as a port of openai-agents-python and now evolves independently.
-// Behavior is specified in docs/spec.md, not inherited; docs/architecture.md
+// Behavior is specified in docs/reference/spec.md, not inherited; docs/explanation/architecture.md
 // explains how the pieces compose.
 //
 // The package is layered. An agent and a run are the whole floor:

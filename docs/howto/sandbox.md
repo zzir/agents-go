@@ -184,7 +184,7 @@ sandbox.FileToolConfig{
 
 File operations require a **persistent working directory** (`WorkDir`). Backends without one (bare `sandbox.NewLocal()`, ephemeral Docker without `WorkDir`) return `sandbox.ErrNoWorkDir`.
 
-**Path resolution follows shell semantics, the same view `exec_command` has** ([spec §5.14](spec.md)): a relative path resolves under the working directory, an absolute path is used as-is — the model learns real paths from `pwd`/`ls` output and both spellings reach the same file. The sandbox, not the working directory, is the isolation boundary; the file tools do not pretend to a narrower view than exec already has. The one exception is **docker bind-mount mode**, whose file operations run on the *host* side of the mount: they are confined to `WorkDir` via `os.Root`, absolute paths must lie under the in-container mount point `/workspace` (translated to the host directory), and anything else fails with `sandbox.ErrOutsideWorkDir` (rendered to the model as "outside the working directory").
+**Path resolution follows shell semantics, the same view `exec_command` has** ([decisions §5.14](../explanation/decisions.md)): a relative path resolves under the working directory, an absolute path is used as-is — the model learns real paths from `pwd`/`ls` output and both spellings reach the same file. The sandbox, not the working directory, is the isolation boundary; the file tools do not pretend to a narrower view than exec already has. The one exception is **docker bind-mount mode**, whose file operations run on the *host* side of the mount: they are confined to `WorkDir` via `os.Root`, absolute paths must lie under the in-container mount point `/workspace` (translated to the host directory), and anything else fails with `sandbox.ErrOutsideWorkDir` (rendered to the model as "outside the working directory").
 
 Docker's working directory can be narrowed to a subtree of the mount with `Options.ContainerWorkDir` (`/workspace` by default; validated to be `/workspace` or below it): commands run there, relative paths in the file tools resolve there, and absolute `/workspace/...` paths keep addressing the whole mount — one mounted directory can host several projects, each session working in its own subdirectory.
 
@@ -280,4 +280,4 @@ bigger grant than running individual commands, so it is excluded by design.
 backend's current configuration cannot host a terminal. The context bounds
 session establishment only; the returned `Terminal` lives until `Close`.
 
-See [examples/sandbox](../examples/sandbox/main.go) and [sandbox/docker/example](../sandbox/docker/example/main.go) for runnable programs.
+See [examples/sandbox](../../examples/sandbox/main.go) and [sandbox/docker/example](../../sandbox/docker/example/main.go) for runnable programs.

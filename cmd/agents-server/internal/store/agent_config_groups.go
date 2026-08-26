@@ -28,7 +28,7 @@ type BehaviorGroup struct {
 	// turns) or "omit" (strip them).
 	ReasoningItemIDPolicy string `json:"reasoning_item_id_policy,omitempty"`
 	// WorkflowAuthoring gives the agent's chat runs get_workflow / save_workflow
-	// (README invariant 39). Off by default: the save schema costs every request.
+	// (workbench invariant 39). Off by default: the save schema costs every request.
 	WorkflowAuthoring bool `json:"workflow_authoring,omitempty"`
 }
 

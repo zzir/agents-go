@@ -187,7 +187,7 @@ func TestSkillImportGitHubLifecycle(t *testing.T) {
 	if len(resp.Created) != 2 {
 		t.Fatalf("created = %v", resp)
 	}
-	// The model-facing name of an imported skill carries its repo (spec §5.29).
+	// The model-facing name of an imported skill carries its repo (decisions §5.29).
 	sk, err := st.GetByNameFor(t.Context(), "o/r:docx", store.LocalUserID)
 	if err != nil {
 		t.Fatal(err)
@@ -227,7 +227,7 @@ func TestSkillImportGitHubLifecycle(t *testing.T) {
 
 // A repo is its skills' namespace: an import whose frontmatter name matches a
 // workbench-authored skill lands beside it rather than colliding, and the two
-// answer to different model-facing names (spec §5.29).
+// answer to different model-facing names (decisions §5.29).
 func TestSkillImportNamespacedByRepo(t *testing.T) {
 	engine, h, st := skillTestEnv(t)
 	if w := doJSON(t, engine, http.MethodPost, "/skills", skillBody(pdfSkillDoc)); w.Code != http.StatusCreated {
@@ -302,7 +302,7 @@ func TestSkillImportEmptyRepo(t *testing.T) {
 
 // A repo group is one scope: publishing flips every one of its skills at
 // once, an imported skill refuses a flip of its own, and a later sync's NEW
-// files join the group rather than splitting it (spec §5.29).
+// files join the group rather than splitting it (decisions §5.29).
 func TestSkillRepoScopeGroup(t *testing.T) {
 	engine, h, st := skillTestEnv(t)
 	engine.POST("/skills/:id/scope", h.SetScope)
@@ -375,7 +375,7 @@ func TestSkillRepoScopeGroup(t *testing.T) {
 // A sync names the GROUP it refreshes, not just the repo. With two groups for
 // one repository — a member's published one and the admin's own private copy
 // — syncing the published one must update THAT group, never quietly refresh
-// the caller's instead (spec §5.31).
+// the caller's instead (decisions §5.31).
 func TestSkillSyncTargetsTheNamedGroup(t *testing.T) {
 	engine, h, st := skillTestEnv(t)
 	engine.POST("/skill-repos/scope", h.SetRepoScope)
@@ -427,7 +427,7 @@ func TestSkillSyncTargetsTheNamedGroup(t *testing.T) {
 	}
 
 	// A member's PRIVATE group is not an admin's to write: management is
-	// delete and scope change, not authorship (spec §5.29). It reads as
+	// delete and scope change, not authorship (decisions §5.29). It reads as
 	// absent, exactly as the row does elsewhere.
 	const shy = "u-shy"
 	private := &store.Skill{Name: "pdf-processing", Description: "theirs", Content: "PRIVATE",

@@ -531,7 +531,7 @@ func TestFallbackModel_StreamCommittedBreakRecordsDiagnostic(t *testing.T) {
 	// A stream that broke after emitting output ends the chain — the tokens are
 	// out and no backend can take them back. NewRetryModel records that as
 	// DiagStreamError; without the same here, one truncated answer is
-	// explainable and the other is merely odd (spec §5.16).
+	// explainable and the other is merely odd (decisions §5.16).
 	for _, tc := range []struct {
 		name      string
 		chain     []streamStep

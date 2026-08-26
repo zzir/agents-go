@@ -42,7 +42,7 @@ type Runner struct {
 	// OnBroadcast, when set, delivers an event about sessionID to every
 	// connection of its owner NOT attached to exceptRunID's stream — for a fact
 	// a run stream cannot carry to everyone: a task paused before its step has
-	// a run id but no run (README invariant 37), and a run interrupted on an
+	// a run id but no run (workbench invariant 37), and a run interrupted on an
 	// approval is not one a connection joining afterwards attaches to. Empty
 	// exceptRunID means every connection of the owner. Same wiring rule as
 	// OnRunAttach.
@@ -431,7 +431,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	out, err = r.finishResult(res, runID, sessionID, agentConfigID, sandboxID, projectID, sendEvent)
 	if err != nil {
 		// The pause could not be made durable: a decision would have nothing
-		// to act on (README invariant 37 lists what an approval IS — a row).
+		// to act on (workbench invariant 37 lists what an approval IS — a row).
 		// The segment ends as a failure instead, which a person can retry;
 		// nothing was announced as awaiting them.
 		return failTurn(agent.Model, "persist_error", err, streamedReasoning, streamedText)

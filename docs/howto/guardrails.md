@@ -152,3 +152,5 @@ if errors.As(err, &tw) {
 
 A panicking guardrail is recovered and reported as that guardrail's error — it
 never crashes the process.
+
+A runnable program covering all of this — one guardrail across three stages, plus a `Blocking` gate — is [examples/guardrails](../../examples/guardrails/main.go).

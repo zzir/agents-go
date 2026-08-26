@@ -7,17 +7,17 @@ yourself: run agents and workflows in a sandbox, behind tool approvals; debug
 with traces, replay & fork. One binary, your data, solo or as a team. Get it
 from
 [Releases](https://github.com/zzir/agents-go/releases); the
-[workbench manual](https://github.com/zzir/agents-go/blob/main/cmd/agents-server/README.md)
+[workbench manual](../cmd/agents-server/README.md)
 covers flags, the REST API, the WebSocket protocol and the design invariants.
 
-This site documents the SDK underneath — embeddable on its own, and
-independent of the workbench ([spec §1.2](spec.md#12-non-goals)).
+These pages document the SDK underneath — embeddable on its own, and
+independent of the workbench ([spec §1.2](explanation/scope.md#12-non-goals)).
 `agents-go` builds agentic AI apps on
 the OpenAI **Responses API** from a small set of primitives and very few
 abstractions. It started as a port of the
 [OpenAI Agents SDK for Python](https://openai.github.io/openai-agents-python/)
 and shares its core concepts, but it now evolves on its own: behavior is
-[specified](spec.md), not inherited.
+[specified](reference/spec.md), not inherited.
 
 - **Agents**: LLMs configured with instructions, tools, guardrails and handoffs
 - **Handoffs**: let an agent delegate the conversation to another agent
@@ -32,8 +32,8 @@ The shape is idiomatic Go: generics instead of runtime reflection magic,
 `iter.Seq2` for streaming — a run executes on the consumer's goroutine, so
 abandoning a stream stops the run rather than leaking one. Where behavior
 diverges from the Python SDK it is a decision with a reason; see
-[Differences from the Python SDK](migration_from_python.md) for the comparison
-and [upstream watch](upstream_watch.md) for what has been reviewed and
+[Differences from the Python SDK](explanation/migration_from_python.md) for the comparison
+and [upstream watch](explanation/upstream_watch.md) for what has been reviewed and
 declined.
 
 ## Installation
@@ -43,7 +43,7 @@ go get github.com/zzir/agents-go
 ```
 
 Anything with a heavy dependency lives in its own module, so the core stays
-dependency-light ([why, module by module](architecture.md#module-boundaries)):
+dependency-light ([why, module by module](explanation/architecture.md#module-boundaries)):
 
 ```bash
 go get github.com/zzir/agents-go/mcp              # optional: MCP client
@@ -89,23 +89,46 @@ func main() {
 
 ## Documentation
 
-| Topic | Page |
+The pages are sorted by what you came for.
+
+### Tutorial — learn by doing
+
+| Page | |
 |---|---|
-| The workbench | [Manual](https://github.com/zzir/agents-go/blob/main/cmd/agents-server/README.md) — flags, REST API, WebSocket protocol, design invariants |
-| Get started | [Quickstart](quickstart.md) |
-| Configuration | [Configuration](config.md) |
-| Core concepts | [Agents](agents.md) · [Running agents](running_agents.md) · [Results](results.md) |
-| Tools | [Tools](tools.md) · [Model context protocol (MCP)](mcp.md) · [Sandbox agents](sandbox.md) · [Skills](skills.md) |
-| Orchestration | [Agent orchestration](multi_agent.md) · [Handoffs](handoffs.md) · [Background tasks](tasks.md) |
-| Safety | [Guardrails](guardrails.md) · [Human-in-the-loop](human_in_the_loop.md) |
-| State | [Sessions](sessions.md) · [Context management](context.md) · [Usage](usage.md) |
-| Streaming | [Streaming](streaming.md) |
-| Models | [Models](models.md) |
-| Observability | [Tracing](tracing.md) · [Logging and diagnostics](logging.md) |
-| Testing | [Testing your agents](testing.md) — scripted models, no API key |
-| Examples | [Examples](examples.md) |
-| API index | [Feature reference](features.md) — every capability mapped to its API |
-| Coming from Python? | [Differences from the Python SDK](migration_from_python.md) |
-| Architecture | [Architecture](architecture.md) — how the pieces compose, and where the extension points are |
-| Behavior spec | [Design spec](spec.md) — the invariants, and why each one is what it is |
-| Upstream | [Upstream watch](upstream_watch.md) — what was reviewed from the Python SDK, ported or declined |
+| [Quickstart](tutorial/quickstart.md) | Build and run your first agent |
+| [Examples](examples.md) | Runnable programs, one per capability |
+
+### How-to — solve one problem
+
+| Area | Pages |
+|---|---|
+| Core | [Agents](howto/agents.md) · [Running agents](howto/running_agents.md) · [Results](howto/results.md) · [Configuration](howto/config.md) |
+| Tools | [Tools](howto/tools.md) · [MCP](howto/mcp.md) · [Sandbox agents](howto/sandbox.md) · [Skills](howto/skills.md) |
+| Orchestration | [Agent orchestration](howto/multi_agent.md) · [Handoffs](howto/handoffs.md) · [Background tasks](howto/tasks.md) |
+| Safety | [Guardrails](howto/guardrails.md) · [Human-in-the-loop](howto/human_in_the_loop.md) |
+| State | [Sessions](howto/sessions.md) · [Context management](howto/context.md) · [Usage](howto/usage.md) |
+| Streaming | [Streaming](howto/streaming.md) |
+| Models | [Models](howto/models.md) |
+| Observability | [Tracing](howto/tracing.md) · [Logging and diagnostics](howto/logging.md) |
+| Testing | [Testing your agents](howto/testing.md) — scripted models, no API key |
+
+### Reference — look something up
+
+| Page | |
+|---|---|
+| [Design spec](reference/spec.md) | The behavioral invariants — what is always true |
+| [pkg.go.dev](https://pkg.go.dev/github.com/zzir/agents-go) | Every exported symbol, always in sync with the code |
+
+### Explanation — understand why
+
+| Page | |
+|---|---|
+| [Architecture](explanation/architecture.md) | How the pieces compose, and where the extension points are |
+| [Design decisions](explanation/decisions.md) | Settled decisions, each with the reason — read before reopening one |
+| [Scope](explanation/scope.md) | What this is, what it deliberately is not |
+| [Differences from the Python SDK](explanation/migration_from_python.md) | For readers arriving from `openai-agents-python` |
+| [Upstream watch](explanation/upstream_watch.md) | What was reviewed from the Python SDK, ported or declined |
+
+### The workbench
+
+[Manual](../cmd/agents-server/README.md) — flags, deployment, the REST and WebSocket surfaces, and the design invariants the panels obey.

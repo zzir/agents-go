@@ -1,7 +1,7 @@
 package agents
 
 // The Responses stream vocabulary — the event names the SDK is written
-// against (spec §5.10).
+// against (decisions §5.10).
 //
 // These live here, in the runner's own package, because that is the only home
 // every user can reach: modelkit (the adapter toolkit that synthesizes these

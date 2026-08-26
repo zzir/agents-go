@@ -391,7 +391,7 @@ func (s *Sandbox) createContainer(ctx context.Context) (string, error) {
 
 // adoptNamed takes over the existing container holding our fixed name,
 // provided the fingerprint label proves it OURS from the SAME configuration
-// (spec §5.19). A stopped match is started; ours-from-an-older-config is
+// (decisions §5.19). A stopped match is started; ours-from-an-older-config is
 // errStaleOurs with the stale container's id, so the caller replaces exactly
 // the container it judged; a foreign holder is a hard error.
 func (s *Sandbox) adoptNamed(ctx context.Context) (string, error) {

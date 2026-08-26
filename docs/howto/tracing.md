@@ -104,7 +104,7 @@ format, and every collector wants a different one — so the SDK exports to a
 function and lets you write the six lines that match yours. That includes
 OpenTelemetry: the span record is OTel-shaped (8-byte span ids, 16-byte trace
 ids), and a `Processor` or `Exporter` that feeds an OTel SDK is yours to write
-against your collector ([spec.md §5.6b](spec.md)).
+against your collector ([decisions §5.6b](../explanation/decisions.md)).
 
 ## Custom processors
 
@@ -127,10 +127,10 @@ Span callbacks can fire from concurrent goroutines (parallel tools, input guardr
 
 Spans record names, timing, error messages and small attributes such as `response_id` and `call_id` — not prompts, completions or tool payloads. Those two ids stay on the span with sensitive data off, so a consumer can still join a span to the session entry it produced. If you add attributes from your own hooks, apply your data policies accordingly.
 
-Two shapes an exporter can rely on ([spec.md §5.6b](spec.md)):
+Two shapes an exporter can rely on ([decisions §5.6b](../explanation/decisions.md)):
 
 - **Span ids are 8 bytes and trace ids 16** (`tracing.NewSpanID`,
-  `tracing.NewTraceID`) — the OTel widths ([spec §5.6b](spec.md#56b-tracing-stays-vendor-neutral-otel-export-is-the-consumers-job)), so an OTel-shaped consumer never
+  `tracing.NewTraceID`) — the OTel widths ([decisions §5.6b](../explanation/decisions.md#56b-tracing-stays-vendor-neutral-otel-export-is-the-consumers-job)), so an OTel-shaped consumer never
   truncates.
 - **A trace has a root span per agent**, not one per trace: a handoff ends the
   current agent span and starts the next one at the top level, so an exporter

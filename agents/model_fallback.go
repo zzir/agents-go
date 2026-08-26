@@ -70,7 +70,7 @@ func (m *FallbackModel) Respond(ctx context.Context, req ModelRequest) (*ModelRe
 
 // StreamResponse implements Model: a backend can only be swapped before its
 // first output event; once output commits the backend, a mid-stream error is
-// surfaced as-is and recorded as DiagStreamError. See spec §5.16.
+// surfaced as-is and recorded as DiagStreamError. See decisions §5.16.
 func (m *FallbackModel) StreamResponse(ctx context.Context, req ModelRequest) iter.Seq2[*ResponseStreamEvent, error] {
 	return func(yield func(*ResponseStreamEvent, error) bool) {
 		var errs []error
@@ -96,7 +96,7 @@ func (m *FallbackModel) StreamResponse(ctx context.Context, req ModelRequest) it
 			if a.committed || i == len(m.models)-1 || !m.shouldFallback(a.err) {
 				if a.committed {
 					// A committed backend cannot be swapped; record which one, so
-					// a truncated answer is explainable (spec §5.16).
+					// a truncated answer is explainable (decisions §5.16).
 					RecordDiagnostic(ctx, DiagStreamError, a.err, map[string]any{
 						"used_index": i, "models": len(m.models),
 					})

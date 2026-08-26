@@ -4,7 +4,7 @@ import "iter"
 
 // streamAttempt is the outcome of deliverStreamAttempt: one inner stream
 // delivered to a consumer with pre-commit events held back. It lets
-// NewRetryModel and NewFallbackModel share one commit rule (spec §5.16).
+// NewRetryModel and NewFallbackModel share one commit rule (decisions §5.16).
 type streamAttempt struct {
 	// committed reports that output reached the consumer, committing this attempt.
 	committed bool
@@ -21,7 +21,7 @@ type streamAttempt struct {
 // falling-back decorator. Events that carry nothing the model generated —
 // lifecycle preamble and terminal-failure events — are buffered rather than
 // delivered until the first output event commits the attempt, so a retried or
-// swapped attempt stays one coherent response to the consumer (spec §5.16). A
+// swapped attempt stays one coherent response to the consumer (decisions §5.16). A
 // nil event neither commits nor buffers; it is dropped.
 func deliverStreamAttempt(
 	seq iter.Seq2[*ResponseStreamEvent, error],

@@ -30,7 +30,7 @@ func (e ErrInvalidBinding) Error() string { return "invalid sandbox binding: " +
 // resolveBindingProject resolves the project a session is about to be bound
 // to: the named one — which must exist, belong to the session's owner and
 // live on the named sandbox — or, unnamed, the owner's default project on
-// that sandbox, created on first use (spec §5.28).
+// that sandbox, created on first use (decisions §5.28).
 func (r *Runner) resolveBindingProject(ctx context.Context, ownerID, sandboxID, projectID string) (*store.Project, error) {
 	if r.Deps.Projects == nil {
 		return nil, fmt.Errorf("no project store is wired")

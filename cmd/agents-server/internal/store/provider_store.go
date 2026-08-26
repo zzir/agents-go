@@ -20,7 +20,7 @@ const AuthModeChatGPTLogin = "chatgpt_login"
 var ErrProviderRef = errors.New("provider_id names no provider")
 
 // ErrProviderScope marks a write refused because the provider it references
-// sits outside the holder's reach (spec §5.29). Handlers map it to 400.
+// sits outside the holder's reach (decisions §5.29). Handlers map it to 400.
 var ErrProviderScope = errors.New("provider_id names a provider outside the agent's scope")
 
 // writeReferencingProvider runs write in ONE transaction that first reads —
@@ -62,7 +62,7 @@ type ProviderStore struct {
 }
 
 // NewProviderStore returns a ProviderStore backed by db. Names are unique
-// per scope (partial indexes, spec §5.29); a duplicate surfaces as a
+// per scope (partial indexes, decisions §5.29); a duplicate surfaces as a
 // UNIQUE-constraint error that handlers map to 409.
 func NewProviderStore(db *bun.DB) *ProviderStore {
 	return &ProviderStore{CrudStore: NewCrudStore[Provider](db, "provider", "created_at DESC").withSecrets(sealProvider, openProvider), db: db}
@@ -171,7 +171,7 @@ func NormalizeProvider(p *Provider) error {
 // refusing while any agent a demote would strand — a global agent, or another
 // owner's private one — still references it. Count and flip share one
 // transaction with the row locked, so a racing agent write cannot pin a
-// global agent to a just-privatized key (spec §5.29). Returns the foreign
+// global agent to a just-privatized key (decisions §5.29). Returns the foreign
 // count, non-zero meaning nothing was flipped; ErrNotFound when the row is
 // gone.
 func (s *ProviderStore) DemoteToPrivate(ctx context.Context, id string) (int, error) {
@@ -209,7 +209,7 @@ func (s *ProviderStore) DemoteToPrivate(ctx context.Context, id string) (int, er
 }
 
 // countStrandedRefs counts the agents that would lose this provider were it
-// private to owner: a global agent, or one another member owns (spec §5.29's
+// private to owner: a global agent, or one another member owns (decisions §5.29's
 // RefVisible, as a query).
 func countStrandedRefs(ctx context.Context, tx bun.Tx, providerID, owner string) (int, error) {
 	return tx.NewSelect().Model((*AgentConfig)(nil)).
@@ -221,7 +221,7 @@ func countStrandedRefs(ctx context.Context, tx bun.Tx, providerID, owner string)
 // TransferOwner hands the provider — credential included — to newOwner. A
 // PRIVATE provider carries its references with it, so the transfer is refused
 // while any agent would be stranded (the same guard a demote carries: a key
-// must not silently vanish from under a run — spec §5.29). Returns the
+// must not silently vanish from under a run — decisions §5.29). Returns the
 // stranded count, non-zero meaning nothing moved.
 func (s *ProviderStore) TransferOwner(ctx context.Context, id, newOwner string) (int, error) {
 	var refs int

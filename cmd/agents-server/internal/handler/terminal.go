@@ -90,7 +90,7 @@ func (h *TerminalHandler) Handle(conn *server.WSConn) {
 	term, opened, proj, release, err := h.open(conn)
 	if err == nil && h.Audit != nil {
 		// Detail names the project and its owner: an admin may open a shell
-		// into a member's tree (spec §5.28), and the log must answer whose
+		// into a member's tree (decisions §5.28), and the log must answer whose
 		// data was reached — the sandbox id alone cannot.
 		h.Audit(context.WithoutCancel(conn.Context()), protocol.AuditRecord{
 			Actor: conn.User, Action: "terminal.open", Resource: opened.ID,
@@ -226,7 +226,7 @@ func (h *TerminalHandler) open(conn *server.WSConn) (sandbox.Terminal, *store.Sa
 		return nil, nil, nil, nil, fmt.Errorf("project %s: %w", msg.ProjectID, err)
 	}
 	// A member opens a shell into their OWN project's container; an admin
-	// into any (the operator's escape hatch, recorded in spec §5.28). A
+	// into any (the operator's escape hatch, recorded in decisions §5.28). A
 	// foreign project reads as absent.
 	if conn.User.Role != store.RoleAdmin && proj.OwnerID != conn.User.ID {
 		return nil, nil, nil, nil, fmt.Errorf("project %s: %w", msg.ProjectID, store.ErrNotFound)

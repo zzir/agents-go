@@ -741,7 +741,7 @@ components:
         config:
           description: |-
             Config holds the connection settings as JSON (HTTPMcpConfig — the
-            streamable_http transport is the only one the server speaks, spec §5.25).
+            streamable_http transport is the only one the server speaks, decisions §5.25).
             Stored as TEXT and exchanged with the API as a raw JSON object.
           items:
             type: integer
@@ -768,7 +768,7 @@ components:
           type: string
         scope:
           description: 'Scope/OwnerID: row visibility and its permanent creator —
-            spec §5.29.'
+            decisions §5.29.'
           type: string
         status:
           description: |-
@@ -995,7 +995,7 @@ components:
           description: |-
             OwnerID names WHICH group this import refreshes — a sync of somebody
             else's published repository, for an admin. Empty means the caller's own
-            group, the only one a first import may create (spec §5.31).
+            group, the only one a first import may create (decisions §5.31).
           type: string
         url:
           type: string
@@ -1316,13 +1316,13 @@ components:
             a COLUMN rather than a field in a JSON group, because it is a reference
             and referential integrity has to be expressible in SQL (the same reason
             sessions.sandbox_id is one). Empty reaches no credential: the run fails
-            its pre-flight until the agent names a provider (spec §5.30).
+            its pre-flight until the agent names a provider (decisions §5.30).
           type: string
         resilience:
           $ref: '#/components/schemas/store.ResilienceGroup'
         scope:
           description: 'Scope/OwnerID: row visibility and its permanent creator —
-            spec §5.29.'
+            decisions §5.29.'
           type: string
         session:
           $ref: '#/components/schemas/store.SessionGroup'
@@ -1395,7 +1395,7 @@ components:
         workflow_authoring:
           description: |-
             WorkflowAuthoring gives the agent's chat runs get_workflow / save_workflow
-            (README invariant 39). Off by default: the save schema costs every request.
+            (workbench invariant 39). Off by default: the save schema costs every request.
           type: boolean
       type: object
     store.CompactionGroup:
@@ -1628,7 +1628,7 @@ components:
             StorageHint names where the files live — the local daemon's host
             directory or the remote daemon's volume. Derived per response by the
             handler for admins only, never stored: deleting the row keeps the
-            storage (spec §5.28), so the UI can say where.
+            storage (decisions §5.28), so the UI can say where.
           type: string
         updated_at:
           type: string
@@ -1696,7 +1696,7 @@ components:
           type: string
         scope:
           description: 'Scope/OwnerID: row visibility and its permanent creator —
-            spec §5.29.'
+            decisions §5.29.'
           type: string
         type:
           description: |-
@@ -1751,7 +1751,7 @@ components:
             at the next run.
           type: integer
         type:
-          description: Type is "docker" — the only backend (spec §5.27).
+          description: Type is "docker" — the only backend (decisions §5.27).
           type: string
         updated_at:
           type: string
@@ -1801,7 +1801,7 @@ components:
           description: |-
             SandboxID/ProjectID are the session's PERMANENT binding: the first
             sandbox-carrying run CAS-writes them (BindSandboxIfEmpty) and they are
-            never rewritten — spec §5.28.
+            never rewritten — decisions §5.28.
           type: string
         updated_at:
           type: string
@@ -1836,7 +1836,7 @@ components:
         id:
           type: string
         name:
-          description: unique per scope (spec §5.29)
+          description: unique per scope (decisions §5.29)
           type: string
         owner_id:
           type: string
@@ -1847,11 +1847,11 @@ components:
             because it is what the unique name indexes key on: two source URLs can
             reduce to one label, and the index must refuse that collision — a
             duplicate qualified name would make read_skill's answer a coin flip
-            (spec §5.31).
+            (decisions §5.31).
           type: string
         scope:
           description: 'Scope/OwnerID: row visibility and its permanent creator —
-            spec §5.29.'
+            decisions §5.29.'
           type: string
         source_path:
           type: string
@@ -2061,7 +2061,7 @@ components:
           type: string
         scope:
           description: 'Scope/OwnerID: row visibility and its permanent creator —
-            spec §5.29.'
+            decisions §5.29.'
           type: string
         steps:
           items:
@@ -3795,7 +3795,7 @@ paths:
   /projects/{id}:
     delete:
       description: The owner deletes their own; an admin deletes any (management,
-        spec §5.29).
+        decisions §5.29).
       parameters:
       - description: Project id
         in: path

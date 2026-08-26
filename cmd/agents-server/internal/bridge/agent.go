@@ -69,7 +69,7 @@ type AgentDeps struct {
 	// save_workflow — per run, like SpawnTool, because the save tool's
 	// description names the agents on offer. Attached only when the config
 	// opts in (behavior.workflow_authoring); never on a background run.
-	// save_workflow gates per call (spec §5.29).
+	// save_workflow gates per call (decisions §5.29).
 	WorkflowTools func(ctx context.Context, ownerID string) []*agents.Tool
 }
 
@@ -226,7 +226,7 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandbox
 	}
 	// Workflow authoring is opt-in per agent and, like the task tools, a
 	// chat-only surface: a background run has nobody to approve a save
-	// (README invariant 39).
+	// (workbench invariant 39).
 	if err == nil && !background && result.Behavior.WorkflowAuthoring && deps.WorkflowTools != nil {
 		mark := len(result.Agent.Tools)
 		// Every owner may save now — a member's save lands in their private
@@ -309,7 +309,7 @@ type agentBuildCtx struct {
 	// one run sees one file system context throughout.
 	projectID string
 	// ownerID is the session owner every built config must be visible to
-	// (spec §5.29); empty skips the check (internal callers with no user).
+	// (decisions §5.29); empty skips the check (internal callers with no user).
 	ownerID string
 	// releases collects the sandbox-instance references every build in this
 	// recursion acquired (the entry agent's and each handoff target's).
@@ -341,7 +341,7 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 	if err != nil {
 		return nil, fmt.Errorf("agent config %q not found — create one in Settings > Agents", configID)
 	}
-	// A foreign private config reads as absent (spec §5.29): a run must never
+	// A foreign private config reads as absent (decisions §5.29): a run must never
 	// execute — and spend the credentials of — another user's agent. Handoff
 	// targets pass through here too, so the whole registry is covered.
 	if bc.ownerID != "" && !store.Visible(ac.Scope, ac.OwnerID, bc.ownerID, false) {
@@ -506,7 +506,7 @@ func buildHandoffs(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx, agen
 
 // attachMCPServers wires the config's selected MCP servers onto the agent,
 // skipping any whose server is not currently connected — or no longer
-// visible to the session owner (spec §5.29: a demoted server drops out like
+// visible to the session owner (decisions §5.29: a demoted server drops out like
 // a deleted one, never serving another user's credentialed connection). It
 // returns the ids it attached — the profile records the decision actually
 // made, not a re-derivation that could race a reconnect.
@@ -561,7 +561,7 @@ func attachSandboxTools(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx,
 // attachSkills loads the stored skills and, when spec restricts the selection
 // (by skill id), filters to the advertised ones; the rendered index pairs
 // with a read_skill tool. read_skill gates on the advertised NAMES but
-// resolves them own-over-global (spec §5.29), so a same-named row of the
+// resolves them own-over-global (decisions §5.29), so a same-named row of the
 // owner's outside the selection can serve the content. Best-effort: a load
 // error is skipped, not fatal. Returns the size of the index it added.
 func attachSkills(ctx context.Context, deps *AgentDeps, agent *agents.Agent, spec *AgentSpec, ownerID string) int {
@@ -571,7 +571,7 @@ func attachSkills(ctx context.Context, deps *AgentDeps, agent *agents.Agent, spe
 		return 0
 	}
 	// The visible set is the session owner's view: global skills plus their
-	// own (spec §5.29) — a selection id pointing outside it simply drops out,
+	// own (decisions §5.29) — a selection id pointing outside it simply drops out,
 	// the same as a deleted skill.
 	stored, err := deps.Skills.ListMeta(ctx, ownerID, false)
 	if err != nil {

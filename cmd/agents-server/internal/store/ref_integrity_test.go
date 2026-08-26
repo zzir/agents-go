@@ -52,7 +52,7 @@ func TestUpdateGuardsProviderReferences(t *testing.T) {
 // The reference rule runs INSIDE the write transaction: a global agent (or a
 // foreign private one) naming a private provider is refused at the store, so
 // a scope flip cannot slip between a handler's validation and the row
-// landing (spec §5.29).
+// landing (decisions §5.29).
 func TestWritesRefuseOutOfScopeProvider(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)

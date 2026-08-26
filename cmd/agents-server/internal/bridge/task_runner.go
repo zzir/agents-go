@@ -50,7 +50,7 @@ func IsTerminalTaskStatus(s string) bool { return isTerminalTaskStatus(s) }
 // for these unprompted) fall back to the spawning run's own agent — a config
 // actually named that way still takes precedence.
 func (r *Runner) resolveSpawnAgent(ctx context.Context, parentSessionID, name string) (*store.AgentConfig, error) {
-	// The spawn resolves within the parent session owner's view (spec §5.29);
+	// The spawn resolves within the parent session owner's view (decisions §5.29);
 	// a lookup that cannot be made refuses — an empty owner would resolve as
 	// the all-seeing internal caller (spec §2.13).
 	sess, err := r.Deps.Sessions.Get(ctx, parentSessionID)
@@ -235,7 +235,7 @@ func (r *Runner) MaxTaskAttempts() int {
 // task manager, which advances a task's state — a workflow's next step
 // included: it is driven from HERE rather than from the callback of the run
 // that started it, because an approval resume passes no callback and the
-// sequence would be lost at the first paused step (README invariant 29) — or,
+// sequence would be lost at the first paused step (workbench invariant 29) — or,
 // for an ordinary chat session, drains the wake-ups that queued while it was
 // busy.
 func (r *Runner) postRun(runID, sessionID string, result *RunOutcome) {

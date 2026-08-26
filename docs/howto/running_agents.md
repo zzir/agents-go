@@ -284,7 +284,7 @@ impossible to desynchronize. The host renders it from `OnUpdate` (or reads the
 calls off the stream); a malformed list is refused whole, so an observer never
 sees a half-applied update. Both middlewares rewrite the entry agent only;
 handoff targets keep their own toolset. See
-[examples/planmode](../examples/planmode/main.go) for both together.
+[examples/planmode](../../examples/planmode/main.go) for both together.
 
 `middleware.Retry` and `agents.NewRetryModel` are different and usually both
 right. The model decorator retries one call (a 429, a dropped connection) and

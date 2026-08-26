@@ -17,7 +17,7 @@ your data, embeddable SDK. Solo or as a team.
 [Get started](#get-started) ·
 [What you get](#what-you-get) ·
 [Workbench manual](cmd/agents-server/README.md) ·
-[SDK docs](https://zzir.github.io/agents-go/) ·
+[SDK docs](docs/) ·
 [Examples](docs/examples.md)
 
 </div>
@@ -31,7 +31,7 @@ your data, embeddable SDK. Solo or as a team.
    `agents-server` binary is at the top level. (On macOS, Gatekeeper refuses
    the unsigned binary; `xattr -d com.apple.quarantine ./agents-server`
    clears it.) Or build from source: see the manual's
-   [Quick start](cmd/agents-server/README.md#quick-start).
+   [Quick start](docs/tutorial/workbench.md).
 
 2. **Run it.**
 
@@ -45,7 +45,7 @@ your data, embeddable SDK. Solo or as a team.
    in `data.db` in the directory you ran it from (`--db`; a `postgres://` DSN
    uses PostgreSQL instead); with a local daemon, project trees live under
    `--workspace` (default `.`). All flags:
-   [manual](cmd/agents-server/README.md#flags).
+   [manual](docs/tutorial/workbench.md#flags).
 
 3. **Add a provider, create an agent, chat.** Settings → Providers: an OpenAI
    or Anthropic API key, or sign in with ChatGPT. Settings → Agents: name,
@@ -92,7 +92,7 @@ your data, embeddable SDK. Solo or as a team.
   admin-published global rows, host configuration is admin-written, every
   change lands in an audit log, personal access tokens serve scripts, and
   stored credentials are sealed at rest with a key only the process holds.
-  Details: [Authentication](cmd/agents-server/README.md#authentication).
+  Details: [Authentication](docs/howto/workbench-auth.md).
 
 Together these close the debug loop: see what the model saw, change it,
 re-run — one call, one turn, or a fork — and diff the results.
@@ -140,33 +140,33 @@ func main() {
 }
 ```
 
-The [Quickstart](docs/quickstart.md) continues from here — handoffs,
+The [Quickstart](docs/tutorial/quickstart.md) continues from here — handoffs,
 guardrails, typed tools, structured output, streaming, approvals. By topic:
 
-- [Tools](docs/tools.md) — typed function tools (the argument struct becomes
+- [Tools](docs/howto/tools.md) — typed function tools (the argument struct becomes
   the JSON schema), agents-as-tools, multimodal output, per-tool approval
-- [Handoffs](docs/handoffs.md), [Guardrails](docs/guardrails.md),
-  [Human-in-the-loop](docs/human_in_the_loop.md) — a paused run serializes to
+- [Handoffs](docs/howto/handoffs.md), [Guardrails](docs/howto/guardrails.md),
+  [Human-in-the-loop](docs/howto/human_in_the_loop.md) — a paused run serializes to
   JSON and resumes in another process
-- [Sessions](docs/sessions.md) — append-only entries, branching, crash
-  recovery, [compaction](docs/sessions.md#run-level-compaction); in-memory,
+- [Sessions](docs/howto/sessions.md) — append-only entries, branching, crash
+  recovery, [compaction](docs/howto/sessions.md#run-level-compaction); in-memory,
   JSONL, SQLite/Postgres or OpenAI server-side
-- [Streaming](docs/streaming.md) — a run is a range-able iterator; steer it or
+- [Streaming](docs/howto/streaming.md) — a run is a range-able iterator; steer it or
   queue follow-ups mid-run
-- [Models](docs/models.md) — OpenAI Responses and Anthropic Messages
+- [Models](docs/howto/models.md) — OpenAI Responses and Anthropic Messages
   providers; retry, fallback and routing decorators;
-  [middleware](docs/running_agents.md#middleware) around a whole run
-- [MCP](docs/mcp.md), [Sandboxes](docs/sandbox.md), [Skills](docs/skills.md),
-  [Tracing](docs/tracing.md), [Background tasks](docs/tasks.md),
-  [Testing](docs/testing.md) — a scripted `Model` fake tests agents
+  [middleware](docs/howto/running_agents.md#middleware) around a whole run
+- [MCP](docs/howto/mcp.md), [Sandboxes](docs/howto/sandbox.md), [Skills](docs/howto/skills.md),
+  [Tracing](docs/howto/tracing.md), [Background tasks](docs/howto/tasks.md),
+  [Testing](docs/howto/testing.md) — a scripted `Model` fake tests agents
   without a key
 
 The core is one small module; the heavier capabilities are opt-in submodules
-([packages](docs/features.md#packages)). Arriving from the OpenAI Agents SDK?
-Start at [Coming from Python?](docs/migration_from_python.md).
+([packages](docs/explanation/architecture.md#packages)). Arriving from the OpenAI Agents SDK?
+Start at [Coming from Python?](docs/explanation/migration_from_python.md).
 
 The SDK stands alone — it never depends on or reports to the workbench
-([spec §1.2](docs/spec.md#12-non-goals)).
+([spec §1.2](docs/explanation/scope.md#12-non-goals)).
 
 Nearly every SDK capability has a runnable example under
 [examples/](examples/):

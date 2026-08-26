@@ -10,7 +10,7 @@ import (
 
 // A transfer moves the credential, so it carries the demote's guard: handing a
 // PRIVATE provider to somebody else while agents still reference it would
-// strand them at run time, so it is refused instead (spec §5.29).
+// strand them at run time, so it is refused instead (decisions §5.29).
 func TestTransferOwnerGuardsReferences(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)

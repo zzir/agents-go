@@ -116,3 +116,5 @@ agents.RecordDiagnostic(ctx, "cache_miss", err, map[string]any{"key": k})
 
 It is a no-op when there is no run behind the context, so a decorator used
 standalone still works.
+
+A runnable program is [examples/logging](../../examples/logging/main.go), which runs the same agent twice — once with `SensitiveData` off, once with it on — so the difference in the records is visible side by side.

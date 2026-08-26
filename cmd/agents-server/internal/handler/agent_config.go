@@ -57,7 +57,7 @@ func (h *AgentConfigHandler) validateAgentConfig(c *gin.Context, ac *store.Agent
 		return false
 	}
 	// An agent naming a provider that does not exist — or one its scope may
-	// not reference (spec §5.29) — would fail at run time with a confusing
+	// not reference (decisions §5.29) — would fail at run time with a confusing
 	// error mid-stream; refuse at save.
 	if ac.ProviderID != "" {
 		pv, err := h.providers.Get(c.Request.Context(), ac.ProviderID)
@@ -388,7 +388,7 @@ func (h *AgentConfigHandler) SetOwner(c *gin.Context) {
 	}
 	// The references are re-validated AS THE NEW OWNER: handing over an agent
 	// that names the old owner's private provider or MCP server would answer
-	// 204 and then fail every run — the state a save refuses (spec §5.29).
+	// 204 and then fail every run — the state a save refuses (decisions §5.29).
 	// The provider leg re-checks again inside the store's transaction.
 	ac.OwnerID = req.UserID
 	if !h.validateAgentConfig(c, ac) {

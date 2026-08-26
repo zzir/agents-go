@@ -24,7 +24,7 @@ const WakeKindTask = "task"
 
 // Wakeup is one debt: a session is owed a turn carrying Payload. The debt is a
 // ROW, drained when the session can take it, rather than a call that has to
-// land at the wrong moment — see README invariant 32.
+// land at the wrong moment — see workbench invariant 32.
 type Wakeup struct {
 	bun.BaseModel `bun:"table:wakeups,alias:wku"`
 

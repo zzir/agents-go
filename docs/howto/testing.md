@@ -68,3 +68,5 @@ on purpose — a test that stubs out the run loop is testing the stub.
   `modelkit/conformancetest` — the golden matrix every in-repo backend passes —
   plus tests against the provider's wire format. A scripted fake is a consumer
   of the `Model` interface, not a conformance suite for it.
+
+The worked version of this page is [examples/testing](../../examples/testing) — a scripted model, the agent's real tool, and a test that asserts both the answer and that the script was fully consumed. It needs no API key: `go test ./examples/testing`.

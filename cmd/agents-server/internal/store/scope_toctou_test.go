@@ -8,7 +8,7 @@ import (
 
 // A repo group is one owner as it is one scope: transferring into an owner who
 // already holds a group for the repo would merge two groups whose scopes the
-// unique indexes cannot compare, so it is refused (spec §5.31).
+// unique indexes cannot compare, so it is refused (decisions §5.31).
 func TestSetRepoOwnerRefusesAMerge(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
@@ -38,7 +38,7 @@ func TestSetRepoOwnerRefusesAMerge(t *testing.T) {
 
 // An import names the group it refreshes: the lookups are owner-EXACT, so an
 // admin who holds their own copy of a repo cannot refresh it while asking for
-// somebody else's published group (spec §5.31).
+// somebody else's published group (decisions §5.31).
 func TestFindBySourceAndRepoGroupAreOwnerExact(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
@@ -74,7 +74,7 @@ func TestFindBySourceAndRepoGroupAreOwnerExact(t *testing.T) {
 
 // A transfer re-checks the leg that spends a credential AS THE NEW OWNER: an
 // agent handed to somebody who cannot see its provider would answer 204 and
-// then fail every run (spec §5.29).
+// then fail every run (decisions §5.29).
 func TestAgentTransferChecksProviderVisibility(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)

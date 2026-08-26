@@ -17,7 +17,7 @@ import (
 // manager owns its lifecycle — the child session, the run transitions, stop,
 // retry, the restart sweep, the wake-up debt — and this file is the workflow
 // DRIVER the manager calls back into: how an execution starts, which step a
-// finished run leads to, and how a step's run is launched. README invariant 29.
+// finished run leads to, and how a step's run is launched. workbench invariant 29.
 
 // ErrWorkflowUnavailable marks a workflow a session cannot run right now — no
 // steps, or an agent that no longer exists. The handler maps it to a 400.
@@ -27,7 +27,7 @@ var ErrWorkflowUnavailable = errors.New("workflow unavailable")
 // into the task's State and spawns a task of the workflow kind, whose first
 // run is the first step. input is the brief — what this execution is about,
 // written by the agent that asked for it; toolCallID is the spawn_task
-// call, so the card it produced follows the execution (README invariant 30).
+// call, so the card it produced follows the execution (workbench invariant 30).
 func (r *Runner) StartWorkflow(ctx context.Context, workflowID, parentSessionID, input, toolCallID string) (*tasks.Info, error) {
 	if r.Deps.Workflows == nil || r.tasks == nil {
 		return nil, errors.New("workflows are not wired")
@@ -254,7 +254,7 @@ func stepName(s *store.WorkflowStep) string {
 // launchWorkflowStep is the task launcher's answer for the workflow kind,
 // whether the launch is the spawn, a step transition or a retry: start the
 // step the task is on — or, for a step a person must approve first, hold the
-// sequence there and ask (README invariant 37).
+// sequence there and ask (workbench invariant 37).
 func (r *Runner) launchWorkflowStep(ctx context.Context, req tasks.LaunchRequest) error {
 	st, err := store.DecodeWorkflowState(req.State)
 	if err != nil {

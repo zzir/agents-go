@@ -15,7 +15,7 @@ import (
 // save time cannot be answered another way at compare time.
 
 // NormalizeSandboxConfig strictly decodes raw ("docker" is the only backend
-// — spec §5.27), enforces the fields the sandbox cannot run without, and
+// — decisions §5.27), enforces the fields the sandbox cannot run without, and
 // returns the canonical payload to store. It gates the API write path: a
 // payload that decodes here builds later — a stored type mismatch would
 // otherwise read as its zero value at build time. Canonical means fields
@@ -61,7 +61,7 @@ func ContentEqual(_ string, a, b json.RawMessage) bool {
 
 // IdentityChanged reports whether an update moves the sandbox's IDENTITY —
 // type and daemon Host, the fields that decide where a binding's files live;
-// they freeze while sessions bind the config (README invariant 27). An
+// they freeze while sessions bind the config (workbench invariant 27). An
 // undecodable prev is NOT a change — fixing it is a bound session's only way
 // out; an undecodable next counts as one, pure defense.
 func IdentityChanged(prev, next *SandboxConfig) bool {

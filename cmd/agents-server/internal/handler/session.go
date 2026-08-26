@@ -173,7 +173,7 @@ func (h *SessionHandler) Create(c *gin.Context) {
 	u, _ := server.CurrentUser(c)
 	if req.AgentConfigID != "" {
 		// A foreign private agent reads as absent — the same rule the run-time
-		// build applies (spec §5.29), admin included: a binding the owner's
+		// build applies (decisions §5.29), admin included: a binding the owner's
 		// runs would refuse must not be created, and the answer must not act
 		// as an existence oracle.
 		ac, err := h.agents.Get(ctx, req.AgentConfigID)

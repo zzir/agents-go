@@ -4,7 +4,7 @@ How the pieces compose, and where you can get in between them.
 
 The other pages explain each capability on its own. This one is about the
 shape: what a run passes through, which types are the seams, and why the
-boundaries fall where they do. [spec.md](spec.md) is the authority on
+boundaries fall where they do. [spec.md](../reference/spec.md) is the authority on
 behavior — where the two disagree, spec.md is right.
 
 ---
@@ -62,7 +62,7 @@ events reach you; `RunSync` makes one blocking call. Everything else —
 guardrail timing, persistence points, ordering, tracing — is identical code.
 A change to run semantics is written once.
 
-See [Running agents](running_agents.md) and [Streaming](streaming.md).
+See [Running agents](../howto/running_agents.md) and [Streaming](../howto/streaming.md).
 
 ---
 
@@ -97,7 +97,7 @@ Three consequences fall out of that:
   renders the summary up front, so the model sees `[summary, kept…]` and a
   reader can still expand what was folded.
 
-See [Sessions](sessions.md) and [Context management](context.md).
+See [Sessions](../howto/sessions.md) and [Context management](../howto/context.md).
 
 ---
 
@@ -126,7 +126,43 @@ what was already a field on the single concrete type, and the walker existed
 because a plain type assertion through a wrapper silently returned false — a
 timeout wrapper around an approval wrapper reported that the tool needed no
 approval. Fields have no such failure mode, and a variant of someone else's tool
-is `cp := *tool`. See [spec.md §2.7c](spec.md#27c-tool-capabilities-are-fields).
+is `cp := *tool`. See [spec.md §2.7c](../reference/spec.md#27c-tool-capabilities-are-fields).
+
+---
+
+## Packages
+
+Core module path: `github.com/zzir/agents-go`. This table names the import
+paths; which of them are separate **modules**, and why, is the next section.
+Signatures live on
+[pkg.go.dev](https://pkg.go.dev/github.com/zzir/agents-go).
+
+| Package | What it is |
+|---|---|
+| `agents` | Core: agents, runner, tools, guardrails, sessions, HITL, tracing hooks |
+| `models/openai` | OpenAI Responses API model provider (built on `openai-go` v3) |
+| `models/modelkit` | Dependency-free toolkit for model adapters + `conformancetest` golden matrix |
+| `tracing` | Traces, spans, processors and exporters |
+| `sandbox` | `Sandbox` interface + `CodeTool` + `apply_patch` + local backend |
+| `mcp` | **separate module** — Model Context Protocol client (modelcontextprotocol/go-sdk) |
+| `models/anthropic` | **separate module** — Anthropic Messages API backend (translated to Responses) |
+| `sandbox/docker` | **separate module** — Docker sandbox backend |
+| `sessions` | **separate module** — SQLite/PostgreSQL session store (uptrace/bun) |
+| `skills` | **separate module** — Agent Skills (`SKILL.md`) parser |
+| `cmd/agents-server` | **separate module** — the workbench: web app (REST + WS + embedded UI) over the SDK |
+
+The core lives in a single `agents/` package. The original plan split it further
+into `tools/`, `outputs/` and `models/`, but in Go those would form an import
+cycle with the core (tool callbacks reference `RunContext`; the `Model` interface
+references `Tool`), so they are kept together in `agents/`. Provider, storage and
+tracing implementations live in subpackages that import `agents`; MCP does the
+same from a nested module, so its go-sdk dependency stays out of the core. Items
+use the `openai-go` Responses types as the wire format directly, so nothing is
+lost converting in and out of a parallel item model.
+
+The Responses **WebSocket transport** and a `Model` connection-lifecycle hook
+(`Close`/`aclose`) are not implemented — only the HTTP Responses transport is
+supported today.
 
 ---
 
@@ -154,7 +190,7 @@ cannot hide a missing `go.mod` require.
 
 This is also why tracing is vendor-neutral in the core: a span is a `Type` tag
 plus a `Data map[string]any`, and mapping it onto a vendor's model is the
-consumer's `Processor` to write ([spec.md §5.6b](spec.md#56b-tracing-stays-vendor-neutral-otel-export-is-the-consumers-job)).
+consumer's `Processor` to write ([decisions §5.6b](decisions.md#56b-tracing-stays-vendor-neutral-otel-export-is-the-consumers-job)).
 Adding an OTel dependency to the core would tax every user for a capability
 most do not enable.
 
@@ -162,8 +198,72 @@ most do not enable.
 
 ## Where behavior is decided
 
-- **[spec.md](spec.md)** — the invariants, each with the reason it is what it
+- **[spec.md](../reference/spec.md)** — the invariants, each with the reason it is what it
   is. When something is not covered there, the rule is: decide, implement, and
   add the invariant in the same change.
 - **[upstream_watch.md](upstream_watch.md)** — what has been reviewed from the
   Python SDK, and what was declined. There is no obligation to match it.
+
+---
+
+## The workbench's architecture
+
+Everything above is the SDK. `agents-server` — the workbench that runs on top of
+it — composes as follows. The rules its handlers and panels must obey are in
+[workbench design invariants](workbench-invariants.md).
+
+```
+cmd/agents-server/
+├── main.go                     entry point
+├── cmd/root.go                 CLI flags, start-up and shutdown ordering
+├── cmd/wire.go                 the composition root: stores → bridge → handlers → auth → server
+├── internal/
+│   ├── server/                 Gin engine, routing, WS upgrade + heartbeat
+│   │   ├── auth.go             bearer middleware (AuthFunc), the auth-exempt list
+│   │   ├── ratelimit.go        per-IP budgets; AuthGuard (failed-credential budget)
+│   │   ├── audit.go            the audit middleware (successful mutating requests)
+│   │   ├── server.go           engine setup, body cap, CSP, static SPA
+│   │   └── ws.go               WS upgrade + heartbeat
+│   ├── authn/                  who is calling: token mode, OAuth (PKCE) login, PATs
+│   ├── secrets/                AES-256-GCM box that seals stored credentials
+│   ├── handler/                HTTP handlers (one file per resource)
+│   │   ├── authz.go            the authorization rules as route gates (decisions §5.29)
+│   │   └── conn_registry.go    per-owner WebSocket broadcast bus
+│   ├── bridge/                 the runner and what it orchestrates
+│   │   ├── agent.go            assemble a full agent from DB config
+│   │   ├── runner.go           stream execution, resume after approval
+│   │   ├── stream_bridge.go    SDK stream events → protocol envelopes
+│   │   ├── run_hub.go          per-run event hub (buffering, seq resume, status)
+│   │   ├── approvals.go        HITL approval persistence & resolution
+│   │   ├── retention.go        the maintenance loops: approval reaper, trace/audit/token/wake-up pruning
+│   │   └── ...                 tasks, workflows, triggers, tracing, provider resolve
+│   ├── mcpservers/             live MCP connections behind stored configs; the MCP OAuth flow
+│   ├── providers/              the registry of model-provider backends; the ChatGPT login
+│   ├── sandboxes/              live sandbox instances behind stored configs; exec_command trust
+│   ├── guardrails/             stored + built-in guardrail definitions → SDK guardrails
+│   ├── settings/               the settings registry and the typed reader (incl. the proxy client)
+│   ├── logging/                structured logging + context propagation
+│   ├── docs/                   generated OpenAPI 3.1 document, swagger.yaml (make openapi)
+│   ├── store/                  data layer (bun ORM; SQLite or PostgreSQL, 23 tables — see Database)
+│   ├── protocol/               wire types — WS messages, REST error envelope, the audit record
+│   └── web/                    embedded SPA static files
+```
+
+### Request flow
+
+1. A client starts a run — `run.create` over WebSocket or `POST /sessions/:id/runs`
+   over REST. Both call `runner.StartRun`, which registers the run in the shared
+   run hub and executes it in the background, independent of the caller's
+   connection.
+2. The runner loads config from the database and calls `BuildFullAgent` to
+   assemble the agent with its provider, MCP tools, sandbox, guardrails,
+   memories, and hooks, then calls the SDK's `agents.Run()` to execute.
+3. Streaming events are published to the hub, which fans them out to every
+   subscriber (WebSocket connections and SSE streams) and buffers them for replay
+   so a reconnecting client can resume from a sequence number.
+4. If a tool requires approval, the run pauses and the pending approval is
+   persisted; it resumes on `approve`/`reject` (over either transport) and
+   survives a server restart.
+5. History is persisted per turn as the run progresses — a cancelled or failed
+   run keeps every completed turn — and the session title is generated in
+   parallel with the first run rather than after it.

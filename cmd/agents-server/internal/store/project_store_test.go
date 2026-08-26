@@ -7,7 +7,7 @@ import (
 )
 
 // Create runs behind a lock on the sandbox row: a missing target refuses the
-// insert instead of leaving a project row that points at nothing (spec §5.28).
+// insert instead of leaving a project row that points at nothing (decisions §5.28).
 func TestProjectCreateRequiresSandbox(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)

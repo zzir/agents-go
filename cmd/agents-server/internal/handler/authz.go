@@ -199,7 +199,7 @@ func (d AuthzDeps) triggerGate() gin.HandlerFunc {
 	}
 }
 
-// The scoped-configuration gates (spec §5.29).
+// The scoped-configuration gates (decisions §5.29).
 
 // stampCreateScope applies the caller to a new scoped row: an explicit
 // global claim needs the admin role, anything else lands private and owned.
@@ -300,7 +300,7 @@ func setOwnerPlain[T any](c *gin.Context, s *store.CrudStore[T]) {
 // ownershipGuard folds the authorization check INTO the write transaction:
 // the returned hook runs against the LOCKED row, so a transfer or scope flip
 // that landed since editableRow ran turns the write into a 409 instead of an
-// edit by somebody who may no longer make it (spec §5.29). next is the
+// edit by somebody who may no longer make it (decisions §5.29). next is the
 // entity's own prepare hook, run after the check.
 func ownershipGuard[T any](scope, owner string, scopeOf func(*T) (string, string), next func(*T) error) func(*T) error {
 	return func(prev *T) error {

@@ -7,7 +7,7 @@ import (
 
 // Own-over-global resolves to the caller's PRIVATE row. Owning the global one
 // is not shadowing: the author published it, so their private row of the same
-// name still wins for them (spec §5.29).
+// name still wins for them (decisions §5.29).
 func TestGetByNameForPrefersOwnPrivateOverOwnGlobal(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
@@ -38,7 +38,7 @@ func TestGetByNameForPrefersOwnPrivateOverOwnGlobal(t *testing.T) {
 
 // The unique name indexes key on the repo LABEL, not the raw source URL: two
 // sources that reduce to one label would otherwise both answer to one
-// model-facing name and make read_skill a coin flip (spec §5.31).
+// model-facing name and make read_skill a coin flip (decisions §5.31).
 func TestSkillNameUniquePerRepoLabel(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
