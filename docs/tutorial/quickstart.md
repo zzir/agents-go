@@ -9,6 +9,19 @@ go get github.com/zzir/agents-go
 export OPENAI_API_KEY=sk-...
 ```
 
+Anything with a heavy dependency lives in its own module, so the core stays
+dependency-light
+([why, module by module](../explanation/architecture.md#module-boundaries)).
+Add only what you use:
+
+```bash
+go get github.com/zzir/agents-go/mcp              # optional: MCP client
+go get github.com/zzir/agents-go/models/anthropic # optional: Anthropic backend
+go get github.com/zzir/agents-go/sandbox/docker   # optional: Docker sandbox
+go get github.com/zzir/agents-go/sessions         # optional: SQLite/Postgres
+go get github.com/zzir/agents-go/skills           # optional: Agent Skills
+```
+
 ## Create your first agent
 
 An agent is a plain struct: instructions, a name, and optional configuration such as tools or a structured output type.

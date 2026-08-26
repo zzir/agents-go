@@ -3,6 +3,13 @@
 Taking `agents-server` beyond `go run`. Start at
 [Running the workbench](../tutorial/workbench.md) if you have not got it up yet.
 
+### Requirements
+
+A Docker daemon — this machine's, or a remote one over SSH or TCP — is the
+server's one external dependency, and only sandboxes need it; the server
+shells out to no binary. Which daemon a sandbox uses is its `config.host`, in
+[Sandboxes](../reference/protocol.md#sandboxes--apiv1sandboxes).
+
 ### Deployment
 
 Standing alone on localhost, no flags are needed. Behind a TLS-terminating

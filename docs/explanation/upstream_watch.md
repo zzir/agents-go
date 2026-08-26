@@ -17,7 +17,7 @@ After each upstream **minor** release:
    - **ported** — implemented here; link the PR
    - **adapted** — implemented differently; say how and why
    - **declined** — not doing it; say why (if it is a permanent non-goal, also
-     add it to [spec.md §1.2 or §3](../reference/spec.md))
+     add it to [scope §1.2 or §3](scope.md))
    - **deferred** — worth doing, nobody has needed it yet
 3. Anything that becomes a design invariant goes into `spec.md` in the same change.
 

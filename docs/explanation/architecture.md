@@ -198,9 +198,12 @@ most do not enable.
 
 ## Where behavior is decided
 
-- **[spec.md](../reference/spec.md)** — the invariants, each with the reason it is what it
-  is. When something is not covered there, the rule is: decide, implement, and
-  add the invariant in the same change.
+- **[spec.md](../reference/spec.md)** — the invariants: what is always true.
+  When something is not covered there, the rule is: decide, implement, and add
+  the invariant in the same change.
+- **[decisions.md](decisions.md)** — why each one went the way it did. Read the
+  reason before reopening a decision.
+- **[scope.md](scope.md)** — what the project deliberately does not do.
 - **[upstream_watch.md](upstream_watch.md)** — what has been reviewed from the
   Python SDK, and what was declined. There is no obligation to match it.
 

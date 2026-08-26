@@ -8,7 +8,7 @@ SDK: behavior is specified in [spec.md](../reference/spec.md) and the two evolve
 This page is a **migration guide for people arriving from the Python SDK**, not a
 parity report. It maps the concepts, then lists the differences you will notice.
 For what this SDK deliberately does not provide (and why), read
-[spec.md §1.2 and §3](../reference/spec.md); for upstream changes we have reviewed, see
+[scope §1.2 and §3](scope.md); for upstream changes we have reviewed, see
 [upstream_watch.md](upstream_watch.md).
 
 > The comparison below was written against Python SDK **v0.18.2**, the last
@@ -103,7 +103,7 @@ For what this SDK deliberately does not provide (and why), read
 ## In Python, not here
 
 Two kinds of entry are mixed below: **deliberate non-goals** (recorded in
-[spec.md §1.2 / §3](../reference/spec.md) — they will not appear) and **things nobody has
+[scope §1.2 / §3](scope.md) — they will not appear) and **things nobody has
 needed yet** (open to contribution). Each entry says which it is.
 
 - *(non-goal)* **Hosted OpenAI tools**: web search, file search, code interpreter, computer use, image generation, `local_shell`, `apply_patch` — deliberately not modeled; tools are provider-agnostic function tools, and a non-standard `tool_choice` is sent as a function name. (For file editing, Go provides `apply_patch` as a **sandbox-backed** function tool — Codex-style patches applied through the `Sandbox` abstraction, not the hosted OpenAI `apply_patch`; [tools](../howto/tools.md))

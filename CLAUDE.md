@@ -7,7 +7,7 @@ Go agents, local first: the Go-native agent workbench you run yourself
 and workflows in a sandbox behind tool approvals, debug with traces, replay and
 fork, solo or as a team — built on a Go SDK for the OpenAI Responses API (the
 root module) that also embeds on its own. One dependency edge: the workbench
-depends on the SDK, the SDK knows nothing of the workbench (spec §1.2).
+depends on the SDK, the SDK knows nothing of the workbench (scope §1.2).
 The SDK began as a port of
 [openai-agents-python](https://github.com/openai/openai-agents-python) and shares
 its core concepts (agents, handoffs, guardrails, sessions), but **evolves
@@ -222,7 +222,9 @@ non-goals, §3 capabilities not provided). The two that come up most:
   earns its keep only when something else implements it (`Model`, `Storage`,
   `Compactor` all clear this bar; a one-impl interface usually does not).
 - **The recorded decisions are deliberate.** Before "simplifying" anything in
-  [spec.md §1.2/§3/§5](docs/reference/spec.md), assume it was decided on purpose and read
+  [scope](docs/explanation/scope.md) or
+  [decisions](docs/explanation/decisions.md), assume it was decided on purpose
+  and read
   the reason. Independent evolution is fine; silent reversal of a recorded
   decision is not.
 
@@ -232,11 +234,13 @@ Comment bloat is a recurring regression here — the altitude rule is strict.
 
 - **A comment says WHAT the code does and the one gotcha a reader can't infer.**
   One or two lines. That is the ceiling for internal functions and struct fields.
-- **Rationale lives in the spec, not the code.** "Why it's built this way,"
-  trade-offs, and invariant proofs go in [spec.md](docs/reference/spec.md). When a subtle
-  invariant needs a signpost, write a single line — `// … — see spec §2.7f` —
-  never a restatement of the spec paragraph. The spec is the one authority; a
-  copy in a comment is a second one that drifts.
+- **Rationale lives in the docs, not the code.** Invariant proofs go in
+  [spec.md](docs/reference/spec.md); "why it's built this way" and the
+  trade-offs go in [decisions.md](docs/explanation/decisions.md). When a subtle
+  invariant needs a signpost, write a single line — `// … — see spec §2.7f`, or
+  `// … — see decisions §5.29` — never a restatement of the paragraph. Those
+  files are the one authority; a copy in a comment is a second one that
+  drifts.
 - **No historical narrative.** "used to…", "the old API…", "this was a bug
   because…" is git/PR history — delete it. The reader sees only the code that
   exists now.

@@ -30,8 +30,8 @@ your data, embeddable SDK. Solo or as a team.
    [Releases](https://github.com/zzir/agents-go/releases) and extract it — the
    `agents-server` binary is at the top level. (On macOS, Gatekeeper refuses
    the unsigned binary; `xattr -d com.apple.quarantine ./agents-server`
-   clears it.) Or build from source: see the manual's
-   [Quick start](docs/tutorial/workbench.md).
+   clears it.) Or build from source:
+   [Running the workbench](docs/tutorial/workbench.md).
 
 2. **Run it.**
 
@@ -45,7 +45,7 @@ your data, embeddable SDK. Solo or as a team.
    in `data.db` in the directory you ran it from (`--db`; a `postgres://` DSN
    uses PostgreSQL instead); with a local daemon, project trees live under
    `--workspace` (default `.`). All flags:
-   [manual](docs/tutorial/workbench.md#flags).
+   [Running the workbench](docs/tutorial/workbench.md#flags).
 
 3. **Add a provider, create an agent, chat.** Settings → Providers: an OpenAI
    or Anthropic API key, or sign in with ChatGPT. Settings → Agents: name,
@@ -57,7 +57,8 @@ your data, embeddable SDK. Solo or as a team.
   file by default, or your own PostgreSQL — hold the agents, sessions,
   traces, approvals and tasks. The one external dependency is the
   Docker daemon that backs sandboxes — the server itself shells out to
-  nothing (details in the [server manual](cmd/agents-server/README.md)).
+  nothing (details in
+  [Deploying the workbench](docs/howto/workbench-deploy.md#requirements)).
 - **The transcript is the truth.** A session is an append-only tree: every
   turn is persisted as it completes, so a cancelled or failed run keeps what
   finished and a paused run survives a restart. Regenerate a turn, or fork
@@ -143,30 +144,33 @@ func main() {
 The [Quickstart](docs/tutorial/quickstart.md) continues from here — handoffs,
 guardrails, typed tools, structured output, streaming, approvals. By topic:
 
-- [Tools](docs/howto/tools.md) — typed function tools (the argument struct becomes
-  the JSON schema), agents-as-tools, multimodal output, per-tool approval
+- [Tools](docs/howto/tools.md) — typed function tools (the argument struct
+  becomes the JSON schema), agents-as-tools, multimodal output, per-tool
+  approval
 - [Handoffs](docs/howto/handoffs.md), [Guardrails](docs/howto/guardrails.md),
-  [Human-in-the-loop](docs/howto/human_in_the_loop.md) — a paused run serializes to
-  JSON and resumes in another process
+  [Human-in-the-loop](docs/howto/human_in_the_loop.md) — a paused run
+  serializes to JSON and resumes in another process
 - [Sessions](docs/howto/sessions.md) — append-only entries, branching, crash
-  recovery, [compaction](docs/howto/sessions.md#run-level-compaction); in-memory,
-  JSONL, SQLite/Postgres or OpenAI server-side
-- [Streaming](docs/howto/streaming.md) — a run is a range-able iterator; steer it or
-  queue follow-ups mid-run
+  recovery, [compaction](docs/howto/sessions.md#run-level-compaction);
+  in-memory, JSONL, SQLite/Postgres or OpenAI server-side
+- [Streaming](docs/howto/streaming.md) — a run is a range-able iterator; steer
+  it or queue follow-ups mid-run
 - [Models](docs/howto/models.md) — OpenAI Responses and Anthropic Messages
   providers; retry, fallback and routing decorators;
   [middleware](docs/howto/running_agents.md#middleware) around a whole run
-- [MCP](docs/howto/mcp.md), [Sandboxes](docs/howto/sandbox.md), [Skills](docs/howto/skills.md),
-  [Tracing](docs/howto/tracing.md), [Background tasks](docs/howto/tasks.md),
+- [MCP](docs/howto/mcp.md), [Sandboxes](docs/howto/sandbox.md),
+  [Skills](docs/howto/skills.md), [Tracing](docs/howto/tracing.md),
+  [Background tasks](docs/howto/tasks.md),
   [Testing](docs/howto/testing.md) — a scripted `Model` fake tests agents
   without a key
 
 The core is one small module; the heavier capabilities are opt-in submodules
-([packages](docs/explanation/architecture.md#packages)). Arriving from the OpenAI Agents SDK?
-Start at [Coming from Python?](docs/explanation/migration_from_python.md).
+([packages](docs/explanation/architecture.md#packages)). Arriving from the
+OpenAI Agents SDK? Start at
+[Coming from Python?](docs/explanation/migration_from_python.md).
 
 The SDK stands alone — it never depends on or reports to the workbench
-([spec §1.2](docs/explanation/scope.md#12-non-goals)).
+([scope §1.2](docs/explanation/scope.md#12-non-goals)).
 
 Nearly every SDK capability has a runnable example under
 [examples/](examples/):
@@ -176,6 +180,8 @@ export OPENAI_API_KEY=sk-...
 go run ./examples/hello      # minimal agent
 go run ./examples/handoffs   # triage agent → specialists
 go run ./examples/hitl       # pause, approve, resume
+
+go test ./examples/testing   # scripted model — no API key needed
 ```
 
 ## License

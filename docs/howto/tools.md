@@ -15,7 +15,7 @@ interpreter, computer use) are **not modeled, and will not be** — a hosted too
 binds the agent to one backend. Where the capability matters, the SDK gives you
 a local equivalent you own: `apply_patch` and shell access run through the
 [Sandbox](sandbox.md) abstraction rather than a provider's. See
-[spec.md §1.2](../explanation/scope.md#12-non-goals) for the decision and
+[scope §1.2](../explanation/scope.md#12-non-goals) for the decision and
 [Differences from Python](../explanation/migration_from_python.md) for the full list.
 
 ## Function tools
@@ -306,7 +306,7 @@ t := &agents.Tool{
 ## Web search
 
 There is no built-in web-search tool: the SDK deliberately does not model
-provider-hosted search (spec §3), and the workbench's answer is an MCP server
+provider-hosted search (scope §3), and the workbench's answer is an MCP server
 the operator (or a member) configures ([decisions §5.30](../explanation/decisions.md)). In your own
 embedding, a search tool is an ordinary `NewTool` function that calls
 whichever API you use.
