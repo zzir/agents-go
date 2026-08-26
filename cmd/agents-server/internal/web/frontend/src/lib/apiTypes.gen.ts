@@ -2546,7 +2546,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["store.Project"];
+                        "application/json": components["schemas"]["handler.projectDetail"];
                     };
                 };
                 /** @description Bad Request */
