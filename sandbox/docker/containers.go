@@ -2,10 +2,12 @@ package docker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/client"
 )
 
@@ -104,6 +106,11 @@ func RemoveManaged(ctx context.Context, opts Options, name string) error {
 	})
 }
 
+// ErrContainerNotFound reports a managed-container call naming a container
+// that is not there. A caller removing one to replace it has already got what
+// it asked for and continues; a caller acting on a listing reports it.
+var ErrContainerNotFound = errors.New("container not found")
+
 // withManaged verifies ownership (the fingerprint label) before act runs —
 // these entry points take a NAME, and must never act on a foreign container
 // that happens to hold it. act receives the inspected container's ID, never
@@ -117,6 +124,9 @@ func withManaged(ctx context.Context, opts Options, name string, act func(cli *c
 	defer done()
 	info, err := cli.ContainerInspect(ctx, name, client.ContainerInspectOptions{})
 	if err != nil {
+		if cerrdefs.IsNotFound(err) {
+			return fmt.Errorf("docker sandbox: %s: %w", name, ErrContainerNotFound)
+		}
 		return fmt.Errorf("docker sandbox: %w", err)
 	}
 	c := info.Container
