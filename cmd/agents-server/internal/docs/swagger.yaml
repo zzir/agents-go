@@ -892,8 +892,58 @@ components:
           additionalProperties: {}
           type: object
       type: object
+    handler.projectDetail:
+      properties:
+        created_at:
+          type: string
+        env:
+          items:
+            $ref: '#/components/schemas/store.EnvVar'
+          type: array
+          uniqueItems: false
+        id:
+          type: string
+        name:
+          description: |-
+            Name is display only — the storage is keyed by ID, so a rename moves
+            nothing. Unique per (owner, sandbox) via idx_projects_owner_sandbox_name.
+          type: string
+        owner_id:
+          type: string
+        revision:
+          description: |-
+            Revision and RuntimeGen are the two counters SandboxConfig carries, for
+            the same two jobs: the expected-revision CAS every update lands
+            against, and the content generation that retires live containers — so
+            a rename (or a Hidden toggle) does not replace anyone's container.
+          type: integer
+        sandbox_id:
+          type: string
+        session_count:
+          description: |-
+            SessionCount is how many sessions bind this project — filled by List
+            (scanonly), so a delete knows whether it will be refused.
+          type: integer
+        storage_hint:
+          description: |-
+            StorageHint names where the files live — the local daemon's host
+            directory or the remote daemon's volume. Derived per response by the
+            handler for admins only, never stored: deleting the row keeps the
+            storage (decisions §5.28), so the UI can say where.
+          type: string
+        updated_at:
+          type: string
+      type: object
     handler.projectReq:
       properties:
+        env:
+          description: |-
+            Env is the environment the project's container is created with;
+            optional, and empty means none.
+          items:
+            $ref: '#/components/schemas/store.EnvVar'
+          type: array
+          uniqueItems: false
         name:
           type: string
         sandbox_id:
@@ -901,6 +951,20 @@ components:
       required:
       - name
       - sandbox_id
+      type: object
+    handler.projectUpdateReq:
+      properties:
+        env:
+          items:
+            $ref: '#/components/schemas/store.EnvVar'
+          type: array
+          uniqueItems: false
+        name:
+          type: string
+        revision:
+          type: integer
+      required:
+      - name
       type: object
     handler.providerReq:
       properties:
@@ -1538,6 +1602,15 @@ components:
         usage:
           $ref: '#/components/schemas/agents.RequestUsage'
       type: object
+    store.EnvVar:
+      properties:
+        hidden:
+          type: boolean
+        key:
+          type: string
+        value:
+          type: string
+      type: object
     store.Guardrail:
       properties:
         blocking:
@@ -1616,6 +1689,13 @@ components:
           type: string
         owner_id:
           type: string
+        revision:
+          description: |-
+            Revision and RuntimeGen are the two counters SandboxConfig carries, for
+            the same two jobs: the expected-revision CAS every update lands
+            against, and the content generation that retires live containers — so
+            a rename (or a Hidden toggle) does not replace anyone's container.
+          type: integer
         sandbox_id:
           type: string
         session_count:
@@ -3821,6 +3901,151 @@ paths:
       security:
       - BearerAuth: []
       summary: Delete project
+      tags:
+      - projects
+    get:
+      description: The one endpoint that returns a project's environment; listings
+        never do. Owner only — an environment is not part of an admin's management
+        reach.
+      parameters:
+      - description: Project id
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.projectDetail'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+      security:
+      - BearerAuth: []
+      summary: Get project
+      tags:
+      - projects
+    put:
+      description: A hidden value may be sent back as its mask to keep it. An environment
+        change replaces the project's container at its next run and severs its terminals;
+        a rename does neither.
+      parameters:
+      - description: Project id
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.projectUpdateReq'
+                description: Name and environment
+                summary: project
+        description: Name and environment
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.projectDetail'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: name already in use, or the project changed concurrently —
+            re-read and retry
+      security:
+      - BearerAuth: []
+      summary: Update project
+      tags:
+      - projects
+  /projects/{id}/container/prepare:
+    post:
+      description: Creates the container up front — the first run otherwise waits
+        for it (an image pull included) inside its first tool call. Synchronous.
+      parameters:
+      - description: Project id
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: ready
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Gateway
+      security:
+      - BearerAuth: []
+      summary: Prepare container
+      tags:
+      - projects
+  /projects/{id}/container/rebuild:
+    post:
+      description: Discards the container and creates a fresh one from the current
+        image and environment. Files under /workspace survive; anything installed
+        into the container does not, and commands running in it fail. Synchronous.
+      parameters:
+      - description: Project id
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: rebuilt
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Gateway
+      security:
+      - BearerAuth: []
+      summary: Rebuild container
       tags:
       - projects
   /provider-types:

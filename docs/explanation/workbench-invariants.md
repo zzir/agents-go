@@ -329,7 +329,10 @@ When a change genuinely doesn't fit, update this list in the same PR.
     folds the whole session on every call: a known cost, deliberately left,
     because a person pays it once per page while a run paid it once per turn.
 27. **A session's `(sandbox_id, project_id)` binding is immutable and
-    server-authoritative.** The first sandbox-carrying run binds it
+    server-authoritative** — which tree it uses, not how that tree's
+    container is configured: a project's environment is CONTENT and stays
+    editable while sessions are bound, reaching them at their next run
+    ([decisions §5.32](decisions.md)). The first sandbox-carrying run binds it
     (`BindSandboxIfEmpty`) and nothing changes it afterwards: there is no
     unbind, no rebind, and no PATCH. From then on `startRunWithID` overrides
     whatever the client sends with the bound values; the top bar shows the

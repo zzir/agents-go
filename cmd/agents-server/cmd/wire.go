@@ -206,7 +206,7 @@ func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL, w
 			Triggers:   handler.NewTriggerHandler(st.Triggers, st.Sessions, st.Workflows, st.AgentConfigs, svc.Scheduler),
 			Guardrails: handler.NewGuardrailHandler(st.Guardrails, svc.Guardrails),
 			Sandboxes:  handler.NewSandboxHandler(st.Sandboxes, svc.Sandboxes, terminal),
-			Projects:   handler.NewProjectHandler(st.Projects, st.Sandboxes, svc.Sandboxes),
+			Projects:   handler.NewProjectHandler(st.Projects, st.Sandboxes, svc.Sandboxes, terminal),
 			Traces:     handler.NewTraceHandler(st.Traces),
 			Playground: handler.NewPlaygroundHandler(svc.Deps),
 			ChatGPT:    handler.NewChatGPTOAuthHandler(svc.ChatGPT, st.Providers),

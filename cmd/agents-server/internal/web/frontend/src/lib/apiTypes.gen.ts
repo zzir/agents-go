@@ -2582,8 +2582,101 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
-        put?: never;
+        /**
+         * Get project
+         * @description The one endpoint that returns a project's environment; listings never do. Owner only — an environment is not part of an admin's management reach.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Project id */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.projectDetail"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        /**
+         * Update project
+         * @description A hidden value may be sent back as its mask to keep it. An environment change replaces the project's container at its next run and severs its terminals; a rename does neither.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Project id */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            /** @description Name and environment */
+            requestBody: {
+                content: {
+                    "application/json": Record<string, never> | components["schemas"]["handler.projectUpdateReq"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.projectDetail"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description name already in use, or the project changed concurrently — re-read and retry */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
         post?: never;
         /**
          * Delete project
@@ -2628,6 +2721,122 @@ export interface paths {
                 };
             };
         };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{id}/container/prepare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Prepare container
+         * @description Creates the container up front — the first run otherwise waits for it (an image pull included) inside its first tool call. Synchronous.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Project id */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description ready */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description Bad Gateway */
+                502: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{id}/container/rebuild": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rebuild container
+         * @description Discards the container and creates a fresh one from the current image and environment. Files under /workspace survive; anything installed into the container does not, and commands running in it fail. Synchronous.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Project id */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description rebuilt */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description Bad Gateway */
+                502: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -7177,9 +7386,51 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        "handler.projectDetail": {
+            created_at?: string;
+            env?: components["schemas"]["store.EnvVar"][];
+            id?: string;
+            /**
+             * @description Name is display only — the storage is keyed by ID, so a rename moves
+             *     nothing. Unique per (owner, sandbox) via idx_projects_owner_sandbox_name.
+             */
+            name?: string;
+            owner_id?: string;
+            /**
+             * @description Revision and RuntimeGen are the two counters SandboxConfig carries, for
+             *     the same two jobs: the expected-revision CAS every update lands
+             *     against, and the content generation that retires live containers — so
+             *     a rename (or a Hidden toggle) does not replace anyone's container.
+             */
+            revision?: number;
+            sandbox_id?: string;
+            /**
+             * @description SessionCount is how many sessions bind this project — filled by List
+             *     (scanonly), so a delete knows whether it will be refused.
+             */
+            session_count?: number;
+            /**
+             * @description StorageHint names where the files live — the local daemon's host
+             *     directory or the remote daemon's volume. Derived per response by the
+             *     handler for admins only, never stored: deleting the row keeps the
+             *     storage (decisions §5.28), so the UI can say where.
+             */
+            storage_hint?: string;
+            updated_at?: string;
+        };
         "handler.projectReq": {
+            /**
+             * @description Env is the environment the project's container is created with;
+             *     optional, and empty means none.
+             */
+            env?: components["schemas"]["store.EnvVar"][];
             name: string;
             sandbox_id: string;
+        };
+        "handler.projectUpdateReq": {
+            env?: components["schemas"]["store.EnvVar"][];
+            name: string;
+            revision?: number;
         };
         "handler.providerReq": {
             /** @description APIKey is write-only: the ******** mask keeps the stored key. */
@@ -7561,6 +7812,11 @@ export interface components {
             run_id?: string;
             usage?: components["schemas"]["agents.RequestUsage"];
         };
+        "store.EnvVar": {
+            hidden?: boolean;
+            key?: string;
+            value?: string;
+        };
         "store.Guardrail": {
             /**
              * @description Blocking, at the input stage, runs the guardrail to completion BEFORE the
@@ -7611,6 +7867,13 @@ export interface components {
              */
             name?: string;
             owner_id?: string;
+            /**
+             * @description Revision and RuntimeGen are the two counters SandboxConfig carries, for
+             *     the same two jobs: the expected-revision CAS every update lands
+             *     against, and the content generation that retires live containers — so
+             *     a rename (or a Hidden toggle) does not replace anyone's container.
+             */
+            revision?: number;
             sandbox_id?: string;
             /**
              * @description SessionCount is how many sessions bind this project — filled by List

@@ -11,6 +11,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
@@ -34,7 +35,8 @@ func TestProjectAdminSurface(t *testing.T) {
 	db := testdb.New(t)
 	projects := store.NewProjectStore(db)
 	sbStore := store.NewSandboxStore(db)
-	h := NewProjectHandler(projects, sbStore, sandboxes.NewManager(t.TempDir()))
+	mgr := sandboxes.NewManager(t.TempDir())
+	h := NewProjectHandler(projects, sbStore, mgr, NewTerminalHandler(sbStore, projects, mgr, settings.NewReader(nil)))
 
 	sb := &store.SandboxConfig{ID: store.NewID(), Name: "sb", Type: "docker", Config: []byte(`{"image":"i"}`)}
 	if err := sbStore.Create(ctx, sb); err != nil {

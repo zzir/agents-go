@@ -868,6 +868,29 @@ An unreferenced container is **idle-stopped** — configurable via
 `sandbox_idle_minutes` — with no run or terminal using it: stopped, not
 removed, so installed packages survive and the next run starts it again.
 
+A project carries the **environment** its container is created with, so
+`exec_command`, a persistent shell and a terminal all read the same values.
+Every value is sealed at rest; the per-entry `hidden` flag decides only
+whether the API masks it ([decisions §5.32](../explanation/decisions.md)),
+and a masked value sent back unchanged keeps what is stored — under the same
+name, never a new one. `GET /projects/{id}` is the ONE endpoint that returns
+an environment, and only to the project's owner: listings never carry it, and
+an admin's management reach does not extend to reading one.
+
+Changing an environment replaces the container **at the project's next run**
+(the runtime generation moves, exactly as a sandbox config edit does) and
+severs that project's terminals — its siblings on the same sandbox are
+untouched. Files under `/workspace` survive; anything installed into the
+container does not. A rename, or a `hidden` toggle that leaves the variables
+themselves alone, changes neither. Updates are compare-and-set: send the
+`revision` the edit was made against and a concurrent write answers 409.
+
+`POST /projects/{id}/container/prepare` creates the container up front —
+containers are built lazily on first use, so without it the first run waits
+for an image pull inside its first tool call. `POST .../container/rebuild`
+discards the container and creates a fresh one; commands running in the old
+one fail. Both are synchronous and owner-only.
+
 *(Endpoints and payload schemas: see the OpenAPI spec — `/openapi.yaml`, browsable at `/docs`.)*
 
 ### Playground — `/api/v1/playground`
