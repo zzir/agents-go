@@ -48,60 +48,50 @@ your data, embeddable SDK. Solo or as a team.
    [Running the workbench](docs/tutorial/workbench.md#flags).
 
 3. **Add a provider, create an agent, chat.** Settings → Providers: an OpenAI
-   or Anthropic API key, or sign in with ChatGPT. Settings → Agents: name,
-   model, instructions, tools. New Chat.
+   or Anthropic API key, a ChatGPT sign-in, or any Responses-compatible
+   endpoint by base URL. Settings → Agents: name, model, instructions, tools.
+   New Chat.
 
 ## What you get
 
-- **Zero infrastructure.** One process and one database — a single SQLite
-  file by default, or your own PostgreSQL — hold the agents, sessions,
-  traces, approvals and tasks. The one external dependency is the
-  Docker daemon that backs sandboxes — the server itself shells out to
-  nothing (details in
-  [Deploying the workbench](docs/howto/workbench-deploy.md#requirements)).
-- **The transcript is the truth.** A session is an append-only tree: every
-  turn is persisted as it completes, so a cancelled or failed run keeps what
-  finished and a paused run survives a restart. Regenerate a turn, or fork
-  any turn into a new session; branches stay visible and switchable.
-- **Context lens.** What the model actually receives — instructions, global
-  system prompt, memories, skills index, tools by source, conversation — with
-  the token cost of each, how much of the window is in use, cache hits,
-  growth per call, and how far to the next auto-compaction. Compact on demand.
-- **Traces without a backend.** Agent / generation / tool / sandbox / handoff /
-  guardrail / compaction spans with tokens and latency, in a panel beside the
-  conversation. No collector to run.
+Built for one person or a small team running their own agents, and for Go
+developers who want the same machinery in their own programs.
+
+- **Zero infrastructure.** One process, one database — SQLite by default, your
+  own PostgreSQL if you prefer. Sandboxes need a Docker daemon; the server
+  itself shells out to nothing.
+- **The transcript is the truth.** A session is an append-only tree: every turn
+  is persisted as it completes, so a cancelled run keeps what finished and a
+  paused one survives a restart. Regenerate or fork any turn; the abandoned
+  branch stays switchable.
+- **Traces and a context lens, no backend.** What actually goes into the
+  context window and what each part costs, plus agent, tool, sandbox and
+  guardrail spans with tokens and latency, in a panel beside the conversation.
+  Nothing to collect, nothing to run.
 - **Replay any generation.** Re-run a traced model call with a different
-  prompt, model, settings or tools — streaming, with a diff against the
-  original and the attempts kept side by side. No session is touched.
-- **Real sandboxes behind an approval gate.** Docker containers — on this
-  machine, or a remote daemon (SSH or TCP); the model
-  reads and edits files (`apply_patch`) and runs commands; approve a command
-  once, trust that command, or trust the session; interactive terminals into a
-  container, in the browser.
-- **Background tasks, workflows, triggers.** `spawn_task` sub-agents that
-  outlive the turn and wake the parent when done (a failed one resumes where it
-  stopped); fixed step sequences as workflows, started by the model, by hand,
-  by cron, or by a signed webhook — and, for an agent you opt in, authored
-  from the chat, each save reviewed and approved in the conversation.
-- **The configuration surface.** MCP servers (streamable HTTP, with OAuth),
-  Agent Skills, sandboxes, projects, memories, guardrails.
-- **Providers.** OpenAI Responses API (API key or ChatGPT sign-in), Anthropic
-  Messages API, or any Responses-compatible endpoint by base URL.
-- **A team, when you need one.** `--auth oauth` replaces the single token with
-  Google sign-in and an allowlist: each person's sessions are their own,
-  agents, providers, MCP servers, skills and workflows are per person with
-  admin-published global rows, host configuration is admin-written, every
-  change lands in an audit log, personal access tokens serve scripts, and
-  stored credentials are sealed at rest with a key only the process holds.
-  Details: [Authentication](docs/howto/workbench-auth.md).
+  prompt, model, settings or tools, streamed, diffed against the original.
+  No session is touched.
+- **Real sandboxes behind an approval gate.** Docker containers, local or
+  remote. The model reads files, edits them with `apply_patch`, runs commands.
+  Approve a command once, trust that command, or trust the session; open a
+  terminal into the container from the browser.
+- **Work that outlives the turn.** `spawn_task` sub-agents that wake the parent
+  when they finish and resume in place when they fail; workflows as fixed step
+  sequences, started by the model, by hand, by cron or by a signed webhook.
+- **The rest of the surface.** MCP servers over streamable HTTP with OAuth,
+  Agent Skills, projects, memories, guardrails.
+- **Solo, or a team.** `--auth oauth` swaps the single token for Google sign-in
+  and an allowlist: sessions and configuration are per person, an admin
+  publishes what everyone shares, and credentials are sealed at rest
+  ([details](docs/howto/workbench-auth.md)).
 
 Together these close the debug loop: see what the model saw, change it,
 re-run — one call, one turn, or a fork — and diff the results.
 
-## Built on agents-go, a Go SDK you can embed
+## Embed it: the agents-go SDK
 
-The workbench is a Go program on top of the `agents` package. Anything it does
-you can do from your own code:
+The workbench is a Go program on top of the `agents` package. Anything it does,
+your own program can do:
 
 ```bash
 go get github.com/zzir/agents-go
@@ -142,27 +132,22 @@ func main() {
 ```
 
 The [Quickstart](docs/tutorial/quickstart.md) continues from here — handoffs,
-guardrails, typed tools, structured output, streaming, approvals. By topic:
+guardrails, typed tools, structured output, streaming, approvals. A few things
+worth knowing it does:
 
-- [Tools](docs/howto/tools.md) — typed function tools (the argument struct
-  becomes the JSON schema), agents-as-tools, multimodal output, per-tool
-  approval
-- [Handoffs](docs/howto/handoffs.md), [Guardrails](docs/howto/guardrails.md),
-  [Human-in-the-loop](docs/howto/human_in_the_loop.md) — a paused run
-  serializes to JSON and resumes in another process
-- [Sessions](docs/howto/sessions.md) — append-only entries, branching, crash
-  recovery, [compaction](docs/howto/sessions.md#run-level-compaction);
-  in-memory, JSONL, SQLite/Postgres or OpenAI server-side
-- [Streaming](docs/howto/streaming.md) — a run is a range-able iterator; steer
-  it or queue follow-ups mid-run
-- [Models](docs/howto/models.md) — OpenAI Responses and Anthropic Messages
-  providers; retry, fallback and routing decorators;
-  [middleware](docs/howto/running_agents.md#middleware) around a whole run
-- [MCP](docs/howto/mcp.md), [Sandboxes](docs/howto/sandbox.md),
-  [Skills](docs/howto/skills.md), [Tracing](docs/howto/tracing.md),
-  [Background tasks](docs/howto/tasks.md),
-  [Testing](docs/howto/testing.md) — a scripted `Model` fake tests agents
-  without a key
+- An argument struct becomes a tool's JSON schema; an agent becomes a tool
+  ([Tools](docs/howto/tools.md))
+- A paused run serializes to JSON and resumes in another process
+  ([Human-in-the-loop](docs/howto/human_in_the_loop.md))
+- A run is a range-able iterator you can steer mid-flight
+  ([Streaming](docs/howto/streaming.md))
+- Session history persists to memory, JSONL, SQLite/Postgres, or the model
+  provider's own store ([Sessions](docs/howto/sessions.md))
+- A scripted `Model` tests your agents with no API key
+  ([Testing](docs/howto/testing.md))
+
+The [full map](docs/) covers the rest: MCP, sandboxes, skills, tracing,
+background tasks, model retry/fallback/routing, and run middleware.
 
 The core is one small module; the heavier capabilities are opt-in submodules
 ([packages](docs/explanation/architecture.md#packages)). Arriving from the
