@@ -297,12 +297,6 @@ func (h *TerminalHandler) unregister(sandboxID string, lt *liveTerminal) {
 	}
 }
 
-// CloseSandboxTerminals tears down every live terminal for a sandbox config
-// that opened under a generation below minGen, and moves the registration
-// fence there so a terminal still dialing is refused at register (see the
-// fence field). A config update passes the new runtime generation; a delete
-// passes math.MaxInt64: nothing may serve a config that is gone. Sandbox
-// Update/Delete call it alongside SandboxManager.Retire/Remove.
 // CloseProjectTerminals severs the terminals a project opened before minGen
 // and fences that generation off — its environment changed, and a shell that
 // keeps reading the old one is a person debugging against what the agent no
@@ -329,6 +323,12 @@ func (h *TerminalHandler) CloseProjectTerminals(projectID string, minGen int64) 
 	}
 }
 
+// CloseSandboxTerminals tears down every live terminal for a sandbox config
+// that opened under a generation below minGen, and moves the registration
+// fence there so a terminal still dialing is refused at register (see the
+// fence field). A config update passes the new runtime generation; a delete
+// passes math.MaxInt64: nothing may serve a config that is gone. Sandbox
+// Update/Delete call it alongside SandboxManager.Retire/Remove.
 func (h *TerminalHandler) CloseSandboxTerminals(sandboxID string, minGen int64) {
 	h.mu.Lock()
 	if h.fence[sandboxID] < minGen {
