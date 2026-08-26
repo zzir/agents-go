@@ -19,9 +19,9 @@ const SLASH_PREFIX = /^\/(\S*)$/;
 export interface SlashCommand {
   id: string;
   // What the composer holds once picked — the command and a trailing space,
-  // ready for what follows.
+  // ready for what follows. Trimmed, it is the row's label too — the offer
+  // shows what picking it types.
   insert: string;
-  title: string;
   description: string;
   icon: Icon;
   // What the typed prefix is matched against ("plan", "workflow build").
@@ -44,15 +44,15 @@ export function useSlashCommands(): SlashCommand[] {
   return useMemo<SlashCommand[]>(() => [
     {
       id: 'plan', insert: '/plan ', match: 'plan', icon: ChecklistIcon,
-      title: 'Plan', description: 'A plan before any change — this message runs in plan mode',
+      description: 'A plan before any change — this message runs in plan mode',
     },
     {
       id: 'plan-off', insert: '/plan off ', match: 'plan off', icon: ChecklistIcon,
-      title: 'Plan off', description: 'Leave plan mode — this message runs unrestrained',
+      description: 'Leave plan mode — this message runs unrestrained',
     },
     ...(workflows || []).map(w => ({
       id: 'workflow:' + w.id, insert: `/workflow ${w.name} `, match: 'workflow ' + w.name.toLowerCase(), icon: WorkflowIcon,
-      title: `Workflow ${w.name}`, description: w.description || 'Run this workflow here, with a brief',
+      description: w.description || 'Run this workflow here, with a brief',
     })),
   ], [workflows]);
 }
@@ -102,8 +102,8 @@ export function SlashCommandPopup({ open, commands, activeIndex, onPick }: {
           <ActionList.Item key={c.id} id={slashOptionID(i)} active={i === activeIndex} role="option" aria-selected={i === activeIndex}
             onSelect={() => onPick(c)} onMouseDown={e => e.preventDefault()}>
             <ActionList.LeadingVisual><c.icon size={16} /></ActionList.LeadingVisual>
-            {c.title}
-            <ActionList.Description variant="block">{c.description}</ActionList.Description>
+            <span className="slash-cmd">{c.insert.trim()}</span>
+            <ActionList.Description variant="inline" truncate>{c.description}</ActionList.Description>
           </ActionList.Item>
         ))}
       </ActionList>

@@ -497,12 +497,15 @@
 
 /* The slash commands: pinned above the box's left edge, capped and
    scrolling — the same place whether the box sits under a transcript or in
-   the middle of a greeting. */
+   the middle of a greeting. As wide as its rows need, up to the cap where
+   descriptions truncate. */
 .slash-popup {
   position: absolute;
   left: 0;
   bottom: calc(100% + 8px);
-  width: min(100%, 560px);
+  width: max-content;
+  min-width: min(240px, 100%);
+  max-width: min(100%, 560px);
   /* Short enough to fit above a greeting's mid-screen composer too. */
   max-height: min(320px, 34vh);
   overflow-y: auto;
@@ -512,6 +515,11 @@
   border-radius: var(--borderRadius-large);
   background: var(--overlay-bgColor);
   box-shadow: var(--shadow-floating-small);
+}
+/* The command never wraps — the description beside it is what gives, and
+   Primer's own no-shrink rule for a truncated description never fires. */
+.slash-popup .slash-cmd {
+  white-space: nowrap;
 }
 .chat-input-box:focus-within {
   border-color: var(--fgColor-accent);
