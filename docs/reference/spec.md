@@ -77,6 +77,7 @@ renumbered — which is why the letters run out of alphabetical order in places.
 | [§2.7k](#27k-persistent-shells) | Persistent shells | When `exec_command` may reuse a named shell |
 | [§2.7l](#27l-sandbox-tool-argument-decoding) | Sandbox tool argument decoding | `exec_command` decodes its own arguments, leniently |
 | [§2.7m](#27m-a-sandbox-reports-its-own-timeout-never-the-callers-ending) | A sandbox reports its own timeout, never the caller's ending | `TimedOut` means the sandbox killed it — never the caller's deadline |
+| [§2.7n](#27n-a-sandboxs-environment-is-part-of-its-container-identity) | A sandbox's environment is part of its container identity | `Options.Env` reaches every command; changing it replaces the container |
 | [§2.8](#28-nested-agent-as-tool-attribution) | Nested agent-as-tool attribution | How usage, spans and errors attribute across a nested agent-as-tool |
 | [§2.9](#29-budgets-) | Budgets 🚧 | `MaxTurns` is the one budget dimension implemented |
 | [§2.10](#210-errors-and-recovery) | Errors and recovery | Stable `ErrorCode`s, and which errors a run can recover from |
@@ -1454,6 +1455,24 @@ the caller set — is returned as that error, with no result.
 The two backends answer the same way, which is the point: a tool that reads
 `TimedOut` to tell the model "that command took too long" must not say it about
 a run the human just cancelled.
+
+### 2.7n A sandbox's environment is part of its container identity
+
+`Options.Env` (docker) sets variables on the CONTAINER, so `exec_command`, a
+persistent shell and a terminal opened into it all read the same values —
+a person debugging an environment problem sees what the agent sees.
+`ExecRequest.Env` overrides an entry for one call only.
+
+The environment therefore joins the adoption fingerprint: a persistent
+container created under a different one is **replaced**, not adopted, exactly
+as for the image or the resource limits ([decisions §5.19](../explanation/decisions.md)).
+Files under the mounted `/workspace` survive that replacement; anything
+installed into the container's own filesystem does not.
+
+**A sandbox with no environment set hashes as though the option did not
+exist.** An empty map and an absent one are the same container, and their
+fingerprint is frozen: changing it would make every already-running container
+read as stale and replace the entire fleet.
 
 ### 2.8 Nested agent-as-tool attribution
 

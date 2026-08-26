@@ -24,9 +24,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -85,6 +87,11 @@ func (s *Sandbox) configFingerprint() string {
 		s.opts.Image, s.opts.Runtime, user, s.opts.UserUnset, s.opts.Network,
 		filepath.Clean(s.opts.WorkDir), s.opts.VolumeName, s.tmpfsSize(),
 		s.opts.Limits.MemoryBytes, s.opts.Limits.CPUs, pids)
+	// Written only when set: an unconditional line would change every
+	// existing container's fingerprint and force a fleet-wide replace.
+	if env := envSlice(s.opts.Env); len(env) > 0 {
+		fmt.Fprintf(h, "env=%s\n", strings.Join(env, "\x00"))
+	}
 	return hex.EncodeToString(h.Sum(nil)[:16])
 }
 
@@ -112,6 +119,11 @@ type Options struct {
 	UserUnset bool
 	// Network, when true, leaves networking enabled. Default false (no network).
 	Network bool
+	// Env sets environment variables on the CONTAINER, so every command,
+	// shell and terminal in it sees them. An ExecRequest.Env entry of the
+	// same name wins for that one call. Part of the fingerprint: changing it
+	// replaces a persistent container rather than adopting the old one.
+	Env map[string]string
 	// Persistent, when true, keeps a single container alive across Exec calls
 	// instead of creating and destroying one per call.
 	Persistent bool
@@ -810,7 +822,7 @@ func (s *Sandbox) buildConfig(req sandbox.ExecRequest) (*container.Config, *cont
 		Image:      s.opts.Image,
 		Entrypoint: req.Cmd,
 		WorkingDir: s.containerWorkDir(),
-		Env:        envSlice(req.Env),
+		Env:        s.containerEnv(req.Env),
 		Tty:        false,
 	}
 	if !s.opts.UserUnset {
@@ -831,6 +843,7 @@ func (s *Sandbox) buildPersistentConfig() (*container.Config, *container.HostCon
 		Image:      s.opts.Image,
 		Entrypoint: []string{"sleep", "infinity"},
 		WorkingDir: s.containerWorkDir(),
+		Env:        envSlice(s.opts.Env),
 		Tty:        false,
 		// The ownership stamp adoptNamed verifies before taking over a
 		// same-named container (see fingerprintLabel).
@@ -950,6 +963,19 @@ func (s *Sandbox) Close() error {
 	return err
 }
 
+// containerEnv is the environment an EPHEMERAL container is created with:
+// the sandbox's own, overridden per entry by the request's — that mode has no
+// docker exec to carry them.
+func (s *Sandbox) containerEnv(req map[string]string) []string {
+	if len(s.opts.Env) == 0 {
+		return envSlice(req)
+	}
+	merged := make(map[string]string, len(s.opts.Env)+len(req))
+	maps.Copy(merged, s.opts.Env)
+	maps.Copy(merged, req)
+	return envSlice(merged)
+}
+
 func envSlice(env map[string]string) []string {
 	if len(env) == 0 {
 		return nil
@@ -958,6 +984,9 @@ func envSlice(env map[string]string) []string {
 	for k, v := range env {
 		out = append(out, k+"="+v)
 	}
+	// Sorted: the container config and the adoption fingerprint must not
+	// change with map iteration order.
+	slices.Sort(out)
 	return out
 }
 

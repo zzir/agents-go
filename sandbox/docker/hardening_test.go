@@ -2,6 +2,7 @@ package docker
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -51,6 +52,23 @@ func TestConfigFingerprint(t *testing.T) {
 	if fp(same) != fp(base) {
 		t.Error("the default tmpfs size spelled explicitly changed the fingerprint")
 	}
+	// An empty environment is no environment: both must hash like a config
+	// that never mentioned one (see TestConfigFingerprintWithoutEnv).
+	same = base
+	same.Env = map[string]string{}
+	if fp(same) != fp(base) {
+		t.Error("an empty Env map changed the fingerprint")
+	}
+	// Map iteration order is randomized per range, so an unsorted env would
+	// hash differently across calls on the same options.
+	multi := base
+	multi.Env = map[string]string{"A": "1", "B": "2", "C": "3", "D": "4", "E": "5"}
+	first := fp(multi)
+	for range 20 {
+		if fp(multi) != first {
+			t.Fatal("the fingerprint of a multi-entry Env is not stable across calls")
+		}
+	}
 	// UserUnset makes any User value moot (the container runs the image
 	// default either way), so a leftover User must not split the fingerprint.
 	unsetA, unsetB := base, base
@@ -95,6 +113,9 @@ func TestConfigFingerprint(t *testing.T) {
 	o = base
 	o.TmpfsSize = "1g"
 	diff["tmpfsSize"] = o
+	o = base
+	o.Env = map[string]string{"TOKEN": "secret"}
+	diff["env"] = o
 	for name, opt := range diff {
 		if fp(opt) == fp(base) {
 			t.Errorf("changing %s did not change the fingerprint", name)
@@ -178,4 +199,32 @@ func (r *failAfterReader) Read(p []byte) (int, error) {
 	n := copy(p, r.data[r.off:])
 	r.off += n
 	return n, nil
+}
+
+// The fingerprint of an env-less config is FROZEN: it is stamped on every
+// container already running, and a changed hash makes adoptNamed judge them
+// all stale — replacing the entire fleet and discarding whatever each had
+// installed. Adding an option to configFingerprint must leave this value
+// alone; only a deliberate fleet-wide replace may change it.
+func TestConfigFingerprintWithoutEnv(t *testing.T) {
+	const golden = "1db392d7d64691b913831ec470a46899"
+	s := &Sandbox{opts: Options{Image: "img", User: "65534:65534", WorkDir: "/srv/data"}}
+	if got := s.configFingerprint(); got != golden {
+		t.Errorf("fingerprint = %s, want %s — every existing container would be replaced", got, golden)
+	}
+}
+
+// A container carries the sandbox's environment; a request's entries win for
+// the one ephemeral container it creates.
+func TestContainerEnv(t *testing.T) {
+	s := &Sandbox{opts: Options{Image: "img", Env: map[string]string{"A": "sandbox", "B": "keep"}}}
+	got := s.containerEnv(map[string]string{"A": "request", "C": "add"})
+	want := []string{"A=request", "B=keep", "C=add"}
+	if !slices.Equal(got, want) {
+		t.Errorf("containerEnv = %v, want %v", got, want)
+	}
+	bare := &Sandbox{opts: Options{Image: "img"}}
+	if got := bare.containerEnv(map[string]string{"A": "1"}); !slices.Equal(got, []string{"A=1"}) {
+		t.Errorf("containerEnv without a sandbox environment = %v, want [A=1]", got)
+	}
 }

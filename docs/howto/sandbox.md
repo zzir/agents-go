@@ -152,12 +152,15 @@ sb, err := docker.New(docker.Options{
 	Image:   "python:3.12-slim",          // must be pulled already
 	Network: false,                       // default: no network
 	Limits:  sandbox.Limits{MemoryBytes: 256 << 20, CPUs: 0.5, PIDs: 128},
+	Env:     map[string]string{"TZ": "UTC"}, // set on the container itself
 })
 ```
 
 Each `Exec` creates a locked-down container and removes it afterwards: no network, read-only root filesystem, all capabilities dropped, `no-new-privileges`, runs as `nobody`, writable `work` dir and `/tmp` (tmpfs), memory/CPU/PID limits, hard timeout (container killed). The command runs as the container entrypoint verbatim — image `ENTRYPOINT`/`CMD` never interfere. Container stdout/stderr is additionally capped on the daemon side (`json-file` log driver, `max-size=10m`), so output floods cannot fill the host disk.
 
 With `Persistent: true` a single container is reused across `Exec` calls (state and installed files survive between calls) and the root filesystem is writable. `VolumeName` mounts a named Docker volume at `/workspace` instead of a host directory or an anonymous volume (durable storage on a remote daemon); `TmpfsSize` resizes the RAM-backed `/tmp` tmpfs (default 64m); `KeepOnClose` makes `Close` stop the container instead of removing it, so a later Sandbox with the same `ContainerName` and configuration adopts it — and a name held by our container from an *older* configuration is replaced, while a foreign holder stays a hard error. The default user is still `65534:65534` (nobody), which **cannot install packages**; set `UserUnset: true` to run as the image's default user, or set `User` explicitly. Timeouts are enforced per exec: when the deadline passes the attached connection is closed and the exec's process tree is killed best-effort (exec processes are tagged with an `AGENTS_SANDBOX_EXEC` environment marker and matched via `/proc`; a process that re-execs itself with a scrubbed environment can evade the sweep — the container's PID/memory limits are the backstop).
+
+`Env` sets variables on the **container**, so a command, a persistent shell and a terminal opened into it all read the same values; an `ExecRequest.Env` entry of the same name wins for that one call. It is part of the adoption fingerprint: changing it replaces a persistent container instead of adopting the old one, keeping `/workspace` but discarding whatever was installed into the container itself ([spec §2.7n](../reference/spec.md#27n-a-sandboxs-environment-is-part-of-its-container-identity)).
 
 ### Remote daemon over SSH
 
