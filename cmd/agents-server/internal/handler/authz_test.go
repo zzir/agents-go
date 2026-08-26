@@ -132,8 +132,8 @@ func TestSessionSubtreesAreTheOwnersAlone(t *testing.T) {
 	if rec := serve(engine, as(memberUser, http.MethodGet, "/api/v1/triggers/"+trg.ID, "")); rec.Code != http.StatusOK {
 		t.Fatalf("owner GET trigger = %d", rec.Code)
 	}
-	if rec := serve(engine, as(memberUser, http.MethodPost, "/api/v1/tasks/"+task.ID+"/dismiss", "")); rec.Code == http.StatusNotFound {
-		t.Fatalf("owner dismiss task = 404")
+	if rec := serve(engine, as(memberUser, http.MethodPost, "/api/v1/tasks/"+task.ID+"/dismiss", "")); rec.Code != http.StatusOK {
+		t.Fatalf("owner dismiss task = %d %s", rec.Code, rec.Body.String())
 	}
 	// A live run: its lookup, stream and cancel are the owner's alone. The
 	// run fails on config at once (no provider), but the hub keeps its record
