@@ -13,9 +13,13 @@ go run ./examples/hello
 | [`examples/tools`](../examples/tools/main.go) | Typed function tools via `NewTool` |
 | [`examples/toolimage`](../examples/toolimage/main.go) | A tool returning image content (`ToolOutputImage`) |
 | [`examples/handoffs`](../examples/handoffs/main.go) | A triage agent delegating to specialists with `HandoffTo` |
+| [`examples/multiagent`](../examples/multiagent/main.go) | Agent-as-tool orchestration: a manager keeps control while specialists run as nested runs |
+| [`examples/guardrails`](../examples/guardrails/main.go) | One `Guardrail` across three stages, plus a `Blocking` gate that trips before any tokens are spent |
 | [`examples/streaming`](../examples/streaming/main.go) | Ranging a `RunStream` |
 | [`examples/hitl`](../examples/hitl/main.go) | Human-in-the-loop: interrupt, approve/reject, resume |
 | [`examples/errorhandlers`](../examples/errorhandlers/main.go) | `RunOptions.Exec.ErrorHandlers`: fallback final outputs for max-turns and invalid structured output |
+| [`examples/logging`](../examples/logging/main.go) | `LogConfig`: the SDK's own logging, and the separate `SensitiveData` switch |
+| [`examples/testing`](../examples/testing/main.go) | A scripted `Model`: test an agent with no API key — the tools run for real |
 | [`examples/tracing`](../examples/tracing/main.go) | The tracing pipeline: tracer → batch processor → console exporter, plus `TraceGroupID`/`TraceMetadata` |
 | [`examples/fallback`](../examples/fallback/main.go) | Retry + fallback model decorators, with `WithShouldFallback` classification |
 | [`examples/anthropic`](../examples/anthropic/main.go) | Streaming an agent on Claude via the Anthropic Messages provider — tool loop plus token deltas (separate module) |
@@ -42,6 +46,7 @@ Most examples only need `OPENAI_API_KEY`. The exceptions:
 - `examples/prompt` — a stored prompt ID: `OPENAI_PROMPT_ID=pmpt_... go run ./examples/prompt`
 - `examples/anthropic` — `ANTHROPIC_API_KEY=... go run .` (from its directory; separate module)
 - `examples/sandbox` — the host needs `python3`
+- `examples/testing` — **no key needed**: `go run ./examples/testing`, `go test ./examples/testing`
 - Examples in the optional submodules run from their module directory:
 
 ```bash
@@ -50,4 +55,6 @@ Most examples only need `OPENAI_API_KEY`. The exceptions:
 (cd sandbox/docker && go run ./example)  # needs a running Docker daemon
 ```
 
-The test suites are also worth reading as usage references — `agents/run_test.go` shows how to script a fake model (`Agent.ModelImpl`) for offline tests of your own agents.
+[`examples/testing`](../examples/testing) is the worked version of
+[Testing your agents](howto/testing.md): a scripted `Model`, the agent's real
+tool, and a test asserting both the answer and that the script was consumed.

@@ -36,7 +36,7 @@ func repoLabelOf(sourceRepo string) string {
 // QualifiedName is the model-facing skill name: "<repo label>:<name>" for an
 // imported skill, the bare frontmatter name for a workbench-authored one —
 // the source is part of the identity, keeping two repos' same-named skills
-// apart (spec §5.31).
+// apart (decisions §5.31).
 func (m *Skill) QualifiedName() string {
 	if m.RepoLabel != "" {
 		return m.RepoLabel + ":" + m.Name
@@ -51,7 +51,7 @@ type SkillStore struct {
 }
 
 // NewSkillStore returns a SkillStore backed by db. Names are unique per
-// scope (partial indexes, spec §5.29); a duplicate surfaces as a
+// scope (partial indexes, decisions §5.29); a duplicate surfaces as a
 // UNIQUE-constraint error that handlers map to 409.
 func NewSkillStore(db *bun.DB) *SkillStore {
 	return &SkillStore{CrudStore: NewCrudStore[Skill](db, "skill", "name ASC"), db: db}
@@ -87,7 +87,7 @@ func (s *SkillStore) ListMeta(ctx context.Context, ownerID string, admin bool) (
 }
 
 // GetByNameFor returns the skill the given MODEL-FACING name resolves to FOR
-// ownerID — their own over a global one sharing it (spec §5.29), the
+// ownerID — their own over a global one sharing it (decisions §5.29), the
 // read_skill tool's lookup. Imported skills answer to their qualified name
 // ("owner/repo:name"), workbench-authored ones to the bare name.
 // ErrNotFound-wrapping error when none matches.
@@ -119,7 +119,7 @@ func (s *SkillStore) GetByNameFor(ctx context.Context, qualified, ownerID string
 // FindBySource returns the row of (repo, path) IN ownerID's group — the one
 // this import refreshes. Nil when none: the import creates instead. The owner
 // is exact, never "the caller's or a global one": a sync names the group it
-// targets (spec §5.31), so an admin syncing somebody's published repo cannot
+// targets (decisions §5.31), so an admin syncing somebody's published repo cannot
 // silently refresh their own copy of it instead.
 func (s *SkillStore) FindBySource(ctx context.Context, repo, path, ownerID string) (*Skill, error) {
 	m := new(Skill)
@@ -162,7 +162,7 @@ func (s *SkillStore) RepoGroup(ctx context.Context, repo, ownerID string) (scope
 var ErrGroupExists = errors.New("the new owner already has this repository")
 
 // SetRepoOwner transfers a whole repo group to newOwner — the group is the
-// unit of ownership as it is of scope (spec §5.31), so moving one row out
+// unit of ownership as it is of scope (decisions §5.31), so moving one row out
 // would leave a group with two authors and, after a later flip, two scopes.
 // Refused when newOwner ALREADY holds a group for the repo: merging two
 // groups would produce exactly the mixed-scope pile the group rule exists to
@@ -241,7 +241,7 @@ type ImportOutcome struct {
 	Label, Name, Action, Reason string
 }
 
-// ApplyImport lands a whole fetched import in ONE transaction (spec §5.31).
+// ApplyImport lands a whole fetched import in ONE transaction (decisions §5.31).
 // Fetching happens first and can take minutes; every write happens here, in
 // an instant, against a group re-read under lock — so a transfer, a delete or
 // a scope flip that landed during the download turns the whole import into

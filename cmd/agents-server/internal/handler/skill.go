@@ -18,7 +18,7 @@ import (
 const maxSkillBytes = 256 << 10
 
 // SkillHandler manages stored SKILL.md documents: CRUD plus import from a
-// GitHub repository or a raw URL (spec §5.26).
+// GitHub repository or a raw URL (decisions §5.26).
 type SkillHandler struct {
 	store    *store.SkillStore
 	settings *settings.Reader
@@ -261,7 +261,7 @@ type repoScopeReq struct {
 }
 
 // SetRepoScope flips a whole repo group between private and global — all or
-// nothing, so a group is always one scope (spec §5.29). Promote is
+// nothing, so a group is always one scope (decisions §5.29). Promote is
 // admin-only; demote is the admin's or the group owner's, returning the rows
 // to their author.
 //
@@ -289,7 +289,7 @@ func (h *SkillHandler) SetRepoScope(c *gin.Context) {
 	// The group is named, never guessed: (repo, owner), defaulting to the
 	// caller's own. A group nobody named is a group nobody flips — which is
 	// what keeps an admin who holds their own copy of a repo from moving
-	// somebody else's by accident (spec §5.31).
+	// somebody else's by accident (decisions §5.31).
 	groupOwner := req.OwnerID
 	if groupOwner == "" {
 		groupOwner = ownerID
@@ -320,7 +320,7 @@ func (h *SkillHandler) SetRepoScope(c *gin.Context) {
 
 // SetOwner transfers a skill to another account (admin). An imported skill
 // moves with its whole repo group — the group is the unit of ownership as it
-// is of scope, so one row may not leave it behind (spec §5.31).
+// is of scope, so one row may not leave it behind (decisions §5.31).
 //
 //	@Summary	Reassign a skill's owner (admin); an imported skill moves with its repo
 //	@Tags		skills

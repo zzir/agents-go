@@ -201,7 +201,7 @@ type runRecord struct {
 	endedAt time.Time
 	// started is the run's latest run.started, pinned OUTSIDE the ring with its
 	// seq: the one event a subscriber from 0 must get even after the ring has
-	// moved past it (README invariant 14).
+	// moved past it (workbench invariant 14).
 	started    *protocol.Envelope
 	startedSeq int
 }
@@ -590,7 +590,7 @@ func (h *RunHub) Subscribe(runID string, fromSeq int, sink EventSink) (func(), b
 //
 // A cursor before the run's latest run.started gets that event first whenever
 // the ring no longer holds it — the run's identity is never lost to the ring
-// (README invariant 14). Whether the ring holds it is read off the stream's
+// (workbench invariant 14). Whether the ring holds it is read off the stream's
 // opening item, which the fanout fixed at subscribe time, so no publish can
 // slip between the check and the replay.
 func (h *RunHub) SubscribeSeq(runID string, fromSeq int, sink SeqSink) (func(), bool) {

@@ -16,7 +16,7 @@ import (
 // connection, another browser, REST) reaches every connection of the
 // session's owner, a connection joining mid-run is attached to each of its
 // user's in-flight streams with a full replay, and nobody else's connection
-// hears a thing (README invariant 42).
+// hears a thing (workbench invariant 42).
 type ConnRegistry struct {
 	hub      *bridge.RunHub
 	sessions *store.SessionStore

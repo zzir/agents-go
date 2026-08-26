@@ -9,6 +9,19 @@ go get github.com/zzir/agents-go
 export OPENAI_API_KEY=sk-...
 ```
 
+Anything with a heavy dependency lives in its own module, so the core stays
+dependency-light
+([why, module by module](../explanation/architecture.md#module-boundaries)).
+Add only what you use:
+
+```bash
+go get github.com/zzir/agents-go/mcp              # optional: MCP client
+go get github.com/zzir/agents-go/models/anthropic # optional: Anthropic backend
+go get github.com/zzir/agents-go/sandbox/docker   # optional: Docker sandbox
+go get github.com/zzir/agents-go/sessions         # optional: SQLite/Postgres
+go get github.com/zzir/agents-go/skills           # optional: Agent Skills
+```
+
 ## Create your first agent
 
 An agent is a plain struct: instructions, a name, and optional configuration such as tools or a structured output type.
@@ -95,7 +108,7 @@ triage.Guardrails = []agents.Guardrail{{
 {% endraw %}
 
 When a guardrail trips, `Run` returns an `*agents.GuardrailTripwireError`;
-`tw.Stage()` says which stage fired. See [Guardrails](guardrails.md) for the
+`tw.Stage()` says which stage fired. See [Guardrails](../howto/guardrails.md) for the
 other stages and for substitution.
 
 ## Add a function tool
@@ -138,7 +151,7 @@ if a, ok := agents.FinalOutputAs[answer](res); ok {
 }
 ```
 
-See [Structured output types](agents.md#structured-output-types).
+See [Structured output types](../howto/agents.md#structured-output-types).
 
 ## Stream the run
 
@@ -166,8 +179,8 @@ _ = ctrl // StopAfterTurn, and mid-run input: Steer redirects the current
 // exchange; Pending reports what was not consumed.
 ```
 
-See [Streaming](streaming.md) for the event types and
-[Controlling a live run](streaming.md#controlling-a-live-run).
+See [Streaming](../howto/streaming.md) for the event types and
+[Controlling a live run](../howto/streaming.md#controlling-a-live-run).
 
 ## Pause for approval
 
@@ -193,12 +206,12 @@ for len(res.Interruptions) > 0 {
 
 The paused state serializes to JSON (`res.State.MarshalJSON()`) and rebuilds
 with `agents.RunStateFromJSON(data, registry)`, so the approval can happen in
-another process — see [Human-in-the-loop](human_in_the_loop.md).
+another process — see [Human-in-the-loop](../howto/human_in_the_loop.md).
 
 ## Put it all together
 
-See [examples/handoffs](../examples/handoffs/main.go) and [examples/tools](../examples/tools/main.go) for complete runnable programs, and:
+See [examples/handoffs](../../examples/handoffs/main.go) and [examples/tools](../../examples/tools/main.go) for complete runnable programs, and:
 
-- [Running agents](running_agents.md) for the run loop, max turns and run options
-- [Results](results.md) for what comes back from a run
-- [Streaming](streaming.md) to surface events while the run executes
+- [Running agents](../howto/running_agents.md) for the run loop, max turns and run options
+- [Results](../howto/results.md) for what comes back from a run
+- [Streaming](../howto/streaming.md) to surface events while the run executes

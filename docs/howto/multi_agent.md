@@ -77,7 +77,7 @@ sub.AsTool(agents.AgentToolConfig{
 
 The nested run inherits the parent's model provider, model override, model settings, tracer and log configuration through the run context, so sub-agents need no provider of their own. Its spans join the parent's trace and its log records carry the sub-agent's name; its usage is tracked separately. If the model calls several agent-tools in one turn they run **concurrently** — like any other function tools.
 
-**State isolation.** The nested run never inherits the parent run's conversation state: the sub-agent sees only the input the orchestrator passes, and nothing it does is written to the parent's `Session`. To give the nested run state of its own, set a session or conversation via `ModifyRunOptions` (one strategy at a time, same as a top-level run); to share client-side history with the parent, pass the parent's `Session` there. Python's `previous_response_id` option has no Go counterpart ([differences](migration_from_python.md)).
+**State isolation.** The nested run never inherits the parent run's conversation state: the sub-agent sees only the input the orchestrator passes, and nothing it does is written to the parent's `Session`. To give the nested run state of its own, set a session or conversation via `ModifyRunOptions` (one strategy at a time, same as a top-level run); to share client-side history with the parent, pass the parent's `Session` there. Python's `previous_response_id` option has no Go counterpart ([differences](../explanation/migration_from_python.md)).
 
 Without a `CustomOutputExtractor`, the tool result is the nested run's final output — as a string for plain-text agents, or the JSON payload for structured ones. When the final output is empty, it falls back to the last non-empty assistant message, then the last non-empty string tool output.
 
@@ -120,3 +120,5 @@ for i, q := range questions {
 }
 if err := g.Wait(); err != nil { /* … */ }
 ```
+
+A runnable program is [examples/multiagent](../../examples/multiagent/main.go) (agent-as-tool) alongside [examples/handoffs](../../examples/handoffs/main.go) (control moves and does not come back).

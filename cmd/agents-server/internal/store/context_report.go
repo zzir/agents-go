@@ -13,7 +13,7 @@ import (
 // ContextReport is what a session's active branch occupies of the model's
 // context window.
 //
-// Its figures are not one ruler and are never mixed (README invariant 28):
+// Its figures are not one ruler and are never mixed (workbench invariant 28):
 // InputTokens and the cache split are the provider's counts for the last model
 // call; CompactionTokens is what the compaction pass compares (mostly that same
 // provider number, plus an estimate for the turns since — ActiveContextTokens);

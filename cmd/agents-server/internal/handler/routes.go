@@ -64,7 +64,7 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 	}
 	// Route-level authz: session content is owner-only, scoped config gates
 	// per row in the handlers, host config is read-everyone/write-admin —
-	// authz.go, spec §5.29.
+	// authz.go, decisions §5.29.
 	admin := adminOnly()
 	{
 		sessions := api.Group("/sessions")

@@ -2,7 +2,7 @@
 
 [MCP](https://modelcontextprotocol.io/) is an open protocol for exposing tools (and other capabilities) to LLM applications. The `mcp` package connects an agent to MCP servers over the official [Go SDK](https://github.com/modelcontextprotocol/go-sdk): each server tool becomes a function tool the model can call.
 
-`mcp` is its own Go module (it carries the go-sdk and its transitive closure, [spec §5.7](spec.md#57-a-submodule-exists-only-to-keep-a-heavy-dependency-out-of-the-core)). The import path is unchanged; add it beside the core:
+`mcp` is its own Go module (it carries the go-sdk and its transitive closure, [decisions §5.7](../explanation/decisions.md#57-a-submodule-exists-only-to-keep-a-heavy-dependency-out-of-the-core)). The import path is unchanged; add it beside the core:
 
 ```bash
 go get github.com/zzir/agents-go/mcp

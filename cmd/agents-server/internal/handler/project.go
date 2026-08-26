@@ -11,9 +11,9 @@ import (
 )
 
 // ProjectHandler manages projects — per-user working trees on a sandbox
-// (spec §5.28). Projects are PERSONAL: routes act on the caller's own rows;
+// (decisions §5.28). Projects are PERSONAL: routes act on the caller's own rows;
 // an admin additionally lists every owner's (?all=true) and may delete any —
-// management, not authoring (spec §5.29).
+// management, not authoring (decisions §5.29).
 type ProjectHandler struct {
 	store     *store.ProjectStore
 	sandboxes *store.SandboxStore
@@ -70,7 +70,7 @@ func (h *ProjectHandler) List(c *gin.Context) {
 
 // storageHint derives where p's files live — the workspace directory on the
 // local daemon, the named volume on a remote one — so the UI can say what a
-// delete leaves behind (spec §5.28: storage outlives the row). Admin-only: a
+// delete leaves behind (decisions §5.28: storage outlives the row). Admin-only: a
 // host path is a server-side fact a member's container never sees. hosts
 // caches sandbox→host across one response; empty when it cannot be derived.
 func (h *ProjectHandler) storageHint(c *gin.Context, hosts map[string]string, p *store.Project) string {
@@ -139,7 +139,7 @@ func (h *ProjectHandler) Create(c *gin.Context) {
 // are left in place — data outlives the row on purpose.
 //
 //	@Summary		Delete project
-//	@Description	The owner deletes their own; an admin deletes any (management, spec §5.29).
+//	@Description	The owner deletes their own; an admin deletes any (management, decisions §5.29).
 //	@Tags			projects
 //	@Param			id	path	string	true	"Project id"
 //	@Success		204	"deleted"

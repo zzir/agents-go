@@ -33,7 +33,7 @@ func AgentProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig) 
 	}
 	// Re-check the reference rule at run time: a scope flip that slipped past
 	// the write-time guards must fail the run loudly, never spend a key that
-	// became somebody's private credential (spec §5.29).
+	// became somebody's private credential (decisions §5.29).
 	if !store.RefVisible(pv.Scope, pv.OwnerID, ac.Scope, ac.OwnerID) {
 		return store.Provider{}, fmt.Errorf("agent %q: provider %s is out of the agent's scope — repoint the agent", ac.Name, ac.ProviderID)
 	}

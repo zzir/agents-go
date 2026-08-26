@@ -2,9 +2,9 @@
 // backend does not speak the OpenAI Responses API.
 //
 // The SDK's canonical item and event format IS the Responses wire format
-// (spec §5.5): session entries, run state and every exported signature carry
+// (decisions §5.5): session entries, run state and every exported signature carry
 // Responses items, and the runner consumes a fixed set of output item types
-// and stream events (spec §5.10). An adapter for another protocol therefore
+// and stream events (decisions §5.10). An adapter for another protocol therefore
 // has exactly one job — translate its wire format into canonical Responses
 // bytes at the model boundary, in both directions. This package holds the
 // shared halves of that job so each adapter only writes the vendor-specific

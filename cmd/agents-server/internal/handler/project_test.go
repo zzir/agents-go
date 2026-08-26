@@ -25,7 +25,7 @@ func memberEngine(userID string) *gin.Engine {
 	return e
 }
 
-// Projects are personal, and the admin surface is management (spec §5.28):
+// Projects are personal, and the admin surface is management (decisions §5.28):
 // a member sees and deletes only their own rows and never a storage_hint;
 // an admin lists every owner's (?all=true, hints included) and deletes any.
 func TestProjectAdminSurface(t *testing.T) {

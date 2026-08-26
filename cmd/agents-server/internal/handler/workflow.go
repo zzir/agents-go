@@ -131,7 +131,7 @@ func (h *WorkflowHandler) bind(c *gin.Context, wf *store.Workflow) bool {
 }
 
 // validateStepAgents checks each step's agent exists AND is one this
-// workflow's scope may reference (spec §5.29). Runs after the scope is
+// workflow's scope may reference (decisions §5.29). Runs after the scope is
 // stamped, so a promote re-uses it too.
 func (h *WorkflowHandler) validateStepAgents(c *gin.Context, wf *store.Workflow) bool {
 	for i := range wf.Steps {
@@ -382,7 +382,7 @@ func (h *WorkflowHandler) SetOwner(c *gin.Context) {
 	}
 	// Step agents are re-validated AS THE NEW OWNER: a workflow whose steps
 	// name the old owner's private agents would answer 204 and then fail at
-	// its next start — the state a save refuses (spec §5.29).
+	// its next start — the state a save refuses (decisions §5.29).
 	wf.OwnerID = req.UserID
 	if !h.validateStepAgents(c, wf) {
 		return

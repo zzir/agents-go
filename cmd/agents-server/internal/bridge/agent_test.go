@@ -129,7 +129,7 @@ func TestBuildFullAgentAppliesWorkflowModes(t *testing.T) {
 
 // Run-time provider resolution re-checks the reference rule: a demote that
 // slipped past the write-time guards must fail the build loudly, never spend
-// a key that became somebody's private credential (spec §5.29).
+// a key that became somebody's private credential (decisions §5.29).
 func TestAgentProviderRechecksScope(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)

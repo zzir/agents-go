@@ -69,7 +69,7 @@ const DefaultMaxTokens int64 = 8192
 // budget. Budgets rather than the native effort parameter because budgets
 // work on every thinking-capable Claude model, while effort/adaptive thinking
 // exists only on the newest ones — and this SDK keeps no model-capability
-// tables to know which is which (spec §1.2).
+// tables to know which is which (scope §1.2).
 var thinkingBudgets = map[agents.ReasoningEffort]int64{
 	agents.ReasoningEffortMinimal: 1024,
 	agents.ReasoningEffortLow:     4096,

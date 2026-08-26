@@ -276,7 +276,7 @@ func TestTerminalWS_EchoResizeExit(t *testing.T) {
 }
 
 // A member opens a shell into their OWN project's container; a foreign
-// project reads as absent and acquires nothing (spec §5.28 — admins reach
+// project reads as absent and acquires nothing (decisions §5.28 — admins reach
 // any project, which the other tests exercise via the local user).
 func TestTerminalWS_ProjectOwnership(t *testing.T) {
 	gin.SetMode(gin.TestMode)

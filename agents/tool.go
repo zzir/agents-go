@@ -10,7 +10,7 @@ import (
 // shown to the model, plus the Go function the SDK runs when the model calls it.
 //
 // It is a STRUCT, and it is the only kind of tool there is — deliberately no
-// interface, which is how "no hosted tools" is enforced (spec §5.4).
+// interface, which is how "no hosted tools" is enforced (decisions §5.4).
 // Everything a tool can do — a timeout, an approval gate, its own guardrails,
 // whether it may run concurrently — is a field here, so configuring a tool is
 // assigning to it and deriving a variant is copying it:

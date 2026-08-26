@@ -3,12 +3,12 @@
 `agents-go` began as a port of [openai-agents-python](https://github.com/openai/openai-agents-python)
 and still shares its core concepts — agents, handoffs, guardrails, sessions, the
 run loop shape, and most names map one-to-one. It **no longer tracks** the Python
-SDK: behavior is specified in [spec.md](spec.md) and the two evolve independently.
+SDK: behavior is specified in [spec.md](../reference/spec.md) and the two evolve independently.
 
 This page is a **migration guide for people arriving from the Python SDK**, not a
 parity report. It maps the concepts, then lists the differences you will notice.
 For what this SDK deliberately does not provide (and why), read
-[spec.md §1.2 and §3](spec.md); for upstream changes we have reviewed, see
+[scope §1.2 and §3](scope.md); for upstream changes we have reviewed, see
 [upstream_watch.md](upstream_watch.md).
 
 > The comparison below was written against Python SDK **v0.18.2**, the last
@@ -38,7 +38,7 @@ For what this SDK deliberately does not provide (and why), read
 | exceptions (`MaxTurnsExceeded`, …) | error values (`*MaxTurnsError`, …) matched with `errors.As` |
 | `RunErrorDetails` on exceptions | `RunError.Result` — a failed run's partial progress as a `*RunResult`, via `errors.AsType[*agents.RunError]` |
 | `set_default_openai_key` / globals | none — pass `openai.NewProvider(...)` explicitly in `RunOptions` |
-| `custom_data_extractor=` (function tools) | `ToolResult.Details` — the tool declares its UI data when it returns, instead of a second extraction pass ([tools](tools.md#returning-more-than-a-value-toolresult)) |
+| `custom_data_extractor=` (function tools) | `ToolResult.Details` — the tool declares its UI data when it returns, instead of a second extraction pass ([tools](../howto/tools.md#returning-more-than-a-value-toolresult)) |
 | `RunConfig.tool_execution.pre_approval_tool_input_guardrails` | `RunOptions.Exec.PreApprovalToolInputGuardrails` |
 | resume a paused run (state as input to `Runner.run` / `Runner.run_streamed`) | `agents.ResumeRunSync(ctx, state, opts)` / `agents.ResumeRun(ctx, state, opts)` |
 | `error_handlers={"max_turns": ..., "model_refusal": ..., "invalid_final_output": ...}` | `RunOptions.Exec.ErrorHandlers` struct (`MaxTurns` / `ModelRefusal` / `InvalidFinalOutput` fields); handlers return `(*RunErrorHandlerResult, error)` — `(nil, nil)` declines like Python's `None`; `include_in_history=True` default becomes the `ExcludeFromHistory` zero value |
@@ -103,12 +103,12 @@ For what this SDK deliberately does not provide (and why), read
 ## In Python, not here
 
 Two kinds of entry are mixed below: **deliberate non-goals** (recorded in
-[spec.md §1.2 / §3](spec.md) — they will not appear) and **things nobody has
+[scope §1.2 / §3](scope.md) — they will not appear) and **things nobody has
 needed yet** (open to contribution). Each entry says which it is.
 
-- *(non-goal)* **Hosted OpenAI tools**: web search, file search, code interpreter, computer use, image generation, `local_shell`, `apply_patch` — deliberately not modeled; tools are provider-agnostic function tools, and a non-standard `tool_choice` is sent as a function name. (For file editing, Go provides `apply_patch` as a **sandbox-backed** function tool — Codex-style patches applied through the `Sandbox` abstraction, not the hosted OpenAI `apply_patch`; [tools](tools.md))
+- *(non-goal)* **Hosted OpenAI tools**: web search, file search, code interpreter, computer use, image generation, `local_shell`, `apply_patch` — deliberately not modeled; tools are provider-agnostic function tools, and a non-standard `tool_choice` is sent as a function name. (For file editing, Go provides `apply_patch` as a **sandbox-backed** function tool — Codex-style patches applied through the `Sandbox` abstraction, not the hosted OpenAI `apply_patch`; [tools](../howto/tools.md))
 - *(non-goal)* **Chat Completions model layer** — only the Responses API (use a Responses-compatible gateway, or implement `Model`)
-- *(non-goal)* **LiteLLM adapter** — but native multi-provider routing, retry and fallback are supported via `Model` decorators ([models](models.md#retries-fallback-and-multiple-providers))
+- *(non-goal)* **LiteLLM adapter** — but native multi-provider routing, retry and fallback are supported via `Model` decorators ([models](../howto/models.md#retries-fallback-and-multiple-providers))
 - *(not yet)* **Redis / encrypted / SQLAlchemy session backends** — only SQLite & PostgreSQL are provided (`sessions` module); implement `Session` for others. (`OpenAIConversationsSession` and `OpenAIResponsesCompactionSession` **are** ported, as `openai.ConversationsSession` and `openai.CompactionSession`.)
 - *(non-goal)* **Realtime and voice agents**
 - *(non-goal)* **REPL utility (`run_demo_loop`) and visualization (Graphviz)**
@@ -120,11 +120,11 @@ needed yet** (open to contribution). Each entry says which it is.
 
 ## Beyond the Python SDK
 
-- **Self-hosted [sandboxes](sandbox.md)**: run model-written code in your own infrastructure — locked-down Docker containers (`sandbox/docker`), on the local daemon or a remote one reached over SSH — exposed via `sandbox.CodeTool`. Python has since grown its own sandbox stack (self-hosted `docker` / `unix_local` in core plus hosted providers — e2b / daytona / cloudflare / runloop / vercel — as extensions) with a PTY session model; the Go `Sandbox` interface predates it and stays a deliberately smaller surface: Exec + file operations, no PTY sessions, no hosted providers
+- **Self-hosted [sandboxes](../howto/sandbox.md)**: run model-written code in your own infrastructure — locked-down Docker containers (`sandbox/docker`), on the local daemon or a remote one reached over SSH — exposed via `sandbox.CodeTool`. Python has since grown its own sandbox stack (self-hosted `docker` / `unix_local` in core plus hosted providers — e2b / daytona / cloudflare / runloop / vercel — as extensions) with a PTY session model; the Go `Sandbox` interface predates it and stays a deliberately smaller surface: Exec + file operations, no PTY sessions, no hosted providers
 - **Hooks can veto**: any hook returning an error aborts the run (Python hooks are observe-only)
-- **[Skills](skills.md)** (`skills` module): the open [Agent Skills](https://github.com/agentskills/agentskills) `SKILL.md` format implemented on `Instructions` + a function tool — provider-agnostic and sandbox-free, unlike Python's sandbox-capability skills
+- **[Skills](../howto/skills.md)** (`skills` module): the open [Agent Skills](https://github.com/agentskills/agentskills) `SKILL.md` format implemented on `Instructions` + a function tool — provider-agnostic and sandbox-free, unlike Python's sandbox-capability skills
 - **Session forking** (`session.Fork`): clone a conversation's active branch into another session — works across any `Session` backend pair (a point-in-time fork is `PathToLeaf` + `session.ReplaceEntries`). Python's closest is `AdvancedSQLiteSession`'s branch support, which is tied to that one backend
-- **`AtomicReplacer` / `GuardedReplacer`**: optional storage capabilities for swapping the whole history in one step — unconditionally, or only while its highest sequence number is still the one the caller read. Only `openai.CompactionSession` needs them: the server-side compact API returns a replacement rather than a decision, with a network round trip between reading the history and writing it back. Local compaction is append-only ([Sessions](sessions.md#run-level-compaction))
+- **`AtomicReplacer` / `GuardedReplacer`**: optional storage capabilities for swapping the whole history in one step — unconditionally, or only while its highest sequence number is still the one the caller read. Only `openai.CompactionSession` needs them: the server-side compact API returns a replacement rather than a decision, with a network round trip between reading the history and writing it back. Local compaction is append-only ([Sessions](../howto/sessions.md#run-level-compaction))
 - **Run-level compaction** (`RunOptions.Compaction` + `agents/compaction`): provider-agnostic, grouped so a tool call is never split from its output, triggered at three points including mid-run, and **append-only** — a checkpoint records what was folded instead of rewriting history
 - **Provider-level decorators**: `NewRetryProvider(inner, policy)` and `NewFallbackProvider(primary, fallbacks...)` wrap a `ModelProvider` so every `Model` it produces automatically retries or falls back — the provider-level counterparts of `NewRetryModel` / `NewFallbackModel`, useful when you know the policy at configuration time but not the model name. Fallback error classification is configurable via `WithShouldFallback` (default: everything except context cancellation advances the chain)
 - **Stream-only backend adaptation**: `NewStreamOnlyModel(inner)` / `NewStreamOnlyProvider(inner)` serve blocking `Respond` calls via an internal stream, for backends that reject non-streaming requests (e.g. the ChatGPT Codex backend). Python has no equivalent decorator

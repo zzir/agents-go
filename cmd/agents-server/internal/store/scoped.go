@@ -11,7 +11,7 @@ import (
 	"github.com/uptrace/bun"
 )
 
-// The visibility vocabulary of scoped configuration (spec §5.29): providers,
+// The visibility vocabulary of scoped configuration (decisions §5.29): providers,
 // agent configs, MCP servers, skills and workflows carry a Scope deciding who
 // sees the row, and an OwnerID naming its creator — permanent, kept across
 // scope flips.
@@ -47,7 +47,7 @@ func NormalizeScope(scope string) string {
 }
 
 // ListVisibleOf returns the scoped-entity rows ownerID may see, in the
-// listing order spec §5.29 promises (global first, each group newest first).
+// listing order decisions §5.29 promises (global first, each group newest first).
 // ONLY for the five scoped tables; a table without the scope/owner columns
 // fails the query loudly.
 func ListVisibleOf[T any](ctx context.Context, s *CrudStore[T], ownerID string, admin bool) ([]T, error) {
@@ -69,7 +69,7 @@ func ListVisibleOf[T any](ctx context.Context, s *CrudStore[T], ownerID string, 
 // first — they are what a member picks from — then each group newest first,
 // so what somebody just made is where they look for it. The sort key is
 // creation time, never a name or a scope, so a rename never moves a row and a
-// scope flip only moves it between the two groups (spec §5.29). The id
+// scope flip only moves it between the two groups (decisions §5.29). The id
 // tiebreak keeps same-instant rows in one order across reloads.
 const scopedListOrder = `CASE WHEN scope = 'global' THEN 0 ELSE 1 END, created_at DESC, id DESC`
 
@@ -78,7 +78,7 @@ const scopedListOrder = `CASE WHEN scope = 'global' THEN 0 ELSE 1 END, created_a
 // §5.29). Handlers map it to 409.
 var ErrSameScope = errors.New("the row is already in that scope")
 
-// SetScopeOf moves one scoped row between global and private (spec §5.29).
+// SetScopeOf moves one scoped row between global and private (decisions §5.29).
 // The owner never changes: a demoted row returns to its author. expectOwner
 // is the owner the CALLER was authorized against — carried into the WHERE, so
 // a transfer landing between that check and this write refuses the flip
@@ -148,7 +148,7 @@ var ErrNoSuchUser = errors.New("no such user")
 // moved between the caller's authorization and the write itself — a transfer
 // or a scope flip landing in between. Handlers map it to 409: the caller
 // re-reads and decides again, rather than editing under a permission they no
-// longer hold (spec §5.29).
+// longer hold (decisions §5.29).
 var ErrOwnershipChanged = errors.New("the configuration's owner or scope changed; reload and try again")
 
 // DeleteOwnedBy removes a row only while it still belongs to the owner the
@@ -203,7 +203,7 @@ func SetOwnerOf[T any](ctx context.Context, s *CrudStore[T], id, ownerID string)
 }
 
 // Shadows reports whether a row is the caller's PRIVATE shadow of a shared
-// name — the own-over-global tiebreak (spec §5.29). Owning a global row is
+// name — the own-over-global tiebreak (decisions §5.29). Owning a global row is
 // not shadowing: the owner authored it, but every member reads it, so a
 // private row of the same name still wins for its owner.
 func Shadows(scope, rowOwner, callerID string) bool {
@@ -212,7 +212,7 @@ func Shadows(scope, rowOwner, callerID string) bool {
 
 // RefVisible reports whether a holder row may REFERENCE the given row: a
 // global holder only global rows, a private holder global rows plus its
-// owner's own — spec §5.29.
+// owner's own — decisions §5.29.
 func RefVisible(refScope, refOwner, holderScope, holderOwner string) bool {
 	if holderScope == ScopeGlobal {
 		return refScope == ScopeGlobal

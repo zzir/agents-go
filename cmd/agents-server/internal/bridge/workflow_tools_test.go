@@ -494,7 +494,7 @@ func TestSaveWorkflowIsApprovedThenWritten(t *testing.T) {
 
 // Everyone carries save_workflow now: a member's save lands in their own
 // private set, and editing a GLOBAL definition through the tool stays the
-// admin's act (spec §5.29).
+// admin's act (decisions §5.29).
 func TestSaveWorkflowScopes(t *testing.T) {
 	ctx := context.Background()
 	model, srv := newRecordingModel(t, func(int, []byte) []any { return sayOutput("ok") })
@@ -540,7 +540,7 @@ func TestSaveWorkflowScopes(t *testing.T) {
 	}
 
 	// A definition somebody ELSE authored refuses the member's edit through the
-	// tool, published or not — the REST edit gate, in the tool (spec §5.29).
+	// tool, published or not — the REST edit gate, in the tool (decisions §5.29).
 	global := &store.Workflow{OwnerID: store.LocalUserID, Name: "team-flow", Description: "shared", Scope: store.ScopeGlobal,
 		Steps: store.WorkflowSteps{{ID: store.NewID(), Name: "one", AgentConfigID: saved.Steps[0].AgentConfigID, Prompt: "p"}}}
 	if err := runner.Deps.Workflows.Create(ctx, global); err != nil {
@@ -580,7 +580,7 @@ func TestSaveWorkflowScopes(t *testing.T) {
 }
 
 // Updating a GLOBAL workflow through save_workflow resolves step agents AS a
-// global holder (spec §5.29): the admin's private shadow of a global agent
+// global holder (decisions §5.29): the admin's private shadow of a global agent
 // name must not become a step most members cannot see, and a private-only
 // agent refuses the save outright — the mirror of REST's validateStepAgents.
 func TestSaveWorkflowGlobalUpdateResolvesGlobalAgents(t *testing.T) {

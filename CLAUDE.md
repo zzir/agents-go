@@ -7,15 +7,17 @@ Go agents, local first: the Go-native agent workbench you run yourself
 and workflows in a sandbox behind tool approvals, debug with traces, replay and
 fork, solo or as a team — built on a Go SDK for the OpenAI Responses API (the
 root module) that also embeds on its own. One dependency edge: the workbench
-depends on the SDK, the SDK knows nothing of the workbench (spec §1.2).
+depends on the SDK, the SDK knows nothing of the workbench (scope §1.2).
 The SDK began as a port of
 [openai-agents-python](https://github.com/openai/openai-agents-python) and shares
 its core concepts (agents, handoffs, guardrails, sessions), but **evolves
 independently** — it no longer tracks upstream.
 
-Behavior is specified in [docs/spec.md](docs/spec.md), not inherited.
-[docs/migration_from_python.md](docs/migration_from_python.md) maps the two APIs
-for users arriving from Python.
+Behavior is specified in [docs/reference/spec.md](docs/reference/spec.md), not
+inherited; the reasoning behind each invariant is in
+[docs/explanation/decisions.md](docs/explanation/decisions.md).
+[docs/explanation/migration_from_python.md](docs/explanation/migration_from_python.md)
+maps the two APIs for users arriving from Python.
 
 Module path: `github.com/zzir/agents-go` (NOT `goagents`, despite the local
 directory name).
@@ -34,7 +36,7 @@ golangci-lint run                     # CI uses golangci-lint v2.13
 ## Layout
 
 Go workspace (`go.work`, gitignored) with eight modules. **A submodule exists only
-to keep a heavy dependency out of the core** ([spec.md §5.7](docs/spec.md)) —
+to keep a heavy dependency out of the core** ([decisions §5.7](docs/explanation/decisions.md)) —
 anything dependency-free stays in the root module. Non-root modules `require` the
 root via `replace => ..`:
 
@@ -43,7 +45,7 @@ root via `replace => ..`:
 - **`mcp`** — MCP client (carries modelcontextprotocol/go-sdk and the
   seven indirect requirements that came with it; import path unchanged)
 - **`models/anthropic`** — Anthropic Messages API backend (carries
-  anthropic-sdk-go; translates to the canonical Responses format, spec §5.10)
+  anthropic-sdk-go; translates to the canonical Responses format, decisions §5.10)
 - **`sandbox/docker`** — Docker sandbox backend (local or SSH-reached remote daemon)
 - **`sessions`** — SQLite/PostgreSQL `Session` backends
 - **`skills`** — Agent Skills (`SKILL.md`) parser
@@ -78,7 +80,7 @@ Core type: `agents.Agent` (a plain struct); everything orbits the runner.
   Wrapping a whole run belongs here, not in the loop.
 - **Models** — `agents/model.go`; backends are `models/openai` (Responses
   API, the native format) and `models/anthropic` (Messages API, translated in
-  the adapter — spec §5.10). `models/modelkit` holds the shared adapter
+  the adapter — decisions §5.10). `models/modelkit` holds the shared adapter
   plumbing and `modelkit/conformancetest` the golden matrix every `Model`
   implementation must pass. Retry / fallback / routing are provider-agnostic
   decorators (`NewRetryModel`, `NewFallbackModel`, `RouterProvider`) — never
@@ -109,7 +111,7 @@ Core type: `agents.Agent` (a plain struct); everything orbits the runner.
   rather than one Go type per span kind. The current parent
   travels on the `context`, so a subsystem outside the runner (retry, MCP,
   sandbox) opens a child without a threaded handle. Export is a consumer-side
-  `Processor` (spec §5.6b); the server stores spans itself.
+  `Processor` (decisions §5.6b); the server stores spans itself.
 - **MCP** — `mcp/`: a client bridged into the runner by `agents/mcp.go`. Its
   own module — `agents.MCPServer` is the inversion that keeps the go-sdk out
   of the core, so never import `mcp` from `agents`.
@@ -121,18 +123,20 @@ Core type: `agents.Agent` (a plain struct); everything orbits the runner.
 - **Fan-out** — `agents/fanout.go`: one producer, many consumers, per-subscriber
   buffers. A dropped event is reported as a `*GapError`, never silent.
 - **Test doubles** — `internal/agentstest` is the shared harness + conformance
-  suites (test infrastructure, not API — spec §5.23). The `agents` package
+  suites (test infrastructure, not API — decisions §5.23). The `agents` package
   cannot import it (cycle), which is why `agents/run_test.go` has its own
   unexported `fakeModel`.
 
 ## Design decisions (deliberate — don't "fix" without cause)
 
-The full list, with reasons, lives in [docs/spec.md](docs/spec.md) §1.2 (non-goals),
-§3 (capabilities not provided) and §5 (recorded decisions). The two that come up most:
+The full list, with reasons, lives in
+[docs/explanation/decisions.md](docs/explanation/decisions.md) (§5, recorded
+decisions) and [docs/explanation/scope.md](docs/explanation/scope.md) (§1.2
+non-goals, §3 capabilities not provided). The two that come up most:
 
 - **Responses is the only canonical format.** Internal item types are Responses
   types. Another backend is supported by translating inside its adapter
-  (`models/anthropic`, spec §5.10) — never by a second canonical format or a
+  (`models/anthropic`, decisions §5.10) — never by a second canonical format or a
   neutral abstraction layer. Chat Completions is intentionally NOT supported.
 - **No hosted tools.** A tool is a `*Tool` **struct**, not an interface,
   so there is nothing a hosted tool could implement. Provider-hosted tools
@@ -142,12 +146,15 @@ The full list, with reasons, lives in [docs/spec.md](docs/spec.md) §1.2 (non-go
 ## Conventions
 
 - **Behavior is specified, not inherited.** Answer behavior questions from
-  `docs/spec.md`. When it does not cover a case: decide, implement, and add the
-  invariant to `spec.md` **in the same change**. Open questions live in
-  `spec.md` §6 — implementing one means moving it out of §6 first.
+  `docs/reference/spec.md`. When it does not cover a case: decide, implement,
+  and add the invariant to `spec.md` **in the same change**; the *reasoning*
+  goes to `docs/explanation/decisions.md` under a new §5 number. Open questions
+  live in `spec.md` §6 — implementing one means moving it out of §6 first.
+  Section numbers in both files are permanent addresses cited from code
+  (`spec §2.7f`, `decisions §5.29`): never renumber, never reuse.
 - **Upstream watch, not upstream parity.** After each upstream minor release,
   review its changelog and record the decision (ported / declined + why) in
-  `docs/upstream_watch.md`. There is no obligation to match.
+  `docs/explanation/upstream_watch.md`. There is no obligation to match.
 - **A new black-box test goes in `package agents_test`.** That external test
   package can import `internal/agentstest` (the shared harness) without a cycle, and
   both are established practice: `agents/` has ~10 `agents_test` files doing
@@ -170,10 +177,38 @@ The full list, with reasons, lives in [docs/spec.md](docs/spec.md) §1.2 (non-go
   grep -rn "OldName" docs/ README.md cmd/agents-server/README.md
   ```
 
-  and read the snippets around each hit rather than only the prose. The pages
-  a package owns are the ones that name it; the pages that own a *decision*
-  are `docs/spec.md` (invariants and recorded decisions) and
-  `docs/architecture.md` (module boundaries).
+  and read the snippets around each hit rather than only the prose.
+
+- **`docs/` is sorted by what the reader came for**, and a new page goes in the
+  directory that matches — a page that fits none of the four is two pages:
+
+  | Directory | For a reader who wants to | Shape |
+  |---|---|---|
+  | `docs/tutorial/` | learn by doing it once | a path with one happy ending |
+  | `docs/howto/` | solve one problem now | task-shaped, short snippets |
+  | `docs/reference/` | look a fact up | accurate, dry, scannable |
+  | `docs/explanation/` | understand why | prose, no steps |
+
+  There is no docs site: `docs/` is read in the repo browser, which renders a
+  directory's `README.md`. `docs/README.md` is the map; each quadrant's
+  `README.md` states what that quadrant is for and lets the file listing below
+  it be the index — so a new page needs no entry anywhere.
+
+- **Each fact has one home; everywhere else links to it.** Restating a fact in
+  a second page is how the two drift apart — the recurring failure this layout
+  exists to stop.
+
+  | The fact | Lives in |
+  |---|---|
+  | An SDK behavioral invariant | `docs/reference/spec.md` §2 (§4 for defaults) |
+  | Why a decision went that way | `docs/explanation/decisions.md` §5 |
+  | What the project deliberately does not do | `docs/explanation/scope.md` |
+  | A workbench panel/handler rule | `docs/explanation/workbench-invariants.md` |
+  | Module boundaries, package layout | `docs/explanation/architecture.md` |
+  | REST/WS endpoint and payload schemas | generated — `make openapi`, never prose |
+  | What a REST call *means* beyond its schema | `docs/reference/protocol.md` |
+  | How to use a capability | that capability's `docs/howto/` page |
+  | Every exported signature | pkg.go.dev — never a hand-written table |
 
 ## Principles
 
@@ -187,7 +222,9 @@ The full list, with reasons, lives in [docs/spec.md](docs/spec.md) §1.2 (non-go
   earns its keep only when something else implements it (`Model`, `Storage`,
   `Compactor` all clear this bar; a one-impl interface usually does not).
 - **The recorded decisions are deliberate.** Before "simplifying" anything in
-  [spec.md §1.2/§3/§5](docs/spec.md), assume it was decided on purpose and read
+  [scope](docs/explanation/scope.md) or
+  [decisions](docs/explanation/decisions.md), assume it was decided on purpose
+  and read
   the reason. Independent evolution is fine; silent reversal of a recorded
   decision is not.
 
@@ -197,11 +234,13 @@ Comment bloat is a recurring regression here — the altitude rule is strict.
 
 - **A comment says WHAT the code does and the one gotcha a reader can't infer.**
   One or two lines. That is the ceiling for internal functions and struct fields.
-- **Rationale lives in the spec, not the code.** "Why it's built this way,"
-  trade-offs, and invariant proofs go in [spec.md](docs/spec.md). When a subtle
-  invariant needs a signpost, write a single line — `// … — see spec §2.7f` —
-  never a restatement of the spec paragraph. The spec is the one authority; a
-  copy in a comment is a second one that drifts.
+- **Rationale lives in the docs, not the code.** Invariant proofs go in
+  [spec.md](docs/reference/spec.md); "why it's built this way" and the
+  trade-offs go in [decisions.md](docs/explanation/decisions.md). When a subtle
+  invariant needs a signpost, write a single line — `// … — see spec §2.7f`, or
+  `// … — see decisions §5.29` — never a restatement of the paragraph. Those
+  files are the one authority; a copy in a comment is a second one that
+  drifts.
 - **No historical narrative.** "used to…", "the old API…", "this was a bug
   because…" is git/PR history — delete it. The reader sees only the code that
   exists now.
@@ -215,8 +254,9 @@ Comment bloat is a recurring regression here — the altitude rule is strict.
 
 - **`type(scope): summary`** — `fix` / `refactor` / `feat` / `docs` / `test` /
   `chore`. A breaking API change adds `!`: `refactor(session)!:`.
-- **Behavior change ⇒ same-commit spec update.** The invariant in `docs/spec.md`
-  and the relevant `docs/` page land in the *same* commit as the code, never a
-  follow-up. (Restated from Conventions because it is the rule most often missed.)
+- **Behavior change ⇒ same-commit spec update.** The invariant in
+  `docs/reference/spec.md`, the reason in `docs/explanation/decisions.md` when
+  it is a decision, and the relevant `docs/howto/` page all land in the *same*
+  commit as the code, never a follow-up. (Restated from Conventions because it is the rule most often missed.)
 - **Branch off `main`; keep CI green.** `./scripts/ci.sh` (race detector on) must
   pass before each commit. Don't push or merge without being asked.

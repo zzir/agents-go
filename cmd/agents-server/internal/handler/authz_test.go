@@ -178,7 +178,7 @@ func serve(engine *gin.Engine, req *http.Request) *httptest.ResponseRecorder {
 	return rec
 }
 
-// Scoped configuration (spec §5.29): a member's create lands private and
+// Scoped configuration (decisions §5.29): a member's create lands private and
 // owned; claiming global needs the admin role; a foreign private row reads
 // as absent to another member and refuses the admin's edit (management is
 // delete and scope change, not authorship); host configuration (sandboxes)
@@ -231,7 +231,7 @@ func TestScopedConfigWrites(t *testing.T) {
 	if rec := serve(engine, as(adminUser, http.MethodPut, "/api/v1/agents/"+ac.ID, `{"name":"a1","model":"m3"}`)); rec.Code != http.StatusForbidden {
 		t.Fatalf("admin update member's private = %d, want 403", rec.Code)
 	}
-	// Publishing is the admin's act; the row KEEPS its author (spec §5.29).
+	// Publishing is the admin's act; the row KEEPS its author (decisions §5.29).
 	if rec := serve(engine, as(memberUser, http.MethodPost, "/api/v1/agents/"+ac.ID+"/scope", `{"scope":"global"}`)); rec.Code != http.StatusForbidden {
 		t.Fatalf("member promote = %d, want 403", rec.Code)
 	}
@@ -284,7 +284,7 @@ func TestScopedConfigWrites(t *testing.T) {
 // An edit authorized against one owner must not land after a transfer moved
 // the row: the check is re-run inside the write transaction, so the late
 // write answers 409 instead of editing under a permission that is gone — and
-// a workflow's write-back cannot restore the old owner (spec §5.29).
+// a workflow's write-back cannot restore the old owner (decisions §5.29).
 func TestUpdateRefusedAfterATransfer(t *testing.T) {
 	r := authzRig(t)
 	engine, ctx := r.engine, context.Background()
@@ -345,7 +345,7 @@ func TestUpdateRefusedAfterATransfer(t *testing.T) {
 
 // A scope request on a row the caller may not see answers 404 whatever else
 // is wrong with it: the imported/authored refusal must not tell a member that
-// somebody else's private skill exists (spec §5.29 — scope is no oracle).
+// somebody else's private skill exists (decisions §5.29 — scope is no oracle).
 func TestSkillScopeIsNoExistenceOracle(t *testing.T) {
 	r := authzRig(t)
 	ctx := context.Background()
@@ -373,7 +373,7 @@ func TestSkillScopeIsNoExistenceOracle(t *testing.T) {
 }
 
 // Transferring a scoped row is the admin's: the new owner edits it, the old
-// one no longer sees it, and a member cannot transfer anything (spec §5.29).
+// one no longer sees it, and a member cannot transfer anything (decisions §5.29).
 func TestScopedConfigOwnerTransfer(t *testing.T) {
 	r := authzRig(t)
 	engine := r.engine
@@ -696,7 +696,7 @@ func TestUserManagement(t *testing.T) {
 }
 
 // A /scope request naming the row's current scope is refused: a flip is
-// defined FROM the other scope only (spec §5.29), so a repeat is a 409 rather
+// defined FROM the other scope only (decisions §5.29), so a repeat is a 409 rather
 // than a silent no-op the caller reads as success.
 func TestSetScopeSameScopeRefused(t *testing.T) {
 	engine := authzRig(t).engine
@@ -724,7 +724,7 @@ func TestSetScopeSameScopeRefused(t *testing.T) {
 	}
 }
 
-// Session create's agent binding follows run visibility (spec §5.29): a
+// Session create's agent binding follows run visibility (decisions §5.29): a
 // foreign private agent id answers the same 400 an unknown id gets — admin
 // included, since the owner's runs would refuse it — so the binding can
 // never name an agent its runs cannot build, and the answer is no

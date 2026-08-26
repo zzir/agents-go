@@ -219,7 +219,7 @@ func (m *retryModel) Respond(ctx context.Context, req ModelRequest) (*ModelRespo
 // pre-commit events are held back until the first output event commits the
 // attempt (deliverStreamAttempt), so a stream that dies early is retried like a
 // failed connection. Once output is emitted the attempt is committed and a
-// later error passes straight through. See spec §5.16.
+// later error passes straight through. See decisions §5.16.
 func (m *retryModel) StreamResponse(ctx context.Context, req ModelRequest) iter.Seq2[*ResponseStreamEvent, error] {
 	return func(yield func(*ResponseStreamEvent, error) bool) {
 		retryIf := m.policy.retryIf()

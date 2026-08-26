@@ -31,7 +31,7 @@ type RepoUnderTest struct {
 }
 
 // RepoConformance holds a SessionRepo to the parts of the entry lifecycle
-// contract in docs/spec.md §2.5e2 that a repo owns: how it addresses a session,
+// contract in docs/reference/spec.md §2.5e2 that a repo owns: how it addresses a session,
 // and what its listing says about the sessions it holds.
 //
 // Most of it is checking that a backend addresses a session by session.Ref and

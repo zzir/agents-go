@@ -182,7 +182,7 @@ func (h *TriggerHandler) bind(c *gin.Context) (*store.Trigger, bool) {
 		badRequest(c, "session_id names a task's own session; a trigger reports to a conversation")
 		return nil, false
 	}
-	// A workflow target must be one the session's owner may see (spec §5.29)
+	// A workflow target must be one the session's owner may see (decisions §5.29)
 	// — the execution will run under their identity, so a foreign private
 	// definition reads as absent.
 	if t.WorkflowID != "" && h.workflows != nil {

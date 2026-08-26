@@ -4,7 +4,7 @@
 //
 // This is a separate Go module, so that the go-sdk and its transitive closure
 // (uritemplate, x/oauth2, x/time, x/tools, the segmentio pair) stay out of
-// every build that does not speak MCP — see docs/spec.md §5.7. Using it costs
+// every build that does not speak MCP — see docs/explanation/decisions.md §5.7. Using it costs
 // one extra require:
 //
 //	go get github.com/zzir/agents-go/mcp

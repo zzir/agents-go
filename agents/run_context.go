@@ -13,7 +13,7 @@ import (
 // agent run. It is passed to tool invocations, guardrails and lifecycle hooks.
 //
 // User data lives in the Context field as an any value; tool authors type-assert
-// it back to their concrete type (see spec §5.12). The standard library
+// it back to their concrete type (see decisions §5.12). The standard library
 // context.Context stays separate, for cancellation and deadlines.
 type RunContext struct {
 	// Context is the arbitrary user value threaded through the run. It is never

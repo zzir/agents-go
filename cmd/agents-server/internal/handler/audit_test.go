@@ -28,11 +28,14 @@ func TestAuditLogRecordsMutations(t *testing.T) {
 	audit := store.NewAuditStore(db)
 	var mu sync.Mutex
 	var seen []protocol.AuditRecord
+	// The store write comes FIRST: recorded(n) below gates on len(seen), so
+	// appending before the write lets the test read the log back while the
+	// nth row is still in flight.
 	record := func(ctx context.Context, r protocol.AuditRecord) {
+		_ = audit.Record(ctx, &store.AuditEvent{ActorID: r.Actor.ID, ActorEmail: r.Actor.Email, Action: r.Action, Resource: r.Resource, Detail: r.Detail})
 		mu.Lock()
 		seen = append(seen, r)
 		mu.Unlock()
-		_ = audit.Record(ctx, &store.AuditEvent{ActorID: r.Actor.ID, ActorEmail: r.Actor.Email, Action: r.Action, Resource: r.Resource, Detail: r.Detail})
 	}
 	local := &store.User{ID: store.LocalUserID, Email: "local@localhost", Role: store.RoleAdmin}
 	s := server.New(slog.New(slog.DiscardHandler), usersByToken, record)

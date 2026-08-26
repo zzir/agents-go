@@ -49,7 +49,7 @@ const unreferenced = "NOT EXISTS (SELECT 1 FROM sessions WHERE sandbox_id = ?)"
 
 // noProjects is the identity update's second guard: a project row pins the
 // sandbox's identity even before any session binds — its tree (a terminal
-// may already have written files) lives on this daemon (spec §5.28). The
+// may already have written files) lives on this daemon (decisions §5.28). The
 // delete does NOT share it: deleting a sandbox cascades its project rows.
 const noProjects = "NOT EXISTS (SELECT 1 FROM projects WHERE sandbox_id = ?)"
 

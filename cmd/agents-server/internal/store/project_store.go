@@ -10,7 +10,7 @@ import (
 )
 
 // ProjectStore persists projects — per-user working trees on a sandbox
-// target (spec §5.28).
+// target (decisions §5.28).
 type ProjectStore struct {
 	*CrudStore[Project]
 	db *bun.DB
@@ -25,7 +25,7 @@ func NewProjectStore(db *bun.DB) *ProjectStore {
 // Create inserts the project while its sandbox row still exists: the sandbox
 // row is locked (lockRow) for the insert's duration, so a racing sandbox
 // delete either cascades this row or arrives first and refuses the create —
-// never an orphan project (spec §5.28). ErrNotFound names the sandbox.
+// never an orphan project (decisions §5.28). ErrNotFound names the sandbox.
 func (s *ProjectStore) Create(ctx context.Context, p *Project) error {
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if err := lockRow(ctx, tx, &SandboxConfig{}, "id = ?", p.SandboxID); err != nil {

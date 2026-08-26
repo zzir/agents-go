@@ -8,7 +8,7 @@ import (
 
 // Every scoped listing uses one order: the shared rows first — what a member
 // picks from — then each group newest first, so what somebody just made is
-// where they look for it (spec §5.29).
+// where they look for it (decisions §5.29).
 func TestScopedListingIsGlobalFirstNewestFirst(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)

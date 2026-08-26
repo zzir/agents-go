@@ -241,7 +241,7 @@ func storedSSHPassword(prev json.RawMessage) bool {
 // maskAcrossDestination reports whether incoming still carries the mask
 // sentinel while the JSON field naming the secret's destination changed —
 // the stored secret belongs to the previous destination and must not ride
-// to a new one (README invariant 9's rule, beyond providers).
+// to a new one (workbench invariant 9's rule, beyond providers).
 func maskAcrossDestination(incoming, prev json.RawMessage, field string) bool {
 	if !bytes.Contains(incoming, []byte(SecretMask)) {
 		return false

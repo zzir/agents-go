@@ -224,7 +224,7 @@ func scanJSONColumn(src, dst any, what string) error {
 type Workflow struct {
 	bun.BaseModel `bun:"table:workflows,alias:wfl"`
 
-	// Scope/OwnerID: row visibility and its permanent creator — spec §5.29.
+	// Scope/OwnerID: row visibility and its permanent creator — decisions §5.29.
 	Scope   string `bun:"scope,notnull"               json:"scope"`
 	OwnerID string `bun:"owner_id,nullzero,type:uuid" json:"owner_id,omitempty"`
 	ID      string `bun:"id,pk,type:uuid" json:"id"`
@@ -667,7 +667,7 @@ type WorkflowStore struct {
 }
 
 // NewWorkflowStore returns a WorkflowStore backed by db. Names are unique
-// per scope, case-insensitively (partial indexes, spec §5.29).
+// per scope, case-insensitively (partial indexes, decisions §5.29).
 func NewWorkflowStore(db *bun.DB) *WorkflowStore {
 	return &WorkflowStore{NewCrudStore[Workflow](db, "workflow", "created_at DESC")}
 }

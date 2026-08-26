@@ -138,7 +138,7 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 		return fmt.Errorf("creating sessions updated_at index: %w", err)
 	}
 	// Scoped-entity names: unique per visibility context via two partial
-	// indexes per table — one global namespace, one per owner (spec §5.29).
+	// indexes per table — one global namespace, one per owner (decisions §5.29).
 	// Load-bearing for agent configs: HITL run state serializes the current
 	// agent by name.
 	for _, t := range []struct {

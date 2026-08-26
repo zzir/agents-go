@@ -62,7 +62,7 @@ type sandboxInstance struct {
 	// expired marks an idle expiry mid-stop: the instance stays under its key
 	// so an acquire waits on gone instead of adopting a stopping container
 	// (which would look dead and be force-recreated, wiping its packages —
-	// spec §5.28). gone closes when the stop finished and the key is free.
+	// decisions §5.28). gone closes when the stop finished and the key is free.
 	// Guarded by mu.
 	expired bool
 	gone    chan struct{}
@@ -112,7 +112,7 @@ type Manager struct {
 	// before the idle-stop evicts it (0 = never). Read per release so a
 	// settings change applies without a restart. The eviction closes the
 	// instance; KeepOnClose makes that a container STOP, and the next
-	// acquire re-adopts it (spec §5.28).
+	// acquire re-adopts it (decisions §5.28).
 	idleAfter func() time.Duration
 }
 
@@ -354,7 +354,7 @@ func (m *Manager) RemoveInstance(cfg *store.SandboxConfig, projectID string) {
 
 // RemoveProject evicts every cached instance keyed to the project — its row
 // was deleted, so no cached container should idle on for it. The container
-// and its storage stay on the daemon (spec §5.28: data outlives the row);
+// and its storage stay on the daemon (decisions §5.28: data outlives the row);
 // in-flight holders finish on what they hold.
 func (m *Manager) RemoveProject(projectID string) {
 	var toClose []*sandboxInstance
@@ -496,7 +496,7 @@ func (m *Manager) SandboxTools(cfg *store.SandboxConfig, proj *store.Project, co
 // persistent container per pair, name derived from the two ids, mounting the
 // project's tree — a host directory under <workspace>/<user>/<project> on the
 // local daemon, the named volume agents-proj-<project> on a remote one (spec
-// §5.28). Docker is the only backend (spec §5.27).
+// §5.28). Docker is the only backend (decisions §5.27).
 func (m *Manager) buildSandbox(cfg *store.SandboxConfig, proj *store.Project) (sandbox.Sandbox, error) {
 	if cfg.Type != "docker" {
 		return nil, fmt.Errorf("unknown sandbox type: %s", cfg.Type)
@@ -571,13 +571,13 @@ func ContainerName(sandboxID, projectID string) string {
 }
 
 // ProjectVolumeName is the named volume serving a project's /workspace on a
-// remote daemon (spec §5.28).
+// remote daemon (decisions §5.28).
 func ProjectVolumeName(projectID string) string {
 	return "agents-proj-" + shortID(projectID)
 }
 
 // ProjectHostDir is the local-daemon bind source for a project's /workspace:
-// <workspace>/<full owner uuid>/<project id> (spec §5.28 — short ids stay
+// <workspace>/<full owner uuid>/<project id> (decisions §5.28 — short ids stay
 // where docker imposes name limits, not on the filesystem). Created by the
 // SDK at container create.
 func (m *Manager) ProjectHostDir(proj *store.Project) string {

@@ -17,7 +17,7 @@ type AgentConfigStore struct {
 }
 
 // NewAgentConfigStore returns an AgentConfigStore backed by db. Names are
-// unique per scope (partial indexes, spec §5.29); a duplicate surfaces as a
+// unique per scope (partial indexes, decisions §5.29); a duplicate surfaces as a
 // UNIQUE-constraint error that handlers map to 409.
 func NewAgentConfigStore(db *bun.DB) *AgentConfigStore {
 	return &AgentConfigStore{CrudStore: NewCrudStore[AgentConfig](db, "agent config", "created_at DESC").withSecrets(sealAgentConfig, openAgentConfig), db: db}
@@ -64,7 +64,7 @@ func (s *AgentConfigStore) Update(ctx context.Context, id string, m *AgentConfig
 
 // TransferOwner hands the agent to newOwner, re-checking the leg that spends
 // a credential AS the new owner: an agent pointed at somebody's private
-// provider would answer 204 here and then fail every run (spec §5.29). The
+// provider would answer 204 here and then fail every run (decisions §5.29). The
 // lock, the check and the write share one transaction, so a provider flip
 // cannot slip between them. The advisory legs (MCP servers, skills, handoff
 // targets) are the handler's to validate, as they are on a save.
@@ -90,7 +90,7 @@ func (s *AgentConfigStore) TransferOwner(ctx context.Context, id, newOwner strin
 // SetScope flips the agent's scope with the credential leg re-checked as the
 // TARGET scope, in the same transaction: a promote validated while the
 // provider was global must not land after a demote made it private, which
-// would leave a global agent on somebody's private key (spec §5.29).
+// would leave a global agent on somebody's private key (decisions §5.29).
 func (s *AgentConfigStore) SetScope(ctx context.Context, id, scope string) error {
 	err := s.rewriteScopeOrOwner(ctx, id, func(ac *AgentConfig) (string, string) {
 		if ac.Scope == scope {

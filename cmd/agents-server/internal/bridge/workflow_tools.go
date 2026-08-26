@@ -15,7 +15,7 @@ import (
 )
 
 // The model's authoring surface for workflow DEFINITIONS: read one, save one.
-// Running one stays spawn_task's (README invariant 30). The pair is opt-in per
+// Running one stays spawn_task's (workbench invariant 30). The pair is opt-in per
 // agent, chat-only, and every save is approved by a person — invariant 39.
 
 // The pair's tool names.
@@ -68,7 +68,7 @@ func (r *Runner) visibleWorkflows(ctx context.Context, ownerID string) ([]store.
 }
 
 // matchWorkflow picks what name resolves to for ownerID: their own row over a
-// global one sharing the name (spec §5.29). Nil when nothing matches.
+// global one sharing the name (decisions §5.29). Nil when nothing matches.
 func matchWorkflow(list []store.Workflow, ownerID, name string) *store.Workflow {
 	var match *store.Workflow
 	for i := range list {
@@ -194,7 +194,7 @@ func (r *Runner) saveWorkflow(ctx context.Context, ownerID string, spec workflow
 		return agents.ToolResult{}, err
 	}
 	if existing == nil {
-		// A new definition is the saver's own (spec §5.29); an admin promotes
+		// A new definition is the saver's own (decisions §5.29); an admin promotes
 		// it over REST if the team should run it.
 		wf.Scope, wf.OwnerID = store.ScopePrivate, ownerID
 		err = r.Deps.Workflows.Create(ctx, wf)
@@ -206,13 +206,13 @@ func (r *Runner) saveWorkflow(ctx context.Context, ownerID string, spec workflow
 	}
 	if err == nil && existing != nil {
 		// The REST edit gate holds here too: a published definition is its
-		// AUTHOR's to change, and an admin's — nobody else's (spec §5.29).
+		// AUTHOR's to change, and an admin's — nobody else's (decisions §5.29).
 		if existing.OwnerID != ownerID && !ownerIsAdmin(ctx, r.Deps, ownerID) {
 			return agents.TextResult(fmt.Sprintf("Nothing was saved: %q is somebody else's workflow. Pick another name to save your own.", existing.Name)), nil
 		}
 		// Scope and owner come from the row inside the transaction, and the
 		// pair this save was authorized against is re-checked there: a
-		// transfer landing mid-save must not be written back (spec §5.29).
+		// transfer landing mid-save must not be written back (decisions §5.29).
 		want := *existing
 		err = r.Deps.Workflows.Update(ctx, existing.ID, wf, func(prev *store.Workflow) error {
 			if prev.Scope != want.Scope || prev.OwnerID != want.OwnerID {
@@ -354,7 +354,7 @@ func (r *Runner) resolveWorkflowSpec(ctx context.Context, ownerID string, spec w
 			return nil, nil, aerr
 		}
 		// Updating a GLOBAL definition resolves steps AS a global holder
-		// (spec §5.29): the saver's private shadow must not become a step
+		// (decisions §5.29): the saver's private shadow must not become a step
 		// most members cannot see — mirror of the REST validateStepAgents.
 		if existing != nil && existing.Scope == store.ScopeGlobal && ac.Scope != store.ScopeGlobal {
 			g, gerr := r.globalAgentByName(ctx, ownerID, agentName)

@@ -9,7 +9,7 @@ import (
 )
 
 // StorageConformance holds a SessionStorage to the entry-lifecycle contract in
-// docs/spec.md §2.5e2.
+// docs/reference/spec.md §2.5e2.
 //
 // It exists because the contract is mostly implemented by shared code, and
 // shared code only helps if every backend actually routes through it. A backend

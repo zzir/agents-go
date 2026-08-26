@@ -35,7 +35,7 @@ type Session struct {
 	AgentConfigID string `bun:"agent_config_id,nullzero,type:uuid" json:"agent_config_id,omitempty"`
 	// SandboxID/ProjectID are the session's PERMANENT binding: the first
 	// sandbox-carrying run CAS-writes them (BindSandboxIfEmpty) and they are
-	// never rewritten — spec §5.28.
+	// never rewritten — decisions §5.28.
 	SandboxID string `bun:"sandbox_id,nullzero,type:uuid" json:"sandbox_id,omitempty"`
 	ProjectID string `bun:"project_id,nullzero,type:uuid" json:"project_id,omitempty"`
 	// Planning is the session's plan phase: true means its next run starts
@@ -131,7 +131,7 @@ const TaskKindWorkflow = "workflow"
 type AgentConfig struct {
 	bun.BaseModel `bun:"table:agent_configs,alias:ac"`
 
-	// Scope/OwnerID: row visibility and its permanent creator — spec §5.29.
+	// Scope/OwnerID: row visibility and its permanent creator — decisions §5.29.
 	Scope   string `bun:"scope,notnull"                 json:"scope"`
 	OwnerID string `bun:"owner_id,nullzero,type:uuid"   json:"owner_id,omitempty"`
 	ID      string `bun:"id,pk,type:uuid" json:"id"`
@@ -146,7 +146,7 @@ type AgentConfig struct {
 	// a COLUMN rather than a field in a JSON group, because it is a reference
 	// and referential integrity has to be expressible in SQL (the same reason
 	// sessions.sandbox_id is one). Empty reaches no credential: the run fails
-	// its pre-flight until the agent names a provider (spec §5.30).
+	// its pre-flight until the agent names a provider (decisions §5.30).
 	ProviderID string `bun:"provider_id,nullzero,type:uuid" json:"provider_id,omitempty"`
 	// ContextWindow is the model's window in tokens, declared rather than
 	// discovered — no provider reports it on a response. It sits beside Model
@@ -189,7 +189,7 @@ type AgentConfig struct {
 type Provider struct {
 	bun.BaseModel `bun:"table:providers,alias:pv"`
 
-	// Scope/OwnerID: row visibility and its permanent creator — spec §5.29.
+	// Scope/OwnerID: row visibility and its permanent creator — decisions §5.29.
 	Scope   string `bun:"scope,notnull"                 json:"scope"`
 	OwnerID string `bun:"owner_id,nullzero,type:uuid"   json:"owner_id,omitempty"`
 	ID      string `bun:"id,pk,type:uuid" json:"id"`
@@ -218,11 +218,11 @@ type Provider struct {
 }
 
 // McpServerConfig is the persisted connection definition for an MCP server
-// (streamable HTTP only — spec §5.25); connection settings live in Config.
+// (streamable HTTP only — decisions §5.25); connection settings live in Config.
 type McpServerConfig struct {
 	bun.BaseModel `bun:"table:mcp_servers,alias:ms"`
 
-	// Scope/OwnerID: row visibility and its permanent creator — spec §5.29.
+	// Scope/OwnerID: row visibility and its permanent creator — decisions §5.29.
 	Scope   string `bun:"scope,notnull"                 json:"scope"`
 	OwnerID string `bun:"owner_id,nullzero,type:uuid"   json:"owner_id,omitempty"`
 	ID      string `bun:"id,pk,type:uuid"        json:"id"`
@@ -233,7 +233,7 @@ type McpServerConfig struct {
 	Enabled bool `bun:"enabled,notnull"        json:"enabled"`
 
 	// Config holds the connection settings as JSON (HTTPMcpConfig — the
-	// streamable_http transport is the only one the server speaks, spec §5.25).
+	// streamable_http transport is the only one the server speaks, decisions §5.25).
 	// Stored as TEXT and exchanged with the API as a raw JSON object.
 	Config json.RawMessage `bun:"config,type:text,nullzero" json:"config,omitempty"`
 
@@ -285,17 +285,17 @@ type HTTPMcpConfig struct {
 	UseStructuredContent bool `json:"use_structured_content,omitempty"`
 }
 
-// Skill is one stored SKILL.md document (spec §5.26). Name and Description
+// Skill is one stored SKILL.md document (decisions §5.26). Name and Description
 // are denormalized from the content's frontmatter at save time — the content
 // is the document, the columns are its index entry.
 type Skill struct {
 	bun.BaseModel `bun:"table:skills,alias:sk"`
 
-	// Scope/OwnerID: row visibility and its permanent creator — spec §5.29.
+	// Scope/OwnerID: row visibility and its permanent creator — decisions §5.29.
 	Scope       string `bun:"scope,notnull"                 json:"scope"`
 	OwnerID     string `bun:"owner_id,nullzero,type:uuid"   json:"owner_id,omitempty"`
 	ID          string `bun:"id,pk,type:uuid" json:"id"`
-	Name        string `bun:"name,notnull"    json:"name"` // unique per scope (spec §5.29)
+	Name        string `bun:"name,notnull"    json:"name"` // unique per scope (decisions §5.29)
 	Description string `bun:"description,notnull" json:"description"`
 	// Content is the full SKILL.md; capped at write time (maxSkillBytes) and
 	// omitted from list responses (ListMeta).
@@ -313,7 +313,7 @@ type Skill struct {
 	// because it is what the unique name indexes key on: two source URLs can
 	// reduce to one label, and the index must refuse that collision — a
 	// duplicate qualified name would make read_skill's answer a coin flip
-	// (spec §5.31).
+	// (decisions §5.31).
 	RepoLabel string `bun:"repo_label,nullzero" json:"repo_label,omitempty"`
 	// Detached marks an imported skill edited in the workbench: a re-import
 	// skips it instead of overwriting the local edit.
@@ -352,7 +352,7 @@ type ContextProfile struct {
 
 // PromptProfile is the ContextProfile payload: the instruction layers and the
 // tool surface, sized in CHARACTERS. Same ruler as the compaction estimate and
-// NOT the provider's — see README invariant 28.
+// NOT the provider's — see workbench invariant 28.
 type PromptProfile struct {
 	// The instruction layers, in the order WrapInstructions composed them.
 	InstructionsChars int `json:"instructions_chars,omitempty"`
@@ -384,7 +384,7 @@ const (
 	ToolSourceSkills  = "skills"
 	ToolSourceTasks   = "tasks"
 	// ToolSourceWorkflows is the workflow-authoring pair, get_workflow and
-	// save_workflow (README invariant 39).
+	// save_workflow (workbench invariant 39).
 	ToolSourceWorkflows = "workflows"
 	ToolSourceTodo      = "todo"
 	ToolSourcePlan      = "plan"
@@ -436,7 +436,7 @@ type SandboxConfig struct {
 
 	ID   string `bun:"id,pk,type:uuid" json:"id"`
 	Name string `bun:"name,notnull" json:"name"`
-	// Type is "docker" — the only backend (spec §5.27).
+	// Type is "docker" — the only backend (decisions §5.27).
 	Type string `bun:"type,notnull" json:"type"`
 
 	// Config holds the backend settings as JSON (DockerConfig). Stored as
@@ -488,7 +488,7 @@ type DockerConfig struct {
 	MaxReadFileBytes int64   `json:"max_read_file_bytes,omitempty"` // read_file cap in bytes; 0 = backend default (8 MiB)
 }
 
-// Project is one user's working tree on one sandbox target (spec §5.28): the
+// Project is one user's working tree on one sandbox target (decisions §5.28): the
 // unit a session binds and the container the sandbox's daemon runs for it
 // mounts at /workspace — a host directory under the server workspace for a
 // local daemon, a named volume on a remote one. The storage is derived from
@@ -507,7 +507,7 @@ type Project struct {
 	// StorageHint names where the files live — the local daemon's host
 	// directory or the remote daemon's volume. Derived per response by the
 	// handler for admins only, never stored: deleting the row keeps the
-	// storage (spec §5.28), so the UI can say where.
+	// storage (decisions §5.28), so the UI can say where.
 	StorageHint string `bun:"-" json:"storage_hint,omitempty"`
 	// SessionCount is how many sessions bind this project — filled by List
 	// (scanonly), so a delete knows whether it will be refused.
@@ -627,7 +627,7 @@ func (m *McpServerConfig) BeforeAppendModel(_ context.Context, q bun.Query) erro
 
 // stampScope pins the scope/owner invariant on INSERT: an unstamped direct
 // write lands private, and every row records its creator — see NormalizeScope
-// and spec §5.29.
+// and decisions §5.29.
 func stampScope(q bun.Query, scope *string, ownerID string) error {
 	if _, ok := q.(*bun.InsertQuery); !ok {
 		return nil
@@ -645,7 +645,7 @@ func (m *Skill) BeforeAppendModel(_ context.Context, q bun.Query) error {
 		return err
 	}
 	// The label is derived, never supplied: it is what the unique name indexes
-	// key on, so it must follow SourceRepo on every write (spec §5.31).
+	// key on, so it must follow SourceRepo on every write (decisions §5.31).
 	m.RepoLabel = repoLabelOf(m.SourceRepo)
 	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
 }

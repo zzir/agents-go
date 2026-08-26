@@ -112,7 +112,7 @@ func (h *ProviderHandler) Get(c *gin.Context) {
 }
 
 // scopeReq is the body of every POST /:id/scope — the promotion/demotion act
-// (spec §5.29): promote is admin-only, demote is the admin's or the owner's.
+// (decisions §5.29): promote is admin-only, demote is the admin's or the owner's.
 type scopeReq struct {
 	Scope string `json:"scope" binding:"required"`
 }
@@ -128,7 +128,7 @@ func bindScope(c *gin.Context) (string, bool) {
 }
 
 // sameScope refuses a /scope request naming the scope the row already holds
-// — spec §5.29 defines a flip FROM the other scope only. Writes the 409 and
+// — decisions §5.29 defines a flip FROM the other scope only. Writes the 409 and
 // returns true when refused.
 func sameScope(c *gin.Context, kind, current, requested string) bool {
 	if current == requested {
@@ -288,7 +288,7 @@ func (h *ProviderHandler) Update(c *gin.Context) {
 		return
 	}
 	// The mask resolves against the stored row inside the store's transaction,
-	// and only for the destination the key was stored for — README invariant 9.
+	// and only for the destination the key was stored for — workbench invariant 9.
 	// Scope and owner never move on an update (POST /:id/scope does).
 	err = h.store.Update(ctx, id, pv, ownershipGuard(cur.Scope, cur.OwnerID,
 		func(p *store.Provider) (string, string) { return p.Scope, p.OwnerID },
