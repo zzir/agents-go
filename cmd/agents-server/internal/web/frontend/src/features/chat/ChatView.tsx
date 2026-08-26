@@ -7,7 +7,7 @@ import { CHECK_ICON } from '@/lib/markdownShared';
 import { type TurnPart, type TimelineEntry, type Branches, type WorkflowStartedNote } from '@/lib/timeline';
 import { useScrollToBottom, useApi } from '@/lib/hooks';
 import { loadSessionAgent, saveSessionAgent, loadSessionSandbox, saveSessionSandbox, loadSessionProject, saveSessionProject } from '@/lib/drafts';
-import { composerSandboxView, groupProjects, projectLabel, type Project, type SessionBinding } from '@/lib/binding';
+import { composerSandboxView, groupProjects, projectLabel, type EnvVar, type Project, type SessionBinding } from '@/lib/binding';
 import { useProjects } from '@/lib/useProjects';
 import { fc } from '@/lib/form';
 import { parseTaskNotification, TASK_KIND_WORKFLOW, type TaskStatus } from '@/lib/protocol';
@@ -26,6 +26,8 @@ import { WorkflowStrip } from '@/features/chat/WorkflowStrip';
 import { TraceDrawer, type TraceReveal } from '@/features/chat/TracePanel';
 import { ContextPanel } from '@/features/chat/ContextPanel';
 import { ChatTopBar } from '@/features/chat/ChatTopBar';
+import { ProjectEnvDialog } from '@/features/chat/ProjectEnvDialog';
+import { EnvEditor, cleanEnv, envError } from '@/components/EnvEditor';
 import { ArrowDownIcon, CommentDiscussionIcon, DependabotIcon, FileDirectoryIcon, PlusIcon } from '@primer/octicons-react';
 import { toast } from '@/lib/toast';
 
@@ -173,7 +175,12 @@ export function ChatView({
   const [projDialogOpen, setProjDialogOpen] = useState(false);
   const [projSandboxId, setProjSandboxId] = useState('');
   const [projName, setProjName] = useState('');
+  const [projEnv, setProjEnv] = useState<EnvVar[]>([]);
   const [projSaving, setProjSaving] = useState(false);
+  // The bound project whose environment is open for editing, and whether a
+  // container call is in flight (both disable the menu).
+  const [envProject, setEnvProject] = useState<Project | null>(null);
+  const [containerBusy, setContainerBusy] = useState(false);
 
   useEffect(() => {
     setAgentConfigIdState(loadSessionAgent(sessionId || ''));
@@ -304,6 +311,33 @@ export function ChatView({
 
   const selectedSandbox = sandboxConfigs?.find(s => s.id === sandboxId);
   const selectedProject = projects?.find(p => p.id === projectId);
+  // The bound pair is what the top-bar menu acts on: a session's container is
+  // its binding's, never the composer's current pick.
+  const boundProject = sessionBinding?.projectId ? projects?.find(p => p.id === sessionBinding.projectId) || null : null;
+  const boundSandbox = sessionBinding?.sandboxId ? sandboxConfigs?.find(sb => sb.id === sessionBinding.sandboxId) : undefined;
+
+  // Prepare creates the container up front; rebuild discards it first. Both
+  // are synchronous and can take an image pull's worth of time, so the menu
+  // stays disabled until they answer.
+  const containerCall = async (kind: 'prepare' | 'rebuild') => {
+    if (!boundProject || containerBusy) return;
+    if (kind === 'rebuild' && !await confirmDialog({
+      title: `Rebuild the container for “${boundProject.name}”?`,
+      content: 'The container is discarded and created again from the image. Files under /workspace survive; anything installed into the container does not, and commands running in it right now will fail.',
+      confirmButtonType: 'danger',
+    })) return;
+    setContainerBusy(true);
+    toast.info(kind === 'prepare' ? 'Preparing the container…' : 'Rebuilding the container…');
+    try {
+      if (kind === 'prepare') await api.projects.prepareContainer(boundProject.id);
+      else await api.projects.rebuildContainer(boundProject.id);
+      toast.success(kind === 'prepare' ? 'Container ready' : 'Container rebuilt');
+    } catch (e) {
+      toast.error((e as Error).message || 'The container call failed');
+    } finally {
+      setContainerBusy(false);
+    }
+  };
   const sandboxView = composerSandboxView(sessionBinding || null, projects, sandboxConfigs);
 
   const handleSend = useCallback((text: string) => {
@@ -606,6 +640,13 @@ export function ChatView({
       binding={sandboxView.bound && sessionBinding
         ? { title: sandboxView.title, projectName: projects?.find(p => p.id === sessionBinding.projectId)?.name || '…' }
         : null}
+      projectMenu={boundProject ? {
+        label: projectLabel(boundProject.name, boundSandbox?.name || ''),
+        busy: containerBusy,
+        onEnv: () => setEnvProject(boundProject),
+        onPrepare: () => { void containerCall('prepare'); },
+        onRebuild: () => { void containerCall('rebuild'); },
+      } : null}
     />
   );
 
@@ -689,6 +730,7 @@ export function ChatView({
                   onSelect={() => {
                     setProjSandboxId((selectedSandbox || sandboxConfigs[0]).id);
                     setProjName('');
+                    setProjEnv([]);
                     setProjDialogOpen(true);
                   }}
                 >
@@ -713,7 +755,11 @@ export function ChatView({
             if (!projSandbox || !projName.trim() || projSaving) return;
             setProjSaving(true);
             try {
-              const created = await api.projects.create({ name: projName.trim(), sandbox_id: projSandbox.id }) as Project;
+              const created = await api.projects.create({
+                name: projName.trim(),
+                sandbox_id: projSandbox.id,
+                env: cleanEnv(projEnv),
+              }) as Project;
               // Seed the cached list before selecting: the stale-id guard
               // below runs against `projects` on the very next commit, and a
               // fire-and-forget reload would hand it a list without the new
@@ -740,7 +786,7 @@ export function ChatView({
                 {
                   content: projSaving ? 'Creating…' : 'Create',
                   buttonType: 'primary',
-                  disabled: !projSandbox || !projName.trim() || projSaving,
+                  disabled: !projSandbox || !projName.trim() || projSaving || !!envError(projEnv),
                   onClick: () => { void create(); },
                 },
               ]}
@@ -765,10 +811,22 @@ export function ChatView({
                     onChange={e => setProjName(e.target.value)}
                   />
                 ), 'Names the working tree the sandbox mounts; unique per sandbox.')}
+                {/* The editor carries its own explanation; a caption here
+                    would be a third line of small print saying the same. */}
+                {fc('Environment', (
+                  <EnvEditor vars={projEnv} onChange={setProjEnv} disabled={projSaving} />
+                ), envError(projEnv))}
               </Stack>
             </Dialog>
           );
         })()}
+        {envProject && (
+          <ProjectEnvDialog
+            project={envProject}
+            sessionCount={envProject.session_count}
+            onClose={() => { setEnvProject(null); reloadProjects(); }}
+          />
+        )}
       </div>
       <div className="chat-input-toolbar-right">
         {agentConfigs && agentConfigs.length > 0 ? (

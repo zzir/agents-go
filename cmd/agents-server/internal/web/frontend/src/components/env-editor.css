@@ -1,0 +1,39 @@
+/* The project environment editor: a name/value row per variable. */
+.env-editor {
+  display: grid;
+  gap: var(--base-size-8);
+}
+
+.env-editor-row {
+  display: flex;
+  gap: var(--base-size-8);
+  align-items: center;
+}
+
+/* The name is narrow and fixed, the value takes the rest — most values run
+   longer than most names. */
+.env-editor-key {
+  flex: 0 0 30%;
+  font-family: var(--fontStack-monospace);
+}
+
+.env-editor-value {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--fontStack-monospace);
+}
+
+.env-editor-hidden {
+  display: flex;
+  gap: var(--base-size-4);
+  align-items: center;
+  font-size: var(--text-body-size-small);
+  color: var(--fgColor-muted);
+  white-space: nowrap;
+}
+
+.env-editor-hint {
+  margin: 0;
+  font-size: var(--text-body-size-small);
+  color: var(--fgColor-muted);
+}

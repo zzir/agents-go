@@ -350,8 +350,16 @@ export const api = {
     list: () => request<S['store.Project'][]>('/projects'),
     // Admin: every owner's projects, storage hints included.
     listAll: () => request<S['store.Project'][]>('/projects?all=true'),
-    create: (data: unknown) => request<S['store.Project']>('/projects', { method: 'POST', body: JSON.stringify(data) }),
+    create: (data: unknown) => request<S['handler.projectDetail']>('/projects', { method: 'POST', body: JSON.stringify(data) }),
+    // The one call that returns an environment, and only to the owner.
+    get: (id: string) => request<S['handler.projectDetail']>(`/projects/${id}`),
+    update: (id: string, data: unknown) =>
+      request<S['handler.projectDetail']>(`/projects/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (id: string) => request<null>(`/projects/${id}`, { method: 'DELETE' }),
+    // Container calls: create it up front, or discard and recreate it. Both
+    // are synchronous and can take an image pull's worth of time.
+    prepareContainer: (id: string) => request<null>(`/projects/${id}/container/prepare`, { method: 'POST' }),
+    rebuildContainer: (id: string) => request<null>(`/projects/${id}/container/rebuild`, { method: 'POST' }),
   },
   workflows: {
     ...crud<S['store.Workflow']>('/workflows'),

@@ -15,7 +15,31 @@ export interface Project {
   /* Where the files live (host directory or remote volume) — shown by the
      delete dialog, since storage outlives the row. */
   storage_hint?: string;
+  /* The row's write counter: an update sends back the one it was edited
+     against, and a concurrent write answers 409. */
+  revision?: number;
+  /* How many sessions bind this project — the confirm step says how many an
+     environment change reaches. */
+  session_count?: number;
 }
+
+/* One environment variable of a project. `hidden` masks the value in
+   responses — it does NOT hide it from the agent, which reads the container's
+   environment with one command. */
+export interface EnvVar {
+  key: string;
+  value: string;
+  hidden?: boolean;
+}
+
+/* GET /projects/:id — the one response that carries an environment. */
+export interface ProjectDetail extends Project {
+  env?: EnvVar[];
+}
+
+/* The sentinel a hidden value comes back as; sending it back unchanged keeps
+   what is stored. */
+export const SECRET_MASK = '********';
 
 /* The session's permanent (sandbox_id, project_id) binding, or null while unbound. */
 export interface SessionBinding {
