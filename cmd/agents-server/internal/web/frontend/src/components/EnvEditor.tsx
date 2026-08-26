@@ -1,16 +1,18 @@
-import { Checkbox, IconButton, TextInput } from '@primer/react';
+import { IconButton, TextInput } from '@primer/react';
 import { PlusIcon, TrashIcon } from '@primer/octicons-react';
 import type { ReactElement } from 'react';
 import { SECRET_MASK, type EnvVar } from '@/lib/binding';
 import '@/components/env-editor.css';
 
 /* The environment editor shared by the new-project dialog and a project's own
-   environment dialog: one row per variable, plus a Hidden box.
+   environment dialog: one name/value row per variable.
 
-   "Hidden" is deliberately not "secret". Every value is encrypted at rest
-   whatever the box says, and no box keeps a value from the agent — it reads
-   the container's environment with one command. The box decides one thing:
-   whether this screen shows the value. */
+   Values are write-only. What you type here is visible until it is saved and
+   never again — the server masks every value on the way out, as it does for
+   every other credential it stores. A masked value sent back unchanged keeps
+   what is stored, so one variable can be rewritten without retyping its
+   neighbours. Nothing here hides a value from the agent: it reads the
+   container's environment with one command. */
 
 interface EnvEditorProps {
   vars: EnvVar[];
@@ -60,21 +62,13 @@ export function EnvEditor({ vars, onChange, disabled }: EnvEditorProps): ReactEl
             className="env-editor-value"
             value={v.value}
             disabled={disabled}
-            /* A stored hidden value arrives as the mask. Select it rather
-               than clear it: typing replaces the sentinel, and clicking in
-               without typing leaves the stored value alone — clearing here
-               would wipe it on the next save. */
+            /* A stored value arrives as the mask. Select it rather than clear
+               it: typing replaces the sentinel, and clicking in without
+               typing leaves the stored value alone — clearing here would wipe
+               it on the next save. */
             onFocus={e => { if (v.value === SECRET_MASK) e.currentTarget.select(); }}
             onChange={e => set(i, { value: e.target.value })}
           />
-          <label className="env-editor-hidden">
-            <Checkbox
-              checked={!!v.hidden}
-              disabled={disabled}
-              onChange={e => set(i, { hidden: e.target.checked })}
-            />
-            Hidden
-          </label>
           <IconButton
             icon={TrashIcon}
             variant="invisible"
@@ -96,8 +90,9 @@ export function EnvEditor({ vars, onChange, disabled }: EnvEditorProps): ReactEl
         />
       </div>
       <p className="env-editor-hint">
-        Optional. Set on the container, so commands, shells and terminals all see them — and
-        anything running in the container can read every value, Hidden included.
+        Optional. Set on the container, so commands, shells and terminals all see them.
+        <strong> Values are not shown again after saving</strong> — you can overwrite one, not read
+        it back. Anything running in the container can read them all.
       </p>
     </div>
   );

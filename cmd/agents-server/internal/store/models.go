@@ -505,12 +505,12 @@ type Project struct {
 	// Env is the canonical environment the container is created with
 	// (NormalizeProjectEnv), values sealed at rest. json:"-" is the default
 	// that keeps it off every listing: GET /projects/{id} is the one endpoint
-	// that returns it, masked.
+	// that returns it, and it returns names with masked values.
 	Env string `bun:"env,type:text,nullzero" json:"-"`
 	// Revision and RuntimeGen are the two counters SandboxConfig carries, for
 	// the same two jobs: the expected-revision CAS every update lands
 	// against, and the content generation that retires live containers — so
-	// a rename (or a Hidden toggle) does not replace anyone's container.
+	// a rename does not replace anyone's container.
 	Revision   int64     `bun:"revision,notnull,default:1"    json:"revision,omitempty"`
 	RuntimeGen int64     `bun:"runtime_gen,notnull,default:1" json:"-"`
 	CreatedAt  time.Time `bun:"created_at,notnull"            json:"created_at"`

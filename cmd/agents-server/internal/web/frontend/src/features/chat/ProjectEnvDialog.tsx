@@ -7,11 +7,12 @@ import { EnvEditor, cleanEnv, envError } from '@/components/EnvEditor';
 import type { EnvVar, Project, ProjectDetail } from '@/lib/binding';
 
 /* The project's environment, loaded on open (a listing never carries one) and
-   saved with the revision it was edited against.
+   saved with the revision it was edited against. Values arrive masked and go
+   back masked unless the person rewrites one.
 
    Saving a CHANGED environment replaces the container at the project's next
-   run, so the confirm step spells out what that costs. A visibility toggle
-   alone changes nothing about the container, and is saved without asking. */
+   run, so the confirm step spells out what that costs; a save that rewrote
+   nothing goes through without asking. */
 
 interface ProjectEnvDialogProps {
   project: Project;
@@ -29,7 +30,8 @@ interface SandboxSummary {
 }
 
 /* What the container is created with — the comparison the server makes to
-   decide whether to replace it. Hidden is not part of it. */
+   decide whether to replace it. Untouched rows compare equal because both
+   sides still hold the mask. */
 const containerEnv = (vars: EnvVar[]) =>
   JSON.stringify(cleanEnv(vars).map(v => [v.key, v.value]).sort((a, b) => a[0].localeCompare(b[0])));
 

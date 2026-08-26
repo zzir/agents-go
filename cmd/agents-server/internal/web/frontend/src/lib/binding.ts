@@ -23,22 +23,22 @@ export interface Project {
   session_count?: number;
 }
 
-/* One environment variable of a project. `hidden` masks the value in
-   responses — it does NOT hide it from the agent, which reads the container's
-   environment with one command. */
+/* One environment variable of a project. Values are write-only: the server
+   masks every one on the way out, and nothing here hides a value from the
+   agent, which reads the container's environment with one command. */
 export interface EnvVar {
   key: string;
   value: string;
-  hidden?: boolean;
 }
 
-/* GET /projects/:id — the one response that carries an environment. */
+/* GET /projects/:id — the one response that carries an environment, as names
+   with masked values. */
 export interface ProjectDetail extends Project {
   env?: EnvVar[];
 }
 
-/* The sentinel a hidden value comes back as; sending it back unchanged keeps
-   what is stored. */
+/* The sentinel every stored value comes back as; sending it back unchanged
+   keeps what is stored. */
 export const SECRET_MASK = '********';
 
 /* The session's permanent (sandbox_id, project_id) binding, or null while unbound. */

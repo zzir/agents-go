@@ -14,13 +14,12 @@ import (
 // answered one way at save time cannot be answered another way at compare
 // time.
 
-// EnvVar is one entry of a project's environment. Hidden masks the value in
-// API responses; it does NOT decide whether the value is sealed at rest —
-// every value is (decisions §5.32).
+// EnvVar is one entry of a project's environment. Values are write-only:
+// sealed at rest and masked in every response, like every other credential
+// this server stores (decisions §5.32).
 type EnvVar struct {
-	Key    string `json:"key"`
-	Value  string `json:"value"`
-	Hidden bool   `json:"hidden,omitempty"`
+	Key   string `json:"key"`
+	Value string `json:"value"`
 }
 
 // The environment's bounds. The whole set rides along on every container
@@ -104,9 +103,9 @@ func EnvMap(raw string) (map[string]string, error) {
 }
 
 // EnvContentEqual reports whether two canonical payloads produce the same
-// CONTAINER — names and values only. Hidden is a display flag: toggling it
-// must not replace a container. An undecodable payload compares unequal, the
-// safe side (as ContentEqual does for sandbox configs).
+// CONTAINER — the predicate behind the runtime-generation bump. An
+// undecodable payload compares unequal, the safe side (as ContentEqual does
+// for sandbox configs).
 func EnvContentEqual(a, b string) bool {
 	va, aerr := DecodeProjectEnv(a)
 	vb, berr := DecodeProjectEnv(b)

@@ -31,32 +31,31 @@ func NewProjectHandler(s *store.ProjectStore, sb *store.SandboxStore, m *sandbox
 	return &ProjectHandler{store: s, sandboxes: sb, manager: m, terminals: terminals}
 }
 
-// projectDetail is the single-project response: the row plus its
-// environment, whose hidden values are masked. Env shadows the row's own
-// (json:"-") field on purpose — a listing must never carry one.
+// projectDetail is the single-project response: the row plus the NAMES of
+// its environment, every value masked. Env shadows the row's own (json:"-")
+// field on purpose — a listing must never carry one.
 type projectDetail struct {
 	store.Project
 	Env []store.EnvVar `json:"env"`
 }
 
-// maskProjectEnv replaces the values of hidden entries with the sentinel a
-// later update resolves back (restoreProjectEnv). Names always stay
-// readable — decisions §5.32.
+// maskProjectEnv replaces every value with the sentinel a later update
+// resolves back (restoreProjectEnv). Values are write-only, like every other
+// credential here; names stay readable, so the environment can still be
+// edited a variable at a time (decisions §5.32).
 func maskProjectEnv(vars []store.EnvVar) []store.EnvVar {
 	out := make([]store.EnvVar, 0, len(vars))
 	for _, v := range vars {
-		if v.Hidden {
-			v.Value = SecretMask
-		}
+		v.Value = maskSecret(v.Value) // an empty value stays empty, as everywhere else
 		out = append(out, v)
 	}
 	return out
 }
 
-// restoreProjectEnv resolves masked values against the stored ones BY NAME,
-// before any hidden flag is applied — so changing a variable's visibility
-// needs no retyping, and a mask can never ride to a name it was not stored
-// under (workbench invariant 9).
+// restoreProjectEnv resolves masked values against the stored ones BY NAME —
+// so an edit rewrites the one variable it touches and leaves the rest
+// standing, and a mask can never ride to a name it was not stored under
+// (workbench invariant 9).
 func restoreProjectEnv(incoming, prev []store.EnvVar) ([]store.EnvVar, error) {
 	stored := make(map[string]string, len(prev))
 	for _, v := range prev {
@@ -235,11 +234,11 @@ func (h *ProjectHandler) Create(c *gin.Context) {
 	created(c, p.ID, out)
 }
 
-// Get responds with one of the caller's projects and its environment, hidden
-// values masked.
+// Get responds with one of the caller's projects and the names of its
+// environment, every value masked.
 //
 //	@Summary		Get project
-//	@Description	The one endpoint that returns a project's environment; listings never do. Owner only — an environment is not part of an admin's management reach.
+//	@Description	The one endpoint that returns a project's environment — names, with every value masked. Listings never carry it at all. Owner only: an environment is not part of an admin's management reach.
 //	@Tags			projects
 //	@Produce		json
 //	@Param			id	path		string	true	"Project id"
@@ -263,7 +262,7 @@ func (h *ProjectHandler) Get(c *gin.Context) {
 // Update renames the caller's project and replaces its environment.
 //
 //	@Summary		Update project
-//	@Description	A hidden value may be sent back as its mask to keep it. An environment change replaces the project's container at its next run and severs its terminals; a rename does neither.
+//	@Description	A value sent back as its mask keeps what is stored; any other value replaces it. An environment change replaces the project's container at its next run and severs its terminals; a rename does neither.
 //	@Tags			projects
 //	@Accept			json
 //	@Produce		json

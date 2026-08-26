@@ -1085,35 +1085,34 @@ collide and resolve own-over-global, exactly as §5.29 says.
 The UI mirrors the invariant: the visibility and owner badges sit on a repo
 group's heading rather than on each row, because the group is what moves.
 
-### 5.32 Sealing a project's environment is storage; hiding it is display
+### 5.32 A project's environment is write-only, like every other credential here
 
 Decided 2026-08-26. A project carries an environment — the variables its
-container is created with — and the two obvious designs for its secrets both
-lose something. Sealing the whole payload as one blob is safe by default but
-forces the read back to be all-or-nothing: showing every value makes the seal
-protect only the disk, and masking every value means changing `NODE_ENV`
-requires retyping the whole set (or building exactly the per-entry mask
-round-trip the blob was supposed to avoid). Sealing only the entries a person
-TICKED as secret reads well and audits well, but a forgotten tick writes a
-token to the column in the clear, silently.
+container is created with — and it is stored the way this server stores every
+other credential: **sealed at rest, masked in every response, replaceable but
+never readable back**. A value is visible while it is being typed and never
+again. Names stay plaintext, so one variable can be rewritten without
+retyping its neighbours, and so the audit log, error messages and operational
+questions ("which project sets `GITHUB_TOKEN`?") stay answerable.
 
-So the two decisions are separated. **Every value is sealed at rest,
-unconditionally**; the per-entry `hidden` flag decides only whether the API
-masks it on the way out. A forgotten flag then costs a value being visible on
-its owner's own edit form — not a credential in a database dump. The flag can
-be toggled in either direction without re-entering the value, because nothing
-about the storage changes when it moves, and `EnvContentEqual` ignores it
-entirely: a visibility change must not replace a container. Names stay
-plaintext, which keeps the audit log, error messages and operational queries
-("which project sets `GITHUB_TOKEN`?") answerable.
+The alternative was a per-entry flag letting the author mark which values are
+secret, masking only those. It reads well — most variables are configuration,
+not credentials, and `NODE_ENV` is friendlier visible. It was dropped for two
+reasons. It makes this the ONE credential surface here whose visibility is a
+per-item choice, against provider keys, MCP client secrets and headers, SSH
+passwords and trigger secrets, which are all unconditionally write-only; a
+second rule needs a reason better than convenience. And a forgotten flag
+writes a token to a readable field silently, which is a failure mode with no
+upper bound, while the flag's benefit has a small one.
 
-**What this does NOT buy is isolation from the agent.** A container's
-environment is readable with one `env`, and `docker inspect` shows it to
-anyone who reaches the daemon. Sealing and masking defend the database and the
-screen; nothing here hides a value from the model that runs in the container,
-and the UI says so rather than implying a lock it does not have. Real
-isolation would need a credential broker outside the container — a different
-feature, not a flag on this one.
+The price is real and is paid on the ordinary values: confirming that `TZ`
+says what you think needs a look inside the container. That look is one `env`
+away in a terminal the workbench already offers — and it is the honest place
+to look, because **the environment is readable to everything running in that
+container anyway**. Sealing and masking defend the database and the screen;
+nothing here hides a value from the model, and the UI says so rather than
+implying a lock it does not have. Real isolation would need a credential
+broker outside the container — a different feature, not a flag on this one.
 
 The environment is a project's CONTENT, not its identity: it may be edited
 while sessions are bound (workbench invariant 27 freezes which tree a session

@@ -52,15 +52,16 @@ func jsonBody(t *testing.T, v any) string {
 	return string(b)
 }
 
-// The mask round-trip: a hidden value comes back masked, goes back masked,
-// and survives — while the listing never carries an environment at all.
+// The mask round-trip: EVERY value comes back masked, a mask sent back
+// unchanged keeps what is stored, and the listing carries no environment at
+// all.
 func TestProjectEnvMaskRoundTrip(t *testing.T) {
 	e, projects, p := projectEnvFixture(t)
 
 	rec := doJSON(t, e, http.MethodPut, "/api/v1/projects/"+p.ID, jsonBody(t, map[string]any{
 		"name": "p",
 		"env": []store.EnvVar{
-			{Key: "TOKEN", Value: "sk-live", Hidden: true},
+			{Key: "TOKEN", Value: "sk-live"},
 			{Key: "TZ", Value: "UTC"},
 		},
 	}))
@@ -71,11 +72,14 @@ func TestProjectEnvMaskRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Env) != 2 || got.Env[0].Key != "TOKEN" || got.Env[0].Value != SecretMask {
-		t.Fatalf("hidden value not masked: %+v", got.Env)
+	if len(got.Env) != 2 {
+		t.Fatalf("env = %+v, want two entries", got.Env)
 	}
-	if got.Env[1].Value != "UTC" {
-		t.Errorf("a visible value was masked: %+v", got.Env[1])
+	// Names readable, values not — an ordinary-looking one included.
+	for i, want := range []string{"TOKEN", "TZ"} {
+		if got.Env[i].Key != want || got.Env[i].Value != SecretMask {
+			t.Errorf("env[%d] = %+v, want %s masked", i, got.Env[i], want)
+		}
 	}
 
 	// A listing must never carry an environment.
@@ -84,11 +88,12 @@ func TestProjectEnvMaskRoundTrip(t *testing.T) {
 		t.Errorf("the listing carried an environment: %s", rec.Body)
 	}
 
-	// Sending the mask straight back keeps the stored value.
+	// Sending the mask straight back keeps the stored value; the neighbour is
+	// edited in the same request.
 	rec = doJSON(t, e, http.MethodPut, "/api/v1/projects/"+p.ID, jsonBody(t, map[string]any{
 		"name": "p",
 		"env": []store.EnvVar{
-			{Key: "TOKEN", Value: SecretMask, Hidden: true},
+			{Key: "TOKEN", Value: SecretMask},
 			{Key: "TZ", Value: "Europe/Berlin"},
 		},
 	}))
@@ -111,29 +116,26 @@ func TestProjectEnvMaskRoundTrip(t *testing.T) {
 	}
 }
 
-// Unhiding a value needs no retyping — the mask resolves before the flag is
-// applied — and the value then comes back readable.
-func TestProjectEnvUnhideKeepsValue(t *testing.T) {
+// An empty value is not a secret: masking it would claim a value is stored
+// where none is, and the sibling maskers all leave "" alone.
+func TestProjectEnvEmptyValueNotMasked(t *testing.T) {
 	e, _, p := projectEnvFixture(t)
-	if rec := doJSON(t, e, http.MethodPut, "/api/v1/projects/"+p.ID, jsonBody(t, map[string]any{
-		"name": "p",
-		"env":  []store.EnvVar{{Key: "TOKEN", Value: "sk-live", Hidden: true}},
-	})); rec.Code != http.StatusOK {
-		t.Fatalf("seed: %d %s", rec.Code, rec.Body)
-	}
 	rec := doJSON(t, e, http.MethodPut, "/api/v1/projects/"+p.ID, jsonBody(t, map[string]any{
 		"name": "p",
-		"env":  []store.EnvVar{{Key: "TOKEN", Value: SecretMask}},
+		"env":  []store.EnvVar{{Key: "EMPTY", Value: ""}, {Key: "SET", Value: "v"}},
 	}))
 	if rec.Code != http.StatusOK {
-		t.Fatalf("unhide: %d %s", rec.Code, rec.Body)
+		t.Fatalf("update: %d %s", rec.Code, rec.Body)
 	}
 	var got projectDetail
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if got.Env[0].Value != "sk-live" || got.Env[0].Hidden {
-		t.Errorf("after unhiding = %+v, want the plaintext value visible", got.Env[0])
+	if got.Env[0].Value != "" {
+		t.Errorf("empty value came back as %q, want it left empty", got.Env[0].Value)
+	}
+	if got.Env[1].Value != SecretMask {
+		t.Errorf("set value = %q, want masked", got.Env[1].Value)
 	}
 }
 
@@ -143,7 +145,7 @@ func TestProjectEnvMaskForUnknownNameRefused(t *testing.T) {
 	e, _, p := projectEnvFixture(t)
 	rec := doJSON(t, e, http.MethodPut, "/api/v1/projects/"+p.ID, jsonBody(t, map[string]any{
 		"name": "p",
-		"env":  []store.EnvVar{{Key: "BRAND_NEW", Value: SecretMask, Hidden: true}},
+		"env":  []store.EnvVar{{Key: "BRAND_NEW", Value: SecretMask}},
 	}))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("code = %d, want 400 (%s)", rec.Code, rec.Body)

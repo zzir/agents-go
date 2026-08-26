@@ -79,8 +79,8 @@ func openSandbox(c *SandboxConfig) (err error) {
 	return err
 }
 
-// Every value of a project's environment is sealed, whatever its Hidden flag
-// says — hiding is a display choice, sealing is not (decisions §5.32).
+// A project's environment is a credential surface like any other here: every
+// value sealed at rest, none readable back (decisions §5.32).
 func sealProject(p *Project) error {
 	return mapProjectEnv(p, func(_ string, s string) (string, error) { return sealSecret(labelProjectEnv, s), nil })
 }

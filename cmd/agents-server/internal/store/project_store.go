@@ -58,9 +58,9 @@ func (s *ProjectStore) Create(ctx context.Context, p *Project) error {
 // under the same compare-and-set the sandbox config uses: the write lands
 // only while the row is still at expectedRevision (see ErrRevisionConflict).
 // contentChanged bumps the runtime generation alongside the revision; a
-// rename, or a Hidden toggle, moves the revision alone so nothing downstream
-// replaces a container or severs a terminal. Owner and sandbox are the
-// project's identity and are not writable here.
+// rename moves the revision alone so nothing downstream replaces a container
+// or severs a terminal. Owner and sandbox are the project's identity and are
+// not writable here.
 func (s *ProjectStore) Update(ctx context.Context, id string, p *Project, expectedRevision int64, contentChanged bool) error {
 	p.ID = id
 	genBump := 0

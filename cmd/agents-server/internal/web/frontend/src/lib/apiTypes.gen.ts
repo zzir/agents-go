@@ -2584,7 +2584,7 @@ export interface paths {
         };
         /**
          * Get project
-         * @description The one endpoint that returns a project's environment; listings never do. Owner only — an environment is not part of an admin's management reach.
+         * @description The one endpoint that returns a project's environment — names, with every value masked. Listings never carry it at all. Owner only: an environment is not part of an admin's management reach.
          */
         get: {
             parameters: {
@@ -2620,7 +2620,7 @@ export interface paths {
         };
         /**
          * Update project
-         * @description A hidden value may be sent back as its mask to keep it. An environment change replaces the project's container at its next run and severs its terminals; a rename does neither.
+         * @description A value sent back as its mask keeps what is stored; any other value replaces it. An environment change replaces the project's container at its next run and severs its terminals; a rename does neither.
          */
         put: {
             parameters: {
@@ -7400,7 +7400,7 @@ export interface components {
              * @description Revision and RuntimeGen are the two counters SandboxConfig carries, for
              *     the same two jobs: the expected-revision CAS every update lands
              *     against, and the content generation that retires live containers — so
-             *     a rename (or a Hidden toggle) does not replace anyone's container.
+             *     a rename does not replace anyone's container.
              */
             revision?: number;
             sandbox_id?: string;
@@ -7813,7 +7813,6 @@ export interface components {
             usage?: components["schemas"]["agents.RequestUsage"];
         };
         "store.EnvVar": {
-            hidden?: boolean;
             key?: string;
             value?: string;
         };
@@ -7871,7 +7870,7 @@ export interface components {
              * @description Revision and RuntimeGen are the two counters SandboxConfig carries, for
              *     the same two jobs: the expected-revision CAS every update lands
              *     against, and the content generation that retires live containers — so
-             *     a rename (or a Hidden toggle) does not replace anyone's container.
+             *     a rename does not replace anyone's container.
              */
             revision?: number;
             sandbox_id?: string;

@@ -79,7 +79,7 @@ func TestProjectEnvSealedOnCreate(t *testing.T) {
 	projects := NewProjectStore(db)
 	createSandboxRow(t, db, id("sb"))
 
-	env, err := NormalizeProjectEnv([]EnvVar{{Key: "TOKEN", Value: "sk-live", Hidden: true}, {Key: "TZ", Value: "UTC"}})
+	env, err := NormalizeProjectEnv([]EnvVar{{Key: "TOKEN", Value: "sk-live"}, {Key: "TZ", Value: "UTC"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestProjectEnvSealedOnCreate(t *testing.T) {
 	if p.Env != env {
 		t.Errorf("caller's env after Create = %q, want plaintext", p.Env)
 	}
-	// Both values, not just the Hidden one: hiding is a display choice
+	// Every value, not a chosen few: the environment is write-only
 	// (decisions §5.32).
 	raw := rawColumn(t, db, "SELECT env FROM projects WHERE id = ?", p.ID)
 	if strings.Contains(raw, "sk-live") || strings.Contains(raw, "UTC") {

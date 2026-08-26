@@ -8,11 +8,11 @@ import (
 // The canonical payload is sorted by key, whatever order it arrived in — the
 // order storage, the container fingerprint and EnvContentEqual all share.
 func TestNormalizeProjectEnvCanonical(t *testing.T) {
-	got, err := NormalizeProjectEnv([]EnvVar{{Key: "B", Value: "2"}, {Key: "A", Value: "1", Hidden: true}})
+	got, err := NormalizeProjectEnv([]EnvVar{{Key: "B", Value: "2"}, {Key: "A", Value: "1"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `[{"key":"A","value":"1","hidden":true},{"key":"B","value":"2"}]`
+	want := `[{"key":"A","value":"1"},{"key":"B","value":"2"}]`
 	if got != want {
 		t.Errorf("canonical = %s, want %s", got, want)
 	}
@@ -64,22 +64,19 @@ func TestNormalizeProjectEnvRejects(t *testing.T) {
 	}
 }
 
-// Hidden is a display flag: toggling it must not read as a different
-// container, or every visibility change would replace one.
-func TestEnvContentEqualIgnoresHidden(t *testing.T) {
+// The predicate behind the runtime-generation bump: what the container gets,
+// nothing else.
+func TestEnvContentEqual(t *testing.T) {
 	shown, err := NormalizeProjectEnv([]EnvVar{{Key: "TOKEN", Value: "t"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	hidden, err := NormalizeProjectEnv([]EnvVar{{Key: "TOKEN", Value: "t", Hidden: true}})
+	same, err := NormalizeProjectEnv([]EnvVar{{Key: "TOKEN", Value: "t"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if shown == hidden {
-		t.Fatal("the payloads are identical; this test proves nothing")
-	}
-	if !EnvContentEqual(shown, hidden) {
-		t.Error("a Hidden toggle compared as a content change")
+	if !EnvContentEqual(shown, same) {
+		t.Error("identical environments compared unequal")
 	}
 	changed, _ := NormalizeProjectEnv([]EnvVar{{Key: "TOKEN", Value: "other"}})
 	if EnvContentEqual(shown, changed) {
@@ -99,7 +96,7 @@ func TestEnvContentEqualIgnoresHidden(t *testing.T) {
 }
 
 func TestEnvMap(t *testing.T) {
-	raw, err := NormalizeProjectEnv([]EnvVar{{Key: "A", Value: "1"}, {Key: "B", Value: "2", Hidden: true}})
+	raw, err := NormalizeProjectEnv([]EnvVar{{Key: "A", Value: "1"}, {Key: "B", Value: "2"}})
 	if err != nil {
 		t.Fatal(err)
 	}
