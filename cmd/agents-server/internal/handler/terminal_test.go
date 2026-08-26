@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -499,5 +500,64 @@ func TestTerminalRegisterFence(t *testing.T) {
 	th.CloseSandboxTerminals("sb", 1)
 	if ok, stale := th.register("sb", &liveTerminal{gen: 1}, 4); ok || !stale {
 		t.Fatalf("register after a late older sweep: ok=%v stale=%v, want still refused", ok, stale)
+	}
+}
+
+// The project fence is its own axis: an environment change refuses the
+// project's late arrivals without touching a sibling project on the same
+// sandbox.
+func TestTerminalRegisterProjectFence(t *testing.T) {
+	th := NewTerminalHandler(nil, nil, nil, settings.NewReader(nil))
+	th.CloseProjectTerminals("p1", 2)
+
+	stale := &liveTerminal{gen: 1, projectID: "p1", projGen: 1}
+	if ok, isStale := th.register("sb", stale, 4); ok || !isStale {
+		t.Fatalf("stale project generation: ok=%v stale=%v, want a stale refusal", ok, isStale)
+	}
+	current := &liveTerminal{gen: 1, projectID: "p1", projGen: 2}
+	if ok, isStale := th.register("sb", current, 4); !ok || isStale {
+		t.Fatalf("current project generation: ok=%v stale=%v, want accepted", ok, isStale)
+	}
+	sibling := &liveTerminal{gen: 1, projectID: "p2", projGen: 1}
+	if ok, isStale := th.register("sb", sibling, 4); !ok || isStale {
+		t.Fatalf("sibling project on the same sandbox: ok=%v stale=%v, want accepted", ok, isStale)
+	}
+}
+
+// perOpenTerminalSandbox hands each terminal its own PTY, so a sweep that
+// closes one connection and spares another is observable.
+type perOpenTerminalSandbox struct{ sandbox.Sandbox }
+
+func (perOpenTerminalSandbox) OpenTerminal(context.Context, sandbox.TerminalOptions) (sandbox.Terminal, error) {
+	return newFakeTerminal(), nil
+}
+
+// A project's sweep closes that project's terminals and leaves the sandbox's
+// other projects connected — they share a config, not an environment.
+func TestCloseProjectTerminalsSparesSiblings(t *testing.T) {
+	srv, th, id, pid := terminalTestServer(t, &fakeProvider{sb: perOpenTerminalSandbox{}})
+	sibling := &store.Project{OwnerID: store.LocalUserID, SandboxID: id, Name: "sibling"}
+	if err := th.projects.Create(t.Context(), sibling); err != nil {
+		t.Fatal(err)
+	}
+	mine := dialTerminal(t, srv, id, pid)
+	other := dialTerminal(t, srv, id, sibling.ID)
+
+	// The project's environment changed: generations below 2 are retired.
+	th.CloseProjectTerminals(pid, 2)
+
+	_ = mine.SetReadDeadline(time.Now().Add(5 * time.Second))
+	for {
+		if _, _, err := mine.ReadMessage(); err != nil {
+			break // torn down — the expected end state
+		}
+	}
+	// The sibling is still connected: its read finds nothing to read rather
+	// than a closed socket.
+	_ = other.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	_, _, err := other.ReadMessage()
+	var netErr net.Error
+	if !errors.As(err, &netErr) || !netErr.Timeout() {
+		t.Errorf("sibling terminal read = %v, want a timeout (connection still open)", err)
 	}
 }

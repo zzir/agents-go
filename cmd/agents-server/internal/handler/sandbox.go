@@ -359,42 +359,10 @@ func (h *SandboxHandler) Test(c *gin.Context) {
 	c.JSON(http.StatusOK, sandboxTestResp{OK: true})
 }
 
-// daemonOptions assembles the SDK options reaching cfg's daemon — shared by
-// the ephemeral health check and the managed-container admin calls.
-func daemonOptions(cfg *store.SandboxConfig) (dockersb.Options, error) {
-	var dc store.DockerConfig
-	if len(cfg.Config) > 0 {
-		if err := json.Unmarshal(cfg.Config, &dc); err != nil {
-			return dockersb.Options{}, fmt.Errorf("invalid config: %w", err)
-		}
-	}
-	if dc.Image == "" {
-		return dockersb.Options{}, fmt.Errorf("docker sandbox requires an image")
-	}
-	opts := dockersb.Options{
-		Image:   dc.Image,
-		Host:    dc.Host,
-		Runtime: dc.Runtime,
-		User:    dc.User,
-		Network: dc.Network,
-		Limits:  sandbox.Limits{MemoryBytes: dc.MemoryMB << 20, CPUs: dc.CPUs},
-	}
-	if strings.HasPrefix(dc.Host, "ssh://") {
-		opts.SSH = dockersb.SSHAuth{
-			UseAgent:              dc.SSHUseAgent,
-			KeyFile:               dc.SSHKeyFile,
-			Password:              dc.SSHPassword,
-			KnownHostsFile:        dc.SSHKnownHosts,
-			InsecureIgnoreHostKey: dc.SSHInsecureHostKey,
-		}
-	}
-	return opts, nil
-}
-
 // testSandbox builds a throw-away ephemeral SDK sandbox from cfg — same
 // image, daemon and limits as the real containers, no name, no mount.
 func (h *SandboxHandler) testSandbox(cfg *store.SandboxConfig) (sandbox.Sandbox, error) {
-	opts, err := daemonOptions(cfg)
+	opts, err := sandboxes.DaemonOptions(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -419,7 +387,7 @@ func (h *SandboxHandler) Containers(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
-	opts, err := daemonOptions(cfg)
+	opts, err := sandboxes.DaemonOptions(cfg)
 	if err != nil {
 		badRequest(c, err.Error())
 		return
@@ -450,7 +418,7 @@ func (h *SandboxHandler) containerAct(c *gin.Context) (dockersb.Options, string,
 		badRequest(c, "not a managed container name")
 		return dockersb.Options{}, "", false
 	}
-	opts, err := daemonOptions(cfg)
+	opts, err := sandboxes.DaemonOptions(cfg)
 	if err != nil {
 		badRequest(c, err.Error())
 		return dockersb.Options{}, "", false

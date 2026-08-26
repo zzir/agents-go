@@ -52,6 +52,11 @@ type TerminalHandler struct {
 	// sandbox). CloseSandboxTerminals moves the fence; register checks it
 	// under the same lock, so the late arrival is refused instead.
 	fence map[string]int64
+	// projFence is the same fence keyed by project, moved when a project's
+	// environment changes. Separate from fence because the two sweeps must
+	// not reach each other's terminals: the projects on a sandbox share its
+	// config but not their environments.
+	projFence map[string]int64
 }
 
 // sandboxProvider is the slice of sandboxes.Manager the terminal handler
@@ -70,14 +75,16 @@ var _ sandboxProvider = (*sandboxes.Manager)(nil)
 // can stop both pumps; gen records the config generation it opened under, so
 // a teardown scoped to older generations leaves newer terminals running.
 type liveTerminal struct {
-	term sandbox.Terminal
-	conn *server.WSConn
-	gen  int64
+	term      sandbox.Terminal
+	conn      *server.WSConn
+	gen       int64
+	projectID string
+	projGen   int64
 }
 
 // NewTerminalHandler returns a handler backed by the given stores and sandbox manager.
 func NewTerminalHandler(s *store.SandboxStore, projects *store.ProjectStore, m sandboxProvider, cfg *settings.Reader) *TerminalHandler {
-	return &TerminalHandler{store: s, projects: projects, manager: m, settings: cfg, live: map[string]map[*liveTerminal]struct{}{}, fence: map[string]int64{}}
+	return &TerminalHandler{store: s, projects: projects, manager: m, settings: cfg, live: map[string]map[*liveTerminal]struct{}{}, fence: map[string]int64{}, projFence: map[string]int64{}}
 }
 
 // Handle runs one terminal session on an authenticated WebSocket connection.
@@ -111,15 +118,16 @@ func (h *TerminalHandler) Handle(conn *server.WSConn) {
 	// forced teardown (CloseSandboxTerminals) closes the conn, the pumps
 	// return, and this defer drops the hold.
 	defer release()
-	lt := &liveTerminal{term: term, conn: conn, gen: opened.RuntimeGen}
+	lt := &liveTerminal{term: term, conn: conn, gen: opened.RuntimeGen, projectID: proj.ID, projGen: proj.RuntimeGen}
 	limit := h.settings.Int(conn.Context(), settings.KeyMaxTerminalsPerSandbox)
 	if ok, stale := h.register(sandboxID, lt, limit); !ok {
 		_ = term.Close()
 		msg := fmt.Sprintf("too many open terminals for this sandbox (max %d)", limit)
 		if stale {
-			// The config was updated or deleted while this terminal was
-			// dialing: its shell would serve retired credentials (or a
-			// sandbox that is gone). Reconnect to open under the current one.
+			// The config or the project was updated (or deleted) while this
+			// terminal was dialing: its shell would serve retired credentials,
+			// a stale environment, or a sandbox that is gone. Reconnect to
+			// open under the current one.
 			msg = "this sandbox changed while the terminal was opening; reconnect"
 		}
 		_ = conn.WriteJSON(&protocol.Envelope{Type: protocol.EventTerminalError, Payload: mustJSON(protocol.TerminalError{
@@ -264,7 +272,7 @@ func (h *TerminalHandler) open(conn *server.WSConn) (sandbox.Terminal, *store.Sa
 func (h *TerminalHandler) register(sandboxID string, lt *liveTerminal, limit int) (ok, stale bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if lt.gen < h.fence[sandboxID] {
+	if lt.gen < h.fence[sandboxID] || lt.projGen < h.projFence[lt.projectID] {
 		return false, true
 	}
 	set := h.live[sandboxID]
@@ -295,6 +303,32 @@ func (h *TerminalHandler) unregister(sandboxID string, lt *liveTerminal) {
 // fence field). A config update passes the new runtime generation; a delete
 // passes math.MaxInt64: nothing may serve a config that is gone. Sandbox
 // Update/Delete call it alongside SandboxManager.Retire/Remove.
+// CloseProjectTerminals severs the terminals a project opened before minGen
+// and fences that generation off — its environment changed, and a shell that
+// keeps reading the old one is a person debugging against what the agent no
+// longer sees. Scoped to the project: the sandbox's other projects are
+// untouched.
+func (h *TerminalHandler) CloseProjectTerminals(projectID string, minGen int64) {
+	h.mu.Lock()
+	if h.projFence[projectID] < minGen {
+		h.projFence[projectID] = minGen
+	}
+	var terminals []*liveTerminal
+	for _, set := range h.live {
+		for lt := range set {
+			if lt.projectID == projectID && lt.projGen < minGen {
+				terminals = append(terminals, lt)
+			}
+		}
+	}
+	h.mu.Unlock()
+	// Close outside the lock: pump teardown re-enters unregister.
+	for _, lt := range terminals {
+		_ = lt.term.Close()
+		lt.conn.Close()
+	}
+}
+
 func (h *TerminalHandler) CloseSandboxTerminals(sandboxID string, minGen int64) {
 	h.mu.Lock()
 	if h.fence[sandboxID] < minGen {
