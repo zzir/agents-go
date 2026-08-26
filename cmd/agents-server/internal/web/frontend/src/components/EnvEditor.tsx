@@ -92,7 +92,8 @@ export function EnvEditor({ vars, onChange, disabled }: EnvEditorProps): ReactEl
       <p className="env-editor-hint">
         Optional. Set on the container, so commands, shells and terminals all see them.
         <strong> Values are not shown again after saving</strong> — you can overwrite one, not read
-        it back. Anything running in the container can read them all.
+        it back. To check what a variable holds, run <code>env</code> in the project&rsquo;s terminal
+        (⋯ → Terminal panel); everything in the container can read them all.
       </p>
     </div>
   );

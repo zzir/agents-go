@@ -886,11 +886,9 @@ untouched. Files under `/workspace` survive; anything installed into the
 container does not. A rename does neither. Updates are compare-and-set: send
 the `revision` the edit was made against and a concurrent write answers 409.
 
-`POST /projects/{id}/container/prepare` creates the container up front —
-containers are built lazily on first use, so without it the first run waits
-for an image pull inside its first tool call. `POST .../container/rebuild`
-discards the container and creates a fresh one; commands running in the old
-one fail. Both are synchronous and owner-only.
+`POST /projects/{id}/container/rebuild` discards the project's container and
+creates a fresh one from the current image and environment; commands running
+in the old one fail. Synchronous and owner-only.
 
 *(Endpoints and payload schemas: see the OpenAPI spec — `/openapi.yaml`, browsable at `/docs`.)*
 

@@ -1,5 +1,5 @@
 import { ActionList, ActionMenu, IconButton } from '@primer/react';
-import { FileDirectoryIcon, KebabHorizontalIcon, MeterIcon, PulseIcon, StackIcon, TerminalIcon } from '@primer/octicons-react';
+import { FileDirectoryIcon, KeyAsteriskIcon, KebabHorizontalIcon, MeterIcon, PulseIcon, StackIcon, SyncIcon, TerminalIcon } from '@primer/octicons-react';
 import type { ReactElement } from 'react';
 import type { InspectorPanel } from '@/features/chat/ChatView';
 import { useChatSession } from '@/features/chat/ChatSessionContext';
@@ -8,6 +8,11 @@ interface ChatTopBarProps {
   sessionName: string;
   panel: InspectorPanel;
   onPanelChange: (panel: InspectorPanel) => void;
+  /* The terminal panel opens from the project menu, not from a button of its
+     own: what it opens is this project's terminal, and the three buttons on
+     the right are inspector lenses — it never belonged among them. The cost
+     is that an unbound session has no way in, which is the trade taken: a
+     session binds on its first message. */
   terminalEnabled: boolean;
   onTerminalOpen?: () => void;
   /* The session's sandbox binding, rendered as a quiet read-only label beside
@@ -22,13 +27,11 @@ interface ChatTopBarProps {
   projectMenu?: ProjectMenu | null;
 }
 
-/* What the bound project offers: editing the environment its container is
-   created with, and the two container calls. */
+/* What the bound project offers: its terminal, the environment its container
+   is created with, and the way back from a container someone broke. */
 export interface ProjectMenu {
-  label: string;
   busy: boolean;
   onEnv: () => void;
-  onPrepare: () => void;
   onRebuild: () => void;
 }
 
@@ -69,24 +72,18 @@ export function ChatTopBar({
             </ActionMenu.Anchor>
             <ActionMenu.Overlay>
               <ActionList>
-                <ActionList.Group>
-                  <ActionList.GroupHeading as="h3">{projectMenu.label}</ActionList.GroupHeading>
-                  <ActionList.Item onSelect={projectMenu.onEnv}>
-                    Environment variables…
-                  </ActionList.Item>
-                  <ActionList.Item onSelect={projectMenu.onPrepare}>
-                    Prepare container
-                    <ActionList.Description variant="block">
-                      Create it now instead of on the next run
-                    </ActionList.Description>
-                  </ActionList.Item>
-                  <ActionList.Item variant="danger" onSelect={projectMenu.onRebuild}>
-                    Rebuild container…
-                    <ActionList.Description variant="block">
-                      Discard it and start from the image again
-                    </ActionList.Description>
-                  </ActionList.Item>
-                </ActionList.Group>
+                <ActionList.Item disabled={!terminalEnabled} onSelect={() => onTerminalOpen?.()}>
+                  <ActionList.LeadingVisual><TerminalIcon /></ActionList.LeadingVisual>
+                  Terminal panel
+                </ActionList.Item>
+                <ActionList.Item onSelect={projectMenu.onEnv}>
+                  <ActionList.LeadingVisual><KeyAsteriskIcon /></ActionList.LeadingVisual>
+                  Environment…
+                </ActionList.Item>
+                <ActionList.Item variant="danger" onSelect={projectMenu.onRebuild}>
+                  <ActionList.LeadingVisual><SyncIcon /></ActionList.LeadingVisual>
+                  Rebuild container
+                </ActionList.Item>
               </ActionList>
             </ActionMenu.Overlay>
           </ActionMenu>
@@ -121,14 +118,6 @@ export function ChatTopBar({
           aria-label="Context"
           disabled={!sessionId}
           onClick={() => onPanelChange(panel?.kind === 'context' ? null : { kind: 'context' })}
-        />
-        <IconButton
-          icon={TerminalIcon}
-          variant="invisible"
-          size="small"
-          aria-label="Terminal"
-          disabled={!terminalEnabled}
-          onClick={onTerminalOpen}
         />
       </div>
     </div>

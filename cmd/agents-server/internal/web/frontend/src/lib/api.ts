@@ -358,7 +358,6 @@ export const api = {
     delete: (id: string) => request<null>(`/projects/${id}`, { method: 'DELETE' }),
     // Container calls: create it up front, or discard and recreate it. Both
     // are synchronous and can take an image pull's worth of time.
-    prepareContainer: (id: string) => request<null>(`/projects/${id}/container/prepare`, { method: 'POST' }),
     rebuildContainer: (id: string) => request<null>(`/projects/${id}/container/rebuild`, { method: 'POST' }),
   },
   workflows: {

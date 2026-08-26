@@ -314,26 +314,23 @@ export function ChatView({
   // The bound pair is what the top-bar menu acts on: a session's container is
   // its binding's, never the composer's current pick.
   const boundProject = sessionBinding?.projectId ? projects?.find(p => p.id === sessionBinding.projectId) || null : null;
-  const boundSandbox = sessionBinding?.sandboxId ? sandboxConfigs?.find(sb => sb.id === sessionBinding.sandboxId) : undefined;
 
-  // Prepare creates the container up front; rebuild discards it first. Both
-  // are synchronous and can take an image pull's worth of time, so the menu
-  // stays disabled until they answer.
-  const containerCall = async (kind: 'prepare' | 'rebuild') => {
+  // A rebuild is synchronous and can take an image pull's worth of time, so
+  // the menu stays disabled until it answers.
+  const rebuildContainer = async () => {
     if (!boundProject || containerBusy) return;
-    if (kind === 'rebuild' && !await confirmDialog({
+    if (!await confirmDialog({
       title: `Rebuild the container for “${boundProject.name}”?`,
       content: 'The container is discarded and created again from the image. Files under /workspace survive; anything installed into the container does not, and commands running in it right now will fail.',
       confirmButtonType: 'danger',
     })) return;
     setContainerBusy(true);
-    toast.info(kind === 'prepare' ? 'Preparing the container…' : 'Rebuilding the container…');
+    toast.info('Rebuilding the container…');
     try {
-      if (kind === 'prepare') await api.projects.prepareContainer(boundProject.id);
-      else await api.projects.rebuildContainer(boundProject.id);
-      toast.success(kind === 'prepare' ? 'Container ready' : 'Container rebuilt');
+      await api.projects.rebuildContainer(boundProject.id);
+      toast.success('Container rebuilt');
     } catch (e) {
-      toast.error((e as Error).message || 'The container call failed');
+      toast.error((e as Error).message || 'The rebuild failed');
     } finally {
       setContainerBusy(false);
     }
@@ -641,11 +638,9 @@ export function ChatView({
         ? { title: sandboxView.title, projectName: projects?.find(p => p.id === sessionBinding.projectId)?.name || '…' }
         : null}
       projectMenu={boundProject ? {
-        label: projectLabel(boundProject.name, boundSandbox?.name || ''),
         busy: containerBusy,
         onEnv: () => setEnvProject(boundProject),
-        onPrepare: () => { void containerCall('prepare'); },
-        onRebuild: () => { void containerCall('rebuild'); },
+        onRebuild: () => { void rebuildContainer(); },
       } : null}
     />
   );

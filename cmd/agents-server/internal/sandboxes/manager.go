@@ -387,19 +387,19 @@ func (m *Manager) RetireProject(projectID string, minLive int64) {
 	}
 }
 
-// PrepareContainer creates the project's container now, so the wait for an
-// image pull happens where someone asked for it rather than inside the first
-// tool call. Containers are built lazily on the first exec, so this IS an
-// exec: "sleep 0" needs nothing the persistent container does not already
-// require (its entrypoint is "sleep infinity").
-func (m *Manager) PrepareContainer(ctx context.Context, cfg *store.SandboxConfig, proj *store.Project) error {
+// createContainer creates the project's container now rather than leaving it
+// to the next run, so a rebuild hands back something usable. Containers are
+// built lazily on the first exec, so this IS an exec: "sleep 0" needs nothing
+// the persistent container does not already require (its entrypoint is
+// "sleep infinity").
+func (m *Manager) createContainer(ctx context.Context, cfg *store.SandboxConfig, proj *store.Project) error {
 	sb, release, err := m.Acquire(cfg, proj)
 	if err != nil {
 		return err
 	}
 	defer release()
 	if _, err := sb.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"sleep", "0"}}); err != nil {
-		return fmt.Errorf("preparing the container: %w", err)
+		return fmt.Errorf("creating the container: %w", err)
 	}
 	return nil
 }
@@ -421,7 +421,7 @@ func (m *Manager) RebuildContainer(ctx context.Context, cfg *store.SandboxConfig
 	if err := dockersb.RemoveManaged(ctx, opts, name); err != nil && !errors.Is(err, dockersb.ErrContainerNotFound) {
 		return fmt.Errorf("removing container %s: %w", name, err)
 	}
-	return m.PrepareContainer(ctx, cfg, proj)
+	return m.createContainer(ctx, cfg, proj)
 }
 
 // RemoveProject evicts every cached instance keyed to the project — its row

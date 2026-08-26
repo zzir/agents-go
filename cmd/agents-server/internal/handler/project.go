@@ -341,21 +341,6 @@ func (h *ProjectHandler) Update(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
-// PrepareContainer creates the project's container now.
-//
-//	@Summary		Prepare container
-//	@Description	Creates the container up front — the first run otherwise waits for it (an image pull included) inside its first tool call. Synchronous.
-//	@Tags			projects
-//	@Param			id	path	string	true	"Project id"
-//	@Success		204	"ready"
-//	@Failure		404	{object}	ErrorResponse
-//	@Failure		502	{object}	ErrorResponse
-//	@Security		BearerAuth
-//	@Router			/projects/{id}/container/prepare [post]
-func (h *ProjectHandler) PrepareContainer(c *gin.Context) {
-	h.containerAct(c, h.manager.PrepareContainer)
-}
-
 // RebuildContainer discards the project's container and creates a fresh one.
 //
 //	@Summary		Rebuild container

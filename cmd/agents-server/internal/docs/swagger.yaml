@@ -3983,37 +3983,6 @@ paths:
       summary: Update project
       tags:
       - projects
-  /projects/{id}/container/prepare:
-    post:
-      description: Creates the container up front — the first run otherwise waits
-        for it (an image pull included) inside its first tool call. Synchronous.
-      parameters:
-      - description: Project id
-        in: path
-        name: id
-        required: true
-        schema:
-          type: string
-      responses:
-        "204":
-          description: ready
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Not Found
-        "502":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Bad Gateway
-      security:
-      - BearerAuth: []
-      summary: Prepare container
-      tags:
-      - projects
   /projects/{id}/container/rebuild:
     post:
       description: Discards the container and creates a fresh one from the current
