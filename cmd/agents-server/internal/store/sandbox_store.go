@@ -3,19 +3,10 @@ package store
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 
 	"github.com/uptrace/bun"
 )
-
-// ErrRevisionConflict reports an update whose expected revision no longer
-// matches the row: another update landed between the caller's read and its
-// write. Proceeding would silently overwrite that update (a credential
-// rotation above all) or bypass the identity freeze through a stale identity
-// comparison — the caller re-reads and retries instead. Handlers map it to
-// 409.
-var ErrRevisionConflict = errors.New("sandbox config changed concurrently; re-read and retry")
 
 // SandboxStore persists sandbox configs.
 type SandboxStore struct {

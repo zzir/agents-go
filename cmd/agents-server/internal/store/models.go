@@ -501,9 +501,20 @@ type Project struct {
 	SandboxID string `bun:"sandbox_id,notnull,type:uuid"  json:"sandbox_id"`
 	// Name is display only — the storage is keyed by ID, so a rename moves
 	// nothing. Unique per (owner, sandbox) via idx_projects_owner_sandbox_name.
-	Name      string    `bun:"name,notnull"                json:"name"`
-	CreatedAt time.Time `bun:"created_at,notnull"          json:"created_at"`
-	UpdatedAt time.Time `bun:"updated_at,notnull"          json:"updated_at"`
+	Name string `bun:"name,notnull"                json:"name"`
+	// Env is the canonical environment the container is created with
+	// (NormalizeProjectEnv), values sealed at rest. json:"-" is the default
+	// that keeps it off every listing: GET /projects/{id} is the one endpoint
+	// that returns it, masked.
+	Env string `bun:"env,type:text,nullzero" json:"-"`
+	// Revision and RuntimeGen are the two counters SandboxConfig carries, for
+	// the same two jobs: the expected-revision CAS every update lands
+	// against, and the content generation that retires live containers — so
+	// a rename (or a Hidden toggle) does not replace anyone's container.
+	Revision   int64     `bun:"revision,notnull,default:1"    json:"revision,omitempty"`
+	RuntimeGen int64     `bun:"runtime_gen,notnull,default:1" json:"-"`
+	CreatedAt  time.Time `bun:"created_at,notnull"            json:"created_at"`
+	UpdatedAt  time.Time `bun:"updated_at,notnull"            json:"updated_at"`
 	// StorageHint names where the files live — the local daemon's host
 	// directory or the remote daemon's volume. Derived per response by the
 	// handler for admins only, never stored: deleting the row keeps the

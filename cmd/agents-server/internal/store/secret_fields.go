@@ -1,6 +1,9 @@
 package store
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // The credential fields of each entity, sealed at rest. Each store installs
 // its pair with withSecrets, and its custom write paths wrap with sealedWrite
@@ -27,6 +30,7 @@ const (
 	labelMcpOAuthToken        = "mcp_servers.oauth_token"
 	labelMcpConfig            = "mcp_servers.config"
 	labelSandboxConfig        = "sandbox_configs.config"
+	labelProjectEnv           = "projects.env"
 	labelTriggerSecret        = "triggers.secret"
 	labelAgentFallbackModels  = "agent_configs.fallback_models"
 	labelSetting              = "settings.value"
@@ -73,6 +77,43 @@ func sealSandbox(c *SandboxConfig) (err error) {
 func openSandbox(c *SandboxConfig) (err error) {
 	c.Config, err = openJSONKeys(labelSandboxConfig, c.Config, "ssh_password")
 	return err
+}
+
+// Every value of a project's environment is sealed, whatever its Hidden flag
+// says — hiding is a display choice, sealing is not (decisions §5.32).
+func sealProject(p *Project) error {
+	return mapProjectEnv(p, func(_ string, s string) (string, error) { return sealSecret(labelProjectEnv, s), nil })
+}
+
+func openProject(p *Project) error {
+	return mapProjectEnv(p, openSecret)
+}
+
+// mapProjectEnv applies fn to every value, re-marshaling through []EnvVar so
+// the payload comes back in its canonical field order — a generic
+// map-of-raw-JSON round trip reorders keys, and the stored form is compared
+// as text nowhere but is read by people everywhere.
+func mapProjectEnv(p *Project, fn func(label, s string) (string, error)) error {
+	if p.Env == "" || secretBox == nil && !hasSealed(json.RawMessage(p.Env)) {
+		return nil
+	}
+	vars, err := DecodeProjectEnv(p.Env)
+	if err != nil {
+		return err
+	}
+	for i, v := range vars {
+		out, ferr := fn(labelProjectEnv, v.Value)
+		if ferr != nil {
+			return fmt.Errorf("environment variable %q: %w", v.Key, ferr)
+		}
+		vars[i].Value = out
+	}
+	b, err := json.Marshal(vars)
+	if err != nil {
+		return fmt.Errorf("encoding project environment: %w", err)
+	}
+	p.Env = string(b)
+	return nil
 }
 
 func sealTrigger(t *Trigger) error {

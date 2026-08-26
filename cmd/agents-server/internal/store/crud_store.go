@@ -56,6 +56,14 @@ func stampOnAppend(query bun.Query, id *string, createdAt, updatedAt *time.Time)
 	return nil
 }
 
+// ErrRevisionConflict reports an update whose expected revision no longer
+// matches the row: another update landed between the caller's read and its
+// write. Proceeding would silently overwrite that update (a credential
+// rotation above all) or bypass an identity freeze through a stale identity
+// comparison — the caller re-reads and retries instead. Handlers map it to
+// 409.
+var ErrRevisionConflict = errors.New("the record changed concurrently; re-read and retry")
+
 // CrudStore is a generic store for entities keyed by a string "id" primary key
 // with created_at/updated_at columns. Embed it (e.g. AgentConfigStore) to get
 // Create/List/Get/Update/Delete and add entity-specific queries alongside.

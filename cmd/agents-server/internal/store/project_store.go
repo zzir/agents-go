@@ -19,28 +19,79 @@ type ProjectStore struct {
 // NewProjectStore returns a ProjectStore backed by db. (owner, sandbox, name)
 // uniqueness is enforced by the DB (idx_projects_owner_sandbox_name).
 func NewProjectStore(db *bun.DB) *ProjectStore {
-	return &ProjectStore{CrudStore: NewCrudStore[Project](db, "project", "name ASC"), db: db}
+	return &ProjectStore{CrudStore: NewCrudStore[Project](db, "project", "name ASC").withSecrets(sealProject, openProject), db: db}
 }
 
 // Create inserts the project while its sandbox row still exists: the sandbox
 // row is locked (lockRow) for the insert's duration, so a racing sandbox
 // delete either cascades this row or arrives first and refuses the create —
 // never an orphan project (decisions §5.28). ErrNotFound names the sandbox.
+// The insert is its own transaction, bypassing the CrudStore write path that
+// seals — hence sealedWrite here, or the one path that CREATES an environment
+// would write it in the clear.
 func (s *ProjectStore) Create(ctx context.Context, p *Project) error {
-	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if err := lockRow(ctx, tx, &SandboxConfig{}, "id = ?", p.SandboxID); err != nil {
-			if errors.Is(err, ErrNotFound) {
-				return fmt.Errorf("sandbox %s: %w", p.SandboxID, err)
+	if p.Revision == 0 {
+		p.Revision = 1
+	}
+	if p.RuntimeGen == 0 {
+		p.RuntimeGen = 1
+	}
+	err := sealedWrite(p, sealProject, openProject, func() error {
+		return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+			if err := lockRow(ctx, tx, &SandboxConfig{}, "id = ?", p.SandboxID); err != nil {
+				if errors.Is(err, ErrNotFound) {
+					return fmt.Errorf("sandbox %s: %w", p.SandboxID, err)
+				}
+				return err
 			}
-			return err
-		}
-		_, err := tx.NewInsert().Model(p).Exec(ctx)
-		return err
+			_, ierr := tx.NewInsert().Model(p).Exec(ctx)
+			return ierr
+		})
 	})
 	if err != nil {
 		return fmt.Errorf("creating project: %w", err)
 	}
 	return nil
+}
+
+// Update overwrites the project's editable fields — name and environment —
+// under the same compare-and-set the sandbox config uses: the write lands
+// only while the row is still at expectedRevision (see ErrRevisionConflict).
+// contentChanged bumps the runtime generation alongside the revision; a
+// rename, or a Hidden toggle, moves the revision alone so nothing downstream
+// replaces a container or severs a terminal. Owner and sandbox are the
+// project's identity and are not writable here.
+func (s *ProjectStore) Update(ctx context.Context, id string, p *Project, expectedRevision int64, contentChanged bool) error {
+	p.ID = id
+	genBump := 0
+	if contentChanged {
+		genBump = 1
+	}
+	var res sql.Result
+	err := sealedWrite(p, sealProject, openProject, func() (err error) {
+		res, err = s.db.NewUpdate().Model(p).
+			Column("name", "env", "updated_at").
+			Set("revision = revision + 1").
+			Set("runtime_gen = runtime_gen + ?", genBump).
+			Where("id = ?", id).
+			Where("revision = ?", expectedRevision).
+			Exec(ctx)
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("updating project %s: %w", id, err)
+	}
+	if n, aerr := res.RowsAffected(); aerr == nil && n > 0 {
+		return nil
+	}
+	exists, eerr := s.db.NewSelect().Model((*Project)(nil)).Where("id = ?", id).Exists(ctx)
+	if eerr != nil {
+		return fmt.Errorf("updating project %s: %w", id, eerr)
+	}
+	if !exists {
+		return fmt.Errorf("updating project %s: %w", id, ErrNotFound)
+	}
+	return ErrRevisionConflict
 }
 
 // List returns one user's projects, or every owner's for EveryOwner (the
