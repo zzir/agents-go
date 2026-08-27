@@ -24,7 +24,7 @@ func projectEnvFixture(t *testing.T) (*gin.Engine, *store.ProjectStore, *store.P
 	projects := store.NewProjectStore(db)
 	mgr := sandboxes.NewManager()
 	targets, templates := mkSandboxRows(t, db)
-	h := NewProjectHandler(projects, store.NewSandboxTargetStore(db), store.NewSandboxTemplateStore(db), mgr, NewTerminalHandler(store.NewSandboxTargetStore(db), store.NewSandboxTemplateStore(db), projects, mgr, settings.NewReader(nil)))
+	h := NewProjectHandler(projects, store.NewSandboxTargetStore(db), store.NewSandboxTemplateStore(db), mgr, NewTerminalHandler(store.NewSandboxTargetStore(db), store.NewSandboxTemplateStore(db), projects, mgr, settings.NewReader(nil)), settings.NewReader(nil))
 
 	p := &store.Project{ID: store.NewID(), OwnerID: store.LocalUserID, TargetID: targets, TemplateID: templates, Name: "p"}
 	if err := projects.Create(context.Background(), p); err != nil {
@@ -187,7 +187,7 @@ func TestProjectEnvForeignReadsAsAbsent(t *testing.T) {
 	projects := store.NewProjectStore(db)
 	mgr := sandboxes.NewManager()
 	targets, templates := mkSandboxRows(t, db)
-	h := NewProjectHandler(projects, store.NewSandboxTargetStore(db), store.NewSandboxTemplateStore(db), mgr, NewTerminalHandler(store.NewSandboxTargetStore(db), store.NewSandboxTemplateStore(db), projects, mgr, settings.NewReader(nil)))
+	h := NewProjectHandler(projects, store.NewSandboxTargetStore(db), store.NewSandboxTemplateStore(db), mgr, NewTerminalHandler(store.NewSandboxTargetStore(db), store.NewSandboxTemplateStore(db), projects, mgr, settings.NewReader(nil)), settings.NewReader(nil))
 	foreign := &store.Project{ID: store.NewID(), OwnerID: store.NewID(), TargetID: targets, TemplateID: templates, Name: "theirs"}
 	if err := projects.Create(context.Background(), foreign); err != nil {
 		t.Fatal(err)

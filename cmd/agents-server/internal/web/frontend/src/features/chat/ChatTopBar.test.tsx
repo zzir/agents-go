@@ -29,7 +29,7 @@ vi.mock('@primer/react', () => {
   };
 });
 vi.mock('@primer/octicons-react', () => ({ default: {}, ...Object.fromEntries(
-  ['FileDirectoryIcon', 'KeyAsteriskIcon', 'KebabHorizontalIcon', 'DownloadIcon', 'MeterIcon', 'PlayIcon', 'PulseIcon', 'SquareFillIcon', 'StackIcon', 'SyncIcon', 'TerminalIcon']
+  ['FileDirectoryIcon', 'KeyAsteriskIcon', 'KebabHorizontalIcon', 'BrowserIcon', 'DownloadIcon', 'MeterIcon', 'PlayIcon', 'PulseIcon', 'SquareFillIcon', 'StackIcon', 'SyncIcon', 'TerminalIcon']
     .map(n => [n, () => null]),
 ) }));
 vi.mock('@/features/chat/ChatSessionContext', () => ({ useChatSession: () => ({ sessionId: 's1' }) }));
@@ -55,7 +55,7 @@ function render(props: Partial<Parameters<typeof ChatTopBar>[0]> = {}): HTMLElem
         terminalEnabled
         onTerminalOpen={noop}
         binding={{ title: 'sb — proj', projectName: 'proj' }}
-        projectMenu={{ busy: false, state: 'running', onEnv: noop, onStart: noop, onStop: noop, onExport: noop, onRebuild: noop }}
+        projectMenu={{ busy: false, state: 'running', onEnv: noop, onStart: noop, onStop: noop, onExport: noop, onPreview: noop, onRebuild: noop }}
         {...props}
       />,
     );
@@ -67,20 +67,20 @@ describe('ChatTopBar', () => {
   it('offers the terminal, the environment, the compute switch and the rebuild, in that order', () => {
     const host = render();
     const items = [...host.querySelectorAll('li')].map(li => li.textContent);
-    expect(items).toEqual(['Terminal panel', 'Environment…', 'Export as tar…The whole working tree, as a download.', 'Stop sandboxKeeps the files; frees the memory.', 'Rebuild container']);
+    expect(items).toEqual(['Terminal panel', 'Environment…', 'Preview a port…Open a service running inside the sandbox.', 'Export as tar…The whole working tree, as a download.', 'Stop sandboxKeeps the files; frees the memory.', 'Rebuild container']);
   });
 
   // A running sandbox offers Stop; anything else offers Start, and says why.
   it('offers Start when the sandbox is not running', () => {
-    const host = render({ projectMenu: { busy: false, state: 'absent', onEnv: noop, onStart: noop, onStop: noop, onExport: noop, onRebuild: noop } });
+    const host = render({ projectMenu: { busy: false, state: 'absent', onEnv: noop, onStart: noop, onStop: noop, onExport: noop, onPreview: noop, onRebuild: noop } });
     const items = [...host.querySelectorAll('li')].map(li => li.textContent);
-    expect(items[3]).toBe('Start sandboxNot created yet — pulls the image.');
+    expect(items[4]).toBe('Start sandboxNot created yet — pulls the image.');
   });
 
   it('marks only the rebuild as destructive', () => {
     const host = render();
     const variants = [...host.querySelectorAll('li')].map(li => li.getAttribute('data-variant'));
-    expect(variants).toEqual([null, null, null, null, 'danger']);
+    expect(variants).toEqual([null, null, null, null, null, 'danger']);
   });
 
   /* The terminal left the top bar for the project menu: the three buttons

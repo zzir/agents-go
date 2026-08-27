@@ -903,6 +903,21 @@ as names with masked values, and only to the project's owner: listings never
 carry it at all, and an admin's management reach does not extend to reading
 one.
 
+`POST /projects/{id}/preview/{port}` mints a short-lived URL under `/preview/`
+for a service listening on that port inside the sandbox, and
+`ANY /preview/{grant}/{path}` proxies to it. The grant exists because a
+browser TAB carries no bearer token: it is unguessable, single (project, port),
+30 minutes, in-memory, and revoked when the project is deleted — so the
+preview route lives outside `/api` with its own per-IP rate limit
+(decisions §5.35). Owner only, and **off unless `preview_enabled` is set**.
+The proxy strips `Authorization` and `Cookie` before forwarding and does not
+impose this app's CSP on the previewed page. A docker template that joins no
+network has no reachable ports at all, and the preview says so. The proxy
+reaches a container over its docker network, which works from a Linux host
+(local daemon) and through the SSH tunnel to a remote daemon; Docker Desktop
+on macOS/Windows keeps that network inside a VM, so a local-daemon preview
+there answers 502 saying so. An e2b target has no such limit.
+
 `GET /projects/{id}/export` streams the working tree as an uncompressed tar
 (`application/x-tar`) — the way files leave a sandbox whose storage the host
 cannot open directly (decisions §5.33). Owner only, on the same reasoning as

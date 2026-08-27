@@ -60,10 +60,10 @@ func (s *Sandbox) Status(ctx context.Context) (sandbox.State, error) {
 	return sandbox.StateRunning, nil
 }
 
-// HostForPort returns the public host a service listening inside the sandbox
-// is reachable at. The service builds one host per port, so this needs no
-// call — but it does need the sandbox to exist.
-func (s *Sandbox) HostForPort(ctx context.Context, port int) (string, error) {
+// URLForPort returns the public URL a service listening inside the sandbox is
+// reachable at. The service builds one host per port, so this needs no call of
+// its own — but it does need the sandbox to exist.
+func (s *Sandbox) URLForPort(ctx context.Context, port int) (string, error) {
 	if port <= 0 || port > 65535 {
 		return "", errUnsupported("port " + strconv.Itoa(port) + " is out of range")
 	}
@@ -71,7 +71,7 @@ func (s *Sandbox) HostForPort(ctx context.Context, port int) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return s.hostFor(id, port), nil
+	return "https://" + s.hostFor(id, port), nil
 }
 
 // Destroy kills the sandbox AND the stored state behind it. It is not part of

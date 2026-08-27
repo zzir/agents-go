@@ -140,14 +140,14 @@ func TestE2BStopStartKeepsTheTree(t *testing.T) {
 
 // A port's public host is built from the sandbox id and the domain, with no
 // call of its own beyond provisioning.
-func TestE2BHostForPort(t *testing.T) {
+func TestE2BURLForPort(t *testing.T) {
 	sb, _ := fakeBackedSandbox(t)
-	host, err := sb.HostForPort(t.Context(), 3000)
+	host, err := sb.URLForPort(t.Context(), 3000)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(host, "3000-sb") || !strings.HasSuffix(host, ".test") {
-		t.Fatalf("host = %q, want 3000-<id>.test", host)
+	if !strings.HasPrefix(host, "https://3000-sb") || !strings.HasSuffix(host, ".test") {
+		t.Fatalf("url = %q, want https://3000-<id>.test", host)
 	}
 }
 

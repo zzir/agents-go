@@ -352,6 +352,30 @@ export function ChatView({
     }
   };
 
+  // The port is asked for rather than guessed: a project may run several
+  // services, and the one a person wants is the one they type.
+  const previewPort = async () => {
+    if (!boundProject || containerBusy) return;
+    const raw = window.prompt('Which port inside the sandbox?', '3000');
+    if (!raw) return;
+    const port = parseInt(raw, 10);
+    if (!Number.isFinite(port) || port <= 0 || port > 65535) {
+      toast.error('That is not a port');
+      return;
+    }
+    setContainerBusy(true);
+    try {
+      const grant = await api.projects.previewGrant(boundProject.id, port);
+      // The link is opened rather than fetched: the point is a real browser
+      // tab, which is also why the grant exists at all.
+      window.open(grant.url, '_blank', 'noopener');
+    } catch (e) {
+      toast.error((e as Error).message || 'Could not open a preview');
+    } finally {
+      setContainerBusy(false);
+    }
+  };
+
   const exportProject = async () => {
     if (!boundProject || containerBusy) return;
     setContainerBusy(true);
@@ -684,6 +708,7 @@ export function ChatView({
         onStart: () => { void startSandbox(); },
         onStop: () => { void stopSandbox(); },
         onExport: () => { void exportProject(); },
+        onPreview: () => { void previewPort(); },
         onRebuild: () => { void rebuildContainer(); },
       } : null}
     />

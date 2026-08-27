@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -661,6 +662,36 @@ func (r *releasingReader) Close() error {
 	r.once.Do(r.release)
 	return err
 }
+
+// Preview resolves where a port inside the project's sandbox answers, and how
+// to reach it: the URL a proxy forwards to, and — for a backend whose ports
+// are not routable from this process — the dial that gets there. The returned
+// release drops the instance reference; the caller holds it for the proxied
+// request's lifetime, so an eviction cannot close the connection mid-response.
+func (m *Manager) Preview(ctx context.Context, spec Spec, port int) (target string, dial DialFunc, release func(), err error) {
+	sb, release, err := m.Acquire(spec)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	fwd, ok := sb.(sandbox.PortForwarder)
+	if !ok {
+		release()
+		return "", nil, nil, fmt.Errorf("%s sandbox: cannot expose a port", spec.Target.Type)
+	}
+	target, err = fwd.URLForPort(ctx, port)
+	if err != nil {
+		release()
+		return "", nil, nil, err
+	}
+	if d, ok := sb.(sandbox.PortDialer); ok {
+		dial = func(ctx context.Context, _, _ string) (net.Conn, error) { return d.DialPort(ctx, port) }
+	}
+	return target, dial, release, nil
+}
+
+// DialFunc is an http.Transport's DialContext, which is what a proxy needs
+// from a backend that opens its own connections.
+type DialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
 
 // holders counts the live references across every cached generation of the
 // project.

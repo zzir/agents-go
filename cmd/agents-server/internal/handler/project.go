@@ -13,6 +13,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -29,14 +30,16 @@ type ProjectHandler struct {
 	templates *store.SandboxTemplateStore
 	manager   *sandboxes.Manager
 	terminals *TerminalHandler
+	settings  *settings.Reader
+	grants    *previewGrants
 }
 
 // NewProjectHandler returns a handler over the project store; targets and
 // templates validate what a project names, m reclaims a deleted project's
 // storage and runs the container calls, and terminals is the registry a
 // content change severs.
-func NewProjectHandler(s *store.ProjectStore, targets *store.SandboxTargetStore, templates *store.SandboxTemplateStore, m *sandboxes.Manager, terminals *TerminalHandler) *ProjectHandler {
-	return &ProjectHandler{store: s, targets: targets, templates: templates, manager: m, terminals: terminals}
+func NewProjectHandler(s *store.ProjectStore, targets *store.SandboxTargetStore, templates *store.SandboxTemplateStore, m *sandboxes.Manager, terminals *TerminalHandler, cfg *settings.Reader) *ProjectHandler {
+	return &ProjectHandler{store: s, targets: targets, templates: templates, manager: m, terminals: terminals, settings: cfg, grants: newPreviewGrants()}
 }
 
 // projectDetail is the single-project response: the row plus the NAMES of
@@ -601,8 +604,10 @@ func (h *ProjectHandler) Delete(c *gin.Context) {
 		return
 	}
 	// The project is gone: its shells must die with it — nothing may keep
-	// serving a tree that is about to be destroyed.
+	// serving a tree that is about to be destroyed — and so must its preview
+	// links.
 	h.terminals.CloseProjectTerminals(p.ID, maxTerminalGen)
+	h.grants.revokeProject(p.ID)
 	// The row is gone; reclaim the storage. A failure here leaves reclaimable
 	// storage rather than a row pointing at nothing, so it is reported without
 	// undoing the delete.

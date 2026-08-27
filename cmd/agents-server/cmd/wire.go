@@ -185,7 +185,7 @@ func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL st
 	terminal.Audit = audit
 	ws := handler.NewWSHandler(svc.Runner, st.Sessions, st.PendingApprovals)
 	ws.Audit = audit
-	projects := handler.NewProjectHandler(st.Projects, st.Targets, st.Templates, svc.Sandboxes, terminal)
+	projects := handler.NewProjectHandler(st.Projects, st.Targets, st.Templates, svc.Sandboxes, terminal, st.SettingReader)
 	projects.Audit = audit
 	return &handlers{
 		WS:       ws,
@@ -330,6 +330,7 @@ func newServer(ctx context.Context, log *slog.Logger, authSvc *authn.Service, au
 	srv.RegisterAPI(hs.API.Register)
 	srv.RegisterWS(hs.WS.Handle, hs.Terminal.Handle)
 	srv.RegisterHook(hs.API.Triggers.Hook)
+	srv.RegisterPreview(hs.API.Projects.Preview)
 	srv.ServeHealth(buildVersion)
 	srv.ServeOpenAPI(docs.SpecYAML)
 	staticFS, err := fs.Sub(web.StaticFS, "frontend/dist")

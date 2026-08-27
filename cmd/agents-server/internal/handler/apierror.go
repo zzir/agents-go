@@ -43,6 +43,13 @@ func conflict(c *gin.Context, message string) {
 	abortError(c, http.StatusConflict, protocol.CodeConflict, message)
 }
 
+// forbidden reports a 403: the caller is who they say they are, and this is
+// still not allowed — a feature an admin has turned off, a role that does not
+// reach.
+func forbidden(c *gin.Context, message string) {
+	abortError(c, http.StatusForbidden, protocol.CodeForbidden, message)
+}
+
 // unavailable reports a 503: the server is draining and cannot take the
 // request. Retryable, unlike an internal error.
 func unavailable(c *gin.Context, message string) {

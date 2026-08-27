@@ -38,6 +38,7 @@ const (
 	KeyApprovalTTLMinutes        = "approval_ttl_minutes"
 	KeyMaxTerminalsPerSandbox    = "max_terminals_per_sandbox"
 	KeySandboxIdleMinutes        = "sandbox_idle_minutes"
+	KeyPreviewEnabled            = "preview_enabled"
 )
 
 // The groups the panel renders as sections, in the order defs are listed.
@@ -149,7 +150,13 @@ var defs = []Def{{
 	Label:       "Sandbox idle stop (minutes)",
 	Default:     "30",
 	Min:         0,
-	Description: "Stop a (sandbox, project) container after this many minutes with no run or terminal using it; 0 disables. The next run starts it again."}}
+	Description: "Stop a project's container after this many minutes with no run or terminal using it; 0 disables. The next run starts it again."}, {
+	Key:         KeyPreviewEnabled,
+	Kind:        KindBool,
+	Group:       GroupLimits,
+	Label:       "Port previews",
+	Default:     "false",
+	Description: "Let a project's owner reach a port inside its sandbox through this server. Off by default: it makes whatever is listening in there reachable by anyone who can sign in."}}
 
 // Defs returns the registry in panel order.
 func Defs() []Def { return defs }

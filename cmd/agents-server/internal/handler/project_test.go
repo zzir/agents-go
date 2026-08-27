@@ -36,7 +36,7 @@ func TestProjectAdminSurface(t *testing.T) {
 	projects := store.NewProjectStore(db)
 	mgr := sandboxes.NewManager()
 	targets, templates := mkSandboxRows(t, db)
-	h := NewProjectHandler(projects, store.NewSandboxTargetStore(db), store.NewSandboxTemplateStore(db), mgr, NewTerminalHandler(store.NewSandboxTargetStore(db), store.NewSandboxTemplateStore(db), projects, mgr, settings.NewReader(nil)))
+	h := NewProjectHandler(projects, store.NewSandboxTargetStore(db), store.NewSandboxTemplateStore(db), mgr, NewTerminalHandler(store.NewSandboxTargetStore(db), store.NewSandboxTemplateStore(db), projects, mgr, settings.NewReader(nil)), settings.NewReader(nil))
 
 	memberID := store.NewID()
 	memberProj := &store.Project{ID: store.NewID(), OwnerID: memberID, TargetID: targets, TemplateID: templates, Name: "member-proj"}

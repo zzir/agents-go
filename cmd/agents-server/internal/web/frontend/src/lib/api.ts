@@ -365,6 +365,11 @@ export const api = {
     sandboxStatus: (id: string) => request<{ state: string }>(`/projects/${id}/sandbox`),
     sandboxStart: (id: string) => request<null>(`/projects/${id}/sandbox/start`, { method: 'POST' }),
     sandboxStop: (id: string) => request<{ stopped: boolean }>(`/projects/${id}/sandbox/stop`, { method: 'POST' }),
+    // A short-lived, unguessable URL a browser tab can open: the preview
+    // itself carries no bearer token, so the grant in its path is what
+    // authorizes it.
+    previewGrant: (id: string, port: number) =>
+      request<{ url: string; expires_at: string }>(`/projects/${id}/preview/${port}`, { method: 'POST' }),
     // The working tree as a tar. It is a DOWNLOAD, not JSON, so it bypasses
     // request(): the bearer token has to ride on the fetch, which rules out a
     // plain link, and the body is a stream rather than a parsed object.

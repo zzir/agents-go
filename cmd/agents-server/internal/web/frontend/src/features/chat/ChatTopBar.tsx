@@ -1,5 +1,5 @@
 import { ActionList, ActionMenu, IconButton } from '@primer/react';
-import { DownloadIcon, FileDirectoryIcon, KeyAsteriskIcon, KebabHorizontalIcon, MeterIcon, PlayIcon, PulseIcon, SquareFillIcon, StackIcon, SyncIcon, TerminalIcon } from '@primer/octicons-react';
+import { BrowserIcon, DownloadIcon, FileDirectoryIcon, KeyAsteriskIcon, KebabHorizontalIcon, MeterIcon, PlayIcon, PulseIcon, SquareFillIcon, StackIcon, SyncIcon, TerminalIcon } from '@primer/octicons-react';
 import type { ReactElement } from 'react';
 import type { InspectorPanel } from '@/features/chat/ChatView';
 import { useChatSession } from '@/features/chat/ChatSessionContext';
@@ -38,6 +38,7 @@ export interface ProjectMenu {
   onStart: () => void;
   onStop: () => void;
   onExport: () => void;
+  onPreview: () => void;
   onRebuild: () => void;
 }
 
@@ -85,6 +86,11 @@ export function ChatTopBar({
                 <ActionList.Item onSelect={projectMenu.onEnv}>
                   <ActionList.LeadingVisual><KeyAsteriskIcon /></ActionList.LeadingVisual>
                   Environment…
+                </ActionList.Item>
+                <ActionList.Item onSelect={projectMenu.onPreview}>
+                  <ActionList.LeadingVisual><BrowserIcon /></ActionList.LeadingVisual>
+                  Preview a port…
+                  <ActionList.Description variant="block">Open a service running inside the sandbox.</ActionList.Description>
                 </ActionList.Item>
                 <ActionList.Item onSelect={projectMenu.onExport}>
                   <ActionList.LeadingVisual><DownloadIcon /></ActionList.LeadingVisual>

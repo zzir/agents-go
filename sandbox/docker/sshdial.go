@@ -124,11 +124,18 @@ func newSSHDialer(hostURL string, auth SSHAuth) (*sshDialer, error) {
 // and retries once on a fresh connection, so a severed transport heals
 // without surfacing every queued request's error.
 func (d *sshDialer) DialContext(ctx context.Context, _, _ string) (net.Conn, error) {
+	return d.dialThrough(ctx, "unix", d.socket)
+}
+
+// dialThrough opens one channel of any kind over the shared transport — the
+// daemon socket, or a TCP address inside the remote's networks (which is what
+// reaches a container's port from here).
+func (d *sshDialer) dialThrough(ctx context.Context, network, addr string) (net.Conn, error) {
 	client, err := d.connect(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
-	conn, err := client.Dial("unix", d.socket)
+	conn, err := client.Dial(network, addr)
 	if err == nil {
 		return conn, nil
 	}
@@ -136,9 +143,9 @@ func (d *sshDialer) DialContext(ctx context.Context, _, _ string) (net.Conn, err
 	if rerr != nil {
 		return nil, fmt.Errorf("docker sandbox: ssh reconnect after %v: %w", err, rerr)
 	}
-	conn, err = client.Dial("unix", d.socket)
+	conn, err = client.Dial(network, addr)
 	if err != nil {
-		return nil, fmt.Errorf("docker sandbox: dialing remote socket %s: %w", d.socket, err)
+		return nil, fmt.Errorf("docker sandbox: dialing %s %s over ssh: %w", network, addr, err)
 	}
 	return conn, nil
 }

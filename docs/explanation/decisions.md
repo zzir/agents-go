@@ -1221,3 +1221,54 @@ and the probe program lives outside the repo because it needs credentials and
 makes billable calls. Until it runs, this backend is unproven against the real
 services and proven against a fake that speaks the wire as read from the
 protos.
+
+### 5.35 A port preview is a gateway with a grant, not a published port
+
+Decided 2026-08-28. Losing the host bind mount (§5.33) took away the way a
+person looked at what the agent built; a **port preview** gives it back:
+`/preview/<grant>/…` reverse-proxies into a service listening inside the
+project's sandbox.
+
+**Not `-p 3000:3000`.** Publishing puts a member's dev server on every
+interface of the host — in a multi-user workbench that is someone else's
+service, reachable by anyone who can route to the machine. Host ports are also
+globally unique, so two people wanting 3000 need an allocation table nobody
+asked for, and on a remote daemon a published port is on the wrong machine
+anyway. The gateway has none of those problems, and it is the shape both
+compatible services already use (E2B's per-port host, OpenSandbox's ingress).
+
+**A grant, because a browser tab carries no bearer token.** Every other route
+authenticates with a header; opening a URL sends none. So the owner asks the
+authenticated API for a grant, and gets a short-lived, unguessable, single
+(project, port) token in the path. The preview route therefore lives OUTSIDE
+`/api`, where the bearer middleware would refuse it, and carries its own
+per-IP rate limit — a route without a bearer must not let anyone spend our
+sandbox. Grants live in memory and die with the process, which is right: a
+preview is a live view of a live sandbox. They are revoked when the project is
+deleted.
+
+**Off by default** (`preview_enabled`). It makes whatever is listening inside
+the sandbox reachable by anyone who can sign in, and that is a decision an
+operator takes rather than inherits.
+
+Two things the proxy does deliberately: it strips `Authorization` and `Cookie`
+before forwarding, so the workbench's own credential never reaches somebody's
+dev server; and it does not apply this app's Content-Security-Policy to a
+previewed page, which is not this app and would simply break.
+
+A docker template that joins **no network** has no address at all, and the
+preview says so rather than timing out. On a remote daemon the container's
+address means nothing here, so the proxy dials through the same SSH transport
+the docker API uses; a `tcp://` daemon exposes its API and not its container
+network, and is refused with that sentence.
+
+**Where a docker preview actually works.** The proxy dials the container's
+address on its docker network, which the server can only reach where that
+network is routable from it: a Linux host with the local daemon, or an
+`ssh://` daemon on a Linux host (the tunnel lands inside its namespace).
+Docker Desktop on macOS and Windows keeps the container network inside a VM,
+so a LOCAL-daemon preview cannot reach it — the 502 says exactly that rather
+than blaming the service. Publishing an ephemeral loopback port would fix that
+one case, and was not taken: it must be decided at container create, when the
+port nobody has typed yet is unknown. An e2b target has no such problem — the
+service publishes a host per port.

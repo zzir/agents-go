@@ -862,6 +862,13 @@ components:
           additionalProperties: {}
           type: object
       type: object
+    handler.previewGrantResp:
+      properties:
+        expires_at:
+          type: string
+        url:
+          type: string
+      type: object
     handler.projectDetail:
       properties:
         created_at:
@@ -4088,6 +4095,54 @@ paths:
       security:
       - BearerAuth: []
       summary: Export the project's working tree
+      tags:
+      - projects
+  /projects/{id}/preview/{port}:
+    post:
+      description: Returns a short-lived, unguessable URL under /preview/. Owner only,
+        and off unless `preview_enabled` is set. A docker template must name a network
+        for its ports to be reachable at all.
+      parameters:
+      - description: Project id
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - description: Port inside the sandbox
+        in: path
+        name: port
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.previewGrantResp'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: previews are disabled
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+      security:
+      - BearerAuth: []
+      summary: Grant a preview URL for a port inside the project's sandbox
       tags:
       - projects
   /projects/{id}/sandbox:

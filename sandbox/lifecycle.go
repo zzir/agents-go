@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 )
 
 // The optional capabilities a backend may offer beyond Sandbox itself.
@@ -60,12 +61,22 @@ type Lifecycle interface {
 	Status(ctx context.Context) (State, error)
 }
 
-// PortForwarder is implemented by backends that can expose a port inside the
-// sandbox to the caller.
+// PortForwarder is implemented by backends that can name where a port inside
+// the sandbox is reachable.
 type PortForwarder interface {
-	// HostForPort returns the host[:port] a service listening on port inside
-	// the sandbox can be reached at. The scheme is the caller's to choose.
-	HostForPort(ctx context.Context, port int) (string, error)
+	// URLForPort returns the base URL a service listening on port inside the
+	// sandbox answers at — scheme included, because backends differ: a public
+	// HTTPS host on one, a container address on another.
+	URLForPort(ctx context.Context, port int) (string, error)
+}
+
+// PortDialer is implemented by backends whose ports are NOT reachable from
+// wherever the caller runs — a container on a remote daemon — and that can
+// open the connection themselves. A caller proxying to URLForPort uses this
+// as its transport when the backend offers it.
+type PortDialer interface {
+	// DialPort opens a connection to a port inside the sandbox.
+	DialPort(ctx context.Context, port int) (net.Conn, error)
 }
 
 // Exporter is implemented by backends that can hand the working tree back as

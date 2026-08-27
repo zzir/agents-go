@@ -2786,6 +2786,77 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/projects/{id}/preview/{port}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Grant a preview URL for a port inside the project's sandbox
+         * @description Returns a short-lived, unguessable URL under /preview/. Owner only, and off unless `preview_enabled` is set. A docker template must name a network for its ports to be reachable at all.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Project id */
+                    id: string;
+                    /** @description Port inside the sandbox */
+                    port: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.previewGrantResp"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description previews are disabled */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{id}/sandbox": {
         parameters: {
             query?: never;
@@ -7790,6 +7861,10 @@ export interface components {
             parameters?: {
                 [key: string]: unknown;
             };
+        };
+        "handler.previewGrantResp": {
+            expires_at?: string;
+            url?: string;
         };
         "handler.projectDetail": {
             created_at?: string;
