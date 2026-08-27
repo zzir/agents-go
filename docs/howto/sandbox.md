@@ -160,6 +160,24 @@ Each `Exec` creates a locked-down container and removes it afterwards: no networ
 
 With `Persistent: true` a single container is reused across `Exec` calls (state and installed files survive between calls) and the root filesystem is writable. `VolumeName` mounts a named Docker volume at `/workspace` instead of a host directory or an anonymous volume (durable storage on any daemon); `TmpfsSize` resizes the RAM-backed `/tmp` tmpfs (default 64m); `KeepOnClose` makes `Close` stop the container instead of removing it, so a later Sandbox with the same `ContainerName` and configuration adopts it — and a name held by our container from an *older* configuration is replaced, while a foreign holder stays a hard error. An empty `User` keeps the image's own user (usually root, so the container can install packages into itself); set `User` to narrow it. `Network` names the docker network to join; empty means no network at all. Timeouts are enforced per exec: when the deadline passes the attached connection is closed and the exec's process tree is killed best-effort (exec processes are tagged with an `AGENTS_SANDBOX_EXEC` environment marker and matched via `/proc`; a process that re-execs itself with a scrubbed environment can evade the sweep — the container's PID/memory limits are the backstop).
 
+Optional capabilities are discovered by type assertion, the way `ExecStreamer`
+and `TerminalOpener` already are ([spec §2.7p](../reference/spec.md#27p-stop-keeps-the-filesystem-and-promises-nothing-else)):
+`Lifecycle` (`Start`/`Stop`/`Status` — Stop keeps the filesystem and promises
+nothing else), `PortForwarder` + `PortDialer` (where a port inside the sandbox
+answers, and how to reach it), and `Exporter` (the working tree as a tar
+stream). A backend that cannot offer one simply does not implement it.
+`sandbox/sandboxtest` is the conformance suite every backend runs; it detects
+the capabilities, so a backend implementing none still passes the core.
+
+`sandbox/e2b` is the second backend: any service speaking the E2B API — E2B's
+own cloud, a self-hosted one, or a compatible service such as Alibaba Cloud's
+Function Compute cloud sandbox. It needs an `APIKey`, a `TemplateID` that
+already exists on the service, and — for anything but E2B's own cloud — the
+`APIURL` and `Domain` that address it. The remote sandbox is created lazily on
+first use, exactly as the docker container is; `OnSandboxID` is how a caller
+remembers which one, so a restart resumes it rather than provisioning a second
+([decisions §5.34](../explanation/decisions.md)).
+
 `Env` sets variables on the **container**, so a command, a persistent shell and a terminal opened into it all read the same values; an `ExecRequest.Env` entry of the same name wins for that one call. It is part of the adoption fingerprint: changing it replaces a persistent container instead of adopting the old one, keeping `/workspace` but discarding whatever was installed into the container itself ([spec §2.7n](../reference/spec.md#27n-a-sandboxs-environment-is-part-of-its-container-identity)).
 
 ### Remote daemon over SSH

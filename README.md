@@ -40,8 +40,9 @@ your data, embeddable SDK. Solo or as a team.
    ```
 
    It listens on `http://127.0.0.1:9527` and prints an auth token at startup;
-   paste the token into the login screen. A Docker daemon is required for
-   sandboxes — on this machine, or a remote daemon (SSH or TCP). State lives
+   paste the token into the login screen. Sandboxes need a Docker daemon — on
+   this machine, or a remote one over SSH or TCP — or an E2B-compatible
+   service. State lives
    in `data.db` in the directory you ran it from (`--db`; a `postgres://` DSN
    uses PostgreSQL instead); project trees live in Docker volumes on their
    target's daemon. All flags:
@@ -58,8 +59,8 @@ Built for one person or a small team running their own agents, and for Go
 developers who want the same machinery in their own programs.
 
 - **Zero infrastructure.** One process, one database — SQLite by default, your
-  own PostgreSQL if you prefer. Sandboxes need a Docker daemon; the server
-  itself shells out to nothing.
+  own PostgreSQL if you prefer. Sandboxes need a Docker daemon, or any service
+  speaking the E2B API; the server itself shells out to nothing.
 - **The transcript is the truth.** A session is an append-only tree: every turn
   is persisted as it completes, so a cancelled run keeps what finished and a
   paused one survives a restart. Regenerate or fork any turn; the abandoned
@@ -71,10 +72,12 @@ developers who want the same machinery in their own programs.
 - **Replay any generation.** Re-run a traced model call with a different
   prompt, model, settings or tools, streamed, diffed against the original.
   No session is touched.
-- **Real sandboxes behind an approval gate.** Docker containers, local or
-  remote. The model reads files, edits them with `apply_patch`, runs commands.
-  Approve a command once, trust that command, or trust the session; open a
-  terminal into the container from the browser.
+- **Real sandboxes behind an approval gate.** A Docker container on this
+  machine or a remote daemon, or a sandbox on any E2B-compatible service. The
+  model reads files, edits them with `apply_patch`, runs commands. Approve a
+  command once, trust that command, or trust the session; open a terminal into
+  it from the browser, preview a port it is serving, or export the whole
+  working tree as a tar.
 - **Work that outlives the turn.** `spawn_task` sub-agents that wake the parent
   when they finish and resume in place when they fail; workflows as fixed step
   sequences, started by the model, by hand, by cron or by a signed webhook.

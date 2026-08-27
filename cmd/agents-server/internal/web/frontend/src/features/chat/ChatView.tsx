@@ -233,8 +233,8 @@ export function ChatView({
     const ok = await confirmDialog({
       title: `Delete “${p.name}”?`,
       content: p.storage_hint
-        ? `This DESTROYS its working tree (${p.storage_hint}). Refused while sessions are still bound to it.`
-        : 'This DESTROYS its working tree. Refused while sessions are still bound to it.',
+        ? `This DESTROYS its working tree — ${p.storage_hint} — and a Docker volume is not in anyone's backup. Export it first if it matters. Refused while sessions are still bound to it.`
+        : 'This DESTROYS its working tree, and a Docker volume is not in anyone\'s backup. Export it first if it matters. Refused while sessions are still bound to it.',
       confirmButtonContent: 'Delete',
       confirmButtonType: 'danger',
     });

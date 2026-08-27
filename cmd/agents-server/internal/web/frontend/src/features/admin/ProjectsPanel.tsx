@@ -9,10 +9,9 @@ import { OwnerName, useOwnerLabels } from '@/lib/owners';
 
 type ProjectRow = Omit<ApiSchemas['store.Project'], 'id'> & { id: string; sandbox: string };
 
-// ProjectsPanel: every owner's working trees and where their files live —
-// the operator's map of what a delete leaves behind (storage outlives the
-// row; reclaiming it happens on the daemon, not here). Newest first: what an
-// admin watches here is what has just appeared.
+// ProjectsPanel: every owner's working trees and where their files live — the
+// operator's map of what exists, and of what a delete destroys. Newest first:
+// what an admin watches here is what has just appeared.
 export function ProjectsPanel() {
   const [projects, setProjects] = useState<ProjectRow[] | null>(null);
   const [error, setError] = useState('');
@@ -34,8 +33,8 @@ export function ProjectsPanel() {
     if (!(await confirm({
       title: `Delete “${p.name}”?`,
       content: p.storage_hint
-        ? `This DESTROYS its working tree (${p.storage_hint}). Refused while sessions are still bound to it.`
-        : 'This DESTROYS its working tree. Refused while sessions are still bound to it.',
+        ? `This DESTROYS its working tree — ${p.storage_hint} — and a Docker volume is not in anyone's backup. Refused while sessions are still bound to it.`
+        : 'This DESTROYS its working tree, and a Docker volume is not in anyone\'s backup. Refused while sessions are still bound to it.',
       confirmButtonContent: 'Delete',
       confirmButtonType: 'danger',
     }))) return;
