@@ -860,7 +860,16 @@ volume and the daemon it is on) is reported to admins only.
 
 An unreferenced container is **idle-stopped** — configurable via
 `sandbox_idle_minutes` — with no run or terminal using it: stopped, not
-removed, so installed packages survive and the next run starts it again.
+removed, so installed packages survive and the next run starts it again. The
+same three acts are available by hand: `GET /projects/{id}/sandbox` reports
+`absent` / `stopped` / `running`, `POST …/sandbox/start` provisions it (the
+image pull happens there, where a person is watching, rather than inside the
+next run), and `POST …/sandbox/stop` releases the compute keeping the tree.
+A stop while a run or a terminal is still using it answers `stopped: false`:
+the instance is doomed so nothing new joins, and it stops when that work ends
+— the person asked for the sandbox to stop, not for the work to die.
+`POST …/sandbox/rebuild` throws the container away and provisions a fresh one
+from the current template.
 
 A project carries the **environment** its container is created with, so
 `exec_command`, a persistent shell and a terminal all read the same values.

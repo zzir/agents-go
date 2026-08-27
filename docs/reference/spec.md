@@ -79,6 +79,7 @@ renumbered — which is why the letters run out of alphabetical order in places.
 | [§2.7m](#27m-a-sandbox-reports-its-own-timeout-never-the-callers-ending) | A sandbox reports its own timeout, never the caller's ending | `TimedOut` means the sandbox killed it — never the caller's deadline |
 | [§2.7n](#27n-a-sandboxs-environment-is-part-of-its-container-identity) | A sandbox's environment is part of its container identity | `Options.Env` reaches every command; changing it replaces the container |
 | [§2.7o](#27o-a-docker-sandbox-runs-as-the-images-user-and-joins-no-network) | A docker sandbox runs as the image's user and joins no network | Empty `User` = the image's own user; empty `Network` = none |
+| [§2.7p](#27p-stop-keeps-the-filesystem-and-promises-nothing-else) | Stop keeps the filesystem and promises nothing else | `Lifecycle.Stop` guarantees the tree, never the processes |
 | [§2.8](#28-nested-agent-as-tool-attribution) | Nested agent-as-tool attribution | How usage, spans and errors attribute across a nested agent-as-tool |
 | [§2.9](#29-budgets-) | Budgets 🚧 | `MaxTurns` is the one budget dimension implemented |
 | [§2.10](#210-errors-and-recovery) | Errors and recovery | Stable `ErrorCode`s, and which errors a run can recover from |
@@ -1490,6 +1491,22 @@ containers, and the process that created it, can reach it.
 
 Both are part of the adoption fingerprint (§2.7n): changing either replaces a
 persistent container rather than adopting it.
+
+### 2.7p Stop keeps the filesystem and promises nothing else
+
+`Lifecycle.Stop` guarantees exactly one thing: **the working tree survives**.
+Whether processes do is the backend's business — docker's stop kills them, a
+backend that snapshots memory may bring them back — so nothing may be written
+that depends on a process outliving a Stop, and no caller may report one to a
+user as "your server is still running".
+
+`Start` after a `Stop` is therefore a resume of the FILES, not of the work.
+`Status` reports `absent` (nothing provisioned), `stopped` or `running`; all
+three say nothing about the storage, which outlives every one of them.
+
+A backend that cannot control its compute does not implement `Lifecycle` at
+all — `LocalSandbox` is one — and callers discover that by type assertion
+rather than by a method that returns "not supported".
 
 ### 2.8 Nested agent-as-tool attribution
 

@@ -181,6 +181,9 @@ export function ChatView({
   // container call is in flight (both disable the menu).
   const [envProject, setEnvProject] = useState<Project | null>(null);
   const [containerBusy, setContainerBusy] = useState(false);
+  // The bound project's compute state, refreshed when the menu's owner
+  // changes and after every act on it. '' means "not asked yet".
+  const [sandboxState, setSandboxState] = useState('');
 
   useEffect(() => {
     setAgentConfigIdState(loadSessionAgent(sessionId || ''));
@@ -300,6 +303,55 @@ export function ChatView({
   // its binding's, never the composer's current pick.
   const boundProject = sessionBinding?.projectId ? projects?.find(p => p.id === sessionBinding.projectId) || null : null;
 
+  // The state is read when the bound project changes, so the menu opens
+  // already knowing whether to offer Start or Stop. A failure leaves it
+  // unknown rather than guessing — the menu then offers Start, which is the
+  // harmless choice.
+  useEffect(() => {
+    if (!boundProject) { setSandboxState(''); return; }
+    let live = true;
+    api.projects.sandboxStatus(boundProject.id)
+      .then(r => { if (live) setSandboxState(r.state); })
+      .catch(() => { if (live) setSandboxState(''); });
+    return () => { live = false; };
+  }, [boundProject]);
+
+  // Start and stop are synchronous and can take an image pull's worth of
+  // time, so the menu stays disabled until they answer.
+  const startSandbox = async () => {
+    if (!boundProject || containerBusy) return;
+    setContainerBusy(true);
+    toast.info('Starting the sandbox…');
+    try {
+      await api.projects.sandboxStart(boundProject.id);
+      setSandboxState('running');
+      toast.success('Sandbox running');
+    } catch (e) {
+      toast.error((e as Error).message || 'Could not start the sandbox');
+    } finally {
+      setContainerBusy(false);
+    }
+  };
+
+  const stopSandbox = async () => {
+    if (!boundProject || containerBusy) return;
+    setContainerBusy(true);
+    try {
+      const res = await api.projects.sandboxStop(boundProject.id);
+      if (res.stopped) {
+        setSandboxState('stopped');
+        toast.success('Sandbox stopped — the files are kept');
+      } else {
+        // A run or an open terminal is still using it; it stops when that ends.
+        toast.info('Will stop when the work using it finishes');
+      }
+    } catch (e) {
+      toast.error((e as Error).message || 'Could not stop the sandbox');
+    } finally {
+      setContainerBusy(false);
+    }
+  };
+
   // A rebuild is synchronous and can take an image pull's worth of time, so
   // the menu stays disabled until it answers.
   const rebuildContainer = async () => {
@@ -313,6 +365,7 @@ export function ChatView({
     toast.info('Rebuilding the container…');
     try {
       await api.projects.rebuildContainer(boundProject.id);
+      setSandboxState('running');
       toast.success('Container rebuilt');
     } catch (e) {
       toast.error((e as Error).message || 'The rebuild failed');
@@ -613,7 +666,10 @@ export function ChatView({
         : null}
       projectMenu={boundProject ? {
         busy: containerBusy,
+        state: sandboxState,
         onEnv: () => setEnvProject(boundProject),
+        onStart: () => { void startSandbox(); },
+        onStop: () => { void stopSandbox(); },
         onRebuild: () => { void rebuildContainer(); },
       } : null}
     />

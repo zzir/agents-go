@@ -1,5 +1,5 @@
 import { ActionList, ActionMenu, IconButton } from '@primer/react';
-import { FileDirectoryIcon, KeyAsteriskIcon, KebabHorizontalIcon, MeterIcon, PulseIcon, StackIcon, SyncIcon, TerminalIcon } from '@primer/octicons-react';
+import { FileDirectoryIcon, KeyAsteriskIcon, KebabHorizontalIcon, MeterIcon, PlayIcon, PulseIcon, SquareFillIcon, StackIcon, SyncIcon, TerminalIcon } from '@primer/octicons-react';
 import type { ReactElement } from 'react';
 import type { InspectorPanel } from '@/features/chat/ChatView';
 import { useChatSession } from '@/features/chat/ChatSessionContext';
@@ -28,10 +28,15 @@ interface ChatTopBarProps {
 }
 
 /* What the bound project offers: its terminal, the environment its container
-   is created with, and the way back from a container someone broke. */
+   is created with, starting and stopping the compute, and the way back from a
+   container someone broke. */
 export interface ProjectMenu {
   busy: boolean;
+  /* absent | stopped | running, or '' while unknown. */
+  state: string;
   onEnv: () => void;
+  onStart: () => void;
+  onStop: () => void;
   onRebuild: () => void;
 }
 
@@ -80,6 +85,22 @@ export function ChatTopBar({
                   <ActionList.LeadingVisual><KeyAsteriskIcon /></ActionList.LeadingVisual>
                   Environment…
                 </ActionList.Item>
+                <ActionList.Divider />
+                {projectMenu.state === 'running' ? (
+                  <ActionList.Item onSelect={projectMenu.onStop}>
+                    <ActionList.LeadingVisual><SquareFillIcon /></ActionList.LeadingVisual>
+                    Stop sandbox
+                    <ActionList.Description variant="block">Keeps the files; frees the memory.</ActionList.Description>
+                  </ActionList.Item>
+                ) : (
+                  <ActionList.Item onSelect={projectMenu.onStart}>
+                    <ActionList.LeadingVisual><PlayIcon /></ActionList.LeadingVisual>
+                    Start sandbox
+                    <ActionList.Description variant="block">
+                      {projectMenu.state === 'absent' ? 'Not created yet — pulls the image.' : 'Stopped.'}
+                    </ActionList.Description>
+                  </ActionList.Item>
+                )}
                 <ActionList.Item variant="danger" onSelect={projectMenu.onRebuild}>
                   <ActionList.LeadingVisual><SyncIcon /></ActionList.LeadingVisual>
                   Rebuild container

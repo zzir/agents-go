@@ -214,7 +214,10 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		projects.GET("/:id", h.Projects.Get)
 		projects.PUT("/:id", h.Projects.Update)
 		projects.DELETE("/:id", h.Projects.Delete)
-		projects.POST("/:id/container/rebuild", h.Projects.RebuildContainer)
+		projects.GET("/:id/sandbox", h.Projects.SandboxStatus)
+		projects.POST("/:id/sandbox/start", h.Projects.SandboxStart)
+		projects.POST("/:id/sandbox/stop", h.Projects.SandboxStop)
+		projects.POST("/:id/sandbox/rebuild", h.Projects.RebuildContainer)
 	}
 	{
 		guardrails := api.Group("/guardrails")

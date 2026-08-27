@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/client"
 
 	"github.com/zzir/agents-go/sandbox"
@@ -35,6 +36,11 @@ func (s *Sandbox) readFileContainer(ctx context.Context, p string) ([]byte, erro
 		SourcePath: s.containerPath(p),
 	})
 	if err != nil {
+		// The daemon reports a missing path as its own not-found; map it so
+		// callers see fs.ErrNotExist, as every other backend gives them.
+		if cerrdefs.IsNotFound(err) || strings.Contains(err.Error(), "Could not find the file") {
+			return nil, fmt.Errorf("docker sandbox: read file %q: %w", p, fs.ErrNotExist)
+		}
 		return nil, fmt.Errorf("docker sandbox: read file: %w", err)
 	}
 	defer result.Content.Close()
@@ -118,6 +124,12 @@ func (s *Sandbox) removeFileContainer(ctx context.Context, p string) error {
 		return err
 	}
 	if res.ExitCode != 0 {
+		// "Absent" must be distinguishable from a real failure — the file
+		// tools render the two differently, and apply_patch's rollback
+		// depends on it.
+		if strings.Contains(res.Stderr, "No such file") {
+			return fmt.Errorf("docker sandbox: rm %q: %w", p, fs.ErrNotExist)
+		}
 		return fmt.Errorf("docker sandbox: rm %q: %s", p, res.Stderr)
 	}
 	return nil
@@ -153,7 +165,14 @@ func (s *Sandbox) listDirContainer(ctx context.Context, p string) ([]sandbox.Dir
 	// entry or corrupt the next line. The name is the final \t-field, so a
 	// tab inside it is preserved by the 3-way split; NUL can never appear
 	// in a filename, so records stay unambiguous.
-	cmd := fmt.Sprintf("find %s -maxdepth 1 -mindepth 1 -printf '%%y\\t%%s\\t%%f\\0'", sandbox.ShellQuote(dir))
+	//
+	// The formatting is a batched `sh` rather than find's `-printf`: that
+	// flag is GNU-only, and busybox find — every alpine-based image — fails
+	// the whole listing on it. `-exec … +` runs ONE shell for the entire
+	// directory, so the cost is one `wc -c` per regular file.
+	cmd := fmt.Sprintf("find %s -maxdepth 1 -mindepth 1 -exec sh -c %s _ {} +",
+		sandbox.ShellQuote(dir),
+		sandbox.ShellQuote(`for f; do if [ -d "$f" ]; then printf "d\t0\t%s\0" "${f##*/}"; else printf "f\t%s\t%s\0" "$(wc -c < "$f")" "${f##*/}"; fi; done`))
 	res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", cmd}})
 	if err != nil {
 		return nil, err

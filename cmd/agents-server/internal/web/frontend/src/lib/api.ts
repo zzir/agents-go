@@ -359,7 +359,12 @@ export const api = {
     delete: (id: string) => request<null>(`/projects/${id}`, { method: 'DELETE' }),
     // Container calls: create it up front, or discard and recreate it. Both
     // are synchronous and can take an image pull's worth of time.
-    rebuildContainer: (id: string) => request<null>(`/projects/${id}/container/rebuild`, { method: 'POST' }),
+    rebuildContainer: (id: string) => request<null>(`/projects/${id}/sandbox/rebuild`, { method: 'POST' }),
+    // The project's compute: what it is doing, and starting/stopping it by
+    // hand rather than leaving both to the next run and the idle timer.
+    sandboxStatus: (id: string) => request<{ state: string }>(`/projects/${id}/sandbox`),
+    sandboxStart: (id: string) => request<null>(`/projects/${id}/sandbox/start`, { method: 'POST' }),
+    sandboxStop: (id: string) => request<{ stopped: boolean }>(`/projects/${id}/sandbox/stop`, { method: 'POST' }),
   },
   workflows: {
     ...crud<S['store.Workflow']>('/workflows'),

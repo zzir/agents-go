@@ -353,29 +353,119 @@ func (h *ProjectHandler) Update(c *gin.Context) {
 
 // RebuildContainer discards the project's container and creates a fresh one.
 //
-//	@Summary		Rebuild container
-//	@Description	Discards the container and creates a fresh one from the current image and environment. Files under /workspace survive; anything installed into the container does not, and commands running in it fail. Synchronous.
+//	@Summary		Rebuild the project's sandbox
+//	@Description	Discards the container and creates a fresh one from the current template and environment. Files under /workspace survive; anything installed into the container does not, and commands running in it fail. Synchronous.
 //	@Tags			projects
 //	@Param			id	path	string	true	"Project id"
 //	@Success		204	"rebuilt"
 //	@Failure		404	{object}	ErrorResponse
 //	@Failure		502	{object}	ErrorResponse
 //	@Security		BearerAuth
-//	@Router			/projects/{id}/container/rebuild [post]
+//	@Router			/projects/{id}/sandbox/rebuild [post]
 func (h *ProjectHandler) RebuildContainer(c *gin.Context) {
 	h.containerAct(c, h.manager.RebuildContainer)
 }
 
-// containerAct resolves the caller's project into a build spec, then runs one
-// of the manager's container calls against it.
-func (h *ProjectHandler) containerAct(c *gin.Context, act func(context.Context, sandboxes.Spec) error) {
-	p, ok := h.own(c)
+// sandboxStateResp is the project's compute state, as the UI badge shows it.
+type sandboxStateResp struct {
+	// State is absent | stopped | running.
+	State string `json:"state"`
+}
+
+// sandboxStopResp says whether the sandbox stopped now or will stop when the
+// work using it finishes — the honest answer to a Stop pressed mid-run.
+type sandboxStopResp struct {
+	Stopped bool `json:"stopped"`
+}
+
+// SandboxStatus reports what the project's compute is doing.
+//
+//	@Summary	Project sandbox status
+//	@Tags		projects
+//	@Produce	json
+//	@Param		id	path		string	true	"Project id"
+//	@Success	200	{object}	sandboxStateResp
+//	@Failure	404	{object}	ErrorResponse
+//	@Failure	502	{object}	ErrorResponse
+//	@Security	BearerAuth
+//	@Router		/projects/{id}/sandbox [get]
+func (h *ProjectHandler) SandboxStatus(c *gin.Context) {
+	spec, ok := h.spec(c)
 	if !ok {
 		return
+	}
+	state, err := h.manager.Status(c.Request.Context(), spec)
+	if err != nil {
+		upstreamError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, sandboxStateResp{State: state.String()})
+}
+
+// SandboxStart provisions the project's sandbox and makes it ready — the
+// image pull happens here, where a person is watching, instead of inside the
+// next run.
+//
+//	@Summary		Start the project's sandbox
+//	@Description	Synchronous, and can take an image pull's worth of time.
+//	@Tags			projects
+//	@Param			id	path	string	true	"Project id"
+//	@Success		204	"running"
+//	@Failure		404	{object}	ErrorResponse
+//	@Failure		502	{object}	ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/projects/{id}/sandbox/start [post]
+func (h *ProjectHandler) SandboxStart(c *gin.Context) {
+	h.containerAct(c, h.manager.EnsureRunning)
+}
+
+// SandboxStop releases the compute, keeping the working tree. A run or an
+// open terminal is not torn off its container: the response says the stop is
+// deferred to whenever that finishes.
+//
+//	@Summary		Stop the project's sandbox
+//	@Description	Keeps the working tree. `stopped: false` means a run or terminal is still using it and the stop happens when that ends.
+//	@Tags			projects
+//	@Produce		json
+//	@Param			id	path		string	true	"Project id"
+//	@Success		200	{object}	sandboxStopResp
+//	@Failure		404	{object}	ErrorResponse
+//	@Failure		502	{object}	ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/projects/{id}/sandbox/stop [post]
+func (h *ProjectHandler) SandboxStop(c *gin.Context) {
+	spec, ok := h.spec(c)
+	if !ok {
+		return
+	}
+	stopped, err := h.manager.Stop(c.Request.Context(), spec)
+	if err != nil {
+		upstreamError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, sandboxStopResp{Stopped: stopped})
+}
+
+// spec resolves the caller's project into a build spec, answering the error
+// when it cannot.
+func (h *ProjectHandler) spec(c *gin.Context) (sandboxes.Spec, bool) {
+	p, ok := h.own(c)
+	if !ok {
+		return sandboxes.Spec{}, false
 	}
 	spec, err := resolveSpec(c.Request.Context(), h.targets, h.templates, p)
 	if err != nil {
 		storeError(c, err)
+		return sandboxes.Spec{}, false
+	}
+	return spec, true
+}
+
+// containerAct resolves the caller's project into a build spec, then runs one
+// of the manager's sandbox calls against it.
+func (h *ProjectHandler) containerAct(c *gin.Context, act func(context.Context, sandboxes.Spec) error) {
+	spec, ok := h.spec(c)
+	if !ok {
 		return
 	}
 	if err := act(c.Request.Context(), spec); err != nil {
@@ -449,13 +539,13 @@ func (h *ProjectHandler) Delete(c *gin.Context) {
 	// storage rather than a row pointing at nothing, so it is reported without
 	// undoing the delete.
 	if h.manager != nil {
-		target, terr := h.targets.Get(c.Request.Context(), p.TargetID)
-		if terr != nil {
+		spec, serr := resolveSpec(c.Request.Context(), h.targets, h.templates, p)
+		if serr != nil {
 			h.manager.RemoveProject(p.ID)
-			internalError(c, terr)
+			internalError(c, serr)
 			return
 		}
-		if rerr := h.manager.ReclaimProject(c.Request.Context(), target, p.ID); rerr != nil {
+		if rerr := h.manager.ReclaimProject(c.Request.Context(), spec); rerr != nil {
 			upstreamError(c, rerr)
 			return
 		}

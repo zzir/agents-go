@@ -1,6 +1,8 @@
 package sandboxes
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -636,5 +638,139 @@ func TestTargetAndBuildOptions(t *testing.T) {
 	spec.Template = &store.SandboxTemplate{ID: "tpl", Type: "docker", Config: []byte(`{}`)}
 	if _, err := BuildOptions(spec); err == nil {
 		t.Error("a template without an image was accepted")
+	}
+}
+
+// lifecycleSandbox is a countable sandbox that also implements Lifecycle.
+type lifecycleSandbox struct {
+	closeCountingSandbox
+	state   sandbox.State
+	starts  int
+	stops   int
+	stopErr error
+}
+
+func (l *lifecycleSandbox) Start(context.Context) error {
+	l.starts++
+	l.state = sandbox.StateRunning
+	return nil
+}
+
+func (l *lifecycleSandbox) Stop(context.Context) error {
+	if l.stopErr != nil {
+		return l.stopErr
+	}
+	l.stops++
+	l.state = sandbox.StateStopped
+	return nil
+}
+
+func (l *lifecycleSandbox) Status(context.Context) (sandbox.State, error) { return l.state, nil }
+
+func lifecycleManager(t *testing.T) (*Manager, *lifecycleSandbox) {
+	t.Helper()
+	m := NewManager()
+	sb := &lifecycleSandbox{}
+	m.buildOverride = func(Spec) (sandbox.Sandbox, error) { return sb, nil }
+	return m, sb
+}
+
+// EnsureRunning starts the sandbox and Status reports it; the reference the
+// call took is released, so nothing is left holding the instance.
+func TestManagerEnsureRunningAndStatus(t *testing.T) {
+	m, sb := lifecycleManager(t)
+	if got, err := m.Status(t.Context(), testSpec("p")); err != nil || got != sandbox.StateAbsent {
+		t.Fatalf("Status before start = %v, %v; want absent", got, err)
+	}
+	if err := m.EnsureRunning(t.Context(), testSpec("p")); err != nil {
+		t.Fatalf("EnsureRunning: %v", err)
+	}
+	if got, err := m.Status(t.Context(), testSpec("p")); err != nil || got != sandbox.StateRunning {
+		t.Fatalf("Status after start = %v, %v; want running", got, err)
+	}
+	if sb.starts != 1 {
+		t.Errorf("starts = %d, want 1", sb.starts)
+	}
+	if n := m.holders("p"); n != 0 {
+		t.Errorf("holders after the calls returned = %d, want 0", n)
+	}
+}
+
+// An idle sandbox stops NOW, and the instance leaves the cache so the next
+// acquire builds against the current configuration.
+func TestManagerStopIdle(t *testing.T) {
+	m, sb := lifecycleManager(t)
+	if err := m.EnsureRunning(t.Context(), testSpec("p")); err != nil {
+		t.Fatal(err)
+	}
+	stopped, err := m.Stop(t.Context(), testSpec("p"))
+	if err != nil || !stopped {
+		t.Fatalf("Stop = %v, %v; want an immediate stop", stopped, err)
+	}
+	if sb.stops != 1 {
+		t.Errorf("stops = %d, want 1", sb.stops)
+	}
+	m.mu.Lock()
+	cached := len(m.instances)
+	m.mu.Unlock()
+	if cached != 0 {
+		t.Errorf("instances after Stop = %d, want 0", cached)
+	}
+}
+
+// A Stop while a run holds the sandbox does NOT tear it off its container: it
+// reports the stop as deferred, dooms the instance so nothing new joins, and
+// the holder's release is what closes it.
+func TestManagerStopDefersToHolders(t *testing.T) {
+	m, sb := lifecycleManager(t)
+	held, release, err := m.acquire(testSpec("p"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stopped, err := m.Stop(t.Context(), testSpec("p"))
+	if err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if stopped {
+		t.Fatal("Stop reported an immediate stop while a holder was using it")
+	}
+	if sb.stops != 0 {
+		t.Errorf("stops = %d, want 0 — the holder was still working", sb.stops)
+	}
+	m.mu.Lock()
+	doomed := held.doomed
+	m.mu.Unlock()
+	if !doomed {
+		t.Error("the instance was not doomed, so a later acquire could still join it")
+	}
+	release()
+	if sb.closes.Load() != 1 {
+		t.Errorf("closes after the last release = %d, want 1", sb.closes.Load())
+	}
+}
+
+// A backend with no Lifecycle says so rather than pretending.
+func TestManagerLifecycleUnsupported(t *testing.T) {
+	m := NewManager()
+	m.buildOverride = func(Spec) (sandbox.Sandbox, error) { return &closeCountingSandbox{}, nil }
+	if err := m.EnsureRunning(t.Context(), testSpec("p")); !errors.Is(err, sandbox.ErrLifecycleUnsupported) {
+		t.Errorf("EnsureRunning = %v, want ErrLifecycleUnsupported", err)
+	}
+	if _, err := m.Stop(t.Context(), testSpec("p")); !errors.Is(err, sandbox.ErrLifecycleUnsupported) {
+		t.Errorf("Stop = %v, want ErrLifecycleUnsupported", err)
+	}
+	if _, err := m.Status(t.Context(), testSpec("p")); !errors.Is(err, sandbox.ErrLifecycleUnsupported) {
+		t.Errorf("Status = %v, want ErrLifecycleUnsupported", err)
+	}
+}
+
+// An unknown target type fails loudly at build time — a stored row this build
+// does not carry must not read as a working sandbox.
+func TestBackendForUnknownType(t *testing.T) {
+	m := NewManager()
+	spec := testSpec("p")
+	spec.Target.Type = "quantum"
+	if _, _, err := m.Acquire(spec); err == nil || !strings.Contains(err.Error(), "quantum") {
+		t.Fatalf("Acquire on an unknown type = %v, want a refusal naming it", err)
 	}
 }

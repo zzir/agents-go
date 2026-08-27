@@ -1005,6 +1005,17 @@ components:
       required:
       - session_id
       type: object
+    handler.sandboxStateResp:
+      properties:
+        state:
+          description: State is absent | stopped | running.
+          type: string
+      type: object
+    handler.sandboxStopResp:
+      properties:
+        stopped:
+          type: boolean
+      type: object
     handler.sandboxTargetReq:
       properties:
         config:
@@ -4044,10 +4055,43 @@ paths:
       summary: Update project
       tags:
       - projects
-  /projects/{id}/container/rebuild:
+  /projects/{id}/sandbox:
+    get:
+      parameters:
+      - description: Project id
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.sandboxStateResp'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Gateway
+      security:
+      - BearerAuth: []
+      summary: Project sandbox status
+      tags:
+      - projects
+  /projects/{id}/sandbox/rebuild:
     post:
       description: Discards the container and creates a fresh one from the current
-        image and environment. Files under /workspace survive; anything installed
+        template and environment. Files under /workspace survive; anything installed
         into the container does not, and commands running in it fail. Synchronous.
       parameters:
       - description: Project id
@@ -4073,7 +4117,72 @@ paths:
           description: Bad Gateway
       security:
       - BearerAuth: []
-      summary: Rebuild container
+      summary: Rebuild the project's sandbox
+      tags:
+      - projects
+  /projects/{id}/sandbox/start:
+    post:
+      description: Synchronous, and can take an image pull's worth of time.
+      parameters:
+      - description: Project id
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: running
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Gateway
+      security:
+      - BearerAuth: []
+      summary: Start the project's sandbox
+      tags:
+      - projects
+  /projects/{id}/sandbox/stop:
+    post:
+      description: 'Keeps the working tree. `stopped: false` means a run or terminal
+        is still using it and the stop happens when that ends.'
+      parameters:
+      - description: Project id
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.sandboxStopResp'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Gateway
+      security:
+      - BearerAuth: []
+      summary: Stop the project's sandbox
       tags:
       - projects
   /provider-types:

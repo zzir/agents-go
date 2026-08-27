@@ -394,27 +394,19 @@ func (m *Manager) RemoveProject(projectID string) {
 // maxGen fences a project id permanently: no runtime generation can reach it.
 const maxGen = int64(1) << 62
 
-// ReclaimProject removes the project's container AND its volume from the
-// target's daemon, after evicting the cached instance. Deleting a project
-// deletes its files: the storage is what the row was for, and leaving a
-// volume behind on every delete is an unbounded leak nobody has a listing for
-// (decisions §5.33). The caller deletes the row first, so a failure here
-// leaves reclaimable storage rather than a row pointing at nothing.
-func (m *Manager) ReclaimProject(ctx context.Context, target *store.SandboxTarget, projectID string) error {
-	m.RemoveProject(projectID)
-	opts, err := TargetOptions(target)
+// ReclaimProject destroys the project's compute AND its storage, after
+// evicting the cached instance. Deleting a project deletes its files: the
+// storage is what the row was for, and leaving it behind on every delete is
+// an unbounded leak nobody has a listing for (decisions §5.33). The caller
+// deletes the row first, so a failure here leaves reclaimable storage rather
+// than a row pointing at nothing.
+func (m *Manager) ReclaimProject(ctx context.Context, spec Spec) error {
+	m.RemoveProject(spec.Project.ID)
+	b, err := backendFor(spec)
 	if err != nil {
 		return err
 	}
-	name := ContainerName(projectID)
-	if err := dockersb.RemoveManaged(ctx, opts, name); err != nil && !errors.Is(err, dockersb.ErrContainerNotFound) {
-		return fmt.Errorf("removing container %s: %w", name, err)
-	}
-	vol := ProjectVolumeName(projectID)
-	if err := dockersb.RemoveManagedVolume(ctx, opts, vol); err != nil && !errors.Is(err, dockersb.ErrVolumeNotFound) {
-		return fmt.Errorf("removing volume %s: %w", vol, err)
-	}
-	return nil
+	return b.Reclaim(ctx, spec)
 }
 
 // createContainer creates the project's container now rather than leaving it
@@ -542,17 +534,87 @@ func (m *Manager) SandboxTools(spec Spec, commandApproval bool) ([]*agents.Tool,
 	return tools, releaseTools, nil
 }
 
-// buildSandbox constructs the SDK sandbox for spec: one persistent container
-// per project, named from its id, mounting the project's named volume at
-// /workspace. The volume is the storage on every daemon, local or remote —
-// there is no host bind mount (decisions §5.33). Docker is the only backend
-// (decisions §5.27).
+// buildSandbox hands spec to its target type's backend.
 func (m *Manager) buildSandbox(spec Spec) (sandbox.Sandbox, error) {
-	opts, err := BuildOptions(spec)
+	b, err := backendFor(spec)
 	if err != nil {
 		return nil, err
 	}
-	return dockersb.New(opts)
+	return b.Open(spec)
+}
+
+// EnsureRunning provisions the project's sandbox and makes it ready to take
+// commands, rather than leaving that to the first command. It is what a
+// "Start" button and a rebuild both need: an image pull's worth of waiting
+// happens here, where a person is watching, instead of inside a run.
+func (m *Manager) EnsureRunning(ctx context.Context, spec Spec) error {
+	sb, release, err := m.Acquire(spec)
+	if err != nil {
+		return err
+	}
+	defer release()
+	lc, ok := sb.(sandbox.Lifecycle)
+	if !ok {
+		return fmt.Errorf("%s sandbox: %w", spec.Target.Type, sandbox.ErrLifecycleUnsupported)
+	}
+	return lc.Start(ctx)
+}
+
+// Stop releases the project's compute, keeping its storage. It reports
+// whether the sandbox stopped NOW: with another holder — a run in flight, an
+// open terminal — the instance is only doomed, and the last release stops it.
+// Tearing a live run off its container would be the other option, and it is
+// not one: the person asked for the sandbox to stop, not for the work to die.
+func (m *Manager) Stop(ctx context.Context, spec Spec) (stopped bool, err error) {
+	sb, release, err := m.Acquire(spec)
+	if err != nil {
+		return false, err
+	}
+	defer release()
+	lc, ok := sb.(sandbox.Lifecycle)
+	if !ok {
+		return false, fmt.Errorf("%s sandbox: %w", spec.Target.Type, sandbox.ErrLifecycleUnsupported)
+	}
+	// One reference is this call's own; anything above it is someone working.
+	if m.holders(spec.Project.ID) > 1 {
+		m.EvictProject(spec.Project.ID)
+		return false, nil
+	}
+	if err := lc.Stop(ctx); err != nil {
+		return false, err
+	}
+	m.EvictProject(spec.Project.ID)
+	return true, nil
+}
+
+// Status reports what the project's compute is doing. It builds the sandbox
+// (a connection, not a container), so "never started" answers absent rather
+// than failing.
+func (m *Manager) Status(ctx context.Context, spec Spec) (sandbox.State, error) {
+	sb, release, err := m.Acquire(spec)
+	if err != nil {
+		return sandbox.StateAbsent, err
+	}
+	defer release()
+	lc, ok := sb.(sandbox.Lifecycle)
+	if !ok {
+		return sandbox.StateAbsent, fmt.Errorf("%s sandbox: %w", spec.Target.Type, sandbox.ErrLifecycleUnsupported)
+	}
+	return lc.Status(ctx)
+}
+
+// holders counts the live references across every cached generation of the
+// project.
+func (m *Manager) holders(projectID string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for key, inst := range m.instances {
+		if key.projectID == projectID {
+			n += inst.refs
+		}
+	}
+	return n
 }
 
 // BuildOptions assembles the SDK options for spec: the target's daemon, the
