@@ -16,6 +16,9 @@ func (s *Sandbox) Start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := s.ensureWorkDir(ctx); err != nil {
+		return err
+	}
 	return s.refresh(ctx, id)
 }
 

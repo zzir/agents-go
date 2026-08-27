@@ -87,6 +87,7 @@ func (s *Sandbox) ensure(ctx context.Context) (string, error) {
 		}
 	}
 	s.id = id
+	s.freshWorkDir = true
 	s.adopt(info)
 	return s.id, nil
 }

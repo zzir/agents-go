@@ -1235,6 +1235,11 @@ document:
   `"type":2` and `"size":220`. A `string` field for the enum fails outright on
   FC, taking every directory listing with it. Both scalars are decoded
   loosely, and the fake serves both renderings so the suite covers the split.
+- **A stock template has no `/workspace`.** The working directory the
+  workbench contracts for everywhere else is not one these images ship, and
+  envd refuses the exec outright (`cwd '/workspace' does not exist`) rather
+  than falling back to the home directory. The client makes it on the sandbox
+  it created (§2.7q), so any template works, not only one built for this.
 - **envd's `Remove` is idempotent** — it answers OK for a path that was never
   there — so `RemoveFile` stats first. Every other backend reports
   `fs.ErrNotExist` there, and apply_patch's rollback tells "deleted" from "was

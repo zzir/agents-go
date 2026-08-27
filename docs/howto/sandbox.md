@@ -176,7 +176,9 @@ already exists on the service, and — for anything but E2B's own cloud — the
 `APIURL` and `Domain` that address it. The remote sandbox is created lazily on
 first use, exactly as the docker container is; `OnSandboxID` is how a caller
 remembers which one, so a restart resumes it rather than provisioning a second
-([decisions §5.34](../explanation/decisions.md)).
+([decisions §5.34](../explanation/decisions.md)). Any template works, including
+a stock one: the working directory is created on the sandbox rather than
+expected of the image ([spec §2.7q](../reference/spec.md#27q-a-sandbox-makes-its-working-directory)).
 
 `Env` sets variables on the **container**, so a command, a persistent shell and a terminal opened into it all read the same values; an `ExecRequest.Env` entry of the same name wins for that one call. It is part of the adoption fingerprint: changing it replaces a persistent container instead of adopting the old one, keeping `/workspace` but discarding whatever was installed into the container itself ([spec §2.7n](../reference/spec.md#27n-a-sandboxs-environment-is-part-of-its-container-identity)).
 

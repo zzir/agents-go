@@ -122,6 +122,9 @@ type Sandbox struct {
 	accessToken string
 	// domain the service told us to use for this sandbox, when it did.
 	domain string
+	// freshWorkDir marks a sandbox created in this process, whose working
+	// directory has yet to be made.
+	freshWorkDir bool
 }
 
 var (
@@ -203,7 +206,30 @@ func (s *Sandbox) envdBase(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if err := s.ensureWorkDir(ctx); err != nil {
+		return "", err
+	}
 	return "https://" + s.hostFor(id, EnvdPort), nil
+}
+
+// ensureWorkDir creates the working directory of a freshly created sandbox.
+// A stock template has no /workspace, and everything here runs there.
+func (s *Sandbox) ensureWorkDir(ctx context.Context) error {
+	s.mu.Lock()
+	// Cleared before the call, which comes back through envdBase.
+	pending := s.freshWorkDir
+	s.freshWorkDir = false
+	s.mu.Unlock()
+	if !pending {
+		return nil
+	}
+	if err := s.makeDir(ctx, s.workDir()); err != nil {
+		s.mu.Lock()
+		s.freshWorkDir = true
+		s.mu.Unlock()
+		return err
+	}
+	return nil
 }
 
 // Close releases nothing remote: the sandbox outlives this client, and which

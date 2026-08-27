@@ -80,6 +80,7 @@ renumbered — which is why the letters run out of alphabetical order in places.
 | [§2.7n](#27n-a-sandboxs-environment-is-part-of-its-container-identity) | A sandbox's environment is part of its container identity | `Options.Env` reaches every command; changing it replaces the container |
 | [§2.7o](#27o-a-docker-sandbox-runs-as-the-images-user-and-joins-no-network) | A docker sandbox runs as the image's user and joins no network | Empty `User` = the image's own user; empty `Network` = none |
 | [§2.7p](#27p-stop-keeps-the-filesystem-and-promises-nothing-else) | Stop keeps the filesystem and promises nothing else | `Lifecycle.Stop` guarantees the tree, never the processes |
+| [§2.7q](#27q-a-sandbox-makes-its-working-directory) | A sandbox makes its working directory | A stock image need not ship one |
 | [§2.8](#28-nested-agent-as-tool-attribution) | Nested agent-as-tool attribution | How usage, spans and errors attribute across a nested agent-as-tool |
 | [§2.9](#29-budgets-) | Budgets 🚧 | `MaxTurns` is the one budget dimension implemented |
 | [§2.10](#210-errors-and-recovery) | Errors and recovery | Stable `ErrorCode`s, and which errors a run can recover from |
@@ -1507,6 +1508,18 @@ three say nothing about the storage, which outlives every one of them.
 A backend that cannot control its compute does not implement `Lifecycle` at
 all — `LocalSandbox` is one — and callers discover that by type assertion
 rather than by a method that returns "not supported".
+
+### 2.7q A sandbox makes its working directory
+
+A backend creates its working directory on a sandbox it provisioned, rather
+than requiring the image to ship one. `docker` gets this from the daemon,
+which makes `WorkingDir` when the image lacks it; `sandbox/e2b` does it
+itself, once, on the sandbox it created — a stock template has no
+`/workspace` and every command would fail with `cwd '/workspace' does not
+exist`.
+
+It is done on the FIRST use, not on every one: a resumed sandbox already has
+the directory, and a caller that removed it meant to.
 
 ### 2.8 Nested agent-as-tool attribution
 

@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -192,5 +194,32 @@ func TestE2BDestroyThenReprovision(t *testing.T) {
 	f.mu.Unlock()
 	if got != 2 {
 		t.Fatalf("creates = %d, want 2 — a destroyed sandbox is replaced, not mourned", got)
+	}
+}
+
+// A stock template has no /workspace: the client makes its working directory
+// on the sandbox it created, or every command fails with "cwd does not exist"
+// (seen on Alibaba Cloud's `base`).
+func TestE2BMakesTheWorkDir(t *testing.T) {
+	root := t.TempDir()
+	f := newFakeService(t, root)
+	base, err := url.Parse(f.URL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sb, err := e2b.New(e2b.Options{
+		APIURL: f.URL(), Domain: "test", APIKey: "key", TemplateID: "base",
+		HTTPClient: &http.Client{Transport: envdRedirect{to: base, next: http.DefaultTransport}},
+		// A directory the template did not ship.
+		WorkDir: filepath.Join(root, "workspace"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sb.WriteFile(t.Context(), "hello.txt", []byte("hi")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "workspace", "hello.txt")); err != nil {
+		t.Fatal(err)
 	}
 }
