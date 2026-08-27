@@ -55,7 +55,7 @@ function render(props: Partial<Parameters<typeof ChatTopBar>[0]> = {}): HTMLElem
         terminalEnabled
         onTerminalOpen={noop}
         binding={{ title: 'sb — proj', projectName: 'proj' }}
-        projectMenu={{ busy: false, state: 'running', onEnv: noop, onStart: noop, onStop: noop, onExport: noop, onPreview: noop, onRebuild: noop }}
+        projectMenu={{ busy: false, state: 'running', rebuildable: true, onEnv: noop, onStart: noop, onStop: noop, onExport: noop, onPreview: noop, onRebuild: noop }}
         {...props}
       />,
     );
@@ -72,9 +72,17 @@ describe('ChatTopBar', () => {
 
   // A running sandbox offers Stop; anything else offers Start, and says why.
   it('offers Start when the sandbox is not running', () => {
-    const host = render({ projectMenu: { busy: false, state: 'absent', onEnv: noop, onStart: noop, onStop: noop, onExport: noop, onPreview: noop, onRebuild: noop } });
+    const host = render({ projectMenu: { busy: false, state: 'absent', rebuildable: true, onEnv: noop, onStart: noop, onStop: noop, onExport: noop, onPreview: noop, onRebuild: noop } });
     const items = [...host.querySelectorAll('li')].map(li => li.textContent);
     expect(items[4]).toBe('Start sandboxNot created yet — pulls the image.');
+  });
+
+  // On a backend where the sandbox IS the storage there is nothing to rebuild
+  // into: offering it would be offering to delete the working tree.
+  it('drops the rebuild on a backend that cannot rebuild', () => {
+    const host = render({ projectMenu: { busy: false, state: 'running', rebuildable: false, onEnv: noop, onStart: noop, onStop: noop, onExport: noop, onPreview: noop, onRebuild: noop } });
+    const items = [...host.querySelectorAll('li')].map(li => li.textContent);
+    expect(items).not.toContain('Rebuild container');
   });
 
   it('marks only the rebuild as destructive', () => {

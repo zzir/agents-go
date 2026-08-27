@@ -212,7 +212,7 @@ func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL st
 			Workflows:  handler.NewWorkflowHandler(st.Workflows, st.AgentConfigs, st.Sessions, svc.Runner),
 			Triggers:   handler.NewTriggerHandler(st.Triggers, st.Sessions, st.Workflows, st.AgentConfigs, svc.Scheduler),
 			Guardrails: handler.NewGuardrailHandler(st.Guardrails, svc.Guardrails),
-			Targets:    handler.NewSandboxTargetHandler(st.Targets, st.Templates, retirer),
+			Targets:    handler.NewSandboxTargetHandler(st.Targets, st.Templates, svc.Sandboxes, retirer),
 			Templates:  handler.NewSandboxTemplateHandler(st.Templates, retirer),
 			Projects:   projects,
 			Traces:     handler.NewTraceHandler(st.Traces),

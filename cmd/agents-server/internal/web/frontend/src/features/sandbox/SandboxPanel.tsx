@@ -203,9 +203,12 @@ export function SandboxTargetsPanel() {
   const [testingId, setTestingId] = useState<string | null>(null);
 
   const handleTest = async (s: SandboxRow) => {
-    const tpl = (templates || [])[0];
+    // A target is checked with a template of its OWN type: the check runs the
+    // template on the target, and a docker image says nothing about a remote
+    // service.
+    const tpl = (templates || []).find(t => (t.type || 'docker') === (s.type || 'docker'));
     if (!tpl) {
-      toast.error('Add a template first — a health check needs an image to run');
+      toast.error((s.type === 'e2b' ? 'Add an E2B template first' : 'Add a Docker template first') + ' — a health check needs one to run');
       return;
     }
     setTestingId(s.id);

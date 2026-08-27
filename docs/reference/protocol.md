@@ -894,7 +894,10 @@ A stop while a run or a terminal is still using it answers `stopped: false`:
 the instance is doomed so nothing new joins, and it stops when that work ends
 — the person asked for the sandbox to stop, not for the work to die.
 `POST …/sandbox/rebuild` throws the container away and provisions a fresh one
-from the current template.
+from the current template, keeping the volume. It is a **docker** operation:
+on an E2B-compatible target the sandbox IS the storage, so the rebuild is
+refused with the way out — export the project, then create a new one
+([decisions §5.34](../explanation/decisions.md)).
 
 A project carries the **environment** its container is created with, so
 `exec_command`, a persistent shell and a terminal all read the same values.
@@ -935,10 +938,6 @@ severs that project's terminals — its siblings on the same sandbox are
 untouched. Files under `/workspace` survive; anything installed into the
 container does not. A rename does neither. Updates are compare-and-set: send
 the `revision` the edit was made against and a concurrent write answers 409.
-
-`POST /projects/{id}/container/rebuild` discards the project's container and
-creates a fresh one from the current image and environment; commands running
-in the old one fail. Synchronous and owner-only.
 
 *(Endpoints and payload schemas: see the OpenAPI spec — `/openapi.yaml`, browsable at `/docs`.)*
 

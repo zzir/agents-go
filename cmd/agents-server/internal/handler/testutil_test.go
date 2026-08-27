@@ -110,7 +110,7 @@ func testAgentConfigHandler(db *bun.DB) *AgentConfigHandler {
 func testTargetHandler(db *bun.DB, manager *sandboxes.Manager) *SandboxTargetHandler {
 	targets, templates, projects := store.NewSandboxTargetStore(db), store.NewSandboxTemplateStore(db), store.NewProjectStore(db)
 	terminals := NewTerminalHandler(targets, templates, projects, manager, settings.NewReader(nil))
-	return NewSandboxTargetHandler(targets, templates, NewRetirer(projects, manager, terminals))
+	return NewSandboxTargetHandler(targets, templates, manager, NewRetirer(projects, manager, terminals))
 }
 
 // testTemplateHandler wires a SandboxTemplateHandler over the same stores.

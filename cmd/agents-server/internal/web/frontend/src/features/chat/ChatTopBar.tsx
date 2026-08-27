@@ -34,6 +34,9 @@ export interface ProjectMenu {
   busy: boolean;
   /* absent | stopped | running, or '' while unknown. */
   state: string;
+  /* False on a backend where the sandbox IS the storage, and replacing it
+     would take the working tree with it. */
+  rebuildable: boolean;
   onEnv: () => void;
   onStart: () => void;
   onStop: () => void;
@@ -113,10 +116,12 @@ export function ChatTopBar({
                     </ActionList.Description>
                   </ActionList.Item>
                 )}
-                <ActionList.Item variant="danger" onSelect={projectMenu.onRebuild}>
-                  <ActionList.LeadingVisual><SyncIcon /></ActionList.LeadingVisual>
-                  Rebuild container
-                </ActionList.Item>
+                {projectMenu.rebuildable && (
+                  <ActionList.Item variant="danger" onSelect={projectMenu.onRebuild}>
+                    <ActionList.LeadingVisual><SyncIcon /></ActionList.LeadingVisual>
+                    Rebuild container
+                  </ActionList.Item>
+                )}
               </ActionList>
             </ActionMenu.Overlay>
           </ActionMenu>

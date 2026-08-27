@@ -7,13 +7,11 @@ import (
 	"net/http"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
-	"github.com/zzir/agents-go/sandbox"
 	dockersb "github.com/zzir/agents-go/sandbox/docker"
 )
 
@@ -22,17 +20,25 @@ import (
 type SandboxTargetHandler struct {
 	store     *store.SandboxTargetStore
 	templates *store.SandboxTemplateStore
+	manager   *sandboxes.Manager
 	retire    *Retirer
 }
 
 // NewSandboxTargetHandler returns a handler over the target store; templates
 // supply the image the health check needs, and the retirer is what carries a
 // content change to the projects on this target.
-func NewSandboxTargetHandler(s *store.SandboxTargetStore, templates *store.SandboxTemplateStore, r *Retirer) *SandboxTargetHandler {
-	if s == nil || templates == nil || r == nil {
-		panic("handler: NewSandboxTargetHandler needs the target and template stores and a retirer")
+func NewSandboxTargetHandler(s *store.SandboxTargetStore, templates *store.SandboxTemplateStore, m *sandboxes.Manager, r *Retirer) *SandboxTargetHandler {
+	if s == nil || templates == nil || m == nil || r == nil {
+		panic("handler: NewSandboxTargetHandler needs the target and template stores, the manager and a retirer")
 	}
-	return &SandboxTargetHandler{store: s, templates: templates, retire: r}
+	return &SandboxTargetHandler{store: s, templates: templates, manager: m, retire: r}
+}
+
+// typeMismatch names a target and template that cannot be paired. The check
+// happens on a project write and on the health check; one wording keeps the
+// two from drifting.
+func typeMismatch(target *store.SandboxTarget, tpl *store.SandboxTemplate) string {
+	return fmt.Sprintf("the %s template %q cannot run on the %s target %q", tpl.Type, tpl.Name, target.Type, target.Name)
 }
 
 // Retirer turns a content change on a target or template into the project
@@ -321,7 +327,7 @@ func (h *SandboxTargetHandler) Delete(c *gin.Context) {
 // connectivity. The image comes from a template, since a target names none.
 //
 //	@Summary		Test sandbox target
-//	@Description	Runs "echo ok" in a throw-away sandbox from the named template. 200 with ok=false means the service was reachable but the command failed.
+//	@Description	Runs "echo ok" in a throw-away sandbox from the named template — a container for a docker target, a provisioned-and-destroyed sandbox for a remote service. 200 with ok=false means the service answered and the command did not. The template's type must match the target's.
 //	@Tags			sandbox-targets
 //	@Produce		json
 //	@Param			id			path		string	true	"Target id"
@@ -349,45 +355,15 @@ func (h *SandboxTargetHandler) Test(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
-	// The health check runs in a throw-away EPHEMERAL container, bypassing
-	// the manager: a test needs no project tree, and must not leave a
-	// persistent container behind.
-	opts, err := sandboxes.TargetOptions(target)
-	if err != nil {
-		badRequest(c, err.Error())
+	if tpl.Type != target.Type {
+		badRequest(c, typeMismatch(target, tpl))
 		return
 	}
-	spec := sandboxes.Spec{Target: target, Template: tpl, Project: &store.Project{}}
-	full, err := sandboxes.BuildOptions(spec)
-	if err != nil {
-		badRequest(c, err.Error())
-		return
-	}
-	// Take the image and shape, leave the container name, volume and
-	// persistence behind — this container must vanish with the request.
-	opts.Image, opts.Runtime, opts.User, opts.Network = full.Image, full.Runtime, full.User, full.Network
-	opts.Limits = full.Limits
-	sb, err := dockersb.New(opts)
-	if err != nil {
-		upstreamError(c, err)
-		return
-	}
-	defer func() { _ = sb.Close() }()
-
-	timeout := sandbox.DefaultTimeout
-	runCtx, cancel := context.WithTimeout(ctx, timeout+5*time.Second)
-	defer cancel()
-	res, err := sb.Exec(runCtx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", "echo ok"}, Timeout: timeout})
-	if err != nil {
-		upstreamError(c, err)
-		return
-	}
-	if res.ExitCode != 0 || res.TimedOut {
-		detail := res.Stderr
-		if res.TimedOut {
-			detail = "timed out"
-		}
-		c.JSON(http.StatusOK, sandboxTestResp{OK: false, Detail: detail})
+	// The check is the backend's: a docker target runs a throw-away
+	// container, a remote service provisions and destroys a sandbox. 200 with
+	// ok=false means the service answered and the command did not.
+	if err := h.manager.CheckTarget(ctx, target, tpl); err != nil {
+		c.JSON(http.StatusOK, sandboxTestResp{OK: false, Detail: err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, sandboxTestResp{OK: true})
@@ -421,8 +397,10 @@ func (h *SandboxTargetHandler) Containers(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
-// daemon resolves the target named by the id path parameter into its
-// connection options, answering the error when it cannot.
+// daemon resolves the target named by the id path parameter into its DOCKER
+// connection options. The container listing and the stop/remove calls are a
+// docker daemon's operator surface and exist nowhere else, so a target of
+// another type is refused by name rather than by a type error.
 func (h *SandboxTargetHandler) daemon(c *gin.Context) (dockersb.Options, bool) {
 	t, err := h.store.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {

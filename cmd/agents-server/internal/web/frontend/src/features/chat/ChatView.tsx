@@ -84,6 +84,8 @@ interface AgentConfig {
 interface SandboxTarget {
   id: string;
   name: string;
+  /* docker | e2b — a target and the template built on it must agree. */
+  type?: string;
 }
 
 // Restartable jump-target flash, shared by trace reverse-navigation and the
@@ -184,6 +186,7 @@ export function ChatView({
   // The bound project's compute state, refreshed when the menu's owner
   // changes and after every act on it. '' means "not asked yet".
   const [sandboxState, setSandboxState] = useState('');
+  const [targetType, setTargetType] = useState('');
 
   useEffect(() => {
     setAgentConfigIdState(loadSessionAgent(sessionId || ''));
@@ -308,11 +311,11 @@ export function ChatView({
   // unknown rather than guessing — the menu then offers Start, which is the
   // harmless choice.
   useEffect(() => {
-    if (!boundProject) { setSandboxState(''); return; }
+    if (!boundProject) { setSandboxState(''); setTargetType(''); return; }
     let live = true;
     api.projects.sandboxStatus(boundProject.id)
-      .then(r => { if (live) setSandboxState(r.state); })
-      .catch(() => { if (live) setSandboxState(''); });
+      .then(r => { if (live) { setSandboxState(r.state); setTargetType(r.target_type); } })
+      .catch(() => { if (live) { setSandboxState(''); setTargetType(''); } });
     return () => { live = false; };
   }, [boundProject]);
 
@@ -704,6 +707,7 @@ export function ChatView({
       projectMenu={boundProject ? {
         busy: containerBusy,
         state: sandboxState,
+        rebuildable: targetType !== 'e2b',
         onEnv: () => setEnvProject(boundProject),
         onStart: () => { void startSandbox(); },
         onStop: () => { void stopSandbox(); },
@@ -792,8 +796,11 @@ export function ChatView({
                 <ActionList.Divider />
                 <ActionList.Item
                   onSelect={() => {
-                    setProjTargetId(selectedProject?.target_id || sandboxTargets[0].id);
-                    setProjTemplateId(selectedProject?.template_id || sandboxTemplates?.[0]?.id || '');
+                    const target = sandboxTargets.find(t => t.id === selectedProject?.target_id) || sandboxTargets[0];
+                    setProjTargetId(target.id);
+                    setProjTemplateId(selectedProject?.template_id
+                      || (sandboxTemplates || []).find(t => (t.type || 'docker') === (target.type || 'docker'))?.id
+                      || '');
                     setProjName('');
                     setProjEnv([]);
                     setProjDialogOpen(true);
@@ -816,7 +823,11 @@ export function ChatView({
         )}
         {projDialogOpen && (() => {
           const projTarget = sandboxTargets?.find(t => t.id === projTargetId);
-          const projTemplate = sandboxTemplates?.find(t => t.id === projTemplateId);
+          // A project's template must be of its machine's type — the server
+          // refuses the pair otherwise, so the list never offers it.
+          const typeOf = (t?: { type?: string }) => t?.type || 'docker';
+          const projTemplates = (sandboxTemplates || []).filter(t => typeOf(t) === typeOf(projTarget));
+          const projTemplate = projTemplates.find(t => t.id === projTemplateId);
           const create = async () => {
             if (!projTarget || !projTemplate || !projName.trim() || projSaving) return;
             setProjSaving(true);
@@ -862,7 +873,11 @@ export function ChatView({
                   <Select
                     block
                     value={projTargetId}
-                    onChange={e => setProjTargetId(e.target.value)}
+                    onChange={e => {
+                      setProjTargetId(e.target.value);
+                      const next = sandboxTargets?.find(t => t.id === e.target.value);
+                      setProjTemplateId((sandboxTemplates || []).find(t => typeOf(t) === typeOf(next))?.id || '');
+                    }}
                   >
                     {sandboxTargets?.map(t => (
                       <Select.Option key={t.id} value={t.id}>{t.name}</Select.Option>
@@ -875,8 +890,8 @@ export function ChatView({
                     value={projTemplateId}
                     onChange={e => setProjTemplateId(e.target.value)}
                   >
-                    {(sandboxTemplates || []).length === 0 && <Select.Option value="">no templates configured</Select.Option>}
-                    {sandboxTemplates?.map(t => (
+                    {projTemplates.length === 0 && <Select.Option value="">no {typeOf(projTarget)} templates configured</Select.Option>}
+                    {projTemplates.map(t => (
                       <Select.Option key={t.id} value={t.id}>{t.name}</Select.Option>
                     ))}
                   </Select>

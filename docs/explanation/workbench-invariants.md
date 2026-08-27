@@ -676,3 +676,20 @@ When a change genuinely doesn't fit, update this list in the same PR.
     connection is outside `http.Server.Shutdown`'s reach; then the listener
     drains, for at most five seconds, and whatever it was still waiting on
     is a warning, not an exit status.
+
+44. **Every per-target operation goes through the backend.** A target's type
+    picks the implementation once, in `sandboxes.BackendFor`, and nothing
+    outside it branches on the string: the health check behind the Test
+    button (`Manager.CheckTarget`) and the rebuild
+    (`Manager.RebuildContainer`) are `Backend` methods like provisioning is.
+    A handler reaching for `TargetOptions` — the docker daemon's connection —
+    is asking a service-managed sandbox for a docker client it does not have,
+    which is how `unknown sandbox target type: e2b` reached a person's
+    screen; that call now names the type in its refusal, and the paths that
+    are genuinely docker-only (Containers, Stop, Remove) refuse before
+    starting rather than mid-way. **A rebuild is not universal**: on docker it
+    replaces the container and keeps the volume, and on an E2B-compatible
+    service — where the sandbox IS the storage
+    ([decisions §5.34](decisions.md)) — it is refused with the way out
+    (export the project first), never approximated by destroying the working
+    tree.

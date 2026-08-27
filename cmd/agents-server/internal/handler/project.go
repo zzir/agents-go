@@ -380,6 +380,9 @@ func (h *ProjectHandler) RebuildContainer(c *gin.Context) {
 type sandboxStateResp struct {
 	// State is absent | stopped | running.
 	State string `json:"state"`
+	// TargetType is the backend behind it (docker | e2b), so a client offers
+	// only the operations that backend has.
+	TargetType string `json:"target_type"`
 }
 
 // sandboxStopResp says whether the sandbox stopped now or will stop when the
@@ -409,7 +412,7 @@ func (h *ProjectHandler) SandboxStatus(c *gin.Context) {
 		upstreamError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, sandboxStateResp{State: state.String()})
+	c.JSON(http.StatusOK, sandboxStateResp{State: state.String(), TargetType: spec.Target.Type})
 }
 
 // SandboxStart provisions the project's sandbox and makes it ready — the
@@ -561,7 +564,7 @@ func (h *ProjectHandler) typesMatch(c *gin.Context, targetID, templateID string)
 		return false
 	}
 	if t.Type != tpl.Type {
-		badRequest(c, fmt.Sprintf("template %q is a %s template and target %q is a %s target", tpl.Name, tpl.Type, t.Name, t.Type))
+		badRequest(c, typeMismatch(t, tpl))
 		return false
 	}
 	return true

@@ -6,7 +6,6 @@ package sandboxes
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -426,43 +425,34 @@ func (m *Manager) ReclaimProject(ctx context.Context, spec Spec) error {
 	return b.Reclaim(ctx, spec)
 }
 
-// createContainer creates the project's container now rather than leaving it
-// to the next run, so a rebuild hands back something usable. Containers are
-// built lazily on the first exec, so this IS an exec: "sleep 0" needs nothing
-// the persistent container does not already require (its entrypoint is
-// "sleep infinity").
-func (m *Manager) createContainer(ctx context.Context, spec Spec) error {
-	sb, release, err := m.Acquire(spec)
+// RebuildContainer discards the project's compute and provisions it again
+// from the current template and environment — the way back from a container
+// someone broke. What "discard" means is the backend's: docker removes the
+// container and keeps the volume, and a backend where the compute IS the
+// storage refuses rather than destroying a working tree. In-flight commands
+// in the old container fail; that is the deal a rebuild makes, and the caller
+// warns before taking it.
+func (m *Manager) RebuildContainer(ctx context.Context, spec Spec) error {
+	b, err := backendFor(spec)
 	if err != nil {
 		return err
 	}
-	defer release()
-	if _, err := sb.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"sleep", "0"}}); err != nil {
-		return fmt.Errorf("creating the container: %w", err)
+	m.EvictProject(spec.Project.ID)
+	if err := b.Rebuild(ctx, spec); err != nil {
+		return err
 	}
-	return nil
+	return m.EnsureRunning(ctx, spec)
 }
 
-// RebuildContainer discards the project's container and creates a fresh one
-// from the current image and environment — the way back from a container
-// someone broke. The REMOVE is the point: closing an instance only stops the
-// container (KeepOnClose), and a stopped container whose fingerprint still
-// matches is adopted again, so an evict-only rebuild would hand back exactly
-// what it was asked to discard. The VOLUME survives: this replaces the
-// container, not the working tree. In-flight commands in the old container
-// fail; that is the deal a rebuild makes, and the caller warns before taking
-// it.
-func (m *Manager) RebuildContainer(ctx context.Context, spec Spec) error {
-	m.EvictProject(spec.Project.ID)
-	opts, err := TargetOptions(spec.Target)
+// CheckTarget reports whether the target is reachable and the template
+// runnable on it. It touches no project: a health check must not create one,
+// and must not leave anything behind.
+func (m *Manager) CheckTarget(ctx context.Context, target *store.SandboxTarget, template *store.SandboxTemplate) error {
+	b, err := BackendFor(target.Type)
 	if err != nil {
 		return err
 	}
-	name := ContainerName(spec.Project.ID)
-	if err := dockersb.RemoveManaged(ctx, opts, name); err != nil && !errors.Is(err, dockersb.ErrContainerNotFound) {
-		return fmt.Errorf("removing container %s: %w", name, err)
-	}
-	return m.createContainer(ctx, spec)
+	return b.Check(ctx, target, template)
 }
 
 // EvictProject drops the project's cached instances without fencing the id —
@@ -730,11 +720,12 @@ func BuildOptions(spec Spec) (dockersb.Options, error) {
 }
 
 // TargetOptions assembles the SDK options reaching the target's daemon — how
-// to talk to it, and nothing else. The health check and the managed-container
-// calls take it as it stands; a real build adds the template and the project.
+// to talk to it, and nothing else. DOCKER ONLY: the managed-container calls
+// take it as it stands, and a real build adds the template and the project.
+// Anything reachable by more than one backend goes through Backend instead.
 func TargetOptions(t *store.SandboxTarget) (dockersb.Options, error) {
 	if t.Type != "docker" {
-		return dockersb.Options{}, fmt.Errorf("unknown sandbox target type: %s", t.Type)
+		return dockersb.Options{}, fmt.Errorf("sandbox target %q is a %s target; this is a Docker-only operation", t.Name, t.Type)
 	}
 	var dc store.DockerTargetConfig
 	if err := unmarshalConfig(t.Config, &dc); err != nil {

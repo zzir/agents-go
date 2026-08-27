@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/sandbox"
 	e2bsb "github.com/zzir/agents-go/sandbox/e2b"
@@ -81,4 +82,41 @@ func e2bOptions(spec Spec) (e2bsb.Options, error) {
 		// service's own console.
 		Metadata: map[string]string{"agents_project": spec.Project.ID, "agents_owner": spec.Project.OwnerID},
 	}, nil
+}
+
+// Rebuild is refused: on these services the sandbox IS the storage, so
+// throwing the compute away throws the working tree away with it. That is
+// what Reclaim means, and it is not what a person clicking "rebuild" is
+// asking for — they want their files back on a fresh container.
+func (e2bBackend) Rebuild(context.Context, Spec) error {
+	return fmt.Errorf("this sandbox runs on an E2B-compatible service, where the sandbox IS the storage: " +
+		"replacing it would destroy the working tree. Export the project first, then create a new one")
+}
+
+// Check provisions a sandbox from the template, runs the health command in it
+// and destroys it again — the only way to prove a remote service reachable
+// and a template runnable.
+func (e2bBackend) Check(ctx context.Context, target *store.SandboxTarget, template *store.SandboxTemplate) error {
+	// A synthetic project: the check needs a sandbox, not a tree, and nothing
+	// it provisions outlives the call.
+	spec := Spec{Target: target, Template: template, Project: &store.Project{ID: "health-check", Name: "health-check"}}
+	opts, err := e2bOptions(spec)
+	if err != nil {
+		return err
+	}
+	// No callback: this sandbox is destroyed below, and recording it would
+	// write a handle onto a project that does not exist.
+	opts.OnSandboxID = nil
+	opts.Metadata = map[string]string{"agents_health_check": "1"}
+	sb, err := e2bsb.New(opts)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		// WithoutCancel: a cancelled request must not leave a billed sandbox.
+		if derr := sb.Destroy(context.WithoutCancel(ctx)); derr != nil {
+			logging.Ctx(ctx).Warn("destroying the health-check sandbox", "error", derr)
+		}
+	}()
+	return checkExec(ctx, sb)
 }

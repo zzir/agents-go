@@ -4226,7 +4226,7 @@ export interface paths {
         put?: never;
         /**
          * Test sandbox target
-         * @description Runs "echo ok" in a throw-away sandbox from the named template. 200 with ok=false means the service was reachable but the command failed.
+         * @description Runs "echo ok" in a throw-away sandbox from the named template — a container for a docker target, a provisioned-and-destroyed sandbox for a remote service. 200 with ok=false means the service answered and the command did not. The template's type must match the target's.
          */
         post: {
             parameters: {
@@ -7961,6 +7961,11 @@ export interface components {
         "handler.sandboxStateResp": {
             /** @description State is absent | stopped | running. */
             state?: string;
+            /**
+             * @description TargetType is the backend behind it (docker | e2b), so a client offers
+             *     only the operations that backend has.
+             */
+            target_type?: string;
         };
         "handler.sandboxStopResp": {
             stopped?: boolean;

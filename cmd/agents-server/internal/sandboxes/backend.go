@@ -3,7 +3,10 @@ package sandboxes
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
 
+	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/sandbox"
 )
 
@@ -23,6 +26,15 @@ type Backend interface {
 	// the row is gone; a failure leaves reclaimable storage rather than a row
 	// pointing at nothing (decisions §5.33).
 	Reclaim(ctx context.Context, spec Spec) error
+	// Rebuild throws the compute away and provisions it again from the
+	// current template, KEEPING the storage — the way back from a container
+	// someone broke. A backend where the compute IS the storage cannot do
+	// that and refuses, rather than quietly destroying a working tree.
+	Rebuild(ctx context.Context, spec Spec) error
+	// Check reports whether the target is reachable and the template runnable
+	// on it, without touching any project: the health check behind a Test
+	// button. It cleans up whatever it provisioned.
+	Check(ctx context.Context, target *store.SandboxTarget, template *store.SandboxTemplate) error
 }
 
 // backends maps a target type to its implementation. A map rather than a
@@ -36,9 +48,14 @@ var backends = map[string]Backend{
 // backendFor resolves spec's target type, naming the type when it is unknown —
 // a stored row with a type this build does not carry must fail loudly.
 func backendFor(spec Spec) (Backend, error) {
-	b, ok := backends[spec.Target.Type]
+	return BackendFor(spec.Target.Type)
+}
+
+// BackendFor resolves one target type.
+func BackendFor(typ string) (Backend, error) {
+	b, ok := backends[typ]
 	if !ok {
-		return nil, fmt.Errorf("unknown sandbox target type: %s", spec.Target.Type)
+		return nil, fmt.Errorf("unknown sandbox target type: %s", typ)
 	}
 	return b, nil
 }
@@ -50,4 +67,25 @@ func RegisterBackend(typ string, b Backend) {
 		panic("sandboxes: duplicate backend for type " + typ)
 	}
 	backends[typ] = b
+}
+
+// checkHealthCmd is what a Check runs. It needs nothing an image might lack.
+var checkHealthCmd = []string{"sh", "-c", "echo ok"}
+
+// checkExec runs the health command and turns a non-zero exit into an error:
+// a Check either proves the sandbox usable or says why not.
+func checkExec(ctx context.Context, sb sandbox.Sandbox) error {
+	runCtx, cancel := context.WithTimeout(ctx, sandbox.DefaultTimeout+5*time.Second)
+	defer cancel()
+	res, err := sb.Exec(runCtx, sandbox.ExecRequest{Cmd: checkHealthCmd, Timeout: sandbox.DefaultTimeout})
+	if err != nil {
+		return err
+	}
+	if res.TimedOut {
+		return fmt.Errorf("the health command timed out")
+	}
+	if res.ExitCode != 0 {
+		return fmt.Errorf("the health command exited %d: %s", res.ExitCode, strings.TrimSpace(res.Stderr))
+	}
+	return nil
 }
