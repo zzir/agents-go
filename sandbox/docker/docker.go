@@ -69,22 +69,17 @@ const (
 // IS security-wise: image, runtime, user, network, the bind source, and the
 // resource limits. ContainerWorkDir is deliberately excluded — persistent mode
 // passes the working directory per exec, so it does not change the container.
-// Effective values are hashed, not raw ones (New already resolved User, and
-// UserUnset makes any User value moot — buildPersistentConfig ignores it; the
-// PIDs default is applied here as in buildHostConfig), so equivalent
-// configurations produce one fingerprint.
+// Effective values are hashed, not raw ones (the PIDs default is applied here
+// as in buildHostConfig), so equivalent configurations produce one
+// fingerprint.
 func (s *Sandbox) configFingerprint() string {
 	pids := s.opts.Limits.PIDs
 	if pids == 0 {
 		pids = 128
 	}
-	user := s.opts.User
-	if s.opts.UserUnset {
-		user = ""
-	}
 	h := sha256.New()
-	fmt.Fprintf(h, "image=%s\nruntime=%s\nuser=%s\nuserUnset=%t\nnetwork=%t\nworkdir=%s\nvolume=%s\ntmpfs=%s\nmemory=%d\ncpus=%v\npids=%d\n",
-		s.opts.Image, s.opts.Runtime, user, s.opts.UserUnset, s.opts.Network,
+	fmt.Fprintf(h, "image=%s\nruntime=%s\nuser=%s\nnetwork=%s\nworkdir=%s\nvolume=%s\ntmpfs=%s\nmemory=%d\ncpus=%v\npids=%d\n",
+		s.opts.Image, s.opts.Runtime, s.opts.User, s.opts.Network,
 		filepath.Clean(s.opts.WorkDir), s.opts.VolumeName, s.tmpfsSize(),
 		s.opts.Limits.MemoryBytes, s.opts.Limits.CPUs, pids)
 	// Written only when set: an unconditional line would change every
@@ -112,13 +107,16 @@ type Options struct {
 	Runtime string
 	// Limits caps the container's resources. Zero fields use the defaults below.
 	Limits sandbox.Limits
-	// User runs the process as the given user[:group]. Defaults to "65534:65534"
-	// (nobody). Set to "" via UserUnset to keep the image default.
+	// User runs the process as the given user[:group]. Empty keeps the image's
+	// own user, which for most images is root — the user a container needs to
+	// be able to install packages into itself.
 	User string
-	// UserUnset, when true, leaves the image's default user (overrides User).
-	UserUnset bool
-	// Network, when true, leaves networking enabled. Default false (no network).
-	Network bool
+	// Network names the docker network the container joins. Empty means "none"
+	// — no network at all, the default. "default" or "bridge" gives the
+	// daemon's ordinary networking; a user-defined network name puts the
+	// container where other containers (and the host process that created it)
+	// can reach it by name.
+	Network string
 	// Env sets environment variables on the CONTAINER, so every command,
 	// shell and terminal in it sees them. An ExecRequest.Env entry of the
 	// same name wins for that one call. Part of the fingerprint: changing it
@@ -242,9 +240,6 @@ func New(opts Options) (*Sandbox, error) {
 			_ = sshDial.Close()
 		}
 		return nil, fmt.Errorf("docker sandbox: %w", err)
-	}
-	if opts.User == "" && !opts.UserUnset {
-		opts.User = "65534:65534"
 	}
 	return &Sandbox{cli: cli, opts: opts, sshDial: sshDial}, nil
 }
@@ -771,13 +766,12 @@ func (s *Sandbox) startEphemeral(ctx context.Context, req sandbox.ExecRequest) (
 }
 
 // buildHostConfig returns the HostConfig. Persistent mode relaxes the
-// read-only root filesystem; note that the process still runs as 65534:65534
-// by default (see New), so installing packages additionally requires
-// UserUnset: true (image default user) or an explicit privileged-enough User.
+// read-only root filesystem, so a container whose User can write to it can
+// install packages into itself.
 func (s *Sandbox) buildHostConfig(persistent bool) *container.HostConfig {
 	netMode := container.NetworkMode("none")
-	if s.opts.Network {
-		netMode = container.NetworkMode("default")
+	if s.opts.Network != "" {
+		netMode = container.NetworkMode(s.opts.Network)
 	}
 	var mounts []mount.Mount
 	switch {
@@ -825,19 +819,12 @@ func (s *Sandbox) buildConfig(req sandbox.ExecRequest) (*container.Config, *cont
 		Env:        s.containerEnv(req.Env),
 		Tty:        false,
 	}
-	if !s.opts.UserUnset {
-		cfg.User = s.opts.User
-	}
+	cfg.User = s.opts.User
 	return cfg, s.buildHostConfig(false)
 }
 
 // buildPersistentConfig assembles the container and host configuration for
 // persistent mode. The container runs "sleep infinity" so it stays alive.
-// The process runs as 65534:65534 (nobody) by default — New applies that
-// default when Options.User is empty and UserUnset is false — which cannot
-// install packages even though the root filesystem is writable in this mode.
-// To install packages, set UserUnset: true (image default user) or an
-// explicit User with sufficient permissions.
 func (s *Sandbox) buildPersistentConfig() (*container.Config, *container.HostConfig) {
 	cfg := &container.Config{
 		Image:      s.opts.Image,
@@ -849,9 +836,7 @@ func (s *Sandbox) buildPersistentConfig() (*container.Config, *container.HostCon
 		// same-named container (see fingerprintLabel).
 		Labels: map[string]string{fingerprintLabel: s.configFingerprint()},
 	}
-	if !s.opts.UserUnset && s.opts.User != "" {
-		cfg.User = s.opts.User
-	}
+	cfg.User = s.opts.User
 	return cfg, s.buildHostConfig(true)
 }
 

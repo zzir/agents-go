@@ -25,7 +25,7 @@ func TestCommandHash(t *testing.T) {
 // commandGate requires approval unless the session has trusted this exact
 // command or all commands.
 func TestCommandGate(t *testing.T) {
-	m := NewManager(t.TempDir())
+	m := NewManager()
 	args := `{"cmd":"ls","workdir":""}`
 	rc := &agents.RunContext{Context: "sess1"}
 

@@ -330,7 +330,7 @@ func (s *TriggerScheduler) fireAgentTurn(ctx context.Context, t *store.Trigger, 
 			logging.Ctx(noteCtx).Warn("recording the trigger-fired note", "error", aerr, "trigger_id", t.ID)
 		}
 	}
-	if _, err := s.runner.startRunReserved(runID, t.SessionID, agent.ID, "", "", input, "", nil, nil, note); err != nil {
+	if _, err := s.runner.startRunReserved(runID, t.SessionID, agent.ID, "", input, "", nil, nil, note); err != nil {
 		return nil, err
 	}
 	return &Fired{RunID: runID}, nil

@@ -344,8 +344,9 @@ export const api = {
     setScope: setScope('/providers'),
     setOwner: setOwner('/providers'),
   },
-  // Projects have no get/update routes: a row is (name, sandbox), immutable
-  // once created — delete refuses (409) while sessions still bind it.
+  // Projects carry a name, a template and an environment; the target is fixed
+  // at creation. A delete refuses (409) while sessions still bind one, and
+  // otherwise destroys the working tree.
   projects: {
     list: () => request<S['store.Project'][]>('/projects'),
     // Admin: every owner's projects, storage hints included.
@@ -366,9 +367,9 @@ export const api = {
     setOwner: setOwner('/workflows'),
     // A person's own run of a workflow: the brief they wrote, for the session
     // the result comes back to.
-    // sandbox_id/project_id bind a still-unbound session first, so the
+    // project_id binds a still-unbound session first, so the
     // execution has its file and command tools; a bound session ignores them.
-    run: (id: string | number, body: { session_id: string; input: string; sandbox_id?: string; project_id?: string }) =>
+    run: (id: string | number, body: { session_id: string; input: string; project_id?: string }) =>
       request(`/workflows/${id}/runs`, { method: 'POST', body: JSON.stringify(body) }),
   },
   // Triggers start a workflow without a conversation asking: on a cron
@@ -401,10 +402,13 @@ export const api = {
     // brings it back.
     dismiss: (id: string | number) => request(`/tasks/${id}/dismiss`, { method: 'POST' }),
   },
-  sandboxes: {
-    ...crud<S['store.SandboxConfig']>('/sandboxes'),
-    test: (id: string | number) => request(`/sandboxes/${id}/test`, { method: 'POST' }),
+  sandboxTargets: {
+    ...crud<S['store.SandboxTarget']>('/sandbox-targets'),
+    // A target names no image, so the health check borrows one from a template.
+    test: (id: string | number, templateId: string) =>
+      request(`/sandbox-targets/${id}/test?template_id=${encodeURIComponent(templateId)}`, { method: 'POST' }),
   },
+  sandboxTemplates: crud<S['store.SandboxTemplate']>('/sandbox-templates'),
   // The OAuth flow belongs to the endpoint: the token is the provider's
   // credential, shared by every agent pointed at it.
   chatgpt: {

@@ -18,17 +18,18 @@ import (
 // management, not authoring (decisions §5.29).
 type ProjectHandler struct {
 	store     *store.ProjectStore
-	sandboxes *store.SandboxStore
+	targets   *store.SandboxTargetStore
+	templates *store.SandboxTemplateStore
 	manager   *sandboxes.Manager
 	terminals *TerminalHandler
 }
 
-// NewProjectHandler returns a handler over the project store; sandboxes
-// validates the target a new project names, m reclaims a deleted project's
-// cached instance and runs the container calls, and terminals is the registry
-// an environment change severs.
-func NewProjectHandler(s *store.ProjectStore, sb *store.SandboxStore, m *sandboxes.Manager, terminals *TerminalHandler) *ProjectHandler {
-	return &ProjectHandler{store: s, sandboxes: sb, manager: m, terminals: terminals}
+// NewProjectHandler returns a handler over the project store; targets and
+// templates validate what a project names, m reclaims a deleted project's
+// storage and runs the container calls, and terminals is the registry a
+// content change severs.
+func NewProjectHandler(s *store.ProjectStore, targets *store.SandboxTargetStore, templates *store.SandboxTemplateStore, m *sandboxes.Manager, terminals *TerminalHandler) *ProjectHandler {
+	return &ProjectHandler{store: s, targets: targets, templates: templates, manager: m, terminals: terminals}
 }
 
 // projectDetail is the single-project response: the row plus the NAMES of
@@ -147,58 +148,60 @@ func (h *ProjectHandler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
-// storageHint derives where p's files live — the workspace directory on the
-// local daemon, the named volume on a remote one — so the UI can say what a
-// delete leaves behind (decisions §5.28: storage outlives the row). Admin-only: a
-// host path is a server-side fact a member's container never sees. hosts
-// caches sandbox→host across one response; empty when it cannot be derived.
+// storageHint names the volume p's files live in and the daemon it is on, so
+// the UI can say what a delete destroys (decisions §5.33). Admin-only: a
+// daemon address is a server-side fact a member's container never sees. hosts
+// caches target→host across one response; empty when it cannot be derived.
 func (h *ProjectHandler) storageHint(c *gin.Context, hosts map[string]string, p *store.Project) string {
-	if h.manager == nil {
-		return ""
-	}
-	host, ok := hosts[p.SandboxID]
+	host, ok := hosts[p.TargetID]
 	if !ok {
-		cfg, err := h.sandboxes.Get(c.Request.Context(), p.SandboxID)
+		t, err := h.targets.Get(c.Request.Context(), p.TargetID)
 		if err != nil {
 			return ""
 		}
-		var dc store.DockerConfig
-		_ = json.Unmarshal(cfg.Config, &dc)
+		var dc store.DockerTargetConfig
+		_ = json.Unmarshal(t.Config, &dc)
 		host = dc.Host
-		hosts[p.SandboxID] = host
-	}
-	if host == "" {
-		return h.manager.ProjectHostDir(p)
+		if host == "" {
+			host = "the local daemon"
+		}
+		hosts[p.TargetID] = host
 	}
 	return "docker volume " + sandboxes.ProjectVolumeName(p.ID) + " on " + host
 }
 
 type projectReq struct {
-	Name      string `json:"name" binding:"required"`
-	SandboxID string `json:"sandbox_id" binding:"required"`
+	Name string `json:"name" binding:"required"`
+	// TargetID is the machine the tree lives on — frozen after creation.
+	TargetID string `json:"target_id" binding:"required"`
+	// TemplateID is what the container is created from — editable.
+	TemplateID string `json:"template_id" binding:"required"`
 	// Env is the environment the project's container is created with;
 	// optional, and empty means none.
 	Env []store.EnvVar `json:"env,omitempty"`
 }
 
-// projectUpdateReq is the update body: the name, the whole environment, and
-// the revision the edit was made against (optional — see Update).
+// projectUpdateReq is the update body: the name, the template, the whole
+// environment, and the revision the edit was made against (optional — see
+// Update). The target is not here: it is the project's identity.
 type projectUpdateReq struct {
-	Name     string         `json:"name" binding:"required"`
-	Env      []store.EnvVar `json:"env,omitempty"`
-	Revision int64          `json:"revision,omitempty"`
+	Name       string         `json:"name" binding:"required"`
+	TemplateID string         `json:"template_id" binding:"required"`
+	Env        []store.EnvVar `json:"env,omitempty"`
+	Revision   int64          `json:"revision,omitempty"`
 }
 
-// Create makes a new project for the caller on the named sandbox.
+// Create makes a new project for the caller on the named target, from the
+// named template.
 //
 //	@Summary	Create project
 //	@Tags		projects
 //	@Accept		json
 //	@Produce	json
-//	@Param		project	body		projectReq	true	"Name and sandbox"
+//	@Param		project	body		projectReq	true	"Name, target and template"
 //	@Success	201		{object}	projectDetail
 //	@Failure	400		{object}	ErrorResponse
-//	@Failure	409		{object}	ErrorResponse	"name already in use on this sandbox"
+//	@Failure	409		{object}	ErrorResponse	"name already in use on this target"
 //	@Security	BearerAuth
 //	@Router		/projects [post]
 func (h *ProjectHandler) Create(c *gin.Context) {
@@ -208,7 +211,7 @@ func (h *ProjectHandler) Create(c *gin.Context) {
 	}
 	var req projectReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		badRequest(c, "name and sandbox_id are required")
+		badRequest(c, "name, target_id and template_id are required")
 		return
 	}
 	env, err := store.NormalizeProjectEnv(req.Env)
@@ -216,9 +219,13 @@ func (h *ProjectHandler) Create(c *gin.Context) {
 		badRequest(c, err.Error())
 		return
 	}
-	// The sandbox's existence is the create's own guard (the store locks the
-	// row), so a missing target 404s from the insert itself — no pre-check.
-	p := &store.Project{OwnerID: ownerID, SandboxID: req.SandboxID, Name: req.Name, Env: env}
+	if !h.typesMatch(c, req.TargetID, req.TemplateID) {
+		return
+	}
+	// Existence is the create's own guard (the store locks both rows), so a
+	// missing target or template 404s from the insert itself — the type check
+	// above is the one thing the insert cannot express.
+	p := &store.Project{OwnerID: ownerID, TargetID: req.TargetID, TemplateID: req.TemplateID, Name: req.Name, Env: env}
 	if err := h.store.Create(c.Request.Context(), p); err != nil {
 		saveError(c, err)
 		return
@@ -277,7 +284,7 @@ func (h *ProjectHandler) Get(c *gin.Context) {
 func (h *ProjectHandler) Update(c *gin.Context) {
 	var req projectUpdateReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		badRequest(c, "name is required")
+		badRequest(c, "name and template_id are required")
 		return
 	}
 	prev, ok := h.own(c)
@@ -310,9 +317,12 @@ func (h *ProjectHandler) Update(c *gin.Context) {
 	if req.Revision != 0 {
 		expected = req.Revision
 	}
-	contentChanged := !store.EnvContentEqual(prev.Env, env)
+	if req.TemplateID != prev.TemplateID && !h.typesMatch(c, prev.TargetID, req.TemplateID) {
+		return
+	}
+	contentChanged := !store.EnvContentEqual(prev.Env, env) || req.TemplateID != prev.TemplateID
 	next := *prev
-	next.Name, next.Env = req.Name, env
+	next.Name, next.TemplateID, next.Env = req.Name, req.TemplateID, env
 	if err := h.store.Update(c.Request.Context(), prev.ID, &next, expected, contentChanged); err != nil {
 		saveError(c, err)
 		return
@@ -356,31 +366,52 @@ func (h *ProjectHandler) RebuildContainer(c *gin.Context) {
 	h.containerAct(c, h.manager.RebuildContainer)
 }
 
-// containerAct resolves the caller's project and its sandbox, then runs one
-// of the manager's container calls against the pair.
-func (h *ProjectHandler) containerAct(c *gin.Context, act func(context.Context, *store.SandboxConfig, *store.Project) error) {
+// containerAct resolves the caller's project into a build spec, then runs one
+// of the manager's container calls against it.
+func (h *ProjectHandler) containerAct(c *gin.Context, act func(context.Context, sandboxes.Spec) error) {
 	p, ok := h.own(c)
 	if !ok {
 		return
 	}
-	cfg, err := h.sandboxes.Get(c.Request.Context(), p.SandboxID)
+	spec, err := resolveSpec(c.Request.Context(), h.targets, h.templates, p)
 	if err != nil {
 		storeError(c, err)
 		return
 	}
-	if err := act(c.Request.Context(), cfg, p); err != nil {
+	if err := act(c.Request.Context(), spec); err != nil {
 		upstreamError(c, err)
 		return
 	}
 	c.Status(http.StatusNoContent)
 }
 
+// typesMatch refuses a project whose template cannot run on its target — the
+// one cross-row rule neither insert nor update can express in SQL.
+func (h *ProjectHandler) typesMatch(c *gin.Context, targetID, templateID string) bool {
+	ctx := c.Request.Context()
+	t, err := h.targets.Get(ctx, targetID)
+	if err != nil {
+		storeError(c, err)
+		return false
+	}
+	tpl, err := h.templates.Get(ctx, templateID)
+	if err != nil {
+		storeError(c, err)
+		return false
+	}
+	if t.Type != tpl.Type {
+		badRequest(c, fmt.Sprintf("template %q is a %s template and target %q is a %s target", tpl.Name, tpl.Type, t.Name, t.Type))
+		return false
+	}
+	return true
+}
+
 // Delete removes the caller's project — an admin's: any project — while no
-// session binds it. The project's files (host directory or remote volume)
-// are left in place — data outlives the row on purpose.
+// session binds it, then DESTROYS its storage: the container and the volume
+// holding the working tree (decisions §5.33).
 //
 //	@Summary		Delete project
-//	@Description	The owner deletes their own; an admin deletes any (management, decisions §5.29).
+//	@Description	Deletes the working tree too — the container and its volume are removed. The owner deletes their own; an admin deletes any (management, decisions §5.29).
 //	@Tags			projects
 //	@Param			id	path	string	true	"Project id"
 //	@Success		204	"deleted"
@@ -411,8 +442,23 @@ func (h *ProjectHandler) Delete(c *gin.Context) {
 		conflict(c, "sessions are still bound to this project; delete them first")
 		return
 	}
+	// The project is gone: its shells must die with it — nothing may keep
+	// serving a tree that is about to be destroyed.
+	h.terminals.CloseProjectTerminals(p.ID, maxTerminalGen)
+	// The row is gone; reclaim the storage. A failure here leaves reclaimable
+	// storage rather than a row pointing at nothing, so it is reported without
+	// undoing the delete.
 	if h.manager != nil {
-		h.manager.RemoveProject(p.ID) // reclaim the cached instance; storage stays
+		target, terr := h.targets.Get(c.Request.Context(), p.TargetID)
+		if terr != nil {
+			h.manager.RemoveProject(p.ID)
+			internalError(c, terr)
+			return
+		}
+		if rerr := h.manager.ReclaimProject(c.Request.Context(), target, p.ID); rerr != nil {
+			upstreamError(c, rerr)
+			return
+		}
 	}
 	c.Status(http.StatusNoContent)
 }

@@ -9,19 +9,19 @@ import { useProjects } from '@/lib/useProjects';
 import { toast } from '@/lib/toast';
 import { TerminalView, type TerminalViewHandle, type TermStatus } from '@/features/terminal/TerminalView';
 
-interface SandboxConfig {
+interface SandboxTarget {
   id: string;
   name: string;
 }
 
 interface TerminalTab {
   id: number;
-  sandboxId: string;
-  sandboxName: string;
   // The project whose container the shell opened into — a bound session's
   // request lands the terminal in its own project container.
   projectId: string;
   projectName: string;
+  // The machine the project lives on, for the tab label.
+  targetName: string;
   // gen forces a fresh session (remount) on restart.
   gen: number;
   status: TermStatus;
@@ -34,10 +34,10 @@ interface TerminalPanelProps {
   // Bumped by the app when the set of session bindings changed; refreshes the
   // + menu's project list.
   bindingsVersion?: number;
-  // One-shot request to start (or focus) a terminal for a (sandbox, project),
-  // issued when the top-bar button opens a closed panel with one selected.
-  // The nonce marks each request as new.
-  openRequest?: { id: string; name: string; projectId: string; projectName?: string; nonce: number } | null;
+  // One-shot request to start (or focus) a terminal for a project, issued
+  // when the top-bar button opens a closed panel with one selected. The nonce
+  // marks each request as new.
+  openRequest?: { projectId: string; projectName?: string; targetName?: string; nonce: number } | null;
 }
 
 // Dragging the top edge below this height collapses the panel to just its
@@ -64,12 +64,12 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
   const [activeHasSelection, setActiveHasSelection] = useState(false);
   const viewRefs = useRef(new Map<number, TerminalViewHandle | null>());
 
-  const { data: sandboxes, reload: reloadSandboxes } = useApi<SandboxConfig[]>(
-    () => api.sandboxes.list() as Promise<SandboxConfig[]>,
+  const { data: targets, reload: reloadTargets } = useApi<SandboxTarget[]>(
+    () => api.sandboxTargets.list() as Promise<SandboxTarget[]>,
   );
   useEffect(() => {
-    if (settingsReloadKey) reloadSandboxes();
-  }, [settingsReloadKey, reloadSandboxes]);
+    if (settingsReloadKey) reloadTargets();
+  }, [settingsReloadKey, reloadTargets]);
   // The caller's project rows for the + menu — the same hook (and unit) the
   // composer picker uses: opening a project's terminal lands in that
   // project's container.
@@ -79,9 +79,9 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
   // mounted into a zero-height body would fit to a bogus grid).
   const expand = () => setCollapsed(false);
 
-  const addTab = (s: SandboxConfig, project: { id: string; name: string }) => {
+  const addTab = (targetName: string, project: { id: string; name: string }) => {
     const id = nextId.current++;
-    setTabs(t => [...t, { id, sandboxId: s.id, sandboxName: s.name, projectId: project.id, projectName: project.name, gen: 0, status: 'connecting' }]);
+    setTabs(t => [...t, { id, projectId: project.id, projectName: project.name, targetName, gen: 0, status: 'connecting' }]);
     setActiveId(id);
     expand();
   };
@@ -129,12 +129,12 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
   };
 
   // Consume the composer's one-shot open request: focus the most recent tab
-  // already running on that sandbox, or start a fresh terminal for it.
+  // already running on that project, or start a fresh terminal for it.
   const consumedRequestNonce = useRef(0);
   useEffect(() => {
     if (!openRequest || openRequest.nonce === consumedRequestNonce.current) return;
     consumedRequestNonce.current = openRequest.nonce;
-    const matching = tabs.filter(t => t.sandboxId === openRequest.id && t.projectId === openRequest.projectId);
+    const matching = tabs.filter(t => t.projectId === openRequest.projectId);
     const existing = matching[matching.length - 1];
     if (existing) {
       activateTab(existing.id);
@@ -142,8 +142,10 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
       // The requester (ChatView) knows the project's name even when this
       // panel's own projects fetch hasn't landed yet — a tab never opens
       // nameless.
-      const name = (projects || []).find(p => p.id === openRequest.projectId)?.name || openRequest.projectName || '';
-      addTab({ id: openRequest.id, name: openRequest.name }, { id: openRequest.projectId, name });
+      const project = (projects || []).find(p => p.id === openRequest.projectId);
+      const name = project?.name || openRequest.projectName || '';
+      const targetName = (targets || []).find(t => t.id === project?.target_id)?.name || openRequest.targetName || '';
+      addTab(targetName, { id: openRequest.projectId, name });
     }
     // activateTab/addTab close over current state; nonce guards re-runs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -201,7 +203,7 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
             >
               <TerminalIcon size={12} />
               <span className="terminal-tab-name" title={tab.projectName || undefined}>
-                {tab.projectName ? `${tab.sandboxName} · ${tab.projectName}` : tab.sandboxName}
+                {tab.targetName ? `${tab.targetName} · ${tab.projectName}` : tab.projectName}
               </span>
               {(tab.status === 'exited' || tab.status === 'error') && (
                 <span className="terminal-tab-status">{tab.status === 'exited' ? 'exited' : 'lost'}</span>
@@ -211,7 +213,7 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
                 variant="invisible"
                 size="small"
                 className="terminal-tab-close"
-                aria-label={`Close ${tab.sandboxName} terminal`}
+                aria-label={`Close ${tab.projectName} terminal`}
                 onClick={e => { e.stopPropagation(); closeTab(tab.id); }}
               />
             </div>
@@ -222,16 +224,16 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
             </ActionMenu.Anchor>
             <ActionMenu.Overlay>
               <ActionList>
-                {(sandboxes || []).length === 0 ? (
-                  <ActionList.Item disabled>No sandboxes configured</ActionList.Item>
+                {(targets || []).length === 0 ? (
+                  <ActionList.Item disabled>No sandbox targets configured</ActionList.Item>
                 ) : (
-                  (sandboxes || []).map(s => {
-                    const items = (projects || []).filter(p => p.sandbox_id === s.id);
+                  (targets || []).map(tg => {
+                    const items = (projects || []).filter(p => p.target_id === tg.id);
                     return (
-                      <ActionList.Group key={s.id}>
+                      <ActionList.Group key={tg.id}>
                         {/* Primer requires an explicit heading level on
                             list-role ActionLists. */}
-                        <ActionList.GroupHeading as="h3">{s.name}</ActionList.GroupHeading>
+                        <ActionList.GroupHeading as="h3">{tg.name}</ActionList.GroupHeading>
                         {items.length === 0 ? (
                           // A failed fetch must not read as an empty account.
                           <ActionList.Item disabled>{projectsError ? 'projects failed to load' : 'no projects yet'}</ActionList.Item>
@@ -239,7 +241,7 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
                           items.map(p => (
                             <ActionList.Item
                               key={p.id}
-                              onSelect={() => addTab(s, { id: p.id, name: p.name })}
+                              onSelect={() => addTab(tg.name, { id: p.id, name: p.name })}
                             >
                               {p.name}
                             </ActionList.Item>
@@ -292,7 +294,6 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
                 if (h) viewRefs.current.set(tab.id, h);
                 else viewRefs.current.delete(tab.id);
               }}
-              sandboxId={tab.sandboxId}
               projectId={tab.projectId}
               hidden={tab.id !== activeId}
               onStatus={s => setTabStatus(tab.id, s)}

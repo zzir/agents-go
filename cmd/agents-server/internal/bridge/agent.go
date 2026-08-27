@@ -30,7 +30,8 @@ type AgentDeps struct {
 	AgentConfigs     *store.AgentConfigStore
 	Providers        *store.ProviderStore
 	McpServers       *store.McpServerStore
-	SandboxConfigs   *store.SandboxStore
+	Targets          *store.SandboxTargetStore
+	Templates        *store.SandboxTemplateStore
 	Skills           *store.SkillStore
 	Projects         *store.ProjectStore
 	Memories         *store.MemoryStore
@@ -171,8 +172,8 @@ func (b *BuildResult) Release() {
 // optional — when set, only that sandbox is attached; when empty, all are.
 // forUserID is who the build is for, as a run's owner would be: it decides
 // which tools they would get.
-func BuildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandboxID, forUserID string) (*BuildResult, error) {
-	return buildFullAgent(ctx, deps, agentConfigID, sandboxID, "", false, forUserID)
+func BuildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, projectID, forUserID string) (*BuildResult, error) {
+	return buildFullAgent(ctx, deps, agentConfigID, projectID, false, forUserID)
 }
 
 // BackgroundInstructions is what a run nobody is watching has to be told. The
@@ -193,7 +194,7 @@ with the outcome, not with a question.`
 // cannot start a sequence either, since a workflow is what spawn_task starts
 // when told a name), and no plan or todo mode, because a plan review is an
 // approval nobody would ever answer.
-func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandboxID, projectID string, background bool, ownerID string) (*BuildResult, error) {
+func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, projectID string, background bool, ownerID string) (*BuildResult, error) {
 	if agentConfigID == "" {
 		return nil, fmt.Errorf("agent_config_id is required")
 	}
@@ -203,7 +204,7 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, sandbox
 		projectID: projectID,
 		ownerID:   ownerID,
 	}
-	result, err := buildAgentFromConfig(ctx, deps, agentConfigID, sandboxID, bc)
+	result, err := buildAgentFromConfig(ctx, deps, agentConfigID, bc)
 	if err == nil {
 		result.TraceIncludeSensitive = deps.Settings.BoolPtr(ctx, settings.KeyTraceIncludeSensitiveData)
 		result.LogSensitive = deps.Settings.Bool(ctx, settings.KeyLogSensitiveData)
@@ -325,7 +326,7 @@ type agentBuildCtx struct {
 // genuine build failure (bad config), which must propagate.
 var errHandoffCycle = fmt.Errorf("cycle detected in handoff chain")
 
-func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandboxID string, bc *agentBuildCtx) (*BuildResult, error) {
+func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID string, bc *agentBuildCtx) (*BuildResult, error) {
 	if r, ok := bc.cache[configID]; ok {
 		return r, nil // already built on another path (shared / diamond node)
 	}
@@ -420,7 +421,7 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 	mark := len(agent.Tools)
 
 	// Sandbox tools — "" means none; a build failure fails the run.
-	if err := attachSandboxTools(ctx, deps, bc, agent, sandboxID, approveCommands); err != nil {
+	if err := attachSandboxTools(ctx, deps, bc, agent, approveCommands); err != nil {
 		return nil, err
 	}
 	mark = bucketToolsSince(agent, mark, store.ToolSourceSandbox, &result.Profile)
@@ -431,7 +432,7 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID, sandbo
 
 	// Handoffs — recursively built; a target with its own provider gets its model
 	// pre-resolved so the run uses the target's backend, not the main agent's.
-	if err := buildHandoffs(ctx, deps, bc, agent, result, ac, spec, sandboxID); err != nil {
+	if err := buildHandoffs(ctx, deps, bc, agent, result, ac, spec); err != nil {
 		return nil, err
 	}
 
@@ -475,9 +476,9 @@ func layerInstructions(ctx context.Context, deps *AgentDeps, agent *agents.Agent
 // propagates. A keyless target on a different backend is refused rather than
 // letting it silently inherit this agent's provider; a target with its own
 // provider gets its model pre-resolved so the run uses the target's backend.
-func buildHandoffs(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx, agent *agents.Agent, result *BuildResult, ac *store.AgentConfig, spec *AgentSpec, sandboxID string) error {
+func buildHandoffs(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx, agent *agents.Agent, result *BuildResult, ac *store.AgentConfig, spec *AgentSpec) error {
 	for _, hID := range spec.Handoffs {
-		hResult, err := buildAgentFromConfig(ctx, deps, hID, sandboxID, bc)
+		hResult, err := buildAgentFromConfig(ctx, deps, hID, bc)
 		if err != nil {
 			if errors.Is(err, errHandoffCycle) {
 				logging.Ctx(ctx).Warn("handoff cycle, skipping edge", "error", err, "handoff_id", hID)
@@ -530,28 +531,30 @@ func attachMCPServers(ctx context.Context, deps *AgentDeps, agent *agents.Agent,
 	return attached
 }
 
-// attachSandboxTools builds and attaches the bound sandbox's tools when one is
-// selected. A build failure fails the run rather than silently downgrading — a
-// bound session must not run coding prompts with no file system. The instance
-// reference is recorded on bc for the build's Release.
-func attachSandboxTools(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx, agent *agents.Agent, sandboxID string, approveCommands bool) error {
-	if sandboxID == "" {
+// attachSandboxTools builds and attaches the bound project's sandbox tools
+// when one is selected. NO PROJECT MEANS NO SANDBOX TOOLS: an agent without a
+// working tree is a chat, not a workbench (decisions §5.33). A build failure
+// fails the run rather than silently downgrading — a bound session must not
+// run coding prompts with no file system. The instance reference is recorded
+// on bc for the build's Release.
+func attachSandboxTools(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx, agent *agents.Agent, approveCommands bool) error {
+	if bc.projectID == "" {
 		return nil
 	}
-	sbCfg, err := deps.SandboxConfigs.Get(ctx, sandboxID)
-	if err != nil {
-		return fmt.Errorf("sandbox %s: %w", sandboxID, err)
-	}
 	if deps.Projects == nil {
-		return fmt.Errorf("sandbox %q: no project store is wired", sbCfg.Name)
+		return fmt.Errorf("project %s: no project store is wired", bc.projectID)
 	}
 	proj, err := deps.Projects.Get(ctx, bc.projectID)
 	if err != nil {
-		return fmt.Errorf("sandbox %q: project %s: %w", sbCfg.Name, bc.projectID, err)
+		return fmt.Errorf("project %s: %w", bc.projectID, err)
 	}
-	tools, release, err := deps.SandboxManager.SandboxTools(sbCfg, proj, approveCommands)
+	spec, err := ProjectSpec(ctx, deps, proj)
 	if err != nil {
-		return fmt.Errorf("sandbox %q: building tools: %w", sbCfg.Name, err)
+		return err
+	}
+	tools, release, err := deps.SandboxManager.SandboxTools(spec, approveCommands)
+	if err != nil {
+		return fmt.Errorf("project %q: building tools: %w", proj.Name, err)
 	}
 	bc.releases = append(bc.releases, release)
 	agent.Tools = append(agent.Tools, tools...)
@@ -739,4 +742,18 @@ func ownerIsAdmin(ctx context.Context, deps *AgentDeps, ownerID string) bool {
 		return false
 	}
 	return u.Role == store.RoleAdmin
+}
+
+// ProjectSpec loads the target and template a project names — everything the
+// sandbox manager needs to build or acquire its instance.
+func ProjectSpec(ctx context.Context, deps *AgentDeps, proj *store.Project) (sandboxes.Spec, error) {
+	target, err := deps.Targets.Get(ctx, proj.TargetID)
+	if err != nil {
+		return sandboxes.Spec{}, fmt.Errorf("project %q: sandbox target %s: %w", proj.Name, proj.TargetID, err)
+	}
+	tpl, err := deps.Templates.Get(ctx, proj.TemplateID)
+	if err != nil {
+		return sandboxes.Spec{}, fmt.Errorf("project %q: sandbox template %s: %w", proj.Name, proj.TemplateID, err)
+	}
+	return sandboxes.Spec{Target: target, Template: tpl, Project: proj}, nil
 }

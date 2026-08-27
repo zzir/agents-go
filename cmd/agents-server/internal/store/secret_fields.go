@@ -29,7 +29,7 @@ const (
 	labelProviderChatGPTToken = "providers.chatgpt_token"
 	labelMcpOAuthToken        = "mcp_servers.oauth_token"
 	labelMcpConfig            = "mcp_servers.config"
-	labelSandboxConfig        = "sandbox_configs.config"
+	labelTargetConfig         = "sandbox_targets.config"
 	labelProjectEnv           = "projects.env"
 	labelTriggerSecret        = "triggers.secret"
 	labelAgentFallbackModels  = "agent_configs.fallback_models"
@@ -69,13 +69,13 @@ func openMcpServer(m *McpServerConfig) (err error) {
 	return err
 }
 
-func sealSandbox(c *SandboxConfig) (err error) {
-	c.Config, err = sealJSONKeys(labelSandboxConfig, c.Config, "ssh_password")
+func sealTarget(t *SandboxTarget) (err error) {
+	t.Config, err = sealJSONKeys(labelTargetConfig, t.Config, "ssh_password")
 	return err
 }
 
-func openSandbox(c *SandboxConfig) (err error) {
-	c.Config, err = openJSONKeys(labelSandboxConfig, c.Config, "ssh_password")
+func openTarget(t *SandboxTarget) (err error) {
+	t.Config, err = openJSONKeys(labelTargetConfig, t.Config, "ssh_password")
 	return err
 }
 

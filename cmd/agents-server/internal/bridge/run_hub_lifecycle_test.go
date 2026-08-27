@@ -19,7 +19,7 @@ import (
 // new segment then closed its (already-closed) gate.
 func TestSegmentFinalizeNoDoubleClose(t *testing.T) {
 	h := NewRunHub(context.Background())
-	seg1, _, err := h.register("run1", "sess1", "", "", "", "", nil)
+	seg1, _, err := h.register("run1", "sess1", "", "", "", nil)
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -31,7 +31,7 @@ func TestSegmentFinalizeNoDoubleClose(t *testing.T) {
 
 	// A racing approve resumes: a fresh segment (new done gate) is swapped onto
 	// the record while seg1 is still in flight.
-	seg2, _, _, err := h.resume("run1", "sess1", "", "", "", "", nil)
+	seg2, _, _, err := h.resume("run1", "sess1", "", "", "", nil)
 	if err != nil {
 		t.Fatalf("resume: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestSegmentFinalizeNoDoubleClose(t *testing.T) {
 // cancel context as a permanent child of the hub root.
 func TestSegmentFinalizeReleasesContext(t *testing.T) {
 	h := NewRunHub(context.Background())
-	seg, ctx, err := h.register("run1", "sess1", "", "", "", "", nil)
+	seg, ctx, err := h.register("run1", "sess1", "", "", "", nil)
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -87,14 +87,14 @@ func TestSegmentFinalizeReleasesContext(t *testing.T) {
 // no hook (returns false) until the new segment installs its own.
 func TestResumeClearsStaleStopHook(t *testing.T) {
 	h := NewRunHub(context.Background())
-	if _, _, err := h.register("run1", "sess1", "", "", "", "", nil); err != nil {
+	if _, _, err := h.register("run1", "sess1", "", "", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	stale := 0
 	h.setControl("run1", &fakeControl{onStop: func() { stale++ }})
 	h.finish("run1", true)
 
-	if _, _, _, err := h.resume("run1", "sess1", "", "", "", "", nil); err != nil {
+	if _, _, _, err := h.resume("run1", "sess1", "", "", "", nil); err != nil {
 		t.Fatalf("resume: %v", err)
 	}
 	// The stale hook must be gone: no hook installed on the fresh segment yet.
@@ -122,15 +122,15 @@ func TestRegisterRefusesDeletingSession(t *testing.T) {
 		t.Fatal("SessionDeleting should report true after markSessionDeleting")
 	}
 
-	_, _, err := h.register("run1", "sess1", "", "", "", "", nil)
+	_, _, err := h.register("run1", "sess1", "", "", "", nil)
 	if !errors.As(err, &ErrSessionDeleting{}) {
 		t.Fatalf("register on a deleting session: err = %v, want ErrSessionDeleting", err)
 	}
-	if _, _, _, err := h.resume("run1", "sess1", "", "", "", "", nil); !errors.As(err, &ErrSessionDeleting{}) {
+	if _, _, _, err := h.resume("run1", "sess1", "", "", "", nil); !errors.As(err, &ErrSessionDeleting{}) {
 		t.Fatalf("resume on a deleting session: err = %v, want ErrSessionDeleting", err)
 	}
 	// A different session is unaffected.
-	if _, _, err := h.register("run2", "other", "", "", "", "", nil); err != nil {
+	if _, _, err := h.register("run2", "other", "", "", "", nil); err != nil {
 		t.Fatalf("register on a live session: %v", err)
 	}
 }
@@ -141,7 +141,7 @@ func TestRegisterRefusesDeletingSession(t *testing.T) {
 // once. Run under -race, a lock-free fan-out would reorder deliveries.
 func TestPublishSeqOrderingUnderConcurrency(t *testing.T) {
 	h := NewRunHub(context.Background())
-	if _, _, err := h.register("run1", "sess1", "", "", "", "", nil); err != nil {
+	if _, _, err := h.register("run1", "sess1", "", "", "", nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -177,7 +177,7 @@ func TestPublishSeqOrderingUnderConcurrency(t *testing.T) {
 // on: waitDone blocks on the CURRENT segment and returns once it finalizes.
 func TestWaitDoneTracksLiveSegment(t *testing.T) {
 	h := NewRunHub(context.Background())
-	seg, _, err := h.register("run1", "sess1", "", "", "", "", nil)
+	seg, _, err := h.register("run1", "sess1", "", "", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

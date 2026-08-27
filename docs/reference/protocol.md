@@ -71,12 +71,12 @@ agent at creation. It must reference an agent VISIBLE to the caller — a foreig
 private id reads as absent and answers `400`. Rename and pin are a single
 `PATCH /sessions/:id` accepting a partial `{name?, pinned?}` body.
 
-Session responses also carry `sandbox_id?` / `project_id?` — the session's
-sandbox binding, written by its first sandbox-carrying run (see
-[Runs](#runs--apiv1runs)); absent while unbound. The binding is **immutable**:
-neither half can be set or changed over the API — one conversation, one file
-system context. Switching projects means starting (or forking into) another
-session; the composer's Project picker is that flow in the UI.
+Session responses also carry `project_id?` — the session's project binding,
+written by its first project-carrying run (see [Runs](#runs--apiv1runs));
+absent while unbound. The binding is **immutable**: it cannot be set or
+changed over the API — one conversation, one file system context. Switching
+projects means starting (or forking into) another session; the composer's
+Project picker is that flow in the UI.
 
 `fork` copies the source session's entries (and their traces) into a new
 session. Its body is optional: `{message_id?, exclusive?, label?}`. Omit
@@ -84,9 +84,9 @@ session. Its body is optional: `{message_id?, exclusive?, label?}`. Omit
 that entry (`exclusive: true` excludes the boundary entry itself). Entry ids and
 their parent links are rewritten into the fork's namespace, so the copy is a
 self-consistent tree rather than one pointing back at another session. The
-session inherits the source's `agent_config_id` and its sandbox binding
-(`sandbox_id` / `project_id`) — a fork continues the same conversation over the
-same file system context, with no fresh bind of its own.
+session inherits the source's `agent_config_id` and its `project_id` — a fork
+continues the same conversation over the same file system context, with no
+fresh bind of its own.
 
 `branch` moves the session's active branch to an entry, so the next run
 continues from there. It APPENDS a leaf entry rather than deleting anything:
@@ -185,18 +185,17 @@ session already has an active run. `plan` (a bool) asks the session to enter
 (`true`) or leave (`false`) the planning phase with this run; absent leaves
 the phase as it stands ([invariant 33](../explanation/workbench-invariants.md)).
 
-The first run that carries a `sandbox_id` **permanently binds**
-`(sandbox_id, project_id)` to the session — validated first (the sandbox
-must exist, and the project must be the caller's own on that sandbox, an
-empty `project_id` landing in the owner's per-sandbox default project,
-"scratch", created on first use; a request that fails validation is `400`
-and leaves the session unbound), announced once with a
-`session.sandbox_bound` event, and runs without a sandbox never bind. From
-then on the server uses the bound values and ignores whatever the client
-sends — [invariant 27](../explanation/workbench-invariants.md) holds the full contract.
+The first run that carries a `project_id` **permanently binds** it to the
+session — validated first (the project must exist and be the caller's own; a
+request that fails validation is `400` and leaves the session unbound),
+announced once with a `session.project_bound` event. A run naming no project
+never binds, and gets **no sandbox tools at all**: no project, no working
+tree, no file or command tools (decisions §5.33). From then on the server uses
+the bound value and ignores whatever the client sends —
+[invariant 27](../explanation/workbench-invariants.md) holds the full contract.
 
 `GET /runs/:id` returns `{run_id, session_id, status, last_seq, agent_config_id?,
-sandbox_id?, project_id?, task?}` — `task` is present only for a background
+project_id?, task?}` — `task` is present only for a background
 task's run, carrying the parent linkage the matching `run.started` event does.
 `status` is one of `running`, `interrupted`, `completed`, `error`,
 or `cancelled`. Finished runs stay queryable and replayable for **15 minutes**
@@ -468,13 +467,11 @@ registry's — read them at `GET /setting-defs`):
 
 *(Endpoints and payload schemas: see the OpenAPI spec — `/openapi.yaml`, browsable at `/docs`.)*
 
-`{version, workspace, max_tasks}` — the flags this process
-was started with, not settings. They are here because a client that cannot
-see them meets them only as unexplained refusals — a task cap with nowhere
-to learn that a flag decides it. `workspace` is absolute (`.` means nothing
-to a browser elsewhere) and `max_tasks` is the EFFECTIVE cap, not the raw
-flag — `--max-tasks 0` means the built-in default, and reporting the zero
-would be a lie.
+`{version, max_tasks}` — the flags this process was started with, not
+settings. They are here because a client that cannot see them meets them only
+as unexplained refusals — a task cap with nowhere to learn that a flag decides
+it. `max_tasks` is the EFFECTIVE cap, not the raw flag — `--max-tasks 0`
+means the built-in default, and reporting the zero would be a lie.
 
 ### Skills — `/api/v1/skills`
 
@@ -762,79 +759,67 @@ and nothing else, so names are unique across all definitions.
 Built-in: `content_filter` (input + tool_input, regex — jailbreak keywords),
 `max_input_length` (input, 50k chars), `max_output_length` (output, 50k chars).
 
-### Sandboxes — `/api/v1/sandboxes`
+### Sandbox targets — `/api/v1/sandbox-targets`
 
 *(Endpoints and payload schemas: see the OpenAPI spec — `/openapi.yaml`, browsable at `/docs`.)*
 
-Every sandbox is a Docker container (`type: "docker"` — decisions §5.27), and the
+A **target** is WHERE sandboxes run (`type: "docker"` — decisions §5.27), and the
 Docker daemon is the server's ONE external dependency: it shells out to no
 binary — not git (skills import over the GitHub API), not ssh (remote
 daemons over pure-Go SSH), not the docker CLI (the socket API).
 `config.host` picks the daemon: empty for this machine's, `ssh://user@host`
 for a remote daemon reached over SSH (the remote needs sshd with
 streamlocal forwarding and the SSH user in the docker group, no remote docker
-CLI), `tcp://host:port` for a TCP-exposed one. An empty `host` means the
-server's LOCAL daemon and its filesystem — the bind mounts are local
-directories. If the server process's `DOCKER_HOST` points at a non-local
-daemon (any scheme other than `unix://` or `npipe://`), building the sandbox
-is refused with an error naming it: a foreign daemon would silently split the
-view — file tools on this filesystem, containers on that one. The `ssh_*`
-fields carry the SSH authentication and come back masked — see
-[Secret handling](#secret-handling). `memory_mb` / `cpus` cap each
-container's resources. `max_read_file_bytes` caps how large a file the read
-tool will load at all (`0` = the 8 MiB default) — a guard on the read itself,
-distinct from the 64 KiB cap below on what the model is SHOWN of it.
+CLI), `tcp://host:port` for a TCP-exposed one. The `ssh_*` fields carry the
+SSH authentication and come back masked — see
+[Secret handling](#secret-handling).
+
+A target names no image: storage is a docker volume on its daemon, so the
+server never touches a host filesystem and the local/remote split that used
+to exist is gone (decisions §5.33). `POST /sandbox-targets/{id}/test` therefore
+takes a `template_id` query parameter — the health check borrows an image
+from it and runs `echo ok` in a throw-away container.
+
+`DELETE` refuses (`409`) while any project lives on the target: a project's
+working tree is on that machine, and deleting a project is what reclaims it.
+`PUT` freezes a referenced target's **identity fields** — `type` and `host` —
+for the same reason, counting the projects that block it. Credentials and the
+name stay freely editable; key rotation is routine.
+
+A target carries one monotonic counter, `revision`: every write bumps it, and
+`PUT` is a compare-and-set against the revision the client read (a concurrent
+update means `409`, re-read and retry). There is no per-target runtime
+generation — the ONE runtime axis is the project's, and a content change here
+bumps it on every project that names this target, which is what retires their
+live instances and severs their terminals.
 
 Create and update validate the config STRICTLY and store it in canonical
-form: a type mismatch on a known field (`network: "yes"`) or a missing
-required field (`image`) is `400` — accepted, it would bind sessions to a
-config that can never build, and once referenced the identity freeze would
-block its own repair. Canonical means unknown keys are dropped and the
-fields re-marshalled in struct order. One decoder answers every question
-about a config — save-time validation, the content comparison, the identity
-freeze — so they cannot disagree.
+form: a type mismatch on a known field or a malformed host is `400`.
+Canonical means unknown keys are dropped and the fields re-marshalled in
+struct order. One decoder answers every question about a config — save-time
+validation, the content comparison, the identity freeze — so they cannot
+disagree.
 
-`DELETE` refuses (`409`) while any session is bound to the sandbox: the
-binding is permanent, so removing its target would leave those sessions
-failing every run with no way back — delete the sessions first. The refusal
-is decided by the delete statement itself (a `NOT EXISTS` guard over
-sessions), and the bind carries the mirror-image `EXISTS` guard, so a
-first-run bind racing a delete cannot leave a session pointing at a vanished
-config. (Conversely, deleting the last session bound to a
-`(sandbox, project)` pair releases its cached live instance — with holders
-draining first: an in-flight run or an open terminal keeps the instance alive
-until it finishes, and only then is the ssh connection or docker container
-closed.)
+`GET /sandbox-targets/{id}/containers` lists this package's containers on the
+target's daemon, and the stop/remove routes act on one by name — the
+operator's reclaim surface.
 
-`PUT` freezes a referenced sandbox's **identity fields** — `type` and `host`
-(the daemon: a different daemon is a different set of filesystems, and every
-project of this sandbox stores there): sessions bound the config id on the
-promise that it keeps meaning the same file system, and a project row ALONE
-pins it too — its tree lives on that daemon before any session binds — so an
-update that would move it is `409` while either exists, the refusal counting
-both ("N session(s) and M project(s)"; [invariant 27](../explanation/workbench-invariants.md)
-holds the full contract). Everything else stays freely
-editable — `name`, credentials (key rotation is routine), `image`, `network`,
-the docker exec `user`, `runtime` and limits change the execution
-environment, not where the data lives.
+### Sandbox templates — `/api/v1/sandbox-templates`
 
-A config carries two monotonic counters (both 1 at creation), each fencing a
-different race. `revision` is the row's version: EVERY write bumps it, `PUT`
-is a compare-and-set against the revision the client read (a concurrent
-update means `409`, re-read and retry — no lost credential rotation, no
-identity check against a stale row), and a first-run bind lands only against
-the revision its plan was validated on (a concurrent update makes it lose
-and re-validate; a config that keeps moving exhausts the bind's three
-attempts as `409`). `runtime_gen` is the CONTENT generation: it bumps only
-when the type or config payload actually change, and it is what the
-live-instance cache keys on and what retires instances and severs web
-terminals when an update lands — so a rename never tears down a running
-container or a live shell, while a credential rotation retires every
-instance the moment it commits; a run that read the old config just before
-can finish on it, but no later run or late-registering terminal ever shares
-old credentials, an old image or an old mount. Integers, deliberately not a
-version-history table: nothing keeps old generations runnable — updates
-apply to everyone at their next run.
+A **template** is WHAT runs: `image` (required), `runtime` (e.g. `runsc` for
+gVisor — whether it exists is the target machine's business), `user`
+(user[:group]; empty runs as **root**, so an agent can install packages into
+its own container), `network` (the docker network name to join; empty means
+no network at all), `memory_mb` / `cpus` caps, and `max_read_file_bytes` —
+how large a file the read tool will load at all (`0` = the 8 MiB default), a
+guard on the read itself, distinct from the 64 KiB cap below on what the
+model is SHOWN of it.
+
+A template is a project's CONTENT, not its identity: it may be swapped while
+sessions are bound, reaching them at their next run
+([decisions §5.33](../explanation/decisions.md)). Its `type` is immutable —
+create a second template instead — and `DELETE` refuses (`409`) while any
+project uses it. One template serves any number of targets of its type.
 
 Every sandbox can host a web terminal and `exec_command`'s **persistent
 shells** — every container is persistent. The tool schema offers a
@@ -847,22 +832,31 @@ output at 32 KiB per stream (truncation keeps head and tail).
 
 ### Projects — `/api/v1/projects`
 
-A project is one user's working tree on one sandbox (decisions §5.28): the unit a
-session binds and the unit a container mounts at `/workspace`. On a
-local-daemon sandbox the tree is `<workspace>/<owner uuid>/<project uuid>`
-(both full uuids) on the server host; on a remote daemon it is the named volume
-`agents-proj-<project id tail>` there. Containers are one per
-(sandbox, project), named `agents-<sandbox tail>-<project tail>`, kept
-(stopped, not removed) across restarts, with `/tmp` a RAM-backed tmpfs
-capped at 1g.
+A project is one user's working tree on one target (decisions §5.28), created
+from one template: the unit a session binds and the unit a container mounts
+at `/workspace`. The tree is the named volume `agents-proj-<project id tail>`
+on the target's daemon — the same on every daemon, local or remote
+(decisions §5.33). Containers are one per project, named
+`agents-<project tail>`, kept (stopped, not removed) across restarts, with
+`/tmp` a RAM-backed tmpfs capped at 1g.
+
+`target_id` is the project's identity and is fixed at creation; `template_id`
+is content and may be changed, which replaces the container at the next run.
+Both must have the same `type`, which the create and update check — the one
+cross-row rule SQL cannot express.
+
+`DELETE` refuses (`409`) while any session binds the project, and otherwise
+**destroys the working tree**: the container and its volume are removed. A
+project's storage is what the row was for, and leaving a volume behind on
+every delete is an unbounded leak nobody has a listing for
+([decisions §5.33](../explanation/decisions.md)) — export what matters first.
 
 Projects are **personal**: every member manages their own; the routes scope
 by owner rather than the admin gate. An admin additionally manages the
 plane (decisions §5.29's manage-not-author line): `?all=true` lists every
-owner's rows — the Admin dialog's Projects tab, and the operator's map of
-what storage a delete leaves behind — and delete works on any project.
-Listings carry each row's `session_count`; `storage_hint` (the host
-directory or volume name) is reported to admins only.
+owner's rows — the Admin dialog's Projects tab — and delete works on any
+project. Listings carry each row's `session_count`; `storage_hint` (the
+volume and the daemon it is on) is reported to admins only.
 
 An unreferenced container is **idle-stopped** — configurable via
 `sandbox_idle_minutes` — with no run or terminal using it: stopped, not
@@ -880,7 +874,7 @@ carry it at all, and an admin's management reach does not extend to reading
 one.
 
 Changing an environment replaces the container **at the project's next run**
-(the runtime generation moves, exactly as a sandbox config edit does) and
+(the runtime generation moves, exactly as a template edit does) and
 severs that project's terminals — its siblings on the same sandbox are
 untouched. Files under `/workspace` survive; anything installed into the
 container does not. A rename does neither. Updates are compare-and-set: send
@@ -1022,7 +1016,7 @@ a run streams live again instead of showing the session idle until it ends).
 
 | type            | Description                                                                                                     |
 |-----------------|-----------------------------------------------------------------------------------------------------------------|
-| `run.create`    | Start a run — `{session_id, input, agent_config_id?, sandbox_id?, project_id?, plan?}` (sandbox/project matter only until the session's first sandbox-carrying run binds them; `plan` as in the REST body) |
+| `run.create`    | Start a run — `{session_id, input, agent_config_id?, project_id?, plan?}` (the project matters only until the session's first project-carrying run binds it; `plan` as in the REST body) |
 | `run.subscribe` | (Re)attach to a run's event stream — `{run_id, from_seq?}` (omit `from_seq` or `0` replays everything retained) |
 | `run.cancel`    | Cancel an in-flight run — `{run_id, mode?}`; `mode: "graceful"` finishes the current turn, default aborts       |
 | `run.inject`    | Inject input into the live run — `{run_id, queue, input}`; `queue: "steer"` changes course inside the current exchange, `"next_turn"` is consumed at the next turn boundary, `"follow_up"` starts a new exchange once this one finishes |
@@ -1052,7 +1046,7 @@ a run streams live again instead of showing the session idle until it ends).
 | `run.cancelled`         | Cancelled — `{run_id}`                                                                                                                                  |
 | `session.title_updated` | Title changed — `{session_id, title}`                                                                                                                   |
 | `task.updated`          | A background task moved — the task row (`task_id`, `status`, `kind`, `state`, `attempt`, `dismissed`, a paused one's `pending_call_id`…) as the store has it; on the task's run stream when the hub holds that run, else broadcast to every connection |
-| `session.sandbox_bound` | The session's first sandbox-carrying run permanently bound `(sandbox_id, project_id)` — `{session_id, sandbox_id, project_id}`; published exactly once, by the run that won the bind |
+| `session.project_bound` | The session's first project-carrying run permanently bound its project — `{session_id, project_id}`; published exactly once, by the run that won the bind |
 | `trace.span`            | Trace span — `{run_id, trace_id, span_id, error?, data?, payload_omitted?, ...}`; `payload_omitted` says the 256KB live cap replaced the payload fields, which the stored row still has |
 
 Generation spans carry the full model request/response in their `data`
@@ -1084,7 +1078,7 @@ answers:
 
 | type              | Direction | Description                                                                  |
 |-------------------|-----------|------------------------------------------------------------------------------|
-| `terminal.open`   | C → S     | Start the session — `{sandbox_id, project_id, cols?, rows?}`; must be the first message  |
+| `terminal.open`   | C → S     | Start the session — `{project_id, cols?, rows?}`; must be the first message  |
 | `terminal.ready`  | S → C     | Shell is live; binary frames flow from here                                  |
 | `terminal.error`  | S → C     | Open failed (unknown sandbox or project, foreign project, backend error) |
 | `terminal.resize` | C → S     | PTY resize — `{cols, rows}`                                                  |

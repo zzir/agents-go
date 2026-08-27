@@ -67,7 +67,7 @@ func TestBackgroundBuildIsToldNobodyIsReading(t *testing.T) {
 		Memories:     store.NewMemoryStore(db),
 	}
 	instructionsOf := func(background bool) string {
-		built, err := buildFullAgent(ctx, deps, ac.ID, "", "", background, "")
+		built, err := buildFullAgent(ctx, deps, ac.ID, "", background, "")
 		if err != nil {
 			t.Fatalf("build (background=%v): %v", background, err)
 		}

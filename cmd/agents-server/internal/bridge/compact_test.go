@@ -124,7 +124,7 @@ func TestCompactSessionGuards(t *testing.T) {
 	}
 
 	// A live run on the session wins over the pass.
-	seg, _, err := runner.hub.register("run_live", sess.ID, "", ac.ID, "", "", nil)
+	seg, _, err := runner.hub.register("run_live", sess.ID, "", ac.ID, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

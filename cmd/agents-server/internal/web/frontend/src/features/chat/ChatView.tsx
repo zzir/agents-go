@@ -6,7 +6,7 @@ import { api } from '@/lib/api';
 import { CHECK_ICON } from '@/lib/markdownShared';
 import { type TurnPart, type TimelineEntry, type Branches, type WorkflowStartedNote } from '@/lib/timeline';
 import { useScrollToBottom, useApi } from '@/lib/hooks';
-import { loadSessionAgent, saveSessionAgent, loadSessionSandbox, saveSessionSandbox, loadSessionProject, saveSessionProject } from '@/lib/drafts';
+import { loadSessionAgent, saveSessionAgent, loadSessionProject, saveSessionProject } from '@/lib/drafts';
 import { composerSandboxView, groupProjects, projectLabel, type EnvVar, type Project, type SessionBinding } from '@/lib/binding';
 import { useProjects } from '@/lib/useProjects';
 import { fc } from '@/lib/form';
@@ -81,7 +81,7 @@ interface AgentConfig {
   name: string;
 }
 
-interface SandboxConfig {
+interface SandboxTarget {
   id: string;
   name: string;
 }
@@ -101,7 +101,7 @@ function flashMessage(el: Element) {
 // ChatViewActions is what the view can ask the app to do. Every member is a
 // stable callback, so the object is memoized once and the memo'd view holds.
 export interface ChatViewActions {
-  onSend: (text: string, agentConfigId: string, sandboxId: string, projectId?: string) => void;
+  onSend: (text: string, agentConfigId: string, projectId?: string) => void;
   onCancel: (graceful?: boolean) => boolean;
   onApprove?: (id: string, scope?: string) => void;
   onReject?: (id: string) => void;
@@ -114,7 +114,7 @@ export interface ChatViewActions {
   // Forces one compaction pass now (the Context panel's button); resolves
   // after the timeline reload that follows a fold.
   onCompact?: () => Promise<void>;
-  onRegenerate?: (userEntryId: string, userContent: string, agentConfigId: string, sandboxId: string, projectId?: string) => void;
+  onRegenerate?: (userEntryId: string, userContent: string, agentConfigId: string, projectId?: string) => void;
   onWatchTask?: (sid: string, taskId: string, childSessionId: string) => void;
   onUnwatchTask?: (sid: string) => void;
   // Applies a server-confirmed task state change (the stop API response) —
@@ -126,18 +126,18 @@ export interface ChatViewActions {
   onPanelChange: (panel: InspectorPanel) => void;
   // Opens the global terminal panel (app-level, independent of the session).
   // Open-only by design: closing/collapsing happens on the panel itself. When
-  // the session is bound to a sandbox its (sandbox, project) is passed along,
-  // and a freshly opened panel starts a terminal for it — in the same
-  // container the session's runs use.
-  onTerminalOpen?: (sandbox?: { id: string; name: string; projectId: string; projectName?: string }) => void;
+  // the session is bound its project is passed along, and a freshly opened
+  // panel starts a terminal for it — in the same container the session's runs
+  // use.
+  onTerminalOpen?: (project?: { projectId: string; projectName?: string; targetName?: string }) => void;
 }
 
 interface ChatViewProps {
   sessionId: string | null;
   // The session's display name for the top bar ('' until known).
   sessionName?: string;
-  // The session's permanent (sandbox, project) binding, or null while unbound.
-  // Set by the first sandbox-carrying run; server-authoritative and immutable
+  // The session's permanent project binding, or null while unbound. Set by
+  // the first project-carrying run; server-authoritative and immutable
   // afterwards — switching projects means starting a new session.
   sessionBinding?: SessionBinding | null;
   // The session as the socket layer keeps it: timeline, stream, live run,
@@ -169,11 +169,11 @@ export function ChatView({
     onWatchTask, onUnwatchTask, onPatchTask, onLoadSpan, onPanelChange, onTerminalOpen,
   } = actions;
   const [agentConfigId, setAgentConfigIdState] = useState(() => loadSessionAgent(sessionId || ''));
-  const [sandboxId, setSandboxIdState] = useState(() => loadSessionSandbox(sessionId || ''));
   const [projectId, setProjectIdState] = useState(() => loadSessionProject(sessionId || ''));
-  // The "New project…" dialog: pick a sandbox, name the project.
+  // The "New project…" dialog: pick a machine and a template, name the project.
   const [projDialogOpen, setProjDialogOpen] = useState(false);
-  const [projSandboxId, setProjSandboxId] = useState('');
+  const [projTargetId, setProjTargetId] = useState('');
+  const [projTemplateId, setProjTemplateId] = useState('');
   const [projName, setProjName] = useState('');
   const [projEnv, setProjEnv] = useState<EnvVar[]>([]);
   const [projSaving, setProjSaving] = useState(false);
@@ -184,7 +184,6 @@ export function ChatView({
 
   useEffect(() => {
     setAgentConfigIdState(loadSessionAgent(sessionId || ''));
-    setSandboxIdState(loadSessionSandbox(sessionId || ''));
     setProjectIdState(loadSessionProject(sessionId || ''));
   }, [sessionId]);
 
@@ -198,13 +197,6 @@ export function ChatView({
     saveSessionProject(sessionId || '', id);
   }, [sessionId]);
 
-  const setSandboxId = useCallback((id: string) => {
-    setSandboxIdState(id);
-    saveSessionSandbox(sessionId || '', id);
-    // A project chosen for sandbox A must not silently apply to sandbox B.
-    setProjectIdState('');
-    saveSessionProject(sessionId || '', '');
-  }, [sessionId]);
   const [traceActiveRun, setTraceActiveRun] = useState<string | null>(null);
   // The span a Context panel jump asked the trace to open, and the counter that
   // makes repeating the same jump a fresh instruction.
@@ -219,7 +211,8 @@ export function ChatView({
     setTraceReveal(null);
   }, [sessionId]);
   const { data: agentConfigs, reload: reloadAgents } = useApi<AgentConfig[]>(() => api.agents.list() as Promise<AgentConfig[]>);
-  const { data: sandboxConfigs, reload: reloadSandboxes } = useApi<SandboxConfig[]>(() => api.sandboxes.list() as Promise<SandboxConfig[]>);
+  const { data: sandboxTargets, reload: reloadTargets } = useApi<SandboxTarget[]>(() => api.sandboxTargets.list() as Promise<SandboxTarget[]>);
+  const { data: sandboxTemplates, reload: reloadTemplates } = useApi<SandboxTarget[]>(() => api.sandboxTemplates.list() as Promise<SandboxTarget[]>);
   // The caller's project rows for the picker — the same hook the terminal
   // panel's + menu uses.
   const { projects, error: projectsError, reload: reloadProjects, mutate: mutateProjects } = useProjects(bindingsVersion);
@@ -237,8 +230,8 @@ export function ChatView({
     const ok = await confirmDialog({
       title: `Delete “${p.name}”?`,
       content: p.storage_hint
-        ? `Its files stay on the sandbox, in ${p.storage_hint}. Refused while sessions are still bound to it.`
-        : 'Its files stay on the sandbox. Refused while sessions are still bound to it.',
+        ? `This DESTROYS its working tree (${p.storage_hint}). Refused while sessions are still bound to it.`
+        : 'This DESTROYS its working tree. Refused while sessions are still bound to it.',
       confirmButtonContent: 'Delete',
       confirmButtonType: 'danger',
     });
@@ -253,24 +246,16 @@ export function ChatView({
     }
   };
 
-  // A persisted sandbox may have since been deleted: drop a now-unknown id
-  // back to None ('' is a valid choice), so the composer doesn't carry a stale
-  // sandbox_id and the label doesn't fall back to a generic "Sandbox".
-  useEffect(() => {
-    if (!sandboxId || !sandboxConfigs) return;
-    if (!sandboxConfigs.some(s => s.id === sandboxId)) setSandboxId('');
-  }, [sandboxConfigs, sandboxId, setSandboxId]);
-
-  // Same for a persisted project id whose row is gone — a send carrying it
-  // would be refused.
+  // A persisted project may have since been deleted — a send carrying it
+  // would be refused, so a now-unknown id drops back to None.
   useEffect(() => {
     if (!projectId || !projects) return;
     if (!projects.some(p => p.id === projectId)) setProjectId('');
   }, [projects, projectId, setProjectId]);
 
   useEffect(() => {
-    if (settingsReloadKey) { reloadAgents(); reloadSandboxes(); }
-  }, [settingsReloadKey, reloadAgents, reloadSandboxes]);
+    if (settingsReloadKey) { reloadAgents(); reloadTargets(); reloadTemplates(); }
+  }, [settingsReloadKey, reloadAgents, reloadTargets, reloadTemplates]);
 
   // The dep must change on every content growth, not just on new messages:
   // .chat-messages opts out of native scroll anchoring, so streamed text and
@@ -309,8 +294,8 @@ export function ChatView({
     });
   }, []);
 
-  const selectedSandbox = sandboxConfigs?.find(s => s.id === sandboxId);
   const selectedProject = projects?.find(p => p.id === projectId);
+  const targetName = (id?: string) => sandboxTargets?.find(t => t.id === id)?.name || '';
   // The bound pair is what the top-bar menu acts on: a session's container is
   // its binding's, never the composer's current pick.
   const boundProject = sessionBinding?.projectId ? projects?.find(p => p.id === sessionBinding.projectId) || null : null;
@@ -335,21 +320,15 @@ export function ChatView({
       setContainerBusy(false);
     }
   };
-  const sandboxView = composerSandboxView(sessionBinding || null, projects, sandboxConfigs);
+  const sandboxView = composerSandboxView(sessionBinding || null, projects, sandboxTargets);
 
   const handleSend = useCallback((text: string) => {
     // No sessionId is fine: sending with no active session starts a new session
     // (app-level onSend auto-creates it). Only an agent is required.
     if (!agentConfigId) return;
-    if (sessionBinding) {
-      // Bound: the server uses the binding regardless — send no sandbox claim.
-      onSend(text, agentConfigId, '', '');
-      return;
-    }
-    // An empty projectId beside a sandbox is valid: the server uses the
-    // per-user scratch project on that sandbox.
-    onSend(text, agentConfigId, sandboxId, projectId);
-  }, [agentConfigId, sandboxId, projectId, sessionBinding, onSend]);
+    // Bound: the server uses the binding regardless — send no project claim.
+    onSend(text, agentConfigId, sessionBinding ? '' : projectId);
+  }, [agentConfigId, projectId, sessionBinding, onSend]);
 
 
   const handleCancel = useCallback((graceful?: boolean) => {
@@ -589,13 +568,13 @@ export function ChatView({
     flashMessage(el);
   }, []);
 
-  // Bound sessions claim no sandbox (the server uses the binding); unbound ones
-  // carry the choice, because a regen can be the first sandbox-carrying run.
-  const regenSandboxId = sessionBinding ? '' : sandboxId;
+  // Bound sessions claim no project (the server uses the binding); unbound
+  // ones carry the choice, because a regen can be the first project-carrying
+  // run.
   const regenProjectId = sessionBinding ? '' : projectId;
   const handleRegen = useCallback((messageId: string, content: string) => {
-    onRegenerate?.(messageId, content, agentConfigId, regenSandboxId, regenProjectId);
-  }, [onRegenerate, agentConfigId, regenSandboxId, regenProjectId]);
+    onRegenerate?.(messageId, content, agentConfigId, regenProjectId);
+  }, [onRegenerate, agentConfigId, regenProjectId]);
 
   // The session scope every transcript component reads (see
   // ChatSessionContext for the split). Each value is memoized on its inputs so
@@ -615,23 +594,18 @@ export function ChatView({
       sessionName={sessionName || ''}
       panel={panel}
       onPanelChange={onPanelChange}
-      terminalEnabled={!!onTerminalOpen && !!sandboxConfigs && sandboxConfigs.length > 0}
+      terminalEnabled={!!onTerminalOpen && !!sandboxTargets && sandboxTargets.length > 0}
       onTerminalOpen={onTerminalOpen
         ? () => {
           // A bound session's terminal follows its binding — the same
-          // (sandbox, project) container the runs use. Unbound sessions fall
-          // back to the picker's current selection, then the sandbox's first
-          // project; a terminal cannot open without a project.
-          const bound = sessionBinding ? sandboxConfigs?.find(s => s.id === sessionBinding.sandboxId) : undefined;
-          const nameOf = (pid: string) => projects?.find(p => p.id === pid)?.name || '';
-          if (bound && sessionBinding?.projectId) {
-            onTerminalOpen({ id: bound.id, name: bound.name, projectId: sessionBinding.projectId, projectName: nameOf(sessionBinding.projectId) });
-          } else if (!sessionBinding && selectedSandbox) {
-            const pid = projectId || projects?.find(p => p.sandbox_id === selectedSandbox.id)?.id;
-            onTerminalOpen(pid ? { id: selectedSandbox.id, name: selectedSandbox.name, projectId: pid, projectName: nameOf(pid) } : undefined);
-          } else {
-            onTerminalOpen(undefined);
-          }
+          // container the runs use. Unbound sessions fall back to the
+          // picker's current selection; a terminal cannot open without a
+          // project.
+          const pid = sessionBinding?.projectId || projectId;
+          const project = pid ? projects?.find(p => p.id === pid) : undefined;
+          onTerminalOpen(pid
+            ? { projectId: pid, projectName: project?.name || '', targetName: targetName(project?.target_id) }
+            : undefined);
         }
         : undefined}
       binding={sandboxView.bound && sessionBinding
@@ -680,13 +654,13 @@ export function ChatView({
             caller's rows, grouped by sandbox — because the project is what a
             person recognizes; the backend is its attribute, not the other
             way around. */}
-        {!sandboxView.bound && sandboxConfigs && sandboxConfigs.length > 0 && (
+        {!sandboxView.bound && sandboxTargets && sandboxTargets.length > 0 && (
           <ActionMenu>
             {/* Nothing picked yet reads as an offer, "+", not as a folder
                 that is not there; a picked project shows as itself. */}
-            {sandboxId && selectedSandbox ? (
+            {selectedProject ? (
               <ActionMenu.Button size="small" variant="invisible" leadingVisual={FileDirectoryIcon}>
-                {selectedProject ? projectLabel(selectedProject.name, selectedSandbox.name) : selectedSandbox.name}
+                {projectLabel(selectedProject.name, targetName(selectedProject.target_id))}
               </ActionMenu.Button>
             ) : (
               <ActionMenu.Anchor>
@@ -695,25 +669,25 @@ export function ChatView({
             )}
             <ActionMenu.Overlay>
               <ActionList selectionVariant="single">
-                <ActionList.Item selected={sandboxId === ''} onSelect={() => setSandboxId('')}>
+                <ActionList.Item selected={projectId === ''} onSelect={() => setProjectId('')}>
                   None
                   <ActionList.Description variant="inline">chat only</ActionList.Description>
                 </ActionList.Item>
                 {/* A failed fetch must not read as an empty account. */}
                 {projectsError && <ActionList.Item disabled>projects failed to load</ActionList.Item>}
-                {/* One group per sandbox: the group heading carries the
-                    backend, rows carry just the project name. */}
-                {groupProjects(projects, sandboxConfigs).map(g => (
-                  <ActionList.Group key={g.sandboxId}>
+                {/* One group per machine: the group heading carries the
+                    target, rows carry just the project name. */}
+                {groupProjects(projects, sandboxTargets).map(g => (
+                  <ActionList.Group key={g.targetId}>
                     {/* Primer requires an explicit heading level on list-role
                         ActionLists; omitting `as` throws and unmounts the app. */}
-                    <ActionList.GroupHeading as="h3">{g.sandboxName}</ActionList.GroupHeading>
+                    <ActionList.GroupHeading as="h3">{g.targetName}</ActionList.GroupHeading>
                     {g.items.map(p => (
                       <ActionList.Item
                         key={p.id}
                         selected={projectId === p.id}
-                        onSelect={() => { setSandboxId(p.sandbox_id); setProjectId(p.id); }}
-                        title={projectLabel(p.name, g.sandboxName)}
+                        onSelect={() => setProjectId(p.id)}
+                        title={projectLabel(p.name, g.targetName)}
                       >
                         {p.name}
                       </ActionList.Item>
@@ -723,7 +697,8 @@ export function ChatView({
                 <ActionList.Divider />
                 <ActionList.Item
                   onSelect={() => {
-                    setProjSandboxId((selectedSandbox || sandboxConfigs[0]).id);
+                    setProjTargetId(selectedProject?.target_id || sandboxTargets[0].id);
+                    setProjTemplateId(selectedProject?.template_id || sandboxTemplates?.[0]?.id || '');
                     setProjName('');
                     setProjEnv([]);
                     setProjDialogOpen(true);
@@ -745,14 +720,16 @@ export function ChatView({
           </ActionMenu>
         )}
         {projDialogOpen && (() => {
-          const projSandbox = sandboxConfigs?.find(s => s.id === projSandboxId);
+          const projTarget = sandboxTargets?.find(t => t.id === projTargetId);
+          const projTemplate = sandboxTemplates?.find(t => t.id === projTemplateId);
           const create = async () => {
-            if (!projSandbox || !projName.trim() || projSaving) return;
+            if (!projTarget || !projTemplate || !projName.trim() || projSaving) return;
             setProjSaving(true);
             try {
               const created = await api.projects.create({
                 name: projName.trim(),
-                sandbox_id: projSandbox.id,
+                target_id: projTarget.id,
+                template_id: projTemplate.id,
                 env: cleanEnv(projEnv),
               }) as Project;
               // Seed the cached list before selecting: the stale-id guard
@@ -760,12 +737,11 @@ export function ChatView({
               // fire-and-forget reload would hand it a list without the new
               // row — wiping the selection it should protect.
               mutateProjects(prev => prev ? [...prev.filter(p => p.id !== created.id), created] : [created]);
-              setSandboxId(projSandbox.id);
               if (created.id) setProjectId(created.id);
               reloadProjects();
               setProjDialogOpen(false);
             } catch (e) {
-              // 409: a project of that name already exists on this sandbox.
+              // 409: a project of that name already exists on this machine.
               toast.error((e as Error).message || 'Could not create the project');
             } finally {
               setProjSaving(false);
@@ -781,23 +757,35 @@ export function ChatView({
                 {
                   content: projSaving ? 'Creating…' : 'Create',
                   buttonType: 'primary',
-                  disabled: !projSandbox || !projName.trim() || projSaving || !!envError(projEnv),
+                  disabled: !projTarget || !projTemplate || !projName.trim() || projSaving || !!envError(projEnv),
                   onClick: () => { void create(); },
                 },
               ]}
             >
               <Stack gap="normal">
-                {fc('Sandbox', (
+                {fc('Machine', (
                   <Select
                     block
-                    value={projSandboxId}
-                    onChange={e => setProjSandboxId(e.target.value)}
+                    value={projTargetId}
+                    onChange={e => setProjTargetId(e.target.value)}
                   >
-                    {sandboxConfigs?.map(s => (
-                      <Select.Option key={s.id} value={s.id}>{s.name}</Select.Option>
+                    {sandboxTargets?.map(t => (
+                      <Select.Option key={t.id} value={t.id}>{t.name}</Select.Option>
                     ))}
                   </Select>
-                ), '')}
+                ), 'Where the files live. Fixed once the project exists.')}
+                {fc('Template', (
+                  <Select
+                    block
+                    value={projTemplateId}
+                    onChange={e => setProjTemplateId(e.target.value)}
+                  >
+                    {(sandboxTemplates || []).length === 0 && <Select.Option value="">no templates configured</Select.Option>}
+                    {sandboxTemplates?.map(t => (
+                      <Select.Option key={t.id} value={t.id}>{t.name}</Select.Option>
+                    ))}
+                  </Select>
+                ), 'What the container is created from. Changeable later.')}
                 {fc('Name', (
                   <TextInput
                     block
@@ -805,7 +793,7 @@ export function ChatView({
                     placeholder="e.g. goagents"
                     onChange={e => setProjName(e.target.value)}
                   />
-                ), 'Names the working tree the sandbox mounts; unique per sandbox.')}
+                ), 'Names the working tree the container mounts; unique per machine.')}
                 {/* The editor carries its own explanation; a caption here
                     would be a third line of small print saying the same. */}
                 {fc('Environment', (

@@ -9,7 +9,7 @@ import { createOrReuseSession } from '@/lib/newSession';
 import { toast } from '@/lib/toast';
 import './sessions.css';
 
-interface SessionRef { id: string; name: string; pinned?: boolean; sandbox_id?: string }
+interface SessionRef { id: string; name: string; pinned?: boolean; project_id?: string }
 
 // SESSIONS_CHANGED is raised when a conversation is made outside the sidebar
 // (here), so the sidebar's list refetches — the same one-shot window event
@@ -104,7 +104,7 @@ export function UnboundHint({ sessionId, what }: { sessionId: string; what: stri
     () => (sessionId ? api.sessions.get(sessionId) as Promise<SessionRef> : Promise.resolve(null)),
     [sessionId],
   );
-  if (!sessionId || !data || data.sandbox_id) return null;
+  if (!sessionId || !data || data.project_id) return null;
   return (
     <Flash variant="warning" style={{ fontSize: 'var(--base-text-size-xs)', padding: 'var(--base-size-6) var(--base-size-8)' }}>
       This conversation has no project bound — {what} will have no file or command tools. Bind one first by sending

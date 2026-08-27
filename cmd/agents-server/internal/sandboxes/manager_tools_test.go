@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	agents "github.com/zzir/agents-go/agents"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/sandbox"
 )
 
@@ -27,19 +26,21 @@ func execTool(t *testing.T, tools []*agents.Tool) *agents.Tool {
 func TestSandboxToolsSessionSchemaPerBackend(t *testing.T) {
 	cases := []struct {
 		name string
-		cfg  *store.SandboxConfig
+		host string
 		want bool
 	}{
-		{"local daemon", &store.SandboxConfig{ID: "dp", Type: "docker", Config: json.RawMessage(`{"image":"i"}`)}, true},
-		{"remote daemon", &store.SandboxConfig{ID: "rp", Type: "docker", Config: json.RawMessage(`{"image":"i","host":"ssh://u@h"}`)}, true},
+		{"local daemon", "", true},
+		{"remote daemon", "ssh://u@h", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			m := NewManager(t.TempDir())
-			m.buildOverride = func(*store.SandboxConfig, *store.Project) (sandbox.Sandbox, error) {
+			m := NewManager()
+			m.buildOverride = func(Spec) (sandbox.Sandbox, error) {
 				return &closeCountingSandbox{}, nil
 			}
-			tools, release, err := m.SandboxTools(tc.cfg, testProject("p"), false)
+			spec := testSpec("p")
+			spec.Target.Config = json.RawMessage(`{"host":"` + tc.host + `"}`)
+			tools, release, err := m.SandboxTools(spec, false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -59,12 +60,11 @@ func TestSandboxToolsSessionSchemaPerBackend(t *testing.T) {
 // by SandboxTools closes the pool, so a late session command fails instead of
 // opening a shell nobody will ever close.
 func TestSandboxToolsReleaseClosesSessionPool(t *testing.T) {
-	m := NewManager(t.TempDir())
-	m.buildOverride = func(*store.SandboxConfig, *store.Project) (sandbox.Sandbox, error) {
+	m := NewManager()
+	m.buildOverride = func(Spec) (sandbox.Sandbox, error) {
 		return &closeCountingSandbox{}, nil
 	}
-	cfg := &store.SandboxConfig{ID: "s", Type: "docker", Config: json.RawMessage(`{"image":"i","persistent":true}`)}
-	tools, release, err := m.SandboxTools(cfg, testProject("p"), false)
+	tools, release, err := m.SandboxTools(testSpec("p"), false)
 	if err != nil {
 		t.Fatal(err)
 	}

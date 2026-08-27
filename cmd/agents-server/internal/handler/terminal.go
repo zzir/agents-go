@@ -30,33 +30,30 @@ const (
 // carry control (resize, exit). Only a persistent container can host one
 // (sandboxes.TerminalCapable).
 //
-// It also tracks live terminals per sandbox config so config updates and
-// deletes can tear them down (an SSH/docker rebuild would otherwise leave
-// orphaned sessions running against the old config).
+// It also tracks live terminals per project so a configuration change can
+// tear them down (a rebuilt container would otherwise leave orphaned sessions
+// running against the old one).
 type TerminalHandler struct {
 	// Audit, when set, records every terminal opened: a shell on a sandbox
 	// host is the act most worth a line. Wired at bootstrap.
-	Audit    protocol.AuditFunc
-	store    *store.SandboxStore
-	projects *store.ProjectStore
-	manager  sandboxProvider
-	settings *settings.Reader
+	Audit     protocol.AuditFunc
+	targets   *store.SandboxTargetStore
+	templates *store.SandboxTemplateStore
+	projects  *store.ProjectStore
+	manager   sandboxProvider
+	settings  *settings.Reader
 
 	mu   sync.Mutex
-	live map[string]map[*liveTerminal]struct{} // sandbox config id → open terminals
-	// fence maps a config id to the lowest runtime generation still allowed
-	// to register. A terminal reads its config, dials and opens a PTY BEFORE
-	// registering, so a config update (or delete) can complete inside that
-	// window — sweeping the registry misses it, and it would surface
-	// afterwards as a live shell on retired credentials (or on a deleted
-	// sandbox). CloseSandboxTerminals moves the fence; register checks it
-	// under the same lock, so the late arrival is refused instead.
+	live map[string]map[*liveTerminal]struct{} // project id → open terminals
+	// fence maps a project id to the lowest runtime generation still allowed
+	// to register. A terminal reads its rows, dials and opens a PTY BEFORE
+	// registering, so a configuration change (or a delete) can complete inside
+	// that window — sweeping the registry misses it, and it would surface
+	// afterwards as a live shell on retired credentials, a stale environment
+	// or a project that is gone. CloseProjectTerminals moves the fence;
+	// register checks it under the same lock, so the late arrival is refused
+	// instead.
 	fence map[string]int64
-	// projFence is the same fence keyed by project, moved when a project's
-	// environment changes. Separate from fence because the two sweeps must
-	// not reach each other's terminals: the projects on a sandbox share its
-	// config but not their environments.
-	projFence map[string]int64
 }
 
 // sandboxProvider is the slice of sandboxes.Manager the terminal handler
@@ -66,7 +63,7 @@ type sandboxProvider interface {
 	// the returned release drops it when the connection ends, so an instance
 	// evicted meanwhile (config update, last bound session deleted) stays
 	// alive under the open terminal and closes only after it.
-	Acquire(cfg *store.SandboxConfig, proj *store.Project) (sandbox.Sandbox, func(), error)
+	Acquire(spec sandboxes.Spec) (sandbox.Sandbox, func(), error)
 }
 
 var _ sandboxProvider = (*sandboxes.Manager)(nil)
@@ -79,12 +76,14 @@ type liveTerminal struct {
 	conn      *server.WSConn
 	gen       int64
 	projectID string
-	projGen   int64
 }
 
 // NewTerminalHandler returns a handler backed by the given stores and sandbox manager.
-func NewTerminalHandler(s *store.SandboxStore, projects *store.ProjectStore, m sandboxProvider, cfg *settings.Reader) *TerminalHandler {
-	return &TerminalHandler{store: s, projects: projects, manager: m, settings: cfg, live: map[string]map[*liveTerminal]struct{}{}, fence: map[string]int64{}, projFence: map[string]int64{}}
+func NewTerminalHandler(targets *store.SandboxTargetStore, templates *store.SandboxTemplateStore, projects *store.ProjectStore, m sandboxProvider, cfg *settings.Reader) *TerminalHandler {
+	return &TerminalHandler{
+		targets: targets, templates: templates, projects: projects, manager: m, settings: cfg,
+		live: map[string]map[*liveTerminal]struct{}{}, fence: map[string]int64{},
+	}
 }
 
 // Handle runs one terminal session on an authenticated WebSocket connection.
@@ -94,14 +93,14 @@ func (h *TerminalHandler) Handle(conn *server.WSConn) {
 		return
 	}
 
-	term, opened, proj, release, err := h.open(conn)
+	term, proj, release, err := h.open(conn)
 	if err == nil && h.Audit != nil {
-		// Detail names the project and its owner: an admin may open a shell
-		// into a member's tree (decisions §5.28), and the log must answer whose
-		// data was reached — the sandbox id alone cannot.
+		// Detail names the owner: an admin may open a shell into a member's
+		// tree (decisions §5.28), and the log must answer whose data was
+		// reached.
 		h.Audit(context.WithoutCancel(conn.Context()), protocol.AuditRecord{
-			Actor: conn.User, Action: "terminal.open", Resource: opened.ID,
-			Detail: "project " + proj.ID + " (owner " + proj.OwnerID + ")",
+			Actor: conn.User, Action: "terminal.open", Resource: proj.ID,
+			Detail: "project " + proj.Name + " (owner " + proj.OwnerID + ")",
 		})
 	}
 	if err != nil {
@@ -113,35 +112,34 @@ func (h *TerminalHandler) Handle(conn *server.WSConn) {
 		})})
 		return
 	}
-	sandboxID := opened.ID
 	// The instance reference lives exactly as long as this connection: a
-	// forced teardown (CloseSandboxTerminals) closes the conn, the pumps
+	// forced teardown (CloseProjectTerminals) closes the conn, the pumps
 	// return, and this defer drops the hold.
 	defer release()
-	lt := &liveTerminal{term: term, conn: conn, gen: opened.RuntimeGen, projectID: proj.ID, projGen: proj.RuntimeGen}
+	lt := &liveTerminal{term: term, conn: conn, gen: proj.RuntimeGen, projectID: proj.ID}
 	limit := h.settings.Int(conn.Context(), settings.KeyMaxTerminalsPerSandbox)
-	if ok, stale := h.register(sandboxID, lt, limit); !ok {
+	if ok, stale := h.register(proj.ID, lt, limit); !ok {
 		_ = term.Close()
-		msg := fmt.Sprintf("too many open terminals for this sandbox (max %d)", limit)
+		msg := fmt.Sprintf("too many open terminals for this project (max %d)", limit)
 		if stale {
-			// The config or the project was updated (or deleted) while this
-			// terminal was dialing: its shell would serve retired credentials,
-			// a stale environment, or a sandbox that is gone. Reconnect to
-			// open under the current one.
-			msg = "this sandbox changed while the terminal was opening; reconnect"
+			// The project (or its target or template) was updated — or the
+			// project deleted — while this terminal was dialing: its shell
+			// would serve retired credentials, a stale environment, or a
+			// project that is gone. Reconnect to open under the current one.
+			msg = "this project changed while the terminal was opening; reconnect"
 		}
 		_ = conn.WriteJSON(&protocol.Envelope{Type: protocol.EventTerminalError, Payload: mustJSON(protocol.TerminalError{
 			Message: msg,
 		})})
 		return
 	}
-	defer h.unregister(sandboxID, lt)
+	defer h.unregister(proj.ID, lt)
 	defer term.Close()
 
 	if err := conn.WriteJSON(&protocol.Envelope{Type: protocol.EventTerminalReady}); err != nil {
 		return
 	}
-	log.Debug("terminal opened", "sandbox_id", sandboxID)
+	log.Debug("terminal opened", "project_id", proj.ID)
 
 	// Output pump: PTY → binary frames. It owns the exit notification — when
 	// the shell exits, Read returns EOF, the code is resolved and reported,
@@ -204,43 +202,40 @@ func (h *TerminalHandler) Handle(conn *server.WSConn) {
 }
 
 // open reads the terminal.open handshake frame and builds the Terminal,
-// returning the config it opened under (its id and runtime generation gate
-// registration) and the project whose tree the shell reaches (the audit
-// line names it). The returned release drops the instance reference open
-// acquired; the caller owns it once err is nil.
-func (h *TerminalHandler) open(conn *server.WSConn) (sandbox.Terminal, *store.SandboxConfig, *store.Project, func(), error) {
+// returning the project whose tree the shell reaches — its id and runtime
+// generation gate registration, and the audit line names it. The returned
+// release drops the instance reference open acquired; the caller owns it once
+// err is nil.
+func (h *TerminalHandler) open(conn *server.WSConn) (sandbox.Terminal, *store.Project, func(), error) {
 	var env protocol.Envelope
 	if err := conn.ReadJSON(&env); err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("read terminal.open: %w", err)
+		return nil, nil, nil, fmt.Errorf("read terminal.open: %w", err)
 	}
 	if env.Type != protocol.EventTerminalOpen {
-		return nil, nil, nil, nil, fmt.Errorf("expected %s as first message, got %q", protocol.EventTerminalOpen, env.Type)
+		return nil, nil, nil, fmt.Errorf("expected %s as first message, got %q", protocol.EventTerminalOpen, env.Type)
 	}
 	var msg protocol.TerminalOpen
 	if err := json.Unmarshal(env.Payload, &msg); err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("invalid terminal.open payload: %w", err)
+		return nil, nil, nil, fmt.Errorf("invalid terminal.open payload: %w", err)
 	}
-	if msg.SandboxID == "" || msg.ProjectID == "" {
-		return nil, nil, nil, nil, errors.New("terminal.open requires sandbox_id and project_id")
+	if msg.ProjectID == "" {
+		return nil, nil, nil, errors.New("terminal.open requires project_id")
 	}
 
 	ctx := conn.Context()
-	cfg, err := h.store.Get(ctx, msg.SandboxID)
-	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("sandbox %s: %w", msg.SandboxID, err)
-	}
 	proj, err := h.projects.Get(ctx, msg.ProjectID)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("project %s: %w", msg.ProjectID, err)
+		return nil, nil, nil, fmt.Errorf("project %s: %w", msg.ProjectID, err)
 	}
 	// A member opens a shell into their OWN project's container; an admin
 	// into any (the operator's escape hatch, recorded in decisions §5.28). A
 	// foreign project reads as absent.
 	if conn.User.Role != store.RoleAdmin && proj.OwnerID != conn.User.ID {
-		return nil, nil, nil, nil, fmt.Errorf("project %s: %w", msg.ProjectID, store.ErrNotFound)
+		return nil, nil, nil, fmt.Errorf("project %s: %w", msg.ProjectID, store.ErrNotFound)
 	}
-	if proj.SandboxID != cfg.ID {
-		return nil, nil, nil, nil, errors.New("project lives on a different sandbox")
+	spec, err := resolveSpec(ctx, h.targets, h.templates, proj)
+	if err != nil {
+		return nil, nil, nil, err
 	}
 	// From here no read happens until the shell is up — an ssh dial, a
 	// first-time image pull — so the heartbeat's deadline is lifted for the
@@ -248,94 +243,69 @@ func (h *TerminalHandler) open(conn *server.WSConn) (sandbox.Terminal, *store.Sa
 	// no pong could have extended.
 	conn.PauseHeartbeat()
 	defer conn.ResumeHeartbeat()
-	sb, release, err := h.manager.Acquire(cfg, proj)
+	sb, release, err := h.manager.Acquire(spec)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, err
 	}
 	opener, ok := sb.(sandbox.TerminalOpener)
 	if !ok {
 		release()
-		return nil, nil, nil, nil, fmt.Errorf("%s sandbox: %w", cfg.Type, sandbox.ErrTerminalUnsupported)
+		return nil, nil, nil, fmt.Errorf("%s sandbox: %w", spec.Target.Type, sandbox.ErrTerminalUnsupported)
 	}
 	term, err := opener.OpenTerminal(ctx, sandbox.TerminalOptions{Cols: msg.Cols, Rows: msg.Rows})
 	if err != nil {
 		release()
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, err
 	}
-	return term, cfg, proj, release, nil
+	return term, proj, release, nil
 }
 
-// register adds a live terminal, enforcing the per-sandbox cap and the
+// register adds a live terminal, enforcing the per-project cap and the
 // generation fence (see the fence field) — checked under the same lock the
 // fence moves under. The two refusals are distinct answers: full is
 // temporary, stale is final.
-func (h *TerminalHandler) register(sandboxID string, lt *liveTerminal, limit int) (ok, stale bool) {
+func (h *TerminalHandler) register(projectID string, lt *liveTerminal, limit int) (ok, stale bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if lt.gen < h.fence[sandboxID] || lt.projGen < h.projFence[lt.projectID] {
+	if lt.gen < h.fence[projectID] {
 		return false, true
 	}
-	set := h.live[sandboxID]
+	set := h.live[projectID]
 	if len(set) >= limit {
 		return false, false
 	}
 	if set == nil {
 		set = map[*liveTerminal]struct{}{}
-		h.live[sandboxID] = set
+		h.live[projectID] = set
 	}
 	set[lt] = struct{}{}
 	return true, false
 }
 
-func (h *TerminalHandler) unregister(sandboxID string, lt *liveTerminal) {
+func (h *TerminalHandler) unregister(projectID string, lt *liveTerminal) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	set := h.live[sandboxID]
+	set := h.live[projectID]
 	delete(set, lt)
 	if len(set) == 0 {
-		delete(h.live, sandboxID)
+		delete(h.live, projectID)
 	}
 }
 
 // CloseProjectTerminals severs the terminals a project opened before minGen
-// and fences that generation off — its environment changed, and a shell that
-// keeps reading the old one is a person debugging against what the agent no
-// longer sees. Scoped to the project: the sandbox's other projects are
-// untouched.
+// and fences that generation off, so a terminal still dialing is refused at
+// register (see the fence field). Every configuration change that reaches a
+// container arrives here as a project generation — its own environment, its
+// template, its target (decisions §5.33) — and a delete passes maxTerminalGen:
+// nothing may serve a project that is gone. A shell that keeps reading the old
+// configuration is a person debugging against what the agent no longer sees.
 func (h *TerminalHandler) CloseProjectTerminals(projectID string, minGen int64) {
 	h.mu.Lock()
-	if h.projFence[projectID] < minGen {
-		h.projFence[projectID] = minGen
+	if h.fence[projectID] < minGen {
+		h.fence[projectID] = minGen
 	}
-	var terminals []*liveTerminal
-	for _, set := range h.live {
-		for lt := range set {
-			if lt.projectID == projectID && lt.projGen < minGen {
-				terminals = append(terminals, lt)
-			}
-		}
-	}
-	h.mu.Unlock()
-	// Close outside the lock: pump teardown re-enters unregister.
-	for _, lt := range terminals {
-		_ = lt.term.Close()
-		lt.conn.Close()
-	}
-}
-
-// CloseSandboxTerminals tears down every live terminal for a sandbox config
-// that opened under a generation below minGen, and moves the registration
-// fence there so a terminal still dialing is refused at register (see the
-// fence field). A config update passes the new runtime generation; a delete
-// passes math.MaxInt64: nothing may serve a config that is gone. Sandbox
-// Update/Delete call it alongside SandboxManager.Retire/Remove.
-func (h *TerminalHandler) CloseSandboxTerminals(sandboxID string, minGen int64) {
-	h.mu.Lock()
-	if h.fence[sandboxID] < minGen {
-		h.fence[sandboxID] = minGen
-	}
-	terminals := make([]*liveTerminal, 0, len(h.live[sandboxID]))
-	for lt := range h.live[sandboxID] {
+	terminals := make([]*liveTerminal, 0, len(h.live[projectID]))
+	for lt := range h.live[projectID] {
 		if lt.gen < minGen {
 			terminals = append(terminals, lt)
 		}
@@ -346,4 +316,21 @@ func (h *TerminalHandler) CloseSandboxTerminals(sandboxID string, minGen int64) 
 		_ = lt.term.Close()
 		lt.conn.Close()
 	}
+}
+
+// maxTerminalGen fences a project id permanently — the delete's minGen.
+const maxTerminalGen = int64(1) << 62
+
+// resolveSpec loads the target and template a project names, so a caller
+// holding only the project row can build or acquire its sandbox.
+func resolveSpec(ctx context.Context, targets *store.SandboxTargetStore, templates *store.SandboxTemplateStore, proj *store.Project) (sandboxes.Spec, error) {
+	target, err := targets.Get(ctx, proj.TargetID)
+	if err != nil {
+		return sandboxes.Spec{}, fmt.Errorf("sandbox target %s: %w", proj.TargetID, err)
+	}
+	tpl, err := templates.Get(ctx, proj.TemplateID)
+	if err != nil {
+		return sandboxes.Spec{}, fmt.Errorf("sandbox template %s: %w", proj.TemplateID, err)
+	}
+	return sandboxes.Spec{Target: target, Template: tpl, Project: proj}, nil
 }

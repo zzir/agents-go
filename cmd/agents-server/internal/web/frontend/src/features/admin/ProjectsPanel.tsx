@@ -20,10 +20,10 @@ export function ProjectsPanel() {
   const { ownerOf, labelFor } = useOwnerLabels();
 
   const reload = useCallback(() => {
-    Promise.all([api.sandboxes.list(), api.projects.listAll()])
-      .then(([sandboxes, rows]) => {
-        const sbName = (id?: string) => (sandboxes ?? []).find(s => s.id === id)?.name || id || '';
-        setProjects((rows ?? []).map(p => ({ ...p, id: p.id || '', sandbox: sbName(p.sandbox_id) })));
+    Promise.all([api.sandboxTargets.list(), api.projects.listAll()])
+      .then(([targets, rows]) => {
+        const tgName = (id?: string) => (targets ?? []).find(t => t.id === id)?.name || id || '';
+        setProjects((rows ?? []).map(p => ({ ...p, id: p.id || '', sandbox: tgName(p.target_id) })));
         setError('');
       })
       .catch(() => setError('Failed to load projects.'));
@@ -34,8 +34,8 @@ export function ProjectsPanel() {
     if (!(await confirm({
       title: `Delete “${p.name}”?`,
       content: p.storage_hint
-        ? `Its files stay on the sandbox, in ${p.storage_hint}. Refused while sessions are still bound to it.`
-        : 'Its files stay on the sandbox. Refused while sessions are still bound to it.',
+        ? `This DESTROYS its working tree (${p.storage_hint}). Refused while sessions are still bound to it.`
+        : 'This DESTROYS its working tree. Refused while sessions are still bound to it.',
       confirmButtonContent: 'Delete',
       confirmButtonType: 'danger',
     }))) return;
@@ -50,7 +50,7 @@ export function ProjectsPanel() {
   const columns = useMemo<Column<ProjectRow>[]>(() => [
     { header: 'Project', id: 'name', rowHeader: true, width: 'growCollapse', minWidth: 120, renderCell: p => <span className="list-clip" title={p.name}>{p.name}</span> },
     { header: 'Owner', id: 'owner', width: 'growCollapse', minWidth: 100, maxWidth: 220, renderCell: p => <OwnerName owner={ownerOf(p.owner_id)} fallback={labelFor(p.owner_id)} /> },
-    { header: 'Sandbox', id: 'sandbox', width: 'growCollapse', minWidth: 90, maxWidth: 180, renderCell: p => <span className="list-clip" title={p.sandbox}>{p.sandbox}</span> },
+    { header: 'Machine', id: 'sandbox', width: 'growCollapse', minWidth: 90, maxWidth: 180, renderCell: p => <span className="list-clip" title={p.sandbox}>{p.sandbox}</span> },
     { header: 'Storage', id: 'storage', width: 'growCollapse', minWidth: 140, renderCell: p => <span className="list-clip" title={p.storage_hint}>{p.storage_hint}</span> },
     { header: 'Sessions', id: 'sessions', width: 'auto', renderCell: p => <span className="list-nowrap">{p.session_count ?? 0}</span> },
     // The list is newest first, so the date it sorts on is on the row.

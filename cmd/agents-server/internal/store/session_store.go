@@ -168,56 +168,52 @@ func (s *SessionStore) BindAgentIfEmpty(ctx context.Context, id, agentConfigID s
 	return nil
 }
 
-// BindSandboxIfEmpty permanently binds (sandbox_id, project_id) to the session,
-// unless it is already bound: the first sandbox-carrying run wins and the
-// binding is never rewritten — the session's file system context must not
-// change under a conversation that already touched it. It reports whether THIS
-// call performed the bind, so the winner (and only the winner) can announce
-// it; a caller that lost re-reads the session to adopt the standing values.
+// BindProjectIfEmpty permanently binds project_id to the session, unless it is
+// already bound: the first project-carrying run wins and the binding is never
+// rewritten — the session's file system context must not change under a
+// conversation that already touched it. It reports whether THIS call performed
+// the bind, so the winner (and only the winner) can announce it; a caller that
+// lost re-reads the session to adopt the standing value.
 //
-// The EXISTS predicate makes "the target is still what was validated" part of
-// the same atomic statement, so a concurrent delete or update cannot bind the
-// session to a vanished config or a stale workdir. Matching the REVISION (not
-// just the id) closes the update half; losing reads as won=false and the caller
-// re-plans.
+// The EXISTS predicate makes "the project is still there" part of the same
+// atomic statement, so a concurrent delete cannot bind the session to a
+// vanished row. Nothing else needs pinning: a project's owner and target are
+// immutable (decisions §5.33), and its template and environment are content
+// that reaches the session at its next run.
 //
-// An empty sandboxID binds nothing (a run without a sandbox leaves the session
+// An empty projectID binds nothing (a run without a project leaves the session
 // bindable later). A missing session is (false, nil) — the caller's own
 // existence check owns that error. Like BindAgentIfEmpty, it leaves updated_at
 // alone: the conversation did not change.
-func (s *SessionStore) BindSandboxIfEmpty(ctx context.Context, id, sandboxID, projectID string, revision int64) (bool, error) {
-	if sandboxID == "" {
+func (s *SessionStore) BindProjectIfEmpty(ctx context.Context, id, projectID string) (bool, error) {
+	if projectID == "" {
 		return false, nil
 	}
 	res, err := s.db.NewUpdate().Model((*Session)(nil)).
-		Set("sandbox_id = ?", sandboxID).
 		Set("project_id = ?", projectID).
 		Where("id = ?", id).
-		Where("sandbox_id IS NULL").
-		Where("EXISTS (SELECT 1 FROM sandbox_configs WHERE id = ? AND revision = ?)", sandboxID, revision).
+		Where("project_id IS NULL").
 		Where("EXISTS (SELECT 1 FROM projects WHERE id = ?)", projectID).
 		Exec(ctx)
 	if err != nil {
-		return false, fmt.Errorf("binding session %s to sandbox %s: %w", id, sandboxID, err)
+		return false, fmt.Errorf("binding session %s to project %s: %w", id, projectID, err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return false, fmt.Errorf("binding session %s to sandbox %s: %w", id, sandboxID, err)
+		return false, fmt.Errorf("binding session %s to project %s: %w", id, projectID, err)
 	}
 	return n > 0, nil
 }
 
-// CountBindingRefs reports how many sessions are bound to exactly (sandboxID,
-// projectID) — the unit the SandboxManager caches an instance per. Zero after a
-// session delete means the pair's cached instance has no caller left. Either
-// half may be unset, which the columns store as NULL (see boundTo).
-func (s *SessionStore) CountBindingRefs(ctx context.Context, sandboxID, projectID string) (int, error) {
-	q := s.db.NewSelect().Model((*Session)(nil))
-	q = boundTo(q, "sandbox_id", sandboxID)
-	q = boundTo(q, "project_id", projectID)
-	n, err := q.Count(ctx)
+// CountProjectRefs reports how many sessions bind projectID — the unit the
+// SandboxManager caches an instance per. Zero after a session delete means the
+// project's cached instance has no caller left. An empty id counts the
+// sessions that carry no binding, which the column stores as NULL (see
+// boundTo).
+func (s *SessionStore) CountProjectRefs(ctx context.Context, projectID string) (int, error) {
+	n, err := boundTo(s.db.NewSelect().Model((*Session)(nil)), "project_id", projectID).Count(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("counting sessions bound to sandbox %s project %s: %w", sandboxID, projectID, err)
+		return 0, fmt.Errorf("counting sessions bound to project %s: %w", projectID, err)
 	}
 	return n, nil
 }

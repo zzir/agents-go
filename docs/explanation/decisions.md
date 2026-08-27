@@ -772,62 +772,51 @@ not parked: its Sandbox implementation had become the workbench's only
 consumer, and an embedder who wants raw remote exec can use x/crypto/ssh
 directly — the value this repo added was the sandboxing, which SSH never
 provided. The SDK's `sandbox.LocalSandbox` stays (embedders and tests; the
-server just never offers it). A sandbox's identity (the binding freeze —
-workbench invariant 27) gains the daemon: changing `Host` moves every
-container's filesystems, so it freezes while any session is bound or any
-project row lives on the config (revised 2026-08-25: a project's tree exists
-without any session — a terminal may already have written it — and §5.28
-pins it to one daemon).
+server just never offers it). Where a sandbox runs is its identity (the
+binding freeze — workbench invariant 27): changing the daemon moves every
+container's filesystem, so it freezes while any project lives on it.
+
+Revised 2026-08-28: the daemon address moved to its own row, the sandbox
+TARGET, and the image and limits to a sandbox TEMPLATE — §5.33.
 
 Do not reintroduce a host-exec sandbox type or a raw remote-exec one; an
 isolation need beyond containers (VMs, gVisor) is a new backend decision
 argued here first — gVisor is already reachable today via `runtime: runsc`.
 
-### 5.28 A project is the unit of working storage, and containers are per (sandbox, project)
+### 5.28 A project is the unit of working storage, and containers are per project
 
 Decided 2026-08-24. A **project** is one user's working tree on one sandbox
-target: `projects(id, owner_id, sandbox_id, name)`, name unique per (owner,
-sandbox) and display-only — storage is keyed by id, so a rename moves
-nothing. The sandbox affinity is deliberate: a tree lives on one daemon, and
-a project that could "move" between daemons would silently be two different
-sets of files. A session's permanent binding is `(sandbox_id, project_id)`;
-the old free-form working directory is gone — execution is always the
-container's /workspace, which mounts the project's storage:
+target: `projects(id, owner_id, target_id, template_id, name)`, name unique
+per (owner, target) and display-only — storage is keyed by id, so a rename
+moves nothing. The target affinity is deliberate: a tree lives on one daemon,
+and a project that could "move" between daemons would silently be two
+different sets of files. A session's permanent binding is `project_id`
+(revised 2026-08-28, §5.33: the project pins the target, so the second column
+was derivable); the old free-form working directory is gone — execution is
+always the container's /workspace, which mounts the project's storage:
 
-- **Local daemon**: bind mount of `<workspace>/<owner uuid>/<project uuid>`
-  — both segments the FULL uuid (revised 2026-08-24: filesystem names have
-  no docker-style length limits, so nothing justified a truncated,
-  collision-prone tail there; short ids remain only in container and volume
-  names). Every mount source is SERVER-derived from ids — no user-typed path
-  ever reaches a mount, which retires the old host-side path validation
-  wholesale.
-- **Remote daemon**: the named volume `agents-proj-<project id tail>` on that
-  daemon. Same rows, different medium; the files are reachable through the
-  container (and its terminal), not a host path.
+Storage is the named volume `agents-proj-<project id tail>` on the target's
+daemon — the same on every daemon (revised 2026-08-28, §5.33: the local
+bind-mount branch is gone). Every volume name is SERVER-derived from the id
+— no user-typed path ever reaches a mount, which retires the old host-side
+path validation wholesale.
 
-**Containers are persistent-only, one per (sandbox, project)**, named
-`agents-<sandbox tail>-<project tail>` — deterministic, so restarts re-adopt
-by fingerprint (§5.19) instead of duplicating. `KeepOnClose` stops rather
-than removes on teardown: installed packages survive idle and restarts; a
-config edit replaces the container via the stale-ours adoption rule. /tmp is
-a tmpfs capped at 1g (RAM-backed — size accordingly), and on the local
-daemon an unset container user defaults to the server process's uid:gid so
-bind-mounted files belong to the operator, not nobody.
+**Containers are persistent-only, one per project**, named
+`agents-<project tail>` — deterministic, so restarts re-adopt by fingerprint
+(§5.19) instead of duplicating. `KeepOnClose` stops rather than removes on
+teardown: installed packages survive idle and restarts; a config edit
+replaces the container via the stale-ours adoption rule. /tmp is a tmpfs
+capped at 1g (RAM-backed — size accordingly).
 
-Deletion contracts mirror the sandbox binding's: the bind CAS carries an
-EXISTS on the project row, a project delete carries NOT EXISTS over bound
-sessions (races settle in SQL), and deleting a sandbox cascades its
-(necessarily unbound) project rows. A sandbox identity update carries the
-mirror NOT EXISTS over project rows too: a project pins its sandbox to one
-daemon even before any session binds, and the project create locks the
-sandbox row for the insert's duration, so a racing sandbox delete either
-cascades the new row or refuses the create — never an orphan (both revised
-2026-08-25). **Storage is never deleted by the server** — a removed project
-row leaves its directory or volume in place (the delete reclaims only the
-cached instance; the stopped container and its volume stay on the daemon
-until the operator removes them); reclaiming space is the operator's explicit
-act. A run naming no project lands in the owner's per-sandbox default
-("scratch"), created on first use.
+Deletion contracts settle in SQL: the bind CAS carries an EXISTS on the
+project row, a project delete carries NOT EXISTS over bound sessions, and a
+target delete carries NOT EXISTS over project rows (revised 2026-08-28: the
+old cascade is gone — a project delete now reclaims storage, so cascading one
+would destroy working trees as a side effect of removing a machine). The
+project create locks both the target and the template row for the insert's
+duration, so a racing delete of either arrives first and refuses the create —
+never an orphan. **A project delete DESTROYS its storage** (revised
+2026-08-28, §5.33). A run naming no project gets no sandbox tools at all.
 Projects are the first PERSONAL configuration entity: every member manages
 their own; ownership is scoped in the handlers, not the admin gate. An admin
 additionally MANAGES the plane (revised 2026-08-25, §5.29's
@@ -1118,4 +1107,61 @@ The environment is a project's CONTENT, not its identity: it may be edited
 while sessions are bound (workbench invariant 27 freezes which tree a session
 uses, never what the tree's container is configured with), and the edit
 reaches everyone at their next run through the runtime generation, exactly as
-a sandbox config edit does.
+a template edit does.
+
+### 5.33 A sandbox is a target and a template; storage is a volume the delete destroys
+
+Decided 2026-08-28. `sandbox_configs` carried two orthogonal things — WHERE a
+container runs (the daemon and its credentials) and WHAT runs (the image, the
+limits, the container's shape) — so a second machine meant duplicating every
+image setting, and an image change was an edit to a row whose identity was a
+machine. They are two rows now: **`sandbox_targets`** (host, ssh auth) and
+**`sandbox_templates`** (image, runtime, user, network, limits). A project
+names one of each and the pair must share a `type`.
+
+The split gives each half the lifecycle it always wanted. A target is a
+project's **identity**: changing the daemon moves every file, so it freezes
+while any project lives on it, exactly as §5.27's rule did. A template is a
+project's **CONTENT**, handled like its environment (§5.32): editable while
+sessions are bound, reaching each at its next run. A template's `type` is
+immutable — a docker template cannot become something its machine can not run
+— and creating a second one costs nothing, so there is no conditional freeze
+to explain.
+
+**One runtime axis.** The instance cache and the terminal registry used to
+fence on a config generation AND a project generation, two maps that must not
+reach each other's rows. With three entities that would have been three. So
+the runtime generation lives only on the PROJECT, and a content change to a
+target or a template bumps it on every project that names the row
+(`ProjectStore.BumpRuntimeGen`). Targets and templates keep only `revision`,
+the compare-and-set every update lands against. Everything downstream —
+`RetireProject`, `CloseProjectTerminals`, the `(project, gen)` cache key —
+now has exactly one thing to watch. The write amplification is one UPDATE on
+a rare admin edit.
+
+**Storage is a volume, always.** The local daemon's bind mount is gone, and
+with it `--workspace`, the host-path plumbing, the `DOCKER_HOST` guard that
+kept file tools and containers on one filesystem, and the uid:gid default that
+made bind-mounted files belong to the operator — and, because that default
+existed, kept the container unable to install a package into itself. A
+container now runs as the image's user (root, unless a template says
+otherwise): the container is the isolation boundary, and its files live in a
+volume nothing else mounts. The price is that the tree is no longer a
+directory on the operator's machine; `docker cp` and an export route are how
+it comes out.
+
+**A project delete destroys its storage.** "Storage outlives the row" (§5.28)
+was defensible when the tree was a visible directory the operator could find
+again. A volume nobody has a listing for is an unbounded leak, and the row was
+the only handle on it. Deleting a project now removes the container AND the
+volume; the confirm says so. Sessions still block the delete, as before.
+
+**No project, no sandbox tools.** The per-owner "scratch" project a run
+without one used to land in is gone. It existed to make an unbound run
+useful, and instead made "which tree did that command touch?" a question with
+a surprising answer. An agent with no project is a chat: `attachSandboxTools`
+returns early, and the composer's picker offers projects with an explicit
+None.
+
+**The session binding collapses to `project_id`.** A project pins its target,
+so the second column was derivable and could only ever disagree.

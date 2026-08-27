@@ -18,7 +18,7 @@ import { EdgeGraph, END, stepLabel, type Workflow, type WorkflowBudget, type Wor
 import { Disclosure } from '@/components/Disclosure';
 import { TriggersDialog } from '@/features/workflows/TriggersDialog';
 import { SessionPicker } from '@/features/sessions/SessionPicker';
-import { projectLabel, type Project, type SandboxConfigLite } from '@/lib/binding';
+import { projectLabel, type Project, type SandboxTargetLite } from '@/lib/binding';
 import '@/features/chat/workflow.css';
 import './workflow-panel.css';
 import './hub.css';
@@ -254,19 +254,18 @@ function RunDialog({ workflow, sessionId, onClose }: { workflow: Workflow; sessi
   const [target, setTarget] = useState(sessionId || '');
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
-  const { data: targetSession } = useApi<{ sandbox_id?: string } | null>(
-    () => (target ? api.sessions.get(target) as Promise<{ sandbox_id?: string }> : Promise.resolve(null)), [target]);
-  const { data: sandboxes } = useApi<SandboxConfigLite[]>(() => api.sandboxes.list() as Promise<SandboxConfigLite[]>);
+  const { data: targetSession } = useApi<{ project_id?: string } | null>(
+    () => (target ? api.sessions.get(target) as Promise<{ project_id?: string }> : Promise.resolve(null)), [target]);
+  const { data: sandboxTargets } = useApi<SandboxTargetLite[]>(() => api.sandboxTargets.list() as Promise<SandboxTargetLite[]>);
   const { data: projects } = useApi<Project[]>(() => api.projects.list() as Promise<Project[]>);
   const [projectId, setProjectId] = useState('');
-  const unbound = !!target && !!targetSession && !targetSession.sandbox_id;
+  const unbound = !!target && !!targetSession && !targetSession.project_id;
   const project = (projects || []).find(p => p.id === projectId);
   const run = async () => {
     setBusy(true);
     try {
-      const body: { session_id: string; input: string; sandbox_id?: string; project_id?: string } = { session_id: target, input: input.trim() };
+      const body: { session_id: string; input: string; project_id?: string } = { session_id: target, input: input.trim() };
       if (unbound && project) {
-        body.sandbox_id = project.sandbox_id;
         body.project_id = project.id;
       }
       await api.workflows.run(workflow.id, body);
@@ -292,8 +291,8 @@ function RunDialog({ workflow, sessionId, onClose }: { workflow: Workflow; sessi
         {unbound && (
           fc('Project', <Select block value={projectId} onChange={e => setProjectId(e.target.value)}>
             <Select.Option value="">None — chat only, no file or command tools</Select.Option>
-            {(projects || []).filter(p => (sandboxes || []).some(sb => sb.id === p.sandbox_id))
-              .map(p => <Select.Option key={p.id} value={p.id}>{projectLabel(p.name, nameOf(sandboxes, p.sandbox_id))}</Select.Option>)}
+            {(projects || []).filter(p => (sandboxTargets || []).some(tg => tg.id === p.target_id))
+              .map(p => <Select.Option key={p.id} value={p.id}>{projectLabel(p.name, nameOf(sandboxTargets, p.target_id))}</Select.Option>)}
           </Select>, 'This conversation has no project bound yet; the one picked here becomes its binding, as a first message\'s would')
         )}
         <Textarea block rows={6} value={input} onChange={e => setInput(e.target.value)} autoFocus

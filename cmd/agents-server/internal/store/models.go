@@ -33,10 +33,10 @@ type Session struct {
 	// had to teach it a second special case.
 	Hidden        bool   `bun:"hidden"               json:"hidden,omitempty"`
 	AgentConfigID string `bun:"agent_config_id,nullzero,type:uuid" json:"agent_config_id,omitempty"`
-	// SandboxID/ProjectID are the session's PERMANENT binding: the first
-	// sandbox-carrying run CAS-writes them (BindSandboxIfEmpty) and they are
-	// never rewritten — decisions §5.28.
-	SandboxID string `bun:"sandbox_id,nullzero,type:uuid" json:"sandbox_id,omitempty"`
+	// ProjectID is the session's PERMANENT binding: the first project-carrying
+	// run CAS-writes it (BindProjectIfEmpty) and it is never rewritten —
+	// decisions §5.28. The project pins the target, so binding the project
+	// binds the machine too.
 	ProjectID string `bun:"project_id,nullzero,type:uuid" json:"project_id,omitempty"`
 	// Planning is the session's plan phase: true means its next run starts
 	// read-only until a plan is approved. It is materialized here — not derived
@@ -97,11 +97,10 @@ type Task struct {
 	// recreates its schema rather than altering it, so no pre-attempt rows
 	// survive an upgrade.)
 	Attempt int `bun:"attempt" json:"attempt,omitempty"`
-	// ParentAgentConfigID / ParentSandboxID / ParentProjectID snapshot the
-	// spawning run's configuration so the completion notification (and a retry)
-	// can start a run with the same setup.
+	// ParentAgentConfigID / ParentProjectID snapshot the spawning run's
+	// configuration so the completion notification (and a retry) can start a
+	// run with the same setup.
 	ParentAgentConfigID string `bun:"parent_agent_config_id,nullzero,type:uuid" json:"-"`
-	ParentSandboxID     string `bun:"parent_sandbox_id,nullzero,type:uuid" json:"-"`
 	ParentProjectID     string `bun:"parent_project_id,nullzero,type:uuid" json:"-"`
 	Status              string `bun:"status,notnull"     json:"status"`
 	Summary             string `bun:"summary,nullzero"   json:"summary,omitempty"`
@@ -427,44 +426,64 @@ type TraceEvent struct {
 	PayloadOmitted bool `bun:"payload_omitted,scanonly" json:"payload_omitted,omitempty"`
 }
 
-// SandboxConfig is the persisted definition of a code-execution sandbox backend.
-// Backend-specific settings live in Config (JSON, interpreted per Type), so a new
-// backend type needs no schema migration — only a new Config payload struct and a
-// case in the bridge.
-type SandboxConfig struct {
-	bun.BaseModel `bun:"table:sandbox_configs,alias:sb"`
+// SandboxTarget is WHERE sandboxes run — a machine reachable by the server,
+// with the credentials to reach it. It is a project's IDENTITY: changing it
+// moves every file, so it freezes while projects live on it (decisions §5.33).
+type SandboxTarget struct {
+	bun.BaseModel `bun:"table:sandbox_targets,alias:tg"`
 
 	ID   string `bun:"id,pk,type:uuid" json:"id"`
 	Name string `bun:"name,notnull" json:"name"`
 	// Type is "docker" — the only backend (decisions §5.27).
 	Type string `bun:"type,notnull" json:"type"`
 
-	// Config holds the backend settings as JSON (DockerConfig). Stored as
+	// Config holds the target settings as JSON (DockerTargetConfig). Stored as
 	// TEXT and sent to/received from the API as a raw JSON object (no
 	// double-encoding).
 	Config json.RawMessage `bun:"config,type:text,nullzero" json:"config,omitempty"`
 
-	// Revision counts this config's WRITES: 1 at creation, +1 on every update,
+	// Revision counts this row's WRITES: 1 at creation, +1 on every update,
 	// name-only included. It is the row's concurrency control — the
-	// expected-revision CAS both update paths carry, and the predicate a
-	// first-run bind lands against (the workdir was validated on exactly this
-	// revision). Nothing keeps old revisions runnable: updates apply to everyone
-	// at the next run.
+	// expected-revision CAS every update path carries. Nothing keeps old
+	// revisions runnable: updates apply to everyone at the next run.
+	//
+	// There is no runtime generation here: the ONE runtime axis is the
+	// project's (decisions §5.33), and a content change to this row bumps it
+	// on every project that names this target.
 	Revision int64 `bun:"revision,notnull,default:1" json:"revision,omitempty"`
-
-	// RuntimeGen counts the config's CONTENT generations: +1 only when Type or
-	// Config actually change. The live-instance cache and terminal registry key
-	// their fences on it, separate from Revision, so a name-only update does not
-	// retire instances or sever terminals over a rename.
-	RuntimeGen int64 `bun:"runtime_gen,notnull,default:1" json:"-"`
 
 	CreatedAt time.Time `bun:"created_at,notnull" json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,notnull" json:"updated_at"`
 }
 
-// DockerConfig is the SandboxConfig.Config payload.
-type DockerConfig struct {
-	Image string `json:"image"`
+// SandboxTemplate is WHAT runs — the image and the limits a project's
+// container is created from. It is a project's CONTENT, not its identity: it
+// may be swapped while sessions are bound, reaching them at their next run
+// through the runtime generation, exactly as an environment does
+// (decisions §5.33). One template serves any number of targets of its type.
+type SandboxTemplate struct {
+	bun.BaseModel `bun:"table:sandbox_templates,alias:tpl"`
+
+	ID   string `bun:"id,pk,type:uuid" json:"id"`
+	Name string `bun:"name,notnull" json:"name"`
+	// Type must match the target's; a docker template cannot run on another
+	// backend's machine.
+	Type string `bun:"type,notnull" json:"type"`
+
+	// Config holds the template settings as JSON (DockerTemplateConfig).
+	Config json.RawMessage `bun:"config,type:text,nullzero" json:"config,omitempty"`
+
+	// Revision is the row's concurrency control, as on SandboxTarget — and,
+	// as there, the runtime generation lives on the projects instead.
+	Revision int64 `bun:"revision,notnull,default:1" json:"revision,omitempty"`
+
+	CreatedAt time.Time `bun:"created_at,notnull" json:"created_at"`
+	UpdatedAt time.Time `bun:"updated_at,notnull" json:"updated_at"`
+}
+
+// DockerTargetConfig is the SandboxTarget.Config payload for type "docker":
+// which daemon, and how to reach it.
+type DockerTargetConfig struct {
 	// Host reaches a remote daemon: "ssh://user@host[:port]" (pure-Go SSH to
 	// the remote's docker socket) or "tcp://host:port". Empty = the local
 	// daemon.
@@ -477,10 +496,18 @@ type DockerConfig struct {
 	SSHPassword        string `json:"ssh_password,omitempty"` // write-only (mask semantics)
 	SSHKnownHosts      string `json:"ssh_known_hosts,omitempty"`
 	SSHInsecureHostKey bool   `json:"ssh_insecure_host_key,omitempty"`
+}
 
+// DockerTemplateConfig is the SandboxTemplate.Config payload for type
+// "docker": the image and the container's shape.
+type DockerTemplateConfig struct {
+	Image   string `json:"image"`
 	Runtime string `json:"runtime,omitempty"` // OCI runtime (e.g. "runsc" for gVisor)
-	User    string `json:"user,omitempty"`    // user[:group] the container runs as; "" = backend default (65534 nobody)
-	Network bool   `json:"network"`
+	User    string `json:"user,omitempty"`    // user[:group] the container runs as; "" = the image's own user
+	// Network names the docker network the container joins; empty leaves it
+	// with no network at all. A port preview needs a network the server can
+	// reach.
+	Network string `json:"network,omitempty"`
 	// MemoryMB / CPUs cap the container's resources; 0 = unlimited (memory)
 	// and the daemon default (cpus).
 	MemoryMB         int64   `json:"memory_mb,omitempty"`
@@ -488,46 +515,53 @@ type DockerConfig struct {
 	MaxReadFileBytes int64   `json:"max_read_file_bytes,omitempty"` // read_file cap in bytes; 0 = backend default (8 MiB)
 }
 
-// Project is one user's working tree on one sandbox target (decisions §5.28): the
-// unit a session binds and the container the sandbox's daemon runs for it
-// mounts at /workspace — a host directory under the server workspace for a
-// local daemon, a named volume on a remote one. The storage is derived from
-// the ids, never stored.
+// Project is one user's working tree on one sandbox target (decisions §5.28):
+// the unit a session binds, stored in the named volume the project's
+// container mounts at /workspace. The storage name is derived from the id,
+// never stored.
 type Project struct {
 	bun.BaseModel `bun:"table:projects,alias:pj"`
 
-	ID        string `bun:"id,pk,type:uuid"               json:"id"`
-	OwnerID   string `bun:"owner_id,notnull,type:uuid"    json:"owner_id"`
-	SandboxID string `bun:"sandbox_id,notnull,type:uuid"  json:"sandbox_id"`
+	ID      string `bun:"id,pk,type:uuid"               json:"id"`
+	OwnerID string `bun:"owner_id,notnull,type:uuid"    json:"owner_id"`
+	// TargetID is the machine the tree lives on — the project's identity, set
+	// at creation and never writable afterwards (decisions §5.33).
+	TargetID string `bun:"target_id,notnull,type:uuid"  json:"target_id"`
+	// TemplateID is what the container is created from — content, editable
+	// like the environment, reaching bound sessions at their next run.
+	TemplateID string `bun:"template_id,notnull,type:uuid" json:"template_id"`
 	// Name is display only — the storage is keyed by ID, so a rename moves
-	// nothing. Unique per (owner, sandbox) via idx_projects_owner_sandbox_name.
+	// nothing. Unique per (owner, target) via idx_projects_owner_target_name.
 	Name string `bun:"name,notnull"                json:"name"`
 	// Env is the canonical environment the container is created with
 	// (NormalizeProjectEnv), values sealed at rest. json:"-" is the default
 	// that keeps it off every listing: GET /projects/{id} is the one endpoint
 	// that returns it, and it returns names with masked values.
 	Env string `bun:"env,type:text,nullzero" json:"-"`
-	// Revision and RuntimeGen are the two counters SandboxConfig carries, for
-	// the same two jobs: the expected-revision CAS every update lands
-	// against, and the content generation that retires live containers — so
-	// a rename does not replace anyone's container.
+	// InstanceRef is the backend's own handle on the project's live sandbox,
+	// for a backend whose instance id it does not derive from the project id.
+	// Docker derives its container name and needs none; it exists so a remote
+	// backend has somewhere to keep the id its API minted.
+	InstanceRef string `bun:"instance_ref,nullzero" json:"-"`
+	// Revision is the expected-revision CAS every update lands against.
+	// RuntimeGen is the workbench's ONE runtime axis: it moves when this
+	// project's own content changes AND when the target or template it names
+	// changes underneath it, so the instance cache and the terminal registry
+	// need a single fence rather than one per entity (decisions §5.33). A
+	// rename moves neither container nor terminal.
 	Revision   int64     `bun:"revision,notnull,default:1"    json:"revision,omitempty"`
 	RuntimeGen int64     `bun:"runtime_gen,notnull,default:1" json:"-"`
 	CreatedAt  time.Time `bun:"created_at,notnull"            json:"created_at"`
 	UpdatedAt  time.Time `bun:"updated_at,notnull"            json:"updated_at"`
-	// StorageHint names where the files live — the local daemon's host
-	// directory or the remote daemon's volume. Derived per response by the
-	// handler for admins only, never stored: deleting the row keeps the
-	// storage (decisions §5.28), so the UI can say where.
+	// StorageHint names where the files live — the named volume on the
+	// target's daemon. Derived per response by the handler for admins only,
+	// never stored: deleting the row keeps the storage (decisions §5.28), so
+	// the UI can say where.
 	StorageHint string `bun:"-" json:"storage_hint,omitempty"`
 	// SessionCount is how many sessions bind this project — filled by List
 	// (scanonly), so a delete knows whether it will be refused.
 	SessionCount int `bun:"session_count,scanonly" json:"session_count,omitempty"`
 }
-
-// DefaultProjectName is the per-(owner, sandbox) project a run lands in when
-// none is picked — created on first use (ProjectStore.EnsureDefault).
-const DefaultProjectName = "scratch"
 
 // Guardrail is a stored guardrail definition. Mode selects the check logic:
 // "regex" uses Config.Pattern; "max_length" uses Config.MaxLength.
@@ -573,7 +607,6 @@ type PendingApproval struct {
 	// execution).
 	Kind          string `bun:"kind"                   json:"kind,omitempty"`
 	AgentConfigID string `bun:"agent_config_id,nullzero,type:uuid" json:"agent_config_id,omitempty"`
-	SandboxID     string `bun:"sandbox_id,nullzero,type:uuid" json:"sandbox_id,omitempty"`
 	ProjectID     string `bun:"project_id,nullzero,type:uuid" json:"project_id,omitempty"`
 	// State is the JSON from agents.RunState.MarshalJSON. Hidden from the API.
 	State string `bun:"state,type:text,notnull" json:"-"`
@@ -683,7 +716,12 @@ func (m *Provider) BeforeAppendModel(_ context.Context, q bun.Query) error {
 }
 
 // BeforeAppendModel stamps the id and timestamps; bun invokes it on insert and update.
-func (m *SandboxConfig) BeforeAppendModel(_ context.Context, q bun.Query) error {
+func (m *SandboxTarget) BeforeAppendModel(_ context.Context, q bun.Query) error {
+	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
+}
+
+// BeforeAppendModel stamps the id and timestamps; bun invokes it on insert and update.
+func (m *SandboxTemplate) BeforeAppendModel(_ context.Context, q bun.Query) error {
 	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
 }
 

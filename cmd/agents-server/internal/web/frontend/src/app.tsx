@@ -419,17 +419,17 @@ function App() {
   // Bumped by workflow.updated: the chat's workflow strip and Tasks panel
   // refetch when a background sequence moves.
   const [settingsReloadKey, setSettingsReloadKey] = useState(0);
-  // The active session's display name and sandbox binding. Captured from the
+  // The active session's display name and project binding. Captured from the
   // existence-check fetch below and kept fresh by the title_updated /
-  // sandbox_bound events; the id guards against a stale response landing after
+  // project_bound events; the id guards against a stale response landing after
   // a session switch.
-  const [sessionMeta, setSessionMeta] = useState<{ id: string; name: string; sandboxId: string; projectId: string } | null>(null);
+  const [sessionMeta, setSessionMeta] = useState<{ id: string; name: string; projectId: string } | null>(null);
   // Bindings announced over the socket, per session. The session GET races the
-  // session.sandbox_bound broadcast (meta is cleared before the fetch, so the
+  // session.project_bound broadcast (meta is cleared before the fetch, so the
   // event can arrive while prev is null), and a binding is immutable once set
   // — any announced value is THE value, merged over whatever the slower GET
   // returns.
-  const announcedBindings = useRef<Record<string, { sandboxId: string; projectId: string }>>({});
+  const announcedBindings = useRef<Record<string, string>>({});
   // Bumped whenever the set of bound sessions changes (a new binding lands, a
   // session is deleted): a bind can auto-create its scratch project, so the
   // project pickers in ChatView and the terminal panel refetch — without this
@@ -441,17 +441,17 @@ function App() {
   // which the panel stays mounted while hidden to keep sessions alive.
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [terminalEverOpened, setTerminalEverOpened] = useState(false);
-  // A one-shot "start a terminal for this sandbox" request, set when the
-  // composer button opens a CLOSED panel with a capable sandbox selected (an
+  // A one-shot "start a terminal for this project" request, set when the
+  // composer button opens a CLOSED panel with a project selected (an
   // already-open panel is left alone). The nonce distinguishes repeat requests
-  // for the same sandbox.
-  const [terminalRequest, setTerminalRequest] = useState<{ id: string; name: string; projectId: string; projectName?: string; nonce: number } | null>(null);
+  // for the same project.
+  const [terminalRequest, setTerminalRequest] = useState<{ projectId: string; projectName?: string; targetName?: string; nonce: number } | null>(null);
   const terminalOpenRef = useRef(false);
   terminalOpenRef.current = terminalOpen;
   const terminalNonceRef = useRef(0);
-  const handleTerminalOpen = useCallback((sandbox?: { id: string; name: string; projectId: string; projectName?: string }) => {
-    if (!terminalOpenRef.current && sandbox) {
-      setTerminalRequest({ ...sandbox, nonce: ++terminalNonceRef.current });
+  const handleTerminalOpen = useCallback((project?: { projectId: string; projectName?: string; targetName?: string }) => {
+    if (!terminalOpenRef.current && project) {
+      setTerminalRequest({ ...project, nonce: ++terminalNonceRef.current });
     }
     setTerminalOpen(true);
     setTerminalEverOpened(true);
@@ -585,15 +585,14 @@ function App() {
     api.sessions.get(activeSession)
       .then((sess) => {
         if (cancelled) return;
-        const s = sess as { name?: string; sandbox_id?: string; project_id?: string };
+        const s = sess as { name?: string; project_id?: string };
         // A binding announced while this fetch was in flight wins: the fetch
         // read the row before the bind landed, and bindings never change.
         const announced = announcedBindings.current[activeSession];
         setSessionMeta({
           id: activeSession,
           name: s?.name || '',
-          sandboxId: announced ? announced.sandboxId : (s?.sandbox_id || ''),
-          projectId: announced ? announced.projectId : (s?.project_id || ''),
+          projectId: announced || s?.project_id || '',
         });
         tryLoad();
       })
@@ -624,16 +623,14 @@ function App() {
         setSessionMeta(prev => (prev && prev.id === p.session_id ? { ...prev, name: title } : prev));
       }
     });
-    wsRef.current.on(EV.sessionSandboxBound, (p: { session_id?: string; sandbox_id?: string; project_id?: string }) => {
-      if (p?.session_id && p.sandbox_id) {
+    wsRef.current.on(EV.sessionProjectBound, (p: { session_id?: string; project_id?: string }) => {
+      if (p?.session_id && p.project_id) {
         // Record first, then patch the live meta. The record is what makes the
         // announcement survive the meta being null (session switch mid-fetch):
         // the fetch merges it when it lands.
-        announcedBindings.current[p.session_id] = { sandboxId: p.sandbox_id, projectId: p.project_id || '' };
-        setSessionMeta(prev => (prev && prev.id === p.session_id
-          ? { ...prev, sandboxId: p.sandbox_id!, projectId: p.project_id || '' }
-          : prev));
-        // The bind may have created its scratch project: refresh the pickers.
+        const projectID = p.project_id;
+        announcedBindings.current[p.session_id] = projectID;
+        setSessionMeta(prev => (prev && prev.id === p.session_id ? { ...prev, projectId: projectID } : prev));
         setBindingsVersion(v => v + 1);
       }
     });
@@ -651,7 +648,7 @@ function App() {
   // workflow, the rest is its brief. Without a conversation open it makes
   // one, as a message would; the started note the server writes into the
   // conversation is what the reload brings in.
-  const runWorkflowCommand = useCallback(async (rest: string, agentConfigId?: string, sandboxId?: string, projectId?: string) => {
+  const runWorkflowCommand = useCallback(async (rest: string, agentConfigId?: string, projectId?: string) => {
     const spec = rest.trim();
     if (!spec) {
       toast.error('Which workflow? /workflow <name> <brief>');
@@ -692,17 +689,14 @@ function App() {
       // The composer's project rides along, as it does on a message: an
       // unbound conversation is bound to it before the start, so the
       // execution has its file and command tools.
-      const body: { session_id: string; input: string; sandbox_id?: string; project_id?: string } = { session_id: sid, input: brief };
-      if (sandboxId) {
-        body.sandbox_id = sandboxId;
-        if (projectId) body.project_id = projectId;
-      }
+      const body: { session_id: string; input: string; project_id?: string } = { session_id: sid, input: brief };
+      if (projectId) body.project_id = projectId;
       await api.workflows.run(wf.id, body);
       toast.success(`Started "${wf.name}" in the background — the result comes back here`);
       // The one thing the person cannot see from here: a conversation with
       // no project — bound or picked — gives the workflow no file or command
       // tools.
-      const bound = (sessionMeta && sessionMeta.id === sid ? !!sessionMeta.sandboxId : false) || !!sandboxId;
+      const bound = (sessionMeta && sessionMeta.id === sid ? !!sessionMeta.projectId : false) || !!projectId;
       if (!bound) toast.info('This conversation has no project — the workflow has no file or command tools');
       await reloadTimeline(sid);
     } catch (e) {
@@ -710,7 +704,7 @@ function App() {
     }
   }, [activeSession, sessionMeta, reloadTimeline]);
 
-  const handleSend = useCallback(async (input: string, agentConfigId?: string, sandboxId?: string, projectId?: string) => {
+  const handleSend = useCallback(async (input: string, agentConfigId?: string, projectId?: string) => {
     if (!wsRef.current) return;
     if (!wsRef.current.isConnected()) {
       toast.error('WebSocket disconnected — message not sent');
@@ -719,7 +713,7 @@ function App() {
     // `/workflow <name> <brief>` starts a workflow into this conversation
     // instead of a turn — the composer's way to what the hub's Run… does.
     if (WORKFLOW_COMMAND.test(input)) {
-      await runWorkflowCommand(input.replace(WORKFLOW_COMMAND, ''), agentConfigId, sandboxId, projectId);
+      await runWorkflowCommand(input.replace(WORKFLOW_COMMAND, ''), agentConfigId, projectId);
       return;
     }
     // `/plan <message>` asks for a plan before any change: the message runs
@@ -769,10 +763,7 @@ function App() {
     const payload: Record<string, unknown> = { session_id: sid, input: text, agent_config_id: agentConfigId };
     if (planned) payload.plan = true;
     if (planOff) payload.plan = false;
-    if (sandboxId) {
-      payload.sandbox_id = sandboxId;
-      if (projectId) payload.project_id = projectId;
-    }
+    if (projectId) payload.project_id = projectId;
     if (!wsRef.current.send(EV.runCreate, payload)) {
       // The socket dropped between the isConnected() check and the send: roll
       // back the optimistic bubble so it isn't left stranded with no run.
@@ -902,7 +893,7 @@ function App() {
   // It used to fork a whole new session per attempt, which is why a chat list
   // filled up with "(regen 2)", "(regen 3)" and no way to compare them — the
   // attempts now live in one session, switchable.
-  const handleRegenerate = useCallback(async (userEntryId: string, userContent: string, agentConfigId: string, sandboxId: string, projectId?: string) => {
+  const handleRegenerate = useCallback(async (userEntryId: string, userContent: string, agentConfigId: string, projectId?: string) => {
     if (!activeSession || !wsRef.current) return;
     try {
       await api.sessions.branch(activeSession, userEntryId);
@@ -914,12 +905,9 @@ function App() {
       // Empty input: the run answers the branch we just switched to rather
       // than adding a new user message. The server maps it to an empty item list.
       const payload: Record<string, unknown> = { session_id: activeSession, input: '', agent_config_id: agentConfigId };
-      if (sandboxId) {
-        payload.sandbox_id = sandboxId;
-        // A regen can be an unbound session's first sandbox-carrying run, so
-        // the project choice rides along; a bound session ignores it anyway.
-        if (projectId) payload.project_id = projectId;
-      }
+      // A regen can be an unbound session's first project-carrying run, so
+      // the project choice rides along; a bound session ignores it anyway.
+      if (projectId) payload.project_id = projectId;
       if (!wsRef.current.send(EV.runCreate, payload)) {
         toast.error('WebSocket disconnected — message not sent');
       }
@@ -977,8 +965,8 @@ function App() {
   // Stable reference so MemoizedChatView's shallow compare isn't defeated by a
   // fresh object literal every render.
   const sessionBinding = useMemo(() =>
-    sessionMeta && sessionMeta.id === activeSession && sessionMeta.sandboxId
-      ? { sandboxId: sessionMeta.sandboxId, projectId: sessionMeta.projectId }
+    sessionMeta && sessionMeta.id === activeSession && sessionMeta.projectId
+      ? { projectId: sessionMeta.projectId }
       : null,
   [sessionMeta, activeSession]);
 

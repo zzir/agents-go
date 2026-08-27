@@ -107,7 +107,6 @@ type RunOutcome struct {
 	RunID         string
 	SessionID     string
 	AgentConfigID string
-	SandboxID     string
 	ProjectID     string
 	// ErrCode/ErrMessage describe a failed run (mirroring the run.error event)
 	// so terminal bookkeeping and the synchronous REST response need not have
@@ -127,28 +126,28 @@ type RunOutcome struct {
 // started it). It returns the run id; subscribe via Hub() to stream events.
 // onDone, if non-nil, is invoked once when the run terminates. It fails with
 // ErrSessionBusy when the session already has a live run.
-func (r *Runner) StartRun(sessionID, agentConfigID, sandboxID, projectID, input string, plan *bool, onDone func(*RunOutcome)) (string, error) {
-	return r.startRunWithID(store.NewID(), sessionID, agentConfigID, sandboxID, projectID, input, "", plan, onDone)
+func (r *Runner) StartRun(sessionID, agentConfigID, projectID, input string, plan *bool, onDone func(*RunOutcome)) (string, error) {
+	return r.startRunWithID(store.NewID(), sessionID, agentConfigID, projectID, input, "", plan, onDone)
 }
 
 // StartWakeRun is StartRun for a task notification delivery: same launch, plus
 // the lineage (the run whose spawn started the chain) the trace records.
-func (r *Runner) StartWakeRun(sessionID, agentConfigID, sandboxID, projectID, input, parentRunID string, onDone func(*RunOutcome)) (string, error) {
-	return r.startRunWithID(store.NewID(), sessionID, agentConfigID, sandboxID, projectID, input, parentRunID, nil, onDone)
+func (r *Runner) StartWakeRun(sessionID, agentConfigID, projectID, input, parentRunID string, onDone func(*RunOutcome)) (string, error) {
+	return r.startRunWithID(store.NewID(), sessionID, agentConfigID, projectID, input, parentRunID, nil, onDone)
 }
 
 // startRunWithID is StartRun with a caller-chosen run id — SpawnTask mints the
 // task's run id up front so the row can carry it before the run launches.
-func (r *Runner) startRunWithID(runID, sessionID, agentConfigID, sandboxID, projectID, input, wakeParentRunID string, planIntent *bool, onDone func(*RunOutcome)) (string, error) {
-	return r.startRunReserved(runID, sessionID, agentConfigID, sandboxID, projectID, input, wakeParentRunID, planIntent, onDone, nil)
+func (r *Runner) startRunWithID(runID, sessionID, agentConfigID, projectID, input, wakeParentRunID string, planIntent *bool, onDone func(*RunOutcome)) (string, error) {
+	return r.startRunReserved(runID, sessionID, agentConfigID, projectID, input, wakeParentRunID, planIntent, onDone, nil)
 }
 
 // startRunReserved is startRunWithID with a hook that runs once the session
 // is RESERVED for the run and before it launches — for a write that must
 // precede the run's own (a trigger's note before the message it sends) and
 // must not happen when the run is refused.
-func (r *Runner) startRunReserved(runID, sessionID, agentConfigID, sandboxID, projectID, input, wakeParentRunID string, planIntent *bool, onDone func(*RunOutcome), reserved func()) (string, error) {
-	seg, ctx, plan, boundNow, err := r.reserveRun(runID, sessionID, agentConfigID, sandboxID, projectID)
+func (r *Runner) startRunReserved(runID, sessionID, agentConfigID, projectID, input, wakeParentRunID string, planIntent *bool, onDone func(*RunOutcome), reserved func()) (string, error) {
+	seg, ctx, plan, boundNow, err := r.reserveRun(runID, sessionID, agentConfigID, projectID)
 	if err != nil {
 		return "", err
 	}
@@ -169,14 +168,14 @@ func (r *Runner) startRunReserved(runID, sessionID, agentConfigID, sandboxID, pr
 	// After register+OnRunAttach so every live connection is attached to this
 	// run's stream and receives the announcement (replayed to late joiners).
 	if boundNow {
-		if env, err := protocol.NewEnvelope(protocol.EventSessionSandboxBound, protocol.SessionSandboxBound{
-			SessionID: sessionID, SandboxID: plan.sandboxID, ProjectID: plan.projectID,
+		if env, err := protocol.NewEnvelope(protocol.EventSessionProjectBound, protocol.SessionProjectBound{
+			SessionID: sessionID, ProjectID: plan.projectID,
 		}); err == nil {
 			r.hub.publish(runID, env)
 		}
 	}
 	r.launchSegment(seg, runID, sessionID, onDone, func() *RunOutcome {
-		return r.runStreamed(ctx, runID, sessionID, agentConfigID, plan.sandboxID, plan.projectID, input, wakeParentRunID)
+		return r.runStreamed(ctx, runID, sessionID, agentConfigID, plan.projectID, input, wakeParentRunID)
 	})
 	return runID, nil
 }
@@ -235,7 +234,7 @@ type segmentSpec struct {
 
 // execStreamed executes one run segment — fresh or resumed — to completion,
 // publishing events to the hub, and returns its outcome.
-func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfigID, sandboxID, projectID string, spec segmentSpec) (out *RunOutcome) {
+func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfigID, projectID string, spec segmentSpec) (out *RunOutcome) {
 	log := logging.Ctx(ctx)
 	// Stamp the run id so a spawn_task inside the run records which run spawned
 	// it — that is what lets the trace panel nest the task's wake-up run here.
@@ -274,7 +273,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	sendEvent(protocol.EventRunStarted, started)
 
 	mkResult := func() *RunOutcome {
-		return &RunOutcome{RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID, ProjectID: projectID}
+		return &RunOutcome{RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, ProjectID: projectID}
 	}
 	mkErrResult := func(code, msg string) *RunOutcome {
 		res := mkResult()
@@ -360,7 +359,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	// Build fully configured agent from DB config. A BACKGROUND run — a task's,
 	// a workflow step's; both task sessions — is built without the tools and
 	// modes that only make sense with a person in front of them.
-	built, err := buildFullAgent(ctx, r.Deps, agentConfigID, sandboxID, projectID, task != nil, ownerID)
+	built, err := buildFullAgent(ctx, r.Deps, agentConfigID, projectID, task != nil, ownerID)
 	if err != nil {
 		return failTurn("", protocol.CodeConfigError, err, "", "")
 	}
@@ -428,7 +427,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 		return failTurn(agent.Model, spec.failCode, err, streamedReasoning, streamedText)
 	}
 
-	out, err = r.finishResult(res, runID, sessionID, agentConfigID, sandboxID, projectID, sendEvent)
+	out, err = r.finishResult(res, runID, sessionID, agentConfigID, projectID, sendEvent)
 	if err != nil {
 		// The pause could not be made durable: a decision would have nothing
 		// to act on (workbench invariant 37 lists what an approval IS — a row).
@@ -441,8 +440,8 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 
 // runStreamed executes one fresh run segment to completion, publishing events
 // to the hub, and returns its outcome.
-func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigID, sandboxID, projectID, input, wakeParentRunID string) *RunOutcome {
-	return r.execStreamed(ctx, runID, sessionID, agentConfigID, sandboxID, projectID, segmentSpec{
+func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigID, projectID, input, wakeParentRunID string) *RunOutcome {
+	return r.execStreamed(ctx, runID, sessionID, agentConfigID, projectID, segmentSpec{
 		input:           input,
 		wakeParentRunID: wakeParentRunID,
 		failCode:        "stream_error",
@@ -473,7 +472,7 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 // returns an error the run is withdrawn and nothing executes — this is what
 // closes the window where an approved tool could run and cause a side effect
 // before a post-launch recheck could cancel it.
-func (r *Runner) ResumeRun(runID string, state *agents.RunState, sessionID, agentConfigID, sandboxID, projectID string, verify func() error, onDone func(*RunOutcome)) (string, error) {
+func (r *Runner) ResumeRun(runID string, state *agents.RunState, sessionID, agentConfigID, projectID string, verify func() error, onDone func(*RunOutcome)) (string, error) {
 	meta, err := r.taskMeta(r.hub.rootCtx, sessionID)
 	if err != nil {
 		return "", err
@@ -482,7 +481,7 @@ func (r *Runner) ResumeRun(runID string, state *agents.RunState, sessionID, agen
 	if err != nil {
 		return "", err
 	}
-	seg, ctx, reopened, err := r.hub.resume(runID, sessionID, sess.OwnerID, agentConfigID, sandboxID, projectID, meta)
+	seg, ctx, reopened, err := r.hub.resume(runID, sessionID, sess.OwnerID, agentConfigID, projectID, meta)
 	if err != nil {
 		return "", err
 	}
@@ -498,7 +497,7 @@ func (r *Runner) ResumeRun(runID string, state *agents.RunState, sessionID, agen
 		r.OnRunAttach(runID)
 	}
 	r.launchSegment(seg, runID, sessionID, onDone, func() *RunOutcome {
-		return r.resumeStreamed(ctx, runID, state, sessionID, agentConfigID, sandboxID, projectID)
+		return r.resumeStreamed(ctx, runID, state, sessionID, agentConfigID, projectID)
 	})
 	return runID, nil
 }
@@ -508,8 +507,8 @@ func (r *Runner) ResumeRun(runID string, state *agents.RunState, sessionID, agen
 // It streams through the same execStreamed pipeline as a fresh run so the
 // resumed segment's events (the approved tool's output, later turns) go live
 // instead of surfacing only in the terminal run.output.
-func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents.RunState, sessionID, agentConfigID, sandboxID, projectID string) *RunOutcome {
-	return r.execStreamed(ctx, runID, sessionID, agentConfigID, sandboxID, projectID, segmentSpec{
+func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents.RunState, sessionID, agentConfigID, projectID string) *RunOutcome {
+	return r.execStreamed(ctx, runID, sessionID, agentConfigID, projectID, segmentSpec{
 		input:    session.UserText(state.UserInput),
 		failCode: "resume_error",
 		start: func(ctx context.Context, _ *agents.Agent, opts agents.RunOptions) (agents.RunStream, agents.RunControl) {
@@ -523,13 +522,12 @@ func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents
 // decision acts on, from any connection and across a restart — and only then
 // announced; a persistence failure is returned, and the segment fails instead
 // of pausing on nothing.
-func (r *Runner) finishResult(res *agents.RunResult, runID, sessionID, agentConfigID, sandboxID, projectID string, sendEvent func(string, any)) (*RunOutcome, error) {
+func (r *Runner) finishResult(res *agents.RunResult, runID, sessionID, agentConfigID, projectID string, sendEvent func(string, any)) (*RunOutcome, error) {
 	if len(res.Interruptions) > 0 {
 		out := &RunOutcome{
 			RunID:         runID,
 			SessionID:     sessionID,
 			AgentConfigID: agentConfigID,
-			SandboxID:     sandboxID,
 			ProjectID:     projectID,
 			Interrupted:   true,
 			Interruptions: res.Interruptions,
@@ -558,7 +556,7 @@ func (r *Runner) finishResult(res *agents.RunResult, runID, sessionID, agentConf
 
 	finalText := res.FinalOutputString()
 	sendEvent(protocol.EventRunOutput, protocol.RunOutput{RunID: runID, FinalOutput: finalText})
-	return &RunOutcome{FinalText: finalText, RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, SandboxID: sandboxID, ProjectID: projectID}, nil
+	return &RunOutcome{FinalText: finalText, RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, ProjectID: projectID}, nil
 }
 
 // StopRunAfterTurn asks the in-flight run to stop gracefully after its current

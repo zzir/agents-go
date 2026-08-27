@@ -34,17 +34,13 @@ func TestProjectAdminSurface(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	projects := store.NewProjectStore(db)
-	sbStore := store.NewSandboxStore(db)
-	mgr := sandboxes.NewManager(t.TempDir())
-	h := NewProjectHandler(projects, sbStore, mgr, NewTerminalHandler(sbStore, projects, mgr, settings.NewReader(nil)))
+	mgr := sandboxes.NewManager()
+	targets, templates := mkSandboxRows(t, db)
+	h := NewProjectHandler(projects, store.NewSandboxTargetStore(db), store.NewSandboxTemplateStore(db), mgr, NewTerminalHandler(store.NewSandboxTargetStore(db), store.NewSandboxTemplateStore(db), projects, mgr, settings.NewReader(nil)))
 
-	sb := &store.SandboxConfig{ID: store.NewID(), Name: "sb", Type: "docker", Config: []byte(`{"image":"i"}`)}
-	if err := sbStore.Create(ctx, sb); err != nil {
-		t.Fatalf("create sandbox: %v", err)
-	}
 	memberID := store.NewID()
-	memberProj := &store.Project{ID: store.NewID(), OwnerID: memberID, SandboxID: sb.ID, Name: "member-proj"}
-	adminProj := &store.Project{ID: store.NewID(), OwnerID: store.LocalUserID, SandboxID: sb.ID, Name: "admin-proj"}
+	memberProj := &store.Project{ID: store.NewID(), OwnerID: memberID, TargetID: targets, TemplateID: templates, Name: "member-proj"}
+	adminProj := &store.Project{ID: store.NewID(), OwnerID: store.LocalUserID, TargetID: targets, TemplateID: templates, Name: "admin-proj"}
 	for _, p := range []*store.Project{memberProj, adminProj} {
 		if err := projects.Create(ctx, p); err != nil {
 			t.Fatalf("create project %s: %v", p.Name, err)
@@ -104,7 +100,7 @@ func TestProjectAdminSurface(t *testing.T) {
 
 	// Admin delete of a member's project: refused while a session binds it,
 	// gone once unbound.
-	sess := &store.Session{ID: store.NewID(), OwnerID: memberID, Name: "s", SandboxID: sb.ID, ProjectID: memberProj.ID}
+	sess := &store.Session{ID: store.NewID(), OwnerID: memberID, Name: "s", ProjectID: memberProj.ID}
 	sessions := store.NewSessionStore(db)
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatalf("create session: %v", err)

@@ -229,7 +229,7 @@ func restoreMcpConfig(incoming, prev json.RawMessage) json.RawMessage {
 	return restoreJSONFields(incoming, prev, true, "oauth_client_secret")
 }
 
-// storedSSHPassword reports whether a stored sandbox config actually holds a
+// storedSSHPassword reports whether a stored sandbox target actually holds a
 // password — the mask-across-host refusal only applies when there is one.
 func storedSSHPassword(prev json.RawMessage) bool {
 	var cfg struct {
@@ -256,16 +256,16 @@ func maskAcrossDestination(incoming, prev json.RawMessage, field string) bool {
 	return is != os
 }
 
-// sanitizeSandboxConfig returns cfg with its secret masked: the SSH password
+// sanitizeTargetConfig returns t with its secret masked: the SSH password
 // of a remote-daemon docker config.
-func sanitizeSandboxConfig(cfg store.SandboxConfig) store.SandboxConfig {
-	cfg.Config = maskJSONFields(cfg.Config, false, "ssh_password")
-	return cfg
+func sanitizeTargetConfig(t store.SandboxTarget) store.SandboxTarget {
+	t.Config = maskJSONFields(t.Config, false, "ssh_password")
+	return t
 }
 
-// restoreSandboxConfig resolves a masked SSH password in an incoming config
-// against the previously stored config.
-func restoreSandboxConfig(_ string, incoming, prev json.RawMessage) json.RawMessage {
+// restoreTargetConfig resolves a masked SSH password in an incoming target
+// config against the previously stored one.
+func restoreTargetConfig(incoming, prev json.RawMessage) json.RawMessage {
 	return restoreJSONFields(incoming, prev, false, "ssh_password")
 }
 

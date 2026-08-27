@@ -1,19 +1,20 @@
-/* Pure projection of the composer's sandbox area — kept out of the component
+/* Pure projection of the composer's project area — kept out of the component
    so the node-environment vitest suite can cover it. */
 
-export interface SandboxConfigLite {
+export interface SandboxTargetLite {
   id: string;
   name: string;
 }
 
 /* A project row as GET /projects returns it: the named working tree a
-   sandbox's container mounts. */
+   target's container mounts. */
 export interface Project {
   id: string;
   name: string;
-  sandbox_id: string;
-  /* Where the files live (host directory or remote volume) — shown by the
-     delete dialog, since storage outlives the row. */
+  target_id: string;
+  template_id: string;
+  /* The volume the files live in, and the daemon it is on — shown by the
+     delete dialog, which destroys it. */
   storage_hint?: string;
   /* The row's write counter: an update sends back the one it was edited
      against, and a concurrent write answers 409. */
@@ -41,9 +42,9 @@ export interface ProjectDetail extends Project {
    keeps what is stored. */
 export const SECRET_MASK = '********';
 
-/* The session's permanent (sandbox_id, project_id) binding, or null while unbound. */
+/* The session's permanent project binding, or null while unbound. The project
+   pins the target, so one id is the whole binding. */
 export interface SessionBinding {
-  sandboxId: string;
   projectId: string;
 }
 
@@ -54,22 +55,22 @@ export interface ComposerSandboxView {
   title: string;
 }
 
-export function projectLabel(projectName: string, sandboxName: string): string {
-  return `${projectName} @ ${sandboxName}`;
+export function projectLabel(projectName: string, targetName: string): string {
+  return `${projectName} @ ${targetName}`;
 }
 
-/* The picker's grouped view: one group per sandbox, groups in configs order,
-   items in server order (name ASC). Projects whose sandbox config no longer
-   exists are dropped — they cannot be started again. */
+/* The picker's grouped view: one group per target, groups in targets order,
+   items in server order (name ASC). Projects whose target no longer exists are
+   dropped — they cannot be started again. */
 export function groupProjects(
   projects: Project[] | null,
-  configs: SandboxConfigLite[] | null,
-): Array<{ sandboxId: string; sandboxName: string; items: Project[] }> {
-  if (!projects || !configs) return [];
-  const groups: Array<{ sandboxId: string; sandboxName: string; items: Project[] }> = [];
-  for (const cfg of configs) {
-    const items = projects.filter(p => p.sandbox_id === cfg.id);
-    if (items.length > 0) groups.push({ sandboxId: cfg.id, sandboxName: cfg.name, items });
+  targets: SandboxTargetLite[] | null,
+): Array<{ targetId: string; targetName: string; items: Project[] }> {
+  if (!projects || !targets) return [];
+  const groups: Array<{ targetId: string; targetName: string; items: Project[] }> = [];
+  for (const t of targets) {
+    const items = projects.filter(p => p.target_id === t.id);
+    if (items.length > 0) groups.push({ targetId: t.id, targetName: t.name, items });
   }
   return groups;
 }
@@ -77,16 +78,19 @@ export function groupProjects(
 export function composerSandboxView(
   binding: SessionBinding | null,
   projects: Project[] | null,
-  configs: SandboxConfigLite[] | null,
+  targets: SandboxTargetLite[] | null,
 ): ComposerSandboxView {
-  if (binding && binding.sandboxId) {
-    const cfg = configs?.find(c => c.id === binding.sandboxId);
-    const name = cfg?.name || binding.sandboxId;
-    // No uuid fallback: while the projects fetch is in flight the title
-    // carries just the sandbox name.
-    const projectName = projects?.find(p => p.id === binding.projectId)?.name || '';
-    let title = projectName ? `${name} — ${projectName}` : name;
-    if (!cfg) title = `${binding.sandboxId} — this sandbox no longer exists; runs fail until it is restored`;
+  if (binding && binding.projectId) {
+    const project = projects?.find(p => p.id === binding.projectId);
+    if (!project) {
+      // Either the projects fetch is still in flight or the row is gone; the
+      // id is all there is to say.
+      return { bound: true, title: binding.projectId };
+    }
+    const target = targets?.find(t => t.id === project.target_id);
+    const title = target
+      ? projectLabel(project.name, target.name)
+      : `${project.name} — this project's machine no longer exists; runs fail until it is restored`;
     return { bound: true, title };
   }
   return { bound: false, title: '' };

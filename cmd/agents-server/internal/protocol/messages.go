@@ -57,10 +57,10 @@ const (
 	EventRunDiagnostic       = "run.diagnostic"
 	EventRunGap              = "run.gap"
 	EventSessionTitleUpdated = "session.title_updated"
-	// EventSessionSandboxBound announces that a session's first sandbox-carrying
-	// run permanently bound (sandbox_id, project_id) to it — published exactly
-	// once, by the run that won the bind.
-	EventSessionSandboxBound = "session.sandbox_bound"
+	// EventSessionProjectBound announces that a session's first
+	// project-carrying run permanently bound a project to it — published
+	// exactly once, by the run that won the bind.
+	EventSessionProjectBound = "session.project_bound"
 	// EventTaskUpdated tells a parent session's subscribers that one of its
 	// background tasks changed state — spawned, paused, moved to its next run,
 	// ended. It rides the TASK run's stream (every connection is attached to
@@ -114,14 +114,13 @@ func NewEnvelope(typ string, payload any) (*Envelope, error) {
 // Client → Server messages
 
 // RunCreate is the client request to start a new run within a session.
-// SandboxID/ProjectID only matter until the session's first sandbox-carrying run
-// binds them permanently; after that the server uses the bound values and
-// ignores what the client sends.
+// ProjectID only matters until the session's first project-carrying run binds
+// it permanently; after that the server uses the bound value and ignores what
+// the client sends.
 type RunCreate struct {
 	SessionID     string `json:"session_id"`
 	Input         string `json:"input"`
 	AgentConfigID string `json:"agent_config_id,omitempty"`
-	SandboxID     string `json:"sandbox_id,omitempty"`
 	ProjectID     string `json:"project_id,omitempty"`
 	// Plan is what this request asks of the session's plan phase: true runs it
 	// read-only until a plan is approved, false leaves planning, and ABSENT
@@ -182,9 +181,8 @@ type ToolReject struct {
 // /ws/terminal; it must be the first message after auth. Cols/Rows of zero
 // use the backend defaults (80x24).
 type TerminalOpen struct {
-	SandboxID string `json:"sandbox_id"`
-	// ProjectID selects the container to open the shell in — a shell lands in
-	// the (sandbox, project) container a session on that pair uses.
+	// ProjectID selects the container to open the shell in — the project's
+	// own, the same one a session bound to it uses.
 	ProjectID string `json:"project_id"`
 	Cols      int    `json:"cols,omitempty"`
 	Rows      int    `json:"rows,omitempty"`
@@ -444,12 +442,11 @@ type SessionTitleUpdated struct {
 	Title     string `json:"title"`
 }
 
-// SessionSandboxBound notifies the client that the session is now permanently
-// bound to (sandbox_id, project_id).
-type SessionSandboxBound struct {
+// SessionProjectBound notifies the client that the session is now permanently
+// bound to project_id.
+type SessionProjectBound struct {
 	SessionID string `json:"session_id"`
-	SandboxID string `json:"sandbox_id"`
-	ProjectID string `json:"project_id,omitempty"`
+	ProjectID string `json:"project_id"`
 }
 
 // TaskUpdated is a task's state as its parent session's subscribers should

@@ -16,19 +16,19 @@ type ProjectStore struct {
 	db *bun.DB
 }
 
-// NewProjectStore returns a ProjectStore backed by db. (owner, sandbox, name)
-// uniqueness is enforced by the DB (idx_projects_owner_sandbox_name).
+// NewProjectStore returns a ProjectStore backed by db. (owner, target, name)
+// uniqueness is enforced by the DB (idx_projects_owner_target_name).
 func NewProjectStore(db *bun.DB) *ProjectStore {
 	return &ProjectStore{CrudStore: NewCrudStore[Project](db, "project", "name ASC").withSecrets(sealProject, openProject), db: db}
 }
 
-// Create inserts the project while its sandbox row still exists: the sandbox
-// row is locked (lockRow) for the insert's duration, so a racing sandbox
-// delete either cascades this row or arrives first and refuses the create —
-// never an orphan project (decisions §5.28). ErrNotFound names the sandbox.
-// The insert is its own transaction, bypassing the CrudStore write path that
-// seals — hence sealedWrite here, or the one path that CREATES an environment
-// would write it in the clear.
+// Create inserts the project while both rows it names still exist: the target
+// and the template are locked (lockRow) for the insert's duration, so a racing
+// delete of either arrives first and refuses the create — never an orphan
+// project (decisions §5.28). ErrNotFound names which one was missing. The
+// insert is its own transaction, bypassing the CrudStore write path that seals
+// — hence sealedWrite here, or the one path that CREATES an environment would
+// write it in the clear.
 func (s *ProjectStore) Create(ctx context.Context, p *Project) error {
 	if p.Revision == 0 {
 		p.Revision = 1
@@ -38,9 +38,15 @@ func (s *ProjectStore) Create(ctx context.Context, p *Project) error {
 	}
 	err := sealedWrite(p, sealProject, openProject, func() error {
 		return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-			if err := lockRow(ctx, tx, &SandboxConfig{}, "id = ?", p.SandboxID); err != nil {
+			if err := lockRow(ctx, tx, &SandboxTarget{}, "id = ?", p.TargetID); err != nil {
 				if errors.Is(err, ErrNotFound) {
-					return fmt.Errorf("sandbox %s: %w", p.SandboxID, err)
+					return fmt.Errorf("sandbox target %s: %w", p.TargetID, err)
+				}
+				return err
+			}
+			if err := lockRow(ctx, tx, &SandboxTemplate{}, "id = ?", p.TemplateID); err != nil {
+				if errors.Is(err, ErrNotFound) {
+					return fmt.Errorf("sandbox template %s: %w", p.TemplateID, err)
 				}
 				return err
 			}
@@ -54,13 +60,13 @@ func (s *ProjectStore) Create(ctx context.Context, p *Project) error {
 	return nil
 }
 
-// Update overwrites the project's editable fields — name and environment —
-// under the same compare-and-set the sandbox config uses: the write lands
-// only while the row is still at expectedRevision (see ErrRevisionConflict).
-// contentChanged bumps the runtime generation alongside the revision; a
-// rename moves the revision alone so nothing downstream replaces a container
-// or severs a terminal. Owner and sandbox are the project's identity and are
-// not writable here.
+// Update overwrites the project's editable fields — name, template and
+// environment — under the same compare-and-set the target uses: the write
+// lands only while the row is still at expectedRevision (see
+// ErrRevisionConflict). contentChanged bumps the runtime generation alongside
+// the revision; a rename moves the revision alone so nothing downstream
+// replaces a container or severs a terminal. Owner and target are the
+// project's identity and are not writable here (decisions §5.33).
 func (s *ProjectStore) Update(ctx context.Context, id string, p *Project, expectedRevision int64, contentChanged bool) error {
 	p.ID = id
 	genBump := 0
@@ -68,15 +74,28 @@ func (s *ProjectStore) Update(ctx context.Context, id string, p *Project, expect
 		genBump = 1
 	}
 	var res sql.Result
-	err := sealedWrite(p, sealProject, openProject, func() (err error) {
-		res, err = s.db.NewUpdate().Model(p).
-			Column("name", "env", "updated_at").
-			Set("revision = revision + 1").
-			Set("runtime_gen = runtime_gen + ?", genBump).
-			Where("id = ?", id).
-			Where("revision = ?", expectedRevision).
-			Exec(ctx)
-		return err
+	err := sealedWrite(p, sealProject, openProject, func() error {
+		// The template row is locked for the write's duration, exactly as the
+		// create locks it: a template delete is guarded by "no project uses
+		// me", so switching a project ONTO a template racing its delete would
+		// otherwise leave a project pointing at nothing.
+		return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+			if err := lockRow(ctx, tx, &SandboxTemplate{}, "id = ?", p.TemplateID); err != nil {
+				if errors.Is(err, ErrNotFound) {
+					return fmt.Errorf("sandbox template %s: %w", p.TemplateID, err)
+				}
+				return err
+			}
+			var uerr error
+			res, uerr = tx.NewUpdate().Model(p).
+				Column("name", "template_id", "env", "updated_at").
+				Set("revision = revision + 1").
+				Set("runtime_gen = runtime_gen + ?", genBump).
+				Where("id = ?", id).
+				Where("revision = ?", expectedRevision).
+				Exec(ctx)
+			return uerr
+		})
 	})
 	if err != nil {
 		return fmt.Errorf("updating project %s: %w", id, err)
@@ -92,6 +111,44 @@ func (s *ProjectStore) Update(ctx context.Context, id string, p *Project, expect
 		return fmt.Errorf("updating project %s: %w", id, ErrNotFound)
 	}
 	return ErrRevisionConflict
+}
+
+// ProjectGen is one project's id paired with its runtime generation after a
+// bump — what the caller needs to retire that project's live instance and
+// terminals, without re-reading the rows.
+type ProjectGen struct {
+	ID         string `bun:"id"`
+	RuntimeGen int64  `bun:"runtime_gen"`
+}
+
+// BumpRuntimeGen moves the runtime generation of every project whose column
+// holds id, and reports the projects it moved with their new generations. It
+// is how a target or template content change reaches the containers built from
+// it: the project's generation is the workbench's ONE runtime axis
+// (decisions §5.33), so a change anywhere upstream shows up as a project the
+// manager already knows how to retire.
+//
+// column is a fixed identifier chosen by the caller (target_id / template_id),
+// never user input. The read is inside the write's transaction, so the
+// generations reported are exactly the ones the update wrote.
+func (s *ProjectStore) BumpRuntimeGen(ctx context.Context, column, id string) ([]ProjectGen, error) {
+	var out []ProjectGen
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewUpdate().Model((*Project)(nil)).
+			Set("runtime_gen = runtime_gen + 1").
+			Where("? = ?", bun.Ident(column), id).
+			Exec(ctx); err != nil {
+			return err
+		}
+		return tx.NewSelect().Model((*Project)(nil)).
+			Column("id", "runtime_gen").
+			Where("? = ?", bun.Ident(column), id).
+			Scan(ctx, &out)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("bumping project generations for %s %s: %w", column, id, err)
+	}
+	return out, nil
 }
 
 // List returns one user's projects, or every owner's for EveryOwner (the
@@ -114,47 +171,12 @@ func (s *ProjectStore) List(ctx context.Context, ownerID string) ([]Project, err
 	return out, nil
 }
 
-// EnsureDefault returns the owner's default project on the sandbox, creating
-// it on first use. The insert race resolves through the unique name index:
-// the loser re-reads the winner's row.
-func (s *ProjectStore) EnsureDefault(ctx context.Context, ownerID, sandboxID string) (*Project, error) {
-	get := func() (*Project, error) {
-		p := new(Project)
-		err := s.db.NewSelect().Model(p).
-			Where("owner_id = ?", ownerID).
-			Where("sandbox_id = ?", sandboxID).
-			Where("name = ?", DefaultProjectName).
-			Scan(ctx)
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
-		}
-		if err != nil {
-			return nil, fmt.Errorf("finding default project: %w", err)
-		}
-		return p, nil
-	}
-	if p, err := get(); err != nil || p != nil {
-		return p, err
-	}
-	p := &Project{OwnerID: ownerID, SandboxID: sandboxID, Name: DefaultProjectName}
-	err := s.Create(ctx, p)
-	if err == nil {
-		return p, nil
-	}
-	if _, dup := UniqueViolation(err); dup {
-		if won, gerr := get(); gerr == nil && won != nil {
-			return won, nil
-		}
-	}
-	return nil, err
-}
-
 // DeleteIfUnreferenced deletes the project only while no session binds it —
-// one atomic statement, the same race-free guard a sandbox delete uses
-// (mirrored by BindSandboxIfEmpty's EXISTS on this table). It returns how
-// many sessions blocked the delete; 0 with a nil error means deleted. The
-// project's storage (host directory or remote volume) is NOT touched — data
-// outlives the row on purpose.
+// one atomic statement, the same race-free guard a target delete uses
+// (mirrored by BindProjectIfEmpty's EXISTS on this table). It returns how
+// many sessions blocked the delete; 0 with a nil error means deleted.
+// Reclaiming the storage is the caller's act, once the row is gone
+// (decisions §5.33).
 func (s *ProjectStore) DeleteIfUnreferenced(ctx context.Context, id string) (refs int, err error) {
 	res, err := s.db.NewDelete().Model((*Project)(nil)).
 		Where("id = ?", id).

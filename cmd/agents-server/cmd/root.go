@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -26,7 +25,6 @@ var (
 	flagHost           string
 	flagPort           int
 	flagDB             string
-	flagWorkspace      string
 	flagToken          string
 	flagMaxTasks       int
 	flagLogLevel       string
@@ -53,7 +51,6 @@ func init() {
 	rootCmd.Flags().StringVar(&flagHost, "host", "127.0.0.1", "Bind address (use 0.0.0.0 for LAN access)")
 	rootCmd.Flags().IntVar(&flagPort, "port", 9527, "HTTP server port")
 	rootCmd.Flags().StringVar(&flagDB, "db", "data.db", "SQLite database path, or a postgres:// DSN")
-	rootCmd.Flags().StringVar(&flagWorkspace, "workspace", ".", "Workspace directory")
 	rootCmd.Flags().StringVar(&flagToken, "token", "", "Authentication token (auto-generated if empty)")
 	rootCmd.Flags().IntVar(&flagMaxTasks, "max-tasks", 0, "Max live background tasks per session (0 = default 6)")
 	rootCmd.Flags().StringVar(&flagLogLevel, "log-level", "info", "Log level: debug, info, warn, error")
@@ -121,12 +118,6 @@ func run(_ *cobra.Command, _ []string) error {
 			return err
 		}
 	}
-	// Absolute, because "." means nothing to a browser reading it.
-	workspaceAbs, err := filepath.Abs(flagWorkspace)
-	if err != nil {
-		return fmt.Errorf("resolving the workspace path: %w", err)
-	}
-
 	// Stored credentials are sealed under one process key. Without a key they
 	// are plaintext — the single-user workbench — and the log says so once.
 	box, err := secrets.FromEnvOrFile("AGENTS_SECRET_KEY", flagSecretKeyFile)
@@ -160,7 +151,7 @@ func run(_ *cobra.Command, _ []string) error {
 	}
 	svc := newBridge(ctx, bgCtx, db, st, recordAudit)
 	defer svc.Close()
-	hs := newHandlers(st, svc, recordAudit, baseURL, workspaceAbs)
+	hs := newHandlers(st, svc, recordAudit, baseURL)
 
 	// The restart reconciliation, in two halves that have opposite ordering
 	// needs.
@@ -216,7 +207,7 @@ func run(_ *cobra.Command, _ []string) error {
 	}
 
 	go func() {
-		log.Info("server started", "addr", addr, "workspace", flagWorkspace)
+		log.Info("server started", "addr", addr)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			// Nothing above can recover from a dead listener, and staying up
 			// would leave a process serving nobody.

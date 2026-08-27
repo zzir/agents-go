@@ -69,28 +69,16 @@ func TestConfigFingerprint(t *testing.T) {
 			t.Fatal("the fingerprint of a multi-entry Env is not stable across calls")
 		}
 	}
-	// UserUnset makes any User value moot (the container runs the image
-	// default either way), so a leftover User must not split the fingerprint.
-	unsetA, unsetB := base, base
-	unsetA.UserUnset = true
-	unsetB.UserUnset, unsetB.User = true, "leftover:value"
-	if fp(unsetA) != fp(unsetB) {
-		t.Error("a moot User value under UserUnset changed the fingerprint")
-	}
-
 	diff := map[string]Options{}
 	o := base
 	o.Image = "other"
 	diff["image"] = o
 	o = base
-	o.Network = true
+	o.Network = "agents-net"
 	diff["network"] = o
 	o = base
 	o.User = "0:0"
 	diff["user"] = o
-	o = base
-	o.UserUnset = true
-	diff["userUnset"] = o
 	o = base
 	o.Runtime = "runsc"
 	diff["runtime"] = o
@@ -132,32 +120,35 @@ func TestPersistentConfig_CarriesFingerprintLabel(t *testing.T) {
 	}
 }
 
-// New defaults User to 65534:65534 (unless UserUnset), and persistent mode
-// must actually apply it — the security default documented on Options.User.
-func TestPersistentConfig_DefaultsToNobody(t *testing.T) {
+// An empty User keeps the image's own user — the container is the isolation
+// boundary, and one that cannot install a package cannot do the work.
+// Persistent mode also relaxes the read-only root fs, which is what makes the
+// install possible.
+func TestPersistentConfig_EmptyUserKeepsImageDefault(t *testing.T) {
 	sb, err := New(Options{Image: "x", Persistent: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer sb.Close()
 	cfg, host := sb.buildPersistentConfig()
-	if cfg.User != "65534:65534" {
-		t.Errorf("persistent user = %q, want the 65534:65534 default", cfg.User)
+	if cfg.User != "" {
+		t.Errorf("persistent user = %q, want empty (the image's own user)", cfg.User)
 	}
 	if host.ReadonlyRootfs {
 		t.Error("persistent mode should relax the read-only root fs")
 	}
 }
 
-func TestPersistentConfig_UserUnsetKeepsImageDefault(t *testing.T) {
-	sb, err := New(Options{Image: "x", Persistent: true, UserUnset: true})
+// An explicit User is applied.
+func TestPersistentConfig_ExplicitUser(t *testing.T) {
+	sb, err := New(Options{Image: "x", Persistent: true, User: "root"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer sb.Close()
 	cfg, _ := sb.buildPersistentConfig()
-	if cfg.User != "" {
-		t.Errorf("user = %q, want empty (image default) with UserUnset", cfg.User)
+	if cfg.User != "root" {
+		t.Errorf("user = %q, want root", cfg.User)
 	}
 }
 
@@ -205,9 +196,10 @@ func (r *failAfterReader) Read(p []byte) (int, error) {
 // container already running, and a changed hash makes adoptNamed judge them
 // all stale — replacing the entire fleet and discarding whatever each had
 // installed. Adding an option to configFingerprint must leave this value
-// alone; only a deliberate fleet-wide replace may change it.
+// alone; only a deliberate fleet-wide replace may change it. (Last moved when
+// Network became a name and the UserUnset flag went away.)
 func TestConfigFingerprintWithoutEnv(t *testing.T) {
-	const golden = "1db392d7d64691b913831ec470a46899"
+	const golden = "5698357ac43dfd5d15202737a6f8afba"
 	s := &Sandbox{opts: Options{Image: "img", User: "65534:65534", WorkDir: "/srv/data"}}
 	if got := s.configFingerprint(); got != golden {
 		t.Errorf("fingerprint = %s, want %s — every existing container would be replaced", got, golden)

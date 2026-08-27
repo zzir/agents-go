@@ -361,8 +361,6 @@ components:
           type: string
         run_id:
           type: string
-        sandbox_id:
-          type: string
         session_id:
           type: string
         status:
@@ -506,11 +504,6 @@ components:
           type: integer
         version:
           type: string
-        workspace:
-          description: |-
-            Workspace is absolute: the relative default (".") means nothing to a
-            browser on another machine.
-          type: string
       type: object
     handler.SessionApproval:
       properties:
@@ -528,8 +521,6 @@ components:
         project_id:
           type: string
         run_id:
-          type: string
-        sandbox_id:
           type: string
         session_id:
           type: string
@@ -689,11 +680,9 @@ components:
           type: boolean
         project_id:
           description: |-
-            ProjectID only matters until the session's first sandbox-carrying run
-            permanently binds (sandbox_id, project_id); after that the server uses the
-            bound values and ignores both fields.
-          type: string
-        sandbox_id:
+            ProjectID only matters until the session's first project-carrying run
+            permanently binds it; after that the server uses the bound value and
+            ignores this field.
           type: string
       type: object
     handler.createRunResp:
@@ -703,25 +692,6 @@ components:
         session_id:
           type: string
         status:
-          type: string
-      type: object
-    handler.createSandboxReq:
-      properties:
-        config:
-          items:
-            type: integer
-          type: array
-          uniqueItems: false
-        name:
-          type: string
-        revision:
-          description: |-
-            Revision, on update only, is the revision the client's edit was based
-            on (from GET/List): editing from a stale form is then 409 instead of
-            silently overwriting a concurrent update. Absent (0) keeps
-            last-writer-wins. Ignored on create.
-          type: integer
-        type:
           type: string
       type: object
     handler.fireReq:
@@ -906,19 +876,19 @@ components:
         name:
           description: |-
             Name is display only — the storage is keyed by ID, so a rename moves
-            nothing. Unique per (owner, sandbox) via idx_projects_owner_sandbox_name.
+            nothing. Unique per (owner, target) via idx_projects_owner_target_name.
           type: string
         owner_id:
           type: string
         revision:
           description: |-
-            Revision and RuntimeGen are the two counters SandboxConfig carries, for
-            the same two jobs: the expected-revision CAS every update lands
-            against, and the content generation that retires live containers — so
-            a rename does not replace anyone's container.
+            Revision is the expected-revision CAS every update lands against.
+            RuntimeGen is the workbench's ONE runtime axis: it moves when this
+            project's own content changes AND when the target or template it names
+            changes underneath it, so the instance cache and the terminal registry
+            need a single fence rather than one per entity (decisions §5.33). A
+            rename moves neither container nor terminal.
           type: integer
-        sandbox_id:
-          type: string
         session_count:
           description: |-
             SessionCount is how many sessions bind this project — filled by List
@@ -926,10 +896,20 @@ components:
           type: integer
         storage_hint:
           description: |-
-            StorageHint names where the files live — the local daemon's host
-            directory or the remote daemon's volume. Derived per response by the
-            handler for admins only, never stored: deleting the row keeps the
-            storage (decisions §5.28), so the UI can say where.
+            StorageHint names where the files live — the named volume on the
+            target's daemon. Derived per response by the handler for admins only,
+            never stored: deleting the row keeps the storage (decisions §5.28), so
+            the UI can say where.
+          type: string
+        target_id:
+          description: |-
+            TargetID is the machine the tree lives on — the project's identity, set
+            at creation and never writable afterwards (decisions §5.33).
+          type: string
+        template_id:
+          description: |-
+            TemplateID is what the container is created from — content, editable
+            like the environment, reaching bound sessions at their next run.
           type: string
         updated_at:
           type: string
@@ -946,11 +926,16 @@ components:
           uniqueItems: false
         name:
           type: string
-        sandbox_id:
+        target_id:
+          description: TargetID is the machine the tree lives on — frozen after creation.
+          type: string
+        template_id:
+          description: TemplateID is what the container is created from — editable.
           type: string
       required:
       - name
-      - sandbox_id
+      - target_id
+      - template_id
       type: object
     handler.projectUpdateReq:
       properties:
@@ -963,8 +948,11 @@ components:
           type: string
         revision:
           type: integer
+        template_id:
+          type: string
       required:
       - name
+      - template_id
       type: object
     handler.providerReq:
       properties:
@@ -1007,17 +995,51 @@ components:
         input:
           type: string
         project_id:
-          type: string
-        sandbox_id:
           description: |-
-            SandboxID/ProjectID bind a still-unbound session first — the project the
-            composer had picked, or the dialog's — so the execution has its file and
-            command tools; a bound session ignores them, as a run request's does.
+            ProjectID binds a still-unbound session first — the project the composer
+            had picked, or the dialog's — so the execution has its file and command
+            tools; a bound session ignores it, as a run request's does.
           type: string
         session_id:
           type: string
       required:
       - session_id
+      type: object
+    handler.sandboxTargetReq:
+      properties:
+        config:
+          items:
+            type: integer
+          type: array
+          uniqueItems: false
+        name:
+          type: string
+        revision:
+          description: |-
+            Revision, on update only, is the revision the client's edit was based
+            on (from GET/List): editing from a stale form is then 409 instead of
+            silently overwriting a concurrent update. Absent (0) keeps
+            last-writer-wins. Ignored on create.
+          type: integer
+        type:
+          type: string
+      type: object
+    handler.sandboxTemplateReq:
+      properties:
+        config:
+          items:
+            type: integer
+          type: array
+          uniqueItems: false
+        name:
+          type: string
+        revision:
+          description: |-
+            Revision, on update only, is the revision the client's edit was based
+            on — see sandboxTargetReq.Revision.
+          type: integer
+        type:
+          type: string
       type: object
     handler.sandboxTestResp:
       properties:
@@ -1683,19 +1705,19 @@ components:
         name:
           description: |-
             Name is display only — the storage is keyed by ID, so a rename moves
-            nothing. Unique per (owner, sandbox) via idx_projects_owner_sandbox_name.
+            nothing. Unique per (owner, target) via idx_projects_owner_target_name.
           type: string
         owner_id:
           type: string
         revision:
           description: |-
-            Revision and RuntimeGen are the two counters SandboxConfig carries, for
-            the same two jobs: the expected-revision CAS every update lands
-            against, and the content generation that retires live containers — so
-            a rename does not replace anyone's container.
+            Revision is the expected-revision CAS every update lands against.
+            RuntimeGen is the workbench's ONE runtime axis: it moves when this
+            project's own content changes AND when the target or template it names
+            changes underneath it, so the instance cache and the terminal registry
+            need a single fence rather than one per entity (decisions §5.33). A
+            rename moves neither container nor terminal.
           type: integer
-        sandbox_id:
-          type: string
         session_count:
           description: |-
             SessionCount is how many sessions bind this project — filled by List
@@ -1703,10 +1725,20 @@ components:
           type: integer
         storage_hint:
           description: |-
-            StorageHint names where the files live — the local daemon's host
-            directory or the remote daemon's volume. Derived per response by the
-            handler for admins only, never stored: deleting the row keeps the
-            storage (decisions §5.28), so the UI can say where.
+            StorageHint names where the files live — the named volume on the
+            target's daemon. Derived per response by the handler for admins only,
+            never stored: deleting the row keeps the storage (decisions §5.28), so
+            the UI can say where.
+          type: string
+        target_id:
+          description: |-
+            TargetID is the machine the tree lives on — the project's identity, set
+            at creation and never writable afterwards (decisions §5.33).
+          type: string
+        template_id:
+          description: |-
+            TemplateID is what the container is created from — content, editable
+            like the environment, reaching bound sessions at their next run.
           type: string
         updated_at:
           type: string
@@ -1802,11 +1834,11 @@ components:
         run_id:
           type: string
       type: object
-    store.SandboxConfig:
+    store.SandboxTarget:
       properties:
         config:
           description: |-
-            Config holds the backend settings as JSON (DockerConfig). Stored as
+            Config holds the target settings as JSON (DockerTargetConfig). Stored as
             TEXT and sent to/received from the API as a raw JSON object (no
             double-encoding).
           items:
@@ -1821,15 +1853,44 @@ components:
           type: string
         revision:
           description: |-
-            Revision counts this config's WRITES: 1 at creation, +1 on every update,
+            Revision counts this row's WRITES: 1 at creation, +1 on every update,
             name-only included. It is the row's concurrency control — the
-            expected-revision CAS both update paths carry, and the predicate a
-            first-run bind lands against (the workdir was validated on exactly this
-            revision). Nothing keeps old revisions runnable: updates apply to everyone
-            at the next run.
+            expected-revision CAS every update path carries. Nothing keeps old
+            revisions runnable: updates apply to everyone at the next run.
+
+            There is no runtime generation here: the ONE runtime axis is the
+            project's (decisions §5.33), and a content change to this row bumps it
+            on every project that names this target.
           type: integer
         type:
           description: Type is "docker" — the only backend (decisions §5.27).
+          type: string
+        updated_at:
+          type: string
+      type: object
+    store.SandboxTemplate:
+      properties:
+        config:
+          description: Config holds the template settings as JSON (DockerTemplateConfig).
+          items:
+            type: integer
+          type: array
+          uniqueItems: false
+        created_at:
+          type: string
+        id:
+          type: string
+        name:
+          type: string
+        revision:
+          description: |-
+            Revision is the row's concurrency control, as on SandboxTarget — and,
+            as there, the runtime generation lives on the projects instead.
+          type: integer
+        type:
+          description: |-
+            Type must match the target's; a docker template cannot run on another
+            backend's machine.
           type: string
         updated_at:
           type: string
@@ -1874,12 +1935,11 @@ components:
             inherits the phase it forked in.
           type: boolean
         project_id:
-          type: string
-        sandbox_id:
           description: |-
-            SandboxID/ProjectID are the session's PERMANENT binding: the first
-            sandbox-carrying run CAS-writes them (BindSandboxIfEmpty) and they are
-            never rewritten — decisions §5.28.
+            ProjectID is the session's PERMANENT binding: the first project-carrying
+            run CAS-writes it (BindProjectIfEmpty) and it is never rewritten —
+            decisions §5.28. The project pins the target, so binding the project
+            binds the machine too.
           type: string
         updated_at:
           type: string
@@ -3842,9 +3902,9 @@ paths:
               oneOf:
               - type: object
               - $ref: '#/components/schemas/handler.projectReq'
-                description: Name and sandbox
+                description: Name, target and template
                 summary: project
-        description: Name and sandbox
+        description: Name, target and template
         required: true
       responses:
         "201":
@@ -3864,7 +3924,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/handler.ErrorResponse'
-          description: name already in use on this sandbox
+          description: name already in use on this target
       security:
       - BearerAuth: []
       summary: Create project
@@ -3872,8 +3932,9 @@ paths:
       - projects
   /projects/{id}:
     delete:
-      description: The owner deletes their own; an admin deletes any (management,
-        decisions §5.29).
+      description: Deletes the working tree too — the container and its volume are
+        removed. The owner deletes their own; an admin deletes any (management, decisions
+        §5.29).
       parameters:
       - description: Project id
         in: path
@@ -4458,7 +4519,7 @@ paths:
       summary: Stream run events (SSE)
       tags:
       - runs
-  /sandboxes:
+  /sandbox-targets:
     get:
       responses:
         "200":
@@ -4466,7 +4527,7 @@ paths:
             application/json:
               schema:
                 items:
-                  $ref: '#/components/schemas/store.SandboxConfig'
+                  $ref: '#/components/schemas/store.SandboxTarget'
                 type: array
           description: OK
         "500":
@@ -4477,31 +4538,30 @@ paths:
           description: Internal Server Error
       security:
       - BearerAuth: []
-      summary: List sandboxes
+      summary: List sandbox targets
       tags:
-      - sandboxes
+      - sandbox-targets
     post:
-      description: 'type is "docker". config: image (required), host ("" = local daemon,
-        tcp://, or ssh://user@host with ssh_* auth — ssh_password is write-only, ********
-        mask semantics), runtime, user, network, memory_mb/cpus caps, max_read_file_bytes
-        (0 = 8 MiB default).'
+      description: 'type is "docker". config: host ("" = local daemon, tcp://, or
+        ssh://user@host with ssh_* auth — ssh_password is write-only, ******** mask
+        semantics).'
       requestBody:
         content:
           application/json:
             schema:
               oneOf:
               - type: object
-              - $ref: '#/components/schemas/handler.createSandboxReq'
-                description: Sandbox configuration
-                summary: sandbox
-        description: Sandbox configuration
+              - $ref: '#/components/schemas/handler.sandboxTargetReq'
+                description: Sandbox target
+                summary: target
+        description: Sandbox target
         required: true
       responses:
         "201":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/store.SandboxConfig'
+                $ref: '#/components/schemas/store.SandboxTarget'
           description: Created
         "400":
           content:
@@ -4517,13 +4577,13 @@ paths:
           description: Internal Server Error
       security:
       - BearerAuth: []
-      summary: Create sandbox
+      summary: Create sandbox target
       tags:
-      - sandboxes
-  /sandboxes/{id}:
+      - sandbox-targets
+  /sandbox-targets/{id}:
     delete:
       parameters:
-      - description: Sandbox ID
+      - description: Target id
         in: path
         name: id
         required: true
@@ -4543,7 +4603,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/handler.ErrorResponse'
-          description: sessions are bound to this sandbox
+          description: projects live on this target
         "500":
           content:
             application/json:
@@ -4552,12 +4612,12 @@ paths:
           description: Internal Server Error
       security:
       - BearerAuth: []
-      summary: Delete sandbox
+      summary: Delete sandbox target
       tags:
-      - sandboxes
+      - sandbox-targets
     get:
       parameters:
-      - description: Sandbox ID
+      - description: Target id
         in: path
         name: id
         required: true
@@ -4568,7 +4628,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/store.SandboxConfig'
+                $ref: '#/components/schemas/store.SandboxTarget'
           description: OK
         "404":
           content:
@@ -4576,23 +4636,17 @@ paths:
               schema:
                 $ref: '#/components/schemas/handler.ErrorResponse'
           description: Not Found
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Internal Server Error
       security:
       - BearerAuth: []
-      summary: Get sandbox
+      summary: Get sandbox target
       tags:
-      - sandboxes
+      - sandbox-targets
     put:
       description: 'Include the revision the edit was based on (from GET/List) to
-        make the write conditional: 409 if the config changed meanwhile. Omitting
-        it falls back to last-writer-wins.'
+        make the write conditional: 409 if the row changed meanwhile. Omitting it
+        falls back to last-writer-wins.'
       parameters:
-      - description: Sandbox ID
+      - description: Target id
         in: path
         name: id
         required: true
@@ -4604,17 +4658,17 @@ paths:
             schema:
               oneOf:
               - type: object
-              - $ref: '#/components/schemas/handler.createSandboxReq'
-                description: Sandbox configuration
-                summary: sandbox
-        description: Sandbox configuration
+              - $ref: '#/components/schemas/handler.sandboxTargetReq'
+                description: Sandbox target
+                summary: target
+        description: Sandbox target
         required: true
       responses:
         "200":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/store.SandboxConfig'
+                $ref: '#/components/schemas/store.SandboxTarget'
           description: OK
         "400":
           content:
@@ -4633,8 +4687,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/handler.ErrorResponse'
-          description: identity change refused (sessions or projects live on it),
-            or the config changed concurrently — re-read and retry
+          description: identity change refused (projects live on it), or the row changed
+            concurrently — re-read and retry
         "500":
           content:
             application/json:
@@ -4643,13 +4697,13 @@ paths:
           description: Internal Server Error
       security:
       - BearerAuth: []
-      summary: Update sandbox
+      summary: Update sandbox target
       tags:
-      - sandboxes
-  /sandboxes/{id}/containers:
+      - sandbox-targets
+  /sandbox-targets/{id}/containers:
     get:
       parameters:
-      - description: Sandbox id
+      - description: Target id
         in: path
         name: id
         required: true
@@ -4678,13 +4732,13 @@ paths:
           description: Bad Gateway
       security:
       - BearerAuth: []
-      summary: List the sandbox's managed containers
+      summary: List the target's managed containers
       tags:
-      - sandboxes
-  /sandboxes/{id}/containers/{name}:
+      - sandbox-targets
+  /sandbox-targets/{id}/containers/{name}:
     delete:
       parameters:
-      - description: Sandbox id
+      - description: Target id
         in: path
         name: id
         required: true
@@ -4715,11 +4769,11 @@ paths:
       - BearerAuth: []
       summary: Remove a managed container (rebuild)
       tags:
-      - sandboxes
-  /sandboxes/{id}/containers/{name}/stop:
+      - sandbox-targets
+  /sandbox-targets/{id}/containers/{name}/stop:
     post:
       parameters:
-      - description: Sandbox id
+      - description: Target id
         in: path
         name: id
         required: true
@@ -4750,15 +4804,21 @@ paths:
       - BearerAuth: []
       summary: Stop a managed container
       tags:
-      - sandboxes
-  /sandboxes/{id}/test:
+      - sandbox-targets
+  /sandbox-targets/{id}/test:
     post:
-      description: Runs "echo ok" in the sandbox. 200 with ok=false means the sandbox
-        was reachable but the command failed.
+      description: Runs "echo ok" in a throw-away container from the named template.
+        200 with ok=false means the daemon was reachable but the command failed.
       parameters:
-      - description: Sandbox ID
+      - description: Target id
         in: path
         name: id
+        required: true
+        schema:
+          type: string
+      - description: Template to take the image from
+        in: query
+        name: template_id
         required: true
         schema:
           type: string
@@ -4769,6 +4829,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/handler.sandboxTestResp'
           description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
         "404":
           content:
             application/json:
@@ -4780,17 +4846,191 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/handler.ErrorResponse'
-          description: sandbox unreachable
+          description: target unreachable
       security:
       - BearerAuth: []
-      summary: Test sandbox
+      summary: Test sandbox target
       tags:
-      - sandboxes
+      - sandbox-targets
+  /sandbox-templates:
+    get:
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/store.SandboxTemplate'
+                type: array
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List sandbox templates
+      tags:
+      - sandbox-templates
+    post:
+      description: 'type is "docker". config: image (required), runtime, user (""
+        = root), network (docker network name; "" = no network), memory_mb/cpus caps,
+        max_read_file_bytes (0 = 8 MiB default).'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.sandboxTemplateReq'
+                description: Sandbox template
+                summary: template
+        description: Sandbox template
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.SandboxTemplate'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Create sandbox template
+      tags:
+      - sandbox-templates
+  /sandbox-templates/{id}:
+    delete:
+      parameters:
+      - description: Template id
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: deleted
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: projects use this template
+      security:
+      - BearerAuth: []
+      summary: Delete sandbox template
+      tags:
+      - sandbox-templates
+    get:
+      parameters:
+      - description: Template id
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.SandboxTemplate'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+      security:
+      - BearerAuth: []
+      summary: Get sandbox template
+      tags:
+      - sandbox-templates
+    put:
+      description: 'Include the revision the edit was based on to make the write conditional:
+        409 if the row changed meanwhile. The type cannot change — create a new template
+        instead.'
+      parameters:
+      - description: Template id
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.sandboxTemplateReq'
+                description: Sandbox template
+                summary: template
+        description: Sandbox template
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.SandboxTemplate'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: the row changed concurrently — re-read and retry
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Update sandbox template
+      tags:
+      - sandbox-templates
   /server:
     get:
-      description: 'The start-up configuration in force: version, workspace, and the
-        flags a client cannot change. Read-only — these come from the command line,
-        not the settings table.'
+      description: 'The start-up configuration in force: version and the flags a client
+        cannot change. Read-only — these come from the command line, not the settings
+        table.'
       responses:
         "200":
           content:

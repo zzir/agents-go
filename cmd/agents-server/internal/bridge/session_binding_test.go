@@ -12,23 +12,26 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// createSandboxConfig persists a docker config under the given id — a
-// binding validates that its sandbox exists before it is written, so tests
-// must create what they bind.
-func createSandboxConfig(t *testing.T, r *Runner, id string) {
+// createTarget persists a docker target under the given id, and createProject
+// a project on it — a binding validates that its project exists before it is
+// written, so tests must create what they bind.
+func createTarget(t *testing.T, r *Runner, id string) {
 	t.Helper()
-	cfg := &store.SandboxConfig{ID: id, Name: id, Type: "docker",
-		Config: json.RawMessage(`{"image":"i"}`)}
-	if err := r.Deps.SandboxConfigs.Create(context.Background(), cfg); err != nil {
-		t.Fatalf("create sandbox config %s: %v", id, err)
+	tg := &store.SandboxTarget{ID: id, Name: id, Type: "docker", Config: json.RawMessage(`{}`)}
+	if err := r.Deps.Targets.Create(context.Background(), tg); err != nil {
+		t.Fatalf("create sandbox target %s: %v", id, err)
 	}
 }
 
-// createProject persists a project for LocalUserID on the given sandbox and
+// createProject persists a project for LocalUserID on the given target and
 // returns its id.
-func createProject(t *testing.T, r *Runner, id, sandboxID string) string {
+func createProject(t *testing.T, r *Runner, id, targetID string) string {
 	t.Helper()
-	p := &store.Project{ID: id, OwnerID: store.LocalUserID, SandboxID: sandboxID, Name: id}
+	tpl := &store.SandboxTemplate{ID: store.NewID(), Name: "tpl-" + id, Type: "docker", Config: json.RawMessage(`{"image":"i"}`)}
+	if err := r.Deps.Templates.Create(context.Background(), tpl); err != nil {
+		t.Fatalf("create sandbox template for %s: %v", id, err)
+	}
+	p := &store.Project{ID: id, OwnerID: store.LocalUserID, TargetID: targetID, TemplateID: tpl.ID, Name: id}
 	if err := r.Deps.Projects.Create(context.Background(), p); err != nil {
 		t.Fatalf("create project %s: %v", id, err)
 	}
@@ -37,12 +40,12 @@ func createProject(t *testing.T, r *Runner, id, sandboxID string) string {
 
 // startAndWait runs StartRun and blocks until the run terminates. The runs in
 // these tests fail on config (no agent provider is wired) — that is fine:
-// the sandbox binding happens in startRunWithID BEFORE the launch, which is
+// the project binding happens in startRunWithID BEFORE the launch, which is
 // exactly the bind-at-start semantics under test.
-func startAndWait(t *testing.T, r *Runner, sessionID, sandboxID, workDir string) string {
+func startAndWait(t *testing.T, r *Runner, sessionID, projectID string) string {
 	t.Helper()
 	done := make(chan struct{})
-	runID, err := r.StartRun(sessionID, "", sandboxID, workDir, "hi", nil, func(*RunOutcome) { close(done) })
+	runID, err := r.StartRun(sessionID, "", projectID, "hi", nil, func(*RunOutcome) { close(done) })
 	if err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
@@ -62,7 +65,7 @@ func countBoundEvents(t *testing.T, r *Runner, runID string) int {
 	var n atomic.Int32
 	seen := make(chan struct{})
 	detach, ok := r.Hub().Subscribe(runID, 0, func(env *protocol.Envelope) {
-		if env.Type == protocol.EventSessionSandboxBound {
+		if env.Type == protocol.EventSessionProjectBound {
 			n.Add(1)
 		}
 		select {
@@ -89,10 +92,10 @@ func countBoundEvents(t *testing.T, r *Runner, runID string) int {
 	}
 }
 
-// The first sandbox-carrying run binds the session; later runs are overridden
+// The first project-carrying run binds the session; later runs are overridden
 // by the binding no matter what the client sends, and exactly one
-// session.sandbox_bound is published — by the winner.
-func TestStartRunBindsSessionSandbox(t *testing.T) {
+// session.project_bound is published — by the winner.
+func TestStartRunBindsSessionProject(t *testing.T) {
 	runner, _ := newBareRunner(t)
 	ctx := context.Background()
 
@@ -100,42 +103,41 @@ func TestStartRunBindsSessionSandbox(t *testing.T) {
 	if err := runner.Deps.Sessions.Create(ctx, sess); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	createSandboxConfig(t, runner, "sb-1")
-	createSandboxConfig(t, runner, "sb-2")
-	p1 := createProject(t, runner, "p-1", "sb-1")
-	p2 := createProject(t, runner, "p-2", "sb-2")
+	createTarget(t, runner, "tg-1")
+	p1 := createProject(t, runner, "p-1", "tg-1")
+	p2 := createProject(t, runner, "p-2", "tg-1")
 
-	run1 := startAndWait(t, runner, sess.ID, "sb-1", p1)
+	run1 := startAndWait(t, runner, sess.ID, p1)
 	got, err := runner.Deps.Sessions.Get(ctx, sess.ID)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got.SandboxID != "sb-1" || got.ProjectID != p1 {
-		t.Fatalf("bound to (%q,%q), want (sb-1,p-1)", got.SandboxID, got.ProjectID)
+	if got.ProjectID != p1 {
+		t.Fatalf("bound to %q, want p-1", got.ProjectID)
 	}
-	if info, ok := runner.Hub().Info(run1); !ok || info.SandboxID != "sb-1" || info.ProjectID != p1 {
-		t.Fatalf("run1 info = %+v, want the bound pair", info)
+	if info, ok := runner.Hub().Info(run1); !ok || info.ProjectID != p1 {
+		t.Fatalf("run1 info = %+v, want the bound project", info)
 	}
 
-	// A later run claiming a different sandbox is overridden by the binding.
-	run2 := startAndWait(t, runner, sess.ID, "sb-2", p2)
-	if got, _ := runner.Deps.Sessions.Get(ctx, sess.ID); got.SandboxID != "sb-1" || got.ProjectID != p1 {
-		t.Fatalf("binding rewritten to (%q,%q)", got.SandboxID, got.ProjectID)
+	// A later run claiming a different project is overridden by the binding.
+	run2 := startAndWait(t, runner, sess.ID, p2)
+	if got, _ := runner.Deps.Sessions.Get(ctx, sess.ID); got.ProjectID != p1 {
+		t.Fatalf("binding rewritten to %q", got.ProjectID)
 	}
-	if info, ok := runner.Hub().Info(run2); !ok || info.SandboxID != "sb-1" || info.ProjectID != p1 {
+	if info, ok := runner.Hub().Info(run2); !ok || info.ProjectID != p1 {
 		t.Fatalf("run2 info = %+v, want the binding to override the request", info)
 	}
 
 	if n := countBoundEvents(t, runner, run1); n != 1 {
-		t.Errorf("run1 published %d session.sandbox_bound events, want 1", n)
+		t.Errorf("run1 published %d session.project_bound events, want 1", n)
 	}
 	if n := countBoundEvents(t, runner, run2); n != 0 {
-		t.Errorf("run2 published %d session.sandbox_bound events, want 0", n)
+		t.Errorf("run2 published %d session.project_bound events, want 0", n)
 	}
 }
 
-// A run with no sandbox binds nothing — the session stays bindable later.
-func TestStartRunWithoutSandboxLeavesSessionBindable(t *testing.T) {
+// A run with no project binds nothing — the session stays bindable later.
+func TestStartRunWithoutProjectLeavesSessionBindable(t *testing.T) {
 	runner, _ := newBareRunner(t)
 	ctx := context.Background()
 
@@ -143,21 +145,17 @@ func TestStartRunWithoutSandboxLeavesSessionBindable(t *testing.T) {
 	if err := runner.Deps.Sessions.Create(ctx, sess); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	createSandboxConfig(t, runner, "sb-late")
+	createTarget(t, runner, "tg-late")
 
-	startAndWait(t, runner, sess.ID, "", "/ignored")
-	if got, _ := runner.Deps.Sessions.Get(ctx, sess.ID); got.SandboxID != "" || got.ProjectID != "" {
-		t.Fatalf("no-sandbox run bound (%q,%q), want nothing", got.SandboxID, got.ProjectID)
+	startAndWait(t, runner, sess.ID, "")
+	if got, _ := runner.Deps.Sessions.Get(ctx, sess.ID); got.ProjectID != "" {
+		t.Fatalf("no-project run bound %q, want nothing", got.ProjectID)
 	}
 
-	// An unnamed project resolves to the auto-created default.
-	startAndWait(t, runner, sess.ID, "sb-late", "")
-	got, _ := runner.Deps.Sessions.Get(ctx, sess.ID)
-	if got.SandboxID != "sb-late" || got.ProjectID == "" {
-		t.Fatalf("late bind = (%q,%q), want (sb-late, the default project)", got.SandboxID, got.ProjectID)
-	}
-	if p, err := runner.Deps.Projects.Get(ctx, got.ProjectID); err != nil || p.Name != store.DefaultProjectName {
-		t.Fatalf("default project = %+v, %v", p, err)
+	late := createProject(t, runner, "p-late", "tg-late")
+	startAndWait(t, runner, sess.ID, late)
+	if got, _ := runner.Deps.Sessions.Get(ctx, sess.ID); got.ProjectID != late {
+		t.Fatalf("late bind = %q, want p-late", got.ProjectID)
 	}
 }
 
@@ -172,56 +170,62 @@ func TestRefusedRunDoesNotBind(t *testing.T) {
 	if err := runner.Deps.Sessions.Create(ctx, sess); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	createSandboxConfig(t, runner, "sb-1")
+	createTarget(t, runner, "tg-1")
+	p := createProject(t, runner, "p-1", "tg-1")
 
 	// Occupy the session's run slot directly, standing in for a live run.
-	seg, _, err := runner.hub.register("run-live", sess.ID, "", "", "", "", nil)
+	seg, _, err := runner.hub.register("run-live", sess.ID, "", "", "", nil)
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
 	defer runner.hub.unregister("run-live", seg)
 
-	if _, err := runner.StartRun(sess.ID, "", "sb-1", "", "hi", nil, nil); err == nil {
+	if _, err := runner.StartRun(sess.ID, "", p, "hi", nil, nil); err == nil {
 		t.Fatal("StartRun succeeded on a busy session")
 	}
-	if got, _ := runner.Deps.Sessions.Get(ctx, sess.ID); got.SandboxID != "" {
-		t.Fatalf("refused run bound the session to %q", got.SandboxID)
+	if got, _ := runner.Deps.Sessions.Get(ctx, sess.ID); got.ProjectID != "" {
+		t.Fatalf("refused run bound the session to %q", got.ProjectID)
 	}
 }
 
-// A binding is validated before anything is written: an unknown sandbox id,
-// or a project that is not the caller's on that sandbox, refuses the run and
-// leaves the session unbound (and its slot free for the corrected retry).
+// A binding is validated before anything is written: an unknown project, or
+// one that is not the caller's, refuses the run and leaves the session unbound
+// (and its slot free for the corrected retry).
 func TestInvalidBindingRefusedUnbound(t *testing.T) {
-	runner, _ := newBareRunner(t)
+	runner, db := newBareRunner(t)
 	ctx := context.Background()
 
 	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "s"}
 	if err := runner.Deps.Sessions.Create(ctx, sess); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	createSandboxConfig(t, runner, "sb-bare")
-	createSandboxConfig(t, runner, "sb-other")
-	elsewhere := createProject(t, runner, "p-elsewhere", "sb-other")
+	createTarget(t, runner, "tg-bare")
+	tpl := &store.SandboxTemplate{ID: store.NewID(), Name: "tpl-foreign", Type: "docker", Config: json.RawMessage(`{"image":"i"}`)}
+	if err := store.NewSandboxTemplateStore(db).Create(ctx, tpl); err != nil {
+		t.Fatal(err)
+	}
+	foreign := &store.Project{OwnerID: store.NewID(), TargetID: "tg-bare", TemplateID: tpl.ID, Name: "theirs"}
+	if err := runner.Deps.Projects.Create(ctx, foreign); err != nil {
+		t.Fatal(err)
+	}
 
-	for name, req := range map[string]struct{ sandboxID, projectID string }{
-		"unknown sandbox":       {"sb-ghost", ""},
-		"unknown project":       {"sb-bare", store.NewID()},
-		"cross-sandbox project": {"sb-bare", elsewhere},
+	for name, projectID := range map[string]string{
+		"unknown project": store.NewID(),
+		"foreign project": foreign.ID,
 	} {
-		_, err := runner.StartRun(sess.ID, "", req.sandboxID, req.projectID, "hi", nil, nil)
+		_, err := runner.StartRun(sess.ID, "", projectID, "hi", nil, nil)
 		if _, ok := errorsAsInvalidBinding(err); !ok {
 			t.Errorf("%s: err = %v, want ErrInvalidBinding", name, err)
 		}
 	}
-	if got, _ := runner.Deps.Sessions.Get(ctx, sess.ID); got.SandboxID != "" {
-		t.Fatalf("invalid binding landed: %q", got.SandboxID)
+	if got, _ := runner.Deps.Sessions.Get(ctx, sess.ID); got.ProjectID != "" {
+		t.Fatalf("invalid binding landed: %q", got.ProjectID)
 	}
 	// The slot is free: a corrected request binds normally.
-	app := createProject(t, runner, "p-app", "sb-bare")
-	startAndWait(t, runner, sess.ID, "sb-bare", app)
-	if got, _ := runner.Deps.Sessions.Get(ctx, sess.ID); got.SandboxID != "sb-bare" || got.ProjectID != app {
-		t.Fatalf("corrected bind = (%q,%q), want (sb-bare,p-app)", got.SandboxID, got.ProjectID)
+	app := createProject(t, runner, "p-app", "tg-bare")
+	startAndWait(t, runner, sess.ID, app)
+	if got, _ := runner.Deps.Sessions.Get(ctx, sess.ID); got.ProjectID != app {
+		t.Fatalf("corrected bind = %q, want p-app", got.ProjectID)
 	}
 }
 

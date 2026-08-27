@@ -27,7 +27,6 @@ func TestTaskAdapter_InheritKeepsTheTaskAgent(t *testing.T) {
 		Status: tasks.StatusWorking,
 		Inherit: store.EncodeInherit(store.Inherit{
 			AgentConfigID: "parent-agent",
-			SandboxID:     "sandbox-1",
 			ProjectID:     "proj-1",
 			TaskAgentID:   "task-agent",
 		}),
@@ -43,7 +42,7 @@ func TestTaskAdapter_InheritKeepsTheTaskAgent(t *testing.T) {
 	if inherit.TaskAgentID != "task-agent" {
 		t.Errorf("task agent = %q, want it preserved — a retry launches from this snapshot", inherit.TaskAgentID)
 	}
-	if inherit.AgentConfigID != "parent-agent" || inherit.SandboxID != "sandbox-1" || inherit.ProjectID != "proj-1" {
+	if inherit.AgentConfigID != "parent-agent" || inherit.ProjectID != "proj-1" {
 		t.Errorf("inherit = %+v, want the spawning run's setup too", inherit)
 	}
 }
@@ -68,7 +67,7 @@ func TestTaskStopper_ReportsWhatItActuallyDid(t *testing.T) {
 
 	// A live run takes a real cancel, and a graceful stop says it will report
 	// its own ending.
-	seg, _, err := runner.hub.register("live-run", "sess-live", "", "agent", "", "", nil)
+	seg, _, err := runner.hub.register("live-run", "sess-live", "", "agent", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +78,7 @@ func TestTaskStopper_ReportsWhatItActuallyDid(t *testing.T) {
 	}
 	// Without a control there is nothing to defer to, so the run is cancelled
 	// outright — and saying AfterTurn would promise an ending nobody records.
-	seg3, _, err := runner.hub.register("no-ctrl", "sess-noctrl", "", "agent", "", "", nil)
+	seg3, _, err := runner.hub.register("no-ctrl", "sess-noctrl", "", "agent", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +89,7 @@ func TestTaskStopper_ReportsWhatItActuallyDid(t *testing.T) {
 
 	// A record the hub keeps after the run ended: nothing to cancel, and
 	// nothing to announce.
-	seg2, _, err := runner.hub.register("done-run", "sess-done", "", "agent", "", "", nil)
+	seg2, _, err := runner.hub.register("done-run", "sess-done", "", "agent", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,13 +127,13 @@ func TestRunHub_RefusesATaskRunWhoseParentIsBeingDeleted(t *testing.T) {
 	hub.markSessionDeleting("parent-x")
 
 	meta := &TaskMeta{TaskID: "task-x", ParentSessionID: "parent-x", Attempt: 2}
-	_, _, err := hub.register(store.NewID(), "child-x", "", "agent", "", "", meta)
+	_, _, err := hub.register(store.NewID(), "child-x", "", "agent", "", meta)
 	if !errors.As(err, new(ErrSessionDeleting)) {
 		t.Fatalf("err = %v, want ErrSessionDeleting", err)
 	}
 
 	// A chat run on an unrelated session is unaffected.
-	if _, _, err := hub.register(store.NewID(), "other", "", "agent", "", "", nil); err != nil {
+	if _, _, err := hub.register(store.NewID(), "other", "", "agent", "", nil); err != nil {
 		t.Fatalf("unrelated session refused: %v", err)
 	}
 }

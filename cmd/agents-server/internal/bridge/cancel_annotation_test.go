@@ -23,7 +23,8 @@ func newBareRunner(t *testing.T) (*Runner, *bun.DB) {
 		Settings:         settings.NewReader(store.NewSettingStore(db)),
 		Memories:         store.NewMemoryStore(db),
 		PendingApprovals: store.NewPendingApprovalStore(db),
-		SandboxConfigs:   store.NewSandboxStore(db),
+		Targets:          store.NewSandboxTargetStore(db),
+		Templates:        store.NewSandboxTemplateStore(db),
 		Projects:         store.NewProjectStore(db),
 	})
 	return runner, db

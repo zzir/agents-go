@@ -125,8 +125,8 @@ func (r *Runner) spawnWorkflow(ctx context.Context, tc *agents.ToolContext, pare
 func startedMessage(ctx context.Context, r *Runner, sessionID string, info *tasks.Info, steps int) string {
 	msg := fmt.Sprintf("Started workflow %q (%d steps) as background task %s. You will be told the result; "+
 		"do not repeat its work here.", info.Label, steps, info.TaskID)
-	if sess, err := r.Deps.Sessions.Get(ctx, sessionID); err == nil && sess.SandboxID == "" {
-		msg += " Note: this session has no sandbox bound, so the workflow has no file or command tools."
+	if sess, err := r.Deps.Sessions.Get(ctx, sessionID); err == nil && sess.ProjectID == "" {
+		msg += " Note: this session has no project bound, so the workflow has no file or command tools."
 	}
 	return msg
 }

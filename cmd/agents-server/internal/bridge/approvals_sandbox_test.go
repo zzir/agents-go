@@ -16,7 +16,7 @@ import (
 // buildAgentRegistry resolves the names in a serialized RunState back to live
 // agents, and that resolved agent is the one the SDK re-runs on approval. So
 // the registry MUST carry the run's sandbox-backed tools; building it with an
-// empty sandbox id strips exec_command/read_file/… and the approved call fails
+// empty project id strips exec_command/read_file/… and the approved call fails
 // with "tool not found on agent" (regression: an approval-gated sandbox tool
 // could never be approved).
 func TestBuildAgentRegistryIncludesSandboxTools(t *testing.T) {
@@ -24,31 +24,37 @@ func TestBuildAgentRegistryIncludesSandboxTools(t *testing.T) {
 	db := testdb.New(t)
 
 	agentConfigs := store.NewAgentConfigStore(db)
-	sandboxStore := store.NewSandboxStore(db)
+	targets := store.NewSandboxTargetStore(db)
+	templates := store.NewSandboxTemplateStore(db)
 
 	ac := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "coder", Model: "gpt-test", ProviderID: testProvider(t, db, "p", "sk-x", "")}
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatalf("create agent: %v", err)
 	}
-	// Building tools never contacts the daemon, so a plain docker config works.
-	sb := &store.SandboxConfig{ID: store.NewID(), Name: "L", Type: "docker", Config: []byte(`{"image":"i"}`)}
-	if err := sandboxStore.Create(ctx, sb); err != nil {
-		t.Fatalf("create sandbox: %v", err)
+	// Building tools never contacts the daemon, so a plain docker pair works.
+	tg := &store.SandboxTarget{ID: store.NewID(), Name: "L", Type: "docker", Config: []byte(`{}`)}
+	if err := targets.Create(ctx, tg); err != nil {
+		t.Fatalf("create target: %v", err)
+	}
+	tpl := &store.SandboxTemplate{ID: store.NewID(), Name: "base", Type: "docker", Config: []byte(`{"image":"i"}`)}
+	if err := templates.Create(ctx, tpl); err != nil {
+		t.Fatalf("create template: %v", err)
 	}
 
 	runner := NewRunner(ctx, db, &AgentDeps{
 		AgentConfigs:   agentConfigs,
 		Providers:      store.NewProviderStore(db),
-		SandboxConfigs: sandboxStore,
+		Targets:        targets,
+		Templates:      templates,
 		Settings:       settings.NewReader(store.NewSettingStore(db)),
 		Memories:       store.NewMemoryStore(db),
 		McpServers:     store.NewMcpServerStore(db),
 		Guardrails:     guardrails.NewResolver(store.NewGuardrailStore(db)),
 		McpManager:     mcpservers.NewManager(ctx, settings.NewReader(store.NewSettingStore(db))),
-		SandboxManager: sandboxes.NewManager(t.TempDir()),
+		SandboxManager: sandboxes.NewManager(),
 		Projects:       store.NewProjectStore(db),
 	})
-	proj := &store.Project{OwnerID: store.LocalUserID, SandboxID: sb.ID, Name: "p"}
+	proj := &store.Project{OwnerID: store.LocalUserID, TargetID: tg.ID, TemplateID: tpl.ID, Name: "p"}
 	if err := runner.Deps.Projects.Create(ctx, proj); err != nil {
 		t.Fatalf("create project: %v", err)
 	}
@@ -66,22 +72,22 @@ func TestBuildAgentRegistryIncludesSandboxTools(t *testing.T) {
 		return false
 	}
 
-	// With the sandbox id: the resolved agent must carry exec_command.
-	withSb, _, err := runner.buildAgentRegistry(ctx, ac.ID, sb.ID, proj.ID, false, "")
+	// With the project id: the resolved agent must carry exec_command.
+	withSb, _, err := runner.buildAgentRegistry(ctx, ac.ID, proj.ID, false, "")
 	if err != nil {
-		t.Fatalf("buildAgentRegistry(sandbox, false): %v", err)
+		t.Fatalf("buildAgentRegistry(project, false): %v", err)
 	}
 	if !hasExec(withSb) {
-		t.Error("registry built with a sandbox id is missing exec_command")
+		t.Error("registry built with a project id is missing exec_command")
 	}
 
 	// Without it, exec_command is absent — this is exactly the state that
 	// stranded approvals, so the fix is that ResolveApproval passes the id.
-	noSb, _, err := runner.buildAgentRegistry(ctx, ac.ID, "", "", false, "")
+	noSb, _, err := runner.buildAgentRegistry(ctx, ac.ID, "", false, "")
 	if err != nil {
 		t.Fatalf("buildAgentRegistry(none, false): %v", err)
 	}
 	if hasExec(noSb) {
-		t.Error("registry built with no sandbox id unexpectedly has exec_command")
+		t.Error("registry built with no project id unexpectedly has exec_command")
 	}
 }

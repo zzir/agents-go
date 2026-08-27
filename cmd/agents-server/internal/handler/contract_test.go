@@ -105,10 +105,8 @@ func TestForkCopiesSandboxBinding(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
 	sessions := store.NewSessionStore(db)
-	// BindSandboxIfEmpty refuses a target with no config row (EXISTS).
-	if err := store.NewSandboxStore(db).Create(t.Context(), &store.SandboxConfig{ID: "sb-1", Name: "sb-1", Type: "docker", Config: json.RawMessage(`{"image":"i","persistent":true}`)}); err != nil {
-		t.Fatal(err)
-	}
+	// BindProjectIfEmpty refuses a project with no row (EXISTS).
+	targetID, templateID := mkSandboxRows(t, db)
 	sh := NewSessionHandler(testSessionDeps(db, func(d *SessionDeps) { d.Sessions = sessions }))
 
 	engine := newTestEngine()
@@ -123,10 +121,10 @@ func TestForkCopiesSandboxBinding(t *testing.T) {
 		ID string `json:"id"`
 	}
 	_ = json.Unmarshal(w.Body.Bytes(), &src)
-	if err := store.NewProjectStore(db).Create(t.Context(), &store.Project{ID: "p-1", OwnerID: store.LocalUserID, SandboxID: "sb-1", Name: "p-1"}); err != nil {
+	if err := store.NewProjectStore(db).Create(t.Context(), &store.Project{ID: "p-1", OwnerID: store.LocalUserID, TargetID: targetID, TemplateID: templateID, Name: "p-1"}); err != nil {
 		t.Fatal(err)
 	}
-	if won, err := sessions.BindSandboxIfEmpty(t.Context(), src.ID, "sb-1", "p-1", 1); err != nil || !won {
+	if won, err := sessions.BindProjectIfEmpty(t.Context(), src.ID, "p-1"); err != nil || !won {
 		t.Fatalf("bind: won=%v err=%v", won, err)
 	}
 
@@ -135,25 +133,22 @@ func TestForkCopiesSandboxBinding(t *testing.T) {
 		t.Fatalf("fork: %d %s", w.Code, w.Body.String())
 	}
 	var forked struct {
-		SandboxID string `json:"sandbox_id"`
 		ProjectID string `json:"project_id"`
 	}
 	_ = json.Unmarshal(w.Body.Bytes(), &forked)
-	if forked.SandboxID != "sb-1" || forked.ProjectID != "p-1" {
-		t.Fatalf("fork binding = (%q,%q), want the source's (sb-1,p-1)", forked.SandboxID, forked.ProjectID)
+	if forked.ProjectID != "p-1" {
+		t.Fatalf("fork binding = %q, want the source's p-1", forked.ProjectID)
 	}
 }
 
-// A session's (sandbox_id, project_id) binding is immutable: PATCH carries
+// A session's project_id binding is immutable: PATCH carries
 // no binding fields, so a request naming one changes nothing — switching
 // projects means starting (or forking into) another session.
 func TestPatchCannotMoveBinding(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
 	sessions := store.NewSessionStore(db)
-	if err := store.NewSandboxStore(db).Create(t.Context(), &store.SandboxConfig{ID: "sb-1", Name: "sb-1", Type: "docker", Config: json.RawMessage(`{"image":"i","persistent":true}`)}); err != nil {
-		t.Fatal(err)
-	}
+	targetID, templateID := mkSandboxRows(t, db)
 	sh := NewSessionHandler(testSessionDeps(db, func(d *SessionDeps) { d.Sessions = sessions }))
 
 	engine := newTestEngine()
@@ -166,10 +161,10 @@ func TestPatchCannotMoveBinding(t *testing.T) {
 	}
 	_ = json.Unmarshal(w.Body.Bytes(), &sess)
 
-	if err := store.NewProjectStore(db).Create(t.Context(), &store.Project{ID: "p-1", OwnerID: store.LocalUserID, SandboxID: "sb-1", Name: "p-1"}); err != nil {
+	if err := store.NewProjectStore(db).Create(t.Context(), &store.Project{ID: "p-1", OwnerID: store.LocalUserID, TargetID: targetID, TemplateID: templateID, Name: "p-1"}); err != nil {
 		t.Fatal(err)
 	}
-	if won, err := sessions.BindSandboxIfEmpty(t.Context(), sess.ID, "sb-1", "p-1", 1); err != nil || !won {
+	if won, err := sessions.BindProjectIfEmpty(t.Context(), sess.ID, "p-1"); err != nil || !won {
 		t.Fatalf("bind: won=%v err=%v", won, err)
 	}
 	w = doJSON(t, engine, http.MethodPatch, "/sessions/"+sess.ID, `{"name":"renamed","project_id":"elsewhere"}`)
@@ -178,14 +173,13 @@ func TestPatchCannotMoveBinding(t *testing.T) {
 	}
 	var patched struct {
 		Name      string `json:"name"`
-		SandboxID string `json:"sandbox_id"`
 		ProjectID string `json:"project_id"`
 	}
 	_ = json.Unmarshal(w.Body.Bytes(), &patched)
 	if patched.Name != "renamed" {
 		t.Fatalf("rename lost: %q", patched.Name)
 	}
-	if patched.SandboxID != "sb-1" || patched.ProjectID != "p-1" {
-		t.Fatalf("binding moved to (%q,%q), want (sb-1,p-1) untouched", patched.SandboxID, patched.ProjectID)
+	if patched.ProjectID != "p-1" {
+		t.Fatalf("binding moved to %q, want p-1 untouched", patched.ProjectID)
 	}
 }

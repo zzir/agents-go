@@ -77,7 +77,7 @@ func TestRestorePlanPhase(t *testing.T) {
 		Memories:       store.NewMemoryStore(db),
 		McpServers:     store.NewMcpServerStore(db),
 		Guardrails:     guardrails.NewResolver(store.NewGuardrailStore(db)),
-		SandboxManager: sandboxes.NewManager(t.TempDir()),
+		SandboxManager: sandboxes.NewManager(),
 	})
 
 	ref0, err := store.RefFor(ctx, db, sess.ID)
@@ -141,7 +141,7 @@ func TestRestorePlanPhase(t *testing.T) {
 		Memories:       store.NewMemoryStore(dbBroken),
 		McpServers:     store.NewMcpServerStore(dbBroken),
 		Guardrails:     guardrails.NewResolver(store.NewGuardrailStore(dbBroken)),
-		SandboxManager: sandboxes.NewManager(t.TempDir()),
+		SandboxManager: sandboxes.NewManager(),
 	})
 	if err := dbBroken.Close(); err != nil {
 		t.Fatalf("close db: %v", err)
@@ -170,12 +170,12 @@ func TestPlanIntentIsNotAppliedWhenTheRunIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Occupy the session so the next start is refused as busy.
-	if _, _, err := runner.hub.register("holder", sess.ID, "", ac.ID, "", "", nil); err != nil {
+	if _, _, err := runner.hub.register("holder", sess.ID, "", ac.ID, "", nil); err != nil {
 		t.Fatal(err)
 	}
 
 	plan := true
-	if _, err := runner.StartRun(sess.ID, ac.ID, "", "", "hi", &plan, nil); err == nil {
+	if _, err := runner.StartRun(sess.ID, ac.ID, "", "hi", &plan, nil); err == nil {
 		t.Fatal("a busy session must refuse the run")
 	}
 	ref, err := store.RefFor(ctx, runner.db, sess.ID)

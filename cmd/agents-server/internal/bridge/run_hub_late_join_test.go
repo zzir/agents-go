@@ -17,7 +17,7 @@ import (
 // event of the run on the floor.
 func TestSubscribeFromZeroDeliversRunStartedAfterRingMovedOn(t *testing.T) {
 	h := NewRunHub(context.Background())
-	if _, _, err := h.register("run1", "sess1", "", "", "", "", nil); err != nil {
+	if _, _, err := h.register("run1", "sess1", "", "", "", nil); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 	started, err := protocol.NewEnvelope(protocol.EventRunStarted, protocol.RunStarted{RunID: "run1", SessionID: "sess1", Input: "hello"})
@@ -86,7 +86,7 @@ func TestSubscribeFromZeroDeliversRunStartedAfterRingMovedOn(t *testing.T) {
 // and a cursor already past the start (a resubscribe) is not told again.
 func TestSubscribeDoesNotRepeatRunStartedTheRingStillHolds(t *testing.T) {
 	h := NewRunHub(context.Background())
-	if _, _, err := h.register("run1", "sess1", "", "", "", "", nil); err != nil {
+	if _, _, err := h.register("run1", "sess1", "", "", "", nil); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 	h.publish("run1", env(protocol.EventRunStarted))

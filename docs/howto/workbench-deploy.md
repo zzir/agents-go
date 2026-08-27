@@ -8,7 +8,7 @@ Taking `agents-server` beyond `go run`. Start at
 A Docker daemon — this machine's, or a remote one over SSH or TCP — is the
 server's one external dependency, and only sandboxes need it; the server
 shells out to no binary. Which daemon a sandbox uses is its `config.host`, in
-[Sandboxes](../reference/protocol.md#sandboxes--apiv1sandboxes).
+[Sandbox targets](../reference/protocol.md#sandbox-targets--apiv1sandbox-targets).
 
 ### Deployment
 

@@ -31,17 +31,17 @@ func (t taskResolver) Resolve(ctx context.Context, parentSessionID, name string)
 	// Snapshot the SPAWNING run's setup, not the task's: this payload comes
 	// back when the parent is woken, and the wake-up must use the agent the
 	// parent was talking to.
-	var parentAgentConfigID, parentSandboxID, parentProjectID string
+	var parentAgentConfigID, parentProjectID string
 	if rid, ok := t.r.hub.ActiveRunForSession(parentSessionID); ok {
 		if info, ok := t.r.hub.Info(rid); ok {
-			parentAgentConfigID, parentSandboxID, parentProjectID = info.AgentConfigID, info.SandboxID, info.ProjectID
+			parentAgentConfigID, parentProjectID = info.AgentConfigID, info.ProjectID
 		}
 	}
 	if parentAgentConfigID == "" {
 		if sess, err := t.r.Deps.Sessions.Get(ctx, parentSessionID); err == nil {
 			parentAgentConfigID = sess.AgentConfigID
-			if parentSandboxID == "" {
-				parentSandboxID, parentProjectID = sess.SandboxID, sess.ProjectID
+			if parentProjectID == "" {
+				parentProjectID = sess.ProjectID
 			}
 		}
 	}
@@ -56,7 +56,6 @@ func (t taskResolver) Resolve(ctx context.Context, parentSessionID, name string)
 		DisplayName: cfg.Name,
 		Inherit: store.EncodeInherit(store.Inherit{
 			AgentConfigID: parentAgentConfigID,
-			SandboxID:     parentSandboxID,
 			ProjectID:     parentProjectID,
 			TaskAgentID:   cfg.ID,
 		}),
@@ -75,20 +74,20 @@ func (t taskLauncher) Launch(ctx context.Context, req tasks.LaunchRequest) error
 	}
 	in := store.DecodeInherit(req.Inherit)
 	if req.Wake {
-		// The parent's wake-up run: same agent and sandbox the spawning run
+		// The parent's wake-up run: same agent and project the spawning run
 		// had, so the notification is read by the agent that asked for it. The
 		// lineage rides along so the run's trace records which run spawned the
 		// delivered task(s).
 		if in.AgentConfigID == "" {
 			return fmt.Errorf("task notification undeliverable: no agent config for session %s", req.SessionID)
 		}
-		_, err := t.r.StartWakeRun(req.SessionID, in.AgentConfigID, in.SandboxID, in.ProjectID, req.Input, req.ParentRunID, nil)
+		_, err := t.r.StartWakeRun(req.SessionID, in.AgentConfigID, in.ProjectID, req.Input, req.ParentRunID, nil)
 		return err
 	}
-	// The task's own run. It shares the parent's sandbox (and project), and
-	// thereby its command-trust scope; the child's first run CAS-binds its
-	// hidden session with the same pair.
-	_, err := t.r.startRunWithID(req.RunID, req.SessionID, in.TaskAgentID, in.SandboxID, in.ProjectID, req.Input, "", nil, nil)
+	// The task's own run. It shares the parent's project, and thereby its
+	// command-trust scope; the child's first run CAS-binds its hidden session
+	// with the same project.
+	_, err := t.r.startRunWithID(req.RunID, req.SessionID, in.TaskAgentID, in.ProjectID, req.Input, "", nil, nil)
 	return err
 }
 

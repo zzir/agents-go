@@ -78,6 +78,7 @@ renumbered — which is why the letters run out of alphabetical order in places.
 | [§2.7l](#27l-sandbox-tool-argument-decoding) | Sandbox tool argument decoding | `exec_command` decodes its own arguments, leniently |
 | [§2.7m](#27m-a-sandbox-reports-its-own-timeout-never-the-callers-ending) | A sandbox reports its own timeout, never the caller's ending | `TimedOut` means the sandbox killed it — never the caller's deadline |
 | [§2.7n](#27n-a-sandboxs-environment-is-part-of-its-container-identity) | A sandbox's environment is part of its container identity | `Options.Env` reaches every command; changing it replaces the container |
+| [§2.7o](#27o-a-docker-sandbox-runs-as-the-images-user-and-joins-no-network) | A docker sandbox runs as the image's user and joins no network | Empty `User` = the image's own user; empty `Network` = none |
 | [§2.8](#28-nested-agent-as-tool-attribution) | Nested agent-as-tool attribution | How usage, spans and errors attribute across a nested agent-as-tool |
 | [§2.9](#29-budgets-) | Budgets 🚧 | `MaxTurns` is the one budget dimension implemented |
 | [§2.10](#210-errors-and-recovery) | Errors and recovery | Stable `ErrorCode`s, and which errors a run can recover from |
@@ -1473,6 +1474,22 @@ installed into the container's own filesystem does not.
 exist.** An empty map and an absent one are the same container, and their
 fingerprint is frozen: changing it would make every already-running container
 read as stale and replace the entire fleet.
+
+### 2.7o A docker sandbox runs as the image's user and joins no network
+
+`docker.Options.User` empty means **the image's own user** — for most images
+root, which is what lets a container install a package into itself. The
+backend applies no user of its own. A caller that wants a narrower one names
+it (`"65534:65534"`, `"1000:1000"`); there is no separate flag for "no,
+really, empty" ([decisions §5.33](../explanation/decisions.md)).
+
+`docker.Options.Network` empty means **no network at all** (`--network none`).
+Any other value is the docker network to join — `"bridge"` for ordinary
+networking, a user-defined network's name to put the container where other
+containers, and the process that created it, can reach it.
+
+Both are part of the adoption fingerprint (§2.7n): changing either replaces a
+persistent container rather than adopting it.
 
 ### 2.8 Nested agent-as-tool attribution
 

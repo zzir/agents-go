@@ -65,7 +65,7 @@ func TestBuildConfig_SecurityDefaults(t *testing.T) {
 }
 
 func TestBuildConfig_NetworkEnabled(t *testing.T) {
-	s := &Sandbox{opts: Options{Image: "x", Network: true}}
+	s := &Sandbox{opts: Options{Image: "x", Network: "bridge"}}
 	_, host := s.buildConfig(sandbox.ExecRequest{Cmd: []string{"x"}})
 	if string(host.NetworkMode) == "none" {
 		t.Error("network should be enabled when Options.Network is true")

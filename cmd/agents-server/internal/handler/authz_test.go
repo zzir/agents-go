@@ -139,7 +139,7 @@ func TestSessionSubtreesAreTheOwnersAlone(t *testing.T) {
 	// run fails on config at once (no provider), but the hub keeps its record
 	// for a while — long enough to be looked up.
 	done := make(chan struct{})
-	runID, err := r.runner.StartRun(sess.ID, "", "", "", "hi", nil, func(*bridge.RunOutcome) { close(done) })
+	runID, err := r.runner.StartRun(sess.ID, "", "", "hi", nil, func(*bridge.RunOutcome) { close(done) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -604,9 +604,9 @@ func TestRunEventsStayWithTheOwner(t *testing.T) {
 
 	// The broadcast bus — a fact about the session a run stream cannot carry
 	// to everyone — reaches the owner's connections only.
-	fact := &protocol.Envelope{Type: protocol.EventSessionSandboxBound, Payload: json.RawMessage(`{"session_id":"` + sess.ID + `"}`)}
+	fact := &protocol.Envelope{Type: protocol.EventSessionProjectBound, Payload: json.RawMessage(`{"session_id":"` + sess.ID + `"}`)}
 	wsh.registry.Broadcast(fact, "", sess.ID)
-	if got := readUntil(t, owner, protocol.EventSessionSandboxBound); got.Type != protocol.EventSessionSandboxBound {
+	if got := readUntil(t, owner, protocol.EventSessionProjectBound); got.Type != protocol.EventSessionProjectBound {
 		t.Fatalf("owner did not hear the broadcast")
 	}
 	if err := stranger.WriteJSON(protocol.Envelope{Type: protocol.EventRunSubscribe, Payload: sub}); err != nil {

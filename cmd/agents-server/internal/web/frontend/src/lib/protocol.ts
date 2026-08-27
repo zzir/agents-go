@@ -42,9 +42,9 @@ export const EV = {
   runDiagnostic: 'run.diagnostic',
   runGap: 'run.gap',
   sessionTitleUpdated: 'session.title_updated',
-  // The session's first sandbox-carrying run permanently bound
-  // (sandbox_id, project_id) — published once, by the run that won the bind.
-  sessionSandboxBound: 'session.sandbox_bound',
+  // The session's first project-carrying run permanently bound its project —
+  // published once, by the run that won the bind.
+  sessionProjectBound: 'session.project_bound',
   // One of a session's background tasks changed state — spawned, paused,
   // moved to its next run (a workflow step), ended. Rides the task run's
   // stream (there is no live parent run) and carries the row as the tasks

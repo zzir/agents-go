@@ -42,7 +42,8 @@ type stores struct {
 	Memories         *store.MemoryStore
 	Settings         *store.SettingStore
 	SettingReader    *settings.Reader
-	Sandboxes        *store.SandboxStore
+	Targets          *store.SandboxTargetStore
+	Templates        *store.SandboxTemplateStore
 	Projects         *store.ProjectStore
 	Guardrails       *store.GuardrailStore
 	PendingApprovals *store.PendingApprovalStore
@@ -70,7 +71,8 @@ func newStores(db *bun.DB) *stores {
 		Memories:         store.NewMemoryStore(db),
 		Settings:         settingStore,
 		SettingReader:    settings.NewReader(settingStore),
-		Sandboxes:        store.NewSandboxStore(db),
+		Targets:          store.NewSandboxTargetStore(db),
+		Templates:        store.NewSandboxTemplateStore(db),
 		Projects:         store.NewProjectStore(db),
 		Guardrails:       store.NewGuardrailStore(db),
 		PendingApprovals: store.NewPendingApprovalStore(db),
@@ -120,7 +122,7 @@ func newBridge(ctx, bgCtx context.Context, db *bun.DB, st *stores, audit protoco
 		Mcp:        mcpservers.NewManager(ctx, st.SettingReader),
 		OAuth:      mcpservers.NewOAuthCoordinator(st.McpServers),
 		ChatGPT:    providers.NewChatGPTOAuth(st.Providers, st.SettingReader),
-		Sandboxes:  sandboxes.NewManager(flagWorkspace),
+		Sandboxes:  sandboxes.NewManager(),
 	}
 	svc.Sandboxes.SetIdleTimeout(func() time.Duration {
 		return time.Duration(st.SettingReader.Int(context.Background(), settings.KeySandboxIdleMinutes)) * time.Minute
@@ -131,7 +133,8 @@ func newBridge(ctx, bgCtx context.Context, db *bun.DB, st *stores, audit protoco
 		AgentConfigs:     st.AgentConfigs,
 		Providers:        st.Providers,
 		McpServers:       st.McpServers,
-		SandboxConfigs:   st.Sandboxes,
+		Targets:          st.Targets,
+		Templates:        st.Templates,
 		Projects:         st.Projects,
 		Skills:           st.Skills,
 		Memories:         st.Memories,
@@ -175,8 +178,9 @@ type handlers struct {
 // newHandlers builds the handlers on the stores and the bridge. Handlers.Auth
 // is left for newServer: it needs the auth service and the server's
 // connection registry.
-func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL, workspaceAbs string) *handlers {
-	terminal := handler.NewTerminalHandler(st.Sandboxes, st.Projects, svc.Sandboxes, st.SettingReader)
+func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL string) *handlers {
+	terminal := handler.NewTerminalHandler(st.Targets, st.Templates, st.Projects, svc.Sandboxes, st.SettingReader)
+	retirer := handler.NewRetirer(st.Projects, svc.Sandboxes, terminal)
 	terminal.Audit = audit
 	ws := handler.NewWSHandler(svc.Runner, st.Sessions, st.PendingApprovals)
 	ws.Audit = audit
@@ -205,15 +209,15 @@ func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL, w
 			Workflows:  handler.NewWorkflowHandler(st.Workflows, st.AgentConfigs, st.Sessions, svc.Runner),
 			Triggers:   handler.NewTriggerHandler(st.Triggers, st.Sessions, st.Workflows, st.AgentConfigs, svc.Scheduler),
 			Guardrails: handler.NewGuardrailHandler(st.Guardrails, svc.Guardrails),
-			Sandboxes:  handler.NewSandboxHandler(st.Sandboxes, svc.Sandboxes, terminal),
-			Projects:   handler.NewProjectHandler(st.Projects, st.Sandboxes, svc.Sandboxes, terminal),
+			Targets:    handler.NewSandboxTargetHandler(st.Targets, st.Templates, retirer),
+			Templates:  handler.NewSandboxTemplateHandler(st.Templates, retirer),
+			Projects:   handler.NewProjectHandler(st.Projects, st.Targets, st.Templates, svc.Sandboxes, terminal),
 			Traces:     handler.NewTraceHandler(st.Traces),
 			Playground: handler.NewPlaygroundHandler(svc.Deps),
 			ChatGPT:    handler.NewChatGPTOAuthHandler(svc.ChatGPT, st.Providers),
 			Server: handler.ServerInfo{
-				Version:   buildVersion,
-				Workspace: workspaceAbs,
-				MaxTasks:  svc.Runner.Hub().MaxTasks(),
+				Version:  buildVersion,
+				MaxTasks: svc.Runner.Hub().MaxTasks(),
 			},
 		},
 	}

@@ -1,6 +1,6 @@
-// Package sandboxes keeps the live sandbox instances behind stored sandbox
-// configs — built on demand, shared across a session, retired on edit — and
-// the per-session command trust that gates exec_command.
+// Package sandboxes keeps the live sandbox instances behind stored projects —
+// built on demand, shared across a session, retired on edit — and the
+// per-session command trust that gates exec_command.
 package sandboxes
 
 import (
@@ -9,9 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -22,17 +19,24 @@ import (
 	dockersb "github.com/zzir/agents-go/sandbox/docker"
 )
 
-// sandboxKey identifies one live sandbox instance: config id, the PROJECT
-// whose tree the container mounts, and the RUNTIME GENERATION of each — their
-// content changes only, so a rename on either never splits the cache.
-// Different projects must not share an instance (the mount and the
-// environment are baked in at build); see the retired fences for the
-// generations' role.
+// Spec is everything one project's sandbox is built from: where it runs, what
+// it runs, and whose tree it mounts. The three rows travel together because
+// no build needs fewer.
+type Spec struct {
+	Target   *store.SandboxTarget
+	Template *store.SandboxTemplate
+	Project  *store.Project
+}
+
+// sandboxKey identifies one live sandbox instance: the PROJECT it serves and
+// that project's RUNTIME GENERATION. One axis is enough because the
+// generation moves for every content change that can reach a container — the
+// project's own, and the target's or template's through
+// ProjectStore.BumpRuntimeGen (decisions §5.33). So a rename anywhere never
+// splits the cache, and a content change anywhere always does.
 type sandboxKey struct {
-	id        string
-	gen       int64
 	projectID string
-	projGen   int64
+	gen       int64
 }
 
 // sandboxInstance is one live sandbox plus everything scoped to its lifetime:
@@ -56,11 +60,12 @@ type sandboxInstance struct {
 	buildErr error
 	// refs counts live holders. Guarded by the manager's mu.
 	refs int
-	// doomed marks an instance evicted from the cache (config update/delete,
-	// or the last bound session going away) while holders remain: nothing new
-	// can acquire it, and the LAST release closes it — an in-flight run or an
-	// open terminal finishes on the configuration it started with instead of
-	// having its connection torn out from under it. Guarded by mu.
+	// doomed marks an instance evicted from the cache (a config edit, the
+	// project's deletion, or the last bound session going away) while holders
+	// remain: nothing new can acquire it, and the LAST release closes it — an
+	// in-flight run or an open terminal finishes on the configuration it
+	// started with instead of having its connection torn out from under it.
+	// Guarded by mu.
 	doomed bool
 	// expired marks an idle expiry mid-stop: the instance stays under its key
 	// so an acquire waits on gone instead of adopting a stopping container
@@ -85,34 +90,28 @@ func (i *sandboxInstance) close() {
 	})
 }
 
-// Manager caches and reuses sandbox instances keyed by (config id,
-// runtime generation, project), with a reference count per instance: runs and
-// terminals Acquire and release, and eviction defers to the last holder (see
+// Manager caches and reuses sandbox instances keyed by (project, runtime
+// generation), with a reference count per instance: runs and terminals
+// Acquire and release, and eviction defers to the last holder (see
 // sandboxInstance).
 type Manager struct {
 	mu        sync.Mutex
 	instances map[sandboxKey]*sandboxInstance
-	// retired maps a config id to the lowest runtime generation still current
-	// — the fence Retire moves on every content-changing config update. An
-	// acquire that read the config just before the update builds from a
-	// retired generation; the fence makes that instance doomed the moment its
-	// build lands, so it serves the run that started it and closes, instead
-	// of living in the cache as a stale-credential instance until process
-	// exit.
+	// retired maps a project id to the lowest runtime generation still
+	// current — the fence RetireProject moves on every content change that
+	// reaches the project. An acquire that read the rows just before the
+	// change builds from a retired generation; the fence makes that instance
+	// doomed the moment its build lands, so it serves the run that started it
+	// and closes, instead of living in the cache as a stale-credential
+	// instance until process exit.
 	retired map[string]int64
-	// retiredProjects is the same fence keyed by project, moved by
-	// RetireProject when a project's environment changes. Two fences rather
-	// than one: a config edit and a project edit each retire their own axis,
-	// and neither may evict the other's instances.
-	retiredProjects map[string]int64
 	// closed latches when CloseAll runs (process shutdown): no new acquire
 	// may start, and every instance — building placeholders included — is
 	// doomed so the last holder's release closes it.
 	closed bool
 	// buildOverride, when set (tests only), replaces buildSandbox — see
 	// buildFn.
-	buildOverride func(*store.SandboxConfig, *store.Project) (sandbox.Sandbox, error)
-	workspace     string
+	buildOverride func(Spec) (sandbox.Sandbox, error)
 	// trust holds per-session exec_command approval grants, consulted by the
 	// commandGate and updated by the approval resolver.
 	trust *TrustStore
@@ -127,14 +126,12 @@ type Manager struct {
 // SetIdleTimeout installs the idle-stop duration provider (see idleAfter).
 func (m *Manager) SetIdleTimeout(fn func() time.Duration) { m.idleAfter = fn }
 
-// NewManager creates a Manager that roots local-daemon project trees at workspace.
-func NewManager(workspace string) *Manager {
+// NewManager creates an empty Manager.
+func NewManager() *Manager {
 	return &Manager{
-		instances:       make(map[sandboxKey]*sandboxInstance),
-		retired:         make(map[string]int64),
-		retiredProjects: make(map[string]int64),
-		workspace:       workspace,
-		trust:           NewTrustStore(),
+		instances: make(map[sandboxKey]*sandboxInstance),
+		retired:   make(map[string]int64),
+		trust:     NewTrustStore(),
 	}
 }
 
@@ -156,15 +153,13 @@ func (m *Manager) commandGate(_ context.Context, rc *agents.RunContext, argsJSON
 	return !m.trust.ForSession(sid).trusted(CommandHash(argsJSON)), nil
 }
 
-// Acquire returns the cached sandbox for (config, project), building one if
+// Acquire returns the cached sandbox for spec's project, building one if
 // absent, and takes a reference on it. The returned release MUST be called
 // exactly once when the holder is done — a run's teardown, a terminal's
 // close. It is idempotent (extra calls are no-ops) and performs the deferred
 // close when this holder was the last one keeping a doomed instance alive.
-// proj is the working tree the instance's container mounts; every acquire
-// carries one.
-func (m *Manager) Acquire(cfg *store.SandboxConfig, proj *store.Project) (sandbox.Sandbox, func(), error) {
-	inst, release, err := m.acquire(cfg, proj)
+func (m *Manager) Acquire(spec Spec) (sandbox.Sandbox, func(), error) {
+	inst, release, err := m.acquire(spec)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -180,11 +175,11 @@ func (m *Manager) Acquire(cfg *store.SandboxConfig, proj *store.Project) (sandbo
 // acquirer installs a placeholder and dials after unlocking; concurrent
 // acquirers of the SAME key find the placeholder, take their reference, and
 // wait on its ready gate — one dial, keyed contention only.
-func (m *Manager) acquire(cfg *store.SandboxConfig, proj *store.Project) (*sandboxInstance, func(), error) {
-	if proj == nil {
-		return nil, nil, fmt.Errorf("sandbox acquire needs a project")
+func (m *Manager) acquire(spec Spec) (*sandboxInstance, func(), error) {
+	if spec.Project == nil || spec.Target == nil || spec.Template == nil {
+		return nil, nil, fmt.Errorf("sandbox acquire needs a target, a template and a project")
 	}
-	key := sandboxKey{id: cfg.ID, gen: cfg.RuntimeGen, projectID: proj.ID, projGen: proj.RuntimeGen}
+	key := sandboxKey{projectID: spec.Project.ID, gen: spec.Project.RuntimeGen}
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
@@ -197,7 +192,7 @@ func (m *Manager) acquire(cfg *store.SandboxConfig, proj *store.Project) (*sandb
 		gone := inst.gone
 		m.mu.Unlock()
 		<-gone
-		return m.acquire(cfg, proj)
+		return m.acquire(spec)
 	}
 	if !ok {
 		inst = &sandboxInstance{ready: make(chan struct{}), key: key}
@@ -205,7 +200,7 @@ func (m *Manager) acquire(cfg *store.SandboxConfig, proj *store.Project) (*sandb
 		m.instances[key] = inst
 		m.mu.Unlock()
 
-		sb, err := m.buildFn()(cfg, proj)
+		sb, err := m.buildFn()(spec)
 
 		m.mu.Lock()
 		inst.sb, inst.buildErr = sb, err
@@ -220,18 +215,18 @@ func (m *Manager) acquire(cfg *store.SandboxConfig, proj *store.Project) (*sandb
 				delete(m.instances, key)
 			}
 		case m.instances[key] != inst:
-			// Evicted while dialing (a config update's Retire, CloseAll, the
-			// last bound session going). The evictor saw refs > 0 and marked
-			// the placeholder doomed, so the last release closes what was just
-			// built — nothing to do here; the case exists to say so.
-		case m.retired[cfg.ID] > cfg.RuntimeGen || m.retiredProjects[proj.ID] > proj.RuntimeGen || m.closed:
+			// Evicted while dialing (a config edit's RetireProject, CloseAll,
+			// the last bound session going). The evictor saw refs > 0 and
+			// marked the placeholder doomed, so the last release closes what
+			// was just built — nothing to do here; the case exists to say so.
+		case m.retired[key.projectID] > key.gen || m.closed:
 			// Built from a generation that was retired while the dial was in
-			// flight (the acquire read the config or the project just before
-			// an update), or the manager shut down meanwhile. Serve the
-			// holders that are already waiting — their run validly started on
-			// this generation — but out of the cache and doomed: the last
-			// release closes it, and no later acquire can share an instance
-			// built from stale credentials or a stale environment.
+			// flight (the acquire read the rows just before an update), or the
+			// manager shut down meanwhile. Serve the holders that are already
+			// waiting — their run validly started on this generation — but out
+			// of the cache and doomed: the last release closes it, and no later
+			// acquire can share an instance built from stale credentials or a
+			// stale environment.
 			delete(m.instances, key)
 			inst.doomed = true
 		}
@@ -266,7 +261,7 @@ func (m *Manager) acquire(cfg *store.SandboxConfig, proj *store.Project) (*sandb
 // buildFn returns the sandbox builder — the real one, or a test's injected
 // stand-in (the only way to hold a build open while exercising the concurrent
 // eviction and shutdown paths).
-func (m *Manager) buildFn() func(*store.SandboxConfig, *store.Project) (sandbox.Sandbox, error) {
+func (m *Manager) buildFn() func(Spec) (sandbox.Sandbox, error) {
 	if m.buildOverride != nil {
 		return m.buildOverride
 	}
@@ -276,7 +271,7 @@ func (m *Manager) buildFn() func(*store.SandboxConfig, *store.Project) (sandbox.
 // SetBuildOverride replaces the sandbox constructor — tests (in this package
 // and the bridge's) inject an in-process fake so tool-execution paths run
 // without a Docker daemon.
-func (m *Manager) SetBuildOverride(fn func(*store.SandboxConfig, *store.Project) (sandbox.Sandbox, error)) {
+func (m *Manager) SetBuildOverride(fn func(Spec) (sandbox.Sandbox, error)) {
 	m.buildOverride = fn
 }
 
@@ -345,36 +340,19 @@ func (m *Manager) evictLocked(key sandboxKey) (toClose *sandboxInstance) {
 	return inst
 }
 
-// RemoveInstance evicts the one cached instance serving (config, project) —
-// the session-scoped release: when the last session bound to that pair is
-// deleted, its container has no caller left, and only a process restart
-// would otherwise reclaim the instance. Holders still using it (a run
-// mid-flight, an open terminal) keep it alive until their release; the
-// eviction only guarantees no NEW holder joins. Other projects on the same
-// config keep their instances.
-func (m *Manager) RemoveInstance(cfg *store.SandboxConfig, projectID string) {
-	key := sandboxKey{id: cfg.ID, gen: cfg.RuntimeGen, projectID: projectID}
-	m.mu.Lock()
-	inst := m.evictLocked(key)
-	m.mu.Unlock()
-	if inst != nil {
-		inst.close()
-	}
-}
-
 // RetireProject evicts every instance of a project built before minLive and
 // fences that generation off, so an acquire whose build is still in flight
-// cannot repopulate the cache with the old environment. The eviction defers
+// cannot repopulate the cache with the old configuration. The eviction defers
 // to live holders: a run or terminal already using an instance finishes on
-// the environment it started with (see sandboxInstance.doomed).
+// what it started with (see sandboxInstance.doomed).
 func (m *Manager) RetireProject(projectID string, minLive int64) {
 	var toClose []*sandboxInstance
 	m.mu.Lock()
-	if m.retiredProjects[projectID] < minLive {
-		m.retiredProjects[projectID] = minLive
+	if m.retired[projectID] < minLive {
+		m.retired[projectID] = minLive
 	}
 	for key := range m.instances {
-		if key.projectID != projectID || key.projGen >= minLive {
+		if key.projectID != projectID || key.gen >= minLive {
 			continue
 		}
 		if inst := m.evictLocked(key); inst != nil {
@@ -387,13 +365,65 @@ func (m *Manager) RetireProject(projectID string, minLive int64) {
 	}
 }
 
+// RemoveProject evicts every cached instance of the project — all generations
+// — and fences the id permanently: the project is gone, so nothing may serve
+// it again. The tombstone covers callers who READ the project before the
+// delete (a terminal open reads, dials, then acquires): without it their late
+// build would enter the cache as an instance of a project that no longer
+// exists, with no path ever retiring it. Permanence is safe — ids are random
+// and never reused. In-flight holders finish on what they acquired; only idle
+// instances close immediately.
+func (m *Manager) RemoveProject(projectID string) {
+	var toClose []*sandboxInstance
+	m.mu.Lock()
+	m.retired[projectID] = maxGen
+	for key := range m.instances {
+		if key.projectID != projectID {
+			continue
+		}
+		if inst := m.evictLocked(key); inst != nil {
+			toClose = append(toClose, inst)
+		}
+	}
+	m.mu.Unlock()
+	for _, inst := range toClose {
+		inst.close()
+	}
+}
+
+// maxGen fences a project id permanently: no runtime generation can reach it.
+const maxGen = int64(1) << 62
+
+// ReclaimProject removes the project's container AND its volume from the
+// target's daemon, after evicting the cached instance. Deleting a project
+// deletes its files: the storage is what the row was for, and leaving a
+// volume behind on every delete is an unbounded leak nobody has a listing for
+// (decisions §5.33). The caller deletes the row first, so a failure here
+// leaves reclaimable storage rather than a row pointing at nothing.
+func (m *Manager) ReclaimProject(ctx context.Context, target *store.SandboxTarget, projectID string) error {
+	m.RemoveProject(projectID)
+	opts, err := TargetOptions(target)
+	if err != nil {
+		return err
+	}
+	name := ContainerName(projectID)
+	if err := dockersb.RemoveManaged(ctx, opts, name); err != nil && !errors.Is(err, dockersb.ErrContainerNotFound) {
+		return fmt.Errorf("removing container %s: %w", name, err)
+	}
+	vol := ProjectVolumeName(projectID)
+	if err := dockersb.RemoveManagedVolume(ctx, opts, vol); err != nil && !errors.Is(err, dockersb.ErrVolumeNotFound) {
+		return fmt.Errorf("removing volume %s: %w", vol, err)
+	}
+	return nil
+}
+
 // createContainer creates the project's container now rather than leaving it
 // to the next run, so a rebuild hands back something usable. Containers are
 // built lazily on the first exec, so this IS an exec: "sleep 0" needs nothing
 // the persistent container does not already require (its entrypoint is
 // "sleep infinity").
-func (m *Manager) createContainer(ctx context.Context, cfg *store.SandboxConfig, proj *store.Project) error {
-	sb, release, err := m.Acquire(cfg, proj)
+func (m *Manager) createContainer(ctx context.Context, spec Spec) error {
+	sb, release, err := m.Acquire(spec)
 	if err != nil {
 		return err
 	}
@@ -409,83 +439,31 @@ func (m *Manager) createContainer(ctx context.Context, cfg *store.SandboxConfig,
 // someone broke. The REMOVE is the point: closing an instance only stops the
 // container (KeepOnClose), and a stopped container whose fingerprint still
 // matches is adopted again, so an evict-only rebuild would hand back exactly
-// what it was asked to discard. In-flight commands in the old container fail;
-// that is the deal a rebuild makes, and the caller warns before taking it.
-func (m *Manager) RebuildContainer(ctx context.Context, cfg *store.SandboxConfig, proj *store.Project) error {
-	m.RemoveProject(proj.ID)
-	opts, err := DaemonOptions(cfg)
+// what it was asked to discard. The VOLUME survives: this replaces the
+// container, not the working tree. In-flight commands in the old container
+// fail; that is the deal a rebuild makes, and the caller warns before taking
+// it.
+func (m *Manager) RebuildContainer(ctx context.Context, spec Spec) error {
+	m.EvictProject(spec.Project.ID)
+	opts, err := TargetOptions(spec.Target)
 	if err != nil {
 		return err
 	}
-	name := ContainerName(cfg.ID, proj.ID)
+	name := ContainerName(spec.Project.ID)
 	if err := dockersb.RemoveManaged(ctx, opts, name); err != nil && !errors.Is(err, dockersb.ErrContainerNotFound) {
 		return fmt.Errorf("removing container %s: %w", name, err)
 	}
-	return m.createContainer(ctx, cfg, proj)
+	return m.createContainer(ctx, spec)
 }
 
-// RemoveProject evicts every cached instance keyed to the project — its row
-// was deleted, so no cached container should idle on for it. The container
-// and its storage stay on the daemon (decisions §5.28: data outlives the row);
-// in-flight holders finish on what they hold.
-func (m *Manager) RemoveProject(projectID string) {
+// EvictProject drops the project's cached instances without fencing the id —
+// the eviction a rebuild and a last-session-released binding both need, which
+// must leave the project acquirable afterwards.
+func (m *Manager) EvictProject(projectID string) {
 	var toClose []*sandboxInstance
 	m.mu.Lock()
 	for key := range m.instances {
 		if key.projectID != projectID {
-			continue
-		}
-		if inst := m.evictLocked(key); inst != nil {
-			toClose = append(toClose, inst)
-		}
-	}
-	m.mu.Unlock()
-	for _, inst := range toClose {
-		inst.close()
-	}
-}
-
-// Retire evicts every cached instance of the config id built from a runtime
-// generation below minLive, and moves the fence so none can come back: an
-// acquire that read the config just before the update may still be dialing,
-// and without the fence its build would re-install an old-credential
-// instance after the eviction swept the cache. With it, that instance is
-// doomed the moment its build lands. In-flight holders finish on what they
-// acquired; only idle instances close immediately.
-func (m *Manager) Retire(id string, minLive int64) {
-	var toClose []*sandboxInstance
-	m.mu.Lock()
-	if m.retired[id] < minLive {
-		m.retired[id] = minLive
-	}
-	for key := range m.instances {
-		if key.id != id || key.gen >= minLive {
-			continue
-		}
-		if inst := m.evictLocked(key); inst != nil {
-			toClose = append(toClose, inst)
-		}
-	}
-	m.mu.Unlock()
-	for _, inst := range toClose {
-		inst.close()
-	}
-}
-
-// Remove evicts every cached instance of the config id — all generations and
-// project variants — and fences the id permanently: the config was deleted,
-// so nothing may serve it again. The tombstone covers callers who READ the
-// config before the delete (a terminal open or config test reads, dials,
-// then acquires): without it their late build would enter the cache as an
-// instance of a config that no longer exists, with no path ever retiring it.
-// Permanence is safe — ids are random and never reused. In-flight holders
-// finish on what they acquired; only idle instances close immediately.
-func (m *Manager) Remove(id string) {
-	var toClose []*sandboxInstance
-	m.mu.Lock()
-	m.retired[id] = math.MaxInt64
-	for key := range m.instances {
-		if key.id != id {
 			continue
 		}
 		if inst := m.evictLocked(key); inst != nil {
@@ -529,18 +507,18 @@ const (
 )
 
 // SandboxTools returns exec_command plus read_file, write_file, list_files and
-// apply_patch tools for the given sandbox config, holding a reference on the
-// backing instance that the returned release drops (see Acquire — the caller
-// releases when the run using the tools is over). apply_patch (Codex-style
-// multi-file edits) and the file tools all edit through the same Sandbox, so
-// they target the same filesystem exec_command runs in. Every container is
-// persistent, so exec_command always offers named shells (session_id); they
-// are scoped to this toolset, so the release also closes any the run opened.
-// When commandApproval is set, exec_command is gated per call through the
-// session command-trust store: a command is approved on first use, then
-// trusted per the user's choice.
-func (m *Manager) SandboxTools(cfg *store.SandboxConfig, proj *store.Project, commandApproval bool) ([]*agents.Tool, func(), error) {
-	sb, release, err := m.Acquire(cfg, proj)
+// apply_patch tools for the given project, holding a reference on the backing
+// instance that the returned release drops (see Acquire — the caller releases
+// when the run using the tools is over). apply_patch (Codex-style multi-file
+// edits) and the file tools all edit through the same Sandbox, so they target
+// the same filesystem exec_command runs in. Every container is persistent, so
+// exec_command always offers named shells (session_id); they are scoped to
+// this toolset, so the release also closes any the run opened. When
+// commandApproval is set, exec_command is gated per call through the session
+// command-trust store: a command is approved on first use, then trusted per
+// the user's choice.
+func (m *Manager) SandboxTools(spec Spec, commandApproval bool) ([]*agents.Tool, func(), error) {
+	sb, release, err := m.Acquire(spec)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -564,67 +542,53 @@ func (m *Manager) SandboxTools(cfg *store.SandboxConfig, proj *store.Project, co
 	return tools, releaseTools, nil
 }
 
-// buildSandbox constructs the SDK sandbox for (config, project): one
-// persistent container per pair, name derived from the two ids, mounting the
-// project's tree — a host directory under <workspace>/<user>/<project> on the
-// local daemon, the named volume agents-proj-<project> on a remote one (spec
-// §5.28). Docker is the only backend (decisions §5.27).
-func (m *Manager) buildSandbox(cfg *store.SandboxConfig, proj *store.Project) (sandbox.Sandbox, error) {
-	opts, err := DaemonOptions(cfg)
+// buildSandbox constructs the SDK sandbox for spec: one persistent container
+// per project, named from its id, mounting the project's named volume at
+// /workspace. The volume is the storage on every daemon, local or remote —
+// there is no host bind mount (decisions §5.33). Docker is the only backend
+// (decisions §5.27).
+func (m *Manager) buildSandbox(spec Spec) (sandbox.Sandbox, error) {
+	opts, err := BuildOptions(spec)
 	if err != nil {
 		return nil, err
-	}
-	if opts.Env, err = store.EnvMap(proj.Env); err != nil {
-		return nil, fmt.Errorf("project %s: %w", proj.Name, err)
-	}
-	opts.Persistent = true
-	opts.KeepOnClose = true
-	opts.TmpfsSize = "1g"
-	opts.ContainerName = ContainerName(cfg.ID, proj.ID)
-	if opts.Host == "" {
-		// An empty Host means THIS machine: the bind source below is a local
-		// directory. The SDK client honors DOCKER_HOST when no Host is given,
-		// so an environment pointing it at another daemon would silently split
-		// the view — file tools on this filesystem, containers on that one.
-		if env := os.Getenv("DOCKER_HOST"); env != "" && !strings.HasPrefix(env, "unix://") && !strings.HasPrefix(env, "npipe://") {
-			return nil, fmt.Errorf("docker sandbox: DOCKER_HOST=%q points at another daemon while this config's empty host mounts local directories; set the sandbox's host explicitly or unset DOCKER_HOST", env)
-		}
-		opts.WorkDir = m.ProjectHostDir(proj)
-		// Bind-mounted files should belong to the user running the server,
-		// not nobody — unless the config names its own user.
-		if opts.User == "" {
-			opts.User = fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())
-		}
-	} else {
-		opts.VolumeName = ProjectVolumeName(proj.ID)
 	}
 	return dockersb.New(opts)
 }
 
-// DaemonOptions assembles the SDK options reaching cfg's daemon — image,
-// limits and how to talk to it. Which container and which tree the caller
-// adds (buildSandbox); the health check and the managed-container calls take
-// it as it stands.
-func DaemonOptions(cfg *store.SandboxConfig) (dockersb.Options, error) {
-	if cfg.Type != "docker" {
-		return dockersb.Options{}, fmt.Errorf("unknown sandbox type: %s", cfg.Type)
+// BuildOptions assembles the SDK options for spec: the target's daemon, the
+// template's image and limits, and the project's container, volume and
+// environment.
+func BuildOptions(spec Spec) (dockersb.Options, error) {
+	opts, err := TargetOptions(spec.Target)
+	if err != nil {
+		return dockersb.Options{}, err
 	}
-	var dc store.DockerConfig
-	if err := unmarshalConfig(cfg.Config, &dc); err != nil {
-		return dockersb.Options{}, fmt.Errorf("docker sandbox: invalid config: %w", err)
+	if err := applyTemplate(&opts, spec.Template); err != nil {
+		return dockersb.Options{}, err
 	}
-	if dc.Image == "" {
-		return dockersb.Options{}, fmt.Errorf("docker sandbox requires an image")
+	if opts.Env, err = store.EnvMap(spec.Project.Env); err != nil {
+		return dockersb.Options{}, fmt.Errorf("project %s: %w", spec.Project.Name, err)
 	}
-	opts := dockersb.Options{
-		Image:            dc.Image,
-		Host:             dc.Host,
-		Runtime:          dc.Runtime,
-		User:             dc.User,
-		Network:          dc.Network,
-		Limits:           sandbox.Limits{MemoryBytes: dc.MemoryMB << 20, CPUs: dc.CPUs},
-		MaxReadFileBytes: dc.MaxReadFileBytes,
+	opts.Persistent = true
+	opts.KeepOnClose = true
+	opts.TmpfsSize = "1g"
+	opts.ContainerName = ContainerName(spec.Project.ID)
+	opts.VolumeName = ProjectVolumeName(spec.Project.ID)
+	return opts, nil
+}
+
+// TargetOptions assembles the SDK options reaching the target's daemon — how
+// to talk to it, and nothing else. The health check and the managed-container
+// calls take it as it stands; a real build adds the template and the project.
+func TargetOptions(t *store.SandboxTarget) (dockersb.Options, error) {
+	if t.Type != "docker" {
+		return dockersb.Options{}, fmt.Errorf("unknown sandbox target type: %s", t.Type)
 	}
+	var dc store.DockerTargetConfig
+	if err := unmarshalConfig(t.Config, &dc); err != nil {
+		return dockersb.Options{}, fmt.Errorf("docker target: invalid config: %w", err)
+	}
+	opts := dockersb.Options{Host: dc.Host}
 	if strings.HasPrefix(dc.Host, "ssh://") {
 		opts.SSH = dockersb.SSHAuth{
 			UseAgent:              dc.SSHUseAgent,
@@ -637,8 +601,39 @@ func DaemonOptions(cfg *store.SandboxConfig) (dockersb.Options, error) {
 	return opts, nil
 }
 
+// DefaultContainerUser is what a template that names no user runs as. Root,
+// deliberately: the container is the isolation boundary, its files live in a
+// volume nobody else mounts, and a workbench whose agent cannot install a
+// package is a workbench that cannot do the work (decisions §5.33).
+const DefaultContainerUser = "root"
+
+// applyTemplate layers the template's image and container shape onto the
+// target's connection options.
+func applyTemplate(opts *dockersb.Options, tpl *store.SandboxTemplate) error {
+	if tpl.Type != "docker" {
+		return fmt.Errorf("unknown sandbox template type: %s", tpl.Type)
+	}
+	var dc store.DockerTemplateConfig
+	if err := unmarshalConfig(tpl.Config, &dc); err != nil {
+		return fmt.Errorf("docker template: invalid config: %w", err)
+	}
+	if dc.Image == "" {
+		return fmt.Errorf("docker template %s requires an image", tpl.Name)
+	}
+	opts.Image = dc.Image
+	opts.Runtime = dc.Runtime
+	opts.User = dc.User
+	if opts.User == "" {
+		opts.User = DefaultContainerUser
+	}
+	opts.Network = dc.Network
+	opts.Limits = sandbox.Limits{MemoryBytes: dc.MemoryMB << 20, CPUs: dc.CPUs}
+	opts.MaxReadFileBytes = dc.MaxReadFileBytes
+	return nil
+}
+
 // shortID is a uuid's tail 12 hex chars — enough to tell ids apart in names
-// docker and filesystems must carry.
+// docker must carry.
 func shortID(id string) string {
 	id = strings.ReplaceAll(id, "-", "")
 	if len(id) > 12 {
@@ -647,28 +642,20 @@ func shortID(id string) string {
 	return id
 }
 
-// ContainerName derives the docker container name serving (sandbox, project).
+// ContainerName derives the docker container name serving a project.
 // Deterministic, so a restarted server (or an idle-stopped container) is
 // re-adopted by fingerprint instead of duplicated.
-func ContainerName(sandboxID, projectID string) string {
-	return "agents-" + shortID(sandboxID) + "-" + shortID(projectID)
+func ContainerName(projectID string) string {
+	return "agents-" + shortID(projectID)
 }
 
-// ProjectVolumeName is the named volume serving a project's /workspace on a
-// remote daemon (decisions §5.28).
+// ProjectVolumeName is the named volume serving a project's /workspace on its
+// target's daemon (decisions §5.33).
 func ProjectVolumeName(projectID string) string {
 	return "agents-proj-" + shortID(projectID)
 }
 
-// ProjectHostDir is the local-daemon bind source for a project's /workspace:
-// <workspace>/<full owner uuid>/<project id> (decisions §5.28 — short ids stay
-// where docker imposes name limits, not on the filesystem). Created by the
-// SDK at container create.
-func (m *Manager) ProjectHostDir(proj *store.Project) string {
-	return filepath.Join(m.workspace, proj.OwnerID, proj.ID)
-}
-
-// unmarshalConfig decodes a SandboxConfig.Config payload, treating empty as a
+// unmarshalConfig decodes a stored Config payload, treating empty as a
 // zero-value config so the per-type required-field checks produce the error.
 func unmarshalConfig(raw json.RawMessage, v any) error {
 	if len(raw) == 0 {

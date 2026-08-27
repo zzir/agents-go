@@ -124,7 +124,7 @@ func TestModelStartsAWorkflow(t *testing.T) {
 	}
 
 	done := make(chan struct{})
-	chatRunID, err := runner.StartRun(sess.ID, ac.ID, "", "", "add a feature", nil, func(*RunOutcome) { close(done) })
+	chatRunID, err := runner.StartRun(sess.ID, ac.ID, "", "add a feature", nil, func(*RunOutcome) { close(done) })
 	if err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}

@@ -81,7 +81,7 @@ func (w Waker) Drain(ctx context.Context, sessionID string) {
 		payloads = append(payloads, batch[i].Payload)
 	}
 
-	if _, err := w.r.StartWakeRun(sessionID, inherit.AgentConfigID, inherit.SandboxID, inherit.ProjectID,
+	if _, err := w.r.StartWakeRun(sessionID, inherit.AgentConfigID, inherit.ProjectID,
 		strings.Join(payloads, "\n\n"), parentRunID, nil); err != nil {
 		// Lost a race with a run that started between the guard and here. The
 		// debts stay pending and that run's own boundary re-drains them.

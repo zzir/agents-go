@@ -11,25 +11,35 @@ import (
 	"github.com/zzir/agents-go/sandbox"
 )
 
-// testProject is an in-memory project row for manager tests: the manager
-// only reads its ids.
-func testProject(id string) *store.Project {
-	return &store.Project{ID: id, OwnerID: "owner-1", SandboxID: "loc", Name: id}
+// testSpec is an in-memory build spec for manager tests: the manager reads
+// the ids and the project's runtime generation, and the build override
+// usually ignores the rest.
+func testSpec(projectID string) Spec {
+	return specGen(projectID, "", 1)
 }
 
-// One live instance per (config id, project): sessions bound to different
-// projects on the same config must not share a sandbox, while the same pair
-// keeps hitting the cache. Remove tears down every variant of the id.
-func TestSandboxManagerKeysByProject(t *testing.T) {
-	m := NewManager(t.TempDir())
-	cfg := &store.SandboxConfig{ID: "loc", Name: "local", Type: "docker", Config: []byte(`{"image":"i"}`)}
+// specGen is testSpec with an explicit environment and runtime generation —
+// what a project edit produces.
+func specGen(projectID, env string, gen int64) Spec {
+	return Spec{
+		Target:   &store.SandboxTarget{ID: "tg", Name: "local", Type: "docker", Config: []byte(`{}`)},
+		Template: &store.SandboxTemplate{ID: "tpl", Name: "base", Type: "docker", Config: []byte(`{"image":"i"}`)},
+		Project:  &store.Project{ID: projectID, OwnerID: "owner-1", TargetID: "tg", TemplateID: "tpl", Name: projectID, Env: env, RuntimeGen: gen},
+	}
+}
 
-	a1, r1, err := m.Acquire(cfg, testProject("p1"))
+// One live instance per project: sessions bound to different projects must
+// not share a sandbox, while the same project keeps hitting the cache.
+// RemoveProject tears down every generation of the id.
+func TestSandboxManagerKeysByProject(t *testing.T) {
+	m := NewManager()
+
+	a1, r1, err := m.Acquire(testSpec("p1"))
 	if err != nil {
 		t.Fatalf("p1: %v", err)
 	}
 	defer r1()
-	a2, r2, err := m.Acquire(cfg, testProject("p2"))
+	a2, r2, err := m.Acquire(testSpec("p2"))
 	if err != nil {
 		t.Fatalf("p2: %v", err)
 	}
@@ -37,21 +47,21 @@ func TestSandboxManagerKeysByProject(t *testing.T) {
 	if a1 == a2 {
 		t.Fatal("different projects share one sandbox instance")
 	}
-	again, r3, err := m.Acquire(cfg, testProject("p1"))
+	again, r3, err := m.Acquire(testSpec("p1"))
 	if err != nil {
 		t.Fatalf("p1 again: %v", err)
 	}
 	defer r3()
 	if again != a1 {
-		t.Fatal("same (id, project) pair not served from the cache")
+		t.Fatal("the same project was not served from the cache")
 	}
 
-	m.Remove("loc")
+	m.RemoveProject("p1")
 	m.mu.Lock()
-	left := len(m.instances)
+	_, left := m.instances[sandboxKey{projectID: "p1", gen: 1}]
 	m.mu.Unlock()
-	if left != 0 {
-		t.Fatalf("Remove left %d variants cached, want 0", left)
+	if left {
+		t.Fatal("RemoveProject left the project cached")
 	}
 }
 
@@ -59,19 +69,18 @@ func TestSandboxManagerKeysByProject(t *testing.T) {
 // a run mid-flight or an open terminal keeps its instance alive — and nothing
 // acquired after the eviction shares the doomed instance.
 func TestSandboxManagerEvictionDefersToHolders(t *testing.T) {
-	m := NewManager(t.TempDir())
-	cfg := &store.SandboxConfig{ID: "loc", Name: "local", Type: "docker", Config: []byte(`{"image":"i"}`)}
+	m := NewManager()
 
-	inst1, rel1, err := m.acquire(cfg, testProject("wd"))
+	inst1, rel1, err := m.acquire(testSpec("wd"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, rel2, err := m.acquire(cfg, testProject("wd"))
+	_, rel2, err := m.acquire(testSpec("wd"))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	m.RemoveInstance(cfg, "wd")
+	m.EvictProject("wd")
 	m.mu.Lock()
 	doomed, refs := inst1.doomed, inst1.refs
 	m.mu.Unlock()
@@ -80,7 +89,7 @@ func TestSandboxManagerEvictionDefersToHolders(t *testing.T) {
 	}
 
 	// A fresh acquire builds a NEW instance — the doomed one is out of the cache.
-	inst2, rel3, err := m.acquire(cfg, testProject("wd"))
+	inst2, rel3, err := m.acquire(testSpec("wd"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,17 +119,16 @@ func TestSandboxManagerEvictionDefersToHolders(t *testing.T) {
 // An idle instance (no holders) closes immediately on eviction, and releasing
 // an instance that is not doomed keeps it cached for the next acquire.
 func TestSandboxManagerIdleEvictionAndReuse(t *testing.T) {
-	m := NewManager(t.TempDir())
-	cfg := &store.SandboxConfig{ID: "loc", Name: "local", Type: "docker", Config: []byte(`{"image":"i"}`)}
+	m := NewManager()
 
-	inst, rel, err := m.acquire(cfg, testProject("wd"))
+	inst, rel, err := m.acquire(testSpec("wd"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	rel()
 
 	// Not doomed: the released instance stays cached and is reused.
-	inst2, rel2, err := m.acquire(cfg, testProject("wd"))
+	inst2, rel2, err := m.acquire(testSpec("wd"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +137,7 @@ func TestSandboxManagerIdleEvictionAndReuse(t *testing.T) {
 	}
 	rel2()
 
-	m.RemoveInstance(cfg, "wd")
+	m.EvictProject("wd")
 	m.mu.Lock()
 	left := len(m.instances)
 	m.mu.Unlock()
@@ -142,8 +150,7 @@ func TestSandboxManagerIdleEvictionAndReuse(t *testing.T) {
 // instance (the placeholder's ready gate synchronizes them), and the refcount
 // equals the callers.
 func TestSandboxManagerConcurrentAcquireSharesOneBuild(t *testing.T) {
-	m := NewManager(t.TempDir())
-	cfg := &store.SandboxConfig{ID: "loc", Name: "local", Type: "docker", Config: []byte(`{"image":"i"}`)}
+	m := NewManager()
 
 	const n = 8
 	insts := make([]*sandboxInstance, n)
@@ -151,7 +158,7 @@ func TestSandboxManagerConcurrentAcquireSharesOneBuild(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := range n {
 		wg.Go(func() {
-			inst, rel, err := m.acquire(cfg, testProject("wd"))
+			inst, rel, err := m.acquire(testSpec("wd"))
 			if err != nil {
 				t.Error(err)
 				return
@@ -177,12 +184,13 @@ func TestSandboxManagerConcurrentAcquireSharesOneBuild(t *testing.T) {
 }
 
 // A failed build must not poison its key: the placeholder leaves the cache
-// with the error, and the next acquire dials fresh. (The failing config here
-// is a docker one with no image — refused before any daemon contact.)
+// with the error, and the next acquire dials fresh. (The failing template
+// here has no image — refused before any daemon contact.)
 func TestSandboxManagerFailedBuildRetries(t *testing.T) {
-	m := NewManager(t.TempDir())
-	bad := &store.SandboxConfig{ID: "sb", Name: "sb", Type: "docker", Config: []byte(`{}`)}
-	if _, _, err := m.acquire(bad, testProject("p")); err == nil {
+	m := NewManager()
+	bad := testSpec("p")
+	bad.Template = &store.SandboxTemplate{ID: "tpl", Name: "empty", Type: "docker", Config: []byte(`{}`)}
+	if _, _, err := m.acquire(bad); err == nil {
 		t.Fatal("imageless docker build succeeded")
 	}
 	m.mu.Lock()
@@ -191,9 +199,8 @@ func TestSandboxManagerFailedBuildRetries(t *testing.T) {
 	if left != 0 {
 		t.Fatalf("failed build left %d placeholders cached", left)
 	}
-	// Same key, now-valid config: the retry builds.
-	good := &store.SandboxConfig{ID: "sb", Name: "sb", Type: "docker", Config: []byte(`{"image":"i"}`)}
-	inst, rel, err := m.acquire(good, testProject("p"))
+	// Same key, now-valid template: the retry builds.
+	inst, rel, err := m.acquire(testSpec("p"))
 	if err != nil {
 		t.Fatalf("retry after a failed build: %v", err)
 	}
@@ -201,27 +208,6 @@ func TestSandboxManagerFailedBuildRetries(t *testing.T) {
 	if inst.sb == nil {
 		t.Fatal("retry returned a sandbox-less instance")
 	}
-}
-
-// An empty Host means the LOCAL daemon: a DOCKER_HOST pointing elsewhere
-// would silently split file tools (this host's filesystem) from containers
-// (that daemon's), so the build refuses it. A unix:// socket stays local
-// and passes.
-func TestSandboxManagerRejectsForeignDockerHost(t *testing.T) {
-	m := NewManager(t.TempDir())
-	cfg := &store.SandboxConfig{ID: "loc", Name: "local", Type: "docker", Config: []byte(`{"image":"i"}`)}
-
-	t.Setenv("DOCKER_HOST", "tcp://10.0.0.9:2375")
-	if _, _, err := m.acquire(cfg, testProject("p")); err == nil || !strings.Contains(err.Error(), "DOCKER_HOST") {
-		t.Fatalf("acquire with a foreign DOCKER_HOST: err=%v, want a refusal naming it", err)
-	}
-
-	t.Setenv("DOCKER_HOST", "unix:///var/run/docker.sock")
-	_, rel, err := m.acquire(cfg, testProject("p"))
-	if err != nil {
-		t.Fatalf("acquire with a local-socket DOCKER_HOST: %v", err)
-	}
-	rel()
 }
 
 // closeCountingSandbox records Close calls; everything else panics loudly via
@@ -237,29 +223,29 @@ func (c *closeCountingSandbox) Close() error { c.closes.Add(1); return nil }
 // closes, handing each acquire its own countable sandbox.
 func gatedManager(t *testing.T) (*Manager, chan struct{}, *closeCountingSandbox) {
 	t.Helper()
-	m := NewManager(t.TempDir())
+	m := NewManager()
 	gate := make(chan struct{})
 	sb := &closeCountingSandbox{}
-	m.buildOverride = func(*store.SandboxConfig, *store.Project) (sandbox.Sandbox, error) {
+	m.buildOverride = func(Spec) (sandbox.Sandbox, error) {
 		<-gate
 		return sb, nil
 	}
 	return m, gate, sb
 }
 
-// A content update while an old-generation build is dialing: the fence dooms
+// A content change while an old-generation build is dialing: the fence dooms
 // the instance the moment its build lands — the run that started on it
 // finishes and releases, then it closes. It never re-enters the cache for new
-// runs.
+// runs. Every content change reaches the manager this way, whether it was the
+// project's own environment, its template or its target (decisions §5.33).
 func TestSandboxManagerRetireFencesInFlightBuilds(t *testing.T) {
 	m, gate, sb := gatedManager(t)
-	oldCfg := &store.SandboxConfig{ID: "sb", Name: "sb", Type: "docker", Config: []byte(`{"image":"i"}`), RuntimeGen: 1}
 
 	done := make(chan struct{})
 	var rel func()
 	go func() {
 		defer close(done)
-		_, r, err := m.acquire(oldCfg, testProject("p"))
+		_, r, err := m.acquire(testSpec("p"))
 		if err != nil {
 			t.Error(err)
 			return
@@ -268,7 +254,7 @@ func TestSandboxManagerRetireFencesInFlightBuilds(t *testing.T) {
 	}()
 
 	// The update lands mid-dial: generations below 2 are retired.
-	m.Retire("sb", 2)
+	m.RetireProject("p", 2)
 	close(gate)
 	<-done
 
@@ -292,13 +278,12 @@ func TestSandboxManagerRetireFencesInFlightBuilds(t *testing.T) {
 // owner, which is what deleting the placeholder outright used to do.
 func TestSandboxManagerCloseAllDuringBuild(t *testing.T) {
 	m, gate, sb := gatedManager(t)
-	cfg := &store.SandboxConfig{ID: "sb", Name: "sb", Type: "docker", Config: []byte(`{"image":"i"}`), RuntimeGen: 1}
 
 	done := make(chan struct{})
 	var rel func()
 	go func() {
 		defer close(done)
-		_, r, err := m.acquire(cfg, testProject("p"))
+		_, r, err := m.acquire(testSpec("p"))
 		if err != nil {
 			t.Error(err)
 			return
@@ -325,30 +310,32 @@ func TestSandboxManagerCloseAllDuringBuild(t *testing.T) {
 		t.Fatalf("closes = %d after shutdown + release, want 1 — the dialed resource leaked", sb.closes.Load())
 	}
 	// The latch refuses new acquires.
-	if _, _, err := m.acquire(cfg, testProject("p")); err == nil {
+	if _, _, err := m.acquire(testSpec("p")); err == nil {
 		t.Fatal("acquire succeeded on a closed manager")
 	}
 }
 
 // A rename bumps the row revision but not the runtime generation, and the
-// cache keys on the generation: the renamed config keeps sharing the live
+// cache keys on the generation: the renamed project keeps sharing the live
 // instance, and nothing retires it over a display-name edit.
 func TestSandboxManagerRenameSharesInstance(t *testing.T) {
-	m := NewManager(t.TempDir())
+	m := NewManager()
 	sb := &closeCountingSandbox{}
 	builds := 0
-	m.buildOverride = func(*store.SandboxConfig, *store.Project) (sandbox.Sandbox, error) {
+	m.buildOverride = func(Spec) (sandbox.Sandbox, error) {
 		builds++
 		return sb, nil
 	}
 
-	v1 := &store.SandboxConfig{ID: "sb", Name: "old", Type: "docker", Config: []byte(`{"image":"i"}`), Revision: 1, RuntimeGen: 1}
-	_, rel1, err := m.Acquire(v1, testProject("p"))
+	v1 := testSpec("p")
+	v1.Project.Revision = 1
+	_, rel1, err := m.Acquire(v1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	renamed := &store.SandboxConfig{ID: "sb", Name: "new", Type: "docker", Config: []byte(`{"image":"i"}`), Revision: 2, RuntimeGen: 1}
-	_, rel2, err := m.Acquire(renamed, testProject("p"))
+	renamed := testSpec("p")
+	renamed.Project.Name, renamed.Project.Revision = "new", 2
+	_, rel2, err := m.Acquire(renamed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -362,8 +349,7 @@ func TestSandboxManagerRenameSharesInstance(t *testing.T) {
 	}
 
 	// A CONTENT change moves the generation and does key a fresh instance.
-	rotated := &store.SandboxConfig{ID: "sb", Name: "new", Type: "docker", Config: []byte(`{"image":"i"}`), Revision: 3, RuntimeGen: 2}
-	_, rel3, err := m.Acquire(rotated, testProject("p"))
+	_, rel3, err := m.Acquire(specGen("p", "", 2))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -373,18 +359,17 @@ func TestSandboxManagerRenameSharesInstance(t *testing.T) {
 	}
 }
 
-// A delete landing between a caller's config read and its acquire: the
-// tombstone dooms the late build instead of letting it enter the cache as an
-// instance of a deleted config that nothing would ever retire.
+// A delete landing between a caller's read and its acquire: the tombstone
+// dooms the late build instead of letting it enter the cache as an instance
+// of a deleted project that nothing would ever retire.
 func TestSandboxManagerRemoveFencesLateAcquires(t *testing.T) {
 	m, gate, sb := gatedManager(t)
-	cfg := &store.SandboxConfig{ID: "sb", Name: "sb", Type: "docker", Config: []byte(`{"image":"i"}`), RuntimeGen: 1}
 
 	done := make(chan struct{})
 	var rel func()
 	go func() {
 		defer close(done)
-		_, r, err := m.acquire(cfg, testProject("p"))
+		_, r, err := m.acquire(testSpec("p"))
 		if err != nil {
 			t.Error(err)
 			return
@@ -393,7 +378,7 @@ func TestSandboxManagerRemoveFencesLateAcquires(t *testing.T) {
 	}()
 
 	// The DELETE lands mid-dial: the id is gone for good.
-	m.Remove("sb")
+	m.RemoveProject("p")
 	close(gate)
 	<-done
 
@@ -401,7 +386,7 @@ func TestSandboxManagerRemoveFencesLateAcquires(t *testing.T) {
 	left := len(m.instances)
 	m.mu.Unlock()
 	if left != 0 {
-		t.Fatalf("a deleted config's build re-entered the cache (%d instances)", left)
+		t.Fatalf("a deleted project's build re-entered the cache (%d instances)", left)
 	}
 	if sb.closes.Load() != 0 {
 		t.Fatal("the instance closed while its holder was still using it")
@@ -415,21 +400,18 @@ func TestSandboxManagerRemoveFencesLateAcquires(t *testing.T) {
 // The idle-stop: the release that drops the last reference arms a timer that
 // evicts and closes the instance; a new acquire before it fires disarms it.
 func TestSandboxManagerIdleStop(t *testing.T) {
-	m := NewManager(t.TempDir())
+	m := NewManager()
 	m.SetIdleTimeout(func() time.Duration { return 20 * time.Millisecond })
 	closed := &closeCountingSandbox{}
-	m.buildOverride = func(*store.SandboxConfig, *store.Project) (sandbox.Sandbox, error) {
-		return closed, nil
-	}
-	cfg := &store.SandboxConfig{ID: "sb", Name: "sb", Type: "docker", Config: []byte(`{"image":"i"}`)}
+	m.buildOverride = func(Spec) (sandbox.Sandbox, error) { return closed, nil }
 
-	inst, rel, err := m.acquire(cfg, testProject("p"))
+	inst, rel, err := m.acquire(testSpec("p"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Re-acquire inside the idle window disarms the timer.
 	rel()
-	_, rel2, err := m.acquire(cfg, testProject("p"))
+	_, rel2, err := m.acquire(testSpec("p"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -480,21 +462,20 @@ func (b *blockingCloseSandbox) Close() error {
 // An acquire racing the idle expiry waits until the stop finished and then
 // takes the key fresh — it must never join the stopping instance.
 func TestSandboxManagerAcquireWaitsOutIdleExpiry(t *testing.T) {
-	m := NewManager(t.TempDir())
+	m := NewManager()
 	m.SetIdleTimeout(func() time.Duration { return 5 * time.Millisecond })
 	blocking := &blockingCloseSandbox{closing: make(chan struct{}), release: make(chan struct{})}
 	fresh := &closeCountingSandbox{}
 	first := true
-	m.buildOverride = func(*store.SandboxConfig, *store.Project) (sandbox.Sandbox, error) {
+	m.buildOverride = func(Spec) (sandbox.Sandbox, error) {
 		if first {
 			first = false
 			return blocking, nil
 		}
 		return fresh, nil
 	}
-	cfg := &store.SandboxConfig{ID: "sb", Name: "sb", Type: "docker", Config: []byte(`{"image":"i"}`)}
 
-	old, rel, err := m.acquire(cfg, testProject("p"))
+	old, rel, err := m.acquire(testSpec("p"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -504,7 +485,7 @@ func TestSandboxManagerAcquireWaitsOutIdleExpiry(t *testing.T) {
 	// The expiry is now mid-stop. A concurrent acquire must block on gone.
 	got := make(chan *sandboxInstance, 1)
 	go func() {
-		inst, r, err := m.acquire(cfg, testProject("p"))
+		inst, r, err := m.acquire(testSpec("p"))
 		if err != nil {
 			t.Error(err)
 			got <- nil
@@ -533,41 +514,127 @@ func TestSandboxManagerAcquireWaitsOutIdleExpiry(t *testing.T) {
 	}
 }
 
-// RemoveProject evicts every cached instance keyed to the project — idle ones
-// close now — and leaves other projects' instances alone.
-func TestSandboxManagerRemoveProject(t *testing.T) {
-	m := NewManager(t.TempDir())
-	mine := &closeCountingSandbox{}
-	other := &closeCountingSandbox{}
-	m.buildOverride = func(_ *store.SandboxConfig, p *store.Project) (sandbox.Sandbox, error) {
-		if p.ID == "p1" {
-			return mine, nil
-		}
-		return other, nil
-	}
-	cfg := &store.SandboxConfig{ID: "sb", Name: "sb", Type: "docker", Config: []byte(`{"image":"i"}`)}
-	_, r1, err := m.Acquire(cfg, testProject("p1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	r1()
-	_, r2, err := m.Acquire(cfg, testProject("p2"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	r2()
+// A project's runtime generation is part of the cache key: a content change
+// anywhere upstream must not keep being served from the instance built before
+// it.
+func TestSandboxManagerKeysByProjectGeneration(t *testing.T) {
+	m := NewManager()
+	m.buildOverride = func(Spec) (sandbox.Sandbox, error) { return sandbox.NewLocal(), nil }
 
-	m.RemoveProject("p1")
-	if mine.closes.Load() != 1 {
-		t.Fatalf("removed project's instance closes = %d, want 1", mine.closes.Load())
+	a1, r1, err := m.Acquire(specGen("p", "", 1))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if other.closes.Load() != 0 {
-		t.Fatal("another project's instance was closed")
+	defer r1()
+
+	a2, r2, err := m.Acquire(specGen("p", `[{"key":"A","value":"1"}]`, 2))
+	if err != nil {
+		t.Fatal(err)
 	}
-	m.mu.Lock()
-	_, still := m.instances[sandboxKey{id: "sb", gen: cfg.RuntimeGen, projectID: "p1"}]
-	m.mu.Unlock()
-	if still {
-		t.Fatal("removed project's key still cached")
+	defer r2()
+	if a1 == a2 {
+		t.Fatal("a new project generation was served the instance built from the old environment")
+	}
+	// The unchanged generation still hits the cache — a rename (revision
+	// only) must not split it.
+	again, r3, err := m.Acquire(specGen("p", "", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r3()
+	if again != a1 {
+		t.Fatal("the same project generation was not served from the cache")
+	}
+}
+
+// Retiring one project leaves its siblings' instances alone.
+func TestRetireProjectSparesSiblings(t *testing.T) {
+	m := NewManager()
+	m.buildOverride = func(Spec) (sandbox.Sandbox, error) { return sandbox.NewLocal(), nil }
+
+	mine, r1, err := m.Acquire(testSpec("p1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r1()
+	sibling, r2, err := m.Acquire(testSpec("p2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r2()
+
+	m.RetireProject("p1", 2)
+
+	stillCached, r3, err := m.Acquire(testSpec("p2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r3()
+	if stillCached != sibling {
+		t.Error("retiring one project evicted another project's instance")
+	}
+	rebuilt, r4, err := m.Acquire(specGen("p1", "", 2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r4()
+	if rebuilt == mine {
+		t.Error("the retired project was served its old instance")
+	}
+}
+
+// An environment that cannot be decoded refuses the build: a container
+// started WITHOUT the variables it was configured with is worse than one
+// that does not start.
+func TestBuildSandboxRejectsUndecodableEnv(t *testing.T) {
+	m := NewManager()
+	_, _, err := m.Acquire(specGen("p", "{not json", 1))
+	if err == nil || !strings.Contains(err.Error(), "environment") {
+		t.Fatalf("err = %v, want a project-environment failure", err)
+	}
+}
+
+// TargetOptions carries only how to reach the daemon; BuildOptions layers the
+// template and the project's container and volume on top.
+func TestTargetAndBuildOptions(t *testing.T) {
+	target := &store.SandboxTarget{ID: "tg", Type: "docker", Config: []byte(`{"host":"ssh://u@h","ssh_use_agent":true}`)}
+	opts, err := TargetOptions(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.Host != "ssh://u@h" || !opts.SSH.UseAgent {
+		t.Errorf("target options = %+v", opts)
+	}
+	if opts.Image != "" || opts.ContainerName != "" || opts.VolumeName != "" || opts.Persistent {
+		t.Errorf("target options carry template/project settings: %+v", opts)
+	}
+	if _, err := TargetOptions(&store.SandboxTarget{ID: "x", Type: "podman"}); err == nil {
+		t.Error("a non-docker target type was accepted")
+	}
+
+	spec := Spec{
+		Target:   target,
+		Template: &store.SandboxTemplate{ID: "tpl", Type: "docker", Config: []byte(`{"image":"img","memory_mb":256,"cpus":2,"network":"agents-net"}`)},
+		Project:  &store.Project{ID: "proj", Name: "proj"},
+	}
+	full, err := BuildOptions(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if full.Image != "img" || full.Limits.MemoryBytes != 256<<20 || full.Limits.CPUs != 2 || full.Network != "agents-net" {
+		t.Errorf("build options = %+v", full)
+	}
+	if full.User != DefaultContainerUser {
+		t.Errorf("user = %q, want %q — a template naming none runs as root", full.User, DefaultContainerUser)
+	}
+	if !full.Persistent || full.ContainerName != ContainerName("proj") || full.VolumeName != ProjectVolumeName("proj") {
+		t.Errorf("build options miss the project's container or volume: %+v", full)
+	}
+	if full.WorkDir != "" {
+		t.Errorf("build options carry a host bind mount: %q", full.WorkDir)
+	}
+	spec.Template = &store.SandboxTemplate{ID: "tpl", Type: "docker", Config: []byte(`{}`)}
+	if _, err := BuildOptions(spec); err == nil {
+		t.Error("a template without an image was accepted")
 	}
 }

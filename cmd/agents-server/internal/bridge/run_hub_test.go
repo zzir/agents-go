@@ -16,7 +16,7 @@ func env(typ string) *protocol.Envelope { return &protocol.Envelope{Type: typ} }
 
 func TestRunHubBufferAndReplay(t *testing.T) {
 	h := NewRunHub(context.Background())
-	if _, _, err := h.register("run1", "sess1", "", "", "", "", nil); err != nil {
+	if _, _, err := h.register("run1", "sess1", "", "", "", nil); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 	if info, _ := h.Info("run1"); info.Status != RunRunning {
@@ -102,10 +102,10 @@ func TestRunHubBufferAndReplay(t *testing.T) {
 
 func TestRunHubSessionBusy(t *testing.T) {
 	h := NewRunHub(context.Background())
-	if _, _, err := h.register("run1", "sess1", "", "", "", "", nil); err != nil {
+	if _, _, err := h.register("run1", "sess1", "", "", "", nil); err != nil {
 		t.Fatalf("first register: %v", err)
 	}
-	_, _, err := h.register("run2", "sess1", "", "", "", "", nil)
+	_, _, err := h.register("run2", "sess1", "", "", "", nil)
 	if err == nil {
 		t.Fatal("expected ErrSessionBusy for second live run on same session")
 	}
@@ -116,14 +116,14 @@ func TestRunHubSessionBusy(t *testing.T) {
 
 	// After the first run finishes, the session frees up.
 	h.finish("run1", false)
-	if _, _, err := h.register("run2", "sess1", "", "", "", "", nil); err != nil {
+	if _, _, err := h.register("run2", "sess1", "", "", "", nil); err != nil {
 		t.Fatalf("register after finish: %v", err)
 	}
 }
 
 func TestRunHubCancelAndInterrupt(t *testing.T) {
 	h := NewRunHub(context.Background())
-	_, ctx, err := h.register("run1", "sess1", "", "", "", "", nil)
+	_, ctx, err := h.register("run1", "sess1", "", "", "", nil)
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestRunHubCancelAndInterrupt(t *testing.T) {
 
 func TestRunHubInterruptedEventIsTerminal(t *testing.T) {
 	h := NewRunHub(context.Background())
-	if _, _, err := h.register("run1", "sess1", "", "", "", "", nil); err != nil {
+	if _, _, err := h.register("run1", "sess1", "", "", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	h.publish("run1", env("run.interrupted"))
@@ -170,7 +170,7 @@ func TestRunHubInterruptedEventIsTerminal(t *testing.T) {
 // and attached subscribers — one logical run, one event stream.
 func TestRunHubResumeSameID(t *testing.T) {
 	h := NewRunHub(context.Background())
-	if _, _, err := h.register("run1", "sess1", "", "ac", "sb", "", nil); err != nil {
+	if _, _, err := h.register("run1", "sess1", "", "ac", "proj", nil); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 	h.publish("run1", env("run.started"))
@@ -192,7 +192,7 @@ func TestRunHubResumeSameID(t *testing.T) {
 	}
 
 	// Resume reopens the same record: same id, seq continues, sub still fed.
-	_, ctx, _, err := h.resume("run1", "sess1", "", "ac", "sb", "", nil)
+	_, ctx, _, err := h.resume("run1", "sess1", "", "ac", "proj", nil)
 	if err != nil {
 		t.Fatalf("resume: %v", err)
 	}
@@ -225,18 +225,18 @@ func TestRunHubResumeSameID(t *testing.T) {
 // A resume must respect the one-live-run-per-session invariant.
 func TestRunHubResumeBusy(t *testing.T) {
 	h := NewRunHub(context.Background())
-	if _, _, err := h.register("paused", "sess1", "", "", "", "", nil); err != nil {
+	if _, _, err := h.register("paused", "sess1", "", "", "", nil); err != nil {
 		t.Fatalf("register paused: %v", err)
 	}
 	h.finish("paused", true)
-	if _, _, err := h.register("blocker", "sess1", "", "", "", "", nil); err != nil {
+	if _, _, err := h.register("blocker", "sess1", "", "", "", nil); err != nil {
 		t.Fatalf("register blocker: %v", err)
 	}
-	if _, _, _, err := h.resume("paused", "sess1", "", "", "", "", nil); !errors.As(err, &ErrSessionBusy{}) {
+	if _, _, _, err := h.resume("paused", "sess1", "", "", "", nil); !errors.As(err, &ErrSessionBusy{}) {
 		t.Fatalf("resume while busy: err = %v, want ErrSessionBusy", err)
 	}
 	h.finish("blocker", false)
-	if _, _, _, err := h.resume("paused", "sess1", "", "", "", "", nil); err != nil {
+	if _, _, _, err := h.resume("paused", "sess1", "", "", "", nil); err != nil {
 		t.Fatalf("resume after free: %v", err)
 	}
 }
@@ -267,13 +267,13 @@ func TestFinalVsTerminalRunEvent(t *testing.T) {
 	// Replaying from 0, only the output is a final event — the SSE would close
 	// on it, delivering everything including the resume's output.
 	h := NewRunHub(context.Background())
-	if _, _, err := h.register("r", "s", "", "", "", "", nil); err != nil {
+	if _, _, err := h.register("r", "s", "", "", "", nil); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 	h.publish("r", env("run.started"))
 	h.publish("r", env("run.interrupted"))
 	h.finish("r", true)
-	_, _, _, _ = h.resume("r", "s", "", "", "", "", nil)
+	_, _, _, _ = h.resume("r", "s", "", "", "", nil)
 	h.publish("r", env("run.started"))
 	h.publish("r", env("run.output"))
 
@@ -301,7 +301,7 @@ func TestFinalVsTerminalRunEvent(t *testing.T) {
 // fresh one under the same id so the continuation still streams.
 func TestRunHubResumeAfterRestart(t *testing.T) {
 	h := NewRunHub(context.Background())
-	_, ctx, _, err := h.resume("ghost-run", "sess1", "", "ac", "", "", nil)
+	_, ctx, _, err := h.resume("ghost-run", "sess1", "", "ac", "", nil)
 	if err != nil {
 		t.Fatalf("resume without record: %v", err)
 	}
@@ -318,7 +318,7 @@ func TestRunHubResumeAfterRestart(t *testing.T) {
 // false for a run that has none yet (the caller then falls back to a hard cancel).
 func TestRunHubStopAfterTurn(t *testing.T) {
 	h := NewRunHub(context.Background())
-	if _, _, err := h.register("run1", "sess1", "", "", "", "", nil); err != nil {
+	if _, _, err := h.register("run1", "sess1", "", "", "", nil); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 	// No hook installed yet.
@@ -345,7 +345,7 @@ func TestRunHubStopAfterTurn(t *testing.T) {
 // cancelled terminal state. resume clears it for the next segment.
 func TestStopAfterTurnSetsGracefulMarker(t *testing.T) {
 	h := NewRunHub(context.Background())
-	if _, _, err := h.register("r1", "s1", "", "", "", "", nil); err != nil {
+	if _, _, err := h.register("r1", "s1", "", "", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	var markerAtHook bool
@@ -369,7 +369,7 @@ func TestStopAfterTurnSetsGracefulMarker(t *testing.T) {
 // racing resume.
 func TestResumeRefusesFinishedRecord(t *testing.T) {
 	h := NewRunHub(context.Background())
-	if _, _, err := h.register("r2", "s2", "", "", "", "", nil); err != nil {
+	if _, _, err := h.register("r2", "s2", "", "", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	env, err := protocol.NewEnvelope(protocol.EventRunCancelled, protocol.RunCancelled{RunID: "r2"})
@@ -378,15 +378,15 @@ func TestResumeRefusesFinishedRecord(t *testing.T) {
 	}
 	h.publish("r2", env)
 	h.finish("r2", false)
-	if _, _, _, err := h.resume("r2", "s2", "", "", "", "", nil); err == nil {
+	if _, _, _, err := h.resume("r2", "s2", "", "", "", nil); err == nil {
 		t.Fatal("resume revived a cancelled record")
 	}
 	// An interrupted record resumes fine.
-	if _, _, err := h.register("r3", "s3", "", "", "", "", nil); err != nil {
+	if _, _, err := h.register("r3", "s3", "", "", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	h.finish("r3", true)
-	if _, _, _, err := h.resume("r3", "s3", "", "", "", "", nil); err != nil {
+	if _, _, _, err := h.resume("r3", "s3", "", "", "", nil); err != nil {
 		t.Fatalf("resume of interrupted record: %v", err)
 	}
 }
@@ -494,7 +494,7 @@ func (c *fakeControl) queueErr() error {
 // rather than collapsing them into one endpoint with a mode.
 func TestInjectRoutesToTheRightQueue(t *testing.T) {
 	h := NewRunHub(context.Background())
-	if _, _, err := h.register("r1", "s1", "", "", "", "", nil); err != nil {
+	if _, _, err := h.register("r1", "s1", "", "", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	ctrl := &fakeControl{}
@@ -525,7 +525,7 @@ func TestInjectReportsNoLiveRun(t *testing.T) {
 	if delivered, err := h.Inject("nope", protocol.InjectQueueSteer, "hi"); delivered || err != nil {
 		t.Errorf("delivered=%v err=%v, want (false, nil) for an unknown run", delivered, err)
 	}
-	if _, _, err := h.register("r1", "s1", "", "", "", "", nil); err != nil {
+	if _, _, err := h.register("r1", "s1", "", "", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	// Registered but no control installed yet.
@@ -536,7 +536,7 @@ func TestInjectReportsNoLiveRun(t *testing.T) {
 
 func TestInjectRejectsAnUnknownQueue(t *testing.T) {
 	h := NewRunHub(context.Background())
-	if _, _, err := h.register("r1", "s1", "", "", "", "", nil); err != nil {
+	if _, _, err := h.register("r1", "s1", "", "", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	h.setControl("r1", &fakeControl{})
@@ -553,10 +553,10 @@ func TestRunHubLiveRunIDs(t *testing.T) {
 	if got := h.LiveRunIDs(); len(got) != 0 {
 		t.Fatalf("empty hub: got %v", got)
 	}
-	if _, _, err := h.register("r1", "s1", "", "", "", "", nil); err != nil {
+	if _, _, err := h.register("r1", "s1", "", "", "", nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := h.register("r2", "s2", "", "", "", "", nil); err != nil {
+	if _, _, err := h.register("r2", "s2", "", "", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := h.LiveRunIDs(); len(got) != 2 {

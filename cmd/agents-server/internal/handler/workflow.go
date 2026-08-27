@@ -18,9 +18,9 @@ import (
 // by the bridge Runner.
 type WorkflowStarter interface {
 	RunWorkflow(ctx context.Context, workflowID, sessionID, input string, origin store.WorkflowOrigin) (*bridge.TaskInfo, error)
-	// BindSessionSandbox gives a still-unbound session the project the start
+	// BindSessionProject gives a still-unbound session the project the start
 	// carries, before the start; a bound session keeps its binding.
-	BindSessionSandbox(ctx context.Context, sessionID, sandboxID, projectID string) (bool, error)
+	BindSessionProject(ctx context.Context, sessionID, projectID string) (bool, error)
 }
 
 // WorkflowHandler serves the workflow DEFINITIONS and starts executions.
@@ -43,10 +43,9 @@ func NewWorkflowHandler(s *store.WorkflowStore, agents *store.AgentConfigStore, 
 type runWorkflowReq struct {
 	SessionID string `json:"session_id" binding:"required"`
 	Input     string `json:"input"`
-	// SandboxID/ProjectID bind a still-unbound session first — the project the
-	// composer had picked, or the dialog's — so the execution has its file and
-	// command tools; a bound session ignores them, as a run request's does.
-	SandboxID string `json:"sandbox_id"`
+	// ProjectID binds a still-unbound session first — the project the composer
+	// had picked, or the dialog's — so the execution has its file and command
+	// tools; a bound session ignores it, as a run request's does.
 	ProjectID string `json:"project_id"`
 }
 
@@ -85,8 +84,8 @@ func (h *WorkflowHandler) Run(c *gin.Context) {
 	if !visibleRow(c, wf.Scope, wf.OwnerID) {
 		return
 	}
-	if req.SandboxID != "" {
-		if _, err := h.starter.BindSessionSandbox(c.Request.Context(), req.SessionID, req.SandboxID, req.ProjectID); err != nil {
+	if req.ProjectID != "" {
+		if _, err := h.starter.BindSessionProject(c.Request.Context(), req.SessionID, req.ProjectID); err != nil {
 			_, invalidBinding := errors.AsType[bridge.ErrInvalidBinding](err)
 			switch {
 			case invalidBinding:

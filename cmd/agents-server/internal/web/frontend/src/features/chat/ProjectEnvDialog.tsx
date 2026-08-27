@@ -60,15 +60,15 @@ export function ProjectEnvDialog({ project, sessionCount, onClose }: ProjectEnvD
 
   useEffect(() => {
     let live = true;
-    api.sandboxes.get(project.sandbox_id)
-      .then(sb => {
+    api.sandboxTemplates.get(project.template_id)
+      .then(tpl => {
         // A failure here costs a hint, not the dialog: the environment is
         // still editable without knowing the image.
-        if (live) setSandbox((sb as { config?: SandboxSummary }).config || {});
+        if (live) setSandbox((tpl as { config?: SandboxSummary }).config || {});
       })
       .catch(() => {});
     return () => { live = false; };
-  }, [project.sandbox_id]);
+  }, [project.template_id]);
 
   const changed = vars !== null && containerEnv(vars) !== loaded;
   const invalid = vars ? envError(vars) : null;
@@ -77,7 +77,7 @@ export function ProjectEnvDialog({ project, sessionCount, onClose }: ProjectEnvD
     if (!vars || saving) return;
     setSaving(true);
     try {
-      await api.projects.update(project.id, { name: project.name, env: cleanEnv(vars), revision });
+      await api.projects.update(project.id, { name: project.name, template_id: project.template_id, env: cleanEnv(vars), revision });
       toast.success(changed ? 'Environment saved — the container is recreated on the next run' : 'Environment saved');
       onClose();
     } catch (e) {

@@ -92,16 +92,16 @@ func TestMcpConfigHeaderMasking(t *testing.T) {
 	}
 }
 
-func TestSandboxPasswordMasking(t *testing.T) {
-	cfg := store.SandboxConfig{
+func TestSandboxTargetPasswordMasking(t *testing.T) {
+	cfg := store.SandboxTarget{
 		Type:   "docker",
-		Config: json.RawMessage(`{"image":"i","host":"ssh://u@h","ssh_password":"pw-1"}`),
+		Config: json.RawMessage(`{"host":"ssh://u@h","ssh_password":"pw-1"}`),
 	}
-	masked := sanitizeSandboxConfig(cfg)
+	masked := sanitizeTargetConfig(cfg)
 	if strings.Contains(string(masked.Config), "pw-1") {
 		t.Fatalf("sanitize leaked password: %s", masked.Config)
 	}
-	restored := restoreSandboxConfig("docker", masked.Config, cfg.Config)
+	restored := restoreTargetConfig(masked.Config, cfg.Config)
 	if !strings.Contains(string(restored), "pw-1") {
 		t.Fatalf("restore did not resolve password: %s", restored)
 	}

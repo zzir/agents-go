@@ -43,8 +43,8 @@ your data, embeddable SDK. Solo or as a team.
    paste the token into the login screen. A Docker daemon is required for
    sandboxes — on this machine, or a remote daemon (SSH or TCP). State lives
    in `data.db` in the directory you ran it from (`--db`; a `postgres://` DSN
-   uses PostgreSQL instead); with a local daemon, project trees live under
-   `--workspace` (default `.`). All flags:
+   uses PostgreSQL instead); project trees live in Docker volumes on their
+   target's daemon. All flags:
    [Running the workbench](docs/tutorial/workbench.md#flags).
 
 3. **Add a provider, create an agent, chat.** Settings → Providers: an OpenAI

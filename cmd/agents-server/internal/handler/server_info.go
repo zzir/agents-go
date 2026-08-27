@@ -13,9 +13,6 @@ import (
 // allowed" with nowhere to learn why.
 type ServerInfo struct {
 	Version string `json:"version"`
-	// Workspace is absolute: the relative default (".") means nothing to a
-	// browser on another machine.
-	Workspace string `json:"workspace"`
 	// MaxTasks is the effective cap, never the raw flag — 0 on the command
 	// line means the built-in default, and reporting the 0 would be a lie.
 	MaxTasks int `json:"max_tasks"`
@@ -25,7 +22,7 @@ type ServerInfo struct {
 // from a store: these are process facts, fixed for its lifetime.
 //
 //	@Summary		Server info
-//	@Description	The start-up configuration in force: version, workspace, and the flags a client cannot change. Read-only — these come from the command line, not the settings table.
+//	@Description	The start-up configuration in force: version and the flags a client cannot change. Read-only — these come from the command line, not the settings table.
 //	@Tags			server
 //	@Produce		json
 //	@Success		200	{object}	ServerInfo

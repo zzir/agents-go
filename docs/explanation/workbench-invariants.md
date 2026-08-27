@@ -328,40 +328,41 @@ When a change genuinely doesn't fit, update this list in the same PR.
     leave the whole conversation on an abandoned branch. `GetEntries` still
     folds the whole session on every call: a known cost, deliberately left,
     because a person pays it once per page while a run paid it once per turn.
-27. **A session's `(sandbox_id, project_id)` binding is immutable and
-    server-authoritative** — which tree it uses, not how that tree's
-    container is configured: a project's environment is CONTENT and stays
-    editable while sessions are bound, reaching them at their next run
-    ([decisions §5.32](decisions.md)). The first sandbox-carrying run binds it
-    (`BindSandboxIfEmpty`) and nothing changes it afterwards: there is no
-    unbind, no rebind, and no PATCH. From then on `startRunWithID` overrides
-    whatever the client sends with the bound values; the top bar shows the
-    binding as a read-only badge. The write order is what keeps a refusal
-    side-effect-free: `planSandboxBinding` resolves and validates the pair,
-    then `hub.register` claims the session slot, and only then does the CAS
-    write land — a run refused as busy/deleting/draining has NOT silently
-    fixed the session's file system context (`hub.unregister` withdraws a
-    registration whose bind failed). The binding's target is protected in
-    both directions, atomically: the delete refusals live in the delete
-    statements themselves and the bind carries the mirror `EXISTS` guards
-    over both the config (at its validated revision) and the project row
-    (the operational surface is [Sandboxes](../reference/protocol.md#sandboxes--apiv1sandboxes) and
-    [Projects](../reference/protocol.md#projects--apiv1projects)); a project create locks the
-    sandbox row so a racing sandbox delete cascades the new row or refuses
-    the create; and an update that would change a sandbox's IDENTITY — type
-    and the daemon (host) — is refused while sessions are bound OR project
-    rows live on the config (`UpdateIdentityIfUnreferenced`; a project's
-    tree exists without any session). A bound session whose sandbox cannot
-    be resolved or built fails the run loudly rather than degrading to a
-    chat with no tools. Sandbox instances are cached per
-    `(config id, runtime generation, project id)` with a REFERENCE COUNT
-    (`SandboxManager.Acquire`):
-    runs and terminals hold their instance for exactly their lifetime, and an
-    eviction (config update/delete, or the last bound session going away —
+27. **A session's `project_id` binding is immutable and server-authoritative**
+    — which tree it uses, not how that tree's container is configured: a
+    project's environment and its template are CONTENT and stay editable
+    while sessions are bound, reaching them at their next run
+    ([decisions §5.32](decisions.md), [§5.33](decisions.md)). A project pins
+    its target, so one column is the whole binding. The first
+    project-carrying run binds it (`BindProjectIfEmpty`) and nothing changes
+    it afterwards: there is no unbind, no rebind, and no PATCH. From then on
+    `startRunWithID` overrides whatever the client sends with the bound
+    value; the top bar shows the binding as a read-only badge. **A run naming
+    no project gets no sandbox tools at all** — no working tree, no file or
+    command tools. The write order is what keeps a refusal side-effect-free:
+    `planProjectBinding` resolves and validates the project, then
+    `hub.register` claims the session slot, and only then does the CAS write
+    land — a run refused as busy/deleting/draining has NOT silently fixed the
+    session's file system context (`hub.unregister` withdraws a registration
+    whose bind failed). The binding's target is protected in both directions,
+    atomically: the delete refusals live in the delete statements themselves
+    and the bind carries the mirror `EXISTS` guard over the project row (the
+    operational surface is [Sandbox targets](../reference/protocol.md#sandbox-targets--apiv1sandbox-targets) and
+    [Projects](../reference/protocol.md#projects--apiv1projects)); a project create
+    locks the target and template rows so a racing delete of either refuses
+    the create; and an update that would change a TARGET's identity — type
+    and the daemon (host) — is refused while project rows live on it
+    (`UpdateIdentityIfUnreferenced`). A bound session whose project cannot be
+    resolved or built fails the run loudly rather than degrading to a chat
+    with no tools. Sandbox instances are cached per
+    `(project id, runtime generation)` with a REFERENCE COUNT
+    (`SandboxManager.Acquire`): runs and terminals hold their instance for
+    exactly their lifetime, and an eviction (a content change anywhere
+    upstream, the project's deletion, or the last bound session going away —
     `ReleaseSessionBinding`) closes an idle instance immediately but only
     DOOMS a held one, which the last release closes — an in-flight run or an
     open terminal is never torn off its connection. Task child sessions
-    inherit the parent's pair through `Inherit` and bind their own hidden
+    inherit the parent's project through `Inherit` and bind their own hidden
     sessions with it.
 
 28. **Every figure in the Context panel says which ruler it is on, and they are

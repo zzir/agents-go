@@ -23,9 +23,6 @@ export const clearDraft = (sessionId: string): void => saveKey('draft', sessionI
 export const loadSessionAgent = (sessionId: string): string => loadKey('agent', sessionId);
 export const saveSessionAgent = (sessionId: string, agentConfigId: string): void => saveKey('agent', sessionId, agentConfigId);
 
-export const loadSessionSandbox = (sessionId: string): string => loadKey('sandbox', sessionId);
-export const saveSessionSandbox = (sessionId: string, sandboxId: string): void => saveKey('sandbox', sessionId, sandboxId);
-
 // The user's pre-binding project choice; once the first run binds the session,
 // the server value wins and this draft stops mattering.
 export const loadSessionProject = (sessionId: string): string => loadKey('project', sessionId);
@@ -34,6 +31,5 @@ export const saveSessionProject = (sessionId: string, projectId: string): void =
 export function clearSessionPrefs(sessionId: string): void {
   saveKey('draft', sessionId, '');
   saveKey('agent', sessionId, '');
-  saveKey('sandbox', sessionId, '');
   saveKey('project', sessionId, '');
 }

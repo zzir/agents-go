@@ -27,7 +27,6 @@ On startup the server prints an auto-generated auth token. Open
 | `--host`                | `127.0.0.1` | Bind address (use `0.0.0.0` for LAN access)            |
 | `--port`                | `9527`      | HTTP listen port                                       |
 | `--db`                  | `data.db`   | SQLite file path, or a `postgres://` / `postgresql://` DSN |
-| `--workspace`           | `.`         | Root of the per-user project trees local-daemon containers mount |
 | `--token`               | auto        | Auth token; randomly generated when omitted            |
 | `--max-tasks`           | `0`         | Max live background tasks per session (`0` = default 6) |
 | `--log-level`           | `info`      | `debug`, `info`, `warn` or `error`                     |

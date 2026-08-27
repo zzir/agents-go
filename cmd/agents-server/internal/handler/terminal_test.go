@@ -17,6 +17,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
@@ -109,46 +110,42 @@ type fakeProvider struct {
 	projects []string
 }
 
-func (p *fakeProvider) Acquire(_ *store.SandboxConfig, proj *store.Project) (sandbox.Sandbox, func(), error) {
+func (p *fakeProvider) Acquire(spec sandboxes.Spec) (sandbox.Sandbox, func(), error) {
 	if p.err != nil {
 		return nil, nil, p.err
 	}
 	p.mu.Lock()
-	p.projects = append(p.projects, proj.ID)
+	p.projects = append(p.projects, spec.Project.ID)
 	p.mu.Unlock()
 	return p.sb, func() { p.releases.Add(1) }, nil
 }
 
-// terminalTestServer stands up /ws/terminal with a fake sandbox backend, a
-// stored docker config and a project on it, returning the pieces tests need.
-func terminalTestServer(t *testing.T, provider sandboxProvider) (*httptest.Server, *TerminalHandler, string, string) {
+// terminalTestServer stands up /ws/terminal with a fake sandbox backend and a
+// stored project, returning the pieces tests need.
+func terminalTestServer(t *testing.T, provider sandboxProvider) (*httptest.Server, *TerminalHandler, string) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
-	sandboxes := store.NewSandboxStore(db)
 	projects := store.NewProjectStore(db)
-	cfg := &store.SandboxConfig{Name: "box", Type: "docker", Config: json.RawMessage(`{"image":"i"}`)}
-	if err := sandboxes.Create(t.Context(), cfg); err != nil {
-		t.Fatal(err)
-	}
-	proj := &store.Project{OwnerID: store.LocalUserID, SandboxID: cfg.ID, Name: "p"}
+	targetID, templateID := mkSandboxRows(t, db)
+	proj := &store.Project{OwnerID: store.LocalUserID, TargetID: targetID, TemplateID: templateID, Name: "p"}
 	if err := projects.Create(t.Context(), proj); err != nil {
 		t.Fatal(err)
 	}
-	th := NewTerminalHandler(sandboxes, projects, provider, settings.NewReader(nil))
+	th := NewTerminalHandler(store.NewSandboxTargetStore(db), store.NewSandboxTemplateStore(db), projects, provider, settings.NewReader(nil))
 	engine := newTestEngine()
 	engine.GET("/ws/terminal", server.HandleWSWithAuth(th.Handle, testAuthFunc(testWSToken), nil, nil))
 	srv := httptest.NewServer(engine)
 	t.Cleanup(srv.Close)
-	return srv, th, cfg.ID, proj.ID
+	return srv, th, proj.ID
 }
 
 // dialTerminal connects, authenticates and completes the terminal.open
 // handshake, returning the connection after terminal.ready.
-func dialTerminal(t *testing.T, srv *httptest.Server, sandboxID, projectID string) *websocket.Conn {
+func dialTerminal(t *testing.T, srv *httptest.Server, projectID string) *websocket.Conn {
 	t.Helper()
 	conn := dialTerminalRaw(t, srv)
-	openTerminal(t, conn, sandboxID, projectID)
+	openTerminal(t, conn, projectID)
 	env := readTerminalEnvelope(t, conn)
 	if env.Type != protocol.EventTerminalReady {
 		t.Fatalf("handshake reply = %q, want %s", env.Type, protocol.EventTerminalReady)
@@ -176,10 +173,10 @@ func dialTerminalRaw(t *testing.T, srv *httptest.Server) *websocket.Conn {
 	return conn
 }
 
-func openTerminal(t *testing.T, conn *websocket.Conn, sandboxID, projectID string) {
+func openTerminal(t *testing.T, conn *websocket.Conn, projectID string) {
 	t.Helper()
 	if err := conn.WriteJSON(&protocol.Envelope{Type: protocol.EventTerminalOpen, Payload: mustJSON(protocol.TerminalOpen{
-		SandboxID: sandboxID, ProjectID: projectID, Cols: 100, Rows: 30,
+		ProjectID: projectID, Cols: 100, Rows: 30,
 	})}); err != nil {
 		t.Fatalf("send terminal.open: %v", err)
 	}
@@ -230,8 +227,8 @@ func readBinaryUntil(t *testing.T, conn *websocket.Conn, want string) {
 // and an exit notification once the shell terminates.
 func TestTerminalWS_EchoResizeExit(t *testing.T) {
 	term := newFakeTerminal()
-	srv, _, id, pid := terminalTestServer(t, &fakeProvider{sb: &fakeTerminalSandbox{term: term}})
-	conn := dialTerminal(t, srv, id, pid)
+	srv, _, pid := terminalTestServer(t, &fakeProvider{sb: &fakeTerminalSandbox{term: term}})
+	conn := dialTerminal(t, srv, pid)
 
 	// The open handshake carried 100x30.
 	if cols, rows := term.size(); cols != 100 || rows != 30 {
@@ -282,22 +279,18 @@ func TestTerminalWS_EchoResizeExit(t *testing.T) {
 func TestTerminalWS_ProjectOwnership(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
-	sandboxes := store.NewSandboxStore(db)
-	cfg := &store.SandboxConfig{Name: "box", Type: "docker", Config: json.RawMessage(`{"image":"i","persistent":true}`)}
-	if err := sandboxes.Create(t.Context(), cfg); err != nil {
-		t.Fatal(err)
-	}
 	projects := store.NewProjectStore(db)
+	targetID, templateID := mkSandboxRows(t, db)
 	member := protocol.UserInfo{ID: store.NewID(), Email: "m@example.com", Role: store.RoleMember}
-	own := &store.Project{OwnerID: member.ID, SandboxID: cfg.ID, Name: "own"}
-	foreign := &store.Project{OwnerID: store.NewID(), SandboxID: cfg.ID, Name: "foreign"}
+	own := &store.Project{OwnerID: member.ID, TargetID: targetID, TemplateID: templateID, Name: "own"}
+	foreign := &store.Project{OwnerID: store.NewID(), TargetID: targetID, TemplateID: templateID, Name: "foreign"}
 	for _, p := range []*store.Project{own, foreign} {
 		if err := projects.Create(t.Context(), p); err != nil {
 			t.Fatal(err)
 		}
 	}
 	provider := &fakeProvider{sb: &fakeTerminalSandbox{term: newFakeTerminal()}}
-	th := NewTerminalHandler(sandboxes, projects, provider, settings.NewReader(nil))
+	th := NewTerminalHandler(store.NewSandboxTargetStore(db), store.NewSandboxTemplateStore(db), projects, provider, settings.NewReader(nil))
 	asMember := func(_ context.Context, bearer string) (protocol.UserInfo, error) {
 		if bearer != testWSToken {
 			return protocol.UserInfo{}, errors.New("unauthorized")
@@ -310,14 +303,14 @@ func TestTerminalWS_ProjectOwnership(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	conn := dialTerminalRaw(t, srv)
-	openTerminal(t, conn, cfg.ID, own.ID)
+	openTerminal(t, conn, own.ID)
 	if env := readTerminalEnvelope(t, conn); env.Type != protocol.EventTerminalReady {
 		t.Fatalf("member on their own project = %q, want %s", env.Type, protocol.EventTerminalReady)
 	}
 	acquired := len(provider.projects)
 
 	conn2 := dialTerminalRaw(t, srv)
-	openTerminal(t, conn2, cfg.ID, foreign.ID)
+	openTerminal(t, conn2, foreign.ID)
 	env := readTerminalEnvelope(t, conn2)
 	var te protocol.TerminalError
 	_ = json.Unmarshal(env.Payload, &te)
@@ -329,10 +322,10 @@ func TestTerminalWS_ProjectOwnership(t *testing.T) {
 	}
 }
 
-func TestTerminalWS_UnknownSandboxRejected(t *testing.T) {
-	srv, _, _, pid := terminalTestServer(t, &fakeProvider{sb: &fakeTerminalSandbox{term: newFakeTerminal()}})
+func TestTerminalWS_UnknownProjectRejected(t *testing.T) {
+	srv, _, _ := terminalTestServer(t, &fakeProvider{sb: &fakeTerminalSandbox{term: newFakeTerminal()}})
 	conn := dialTerminalRaw(t, srv)
-	openTerminal(t, conn, "no-such-id", pid)
+	openTerminal(t, conn, store.NewID())
 	env := readTerminalEnvelope(t, conn)
 	if env.Type != protocol.EventTerminalError {
 		t.Fatalf("type = %q, want %s", env.Type, protocol.EventTerminalError)
@@ -340,28 +333,28 @@ func TestTerminalWS_UnknownSandboxRejected(t *testing.T) {
 }
 
 func TestTerminalWS_OpenErrorReported(t *testing.T) {
-	srv, _, id, pid := terminalTestServer(t, &fakeProvider{sb: &fakeTerminalSandbox{
+	srv, _, pid := terminalTestServer(t, &fakeProvider{sb: &fakeTerminalSandbox{
 		term:    newFakeTerminal(),
 		openErr: errors.New("attach failed"),
 	}})
 	conn := dialTerminalRaw(t, srv)
-	openTerminal(t, conn, id, pid)
+	openTerminal(t, conn, pid)
 	env := readTerminalEnvelope(t, conn)
 	if env.Type != protocol.EventTerminalError {
 		t.Fatalf("type = %q, want %s", env.Type, protocol.EventTerminalError)
 	}
 }
 
-// Deleting/updating a sandbox must tear down its live terminals: the client
-// observes the shell dying (exit envelope and/or socket close).
-func TestTerminalWS_CloseSandboxTerminals(t *testing.T) {
+// A configuration change must tear down the project's live terminals: the
+// client observes the shell dying (exit envelope and/or socket close).
+func TestTerminalWS_CloseProjectTerminals(t *testing.T) {
 	term := newFakeTerminal()
-	srv, th, id, pid := terminalTestServer(t, &fakeProvider{sb: &fakeTerminalSandbox{term: term}})
-	conn := dialTerminal(t, srv, id, pid)
+	srv, th, pid := terminalTestServer(t, &fakeProvider{sb: &fakeTerminalSandbox{term: term}})
+	conn := dialTerminal(t, srv, pid)
 
 	// The update's new generation retires everything below it (the test
-	// config sits at generation 1).
-	th.CloseSandboxTerminals(id, 2)
+	// project sits at generation 1).
+	th.CloseProjectTerminals(pid, 2)
 
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	for {
@@ -380,36 +373,24 @@ func TestTerminalWS_CloseSandboxTerminals(t *testing.T) {
 	closed := term.closed
 	term.mu.Unlock()
 	if !closed {
-		t.Error("terminal not closed after CloseSandboxTerminals")
+		t.Error("terminal not closed after CloseProjectTerminals")
 	}
 }
 
-// terminal.open resolves its project and refuses a mismatched pair: the
-// shell must land in the exact (sandbox, project) container the sessions on
-// that pair use.
+// terminal.open resolves its project and refuses anything that is not one the
+// caller may reach: the shell must land in the exact project container the
+// sessions bound to it use.
 func TestTerminalOpen_ValidatesProject(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
-	sandboxes := store.NewSandboxStore(db)
 	projects := store.NewProjectStore(db)
-	cfg := &store.SandboxConfig{Name: "dock", Type: "docker", Config: json.RawMessage(`{"image":"i"}`)}
-	if err := sandboxes.Create(t.Context(), cfg); err != nil {
-		t.Fatal(err)
-	}
-	other := &store.SandboxConfig{Name: "dock2", Type: "docker", Config: json.RawMessage(`{"image":"i"}`)}
-	if err := sandboxes.Create(t.Context(), other); err != nil {
-		t.Fatal(err)
-	}
-	mine := &store.Project{OwnerID: store.LocalUserID, SandboxID: cfg.ID, Name: "mine"}
+	targetID, templateID := mkSandboxRows(t, db)
+	mine := &store.Project{OwnerID: store.LocalUserID, TargetID: targetID, TemplateID: templateID, Name: "mine"}
 	if err := projects.Create(t.Context(), mine); err != nil {
 		t.Fatal(err)
 	}
-	elsewhere := &store.Project{OwnerID: store.LocalUserID, SandboxID: other.ID, Name: "elsewhere"}
-	if err := projects.Create(t.Context(), elsewhere); err != nil {
-		t.Fatal(err)
-	}
 	provider := &fakeProvider{sb: &fakeTerminalSandbox{term: newFakeTerminal()}}
-	th := NewTerminalHandler(sandboxes, projects, provider, settings.NewReader(nil))
+	th := NewTerminalHandler(store.NewSandboxTargetStore(db), store.NewSandboxTemplateStore(db), projects, provider, settings.NewReader(nil))
 	var auditMu sync.Mutex
 	var audited []protocol.AuditRecord
 	th.Audit = func(_ context.Context, r protocol.AuditRecord) {
@@ -424,25 +405,18 @@ func TestTerminalOpen_ValidatesProject(t *testing.T) {
 
 	open := func(projectID string) protocol.Envelope {
 		conn := dialTerminalRaw(t, srv)
-		if err := conn.WriteJSON(&protocol.Envelope{Type: protocol.EventTerminalOpen, Payload: mustJSON(protocol.TerminalOpen{
-			SandboxID: cfg.ID, ProjectID: projectID, Cols: 80, Rows: 24,
-		})}); err != nil {
-			t.Fatal(err)
-		}
+		openTerminal(t, conn, projectID)
 		return readTerminalEnvelope(t, conn)
 	}
 
-	// No project, an unknown one, and one on a different sandbox: refused.
+	// No project and an unknown one: refused.
 	if env := open(""); env.Type != protocol.EventTerminalError {
 		t.Fatalf("projectless open: %s, want %s", env.Type, protocol.EventTerminalError)
 	}
 	if env := open(store.NewID()); env.Type != protocol.EventTerminalError {
 		t.Fatalf("unknown-project open: %s, want %s", env.Type, protocol.EventTerminalError)
 	}
-	if env := open(elsewhere.ID); env.Type != protocol.EventTerminalError {
-		t.Fatalf("cross-sandbox open: %s, want %s", env.Type, protocol.EventTerminalError)
-	}
-	// The matching pair opens, and the manager saw exactly it.
+	// The caller's own project opens, and the manager saw exactly it.
 	if env := open(mine.ID); env.Type != protocol.EventTerminalReady {
 		t.Fatalf("valid open: %s, want %s", env.Type, protocol.EventTerminalReady)
 	}
@@ -453,14 +427,14 @@ func TestTerminalOpen_ValidatesProject(t *testing.T) {
 		t.Fatalf("manager saw projects %q, want [%s]", got, mine.ID)
 	}
 	// Only the successful open leaves an audit line, and it names the project
-	// and its owner — the sandbox id alone cannot say whose data was reached.
+	// and its owner.
 	auditMu.Lock()
 	records := append([]protocol.AuditRecord(nil), audited...)
 	auditMu.Unlock()
-	if len(records) != 1 || records[0].Resource != cfg.ID {
-		t.Fatalf("audit records = %+v, want one for sandbox %s", records, cfg.ID)
+	if len(records) != 1 || records[0].Resource != mine.ID {
+		t.Fatalf("audit records = %+v, want one for project %s", records, mine.ID)
 	}
-	if d := records[0].Detail; !strings.Contains(d, mine.ID) || !strings.Contains(d, store.LocalUserID) {
+	if d := records[0].Detail; !strings.Contains(d, mine.Name) || !strings.Contains(d, store.LocalUserID) {
 		t.Fatalf("audit detail %q does not name the project and owner", d)
 	}
 }
@@ -470,8 +444,8 @@ func TestTerminalOpen_ValidatesProject(t *testing.T) {
 // would pin an evicted instance forever) and not twice.
 func TestTerminalWS_ReleasesInstanceOnClose(t *testing.T) {
 	p := &fakeProvider{sb: &fakeTerminalSandbox{term: newFakeTerminal()}}
-	srv, _, id, pid := terminalTestServer(t, p)
-	conn := dialTerminal(t, srv, id, pid)
+	srv, _, pid := terminalTestServer(t, p)
+	conn := dialTerminal(t, srv, pid)
 	_ = conn.Close()
 
 	deadline := time.Now().Add(5 * time.Second)
@@ -487,40 +461,23 @@ func TestTerminalWS_ReleasesInstanceOnClose(t *testing.T) {
 // generation is refused at register — the sweep that retired it ran while
 // this terminal was still dialing and could not see it.
 func TestTerminalRegisterFence(t *testing.T) {
-	th := NewTerminalHandler(nil, nil, nil, settings.NewReader(nil))
-	th.CloseSandboxTerminals("sb", 2)
+	th := NewTerminalHandler(nil, nil, nil, nil, settings.NewReader(nil))
+	th.CloseProjectTerminals("p1", 2)
 
-	if ok, stale := th.register("sb", &liveTerminal{gen: 1}, 4); ok || !stale {
+	if ok, stale := th.register("p1", &liveTerminal{gen: 1}, 4); ok || !stale {
 		t.Fatalf("stale-generation register: ok=%v stale=%v, want a stale refusal", ok, stale)
 	}
-	if ok, stale := th.register("sb", &liveTerminal{gen: 2}, 4); !ok || stale {
+	if ok, stale := th.register("p1", &liveTerminal{gen: 2}, 4); !ok || stale {
 		t.Fatalf("current-generation register: ok=%v stale=%v, want accepted", ok, stale)
 	}
 	// The fence never regresses: an older sweep arriving late cannot reopen it.
-	th.CloseSandboxTerminals("sb", 1)
-	if ok, stale := th.register("sb", &liveTerminal{gen: 1}, 4); ok || !stale {
+	th.CloseProjectTerminals("p1", 1)
+	if ok, stale := th.register("p1", &liveTerminal{gen: 1}, 4); ok || !stale {
 		t.Fatalf("register after a late older sweep: ok=%v stale=%v, want still refused", ok, stale)
 	}
-}
-
-// The project fence is its own axis: an environment change refuses the
-// project's late arrivals without touching a sibling project on the same
-// sandbox.
-func TestTerminalRegisterProjectFence(t *testing.T) {
-	th := NewTerminalHandler(nil, nil, nil, settings.NewReader(nil))
-	th.CloseProjectTerminals("p1", 2)
-
-	stale := &liveTerminal{gen: 1, projectID: "p1", projGen: 1}
-	if ok, isStale := th.register("sb", stale, 4); ok || !isStale {
-		t.Fatalf("stale project generation: ok=%v stale=%v, want a stale refusal", ok, isStale)
-	}
-	current := &liveTerminal{gen: 1, projectID: "p1", projGen: 2}
-	if ok, isStale := th.register("sb", current, 4); !ok || isStale {
-		t.Fatalf("current project generation: ok=%v stale=%v, want accepted", ok, isStale)
-	}
-	sibling := &liveTerminal{gen: 1, projectID: "p2", projGen: 1}
-	if ok, isStale := th.register("sb", sibling, 4); !ok || isStale {
-		t.Fatalf("sibling project on the same sandbox: ok=%v stale=%v, want accepted", ok, isStale)
+	// A sibling project is its own fence.
+	if ok, stale := th.register("p2", &liveTerminal{gen: 1}, 4); !ok || stale {
+		t.Fatalf("sibling project: ok=%v stale=%v, want accepted", ok, stale)
 	}
 }
 
@@ -532,16 +489,20 @@ func (perOpenTerminalSandbox) OpenTerminal(context.Context, sandbox.TerminalOpti
 	return newFakeTerminal(), nil
 }
 
-// A project's sweep closes that project's terminals and leaves the sandbox's
-// other projects connected — they share a config, not an environment.
+// A project's sweep closes that project's terminals and leaves other
+// projects' connected — they share a target, not a container.
 func TestCloseProjectTerminalsSparesSiblings(t *testing.T) {
-	srv, th, id, pid := terminalTestServer(t, &fakeProvider{sb: perOpenTerminalSandbox{}})
-	sibling := &store.Project{OwnerID: store.LocalUserID, SandboxID: id, Name: "sibling"}
+	srv, th, pid := terminalTestServer(t, &fakeProvider{sb: perOpenTerminalSandbox{}})
+	first, err := th.projects.Get(t.Context(), pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sibling := &store.Project{OwnerID: store.LocalUserID, TargetID: first.TargetID, TemplateID: first.TemplateID, Name: "sibling"}
 	if err := th.projects.Create(t.Context(), sibling); err != nil {
 		t.Fatal(err)
 	}
-	mine := dialTerminal(t, srv, id, pid)
-	other := dialTerminal(t, srv, id, sibling.ID)
+	mine := dialTerminal(t, srv, pid)
+	other := dialTerminal(t, srv, sibling.ID)
 
 	// The project's environment changed: generations below 2 are retired.
 	th.CloseProjectTerminals(pid, 2)
@@ -555,7 +516,7 @@ func TestCloseProjectTerminalsSparesSiblings(t *testing.T) {
 	// The sibling is still connected: its read finds nothing to read rather
 	// than a closed socket.
 	_ = other.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
-	_, _, err := other.ReadMessage()
+	_, _, err = other.ReadMessage()
 	var netErr net.Error
 	if !errors.As(err, &netErr) || !netErr.Timeout() {
 		t.Errorf("sibling terminal read = %v, want a timeout (connection still open)", err)

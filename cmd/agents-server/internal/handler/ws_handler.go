@@ -264,7 +264,7 @@ func (h *WSHandler) handleRunCreate(conn *server.WSConn, msg protocol.RunCreate)
 	// connection of the owner (this one included) before the first event
 	// published. The plan intent rides the request: StartRun applies it inside
 	// the reservation, so a busy refusal never mutates the session's phase.
-	_, err := h.runner.StartRun(msg.SessionID, msg.AgentConfigID, msg.SandboxID, msg.ProjectID, msg.Input, msg.Plan, nil)
+	_, err := h.runner.StartRun(msg.SessionID, msg.AgentConfigID, msg.ProjectID, msg.Input, msg.Plan, nil)
 	if err == nil {
 		h.audit(conn, "ws.run.create", msg.SessionID, "")
 	}

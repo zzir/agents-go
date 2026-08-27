@@ -8,56 +8,60 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// The binding-time project rules: the named project must be the owner's, on
-// the named sandbox; unnamed resolves to the owner's default project on that
-// sandbox, created on first use.
-func TestResolveBindingProject(t *testing.T) {
+// The binding-time project rules: a run naming no project resolves to none
+// (no project, no sandbox tools — decisions §5.33); a named one must exist and
+// be the session owner's.
+func TestPlanProjectBinding(t *testing.T) {
 	runner, db := newBareRunner(t)
 	ctx := context.Background()
-	sandboxes := store.NewSandboxStore(db)
-	cfg := &store.SandboxConfig{ID: store.NewID(), Name: "sb", Type: "docker", Config: []byte(`{"image":"i"}`)}
-	if err := sandboxes.Create(ctx, cfg); err != nil {
+	targets := store.NewSandboxTargetStore(db)
+	templates := store.NewSandboxTemplateStore(db)
+	tg := &store.SandboxTarget{ID: store.NewID(), Name: "tg", Type: "docker", Config: []byte(`{}`)}
+	if err := targets.Create(ctx, tg); err != nil {
 		t.Fatal(err)
 	}
-	other := &store.SandboxConfig{ID: store.NewID(), Name: "sb2", Type: "docker", Config: []byte(`{"image":"i"}`)}
-	if err := sandboxes.Create(ctx, other); err != nil {
+	tpl := &store.SandboxTemplate{ID: store.NewID(), Name: "tpl", Type: "docker", Config: []byte(`{"image":"i"}`)}
+	if err := templates.Create(ctx, tpl); err != nil {
 		t.Fatal(err)
 	}
+	mine := &store.Project{OwnerID: store.LocalUserID, TargetID: tg.ID, TemplateID: tpl.ID, Name: "mine"}
+	if err := runner.Deps.Projects.Create(ctx, mine); err != nil {
+		t.Fatal(err)
+	}
+	sess := &store.Session{ID: store.NewID(), OwnerID: store.LocalUserID, Name: "s"}
 
-	// Unnamed: the default project is created once and found thereafter.
-	def, err := runner.resolveBindingProject(ctx, store.LocalUserID, cfg.ID, "")
+	// Unnamed: no project, and nothing to bind.
+	plan, err := runner.planProjectBinding(ctx, sess, "")
 	if err != nil {
-		t.Fatalf("default: %v", err)
+		t.Fatalf("unnamed: %v", err)
 	}
-	if def.Name != store.DefaultProjectName || def.SandboxID != cfg.ID {
-		t.Fatalf("default project = %+v", def)
-	}
-	again, err := runner.resolveBindingProject(ctx, store.LocalUserID, cfg.ID, "")
-	if err != nil || again.ID != def.ID {
-		t.Fatalf("second resolve = %+v, %v; want the same row", again, err)
+	if plan.projectID != "" || plan.needBind {
+		t.Fatalf("unnamed plan = %+v, want an empty plan", plan)
 	}
 
-	// Named: the owner's project on that sandbox resolves.
-	named, err := runner.resolveBindingProject(ctx, store.LocalUserID, cfg.ID, def.ID)
-	if err != nil || named.ID != def.ID {
-		t.Fatalf("named resolve = %+v, %v", named, err)
+	// Named: the owner's project resolves and a bind is planned.
+	plan, err = runner.planProjectBinding(ctx, sess, mine.ID)
+	if err != nil || plan.projectID != mine.ID || !plan.needBind {
+		t.Fatalf("named plan = %+v, %v", plan, err)
+	}
+
+	// A bound session overrides whatever the request says.
+	bound := &store.Session{ID: store.NewID(), OwnerID: store.LocalUserID, Name: "b", ProjectID: mine.ID}
+	plan, err = runner.planProjectBinding(ctx, bound, store.NewID())
+	if err != nil || plan.projectID != mine.ID || plan.needBind {
+		t.Fatalf("bound plan = %+v, %v; want the standing binding and no re-bind", plan, err)
 	}
 
 	var invalid ErrInvalidBinding
-	// Unknown project id.
-	if _, err := runner.resolveBindingProject(ctx, store.LocalUserID, cfg.ID, store.NewID()); !errors.As(err, &invalid) {
+	if _, err := runner.planProjectBinding(ctx, sess, store.NewID()); !errors.As(err, &invalid) {
 		t.Fatalf("unknown project: %v, want ErrInvalidBinding", err)
 	}
 	// A foreign owner's project reads as absent.
-	foreign := &store.Project{OwnerID: store.NewID(), SandboxID: cfg.ID, Name: "theirs"}
+	foreign := &store.Project{OwnerID: store.NewID(), TargetID: tg.ID, TemplateID: tpl.ID, Name: "theirs"}
 	if err := runner.Deps.Projects.Create(ctx, foreign); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runner.resolveBindingProject(ctx, store.LocalUserID, cfg.ID, foreign.ID); !errors.As(err, &invalid) {
+	if _, err := runner.planProjectBinding(ctx, sess, foreign.ID); !errors.As(err, &invalid) {
 		t.Fatalf("foreign project: %v, want ErrInvalidBinding", err)
-	}
-	// A project on a different sandbox is refused.
-	if _, err := runner.resolveBindingProject(ctx, store.LocalUserID, other.ID, def.ID); !errors.As(err, &invalid) {
-		t.Fatalf("cross-sandbox project: %v, want ErrInvalidBinding", err)
 	}
 }

@@ -27,7 +27,8 @@ type Handlers struct {
 	Workflows  *WorkflowHandler
 	Triggers   *TriggerHandler
 	Guardrails *GuardrailHandler
-	Sandboxes  *SandboxHandler
+	Targets    *SandboxTargetHandler
+	Templates  *SandboxTemplateHandler
 	Projects   *ProjectHandler
 	Traces     *TraceHandler
 	Playground *PlaygroundHandler
@@ -224,16 +225,23 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		guardrails.DELETE("/:id", admin, h.Guardrails.Delete)
 	}
 	{
-		sandboxes := api.Group("/sandboxes")
-		sandboxes.GET("", h.Sandboxes.List)
-		sandboxes.POST("", admin, h.Sandboxes.Create)
-		sandboxes.GET("/:id", h.Sandboxes.Get)
-		sandboxes.PUT("/:id", admin, h.Sandboxes.Update)
-		sandboxes.DELETE("/:id", admin, h.Sandboxes.Delete)
-		sandboxes.POST("/:id/test", admin, h.Sandboxes.Test)
-		sandboxes.GET("/:id/containers", admin, h.Sandboxes.Containers)
-		sandboxes.POST("/:id/containers/:name/stop", admin, h.Sandboxes.StopContainer)
-		sandboxes.DELETE("/:id/containers/:name", admin, h.Sandboxes.RemoveContainer)
+		targets := api.Group("/sandbox-targets")
+		targets.GET("", h.Targets.List)
+		targets.POST("", admin, h.Targets.Create)
+		targets.GET("/:id", h.Targets.Get)
+		targets.PUT("/:id", admin, h.Targets.Update)
+		targets.DELETE("/:id", admin, h.Targets.Delete)
+		targets.POST("/:id/test", admin, h.Targets.Test)
+		targets.GET("/:id/containers", admin, h.Targets.Containers)
+		targets.POST("/:id/containers/:name/stop", admin, h.Targets.StopContainer)
+		targets.DELETE("/:id/containers/:name", admin, h.Targets.RemoveContainer)
+
+		templates := api.Group("/sandbox-templates")
+		templates.GET("", h.Templates.List)
+		templates.POST("", admin, h.Templates.Create)
+		templates.GET("/:id", h.Templates.Get)
+		templates.PUT("/:id", admin, h.Templates.Update)
+		templates.DELETE("/:id", admin, h.Templates.Delete)
 	}
 	api.POST("/playground/generate", h.Playground.Generate)
 }

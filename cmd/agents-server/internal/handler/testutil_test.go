@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http/httptest"
@@ -64,10 +65,10 @@ func doJSON(t *testing.T, engine *gin.Engine, method, path, body string) *httpte
 // noopStopper is a RunStopper for handler tests that never start a run.
 type noopStopper struct{}
 
-func (noopStopper) StopSessionTree(string)               {}
-func (noopStopper) AbortSessionDelete(string)            {}
-func (noopStopper) ReleaseSessionBinding(string, string) {}
-func (noopStopper) SessionBusy(string) bool              { return false }
+func (noopStopper) StopSessionTree(string)       {}
+func (noopStopper) AbortSessionDelete(string)    {}
+func (noopStopper) ReleaseSessionBinding(string) {}
+func (noopStopper) SessionBusy(string) bool      { return false }
 
 // noopCompactor is a SessionCompactor that finds nothing to fold.
 type noopCompactor struct{}
@@ -104,9 +105,33 @@ func testAgentConfigHandler(db *bun.DB) *AgentConfigHandler {
 		guardrails.NewResolver(store.NewGuardrailStore(db)))
 }
 
-// testSandboxHandler wires a SandboxHandler over the given store and manager,
-// with a terminal registry over the same pair and the workspace given. Local
-// sandboxes stay refused, as the flag defaults.
-func testSandboxHandler(sandboxStore *store.SandboxStore, manager *sandboxes.Manager, _ string) *SandboxHandler {
-	return NewSandboxHandler(sandboxStore, manager, NewTerminalHandler(sandboxStore, nil, manager, settings.NewReader(nil)))
+// testTargetHandler wires a SandboxTargetHandler over a database, with a
+// terminal registry and retirer over the same stores.
+func testTargetHandler(db *bun.DB, manager *sandboxes.Manager) *SandboxTargetHandler {
+	targets, templates, projects := store.NewSandboxTargetStore(db), store.NewSandboxTemplateStore(db), store.NewProjectStore(db)
+	terminals := NewTerminalHandler(targets, templates, projects, manager, settings.NewReader(nil))
+	return NewSandboxTargetHandler(targets, templates, NewRetirer(projects, manager, terminals))
+}
+
+// testTemplateHandler wires a SandboxTemplateHandler over the same stores.
+func testTemplateHandler(db *bun.DB, manager *sandboxes.Manager) *SandboxTemplateHandler {
+	targets, templates, projects := store.NewSandboxTargetStore(db), store.NewSandboxTemplateStore(db), store.NewProjectStore(db)
+	terminals := NewTerminalHandler(targets, templates, projects, manager, settings.NewReader(nil))
+	return NewSandboxTemplateHandler(templates, NewRetirer(projects, manager, terminals))
+}
+
+// mkSandboxRows persists a docker target and template and returns their ids —
+// the pair every project needs.
+func mkSandboxRows(t *testing.T, db *bun.DB) (targetID, templateID string) {
+	t.Helper()
+	ctx := context.Background()
+	tg := &store.SandboxTarget{ID: store.NewID(), Name: "tg-" + store.NewID(), Type: "docker", Config: json.RawMessage(`{}`)}
+	if err := store.NewSandboxTargetStore(db).Create(ctx, tg); err != nil {
+		t.Fatalf("create sandbox target: %v", err)
+	}
+	tpl := &store.SandboxTemplate{ID: store.NewID(), Name: "tpl-" + store.NewID(), Type: "docker", Config: json.RawMessage(`{"image":"i"}`)}
+	if err := store.NewSandboxTemplateStore(db).Create(ctx, tpl); err != nil {
+		t.Fatalf("create sandbox template: %v", err)
+	}
+	return tg.ID, tpl.ID
 }

@@ -56,8 +56,7 @@ export interface TerminalViewHandle {
 }
 
 interface TerminalViewProps {
-  sandboxId: string;
-  // The project whose (sandbox, project) container this shell opens into —
+  // The project whose container this shell opens into —
   // required by terminal.open; a bound session's terminal follows its binding.
   projectId: string;
   // Hidden tabs stay mounted so their session (xterm buffer + WebSocket)
@@ -71,7 +70,7 @@ interface TerminalViewProps {
 // session's lifetime is the component's: unmounting (closing the tab) ends
 // the shell.
 export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(function TerminalView(
-  { sandboxId, projectId, hidden, onStatus, onSelection }: TerminalViewProps,
+  { projectId, hidden, onStatus, onSelection }: TerminalViewProps,
   ref,
 ) {
   const mountRef = useRef<HTMLDivElement>(null);
@@ -161,7 +160,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
         case EV.authOk:
           ws.send(JSON.stringify({
             type: EV.terminalOpen,
-            payload: { sandbox_id: sandboxId, project_id: projectId, cols: term.cols, rows: term.rows },
+            payload: { project_id: projectId, cols: term.cols, rows: term.rows },
           }));
           break;
         case EV.terminalReady:
@@ -230,7 +229,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
       webglRef.current = null;
       term.dispose(); // disposes loaded addons (fit, webgl) with it
     };
-  }, [sandboxId, projectId]);
+  }, [projectId]);
 
   // WebGL renderer as progressive enhancement, attached ONLY to the visible
   // tab: hugely faster on output floods, but it must not run on hidden
@@ -259,7 +258,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
     } catch {
       webglRef.current = null;
     }
-  }, [hidden, sandboxId]);
+  }, [hidden, projectId]);
 
   return <div ref={mountRef} className="terminal-view" style={hidden ? { display: 'none' } : undefined} />;
 });

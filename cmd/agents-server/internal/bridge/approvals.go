@@ -82,7 +82,6 @@ func (r *Runner) persistInterruption(result *RunOutcome) error {
 		RunID:         result.RunID,
 		SessionID:     result.SessionID,
 		AgentConfigID: result.AgentConfigID,
-		SandboxID:     result.SandboxID,
 		ProjectID:     result.ProjectID,
 		State:         string(stateJSON),
 		ToolCalls:     callsJSON,
@@ -111,13 +110,13 @@ func (r *Runner) persistInterruption(result *RunOutcome) error {
 
 // buildAgentRegistry builds the agent from its config and returns a name→agent
 // registry covering it and all reachable handoff targets, as required by
-// agents.RunStateFromJSON. It must build with the run's sandboxID: the
+// agents.RunStateFromJSON. It must build with the run's project: the
 // restored state's CurrentAgent is resolved FROM this registry and is the very
 // agent the SDK re-runs, so omitting the sandbox here strips its
 // sandbox-backed tools (exec_command, read_file, …) and the approved call
 // fails with "tool not found on agent".
-func (r *Runner) buildAgentRegistry(ctx context.Context, agentConfigID, sandboxID, projectID string, background bool, ownerID string) (map[string]*agents.Agent, *BuildResult, error) {
-	built, err := buildFullAgent(ctx, r.Deps, agentConfigID, sandboxID, projectID, background, ownerID)
+func (r *Runner) buildAgentRegistry(ctx context.Context, agentConfigID, projectID string, background bool, ownerID string) (map[string]*agents.Agent, *BuildResult, error) {
+	built, err := buildFullAgent(ctx, r.Deps, agentConfigID, projectID, background, ownerID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -291,7 +290,7 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 	if err != nil {
 		return "", pending.SessionID, err
 	}
-	registry, rebuilt, err := r.buildAgentRegistry(ctx, pending.AgentConfigID, pending.SandboxID, pending.ProjectID, taskMeta != nil, sess.OwnerID)
+	registry, rebuilt, err := r.buildAgentRegistry(ctx, pending.AgentConfigID, pending.ProjectID, taskMeta != nil, sess.OwnerID)
 	if err != nil {
 		return "", pending.SessionID, fmt.Errorf("rebuilding agent: %w", err)
 	}
@@ -415,7 +414,7 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 		}
 		return nil
 	}
-	runID, err = r.ResumeRun(pending.RunID, state, pending.SessionID, pending.AgentConfigID, pending.SandboxID, pending.ProjectID, verify, resumeDone)
+	runID, err = r.ResumeRun(pending.RunID, state, pending.SessionID, pending.AgentConfigID, pending.ProjectID, verify, resumeDone)
 	if errors.Is(err, errResumeStopped) {
 		// The work was stopped in the window between the claim and the launch.
 		// The approval is void and the run never started — nothing to restore,

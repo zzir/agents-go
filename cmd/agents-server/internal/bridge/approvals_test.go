@@ -78,7 +78,7 @@ func TestResolveApprovalBusyKeepsPending(t *testing.T) {
 	}
 
 	// Occupy the session with a live run so ResumeRun must fail busy.
-	if _, _, err := runner.hub.register("blocker-run", sess.ID, "", ac.ID, "", "", nil); err != nil {
+	if _, _, err := runner.hub.register("blocker-run", sess.ID, "", ac.ID, "", nil); err != nil {
 		t.Fatalf("register blocker: %v", err)
 	}
 

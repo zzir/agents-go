@@ -106,6 +106,37 @@ func RemoveManaged(ctx context.Context, opts Options, name string) error {
 	})
 }
 
+// ManagedNamePrefix is what every name this package creates — container or
+// volume — begins with.
+const ManagedNamePrefix = "agents-"
+
+// ErrVolumeNotFound reports a volume call naming a volume that is not there.
+// A caller reclaiming storage has already got what it asked for and continues.
+var ErrVolumeNotFound = errors.New("volume not found")
+
+// RemoveManagedVolume removes the named volume from the daemon opts describes
+// — the storage reclaim. Unlike the container calls there is no ownership
+// label to verify (the daemon creates a named volume implicitly on first
+// mount), so this refuses any name outside ManagedNamePrefix; callers derive
+// the name from an id they own and never take it from a request.
+func RemoveManagedVolume(ctx context.Context, opts Options, name string) error {
+	if !strings.HasPrefix(name, ManagedNamePrefix) {
+		return fmt.Errorf("docker sandbox: %q is not a managed volume name", name)
+	}
+	cli, done, err := managedClient(opts)
+	if err != nil {
+		return err
+	}
+	defer done()
+	if _, err := cli.VolumeRemove(ctx, name, client.VolumeRemoveOptions{}); err != nil {
+		if cerrdefs.IsNotFound(err) {
+			return fmt.Errorf("docker sandbox: %s: %w", name, ErrVolumeNotFound)
+		}
+		return fmt.Errorf("docker sandbox: %w", err)
+	}
+	return nil
+}
+
 // ErrContainerNotFound reports a managed-container call naming a container
 // that is not there. A caller removing one to replace it has already got what
 // it asked for and continues; a caller acting on a listing reports it.

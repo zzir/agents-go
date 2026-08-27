@@ -17,9 +17,9 @@ func TestCreateSchemaFailsOnStaleTable(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	ctx := context.Background()
 
-	// A sandbox_configs table from before the revision counters existed.
+	// A sandbox_targets table from before the revision counter existed.
 	if _, err := db.ExecContext(ctx,
-		`CREATE TABLE sandbox_configs (id TEXT PRIMARY KEY, name TEXT, type TEXT, config TEXT, created_at TIMESTAMP, updated_at TIMESTAMP)`); err != nil {
+		`CREATE TABLE sandbox_targets (id TEXT PRIMARY KEY, name TEXT, type TEXT, config TEXT, created_at TIMESTAMP, updated_at TIMESTAMP)`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -27,7 +27,7 @@ func TestCreateSchemaFailsOnStaleTable(t *testing.T) {
 	if err == nil {
 		t.Fatal("CreateSchema accepted a stale table; want a schema-out-of-date error")
 	}
-	if !strings.Contains(err.Error(), "out of date") || !strings.Contains(err.Error(), "SandboxConfig") {
+	if !strings.Contains(err.Error(), "out of date") || !strings.Contains(err.Error(), "SandboxTarget") {
 		t.Fatalf("err = %v, want an out-of-date message naming the model", err)
 	}
 }

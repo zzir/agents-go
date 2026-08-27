@@ -3,27 +3,32 @@ package store
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/uptrace/bun"
 )
 
-// createSandboxRow persists a sandbox config under the given id.
-// BindSandboxIfEmpty refuses a bind whose target config is gone (the EXISTS
+// createTargetRow persists a sandbox target under the given id.
+// BindProjectIfEmpty refuses a bind whose project is gone (the EXISTS
 // predicate), so binding tests must create what they bind.
-func createSandboxRow(t *testing.T, db *bun.DB, id string) {
+func createTargetRow(t *testing.T, db *bun.DB, id string) {
 	t.Helper()
-	cfg := &SandboxConfig{ID: id, Name: id, Type: "docker", Config: []byte(`{"image":"i","host":"ssh://u@h"}`)}
-	if err := NewSandboxStore(db).Create(context.Background(), cfg); err != nil {
-		t.Fatalf("create sandbox config %s: %v", id, err)
+	cfg := &SandboxTarget{ID: id, Name: id, Type: "docker", Config: []byte(`{"host":"ssh://u@h"}`)}
+	if err := NewSandboxTargetStore(db).Create(context.Background(), cfg); err != nil {
+		t.Fatalf("create sandbox target %s: %v", id, err)
 	}
 }
 
-// createProjectRow persists a project on the given sandbox — a bind's target
+// createProjectRow persists a project on the given target — a bind's target
 // project must exist (the EXISTS guard mirrors ProjectStore.DeleteIfUnreferenced).
-func createProjectRow(t *testing.T, db *bun.DB, id, sandboxID string) {
+func createProjectRow(t *testing.T, db *bun.DB, id, targetID string) {
 	t.Helper()
-	p := &Project{ID: id, OwnerID: LocalUserID, SandboxID: sandboxID, Name: id}
+	tpl := &SandboxTemplate{ID: NewID(), Name: "tpl-" + id, Type: "docker", Config: []byte(`{"image":"i"}`)}
+	if err := NewSandboxTemplateStore(db).Create(context.Background(), tpl); err != nil {
+		t.Fatalf("create sandbox template for %s: %v", id, err)
+	}
+	p := &Project{ID: id, OwnerID: LocalUserID, TargetID: targetID, TemplateID: tpl.ID, Name: id}
 	if err := NewProjectStore(db).Create(context.Background(), p); err != nil {
 		t.Fatalf("create project %s: %v", id, err)
 	}
@@ -94,30 +99,28 @@ func TestBindAgentIfEmptyKeepsTheFirstBinding(t *testing.T) {
 	}
 }
 
-// The first sandbox-carrying run permanently binds (sandbox_id, work_dir):
-// the binding is the session's file system context and must never change
-// under a conversation that already touched it. Exactly one caller wins.
-func TestBindSandboxIfEmptyKeepsTheFirstBinding(t *testing.T) {
+// The first project-carrying run permanently binds project_id: the binding is
+// the session's file system context and must never change under a
+// conversation that already touched it. Exactly one caller wins.
+func TestBindProjectIfEmptyKeepsTheFirstBinding(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	id := ids(t)
 	sessions := NewSessionStore(db)
-	for _, name := range []string{"sb-1", "sb-2", "sb-3"} {
-		createSandboxRow(t, db, id(name))
-	}
+	createTargetRow(t, db, id("tg-1"))
 
 	sess := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "s"}
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 
-	createProjectRow(t, db, id("p-1"), id("sb-1"))
-	createProjectRow(t, db, id("p-2"), id("sb-2"))
-	won, err := sessions.BindSandboxIfEmpty(ctx, sess.ID, id("sb-1"), id("p-1"), 1)
+	createProjectRow(t, db, id("p-1"), id("tg-1"))
+	createProjectRow(t, db, id("p-2"), id("tg-1"))
+	won, err := sessions.BindProjectIfEmpty(ctx, sess.ID, id("p-1"))
 	if err != nil || !won {
 		t.Fatalf("first bind: won=%v err=%v, want a win", won, err)
 	}
-	won, err = sessions.BindSandboxIfEmpty(ctx, sess.ID, id("sb-2"), id("p-2"), 1)
+	won, err = sessions.BindProjectIfEmpty(ctx, sess.ID, id("p-2"))
 	if err != nil || won {
 		t.Fatalf("second bind: won=%v err=%v, want a silent loss", won, err)
 	}
@@ -125,85 +128,69 @@ func TestBindSandboxIfEmptyKeepsTheFirstBinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got.SandboxID != id("sb-1") || got.ProjectID != id("p-1") {
-		t.Fatalf("bound to (%q,%q), want the first binding (sb-1,p-1)", got.SandboxID, got.ProjectID)
+	if got.ProjectID != id("p-1") {
+		t.Fatalf("bound to %q, want the first binding p-1", got.ProjectID)
 	}
 
 	// Binding nothing and binding a missing session are quiet non-events.
-	if won, err := sessions.BindSandboxIfEmpty(ctx, sess.ID, "", id("p-1"), 1); err != nil || won {
-		t.Fatalf("empty sandbox: won=%v err=%v, want a no-op", won, err)
+	if won, err := sessions.BindProjectIfEmpty(ctx, sess.ID, ""); err != nil || won {
+		t.Fatalf("empty project: won=%v err=%v, want a no-op", won, err)
 	}
-	if won, err := sessions.BindSandboxIfEmpty(ctx, NewID(), id("sb-1"), id("p-1"), 1); err != nil || won {
+	if won, err := sessions.BindProjectIfEmpty(ctx, NewID(), id("p-1")); err != nil || won {
 		t.Fatalf("missing session: won=%v err=%v, want a no-op", won, err)
-	}
-
-	// A vanished PROJECT loses the same way a vanished config does.
-	other := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "o"}
-	if err := sessions.Create(ctx, other); err != nil {
-		t.Fatalf("create other: %v", err)
-	}
-	if won, err := sessions.BindSandboxIfEmpty(ctx, other.ID, id("sb-1"), NewID(), 1); err != nil || won {
-		t.Fatalf("vanished-project bind: won=%v err=%v, want a quiet loss", won, err)
-	}
-	if won, err := sessions.BindSandboxIfEmpty(ctx, other.ID, id("sb-1"), id("p-1"), 1); err != nil || !won {
-		t.Fatalf("valid bind after the loss: won=%v err=%v, want a win", won, err)
 	}
 }
 
-// The reference count behind "may this cached instance be released": exact
-// (config, project) pairs, dropping to zero when the last bound session goes.
-func TestCountBindingRefs(t *testing.T) {
+// The reference count behind "may this cached instance be released": one
+// project, dropping to zero when the last bound session goes.
+func TestCountProjectRefs(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	id := ids(t)
 	sessions := NewSessionStore(db)
-	createSandboxRow(t, db, id("sb-1"))
-	createSandboxRow(t, db, id("sb-2"))
-
-	createProjectRow(t, db, id("p-1"), id("sb-1"))
-	createProjectRow(t, db, id("p-2"), id("sb-1"))
-	createProjectRow(t, db, id("p-3"), id("sb-2"))
-	mk := func(sandboxID, projectID string) *Session {
+	createTargetRow(t, db, id("tg-1"))
+	createProjectRow(t, db, id("p-1"), id("tg-1"))
+	createProjectRow(t, db, id("p-2"), id("tg-1"))
+	mk := func(projectID string) *Session {
 		s := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "s"}
 		if err := sessions.Create(ctx, s); err != nil {
 			t.Fatalf("create: %v", err)
 		}
-		if sandboxID != "" {
-			if won, err := sessions.BindSandboxIfEmpty(ctx, s.ID, sandboxID, projectID, 1); err != nil || !won {
+		if projectID != "" {
+			if won, err := sessions.BindProjectIfEmpty(ctx, s.ID, projectID); err != nil || !won {
 				t.Fatalf("bind: won=%v err=%v", won, err)
 			}
 		}
 		return s
 	}
-	a := mk(id("sb-1"), id("p-1"))
-	mk(id("sb-1"), id("p-2"))
-	mk(id("sb-2"), id("p-3"))
-	mk("", "")
+	a := mk(id("p-1"))
+	mk(id("p-2"))
+	mk("")
 
-	if n, err := sessions.CountBindingRefs(ctx, id("sb-1"), id("p-1")); err != nil || n != 1 {
-		t.Fatalf("CountBindingRefs(sb-1,p-1) = %d, %v; want 1", n, err)
+	if n, err := sessions.CountProjectRefs(ctx, id("p-1")); err != nil || n != 1 {
+		t.Fatalf("CountProjectRefs(p-1) = %d, %v; want 1", n, err)
 	}
-	if n, err := sessions.CountBindingRefs(ctx, NewID(), ""); err != nil || n != 0 {
-		t.Fatalf("CountBindingRefs(sb-none) = %d, %v; want 0", n, err)
+	if n, err := sessions.CountProjectRefs(ctx, NewID()); err != nil || n != 0 {
+		t.Fatalf("CountProjectRefs(unknown) = %d, %v; want 0", n, err)
 	}
-	// An unset half is stored as NULL, so it is asked for as NULL: the pair
-	// ("", "") is the unbound sessions, not a syntax error (PostgreSQL refuses
-	// "" as a uuid) and not silently nothing (what SQLite would answer).
-	if n, err := sessions.CountBindingRefs(ctx, "", ""); err != nil || n != 1 {
-		t.Fatalf("CountBindingRefs(unbound) = %d, %v; want the one unbound session", n, err)
+	// An unset binding is stored as NULL, so it is asked for as NULL: "" is
+	// the unbound sessions, not a syntax error (PostgreSQL refuses "" as a
+	// uuid) and not silently nothing (what SQLite would answer).
+	if n, err := sessions.CountProjectRefs(ctx, ""); err != nil || n != 1 {
+		t.Fatalf("CountProjectRefs(unbound) = %d, %v; want the one unbound session", n, err)
 	}
 	if err := sessions.Delete(ctx, a.ID); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	if n, err := sessions.CountBindingRefs(ctx, id("sb-1"), id("p-1")); err != nil || n != 0 {
-		t.Fatalf("CountBindingRefs after delete = %d, %v; want 0", n, err)
+	if n, err := sessions.CountProjectRefs(ctx, id("p-1")); err != nil || n != 0 {
+		t.Fatalf("CountProjectRefs after delete = %d, %v; want 0", n, err)
 	}
 }
 
-// The EXISTS predicate: a bind whose target config vanished between the
-// caller's validation and the write must lose, not point the session at
-// nothing forever — the caller's re-plan then reports the config as missing.
-func TestBindSandboxRefusesVanishedTarget(t *testing.T) {
+// The EXISTS predicate: a bind whose project vanished between the caller's
+// validation and the write must lose, not point the session at nothing
+// forever — the caller's re-plan then reports the project as missing.
+func TestBindProjectRefusesVanishedTarget(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	sessions := NewSessionStore(db)
@@ -212,115 +199,51 @@ func TestBindSandboxRefusesVanishedTarget(t *testing.T) {
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	// No sandbox config row at all — the delete already landed.
-	won, err := sessions.BindSandboxIfEmpty(ctx, sess.ID, NewID(), NewID(), 1)
+	// No project row at all — the delete already landed.
+	won, err := sessions.BindProjectIfEmpty(ctx, sess.ID, NewID())
 	if err != nil || won {
-		t.Fatalf("bind to a vanished config: won=%v err=%v, want a quiet loss", won, err)
+		t.Fatalf("bind to a vanished project: won=%v err=%v, want a quiet loss", won, err)
 	}
-	if got, _ := sessions.Get(ctx, sess.ID); got.SandboxID != "" {
-		t.Fatalf("session bound to %q, want unbound", got.SandboxID)
+	if got, _ := sessions.Get(ctx, sess.ID); got.ProjectID != "" {
+		t.Fatalf("session bound to %q, want unbound", got.ProjectID)
 	}
 }
 
 // Two racing binds settle in SQL: exactly one wins.
-func TestBindSandboxIfEmptyRace(t *testing.T) {
+func TestBindProjectIfEmptyRace(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	id := ids(t)
 	sessions := NewSessionStore(db)
-	createSandboxRow(t, db, id("sb-a"))
-	createSandboxRow(t, db, id("sb-b"))
-	createProjectRow(t, db, id("p-a"), id("sb-a"))
-	createProjectRow(t, db, id("p-b"), id("sb-b"))
+	createTargetRow(t, db, id("tg-a"))
+	createProjectRow(t, db, id("p-a"), id("tg-a"))
+	createProjectRow(t, db, id("p-b"), id("tg-a"))
 
 	sess := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "s"}
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	results := make(chan bool, 2)
-	for _, n := range []string{"a", "b"} {
-		go func(sb, pj string) {
-			won, err := sessions.BindSandboxIfEmpty(ctx, sess.ID, sb, pj, 1)
+	var wg sync.WaitGroup
+	for _, pid := range []string{id("p-a"), id("p-b")} {
+		wg.Go(func() {
+			won, err := sessions.BindProjectIfEmpty(ctx, sess.ID, pid)
 			if err != nil {
-				t.Errorf("bind %s: %v", sb, err)
+				t.Error(err)
 			}
 			results <- won
-		}(id("sb-"+n), id("p-"+n))
+		})
 	}
+	wg.Wait()
+	close(results)
 	wins := 0
-	for range 2 {
-		if <-results {
+	for won := range results {
+		if won {
 			wins++
 		}
 	}
 	if wins != 1 {
-		t.Fatalf("wins = %d, want exactly 1", wins)
-	}
-}
-
-// regression guard: deleting the parent still cascades to the task row and
-// its hidden child session.
-func TestSessionDeleteParentCascadesTask(t *testing.T) {
-	ctx := context.Background()
-	db := newTestDB(t)
-	sessions := NewSessionStore(db)
-	tasks := NewTaskStore(db)
-
-	parent := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "parent"}
-	child := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "child"}
-	for _, s := range []*Session{parent, child} {
-		if err := sessions.Create(ctx, s); err != nil {
-			t.Fatalf("create session: %v", err)
-		}
-	}
-	task := &Task{ID: NewID(), RunID: NewID(), ParentSessionID: parent.ID, ChildSessionID: child.ID, Status: "working"}
-	if err := tasks.Create(ctx, task); err != nil {
-		t.Fatalf("create task: %v", err)
-	}
-
-	if err := sessions.Delete(ctx, parent.ID); err != nil {
-		t.Fatalf("delete parent: %v", err)
-	}
-	if _, err := tasks.Get(ctx, task.ID); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("task should cascade with parent, got %v", err)
-	}
-	if _, err := sessions.Get(ctx, child.ID); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("hidden child session should cascade with parent, got %v", err)
-	}
-}
-
-// The bind CAS matches the revision its plan was validated against: a
-// config updated between the plan's read and the write makes the bind lose —
-// the re-plan then validates against the new revision — instead of fixing a
-// workdir vetted against values that no longer hold.
-func TestBindSandboxRefusesAStaleRevision(t *testing.T) {
-	ctx := context.Background()
-	db := newTestDB(t)
-	id := ids(t)
-	sessions := NewSessionStore(db)
-	sandboxes := NewSandboxStore(db)
-	createSandboxRow(t, db, id("sb-1"))
-	createProjectRow(t, db, id("p-1"), id("sb-1"))
-
-	// The config moves to revision 2 after the caller read revision 1.
-	up := &SandboxConfig{Name: "sb-1", Type: "docker", Config: []byte(`{"image":"i","host":"ssh://u@h2"}`)}
-	if err := sandboxes.Update(ctx, id("sb-1"), up, 1, true); err != nil {
-		t.Fatal(err)
-	}
-
-	sess := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "s"}
-	if err := sessions.Create(ctx, sess); err != nil {
-		t.Fatal(err)
-	}
-	if won, err := sessions.BindSandboxIfEmpty(ctx, sess.ID, id("sb-1"), id("p-1"), 1); err != nil || won {
-		t.Fatalf("stale-revision bind: won=%v err=%v, want a quiet loss", won, err)
-	}
-	if got, _ := sessions.Get(ctx, sess.ID); got.SandboxID != "" {
-		t.Fatalf("session bound at a stale revision: %q", got.SandboxID)
-	}
-	// The re-read revision binds.
-	if won, err := sessions.BindSandboxIfEmpty(ctx, sess.ID, id("sb-1"), id("p-1"), 2); err != nil || !won {
-		t.Fatalf("current-revision bind: won=%v err=%v", won, err)
+		t.Fatalf("wins = %d, want exactly one", wins)
 	}
 }
 

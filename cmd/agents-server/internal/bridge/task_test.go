@@ -178,7 +178,7 @@ func TestDrainTaskNotificationsQueuesWhileBusy(t *testing.T) {
 	}
 	// Busy parent: the debt stays pending — draining refuses while a run holds
 	// the session, and taskFinished (OnFinished) now only drains.
-	if _, _, err := runner.hub.register("busy-run", parent.ID, "", ac.ID, "", "", nil); err != nil {
+	if _, _, err := runner.hub.register("busy-run", parent.ID, "", ac.ID, "", nil); err != nil {
 		t.Fatal(err)
 	}
 	runner.taskFinished(ctx, &sdktasks.Task{
@@ -293,14 +293,14 @@ func TestBuildFullAgentTaskDepthCap(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	chat, err := buildFullAgent(ctx, runner.Deps, ac.ID, "", "", false, "")
+	chat, err := buildFullAgent(ctx, runner.Deps, ac.ID, "", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !hasTool(chat, "spawn_task") {
 		t.Fatal("chat agent missing spawn_task")
 	}
-	taskAgent, err := buildFullAgent(ctx, runner.Deps, ac.ID, "", "", true, "")
+	taskAgent, err := buildFullAgent(ctx, runner.Deps, ac.ID, "", true, "")
 	if err != nil {
 		t.Fatal(err)
 	}

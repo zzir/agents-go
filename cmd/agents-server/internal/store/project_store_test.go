@@ -5,26 +5,45 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/uptrace/bun"
 )
 
-// Create runs behind a lock on the sandbox row: a missing target refuses the
-// insert instead of leaving a project row that points at nothing (decisions §5.28).
-func TestProjectCreateRequiresSandbox(t *testing.T) {
+// Create runs behind locks on the target AND the template rows: a missing
+// either refuses the insert instead of leaving a project row that points at
+// nothing (decisions §5.28).
+func TestProjectCreateRequiresTargetAndTemplate(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	id := ids(t)
 	projects := NewProjectStore(db)
+	tpl := createTemplateRow(t, db)
 
-	p := &Project{ID: NewID(), OwnerID: LocalUserID, SandboxID: NewID(), Name: "p"}
+	p := &Project{ID: NewID(), OwnerID: LocalUserID, TargetID: NewID(), TemplateID: tpl, Name: "p"}
 	if err := projects.Create(ctx, p); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("create on a missing sandbox: err=%v, want ErrNotFound", err)
+		t.Fatalf("create on a missing target: err=%v, want ErrNotFound", err)
 	}
 
-	createSandboxRow(t, db, id("sb-1"))
-	p = &Project{ID: NewID(), OwnerID: LocalUserID, SandboxID: id("sb-1"), Name: "p"}
-	if err := projects.Create(ctx, p); err != nil {
-		t.Fatalf("create on an existing sandbox: %v", err)
+	createTargetRow(t, db, id("tg-1"))
+	p = &Project{ID: NewID(), OwnerID: LocalUserID, TargetID: id("tg-1"), TemplateID: NewID(), Name: "p"}
+	if err := projects.Create(ctx, p); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("create on a missing template: err=%v, want ErrNotFound", err)
 	}
+
+	p = &Project{ID: NewID(), OwnerID: LocalUserID, TargetID: id("tg-1"), TemplateID: tpl, Name: "p"}
+	if err := projects.Create(ctx, p); err != nil {
+		t.Fatalf("create on existing rows: %v", err)
+	}
+}
+
+// createTemplateRow persists a docker template and returns its id.
+func createTemplateRow(t *testing.T, db *bun.DB) string {
+	t.Helper()
+	tpl := &SandboxTemplate{ID: NewID(), Name: "tpl-" + NewID(), Type: "docker", Config: []byte(`{"image":"i"}`)}
+	if err := NewSandboxTemplateStore(db).Create(context.Background(), tpl); err != nil {
+		t.Fatalf("create sandbox template: %v", err)
+	}
+	return tpl.ID
 }
 
 // List scopes to one owner — EveryOwner is the admin listing across all —
@@ -35,15 +54,16 @@ func TestProjectListScopeAndSessionCount(t *testing.T) {
 	id := ids(t)
 	projects := NewProjectStore(db)
 
-	createSandboxRow(t, db, id("sb"))
-	mine := &Project{ID: NewID(), OwnerID: LocalUserID, SandboxID: id("sb"), Name: "mine"}
-	foreign := &Project{ID: NewID(), OwnerID: NewID(), SandboxID: id("sb"), Name: "foreign"}
+	createTargetRow(t, db, id("tg"))
+	tpl := createTemplateRow(t, db)
+	mine := &Project{ID: NewID(), OwnerID: LocalUserID, TargetID: id("tg"), TemplateID: tpl, Name: "mine"}
+	foreign := &Project{ID: NewID(), OwnerID: NewID(), TargetID: id("tg"), TemplateID: tpl, Name: "foreign"}
 	for _, p := range []*Project{mine, foreign} {
 		if err := projects.Create(ctx, p); err != nil {
 			t.Fatalf("create project %s: %v", p.Name, err)
 		}
 	}
-	s := &Session{ID: NewID(), OwnerID: LocalUserID, Name: "s", SandboxID: id("sb"), ProjectID: mine.ID}
+	s := &Session{ID: NewID(), OwnerID: LocalUserID, Name: "s", ProjectID: mine.ID}
 	if err := NewSessionStore(db).Create(ctx, s); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -68,7 +88,7 @@ func TestProjectListScopeAndSessionCount(t *testing.T) {
 	}
 }
 
-// Create builds its own transaction (it locks the sandbox row), so it bypasses
+// Create builds its own transaction (it locks the target and template rows), so it bypasses
 // the CrudStore write path that seals — the seal has to be applied there too,
 // or the one path that CREATES an environment writes it in the clear.
 func TestProjectEnvSealedOnCreate(t *testing.T) {
@@ -77,13 +97,14 @@ func TestProjectEnvSealedOnCreate(t *testing.T) {
 	id := ids(t)
 	withTestBox(t)
 	projects := NewProjectStore(db)
-	createSandboxRow(t, db, id("sb"))
+	createTargetRow(t, db, id("tg"))
+	tpl := createTemplateRow(t, db)
 
 	env, err := NormalizeProjectEnv([]EnvVar{{Key: "TOKEN", Value: "sk-live"}, {Key: "TZ", Value: "UTC"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := &Project{ID: NewID(), OwnerID: LocalUserID, SandboxID: id("sb"), Name: "p", Env: env}
+	p := &Project{ID: NewID(), OwnerID: LocalUserID, TargetID: id("tg"), TemplateID: tpl, Name: "p", Env: env}
 	if err := projects.Create(ctx, p); err != nil {
 		t.Fatal(err)
 	}
@@ -116,9 +137,10 @@ func TestProjectUpdateCASAndGenerations(t *testing.T) {
 	id := ids(t)
 	withTestBox(t)
 	projects := NewProjectStore(db)
-	createSandboxRow(t, db, id("sb"))
+	createTargetRow(t, db, id("tg"))
+	tpl := createTemplateRow(t, db)
 
-	p := &Project{ID: NewID(), OwnerID: LocalUserID, SandboxID: id("sb"), Name: "p"}
+	p := &Project{ID: NewID(), OwnerID: LocalUserID, TargetID: id("tg"), TemplateID: tpl, Name: "p"}
 	if err := projects.Create(ctx, p); err != nil {
 		t.Fatal(err)
 	}
@@ -172,17 +194,17 @@ func TestProjectUpdateCASAndGenerations(t *testing.T) {
 	if err := projects.Update(ctx, p.ID, &stale, 3, false); !errors.Is(err, ErrRevisionConflict) {
 		t.Fatalf("stale update: err=%v, want ErrRevisionConflict", err)
 	}
-	// Owner and sandbox are identity, not editable content.
+	// Owner and target are identity, not editable content.
 	moved := *got
-	moved.OwnerID, moved.SandboxID = NewID(), NewID()
+	moved.OwnerID, moved.TargetID = NewID(), NewID()
 	if err := projects.Update(ctx, p.ID, &moved, 4, false); err != nil {
 		t.Fatal(err)
 	}
 	if got, err = projects.Get(ctx, p.ID); err != nil {
 		t.Fatal(err)
 	}
-	if got.OwnerID != LocalUserID || got.SandboxID != id("sb") {
-		t.Errorf("owner/sandbox after update = %s/%s, want them unchanged", got.OwnerID, got.SandboxID)
+	if got.OwnerID != LocalUserID || got.TargetID != id("tg") {
+		t.Errorf("owner/target after update = %s/%s, want them unchanged", got.OwnerID, got.TargetID)
 	}
 	if err := projects.Update(ctx, NewID(), &stale, 1, false); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("update of a missing project: err=%v, want ErrNotFound", err)

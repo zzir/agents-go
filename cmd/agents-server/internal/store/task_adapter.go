@@ -23,11 +23,10 @@ func NewTaskAdapter(s *TaskStore) *TaskAdapter { return &TaskAdapter{store: s} }
 // Inherit is the configuration snapshot the SDK carries opaquely and hands back
 // when it launches a run — this server's agent config and sandbox.
 type Inherit struct {
-	// AgentConfigID, SandboxID and ProjectID are the SPAWNING run's setup,
+	// AgentConfigID and ProjectID are the SPAWNING run's setup,
 	// replayed when the parent is woken so the notification reaches the agent
 	// that asked for the task.
 	AgentConfigID string `json:"agent_config_id,omitempty"`
-	SandboxID     string `json:"sandbox_id,omitempty"`
 	ProjectID     string `json:"project_id,omitempty"`
 	// TaskAgentID is the agent the task itself runs as, which is usually a
 	// different one.
@@ -74,7 +73,6 @@ func toSDK(t *Task) *tasks.Task {
 		// no agent config at all.
 		Inherit: EncodeInherit(Inherit{
 			AgentConfigID: t.ParentAgentConfigID,
-			SandboxID:     t.ParentSandboxID,
 			ProjectID:     t.ParentProjectID,
 			TaskAgentID:   t.AgentConfigID,
 		}),
@@ -113,7 +111,6 @@ func (a *TaskAdapter) Create(ctx context.Context, t *tasks.Task) error {
 		// different agent than the one that spawned it, which is the usual case.
 		AgentConfigID:       inherit.TaskAgentID,
 		ParentAgentConfigID: inherit.AgentConfigID,
-		ParentSandboxID:     inherit.SandboxID,
 		ParentProjectID:     inherit.ProjectID,
 		Attempt:             t.Attempt,
 		Status:              string(t.Status),
@@ -184,7 +181,6 @@ func taskWakeup(row *Task, st tasks.Status, summary, result, attempt string) *Wa
 		// would split one wake turn into one per task agent.
 		Inherit: string(EncodeInherit(Inherit{
 			AgentConfigID: row.ParentAgentConfigID,
-			SandboxID:     row.ParentSandboxID,
 			ProjectID:     row.ParentProjectID,
 		})),
 		ParentRunID: row.ParentRunID,
