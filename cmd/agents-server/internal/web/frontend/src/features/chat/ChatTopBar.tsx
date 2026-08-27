@@ -43,6 +43,9 @@ export interface ProjectMenu {
   onExport: () => void;
   onPreview: () => void;
   onRebuild: () => void;
+  /* Re-read the compute state as the menu opens: a run that started the
+     sandbox did not tell this component. */
+  onOpen: () => void;
 }
 
 export function ChatTopBar({
@@ -70,7 +73,7 @@ export function ChatTopBar({
           </span>
         )}
         {binding && projectMenu && (
-          <ActionMenu>
+          <ActionMenu onOpenChange={open => { if (open) projectMenu.onOpen(); }}>
             <ActionMenu.Anchor>
               <IconButton
                 icon={KebabHorizontalIcon}
@@ -93,27 +96,21 @@ export function ChatTopBar({
                 <ActionList.Item onSelect={projectMenu.onPreview}>
                   <ActionList.LeadingVisual><BrowserIcon /></ActionList.LeadingVisual>
                   Preview a port…
-                  <ActionList.Description variant="block">Open a service running inside the sandbox.</ActionList.Description>
                 </ActionList.Item>
                 <ActionList.Item onSelect={projectMenu.onExport}>
                   <ActionList.LeadingVisual><DownloadIcon /></ActionList.LeadingVisual>
                   Export as tar…
-                  <ActionList.Description variant="block">The whole working tree, as a download.</ActionList.Description>
                 </ActionList.Item>
                 <ActionList.Divider />
                 {projectMenu.state === 'running' ? (
                   <ActionList.Item onSelect={projectMenu.onStop}>
                     <ActionList.LeadingVisual><SquareFillIcon /></ActionList.LeadingVisual>
                     Stop sandbox
-                    <ActionList.Description variant="block">Keeps the files; frees the memory.</ActionList.Description>
                   </ActionList.Item>
                 ) : (
                   <ActionList.Item onSelect={projectMenu.onStart}>
                     <ActionList.LeadingVisual><PlayIcon /></ActionList.LeadingVisual>
                     Start sandbox
-                    <ActionList.Description variant="block">
-                      {projectMenu.state === 'absent' ? 'Not created yet — pulls the image.' : 'Stopped.'}
-                    </ActionList.Description>
                   </ActionList.Item>
                 )}
                 {projectMenu.rebuildable && (

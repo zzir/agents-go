@@ -304,18 +304,25 @@ export function ChatView({
   // its binding's, never the composer's current pick.
   const boundProject = sessionBinding?.projectId ? projects?.find(p => p.id === sessionBinding.projectId) || null : null;
 
-  // The state is read when the bound project changes, so the menu opens
-  // already knowing whether to offer Start or Stop. A failure leaves it
-  // unknown rather than guessing — the menu then offers Start, which is the
-  // harmless choice.
+  // The state is read when the bound project changes AND again as the menu
+  // opens: a run's first command starts the sandbox without telling this
+  // component, so a state read once at bind time goes stale in the most
+  // ordinary way there is. A failure leaves it unknown rather than guessing —
+  // the menu then offers Start, which is the harmless choice.
+  const refreshSandboxState = useCallback(async (projectID: string) => {
+    try {
+      const r = await api.projects.sandboxStatus(projectID);
+      setSandboxState(r.state);
+      setTargetType(r.sandbox_type);
+    } catch {
+      setSandboxState('');
+      setTargetType('');
+    }
+  }, []);
   useEffect(() => {
     if (!boundProject) { setSandboxState(''); setTargetType(''); return; }
-    let live = true;
-    api.projects.sandboxStatus(boundProject.id)
-      .then(r => { if (live) { setSandboxState(r.state); setTargetType(r.sandbox_type); } })
-      .catch(() => { if (live) { setSandboxState(''); setTargetType(''); } });
-    return () => { live = false; };
-  }, [boundProject]);
+    void refreshSandboxState(boundProject.id);
+  }, [boundProject, refreshSandboxState]);
 
   // Start and stop are synchronous and can take an image pull's worth of
   // time, so the menu stays disabled until they answer.
@@ -712,6 +719,7 @@ export function ChatView({
         onExport: () => { void exportProject(); },
         onPreview: () => { void previewPort(); },
         onRebuild: () => { void rebuildContainer(); },
+        onOpen: () => { void refreshSandboxState(boundProject.id); },
       } : null}
     />
   );

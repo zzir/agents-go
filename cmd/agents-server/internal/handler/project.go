@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	e2bsb "github.com/zzir/agents-go/sandbox/e2b"
 )
 
 // ProjectHandler manages projects — per-user working trees on a sandbox
@@ -116,6 +118,28 @@ func (h *ProjectHandler) own(c *gin.Context) (*store.Project, bool) {
 	return p, true
 }
 
+// manage resolves the project for an operation on its COMPUTE — status,
+// start, stop, rebuild. An admin passes on any project: they can already
+// delete one outright (decisions §5.29), and every one of these is strictly
+// less than that. It is deliberately NOT what preview and export use: those
+// disclose the owner's files, which managing the plane does not include.
+func (h *ProjectHandler) manage(c *gin.Context) (*store.Project, bool) {
+	ownerID, admin, ok := callerScope(c)
+	if !ok {
+		return nil, false
+	}
+	p, err := h.store.Get(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		storeError(c, err)
+		return nil, false
+	}
+	if !admin && p.OwnerID != ownerID {
+		notFound(c)
+		return nil, false
+	}
+	return p, true
+}
+
 // List responds with the caller's projects; `?all=true` is the admin's
 // listing of every owner's.
 //
@@ -157,26 +181,49 @@ func (h *ProjectHandler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
-// storageHint names the volume p's files live in and the daemon it is on, so
-// the UI can say what a delete destroys (decisions §5.33). Admin-only: a
-// daemon address is a server-side fact a member's container never sees. hosts
-// caches sandbox→host across one response; empty when it cannot be derived.
-func (h *ProjectHandler) storageHint(c *gin.Context, hosts map[string]string, p *store.Project) string {
-	host, ok := hosts[p.SandboxID]
+// storageHint names WHERE p's files live, so the UI can say what a delete
+// destroys (decisions §5.33) — a docker volume on its daemon, or the sandbox
+// itself on a service where the sandbox IS the storage. Admin-only: a daemon
+// address is a server-side fact a member's container never sees. hints caches
+// the per-sandbox half across one response; empty when it cannot be derived.
+func (h *ProjectHandler) storageHint(c *gin.Context, hints map[string]string, p *store.Project) string {
+	where, ok := hints[p.SandboxID]
 	if !ok {
 		sb, err := h.sandboxes.Get(c.Request.Context(), p.SandboxID)
 		if err != nil {
 			return ""
 		}
-		var dc store.DockerConfig
-		_ = json.Unmarshal(sb.Config, &dc)
-		host = dc.Host
-		if host == "" {
-			host = "the local daemon"
-		}
-		hosts[p.SandboxID] = host
+		where = sandboxStorageWhere(sb)
+		hints[p.SandboxID] = where
 	}
-	return "docker volume " + sandboxes.ProjectVolumeName(p.ID) + " on " + host
+	if strings.HasPrefix(where, "sandbox on ") {
+		ref := p.InstanceRef
+		if ref == "" {
+			ref = "not provisioned yet"
+		}
+		return ref + " — a " + where
+	}
+	return "docker volume " + sandboxes.ProjectVolumeName(p.ID) + " on " + where
+}
+
+// sandboxStorageWhere is the per-sandbox half of a storage hint: a daemon
+// address for docker, the service for anything whose instance IS the storage.
+func sandboxStorageWhere(sb *store.Sandbox) string {
+	if sb.Type != "docker" {
+		var ec store.E2BConfig
+		_ = json.Unmarshal(sb.Config, &ec)
+		host := ec.APIURL
+		if host == "" {
+			host = e2bsb.DefaultAPIURL
+		}
+		return "sandbox on " + host
+	}
+	var dc store.DockerConfig
+	_ = json.Unmarshal(sb.Config, &dc)
+	if dc.Host == "" {
+		return "the local daemon"
+	}
+	return dc.Host
 }
 
 type projectReq struct {
@@ -353,7 +400,7 @@ func (h *ProjectHandler) Update(c *gin.Context) {
 // RebuildContainer discards the project's container and creates a fresh one.
 //
 //	@Summary		Rebuild the project's sandbox
-//	@Description	Discards the container and creates a fresh one from the current template and environment. Files under /workspace survive; anything installed into the container does not, and commands running in it fail. Synchronous.
+//	@Description	Discards the container and creates a fresh one from the current sandbox and environment. Files under /workspace survive; anything installed into the container does not, and commands running in it fail. Synchronous. Owner or admin. Refused on a sandbox whose instance IS the storage (E2B-compatible): export first.
 //	@Tags			projects
 //	@Param			id	path	string	true	"Project id"
 //	@Success		204	"rebuilt"
@@ -409,7 +456,7 @@ func (h *ProjectHandler) SandboxStatus(c *gin.Context) {
 // next run.
 //
 //	@Summary		Start the project's sandbox
-//	@Description	Synchronous, and can take an image pull's worth of time.
+//	@Description	Synchronous, and can take an image pull's worth of time. Owner or admin.
 //	@Tags			projects
 //	@Param			id	path	string	true	"Project id"
 //	@Success		204	"running"
@@ -426,7 +473,7 @@ func (h *ProjectHandler) SandboxStart(c *gin.Context) {
 // deferred to whenever that finishes.
 //
 //	@Summary		Stop the project's sandbox
-//	@Description	Keeps the working tree. `stopped: false` means a run or terminal is still using it and the stop happens when that ends.
+//	@Description	Keeps the working tree. `stopped: false` means a run or terminal is still using it and the stop happens when that ends. Owner or admin.
 //	@Tags			projects
 //	@Produce		json
 //	@Param			id	path		string	true	"Project id"
@@ -454,7 +501,7 @@ func (h *ProjectHandler) SandboxStop(c *gin.Context) {
 // and an admin's management reach does not extend to reading one.
 //
 //	@Summary		Export the project's working tree
-//	@Description	Streams /workspace as an uncompressed tar. Audited: this takes the whole tree off the machine.
+//	@Description	Streams /workspace as an uncompressed tar. Owner only, and audited: this takes the whole tree off the machine.
 //	@Tags			projects
 //	@Produce		application/x-tar
 //	@Param			id	path	string	true	"Project id"
@@ -464,8 +511,15 @@ func (h *ProjectHandler) SandboxStop(c *gin.Context) {
 //	@Security		BearerAuth
 //	@Router			/projects/{id}/export [get]
 func (h *ProjectHandler) Export(c *gin.Context) {
-	spec, ok := h.spec(c)
+	// Owner only, unlike the lifecycle routes: this hands over the whole
+	// working tree, and managing the plane is not reading someone's files.
+	p, ok := h.own(c)
 	if !ok {
+		return
+	}
+	spec, err := resolveSpec(c.Request.Context(), h.sandboxes, p)
+	if err != nil {
+		storeError(c, err)
 		return
 	}
 	rc, err := h.manager.ExportProject(c.Request.Context(), spec)
@@ -512,7 +566,7 @@ func tarFilename(name string) string {
 // spec resolves the caller's project into a build spec, answering the error
 // when it cannot.
 func (h *ProjectHandler) spec(c *gin.Context) (sandboxes.Spec, bool) {
-	p, ok := h.own(c)
+	p, ok := h.manage(c)
 	if !ok {
 		return sandboxes.Spec{}, false
 	}
@@ -524,8 +578,8 @@ func (h *ProjectHandler) spec(c *gin.Context) (sandboxes.Spec, bool) {
 	return spec, true
 }
 
-// containerAct resolves the caller's project into a build spec, then runs one
-// of the manager's sandbox calls against it.
+// containerAct resolves the project into a build spec, then runs one of the
+// manager's sandbox calls against it. Owner or admin (see manage).
 func (h *ProjectHandler) containerAct(c *gin.Context, act func(context.Context, sandboxes.Spec) error) {
 	spec, ok := h.spec(c)
 	if !ok {

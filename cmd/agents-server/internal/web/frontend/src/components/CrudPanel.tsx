@@ -60,14 +60,18 @@ export function CrudPanel({ title, as, description, onAdd, onCancel, onDelete, f
 
 /** A row's "…" overflow, the one action control a list row carries:
  * Edit ("View" when the form it opens is a disabled view — the dialog is
- * read-only, or `editReadOnly` says this row is not the caller's), a Fork
+ * read-only, or `editReadOnly` says this row is not the caller's), a Duplicate,
+ * a Fork
  * (open the CREATE form pre-filled from this row — nothing is written until
  * Save), the admin's scope flip, and a Delete the caller confirms. Renders
  * nothing when the caller can do none of it. */
-export function RowActionsMenu({ name, onEdit, editReadOnly, onFork, scope, onDelete }: {
+export function RowActionsMenu({ name, onEdit, editReadOnly, onDuplicate, onFork, scope, onDelete }: {
   name: string;
   onEdit?: () => void;
   editReadOnly?: boolean;
+  // A new row seeded from this one — where duplicating is cheaper than
+  // retyping (a second image on one machine).
+  onDuplicate?: () => void;
   // Offered on every visible row: forking a global row is how a member gets
   // an editable private copy.
   onFork?: () => void;
@@ -88,7 +92,7 @@ export function RowActionsMenu({ name, onEdit, editReadOnly, onFork, scope, onDe
   const ctx = useReadOnly();
   const global = scope?.row.scope === 'global';
   const showScope = !!scope && (global ? scope.canDemote : scope.canPromote);
-  if (!onEdit && !onFork && !showScope && !onDelete) return null;
+  if (!onEdit && !onDuplicate && !onFork && !showScope && !onDelete) return null;
   const flip = async () => {
     if (!scope) return;
     try {
@@ -101,6 +105,7 @@ export function RowActionsMenu({ name, onEdit, editReadOnly, onFork, scope, onDe
   return (
     <RowMenu label={`Actions for ${name}`}>
       {onEdit && <ActionList.Item onSelect={onEdit}>{(editReadOnly ?? ctx) ? 'View' : 'Edit'}</ActionList.Item>}
+      {onDuplicate && <ActionList.Item onSelect={onDuplicate}>Duplicate</ActionList.Item>}
       {onFork && <ActionList.Item onSelect={onFork}>Fork</ActionList.Item>}
       {showScope && <ActionList.Item onSelect={() => void flip()}>{global ? 'Make private' : 'Make global'}</ActionList.Item>}
       {onDelete && <ActionList.Item variant="danger" onSelect={onDelete}>Delete</ActionList.Item>}

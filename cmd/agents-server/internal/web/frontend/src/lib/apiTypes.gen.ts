@@ -2735,7 +2735,7 @@ export interface paths {
         };
         /**
          * Export the project's working tree
-         * @description Streams /workspace as an uncompressed tar. Audited: this takes the whole tree off the machine.
+         * @description Streams /workspace as an uncompressed tar. Owner only, and audited: this takes the whole tree off the machine.
          */
         get: {
             parameters: {
@@ -2925,7 +2925,7 @@ export interface paths {
         put?: never;
         /**
          * Rebuild the project's sandbox
-         * @description Discards the container and creates a fresh one from the current template and environment. Files under /workspace survive; anything installed into the container does not, and commands running in it fail. Synchronous.
+         * @description Discards the container and creates a fresh one from the current sandbox and environment. Files under /workspace survive; anything installed into the container does not, and commands running in it fail. Synchronous. Owner or admin. Refused on a sandbox whose instance IS the storage (E2B-compatible): export first.
          */
         post: {
             parameters: {
@@ -2983,7 +2983,7 @@ export interface paths {
         put?: never;
         /**
          * Start the project's sandbox
-         * @description Synchronous, and can take an image pull's worth of time.
+         * @description Synchronous, and can take an image pull's worth of time. Owner or admin.
          */
         post: {
             parameters: {
@@ -3041,7 +3041,7 @@ export interface paths {
         put?: never;
         /**
          * Stop the project's sandbox
-         * @description Keeps the working tree. `stopped: false` means a run or terminal is still using it and the stop happens when that ends.
+         * @description Keeps the working tree. `stopped: false` means a run or terminal is still using it and the stop happens when that ends. Owner or admin.
          */
         post: {
             parameters: {

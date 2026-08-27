@@ -365,17 +365,18 @@ export function SandboxPanel() {
           sub={summary(s)}
           actions={<>
             {!readOnly && (
-              <>
-                <Button onClick={() => handleTest(s)} size="small" disabled={testingId === s.id} style={{ color: 'var(--fgColor-success)' }}>
-                  {testingId === s.id ? 'Testing...' : 'Test'}
-                </Button>
-                {/* Another image on the same machine, without retyping how to
-                    reach it — a project moves freely between two sandboxes at
-                    one address. */}
-                <Button onClick={() => { setSeed(copyOf(s)); startAdd(); }} size="small">Duplicate</Button>
-              </>
+              <Button onClick={() => handleTest(s)} size="small" disabled={testingId === s.id} style={{ color: 'var(--fgColor-success)' }}>
+                {testingId === s.id ? 'Testing...' : 'Test'}
+              </Button>
             )}
-            <RowActionsMenu name={s.name} onEdit={() => { setSeed(null); startEdit(s); }} />
+            <RowActionsMenu
+              name={s.name}
+              onEdit={() => { setSeed(null); startEdit(s); }}
+              // Another image on the same machine, without retyping how to
+              // reach it — a project moves freely between two sandboxes at
+              // one address.
+              onDuplicate={readOnly ? undefined : () => { setSeed(copyOf(s)); startAdd(); }}
+            />
           </>}
         />
       ))}

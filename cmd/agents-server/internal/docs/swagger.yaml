@@ -4016,8 +4016,8 @@ paths:
       - projects
   /projects/{id}/export:
     get:
-      description: 'Streams /workspace as an uncompressed tar. Audited: this takes
-        the whole tree off the machine.'
+      description: 'Streams /workspace as an uncompressed tar. Owner only, and audited:
+        this takes the whole tree off the machine.'
       parameters:
       - description: Project id
         in: path
@@ -4132,9 +4132,11 @@ paths:
       - projects
   /projects/{id}/sandbox/rebuild:
     post:
-      description: Discards the container and creates a fresh one from the current
-        template and environment. Files under /workspace survive; anything installed
+      description: 'Discards the container and creates a fresh one from the current
+        sandbox and environment. Files under /workspace survive; anything installed
         into the container does not, and commands running in it fail. Synchronous.
+        Owner or admin. Refused on a sandbox whose instance IS the storage (E2B-compatible):
+        export first.'
       parameters:
       - description: Project id
         in: path
@@ -4164,7 +4166,8 @@ paths:
       - projects
   /projects/{id}/sandbox/start:
     post:
-      description: Synchronous, and can take an image pull's worth of time.
+      description: Synchronous, and can take an image pull's worth of time. Owner
+        or admin.
       parameters:
       - description: Project id
         in: path
@@ -4195,7 +4198,7 @@ paths:
   /projects/{id}/sandbox/stop:
     post:
       description: 'Keeps the working tree. `stopped: false` means a run or terminal
-        is still using it and the stop happens when that ends.'
+        is still using it and the stop happens when that ends. Owner or admin.'
       parameters:
       - description: Project id
         in: path
