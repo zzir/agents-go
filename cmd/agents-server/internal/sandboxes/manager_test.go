@@ -24,9 +24,8 @@ func testSpec(projectID string) Spec {
 // what a project edit produces.
 func specGen(projectID, env string, gen int64) Spec {
 	return Spec{
-		Target:   &store.SandboxTarget{ID: "tg", Name: "local", Type: "docker", Config: []byte(`{}`)},
-		Template: &store.SandboxTemplate{ID: "tpl", Name: "base", Type: "docker", Config: []byte(`{"image":"i"}`)},
-		Project:  &store.Project{ID: projectID, OwnerID: "owner-1", TargetID: "tg", TemplateID: "tpl", Name: projectID, Env: env, RuntimeGen: gen},
+		Sandbox: &store.Sandbox{ID: "sb", Name: "local", Type: "docker", Config: []byte(`{"image":"i"}`)},
+		Project: &store.Project{ID: projectID, OwnerID: "owner-1", SandboxID: "sb", Name: projectID, Env: env, RuntimeGen: gen},
 	}
 }
 
@@ -186,12 +185,12 @@ func TestSandboxManagerConcurrentAcquireSharesOneBuild(t *testing.T) {
 }
 
 // A failed build must not poison its key: the placeholder leaves the cache
-// with the error, and the next acquire dials fresh. (The failing template
-// here has no image — refused before any daemon contact.)
+// with the error, and the next acquire dials fresh. (The failing sandbox here
+// has no image — refused before any daemon contact.)
 func TestSandboxManagerFailedBuildRetries(t *testing.T) {
 	m := NewManager()
 	bad := testSpec("p")
-	bad.Template = &store.SandboxTemplate{ID: "tpl", Name: "empty", Type: "docker", Config: []byte(`{}`)}
+	bad.Sandbox = &store.Sandbox{ID: "sb", Name: "empty", Type: "docker", Config: []byte(`{}`)}
 	if _, _, err := m.acquire(bad); err == nil {
 		t.Fatal("imageless docker build succeeded")
 	}
@@ -596,28 +595,27 @@ func TestBuildSandboxRejectsUndecodableEnv(t *testing.T) {
 	}
 }
 
-// TargetOptions carries only how to reach the daemon; BuildOptions layers the
-// template and the project's container and volume on top.
-func TestTargetAndBuildOptions(t *testing.T) {
-	target := &store.SandboxTarget{ID: "tg", Type: "docker", Config: []byte(`{"host":"ssh://u@h","ssh_use_agent":true}`)}
-	opts, err := TargetOptions(target)
+// DaemonOptions carries only how to reach the daemon; BuildOptions layers the
+// image and the project's container and volume on top.
+func TestDaemonAndBuildOptions(t *testing.T) {
+	daemonOnly := &store.Sandbox{ID: "sb", Type: "docker", Config: []byte(`{"host":"ssh://u@h","ssh_use_agent":true}`)}
+	opts, err := DaemonOptions(daemonOnly)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if opts.Host != "ssh://u@h" || !opts.SSH.UseAgent {
-		t.Errorf("target options = %+v", opts)
+		t.Errorf("daemon options = %+v", opts)
 	}
 	if opts.Image != "" || opts.ContainerName != "" || opts.VolumeName != "" || opts.Persistent {
-		t.Errorf("target options carry template/project settings: %+v", opts)
+		t.Errorf("daemon options carry image or project settings: %+v", opts)
 	}
-	if _, err := TargetOptions(&store.SandboxTarget{ID: "x", Type: "podman"}); err == nil {
-		t.Error("a non-docker target type was accepted")
+	if _, err := DaemonOptions(&store.Sandbox{ID: "x", Type: "podman"}); err == nil {
+		t.Error("a non-docker sandbox type was accepted")
 	}
 
 	spec := Spec{
-		Target:   target,
-		Template: &store.SandboxTemplate{ID: "tpl", Type: "docker", Config: []byte(`{"image":"img","memory_mb":256,"cpus":2,"network":"agents-net"}`)},
-		Project:  &store.Project{ID: "proj", Name: "proj"},
+		Sandbox: &store.Sandbox{ID: "sb", Type: "docker", Config: []byte(`{"host":"ssh://u@h","ssh_use_agent":true,"image":"img","memory_mb":256,"cpus":2,"network":"agents-net"}`)},
+		Project: &store.Project{ID: "proj", Name: "proj"},
 	}
 	full, err := BuildOptions(spec)
 	if err != nil {
@@ -627,7 +625,7 @@ func TestTargetAndBuildOptions(t *testing.T) {
 		t.Errorf("build options = %+v", full)
 	}
 	if full.User != DefaultContainerUser {
-		t.Errorf("user = %q, want %q — a template naming none runs as root", full.User, DefaultContainerUser)
+		t.Errorf("user = %q, want %q — a sandbox naming none runs as root", full.User, DefaultContainerUser)
 	}
 	if !full.Persistent || full.ContainerName != ContainerName("proj") || full.VolumeName != ProjectVolumeName("proj") {
 		t.Errorf("build options miss the project's container or volume: %+v", full)
@@ -635,9 +633,9 @@ func TestTargetAndBuildOptions(t *testing.T) {
 	if full.WorkDir != "" {
 		t.Errorf("build options carry a host bind mount: %q", full.WorkDir)
 	}
-	spec.Template = &store.SandboxTemplate{ID: "tpl", Type: "docker", Config: []byte(`{}`)}
+	spec.Sandbox = &store.Sandbox{ID: "sb", Type: "docker", Config: []byte(`{}`)}
 	if _, err := BuildOptions(spec); err == nil {
-		t.Error("a template without an image was accepted")
+		t.Error("a sandbox without an image was accepted")
 	}
 }
 
@@ -769,7 +767,7 @@ func TestManagerLifecycleUnsupported(t *testing.T) {
 func TestBackendForUnknownType(t *testing.T) {
 	m := NewManager()
 	spec := testSpec("p")
-	spec.Target.Type = "quantum"
+	spec.Sandbox.Type = "quantum"
 	if _, _, err := m.Acquire(spec); err == nil || !strings.Contains(err.Error(), "quantum") {
 		t.Fatalf("Acquire on an unknown type = %v, want a refusal naming it", err)
 	}

@@ -426,19 +426,26 @@ type TraceEvent struct {
 	PayloadOmitted bool `bun:"payload_omitted,scanonly" json:"payload_omitted,omitempty"`
 }
 
-// SandboxTarget is WHERE sandboxes run — a machine reachable by the server,
-// with the credentials to reach it. It is a project's IDENTITY: changing it
-// moves every file, so it freezes while projects live on it (decisions §5.33).
-type SandboxTarget struct {
-	bun.BaseModel `bun:"table:sandbox_targets,alias:tg"`
+// Sandbox is a complete sandbox definition: WHERE it runs — the machine or
+// service, with the credentials to reach it — and WHAT runs on it, the image
+// and the limits. One row, because a project picks one thing
+// (decisions §5.36).
+//
+// Its fields split by MUTABILITY, not by table: the type and the destination
+// are a project's identity and freeze while projects live on the sandbox
+// (SandboxIdentityChanged); everything else is content, editable while
+// sessions are bound and reaching them at their next run through the
+// project's runtime generation, exactly as an environment does.
+type Sandbox struct {
+	bun.BaseModel `bun:"table:sandboxes,alias:sb"`
 
 	ID   string `bun:"id,pk,type:uuid" json:"id"`
 	Name string `bun:"name,notnull" json:"name"`
-	// Type is "docker" — the only backend (decisions §5.27).
+	// Type is the backend: "docker" or "e2b".
 	Type string `bun:"type,notnull" json:"type"`
 
-	// Config holds the target settings as JSON (DockerTargetConfig). Stored as
-	// TEXT and sent to/received from the API as a raw JSON object (no
+	// Config holds the settings as JSON (DockerConfig or E2BConfig). Stored
+	// as TEXT and sent to/received from the API as a raw JSON object (no
 	// double-encoding).
 	Config json.RawMessage `bun:"config,type:text,nullzero" json:"config,omitempty"`
 
@@ -449,41 +456,17 @@ type SandboxTarget struct {
 	//
 	// There is no runtime generation here: the ONE runtime axis is the
 	// project's (decisions §5.33), and a content change to this row bumps it
-	// on every project that names this target.
+	// on every project that names this sandbox.
 	Revision int64 `bun:"revision,notnull,default:1" json:"revision,omitempty"`
 
 	CreatedAt time.Time `bun:"created_at,notnull" json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,notnull" json:"updated_at"`
 }
 
-// SandboxTemplate is WHAT runs — the image and the limits a project's
-// container is created from. It is a project's CONTENT, not its identity: it
-// may be swapped while sessions are bound, reaching them at their next run
-// through the runtime generation, exactly as an environment does
-// (decisions §5.33). One template serves any number of targets of its type.
-type SandboxTemplate struct {
-	bun.BaseModel `bun:"table:sandbox_templates,alias:tpl"`
-
-	ID   string `bun:"id,pk,type:uuid" json:"id"`
-	Name string `bun:"name,notnull" json:"name"`
-	// Type must match the target's; a docker template cannot run on another
-	// backend's machine.
-	Type string `bun:"type,notnull" json:"type"`
-
-	// Config holds the template settings as JSON (DockerTemplateConfig).
-	Config json.RawMessage `bun:"config,type:text,nullzero" json:"config,omitempty"`
-
-	// Revision is the row's concurrency control, as on SandboxTarget — and,
-	// as there, the runtime generation lives on the projects instead.
-	Revision int64 `bun:"revision,notnull,default:1" json:"revision,omitempty"`
-
-	CreatedAt time.Time `bun:"created_at,notnull" json:"created_at"`
-	UpdatedAt time.Time `bun:"updated_at,notnull" json:"updated_at"`
-}
-
-// DockerTargetConfig is the SandboxTarget.Config payload for type "docker":
-// which daemon, and how to reach it.
-type DockerTargetConfig struct {
+// DockerConfig is the Sandbox.Config payload for type "docker". The first
+// group is the DESTINATION — which daemon, and how to reach it — and freezes
+// while projects live on the sandbox; the rest is content.
+type DockerConfig struct {
 	// Host reaches a remote daemon: "ssh://user@host[:port]" (pure-Go SSH to
 	// the remote's docker socket) or "tcp://host:port". Empty = the local
 	// daemon.
@@ -496,47 +479,7 @@ type DockerTargetConfig struct {
 	SSHPassword        string `json:"ssh_password,omitempty"` // write-only (mask semantics)
 	SSHKnownHosts      string `json:"ssh_known_hosts,omitempty"`
 	SSHInsecureHostKey bool   `json:"ssh_insecure_host_key,omitempty"`
-}
 
-// E2BTargetConfig is the SandboxTarget.Config payload for type "e2b": which
-// service, and the key that reaches it. E2B's own cloud, a self-hosted E2B and
-// a compatible service such as Alibaba Cloud's differ only in these
-// (decisions §5.34).
-type E2BTargetConfig struct {
-	// APIURL is the control plane base; empty means E2B's own.
-	APIURL string `json:"api_url,omitempty"`
-	// Domain is the suffix a sandbox's public hosts are built from; empty
-	// means E2B's own.
-	Domain string `json:"domain,omitempty"`
-	// APIKey authenticates the control plane. Write-only (mask semantics).
-	APIKey string `json:"api_key,omitempty"`
-	// DataPlaneAuth selects the credential the in-sandbox daemon takes:
-	// "" (auto), "access_token", "api_key" or "none". Configuration rather
-	// than a constant because the compatible services differ.
-	DataPlaneAuth string `json:"data_plane_auth,omitempty"`
-}
-
-// E2BTemplateConfig is the SandboxTemplate.Config payload for type "e2b".
-// The template itself is built on the service, not here — the workbench
-// references one by id.
-type E2BTemplateConfig struct {
-	// TemplateID names a template that already exists on the service.
-	TemplateID string `json:"template_id"`
-	// TimeoutSeconds is the lease a sandbox is created and refreshed with;
-	// 0 uses the backend default.
-	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
-	// AutoPause makes the lease PAUSE the sandbox rather than kill it, so an
-	// idle project keeps its files.
-	AutoPause bool `json:"auto_pause,omitempty"`
-	// AllowInternet gives the sandbox outbound network access.
-	AllowInternet bool `json:"allow_internet,omitempty"`
-	// MaxReadFileBytes caps read_file; 0 = the backend default (8 MiB).
-	MaxReadFileBytes int64 `json:"max_read_file_bytes,omitempty"`
-}
-
-// DockerTemplateConfig is the SandboxTemplate.Config payload for type
-// "docker": the image and the container's shape.
-type DockerTemplateConfig struct {
 	Image   string `json:"image"`
 	Runtime string `json:"runtime,omitempty"` // OCI runtime (e.g. "runsc" for gVisor)
 	User    string `json:"user,omitempty"`    // user[:group] the container runs as; "" = the image's own user
@@ -551,7 +494,37 @@ type DockerTemplateConfig struct {
 	MaxReadFileBytes int64   `json:"max_read_file_bytes,omitempty"` // read_file cap in bytes; 0 = backend default (8 MiB)
 }
 
-// Project is one user's working tree on one sandbox target (decisions §5.28):
+// E2BConfig is the Sandbox.Config payload for type "e2b": which service, and
+// which of its templates. APIURL and Domain are the destination and freeze
+// while projects live on the sandbox.
+type E2BConfig struct {
+	// APIURL is the control plane base; empty means E2B's own.
+	APIURL string `json:"api_url,omitempty"`
+	// Domain is the suffix a sandbox's public hosts are built from; empty
+	// means E2B's own.
+	Domain string `json:"domain,omitempty"`
+	// APIKey authenticates the control plane. Write-only (mask semantics).
+	APIKey string `json:"api_key,omitempty"`
+	// DataPlaneAuth selects the credential the in-sandbox daemon takes:
+	// "" (auto), "access_token", "api_key" or "none". Configuration rather
+	// than a constant because the compatible services differ.
+	DataPlaneAuth string `json:"data_plane_auth,omitempty"`
+
+	// TemplateID names a template that already exists on the service.
+	TemplateID string `json:"template_id"`
+	// TimeoutSeconds is the lease a sandbox is created and refreshed with;
+	// 0 uses the backend default.
+	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
+	// AutoPause makes the lease PAUSE the sandbox rather than kill it, so an
+	// idle project keeps its files.
+	AutoPause bool `json:"auto_pause,omitempty"`
+	// AllowInternet gives the sandbox outbound network access.
+	AllowInternet bool `json:"allow_internet,omitempty"`
+	// MaxReadFileBytes caps read_file; 0 = the backend default (8 MiB).
+	MaxReadFileBytes int64 `json:"max_read_file_bytes,omitempty"`
+}
+
+// Project is one user's working tree on one sandbox (decisions §5.28):
 // the unit a session binds, stored in the named volume the project's
 // container mounts at /workspace. The storage name is derived from the id,
 // never stored.
@@ -560,14 +533,13 @@ type Project struct {
 
 	ID      string `bun:"id,pk,type:uuid"               json:"id"`
 	OwnerID string `bun:"owner_id,notnull,type:uuid"    json:"owner_id"`
-	// TargetID is the machine the tree lives on — the project's identity, set
-	// at creation and never writable afterwards (decisions §5.33).
-	TargetID string `bun:"target_id,notnull,type:uuid"  json:"target_id"`
-	// TemplateID is what the container is created from — content, editable
-	// like the environment, reaching bound sessions at their next run.
-	TemplateID string `bun:"template_id,notnull,type:uuid" json:"template_id"`
+	// SandboxID is what the project runs on — the machine and the image, set
+	// at creation and never writable afterwards. The image half IS editable,
+	// on the sandbox row: the freeze is on which row, not on its content
+	// (decisions §5.36).
+	SandboxID string `bun:"sandbox_id,notnull,type:uuid" json:"sandbox_id"`
 	// Name is display only — the storage is keyed by ID, so a rename moves
-	// nothing. Unique per (owner, target) via idx_projects_owner_target_name.
+	// nothing. Unique per (owner, sandbox) via idx_projects_owner_sandbox_name.
 	Name string `bun:"name,notnull"                json:"name"`
 	// Env is the canonical environment the container is created with
 	// (NormalizeProjectEnv), values sealed at rest. json:"-" is the default
@@ -581,8 +553,8 @@ type Project struct {
 	InstanceRef string `bun:"instance_ref,nullzero" json:"-"`
 	// Revision is the expected-revision CAS every update lands against.
 	// RuntimeGen is the workbench's ONE runtime axis: it moves when this
-	// project's own content changes AND when the target or template it names
-	// changes underneath it, so the instance cache and the terminal registry
+	// project's own content changes AND when the sandbox it names changes
+	// underneath it, so the instance cache and the terminal registry
 	// need a single fence rather than one per entity (decisions §5.33). A
 	// rename moves neither container nor terminal.
 	Revision   int64     `bun:"revision,notnull,default:1"    json:"revision,omitempty"`
@@ -590,7 +562,7 @@ type Project struct {
 	CreatedAt  time.Time `bun:"created_at,notnull"            json:"created_at"`
 	UpdatedAt  time.Time `bun:"updated_at,notnull"            json:"updated_at"`
 	// StorageHint names where the files live — the named volume on the
-	// target's daemon. Derived per response by the handler for admins only,
+	// sandbox's daemon. Derived per response by the handler for admins only,
 	// never stored: deleting the row keeps the storage (decisions §5.28), so
 	// the UI can say where.
 	StorageHint string `bun:"-" json:"storage_hint,omitempty"`
@@ -752,12 +724,7 @@ func (m *Provider) BeforeAppendModel(_ context.Context, q bun.Query) error {
 }
 
 // BeforeAppendModel stamps the id and timestamps; bun invokes it on insert and update.
-func (m *SandboxTarget) BeforeAppendModel(_ context.Context, q bun.Query) error {
-	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
-}
-
-// BeforeAppendModel stamps the id and timestamps; bun invokes it on insert and update.
-func (m *SandboxTemplate) BeforeAppendModel(_ context.Context, q bun.Query) error {
+func (m *Sandbox) BeforeAppendModel(_ context.Context, q bun.Query) error {
 	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
 }
 

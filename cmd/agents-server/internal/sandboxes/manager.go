@@ -19,13 +19,11 @@ import (
 	dockersb "github.com/zzir/agents-go/sandbox/docker"
 )
 
-// Spec is everything one project's sandbox is built from: where it runs, what
-// it runs, and whose tree it mounts. The three rows travel together because
-// no build needs fewer.
+// Spec is everything one project's sandbox is built from: the sandbox — where
+// it runs and what it runs — and the project whose tree it mounts.
 type Spec struct {
-	Target   *store.SandboxTarget
-	Template *store.SandboxTemplate
-	Project  *store.Project
+	Sandbox *store.Sandbox
+	Project *store.Project
 	// SaveInstanceRef records the handle a service minted for this project's
 	// sandbox, so the next process finds the same one instead of provisioning
 	// a second. The MANAGER fills it in before handing the spec to a backend —
@@ -192,8 +190,8 @@ func (m *Manager) Acquire(spec Spec) (sandbox.Sandbox, func(), error) {
 // acquirers of the SAME key find the placeholder, take their reference, and
 // wait on its ready gate — one dial, keyed contention only.
 func (m *Manager) acquire(spec Spec) (*sandboxInstance, func(), error) {
-	if spec.Project == nil || spec.Target == nil || spec.Template == nil {
-		return nil, nil, fmt.Errorf("sandbox acquire needs a target, a template and a project")
+	if spec.Project == nil || spec.Sandbox == nil {
+		return nil, nil, fmt.Errorf("sandbox acquire needs a sandbox and a project")
 	}
 	key := sandboxKey{projectID: spec.Project.ID, gen: spec.Project.RuntimeGen}
 	m.mu.Lock()
@@ -444,15 +442,15 @@ func (m *Manager) RebuildContainer(ctx context.Context, spec Spec) error {
 	return m.EnsureRunning(ctx, spec)
 }
 
-// CheckTarget reports whether the target is reachable and the template
-// runnable on it. It touches no project: a health check must not create one,
-// and must not leave anything behind.
-func (m *Manager) CheckTarget(ctx context.Context, target *store.SandboxTarget, template *store.SandboxTemplate) error {
-	b, err := BackendFor(target.Type)
+// Check reports whether the sandbox is reachable and runnable. It touches no
+// project: a health check must not create one, and must not leave anything
+// behind.
+func (m *Manager) Check(ctx context.Context, sb *store.Sandbox) error {
+	b, err := BackendFor(sb.Type)
 	if err != nil {
 		return err
 	}
-	return b.Check(ctx, target, template)
+	return b.Check(ctx, sb)
 }
 
 // EvictProject drops the project's cached instances without fencing the id —
@@ -570,7 +568,7 @@ func (m *Manager) EnsureRunning(ctx context.Context, spec Spec) error {
 	defer release()
 	lc, ok := sb.(sandbox.Lifecycle)
 	if !ok {
-		return fmt.Errorf("%s sandbox: %w", spec.Target.Type, sandbox.ErrLifecycleUnsupported)
+		return fmt.Errorf("%s sandbox: %w", spec.Sandbox.Type, sandbox.ErrLifecycleUnsupported)
 	}
 	return lc.Start(ctx)
 }
@@ -588,7 +586,7 @@ func (m *Manager) Stop(ctx context.Context, spec Spec) (stopped bool, err error)
 	defer release()
 	lc, ok := sb.(sandbox.Lifecycle)
 	if !ok {
-		return false, fmt.Errorf("%s sandbox: %w", spec.Target.Type, sandbox.ErrLifecycleUnsupported)
+		return false, fmt.Errorf("%s sandbox: %w", spec.Sandbox.Type, sandbox.ErrLifecycleUnsupported)
 	}
 	// One reference is this call's own; anything above it is someone working.
 	if m.holders(spec.Project.ID) > 1 {
@@ -613,7 +611,7 @@ func (m *Manager) Status(ctx context.Context, spec Spec) (sandbox.State, error) 
 	defer release()
 	lc, ok := sb.(sandbox.Lifecycle)
 	if !ok {
-		return sandbox.StateAbsent, fmt.Errorf("%s sandbox: %w", spec.Target.Type, sandbox.ErrLifecycleUnsupported)
+		return sandbox.StateAbsent, fmt.Errorf("%s sandbox: %w", spec.Sandbox.Type, sandbox.ErrLifecycleUnsupported)
 	}
 	return lc.Status(ctx)
 }
@@ -630,7 +628,7 @@ func (m *Manager) ExportProject(ctx context.Context, spec Spec) (io.ReadCloser, 
 	ex, ok := sb.(sandbox.Exporter)
 	if !ok {
 		release()
-		return nil, fmt.Errorf("%s sandbox: cannot export", spec.Target.Type)
+		return nil, fmt.Errorf("%s sandbox: cannot export", spec.Sandbox.Type)
 	}
 	rc, err := ex.ExportTar(ctx, "")
 	if err != nil {
@@ -666,7 +664,7 @@ func (m *Manager) Preview(ctx context.Context, spec Spec, port int) (target stri
 	fwd, ok := sb.(sandbox.PortForwarder)
 	if !ok {
 		release()
-		return "", nil, nil, fmt.Errorf("%s sandbox: cannot expose a port", spec.Target.Type)
+		return "", nil, nil, fmt.Errorf("%s sandbox: cannot expose a port", spec.Sandbox.Type)
 	}
 	target, err = fwd.URLForPort(ctx, port)
 	if err != nil {
@@ -697,15 +695,14 @@ func (m *Manager) holders(projectID string) int {
 	return n
 }
 
-// BuildOptions assembles the SDK options for spec: the target's daemon, the
-// template's image and limits, and the project's container, volume and
-// environment.
+// BuildOptions assembles the SDK options for spec: the sandbox's daemon,
+// image and limits, and the project's container, volume and environment.
 func BuildOptions(spec Spec) (dockersb.Options, error) {
-	opts, err := TargetOptions(spec.Target)
+	opts, err := DaemonOptions(spec.Sandbox)
 	if err != nil {
 		return dockersb.Options{}, err
 	}
-	if err := applyTemplate(&opts, spec.Template); err != nil {
+	if err := applyImage(&opts, spec.Sandbox); err != nil {
 		return dockersb.Options{}, err
 	}
 	if opts.Env, err = store.EnvMap(spec.Project.Env); err != nil {
@@ -719,17 +716,17 @@ func BuildOptions(spec Spec) (dockersb.Options, error) {
 	return opts, nil
 }
 
-// TargetOptions assembles the SDK options reaching the target's daemon — how
+// DaemonOptions assembles the SDK options reaching the sandbox's daemon — how
 // to talk to it, and nothing else. DOCKER ONLY: the managed-container calls
-// take it as it stands, and a real build adds the template and the project.
+// take it as it stands, and a real build adds the image and the project.
 // Anything reachable by more than one backend goes through Backend instead.
-func TargetOptions(t *store.SandboxTarget) (dockersb.Options, error) {
-	if t.Type != "docker" {
-		return dockersb.Options{}, fmt.Errorf("sandbox target %q is a %s target; this is a Docker-only operation", t.Name, t.Type)
+func DaemonOptions(sb *store.Sandbox) (dockersb.Options, error) {
+	if sb.Type != "docker" {
+		return dockersb.Options{}, fmt.Errorf("sandbox %q is a %s sandbox; this is a Docker-only operation", sb.Name, sb.Type)
 	}
-	var dc store.DockerTargetConfig
-	if err := unmarshalConfig(t.Config, &dc); err != nil {
-		return dockersb.Options{}, fmt.Errorf("docker target: invalid config: %w", err)
+	var dc store.DockerConfig
+	if err := unmarshalConfig(sb.Config, &dc); err != nil {
+		return dockersb.Options{}, fmt.Errorf("docker sandbox: invalid config: %w", err)
 	}
 	opts := dockersb.Options{Host: dc.Host}
 	if strings.HasPrefix(dc.Host, "ssh://") {
@@ -744,24 +741,20 @@ func TargetOptions(t *store.SandboxTarget) (dockersb.Options, error) {
 	return opts, nil
 }
 
-// DefaultContainerUser is what a template that names no user runs as. Root,
+// DefaultContainerUser is what a sandbox that names no user runs as. Root,
 // deliberately: the container is the isolation boundary, its files live in a
 // volume nobody else mounts, and a workbench whose agent cannot install a
 // package is a workbench that cannot do the work (decisions §5.33).
 const DefaultContainerUser = "root"
 
-// applyTemplate layers the template's image and container shape onto the
-// target's connection options.
-func applyTemplate(opts *dockersb.Options, tpl *store.SandboxTemplate) error {
-	if tpl.Type != "docker" {
-		return fmt.Errorf("unknown sandbox template type: %s", tpl.Type)
-	}
-	var dc store.DockerTemplateConfig
-	if err := unmarshalConfig(tpl.Config, &dc); err != nil {
-		return fmt.Errorf("docker template: invalid config: %w", err)
+// applyImage layers the image and container shape onto the daemon options.
+func applyImage(opts *dockersb.Options, sb *store.Sandbox) error {
+	var dc store.DockerConfig
+	if err := unmarshalConfig(sb.Config, &dc); err != nil {
+		return fmt.Errorf("docker sandbox: invalid config: %w", err)
 	}
 	if dc.Image == "" {
-		return fmt.Errorf("docker template %s requires an image", tpl.Name)
+		return fmt.Errorf("docker sandbox %s requires an image", sb.Name)
 	}
 	opts.Image = dc.Image
 	opts.Runtime = dc.Runtime

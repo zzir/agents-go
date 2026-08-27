@@ -9,26 +9,22 @@ import (
 	"github.com/uptrace/bun"
 )
 
-// createTargetRow persists a sandbox target under the given id.
+// createSandboxRow persists a sandbox under the given id.
 // BindProjectIfEmpty refuses a bind whose project is gone (the EXISTS
 // predicate), so binding tests must create what they bind.
-func createTargetRow(t *testing.T, db *bun.DB, id string) {
+func createSandboxRow(t *testing.T, db *bun.DB, id string) {
 	t.Helper()
-	cfg := &SandboxTarget{ID: id, Name: id, Type: "docker", Config: []byte(`{"host":"ssh://u@h"}`)}
-	if err := NewSandboxTargetStore(db).Create(context.Background(), cfg); err != nil {
-		t.Fatalf("create sandbox target %s: %v", id, err)
+	sb := &Sandbox{ID: id, Name: id, Type: "docker", Config: []byte(`{"host":"ssh://u@h","image":"i"}`)}
+	if err := NewSandboxStore(db).Create(context.Background(), sb); err != nil {
+		t.Fatalf("create sandbox %s: %v", id, err)
 	}
 }
 
-// createProjectRow persists a project on the given target — a bind's target
-// project must exist (the EXISTS guard mirrors ProjectStore.DeleteIfUnreferenced).
-func createProjectRow(t *testing.T, db *bun.DB, id, targetID string) {
+// createProjectRow persists a project on the given sandbox — a bind's project
+// must exist (the EXISTS guard mirrors ProjectStore.DeleteIfUnreferenced).
+func createProjectRow(t *testing.T, db *bun.DB, id, sandboxID string) {
 	t.Helper()
-	tpl := &SandboxTemplate{ID: NewID(), Name: "tpl-" + id, Type: "docker", Config: []byte(`{"image":"i"}`)}
-	if err := NewSandboxTemplateStore(db).Create(context.Background(), tpl); err != nil {
-		t.Fatalf("create sandbox template for %s: %v", id, err)
-	}
-	p := &Project{ID: id, OwnerID: LocalUserID, TargetID: targetID, TemplateID: tpl.ID, Name: id}
+	p := &Project{ID: id, OwnerID: LocalUserID, SandboxID: sandboxID, Name: id}
 	if err := NewProjectStore(db).Create(context.Background(), p); err != nil {
 		t.Fatalf("create project %s: %v", id, err)
 	}
@@ -107,7 +103,7 @@ func TestBindProjectIfEmptyKeepsTheFirstBinding(t *testing.T) {
 	db := newTestDB(t)
 	id := ids(t)
 	sessions := NewSessionStore(db)
-	createTargetRow(t, db, id("tg-1"))
+	createSandboxRow(t, db, id("tg-1"))
 
 	sess := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "s"}
 	if err := sessions.Create(ctx, sess); err != nil {
@@ -148,7 +144,7 @@ func TestCountProjectRefs(t *testing.T) {
 	db := newTestDB(t)
 	id := ids(t)
 	sessions := NewSessionStore(db)
-	createTargetRow(t, db, id("tg-1"))
+	createSandboxRow(t, db, id("tg-1"))
 	createProjectRow(t, db, id("p-1"), id("tg-1"))
 	createProjectRow(t, db, id("p-2"), id("tg-1"))
 	mk := func(projectID string) *Session {
@@ -215,7 +211,7 @@ func TestBindProjectIfEmptyRace(t *testing.T) {
 	db := newTestDB(t)
 	id := ids(t)
 	sessions := NewSessionStore(db)
-	createTargetRow(t, db, id("tg-a"))
+	createSandboxRow(t, db, id("tg-a"))
 	createProjectRow(t, db, id("p-a"), id("tg-a"))
 	createProjectRow(t, db, id("p-b"), id("tg-a"))
 

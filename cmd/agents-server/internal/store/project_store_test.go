@@ -5,45 +5,27 @@ import (
 	"errors"
 	"strings"
 	"testing"
-
-	"github.com/uptrace/bun"
 )
 
 // Create runs behind locks on the target AND the template rows: a missing
 // either refuses the insert instead of leaving a project row that points at
 // nothing (decisions §5.28).
-func TestProjectCreateRequiresTargetAndTemplate(t *testing.T) {
+func TestProjectCreateRequiresSandbox(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	id := ids(t)
 	projects := NewProjectStore(db)
-	tpl := createTemplateRow(t, db)
 
-	p := &Project{ID: NewID(), OwnerID: LocalUserID, TargetID: NewID(), TemplateID: tpl, Name: "p"}
+	p := &Project{ID: NewID(), OwnerID: LocalUserID, SandboxID: NewID(), Name: "p"}
 	if err := projects.Create(ctx, p); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("create on a missing target: err=%v, want ErrNotFound", err)
+		t.Fatalf("create on a missing sandbox: err=%v, want ErrNotFound", err)
 	}
 
-	createTargetRow(t, db, id("tg-1"))
-	p = &Project{ID: NewID(), OwnerID: LocalUserID, TargetID: id("tg-1"), TemplateID: NewID(), Name: "p"}
-	if err := projects.Create(ctx, p); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("create on a missing template: err=%v, want ErrNotFound", err)
-	}
-
-	p = &Project{ID: NewID(), OwnerID: LocalUserID, TargetID: id("tg-1"), TemplateID: tpl, Name: "p"}
+	createSandboxRow(t, db, id("sb-1"))
+	p = &Project{ID: NewID(), OwnerID: LocalUserID, SandboxID: id("sb-1"), Name: "p"}
 	if err := projects.Create(ctx, p); err != nil {
-		t.Fatalf("create on existing rows: %v", err)
+		t.Fatalf("create on an existing sandbox: %v", err)
 	}
-}
-
-// createTemplateRow persists a docker template and returns its id.
-func createTemplateRow(t *testing.T, db *bun.DB) string {
-	t.Helper()
-	tpl := &SandboxTemplate{ID: NewID(), Name: "tpl-" + NewID(), Type: "docker", Config: []byte(`{"image":"i"}`)}
-	if err := NewSandboxTemplateStore(db).Create(context.Background(), tpl); err != nil {
-		t.Fatalf("create sandbox template: %v", err)
-	}
-	return tpl.ID
 }
 
 // List scopes to one owner — EveryOwner is the admin listing across all —
@@ -54,10 +36,9 @@ func TestProjectListScopeAndSessionCount(t *testing.T) {
 	id := ids(t)
 	projects := NewProjectStore(db)
 
-	createTargetRow(t, db, id("tg"))
-	tpl := createTemplateRow(t, db)
-	mine := &Project{ID: NewID(), OwnerID: LocalUserID, TargetID: id("tg"), TemplateID: tpl, Name: "mine"}
-	foreign := &Project{ID: NewID(), OwnerID: NewID(), TargetID: id("tg"), TemplateID: tpl, Name: "foreign"}
+	createSandboxRow(t, db, id("tg"))
+	mine := &Project{ID: NewID(), OwnerID: LocalUserID, SandboxID: id("tg"), Name: "mine"}
+	foreign := &Project{ID: NewID(), OwnerID: NewID(), SandboxID: id("tg"), Name: "foreign"}
 	for _, p := range []*Project{mine, foreign} {
 		if err := projects.Create(ctx, p); err != nil {
 			t.Fatalf("create project %s: %v", p.Name, err)
@@ -97,14 +78,13 @@ func TestProjectEnvSealedOnCreate(t *testing.T) {
 	id := ids(t)
 	withTestBox(t)
 	projects := NewProjectStore(db)
-	createTargetRow(t, db, id("tg"))
-	tpl := createTemplateRow(t, db)
+	createSandboxRow(t, db, id("tg"))
 
 	env, err := NormalizeProjectEnv([]EnvVar{{Key: "TOKEN", Value: "sk-live"}, {Key: "TZ", Value: "UTC"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := &Project{ID: NewID(), OwnerID: LocalUserID, TargetID: id("tg"), TemplateID: tpl, Name: "p", Env: env}
+	p := &Project{ID: NewID(), OwnerID: LocalUserID, SandboxID: id("tg"), Name: "p", Env: env}
 	if err := projects.Create(ctx, p); err != nil {
 		t.Fatal(err)
 	}
@@ -137,10 +117,9 @@ func TestProjectUpdateCASAndGenerations(t *testing.T) {
 	id := ids(t)
 	withTestBox(t)
 	projects := NewProjectStore(db)
-	createTargetRow(t, db, id("tg"))
-	tpl := createTemplateRow(t, db)
+	createSandboxRow(t, db, id("tg"))
 
-	p := &Project{ID: NewID(), OwnerID: LocalUserID, TargetID: id("tg"), TemplateID: tpl, Name: "p"}
+	p := &Project{ID: NewID(), OwnerID: LocalUserID, SandboxID: id("tg"), Name: "p"}
 	if err := projects.Create(ctx, p); err != nil {
 		t.Fatal(err)
 	}
@@ -194,19 +173,70 @@ func TestProjectUpdateCASAndGenerations(t *testing.T) {
 	if err := projects.Update(ctx, p.ID, &stale, 3, false); !errors.Is(err, ErrRevisionConflict) {
 		t.Fatalf("stale update: err=%v, want ErrRevisionConflict", err)
 	}
-	// Owner and target are identity, not editable content.
+	// The owner is identity, not editable content; the sandbox may move only
+	// among sandboxes at the same address, so an unknown one is refused.
 	moved := *got
-	moved.OwnerID, moved.TargetID = NewID(), NewID()
+	moved.OwnerID, moved.SandboxID = NewID(), NewID()
+	if err := projects.Update(ctx, p.ID, &moved, 4, false); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("update onto a missing sandbox: err=%v, want ErrNotFound", err)
+	}
+	moved.SandboxID = got.SandboxID
 	if err := projects.Update(ctx, p.ID, &moved, 4, false); err != nil {
 		t.Fatal(err)
 	}
 	if got, err = projects.Get(ctx, p.ID); err != nil {
 		t.Fatal(err)
 	}
-	if got.OwnerID != LocalUserID || got.TargetID != id("tg") {
-		t.Errorf("owner/target after update = %s/%s, want them unchanged", got.OwnerID, got.TargetID)
+	if got.OwnerID != LocalUserID || got.SandboxID != id("tg") {
+		t.Errorf("owner/sandbox after update = %s/%s, want them unchanged", got.OwnerID, got.SandboxID)
 	}
 	if err := projects.Update(ctx, NewID(), &stale, 1, false); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("update of a missing project: err=%v, want ErrNotFound", err)
+	}
+}
+
+// A project may move between sandboxes that address the same machine — how it
+// changes its image — and no further: its files live at that address and do
+// not move with it.
+func TestProjectMovesOnlyWithinOneDestination(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	projects := NewProjectStore(db)
+	sandboxes := NewSandboxStore(db)
+
+	mk := func(name, host, image string) *Sandbox {
+		t.Helper()
+		sb := &Sandbox{Name: name, Type: "docker", Config: []byte(`{"host":"` + host + `","image":"` + image + `"}`)}
+		if err := sandboxes.Create(ctx, sb); err != nil {
+			t.Fatal(err)
+		}
+		return sb
+	}
+	python := mk("python", "", "python:3.12")
+	node := mk("node", "", "node:22")
+	remote := mk("remote", "ssh://u@h", "node:22")
+
+	p := &Project{ID: NewID(), OwnerID: LocalUserID, SandboxID: python.ID, Name: "p"}
+	if err := projects.Create(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+
+	toNode := *p
+	toNode.SandboxID = node.ID
+	if err := projects.Update(ctx, p.ID, &toNode, 1, true); err != nil {
+		t.Fatalf("moving to another image on the same daemon: %v", err)
+	}
+	got, err := projects.Get(ctx, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SandboxID != node.ID {
+		t.Fatalf("sandbox = %s, want the node one", got.SandboxID)
+	}
+
+	toRemote := *got
+	toRemote.SandboxID = remote.ID
+	if err := projects.Update(ctx, p.ID, &toRemote, 2, true); !errors.Is(err, ErrSandboxMoveDestination) {
+		t.Fatalf("moving to another daemon: err=%v, want ErrSandboxMoveDestination", err)
 	}
 }

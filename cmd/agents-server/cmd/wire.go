@@ -42,8 +42,7 @@ type stores struct {
 	Memories         *store.MemoryStore
 	Settings         *store.SettingStore
 	SettingReader    *settings.Reader
-	Targets          *store.SandboxTargetStore
-	Templates        *store.SandboxTemplateStore
+	SandboxDefs      *store.SandboxStore
 	Projects         *store.ProjectStore
 	Guardrails       *store.GuardrailStore
 	PendingApprovals *store.PendingApprovalStore
@@ -71,8 +70,7 @@ func newStores(db *bun.DB) *stores {
 		Memories:         store.NewMemoryStore(db),
 		Settings:         settingStore,
 		SettingReader:    settings.NewReader(settingStore),
-		Targets:          store.NewSandboxTargetStore(db),
-		Templates:        store.NewSandboxTemplateStore(db),
+		SandboxDefs:      store.NewSandboxStore(db),
 		Projects:         store.NewProjectStore(db),
 		Guardrails:       store.NewGuardrailStore(db),
 		PendingApprovals: store.NewPendingApprovalStore(db),
@@ -134,8 +132,7 @@ func newBridge(ctx, bgCtx context.Context, db *bun.DB, st *stores, audit protoco
 		AgentConfigs:     st.AgentConfigs,
 		Providers:        st.Providers,
 		McpServers:       st.McpServers,
-		Targets:          st.Targets,
-		Templates:        st.Templates,
+		Sandboxes:        st.SandboxDefs,
 		Projects:         st.Projects,
 		Skills:           st.Skills,
 		Memories:         st.Memories,
@@ -180,12 +177,12 @@ type handlers struct {
 // is left for newServer: it needs the auth service and the server's
 // connection registry.
 func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL string) *handlers {
-	terminal := handler.NewTerminalHandler(st.Targets, st.Templates, st.Projects, svc.Sandboxes, st.SettingReader)
+	terminal := handler.NewTerminalHandler(st.SandboxDefs, st.Projects, svc.Sandboxes, st.SettingReader)
 	retirer := handler.NewRetirer(st.Projects, svc.Sandboxes, terminal)
 	terminal.Audit = audit
 	ws := handler.NewWSHandler(svc.Runner, st.Sessions, st.PendingApprovals)
 	ws.Audit = audit
-	projects := handler.NewProjectHandler(st.Projects, st.Targets, st.Templates, svc.Sandboxes, terminal, st.SettingReader)
+	projects := handler.NewProjectHandler(st.Projects, st.SandboxDefs, svc.Sandboxes, terminal, st.SettingReader)
 	projects.Audit = audit
 	return &handlers{
 		WS:       ws,
@@ -212,8 +209,7 @@ func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL st
 			Workflows:  handler.NewWorkflowHandler(st.Workflows, st.AgentConfigs, st.Sessions, svc.Runner),
 			Triggers:   handler.NewTriggerHandler(st.Triggers, st.Sessions, st.Workflows, st.AgentConfigs, svc.Scheduler),
 			Guardrails: handler.NewGuardrailHandler(st.Guardrails, svc.Guardrails),
-			Targets:    handler.NewSandboxTargetHandler(st.Targets, st.Templates, svc.Sandboxes, retirer),
-			Templates:  handler.NewSandboxTemplateHandler(st.Templates, retirer),
+			Sandboxes:  handler.NewSandboxHandler(st.SandboxDefs, svc.Sandboxes, retirer),
 			Projects:   projects,
 			Traces:     handler.NewTraceHandler(st.Traces),
 			Playground: handler.NewPlaygroundHandler(svc.Deps),

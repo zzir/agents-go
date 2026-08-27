@@ -1,18 +1,19 @@
 /* Pure projection of the composer's project area — kept out of the component
    so the node-environment vitest suite can cover it. */
 
-export interface SandboxTargetLite {
+export interface SandboxLite {
   id: string;
   name: string;
+  /* docker | e2b — which backend, so a client offers only what it can do. */
+  type?: string;
 }
 
 /* A project row as GET /projects returns it: the named working tree a
-   target's container mounts. */
+   sandbox's container mounts. */
 export interface Project {
   id: string;
   name: string;
-  target_id: string;
-  template_id: string;
+  sandbox_id: string;
   /* The volume the files live in, and the daemon it is on — shown by the
      delete dialog, which destroys it. */
   storage_hint?: string;
@@ -43,7 +44,7 @@ export interface ProjectDetail extends Project {
 export const SECRET_MASK = '********';
 
 /* The session's permanent project binding, or null while unbound. The project
-   pins the target, so one id is the whole binding. */
+   pins the sandbox, so one id is the whole binding. */
 export interface SessionBinding {
   projectId: string;
 }
@@ -55,22 +56,22 @@ export interface ComposerSandboxView {
   title: string;
 }
 
-export function projectLabel(projectName: string, targetName: string): string {
-  return `${projectName} @ ${targetName}`;
+export function projectLabel(projectName: string, sandboxName: string): string {
+  return `${projectName} @ ${sandboxName}`;
 }
 
-/* The picker's grouped view: one group per target, groups in targets order,
-   items in server order (name ASC). Projects whose target no longer exists are
-   dropped — they cannot be started again. */
+/* The picker's grouped view: one group per sandbox, groups in sandbox order,
+   items in server order (name ASC). Projects whose sandbox no longer exists
+   are dropped — they cannot be started again. */
 export function groupProjects(
   projects: Project[] | null,
-  targets: SandboxTargetLite[] | null,
-): Array<{ targetId: string; targetName: string; items: Project[] }> {
-  if (!projects || !targets) return [];
-  const groups: Array<{ targetId: string; targetName: string; items: Project[] }> = [];
-  for (const t of targets) {
-    const items = projects.filter(p => p.target_id === t.id);
-    if (items.length > 0) groups.push({ targetId: t.id, targetName: t.name, items });
+  sandboxes: SandboxLite[] | null,
+): Array<{ sandboxId: string; sandboxName: string; items: Project[] }> {
+  if (!projects || !sandboxes) return [];
+  const groups: Array<{ sandboxId: string; sandboxName: string; items: Project[] }> = [];
+  for (const sb of sandboxes) {
+    const items = projects.filter(p => p.sandbox_id === sb.id);
+    if (items.length > 0) groups.push({ sandboxId: sb.id, sandboxName: sb.name, items });
   }
   return groups;
 }
@@ -78,7 +79,7 @@ export function groupProjects(
 export function composerSandboxView(
   binding: SessionBinding | null,
   projects: Project[] | null,
-  targets: SandboxTargetLite[] | null,
+  sandboxes: SandboxLite[] | null,
 ): ComposerSandboxView {
   if (binding && binding.projectId) {
     const project = projects?.find(p => p.id === binding.projectId);
@@ -87,9 +88,9 @@ export function composerSandboxView(
       // id is all there is to say.
       return { bound: true, title: binding.projectId };
     }
-    const target = targets?.find(t => t.id === project.target_id);
-    const title = target
-      ? projectLabel(project.name, target.name)
+    const sb = sandboxes?.find(s => s.id === project.sandbox_id);
+    const title = sb
+      ? projectLabel(project.name, sb.name)
       : `${project.name} — this project's machine no longer exists; runs fail until it is restored`;
     return { bound: true, title };
   }

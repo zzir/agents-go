@@ -759,20 +759,28 @@ and nothing else, so names are unique across all definitions.
 Built-in: `content_filter` (input + tool_input, regex — jailbreak keywords),
 `max_input_length` (input, 50k chars), `max_output_length` (output, 50k chars).
 
-### Sandbox targets — `/api/v1/sandbox-targets`
+### Sandboxes — `/api/v1/sandboxes`
 
 *(Endpoints and payload schemas: see the OpenAPI spec — `/openapi.yaml`, browsable at `/docs`.)*
 
-A **target** is WHERE sandboxes run. Two types: `docker` and `e2b`.
+A **sandbox** is one row: WHERE it runs and WHAT runs on it. A project names
+one (decisions §5.36). Two types: `docker` and `e2b`.
 
 For `e2b` — any service speaking the E2B API: E2B's own cloud, a self-hosted
 E2B, or a compatible service such as Alibaba Cloud's Function Compute cloud
 sandbox (decisions §5.34) — the config is `api_url` (control plane; empty =
 E2B's own), `domain` (the suffix a sandbox's public hosts are built from),
-`api_key` (write-only, masked) and `data_plane_auth` (`""` auto,
-`access_token`, `api_key` or `none` — which credential the in-sandbox daemon
-takes; the compatible services differ, so it is configuration). Its identity is
-the pair (api_url, domain): moving either moves every project's files.
+`api_key` (write-only, masked), `data_plane_auth` (`""` auto, `access_token`,
+`api_key` or `none` — which credential the in-sandbox daemon takes; the
+compatible services differ, so it is configuration), `template_id` (required —
+the workbench builds no templates; the service's console or CLI does),
+`timeout_seconds` (the lease a sandbox is created and refreshed with),
+`auto_pause` (an expired lease PAUSES rather than kills — **off destroys the
+working tree**, and some services gate it behind a per-function feature and
+refuse the create without one), `allow_internet`, and `max_read_file_bytes`.
+Every sandbox is created `secure`, so its daemon requires the per-sandbox
+token: without that, anyone who learns the sandbox id — which is in the public
+hostname of every port it serves — reaches its files (decisions §5.34).
 
 For `docker`, the Docker daemon is the server's ONE external dependency: it shells out to no
 binary — not git (skills import over the GitHub API), not ssh (remote
@@ -782,25 +790,34 @@ for a remote daemon reached over SSH (the remote needs sshd with
 streamlocal forwarding and the SSH user in the docker group, no remote docker
 CLI), `tcp://host:port` for a TCP-exposed one. The `ssh_*` fields carry the
 SSH authentication and come back masked — see
-[Secret handling](#secret-handling).
+[Secret handling](#secret-handling). The rest is what runs: `image`
+(required), `runtime` (e.g. `runsc` for gVisor — whether it exists is that
+machine's business), `user` (user[:group]; empty runs as **root**, so an agent
+can install packages into its own container), `network` (the docker network
+name to join; empty means no network at all), `memory_mb` / `cpus` caps, and
+`max_read_file_bytes` — how large a file the read tool will load at all
+(`0` = the 8 MiB default), a guard on the read itself, distinct from the
+64 KiB cap below on what the model is SHOWN of it.
 
-A target names no image: storage is a docker volume on its daemon, so the
-server never touches a host filesystem and the local/remote split that used
-to exist is gone (decisions §5.33). `POST /sandbox-targets/{id}/test` therefore
-takes a `template_id` query parameter — the health check borrows an image
-from it and runs `echo ok` in a throw-away container.
+Storage is a docker volume on the sandbox's daemon, so the server never
+touches a host filesystem (decisions §5.33).
+`POST /sandboxes/{id}/test` runs `echo ok` in a throw-away sandbox — a
+container for `docker`, a provisioned-and-destroyed instance for a remote
+service.
 
-`DELETE` refuses (`409`) while any project lives on the target: a project's
-working tree is on that machine, and deleting a project is what reclaims it.
-`PUT` freezes a referenced target's **identity fields** — `type` and `host` —
-for the same reason, counting the projects that block it. Credentials and the
-name stay freely editable; key rotation is routine.
+`DELETE` refuses (`409`) while any project lives on the sandbox: a project's
+working tree is at that address, and deleting a project is what reclaims it.
+`PUT` freezes a referenced sandbox's **identity fields** — `type` and the
+destination (`host`, or `api_url` + `domain`) — for the same reason, counting
+the projects that block it. The image, the limits, the credentials and the
+name stay freely editable; key rotation is routine, and an image change
+replaces the containers at their next run.
 
-A target carries one monotonic counter, `revision`: every write bumps it, and
+A sandbox carries one monotonic counter, `revision`: every write bumps it, and
 `PUT` is a compare-and-set against the revision the client read (a concurrent
-update means `409`, re-read and retry). There is no per-target runtime
+update means `409`, re-read and retry). There is no per-sandbox runtime
 generation — the ONE runtime axis is the project's, and a content change here
-bumps it on every project that names this target, which is what retires their
+bumps it on every project that names this sandbox, which is what retires their
 live instances and severs their terminals.
 
 Create and update validate the config STRICTLY and store it in canonical
@@ -810,38 +827,10 @@ struct order. One decoder answers every question about a config — save-time
 validation, the content comparison, the identity freeze — so they cannot
 disagree.
 
-`GET /sandbox-targets/{id}/containers` lists this package's containers on the
-target's daemon, and the stop/remove routes act on one by name — the
-operator's reclaim surface.
-
-### Sandbox templates — `/api/v1/sandbox-templates`
-
-A **template** is WHAT runs, and its `type` must match the target's.
-
-For `e2b`: `template_id` (required — the workbench builds no templates; the
-service's console or CLI does), `timeout_seconds` (the lease a sandbox is
-created and refreshed with), `auto_pause` (an expired lease PAUSES rather than
-kills — **off destroys the working tree**, and some services gate it behind a
-per-function feature and refuse the create without one), `allow_internet`, and
-`max_read_file_bytes`. Every sandbox is created `secure`, so its daemon
-requires the per-sandbox token: without that, anyone who learns the sandbox id
-— which is in the public hostname of every port it serves — reaches its files
-(decisions §5.34).
-
-For `docker`: `image` (required), `runtime` (e.g. `runsc` for
-gVisor — whether it exists is the target machine's business), `user`
-(user[:group]; empty runs as **root**, so an agent can install packages into
-its own container), `network` (the docker network name to join; empty means
-no network at all), `memory_mb` / `cpus` caps, and `max_read_file_bytes` —
-how large a file the read tool will load at all (`0` = the 8 MiB default), a
-guard on the read itself, distinct from the 64 KiB cap below on what the
-model is SHOWN of it.
-
-A template is a project's CONTENT, not its identity: it may be swapped while
-sessions are bound, reaching them at their next run
-([decisions §5.33](../explanation/decisions.md)). Its `type` is immutable —
-create a second template instead — and `DELETE` refuses (`409`) while any
-project uses it. One template serves any number of targets of its type.
+`GET /sandboxes/{id}/containers` lists this package's containers on the
+sandbox's daemon, and the stop/remove routes act on one by name — the
+operator's reclaim surface. It is DOCKER only, and a sandbox of another type
+is refused by name (`400`).
 
 Every sandbox can host a web terminal and `exec_command`'s **persistent
 shells** — every container is persistent. The tool schema offers a
@@ -854,21 +843,18 @@ output at 32 KiB per stream (truncation keeps head and tail).
 
 ### Projects — `/api/v1/projects`
 
-A project is one user's working tree on one target (decisions §5.28), created
-from one template: the unit a session binds and the unit a container mounts
-at `/workspace`. The tree is the named volume `agents-proj-<project id tail>`
-on the target's daemon — the same on every daemon, local or remote
+A project is one user's working tree on one sandbox (decisions §5.28): the
+unit a session binds and the unit a container mounts at `/workspace`. The tree
+is the named volume `agents-proj-<project id tail>` on the sandbox's daemon — the same on every daemon, local or remote
 (decisions §5.33). Containers are one per project, named
 `agents-<project tail>`, kept (stopped, not removed) across restarts, with
 `/tmp` a RAM-backed tmpfs capped at 1g.
 
-`target_id` is the project's identity and is fixed at creation; `template_id`
-is content and may be changed, which replaces the container at the next run.
-On an `e2b` target the storage IS the sandbox, so `instance_ref` remembers
-which one — recorded before the client will use it, since a sandbox nobody
-recorded is billed compute nobody will ever stop.
-Both must have the same `type`, which the create and update check — the one
-cross-row rule SQL cannot express.
+`sandbox_id` may change, but only to a sandbox at the SAME destination — how
+a project changes its image, and no further: the files live at that address
+and do not travel (`409`). On an `e2b` sandbox the storage IS the instance, so
+`instance_ref` remembers which one — recorded before the client will use it,
+since a sandbox nobody recorded is billed compute nobody will ever stop.
 
 `DELETE` refuses (`409`) while any session binds the project, and otherwise
 **destroys the working tree**: the container and its volume are removed. A

@@ -22,8 +22,7 @@ var schemaModels = []any{
 	(*Provider)(nil),
 	(*Workflow)(nil),
 	(*Trigger)(nil),
-	(*SandboxTarget)(nil),
-	(*SandboxTemplate)(nil),
+	(*Sandbox)(nil),
 	(*Project)(nil),
 	(*TraceEvent)(nil),
 	(*Guardrail)(nil),
@@ -254,13 +253,13 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 		Exec(ctx); err != nil {
 		return fmt.Errorf("creating wakeups prune index: %w", err)
 	}
-	// A project's name is how a person picks it per (owner, target); two
+	// A project's name is how a person picks it per (owner, sandbox); two
 	// sharing one make the choice a coin flip.
 	if _, err := db.NewCreateIndex().
 		Model((*Project)(nil)).
-		Index("idx_projects_owner_target_name").
+		Index("idx_projects_owner_sandbox_name").
 		Unique().
-		Column("owner_id", "target_id", "name").
+		Column("owner_id", "sandbox_id", "name").
 		IfNotExists().
 		Exec(ctx); err != nil {
 		return fmt.Errorf("creating projects unique name index: %w", err)

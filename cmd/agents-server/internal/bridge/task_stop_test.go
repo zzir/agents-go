@@ -207,8 +207,7 @@ func TestStopTaskCancelsARunInsideATool(t *testing.T) {
 
 	runner, sessions, tasks, agentConfigs := newTaskTestRunner(t)
 	workspace := t.TempDir()
-	runner.Deps.Targets = store.NewSandboxTargetStore(runner.db)
-	runner.Deps.Templates = store.NewSandboxTemplateStore(runner.db)
+	runner.Deps.Sandboxes = store.NewSandboxStore(runner.db)
 	runner.Deps.Projects = store.NewProjectStore(runner.db)
 	runner.Deps.SandboxManager = sandboxes.NewManager()
 	// The command must run on THIS host (awaitProcess reads the local process
@@ -217,15 +216,11 @@ func TestStopTaskCancelsARunInsideATool(t *testing.T) {
 	runner.Deps.SandboxManager.SetBuildOverride(func(sandboxes.Spec) (sandbox.Sandbox, error) {
 		return sandbox.NewLocalWithOptions(sandbox.LocalOptions{WorkDir: workspace}), nil
 	})
-	tg := &store.SandboxTarget{ID: store.NewID(), Name: "host", Type: "docker", Config: []byte(`{}`)}
-	if err := runner.Deps.Targets.Create(ctx, tg); err != nil {
+	tg := &store.Sandbox{ID: store.NewID(), Name: "host", Type: "docker", Config: []byte(`{"image":"i"}`)}
+	if err := runner.Deps.Sandboxes.Create(ctx, tg); err != nil {
 		t.Fatal(err)
 	}
-	tpl := &store.SandboxTemplate{ID: store.NewID(), Name: "base", Type: "docker", Config: []byte(`{"image":"i"}`)}
-	if err := runner.Deps.Templates.Create(ctx, tpl); err != nil {
-		t.Fatal(err)
-	}
-	proj := &store.Project{OwnerID: store.LocalUserID, TargetID: tg.ID, TemplateID: tpl.ID, Name: "p"}
+	proj := &store.Project{OwnerID: store.LocalUserID, SandboxID: tg.ID, Name: "p"}
 	if err := runner.Deps.Projects.Create(ctx, proj); err != nil {
 		t.Fatal(err)
 	}

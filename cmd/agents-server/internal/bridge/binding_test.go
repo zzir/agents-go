@@ -14,17 +14,12 @@ import (
 func TestPlanProjectBinding(t *testing.T) {
 	runner, db := newBareRunner(t)
 	ctx := context.Background()
-	targets := store.NewSandboxTargetStore(db)
-	templates := store.NewSandboxTemplateStore(db)
-	tg := &store.SandboxTarget{ID: store.NewID(), Name: "tg", Type: "docker", Config: []byte(`{}`)}
+	targets := store.NewSandboxStore(db)
+	tg := &store.Sandbox{ID: store.NewID(), Name: "tg", Type: "docker", Config: []byte(`{"image":"i"}`)}
 	if err := targets.Create(ctx, tg); err != nil {
 		t.Fatal(err)
 	}
-	tpl := &store.SandboxTemplate{ID: store.NewID(), Name: "tpl", Type: "docker", Config: []byte(`{"image":"i"}`)}
-	if err := templates.Create(ctx, tpl); err != nil {
-		t.Fatal(err)
-	}
-	mine := &store.Project{OwnerID: store.LocalUserID, TargetID: tg.ID, TemplateID: tpl.ID, Name: "mine"}
+	mine := &store.Project{OwnerID: store.LocalUserID, SandboxID: tg.ID, Name: "mine"}
 	if err := runner.Deps.Projects.Create(ctx, mine); err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +52,7 @@ func TestPlanProjectBinding(t *testing.T) {
 		t.Fatalf("unknown project: %v, want ErrInvalidBinding", err)
 	}
 	// A foreign owner's project reads as absent.
-	foreign := &store.Project{OwnerID: store.NewID(), TargetID: tg.ID, TemplateID: tpl.ID, Name: "theirs"}
+	foreign := &store.Project{OwnerID: store.NewID(), SandboxID: tg.ID, Name: "theirs"}
 	if err := runner.Deps.Projects.Create(ctx, foreign); err != nil {
 		t.Fatal(err)
 	}

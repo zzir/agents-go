@@ -42,41 +42,33 @@ func (e2bBackend) Reclaim(ctx context.Context, spec Spec) error {
 	return sb.Destroy(ctx)
 }
 
-// e2bOptions assembles the SDK options from the target, the template and the
-// project.
+// e2bOptions assembles the SDK options from the sandbox and the project.
 func e2bOptions(spec Spec) (e2bsb.Options, error) {
-	var tc store.E2BTargetConfig
-	if err := unmarshalConfig(spec.Target.Config, &tc); err != nil {
-		return e2bsb.Options{}, fmt.Errorf("e2b target: invalid config: %w", err)
+	var c store.E2BConfig
+	if err := unmarshalConfig(spec.Sandbox.Config, &c); err != nil {
+		return e2bsb.Options{}, fmt.Errorf("e2b sandbox: invalid config: %w", err)
 	}
-	if tc.APIKey == "" {
-		return e2bsb.Options{}, fmt.Errorf("e2b target %q requires an api_key", spec.Target.Name)
+	if c.APIKey == "" {
+		return e2bsb.Options{}, fmt.Errorf("e2b sandbox %q requires an api_key", spec.Sandbox.Name)
 	}
-	if spec.Template.Type != "e2b" {
-		return e2bsb.Options{}, fmt.Errorf("template %q is a %s template on an e2b target", spec.Template.Name, spec.Template.Type)
-	}
-	var pc store.E2BTemplateConfig
-	if err := unmarshalConfig(spec.Template.Config, &pc); err != nil {
-		return e2bsb.Options{}, fmt.Errorf("e2b template: invalid config: %w", err)
-	}
-	if pc.TemplateID == "" {
-		return e2bsb.Options{}, fmt.Errorf("e2b template %q names no template_id", spec.Template.Name)
+	if c.TemplateID == "" {
+		return e2bsb.Options{}, fmt.Errorf("e2b sandbox %q names no template_id", spec.Sandbox.Name)
 	}
 	env, err := store.EnvMap(spec.Project.Env)
 	if err != nil {
 		return e2bsb.Options{}, fmt.Errorf("project %s: %w", spec.Project.Name, err)
 	}
 	return e2bsb.Options{
-		APIURL:           tc.APIURL,
-		Domain:           tc.Domain,
-		APIKey:           tc.APIKey,
-		DataPlaneAuth:    e2bsb.DataPlaneAuth(tc.DataPlaneAuth),
-		TemplateID:       pc.TemplateID,
+		APIURL:           c.APIURL,
+		Domain:           c.Domain,
+		APIKey:           c.APIKey,
+		DataPlaneAuth:    e2bsb.DataPlaneAuth(c.DataPlaneAuth),
+		TemplateID:       c.TemplateID,
 		SandboxID:        spec.Project.InstanceRef,
-		TimeoutSeconds:   pc.TimeoutSeconds,
-		AutoPause:        pc.AutoPause,
-		AllowInternet:    pc.AllowInternet,
-		MaxReadFileBytes: pc.MaxReadFileBytes,
+		TimeoutSeconds:   c.TimeoutSeconds,
+		AutoPause:        c.AutoPause,
+		AllowInternet:    c.AllowInternet,
+		MaxReadFileBytes: c.MaxReadFileBytes,
 		Env:              env,
 		// The tag an operator needs to tell whose sandbox is whose on the
 		// service's own console.
@@ -93,13 +85,13 @@ func (e2bBackend) Rebuild(context.Context, Spec) error {
 		"replacing it would destroy the working tree. Export the project first, then create a new one")
 }
 
-// Check provisions a sandbox from the template, runs the health command in it
-// and destroys it again — the only way to prove a remote service reachable
-// and a template runnable.
-func (e2bBackend) Check(ctx context.Context, target *store.SandboxTarget, template *store.SandboxTemplate) error {
+// Check provisions a sandbox, runs the health command in it and destroys it
+// again — the only way to prove a remote service reachable and its template
+// runnable.
+func (e2bBackend) Check(ctx context.Context, sb *store.Sandbox) error {
 	// A synthetic project: the check needs a sandbox, not a tree, and nothing
 	// it provisions outlives the call.
-	spec := Spec{Target: target, Template: template, Project: &store.Project{ID: "health-check", Name: "health-check"}}
+	spec := Spec{Sandbox: sb, Project: &store.Project{ID: "health-check", Name: "health-check"}}
 	opts, err := e2bOptions(spec)
 	if err != nil {
 		return err
@@ -108,15 +100,15 @@ func (e2bBackend) Check(ctx context.Context, target *store.SandboxTarget, templa
 	// write a handle onto a project that does not exist.
 	opts.OnSandboxID = nil
 	opts.Metadata = map[string]string{"agents_health_check": "1"}
-	sb, err := e2bsb.New(opts)
+	inst, err := e2bsb.New(opts)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		// WithoutCancel: a cancelled request must not leave a billed sandbox.
-		if derr := sb.Destroy(context.WithoutCancel(ctx)); derr != nil {
+		if derr := inst.Destroy(context.WithoutCancel(ctx)); derr != nil {
 			logging.Ctx(ctx).Warn("destroying the health-check sandbox", "error", derr)
 		}
 	}()
-	return checkExec(ctx, sb)
+	return checkExec(ctx, inst)
 }

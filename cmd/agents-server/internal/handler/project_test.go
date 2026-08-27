@@ -35,12 +35,12 @@ func TestProjectAdminSurface(t *testing.T) {
 	db := testdb.New(t)
 	projects := store.NewProjectStore(db)
 	mgr := sandboxes.NewManager()
-	targets, templates := mkSandboxRows(t, db)
-	h := NewProjectHandler(projects, store.NewSandboxTargetStore(db), store.NewSandboxTemplateStore(db), mgr, NewTerminalHandler(store.NewSandboxTargetStore(db), store.NewSandboxTemplateStore(db), projects, mgr, settings.NewReader(nil)), settings.NewReader(nil))
+	sandboxID := mkSandboxRow(t, db)
+	h := NewProjectHandler(projects, store.NewSandboxStore(db), mgr, NewTerminalHandler(store.NewSandboxStore(db), projects, mgr, settings.NewReader(nil)), settings.NewReader(nil))
 
 	memberID := store.NewID()
-	memberProj := &store.Project{ID: store.NewID(), OwnerID: memberID, TargetID: targets, TemplateID: templates, Name: "member-proj"}
-	adminProj := &store.Project{ID: store.NewID(), OwnerID: store.LocalUserID, TargetID: targets, TemplateID: templates, Name: "admin-proj"}
+	memberProj := &store.Project{ID: store.NewID(), OwnerID: memberID, SandboxID: sandboxID, Name: "member-proj"}
+	adminProj := &store.Project{ID: store.NewID(), OwnerID: store.LocalUserID, SandboxID: sandboxID, Name: "admin-proj"}
 	for _, p := range []*store.Project{memberProj, adminProj} {
 		if err := projects.Create(ctx, p); err != nil {
 			t.Fatalf("create project %s: %v", p.Name, err)

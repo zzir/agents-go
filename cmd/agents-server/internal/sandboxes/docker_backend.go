@@ -28,7 +28,7 @@ func (dockerBackend) Open(spec Spec) (sandbox.Sandbox, error) {
 // again — an evict-only rebuild would hand back exactly what it was asked to
 // discard. The volume survives: this replaces the container, not the tree.
 func (dockerBackend) Rebuild(ctx context.Context, spec Spec) error {
-	opts, err := TargetOptions(spec.Target)
+	opts, err := DaemonOptions(spec.Sandbox)
 	if err != nil {
 		return err
 	}
@@ -41,31 +41,31 @@ func (dockerBackend) Rebuild(ctx context.Context, spec Spec) error {
 
 // Check runs the health command in a throw-away EPHEMERAL container: it needs
 // no project tree, and must not leave a persistent container behind.
-func (dockerBackend) Check(ctx context.Context, target *store.SandboxTarget, template *store.SandboxTemplate) error {
-	opts, err := TargetOptions(target)
+func (dockerBackend) Check(ctx context.Context, sb *store.Sandbox) error {
+	opts, err := DaemonOptions(sb)
 	if err != nil {
 		return err
 	}
-	// Borrow the template's image and shape, leave its container, volume and
-	// persistence behind.
-	full, err := BuildOptions(Spec{Target: target, Template: template, Project: &store.Project{}})
+	// Borrow the image and shape, leave the container, volume and persistence
+	// behind.
+	full, err := BuildOptions(Spec{Sandbox: sb, Project: &store.Project{}})
 	if err != nil {
 		return err
 	}
 	opts.Image, opts.Runtime, opts.User, opts.Network = full.Image, full.Runtime, full.User, full.Network
 	opts.Limits = full.Limits
-	sb, err := dockersb.New(opts)
+	inst, err := dockersb.New(opts)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = sb.Close() }()
-	return checkExec(ctx, sb)
+	defer func() { _ = inst.Close() }()
+	return checkExec(ctx, inst)
 }
 
 // Reclaim removes the container and then the volume. Both "not found" cases
 // are success: the caller asked for the storage to be gone.
 func (dockerBackend) Reclaim(ctx context.Context, spec Spec) error {
-	opts, err := TargetOptions(spec.Target)
+	opts, err := DaemonOptions(spec.Sandbox)
 	if err != nil {
 		return err
 	}

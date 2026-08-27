@@ -229,9 +229,9 @@ func restoreMcpConfig(incoming, prev json.RawMessage) json.RawMessage {
 	return restoreJSONFields(incoming, prev, true, "oauth_client_secret")
 }
 
-// storedTargetSecret reports whether a stored sandbox target actually holds a
-// password — the mask-across-host refusal only applies when there is one.
-func storedTargetSecret(prev json.RawMessage) bool {
+// storedSandboxSecret reports whether a stored sandbox actually holds a
+// credential — the mask-across-destination refusal only applies when it does.
+func storedSandboxSecret(prev json.RawMessage) bool {
 	var cfg struct {
 		SSHPassword string `json:"ssh_password"`
 		APIKey      string `json:"api_key"`
@@ -257,23 +257,23 @@ func maskAcrossDestination(incoming, prev json.RawMessage, field string) bool {
 	return is != os
 }
 
-// sanitizeTargetConfig returns t with its secret masked: the SSH password
-// of a remote-daemon docker config.
-func sanitizeTargetConfig(t store.SandboxTarget) store.SandboxTarget {
-	t.Config = maskJSONFields(t.Config, false, targetSecretFields...)
-	return t
+// sanitizeSandboxConfig returns sb with its credential masked: an SSH
+// password, or a service's API key.
+func sanitizeSandboxConfig(sb store.Sandbox) store.Sandbox {
+	sb.Config = maskJSONFields(sb.Config, false, sandboxSecretFields...)
+	return sb
 }
 
-// restoreTargetConfig resolves a masked credential in an incoming target
+// restoreSandboxConfig resolves a masked credential in an incoming sandbox
 // config against the previously stored one.
-func restoreTargetConfig(incoming, prev json.RawMessage) json.RawMessage {
-	return restoreJSONFields(incoming, prev, false, targetSecretFields...)
+func restoreSandboxConfig(incoming, prev json.RawMessage) json.RawMessage {
+	return restoreJSONFields(incoming, prev, false, sandboxSecretFields...)
 }
 
-// targetSecretFields are every type's credential field: one list, so a new
+// sandboxSecretFields are every type's credential field: one list, so a new
 // backend's key cannot be forgotten by a per-type branch (it mirrors the
 // store's sealing list).
-var targetSecretFields = []string{"ssh_password", "api_key"}
+var sandboxSecretFields = []string{"ssh_password", "api_key"}
 
 // sanitizeAgentConfig masks the secret-bearing fields of an agent config for
 // API responses. Only the per-entry fallback-model keys remain: the provider

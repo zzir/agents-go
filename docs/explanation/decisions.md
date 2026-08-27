@@ -776,8 +776,8 @@ server just never offers it). Where a sandbox runs is its identity (the
 binding freeze — workbench invariant 27): changing the daemon moves every
 container's filesystem, so it freezes while any project lives on it.
 
-Revised 2026-08-28: the daemon address moved to its own row, the sandbox
-TARGET, and the image and limits to a sandbox TEMPLATE — §5.33.
+Revised 2026-08-28: the daemon address and the image live in one `sandboxes`
+row, whose destination freezes while projects live on it — §5.36.
 
 Do not reintroduce a host-exec sandbox type or a raw remote-exec one; an
 isolation need beyond containers (VMs, gVisor) is a new backend decision
@@ -785,17 +785,18 @@ argued here first — gVisor is already reachable today via `runtime: runsc`.
 
 ### 5.28 A project is the unit of working storage, and containers are per project
 
-Decided 2026-08-24. A **project** is one user's working tree on one sandbox
-target: `projects(id, owner_id, target_id, template_id, name)`, name unique
-per (owner, target) and display-only — storage is keyed by id, so a rename
-moves nothing. The target affinity is deliberate: a tree lives on one daemon,
-and a project that could "move" between daemons would silently be two
-different sets of files. A session's permanent binding is `project_id`
-(revised 2026-08-28, §5.33: the project pins the target, so the second column
-was derivable); the old free-form working directory is gone — execution is
+Decided 2026-08-24. A **project** is one user's working tree on one sandbox:
+`projects(id, owner_id, sandbox_id, name)`, name unique per (owner, sandbox)
+and display-only — storage is keyed by id, so a rename moves nothing (revised
+2026-08-28, §5.36: one column, not two). The machine affinity is deliberate: a
+tree lives on one daemon, and a project that could "move" between daemons
+would silently be two different sets of files. A session's permanent binding
+is `project_id` (revised 2026-08-28, §5.33: the project pins its machine, so
+the second column was derivable); the old free-form working directory is
+gone — execution is
 always the container's /workspace, which mounts the project's storage:
 
-Storage is the named volume `agents-proj-<project id tail>` on the target's
+Storage is the named volume `agents-proj-<project id tail>` on the sandbox's
 daemon — the same on every daemon (revised 2026-08-28, §5.33: the local
 bind-mount branch is gone). Every volume name is SERVER-derived from the id
 — no user-typed path ever reaches a mount, which retires the old host-side
@@ -1109,32 +1110,18 @@ uses, never what the tree's container is configured with), and the edit
 reaches everyone at their next run through the runtime generation, exactly as
 a template edit does.
 
-### 5.33 A sandbox is a target and a template; storage is a volume the delete destroys
+### 5.33 Storage is a volume the delete destroys
 
-Decided 2026-08-28. `sandbox_configs` carried two orthogonal things — WHERE a
-container runs (the daemon and its credentials) and WHAT runs (the image, the
-limits, the container's shape) — so a second machine meant duplicating every
-image setting, and an image change was an edit to a row whose identity was a
-machine. They are two rows now: **`sandbox_targets`** (host, ssh auth) and
-**`sandbox_templates`** (image, runtime, user, network, limits). A project
-names one of each and the pair must share a `type`.
-
-The split gives each half the lifecycle it always wanted. A target is a
-project's **identity**: changing the daemon moves every file, so it freezes
-while any project lives on it, exactly as §5.27's rule did. A template is a
-project's **CONTENT**, handled like its environment (§5.32): editable while
-sessions are bound, reaching each at its next run. A template's `type` is
-immutable — a docker template cannot become something its machine can not run
-— and creating a second one costs nothing, so there is no conditional freeze
-to explain.
+Decided 2026-08-28. **The target/template split this section introduced was
+reversed the same week — see §5.36 for what replaced it and why.** What
+follows stands.
 
 **One runtime axis.** The instance cache and the terminal registry used to
 fence on a config generation AND a project generation, two maps that must not
-reach each other's rows. With three entities that would have been three. So
-the runtime generation lives only on the PROJECT, and a content change to a
-target or a template bumps it on every project that names the row
-(`ProjectStore.BumpRuntimeGen`). Targets and templates keep only `revision`,
-the compare-and-set every update lands against. Everything downstream —
+reach each other's rows. So the runtime generation lives only on the PROJECT,
+and a content change to a sandbox bumps it on every project that names the row
+(`ProjectStore.BumpRuntimeGen`). A sandbox keeps only `revision`, the
+compare-and-set every update lands against. Everything downstream —
 `RetireProject`, `CloseProjectTerminals`, the `(project, gen)` cache key —
 now has exactly one thing to watch. The write amplification is one UPDATE on
 a rare admin edit.
@@ -1163,7 +1150,7 @@ a surprising answer. An agent with no project is a chat: `attachSandboxTools`
 returns early, and the composer's picker offers projects with an explicit
 None.
 
-**The session binding collapses to `project_id`.** A project pins its target,
+**The session binding collapses to `project_id`.** A project pins its machine,
 so the second column was derivable and could only ever disagree.
 
 ### 5.34 One E2B-compatible backend, written here, not one backend per cloud
@@ -1286,7 +1273,7 @@ before forwarding, so the workbench's own credential never reaches somebody's
 dev server; and it does not apply this app's Content-Security-Policy to a
 previewed page, which is not this app and would simply break.
 
-A docker template that joins **no network** has no address at all, and the
+A docker sandbox that joins **no network** has no address at all, and the
 preview says so rather than timing out. On a remote daemon the container's
 address means nothing here, so the proxy dials through the same SSH transport
 the docker API uses; a `tcp://` daemon exposes its API and not its container
@@ -1300,5 +1287,49 @@ Docker Desktop on macOS and Windows keeps the container network inside a VM,
 so a LOCAL-daemon preview cannot reach it — the 502 says exactly that rather
 than blaming the service. Publishing an ephemeral loopback port would fix that
 one case, and was not taken: it must be decided at container create, when the
-port nobody has typed yet is unknown. An e2b target has no such problem — the
+port nobody has typed yet is unknown. An e2b sandbox has no such problem — the
 service publishes a host per port.
+
+### 5.36 A sandbox is one row, and only its destination freezes
+
+Decided 2026-08-28, reversing §5.33's split the same week it landed. The split
+into `sandbox_targets` and `sandbox_templates` was justified by REUSE — one
+daemon under many images, one image on many daemons — and the justification
+did not survive contact with the workbench:
+
+- For the common case there is nothing to reuse. A local docker target's whole
+  config is `{}`: the row is a name and a type, so pairing it with a template
+  is pure ceremony on every project create.
+- The stated rule ("a target is frozen identity, a template is editable
+  content") was never what the code did. Only the type and the DESTINATION —
+  `host`, or `api_url|domain` — ever froze; the SSH password, the API key and
+  `data_plane_auth` sat in the "frozen" table and were always editable. The
+  freeze is field-level, and one table expresses it exactly as well.
+- The split generated a bug class of its own: a target and a template of
+  different types. That needed a type check on the project write, another on
+  the health check, a filtered dropdown in two places — and it still reached a
+  person's screen as `unknown sandbox target type: e2b`, because the health
+  check took the first template in the list.
+
+So: one `sandboxes` row carries where it runs and what runs on it, and a
+project names one. `SandboxIdentityChanged` freezes the type and the
+destination while projects live on the row; everything else — the image, the
+limits, the network, the credential, the name — edits freely and reaches bound
+sessions at their next run, exactly as before. Nothing about the lifecycle
+changed; what changed is that the mutability line is drawn between FIELDS
+instead of between TABLES, which is where it always was.
+
+**The cost is named, not hidden.** A second image on one remote daemon repeats
+that daemon's host and credential, and rotating a key touches every row that
+carries it. That was accepted deliberately, against a two-dropdown project
+create and two settings lists paid on every use. `Duplicate` on a sandbox row
+takes the sting out — it copies everything but the identity and the
+credential, which is dropped rather than carried as a mask that would resolve
+to empty on the create and look like it had copied.
+
+**A project may still change its image.** It moves between sandboxes that
+share a destination — that is what "swap the template" became — and no
+further: the files live at that address and do not travel
+(`ErrSandboxMoveDestination`). Both rows are read inside the write's
+transaction with the destination locked, so a sandbox cannot be re-addressed
+between the check and the write.

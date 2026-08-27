@@ -24,28 +24,22 @@ func TestBuildAgentRegistryIncludesSandboxTools(t *testing.T) {
 	db := testdb.New(t)
 
 	agentConfigs := store.NewAgentConfigStore(db)
-	targets := store.NewSandboxTargetStore(db)
-	templates := store.NewSandboxTemplateStore(db)
+	targets := store.NewSandboxStore(db)
 
 	ac := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "coder", Model: "gpt-test", ProviderID: testProvider(t, db, "p", "sk-x", "")}
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatalf("create agent: %v", err)
 	}
 	// Building tools never contacts the daemon, so a plain docker pair works.
-	tg := &store.SandboxTarget{ID: store.NewID(), Name: "L", Type: "docker", Config: []byte(`{}`)}
+	tg := &store.Sandbox{ID: store.NewID(), Name: "L", Type: "docker", Config: []byte(`{"image":"i"}`)}
 	if err := targets.Create(ctx, tg); err != nil {
 		t.Fatalf("create target: %v", err)
-	}
-	tpl := &store.SandboxTemplate{ID: store.NewID(), Name: "base", Type: "docker", Config: []byte(`{"image":"i"}`)}
-	if err := templates.Create(ctx, tpl); err != nil {
-		t.Fatalf("create template: %v", err)
 	}
 
 	runner := NewRunner(ctx, db, &AgentDeps{
 		AgentConfigs:   agentConfigs,
 		Providers:      store.NewProviderStore(db),
-		Targets:        targets,
-		Templates:      templates,
+		Sandboxes:      targets,
 		Settings:       settings.NewReader(store.NewSettingStore(db)),
 		Memories:       store.NewMemoryStore(db),
 		McpServers:     store.NewMcpServerStore(db),
@@ -54,7 +48,7 @@ func TestBuildAgentRegistryIncludesSandboxTools(t *testing.T) {
 		SandboxManager: sandboxes.NewManager(),
 		Projects:       store.NewProjectStore(db),
 	})
-	proj := &store.Project{OwnerID: store.LocalUserID, TargetID: tg.ID, TemplateID: tpl.ID, Name: "p"}
+	proj := &store.Project{OwnerID: store.LocalUserID, SandboxID: tg.ID, Name: "p"}
 	if err := runner.Deps.Projects.Create(ctx, proj); err != nil {
 		t.Fatalf("create project: %v", err)
 	}

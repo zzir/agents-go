@@ -111,7 +111,8 @@ func saveError(c *gin.Context, err error) {
 		badRequest(c, err.Error())
 		return
 	}
-	if errors.Is(err, store.ErrSameScope) || errors.Is(err, store.ErrOwnershipChanged) || errors.Is(err, store.ErrGroupExists) {
+	if errors.Is(err, store.ErrSameScope) || errors.Is(err, store.ErrOwnershipChanged) || errors.Is(err, store.ErrGroupExists) ||
+		errors.Is(err, store.ErrSandboxMoveDestination) {
 		conflict(c, err.Error())
 		return
 	}

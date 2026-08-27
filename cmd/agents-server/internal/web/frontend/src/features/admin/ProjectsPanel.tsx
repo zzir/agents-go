@@ -19,10 +19,10 @@ export function ProjectsPanel() {
   const { ownerOf, labelFor } = useOwnerLabels();
 
   const reload = useCallback(() => {
-    Promise.all([api.sandboxTargets.list(), api.projects.listAll()])
+    Promise.all([api.sandboxes.list(), api.projects.listAll()])
       .then(([targets, rows]) => {
         const tgName = (id?: string) => (targets ?? []).find(t => t.id === id)?.name || id || '';
-        setProjects((rows ?? []).map(p => ({ ...p, id: p.id || '', sandbox: tgName(p.target_id) })));
+        setProjects((rows ?? []).map(p => ({ ...p, id: p.id || '', sandbox: tgName(p.sandbox_id) })));
         setError('');
       })
       .catch(() => setError('Failed to load projects.'));

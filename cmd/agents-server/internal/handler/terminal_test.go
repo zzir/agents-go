@@ -127,12 +127,12 @@ func terminalTestServer(t *testing.T, provider sandboxProvider) (*httptest.Serve
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
 	projects := store.NewProjectStore(db)
-	targetID, templateID := mkSandboxRows(t, db)
-	proj := &store.Project{OwnerID: store.LocalUserID, TargetID: targetID, TemplateID: templateID, Name: "p"}
+	sandboxID := mkSandboxRow(t, db)
+	proj := &store.Project{OwnerID: store.LocalUserID, SandboxID: sandboxID, Name: "p"}
 	if err := projects.Create(t.Context(), proj); err != nil {
 		t.Fatal(err)
 	}
-	th := NewTerminalHandler(store.NewSandboxTargetStore(db), store.NewSandboxTemplateStore(db), projects, provider, settings.NewReader(nil))
+	th := NewTerminalHandler(store.NewSandboxStore(db), projects, provider, settings.NewReader(nil))
 	engine := newTestEngine()
 	engine.GET("/ws/terminal", server.HandleWSWithAuth(th.Handle, testAuthFunc(testWSToken), nil, nil))
 	srv := httptest.NewServer(engine)
@@ -280,17 +280,17 @@ func TestTerminalWS_ProjectOwnership(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
 	projects := store.NewProjectStore(db)
-	targetID, templateID := mkSandboxRows(t, db)
+	sandboxID := mkSandboxRow(t, db)
 	member := protocol.UserInfo{ID: store.NewID(), Email: "m@example.com", Role: store.RoleMember}
-	own := &store.Project{OwnerID: member.ID, TargetID: targetID, TemplateID: templateID, Name: "own"}
-	foreign := &store.Project{OwnerID: store.NewID(), TargetID: targetID, TemplateID: templateID, Name: "foreign"}
+	own := &store.Project{OwnerID: member.ID, SandboxID: sandboxID, Name: "own"}
+	foreign := &store.Project{OwnerID: store.NewID(), SandboxID: sandboxID, Name: "foreign"}
 	for _, p := range []*store.Project{own, foreign} {
 		if err := projects.Create(t.Context(), p); err != nil {
 			t.Fatal(err)
 		}
 	}
 	provider := &fakeProvider{sb: &fakeTerminalSandbox{term: newFakeTerminal()}}
-	th := NewTerminalHandler(store.NewSandboxTargetStore(db), store.NewSandboxTemplateStore(db), projects, provider, settings.NewReader(nil))
+	th := NewTerminalHandler(store.NewSandboxStore(db), projects, provider, settings.NewReader(nil))
 	asMember := func(_ context.Context, bearer string) (protocol.UserInfo, error) {
 		if bearer != testWSToken {
 			return protocol.UserInfo{}, errors.New("unauthorized")
@@ -384,13 +384,13 @@ func TestTerminalOpen_ValidatesProject(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
 	projects := store.NewProjectStore(db)
-	targetID, templateID := mkSandboxRows(t, db)
-	mine := &store.Project{OwnerID: store.LocalUserID, TargetID: targetID, TemplateID: templateID, Name: "mine"}
+	sandboxID := mkSandboxRow(t, db)
+	mine := &store.Project{OwnerID: store.LocalUserID, SandboxID: sandboxID, Name: "mine"}
 	if err := projects.Create(t.Context(), mine); err != nil {
 		t.Fatal(err)
 	}
 	provider := &fakeProvider{sb: &fakeTerminalSandbox{term: newFakeTerminal()}}
-	th := NewTerminalHandler(store.NewSandboxTargetStore(db), store.NewSandboxTemplateStore(db), projects, provider, settings.NewReader(nil))
+	th := NewTerminalHandler(store.NewSandboxStore(db), projects, provider, settings.NewReader(nil))
 	var auditMu sync.Mutex
 	var audited []protocol.AuditRecord
 	th.Audit = func(_ context.Context, r protocol.AuditRecord) {
@@ -461,7 +461,7 @@ func TestTerminalWS_ReleasesInstanceOnClose(t *testing.T) {
 // generation is refused at register — the sweep that retired it ran while
 // this terminal was still dialing and could not see it.
 func TestTerminalRegisterFence(t *testing.T) {
-	th := NewTerminalHandler(nil, nil, nil, nil, settings.NewReader(nil))
+	th := NewTerminalHandler(nil, nil, nil, settings.NewReader(nil))
 	th.CloseProjectTerminals("p1", 2)
 
 	if ok, stale := th.register("p1", &liveTerminal{gen: 1}, 4); ok || !stale {
@@ -497,7 +497,7 @@ func TestCloseProjectTerminalsSparesSiblings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sibling := &store.Project{OwnerID: store.LocalUserID, TargetID: first.TargetID, TemplateID: first.TemplateID, Name: "sibling"}
+	sibling := &store.Project{OwnerID: store.LocalUserID, SandboxID: first.SandboxID, Name: "sibling"}
 	if err := th.projects.Create(t.Context(), sibling); err != nil {
 		t.Fatal(err)
 	}

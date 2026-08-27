@@ -105,33 +105,21 @@ func testAgentConfigHandler(db *bun.DB) *AgentConfigHandler {
 		guardrails.NewResolver(store.NewGuardrailStore(db)))
 }
 
-// testTargetHandler wires a SandboxTargetHandler over a database, with a
-// terminal registry and retirer over the same stores.
-func testTargetHandler(db *bun.DB, manager *sandboxes.Manager) *SandboxTargetHandler {
-	targets, templates, projects := store.NewSandboxTargetStore(db), store.NewSandboxTemplateStore(db), store.NewProjectStore(db)
-	terminals := NewTerminalHandler(targets, templates, projects, manager, settings.NewReader(nil))
-	return NewSandboxTargetHandler(targets, templates, manager, NewRetirer(projects, manager, terminals))
+// testSandboxHandler wires a SandboxHandler over a database, with a terminal
+// registry and retirer over the same stores.
+func testSandboxHandler(db *bun.DB, manager *sandboxes.Manager) *SandboxHandler {
+	sbs, projects := store.NewSandboxStore(db), store.NewProjectStore(db)
+	terminals := NewTerminalHandler(sbs, projects, manager, settings.NewReader(nil))
+	return NewSandboxHandler(sbs, manager, NewRetirer(projects, manager, terminals))
 }
 
-// testTemplateHandler wires a SandboxTemplateHandler over the same stores.
-func testTemplateHandler(db *bun.DB, manager *sandboxes.Manager) *SandboxTemplateHandler {
-	targets, templates, projects := store.NewSandboxTargetStore(db), store.NewSandboxTemplateStore(db), store.NewProjectStore(db)
-	terminals := NewTerminalHandler(targets, templates, projects, manager, settings.NewReader(nil))
-	return NewSandboxTemplateHandler(templates, NewRetirer(projects, manager, terminals))
-}
-
-// mkSandboxRows persists a docker target and template and returns their ids —
-// the pair every project needs.
-func mkSandboxRows(t *testing.T, db *bun.DB) (targetID, templateID string) {
+// mkSandboxRow persists a docker sandbox and returns its id — what every
+// project needs.
+func mkSandboxRow(t *testing.T, db *bun.DB) string {
 	t.Helper()
-	ctx := context.Background()
-	tg := &store.SandboxTarget{ID: store.NewID(), Name: "tg-" + store.NewID(), Type: "docker", Config: json.RawMessage(`{}`)}
-	if err := store.NewSandboxTargetStore(db).Create(ctx, tg); err != nil {
-		t.Fatalf("create sandbox target: %v", err)
+	sb := &store.Sandbox{ID: store.NewID(), Name: "sb-" + store.NewID(), Type: "docker", Config: json.RawMessage(`{"image":"i"}`)}
+	if err := store.NewSandboxStore(db).Create(context.Background(), sb); err != nil {
+		t.Fatalf("create sandbox: %v", err)
 	}
-	tpl := &store.SandboxTemplate{ID: store.NewID(), Name: "tpl-" + store.NewID(), Type: "docker", Config: json.RawMessage(`{"image":"i"}`)}
-	if err := store.NewSandboxTemplateStore(db).Create(ctx, tpl); err != nil {
-		t.Fatalf("create sandbox template: %v", err)
-	}
-	return tg.ID, tpl.ID
+	return sb.ID
 }

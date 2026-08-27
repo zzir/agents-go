@@ -23,10 +23,10 @@ func projectEnvFixture(t *testing.T) (*gin.Engine, *store.ProjectStore, *store.P
 	db := testdb.New(t)
 	projects := store.NewProjectStore(db)
 	mgr := sandboxes.NewManager()
-	targets, templates := mkSandboxRows(t, db)
-	h := NewProjectHandler(projects, store.NewSandboxTargetStore(db), store.NewSandboxTemplateStore(db), mgr, NewTerminalHandler(store.NewSandboxTargetStore(db), store.NewSandboxTemplateStore(db), projects, mgr, settings.NewReader(nil)), settings.NewReader(nil))
+	sandboxID := mkSandboxRow(t, db)
+	h := NewProjectHandler(projects, store.NewSandboxStore(db), mgr, NewTerminalHandler(store.NewSandboxStore(db), projects, mgr, settings.NewReader(nil)), settings.NewReader(nil))
 
-	p := &store.Project{ID: store.NewID(), OwnerID: store.LocalUserID, TargetID: targets, TemplateID: templates, Name: "p"}
+	p := &store.Project{ID: store.NewID(), OwnerID: store.LocalUserID, SandboxID: sandboxID, Name: "p"}
 	if err := projects.Create(context.Background(), p); err != nil {
 		t.Fatal(err)
 	}
@@ -55,8 +55,8 @@ func TestProjectEnvMaskRoundTrip(t *testing.T) {
 	e, projects, p := projectEnvFixture(t)
 
 	rec := doJSON(t, e, http.MethodPut, "/api/v1/projects/"+p.ID, jsonBody(t, map[string]any{
-		"name":        "p",
-		"template_id": p.TemplateID,
+		"name":       "p",
+		"sandbox_id": p.SandboxID,
 		"env": []store.EnvVar{
 			{Key: "TOKEN", Value: "sk-live"},
 			{Key: "TZ", Value: "UTC"},
@@ -88,8 +88,8 @@ func TestProjectEnvMaskRoundTrip(t *testing.T) {
 	// Sending the mask straight back keeps the stored value; the neighbour is
 	// edited in the same request.
 	rec = doJSON(t, e, http.MethodPut, "/api/v1/projects/"+p.ID, jsonBody(t, map[string]any{
-		"name":        "p",
-		"template_id": p.TemplateID,
+		"name":       "p",
+		"sandbox_id": p.SandboxID,
 		"env": []store.EnvVar{
 			{Key: "TOKEN", Value: SecretMask},
 			{Key: "TZ", Value: "Europe/Berlin"},
@@ -119,9 +119,9 @@ func TestProjectEnvMaskRoundTrip(t *testing.T) {
 func TestProjectEnvEmptyValueNotMasked(t *testing.T) {
 	e, _, p := projectEnvFixture(t)
 	rec := doJSON(t, e, http.MethodPut, "/api/v1/projects/"+p.ID, jsonBody(t, map[string]any{
-		"name":        "p",
-		"template_id": p.TemplateID,
-		"env":         []store.EnvVar{{Key: "EMPTY", Value: ""}, {Key: "SET", Value: "v"}},
+		"name":       "p",
+		"sandbox_id": p.SandboxID,
+		"env":        []store.EnvVar{{Key: "EMPTY", Value: ""}, {Key: "SET", Value: "v"}},
 	}))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("update: %d %s", rec.Code, rec.Body)
@@ -143,9 +143,9 @@ func TestProjectEnvEmptyValueNotMasked(t *testing.T) {
 func TestProjectEnvMaskForUnknownNameRefused(t *testing.T) {
 	e, _, p := projectEnvFixture(t)
 	rec := doJSON(t, e, http.MethodPut, "/api/v1/projects/"+p.ID, jsonBody(t, map[string]any{
-		"name":        "p",
-		"template_id": p.TemplateID,
-		"env":         []store.EnvVar{{Key: "BRAND_NEW", Value: SecretMask}},
+		"name":       "p",
+		"sandbox_id": p.SandboxID,
+		"env":        []store.EnvVar{{Key: "BRAND_NEW", Value: SecretMask}},
 	}))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("code = %d, want 400 (%s)", rec.Code, rec.Body)
@@ -157,7 +157,7 @@ func TestProjectEnvMaskForUnknownNameRefused(t *testing.T) {
 // there would make every second save conflict.
 func TestProjectEnvStaleRevisionConflicts(t *testing.T) {
 	e, _, p := projectEnvFixture(t)
-	body := jsonBody(t, map[string]any{"name": "p", "template_id": p.TemplateID, "env": []store.EnvVar{{Key: "A", Value: "1"}}, "revision": 1})
+	body := jsonBody(t, map[string]any{"name": "p", "sandbox_id": p.SandboxID, "env": []store.EnvVar{{Key: "A", Value: "1"}}, "revision": 1})
 	rec := doJSON(t, e, http.MethodPut, "/api/v1/projects/"+p.ID, body)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("first: %d %s", rec.Code, rec.Body)
@@ -173,7 +173,7 @@ func TestProjectEnvStaleRevisionConflicts(t *testing.T) {
 		t.Fatalf("stale revision: %d, want 409 (%s)", rec.Code, rec.Body)
 	}
 	// The revision the response handed back is the one that works.
-	next := jsonBody(t, map[string]any{"name": "p2", "template_id": p.TemplateID, "env": []store.EnvVar{{Key: "A", Value: "1"}}, "revision": got.Revision})
+	next := jsonBody(t, map[string]any{"name": "p2", "sandbox_id": p.SandboxID, "env": []store.EnvVar{{Key: "A", Value: "1"}}, "revision": got.Revision})
 	if rec := doJSON(t, e, http.MethodPut, "/api/v1/projects/"+p.ID, next); rec.Code != http.StatusOK {
 		t.Fatalf("update at the returned revision: %d, want 200 (%s)", rec.Code, rec.Body)
 	}
@@ -186,9 +186,9 @@ func TestProjectEnvForeignReadsAsAbsent(t *testing.T) {
 	db := testdb.New(t)
 	projects := store.NewProjectStore(db)
 	mgr := sandboxes.NewManager()
-	targets, templates := mkSandboxRows(t, db)
-	h := NewProjectHandler(projects, store.NewSandboxTargetStore(db), store.NewSandboxTemplateStore(db), mgr, NewTerminalHandler(store.NewSandboxTargetStore(db), store.NewSandboxTemplateStore(db), projects, mgr, settings.NewReader(nil)), settings.NewReader(nil))
-	foreign := &store.Project{ID: store.NewID(), OwnerID: store.NewID(), TargetID: targets, TemplateID: templates, Name: "theirs"}
+	sandboxID := mkSandboxRow(t, db)
+	h := NewProjectHandler(projects, store.NewSandboxStore(db), mgr, NewTerminalHandler(store.NewSandboxStore(db), projects, mgr, settings.NewReader(nil)), settings.NewReader(nil))
+	foreign := &store.Project{ID: store.NewID(), OwnerID: store.NewID(), SandboxID: sandboxID, Name: "theirs"}
 	if err := projects.Create(context.Background(), foreign); err != nil {
 		t.Fatal(err)
 	}

@@ -31,13 +31,13 @@ type Backend interface {
 	// someone broke. A backend where the compute IS the storage cannot do
 	// that and refuses, rather than quietly destroying a working tree.
 	Rebuild(ctx context.Context, spec Spec) error
-	// Check reports whether the target is reachable and the template runnable
-	// on it, without touching any project: the health check behind a Test
-	// button. It cleans up whatever it provisioned.
-	Check(ctx context.Context, target *store.SandboxTarget, template *store.SandboxTemplate) error
+	// Check reports whether the sandbox is reachable and runnable, without
+	// touching any project: the health check behind a Test button. It cleans
+	// up whatever it provisioned.
+	Check(ctx context.Context, sb *store.Sandbox) error
 }
 
-// backends maps a target type to its implementation. A map rather than a
+// backends maps a sandbox type to its implementation. A map rather than a
 // switch so a build tag or a submodule can register one without editing the
 // manager.
 var backends = map[string]Backend{
@@ -45,17 +45,17 @@ var backends = map[string]Backend{
 	"e2b":    e2bBackend{},
 }
 
-// backendFor resolves spec's target type, naming the type when it is unknown —
-// a stored row with a type this build does not carry must fail loudly.
+// backendFor resolves spec's sandbox type, naming the type when it is unknown
+// — a stored row with a type this build does not carry must fail loudly.
 func backendFor(spec Spec) (Backend, error) {
-	return BackendFor(spec.Target.Type)
+	return BackendFor(spec.Sandbox.Type)
 }
 
-// BackendFor resolves one target type.
+// BackendFor resolves one sandbox type.
 func BackendFor(typ string) (Backend, error) {
 	b, ok := backends[typ]
 	if !ok {
-		return nil, fmt.Errorf("unknown sandbox target type: %s", typ)
+		return nil, fmt.Errorf("unknown sandbox type: %s", typ)
 	}
 	return b, nil
 }

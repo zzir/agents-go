@@ -29,7 +29,7 @@ const (
 	labelProviderChatGPTToken = "providers.chatgpt_token"
 	labelMcpOAuthToken        = "mcp_servers.oauth_token"
 	labelMcpConfig            = "mcp_servers.config"
-	labelTargetConfig         = "sandbox_targets.config"
+	labelSandboxConfig        = "sandboxes.config"
 	labelProjectEnv           = "projects.env"
 	labelTriggerSecret        = "triggers.secret"
 	labelAgentFallbackModels  = "agent_configs.fallback_models"
@@ -69,18 +69,18 @@ func openMcpServer(m *McpServerConfig) (err error) {
 	return err
 }
 
-// targetSecretKeys are the credential fields inside a target's config, across
-// every type: one list, so a new backend's key cannot be forgotten by a
+// sandboxSecretKeys are the credential fields inside a sandbox's config,
+// across every type: one list, so a new backend's key cannot be forgotten by a
 // per-type branch.
-var targetSecretKeys = []string{"ssh_password", "api_key"}
+var sandboxSecretKeys = []string{"ssh_password", "api_key"}
 
-func sealTarget(t *SandboxTarget) (err error) {
-	t.Config, err = sealJSONKeys(labelTargetConfig, t.Config, targetSecretKeys...)
+func sealSandbox(sb *Sandbox) (err error) {
+	sb.Config, err = sealJSONKeys(labelSandboxConfig, sb.Config, sandboxSecretKeys...)
 	return err
 }
 
-func openTarget(t *SandboxTarget) (err error) {
-	t.Config, err = openJSONKeys(labelTargetConfig, t.Config, targetSecretKeys...)
+func openSandbox(sb *Sandbox) (err error) {
+	sb.Config, err = openJSONKeys(labelSandboxConfig, sb.Config, sandboxSecretKeys...)
 	return err
 }
 

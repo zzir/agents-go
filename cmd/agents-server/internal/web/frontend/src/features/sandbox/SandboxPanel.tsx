@@ -7,15 +7,20 @@ import { useReadOnly } from '@/lib/access';
 import { ResourceRow } from '@/components/ResourceRow';
 import { api } from '@/lib/api';
 import { BADGE } from '@/lib/badges';
-import { useApi, useCrud } from '@/lib/hooks';
+import { useCrud } from '@/lib/hooks';
 import { fc } from '@/lib/form';
 import { toast } from '@/lib/toast';
 
-// A sandbox is two rows: a TARGET says where it runs (and how to reach it),
-// a TEMPLATE says what runs. A project pairs them — its target is fixed at
-// creation, its template is editable. Two types: "docker" (a daemon on this
-// machine or reachable over SSH) and "e2b" (any service speaking the E2B API
-// — E2B's own, a self-hosted one, or a compatible one).
+// A sandbox is one row: WHERE it runs (the daemon or the service, and how to
+// reach it) and WHAT runs on it (the image and the limits). A project picks
+// one. Two types: "docker" (a daemon on this machine or reachable over SSH)
+// and "e2b" (any service speaking the E2B API — E2B's own, a self-hosted one,
+// or a compatible one).
+//
+// The fields split by MUTABILITY, not by section: the type and the destination
+// are a project's identity and freeze while projects live on the sandbox;
+// everything else is editable and reaches bound sessions at their next run
+// (decisions §5.36).
 
 type SandboxType = 'docker' | 'e2b';
 
@@ -41,64 +46,108 @@ interface PackedForm {
   revision?: number;
 }
 
-/* ---------- targets ---------- */
-
-interface TargetShape {
+interface DockerShape {
   host?: string;
   ssh_key_file?: string;
   ssh_password?: string;
   ssh_use_agent?: boolean;
   ssh_known_hosts?: string;
   ssh_insecure_host_key?: boolean;
+  image?: string;
+  runtime?: string;
+  user?: string;
+  network?: string;
+  memory_mb?: number;
+  cpus?: number;
+  max_read_file_bytes?: number;
 }
 
-interface E2BTargetShape {
+interface E2BShape {
   api_url?: string;
   domain?: string;
   api_key?: string;
   data_plane_auth?: string;
+  template_id?: string;
+  timeout_seconds?: number;
+  auto_pause?: boolean;
+  allow_internet?: boolean;
+  max_read_file_bytes?: number;
 }
 
-interface TargetForm {
+interface FormState {
   name: string;
   type: SandboxType;
+  // docker: where
   host: string;
   ssh_key_file: string;
   ssh_password: string;
   ssh_use_agent: boolean;
   ssh_known_hosts: string;
   ssh_insecure_host_key: boolean;
+  // docker: what
+  image: string;
+  runtime: string;
+  user: string;
+  network: string;
+  // e2b: where
   api_url: string;
   domain: string;
   api_key: string;
   data_plane_auth: string;
+  // e2b: what
+  template_id: string;
+  timeout_seconds: string;
+  auto_pause: boolean;
+  allow_internet: boolean;
+  // numbers kept as strings so the fields can be empty (= server default)
+  memory_mb: string;
+  cpus: string;
+  max_read_file_bytes: string;
 }
 
-function flattenTarget(s: Partial<SandboxRow>): TargetForm {
-  const c = (s.config || {}) as TargetShape & E2BTargetShape;
+function flatten(s: Partial<SandboxRow>): FormState {
+  const c = (s.config || {}) as DockerShape & E2BShape;
+  const type = (s.type as SandboxType) || 'docker';
   return {
     name: s.name || '',
-    type: (s.type as SandboxType) || 'docker',
+    type,
     host: c.host || '',
     ssh_key_file: c.ssh_key_file || '', ssh_password: c.ssh_password || '',
     ssh_use_agent: !!c.ssh_use_agent, ssh_known_hosts: c.ssh_known_hosts || '',
     ssh_insecure_host_key: !!c.ssh_insecure_host_key,
+    image: c.image || (type === 'docker' ? 'ghcr.io/zzir/sandbox:latest' : ''),
+    runtime: c.runtime || '', user: c.user || '', network: c.network || '',
     api_url: c.api_url || '', domain: c.domain || '', api_key: c.api_key || '',
     data_plane_auth: c.data_plane_auth || '',
+    template_id: c.template_id || '',
+    timeout_seconds: c.timeout_seconds ? String(c.timeout_seconds) : '',
+    auto_pause: c.auto_pause ?? true,
+    allow_internet: !!c.allow_internet,
+    memory_mb: c.memory_mb ? String(c.memory_mb) : '',
+    cpus: c.cpus ? String(c.cpus) : '',
+    max_read_file_bytes: c.max_read_file_bytes ? String(c.max_read_file_bytes) : '',
   };
 }
 
-function packTarget(form: TargetForm): PackedForm {
+function pack(form: FormState): PackedForm {
+  const maxRead = parseInt(form.max_read_file_bytes, 10);
   if (form.type === 'e2b') {
-    return {
-      name: form.name, type: 'e2b',
-      config: {
-        api_url: form.api_url, domain: form.domain,
-        api_key: form.api_key, data_plane_auth: form.data_plane_auth,
-      },
+    const config: Record<string, unknown> = {
+      api_url: form.api_url, domain: form.domain,
+      api_key: form.api_key, data_plane_auth: form.data_plane_auth,
+      template_id: form.template_id,
+      auto_pause: form.auto_pause,
+      allow_internet: form.allow_internet,
     };
+    const timeout = parseInt(form.timeout_seconds, 10);
+    if (Number.isFinite(timeout) && timeout > 0) config.timeout_seconds = timeout;
+    if (Number.isFinite(maxRead) && maxRead > 0) config.max_read_file_bytes = maxRead;
+    return { name: form.name, type: 'e2b', config };
   }
-  const config: Record<string, unknown> = { host: form.host };
+  const config: Record<string, unknown> = {
+    host: form.host,
+    image: form.image, runtime: form.runtime, user: form.user, network: form.network,
+  };
   if (form.host.startsWith('ssh://')) {
     config.ssh_use_agent = form.ssh_use_agent;
     config.ssh_key_file = form.ssh_key_file;
@@ -106,50 +155,39 @@ function packTarget(form: TargetForm): PackedForm {
     config.ssh_known_hosts = form.ssh_known_hosts;
     config.ssh_insecure_host_key = form.ssh_insecure_host_key;
   }
+  const memory = parseInt(form.memory_mb, 10);
+  if (Number.isFinite(memory) && memory > 0) config.memory_mb = memory;
+  const cpus = parseFloat(form.cpus);
+  if (Number.isFinite(cpus) && cpus > 0) config.cpus = cpus;
+  if (Number.isFinite(maxRead) && maxRead > 0) config.max_read_file_bytes = maxRead;
   return { name: form.name, type: 'docker', config };
 }
 
-function TargetForm({ initial, onSave, onCancel, onDelete, saving }: {
+function SandboxForm({ initial, seed, onSave, onCancel, onDelete, saving }: {
+  // initial edits that row; seed prefills a NEW one from a copy.
   initial?: SandboxRow;
+  seed?: SandboxRow;
   onSave: (form: PackedForm) => void;
   onCancel?: () => void;
   onDelete?: () => void;
   saving?: boolean;
 }) {
-  const [form, setForm] = useState<TargetForm>(flattenTarget(initial ?? { name: '' }));
-  const set = (k: keyof TargetForm, v: unknown) => setForm(prev => ({ ...prev, [k]: v }));
+  const [form, setForm] = useState<FormState>(flatten(initial ?? seed ?? { name: '' }));
+  const set = (k: keyof FormState, v: unknown) => setForm(prev => ({ ...prev, [k]: v }));
   const remote = form.type === 'docker' && form.host.startsWith('ssh://');
 
   return (
     <Stack gap="normal">
-      {fc('Name', <TextInput block value={form.name} onChange={e => set('name', e.target.value)} placeholder="e.g. laptop" />)}
+      {fc('Name', <TextInput block value={form.name} onChange={e => set('name', e.target.value)} placeholder="e.g. laptop · python-3.12" />)}
       {fc('Type', (
-        // Frozen on an existing target: the type is its identity, and the
+        // Frozen on an existing sandbox: the type is its identity, and the
         // server refuses the change while projects live on it.
         <Select block value={form.type} disabled={!!initial} onChange={e => set('type', e.target.value as SandboxType)}>
           <Select.Option value="docker">Docker daemon</Select.Option>
           <Select.Option value="e2b">E2B-compatible service</Select.Option>
         </Select>
-      ), 'Where sandboxes run. Frozen once the target exists.')}
-      {form.type === 'e2b' && fc('API URL',
-        <TextInput block value={form.api_url} onChange={e => set('api_url', e.target.value)} placeholder="https://api.e2b.app" />,
-        'The control plane. Empty uses E2B\'s own; a compatible service (Alibaba Cloud Function Compute, a self-hosted E2B) has its own.',
-      )}
-      {form.type === 'e2b' && fc('Sandbox domain',
-        <TextInput block value={form.domain} onChange={e => set('domain', e.target.value)} placeholder="e2b.app" />,
-        'The suffix a sandbox\'s public hosts are built from: <port>-<sandbox id>.<domain>.',
-      )}
-      {form.type === 'e2b' && fc('API key',
-        <SecretInput block value={form.api_key} onChange={e => set('api_key', e.target.value)} placeholder="e2b_…" />,
-      )}
-      {form.type === 'e2b' && fc('Daemon credential', (
-        <Select block value={form.data_plane_auth} onChange={e => set('data_plane_auth', e.target.value)}>
-          <Select.Option value="">Automatic</Select.Option>
-          <Select.Option value="access_token">Per-sandbox access token</Select.Option>
-          <Select.Option value="api_key">API key</Select.Option>
-          <Select.Option value="none">None</Select.Option>
-        </Select>
-      ), 'What the in-sandbox daemon is authenticated with. Automatic uses the token the service mints, and the API key when it mints none — which is what a compatible service without token support needs.')}
+      ), 'Frozen once projects live on it.')}
+
       {form.type === 'docker' && fc('Daemon',
         <TextInput block value={form.host} onChange={e => set('host', e.target.value)} placeholder="ssh://user@host — empty for the local daemon" />,
         'Where the containers run: empty = this machine\'s Docker daemon; ssh://user@host reaches a remote daemon over SSH; tcp://host:port a TCP-exposed one. Frozen once projects live on it.',
@@ -177,186 +215,51 @@ function TargetForm({ initial, onSave, onCancel, onDelete, saving }: {
           <FormControl.Label>Skip host key verification (insecure -- dev/test only)</FormControl.Label>
         </FormControl>
       )}
-      <FormActions saving={saving} onSave={() => onSave({ ...packTarget(form), revision: initial?.revision })} onCancel={onCancel} onDelete={onDelete} />
-    </Stack>
-  );
-}
 
-function targetSummary(s: SandboxRow): string {
-  if (s.type === 'e2b') {
-    const c = (s.config || {}) as E2BTargetShape;
-    return [c.api_url || 'api.e2b.app', c.domain || 'e2b.app'].join(' · ');
-  }
-  const c = (s.config || {}) as TargetShape;
-  const parts: string[] = [c.host ? c.host.replace(/^ssh:\/\//, '') : 'local daemon'];
-  if (c.ssh_insecure_host_key) parts.push('insecure host key');
-  return parts.join(' · ');
-}
-
-export function SandboxTargetsPanel() {
-  const readOnly = useReadOnly();
-  const { items, adding, editing, startAdd, startEdit, cancel, save, saving, remove } =
-    useCrud<SandboxRow, PackedForm>(api.sandboxTargets);
-  // The health check needs an image, which a target does not carry: it
-  // borrows the first template.
-  const { data: templates } = useApi<SandboxRow[]>(() => api.sandboxTemplates.list() as unknown as Promise<SandboxRow[]>);
-  const [testingId, setTestingId] = useState<string | null>(null);
-
-  const handleTest = async (s: SandboxRow) => {
-    // A target is checked with a template of its OWN type: the check runs the
-    // template on the target, and a docker image says nothing about a remote
-    // service.
-    const tpl = (templates || []).find(t => (t.type || 'docker') === (s.type || 'docker'));
-    if (!tpl) {
-      toast.error((s.type === 'e2b' ? 'Add an E2B template first' : 'Add a Docker template first') + ' — a health check needs one to run');
-      return;
-    }
-    setTestingId(s.id);
-    try {
-      const res = await api.sandboxTargets.test(s.id, tpl.id) as TestResult;
-      if (res.ok) {
-        toast.success('Target "' + s.name + '" is working');
-      } else {
-        toast.error('Target "' + s.name + '" failed: ' + (res.detail || 'unknown error'));
-      }
-    } catch (e) {
-      toast.error((e as Error).message || 'Test failed');
-    } finally {
-      setTestingId(null);
-    }
-  };
-
-  const form = adding ? <TargetForm saving={saving} onSave={save} onCancel={cancel} />
-    : editing ? <TargetForm saving={saving} initial={editing} onSave={save} onCancel={cancel} onDelete={async () => { if (await remove(editing.id, editing.name)) cancel(); }} />
-    : null;
-
-  return (
-    <CrudPanel title="Sandbox targets" onAdd={startAdd} onCancel={cancel} form={form} isEmpty={items.length === 0} empty="No sandbox targets configured.">
-      {items.map(s => (
-        <ResourceRow key={s.id}
-          title={s.name}
-          badges={<Label variant={BADGE.type}>{targetBadge(s)}</Label>}
-          sub={targetSummary(s)}
-          actions={<>
-            {!readOnly && (
-              <Button onClick={() => handleTest(s)} size="small" disabled={testingId === s.id} style={{ color: 'var(--fgColor-success)' }}>
-                {testingId === s.id ? 'Testing...' : 'Test'}
-              </Button>
-            )}
-            <RowActionsMenu name={s.name} onEdit={() => startEdit(s)} />
-          </>}
-        />
-      ))}
-    </CrudPanel>
-  );
-}
-
-// targetBadge names the kind at a glance: which service, or which daemon.
-function targetBadge(s: SandboxRow): string {
-  if (s.type === 'e2b') return 'E2B';
-  return (s.config as TargetShape)?.host ? 'Remote' : 'Local';
-}
-
-/* ---------- templates ---------- */
-
-interface TemplateShape {
-  image?: string;
-  runtime?: string;
-  user?: string;
-  network?: string;
-  memory_mb?: number;
-  cpus?: number;
-  max_read_file_bytes?: number;
-}
-
-interface E2BTemplateShape {
-  template_id?: string;
-  timeout_seconds?: number;
-  auto_pause?: boolean;
-  allow_internet?: boolean;
-  max_read_file_bytes?: number;
-}
-
-interface TemplateFormState {
-  name: string;
-  type: SandboxType;
-  image: string;
-  runtime: string;
-  user: string;
-  network: string;
-  template_id: string;
-  timeout_seconds: string;
-  auto_pause: boolean;
-  allow_internet: boolean;
-  // numbers kept as strings so the fields can be empty (= server default)
-  memory_mb: string;
-  cpus: string;
-  max_read_file_bytes: string;
-}
-
-function flattenTemplate(s: Partial<SandboxRow>): TemplateFormState {
-  const c = (s.config || {}) as TemplateShape & E2BTemplateShape;
-  const type = (s.type as SandboxType) || 'docker';
-  return {
-    name: s.name || '',
-    type,
-    image: c.image || (type === 'docker' ? 'ghcr.io/zzir/sandbox:latest' : ''),
-    runtime: c.runtime || '', user: c.user || '', network: c.network || '',
-    template_id: c.template_id || '',
-    timeout_seconds: c.timeout_seconds ? String(c.timeout_seconds) : '',
-    auto_pause: c.auto_pause ?? true,
-    allow_internet: !!c.allow_internet,
-    memory_mb: c.memory_mb ? String(c.memory_mb) : '',
-    cpus: c.cpus ? String(c.cpus) : '',
-    max_read_file_bytes: c.max_read_file_bytes ? String(c.max_read_file_bytes) : '',
-  };
-}
-
-function packTemplate(form: TemplateFormState): PackedForm {
-  const maxRead = parseInt(form.max_read_file_bytes, 10);
-  if (form.type === 'e2b') {
-    const config: Record<string, unknown> = {
-      template_id: form.template_id,
-      auto_pause: form.auto_pause,
-      allow_internet: form.allow_internet,
-    };
-    const timeout = parseInt(form.timeout_seconds, 10);
-    if (Number.isFinite(timeout) && timeout > 0) config.timeout_seconds = timeout;
-    if (Number.isFinite(maxRead) && maxRead > 0) config.max_read_file_bytes = maxRead;
-    return { name: form.name, type: 'e2b', config };
-  }
-  const config: Record<string, unknown> = {
-    image: form.image, runtime: form.runtime, user: form.user, network: form.network,
-  };
-  const memory = parseInt(form.memory_mb, 10);
-  if (Number.isFinite(memory) && memory > 0) config.memory_mb = memory;
-  const cpus = parseFloat(form.cpus);
-  if (Number.isFinite(cpus) && cpus > 0) config.cpus = cpus;
-  if (Number.isFinite(maxRead) && maxRead > 0) config.max_read_file_bytes = maxRead;
-  return { name: form.name, type: 'docker', config };
-}
-
-function TemplateForm({ initial, onSave, onCancel, onDelete, saving }: {
-  initial?: SandboxRow;
-  onSave: (form: PackedForm) => void;
-  onCancel?: () => void;
-  onDelete?: () => void;
-  saving?: boolean;
-}) {
-  const [form, setForm] = useState<TemplateFormState>(flattenTemplate(initial ?? { name: '' }));
-  const set = (k: keyof TemplateFormState, v: unknown) => setForm(prev => ({ ...prev, [k]: v }));
-
-  return (
-    <Stack gap="normal">
-      {fc('Name', <TextInput block value={form.name} onChange={e => set('name', e.target.value)} placeholder="e.g. python-3.12" />)}
-      {fc('Type', (
-        // Immutable on an existing template: a docker template cannot become
-        // one its machine could not run, and a second template costs nothing.
-        <Select block value={form.type} disabled={!!initial} onChange={e => set('type', e.target.value as SandboxType)}>
-          <Select.Option value="docker">Docker image</Select.Option>
-          <Select.Option value="e2b">E2B template</Select.Option>
+      {form.type === 'e2b' && fc('API URL',
+        <TextInput block value={form.api_url} onChange={e => set('api_url', e.target.value)} placeholder="https://api.e2b.app" />,
+        'The control plane. Empty uses E2B\'s own; a compatible service (Alibaba Cloud Function Compute, a self-hosted E2B) has its own. Frozen once projects live on it.',
+      )}
+      {form.type === 'e2b' && fc('Sandbox domain',
+        <TextInput block value={form.domain} onChange={e => set('domain', e.target.value)} placeholder="e2b.app" />,
+        'The suffix a sandbox\'s public hosts are built from: <port>-<sandbox id>.<domain>.',
+      )}
+      {form.type === 'e2b' && fc('API key',
+        <SecretInput block value={form.api_key} onChange={e => set('api_key', e.target.value)} placeholder="e2b_…" />,
+      )}
+      {form.type === 'e2b' && fc('Daemon credential', (
+        <Select block value={form.data_plane_auth} onChange={e => set('data_plane_auth', e.target.value)}>
+          <Select.Option value="">Automatic</Select.Option>
+          <Select.Option value="access_token">Per-sandbox access token</Select.Option>
+          <Select.Option value="api_key">API key</Select.Option>
+          <Select.Option value="none">None</Select.Option>
         </Select>
-      ), 'Must match the target it is used on. Immutable.')}
+      ), 'What the in-sandbox daemon is authenticated with. Automatic uses the token the service mints, and the API key when it mints none — which is what a compatible service without token support needs.')}
+
+      {form.type === 'docker' && fc('Image',
+        <TextInput block value={form.image} onChange={e => set('image', e.target.value)} placeholder="ghcr.io/zzir/sandbox:latest" />,
+      )}
+      {form.type === 'docker' && fc('Runtime',
+        <TextInput block value={form.runtime} onChange={e => set('runtime', e.target.value)} placeholder="runc" />,
+        'OCI runtime. Use "runsc" for gVisor isolation. Leave empty for the daemon default (runc). Whether it exists is up to the machine.',
+      )}
+      {form.type === 'docker' && fc('User',
+        <TextInput block value={form.user} onChange={e => set('user', e.target.value)} placeholder="root" />,
+        'user[:group] the container runs as. Empty runs as root, so the agent can install packages into its own container; the working tree lives in a volume nobody else mounts.',
+      )}
+      {form.type === 'docker' && fc('Network',
+        <TextInput block value={form.network} onChange={e => set('network', e.target.value)} placeholder="(none)" />,
+        'The Docker network the container joins. Empty = no network at all. "bridge" gives ordinary networking; a user-defined network name puts it where the server can reach it.',
+      )}
+      {form.type === 'docker' && fc('Memory limit (MB)',
+        <TextInput block type="number" value={form.memory_mb} onChange={e => set('memory_mb', e.target.value)} placeholder="unlimited" />,
+        'Hard memory cap per container. Empty = unlimited.',
+      )}
+      {form.type === 'docker' && fc('CPU limit',
+        <TextInput block type="number" value={form.cpus} onChange={e => set('cpus', e.target.value)} placeholder="daemon default" />,
+        'CPU cores per container (fractional allowed, e.g. 0.5). Empty = the daemon default.',
+      )}
+
       {form.type === 'e2b' && fc('Template id',
         <TextInput block value={form.template_id} onChange={e => set('template_id', e.target.value)} placeholder="base" />,
         'A template that already exists on the service — the workbench builds none. Its console or CLI is where they are made.',
@@ -382,83 +285,101 @@ function TemplateForm({ initial, onSave, onCancel, onDelete, saving }: {
           <FormControl.Label>Allow outbound network access</FormControl.Label>
         </FormControl>
       )}
-      {form.type === 'docker' && fc('Image',
-        <TextInput block value={form.image} onChange={e => set('image', e.target.value)} placeholder="ghcr.io/zzir/sandbox:latest" />,
-      )}
-      {form.type === 'docker' && fc('Runtime',
-        <TextInput block value={form.runtime} onChange={e => set('runtime', e.target.value)} placeholder="runc" />,
-        'OCI runtime. Use "runsc" for gVisor isolation. Leave empty for the daemon default (runc). Whether it exists is up to the target machine.',
-      )}
-      {form.type === 'docker' && fc('User',
-        <TextInput block value={form.user} onChange={e => set('user', e.target.value)} placeholder="root" />,
-        'user[:group] the container runs as. Empty runs as root, so the agent can install packages into its own container; the working tree lives in a volume nobody else mounts.',
-      )}
-      {form.type === 'docker' && fc('Network',
-        <TextInput block value={form.network} onChange={e => set('network', e.target.value)} placeholder="(none)" />,
-        'The Docker network the container joins. Empty = no network at all. "bridge" gives ordinary networking; a user-defined network name puts it where the server can reach it.',
-      )}
-      {form.type === 'docker' && fc('Memory limit (MB)',
-        <TextInput block type="number" value={form.memory_mb} onChange={e => set('memory_mb', e.target.value)} placeholder="unlimited" />,
-        'Hard memory cap per container. Empty = unlimited.',
-      )}
-      {form.type === 'docker' && fc('CPU limit',
-        <TextInput block type="number" value={form.cpus} onChange={e => set('cpus', e.target.value)} placeholder="daemon default" />,
-        'CPU cores per container (fractional allowed, e.g. 0.5). Empty = the daemon default.',
-      )}
       {fc('Max read_file bytes',
         <TextInput block type="number" value={form.max_read_file_bytes} onChange={e => set('max_read_file_bytes', e.target.value)} placeholder="8388608" />,
         'Cap on bytes a single read_file returns; larger files fail instead of loading into memory. Empty = 8 MiB default.',
       )}
-      <FormActions saving={saving} onSave={() => onSave({ ...packTemplate(form), revision: initial?.revision })} onCancel={onCancel} onDelete={onDelete} />
+      <FormActions saving={saving} onSave={() => onSave({ ...pack(form), revision: initial?.revision })} onCancel={onCancel} onDelete={onDelete} />
     </Stack>
   );
 }
 
-function templateSummary(s: SandboxRow): string {
+// summary is where it runs, then what runs on it.
+function summary(s: SandboxRow): string {
   if (s.type === 'e2b') {
-    const c = (s.config || {}) as E2BTemplateShape;
-    const parts = [c.template_id || '(no template id)'];
+    const c = (s.config || {}) as E2BShape;
+    const parts = [c.api_url || 'api.e2b.app', c.template_id || '(no template id)'];
     parts.push(c.auto_pause === false ? 'killed on expiry' : 'paused on expiry');
     if (c.allow_internet) parts.push('internet');
     return parts.join(' · ');
   }
-  const c = (s.config || {}) as TemplateShape;
-  const parts: string[] = [];
+  const c = (s.config || {}) as DockerShape;
+  const parts: string[] = [c.host ? c.host.replace(/^ssh:\/\//, '') : 'local daemon'];
   if (c.image) parts.push(c.image);
   if (c.runtime) parts.push(c.runtime);
   parts.push(c.network ? `network ${c.network}` : 'no network');
+  if (c.ssh_insecure_host_key) parts.push('insecure host key');
   return parts.join(' · ');
 }
 
-export function SandboxTemplatesPanel() {
-  const { items, adding, editing, startAdd, startEdit, cancel, save, saving, remove } =
-    useCrud<SandboxRow, PackedForm>(api.sandboxTemplates);
+// badge names the kind at a glance: which service, or which daemon.
+function badge(s: SandboxRow): string {
+  if (s.type === 'e2b') return 'E2B';
+  return (s.config as DockerShape)?.host ? 'Remote' : 'Local';
+}
 
-  const form = adding ? <TemplateForm saving={saving} onSave={save} onCancel={cancel} />
-    : editing ? <TemplateForm saving={saving} initial={editing} onSave={save} onCancel={cancel} onDelete={async () => { if (await remove(editing.id, editing.name)) cancel(); }} />
+// copyOf is Duplicate's seed: everything but the identity and the credential.
+// A credential comes back masked, and a mask resolves to empty on a create —
+// carrying it would look like it copied and store nothing.
+function copyOf(s: SandboxRow): SandboxRow {
+  const config = { ...(s.config || {}) };
+  delete config.ssh_password;
+  delete config.api_key;
+  return { id: '', name: s.name + ' copy', type: s.type, config };
+}
+
+export function SandboxPanel() {
+  const readOnly = useReadOnly();
+  const { items, adding, editing, startAdd, startEdit, cancel, save, saving, remove } =
+    useCrud<SandboxRow, PackedForm>(api.sandboxes);
+  const [seed, setSeed] = useState<SandboxRow | null>(null);
+  const [testingId, setTestingId] = useState<string | null>(null);
+
+  const handleTest = async (s: SandboxRow) => {
+    setTestingId(s.id);
+    try {
+      const res = await api.sandboxes.test(s.id) as TestResult;
+      if (res.ok) {
+        toast.success('Sandbox "' + s.name + '" is working');
+      } else {
+        toast.error('Sandbox "' + s.name + '" failed: ' + (res.detail || 'unknown error'));
+      }
+    } catch (e) {
+      toast.error((e as Error).message || 'Test failed');
+    } finally {
+      setTestingId(null);
+    }
+  };
+
+  const close = () => { setSeed(null); cancel(); };
+  const form = adding ? <SandboxForm saving={saving} seed={seed ?? undefined} onSave={save} onCancel={close} />
+    : editing ? <SandboxForm saving={saving} initial={editing} onSave={save} onCancel={close} onDelete={async () => { if (await remove(editing.id, editing.name)) close(); }} />
     : null;
 
   return (
-    <CrudPanel title="Sandbox templates" onAdd={startAdd} onCancel={cancel} form={form} isEmpty={items.length === 0} empty="No sandbox templates configured.">
+    <CrudPanel title="Sandboxes" onAdd={() => { setSeed(null); startAdd(); }} onCancel={close} form={form} isEmpty={items.length === 0} empty="No sandboxes configured.">
       {items.map(s => (
         <ResourceRow key={s.id}
           title={s.name}
-          badges={<Label variant={BADGE.type}>{s.type === 'e2b' ? 'E2B' : 'Docker'}</Label>}
-          sub={templateSummary(s)}
-          actions={<RowActionsMenu name={s.name} onEdit={() => startEdit(s)} />}
+          badges={<Label variant={BADGE.type}>{badge(s)}</Label>}
+          sub={summary(s)}
+          actions={<>
+            {!readOnly && (
+              <>
+                <Button onClick={() => handleTest(s)} size="small" disabled={testingId === s.id} style={{ color: 'var(--fgColor-success)' }}>
+                  {testingId === s.id ? 'Testing...' : 'Test'}
+                </Button>
+                {/* Another image on the same machine, without retyping how to
+                    reach it — a project moves freely between two sandboxes at
+                    one address. */}
+                <Button onClick={() => { setSeed(copyOf(s)); startAdd(); }} size="small">Duplicate</Button>
+              </>
+            )}
+            <RowActionsMenu name={s.name} onEdit={() => { setSeed(null); startEdit(s); }} />
+          </>}
         />
       ))}
     </CrudPanel>
-  );
-}
-
-// The settings entry shows both: the machines, then what runs on them.
-export function SandboxPanel() {
-  return (
-    <Stack gap="normal">
-      <SandboxTargetsPanel />
-      <SandboxTemplatesPanel />
-    </Stack>
   );
 }
 

@@ -30,8 +30,7 @@ type AgentDeps struct {
 	AgentConfigs     *store.AgentConfigStore
 	Providers        *store.ProviderStore
 	McpServers       *store.McpServerStore
-	Targets          *store.SandboxTargetStore
-	Templates        *store.SandboxTemplateStore
+	Sandboxes        *store.SandboxStore
 	Skills           *store.SkillStore
 	Projects         *store.ProjectStore
 	Memories         *store.MemoryStore
@@ -744,16 +743,12 @@ func ownerIsAdmin(ctx context.Context, deps *AgentDeps, ownerID string) bool {
 	return u.Role == store.RoleAdmin
 }
 
-// ProjectSpec loads the target and template a project names — everything the
-// sandbox manager needs to build or acquire its instance.
+// ProjectSpec loads the sandbox a project names — everything the sandbox
+// manager needs to build or acquire its instance.
 func ProjectSpec(ctx context.Context, deps *AgentDeps, proj *store.Project) (sandboxes.Spec, error) {
-	target, err := deps.Targets.Get(ctx, proj.TargetID)
+	sb, err := deps.Sandboxes.Get(ctx, proj.SandboxID)
 	if err != nil {
-		return sandboxes.Spec{}, fmt.Errorf("project %q: sandbox target %s: %w", proj.Name, proj.TargetID, err)
+		return sandboxes.Spec{}, fmt.Errorf("project %q: sandbox %s: %w", proj.Name, proj.SandboxID, err)
 	}
-	tpl, err := deps.Templates.Get(ctx, proj.TemplateID)
-	if err != nil {
-		return sandboxes.Spec{}, fmt.Errorf("project %q: sandbox template %s: %w", proj.Name, proj.TemplateID, err)
-	}
-	return sandboxes.Spec{Target: target, Template: tpl, Project: proj}, nil
+	return sandboxes.Spec{Sandbox: sb, Project: proj}, nil
 }

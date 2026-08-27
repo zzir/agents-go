@@ -27,8 +27,7 @@ type Handlers struct {
 	Workflows  *WorkflowHandler
 	Triggers   *TriggerHandler
 	Guardrails *GuardrailHandler
-	Targets    *SandboxTargetHandler
-	Templates  *SandboxTemplateHandler
+	Sandboxes  *SandboxHandler
 	Projects   *ProjectHandler
 	Traces     *TraceHandler
 	Playground *PlaygroundHandler
@@ -230,23 +229,16 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		guardrails.DELETE("/:id", admin, h.Guardrails.Delete)
 	}
 	{
-		targets := api.Group("/sandbox-targets")
-		targets.GET("", h.Targets.List)
-		targets.POST("", admin, h.Targets.Create)
-		targets.GET("/:id", h.Targets.Get)
-		targets.PUT("/:id", admin, h.Targets.Update)
-		targets.DELETE("/:id", admin, h.Targets.Delete)
-		targets.POST("/:id/test", admin, h.Targets.Test)
-		targets.GET("/:id/containers", admin, h.Targets.Containers)
-		targets.POST("/:id/containers/:name/stop", admin, h.Targets.StopContainer)
-		targets.DELETE("/:id/containers/:name", admin, h.Targets.RemoveContainer)
-
-		templates := api.Group("/sandbox-templates")
-		templates.GET("", h.Templates.List)
-		templates.POST("", admin, h.Templates.Create)
-		templates.GET("/:id", h.Templates.Get)
-		templates.PUT("/:id", admin, h.Templates.Update)
-		templates.DELETE("/:id", admin, h.Templates.Delete)
+		sbs := api.Group("/sandboxes")
+		sbs.GET("", h.Sandboxes.List)
+		sbs.POST("", admin, h.Sandboxes.Create)
+		sbs.GET("/:id", h.Sandboxes.Get)
+		sbs.PUT("/:id", admin, h.Sandboxes.Update)
+		sbs.DELETE("/:id", admin, h.Sandboxes.Delete)
+		sbs.POST("/:id/test", admin, h.Sandboxes.Test)
+		sbs.GET("/:id/containers", admin, h.Sandboxes.Containers)
+		sbs.POST("/:id/containers/:name/stop", admin, h.Sandboxes.StopContainer)
+		sbs.DELETE("/:id/containers/:name", admin, h.Sandboxes.RemoveContainer)
 	}
 	api.POST("/playground/generate", h.Playground.Generate)
 }

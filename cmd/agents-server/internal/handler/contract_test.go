@@ -106,7 +106,7 @@ func TestForkCopiesSandboxBinding(t *testing.T) {
 	db := testdb.New(t)
 	sessions := store.NewSessionStore(db)
 	// BindProjectIfEmpty refuses a project with no row (EXISTS).
-	targetID, templateID := mkSandboxRows(t, db)
+	sandboxID := mkSandboxRow(t, db)
 	sh := NewSessionHandler(testSessionDeps(db, func(d *SessionDeps) { d.Sessions = sessions }))
 
 	engine := newTestEngine()
@@ -121,7 +121,7 @@ func TestForkCopiesSandboxBinding(t *testing.T) {
 		ID string `json:"id"`
 	}
 	_ = json.Unmarshal(w.Body.Bytes(), &src)
-	if err := store.NewProjectStore(db).Create(t.Context(), &store.Project{ID: "p-1", OwnerID: store.LocalUserID, TargetID: targetID, TemplateID: templateID, Name: "p-1"}); err != nil {
+	if err := store.NewProjectStore(db).Create(t.Context(), &store.Project{ID: "p-1", OwnerID: store.LocalUserID, SandboxID: sandboxID, Name: "p-1"}); err != nil {
 		t.Fatal(err)
 	}
 	if won, err := sessions.BindProjectIfEmpty(t.Context(), src.ID, "p-1"); err != nil || !won {
@@ -148,7 +148,7 @@ func TestPatchCannotMoveBinding(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
 	sessions := store.NewSessionStore(db)
-	targetID, templateID := mkSandboxRows(t, db)
+	sandboxID := mkSandboxRow(t, db)
 	sh := NewSessionHandler(testSessionDeps(db, func(d *SessionDeps) { d.Sessions = sessions }))
 
 	engine := newTestEngine()
@@ -161,7 +161,7 @@ func TestPatchCannotMoveBinding(t *testing.T) {
 	}
 	_ = json.Unmarshal(w.Body.Bytes(), &sess)
 
-	if err := store.NewProjectStore(db).Create(t.Context(), &store.Project{ID: "p-1", OwnerID: store.LocalUserID, TargetID: targetID, TemplateID: templateID, Name: "p-1"}); err != nil {
+	if err := store.NewProjectStore(db).Create(t.Context(), &store.Project{ID: "p-1", OwnerID: store.LocalUserID, SandboxID: sandboxID, Name: "p-1"}); err != nil {
 		t.Fatal(err)
 	}
 	if won, err := sessions.BindProjectIfEmpty(t.Context(), sess.ID, "p-1"); err != nil || !won {

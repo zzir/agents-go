@@ -39,7 +39,7 @@ func TestSandboxToolsSessionSchemaPerBackend(t *testing.T) {
 				return &closeCountingSandbox{}, nil
 			}
 			spec := testSpec("p")
-			spec.Target.Config = json.RawMessage(`{"host":"` + tc.host + `"}`)
+			spec.Sandbox.Config = json.RawMessage(`{"host":"` + tc.host + `","image":"i"}`)
 			tools, release, err := m.SandboxTools(spec, false)
 			if err != nil {
 				t.Fatal(err)

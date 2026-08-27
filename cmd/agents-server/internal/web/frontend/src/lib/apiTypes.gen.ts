@@ -2533,7 +2533,7 @@ export interface paths {
                 path?: never;
                 cookie?: never;
             };
-            /** @description Name, target and template */
+            /** @description Name and sandbox */
             requestBody: {
                 content: {
                     "application/json": Record<string, never> | components["schemas"]["handler.projectReq"];
@@ -2558,7 +2558,7 @@ export interface paths {
                         "application/json": components["schemas"]["handler.ErrorResponse"];
                     };
                 };
-                /** @description name already in use on this target */
+                /** @description name already in use on this sandbox */
                 409: {
                     headers: {
                         [name: string]: unknown;
@@ -3790,14 +3790,14 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/sandbox-targets": {
+    "/sandboxes": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** List sandbox targets */
+        /** List sandboxes */
         get: {
             parameters: {
                 query?: never;
@@ -3813,7 +3813,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["store.SandboxTarget"][];
+                        "application/json": components["schemas"]["store.Sandbox"][];
                     };
                 };
                 /** @description Internal Server Error */
@@ -3829,8 +3829,8 @@ export interface paths {
         };
         put?: never;
         /**
-         * Create sandbox target
-         * @description type is "docker" (config: host — "" = local daemon, tcp://, or ssh://user@host with ssh_* auth) or "e2b" (config: api_url, domain, api_key, data_plane_auth). ssh_password and api_key are write-only, ******** mask semantics.
+         * Create sandbox
+         * @description type "docker" config: host ("" = local daemon, tcp://, or ssh://user@host with ssh_* auth), image (required), runtime, user ("" = root), network (docker network name; "" = no network), memory_mb/cpus caps, max_read_file_bytes. type "e2b" config: api_url, domain, api_key, data_plane_auth, template_id (required — build it on the service first), timeout_seconds, auto_pause, allow_internet, max_read_file_bytes. ssh_password and api_key are write-only, ******** mask semantics.
          */
         post: {
             parameters: {
@@ -3839,10 +3839,10 @@ export interface paths {
                 path?: never;
                 cookie?: never;
             };
-            /** @description Sandbox target */
+            /** @description Sandbox */
             requestBody: {
                 content: {
-                    "application/json": Record<string, never> | components["schemas"]["handler.sandboxTargetReq"];
+                    "application/json": Record<string, never> | components["schemas"]["handler.sandboxReq"];
                 };
             };
             responses: {
@@ -3852,7 +3852,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["store.SandboxTarget"];
+                        "application/json": components["schemas"]["store.Sandbox"];
                     };
                 };
                 /** @description Bad Request */
@@ -3881,20 +3881,20 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/sandbox-targets/{id}": {
+    "/sandboxes/{id}": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Get sandbox target */
+        /** Get sandbox */
         get: {
             parameters: {
                 query?: never;
                 header?: never;
                 path: {
-                    /** @description Target id */
+                    /** @description Sandbox id */
                     id: string;
                 };
                 cookie?: never;
@@ -3907,7 +3907,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["store.SandboxTarget"];
+                        "application/json": components["schemas"]["store.Sandbox"];
                     };
                 };
                 /** @description Not Found */
@@ -3922,7 +3922,7 @@ export interface paths {
             };
         };
         /**
-         * Update sandbox target
+         * Update sandbox
          * @description Include the revision the edit was based on (from GET/List) to make the write conditional: 409 if the row changed meanwhile. Omitting it falls back to last-writer-wins.
          */
         put: {
@@ -3930,15 +3930,15 @@ export interface paths {
                 query?: never;
                 header?: never;
                 path: {
-                    /** @description Target id */
+                    /** @description Sandbox id */
                     id: string;
                 };
                 cookie?: never;
             };
-            /** @description Sandbox target */
+            /** @description Sandbox */
             requestBody: {
                 content: {
-                    "application/json": Record<string, never> | components["schemas"]["handler.sandboxTargetReq"];
+                    "application/json": Record<string, never> | components["schemas"]["handler.sandboxReq"];
                 };
             };
             responses: {
@@ -3948,7 +3948,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["store.SandboxTarget"];
+                        "application/json": components["schemas"]["store.Sandbox"];
                     };
                 };
                 /** @description Bad Request */
@@ -3990,13 +3990,13 @@ export interface paths {
             };
         };
         post?: never;
-        /** Delete sandbox target */
+        /** Delete sandbox */
         delete: {
             parameters: {
                 query?: never;
                 header?: never;
                 path: {
-                    /** @description Target id */
+                    /** @description Sandbox id */
                     id: string;
                 };
                 cookie?: never;
@@ -4019,7 +4019,7 @@ export interface paths {
                         "application/json": components["schemas"]["handler.ErrorResponse"];
                     };
                 };
-                /** @description projects live on this target */
+                /** @description projects live on this sandbox */
                 409: {
                     headers: {
                         [name: string]: unknown;
@@ -4044,20 +4044,20 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/sandbox-targets/{id}/containers": {
+    "/sandboxes/{id}/containers": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** List the target's managed containers */
+        /** List the sandbox's managed containers */
         get: {
             parameters: {
                 query?: never;
                 header?: never;
                 path: {
-                    /** @description Target id */
+                    /** @description Sandbox id */
                     id: string;
                 };
                 cookie?: never;
@@ -4101,7 +4101,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/sandbox-targets/{id}/containers/{name}": {
+    "/sandboxes/{id}/containers/{name}": {
         parameters: {
             query?: never;
             header?: never;
@@ -4117,7 +4117,7 @@ export interface paths {
                 query?: never;
                 header?: never;
                 path: {
-                    /** @description Target id */
+                    /** @description Sandbox id */
                     id: string;
                     /** @description Container name (agents-…) */
                     name: string;
@@ -4158,7 +4158,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/sandbox-targets/{id}/containers/{name}/stop": {
+    "/sandboxes/{id}/containers/{name}/stop": {
         parameters: {
             query?: never;
             header?: never;
@@ -4173,7 +4173,7 @@ export interface paths {
                 query?: never;
                 header?: never;
                 path: {
-                    /** @description Target id */
+                    /** @description Sandbox id */
                     id: string;
                     /** @description Container name (agents-…) */
                     name: string;
@@ -4215,7 +4215,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/sandbox-targets/{id}/test": {
+    "/sandboxes/{id}/test": {
         parameters: {
             query?: never;
             header?: never;
@@ -4225,18 +4225,15 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Test sandbox target
-         * @description Runs "echo ok" in a throw-away sandbox from the named template — a container for a docker target, a provisioned-and-destroyed sandbox for a remote service. 200 with ok=false means the service answered and the command did not. The template's type must match the target's.
+         * Test sandbox
+         * @description Runs "echo ok" in a throw-away sandbox — a container for a docker sandbox, a provisioned-and-destroyed instance for a remote service. 200 with ok=false means the service answered and the command did not.
          */
         post: {
             parameters: {
-                query: {
-                    /** @description Template to take the image from */
-                    template_id: string;
-                };
+                query?: never;
                 header?: never;
                 path: {
-                    /** @description Target id */
+                    /** @description Sandbox id */
                     id: string;
                 };
                 cookie?: never;
@@ -4252,15 +4249,6 @@ export interface paths {
                         "application/json": components["schemas"]["handler.sandboxTestResp"];
                     };
                 };
-                /** @description Bad Request */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
                 /** @description Not Found */
                 404: {
                     headers: {
@@ -4270,7 +4258,7 @@ export interface paths {
                         "application/json": components["schemas"]["handler.ErrorResponse"];
                     };
                 };
-                /** @description target unreachable */
+                /** @description sandbox unreachable */
                 502: {
                     headers: {
                         [name: string]: unknown;
@@ -4282,251 +4270,6 @@ export interface paths {
             };
         };
         delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/sandbox-templates": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List sandbox templates */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["store.SandboxTemplate"][];
-                    };
-                };
-                /** @description Internal Server Error */
-                500: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        /**
-         * Create sandbox template
-         * @description type "docker" config: image (required), runtime, user ("" = root), network (docker network name; "" = no network), memory_mb/cpus caps, max_read_file_bytes. type "e2b" config: template_id (required — build it on the service first), timeout_seconds, auto_pause, allow_internet, max_read_file_bytes.
-         */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            /** @description Sandbox template */
-            requestBody: {
-                content: {
-                    "application/json": Record<string, never> | components["schemas"]["handler.sandboxTemplateReq"];
-                };
-            };
-            responses: {
-                /** @description Created */
-                201: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["store.SandboxTemplate"];
-                    };
-                };
-                /** @description Bad Request */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-                /** @description Internal Server Error */
-                500: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/sandbox-templates/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get sandbox template */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description Template id */
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["store.SandboxTemplate"];
-                    };
-                };
-                /** @description Not Found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-            };
-        };
-        /**
-         * Update sandbox template
-         * @description Include the revision the edit was based on to make the write conditional: 409 if the row changed meanwhile. The type cannot change — create a new template instead.
-         */
-        put: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description Template id */
-                    id: string;
-                };
-                cookie?: never;
-            };
-            /** @description Sandbox template */
-            requestBody: {
-                content: {
-                    "application/json": Record<string, never> | components["schemas"]["handler.sandboxTemplateReq"];
-                };
-            };
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["store.SandboxTemplate"];
-                    };
-                };
-                /** @description Bad Request */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-                /** @description Not Found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-                /** @description the row changed concurrently — re-read and retry */
-                409: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-                /** @description Internal Server Error */
-                500: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-            };
-        };
-        post?: never;
-        /** Delete sandbox template */
-        delete: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description Template id */
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description deleted */
-                204: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Not Found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-                /** @description projects use this template */
-                409: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-            };
-        };
         options?: never;
         head?: never;
         patch?: never;
@@ -7872,19 +7615,26 @@ export interface components {
             id?: string;
             /**
              * @description Name is display only — the storage is keyed by ID, so a rename moves
-             *     nothing. Unique per (owner, target) via idx_projects_owner_target_name.
+             *     nothing. Unique per (owner, sandbox) via idx_projects_owner_sandbox_name.
              */
             name?: string;
             owner_id?: string;
             /**
              * @description Revision is the expected-revision CAS every update lands against.
              *     RuntimeGen is the workbench's ONE runtime axis: it moves when this
-             *     project's own content changes AND when the target or template it names
-             *     changes underneath it, so the instance cache and the terminal registry
+             *     project's own content changes AND when the sandbox it names changes
+             *     underneath it, so the instance cache and the terminal registry
              *     need a single fence rather than one per entity (decisions §5.33). A
              *     rename moves neither container nor terminal.
              */
             revision?: number;
+            /**
+             * @description SandboxID is what the project runs on — the machine and the image, set
+             *     at creation and never writable afterwards. The image half IS editable,
+             *     on the sandbox row: the freeze is on which row, not on its content
+             *     (decisions §5.36).
+             */
+            sandbox_id?: string;
             /**
              * @description SessionCount is how many sessions bind this project — filled by List
              *     (scanonly), so a delete knows whether it will be refused.
@@ -7892,21 +7642,11 @@ export interface components {
             session_count?: number;
             /**
              * @description StorageHint names where the files live — the named volume on the
-             *     target's daemon. Derived per response by the handler for admins only,
+             *     sandbox's daemon. Derived per response by the handler for admins only,
              *     never stored: deleting the row keeps the storage (decisions §5.28), so
              *     the UI can say where.
              */
             storage_hint?: string;
-            /**
-             * @description TargetID is the machine the tree lives on — the project's identity, set
-             *     at creation and never writable afterwards (decisions §5.33).
-             */
-            target_id?: string;
-            /**
-             * @description TemplateID is what the container is created from — content, editable
-             *     like the environment, reaching bound sessions at their next run.
-             */
-            template_id?: string;
             updated_at?: string;
         };
         "handler.projectReq": {
@@ -7916,16 +7656,14 @@ export interface components {
              */
             env?: components["schemas"]["store.EnvVar"][];
             name: string;
-            /** @description TargetID is the machine the tree lives on — frozen after creation. */
-            target_id: string;
-            /** @description TemplateID is what the container is created from — editable. */
-            template_id: string;
+            /** @description SandboxID is what the project runs on — the machine and the image. */
+            sandbox_id: string;
         };
         "handler.projectUpdateReq": {
             env?: components["schemas"]["store.EnvVar"][];
             name: string;
             revision?: number;
-            template_id: string;
+            sandbox_id: string;
         };
         "handler.providerReq": {
             /** @description APIKey is write-only: the ******** mask keeps the stored key. */
@@ -7958,19 +7696,7 @@ export interface components {
             project_id?: string;
             session_id: string;
         };
-        "handler.sandboxStateResp": {
-            /** @description State is absent | stopped | running. */
-            state?: string;
-            /**
-             * @description TargetType is the backend behind it (docker | e2b), so a client offers
-             *     only the operations that backend has.
-             */
-            target_type?: string;
-        };
-        "handler.sandboxStopResp": {
-            stopped?: boolean;
-        };
-        "handler.sandboxTargetReq": {
+        "handler.sandboxReq": {
             config?: number[];
             name?: string;
             /**
@@ -7982,15 +7708,17 @@ export interface components {
             revision?: number;
             type?: string;
         };
-        "handler.sandboxTemplateReq": {
-            config?: number[];
-            name?: string;
+        "handler.sandboxStateResp": {
             /**
-             * @description Revision, on update only, is the revision the client's edit was based
-             *     on — see sandboxTargetReq.Revision.
+             * @description SandboxType is the backend behind it (docker | e2b), so a client offers
+             *     only the operations that backend has.
              */
-            revision?: number;
-            type?: string;
+            sandbox_type?: string;
+            /** @description State is absent | stopped | running. */
+            state?: string;
+        };
+        "handler.sandboxStopResp": {
+            stopped?: boolean;
         };
         "handler.sandboxTestResp": {
             detail?: string;
@@ -8390,19 +8118,26 @@ export interface components {
             id?: string;
             /**
              * @description Name is display only — the storage is keyed by ID, so a rename moves
-             *     nothing. Unique per (owner, target) via idx_projects_owner_target_name.
+             *     nothing. Unique per (owner, sandbox) via idx_projects_owner_sandbox_name.
              */
             name?: string;
             owner_id?: string;
             /**
              * @description Revision is the expected-revision CAS every update lands against.
              *     RuntimeGen is the workbench's ONE runtime axis: it moves when this
-             *     project's own content changes AND when the target or template it names
-             *     changes underneath it, so the instance cache and the terminal registry
+             *     project's own content changes AND when the sandbox it names changes
+             *     underneath it, so the instance cache and the terminal registry
              *     need a single fence rather than one per entity (decisions §5.33). A
              *     rename moves neither container nor terminal.
              */
             revision?: number;
+            /**
+             * @description SandboxID is what the project runs on — the machine and the image, set
+             *     at creation and never writable afterwards. The image half IS editable,
+             *     on the sandbox row: the freeze is on which row, not on its content
+             *     (decisions §5.36).
+             */
+            sandbox_id?: string;
             /**
              * @description SessionCount is how many sessions bind this project — filled by List
              *     (scanonly), so a delete knows whether it will be refused.
@@ -8410,21 +8145,11 @@ export interface components {
             session_count?: number;
             /**
              * @description StorageHint names where the files live — the named volume on the
-             *     target's daemon. Derived per response by the handler for admins only,
+             *     sandbox's daemon. Derived per response by the handler for admins only,
              *     never stored: deleting the row keeps the storage (decisions §5.28), so
              *     the UI can say where.
              */
             storage_hint?: string;
-            /**
-             * @description TargetID is the machine the tree lives on — the project's identity, set
-             *     at creation and never writable afterwards (decisions §5.33).
-             */
-            target_id?: string;
-            /**
-             * @description TemplateID is what the container is created from — content, editable
-             *     like the environment, reaching bound sessions at their next run.
-             */
-            template_id?: string;
             updated_at?: string;
         };
         /**
@@ -8488,10 +8213,10 @@ export interface components {
             question?: string;
             run_id?: string;
         };
-        "store.SandboxTarget": {
+        "store.Sandbox": {
             /**
-             * @description Config holds the target settings as JSON (DockerTargetConfig). Stored as
-             *     TEXT and sent to/received from the API as a raw JSON object (no
+             * @description Config holds the settings as JSON (DockerConfig or E2BConfig). Stored
+             *     as TEXT and sent to/received from the API as a raw JSON object (no
              *     double-encoding).
              */
             config?: number[];
@@ -8506,28 +8231,10 @@ export interface components {
              *
              *     There is no runtime generation here: the ONE runtime axis is the
              *     project's (decisions §5.33), and a content change to this row bumps it
-             *     on every project that names this target.
+             *     on every project that names this sandbox.
              */
             revision?: number;
-            /** @description Type is "docker" — the only backend (decisions §5.27). */
-            type?: string;
-            updated_at?: string;
-        };
-        "store.SandboxTemplate": {
-            /** @description Config holds the template settings as JSON (DockerTemplateConfig). */
-            config?: number[];
-            created_at?: string;
-            id?: string;
-            name?: string;
-            /**
-             * @description Revision is the row's concurrency control, as on SandboxTarget — and,
-             *     as there, the runtime generation lives on the projects instead.
-             */
-            revision?: number;
-            /**
-             * @description Type must match the target's; a docker template cannot run on another
-             *     backend's machine.
-             */
+            /** @description Type is the backend: "docker" or "e2b". */
             type?: string;
             updated_at?: string;
         };

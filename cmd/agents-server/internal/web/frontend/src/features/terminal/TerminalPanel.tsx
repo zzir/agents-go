@@ -65,7 +65,7 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
   const viewRefs = useRef(new Map<number, TerminalViewHandle | null>());
 
   const { data: targets, reload: reloadTargets } = useApi<SandboxTarget[]>(
-    () => api.sandboxTargets.list() as Promise<SandboxTarget[]>,
+    () => api.sandboxes.list() as Promise<SandboxTarget[]>,
   );
   useEffect(() => {
     if (settingsReloadKey) reloadTargets();
@@ -144,7 +144,7 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
       // nameless.
       const project = (projects || []).find(p => p.id === openRequest.projectId);
       const name = project?.name || openRequest.projectName || '';
-      const targetName = (targets || []).find(t => t.id === project?.target_id)?.name || openRequest.targetName || '';
+      const targetName = (targets || []).find(t => t.id === project?.sandbox_id)?.name || openRequest.targetName || '';
       addTab(targetName, { id: openRequest.projectId, name });
     }
     // activateTab/addTab close over current state; nonce guards re-runs.
@@ -228,7 +228,7 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
                   <ActionList.Item disabled>No sandbox targets configured</ActionList.Item>
                 ) : (
                   (targets || []).map(tg => {
-                    const items = (projects || []).filter(p => p.target_id === tg.id);
+                    const items = (projects || []).filter(p => p.sandbox_id === tg.id);
                     return (
                       <ActionList.Group key={tg.id}>
                         {/* Primer requires an explicit heading level on

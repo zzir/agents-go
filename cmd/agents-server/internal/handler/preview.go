@@ -83,7 +83,7 @@ func (h *ProjectHandler) Preview(c *gin.Context) {
 		c.String(http.StatusNotFound, "this preview link is no longer valid")
 		return
 	}
-	spec, err := resolveSpec(c.Request.Context(), h.targets, h.templates, p)
+	spec, err := resolveSpec(c.Request.Context(), h.sandboxes, p)
 	if err != nil {
 		c.String(http.StatusBadGateway, "this project's sandbox cannot be resolved")
 		return

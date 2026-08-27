@@ -330,10 +330,10 @@ When a change genuinely doesn't fit, update this list in the same PR.
     because a person pays it once per page while a run paid it once per turn.
 27. **A session's `project_id` binding is immutable and server-authoritative**
     — which tree it uses, not how that tree's container is configured: a
-    project's environment and its template are CONTENT and stay editable
-    while sessions are bound, reaching them at their next run
-    ([decisions §5.32](decisions.md), [§5.33](decisions.md)). A project pins
-    its target, so one column is the whole binding. The first
+    project's environment, and the image on the sandbox it names, are CONTENT
+    and stay editable while sessions are bound, reaching them at their next run
+    ([decisions §5.32](decisions.md), [§5.36](decisions.md)). A project pins
+    its sandbox, so one column is the whole binding. The first
     project-carrying run binds it (`BindProjectIfEmpty`) and nothing changes
     it afterwards: there is no unbind, no rebind, and no PATCH. From then on
     `startRunWithID` overrides whatever the client sends with the bound
@@ -347,12 +347,14 @@ When a change genuinely doesn't fit, update this list in the same PR.
     whose bind failed). The binding's target is protected in both directions,
     atomically: the delete refusals live in the delete statements themselves
     and the bind carries the mirror `EXISTS` guard over the project row (the
-    operational surface is [Sandbox targets](../reference/protocol.md#sandbox-targets--apiv1sandbox-targets) and
+    operational surface is [Sandboxes](../reference/protocol.md#sandboxes--apiv1sandboxes) and
     [Projects](../reference/protocol.md#projects--apiv1projects)); a project create
-    locks the target and template rows so a racing delete of either refuses
-    the create; and an update that would change a TARGET's identity — type
-    and the daemon (host) — is refused while project rows live on it
-    (`UpdateIdentityIfUnreferenced`). A bound session whose project cannot be
+    locks the sandbox row so a racing delete refuses the create; and an update
+    that would change a SANDBOX's identity — the type and the destination — is
+    refused while project rows live on it
+    (`UpdateIdentityIfUnreferenced`). A project MOVES only between sandboxes
+    that share a destination, checked inside the write's transaction with that
+    row locked (`ErrSandboxMoveDestination`). A bound session whose project cannot be
     resolved or built fails the run loudly rather than degrading to a chat
     with no tools. Sandbox instances are cached per
     `(project id, runtime generation)` with a REFERENCE COUNT
@@ -677,19 +679,27 @@ When a change genuinely doesn't fit, update this list in the same PR.
     drains, for at most five seconds, and whatever it was still waiting on
     is a warning, not an exit status.
 
-44. **Every per-target operation goes through the backend.** A target's type
+44. **Every per-sandbox operation goes through the backend.** A sandbox's type
     picks the implementation once, in `sandboxes.BackendFor`, and nothing
     outside it branches on the string: the health check behind the Test
-    button (`Manager.CheckTarget`) and the rebuild
+    button (`Manager.Check`) and the rebuild
     (`Manager.RebuildContainer`) are `Backend` methods like provisioning is.
-    A handler reaching for `TargetOptions` — the docker daemon's connection —
+    A handler reaching for `DaemonOptions` — the docker daemon's connection —
     is asking a service-managed sandbox for a docker client it does not have,
     which is how `unknown sandbox target type: e2b` reached a person's
-    screen; that call now names the type in its refusal, and the paths that
-    are genuinely docker-only (Containers, Stop, Remove) refuse before
-    starting rather than mid-way. **A rebuild is not universal**: on docker it
+    screen; that call now names the sandbox and its type in its refusal, and
+    the paths that are genuinely docker-only (Containers, Stop, Remove) refuse
+    before starting rather than mid-way. **A rebuild is not universal**: on docker it
     replaces the container and keeps the volume, and on an E2B-compatible
     service — where the sandbox IS the storage
     ([decisions §5.34](decisions.md)) — it is refused with the way out
     (export the project first), never approximated by destroying the working
     tree.
+
+45. **A sandbox is one row, and only its destination freezes.** Where it runs
+    and what runs on it live together in `sandboxes`; a project names one
+    ([decisions §5.36](decisions.md)). The mutability line is between FIELDS,
+    not tables: `SandboxIdentityChanged` covers the type and the destination,
+    everything else edits freely and reaches bound sessions at their next run.
+    There is no separate template entity, and therefore no pair that can
+    disagree about its type.

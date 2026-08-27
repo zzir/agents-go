@@ -362,7 +362,7 @@ export const api = {
     rebuildContainer: (id: string) => request<null>(`/projects/${id}/sandbox/rebuild`, { method: 'POST' }),
     // The project's compute: what it is doing, and starting/stopping it by
     // hand rather than leaving both to the next run and the idle timer.
-    sandboxStatus: (id: string) => request<{ state: string; target_type: string }>(`/projects/${id}/sandbox`),
+    sandboxStatus: (id: string) => request<{ state: string; sandbox_type: string }>(`/projects/${id}/sandbox`),
     sandboxStart: (id: string) => request<null>(`/projects/${id}/sandbox/start`, { method: 'POST' }),
     sandboxStop: (id: string) => request<{ stopped: boolean }>(`/projects/${id}/sandbox/stop`, { method: 'POST' }),
     // A short-lived, unguessable URL a browser tab can open: the preview
@@ -431,13 +431,10 @@ export const api = {
     // brings it back.
     dismiss: (id: string | number) => request(`/tasks/${id}/dismiss`, { method: 'POST' }),
   },
-  sandboxTargets: {
-    ...crud<S['store.SandboxTarget']>('/sandbox-targets'),
-    // A target names no image, so the health check borrows one from a template.
-    test: (id: string | number, templateId: string) =>
-      request(`/sandbox-targets/${id}/test?template_id=${encodeURIComponent(templateId)}`, { method: 'POST' }),
+  sandboxes: {
+    ...crud<S['store.Sandbox']>('/sandboxes'),
+    test: (id: string | number) => request(`/sandboxes/${id}/test`, { method: 'POST' }),
   },
-  sandboxTemplates: crud<S['store.SandboxTemplate']>('/sandbox-templates'),
   // The OAuth flow belongs to the endpoint: the token is the provider's
   // credential, shared by every agent pointed at it.
   chatgpt: {

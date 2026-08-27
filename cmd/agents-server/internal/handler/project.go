@@ -26,20 +26,19 @@ type ProjectHandler struct {
 	// takes a whole project off the machine. Wired at bootstrap.
 	Audit     protocol.AuditFunc
 	store     *store.ProjectStore
-	targets   *store.SandboxTargetStore
-	templates *store.SandboxTemplateStore
+	sandboxes *store.SandboxStore
 	manager   *sandboxes.Manager
 	terminals *TerminalHandler
 	settings  *settings.Reader
 	grants    *previewGrants
 }
 
-// NewProjectHandler returns a handler over the project store; targets and
-// templates validate what a project names, m reclaims a deleted project's
+// NewProjectHandler returns a handler over the project store; sandboxes
+// validate what a project names, m reclaims a deleted project's
 // storage and runs the container calls, and terminals is the registry a
 // content change severs.
-func NewProjectHandler(s *store.ProjectStore, targets *store.SandboxTargetStore, templates *store.SandboxTemplateStore, m *sandboxes.Manager, terminals *TerminalHandler, cfg *settings.Reader) *ProjectHandler {
-	return &ProjectHandler{store: s, targets: targets, templates: templates, manager: m, terminals: terminals, settings: cfg, grants: newPreviewGrants()}
+func NewProjectHandler(s *store.ProjectStore, sbs *store.SandboxStore, m *sandboxes.Manager, terminals *TerminalHandler, cfg *settings.Reader) *ProjectHandler {
+	return &ProjectHandler{store: s, sandboxes: sbs, manager: m, terminals: terminals, settings: cfg, grants: newPreviewGrants()}
 }
 
 // projectDetail is the single-project response: the row plus the NAMES of
@@ -161,57 +160,54 @@ func (h *ProjectHandler) List(c *gin.Context) {
 // storageHint names the volume p's files live in and the daemon it is on, so
 // the UI can say what a delete destroys (decisions §5.33). Admin-only: a
 // daemon address is a server-side fact a member's container never sees. hosts
-// caches target→host across one response; empty when it cannot be derived.
+// caches sandbox→host across one response; empty when it cannot be derived.
 func (h *ProjectHandler) storageHint(c *gin.Context, hosts map[string]string, p *store.Project) string {
-	host, ok := hosts[p.TargetID]
+	host, ok := hosts[p.SandboxID]
 	if !ok {
-		t, err := h.targets.Get(c.Request.Context(), p.TargetID)
+		sb, err := h.sandboxes.Get(c.Request.Context(), p.SandboxID)
 		if err != nil {
 			return ""
 		}
-		var dc store.DockerTargetConfig
-		_ = json.Unmarshal(t.Config, &dc)
+		var dc store.DockerConfig
+		_ = json.Unmarshal(sb.Config, &dc)
 		host = dc.Host
 		if host == "" {
 			host = "the local daemon"
 		}
-		hosts[p.TargetID] = host
+		hosts[p.SandboxID] = host
 	}
 	return "docker volume " + sandboxes.ProjectVolumeName(p.ID) + " on " + host
 }
 
 type projectReq struct {
 	Name string `json:"name" binding:"required"`
-	// TargetID is the machine the tree lives on — frozen after creation.
-	TargetID string `json:"target_id" binding:"required"`
-	// TemplateID is what the container is created from — editable.
-	TemplateID string `json:"template_id" binding:"required"`
+	// SandboxID is what the project runs on — the machine and the image.
+	SandboxID string `json:"sandbox_id" binding:"required"`
 	// Env is the environment the project's container is created with;
 	// optional, and empty means none.
 	Env []store.EnvVar `json:"env,omitempty"`
 }
 
-// projectUpdateReq is the update body: the name, the template, the whole
+// projectUpdateReq is the update body: the name, the sandbox, the whole
 // environment, and the revision the edit was made against (optional — see
-// Update). The target is not here: it is the project's identity.
+// Update).
 type projectUpdateReq struct {
-	Name       string         `json:"name" binding:"required"`
-	TemplateID string         `json:"template_id" binding:"required"`
-	Env        []store.EnvVar `json:"env,omitempty"`
-	Revision   int64          `json:"revision,omitempty"`
+	Name      string         `json:"name" binding:"required"`
+	SandboxID string         `json:"sandbox_id" binding:"required"`
+	Env       []store.EnvVar `json:"env,omitempty"`
+	Revision  int64          `json:"revision,omitempty"`
 }
 
-// Create makes a new project for the caller on the named target, from the
-// named template.
+// Create makes a new project for the caller on the named sandbox.
 //
 //	@Summary	Create project
 //	@Tags		projects
 //	@Accept		json
 //	@Produce	json
-//	@Param		project	body		projectReq	true	"Name, target and template"
+//	@Param		project	body		projectReq	true	"Name and sandbox"
 //	@Success	201		{object}	projectDetail
 //	@Failure	400		{object}	ErrorResponse
-//	@Failure	409		{object}	ErrorResponse	"name already in use on this target"
+//	@Failure	409		{object}	ErrorResponse	"name already in use on this sandbox"
 //	@Security	BearerAuth
 //	@Router		/projects [post]
 func (h *ProjectHandler) Create(c *gin.Context) {
@@ -221,7 +217,7 @@ func (h *ProjectHandler) Create(c *gin.Context) {
 	}
 	var req projectReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		badRequest(c, "name, target_id and template_id are required")
+		badRequest(c, "name and sandbox_id are required")
 		return
 	}
 	env, err := store.NormalizeProjectEnv(req.Env)
@@ -229,13 +225,9 @@ func (h *ProjectHandler) Create(c *gin.Context) {
 		badRequest(c, err.Error())
 		return
 	}
-	if !h.typesMatch(c, req.TargetID, req.TemplateID) {
-		return
-	}
-	// Existence is the create's own guard (the store locks both rows), so a
-	// missing target or template 404s from the insert itself — the type check
-	// above is the one thing the insert cannot express.
-	p := &store.Project{OwnerID: ownerID, TargetID: req.TargetID, TemplateID: req.TemplateID, Name: req.Name, Env: env}
+	// Existence is the create's own guard (the store locks the row), so a
+	// missing sandbox 404s from the insert itself.
+	p := &store.Project{OwnerID: ownerID, SandboxID: req.SandboxID, Name: req.Name, Env: env}
 	if err := h.store.Create(c.Request.Context(), p); err != nil {
 		saveError(c, err)
 		return
@@ -327,12 +319,9 @@ func (h *ProjectHandler) Update(c *gin.Context) {
 	if req.Revision != 0 {
 		expected = req.Revision
 	}
-	if req.TemplateID != prev.TemplateID && !h.typesMatch(c, prev.TargetID, req.TemplateID) {
-		return
-	}
-	contentChanged := !store.EnvContentEqual(prev.Env, env) || req.TemplateID != prev.TemplateID
+	contentChanged := !store.EnvContentEqual(prev.Env, env) || req.SandboxID != prev.SandboxID
 	next := *prev
-	next.Name, next.TemplateID, next.Env = req.Name, req.TemplateID, env
+	next.Name, next.SandboxID, next.Env = req.Name, req.SandboxID, env
 	if err := h.store.Update(c.Request.Context(), prev.ID, &next, expected, contentChanged); err != nil {
 		saveError(c, err)
 		return
@@ -380,9 +369,9 @@ func (h *ProjectHandler) RebuildContainer(c *gin.Context) {
 type sandboxStateResp struct {
 	// State is absent | stopped | running.
 	State string `json:"state"`
-	// TargetType is the backend behind it (docker | e2b), so a client offers
+	// SandboxType is the backend behind it (docker | e2b), so a client offers
 	// only the operations that backend has.
-	TargetType string `json:"target_type"`
+	SandboxType string `json:"sandbox_type"`
 }
 
 // sandboxStopResp says whether the sandbox stopped now or will stop when the
@@ -412,7 +401,7 @@ func (h *ProjectHandler) SandboxStatus(c *gin.Context) {
 		upstreamError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, sandboxStateResp{State: state.String(), TargetType: spec.Target.Type})
+	c.JSON(http.StatusOK, sandboxStateResp{State: state.String(), SandboxType: spec.Sandbox.Type})
 }
 
 // SandboxStart provisions the project's sandbox and makes it ready — the
@@ -527,7 +516,7 @@ func (h *ProjectHandler) spec(c *gin.Context) (sandboxes.Spec, bool) {
 	if !ok {
 		return sandboxes.Spec{}, false
 	}
-	spec, err := resolveSpec(c.Request.Context(), h.targets, h.templates, p)
+	spec, err := resolveSpec(c.Request.Context(), h.sandboxes, p)
 	if err != nil {
 		storeError(c, err)
 		return sandboxes.Spec{}, false
@@ -547,27 +536,6 @@ func (h *ProjectHandler) containerAct(c *gin.Context, act func(context.Context, 
 		return
 	}
 	c.Status(http.StatusNoContent)
-}
-
-// typesMatch refuses a project whose template cannot run on its target — the
-// one cross-row rule neither insert nor update can express in SQL.
-func (h *ProjectHandler) typesMatch(c *gin.Context, targetID, templateID string) bool {
-	ctx := c.Request.Context()
-	t, err := h.targets.Get(ctx, targetID)
-	if err != nil {
-		storeError(c, err)
-		return false
-	}
-	tpl, err := h.templates.Get(ctx, templateID)
-	if err != nil {
-		storeError(c, err)
-		return false
-	}
-	if t.Type != tpl.Type {
-		badRequest(c, typeMismatch(t, tpl))
-		return false
-	}
-	return true
 }
 
 // Delete removes the caller's project — an admin's: any project — while no
@@ -615,7 +583,7 @@ func (h *ProjectHandler) Delete(c *gin.Context) {
 	// storage rather than a row pointing at nothing, so it is reported without
 	// undoing the delete.
 	if h.manager != nil {
-		spec, serr := resolveSpec(c.Request.Context(), h.targets, h.templates, p)
+		spec, serr := resolveSpec(c.Request.Context(), h.sandboxes, p)
 		if serr != nil {
 			h.manager.RemoveProject(p.ID)
 			internalError(c, serr)

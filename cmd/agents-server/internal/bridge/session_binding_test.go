@@ -15,23 +15,19 @@ import (
 // createTarget persists a docker target under the given id, and createProject
 // a project on it — a binding validates that its project exists before it is
 // written, so tests must create what they bind.
-func createTarget(t *testing.T, r *Runner, id string) {
+func createSandbox(t *testing.T, r *Runner, id string) {
 	t.Helper()
-	tg := &store.SandboxTarget{ID: id, Name: id, Type: "docker", Config: json.RawMessage(`{}`)}
-	if err := r.Deps.Targets.Create(context.Background(), tg); err != nil {
-		t.Fatalf("create sandbox target %s: %v", id, err)
+	sb := &store.Sandbox{ID: id, Name: id, Type: "docker", Config: json.RawMessage(`{"image":"i"}`)}
+	if err := r.Deps.Sandboxes.Create(context.Background(), sb); err != nil {
+		t.Fatalf("create sandbox %s: %v", id, err)
 	}
 }
 
-// createProject persists a project for LocalUserID on the given target and
+// createProject persists a project for LocalUserID on the given sandbox and
 // returns its id.
-func createProject(t *testing.T, r *Runner, id, targetID string) string {
+func createProject(t *testing.T, r *Runner, id, sandboxID string) string {
 	t.Helper()
-	tpl := &store.SandboxTemplate{ID: store.NewID(), Name: "tpl-" + id, Type: "docker", Config: json.RawMessage(`{"image":"i"}`)}
-	if err := r.Deps.Templates.Create(context.Background(), tpl); err != nil {
-		t.Fatalf("create sandbox template for %s: %v", id, err)
-	}
-	p := &store.Project{ID: id, OwnerID: store.LocalUserID, TargetID: targetID, TemplateID: tpl.ID, Name: id}
+	p := &store.Project{ID: id, OwnerID: store.LocalUserID, SandboxID: sandboxID, Name: id}
 	if err := r.Deps.Projects.Create(context.Background(), p); err != nil {
 		t.Fatalf("create project %s: %v", id, err)
 	}
@@ -103,7 +99,7 @@ func TestStartRunBindsSessionProject(t *testing.T) {
 	if err := runner.Deps.Sessions.Create(ctx, sess); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	createTarget(t, runner, "tg-1")
+	createSandbox(t, runner, "tg-1")
 	p1 := createProject(t, runner, "p-1", "tg-1")
 	p2 := createProject(t, runner, "p-2", "tg-1")
 
@@ -145,7 +141,7 @@ func TestStartRunWithoutProjectLeavesSessionBindable(t *testing.T) {
 	if err := runner.Deps.Sessions.Create(ctx, sess); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	createTarget(t, runner, "tg-late")
+	createSandbox(t, runner, "tg-late")
 
 	startAndWait(t, runner, sess.ID, "")
 	if got, _ := runner.Deps.Sessions.Get(ctx, sess.ID); got.ProjectID != "" {
@@ -170,7 +166,7 @@ func TestRefusedRunDoesNotBind(t *testing.T) {
 	if err := runner.Deps.Sessions.Create(ctx, sess); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	createTarget(t, runner, "tg-1")
+	createSandbox(t, runner, "tg-1")
 	p := createProject(t, runner, "p-1", "tg-1")
 
 	// Occupy the session's run slot directly, standing in for a live run.
@@ -192,19 +188,15 @@ func TestRefusedRunDoesNotBind(t *testing.T) {
 // one that is not the caller's, refuses the run and leaves the session unbound
 // (and its slot free for the corrected retry).
 func TestInvalidBindingRefusedUnbound(t *testing.T) {
-	runner, db := newBareRunner(t)
+	runner, _ := newBareRunner(t)
 	ctx := context.Background()
 
 	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "s"}
 	if err := runner.Deps.Sessions.Create(ctx, sess); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	createTarget(t, runner, "tg-bare")
-	tpl := &store.SandboxTemplate{ID: store.NewID(), Name: "tpl-foreign", Type: "docker", Config: json.RawMessage(`{"image":"i"}`)}
-	if err := store.NewSandboxTemplateStore(db).Create(ctx, tpl); err != nil {
-		t.Fatal(err)
-	}
-	foreign := &store.Project{OwnerID: store.NewID(), TargetID: "tg-bare", TemplateID: tpl.ID, Name: "theirs"}
+	createSandbox(t, runner, "tg-bare")
+	foreign := &store.Project{OwnerID: store.NewID(), SandboxID: "tg-bare", Name: "theirs"}
 	if err := runner.Deps.Projects.Create(ctx, foreign); err != nil {
 		t.Fatal(err)
 	}

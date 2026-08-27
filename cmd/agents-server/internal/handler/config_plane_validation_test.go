@@ -52,64 +52,40 @@ func TestMcpServerReqValidate(t *testing.T) {
 	}
 }
 
-// Target save-time validation rejects an unknown type and a docker config that
-// fails to parse — the latter must not slip a bare-host config past the block.
-func TestSandboxTargetValidation(t *testing.T) {
+// Sandbox save-time validation rejects an unknown type, a docker config that
+// fails to parse (which must not slip a bare-host config past the block) and
+// one with no image — stored as-is they would give projects a sandbox that can
+// never build.
+func TestSandboxValidation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
-	h := testTargetHandler(db, sandboxes.NewManager())
+	h := testSandboxHandler(db, sandboxes.NewManager())
 	engine := newTestEngine()
-	engine.POST("/sandbox-targets", h.Create)
+	engine.POST("/sandboxes", h.Create)
 
 	cases := []struct {
 		name string
 		body string
 		want int
 	}{
-		{"local daemon", `{"name":"d","type":"docker","config":{}}`, http.StatusCreated},
-		{"remote daemon", `{"name":"r","type":"docker","config":{"host":"ssh://u@h"}}`, http.StatusCreated},
+		{"local daemon", `{"name":"d","type":"docker","config":{"image":"x"}}`, http.StatusCreated},
+		{"remote daemon", `{"name":"r","type":"docker","config":{"host":"ssh://u@h","image":"x"}}`, http.StatusCreated},
+		{"with a network", `{"name":"n","type":"docker","config":{"image":"x","network":"agents-net"}}`, http.StatusCreated},
+		{"e2b", `{"name":"c","type":"e2b","config":{"api_key":"k","template_id":"base"}}`, http.StatusCreated},
 		{"unknown type", `{"name":"x","type":"quantum"}`, http.StatusBadRequest},
 		{"retired local type", `{"name":"x","type":"local"}`, http.StatusBadRequest},
 		{"retired ssh type", `{"name":"x","type":"ssh","config":{"addr":"h","user":"u"}}`, http.StatusBadRequest},
-		{"bare host refused", `{"name":"x","type":"docker","config":{"host":"remote:2375"}}`, http.StatusBadRequest},
-		{"ssh host without user refused", `{"name":"x","type":"docker","config":{"host":"ssh://h"}}`, http.StatusBadRequest},
+		{"bare host refused", `{"name":"x","type":"docker","config":{"host":"remote:2375","image":"x"}}`, http.StatusBadRequest},
+		{"ssh host without user refused", `{"name":"x","type":"docker","config":{"host":"ssh://h","image":"x"}}`, http.StatusBadRequest},
 		{"malformed docker config", `{"name":"x","type":"docker","config":"notanobject"}`, http.StatusBadRequest},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if w := doJSON(t, engine, http.MethodPost, "/sandbox-targets", tc.body); w.Code != tc.want {
-				t.Fatalf("got %d, want %d (body %s)", w.Code, tc.want, w.Body.String())
-			}
-		})
-	}
-}
-
-// Template save-time validation: an image is required, a type mismatch or a
-// negative cap is refused — stored as-is they would give projects a template
-// that can never build.
-func TestSandboxTemplateValidation(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	db := testdb.New(t)
-	h := testTemplateHandler(db, sandboxes.NewManager())
-	engine := newTestEngine()
-	engine.POST("/sandbox-templates", h.Create)
-
-	cases := []struct {
-		name string
-		body string
-		want int
-	}{
-		{"valid", `{"name":"d","type":"docker","config":{"image":"x"}}`, http.StatusCreated},
-		{"with a network", `{"name":"n","type":"docker","config":{"image":"x","network":"agents-net"}}`, http.StatusCreated},
-		{"unknown type", `{"name":"x","type":"quantum","config":{"image":"x"}}`, http.StatusBadRequest},
 		{"no image", `{"name":"x","type":"docker","config":{}}`, http.StatusBadRequest},
 		{"type mismatch", `{"name":"x","type":"docker","config":{"image":"i","memory_mb":"lots"}}`, http.StatusBadRequest},
 		{"negative cap", `{"name":"x","type":"docker","config":{"image":"i","cpus":-1}}`, http.StatusBadRequest},
-		{"malformed config", `{"name":"x","type":"docker","config":"notanobject"}`, http.StatusBadRequest},
+		{"e2b without a template", `{"name":"x","type":"e2b","config":{"api_key":"k"}}`, http.StatusBadRequest},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if w := doJSON(t, engine, http.MethodPost, "/sandbox-templates", tc.body); w.Code != tc.want {
+			if w := doJSON(t, engine, http.MethodPost, "/sandboxes", tc.body); w.Code != tc.want {
 				t.Fatalf("got %d, want %d (body %s)", w.Code, tc.want, w.Body.String())
 			}
 		})

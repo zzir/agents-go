@@ -37,8 +37,7 @@ type TerminalHandler struct {
 	// Audit, when set, records every terminal opened: a shell on a sandbox
 	// host is the act most worth a line. Wired at bootstrap.
 	Audit     protocol.AuditFunc
-	targets   *store.SandboxTargetStore
-	templates *store.SandboxTemplateStore
+	sandboxes *store.SandboxStore
 	projects  *store.ProjectStore
 	manager   sandboxProvider
 	settings  *settings.Reader
@@ -79,9 +78,9 @@ type liveTerminal struct {
 }
 
 // NewTerminalHandler returns a handler backed by the given stores and sandbox manager.
-func NewTerminalHandler(targets *store.SandboxTargetStore, templates *store.SandboxTemplateStore, projects *store.ProjectStore, m sandboxProvider, cfg *settings.Reader) *TerminalHandler {
+func NewTerminalHandler(sbs *store.SandboxStore, projects *store.ProjectStore, m sandboxProvider, cfg *settings.Reader) *TerminalHandler {
 	return &TerminalHandler{
-		targets: targets, templates: templates, projects: projects, manager: m, settings: cfg,
+		sandboxes: sbs, projects: projects, manager: m, settings: cfg,
 		live: map[string]map[*liveTerminal]struct{}{}, fence: map[string]int64{},
 	}
 }
@@ -233,7 +232,7 @@ func (h *TerminalHandler) open(conn *server.WSConn) (sandbox.Terminal, *store.Pr
 	if conn.User.Role != store.RoleAdmin && proj.OwnerID != conn.User.ID {
 		return nil, nil, nil, fmt.Errorf("project %s: %w", msg.ProjectID, store.ErrNotFound)
 	}
-	spec, err := resolveSpec(ctx, h.targets, h.templates, proj)
+	spec, err := resolveSpec(ctx, h.sandboxes, proj)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -250,7 +249,7 @@ func (h *TerminalHandler) open(conn *server.WSConn) (sandbox.Terminal, *store.Pr
 	opener, ok := sb.(sandbox.TerminalOpener)
 	if !ok {
 		release()
-		return nil, nil, nil, fmt.Errorf("%s sandbox: %w", spec.Target.Type, sandbox.ErrTerminalUnsupported)
+		return nil, nil, nil, fmt.Errorf("%s sandbox: %w", spec.Sandbox.Type, sandbox.ErrTerminalUnsupported)
 	}
 	term, err := opener.OpenTerminal(ctx, sandbox.TerminalOptions{Cols: msg.Cols, Rows: msg.Rows})
 	if err != nil {
@@ -323,14 +322,10 @@ const maxTerminalGen = int64(1) << 62
 
 // resolveSpec loads the target and template a project names, so a caller
 // holding only the project row can build or acquire its sandbox.
-func resolveSpec(ctx context.Context, targets *store.SandboxTargetStore, templates *store.SandboxTemplateStore, proj *store.Project) (sandboxes.Spec, error) {
-	target, err := targets.Get(ctx, proj.TargetID)
+func resolveSpec(ctx context.Context, sbs *store.SandboxStore, proj *store.Project) (sandboxes.Spec, error) {
+	sb, err := sbs.Get(ctx, proj.SandboxID)
 	if err != nil {
-		return sandboxes.Spec{}, fmt.Errorf("sandbox target %s: %w", proj.TargetID, err)
+		return sandboxes.Spec{}, fmt.Errorf("sandbox %s: %w", proj.SandboxID, err)
 	}
-	tpl, err := templates.Get(ctx, proj.TemplateID)
-	if err != nil {
-		return sandboxes.Spec{}, fmt.Errorf("sandbox template %s: %w", proj.TemplateID, err)
-	}
-	return sandboxes.Spec{Target: target, Template: tpl, Project: proj}, nil
+	return sandboxes.Spec{Sandbox: sb, Project: proj}, nil
 }

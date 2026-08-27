@@ -49,8 +49,8 @@ func previewFixture(t *testing.T, upstream string, enabled bool) (*gin.Engine, *
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
 	projects := store.NewProjectStore(db)
-	targetID, templateID := mkSandboxRows(t, db)
-	p := &store.Project{ID: store.NewID(), OwnerID: store.LocalUserID, TargetID: targetID, TemplateID: templateID, Name: "p"}
+	sandboxID := mkSandboxRow(t, db)
+	p := &store.Project{ID: store.NewID(), OwnerID: store.LocalUserID, SandboxID: sandboxID, Name: "p"}
 	if err := projects.Create(t.Context(), p); err != nil {
 		t.Fatal(err)
 	}
@@ -65,9 +65,9 @@ func previewFixture(t *testing.T, upstream string, enabled bool) (*gin.Engine, *
 		}
 	}
 	reader := settings.NewReader(settingStore)
-	targets, templates := store.NewSandboxTargetStore(db), store.NewSandboxTemplateStore(db)
-	h := NewProjectHandler(projects, targets, templates, mgr,
-		NewTerminalHandler(targets, templates, projects, mgr, reader), reader)
+	sbs := store.NewSandboxStore(db)
+	h := NewProjectHandler(projects, sbs, mgr,
+		NewTerminalHandler(sbs, projects, mgr, reader), reader)
 
 	e := newTestEngine()
 	e.POST("/api/v1/projects/:id/preview/:port", h.PreviewGrant)
