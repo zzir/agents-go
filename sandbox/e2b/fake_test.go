@@ -2,6 +2,7 @@ package e2b_test
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -28,12 +29,16 @@ type fakeService struct {
 	t   *testing.T
 	srv *httptest.Server
 
-	root    string
-	mu      sync.Mutex
-	boxes   map[string]*fakeBox
-	nextID  int
-	nextPID uint32
-	procs   map[uint32]*fakeProc
+	root string
+	// numericEnums renders FileType as the enum's number and size as a
+	// number — the way Alibaba Cloud's older envd does. The default is E2B's
+	// spelling. Both are real; a client that handles one is broken.
+	numericEnums bool
+	mu           sync.Mutex
+	boxes        map[string]*fakeBox
+	nextID       int
+	nextPID      uint32
+	procs        map[uint32]*fakeProc
 	// createCalls counts provisioning, so a test can assert a client does not
 	// create a second sandbox for one project.
 	createCalls int
@@ -96,6 +101,11 @@ func (f *fakeService) control(w http.ResponseWriter, r *http.Request) {
 		f.nextID++
 		f.createCalls++
 		box := &fakeBox{id: "sb" + strconv.Itoa(f.nextID), token: "tok" + strconv.Itoa(f.nextID)}
+		if req, _ := body(r); req["secure"] != true {
+			// Every create this client makes must ask for a credentialed
+			// daemon; without it anyone knowing the id reaches the sandbox.
+			f.t.Error("create did not ask for a secure sandbox")
+		}
 		f.boxes[box.id] = box
 		f.mu.Unlock()
 		writeJSON(w, map[string]any{"sandboxID": box.id, "envdAccessToken": box.token, "state": "running"})
@@ -263,6 +273,8 @@ func (f *fakeService) rpc(w http.ResponseWriter, r *http.Request) {
 		f.move(w, req)
 	case "/filesystem.Filesystem/Remove":
 		f.remove(w, req)
+	case "/filesystem.Filesystem/Stat":
+		f.stat(w, req)
 	default:
 		connectErr(w, http.StatusNotFound, "unimplemented", r.URL.Path)
 	}
@@ -281,17 +293,23 @@ func (f *fakeService) listDir(w http.ResponseWriter, req map[string]any) {
 	}
 	out := make([]map[string]any, 0, len(entries))
 	for _, e := range entries {
-		typ := "FILE_TYPE_FILE"
-		if e.IsDir() {
-			typ = "FILE_TYPE_DIRECTORY"
-		}
 		var size int64
 		if info, ierr := e.Info(); ierr == nil {
 			size = info.Size()
 		}
-		// int64 renders as a STRING in protojson — the shape the client must
-		// tolerate.
-		out = append(out, map[string]any{"name": e.Name(), "type": typ, "size": strconv.FormatInt(size, 10)})
+		var typ, sz any
+		if f.numericEnums {
+			typ, sz = 1, size
+			if e.IsDir() {
+				typ = 2
+			}
+		} else {
+			typ, sz = "FILE_TYPE_FILE", strconv.FormatInt(size, 10)
+			if e.IsDir() {
+				typ = "FILE_TYPE_DIRECTORY"
+			}
+		}
+		out = append(out, map[string]any{"name": e.Name(), "type": typ, "size": sz})
 	}
 	writeJSON(w, map[string]any{"entries": out})
 }
@@ -346,6 +364,21 @@ func (f *fakeService) remove(w http.ResponseWriter, req map[string]any) {
 		return
 	}
 	writeJSON(w, map[string]any{})
+}
+
+// stat answers whether a path exists — what RemoveFile checks first, because
+// envd's own Remove is idempotent and would hide the absence.
+func (f *fakeService) stat(w http.ResponseWriter, req map[string]any) {
+	full, ok := f.hostPath(str(req["path"]))
+	if !ok {
+		connectErr(w, http.StatusForbidden, "permission_denied", "outside the sandbox")
+		return
+	}
+	if _, err := os.Stat(full); err != nil {
+		connectErr(w, http.StatusNotFound, "not_found", err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"entry": map[string]any{"name": filepath.Base(full)}})
 }
 
 // start runs the command on this machine and streams its events back in
@@ -464,6 +497,18 @@ func (f *fakeService) sendInput(w http.ResponseWriter, req map[string]any) {
 /* ---------- wire helpers ---------- */
 
 const endStreamFlagTest = 0x02
+
+// body decodes a JSON request body without consuming it for later handlers.
+func body(r *http.Request) (map[string]any, error) {
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		return nil, err
+	}
+	r.Body = io.NopCloser(bytes.NewReader(raw))
+	var out map[string]any
+	_ = json.Unmarshal(raw, &out)
+	return out, nil
+}
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")

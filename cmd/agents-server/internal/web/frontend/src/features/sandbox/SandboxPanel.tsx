@@ -366,7 +366,11 @@ function TemplateForm({ initial, onSave, onCancel, onDelete, saving }: {
         <FormControl>
           <Checkbox checked={form.auto_pause} onChange={e => set('auto_pause', e.target.checked)} />
           <FormControl.Label>Pause on expiry instead of killing</FormControl.Label>
-          <FormControl.Caption>Off means an expired lease DESTROYS the working tree.</FormControl.Caption>
+          <FormControl.Caption>
+            Off means an expired lease DESTROYS the working tree. Some services gate this behind a
+            per-function feature (Alibaba Cloud: snapshots) and refuse to create a sandbox without it —
+            uncheck it there.
+          </FormControl.Caption>
         </FormControl>
       )}
       {form.type === 'e2b' && (

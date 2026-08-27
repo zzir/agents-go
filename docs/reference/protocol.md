@@ -821,8 +821,12 @@ A **template** is WHAT runs, and its `type` must match the target's.
 For `e2b`: `template_id` (required — the workbench builds no templates; the
 service's console or CLI does), `timeout_seconds` (the lease a sandbox is
 created and refreshed with), `auto_pause` (an expired lease PAUSES rather than
-kills — **off destroys the working tree**), `allow_internet`, and
-`max_read_file_bytes`.
+kills — **off destroys the working tree**, and some services gate it behind a
+per-function feature and refuse the create without one), `allow_internet`, and
+`max_read_file_bytes`. Every sandbox is created `secure`, so its daemon
+requires the per-sandbox token: without that, anyone who learns the sandbox id
+— which is in the public hostname of every port it serves — reaches its files
+(decisions §5.34).
 
 For `docker`: `image` (required), `runtime` (e.g. `runsc` for
 gVisor — whether it exists is the target machine's business), `user`

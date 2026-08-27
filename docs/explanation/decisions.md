@@ -1211,16 +1211,41 @@ volume removal — killing the sandbox is the whole of it. It also means
 `auto_pause` matters: with it off, an expired lease destroys a working tree,
 which is why the template form says so where the checkbox is.
 
-**Two things are unverified until someone runs the probe** against a real
-service: which credential the in-sandbox daemon takes (E2B mints a per-sandbox
-token; Alibaba Cloud's compatibility notes say it does NOT support
-`E2B_ACCESS_TOKEN`), and whether both accept the JSON codec. Both are
-configuration rather than assumption — `data_plane_auth` selects the
-credential and defaults to "whatever the create returned, else the API key" —
-and the probe program lives outside the repo because it needs credentials and
-makes billable calls. Until it runs, this backend is unproven against the real
-services and proven against a fake that speaks the wire as read from the
-protos.
+**Verified against both services** (2026-08-28, E2B's cloud and Alibaba Cloud
+Function Compute in ap-southeast-1). The conformance suite runs against a live
+service behind the `e2b_integration` build tag: **9/9 on E2B, 8/9 on FC**.
+Everything the workbench needs works on both — exec, files, the atomic
+create, rename/remove, the PTY terminal and the tar export — and the Connect
+JSON codec, the five-byte envelopes and the base64 payloads are byte-for-byte
+what this client writes.
+
+The four things the probe settled, none of which could have been read off a
+document:
+
+- **The daemon credential is the per-sandbox token on both**, and `AuthAuto`
+  is right for both: FC mints one and refuses the API key with 403; E2B mints
+  one only when the create asks for it.
+- **So the create always asks (`secure: true`).** Without it E2B's daemon
+  takes NO credential at all — an unauthenticated request to a non-secure
+  sandbox answers 200, and the sandbox id is in the public hostname of every
+  port it serves. With it, 401. This is the single most important thing the
+  probe found.
+- **The same protobuf is rendered differently.** E2B's envd 0.7 sends
+  `"type":"FILE_TYPE_DIRECTORY"` and `"size":"220"`; FC's envd 0.5 sends
+  `"type":2` and `"size":220`. A `string` field for the enum fails outright on
+  FC, taking every directory listing with it. Both scalars are decoded
+  loosely, and the fake serves both renderings so the suite covers the split.
+- **envd's `Remove` is idempotent** — it answers OK for a path that was never
+  there — so `RemoveFile` stats first. Every other backend reports
+  `fs.ErrNotExist` there, and apply_patch's rollback tells "deleted" from "was
+  never there" by exactly that.
+
+The one thing that does NOT work on FC is `Stop`: pausing is gated behind a
+per-function feature (`pauseSession`), as `autoPause` is behind snapshots, and
+without them the service refuses with its own words — which the client passes
+through verbatim rather than replacing with a status line. That is a service
+configuration, not a client defect, and the template form says so where the
+checkbox is.
 
 ### 5.35 A port preview is a gateway with a grant, not a published port
 

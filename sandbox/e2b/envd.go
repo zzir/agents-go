@@ -169,16 +169,34 @@ func (s *Sandbox) CreateExclusive(ctx context.Context, p string, content []byte)
 /* ---------- directory operations ---------- */
 
 // entryInfo mirrors filesystem.EntryInfo, in the camelCase protojson emits.
+// Both scalar fields are deliberately loose: the compatible services render
+// the SAME protobuf differently, and a strict type would break on one of them.
 type entryInfo struct {
-	Name string `json:"name"`
-	Type string `json:"type"`
-	Path string `json:"path"`
-	// Size arrives as a STRING: protojson renders int64 that way, and an
-	// int64 field here would refuse it.
+	Name string   `json:"name"`
+	Type fileType `json:"type"`
+	Path string   `json:"path"`
+	// Size is an int64: protojson renders those as strings, but an older envd
+	// renders them as numbers. json.Number takes either.
 	Size json.Number `json:"size"`
 }
 
-func (e entryInfo) isDir() bool { return e.Type == "FILE_TYPE_DIRECTORY" }
+// fileType decodes filesystem.FileType however the service spells it. Verified
+// against both: E2B's envd 0.7 sends "FILE_TYPE_DIRECTORY", Alibaba Cloud's
+// 0.5 sends the enum's NUMBER, 2. A plain string field fails outright on the
+// second, taking the whole directory listing with it.
+type fileType struct{ dir bool }
+
+func (f *fileType) UnmarshalJSON(b []byte) error {
+	switch string(bytes.Trim(b, `"`)) {
+	case "FILE_TYPE_DIRECTORY", "2", "dir", "directory":
+		f.dir = true
+	default:
+		f.dir = false
+	}
+	return nil
+}
+
+func (e entryInfo) isDir() bool { return e.Type.dir }
 
 func (e entryInfo) size() int64 {
 	n, err := e.Size.Int64()
@@ -208,8 +226,21 @@ func (s *Sandbox) ListDir(ctx context.Context, p string) ([]sandbox.DirEntry, er
 }
 
 // RemoveFile deletes one path.
+//
+// envd's Remove is IDEMPOTENT: it answers OK for a path that was never there,
+// so the absence has to be established first. Every other backend reports
+// fs.ErrNotExist here, and apply_patch's rollback tells "deleted" from "was
+// never there" by exactly that. The extra Stat is the price of the contract
+// (verified against the real service — the suite caught this).
 func (s *Sandbox) RemoveFile(ctx context.Context, p string) error {
-	err := s.unary(ctx, procRemove, map[string]any{"path": s.resolvePath(p)}, nil)
+	full := s.resolvePath(p)
+	if err := s.unary(ctx, procStat, map[string]any{"path": full}, nil); err != nil {
+		if isNotFound(err) {
+			return fmt.Errorf("e2b: remove %q: %w", p, fs.ErrNotExist)
+		}
+		return err
+	}
+	err := s.unary(ctx, procRemove, map[string]any{"path": full}, nil)
 	if isNotFound(err) {
 		return fmt.Errorf("e2b: remove %q: %w", p, fs.ErrNotExist)
 	}

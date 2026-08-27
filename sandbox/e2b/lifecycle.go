@@ -3,6 +3,7 @@ package e2b
 import (
 	"context"
 	"strconv"
+	"strings"
 
 	"github.com/zzir/agents-go/sandbox"
 )
@@ -32,7 +33,12 @@ func (s *Sandbox) Stop(ctx context.Context) error {
 		return nil
 	}
 	err := s.pause(ctx, id)
-	if isNotFound(err) {
+	switch {
+	case isNotFound(err):
+		return nil
+	case err != nil && strings.Contains(err.Error(), "already paused"):
+		// Stopping a stopped sandbox is a no-op by contract; the service
+		// spells it as a 409 (verified against the real one).
 		return nil
 	}
 	return err

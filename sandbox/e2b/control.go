@@ -106,6 +106,12 @@ func (s *Sandbox) create(ctx context.Context) (sandboxInfo, error) {
 	body := map[string]any{
 		"templateID": s.opts.TemplateID,
 		"timeout":    s.timeout(),
+		// ALWAYS secure. Without it E2B's daemon takes no credential at all:
+		// anyone who learns the sandbox id — which is in the public hostname
+		// of every port a sandbox serves — can read its files and run
+		// commands in it. Verified: a non-secure sandbox answers an
+		// unauthenticated request 200, a secure one 401 (decisions §5.34).
+		"secure": true,
 	}
 	if s.opts.AutoPause {
 		body["autoPause"] = true

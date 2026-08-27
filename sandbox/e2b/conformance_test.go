@@ -31,8 +31,16 @@ func (t envdRedirect) RoundTrip(r *http.Request) (*http.Response, error) {
 
 func fakeBackedSandbox(t *testing.T) (*e2b.Sandbox, *fakeService) {
 	t.Helper()
+	return fakeBackedSandboxWith(t, false)
+}
+
+// fakeBackedSandboxWith chooses how the fake renders the protobuf: E2B 0.7's
+// spelling, or the older numeric one.
+func fakeBackedSandboxWith(t *testing.T, numericEnums bool) (*e2b.Sandbox, *fakeService) {
+	t.Helper()
 	root := t.TempDir()
 	f := newFakeService(t, root)
+	f.numericEnums = numericEnums
 	base, err := url.Parse(f.URL())
 	if err != nil {
 		t.Fatal(err)
@@ -51,6 +59,18 @@ func fakeBackedSandbox(t *testing.T) (*e2b.Sandbox, *fakeService) {
 		t.Fatal(err)
 	}
 	return sb, f
+}
+
+// The same suite against a service that renders the protobuf the OLDER way —
+// FileType as the enum's number, int64 as a number. Alibaba Cloud's envd 0.5
+// does exactly this, and a client that only reads E2B 0.7's spelling fails
+// every directory listing against it (found by the protocol probe).
+func TestE2BConformanceNumericEnums(t *testing.T) {
+	sandboxtest.Run(t, func(t *testing.T) sandbox.Sandbox {
+		t.Helper()
+		sb, _ := fakeBackedSandboxWith(t, true)
+		return sb
+	})
 }
 
 // The whole suite against a service that speaks the wire this client writes:
