@@ -365,6 +365,25 @@ export const api = {
     sandboxStatus: (id: string) => request<{ state: string }>(`/projects/${id}/sandbox`),
     sandboxStart: (id: string) => request<null>(`/projects/${id}/sandbox/start`, { method: 'POST' }),
     sandboxStop: (id: string) => request<{ stopped: boolean }>(`/projects/${id}/sandbox/stop`, { method: 'POST' }),
+    // The working tree as a tar. It is a DOWNLOAD, not JSON, so it bypasses
+    // request(): the bearer token has to ride on the fetch, which rules out a
+    // plain link, and the body is a stream rather than a parsed object.
+    exportTar: async (id: string, name: string): Promise<void> => {
+      const headers: Record<string, string> = {};
+      const t = getToken();
+      if (t) headers['Authorization'] = `Bearer ${t}`;
+      const res = await fetch(`${BASE}/projects/${id}/export`, { headers });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error?.message || res.statusText);
+      }
+      const url = URL.createObjectURL(await res.blob());
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${name || 'project'}.tar`;
+      a.click();
+      URL.revokeObjectURL(url);
+    },
   },
   workflows: {
     ...crud<S['store.Workflow']>('/workflows'),

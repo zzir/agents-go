@@ -4,11 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -17,6 +21,9 @@ import (
 // an admin additionally lists every owner's (?all=true) and may delete any —
 // management, not authoring (decisions §5.29).
 type ProjectHandler struct {
+	// Audit, when set, records every working-tree export: the one call that
+	// takes a whole project off the machine. Wired at bootstrap.
+	Audit     protocol.AuditFunc
 	store     *store.ProjectStore
 	targets   *store.SandboxTargetStore
 	templates *store.SandboxTemplateStore
@@ -444,6 +451,67 @@ func (h *ProjectHandler) SandboxStop(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, sandboxStopResp{Stopped: stopped})
+}
+
+// Export streams the project's working tree as a tar archive — the way files
+// leave a sandbox whose storage the host cannot open directly
+// (decisions §5.33). Owner only, like the environment: a tree is the owner's,
+// and an admin's management reach does not extend to reading one.
+//
+//	@Summary		Export the project's working tree
+//	@Description	Streams /workspace as an uncompressed tar. Audited: this takes the whole tree off the machine.
+//	@Tags			projects
+//	@Produce		application/x-tar
+//	@Param			id	path	string	true	"Project id"
+//	@Success		200	"tar stream"
+//	@Failure		404	{object}	ErrorResponse
+//	@Failure		502	{object}	ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/projects/{id}/export [get]
+func (h *ProjectHandler) Export(c *gin.Context) {
+	spec, ok := h.spec(c)
+	if !ok {
+		return
+	}
+	rc, err := h.manager.ExportProject(c.Request.Context(), spec)
+	if err != nil {
+		upstreamError(c, err)
+		return
+	}
+	defer func() { _ = rc.Close() }()
+	if h.Audit != nil {
+		user, _ := server.CurrentUser(c)
+		h.Audit(context.WithoutCancel(c.Request.Context()), protocol.AuditRecord{
+			Actor: user, Action: "project.export", Resource: spec.Project.ID,
+			Detail: "project " + spec.Project.Name,
+		})
+	}
+	// The headers go out before the first byte: a failure mid-stream cannot
+	// be turned back into a JSON error, so the client sees a truncated
+	// archive — which tar itself reports.
+	c.Header("Content-Disposition", `attachment; filename="`+tarFilename(spec.Project.Name)+`"`)
+	c.Header("Content-Type", "application/x-tar")
+	c.Status(http.StatusOK)
+	if _, err := io.Copy(c.Writer, rc); err != nil {
+		logging.Ctx(c.Request.Context()).Warn("project export stream ended early", "error", err, "project_id", spec.Project.ID)
+	}
+}
+
+// tarFilename turns a project name into a safe download name.
+func tarFilename(name string) string {
+	out := make([]rune, 0, len(name)+4)
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+			out = append(out, r)
+		default:
+			out = append(out, '-')
+		}
+	}
+	if len(out) == 0 {
+		return "project.tar"
+	}
+	return string(out) + ".tar"
 }
 
 // spec resolves the caller's project into a build spec, answering the error

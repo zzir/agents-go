@@ -882,6 +882,13 @@ as names with masked values, and only to the project's owner: listings never
 carry it at all, and an admin's management reach does not extend to reading
 one.
 
+`GET /projects/{id}/export` streams the working tree as an uncompressed tar
+(`application/x-tar`) — the way files leave a sandbox whose storage the host
+cannot open directly (decisions §5.33). Owner only, on the same reasoning as
+the environment, and **audited**: it takes a whole tree off the machine. The
+headers go out before the first byte, so a failure mid-stream cannot become a
+JSON error — the client sees a truncated archive, which tar itself reports.
+
 Changing an environment replaces the container **at the project's next run**
 (the runtime generation moves, exactly as a template edit does) and
 severs that project's terminals — its siblings on the same sandbox are

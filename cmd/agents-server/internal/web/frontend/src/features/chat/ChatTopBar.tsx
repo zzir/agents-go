@@ -1,5 +1,5 @@
 import { ActionList, ActionMenu, IconButton } from '@primer/react';
-import { FileDirectoryIcon, KeyAsteriskIcon, KebabHorizontalIcon, MeterIcon, PlayIcon, PulseIcon, SquareFillIcon, StackIcon, SyncIcon, TerminalIcon } from '@primer/octicons-react';
+import { DownloadIcon, FileDirectoryIcon, KeyAsteriskIcon, KebabHorizontalIcon, MeterIcon, PlayIcon, PulseIcon, SquareFillIcon, StackIcon, SyncIcon, TerminalIcon } from '@primer/octicons-react';
 import type { ReactElement } from 'react';
 import type { InspectorPanel } from '@/features/chat/ChatView';
 import { useChatSession } from '@/features/chat/ChatSessionContext';
@@ -37,6 +37,7 @@ export interface ProjectMenu {
   onEnv: () => void;
   onStart: () => void;
   onStop: () => void;
+  onExport: () => void;
   onRebuild: () => void;
 }
 
@@ -84,6 +85,11 @@ export function ChatTopBar({
                 <ActionList.Item onSelect={projectMenu.onEnv}>
                   <ActionList.LeadingVisual><KeyAsteriskIcon /></ActionList.LeadingVisual>
                   Environment…
+                </ActionList.Item>
+                <ActionList.Item onSelect={projectMenu.onExport}>
+                  <ActionList.LeadingVisual><DownloadIcon /></ActionList.LeadingVisual>
+                  Export as tar…
+                  <ActionList.Description variant="block">The whole working tree, as a download.</ActionList.Description>
                 </ActionList.Item>
                 <ActionList.Divider />
                 {projectMenu.state === 'running' ? (

@@ -4055,6 +4055,41 @@ paths:
       summary: Update project
       tags:
       - projects
+  /projects/{id}/export:
+    get:
+      description: 'Streams /workspace as an uncompressed tar. Audited: this takes
+        the whole tree off the machine.'
+      parameters:
+      - description: Project id
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/x-tar:
+              schema:
+                type: string
+          description: tar stream
+        "404":
+          content:
+            application/x-tar:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "502":
+          content:
+            application/x-tar:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Gateway
+      security:
+      - BearerAuth: []
+      summary: Export the project's working tree
+      tags:
+      - projects
   /projects/{id}/sandbox:
     get:
       parameters:

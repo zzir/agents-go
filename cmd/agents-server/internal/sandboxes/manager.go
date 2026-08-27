@@ -603,6 +603,41 @@ func (m *Manager) Status(ctx context.Context, spec Spec) (sandbox.State, error) 
 	return lc.Status(ctx)
 }
 
+// ExportProject streams the project's working tree as a tar archive. The
+// reference the export holds is released when the returned reader is closed:
+// the archive is produced lazily by the backend, so releasing at return would
+// let an eviction close the connection mid-stream.
+func (m *Manager) ExportProject(ctx context.Context, spec Spec) (io.ReadCloser, error) {
+	sb, release, err := m.Acquire(spec)
+	if err != nil {
+		return nil, err
+	}
+	ex, ok := sb.(sandbox.Exporter)
+	if !ok {
+		release()
+		return nil, fmt.Errorf("%s sandbox: cannot export", spec.Target.Type)
+	}
+	rc, err := ex.ExportTar(ctx, "")
+	if err != nil {
+		release()
+		return nil, err
+	}
+	return &releasingReader{ReadCloser: rc, release: release}, nil
+}
+
+// releasingReader drops the manager reference when the stream is closed.
+type releasingReader struct {
+	io.ReadCloser
+	once    sync.Once
+	release func()
+}
+
+func (r *releasingReader) Close() error {
+	err := r.ReadCloser.Close()
+	r.once.Do(r.release)
+	return err
+}
+
 // holders counts the live references across every cached generation of the
 // project.
 func (m *Manager) holders(projectID string) int {

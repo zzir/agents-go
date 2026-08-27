@@ -184,6 +184,8 @@ func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL st
 	terminal.Audit = audit
 	ws := handler.NewWSHandler(svc.Runner, st.Sessions, st.PendingApprovals)
 	ws.Audit = audit
+	projects := handler.NewProjectHandler(st.Projects, st.Targets, st.Templates, svc.Sandboxes, terminal)
+	projects.Audit = audit
 	return &handlers{
 		WS:       ws,
 		Terminal: terminal,
@@ -211,7 +213,7 @@ func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL st
 			Guardrails: handler.NewGuardrailHandler(st.Guardrails, svc.Guardrails),
 			Targets:    handler.NewSandboxTargetHandler(st.Targets, st.Templates, retirer),
 			Templates:  handler.NewSandboxTemplateHandler(st.Templates, retirer),
-			Projects:   handler.NewProjectHandler(st.Projects, st.Targets, st.Templates, svc.Sandboxes, terminal),
+			Projects:   projects,
 			Traces:     handler.NewTraceHandler(st.Traces),
 			Playground: handler.NewPlaygroundHandler(svc.Deps),
 			ChatGPT:    handler.NewChatGPTOAuthHandler(svc.ChatGPT, st.Providers),

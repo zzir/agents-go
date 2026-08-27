@@ -352,6 +352,19 @@ export function ChatView({
     }
   };
 
+  const exportProject = async () => {
+    if (!boundProject || containerBusy) return;
+    setContainerBusy(true);
+    toast.info('Preparing the archive…');
+    try {
+      await api.projects.exportTar(boundProject.id, boundProject.name);
+    } catch (e) {
+      toast.error((e as Error).message || 'Could not export the project');
+    } finally {
+      setContainerBusy(false);
+    }
+  };
+
   // A rebuild is synchronous and can take an image pull's worth of time, so
   // the menu stays disabled until it answers.
   const rebuildContainer = async () => {
@@ -670,6 +683,7 @@ export function ChatView({
         onEnv: () => setEnvProject(boundProject),
         onStart: () => { void startSandbox(); },
         onStop: () => { void stopSandbox(); },
+        onExport: () => { void exportProject(); },
         onRebuild: () => { void rebuildContainer(); },
       } : null}
     />
