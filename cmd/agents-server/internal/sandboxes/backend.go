@@ -30,6 +30,7 @@ type Backend interface {
 // manager.
 var backends = map[string]Backend{
 	"docker": dockerBackend{},
+	"e2b":    e2bBackend{},
 }
 
 // backendFor resolves spec's target type, naming the type when it is unknown —

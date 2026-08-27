@@ -69,13 +69,18 @@ func openMcpServer(m *McpServerConfig) (err error) {
 	return err
 }
 
+// targetSecretKeys are the credential fields inside a target's config, across
+// every type: one list, so a new backend's key cannot be forgotten by a
+// per-type branch.
+var targetSecretKeys = []string{"ssh_password", "api_key"}
+
 func sealTarget(t *SandboxTarget) (err error) {
-	t.Config, err = sealJSONKeys(labelTargetConfig, t.Config, "ssh_password")
+	t.Config, err = sealJSONKeys(labelTargetConfig, t.Config, targetSecretKeys...)
 	return err
 }
 
 func openTarget(t *SandboxTarget) (err error) {
-	t.Config, err = openJSONKeys(labelTargetConfig, t.Config, "ssh_password")
+	t.Config, err = openJSONKeys(labelTargetConfig, t.Config, targetSecretKeys...)
 	return err
 }
 

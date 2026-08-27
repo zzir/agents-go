@@ -763,8 +763,18 @@ Built-in: `content_filter` (input + tool_input, regex — jailbreak keywords),
 
 *(Endpoints and payload schemas: see the OpenAPI spec — `/openapi.yaml`, browsable at `/docs`.)*
 
-A **target** is WHERE sandboxes run (`type: "docker"` — decisions §5.27), and the
-Docker daemon is the server's ONE external dependency: it shells out to no
+A **target** is WHERE sandboxes run. Two types: `docker` and `e2b`.
+
+For `e2b` — any service speaking the E2B API: E2B's own cloud, a self-hosted
+E2B, or a compatible service such as Alibaba Cloud's Function Compute cloud
+sandbox (decisions §5.34) — the config is `api_url` (control plane; empty =
+E2B's own), `domain` (the suffix a sandbox's public hosts are built from),
+`api_key` (write-only, masked) and `data_plane_auth` (`""` auto,
+`access_token`, `api_key` or `none` — which credential the in-sandbox daemon
+takes; the compatible services differ, so it is configuration). Its identity is
+the pair (api_url, domain): moving either moves every project's files.
+
+For `docker`, the Docker daemon is the server's ONE external dependency: it shells out to no
 binary — not git (skills import over the GitHub API), not ssh (remote
 daemons over pure-Go SSH), not the docker CLI (the socket API).
 `config.host` picks the daemon: empty for this machine's, `ssh://user@host`
@@ -806,7 +816,15 @@ operator's reclaim surface.
 
 ### Sandbox templates — `/api/v1/sandbox-templates`
 
-A **template** is WHAT runs: `image` (required), `runtime` (e.g. `runsc` for
+A **template** is WHAT runs, and its `type` must match the target's.
+
+For `e2b`: `template_id` (required — the workbench builds no templates; the
+service's console or CLI does), `timeout_seconds` (the lease a sandbox is
+created and refreshed with), `auto_pause` (an expired lease PAUSES rather than
+kills — **off destroys the working tree**), `allow_internet`, and
+`max_read_file_bytes`.
+
+For `docker`: `image` (required), `runtime` (e.g. `runsc` for
 gVisor — whether it exists is the target machine's business), `user`
 (user[:group]; empty runs as **root**, so an agent can install packages into
 its own container), `network` (the docker network name to join; empty means
@@ -842,6 +860,9 @@ on the target's daemon — the same on every daemon, local or remote
 
 `target_id` is the project's identity and is fixed at creation; `template_id`
 is content and may be changed, which replaces the container at the next run.
+On an `e2b` target the storage IS the sandbox, so `instance_ref` remembers
+which one — recorded before the client will use it, since a sandbox nobody
+recorded is billed compute nobody will ever stop.
 Both must have the same `type`, which the create and update check — the one
 cross-row rule SQL cannot express.
 

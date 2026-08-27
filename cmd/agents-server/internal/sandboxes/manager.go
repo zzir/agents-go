@@ -26,6 +26,12 @@ type Spec struct {
 	Target   *store.SandboxTarget
 	Template *store.SandboxTemplate
 	Project  *store.Project
+	// SaveInstanceRef records the handle a service minted for this project's
+	// sandbox, so the next process finds the same one instead of provisioning
+	// a second. The MANAGER fills it in before handing the spec to a backend —
+	// callers never set it, and a backend that derives its own name (docker)
+	// never calls it.
+	SaveInstanceRef func(ctx context.Context, ref string) error
 }
 
 // sandboxKey identifies one live sandbox instance: the PROJECT it serves and
@@ -115,6 +121,10 @@ type Manager struct {
 	// trust holds per-session exec_command approval grants, consulted by the
 	// commandGate and updated by the approval resolver.
 	trust *TrustStore
+	// writeInstanceRef persists a backend's handle on a project's sandbox.
+	// Wired at bootstrap; without it a remote backend provisions a fresh
+	// sandbox on every restart, so the build refuses rather than leaking one.
+	writeInstanceRef func(ctx context.Context, projectID, ref string) error
 	// idleAfter, when set, returns how long an unreferenced instance lives
 	// before the idle-stop evicts it (0 = never). Read per release so a
 	// settings change applies without a restart. The eviction closes the
@@ -125,6 +135,12 @@ type Manager struct {
 
 // SetIdleTimeout installs the idle-stop duration provider (see idleAfter).
 func (m *Manager) SetIdleTimeout(fn func() time.Duration) { m.idleAfter = fn }
+
+// SetInstanceRefWriter installs how a backend's handle on a project's sandbox
+// is persisted.
+func (m *Manager) SetInstanceRefWriter(fn func(ctx context.Context, projectID, ref string) error) {
+	m.writeInstanceRef = fn
+}
 
 // NewManager creates an empty Manager.
 func NewManager() *Manager {
@@ -534,11 +550,19 @@ func (m *Manager) SandboxTools(spec Spec, commandApproval bool) ([]*agents.Tool,
 	return tools, releaseTools, nil
 }
 
-// buildSandbox hands spec to its target type's backend.
+// buildSandbox hands spec to its target type's backend, with the callback a
+// remote backend needs to remember what it provisioned.
 func (m *Manager) buildSandbox(spec Spec) (sandbox.Sandbox, error) {
 	b, err := backendFor(spec)
 	if err != nil {
 		return nil, err
+	}
+	projectID := spec.Project.ID
+	spec.SaveInstanceRef = func(ctx context.Context, ref string) error {
+		if m.writeInstanceRef == nil {
+			return fmt.Errorf("no way to record the sandbox for project %s: nothing would ever stop it", projectID)
+		}
+		return m.writeInstanceRef(ctx, projectID, ref)
 	}
 	return b.Open(spec)
 }

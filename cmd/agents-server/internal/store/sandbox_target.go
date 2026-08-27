@@ -18,30 +18,48 @@ import (
 // typed config and the same canonicalizer, so a question answered one way at
 // save time cannot be answered another way at compare time.
 
-// NormalizeTargetConfig strictly decodes raw ("docker" is the only backend —
-// decisions §5.27) and returns the canonical payload to store. It gates the
-// API write path: a payload that decodes here builds later — a stored type
-// mismatch would otherwise read as its zero value at build time. Canonical
-// means fields re-marshaled in struct order and unknown keys dropped (nothing
-// consumes them).
+// TargetTypes are the backends a target may name.
+var TargetTypes = []string{"docker", "e2b"}
+
+// NormalizeTargetConfig strictly decodes raw and returns the canonical payload
+// to store. It gates the API write path: a payload that decodes here builds
+// later — a stored type mismatch would otherwise read as its zero value at
+// build time. Canonical means fields re-marshaled in struct order and unknown
+// keys dropped (nothing consumes them).
 func NormalizeTargetConfig(typ string, raw json.RawMessage) (json.RawMessage, error) {
-	if typ != "docker" {
-		return nil, fmt.Errorf("sandbox target type must be docker, got %q", typ)
-	}
-	var dc DockerTargetConfig
-	if err := unmarshalConfigJSON(raw, &dc); err != nil {
-		return nil, fmt.Errorf("docker target config: %w", err)
-	}
-	switch {
-	case dc.Host == "" || strings.HasPrefix(dc.Host, "tcp://"):
-	case strings.HasPrefix(dc.Host, "ssh://"):
-		if !strings.Contains(strings.TrimPrefix(dc.Host, "ssh://"), "@") {
-			return nil, errors.New("an ssh:// host must carry its user: ssh://user@host")
+	switch typ {
+	case "docker":
+		var dc DockerTargetConfig
+		if err := unmarshalConfigJSON(raw, &dc); err != nil {
+			return nil, fmt.Errorf("docker target config: %w", err)
 		}
+		switch {
+		case dc.Host == "" || strings.HasPrefix(dc.Host, "tcp://"):
+		case strings.HasPrefix(dc.Host, "ssh://"):
+			if !strings.Contains(strings.TrimPrefix(dc.Host, "ssh://"), "@") {
+				return nil, errors.New("an ssh:// host must carry its user: ssh://user@host")
+			}
+		default:
+			return nil, errors.New("host must be empty (local daemon), tcp://host:port, or ssh://user@host")
+		}
+		return json.Marshal(dc)
+	case "e2b":
+		var ec E2BTargetConfig
+		if err := unmarshalConfigJSON(raw, &ec); err != nil {
+			return nil, fmt.Errorf("e2b target config: %w", err)
+		}
+		if ec.APIURL != "" && !strings.HasPrefix(ec.APIURL, "http://") && !strings.HasPrefix(ec.APIURL, "https://") {
+			return nil, errors.New("api_url must be an absolute http(s) URL")
+		}
+		switch ec.DataPlaneAuth {
+		case "", "access_token", "api_key", "none":
+		default:
+			return nil, errors.New(`data_plane_auth must be "", "access_token", "api_key" or "none"`)
+		}
+		return json.Marshal(ec)
 	default:
-		return nil, errors.New("host must be empty (local daemon), tcp://host:port, or ssh://user@host")
+		return nil, fmt.Errorf("sandbox target type must be docker or e2b, got %q", typ)
 	}
-	return json.Marshal(dc)
 }
 
 // TargetContentEqual reports whether two target payloads mean the same runtime
@@ -49,27 +67,57 @@ func NormalizeTargetConfig(typ string, raw json.RawMessage) (json.RawMessage, er
 // bump, and the instance retirement that follows). Canonical typed comparison keeps representation noise —
 // omitted-vs-zero fields, unknown keys — from tearing down a container; a
 // payload that cannot decode compares UNEQUAL, the safe side.
-func TargetContentEqual(_ string, a, b json.RawMessage) bool {
+func TargetContentEqual(typ string, a, b json.RawMessage) bool {
+	if typ == "e2b" {
+		return canonicalEqual(a, b, func(*E2BTargetConfig) {})
+	}
 	return canonicalEqual(a, b, func(*DockerTargetConfig) {})
 }
 
 // TargetIdentityChanged reports whether an update moves the target's IDENTITY
-// — type and daemon Host, the fields that decide which machine a project's
-// files live on; they freeze while projects live on the target (decisions
-// §5.33). An undecodable prev is NOT a change — fixing it is a referenced
-// target's only way out; an undecodable next counts as one, pure defense.
+// — the type, and the address of the machine or service a project's files live
+// on; they freeze while projects live on the target (decisions §5.33). An
+// undecodable prev is NOT a change — fixing it is a referenced target's only
+// way out; an undecodable next counts as one, pure defense.
 func TargetIdentityChanged(prev, next *SandboxTarget) bool {
 	if prev.Type != next.Type {
 		return true
 	}
-	var p, n DockerTargetConfig
-	if unmarshalConfigJSON(prev.Config, &p) != nil {
+	p, perr := targetDestination(prev)
+	n, nerr := targetDestination(next)
+	if perr != nil {
 		return false
 	}
-	if unmarshalConfigJSON(next.Config, &n) != nil {
+	if nerr != nil {
 		return true
 	}
-	return p.Host != n.Host
+	return p != n
+}
+
+// TargetDestinationField names the config field that IS the target's address,
+// per type. The mask guard uses it: a credential sent back masked means "keep
+// the stored one", which only holds while the destination is unchanged.
+func TargetDestinationField(typ string) string {
+	if typ == "e2b" {
+		return "api_url"
+	}
+	return "host"
+}
+
+// targetDestination is the address itself.
+func targetDestination(t *SandboxTarget) (string, error) {
+	if t.Type == "e2b" {
+		var ec E2BTargetConfig
+		if err := unmarshalConfigJSON(t.Config, &ec); err != nil {
+			return "", err
+		}
+		return ec.APIURL + "|" + ec.Domain, nil
+	}
+	var dc DockerTargetConfig
+	if err := unmarshalConfigJSON(t.Config, &dc); err != nil {
+		return "", err
+	}
+	return dc.Host, nil
 }
 
 // SandboxTargetStore persists sandbox targets.

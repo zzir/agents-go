@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -60,13 +62,12 @@ func (h *SandboxTemplateHandler) validate(c *gin.Context, req *sandboxTemplateRe
 		badRequest(c, "name is required")
 		return false
 	}
-	switch req.Type {
-	case "docker":
-	case "":
+	if req.Type == "" {
 		badRequest(c, "type is required")
 		return false
-	default:
-		badRequest(c, "type must be docker, got "+req.Type)
+	}
+	if !slices.Contains(store.TargetTypes, req.Type) {
+		badRequest(c, "type must be one of "+strings.Join(store.TargetTypes, ", ")+", got "+req.Type)
 		return false
 	}
 	return true
@@ -75,7 +76,7 @@ func (h *SandboxTemplateHandler) validate(c *gin.Context, req *sandboxTemplateRe
 // Create persists a new sandbox template.
 //
 //	@Summary		Create sandbox template
-//	@Description	type is "docker". config: image (required), runtime, user ("" = root), network (docker network name; "" = no network), memory_mb/cpus caps, max_read_file_bytes (0 = 8 MiB default).
+//	@Description	type "docker" config: image (required), runtime, user ("" = root), network (docker network name; "" = no network), memory_mb/cpus caps, max_read_file_bytes. type "e2b" config: template_id (required — build it on the service first), timeout_seconds, auto_pause, allow_internet, max_read_file_bytes.
 //	@Tags			sandbox-templates
 //	@Accept			json
 //	@Produce		json

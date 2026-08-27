@@ -113,6 +113,22 @@ func (s *ProjectStore) Update(ctx context.Context, id string, p *Project, expect
 	return ErrRevisionConflict
 }
 
+// SetInstanceRef records a backend's handle on the project's sandbox. It is a
+// plain overwrite: a handle is only ever replaced when the old sandbox is gone
+// (destroyed, or expired), and refusing the write would strand the project on
+// a dead one. It moves neither counter — the handle is bookkeeping, not
+// configuration, and bumping the runtime generation would replace the very
+// instance that just reported it.
+func (s *ProjectStore) SetInstanceRef(ctx context.Context, id, ref string) error {
+	if _, err := s.db.NewUpdate().Model((*Project)(nil)).
+		Set("instance_ref = ?", ref).
+		Where("id = ?", id).
+		Exec(ctx); err != nil {
+		return fmt.Errorf("recording the sandbox for project %s: %w", id, err)
+	}
+	return nil
+}
+
 // ProjectGen is one project's id paired with its runtime generation after a
 // bump — what the caller needs to retire that project's live instance and
 // terminals, without re-reading the rows.

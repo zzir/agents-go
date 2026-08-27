@@ -1,0 +1,203 @@
+package e2b
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"strings"
+
+	"github.com/zzir/agents-go/sandbox"
+)
+
+// processEvent is one frame of a process stream, in the camelCase protojson
+// emits. Exactly one of the three is set per frame.
+type processEvent struct {
+	Event struct {
+		Start *struct {
+			PID uint32 `json:"pid"`
+		} `json:"start"`
+		Data *struct {
+			// bytes fields arrive base64-encoded.
+			Stdout string `json:"stdout"`
+			Stderr string `json:"stderr"`
+			PTY    string `json:"pty"`
+		} `json:"data"`
+		End *struct {
+			// sint32 renders as a number; a service that renders it as a
+			// string is tolerated by json.Number.
+			ExitCode json.Number `json:"exitCode"`
+			Exited   bool        `json:"exited"`
+			Status   string      `json:"status"`
+			Error    string      `json:"error"`
+		} `json:"end"`
+	} `json:"event"`
+}
+
+func (e processEvent) exitCode() int {
+	if e.Event.End == nil {
+		return 0
+	}
+	n, err := e.Event.End.ExitCode.Int64()
+	if err != nil {
+		return 0
+	}
+	return int(n)
+}
+
+// Exec runs a command and returns its captured output.
+func (s *Sandbox) Exec(ctx context.Context, req sandbox.ExecRequest) (*sandbox.ExecResult, error) {
+	stdout := &sandbox.CappedBuffer{Max: req.EffectiveMaxOutputBytes()}
+	stderr := &sandbox.CappedBuffer{Max: req.EffectiveMaxOutputBytes()}
+	res, err := s.ExecStream(ctx, req, stdout, stderr)
+	if err != nil {
+		return nil, err
+	}
+	res.Stdout, res.Stderr = stdout.String(), stderr.String()
+	return res, nil
+}
+
+// ExecStream runs a command, writing its output to the caller's writers as it
+// arrives.
+func (s *Sandbox) ExecStream(ctx context.Context, req sandbox.ExecRequest, stdout, stderr io.Writer) (*sandbox.ExecResult, error) {
+	if len(req.Cmd) == 0 {
+		return nil, errors.New("e2b: ExecRequest.Cmd is empty")
+	}
+	if req.Stdin != "" {
+		return nil, errors.New("e2b: ExecRequest.Stdin is not supported")
+	}
+	if err := s.writeRequestFiles(ctx, req.Files); err != nil {
+		return nil, err
+	}
+
+	envs := map[string]string{}
+	for k, v := range s.opts.Env {
+		envs[k] = v
+	}
+	for k, v := range req.Env {
+		envs[k] = v
+	}
+	start := map[string]any{
+		"process": map[string]any{
+			"cmd":  req.Cmd[0],
+			"args": req.Cmd[1:],
+			"envs": envs,
+			"cwd":  s.workDir(),
+		},
+	}
+
+	// The timeout is the CALLER's deadline, enforced here: envd's Start
+	// carries none. A deadline that fires cancels the stream, and the process
+	// is signalled so it does not outlive the request inside the sandbox.
+	runCtx, cancel := withTimeout(ctx, req.EffectiveTimeout())
+	defer cancel()
+
+	var pid uint32
+	result := &sandbox.ExecResult{}
+	err := s.stream(runCtx, procProcessStart, start, func(raw json.RawMessage) error {
+		var ev processEvent
+		if err := json.Unmarshal(raw, &ev); err != nil {
+			return fmt.Errorf("e2b: decoding a process event: %w", err)
+		}
+		switch {
+		case ev.Event.Start != nil:
+			pid = ev.Event.Start.PID
+		case ev.Event.Data != nil:
+			writeChunk(stdout, ev.Event.Data.Stdout)
+			writeChunk(stderr, ev.Event.Data.Stderr)
+		case ev.Event.End != nil:
+			result.ExitCode = ev.exitCode()
+		}
+		return nil
+	})
+	if err != nil {
+		// A deadline is not a failure: it is the sandbox's answer, reported
+		// the way every backend reports one (spec §2.7m).
+		if errors.Is(runCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+			s.signal(context.WithoutCancel(ctx), pid, "SIGNAL_SIGKILL")
+			return &sandbox.ExecResult{ExitCode: -1, TimedOut: true}, nil
+		}
+		return nil, err
+	}
+	return result, nil
+}
+
+// writeChunk decodes one base64 output chunk into w. A chunk that will not
+// decode is dropped rather than failing the command: partial output is worth
+// more to the model than none.
+func writeChunk(w io.Writer, encoded string) {
+	if encoded == "" || w == nil {
+		return
+	}
+	if raw, err := base64.StdEncoding.DecodeString(encoded); err == nil {
+		_, _ = w.Write(raw)
+	}
+}
+
+// writeRequestFiles materializes ExecRequest.Files before the command runs.
+func (s *Sandbox) writeRequestFiles(ctx context.Context, files map[string]string) error {
+	for name, content := range files {
+		if err := s.WriteFile(ctx, name, []byte(content)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// signal best-effort kills a process the caller stopped waiting for.
+func (s *Sandbox) signal(ctx context.Context, pid uint32, sig string) {
+	if pid == 0 {
+		return
+	}
+	_ = s.unary(ctx, procSendSignal, map[string]any{
+		"process": map[string]any{"pid": pid},
+		"signal":  sig,
+	}, nil)
+}
+
+// ExportTar streams the working tree as a tar archive, produced by the
+// sandbox itself: there is no host-side filesystem to read, and the tool is
+// already in every image these run.
+func (s *Sandbox) ExportTar(ctx context.Context, p string) (io.ReadCloser, error) {
+	dir := s.workDir()
+	if p != "" {
+		dir = s.resolvePath(p)
+	}
+	pr, pw := io.Pipe()
+	go func() {
+		// -C the parent and name the leaf, so the archive carries one top
+		// directory rather than absolute paths.
+		script := "tar -cf - -C " + sandbox.ShellQuote(parentOf(dir)) + " " + sandbox.ShellQuote(leafOf(dir))
+		res, err := s.ExecStream(ctx, sandbox.ExecRequest{
+			Cmd: []string{"sh", "-c", script},
+			// An export is not a command with a 30-second answer.
+			Timeout: exportTimeout,
+		}, pw, io.Discard)
+		switch {
+		case err != nil:
+			_ = pw.CloseWithError(err)
+		case res.ExitCode != 0:
+			_ = pw.CloseWithError(fmt.Errorf("e2b: export %q: tar exited %d", dir, res.ExitCode))
+		default:
+			_ = pw.Close()
+		}
+	}()
+	return pr, nil
+}
+
+func parentOf(p string) string {
+	if i := strings.LastIndex(strings.TrimSuffix(p, "/"), "/"); i > 0 {
+		return p[:i]
+	}
+	return "/"
+}
+
+func leafOf(p string) string {
+	p = strings.TrimSuffix(p, "/")
+	if i := strings.LastIndex(p, "/"); i >= 0 {
+		return p[i+1:]
+	}
+	return p
+}

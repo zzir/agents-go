@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -106,22 +107,20 @@ func (r sandboxTargetReq) toTarget() *store.SandboxTarget {
 	return &store.SandboxTarget{Name: r.Name, Type: r.Type, Config: r.Config}
 }
 
-// validate enforces the POLICY layer of a target write: name and type
-// present, docker the only backend (decisions §5.27). Field-level validation
-// and canonicalization live in store.NormalizeTargetConfig, which both write
-// handlers run right after this.
+// validate enforces the POLICY layer of a target write: a name, and a type
+// this build carries. Field-level validation and canonicalization live in
+// store.NormalizeTargetConfig, which both write handlers run right after this.
 func (h *SandboxTargetHandler) validate(c *gin.Context, req *sandboxTargetReq) bool {
 	if req.Name == "" {
 		badRequest(c, "name is required")
 		return false
 	}
-	switch req.Type {
-	case "docker":
-	case "":
+	if req.Type == "" {
 		badRequest(c, "type is required")
 		return false
-	default:
-		badRequest(c, "type must be docker, got "+req.Type)
+	}
+	if !slices.Contains(store.TargetTypes, req.Type) {
+		badRequest(c, "type must be one of "+strings.Join(store.TargetTypes, ", ")+", got "+req.Type)
 		return false
 	}
 	return true
@@ -130,7 +129,7 @@ func (h *SandboxTargetHandler) validate(c *gin.Context, req *sandboxTargetReq) b
 // Create persists a new sandbox target from the request body.
 //
 //	@Summary		Create sandbox target
-//	@Description	type is "docker". config: host ("" = local daemon, tcp://, or ssh://user@host with ssh_* auth — ssh_password is write-only, ******** mask semantics).
+//	@Description	type is "docker" (config: host — "" = local daemon, tcp://, or ssh://user@host with ssh_* auth) or "e2b" (config: api_url, domain, api_key, data_plane_auth). ssh_password and api_key are write-only, ******** mask semantics.
 //	@Tags			sandbox-targets
 //	@Accept			json
 //	@Produce		json
@@ -228,10 +227,12 @@ func (h *SandboxTargetHandler) Update(c *gin.Context) {
 		return
 	}
 	t := req.toTarget()
-	// Only refuse when a stored password actually exists — a mask with
-	// nothing behind it resolves to "" and needs no guard.
-	if maskAcrossDestination(t.Config, prev.Config, "host") && storedSSHPassword(prev.Config) {
-		badRequest(c, "host changed: the stored ssh_password belongs to the previous host — replace it or clear it")
+	// A masked credential means "keep the stored one", which only holds while
+	// the destination is unchanged: moving the machine or the service must not
+	// carry the old key along. Only refuse when one is actually stored — a
+	// mask with nothing behind it resolves to "" and needs no guard.
+	if maskAcrossDestination(t.Config, prev.Config, store.TargetDestinationField(prev.Type)) && storedTargetSecret(prev.Config) {
+		badRequest(c, "the destination changed: the stored credential belongs to the previous one — replace it or clear it")
 		return
 	}
 	t.Config = restoreTargetConfig(t.Config, prev.Config)
@@ -320,7 +321,7 @@ func (h *SandboxTargetHandler) Delete(c *gin.Context) {
 // connectivity. The image comes from a template, since a target names none.
 //
 //	@Summary		Test sandbox target
-//	@Description	Runs "echo ok" in a throw-away container from the named template. 200 with ok=false means the daemon was reachable but the command failed.
+//	@Description	Runs "echo ok" in a throw-away sandbox from the named template. 200 with ok=false means the service was reachable but the command failed.
 //	@Tags			sandbox-targets
 //	@Produce		json
 //	@Param			id			path		string	true	"Target id"

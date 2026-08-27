@@ -3759,7 +3759,7 @@ export interface paths {
         put?: never;
         /**
          * Create sandbox target
-         * @description type is "docker". config: host ("" = local daemon, tcp://, or ssh://user@host with ssh_* auth — ssh_password is write-only, ******** mask semantics).
+         * @description type is "docker" (config: host — "" = local daemon, tcp://, or ssh://user@host with ssh_* auth) or "e2b" (config: api_url, domain, api_key, data_plane_auth). ssh_password and api_key are write-only, ******** mask semantics.
          */
         post: {
             parameters: {
@@ -4155,7 +4155,7 @@ export interface paths {
         put?: never;
         /**
          * Test sandbox target
-         * @description Runs "echo ok" in a throw-away container from the named template. 200 with ok=false means the daemon was reachable but the command failed.
+         * @description Runs "echo ok" in a throw-away sandbox from the named template. 200 with ok=false means the service was reachable but the command failed.
          */
         post: {
             parameters: {
@@ -4256,7 +4256,7 @@ export interface paths {
         put?: never;
         /**
          * Create sandbox template
-         * @description type is "docker". config: image (required), runtime, user ("" = root), network (docker network name; "" = no network), memory_mb/cpus caps, max_read_file_bytes (0 = 8 MiB default).
+         * @description type "docker" config: image (required), runtime, user ("" = root), network (docker network name; "" = no network), memory_mb/cpus caps, max_read_file_bytes. type "e2b" config: template_id (required — build it on the service first), timeout_seconds, auto_pause, allow_internet, max_read_file_bytes.
          */
         post: {
             parameters: {

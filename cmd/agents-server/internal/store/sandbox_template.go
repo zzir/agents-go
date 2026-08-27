@@ -21,29 +21,46 @@ var ErrTemplateTypeImmutable = errors.New("a template's type cannot change; crea
 // container cannot be created without. See NormalizeTargetConfig for what
 // canonical means and why the write path gates here.
 func NormalizeTemplateConfig(typ string, raw json.RawMessage) (json.RawMessage, error) {
-	if typ != "docker" {
-		return nil, fmt.Errorf("sandbox template type must be docker, got %q", typ)
+	switch typ {
+	case "docker":
+		var dc DockerTemplateConfig
+		if err := unmarshalConfigJSON(raw, &dc); err != nil {
+			return nil, fmt.Errorf("docker template config: %w", err)
+		}
+		if dc.Image == "" {
+			return nil, errors.New("a docker template requires config.image")
+		}
+		if dc.MaxReadFileBytes < 0 {
+			return nil, errors.New("max_read_file_bytes cannot be negative")
+		}
+		if dc.MemoryMB < 0 || dc.CPUs < 0 {
+			return nil, errors.New("memory_mb and cpus cannot be negative")
+		}
+		return json.Marshal(dc)
+	case "e2b":
+		var ec E2BTemplateConfig
+		if err := unmarshalConfigJSON(raw, &ec); err != nil {
+			return nil, fmt.Errorf("e2b template config: %w", err)
+		}
+		if ec.TemplateID == "" {
+			return nil, errors.New("an e2b template requires config.template_id — build it on the service first")
+		}
+		if ec.TimeoutSeconds < 0 || ec.MaxReadFileBytes < 0 {
+			return nil, errors.New("timeout_seconds and max_read_file_bytes cannot be negative")
+		}
+		return json.Marshal(ec)
+	default:
+		return nil, fmt.Errorf("sandbox template type must be docker or e2b, got %q", typ)
 	}
-	var dc DockerTemplateConfig
-	if err := unmarshalConfigJSON(raw, &dc); err != nil {
-		return nil, fmt.Errorf("docker template config: %w", err)
-	}
-	if dc.Image == "" {
-		return nil, errors.New("a docker template requires config.image")
-	}
-	if dc.MaxReadFileBytes < 0 {
-		return nil, errors.New("max_read_file_bytes cannot be negative")
-	}
-	if dc.MemoryMB < 0 || dc.CPUs < 0 {
-		return nil, errors.New("memory_mb and cpus cannot be negative")
-	}
-	return json.Marshal(dc)
 }
 
 // TemplateContentEqual reports whether two template payloads mean the same
 // runtime content — the predicate behind the RuntimeGen bump. Semantics match
 // TargetContentEqual's.
-func TemplateContentEqual(_ string, a, b json.RawMessage) bool {
+func TemplateContentEqual(typ string, a, b json.RawMessage) bool {
+	if typ == "e2b" {
+		return canonicalEqual(a, b, func(*E2BTemplateConfig) {})
+	}
 	return canonicalEqual(a, b, func(*DockerTemplateConfig) {})
 }
 

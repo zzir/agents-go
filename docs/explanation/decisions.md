@@ -1165,3 +1165,59 @@ None.
 
 **The session binding collapses to `project_id`.** A project pins its target,
 so the second column was derivable and could only ever disagree.
+
+### 5.34 One E2B-compatible backend, written here, not one backend per cloud
+
+Decided 2026-08-28. Alibaba Cloud's Function Compute cloud sandbox is **E2B
+SDK compatible**, and its compatibility list covers everything the workbench
+needs: create / connect / pause / kill / setTimeout, `getHost(port)`,
+`commands.run`, `pty`, and the whole `files` surface. So the second backend is
+not "e2b and Alibaba Cloud" — it is **one backend that speaks the E2B API, and
+a target row that says which service**: `api_url` (control plane), `domain`
+(the suffix a sandbox's public hosts are built from) and `api_key`. E2B's own
+cloud, a self-hosted E2B and the compatible services differ only in those
+three. No `flavor` discriminator: the moment one appears that configuration
+cannot express, that is a new decision to argue, not a switch to grow.
+
+**The client is written here.** E2B ships no official Go SDK — the two that
+exist are community ports — and the parts this needs are six REST calls and a
+handful of RPCs. The control plane is ordinary JSON over HTTP. The data plane
+is Connect, whose JSON codec makes a unary call an ordinary POST and a server
+stream the same JSON inside a five-byte envelope: one flag byte, four bytes of
+big-endian length, the payload. That is ~150 lines, against a protobuf
+toolchain plus generated stubs plus two module dependencies. The trade is real
+and named: generated stubs would be checked against the schema, and this is
+checked against a fake and a probe. If the surface grows past the six messages
+it pins, generate them.
+
+Because none of it needs a dependency, `sandbox/e2b` lives in the ROOT module.
+The submodule rule (§5.7) exists to keep heavy dependencies out of the core;
+there are none to keep out.
+
+**What the workbench does not use**: templates are referenced by id, never
+built (the service's own console or CLI builds them); no metrics, no logs, no
+fork, no snapshots, no egress rules, no volumes, no code interpreter.
+
+**The sandbox is remembered, not searched for.** A created sandbox's id is
+written to `projects.instance_ref` before the client will use it: a sandbox
+nobody recorded is billed compute nobody will ever stop, so a failure to
+record fails the create. Finding it again by metadata query would need a
+filter syntax the compatible services do not document identically; a column
+does not.
+
+**Stop is pause, and Reclaim is kill.** On these services the sandbox IS the
+storage, so §5.33's "a project delete destroys its storage" needs no separate
+volume removal — killing the sandbox is the whole of it. It also means
+`auto_pause` matters: with it off, an expired lease destroys a working tree,
+which is why the template form says so where the checkbox is.
+
+**Two things are unverified until someone runs the probe** against a real
+service: which credential the in-sandbox daemon takes (E2B mints a per-sandbox
+token; Alibaba Cloud's compatibility notes say it does NOT support
+`E2B_ACCESS_TOKEN`), and whether both accept the JSON codec. Both are
+configuration rather than assumption — `data_plane_auth` selects the
+credential and defaults to "whatever the create returned, else the API key" —
+and the probe program lives outside the repo because it needs credentials and
+makes billable calls. Until it runs, this backend is unproven against the real
+services and proven against a fake that speaks the wire as read from the
+protos.

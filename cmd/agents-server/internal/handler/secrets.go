@@ -229,13 +229,14 @@ func restoreMcpConfig(incoming, prev json.RawMessage) json.RawMessage {
 	return restoreJSONFields(incoming, prev, true, "oauth_client_secret")
 }
 
-// storedSSHPassword reports whether a stored sandbox target actually holds a
+// storedTargetSecret reports whether a stored sandbox target actually holds a
 // password — the mask-across-host refusal only applies when there is one.
-func storedSSHPassword(prev json.RawMessage) bool {
+func storedTargetSecret(prev json.RawMessage) bool {
 	var cfg struct {
 		SSHPassword string `json:"ssh_password"`
+		APIKey      string `json:"api_key"`
 	}
-	return json.Unmarshal(prev, &cfg) == nil && cfg.SSHPassword != ""
+	return json.Unmarshal(prev, &cfg) == nil && (cfg.SSHPassword != "" || cfg.APIKey != "")
 }
 
 // maskAcrossDestination reports whether incoming still carries the mask
@@ -259,15 +260,20 @@ func maskAcrossDestination(incoming, prev json.RawMessage, field string) bool {
 // sanitizeTargetConfig returns t with its secret masked: the SSH password
 // of a remote-daemon docker config.
 func sanitizeTargetConfig(t store.SandboxTarget) store.SandboxTarget {
-	t.Config = maskJSONFields(t.Config, false, "ssh_password")
+	t.Config = maskJSONFields(t.Config, false, targetSecretFields...)
 	return t
 }
 
-// restoreTargetConfig resolves a masked SSH password in an incoming target
+// restoreTargetConfig resolves a masked credential in an incoming target
 // config against the previously stored one.
 func restoreTargetConfig(incoming, prev json.RawMessage) json.RawMessage {
-	return restoreJSONFields(incoming, prev, false, "ssh_password")
+	return restoreJSONFields(incoming, prev, false, targetSecretFields...)
 }
+
+// targetSecretFields are every type's credential field: one list, so a new
+// backend's key cannot be forgotten by a per-type branch (it mirrors the
+// store's sealing list).
+var targetSecretFields = []string{"ssh_password", "api_key"}
 
 // sanitizeAgentConfig masks the secret-bearing fields of an agent config for
 // API responses. Only the per-entry fallback-model keys remain: the provider

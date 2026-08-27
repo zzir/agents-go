@@ -124,6 +124,7 @@ func newBridge(ctx, bgCtx context.Context, db *bun.DB, st *stores, audit protoco
 		ChatGPT:    providers.NewChatGPTOAuth(st.Providers, st.SettingReader),
 		Sandboxes:  sandboxes.NewManager(),
 	}
+	svc.Sandboxes.SetInstanceRefWriter(st.Projects.SetInstanceRef)
 	svc.Sandboxes.SetIdleTimeout(func() time.Duration {
 		return time.Duration(st.SettingReader.Int(context.Background(), settings.KeySandboxIdleMinutes)) * time.Minute
 	})

@@ -498,6 +498,42 @@ type DockerTargetConfig struct {
 	SSHInsecureHostKey bool   `json:"ssh_insecure_host_key,omitempty"`
 }
 
+// E2BTargetConfig is the SandboxTarget.Config payload for type "e2b": which
+// service, and the key that reaches it. E2B's own cloud, a self-hosted E2B and
+// a compatible service such as Alibaba Cloud's differ only in these
+// (decisions §5.34).
+type E2BTargetConfig struct {
+	// APIURL is the control plane base; empty means E2B's own.
+	APIURL string `json:"api_url,omitempty"`
+	// Domain is the suffix a sandbox's public hosts are built from; empty
+	// means E2B's own.
+	Domain string `json:"domain,omitempty"`
+	// APIKey authenticates the control plane. Write-only (mask semantics).
+	APIKey string `json:"api_key,omitempty"`
+	// DataPlaneAuth selects the credential the in-sandbox daemon takes:
+	// "" (auto), "access_token", "api_key" or "none". Configuration rather
+	// than a constant because the compatible services differ.
+	DataPlaneAuth string `json:"data_plane_auth,omitempty"`
+}
+
+// E2BTemplateConfig is the SandboxTemplate.Config payload for type "e2b".
+// The template itself is built on the service, not here — the workbench
+// references one by id.
+type E2BTemplateConfig struct {
+	// TemplateID names a template that already exists on the service.
+	TemplateID string `json:"template_id"`
+	// TimeoutSeconds is the lease a sandbox is created and refreshed with;
+	// 0 uses the backend default.
+	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
+	// AutoPause makes the lease PAUSE the sandbox rather than kill it, so an
+	// idle project keeps its files.
+	AutoPause bool `json:"auto_pause,omitempty"`
+	// AllowInternet gives the sandbox outbound network access.
+	AllowInternet bool `json:"allow_internet,omitempty"`
+	// MaxReadFileBytes caps read_file; 0 = the backend default (8 MiB).
+	MaxReadFileBytes int64 `json:"max_read_file_bytes,omitempty"`
+}
+
 // DockerTemplateConfig is the SandboxTemplate.Config payload for type
 // "docker": the image and the container's shape.
 type DockerTemplateConfig struct {
