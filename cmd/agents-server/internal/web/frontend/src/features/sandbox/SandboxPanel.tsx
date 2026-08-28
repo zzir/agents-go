@@ -252,12 +252,12 @@ function SandboxForm({ initial, seed, onSave, onCancel, onDelete, saving }: {
         'The Docker network the container joins. Empty = no network at all. "bridge" gives ordinary networking; a user-defined network name puts it where the server can reach it.',
       )}
       {form.type === 'docker' && fc('Memory limit (MB)',
-        <TextInput block type="number" value={form.memory_mb} onChange={e => set('memory_mb', e.target.value)} placeholder="unlimited" />,
-        'Hard memory cap per container. Empty = unlimited.',
+        <TextInput block type="number" value={form.memory_mb} onChange={e => set('memory_mb', e.target.value)} placeholder="4096 (default)" />,
+        'Hard memory cap per container. Empty = the 4 GiB safe default (agent code runs here — it is never unlimited).',
       )}
       {form.type === 'docker' && fc('CPU limit',
-        <TextInput block type="number" value={form.cpus} onChange={e => set('cpus', e.target.value)} placeholder="daemon default" />,
-        'CPU cores per container (fractional allowed, e.g. 0.5). Empty = the daemon default.',
+        <TextInput block type="number" value={form.cpus} onChange={e => set('cpus', e.target.value)} placeholder="2 (default)" />,
+        'CPU cores per container (fractional allowed, e.g. 0.5). Empty = the 2-core safe default.',
       )}
 
       {form.type === 'e2b' && fc('Template id',

@@ -93,10 +93,14 @@ export function ProjectEnvDialog({ project, sessionCount, onClose }: ProjectEnvD
     return () => { live = false; };
   }, [project.sandbox_id]);
 
-  // Compare ports by what they parse to, not by their text: "3000, 5173" and
-  // "3000,5173" are the same published set and must not read as an edit that
-  // recreates the container.
-  const canonPorts = (raw: string) => parsePorts(raw)?.join(',') ?? raw.trim();
+  // Compare ports by the canonical set the server stores — sorted and
+  // deduplicated — not by their text: "5173, 3000", "3000,5173" and
+  // "3000, 3000, 5173" are the same published set and must not read as an edit
+  // that recreates the container.
+  const canonPorts = (raw: string) => {
+    const p = parsePorts(raw);
+    return p ? [...new Set(p)].sort((a, b) => a - b).join(',') : raw.trim();
+  };
   const changed = vars !== null && (containerEnv(vars) !== loaded || canonPorts(ports) !== canonPorts(loadedPorts));
   const invalid = vars ? envError(vars) : null;
   const portList = parsePorts(ports);
@@ -108,7 +112,9 @@ export function ProjectEnvDialog({ project, sessionCount, onClose }: ProjectEnvD
     try {
       await api.projects.update(project.id, {
         name: project.name, sandbox_id: project.sandbox_id,
-        env: cleanEnv(vars), ports: portList ?? [], revision,
+        // e2b ignores ports and the server rejects them; the field is hidden
+        // for e2b, so never send a stray one that would 400 the save.
+        env: cleanEnv(vars), ports: sandboxType === 'e2b' ? [] : (portList ?? []), revision,
       });
       toast.success(changed ? 'Saved — the container is recreated on the next run' : 'Saved');
       onClose();
@@ -137,7 +143,8 @@ export function ProjectEnvDialog({ project, sessionCount, onClose }: ProjectEnvD
         </p>
         <p className="env-editor-hint">
           Packages installed inside the container are lost; files under <code>/workspace</code> are not
-          touched. Runs in flight and open terminals keep the container they started with.{used}
+          touched. Open terminals are closed; a run already in progress finishes on the container it
+          started with.{used}
         </p>
       </Dialog>
     );

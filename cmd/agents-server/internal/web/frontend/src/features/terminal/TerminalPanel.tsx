@@ -231,9 +231,9 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
                     const items = (projects || []).filter(p => p.sandbox_id === tg.id);
                     return (
                       <ActionList.Group key={tg.id}>
-                        {/* Primer requires an explicit heading level on
-                            list-role ActionLists. */}
-                        <ActionList.GroupHeading as="h3">{tg.name}</ActionList.GroupHeading>
+                        {/* Menu-role ActionList: the heading is presentational,
+                            a heading level (`as`) is invalid here and throws. */}
+                        <ActionList.GroupHeading>{tg.name}</ActionList.GroupHeading>
                         {items.length === 0 ? (
                           // A failed fetch must not read as an empty account.
                           <ActionList.Item disabled>{projectsError ? 'projects failed to load' : 'no projects yet'}</ActionList.Item>

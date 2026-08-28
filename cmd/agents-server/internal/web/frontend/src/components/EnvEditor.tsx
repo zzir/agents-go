@@ -64,10 +64,16 @@ export function EnvEditor({ vars, onChange, disabled }: EnvEditorProps): ReactEl
             disabled={disabled}
             /* A stored value arrives as the mask. Select it rather than clear
                it: typing replaces the sentinel, and clicking in without
-               typing leaves the stored value alone — clearing here would wipe
-               it on the next save. */
+               typing leaves the stored value alone. */
             onFocus={e => { if (v.value === SECRET_MASK) e.currentTarget.select(); }}
-            onChange={e => set(i, { value: e.target.value })}
+            /* Clearing the mask to empty is treated as "leave it unchanged",
+               not "set it empty": emptying a stored secret is almost never
+               intended and the wipe is unrecoverable (remove the row to delete
+               the variable). Once a real value is typed, clearing works. */
+            onChange={e => {
+              if (e.target.value === '' && v.value === SECRET_MASK) return;
+              set(i, { value: e.target.value });
+            }}
           />
           <IconButton
             icon={TrashIcon}

@@ -394,7 +394,12 @@ export function ChatView({
   // Where every port is already published (an E2B-compatible service), the
   // port is asked for: there is no declared list to choose from.
   const askPreviewPort = async () => {
-    const raw = window.prompt('Which port inside the sandbox?', '3000');
+    // On E2B the port is reached at a PUBLIC host (<port>-<id>.<domain>);
+    // the grant is only a convenience, not a guard, so say so before opening.
+    const msg = boundSandboxType === 'e2b'
+      ? 'Which port inside the sandbox?\n\nHeads up: on E2B this opens a public URL — anyone with the link can reach the port.'
+      : 'Which port inside the sandbox?';
+    const raw = window.prompt(msg, '3000');
     if (!raw) return;
     const port = parseInt(raw, 10);
     if (!Number.isFinite(port) || port <= 0 || port > 65535) {
@@ -840,9 +845,10 @@ export function ChatView({
                     target, rows carry just the project name. */}
                 {groupProjects(projects, sandboxDefs).map(g => (
                   <ActionList.Group key={g.sandboxId}>
-                    {/* Primer requires an explicit heading level on list-role
-                        ActionLists; omitting `as` throws and unmounts the app. */}
-                    <ActionList.GroupHeading as="h3">{g.sandboxName}</ActionList.GroupHeading>
+                    {/* Inside a menu-role ActionList the heading is
+                        presentational: a heading level (`as`) is invalid in a
+                        menu and throws, unmounting the app. */}
+                    <ActionList.GroupHeading>{g.sandboxName}</ActionList.GroupHeading>
                     {g.items.map(p => (
                       <ActionList.Item
                         key={p.id}
