@@ -607,16 +607,46 @@ func (m *Manager) Stop(ctx context.Context, spec Spec) (stopped bool, err error)
 	if !ok {
 		return false, fmt.Errorf("%s sandbox: %w", spec.Sandbox.Type, sandbox.ErrLifecycleUnsupported)
 	}
-	// One reference is this call's own; anything above it is someone working.
-	if m.holders(spec.Project.ID) > 1 {
+	// "Am I the only holder?" and "take the instance out of the cache" happen
+	// under one lock: otherwise a concurrent Acquire slipping in between the
+	// count and lc.Stop would adopt the very container this call stops out from
+	// under it. detachIfSole removes the instance so a later Acquire builds a
+	// fresh one; this call's own release then closes what it detached.
+	if !m.detachIfSole(spec.Project.ID) {
+		// Someone is still working in it; leave the container up and let the
+		// last holder's release stop it (EvictProject dooms every instance).
 		m.EvictProject(spec.Project.ID)
 		return false, nil
 	}
 	if err := lc.Stop(ctx); err != nil {
 		return false, err
 	}
-	m.EvictProject(spec.Project.ID)
 	return true, nil
+}
+
+// detachIfSole reports whether this caller holds the project's only reference,
+// and if so removes every instance of the project from the cache and dooms it,
+// so no concurrent Acquire adopts an instance about to be stopped and the
+// caller's own release closes it. Callers hold one reference (from Acquire).
+func (m *Manager) detachIfSole(projectID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for key, inst := range m.instances {
+		if key.projectID == projectID {
+			n += inst.refs
+		}
+	}
+	if n != 1 {
+		return false
+	}
+	for key, inst := range m.instances {
+		if key.projectID == projectID {
+			delete(m.instances, key)
+			inst.doomed = true
+		}
+	}
+	return true
 }
 
 // Status reports what the project's compute is doing. It builds the sandbox
