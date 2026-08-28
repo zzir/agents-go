@@ -44,8 +44,8 @@ your data, embeddable SDK. Solo or as a team.
    this machine, or a remote one over SSH or TCP — or an E2B-compatible
    service. State lives
    in `data.db` in the directory you ran it from (`--db`; a `postgres://` DSN
-   uses PostgreSQL instead); project trees live in Docker volumes on their
-   target's daemon. All flags:
+   uses PostgreSQL instead); a project's tree lives in a Docker volume on its
+   sandbox's daemon, or in the E2B sandbox itself. All flags:
    [Running the workbench](docs/tutorial/workbench.md#flags).
 
 3. **Add a provider, create an agent, chat.** Settings → Providers: an OpenAI

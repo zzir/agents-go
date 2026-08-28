@@ -10,10 +10,11 @@ import (
 	"github.com/zzir/agents-go/sandbox"
 )
 
-// Backend is one sandbox TYPE: how to build a project's sandbox, and how to
-// destroy what it left behind. Everything else a project's sandbox can do is
-// on the Sandbox itself (and its optional capabilities), so this stays at two
-// methods — the two things only the type knows.
+// Backend is one sandbox TYPE: the four things only the type knows — build a
+// project's sandbox (Open), destroy what it left behind (Reclaim), rebuild the
+// compute keeping the storage (Rebuild), and health-check the type (Check).
+// Everything a running sandbox can do is on the Sandbox itself and its optional
+// capabilities, not here.
 //
 // Open takes no context deliberately: building a sandbox is CONFIGURATION, not
 // I/O. The docker backend dials lazily on the first command; a remote backend

@@ -570,8 +570,8 @@ type Project struct {
 	UpdatedAt  time.Time `bun:"updated_at,notnull"            json:"updated_at"`
 	// StorageHint names where the files live — the named volume on the
 	// sandbox's daemon. Derived per response by the handler for admins only,
-	// never stored: deleting the row keeps the storage (decisions §5.28), so
-	// the UI can say where.
+	// never stored: a delete DESTROYS that storage (decisions §5.33), so the UI
+	// can say what will be lost.
 	StorageHint string `bun:"-" json:"storage_hint,omitempty"`
 	// SessionCount is how many sessions bind this project — filled by List
 	// (scanonly), so a delete knows whether it will be refused.
