@@ -123,13 +123,21 @@ describe('ChatTopBar', () => {
     expect(items).not.toContain('Publish a port to preview…');
   });
 
-// The compute item is never a guess: until the state is read it offers
-// neither Start nor Stop.
-  it('offers no compute action while the state is unknown', () => {
+// Only the very FIRST read shows "Checking…": state '' with a read in flight.
+  it('shows Checking while the first read is in flight', () => {
     const host = render({ projectMenu: { busy: false, state: '', stateLoading: true, rebuildable: true, ports: [], anyPort: false, onEnv: noop, onStart: noop, onStop: noop, onExport: noop, onPreview: noop, onPreviewAsk: noop, onRebuild: noop, onOpen: noop } });
     const items = [...host.querySelectorAll('li')].map(li => li.textContent);
     expect(items).toContain('Checking the sandbox…');
     expect(items).not.toContain('Start sandbox');
     expect(items).not.toContain('Stop sandbox');
+  });
+
+// A read that FAILED (state '' but no read in flight) falls through to Start —
+// the harmless choice — never a permanent "Checking…".
+  it('offers Start after a failed read rather than Checking forever', () => {
+    const host = render({ projectMenu: { busy: false, state: '', stateLoading: false, rebuildable: true, ports: [], anyPort: false, onEnv: noop, onStart: noop, onStop: noop, onExport: noop, onPreview: noop, onPreviewAsk: noop, onRebuild: noop, onOpen: noop } });
+    const items = [...host.querySelectorAll('li')].map(li => li.textContent);
+    expect(items).toContain('Start sandbox');
+    expect(items).not.toContain('Checking the sandbox…');
   });
 });

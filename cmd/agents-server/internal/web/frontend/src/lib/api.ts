@@ -364,7 +364,7 @@ export const api = {
     rebuildContainer: (id: string) => request<null>(`/projects/${id}/sandbox/rebuild`, { method: 'POST' }),
     // The project's compute: what it is doing, and starting/stopping it by
     // hand rather than leaving both to the next run and the idle timer.
-    sandboxStatus: (id: string) => request<{ state: string; sandbox_type: string }>(`/projects/${id}/sandbox`),
+    sandboxStatus: (id: string) => request<{ state: string }>(`/projects/${id}/sandbox`),
     sandboxStart: (id: string) => request<null>(`/projects/${id}/sandbox/start`, { method: 'POST' }),
     sandboxStop: (id: string) => request<{ stopped: boolean }>(`/projects/${id}/sandbox/stop`, { method: 'POST' }),
     // A short-lived, unguessable URL a browser tab can open: the preview
@@ -388,8 +388,14 @@ export const api = {
       const a = document.createElement('a');
       a.href = url;
       a.download = `${name || 'project'}.tar`;
+      // Appended to the DOM (older Firefox ignores a detached anchor) and the
+      // URL revoked on a delay: revoking straight after click() can cancel a
+      // download Safari has not yet started.
+      a.style.display = 'none';
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(url);
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
     },
   },
   workflows: {

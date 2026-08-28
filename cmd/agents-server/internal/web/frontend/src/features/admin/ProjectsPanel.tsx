@@ -19,6 +19,7 @@ type ProjectRow = Omit<ApiSchemas['store.Project'], 'id'> & { id: string; sandbo
 export function ProjectsPanel() {
   const [projects, setProjects] = useState<ProjectRow[] | null>(null);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const confirm = useConfirm();
   const { ownerOf, labelFor } = useOwnerLabels();
 
@@ -37,17 +38,30 @@ export function ProjectsPanel() {
       .catch(() => setError('Failed to load projects.'));
   }, []);
 
-  // Stop and rebuild answer 204, or an upstream error worth reading — a
-  // rebuild refused because the sandbox IS the storage says so in its message.
+  // Stop and rebuild answer, or an upstream error worth reading — a rebuild
+  // refused because the sandbox IS the storage says so in its message. Rebuild
+  // discards the container, so it confirms first, like the chat menu's does.
   const act = useCallback(async (p: ProjectRow, what: 'stop' | 'rebuild') => {
+    if (what === 'rebuild' && !(await confirm({
+      title: `Rebuild the container for “${p.name}”?`,
+      content: 'The container is discarded and created again from the image. Files in the working tree survive; anything installed into the container does not, and commands running in it right now will fail.',
+      confirmButtonContent: 'Rebuild',
+      confirmButtonType: 'danger',
+    }))) return;
     try {
-      if (what === 'stop') await api.projects.sandboxStop(p.id);
-      else await api.projects.rebuildContainer(p.id);
+      if (what === 'stop') {
+        const res = await api.projects.sandboxStop(p.id);
+        setNotice(res.stopped ? `Sandbox for “${p.name}” stopped.` : `Sandbox for “${p.name}” will stop when the work using it finishes.`);
+      } else {
+        await api.projects.rebuildContainer(p.id);
+        setNotice(`Container for “${p.name}” rebuilt.`);
+      }
       setError('');
     } catch (e) {
+      setNotice('');
       setError(e instanceof Error ? e.message : `Failed to ${what} the sandbox.`);
     }
-  }, []);
+  }, [confirm]);
   useEffect(() => { reload(); }, [reload]);
 
   const remove = useCallback(async (p: ProjectRow) => {
@@ -101,6 +115,7 @@ export function ProjectsPanel() {
         </PageHeader.Description>
       </PageHeader>
       {error ? <Flash variant="danger">{error}</Flash> : null}
+      {notice ? <Flash variant="success">{notice}</Flash> : null}
       <ListTable
         labelledBy="admin-projects-title"
         rows={projects ?? []}

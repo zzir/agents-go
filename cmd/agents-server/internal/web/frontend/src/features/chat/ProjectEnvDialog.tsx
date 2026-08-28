@@ -93,7 +93,11 @@ export function ProjectEnvDialog({ project, sessionCount, onClose }: ProjectEnvD
     return () => { live = false; };
   }, [project.sandbox_id]);
 
-  const changed = vars !== null && (containerEnv(vars) !== loaded || ports.trim() !== loadedPorts);
+  // Compare ports by what they parse to, not by their text: "3000, 5173" and
+  // "3000,5173" are the same published set and must not read as an edit that
+  // recreates the container.
+  const canonPorts = (raw: string) => parsePorts(raw)?.join(',') ?? raw.trim();
+  const changed = vars !== null && (containerEnv(vars) !== loaded || canonPorts(ports) !== canonPorts(loadedPorts));
   const invalid = vars ? envError(vars) : null;
   const portList = parsePorts(ports);
   const portError = portList === null ? 'Ports must be numbers between 1 and 65535, separated by commas' : null;

@@ -143,7 +143,11 @@ export function ChatTopBar({
                   Export as tar…
                 </ActionList.Item>
                 <ActionList.Divider />
-                {projectMenu.state === '' ? (
+                {projectMenu.stateLoading && projectMenu.state === '' ? (
+                  // Only the very first read shows this: a re-read of a known
+                  // state keeps the last label (disabled below) rather than
+                  // flashing back to "Checking…", and a failed first read falls
+                  // through to Start — the harmless choice.
                   <ActionList.Item disabled>
                     <ActionList.LeadingVisual><PlayIcon /></ActionList.LeadingVisual>
                     Checking the sandbox…

@@ -247,14 +247,15 @@ export function ChatView({
         // The row IS gone; only the storage was left behind.
         toast.error(`“${p.name}” was deleted, but its storage could not be reclaimed: ${res.storage_error}`);
       }
+      // Only a delete that actually happened drops the row and the selection:
+      // a refused delete (still bound) must not flash the project out of the
+      // list or clear the composer's pick.
+      mutateProjects(prev => (prev ? prev.filter(x => x.id !== p.id) : prev));
+      if (projectId === p.id) setProjectId('');
     } catch (e) {
       toast.error((e as Error).message || 'Could not delete the project');
     } finally {
-      // Refetched whatever happened: a delete that answered an error may still
-      // have removed the row, and a list that keeps offering it is worse than
-      // one that briefly lacks a project that survived.
-      mutateProjects(prev => (prev ? prev.filter(x => x.id !== p.id) : prev));
-      if (projectId === p.id) setProjectId('');
+      // Reconcile with the server whatever happened.
       reloadProjects();
     }
   };
@@ -312,27 +313,45 @@ export function ChatView({
   // The bound pair is what the top-bar menu acts on: a session's container is
   // its binding's, never the composer's current pick.
   const boundProject = sessionBinding?.projectId ? projects?.find(p => p.id === sessionBinding.projectId) || null : null;
-  const boundSandboxType = sandboxDefs?.find(sb => sb.id === boundProject?.sandbox_id)?.type || '';
+  const boundSandbox = sandboxDefs?.find(sb => sb.id === boundProject?.sandbox_id);
+  const boundSandboxType = boundSandbox?.type || '';
+  // Whether the bound project's sandbox row is known: false while sandboxDefs
+  // load, and for an orphan project whose row was deleted. The menu leans on
+  // this so a danger action (Rebuild) is never offered on a guess.
+  const boundSandboxKnown = !!boundProject && !!boundSandbox;
 
-  // The state is read when the bound project changes AND again as the menu
-  // opens: a run's first command starts the sandbox without telling this
-  // component, so a state read once at bind time goes stale in the most
-  // ordinary way there is. A failure leaves it unknown rather than guessing —
-  // the menu then offers Start, which is the harmless choice.
+  // The state is read when the bound project changes, again as the menu opens,
+  // and whenever a run starts or ends: a run's first command starts the
+  // sandbox without telling this component, so a state read once at bind time
+  // goes stale in the most ordinary way there is. A failure leaves the last
+  // known value in place (or, on a first read, offers Start — the harmless
+  // choice). A stale response never wins: only the newest read for the current
+  // project lands.
+  const stateReqSeq = useRef(0);
   const refreshSandboxState = useCallback(async (projectID: string) => {
+    const seq = ++stateReqSeq.current;
     setStateLoading(true);
     try {
-      setSandboxState((await api.projects.sandboxStatus(projectID)).state);
+      const state = (await api.projects.sandboxStatus(projectID)).state;
+      if (seq === stateReqSeq.current) setSandboxState(state);
     } catch {
-      setSandboxState('');
+      // Keep the last known value; '' stays '' and renders Start, not a
+      // permanent "Checking…".
     } finally {
-      setStateLoading(false);
+      if (seq === stateReqSeq.current) setStateLoading(false);
     }
   }, []);
   useEffect(() => {
-    if (!boundProject) { setSandboxState(''); return; }
+    if (!boundProject) { stateReqSeq.current++; setSandboxState(''); return; }
     void refreshSandboxState(boundProject.id);
   }, [boundProject, refreshSandboxState]);
+  // A run's first command starts the container and its end lets the idle timer
+  // stop it; either edge can move the state without a message to this
+  // component, so re-read on both.
+  useEffect(() => {
+    if (boundProject) void refreshSandboxState(boundProject.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [running]);
 
   // Start and stop are synchronous and can take an image pull's worth of
   // time, so the menu stays disabled until they answer.
@@ -385,31 +404,44 @@ export function ChatView({
     await previewPort(port);
   };
 
+  // Preview and export read the container; they do not change its lifecycle, so
+  // they never take the containerBusy lock that Start/Stop/Rebuild hold — a
+  // slow export must not lock the menu shut on the state itself. Their own refs
+  // only stop a double-click.
+  const previewBusy = useRef(false);
+  const exportBusy = useRef(false);
+
   const previewPort = async (port: number) => {
-    if (!boundProject || containerBusy) return;
-    setContainerBusy(true);
+    if (!boundProject || previewBusy.current) return;
+    previewBusy.current = true;
+    // Open the tab inside the click, before the await: a window.open after the
+    // grant resolves is outside the gesture and pop-up blockers eat it. The
+    // opener is severed at once so the untrusted preview (a separate origin)
+    // cannot reach back through window.opener.
+    const win = window.open('about:blank', '_blank');
+    if (win) win.opener = null;
     try {
       const grant = await api.projects.previewGrant(boundProject.id, port);
-      // The link is opened rather than fetched: the point is a real browser
-      // tab, which is also why the grant exists at all.
-      window.open(grant.url, '_blank', 'noopener');
+      if (win) win.location.href = grant.url;
+      else toast.error('A pop-up blocker stopped the preview tab');
     } catch (e) {
+      win?.close();
       toast.error((e as Error).message || 'Could not open a preview');
     } finally {
-      setContainerBusy(false);
+      previewBusy.current = false;
     }
   };
 
   const exportProject = async () => {
-    if (!boundProject || containerBusy) return;
-    setContainerBusy(true);
+    if (!boundProject || exportBusy.current) return;
+    exportBusy.current = true;
     toast.info('Preparing the archive…');
     try {
       await api.projects.exportTar(boundProject.id, boundProject.name);
     } catch (e) {
       toast.error((e as Error).message || 'Could not export the project');
     } finally {
-      setContainerBusy(false);
+      exportBusy.current = false;
     }
   };
 
@@ -729,9 +761,11 @@ export function ChatView({
         busy: containerBusy,
         state: sandboxState,
         stateLoading,
-        // The backend comes from the sandbox the project names, which is
-        // already loaded — not from a status call that has yet to answer.
-        rebuildable: boundSandboxType !== 'e2b',
+        // The backend comes from the sandbox the project names. Until that row
+        // is known, Rebuild is withheld rather than offered on a guess: an E2B
+        // sandbox cannot be rebuilt (its store IS the compute), and a
+        // mislabelled Rebuild there would read as "safe" when it is refused.
+        rebuildable: boundSandboxKnown && boundSandboxType !== 'e2b',
         anyPort: boundSandboxType === 'e2b',
         onEnv: () => setEnvProject(boundProject),
         onStart: () => { void startSandbox(); },
@@ -824,7 +858,11 @@ export function ChatView({
                 <ActionList.Divider />
                 <ActionList.Item
                   onSelect={() => {
-                    setProjSandboxId(selectedProject?.sandbox_id || sandboxDefs[0].id);
+                    // Default to the composer's current project's sandbox, else
+                    // a docker one over an E2B one: a first-in-list default that
+                    // lands on a paid, internet-on cloud sandbox is a footgun.
+                    const fallback = sandboxDefs.find(sb => sb.type === 'docker') || sandboxDefs[0];
+                    setProjSandboxId(selectedProject?.sandbox_id || fallback.id);
                     setProjName('');
                     setProjEnv([]);
                     setProjPorts('');
