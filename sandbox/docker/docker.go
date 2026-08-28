@@ -24,7 +24,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"net/netip"
 	"os"
 	"path"
@@ -1009,13 +1008,7 @@ func (s *Sandbox) Close() error {
 // the sandbox's own, overridden per entry by the request's — that mode has no
 // docker exec to carry them.
 func (s *Sandbox) containerEnv(req map[string]string) []string {
-	if len(s.opts.Env) == 0 {
-		return envSlice(req)
-	}
-	merged := make(map[string]string, len(s.opts.Env)+len(req))
-	maps.Copy(merged, s.opts.Env)
-	maps.Copy(merged, req)
-	return envSlice(merged)
+	return envSlice(sandbox.MergeEnv(s.opts.Env, req))
 }
 
 func envSlice(env map[string]string) []string {

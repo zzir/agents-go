@@ -185,7 +185,24 @@ func (s *Sandbox) httpClient() *http.Client {
 	if s.opts.HTTPClient != nil {
 		return s.opts.HTTPClient
 	}
-	return http.DefaultClient
+	return defaultClient
+}
+
+// defaultClient refuses a redirect that leaves the host the request was sent
+// to. The data plane talks to envd INSIDE the sandbox — a host untrusted
+// agent code can influence — so a cross-host redirect it returns would
+// otherwise carry the X-API-Key / X-Access-Token credential (which Go forwards
+// across redirects, unlike Authorization) to wherever it points.
+var defaultClient = &http.Client{
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) > 0 && req.URL.Host != via[0].URL.Host {
+			return fmt.Errorf("e2b: refusing a cross-host redirect to %s", req.URL.Host)
+		}
+		if len(via) >= 10 {
+			return errors.New("e2b: stopped after 10 redirects")
+		}
+		return nil
+	},
 }
 
 func (s *Sandbox) apiURL() string {

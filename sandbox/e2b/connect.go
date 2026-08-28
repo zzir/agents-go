@@ -176,9 +176,5 @@ func decodeConnectError(status int, payload []byte) error {
 	if json.Unmarshal(payload, &ce) == nil && ce.Code != "" {
 		return &ce
 	}
-	msg := string(bytes.TrimSpace(payload))
-	if len(msg) > 300 {
-		msg = msg[:300] + "…"
-	}
-	return &connectError{Code: fmt.Sprintf("http_%d", status), Message: msg}
+	return &connectError{Code: fmt.Sprintf("http_%d", status), Message: capBody(string(bytes.TrimSpace(payload)))}
 }

@@ -5,7 +5,9 @@
 //
 // A sandbox executes a command in a working directory after writing the request
 // files into it. Backends enforce isolation (no network, read-only root,
-// dropped capabilities, resource and time limits) by default.
+// dropped capabilities) and a per-command time limit by default; memory and CPU
+// limits apply when the caller sets Options.Limits (the workbench sets a safe
+// default cap of its own).
 package sandbox
 
 import (
@@ -124,6 +126,20 @@ func (r ExecRequest) EffectiveTimeout() time.Duration {
 		return DefaultTimeout
 	}
 	return r.Timeout
+}
+
+// MergeEnv returns base overlaid by override — the environment a command runs
+// with: the sandbox's own variables, each overridden by the request's. A fresh
+// map, so neither input is mutated.
+func MergeEnv(base, override map[string]string) map[string]string {
+	merged := make(map[string]string, len(base)+len(override))
+	for k, v := range base {
+		merged[k] = v
+	}
+	for k, v := range override {
+		merged[k] = v
+	}
+	return merged
 }
 
 // EffectiveMaxOutputBytes returns the request's per-stream output cap or

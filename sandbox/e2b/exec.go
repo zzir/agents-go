@@ -72,18 +72,11 @@ func (s *Sandbox) ExecStream(ctx context.Context, req sandbox.ExecRequest, stdou
 		return nil, err
 	}
 
-	envs := map[string]string{}
-	for k, v := range s.opts.Env {
-		envs[k] = v
-	}
-	for k, v := range req.Env {
-		envs[k] = v
-	}
 	start := map[string]any{
 		"process": map[string]any{
 			"cmd":  req.Cmd[0],
 			"args": req.Cmd[1:],
-			"envs": envs,
+			"envs": sandbox.MergeEnv(s.opts.Env, req.Env),
 			"cwd":  s.workDir(),
 		},
 	}
@@ -95,6 +88,7 @@ func (s *Sandbox) ExecStream(ctx context.Context, req sandbox.ExecRequest, stdou
 	defer cancel()
 
 	var pid uint32
+	var sawEnd bool
 	result := &sandbox.ExecResult{}
 	err := s.stream(runCtx, procProcessStart, start, func(raw json.RawMessage) error {
 		var ev processEvent
@@ -109,6 +103,7 @@ func (s *Sandbox) ExecStream(ctx context.Context, req sandbox.ExecRequest, stdou
 			writeChunk(stderr, ev.Event.Data.Stderr)
 		case ev.Event.End != nil:
 			result.ExitCode = ev.exitCode()
+			sawEnd = true
 		}
 		return nil
 	})
@@ -119,13 +114,24 @@ func (s *Sandbox) ExecStream(ctx context.Context, req sandbox.ExecRequest, stdou
 			s.signal(context.WithoutCancel(ctx), pid, "SIGNAL_SIGKILL")
 			return &sandbox.ExecResult{ExitCode: -1, TimedOut: true}, nil
 		}
-		// The caller stopped waiting (cancel): kill the process so it does not
-		// keep running in the sandbox after the request that started it — the
-		// docker backend does the same on a caller cancel.
-		if ctx.Err() != nil {
+		// Any other failure — a caller cancel, a dropped stream, a decode error
+		// — leaves a process that started still running in the sandbox; kill it
+		// so it does not outlive the request (best-effort: the transport may be
+		// the thing that failed).
+		if pid != 0 {
 			s.signal(context.WithoutCancel(ctx), pid, "SIGNAL_SIGKILL")
 		}
 		return nil, err
+	}
+	if !sawEnd {
+		// The stream closed cleanly but the process never reported an exit
+		// (reaped without an end frame, a paused or killed sandbox). Returning
+		// ExitCode 0 here would tell the caller a command that never finished
+		// succeeded.
+		if pid != 0 {
+			s.signal(context.WithoutCancel(ctx), pid, "SIGNAL_SIGKILL")
+		}
+		return nil, fmt.Errorf("e2b: the process stream ended without an exit status")
 	}
 	return result, nil
 }

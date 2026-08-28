@@ -170,9 +170,13 @@ func (s *Sandbox) listDirContainer(ctx context.Context, p string) ([]sandbox.Dir
 	// flag is GNU-only, and busybox find — every alpine-based image — fails
 	// the whole listing on it. `-exec … +` runs ONE shell for the entire
 	// directory, so the cost is one `wc -c` per regular file.
+	// wc runs only on a REGULAR file: `wc -c < fifo` blocks on open until a
+	// writer appears, so a named pipe in the tree would otherwise hang the
+	// whole listing until the exec timeout. Anything else non-directory
+	// reports size 0 without being opened.
 	cmd := fmt.Sprintf("find %s -maxdepth 1 -mindepth 1 -exec sh -c %s _ {} +",
 		sandbox.ShellQuote(dir),
-		sandbox.ShellQuote(`for f; do if [ -d "$f" ]; then printf "d\t0\t%s\0" "${f##*/}"; else printf "f\t%s\t%s\0" "$(wc -c < "$f")" "${f##*/}"; fi; done`))
+		sandbox.ShellQuote(`for f; do if [ -d "$f" ]; then printf "d\t0\t%s\0" "${f##*/}"; elif [ -f "$f" ]; then printf "f\t%s\t%s\0" "$(wc -c < "$f")" "${f##*/}"; else printf "f\t0\t%s\0" "${f##*/}"; fi; done`))
 	res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", cmd}})
 	if err != nil {
 		return nil, err

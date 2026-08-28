@@ -8,6 +8,7 @@ import (
 	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
+	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 )
 
@@ -163,12 +164,23 @@ func withManaged(ctx context.Context, opts Options, name string, act func(cli *c
 		return fmt.Errorf("docker sandbox: %w", err)
 	}
 	c := info.Container
+	if err := ensureOwned(c.Config, name); err != nil {
+		return err
+	}
+	return act(cli, c.ID)
+}
+
+// ensureOwned is the ownership boundary the by-name entry points share: a
+// container missing this package's fingerprint label was created by someone
+// else and must never be stopped, removed or adopted. cfg is the inspected
+// container's Config (nil-safe).
+func ensureOwned(cfg *container.Config, name string) error {
 	var labels map[string]string
-	if c.Config != nil {
-		labels = c.Config.Labels
+	if cfg != nil {
+		labels = cfg.Labels
 	}
 	if _, ours := labels[fingerprintLabel]; !ours {
 		return fmt.Errorf("docker sandbox: container %q was not created by this package", name)
 	}
-	return act(cli, c.ID)
+	return nil
 }

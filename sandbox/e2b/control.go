@@ -255,6 +255,18 @@ func isConflict(err error) bool {
 	return errors.As(err, &he) && he.Status == http.StatusConflict
 }
 
+// maxErrBody caps an error message so a huge or HTML error page does not flood
+// a log line or a tool result.
+const maxErrBody = 300
+
+// capBody caps s at maxErrBody, marking a truncation with an ellipsis.
+func capBody(s string) string {
+	if len(s) > maxErrBody {
+		return s[:maxErrBody] + "…"
+	}
+	return s
+}
+
 // controlError extracts the service's own message from an error body.
 func controlError(status int, payload []byte) error {
 	var body struct {
@@ -272,8 +284,5 @@ func controlError(status int, payload []byte) error {
 	if msg == "" {
 		msg = string(bytes.TrimSpace(payload))
 	}
-	if len(msg) > 300 {
-		msg = msg[:300] + "…"
-	}
-	return &httpError{Status: status, Message: msg}
+	return &httpError{Status: status, Message: capBody(msg)}
 }

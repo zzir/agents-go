@@ -106,12 +106,8 @@ func (s *Sandbox) inspectOwned(ctx context.Context) (id string, running, ok bool
 		return "", false, false, fmt.Errorf("docker sandbox: inspecting %s: %w", s.opts.ContainerName, err)
 	}
 	c := info.Container
-	var labels map[string]string
-	if c.Config != nil {
-		labels = c.Config.Labels
-	}
-	if _, ours := labels[fingerprintLabel]; !ours {
-		return "", false, false, fmt.Errorf("docker sandbox: container %q was not created by this package", s.opts.ContainerName)
+	if err := ensureOwned(c.Config, s.opts.ContainerName); err != nil {
+		return "", false, false, err
 	}
 	return c.ID, c.State != nil && c.State.Running, true, nil
 }
