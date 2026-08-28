@@ -72,6 +72,7 @@ func previewFixture(t *testing.T, upstream string, enabled bool) (*gin.Engine, *
 	e := newTestEngine()
 	e.POST("/api/v1/projects/:id/preview/:port", h.PreviewGrant)
 	e.Any(server.PreviewPrefix+":token/*path", h.Preview)
+	e.NoRoute(h.Preview) // the cookie route for a page's absolute-path sub-resources
 	return e, h, p
 }
 
@@ -117,6 +118,60 @@ func TestPreviewGrantAndProxy(t *testing.T) {
 	}
 	if gotAuth != "" || gotCookie != "" {
 		t.Errorf("the workbench's credential reached the previewed service: auth=%q cookie=%q", gotAuth, gotCookie)
+	}
+}
+
+// A previewed page's absolute-path sub-resources carry no token in the path;
+// the cookie the tokenized entry point planted routes them to the same grant,
+// and without that cookie they are a plain 404.
+func TestPreviewCookieRoutesAbsolutePaths(t *testing.T) {
+	var gotPath string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_, _ = w.Write([]byte("asset"))
+	}))
+	defer upstream.Close()
+
+	e, _, p := previewFixture(t, upstream.URL, true)
+	rec := doJSON(t, e, http.MethodPost, "/api/v1/projects/"+p.ID+"/preview/8000", "")
+	var grant previewGrantResp
+	if err := json.Unmarshal(rec.Body.Bytes(), &grant); err != nil {
+		t.Fatal(err)
+	}
+
+	// The tokenized entry point plants the cookie.
+	out := httptest.NewRecorder()
+	e.ServeHTTP(out, previewRequest(t, grant.URL))
+	if out.Code != http.StatusOK {
+		t.Fatalf("tokenized entry: %d %s", out.Code, out.Body)
+	}
+	var token string
+	for _, ck := range out.Result().Cookies() {
+		if ck.Name == previewCookie {
+			token = ck.Value
+		}
+	}
+	if token == "" {
+		t.Fatal("the tokenized entry point did not plant the preview cookie")
+	}
+
+	// An absolute-path request carrying only that cookie routes to the grant.
+	req := previewRequest(t, "/app.js")
+	req.AddCookie(&http.Cookie{Name: previewCookie, Value: token})
+	out2 := httptest.NewRecorder()
+	e.ServeHTTP(out2, req)
+	if out2.Code != http.StatusOK {
+		t.Fatalf("cookie route: %d %s", out2.Code, out2.Body)
+	}
+	if gotPath != "/app.js" {
+		t.Errorf("upstream saw %q, want /app.js", gotPath)
+	}
+
+	// Without the cookie the same path has no grant: a plain 404.
+	out3 := httptest.NewRecorder()
+	e.ServeHTTP(out3, previewRequest(t, "/app.js"))
+	if out3.Code != http.StatusNotFound {
+		t.Errorf("no-cookie absolute path = %d, want 404", out3.Code)
 	}
 }
 

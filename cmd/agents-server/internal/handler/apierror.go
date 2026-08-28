@@ -107,7 +107,8 @@ func saveError(c *gin.Context, err error) {
 		return
 	}
 	_, rejected := errors.AsType[badRequestError](err)
-	if errors.Is(err, store.ErrProviderRef) || errors.Is(err, store.ErrProviderScope) || rejected {
+	if errors.Is(err, store.ErrProviderRef) || errors.Is(err, store.ErrProviderScope) ||
+		errors.Is(err, store.ErrPortsUnsupported) || rejected {
 		badRequest(c, err.Error())
 		return
 	}

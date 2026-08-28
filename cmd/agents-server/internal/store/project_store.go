@@ -30,6 +30,11 @@ func NewProjectStore(db *bun.DB) *ProjectStore {
 // — hence sealedWrite here, or the one path that CREATES an environment would
 // write it in the clear.
 func (s *ProjectStore) Create(ctx context.Context, p *Project) error {
+	// Assign the id before sealing: the env AAD binds to it, so it must be the
+	// final id at seal time, not one the insert stamps on afterwards.
+	if p.ID == "" {
+		p.ID = NewID()
+	}
 	if p.Revision == 0 {
 		p.Revision = 1
 	}
@@ -38,10 +43,14 @@ func (s *ProjectStore) Create(ctx context.Context, p *Project) error {
 	}
 	err := sealedWrite(p, sealProject, openProject, func() error {
 		return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-			if err := lockRow(ctx, tx, &Sandbox{}, "id = ?", p.SandboxID); err != nil {
+			sb := new(Sandbox)
+			if err := lockRow(ctx, tx, sb, "id = ?", p.SandboxID); err != nil {
 				if errors.Is(err, ErrNotFound) {
 					return fmt.Errorf("sandbox %s: %w", p.SandboxID, err)
 				}
+				return err
+			}
+			if err := checkPortsSupported(sb.Type, p.Ports); err != nil {
 				return err
 			}
 			_, ierr := tx.NewInsert().Model(p).Exec(ctx)
@@ -66,13 +75,18 @@ func (s *ProjectStore) Create(ctx context.Context, p *Project) error {
 // and do not move with it (ErrSandboxMoveDestination). Both sandboxes are
 // read inside the write's transaction, with the destination row locked, so a
 // sandbox cannot be re-addressed between the check and the write.
-func (s *ProjectStore) Update(ctx context.Context, id string, p *Project, expectedRevision int64, contentChanged bool) error {
+// It returns the runtime generation the write landed on, so the caller's
+// retire fence uses the generation the store actually wrote — not prev+1,
+// which a concurrent sandbox-content bump (moving runtime_gen without the
+// revision this CAS anchors on) would leave one short.
+func (s *ProjectStore) Update(ctx context.Context, id string, p *Project, expectedRevision int64, contentChanged bool) (int64, error) {
 	p.ID = id
 	genBump := 0
 	if contentChanged {
 		genBump = 1
 	}
 	var res sql.Result
+	var newGen int64
 	err := sealedWrite(p, sealProject, openProject, func() error {
 		// The sandbox row is locked for the write's duration, exactly as the
 		// create locks it: a sandbox delete is guarded by "no project uses
@@ -89,6 +103,9 @@ func (s *ProjectStore) Update(ctx context.Context, id string, p *Project, expect
 			if err := checkMove(ctx, tx, id, next); err != nil {
 				return err
 			}
+			if err := checkPortsSupported(next.Type, p.Ports); err != nil {
+				return err
+			}
 			var uerr error
 			res, uerr = tx.NewUpdate().Model(p).
 				Column("name", "sandbox_id", "env", "ports", "updated_at").
@@ -97,28 +114,53 @@ func (s *ProjectStore) Update(ctx context.Context, id string, p *Project, expect
 				Where("id = ?", id).
 				Where("revision = ?", expectedRevision).
 				Exec(ctx)
-			return uerr
+			if uerr != nil {
+				return uerr
+			}
+			if n, aerr := res.RowsAffected(); aerr == nil && n > 0 {
+				return tx.NewSelect().Model((*Project)(nil)).
+					Column("runtime_gen").Where("id = ?", id).Scan(ctx, &newGen)
+			}
+			return nil
 		})
 	})
 	if err != nil {
-		return fmt.Errorf("updating project %s: %w", id, err)
+		return 0, fmt.Errorf("updating project %s: %w", id, err)
 	}
 	if n, aerr := res.RowsAffected(); aerr == nil && n > 0 {
-		return nil
+		return newGen, nil
 	}
 	exists, eerr := s.db.NewSelect().Model((*Project)(nil)).Where("id = ?", id).Exists(ctx)
 	if eerr != nil {
-		return fmt.Errorf("updating project %s: %w", id, eerr)
+		return 0, fmt.Errorf("updating project %s: %w", id, eerr)
 	}
 	if !exists {
-		return fmt.Errorf("updating project %s: %w", id, ErrNotFound)
+		return 0, fmt.Errorf("updating project %s: %w", id, ErrNotFound)
 	}
-	return ErrRevisionConflict
+	return 0, ErrRevisionConflict
 }
 
 // ErrSandboxMoveDestination refuses a project move that would change the
 // machine its files live on.
 var ErrSandboxMoveDestination = errors.New("a project cannot move to a sandbox on another machine: its files stay where they are")
+
+// ErrPortsUnsupported refuses published ports on a sandbox type that does not
+// serve them: e2b routes its own public hosts, so a stored port would be
+// silently ignored — a phantom the API must reject rather than keep.
+var ErrPortsUnsupported = errors.New("this sandbox type does not support published ports")
+
+// checkPortsSupported gates published ports by the sandbox's type, read from
+// the row locked in the write's transaction so the answer cannot race a type
+// change.
+func checkPortsSupported(sandboxType, portsJSON string) error {
+	if sandboxType != "e2b" {
+		return nil
+	}
+	if ports, _ := DecodeProjectPorts(portsJSON); len(ports) > 0 {
+		return ErrPortsUnsupported
+	}
+	return nil
+}
 
 // checkMove permits a project's sandbox to change only among sandboxes that
 // address the same machine. Read inside the caller's transaction, after the
@@ -156,11 +198,19 @@ func checkMove(ctx context.Context, tx bun.Tx, projectID string, next *Sandbox) 
 // configuration, and bumping the runtime generation would replace the very
 // instance that just reported it.
 func (s *ProjectStore) SetInstanceRef(ctx context.Context, id, ref string) error {
-	if _, err := s.db.NewUpdate().Model((*Project)(nil)).
+	res, err := s.db.NewUpdate().Model((*Project)(nil)).
 		Set("instance_ref = ?", ref).
 		Where("id = ?", id).
-		Exec(ctx); err != nil {
+		Exec(ctx)
+	if err != nil {
 		return fmt.Errorf("recording the sandbox for project %s: %w", id, err)
+	}
+	// No row means the project was deleted while its sandbox was being
+	// created: report it so the backend kills the sandbox it just made
+	// (OnSandboxID treats a recording failure as fatal) rather than leaking
+	// billed compute nothing points at.
+	if n, aerr := res.RowsAffected(); aerr == nil && n == 0 {
+		return fmt.Errorf("recording the sandbox for project %s: %w", id, ErrNotFound)
 	}
 	return nil
 }

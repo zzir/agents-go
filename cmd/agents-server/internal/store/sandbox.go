@@ -71,6 +71,13 @@ func NormalizeSandboxConfig(typ string, raw json.RawMessage) (json.RawMessage, e
 		if ec.TimeoutSeconds < 0 || ec.MaxReadFileBytes < 0 {
 			return nil, errors.New("timeout_seconds and max_read_file_bytes cannot be negative")
 		}
+		// auto_pause defaults to true — pause on expiry, keeping the working
+		// tree — when the field is absent; an explicit false is kill-on-expiry.
+		// A plain bool cannot tell absent from false, so detect the key and make
+		// the stored form explicit (the tag drops omitempty for the same reason).
+		if !jsonHasKey(raw, "auto_pause") {
+			ec.AutoPause = true
+		}
 		return json.Marshal(ec)
 	default:
 		return nil, fmt.Errorf("sandbox type must be docker or e2b, got %q", typ)
@@ -91,17 +98,20 @@ func SandboxContentEqual(typ string, a, b json.RawMessage) bool {
 }
 
 // SandboxIdentityChanged reports whether an update moves the sandbox's
-// IDENTITY — the type, and the address of the machine or service a project's
-// files live on; they freeze while projects live on the sandbox
-// (decisions §5.36). An undecodable prev is NOT a change — fixing it is a
-// referenced sandbox's only way out; an undecodable next counts as one, pure
-// defense.
+// IDENTITY — the fields that freeze while projects live on it (decisions
+// §5.36): the type and destination for every backend, plus, for e2b, the
+// fields a /connect resume cannot apply to an already-provisioned sandbox
+// (template_id, auto_pause, allow_internet). Freezing them refuses an edit
+// that would otherwise look saved yet silently never take effect; timeout is
+// NOT among them — resume re-sends it, so it propagates on the next build.
+// An undecodable prev is NOT a change — fixing it is a referenced sandbox's
+// only way out; an undecodable next counts as one, pure defense.
 func SandboxIdentityChanged(prev, next *Sandbox) bool {
 	if prev.Type != next.Type {
 		return true
 	}
-	p, perr := sandboxDestination(prev)
-	n, nerr := sandboxDestination(next)
+	p, perr := identityOf(prev.Type, prev.Config)
+	n, nerr := identityOf(next.Type, next.Config)
 	if perr != nil {
 		return false
 	}
@@ -111,31 +121,64 @@ func SandboxIdentityChanged(prev, next *Sandbox) bool {
 	return p != n
 }
 
-// SandboxDestinationField names the config field that IS the sandbox's
-// address, per type. The mask guard uses it: a credential sent back masked
-// means "keep the stored one", which only holds while the destination is
-// unchanged.
-func SandboxDestinationField(typ string) string {
-	if typ == "e2b" {
-		return "api_url"
+// SandboxDestinationChanged reports whether incoming names a different
+// DESTINATION than prev — the address a stored credential would ride to. The
+// mask guard uses it: a credential sent back masked means "keep the stored
+// one", which holds only while the destination is unchanged. Either side
+// undecodable counts as changed — the safe side (refuse the masked carry-over).
+func SandboxDestinationChanged(typ string, prev, incoming json.RawMessage) bool {
+	p, perr := destinationOf(typ, prev)
+	n, nerr := destinationOf(typ, incoming)
+	if perr != nil || nerr != nil {
+		return true
 	}
-	return "host"
+	return p != n
 }
 
-// sandboxDestination is the address itself.
-func sandboxDestination(s *Sandbox) (string, error) {
-	if s.Type == "e2b" {
+// destinationOf is the address a project's files — and a data-plane credential
+// — live at: the daemon host for docker, the control plane AND the public-host
+// domain for e2b (both, so a domain-only move is still a move).
+func destinationOf(typ string, raw json.RawMessage) (string, error) {
+	if typ == "e2b" {
 		var ec E2BConfig
-		if err := unmarshalConfigJSON(s.Config, &ec); err != nil {
+		if err := unmarshalConfigJSON(raw, &ec); err != nil {
 			return "", err
 		}
-		return ec.APIURL + "|" + ec.Domain, nil
+		return jsonKey(ec.APIURL, ec.Domain), nil
 	}
 	var dc DockerConfig
-	if err := unmarshalConfigJSON(s.Config, &dc); err != nil {
+	if err := unmarshalConfigJSON(raw, &dc); err != nil {
 		return "", err
 	}
-	return dc.Host, nil
+	return jsonKey(dc.Host), nil
+}
+
+// identityOf is the destination plus, for e2b, the fields a resume cannot
+// change on an existing sandbox — so a referenced sandbox freezes them rather
+// than accept an edit that silently never applies.
+func identityOf(typ string, raw json.RawMessage) (string, error) {
+	if typ != "e2b" {
+		return destinationOf(typ, raw)
+	}
+	var ec E2BConfig
+	if err := unmarshalConfigJSON(raw, &ec); err != nil {
+		return "", err
+	}
+	return jsonKey(ec.APIURL, ec.Domain, ec.TemplateID, ec.AutoPause, ec.AllowInternet), nil
+}
+
+// jsonKey renders fields as a self-delimiting equality key: JSON quotes and
+// escapes every value, so a field that contains the separator cannot collide
+// with the next field the way a plain "a|b" join can.
+func jsonKey(fields ...any) string {
+	b, _ := json.Marshal(fields)
+	return string(b)
+}
+
+// sandboxDestination is destinationOf for a stored row — checkMove's
+// same-machine guard on a project move.
+func sandboxDestination(s *Sandbox) (string, error) {
+	return destinationOf(s.Type, s.Config)
 }
 
 // SandboxStore persists sandboxes.
@@ -296,6 +339,20 @@ func canonicalEqual[T comparable](a, b json.RawMessage, canon func(*T)) bool {
 	canon(&va)
 	canon(&vb)
 	return va == vb
+}
+
+// jsonHasKey reports whether the top-level JSON object in raw carries key —
+// how a normalizer tells an absent field from an explicit zero value.
+func jsonHasKey(raw json.RawMessage, key string) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var m map[string]json.RawMessage
+	if json.Unmarshal(raw, &m) != nil {
+		return false
+	}
+	_, ok := m[key]
+	return ok
 }
 
 // unmarshalConfigJSON fills dst from raw; an absent payload is the zero

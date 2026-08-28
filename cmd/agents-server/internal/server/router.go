@@ -6,7 +6,6 @@ package server
 
 import (
 	"log/slog"
-	"net/http"
 
 	"github.com/gin-gonic/gin"
 )
@@ -51,9 +50,11 @@ func NewPreviewEngine(log *slog.Logger, preview gin.HandlerFunc, trustedProxies 
 	e.Use(logMiddleware(log))
 	e.Use(func(c *gin.Context) { c.Header("Referrer-Policy", "no-referrer"); c.Next() })
 	e.Any(PreviewPrefix+":token/*path", RateLimit(previewRatePerMinute, previewRateBurst), preview)
-	// This origin is not the app: an unmatched path is a plain 404, never the
-	// SPA — nothing of the workbench is served here.
-	e.NoRoute(func(c *gin.Context) { c.String(http.StatusNotFound, "not found") })
+	// A previewed page's absolute-path sub-resources (/asset.js, a redirect to
+	// /login, HMR) arrive without the token in the path; the same handler reads
+	// it from the cookie the tokenized entry point planted. With no valid grant
+	// cookie this is a plain 404 — this origin is not the app, never the SPA.
+	e.NoRoute(RateLimit(previewRatePerMinute, previewRateBurst), preview)
 	return e, nil
 }
 

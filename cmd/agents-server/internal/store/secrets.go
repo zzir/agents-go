@@ -84,9 +84,12 @@ func mapJSONKeys(label string, raw json.RawMessage, fn func(label, s string) (st
 }
 
 // hasSealed reports whether raw contains a sealed value — so plaintext mode
-// still opens (and fails loudly on) rows sealed under a key that is gone.
+// still opens (and fails loudly on) rows sealed under a key that is gone. It
+// matches the versioned envelope ("enc:v…), not a bare "enc:" prefix, so a
+// plaintext value a user typed that starts with "enc:" is not misread as
+// ciphertext (which would brick the row in keyless mode).
 func hasSealed(raw json.RawMessage) bool {
-	return strings.Contains(string(raw), `"enc:`)
+	return strings.Contains(string(raw), `"enc:v`)
 }
 
 // secretKeyCheck is the settings row that proves the configured key is the

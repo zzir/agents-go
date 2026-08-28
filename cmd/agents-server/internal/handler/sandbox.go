@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -231,7 +232,8 @@ func (h *SandboxHandler) Update(c *gin.Context) {
 	// the destination is unchanged: moving the machine or the service must not
 	// carry the old key along. Only refuse when one is actually stored — a
 	// mask with nothing behind it resolves to "" and needs no guard.
-	if maskAcrossDestination(sb.Config, prev.Config, store.SandboxDestinationField(prev.Type)) && storedSandboxSecret(prev.Config) {
+	if strings.Contains(string(sb.Config), SecretMask) && storedSandboxSecret(prev.Config) &&
+		store.SandboxDestinationChanged(prev.Type, prev.Config, sb.Config) {
 		badRequest(c, "the destination changed: the stored credential belongs to the previous one — replace it or clear it")
 		return
 	}
@@ -262,7 +264,11 @@ func (h *SandboxHandler) Update(c *gin.Context) {
 			return
 		}
 		if projects > 0 {
-			conflict(c, fmt.Sprintf("%d project(s) live on this sandbox; its type and machine are frozen — the image, the limits, the credential and the name stay editable, or create a new sandbox for the new location", projects))
+			frozen := "its type and machine are frozen — the image, the limits, the credential and the name stay editable"
+			if prev.Type == "e2b" {
+				frozen = "its type, service address, template and lifecycle (auto-pause, internet) are frozen — the api key, timeout, read limit and name stay editable"
+			}
+			conflict(c, fmt.Sprintf("%d project(s) live on this sandbox; %s, or create a new sandbox for the new location", projects, frozen))
 			return
 		}
 	} else if err := h.store.Update(ctx, id, sb, expected); err != nil {
@@ -275,7 +281,10 @@ func (h *SandboxHandler) Update(c *gin.Context) {
 	// CONTENT change retires: a rename must not sever terminals or close idle
 	// containers.
 	if contentChanged {
-		if err := h.retire.bump(ctx, id); err != nil {
+		// WithoutCancel: the row is written; a disconnect here must not skip
+		// the generation bump, or live instances and terminals keep serving
+		// the replaced image/credential with no path retiring them.
+		if err := h.retire.bump(context.WithoutCancel(ctx), id); err != nil {
 			internalError(c, err)
 			return
 		}
@@ -336,10 +345,15 @@ func (h *SandboxHandler) Test(c *gin.Context) {
 		return
 	}
 	// The check is the backend's: docker runs a throw-away container, a
-	// remote service provisions and destroys a sandbox. 200 with ok=false
-	// means the service answered and the command did not.
+	// remote service provisions and destroys a sandbox. 200 with ok=false means
+	// the service answered and the command did not; an unreachable daemon or
+	// bad credential is 502 — a different thing a caller must tell apart.
 	if err := h.manager.Check(ctx, sb); err != nil {
-		c.JSON(http.StatusOK, sandboxTestResp{OK: false, Detail: err.Error()})
+		if errors.Is(err, sandboxes.ErrHealthCommandFailed) {
+			c.JSON(http.StatusOK, sandboxTestResp{OK: false, Detail: err.Error()})
+			return
+		}
+		upstreamError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, sandboxTestResp{OK: true})

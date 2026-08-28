@@ -406,17 +406,19 @@ func (h *ProjectHandler) Update(c *gin.Context) {
 		req.SandboxID != prev.SandboxID
 	next := *prev
 	next.Name, next.SandboxID, next.Env, next.Ports = req.Name, req.SandboxID, env, ports
-	if err := h.store.Update(c.Request.Context(), prev.ID, &next, expected, contentChanged); err != nil {
+	newGen, err := h.store.Update(c.Request.Context(), prev.ID, &next, expected, contentChanged)
+	if err != nil {
 		saveError(c, err)
 		return
 	}
-	// Invalidate from what the CAS guarantees (the generation moved iff the
-	// content changed), not from a re-read a cancelled request could fail —
-	// which would leave the new environment stored while live containers and
-	// terminals keep serving the old one.
+	// Invalidate from the generation the store actually wrote — not prev+1,
+	// which a concurrent sandbox-content bump can leave short — and not from a
+	// re-read a cancelled request could fail, which would leave the new
+	// environment stored while live containers and terminals keep serving the
+	// old one.
 	if contentChanged {
-		h.manager.RetireProject(prev.ID, prev.RuntimeGen+1)
-		h.terminals.CloseProjectTerminals(prev.ID, prev.RuntimeGen+1)
+		h.manager.RetireProject(prev.ID, newGen)
+		h.terminals.CloseProjectTerminals(prev.ID, newGen)
 	}
 	// Re-read for the response: the counters the write moved live in the
 	// row, and a client that answered with a stale revision would have its
@@ -672,9 +674,13 @@ func (h *ProjectHandler) Delete(c *gin.Context) {
 	// as part of a successful delete, not as a failed one: an error status
 	// would tell the client the project is still there, and it is not.
 	if h.manager != nil {
-		spec, serr := resolveSpec(c.Request.Context(), h.sandboxes, p)
+		// WithoutCancel: the row is already gone, so a client disconnect must
+		// not abort the reclaim and strand the container/volume with nothing
+		// pointing at it.
+		reclaimCtx := context.WithoutCancel(c.Request.Context())
+		spec, serr := resolveSpec(reclaimCtx, h.sandboxes, p)
 		if serr == nil {
-			serr = h.manager.ReclaimProject(c.Request.Context(), spec)
+			serr = h.manager.ReclaimProject(reclaimCtx, spec)
 		} else {
 			h.manager.RemoveProject(p.ID)
 		}

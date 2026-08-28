@@ -61,3 +61,21 @@ func TestSealOpenRoundTrip(t *testing.T) {
 		t.Fatal("no key: no key id")
 	}
 }
+
+// A user value that merely starts with "enc:" is not the sealed envelope
+// (enc:v<n>:<kid>:<payload>): it must pass through Open untouched — with a key
+// and without one — or a project env value like "enc:test" would fail to open
+// and brick its row in keyless mode.
+func TestPlaintextEncPrefixPassesThrough(t *testing.T) {
+	key, _ := ParseKey("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	box, _ := New(key)
+	var none *Box
+	for _, v := range []string{"enc:test", "enc:hello world", "enc:v", "enc:v2:onlythree"} {
+		if got, err := box.Open("projects.env.p1", v); err != nil || got != v {
+			t.Errorf("keyed Open(%q) = %q, %v; want it passed through", v, got, err)
+		}
+		if got, err := none.Open("projects.env.p1", v); err != nil || got != v {
+			t.Errorf("keyless Open(%q) = %q, %v; want it passed through", v, got, err)
+		}
+	}
+}

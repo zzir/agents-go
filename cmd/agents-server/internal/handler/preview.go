@@ -1,7 +1,7 @@
 package handler
 
 import (
-	"fmt"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -52,7 +52,9 @@ func (o PreviewOrigin) urlFor(r *http.Request, token string) string {
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}
-	return fmt.Sprintf("%s://%s:%d%s", scheme, host, o.Port, tail)
+	// JoinHostPort brackets an IPv6 literal; a bare Sprintf would emit
+	// http://::1:9528/… which no browser can open.
+	return scheme + "://" + net.JoinHostPort(host, strconv.Itoa(o.Port)) + tail
 }
 
 // The port preview: a service running inside a project's sandbox, reachable
@@ -118,12 +120,26 @@ func (h *ProjectHandler) PreviewGrant(c *gin.Context) {
 	c.JSON(http.StatusOK, previewGrantResp{URL: h.PreviewOrigin.urlFor(c.Request, token), ExpiresAt: expires})
 }
 
+// previewCookie carries the grant token to the sub-resources a previewed page
+// fetches by ABSOLUTE path (its /asset.js, a redirect to /login, an HMR
+// socket): the preview is one origin, so those requests do not carry the token
+// in their path. The tokenized entry point plants it; the cookie route reads
+// it. HttpOnly so the untrusted page cannot read the token, scoped to the
+// whole origin so every absolute path resolves.
+const previewCookie = "preview_token"
+
 // Preview proxies one request into the project's sandbox. It carries NO
-// bearer token — a browser tab cannot send one — so the grant in its path is
-// the whole authorization, and the route lives outside /api where the bearer
-// middleware would otherwise refuse it.
+// bearer token — a browser tab cannot send one — so the grant (in the path on
+// the tokenized entry point, in the cookie for a page's absolute-path
+// sub-resources) is the whole authorization, and the route lives outside /api
+// where the bearer middleware would otherwise refuse it.
 func (h *ProjectHandler) Preview(c *gin.Context) {
-	grant, ok := h.grants.resolve(c.Param("token"))
+	token := c.Param("token")
+	fromPath := token != ""
+	if !fromPath {
+		token, _ = c.Cookie(previewCookie)
+	}
+	grant, ok := h.grants.resolve(token)
 	if !ok {
 		c.String(http.StatusNotFound, "this preview link has expired; open a new one from the project menu")
 		return
@@ -133,12 +149,38 @@ func (h *ProjectHandler) Preview(c *gin.Context) {
 		return
 	}
 	p, err := h.store.Get(c.Request.Context(), grant.projectID)
-	if err != nil || p.OwnerID != grant.ownerID {
-		// The project was deleted or transferred since the grant: the grant
-		// names a project that is no longer the one it was minted for.
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			// Deleted for good: retire every grant on it.
+			h.grants.revokeProject(grant.projectID)
+			c.String(http.StatusNotFound, "this preview link is no longer valid")
+			return
+		}
+		// A transient lookup failure must not revoke a still-valid grant.
+		c.String(http.StatusBadGateway, "the project could not be looked up; try again")
+		return
+	}
+	if p.OwnerID != grant.ownerID {
+		// Transferred since the grant was minted: it names a project that is no
+		// longer the one it was for.
 		h.grants.revokeProject(grant.projectID)
 		c.String(http.StatusNotFound, "this preview link is no longer valid")
 		return
+	}
+	// The tokenized entry point plants the grant in a cookie so the page's
+	// absolute-path sub-resources resolve to the same grant. One preview origin
+	// means one active grant per browser: opening a second project's preview
+	// replaces the cookie (decisions §5.35).
+	if fromPath {
+		http.SetCookie(c.Writer, &http.Cookie{
+			Name:     previewCookie,
+			Value:    token,
+			Path:     "/",
+			HttpOnly: true,
+			Secure:   c.Request.TLS != nil,
+			SameSite: http.SameSiteLaxMode,
+			Expires:  grant.expires,
+		})
 	}
 	spec, err := resolveSpec(c.Request.Context(), h.sandboxes, p)
 	if err != nil {
@@ -161,17 +203,21 @@ func (h *ProjectHandler) Preview(c *gin.Context) {
 		c.String(http.StatusBadGateway, "the preview target is not a URL")
 		return
 	}
-
+	// The dev server sees the path below the /preview/<token>/ prefix on the
+	// tokenized route, and the request path as-is on the cookie route.
+	upstreamPath := c.Request.URL.Path
+	if fromPath {
+		upstreamPath = "/" + strings.TrimPrefix(c.Param("path"), "/")
+	}
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(r *httputil.ProxyRequest) {
 			r.SetURL(base)
-			// The service sees the path BELOW the preview prefix, so a dev
-			// server's own routes match without knowing it is proxied.
-			r.Out.URL.Path = "/" + strings.TrimPrefix(c.Param("path"), "/")
+			r.Out.URL.Path = upstreamPath
 			r.Out.Host = base.Host
-			// Forwarded headers are set deliberately rather than inherited:
-			// the workbench's own auth header must not travel into someone's
-			// dev server.
+			// Forwarded headers are set deliberately rather than inherited: the
+			// workbench's own auth header and every cookie (the grant cookie,
+			// and any app cookie that bled across the port-blind cookie scope)
+			// must not travel into someone's dev server.
 			r.Out.Header.Del("Authorization")
 			r.Out.Header.Del("Cookie")
 			r.SetXForwarded()
@@ -183,9 +229,14 @@ func (h *ProjectHandler) Preview(c *gin.Context) {
 		},
 	}
 	if dial != nil {
-		// The backend opens the connection: a container's address means
-		// nothing on this machine when the daemon is somewhere else.
-		proxy.Transport = &http.Transport{DialContext: dial}
+		// The backend opens the connection: a container's address means nothing
+		// on this machine when the daemon is somewhere else. Close this
+		// request's upstream conns when it ends — a fresh Transport per request
+		// otherwise parks an idle keep-alive conn (and its goroutine, an ssh
+		// channel for a remote daemon) that nothing reuses or reaps.
+		t := &http.Transport{DialContext: dial}
+		defer t.CloseIdleConnections()
+		proxy.Transport = t
 	}
 	proxy.ServeHTTP(c.Writer, c.Request)
 }

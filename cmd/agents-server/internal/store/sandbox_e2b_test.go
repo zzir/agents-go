@@ -35,25 +35,55 @@ func TestNormalizeE2BConfig(t *testing.T) {
 	}
 }
 
-// The destination a masked credential is bound to is per type: moving an e2b
-// sandbox's api_url is as much a move as changing a docker daemon's host.
+// The destination a masked credential is bound to is per type, and BOTH the
+// api_url and the domain are part of it for e2b: moving either must fire the
+// mask-across-destination guard, or a stored key rides to a new host.
+func TestE2BSandboxDestination(t *testing.T) {
+	prev := json.RawMessage(`{"api_url":"https://a","domain":"a"}`)
+	sameKey := json.RawMessage(`{"api_url":"https://a","domain":"a","api_key":"rotated"}`)
+	movedURL := json.RawMessage(`{"api_url":"https://b","domain":"a"}`)
+	movedDomain := json.RawMessage(`{"api_url":"https://a","domain":"b"}`)
+	if SandboxDestinationChanged("e2b", prev, sameKey) {
+		t.Error("rotating the key read as a destination change")
+	}
+	if !SandboxDestinationChanged("e2b", prev, movedURL) {
+		t.Error("moving the api_url did not read as a destination change")
+	}
+	if !SandboxDestinationChanged("e2b", prev, movedDomain) {
+		t.Error("moving the domain did not read as a destination change (the mask-guard leak)")
+	}
+	// The api_url/domain boundary must be self-delimiting: a "|" join renders
+	// both of these as "https://a|b|c", collapsing a real move to "no change".
+	splitA := json.RawMessage(`{"api_url":"https://a","domain":"b|c"}`)
+	splitB := json.RawMessage(`{"api_url":"https://a|b","domain":"c"}`)
+	if !SandboxDestinationChanged("e2b", splitA, splitB) {
+		t.Error("a separator inside a destination field collided with the next field")
+	}
+}
+
+// e2b freezes what a /connect resume cannot re-apply: the template and the
+// lifecycle policy. timeout is NOT frozen — resume re-sends it — and rotating
+// the key is not an identity change.
 func TestE2BSandboxIdentity(t *testing.T) {
-	if got := SandboxDestinationField("e2b"); got != "api_url" {
-		t.Errorf("destination field = %q, want api_url", got)
+	base := `"api_url":"https://a","domain":"a","template_id":"base","timeout_seconds":300`
+	prev := &Sandbox{Type: "e2b", Config: json.RawMessage(`{` + base + `}`)}
+	cases := []struct {
+		name   string
+		config string
+		frozen bool
+	}{
+		{"rotate key", `{` + base + `,"api_key":"rotated"}`, false},
+		{"new timeout", `{"api_url":"https://a","domain":"a","template_id":"base","timeout_seconds":600}`, false},
+		{"new template", `{"api_url":"https://a","domain":"a","template_id":"other","timeout_seconds":300}`, true},
+		{"auto_pause", `{` + base + `,"auto_pause":true}`, true},
+		{"allow_internet", `{` + base + `,"allow_internet":true}`, true},
+		{"move domain", `{"api_url":"https://a","domain":"b","template_id":"base","timeout_seconds":300}`, true},
 	}
-	prev := &Sandbox{Type: "e2b", Config: json.RawMessage(`{"api_url":"https://a","domain":"a"}`)}
-	same := &Sandbox{Type: "e2b", Config: json.RawMessage(`{"api_url":"https://a","domain":"a","api_key":"rotated"}`)}
-	moved := &Sandbox{Type: "e2b", Config: json.RawMessage(`{"api_url":"https://b","domain":"a"}`)}
-	if SandboxIdentityChanged(prev, same) {
-		t.Error("rotating the key read as an identity change")
-	}
-	if !SandboxIdentityChanged(prev, moved) {
-		t.Error("moving the api_url did not read as an identity change")
-	}
-	// The domain is half the address too: sandboxes are reached through it.
-	other := &Sandbox{Type: "e2b", Config: json.RawMessage(`{"api_url":"https://a","domain":"b"}`)}
-	if !SandboxIdentityChanged(prev, other) {
-		t.Error("moving the domain did not read as an identity change")
+	for _, tc := range cases {
+		next := &Sandbox{Type: "e2b", Config: json.RawMessage(tc.config)}
+		if got := SandboxIdentityChanged(prev, next); got != tc.frozen {
+			t.Errorf("%s: identity changed = %v, want %v", tc.name, got, tc.frozen)
+		}
 	}
 }
 

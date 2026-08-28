@@ -495,8 +495,10 @@ type DockerConfig struct {
 }
 
 // E2BConfig is the Sandbox.Config payload for type "e2b": which service, and
-// which of its templates. APIURL and Domain are the destination and freeze
-// while projects live on the sandbox.
+// which of its templates. APIURL and Domain are the destination; they, the
+// template and the lifecycle policy a /connect resume cannot re-apply
+// (template_id, auto_pause, allow_internet) all freeze while projects live on
+// the sandbox (see SandboxIdentityChanged).
 type E2BConfig struct {
 	// APIURL is the control plane base; empty means E2B's own.
 	APIURL string `json:"api_url,omitempty"`
@@ -516,8 +518,10 @@ type E2BConfig struct {
 	// 0 uses the backend default.
 	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
 	// AutoPause makes the lease PAUSE the sandbox rather than kill it, so an
-	// idle project keeps its files.
-	AutoPause bool `json:"auto_pause,omitempty"`
+	// idle project keeps its files. Defaults to true when absent (set by
+	// NormalizeSandboxConfig); serialized explicitly — no omitempty — so a
+	// false (kill on expiry) is never confused with an unset field.
+	AutoPause bool `json:"auto_pause"`
 	// AllowInternet gives the sandbox outbound network access.
 	AllowInternet bool `json:"allow_internet,omitempty"`
 	// MaxReadFileBytes caps read_file; 0 = the backend default (8 MiB).

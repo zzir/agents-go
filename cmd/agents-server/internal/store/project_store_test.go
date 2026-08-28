@@ -126,7 +126,7 @@ func TestProjectUpdateCASAndGenerations(t *testing.T) {
 
 	renamed := *p
 	renamed.Name = "renamed"
-	if err := projects.Update(ctx, p.ID, &renamed, 1, false); err != nil {
+	if _, err := projects.Update(ctx, p.ID, &renamed, 1, false); err != nil {
 		t.Fatal(err)
 	}
 	got, err := projects.Get(ctx, p.ID)
@@ -143,7 +143,7 @@ func TestProjectUpdateCASAndGenerations(t *testing.T) {
 	}
 	withEnv := *got
 	withEnv.Env = env
-	if err := projects.Update(ctx, p.ID, &withEnv, 2, true); err != nil {
+	if _, err := projects.Update(ctx, p.ID, &withEnv, 2, true); err != nil {
 		t.Fatal(err)
 	}
 	if got, err = projects.Get(ctx, p.ID); err != nil {
@@ -158,7 +158,7 @@ func TestProjectUpdateCASAndGenerations(t *testing.T) {
 
 	cleared := *got
 	cleared.Env = ""
-	if err := projects.Update(ctx, p.ID, &cleared, 3, true); err != nil {
+	if _, err := projects.Update(ctx, p.ID, &cleared, 3, true); err != nil {
 		t.Fatal(err)
 	}
 	if got, err = projects.Get(ctx, p.ID); err != nil {
@@ -170,18 +170,18 @@ func TestProjectUpdateCASAndGenerations(t *testing.T) {
 
 	stale := *got
 	stale.Name = "loser"
-	if err := projects.Update(ctx, p.ID, &stale, 3, false); !errors.Is(err, ErrRevisionConflict) {
+	if _, err := projects.Update(ctx, p.ID, &stale, 3, false); !errors.Is(err, ErrRevisionConflict) {
 		t.Fatalf("stale update: err=%v, want ErrRevisionConflict", err)
 	}
 	// The owner is identity, not editable content; the sandbox may move only
 	// among sandboxes at the same address, so an unknown one is refused.
 	moved := *got
 	moved.OwnerID, moved.SandboxID = NewID(), NewID()
-	if err := projects.Update(ctx, p.ID, &moved, 4, false); !errors.Is(err, ErrNotFound) {
+	if _, err := projects.Update(ctx, p.ID, &moved, 4, false); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("update onto a missing sandbox: err=%v, want ErrNotFound", err)
 	}
 	moved.SandboxID = got.SandboxID
-	if err := projects.Update(ctx, p.ID, &moved, 4, false); err != nil {
+	if _, err := projects.Update(ctx, p.ID, &moved, 4, false); err != nil {
 		t.Fatal(err)
 	}
 	if got, err = projects.Get(ctx, p.ID); err != nil {
@@ -190,7 +190,7 @@ func TestProjectUpdateCASAndGenerations(t *testing.T) {
 	if got.OwnerID != LocalUserID || got.SandboxID != id("tg") {
 		t.Errorf("owner/sandbox after update = %s/%s, want them unchanged", got.OwnerID, got.SandboxID)
 	}
-	if err := projects.Update(ctx, NewID(), &stale, 1, false); !errors.Is(err, ErrNotFound) {
+	if _, err := projects.Update(ctx, NewID(), &stale, 1, false); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("update of a missing project: err=%v, want ErrNotFound", err)
 	}
 }
@@ -223,7 +223,7 @@ func TestProjectMovesOnlyWithinOneDestination(t *testing.T) {
 
 	toNode := *p
 	toNode.SandboxID = node.ID
-	if err := projects.Update(ctx, p.ID, &toNode, 1, true); err != nil {
+	if _, err := projects.Update(ctx, p.ID, &toNode, 1, true); err != nil {
 		t.Fatalf("moving to another image on the same daemon: %v", err)
 	}
 	got, err := projects.Get(ctx, p.ID)
@@ -236,7 +236,7 @@ func TestProjectMovesOnlyWithinOneDestination(t *testing.T) {
 
 	toRemote := *got
 	toRemote.SandboxID = remote.ID
-	if err := projects.Update(ctx, p.ID, &toRemote, 2, true); !errors.Is(err, ErrSandboxMoveDestination) {
+	if _, err := projects.Update(ctx, p.ID, &toRemote, 2, true); !errors.Is(err, ErrSandboxMoveDestination) {
 		t.Fatalf("moving to another daemon: err=%v, want ErrSandboxMoveDestination", err)
 	}
 }

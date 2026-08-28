@@ -87,7 +87,7 @@ func openSandbox(sb *Sandbox) (err error) {
 // A project's environment is a credential surface like any other here: every
 // value sealed at rest, none readable back (decisions §5.32).
 func sealProject(p *Project) error {
-	return mapProjectEnv(p, func(_ string, s string) (string, error) { return sealSecret(labelProjectEnv, s), nil })
+	return mapProjectEnv(p, func(label, s string) (string, error) { return sealSecret(label, s), nil })
 }
 
 func openProject(p *Project) error {
@@ -106,8 +106,12 @@ func mapProjectEnv(p *Project, fn func(label, s string) (string, error)) error {
 	if err != nil {
 		return err
 	}
+	// AAD is bound to the project id: a sealed value carries no meaning under
+	// another project, so an attacker with DB write access cannot paste a
+	// victim project's ciphertext into their own env as a decryption oracle.
+	label := labelProjectEnv + "." + p.ID
 	for i, v := range vars {
-		out, ferr := fn(labelProjectEnv, v.Value)
+		out, ferr := fn(label, v.Value)
 		if ferr != nil {
 			return fmt.Errorf("environment variable %q: %w", v.Key, ferr)
 		}

@@ -113,10 +113,22 @@ func (b *Box) Seal(label, plain string) string {
 	return prefix + version + ":" + b.kid + ":" + base64.RawStdEncoding.EncodeToString(ct)
 }
 
+// looksSealed reports whether stored has the sealed envelope shape
+// (enc:v<n>:<kid>:<payload>), not merely a leading "enc:" — so a plaintext
+// value a user typed that happens to start with "enc:" is left alone instead
+// of being treated as ciphertext and failing to open.
+func looksSealed(stored string) bool {
+	if !strings.HasPrefix(stored, prefix+"v") {
+		return false
+	}
+	parts := strings.SplitN(stored, ":", 4)
+	return len(parts) == 4 && strings.HasPrefix(parts[1], "v")
+}
+
 // Open decrypts a value sealed for label; an unsealed one passes through. A
 // sealed value with no key, or under another key, is an error naming which.
 func (b *Box) Open(label, stored string) (string, error) {
-	if !strings.HasPrefix(stored, prefix) {
+	if !looksSealed(stored) {
 		return stored, nil
 	}
 	if b == nil {

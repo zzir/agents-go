@@ -2,6 +2,7 @@ package sandboxes
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -38,9 +39,7 @@ type Backend interface {
 	Check(ctx context.Context, sb *store.Sandbox) error
 }
 
-// backends maps a sandbox type to its implementation. A map rather than a
-// switch so a build tag or a submodule can register one without editing the
-// manager.
+// backends maps a sandbox type to its implementation.
 var backends = map[string]Backend{
 	"docker": dockerBackend{},
 	"e2b":    e2bBackend{},
@@ -61,32 +60,29 @@ func BackendFor(typ string) (Backend, error) {
 	return b, nil
 }
 
-// RegisterBackend adds a backend for a target type. It panics on a duplicate:
-// two implementations of one type is a build mistake, not a runtime condition.
-func RegisterBackend(typ string, b Backend) {
-	if _, dup := backends[typ]; dup {
-		panic("sandboxes: duplicate backend for type " + typ)
-	}
-	backends[typ] = b
-}
-
 // checkHealthCmd is what a Check runs. It needs nothing an image might lack.
 var checkHealthCmd = []string{"sh", "-c", "echo ok"}
 
 // checkExec runs the health command and turns a non-zero exit into an error:
 // a Check either proves the sandbox usable or says why not.
+// ErrHealthCommandFailed marks the health check's SECOND kind of failure: the
+// service was reached and ran the command, which then timed out or exited
+// non-zero. The handler answers it 200 ok=false, reserving 502 for the first
+// kind — the service could not be reached at all.
+var ErrHealthCommandFailed = errors.New("the health command ran and did not succeed")
+
 func checkExec(ctx context.Context, sb sandbox.Sandbox) error {
 	runCtx, cancel := context.WithTimeout(ctx, sandbox.DefaultTimeout+5*time.Second)
 	defer cancel()
 	res, err := sb.Exec(runCtx, sandbox.ExecRequest{Cmd: checkHealthCmd, Timeout: sandbox.DefaultTimeout})
 	if err != nil {
-		return err
+		return err // unreachable: the service could not run the command
 	}
 	if res.TimedOut {
-		return fmt.Errorf("the health command timed out")
+		return fmt.Errorf("%w: it timed out", ErrHealthCommandFailed)
 	}
 	if res.ExitCode != 0 {
-		return fmt.Errorf("the health command exited %d: %s", res.ExitCode, strings.TrimSpace(res.Stderr))
+		return fmt.Errorf("%w: exited %d: %s", ErrHealthCommandFailed, res.ExitCode, strings.TrimSpace(res.Stderr))
 	}
 	return nil
 }
