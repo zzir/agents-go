@@ -2680,7 +2680,7 @@ export interface paths {
         post?: never;
         /**
          * Delete project
-         * @description Deletes the working tree too — the container and its volume are removed. The owner deletes their own; an admin deletes any (management, decisions §5.29).
+         * @description Deletes the working tree too — the container and its volume are removed. The owner deletes their own; an admin deletes any (management, decisions §5.29). The row is gone whenever this answers 200: a storage_error means the STORAGE could not be reclaimed and is left for the operator, not that the project survived.
          */
         delete: {
             parameters: {
@@ -2694,12 +2694,14 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description deleted */
-                204: {
+                /** @description OK */
+                200: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["handler.projectDeleteResp"];
+                    };
                 };
                 /** @description Not Found */
                 404: {
@@ -7609,6 +7611,10 @@ export interface components {
             expires_at?: string;
             url?: string;
         };
+        "handler.projectDeleteResp": {
+            deleted?: boolean;
+            storage_error?: string;
+        };
         "handler.projectDetail": {
             created_at?: string;
             env?: components["schemas"]["store.EnvVar"][];
@@ -7716,11 +7722,6 @@ export interface components {
             type?: string;
         };
         "handler.sandboxStateResp": {
-            /**
-             * @description SandboxType is the backend behind it (docker | e2b), so a client offers
-             *     only the operations that backend has.
-             */
-            sandbox_type?: string;
             /** @description State is absent | stopped | running. */
             state?: string;
         };

@@ -865,15 +865,22 @@ every delete is an unbounded leak nobody has a listing for
 Projects are **personal**: every member manages their own; the routes scope
 by owner rather than the admin gate. An admin additionally manages the
 plane (decisions §5.29's manage-not-author line): `?all=true` lists every
-owner's rows — the Admin dialog's Projects tab — and delete works on any
-project. Listings carry each row's `session_count`; `storage_hint` (the
-volume and the daemon it is on) is reported to admins only.
+owner's rows — the Admin dialog's Projects tab — and delete, stop and rebuild
+work on any project (each is less than the delete already allowed there);
+reading a tree — export, preview — stays the owner's. Listings carry each
+row's `session_count`; `storage_hint` (where the files live) is reported to
+admins only.
+
+`DELETE /projects/{id}` answers `200 {deleted, storage_error?}`. The row is
+gone whenever it answers: a `storage_error` names storage that could not be
+reclaimed and is left for the operator, NOT a project that survived — an
+error status there would say the opposite.
 
 An unreferenced container is **idle-stopped** — configurable via
 `sandbox_idle_minutes` — with no run or terminal using it: stopped, not
 removed, so installed packages survive and the next run starts it again. The
 same three acts are available by hand: `GET /projects/{id}/sandbox` reports
-`absent` / `stopped` / `running`, `POST …/sandbox/start` provisions it (the
+`absent` / `stopped` / `running` (owner or admin), `POST …/sandbox/start` provisions it (the
 image pull happens there, where a person is watching, rather than inside the
 next run), and `POST …/sandbox/stop` releases the compute keeping the tree.
 A stop while a run or a terminal is still using it answers `stopped: false`:
@@ -917,7 +924,8 @@ tunnel to a remote daemon but not on Docker Desktop; that attempt is bounded to
 five seconds so it fails with the reason rather than hanging.
 
 **On e2b nothing is declared** — the service already answers every port at
-`<port>-<sandbox id>.<domain>`, so the field is not shown. Those hosts are
+`<port>-<sandbox id>.<domain>`, so the field is not shown and the menu asks
+for a port instead of listing any. Those hosts are
 PUBLIC: `secure: true` protects the sandbox daemon, not the workload, so the
 grant is a convenience rather than a gate (decisions §5.35).
 

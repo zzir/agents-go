@@ -704,7 +704,14 @@ When a change genuinely doesn't fit, update this list in the same PR.
     There is no separate template entity, and therefore no pair that can
     disagree about its type.
 
-46. **A preview reaches a port the project PUBLISHED.** `projects.ports` is
+46. **A delete that could not reclaim the storage still deleted the project.**
+    `DELETE /projects/{id}` answers `200 {deleted, storage_error?}`: the row is
+    gone whenever it answers at all, and a `storage_error` names storage left
+    for the operator — never a project that survived. An error STATUS there
+    told a client the opposite, and a client that then skipped its refresh
+    kept offering a project the server no longer had.
+
+47. **A preview reaches a port the project PUBLISHED.** `projects.ports` is
     content like the environment: each port is published to the daemon's
     loopback on an ephemeral host port, the preview proxy dials that, and a
     change replaces that one project's container at its next run

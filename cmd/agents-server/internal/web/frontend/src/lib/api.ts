@@ -356,7 +356,9 @@ export const api = {
     get: (id: string) => request<S['handler.projectDetail']>(`/projects/${id}`),
     update: (id: string, data: unknown) =>
       request<S['handler.projectDetail']>(`/projects/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
-    delete: (id: string) => request<null>(`/projects/${id}`, { method: 'DELETE' }),
+    // Answers 200 whenever the row is gone; storage_error names storage that
+    // could not be reclaimed with it — a warning, not a failed delete.
+    delete: (id: string) => request<{ deleted: boolean; storage_error?: string }>(`/projects/${id}`, { method: 'DELETE' }),
     // Container calls: create it up front, or discard and recreate it. Both
     // are synchronous and can take an image pull's worth of time.
     rebuildContainer: (id: string) => request<null>(`/projects/${id}/sandbox/rebuild`, { method: 'POST' }),

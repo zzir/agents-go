@@ -107,6 +107,13 @@ func withPorts(p *store.Project) {
 	p.PortList, _ = store.DecodeProjectPorts(p.Ports)
 }
 
+// projectDeleteResp answers a delete. The row is always gone when this is
+// returned; storage_error names storage that could not be reclaimed with it.
+type projectDeleteResp struct {
+	Deleted      bool   `json:"deleted"`
+	StorageError string `json:"storage_error,omitempty"`
+}
+
 // own resolves the caller's project by id; an admin's management reach does
 // NOT extend here — an environment is the owner's, and a foreign project
 // reads as absent.
@@ -442,9 +449,6 @@ func (h *ProjectHandler) RebuildContainer(c *gin.Context) {
 type sandboxStateResp struct {
 	// State is absent | stopped | running.
 	State string `json:"state"`
-	// SandboxType is the backend behind it (docker | e2b), so a client offers
-	// only the operations that backend has.
-	SandboxType string `json:"sandbox_type"`
 }
 
 // sandboxStopResp says whether the sandbox stopped now or will stop when the
@@ -474,7 +478,7 @@ func (h *ProjectHandler) SandboxStatus(c *gin.Context) {
 		upstreamError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, sandboxStateResp{State: state.String(), SandboxType: spec.Sandbox.Type})
+	c.JSON(http.StatusOK, sandboxStateResp{State: state.String()})
 }
 
 // SandboxStart provisions the project's sandbox and makes it ready — the
@@ -623,10 +627,10 @@ func (h *ProjectHandler) containerAct(c *gin.Context, act func(context.Context, 
 // holding the working tree (decisions §5.33).
 //
 //	@Summary		Delete project
-//	@Description	Deletes the working tree too — the container and its volume are removed. The owner deletes their own; an admin deletes any (management, decisions §5.29).
+//	@Description	Deletes the working tree too — the container and its volume are removed. The owner deletes their own; an admin deletes any (management, decisions §5.29). The row is gone whenever this answers 200: a storage_error means the STORAGE could not be reclaimed and is left for the operator, not that the project survived.
 //	@Tags			projects
-//	@Param			id	path	string	true	"Project id"
-//	@Success		204	"deleted"
+//	@Param			id	path		string	true	"Project id"
+//	@Success		200	{object}	projectDeleteResp
 //	@Failure		404	{object}	ErrorResponse
 //	@Failure		409	{object}	ErrorResponse	"sessions still bound"
 //	@Security		BearerAuth
@@ -660,19 +664,21 @@ func (h *ProjectHandler) Delete(c *gin.Context) {
 	h.terminals.CloseProjectTerminals(p.ID, maxTerminalGen)
 	h.grants.revokeProject(p.ID)
 	// The row is gone; reclaim the storage. A failure here leaves reclaimable
-	// storage rather than a row pointing at nothing, so it is reported without
-	// undoing the delete.
+	// storage rather than a row pointing at nothing, so it is REPORTED — but
+	// as part of a successful delete, not as a failed one: an error status
+	// would tell the client the project is still there, and it is not.
 	if h.manager != nil {
 		spec, serr := resolveSpec(c.Request.Context(), h.sandboxes, p)
-		if serr != nil {
+		if serr == nil {
+			serr = h.manager.ReclaimProject(c.Request.Context(), spec)
+		} else {
 			h.manager.RemoveProject(p.ID)
-			internalError(c, serr)
-			return
 		}
-		if rerr := h.manager.ReclaimProject(c.Request.Context(), spec); rerr != nil {
-			upstreamError(c, rerr)
+		if serr != nil {
+			logging.Ctx(c.Request.Context()).Warn("reclaiming a deleted project's storage", "project", p.ID, "error", serr)
+			c.JSON(http.StatusOK, projectDeleteResp{Deleted: true, StorageError: serr.Error()})
 			return
 		}
 	}
-	c.Status(http.StatusNoContent)
+	c.JSON(http.StatusOK, projectDeleteResp{Deleted: true})
 }

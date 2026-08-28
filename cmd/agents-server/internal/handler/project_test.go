@@ -111,8 +111,10 @@ func TestProjectAdminSurface(t *testing.T) {
 	if err := sessions.Delete(ctx, sess.ID); err != nil {
 		t.Fatalf("delete session: %v", err)
 	}
-	if w := doJSON(t, admin, http.MethodDelete, "/projects/"+memberProj.ID, ""); w.Code != http.StatusNoContent {
-		t.Fatalf("admin delete of a member's project: %d, want 204", w.Code)
+	// 200 with deleted:true — a delete reports what it could not reclaim
+	// without claiming the project survived.
+	if w := doJSON(t, admin, http.MethodDelete, "/projects/"+memberProj.ID, ""); w.Code != http.StatusOK {
+		t.Fatalf("admin delete of a member's project: %d, want 200", w.Code)
 	}
 	if _, err := projects.Get(ctx, memberProj.ID); err == nil {
 		t.Fatal("member project still present after the admin delete")

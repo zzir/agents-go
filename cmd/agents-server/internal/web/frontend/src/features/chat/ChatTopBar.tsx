@@ -34,14 +34,23 @@ export interface ProjectMenu {
   busy: boolean;
   /* absent | stopped | running, or '' while unknown. */
   state: string;
+  /* True while the state is being re-read. The compute item is disabled
+     meanwhile: on a remote service the read is a network round trip, so the
+     menu would otherwise offer Start on a running sandbox for a moment. */
+  stateLoading: boolean;
   /* False on a backend where the sandbox IS the storage, and replacing it
      would take the working tree with it. */
   rebuildable: boolean;
   onEnv: () => void;
   /* The ports this project publishes — what Preview can open. Empty offers
-     the settings dialog instead of a link that cannot work. */
+     the settings dialog instead of a link that cannot work. Not consulted on
+     a backend that publishes every port itself (see anyPort). */
   ports: number[];
+  /* True where any port is reachable without declaring it (E2B-compatible
+     services publish them all), so the menu asks for one instead of listing. */
+  anyPort: boolean;
   onPreview: (port: number) => void;
+  onPreviewAsk: () => void;
   onStart: () => void;
   onStop: () => void;
   onExport: () => void;
@@ -96,31 +105,56 @@ export function ChatTopBar({
                   <ActionList.LeadingVisual><KeyAsteriskIcon /></ActionList.LeadingVisual>
                   Settings…
                 </ActionList.Item>
-                {projectMenu.ports.length === 0 ? (
+                {projectMenu.anyPort ? (
+                  // Every port is already reachable there; nothing is declared,
+                  // so the port is asked for.
+                  <ActionList.Item onSelect={projectMenu.onPreviewAsk}>
+                    <ActionList.LeadingVisual><BrowserIcon /></ActionList.LeadingVisual>
+                    Preview a port…
+                  </ActionList.Item>
+                ) : projectMenu.ports.length === 0 ? (
                   // Nothing to open: the item leads where a port is declared,
                   // rather than asking for one the container never published.
                   <ActionList.Item onSelect={projectMenu.onEnv}>
                     <ActionList.LeadingVisual><BrowserIcon /></ActionList.LeadingVisual>
                     Publish a port to preview…
                   </ActionList.Item>
-                ) : projectMenu.ports.map(port => (
-                  <ActionList.Item key={port} onSelect={() => projectMenu.onPreview(port)}>
-                    <ActionList.LeadingVisual><BrowserIcon /></ActionList.LeadingVisual>
-                    Preview port {port}
-                  </ActionList.Item>
-                ))}
+                ) : (
+                  // One item that expands: the ports are a list of their own,
+                  // not five siblings of Terminal and Export.
+                  <ActionMenu>
+                    <ActionMenu.Anchor>
+                      <ActionList.Item>
+                        <ActionList.LeadingVisual><BrowserIcon /></ActionList.LeadingVisual>
+                        Preview a port
+                      </ActionList.Item>
+                    </ActionMenu.Anchor>
+                    <ActionMenu.Overlay>
+                      <ActionList>
+                        {projectMenu.ports.map(port => (
+                          <ActionList.Item key={port} onSelect={() => projectMenu.onPreview(port)}>{port}</ActionList.Item>
+                        ))}
+                      </ActionList>
+                    </ActionMenu.Overlay>
+                  </ActionMenu>
+                )}
                 <ActionList.Item onSelect={projectMenu.onExport}>
                   <ActionList.LeadingVisual><DownloadIcon /></ActionList.LeadingVisual>
                   Export as tar…
                 </ActionList.Item>
                 <ActionList.Divider />
-                {projectMenu.state === 'running' ? (
-                  <ActionList.Item onSelect={projectMenu.onStop}>
+                {projectMenu.state === '' ? (
+                  <ActionList.Item disabled>
+                    <ActionList.LeadingVisual><PlayIcon /></ActionList.LeadingVisual>
+                    Checking the sandbox…
+                  </ActionList.Item>
+                ) : projectMenu.state === 'running' ? (
+                  <ActionList.Item disabled={projectMenu.stateLoading} onSelect={projectMenu.onStop}>
                     <ActionList.LeadingVisual><SquareFillIcon /></ActionList.LeadingVisual>
                     Stop sandbox
                   </ActionList.Item>
                 ) : (
-                  <ActionList.Item onSelect={projectMenu.onStart}>
+                  <ActionList.Item disabled={projectMenu.stateLoading} onSelect={projectMenu.onStart}>
                     <ActionList.LeadingVisual><PlayIcon /></ActionList.LeadingVisual>
                     Start sandbox
                   </ActionList.Item>

@@ -869,6 +869,13 @@ components:
         url:
           type: string
       type: object
+    handler.projectDeleteResp:
+      properties:
+        deleted:
+          type: boolean
+        storage_error:
+          type: string
+      type: object
     handler.projectDetail:
       properties:
         created_at:
@@ -1045,11 +1052,6 @@ components:
       type: object
     handler.sandboxStateResp:
       properties:
-        sandbox_type:
-          description: |-
-            SandboxType is the backend behind it (docker | e2b), so a client offers
-            only the operations that backend has.
-          type: string
         state:
           description: State is absent | stopped | running.
           type: string
@@ -3925,9 +3927,11 @@ paths:
       - projects
   /projects/{id}:
     delete:
-      description: Deletes the working tree too — the container and its volume are
+      description: 'Deletes the working tree too — the container and its volume are
         removed. The owner deletes their own; an admin deletes any (management, decisions
-        §5.29).
+        §5.29). The row is gone whenever this answers 200: a storage_error means the
+        STORAGE could not be reclaimed and is left for the operator, not that the
+        project survived.'
       parameters:
       - description: Project id
         in: path
@@ -3936,8 +3940,12 @@ paths:
         schema:
           type: string
       responses:
-        "204":
-          description: deleted
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.projectDeleteResp'
+          description: OK
         "404":
           content:
             application/json:

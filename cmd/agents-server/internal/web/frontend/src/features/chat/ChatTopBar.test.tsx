@@ -55,7 +55,7 @@ function render(props: Partial<Parameters<typeof ChatTopBar>[0]> = {}): HTMLElem
         terminalEnabled
         onTerminalOpen={noop}
         binding={{ title: 'sb — proj', projectName: 'proj' }}
-        projectMenu={{ busy: false, state: 'running', rebuildable: true, ports: [3000], onEnv: noop, onStart: noop, onStop: noop, onExport: noop, onPreview: noop, onRebuild: noop, onOpen: noop }}
+        projectMenu={{ busy: false, state: 'running', rebuildable: true, ports: [3000], stateLoading: false, anyPort: false, onEnv: noop, onStart: noop, onStop: noop, onExport: noop, onPreview: noop, onPreviewAsk: noop, onRebuild: noop, onOpen: noop }}
         {...props}
       />,
     );
@@ -67,20 +67,22 @@ describe('ChatTopBar', () => {
   it('offers the terminal, the environment, the compute switch and the rebuild, in that order', () => {
     const host = render();
     const items = [...host.querySelectorAll('li')].map(li => li.textContent);
-    expect(items).toEqual(['Terminal panel', 'Settings…', 'Preview port 3000', 'Export as tar…', 'Stop sandbox', 'Rebuild container']);
+    // The ports live one level down, behind "Preview a port"; jsdom renders
+    // the closed submenu's items too, which is why 3000 shows up here.
+    expect(items).toEqual(['Terminal panel', 'Settings…', 'Preview a port', '3000', 'Export as tar…', 'Stop sandbox', 'Rebuild container']);
   });
 
   // A running sandbox offers Stop; anything else offers Start, and says why.
   it('offers Start when the sandbox is not running', () => {
-    const host = render({ projectMenu: { busy: false, state: 'absent', rebuildable: true, ports: [3000], onEnv: noop, onStart: noop, onStop: noop, onExport: noop, onPreview: noop, onRebuild: noop, onOpen: noop } });
+    const host = render({ projectMenu: { busy: false, state: 'absent', rebuildable: true, ports: [3000], stateLoading: false, anyPort: false, onEnv: noop, onStart: noop, onStop: noop, onExport: noop, onPreview: noop, onPreviewAsk: noop, onRebuild: noop, onOpen: noop } });
     const items = [...host.querySelectorAll('li')].map(li => li.textContent);
-    expect(items[4]).toBe('Start sandbox');
+    expect(items[5]).toBe('Start sandbox');
   });
 
   // On a backend where the sandbox IS the storage there is nothing to rebuild
   // into: offering it would be offering to delete the working tree.
   it('drops the rebuild on a backend that cannot rebuild', () => {
-    const host = render({ projectMenu: { busy: false, state: 'running', rebuildable: false, ports: [3000], onEnv: noop, onStart: noop, onStop: noop, onExport: noop, onPreview: noop, onRebuild: noop, onOpen: noop } });
+    const host = render({ projectMenu: { busy: false, state: 'running', rebuildable: false, ports: [3000], stateLoading: false, anyPort: false, onEnv: noop, onStart: noop, onStop: noop, onExport: noop, onPreview: noop, onPreviewAsk: noop, onRebuild: noop, onOpen: noop } });
     const items = [...host.querySelectorAll('li')].map(li => li.textContent);
     expect(items).not.toContain('Rebuild container');
   });
@@ -88,7 +90,7 @@ describe('ChatTopBar', () => {
   it('marks only the rebuild as destructive', () => {
     const host = render();
     const variants = [...host.querySelectorAll('li')].map(li => li.getAttribute('data-variant'));
-    expect(variants).toEqual([null, null, null, null, null, 'danger']);
+    expect(variants).toEqual([null, null, null, null, null, null, 'danger']);
   });
 
   /* The terminal left the top bar for the project menu: the three buttons
@@ -110,5 +112,24 @@ describe('ChatTopBar', () => {
   it('shows no menu while the session is unbound', () => {
     const host = render({ binding: null, projectMenu: null });
     expect(host.querySelectorAll('li')).toHaveLength(0);
+  });
+
+// Where every port is already published — an E2B-compatible service — there is
+// no list to expand, so the item asks for a port instead.
+  it('asks for a port where every port is already published', () => {
+    const host = render({ projectMenu: { busy: false, state: 'running', stateLoading: false, rebuildable: false, ports: [], anyPort: true, onEnv: noop, onStart: noop, onStop: noop, onExport: noop, onPreview: noop, onPreviewAsk: noop, onRebuild: noop, onOpen: noop } });
+    const items = [...host.querySelectorAll('li')].map(li => li.textContent);
+    expect(items).toContain('Preview a port…');
+    expect(items).not.toContain('Publish a port to preview…');
+  });
+
+// The compute item is never a guess: until the state is read it offers
+// neither Start nor Stop.
+  it('offers no compute action while the state is unknown', () => {
+    const host = render({ projectMenu: { busy: false, state: '', stateLoading: true, rebuildable: true, ports: [], anyPort: false, onEnv: noop, onStart: noop, onStop: noop, onExport: noop, onPreview: noop, onPreviewAsk: noop, onRebuild: noop, onOpen: noop } });
+    const items = [...host.querySelectorAll('li')].map(li => li.textContent);
+    expect(items).toContain('Checking the sandbox…');
+    expect(items).not.toContain('Start sandbox');
+    expect(items).not.toContain('Stop sandbox');
   });
 });

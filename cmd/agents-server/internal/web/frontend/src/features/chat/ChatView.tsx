@@ -186,7 +186,7 @@ export function ChatView({
   // The bound project's compute state, refreshed when the menu's owner
   // changes and after every act on it. '' means "not asked yet".
   const [sandboxState, setSandboxState] = useState('');
-  const [targetType, setTargetType] = useState('');
+  const [stateLoading, setStateLoading] = useState(false);
 
   useEffect(() => {
     setAgentConfigIdState(loadSessionAgent(sessionId || ''));
@@ -242,12 +242,20 @@ export function ChatView({
     });
     if (!ok) return;
     try {
-      await api.projects.delete(p.id);
+      const res = await api.projects.delete(p.id);
+      if (res?.storage_error) {
+        // The row IS gone; only the storage was left behind.
+        toast.error(`“${p.name}” was deleted, but its storage could not be reclaimed: ${res.storage_error}`);
+      }
+    } catch (e) {
+      toast.error((e as Error).message || 'Could not delete the project');
+    } finally {
+      // Refetched whatever happened: a delete that answered an error may still
+      // have removed the row, and a list that keeps offering it is worse than
+      // one that briefly lacks a project that survived.
       mutateProjects(prev => (prev ? prev.filter(x => x.id !== p.id) : prev));
       if (projectId === p.id) setProjectId('');
       reloadProjects();
-    } catch (e) {
-      toast.error((e as Error).message || 'Could not delete the project');
     }
   };
 
@@ -304,6 +312,7 @@ export function ChatView({
   // The bound pair is what the top-bar menu acts on: a session's container is
   // its binding's, never the composer's current pick.
   const boundProject = sessionBinding?.projectId ? projects?.find(p => p.id === sessionBinding.projectId) || null : null;
+  const boundSandboxType = sandboxDefs?.find(sb => sb.id === boundProject?.sandbox_id)?.type || '';
 
   // The state is read when the bound project changes AND again as the menu
   // opens: a run's first command starts the sandbox without telling this
@@ -311,17 +320,17 @@ export function ChatView({
   // ordinary way there is. A failure leaves it unknown rather than guessing —
   // the menu then offers Start, which is the harmless choice.
   const refreshSandboxState = useCallback(async (projectID: string) => {
+    setStateLoading(true);
     try {
-      const r = await api.projects.sandboxStatus(projectID);
-      setSandboxState(r.state);
-      setTargetType(r.sandbox_type);
+      setSandboxState((await api.projects.sandboxStatus(projectID)).state);
     } catch {
       setSandboxState('');
-      setTargetType('');
+    } finally {
+      setStateLoading(false);
     }
   }, []);
   useEffect(() => {
-    if (!boundProject) { setSandboxState(''); setTargetType(''); return; }
+    if (!boundProject) { setSandboxState(''); return; }
     void refreshSandboxState(boundProject.id);
   }, [boundProject, refreshSandboxState]);
 
@@ -363,6 +372,19 @@ export function ChatView({
 
   // The port is asked for rather than guessed: a project may run several
   // services, and the one a person wants is the one they type.
+  // Where every port is already published (an E2B-compatible service), the
+  // port is asked for: there is no declared list to choose from.
+  const askPreviewPort = async () => {
+    const raw = window.prompt('Which port inside the sandbox?', '3000');
+    if (!raw) return;
+    const port = parseInt(raw, 10);
+    if (!Number.isFinite(port) || port <= 0 || port > 65535) {
+      toast.error('That is not a port');
+      return;
+    }
+    await previewPort(port);
+  };
+
   const previewPort = async (port: number) => {
     if (!boundProject || containerBusy) return;
     setContainerBusy(true);
@@ -706,13 +728,18 @@ export function ChatView({
       projectMenu={boundProject ? {
         busy: containerBusy,
         state: sandboxState,
-        rebuildable: targetType !== 'e2b',
+        stateLoading,
+        // The backend comes from the sandbox the project names, which is
+        // already loaded — not from a status call that has yet to answer.
+        rebuildable: boundSandboxType !== 'e2b',
+        anyPort: boundSandboxType === 'e2b',
         onEnv: () => setEnvProject(boundProject),
         onStart: () => { void startSandbox(); },
         onStop: () => { void stopSandbox(); },
         onExport: () => { void exportProject(); },
         ports: boundProject.ports || [],
         onPreview: (port: number) => { void previewPort(port); },
+        onPreviewAsk: () => { void askPreviewPort(); },
         onRebuild: () => { void rebuildContainer(); },
         onOpen: () => { void refreshSandboxState(boundProject.id); },
       } : null}
