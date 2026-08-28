@@ -79,9 +79,19 @@ type sandboxInstance struct {
 	// Guarded by mu.
 	expired bool
 	gone    chan struct{}
+	// stopOnRelease pauses the compute when the last holder of a doomed
+	// instance releases it — a user Stop deferred behind live work, or an idle
+	// expiry — rather than only closing the connection, which for e2b releases
+	// nothing remote. A retire, remove or rebuild leaves it false: a successor
+	// generation keeps the sandbox, or a reclaim destroys it. Guarded by mu.
+	stopOnRelease bool
 
 	closeOnce sync.Once
 }
+
+// stopTimeout bounds a background pause/stop — an idle expiry or a deferred
+// user Stop, neither of which has the caller's context to carry.
+const stopTimeout = 30 * time.Second
 
 // close tears down the sandbox, once — the idle expiry and an eviction may
 // both reach it. Called without the manager lock — teardown can block on I/O.
@@ -93,6 +103,19 @@ func (i *sandboxInstance) close() {
 			_ = i.sb.Close()
 		}
 	})
+}
+
+// stop pauses the compute (Lifecycle.Stop) before releasing the connection —
+// what an idle expiry or a deferred user Stop wants. For e2b that pause is the
+// only thing that ends the billed sandbox (Close releases nothing remote); for
+// docker it stops the container even when this instance never cached its id.
+func (i *sandboxInstance) stop() {
+	if lc, ok := i.sb.(sandbox.Lifecycle); ok {
+		ctx, cancel := context.WithTimeout(context.Background(), stopTimeout)
+		_ = lc.Stop(ctx)
+		cancel()
+	}
+	i.close()
 }
 
 // Manager caches and reuses sandbox instances keyed by (project, runtime
@@ -302,6 +325,7 @@ func (m *Manager) release(inst *sandboxInstance) {
 	m.mu.Lock()
 	inst.refs--
 	dead := inst.doomed && inst.refs <= 0
+	stopIntent := inst.stopOnRelease
 	if !dead && inst.refs <= 0 && !m.closed && idle > 0 {
 		if inst.idle != nil {
 			inst.idle.Stop()
@@ -310,7 +334,11 @@ func (m *Manager) release(inst *sandboxInstance) {
 	}
 	m.mu.Unlock()
 	if dead {
-		inst.close()
+		if stopIntent {
+			inst.stop()
+		} else {
+			inst.close()
+		}
 	}
 }
 
@@ -330,7 +358,7 @@ func (m *Manager) idleExpire(inst *sandboxInstance) {
 	inst.expired = true
 	inst.gone = make(chan struct{})
 	m.mu.Unlock()
-	inst.close()
+	inst.stop() // idle expiry pauses the compute, not just the connection
 	m.mu.Lock()
 	if m.instances[inst.key] == inst {
 		delete(m.instances, inst.key)
@@ -380,14 +408,11 @@ func (m *Manager) RetireProject(projectID string, minLive int64) {
 	}
 }
 
-// RemoveProject evicts every cached instance of the project — all generations
-// — and fences the id permanently: the project is gone, so nothing may serve
-// it again. The tombstone covers callers who READ the project before the
-// delete (a terminal open reads, dials, then acquires): without it their late
-// build would enter the cache as an instance of a project that no longer
-// exists, with no path ever retiring it. Permanence is safe — ids are random
-// and never reused. In-flight holders finish on what they acquired; only idle
-// instances close immediately.
+// RemoveProject evicts every cached instance of the project and fences its id
+// permanently (a random id is never reused): the project is gone, so a late
+// build from a caller that read it before the delete cannot re-enter the cache
+// with nothing left to retire it. In-flight holders finish on what they
+// acquired; only idle instances close immediately.
 func (m *Manager) RemoveProject(projectID string) {
 	var toClose []*sandboxInstance
 	m.mu.Lock()
@@ -471,6 +496,39 @@ func (m *Manager) EvictProject(projectID string) {
 	m.mu.Unlock()
 	for _, inst := range toClose {
 		inst.close()
+	}
+}
+
+// stopProjectOnRelease evicts every instance of the project and marks it so
+// the last holder's release PAUSES the compute; an instance with no holders is
+// paused now. Unlike EvictProject (a rebuild or unbind that only closes), this
+// is a user Stop deferred behind live work — for e2b, pausing is the only way
+// to end the billed sandbox.
+func (m *Manager) stopProjectOnRelease(projectID string) {
+	var toStop []*sandboxInstance
+	m.mu.Lock()
+	for key := range m.instances {
+		if key.projectID != projectID {
+			continue
+		}
+		inst := m.instances[key]
+		delete(m.instances, key)
+		inst.stopOnRelease = true
+		if inst.refs > 0 {
+			inst.doomed = true
+		} else {
+			// Disarm any idle timer so it does not also fire stop() on this
+			// instance; the timer's own guard already no-ops on an evicted key,
+			// this just avoids the redundant wake.
+			if inst.idle != nil {
+				inst.idle.Stop()
+			}
+			toStop = append(toStop, inst)
+		}
+	}
+	m.mu.Unlock()
+	for _, inst := range toStop {
+		inst.stop()
 	}
 }
 
@@ -614,8 +672,9 @@ func (m *Manager) Stop(ctx context.Context, spec Spec) (stopped bool, err error)
 	// fresh one; this call's own release then closes what it detached.
 	if !m.detachIfSole(spec.Project.ID) {
 		// Someone is still working in it; leave the container up and let the
-		// last holder's release stop it (EvictProject dooms every instance).
-		m.EvictProject(spec.Project.ID)
+		// last holder's release PAUSE it — close alone releases nothing remote
+		// for e2b, so a plain eviction would never stop the billed sandbox.
+		m.stopProjectOnRelease(spec.Project.ID)
 		return false, nil
 	}
 	if err := lc.Stop(ctx); err != nil {
@@ -631,13 +690,7 @@ func (m *Manager) Stop(ctx context.Context, spec Spec) (stopped bool, err error)
 func (m *Manager) detachIfSole(projectID string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	n := 0
-	for key, inst := range m.instances {
-		if key.projectID == projectID {
-			n += inst.refs
-		}
-	}
-	if n != 1 {
+	if m.projectRefsLocked(projectID) != 1 {
 		return false
 	}
 	for key, inst := range m.instances {
@@ -647,6 +700,18 @@ func (m *Manager) detachIfSole(projectID string) bool {
 		}
 	}
 	return true
+}
+
+// projectRefsLocked sums the live holders across every cached generation of
+// the project. Callers hold m.mu.
+func (m *Manager) projectRefsLocked(projectID string) int {
+	n := 0
+	for key, inst := range m.instances {
+		if key.projectID == projectID {
+			n += inst.refs
+		}
+	}
+	return n
 }
 
 // Status reports what the project's compute is doing. It builds the sandbox
@@ -745,13 +810,7 @@ type DialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
 func (m *Manager) holders(projectID string) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	n := 0
-	for key, inst := range m.instances {
-		if key.projectID == projectID {
-			n += inst.refs
-		}
-	}
-	return n
+	return m.projectRefsLocked(projectID)
 }
 
 // BuildOptions assembles the SDK options for spec: the sandbox's daemon,
@@ -825,10 +884,29 @@ func applyImage(opts *dockersb.Options, sb *store.Sandbox) error {
 		opts.User = DefaultContainerUser
 	}
 	opts.Network = dc.Network
-	opts.Limits = sandbox.Limits{MemoryBytes: dc.MemoryMB << 20, CPUs: dc.CPUs}
+	// A blank limit takes the workbench default, not "unlimited": agent-
+	// generated code runs here, so an uncapped container could exhaust the
+	// host's memory or CPU. An operator raises them per sandbox.
+	mem := dc.MemoryMB
+	if mem == 0 {
+		mem = DefaultMemoryMB
+	}
+	cpus := dc.CPUs
+	if cpus == 0 {
+		cpus = DefaultCPUs
+	}
+	opts.Limits = sandbox.Limits{MemoryBytes: mem << 20, CPUs: cpus}
 	opts.MaxReadFileBytes = dc.MaxReadFileBytes
 	return nil
 }
+
+// Default resource caps for a workbench docker sandbox that leaves them blank.
+// 0 in the config means "this default", never "unlimited" — an unbounded
+// container running agent code is a host-DoS surface (decisions §5.38).
+const (
+	DefaultMemoryMB int64   = 4096
+	DefaultCPUs     float64 = 2
+)
 
 // shortID is a uuid's tail 12 hex chars — enough to tell ids apart in names
 // docker must carry.

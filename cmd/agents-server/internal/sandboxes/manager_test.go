@@ -274,9 +274,9 @@ func TestSandboxManagerRetireFencesInFlightBuilds(t *testing.T) {
 	}
 }
 
-// CloseAll while a build is dialing: the placeholder is doomed, the builder's
-// freshly dialed resource is closed by the last release — not leaked with no
-// owner, which is what deleting the placeholder outright used to do.
+// CloseAll while a build is dialing: the placeholder is doomed, and the
+// builder's freshly dialed resource is closed by the last release rather than
+// leaked with no owner.
 func TestSandboxManagerCloseAllDuringBuild(t *testing.T) {
 	m, gate, sb := gatedManager(t)
 
@@ -718,7 +718,8 @@ func TestManagerStopIdle(t *testing.T) {
 
 // A Stop while a run holds the sandbox does NOT tear it off its container: it
 // reports the stop as deferred, dooms the instance so nothing new joins, and
-// the holder's release is what closes it.
+// the holder's release is what PAUSES it (Lifecycle.Stop) — not merely closes
+// the connection, which for e2b would leave the billed sandbox running.
 func TestManagerStopDefersToHolders(t *testing.T) {
 	m, sb := lifecycleManager(t)
 	held, release, err := m.acquire(testSpec("p"))
@@ -742,6 +743,9 @@ func TestManagerStopDefersToHolders(t *testing.T) {
 		t.Error("the instance was not doomed, so a later acquire could still join it")
 	}
 	release()
+	if sb.stops != 1 {
+		t.Errorf("stops after the last release = %d, want 1 — the deferred stop must pause the compute", sb.stops)
+	}
 	if sb.closes.Load() != 1 {
 		t.Errorf("closes after the last release = %d, want 1", sb.closes.Load())
 	}
