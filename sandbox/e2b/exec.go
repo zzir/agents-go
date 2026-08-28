@@ -119,6 +119,12 @@ func (s *Sandbox) ExecStream(ctx context.Context, req sandbox.ExecRequest, stdou
 			s.signal(context.WithoutCancel(ctx), pid, "SIGNAL_SIGKILL")
 			return &sandbox.ExecResult{ExitCode: -1, TimedOut: true}, nil
 		}
+		// The caller stopped waiting (cancel): kill the process so it does not
+		// keep running in the sandbox after the request that started it — the
+		// docker backend does the same on a caller cancel.
+		if ctx.Err() != nil {
+			s.signal(context.WithoutCancel(ctx), pid, "SIGNAL_SIGKILL")
+		}
 		return nil, err
 	}
 	return result, nil
@@ -146,11 +152,15 @@ func (s *Sandbox) writeRequestFiles(ctx context.Context, files map[string]string
 	return nil
 }
 
-// signal best-effort kills a process the caller stopped waiting for.
+// signal best-effort kills a process the caller stopped waiting for. It bounds
+// its own call: a hung envd must not hang the signal that is meant to clean up
+// after one.
 func (s *Sandbox) signal(ctx context.Context, pid uint32, sig string) {
 	if pid == 0 {
 		return
 	}
+	ctx, cancel := context.WithTimeout(ctx, controlCallTimeout)
+	defer cancel()
 	_ = s.unary(ctx, procSendSignal, map[string]any{
 		"process": map[string]any{"pid": pid},
 		"signal":  sig,

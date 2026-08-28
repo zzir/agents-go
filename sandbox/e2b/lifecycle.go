@@ -3,7 +3,7 @@ package e2b
 import (
 	"context"
 	"strconv"
-	"strings"
+	"time"
 
 	"github.com/zzir/agents-go/sandbox"
 )
@@ -37,11 +37,15 @@ func (s *Sandbox) Stop(ctx context.Context) error {
 	}
 	err := s.pause(ctx, id)
 	switch {
-	case isNotFound(err):
+	case err == nil, isConflict(err):
+		// Paused (or already paused — a 409, matched by status not message
+		// text). Drop the lease so the next ensure takes the slow path and
+		// resumes it, instead of the fast path handing back a paused sandbox.
+		s.mu.Lock()
+		s.leaseUntil = time.Time{}
+		s.mu.Unlock()
 		return nil
-	case err != nil && strings.Contains(err.Error(), "already paused"):
-		// Stopping a stopped sandbox is a no-op by contract; the service
-		// spells it as a 409 (verified against the real one).
+	case isNotFound(err):
 		return nil
 	}
 	return err
@@ -89,7 +93,7 @@ func (s *Sandbox) URLForPort(ctx context.Context, port int) (string, error) {
 func (s *Sandbox) Destroy(ctx context.Context) error {
 	s.mu.Lock()
 	id := s.id
-	s.id, s.accessToken, s.domain = "", "", ""
+	s.forget()
 	s.mu.Unlock()
 	if id == "" {
 		return nil

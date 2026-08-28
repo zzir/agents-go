@@ -57,16 +57,26 @@ func (s *Sandbox) OpenTerminal(ctx context.Context, opts sandbox.TerminalOptions
 	// known cannot take input, and the caller would write into a void.
 	select {
 	case <-t.ready:
+		return t, nil
 	case <-t.done:
+		// The stream ended before a pid arrived — an error, or an immediate
+		// exit. ready is closed ONLY on a real pid, so a done that beats it
+		// means there is no live session to hand back; surface why instead of a
+		// dead terminal whose failure hides in Wait().
+		select {
+		case <-t.ready:
+			return t, nil // a pid did arrive, racing done — the session is valid
+		default:
+		}
+		cancel()
 		if t.err != nil {
-			cancel()
 			return nil, t.err
 		}
+		return nil, errors.New("e2b: the terminal stream ended before the shell started")
 	case <-ctx.Done():
 		cancel()
 		return nil, ctx.Err()
 	}
-	return t, nil
 }
 
 // terminal is one live PTY session.
@@ -123,7 +133,9 @@ func (t *terminal) pump(ctx context.Context, start map[string]any) {
 	if err != nil && !errors.Is(err, context.Canceled) {
 		t.err = err
 	}
-	readyOnce.Do(func() { close(t.ready) })
+	// ready is deliberately NOT closed here: it closes only when a pid arrives,
+	// so OpenTerminal can tell "shell started" from "stream ended first" (a
+	// close here would hand back a terminal that is already dead).
 	close(t.out)
 }
 
@@ -156,7 +168,9 @@ func (t *terminal) Write(p []byte) (int, error) {
 	if !ok {
 		return 0, io.ErrClosedPipe
 	}
-	err := t.sb.unary(context.Background(), procSendInput, map[string]any{
+	ctx, cancel := context.WithTimeout(context.Background(), controlCallTimeout)
+	defer cancel()
+	err := t.sb.unary(ctx, procSendInput, map[string]any{
 		"process": map[string]any{"pid": pid},
 		"input":   map[string]any{"pty": base64.StdEncoding.EncodeToString(p)},
 	}, nil)
@@ -172,7 +186,9 @@ func (t *terminal) Resize(cols, rows int) error {
 	if !ok {
 		return io.ErrClosedPipe
 	}
-	return t.sb.unary(context.Background(), procUpdate, map[string]any{
+	ctx, cancel := context.WithTimeout(context.Background(), controlCallTimeout)
+	defer cancel()
+	return t.sb.unary(ctx, procUpdate, map[string]any{
 		"process": map[string]any{"pid": pid},
 		"pty":     map[string]any{"size": map[string]any{"cols": cols, "rows": rows}},
 	}, nil)

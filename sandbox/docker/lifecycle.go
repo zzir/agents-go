@@ -47,10 +47,20 @@ func (s *Sandbox) Stop(ctx context.Context) error {
 	if err := s.requirePersistent(); err != nil {
 		return err
 	}
+	// Ownership first, like every other by-name entry point (withManaged): a
+	// foreign container that happens to hold the name must not be stopped, and
+	// the stop then acts on the id, not the name — an id is not reused.
+	id, _, ok, err := s.inspectOwned(ctx)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil // nothing provisioned: already as stopped as it gets
+	}
 	timeout := 10
-	if _, err := s.cli.ContainerStop(ctx, s.opts.ContainerName, client.ContainerStopOptions{Timeout: &timeout}); err != nil {
+	if _, err := s.cli.ContainerStop(ctx, id, client.ContainerStopOptions{Timeout: &timeout}); err != nil {
 		if cerrdefs.IsNotFound(err) {
-			return nil // nothing provisioned: already as stopped as it gets
+			return nil
 		}
 		return fmt.Errorf("docker sandbox: stopping %s: %w", s.opts.ContainerName, err)
 	}
@@ -64,22 +74,46 @@ func (s *Sandbox) Stop(ctx context.Context) error {
 
 // Status inspects the container BY NAME, not by the cached id: a sandbox that
 // has never run a command holds no id, and "never used" must read as absent
-// rather than as an error.
+// rather than as an error. A foreign container squatting the name is an error,
+// not a state — Status never reports its running/stopped as this sandbox's.
 func (s *Sandbox) Status(ctx context.Context) (sandbox.State, error) {
 	if err := s.requirePersistent(); err != nil {
 		return sandbox.StateAbsent, err
 	}
-	info, err := s.cli.ContainerInspect(ctx, s.opts.ContainerName, client.ContainerInspectOptions{})
+	_, running, ok, err := s.inspectOwned(ctx)
 	if err != nil {
-		if cerrdefs.IsNotFound(err) {
-			return sandbox.StateAbsent, nil
-		}
-		return sandbox.StateAbsent, fmt.Errorf("docker sandbox: inspecting %s: %w", s.opts.ContainerName, err)
+		return sandbox.StateAbsent, err
 	}
-	if info.Container.State != nil && info.Container.State.Running {
+	if !ok {
+		return sandbox.StateAbsent, nil
+	}
+	if running {
 		return sandbox.StateRunning, nil
 	}
 	return sandbox.StateStopped, nil
+}
+
+// inspectOwned inspects the named container and confirms this package created
+// it (the fingerprint label is present). ok is false when nothing holds the
+// name; a FOREIGN holder is an error, so the by-name lifecycle calls never act
+// on or report a container that merely shares the name.
+func (s *Sandbox) inspectOwned(ctx context.Context) (id string, running, ok bool, err error) {
+	info, err := s.cli.ContainerInspect(ctx, s.opts.ContainerName, client.ContainerInspectOptions{})
+	if err != nil {
+		if cerrdefs.IsNotFound(err) {
+			return "", false, false, nil
+		}
+		return "", false, false, fmt.Errorf("docker sandbox: inspecting %s: %w", s.opts.ContainerName, err)
+	}
+	c := info.Container
+	var labels map[string]string
+	if c.Config != nil {
+		labels = c.Config.Labels
+	}
+	if _, ours := labels[fingerprintLabel]; !ours {
+		return "", false, false, fmt.Errorf("docker sandbox: container %q was not created by this package", s.opts.ContainerName)
+	}
+	return c.ID, c.State != nil && c.State.Running, true, nil
 }
 
 // ExportTar streams path (empty = the whole working directory) out of the
@@ -129,7 +163,9 @@ func StartManaged(ctx context.Context, opts Options, name string) error {
 // URLForPort returns the address a service listening inside the container
 // answers at: the container's own IP on the docker network it joined. A
 // template that joins no network has no address at all, which is the honest
-// answer rather than a connection that times out.
+// answer rather than a connection that times out. Like ExportTar, resolving an
+// address ensures the image and container: asking where a port is starts the
+// sandbox if it was not running.
 func (s *Sandbox) URLForPort(ctx context.Context, port int) (string, error) {
 	addr, err := s.portAddr(ctx, port)
 	if err != nil {

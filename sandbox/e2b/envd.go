@@ -158,7 +158,10 @@ func (s *Sandbox) CreateExclusive(ctx context.Context, p string, content []byte)
 		return err
 	}
 	if res.ExitCode != 0 {
-		if strings.Contains(res.Stderr, "cannot overwrite") || strings.Contains(res.Stderr, "File exists") || strings.Contains(res.Stderr, "exists") {
+		// set -C failed. Ask whether the path exists rather than sniffing a
+		// locale-dependent stderr: a stat that finds it is the ErrExist the
+		// exclusive create promises; anything else is the real failure.
+		if serr := s.unary(ctx, procStat, map[string]any{"path": full}, nil); serr == nil {
 			return fmt.Errorf("e2b: create %q: %w", p, fs.ErrExist)
 		}
 		return fmt.Errorf("e2b: create %q: %s", p, strings.TrimSpace(res.Stderr))

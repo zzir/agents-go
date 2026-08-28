@@ -70,10 +70,11 @@ type PortForwarder interface {
 	URLForPort(ctx context.Context, port int) (string, error)
 }
 
-// PortDialer is implemented by backends whose ports are NOT reachable from
-// wherever the caller runs — a container on a remote daemon — and that can
-// open the connection themselves. A caller proxying to URLForPort uses this
-// as its transport when the backend offers it.
+// PortDialer is implemented by backends that can open a connection to a port
+// inside the sandbox themselves. A caller proxying to URLForPort uses this as
+// its transport when the backend offers it — required when the port is not
+// reachable from where the caller runs (a container on a remote daemon), and a
+// plain net.Dial where it is (the local daemon), which the backend decides.
 type PortDialer interface {
 	// DialPort opens a connection to a port inside the sandbox.
 	DialPort(ctx context.Context, port int) (net.Conn, error)

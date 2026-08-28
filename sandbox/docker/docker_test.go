@@ -67,8 +67,22 @@ func TestBuildConfig_SecurityDefaults(t *testing.T) {
 func TestBuildConfig_NetworkEnabled(t *testing.T) {
 	s := &Sandbox{opts: Options{Image: "x", Network: "bridge"}}
 	_, host := s.buildConfig(sandbox.ExecRequest{Cmd: []string{"x"}})
-	if string(host.NetworkMode) == "none" {
-		t.Error("network should be enabled when Options.Network is true")
+	if string(host.NetworkMode) != "bridge" {
+		t.Errorf("network mode = %q, want the named network when Options.Network is set", host.NetworkMode)
+	}
+}
+
+// Ports are a persistent container's concern: an ephemeral one-shot has nothing
+// to serve, and publishing on it would both race a shared field and bind a host
+// port for a container that exits after one command (spec §2.7r).
+func TestBuildHostConfig_PortsOnlyPersistent(t *testing.T) {
+	s := &Sandbox{opts: Options{Image: "x", Ports: []int{8000}}}
+	if _, exposed := s.buildHostConfig(false); len(exposed) != 0 {
+		t.Errorf("ephemeral exposed = %v, want none", exposed)
+	}
+	host, exposed := s.buildHostConfig(true)
+	if len(exposed) != 1 || len(host.PortBindings) != 1 {
+		t.Errorf("persistent exposed = %v, bindings = %v, want one each", exposed, host.PortBindings)
 	}
 }
 

@@ -225,9 +225,6 @@ type Sandbox struct {
 
 	// sshDial is set for an ssh:// Host and closed with the sandbox.
 	sshDial *sshDialer
-	// exposed is the port set buildHostConfig derived, kept so the container
-	// config declares what the host config binds.
-	exposed network.PortSet
 
 	// persistent container state
 	mu          sync.Mutex
@@ -800,10 +797,11 @@ func (s *Sandbox) startEphemeral(ctx context.Context, req sandbox.ExecRequest) (
 	return id, remove, nil
 }
 
-// buildHostConfig returns the HostConfig. Persistent mode relaxes the
+// buildHostConfig returns the HostConfig and, for a persistent container, the
+// set of ports it exposes (empty otherwise). Persistent mode relaxes the
 // read-only root filesystem, so a container whose User can write to it can
 // install packages into itself.
-func (s *Sandbox) buildHostConfig(persistent bool) *container.HostConfig {
+func (s *Sandbox) buildHostConfig(persistent bool) (*container.HostConfig, network.PortSet) {
 	netMode := container.NetworkMode("none")
 	if s.opts.Network != "" {
 		netMode = container.NetworkMode(s.opts.Network)
@@ -833,8 +831,14 @@ func (s *Sandbox) buildHostConfig(persistent bool) *container.HostConfig {
 			Config: map[string]string{"max-size": logMaxSize, "max-file": "1"},
 		},
 	}
-	if ports := s.publishedPorts(); len(ports) > 0 {
-		exposed, bindings := network.PortSet{}, network.PortMap{}
+	// Ports are published only for the persistent container: an ephemeral
+	// one-shot has nothing to serve between commands, and publishing is decided
+	// once, at create (spec §2.7r). Returning the set keeps it off a shared
+	// field that concurrent ephemeral Execs would race on.
+	var exposed network.PortSet
+	if ports := s.publishedPorts(); persistent && len(ports) > 0 {
+		exposed = network.PortSet{}
+		bindings := network.PortMap{}
 		for _, p := range ports {
 			port, err := network.ParsePort(strconv.Itoa(p) + "/tcp")
 			if err != nil {
@@ -846,7 +850,6 @@ func (s *Sandbox) buildHostConfig(persistent bool) *container.HostConfig {
 			bindings[port] = []network.PortBinding{{HostIP: netip.AddrFrom4([4]byte{127, 0, 0, 1}), HostPort: "0"}}
 		}
 		hostCfg.PortBindings = bindings
-		s.exposed = exposed
 	}
 	hostCfg.Memory = s.opts.Limits.MemoryBytes
 	if s.opts.Limits.CPUs > 0 {
@@ -857,7 +860,7 @@ func (s *Sandbox) buildHostConfig(persistent bool) *container.HostConfig {
 		pids = 128
 	}
 	hostCfg.PidsLimit = &pids
-	return hostCfg
+	return hostCfg, exposed
 }
 
 // buildConfig assembles the container and host configuration for ephemeral mode.
@@ -870,7 +873,8 @@ func (s *Sandbox) buildConfig(req sandbox.ExecRequest) (*container.Config, *cont
 		Tty:        false,
 	}
 	cfg.User = s.opts.User
-	return cfg, s.buildHostConfig(false)
+	hostCfg, _ := s.buildHostConfig(false)
+	return cfg, hostCfg
 }
 
 // buildPersistentConfig assembles the container and host configuration for
@@ -887,10 +891,9 @@ func (s *Sandbox) buildPersistentConfig() (*container.Config, *container.HostCon
 		Labels: map[string]string{fingerprintLabel: s.configFingerprint()},
 	}
 	cfg.User = s.opts.User
-	hostCfg := s.buildHostConfig(true)
-	// buildHostConfig fills s.exposed alongside the bindings: the container
-	// config must declare the same ports.
-	cfg.ExposedPorts = s.exposed
+	// The container config declares the same ports the host config binds.
+	hostCfg, exposed := s.buildHostConfig(true)
+	cfg.ExposedPorts = exposed
 	return cfg, hostCfg
 }
 

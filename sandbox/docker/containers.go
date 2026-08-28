@@ -106,8 +106,10 @@ func RemoveManaged(ctx context.Context, opts Options, name string) error {
 	})
 }
 
-// ManagedNamePrefix is what every name this package creates — container or
-// volume — begins with.
+// ManagedNamePrefix is the guard prefix for a volume reclaim: this package does
+// not mint names (the caller supplies ContainerName/VolumeName), so a volume —
+// which carries no ownership label a container's fingerprint would — is only
+// removed when its name begins with this. Callers derive names with it.
 const ManagedNamePrefix = "agents-"
 
 // ErrVolumeNotFound reports a volume call naming a volume that is not there.

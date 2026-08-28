@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -49,24 +50,42 @@ func (i sandboxInfo) paused() bool {
 func (s *Sandbox) ensure(ctx context.Context) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Fast path: a bound sandbox with a lease that is not near expiry needs no
+	// control-plane call — the common case for a chatty session. If the sandbox
+	// died under us the data-plane call fails once and the next ensure rebuilds;
+	// that beats a control round trip on every command.
+	if s.id != "" && s.leaseValid() {
+		return s.id, nil
+	}
 	if s.id != "" {
 		info, err := s.get(ctx, s.id)
 		switch {
 		case err == nil && !info.paused():
+			// Running: adopt its credential and extend the lease so a long
+			// session does not lose the sandbox to its TTL.
 			s.adopt(info)
-			return s.id, nil
+			switch rerr := s.refresh(ctx, s.id); {
+			case rerr == nil:
+				s.markLeased()
+				return s.id, nil
+			case isNotFound(rerr):
+				s.forget() // vanished between the read and the refresh; rebuild
+			default:
+				return "", rerr
+			}
 		case err == nil:
 			resumed, rerr := s.resume(ctx, s.id)
 			if rerr != nil {
 				return "", rerr
 			}
 			s.adopt(resumed)
+			s.markLeased()
 			return s.id, nil
 		case isNotFound(err):
 			// The sandbox is gone for good (killed, or expired without
 			// auto-pause). Forget it and build a fresh one rather than
 			// failing every command from here on.
-			s.id, s.accessToken, s.domain = "", "", ""
+			s.forget()
 		default:
 			return "", err
 		}
@@ -80,15 +99,21 @@ func (s *Sandbox) ensure(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("e2b: the create returned no sandbox id")
 	}
 	// Record BEFORE adopting: a sandbox this client cannot hand back to its
-	// owner is billed compute nobody will ever stop.
+	// owner is billed compute nobody will ever stop. If recording fails, kill
+	// the sandbox we just made rather than leak it — the record was the only
+	// thing that would ever have let anyone stop it.
 	if s.opts.OnSandboxID != nil {
-		if err := s.opts.OnSandboxID(ctx, id); err != nil {
-			return "", fmt.Errorf("e2b: recording sandbox %s: %w", id, err)
+		if rerr := s.opts.OnSandboxID(ctx, id); rerr != nil {
+			if kerr := s.kill(context.WithoutCancel(ctx), id); kerr != nil {
+				return "", fmt.Errorf("e2b: recording sandbox %s failed (%w) and killing it also failed: %w", id, rerr, kerr)
+			}
+			return "", fmt.Errorf("e2b: recording sandbox %s: %w", id, rerr)
 		}
 	}
 	s.id = id
 	s.freshWorkDir = true
 	s.adopt(info)
+	s.markLeased()
 	return s.id, nil
 }
 
@@ -117,9 +142,12 @@ func (s *Sandbox) create(ctx context.Context) (sandboxInfo, error) {
 	if s.opts.AutoPause {
 		body["autoPause"] = true
 	}
-	if s.opts.AllowInternet {
-		body["allow_internet_access"] = true
-	}
+	// Internet is OFF by default, matching the docker backend and the sandbox
+	// package's isolation contract — so the field is sent either way, never
+	// left to the service's own default (which is internet ON). NOTE: the field
+	// name and its effect must be confirmed against the real service; the
+	// compatible fake cannot prove it (decisions §5.37).
+	body["allow_internet_access"] = s.opts.AllowInternet
 	if len(s.opts.Metadata) > 0 {
 		body["metadata"] = s.opts.Metadata
 	}
@@ -209,6 +237,24 @@ func (s *Sandbox) control(ctx context.Context, method, path string, in, out any)
 	return nil
 }
 
+// httpError is a non-2xx control-plane response, carrying the status so a
+// caller can branch on it (a pause of an already-paused sandbox is a 409)
+// rather than sniffing the message text.
+type httpError struct {
+	Status  int
+	Message string
+}
+
+func (e *httpError) Error() string {
+	return fmt.Sprintf("e2b: the service refused with %d: %s", e.Status, e.Message)
+}
+
+// isConflict reports a 409 from the control plane.
+func isConflict(err error) bool {
+	var he *httpError
+	return errors.As(err, &he) && he.Status == http.StatusConflict
+}
+
 // controlError extracts the service's own message from an error body.
 func controlError(status int, payload []byte) error {
 	var body struct {
@@ -229,5 +275,5 @@ func controlError(status int, payload []byte) error {
 	if len(msg) > 300 {
 		msg = msg[:300] + "…"
 	}
-	return fmt.Errorf("e2b: the service refused with %d: %s", status, msg)
+	return &httpError{Status: status, Message: msg}
 }

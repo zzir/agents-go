@@ -44,6 +44,11 @@ const (
 // is not a 30-second command.
 const exportTimeout = 10 * time.Minute
 
+// controlCallTimeout bounds a one-shot envd call that has no deadline of its
+// own — a signal, a terminal write or resize — so a hung sandbox ends the call
+// rather than blocking the goroutine that made it forever.
+const controlCallTimeout = 30 * time.Second
+
 // DataPlaneAuth selects how envd is authenticated. It is configuration rather
 // than a fixed choice because compatible services differ: E2B mints a
 // per-sandbox access token, and Alibaba Cloud's compatible API does not
@@ -89,7 +94,9 @@ type Options struct {
 	// AutoPause makes the TTL PAUSE the sandbox instead of killing it, so the
 	// filesystem survives an idle period.
 	AutoPause bool
-	// AllowInternet gives the sandbox outbound network access.
+	// AllowInternet gives the sandbox outbound network access. Off by default,
+	// like the docker backend: the create sends the flag explicitly either way
+	// rather than inheriting the service's internet-on default (decisions §5.37).
 	AllowInternet bool
 	// Metadata tags the sandbox on the service side; the workbench uses it to
 	// say which project a sandbox belongs to.
@@ -122,9 +129,36 @@ type Sandbox struct {
 	accessToken string
 	// domain the service told us to use for this sandbox, when it did.
 	domain string
+	// leaseUntil is when the sandbox's TTL expires, as of the last create,
+	// resume or refresh. ensure refreshes it before it runs out — a lease that
+	// lapses mid-session takes the whole working tree with it (decisions §5.37).
+	leaseUntil time.Time
 	// freshWorkDir marks a sandbox created in this process, whose working
 	// directory has yet to be made.
 	freshWorkDir bool
+}
+
+// leaseValid reports whether the lease has enough runway to skip a
+// control-plane refresh. Refreshing at half the TTL keeps a busy sandbox alive
+// without a round trip on every data-plane call. Callers hold s.mu.
+func (s *Sandbox) leaseValid() bool {
+	if s.leaseUntil.IsZero() {
+		return false
+	}
+	margin := time.Duration(s.timeout()) * time.Second / 2
+	return time.Now().Before(s.leaseUntil.Add(-margin))
+}
+
+// markLeased records a fresh TTL after a create, resume or refresh. Callers
+// hold s.mu.
+func (s *Sandbox) markLeased() {
+	s.leaseUntil = time.Now().Add(time.Duration(s.timeout()) * time.Second)
+}
+
+// forget drops a sandbox that is gone, so the next ensure builds a new one.
+// Callers hold s.mu.
+func (s *Sandbox) forget() {
+	s.id, s.accessToken, s.domain, s.leaseUntil = "", "", "", time.Time{}
 }
 
 var (

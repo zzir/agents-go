@@ -52,9 +52,8 @@ func sb(t *testing.T, open Backend) sandbox.Sandbox {
 }
 
 // A command's stdout, stderr and exit code come back as the sandbox saw them.
-// failure to Run\'s dispatch line instead of the assertion that failed.
 //
-//nolint:thelper // a subtest BODY, not a helper: t.Helper() would attribute every
+//nolint:thelper // a subtest BODY, not a helper: t.Helper() would attribute every failure to the caller's dispatch line instead of the assertion that failed.
 func testExec(t *testing.T, open Backend) {
 	s := sb(t, open)
 	res, err := s.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "echo out; echo err >&2"}})
@@ -77,9 +76,8 @@ func testExec(t *testing.T, open Backend) {
 
 // A non-zero exit is a RESULT, not an error: the model has to see it to
 // correct itself, so the call must not fail.
-// failure to Run\'s dispatch line instead of the assertion that failed.
 //
-//nolint:thelper // a subtest BODY, not a helper: t.Helper() would attribute every
+//nolint:thelper // a subtest BODY, not a helper: t.Helper() would attribute every failure to the caller's dispatch line instead of the assertion that failed.
 func testExecFailure(t *testing.T, open Backend) {
 	s := sb(t, open)
 	res, err := s.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "exit 3"}})
@@ -93,9 +91,8 @@ func testExecFailure(t *testing.T, open Backend) {
 
 // Write, read back, list. A missing file is fs.ErrNotExist, not a generic
 // failure — the file tools map it to a message the model can act on.
-// failure to Run\'s dispatch line instead of the assertion that failed.
 //
-//nolint:thelper // a subtest BODY, not a helper: t.Helper() would attribute every
+//nolint:thelper // a subtest BODY, not a helper: t.Helper() would attribute every failure to the caller's dispatch line instead of the assertion that failed.
 func testFiles(t *testing.T, open Backend) {
 	s := sb(t, open)
 	ctx := t.Context()
@@ -123,9 +120,8 @@ func testFiles(t *testing.T, open Backend) {
 
 // CreateExclusive never overwrites: the second call fails with fs.ErrExist,
 // which is what makes apply_patch's Add safe against a concurrent tool call.
-// failure to Run\'s dispatch line instead of the assertion that failed.
 //
-//nolint:thelper // a subtest BODY, not a helper: t.Helper() would attribute every
+//nolint:thelper // a subtest BODY, not a helper: t.Helper() would attribute every failure to the caller's dispatch line instead of the assertion that failed.
 func testCreateExclusive(t *testing.T, open Backend) {
 	s := sb(t, open)
 	ctx := t.Context()
@@ -143,9 +139,8 @@ func testCreateExclusive(t *testing.T, open Backend) {
 
 // Rename moves (creating parents), Remove deletes, and both report a missing
 // source as fs.ErrNotExist.
-// failure to Run\'s dispatch line instead of the assertion that failed.
 //
-//nolint:thelper // a subtest BODY, not a helper: t.Helper() would attribute every
+//nolint:thelper // a subtest BODY, not a helper: t.Helper() would attribute every failure to the caller's dispatch line instead of the assertion that failed.
 func testRenameRemove(t *testing.T, open Backend) {
 	s := sb(t, open)
 	ctx := t.Context()
@@ -171,9 +166,8 @@ func testRenameRemove(t *testing.T, open Backend) {
 
 // The file operations and exec share ONE filesystem — the invariant the
 // bind-mount era kept threatening (decisions §5.14).
-// failure to Run\'s dispatch line instead of the assertion that failed.
 //
-//nolint:thelper // a subtest BODY, not a helper: t.Helper() would attribute every
+//nolint:thelper // a subtest BODY, not a helper: t.Helper() would attribute every failure to the caller's dispatch line instead of the assertion that failed.
 func testExecSeesFiles(t *testing.T, open Backend) {
 	s := sb(t, open)
 	ctx := t.Context()
@@ -198,9 +192,8 @@ func testExecSeesFiles(t *testing.T, open Backend) {
 
 // Stop keeps the FILESYSTEM and nothing more; Start makes it usable again.
 // A backend that implements no Lifecycle skips this.
-// failure to Run\'s dispatch line instead of the assertion that failed.
 //
-//nolint:thelper // a subtest BODY, not a helper: t.Helper() would attribute every
+//nolint:thelper // a subtest BODY, not a helper: t.Helper() would attribute every failure to the caller's dispatch line instead of the assertion that failed.
 func testLifecycle(t *testing.T, open Backend) {
 	s := sb(t, open)
 	lc, ok := s.(sandbox.Lifecycle)
@@ -236,9 +229,8 @@ func testLifecycle(t *testing.T, open Backend) {
 }
 
 // A terminal echoes what is typed and reports the shell's exit.
-// failure to Run\'s dispatch line instead of the assertion that failed.
 //
-//nolint:thelper // a subtest BODY, not a helper: t.Helper() would attribute every
+//nolint:thelper // a subtest BODY, not a helper: t.Helper() would attribute every failure to the caller's dispatch line instead of the assertion that failed.
 func testTerminal(t *testing.T, open Backend) {
 	s := sb(t, open)
 	opener, ok := s.(sandbox.TerminalOpener)
@@ -273,9 +265,8 @@ func testTerminal(t *testing.T, open Backend) {
 }
 
 // The export is a tar of the working tree, carrying what was written into it.
-// failure to Run\'s dispatch line instead of the assertion that failed.
 //
-//nolint:thelper // a subtest BODY, not a helper: t.Helper() would attribute every
+//nolint:thelper // a subtest BODY, not a helper: t.Helper() would attribute every failure to the caller's dispatch line instead of the assertion that failed.
 func testExport(t *testing.T, open Backend) {
 	s := sb(t, open)
 	ex, ok := s.(sandbox.Exporter)

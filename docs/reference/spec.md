@@ -1494,6 +1494,12 @@ containers, and the process that created it, can reach it.
 Both are part of the adoption fingerprint (§2.7n): changing either replaces a
 persistent container rather than adopting it.
 
+**No network is the default across backends.** `sandbox/e2b` sends
+`allow_internet_access` on every create — `false` unless the caller opts in —
+rather than inheriting the service's internet-on default, so an un-opted-in
+E2B sandbox has no outbound network, the same as an empty-`Network` docker one
+([decisions §5.37](../explanation/decisions.md)).
+
 ### 2.7p Stop keeps the filesystem and promises nothing else
 
 `Lifecycle.Stop` guarantees exactly one thing: **the working tree survives**.
@@ -1509,6 +1515,14 @@ three say nothing about the storage, which outlives every one of them.
 A backend that cannot control its compute does not implement `Lifecycle` at
 all — `LocalSandbox` is one — and callers discover that by type assertion
 rather than by a method that returns "not supported".
+
+**A by-name lifecycle call never touches a container it did not create.**
+`docker`'s `Stop` and `Status` act on a fixed container name, so — like the
+admin `StopManaged`/`RemoveManaged` calls — they verify the ownership
+fingerprint before acting: a foreign container that happens to hold the name is
+an error, never stopped, and never reported as this sandbox's state. `Stop`
+then acts on the resolved id, not the name, so a remove-and-recreate racing the
+check cannot redirect it.
 
 ### 2.7q A sandbox makes its working directory
 
@@ -1544,7 +1558,9 @@ the caller is told so rather than left to find out.
 
 Ports are part of the adoption fingerprint (§2.7n): changing the list replaces
 a persistent container rather than adopting it, because publishing is decided
-once, at create.
+once, at create. An ephemeral one-shot container publishes nothing — it has no
+service to serve between commands — so only the persistent container binds
+ports.
 
 ### 2.8 Nested agent-as-tool attribution
 
