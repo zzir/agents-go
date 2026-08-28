@@ -1086,6 +1086,15 @@ again. Names stay plaintext, so one variable can be rewritten without
 retyping its neighbours, and so the audit log, error messages and operational
 questions ("which project sets `GITHUB_TOKEN`?") stay answerable.
 
+**The seal is bound to the project.** A value is sealed with the encryption AAD
+set to the project id, so its ciphertext opens only under that project. An
+attacker with DB write access but not the key cannot paste a victim project's
+ciphertext into a project they own and read the plaintext back — the box
+refuses to open it there, rather than acting as a decryption oracle. This
+changed the seal format: env values sealed before the upgrade do not open
+afterward and must be re-entered, consistent with the project's
+rebuild-on-schema-change norm.
+
 The alternative was a per-entry flag letting the author mark which values are
 secret, masking only those. It reads well — most variables are configuration,
 not credentials, and `NODE_ENV` is friendlier visible. It was dropped for two
@@ -1197,7 +1206,12 @@ does not.
 storage, so §5.33's "a project delete destroys its storage" needs no separate
 volume removal — killing the sandbox is the whole of it. It also means
 `auto_pause` matters: with it off, an expired lease destroys a working tree,
-which is why the template form says so where the checkbox is.
+which is why the template form says so where the checkbox is. So `auto_pause`
+**defaults to true** — an absent field normalizes to pause-on-expiry, the safe
+default for a workbench that stores working trees; an explicit `false` opts
+into kill-on-expiry. The canonical stored form carries the field explicitly (no
+`omitempty`), since a plain bool cannot tell an omitted key from a typed
+`false`.
 
 **Verified against both services** (2026-08-28, E2B's cloud and Alibaba Cloud
 Function Compute in ap-southeast-1). The conformance suite runs against a live
@@ -1265,14 +1279,25 @@ sandbox. Grants live in memory and die with the process, which is right: a
 preview is a live view of a live sandbox. They are revoked when the project is
 deleted.
 
+**The grant rides the path once, then a cookie.** A previewed page's own
+sub-resources — its `/asset.js`, a redirect to `/login`, an HMR socket — are
+absolute paths that carry no token, so the tokenized entry point
+(`/preview/<token>/`) plants the grant in a short-lived HttpOnly `preview_token`
+cookie and those requests resolve through it; a typical dev server (Vite,
+Webpack, an SPA) then works through the preview instead of 404ing. `Referer`
+cannot stand in — the preview origin sends `Referrer-Policy: no-referrer`
+(§5.37). One preview origin means ONE active grant per browser: opening a second
+project's preview replaces the cookie.
+
 **Off by default** (`preview_enabled`). It makes whatever is listening inside
 the sandbox reachable by anyone who can sign in, and that is a decision an
 operator takes rather than inherits.
 
 Two things the proxy does deliberately: it strips `Authorization` and `Cookie`
-before forwarding, so the workbench's own credential never reaches somebody's
-dev server; and it does not apply this app's Content-Security-Policy to a
-previewed page, which is not this app and would simply break.
+(the `preview_token` included) before forwarding, so neither the workbench's own
+credential nor the grant reaches somebody's dev server; and it does not apply
+this app's Content-Security-Policy to a previewed page, which is not this app and
+would simply break.
 
 A docker sandbox that joins **no network** has no address at all, and the
 preview says so rather than timing out. On a remote daemon the container's
@@ -1319,7 +1344,7 @@ services (2026-08-28), an unauthenticated GET to an application port answers
 not the workload. So on e2b the grant is a convenience, not a gate — anyone
 with the sandbox id reaches the service directly, and the UI says so.
 
-### 5.36 A sandbox is one row, and only its destination freezes
+### 5.36 A sandbox is one row, and only its identity freezes
 
 Decided 2026-08-28, reversing §5.33's split the same week it landed. The split
 into `sandbox_targets` and `sandbox_templates` was justified by REUSE — one
@@ -1344,7 +1369,12 @@ So: one `sandboxes` row carries where it runs and what runs on it, and a
 project names one. `SandboxIdentityChanged` freezes the type and the
 destination while projects live on the row; everything else — the image, the
 limits, the network, the credential, the name — edits freely and reaches bound
-sessions at their next run, exactly as before. Nothing about the lifecycle
+sessions at their next run, exactly as before. For an e2b sandbox the freeze
+reaches three more fields — `template_id`, `auto_pause`, `allow_internet` —
+because a `/connect` resume re-attaches to the already-provisioned instance and
+cannot re-apply them: accepting the edit would look saved yet silently never
+take effect, so it is `409` instead. `timeout_seconds` is exempt — resume
+re-sends it, so a change lands on the next refresh. Nothing about the lifecycle
 changed; what changed is that the mutability line is drawn between FIELDS
 instead of between TABLES, which is where it always was.
 
@@ -1380,9 +1410,11 @@ second listener (`--preview-port`, the app port + 1 by default; or
 origin that has no app, no bearer middleware, and no stored token. A grant URL
 is absolute, on that origin. The app engine stops serving `/preview/`
 entirely, and the isolated engine sets `Referrer-Policy: no-referrer` so the
-grant in the path does not leak through a sub-resource's `Referer`. The grant
-stays short-lived and reusable within its TTL, not single-use: one page pulls
-many sub-resources, each a request carrying the same grant. Previews remain off
+grant in the path does not leak through a sub-resource's `Referer`. With
+`Referer` denied and the token absent from an absolute-path sub-resource's URL,
+those requests carry the grant in the `preview_token` cookie the entry point
+plants (§5.35). The grant stays short-lived and reusable within its TTL, not
+single-use: one page pulls many sub-resources, each carrying that cookie. Previews remain off
 by default (`preview_enabled`), so nothing here is reachable until an admin
 turns it on.
 
@@ -1400,3 +1432,21 @@ service's own default, which is internet ON. The two backends now read the same
 way: an un-opted-in sandbox has no outbound network. NOTE: the exact field name
 and its effect on the real service could not be verified from the compatible
 fake; a real-service check is owed before this is relied on.
+
+### 5.38 A workbench docker sandbox caps memory and CPU by default
+
+Decided 2026-08-28. A docker sandbox whose config leaves `memory_mb` or `cpus`
+blank (`0`) does not run uncapped: the workbench applies a default cap
+(`DefaultMemoryMB` 4096 MiB, `DefaultCPUs` 2) in `sandboxes.applyImage`. Agent-
+generated code runs in that container, and an uncapped one is a host-DoS
+surface — a fork bomb or a runaway allocation takes the machine, and on a shared
+workbench that is everyone's machine. `0` therefore means "this default", never
+"unlimited"; an operator who needs more raises the cap on the sandbox.
+
+The cap is the workbench's, not the SDK's. The `sandbox` package still enforces
+only the limits its caller sets in `Options.Limits` — its isolation-by-default
+promise covers network, filesystem, capabilities and the per-command timeout,
+not memory and CPU, and its package doc was corrected to stop implying
+otherwise. The default belongs in the layer that knows it is running untrusted
+agent code for many users; a library embedded on its own has no such context to
+assume.

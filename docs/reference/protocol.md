@@ -775,8 +775,9 @@ E2B's own), `domain` (the suffix a sandbox's public hosts are built from),
 compatible services differ, so it is configuration), `template_id` (required —
 the workbench builds no templates; the service's console or CLI does),
 `timeout_seconds` (the lease a sandbox is created and refreshed with),
-`auto_pause` (an expired lease PAUSES rather than kills — **off destroys the
-working tree**, and some services gate it behind a per-function feature and
+`auto_pause` (an expired lease PAUSES rather than kills — **defaults to true**,
+the safe choice for stored working trees; an explicit `false` destroys the tree
+on expiry, and some services gate pausing behind a per-function feature and
 refuse the create without one), `allow_internet`, and `max_read_file_bytes`.
 Every sandbox is created `secure`, so its daemon requires the per-sandbox
 token: without that, anyone who learns the sandbox id — which is in the public
@@ -794,7 +795,9 @@ SSH authentication and come back masked — see
 (required), `runtime` (e.g. `runsc` for gVisor — whether it exists is that
 machine's business), `user` (user[:group]; empty runs as **root**, so an agent
 can install packages into its own container), `network` (the docker network
-name to join; empty means no network at all), `memory_mb` / `cpus` caps, and
+name to join; empty means no network at all), `memory_mb` / `cpus` caps (blank
+`0` takes a safe workbench default — 4096 MiB, 2 CPUs — never "unlimited", since
+agent code runs here; raise them per sandbox), and
 `max_read_file_bytes` — how large a file the read tool will load at all
 (`0` = the 8 MiB default), a guard on the read itself, distinct from the
 64 KiB cap below on what the model is SHOWN of it.
@@ -803,19 +806,29 @@ Storage is a docker volume on the sandbox's daemon, so the server never
 touches a host filesystem (decisions §5.33).
 `POST /sandboxes/{id}/test` runs `echo ok` in a throw-away sandbox — a
 container for `docker`, a provisioned-and-destroyed instance for a remote
-service.
+service. `200 {ok:false}` means the service was reached and the command RAN but
+did not succeed (non-zero exit or timeout); a daemon or service that could not
+be reached at all — a dial or credential failure — is `502`, a different thing
+a caller must tell apart.
 
 `DELETE` refuses (`409`) while any project lives on the sandbox: a project's
 working tree is at that address, and deleting a project is what reclaims it.
 `PUT` freezes a referenced sandbox's **identity fields** — `type` and the
 destination (`host`, or `api_url` + `domain`) — for the same reason, counting
-the projects that block it. The image, the limits, the credentials and the
-name stay freely editable; key rotation is routine, and an image change
-replaces the containers at their next run.
+the projects that block it. For an e2b sandbox the freeze also covers
+`template_id`, `auto_pause` and `allow_internet`: a `/connect` resume
+re-attaches to the already-provisioned instance and cannot re-apply them, so an
+edit that projects block is `409` rather than a save that silently never takes
+effect. `timeout_seconds` is exempt — resume re-sends it. The image, the limits,
+the credentials and the name stay freely editable; key rotation is routine, and
+an image change replaces the containers at their next run.
 
-A sandbox carries one monotonic counter, `revision`: every write bumps it, and
-`PUT` is a compare-and-set against the revision the client read (a concurrent
-update means `409`, re-read and retry). There is no per-sandbox runtime
+A sandbox carries one monotonic counter, `revision`: every write bumps it. A
+`PUT` MAY carry the `revision` the edit was based on (from GET/List) to make the
+write a compare-and-set — a concurrent update then means `409`, re-read and
+retry; omitting it is last-writer-wins, anchored on the row's current revision,
+which stops an in-handler race but not a stale-client overwrite. There is no
+per-sandbox runtime
 generation — the ONE runtime axis is the project's, and a content change here
 bumps it on every project that names this sandbox, which is what retires their
 live instances and severs their terminals.
@@ -921,6 +934,15 @@ all. The proxy strips `Authorization` and `Cookie` before forwarding, carries
 its own per-IP rate limit, sets `Referrer-Policy: no-referrer`, and does not
 impose this app's CSP on the previewed page.
 
+A page's absolute-path sub-resources — `/asset.js`, a redirect to `/login`, an
+HMR socket — carry no token in their URL, and with `Referer` denied the
+tokenized entry point plants the grant in a short-lived HttpOnly `preview_token`
+cookie that those requests resolve through, so a typical dev server (Vite,
+Webpack, an SPA) works through the preview instead of 404ing. One origin means
+one active grant per browser: opening a second project's preview replaces the
+cookie, and the cookie is stripped with the rest before the request reaches the
+dev server.
+
 **On docker the project declares which ports to publish.** `projects.ports` is
 content like the environment: each is published to the daemon's loopback on an
 ephemeral host port, the proxy dials that, and a change replaces the container
@@ -934,7 +956,10 @@ five seconds so it fails with the reason rather than hanging.
 
 **On e2b nothing is declared** — the service already answers every port at
 `<port>-<sandbox id>.<domain>`, so the field is not shown and the menu asks
-for a port instead of listing any. Those hosts are
+for a port instead of listing any. A project create or update carrying `ports`
+on an e2b sandbox is therefore `400`: the service routes its own public hosts
+and would ignore the list, so a stored port is a phantom, not configuration.
+Those hosts are
 PUBLIC: `secure: true` protects the sandbox daemon, not the workload, so the
 grant is a convenience rather than a gate (decisions §5.35).
 
@@ -949,8 +974,10 @@ Changing an environment replaces the container **at the project's next run**
 (the runtime generation moves, exactly as a template edit does) and
 severs that project's terminals — its siblings on the same sandbox are
 untouched. Files under `/workspace` survive; anything installed into the
-container does not. A rename does neither. Updates are compare-and-set: send
-the `revision` the edit was made against and a concurrent write answers 409.
+container does not. A rename does neither. An update MAY send the `revision` the
+edit was made against to make the write a compare-and-set (a concurrent write
+then answers `409`); omitting it is last-writer-wins, anchored on the row's
+current revision.
 
 *(Endpoints and payload schemas: see the OpenAPI spec — `/openapi.yaml`, browsable at `/docs`.)*
 

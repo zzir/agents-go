@@ -144,6 +144,8 @@ Signatures live on
 | `models/modelkit` | Dependency-free toolkit for model adapters + `conformancetest` golden matrix |
 | `tracing` | Traces, spans, processors and exporters |
 | `sandbox` | `Sandbox` interface + `CodeTool` + `apply_patch` + local backend |
+| `sandbox/e2b` | E2B-compatible cloud backend (HTTP only, so it stays in the root module) |
+| `sandbox/sandboxtest` | conformance suite every `Sandbox` backend runs against |
 | `mcp` | **separate module** — Model Context Protocol client (modelcontextprotocol/go-sdk) |
 | `models/anthropic` | **separate module** — Anthropic Messages API backend (translated to Responses) |
 | `sandbox/docker` | **separate module** — Docker sandbox backend |

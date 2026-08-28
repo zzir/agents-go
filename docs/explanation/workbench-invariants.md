@@ -696,12 +696,16 @@ When a change genuinely doesn't fit, update this list in the same PR.
     (export the project first), never approximated by destroying the working
     tree.
 
-45. **A sandbox is one row, and only its destination freezes.** Where it runs
+45. **A sandbox is one row, and only its identity freezes.** Where it runs
     and what runs on it live together in `sandboxes`; a project names one
     ([decisions §5.36](decisions.md)). The mutability line is between FIELDS,
-    not tables: `SandboxIdentityChanged` covers the type and the destination,
-    everything else edits freely and reaches bound sessions at their next run.
-    There is no separate template entity, and therefore no pair that can
+    not tables: `SandboxIdentityChanged` covers the type and the destination for
+    every backend, plus, for e2b, the fields a `/connect` resume cannot re-apply
+    to an already-provisioned instance — `template_id`, `auto_pause`,
+    `allow_internet` (editing one while projects live on it is `409`, not a save
+    that never takes effect); `timeout_seconds` is exempt, since resume re-sends
+    it. Everything else edits freely and reaches bound sessions at their next
+    run. There is no separate template entity, and therefore no pair that can
     disagree about its type.
 
 46. **A delete that could not reclaim the storage still deleted the project.**
@@ -725,7 +729,9 @@ When a change genuinely doesn't fit, update this list in the same PR.
     `exec_command`'s description when the project publishes anything. On an
     E2B-compatible service nothing is declared and the field is hidden: every
     port is already public there, which also makes the grant a convenience
-    rather than a gate.
+    rather than a gate — and a project create or update carrying `ports` on an
+    e2b sandbox is refused (`400`), since a stored port the service would ignore
+    is a phantom, not configuration.
 
 48. **A preview is served on its own origin, never the app's.** The preview
     reverse-proxies an untrusted page (a sandbox's dev server); the workbench
@@ -738,7 +744,13 @@ When a change genuinely doesn't fit, update this list in the same PR.
     responses carry `Referrer-Policy: no-referrer` so the grant does not leak
     through a sub-resource's `Referer`
     ([decisions §5.37](decisions.md)). The grant is reusable within its TTL
-    (a page pulls many sub-resources), not single-use.
+    (a page pulls many sub-resources), not single-use. A page's absolute-path
+    sub-resources carry no token in their URL and — with `Referer` denied —
+    resolve through a short-lived HttpOnly `preview_token` cookie the tokenized
+    entry point plants, so a typical dev server works through the preview; one
+    origin means one active grant per browser, so a second project's preview
+    replaces the cookie, and the cookie is stripped before the request reaches
+    the dev server.
 
 49. **The top bar re-reads the sandbox state on the edges that move it.** The
     compute state a project menu shows comes from `GET /projects/:id/sandbox`,
