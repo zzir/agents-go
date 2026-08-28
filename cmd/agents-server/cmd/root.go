@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/handler"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/secrets"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
@@ -24,6 +25,8 @@ import (
 var (
 	flagHost           string
 	flagPort           int
+	flagPreviewPort    int
+	flagPreviewBaseURL string
 	flagDB             string
 	flagToken          string
 	flagMaxTasks       int
@@ -50,6 +53,8 @@ var rootCmd = &cobra.Command{
 func init() {
 	rootCmd.Flags().StringVar(&flagHost, "host", "127.0.0.1", "Bind address (use 0.0.0.0 for LAN access)")
 	rootCmd.Flags().IntVar(&flagPort, "port", 9527, "HTTP server port")
+	rootCmd.Flags().IntVar(&flagPreviewPort, "preview-port", 0, "Port for the isolated sandbox-preview origin (0 = port+1); must differ from --port so a previewed page cannot read the app's token")
+	rootCmd.Flags().StringVar(&flagPreviewBaseURL, "preview-base-url", "", "Public origin the preview listener is reached at, scheme://host[:port] (behind a reverse proxy that routes a second hostname to the preview port)")
 	rootCmd.Flags().StringVar(&flagDB, "db", "data.db", "SQLite database path, or a postgres:// DSN")
 	rootCmd.Flags().StringVar(&flagToken, "token", "", "Authentication token (auto-generated if empty)")
 	rootCmd.Flags().IntVar(&flagMaxTasks, "max-tasks", 0, "Max live background tasks per session (0 = default 6)")
@@ -118,6 +123,22 @@ func run(_ *cobra.Command, _ []string) error {
 			return err
 		}
 	}
+	// The preview runs on its own origin so an untrusted previewed page cannot
+	// read the app's token (decisions §5.37): a second port by default, or a
+	// configured origin behind a reverse proxy.
+	previewPort := flagPreviewPort
+	if previewPort == 0 {
+		previewPort = flagPort + 1
+	}
+	if previewPort == flagPort || previewPort < 1 || previewPort > 65535 {
+		return fmt.Errorf("--preview-port must be 1-65535 and differ from --port (%d)", flagPort)
+	}
+	previewOrigin := handler.PreviewOrigin{Port: previewPort}
+	if flagPreviewBaseURL != "" {
+		if previewOrigin.BaseURL, err = server.NormalizeBaseURL(flagPreviewBaseURL); err != nil {
+			return fmt.Errorf("invalid --preview-base-url: %w", err)
+		}
+	}
 	// Stored credentials are sealed under one process key. Without a key they
 	// are plaintext — the single-user workbench — and the log says so once.
 	box, err := secrets.FromEnvOrFile("AGENTS_SECRET_KEY", flagSecretKeyFile)
@@ -151,7 +172,7 @@ func run(_ *cobra.Command, _ []string) error {
 	}
 	svc := newBridge(ctx, bgCtx, db, st, recordAudit)
 	defer svc.Close()
-	hs := newHandlers(st, svc, recordAudit, baseURL)
+	hs := newHandlers(st, svc, recordAudit, baseURL, previewOrigin)
 
 	// The restart reconciliation, in two halves that have opposite ordering
 	// needs.
@@ -216,6 +237,29 @@ func run(_ *cobra.Command, _ []string) error {
 		}
 	}()
 
+	// The preview listener: a second origin serving only sandbox previews, so a
+	// previewed page never shares the app origin's stored token (decisions
+	// §5.37). Its failure is not fatal — the app runs without previews — but the
+	// grant URLs would point at a dead port, so the log says so loudly.
+	previewEngine, err := server.NewPreviewEngine(log, hs.API.Projects.Preview, splitList(flagTrustedProxies))
+	if err != nil {
+		return fmt.Errorf("building the preview engine: %w", err)
+	}
+	previewAddr := fmt.Sprintf("%s:%d", flagHost, previewPort)
+	previewSrv := &http.Server{
+		Addr:              previewAddr,
+		Handler:           previewEngine,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	go func() {
+		log.Info("preview listener started", "addr", previewAddr)
+		if err := previewSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Error("preview listener stopped; port previews will not open until it is fixed", "error", err, "addr", previewAddr)
+		}
+	}()
+
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
@@ -241,6 +285,7 @@ func run(_ *cobra.Command, _ []string) error {
 	srv.Conns.CloseAll("server shutting down")
 	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	_ = previewSrv.Shutdown(shutCtx)
 	if err := httpSrv.Shutdown(shutCtx); err != nil {
 		// The runs are drained and persisted by now; whatever kept Shutdown
 		// waiting is not worth an exit status.

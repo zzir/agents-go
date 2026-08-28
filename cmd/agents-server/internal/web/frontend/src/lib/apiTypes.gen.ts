@@ -2799,7 +2799,7 @@ export interface paths {
         put?: never;
         /**
          * Grant a preview URL for a port inside the project's sandbox
-         * @description Returns a short-lived, unguessable URL under /preview/. Owner only, and off unless `preview_enabled` is set. A docker template must name a network for its ports to be reachable at all.
+         * @description Returns a short-lived, unguessable URL under /preview/ on the preview origin. Owner only, and off unless `preview_enabled` is set. A docker template must name a network for its ports to be reachable at all.
          */
         post: {
             parameters: {
@@ -7650,8 +7650,8 @@ export interface components {
             /**
              * @description StorageHint names where the files live — the named volume on the
              *     sandbox's daemon. Derived per response by the handler for admins only,
-             *     never stored: deleting the row keeps the storage (decisions §5.28), so
-             *     the UI can say where.
+             *     never stored: a delete DESTROYS that storage (decisions §5.33), so the UI
+             *     can say what will be lost.
              */
             storage_hint?: string;
             updated_at?: string;
@@ -8155,8 +8155,8 @@ export interface components {
             /**
              * @description StorageHint names where the files live — the named volume on the
              *     sandbox's daemon. Derived per response by the handler for admins only,
-             *     never stored: deleting the row keeps the storage (decisions §5.28), so
-             *     the UI can say where.
+             *     never stored: a delete DESTROYS that storage (decisions §5.33), so the UI
+             *     can say what will be lost.
              */
             storage_hint?: string;
             updated_at?: string;

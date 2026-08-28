@@ -160,6 +160,29 @@ func TestPreviewGrantRevokedWithTheProject(t *testing.T) {
 	}
 }
 
+// The grant URL opens on the preview ORIGIN, not the app's: a fixed base when
+// one is configured, otherwise the request host with the preview port. A page
+// on that origin cannot read the app origin's stored token (decisions §5.37).
+func TestPreviewOriginURL(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "http://work.example:9527/api/v1/projects/p/preview/8000", nil)
+	cases := []struct {
+		name   string
+		origin PreviewOrigin
+		want   string
+	}{
+		{"derived from request host and preview port", PreviewOrigin{Port: 9528}, "http://work.example:9528" + server.PreviewPrefix + "tok/"},
+		{"fixed base for a reverse proxy", PreviewOrigin{BaseURL: "https://preview.example", Port: 9528}, "https://preview.example" + server.PreviewPrefix + "tok/"},
+		{"unconfigured falls back to a relative path", PreviewOrigin{}, server.PreviewPrefix + "tok/"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.origin.urlFor(req, "tok"); got != tc.want {
+				t.Errorf("urlFor = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // A bad port is refused at the mint, not discovered at the proxy.
 func TestPreviewPortValidated(t *testing.T) {
 	e, _, p := previewFixture(t, "http://127.0.0.1:1", true)

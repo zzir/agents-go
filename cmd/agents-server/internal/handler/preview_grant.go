@@ -12,7 +12,8 @@ import (
 // carry: opening a URL sends no header. So the owner asks for a grant through
 // the authenticated API, and the grant — an unguessable, short-lived,
 // single-project token — is the authorization the preview path checks
-// (decisions §5.35).
+// (decisions §5.35). It is reusable within its TTL, not single-use: one page
+// loads many sub-resources, each a request carrying the same grant in its path.
 //
 // Grants live in memory. A restart invalidating them is the right behavior
 // (the preview is a live view of a live sandbox) and it keeps the feature

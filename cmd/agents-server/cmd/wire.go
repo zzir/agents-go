@@ -176,7 +176,7 @@ type handlers struct {
 // newHandlers builds the handlers on the stores and the bridge. Handlers.Auth
 // is left for newServer: it needs the auth service and the server's
 // connection registry.
-func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL string) *handlers {
+func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL string, previewOrigin handler.PreviewOrigin) *handlers {
 	terminal := handler.NewTerminalHandler(st.SandboxDefs, st.Projects, svc.Sandboxes, st.SettingReader)
 	retirer := handler.NewRetirer(st.Projects, svc.Sandboxes, terminal)
 	terminal.Audit = audit
@@ -184,6 +184,7 @@ func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL st
 	ws.Audit = audit
 	projects := handler.NewProjectHandler(st.Projects, st.SandboxDefs, svc.Sandboxes, terminal, st.SettingReader)
 	projects.Audit = audit
+	projects.PreviewOrigin = previewOrigin
 	return &handlers{
 		WS:       ws,
 		Terminal: terminal,
@@ -326,7 +327,9 @@ func newServer(ctx context.Context, log *slog.Logger, authSvc *authn.Service, au
 	srv.RegisterAPI(hs.API.Register)
 	srv.RegisterWS(hs.WS.Handle, hs.Terminal.Handle)
 	srv.RegisterHook(hs.API.Triggers.Hook)
-	srv.RegisterPreview(hs.API.Projects.Preview)
+	// The preview is NOT mounted here: it runs on its own engine and origin
+	// (server.NewPreviewEngine, a second listener in run), so an untrusted
+	// previewed page never shares this origin's stored token (decisions §5.37).
 	srv.ServeHealth(buildVersion)
 	srv.ServeOpenAPI(docs.SpecYAML)
 	staticFS, err := fs.Sub(web.StaticFS, "frontend/dist")

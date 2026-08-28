@@ -26,13 +26,17 @@ import (
 type ProjectHandler struct {
 	// Audit, when set, records every working-tree export: the one call that
 	// takes a whole project off the machine. Wired at bootstrap.
-	Audit     protocol.AuditFunc
-	store     *store.ProjectStore
-	sandboxes *store.SandboxStore
-	manager   *sandboxes.Manager
-	terminals *TerminalHandler
-	settings  *settings.Reader
-	grants    *previewGrants
+	Audit protocol.AuditFunc
+	// PreviewOrigin is the separate origin a preview URL opens on, so its
+	// untrusted page cannot read the app's token. Wired at bootstrap; the zero
+	// value keeps a same-origin relative URL for tests (decisions §5.37).
+	PreviewOrigin PreviewOrigin
+	store         *store.ProjectStore
+	sandboxes     *store.SandboxStore
+	manager       *sandboxes.Manager
+	terminals     *TerminalHandler
+	settings      *settings.Reader
+	grants        *previewGrants
 }
 
 // NewProjectHandler returns a handler over the project store; sandboxes
@@ -359,7 +363,7 @@ func (h *ProjectHandler) Get(c *gin.Context) {
 func (h *ProjectHandler) Update(c *gin.Context) {
 	var req projectUpdateReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		badRequest(c, "name and template_id are required")
+		badRequest(c, "name and sandbox_id are required")
 		return
 	}
 	prev, ok := h.own(c)

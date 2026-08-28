@@ -26,6 +26,8 @@ On startup the server prints an auto-generated auth token. Open
 |-------------------------|-------------|--------------------------------------------------------|
 | `--host`                | `127.0.0.1` | Bind address (use `0.0.0.0` for LAN access)            |
 | `--port`                | `9527`      | HTTP listen port                                       |
+| `--preview-port`        | `0`         | Port for the isolated sandbox-preview origin (`0` = `--port` + 1); must differ from `--port` so a previewed page cannot read the app's token |
+| `--preview-base-url`    | —           | Public origin the preview listener is reached at, `scheme://host[:port]` (reverse proxy that routes a second hostname to the preview port) |
 | `--db`                  | `data.db`   | SQLite file path, or a `postgres://` / `postgresql://` DSN |
 | `--token`               | auto        | Auth token; randomly generated when omitted            |
 | `--max-tasks`           | `0`         | Max live background tasks per session (`0` = default 6) |

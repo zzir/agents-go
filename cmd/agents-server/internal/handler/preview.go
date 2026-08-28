@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -16,6 +18,42 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
+
+// PreviewOrigin decides the browser origin a preview URL opens on. A preview
+// serves an untrusted page — someone's dev server — so it must NOT share the
+// app's origin, where the workbench token lives in localStorage: the isolated
+// origin's scripts cannot read another origin's storage (decisions §5.37).
+type PreviewOrigin struct {
+	// BaseURL, when set (--preview-base-url), is the fixed origin every grant
+	// URL uses — for a reverse proxy that routes a second hostname to the
+	// preview listener.
+	BaseURL string
+	// Port is the preview listener's own port; the origin is derived from the
+	// request host and this port when BaseURL is empty.
+	Port int
+}
+
+// urlFor renders the absolute grant URL. Unconfigured (Port 0, no BaseURL) it
+// falls back to a same-origin relative path — the shape unit tests assert; the
+// running server always sets a Port, so a real grant is cross-origin.
+func (o PreviewOrigin) urlFor(r *http.Request, token string) string {
+	tail := server.PreviewPrefix + token + "/"
+	switch {
+	case o.BaseURL != "":
+		return o.BaseURL + tail
+	case o.Port == 0:
+		return tail
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	host := r.Host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	return fmt.Sprintf("%s://%s:%d%s", scheme, host, o.Port, tail)
+}
 
 // The port preview: a service running inside a project's sandbox, reachable
 // through THIS server rather than published to the world. Publishing the port
@@ -46,10 +84,12 @@ type previewGrantResp struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
-// PreviewGrant mints the one-time URL a browser tab opens.
+// PreviewGrant mints the short-lived URL a browser tab opens. The URL is on
+// the preview origin — a separate origin from the app — so the page it serves
+// cannot read the workbench token (decisions §5.37).
 //
 //	@Summary		Grant a preview URL for a port inside the project's sandbox
-//	@Description	Returns a short-lived, unguessable URL under /preview/. Owner only, and off unless `preview_enabled` is set. A docker template must name a network for its ports to be reachable at all.
+//	@Description	Returns a short-lived, unguessable URL under /preview/ on the preview origin. Owner only, and off unless `preview_enabled` is set. A docker template must name a network for its ports to be reachable at all.
 //	@Tags			projects
 //	@Produce		json
 //	@Param			id		path		string	true	"Project id"
@@ -75,7 +115,7 @@ func (h *ProjectHandler) PreviewGrant(c *gin.Context) {
 		return
 	}
 	token, expires := h.grants.mint(p.ID, port, p.OwnerID)
-	c.JSON(http.StatusOK, previewGrantResp{URL: server.PreviewPrefix + token + "/", ExpiresAt: expires})
+	c.JSON(http.StatusOK, previewGrantResp{URL: h.PreviewOrigin.urlFor(c.Request, token), ExpiresAt: expires})
 }
 
 // Preview proxies one request into the project's sandbox. It carries NO

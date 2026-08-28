@@ -924,8 +924,8 @@ components:
           description: |-
             StorageHint names where the files live — the named volume on the
             sandbox's daemon. Derived per response by the handler for admins only,
-            never stored: deleting the row keeps the storage (decisions §5.28), so
-            the UI can say where.
+            never stored: a delete DESTROYS that storage (decisions §5.33), so the UI
+            can say what will be lost.
           type: string
         updated_at:
           type: string
@@ -1759,8 +1759,8 @@ components:
           description: |-
             StorageHint names where the files live — the named volume on the
             sandbox's daemon. Derived per response by the handler for admins only,
-            never stored: deleting the row keeps the storage (decisions §5.28), so
-            the UI can say where.
+            never stored: a delete DESTROYS that storage (decisions §5.33), so the UI
+            can say what will be lost.
           type: string
         updated_at:
           type: string
@@ -4082,9 +4082,9 @@ paths:
       - projects
   /projects/{id}/preview/{port}:
     post:
-      description: Returns a short-lived, unguessable URL under /preview/. Owner only,
-        and off unless `preview_enabled` is set. A docker template must name a network
-        for its ports to be reachable at all.
+      description: Returns a short-lived, unguessable URL under /preview/ on the preview
+        origin. Owner only, and off unless `preview_enabled` is set. A docker template
+        must name a network for its ports to be reachable at all.
       parameters:
       - description: Project id
         in: path

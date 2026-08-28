@@ -754,14 +754,15 @@ Decided 2026-08-24. The server's `local` and `ssh` sandbox types are removed:
 a local sandbox was host execution behind one admin write and one approval
 (and the reason a web terminal had to be special-cased off), and the generic
 SSH sandbox ran commands with a login user's full privileges, no limits, on a
-machine the server merely had credentials to. Every sandbox is now a Docker
-container; what varies is WHERE — `DockerConfig.Host` empty for the local
+machine the server merely had credentials to. The removed types are gone; a
+sandbox is a Docker container (this section) or, since §5.34, an
+E2B-compatible one. For Docker, what varies is WHERE — `DockerConfig.Host` empty for the local
 daemon, `ssh://user@host` for a remote one, `tcp://` for the exposed case.
-Empty means THIS machine and its filesystem: the SDK client honors
-`DOCKER_HOST` when no Host is given, so the server refuses to build an
-empty-Host sandbox while that variable points at another daemon (`unix://`
-and `npipe://` sockets pass — local by construction; revised 2026-08-25) —
-file tools would otherwise act on a filesystem the containers never see.
+Empty means THIS machine and its filesystem (the SDK client honors
+`DOCKER_HOST` when no Host is given). The empty-Host `DOCKER_HOST` guard this
+section once described is gone: it went with the bind mount that made it matter
+(§5.33) — a project's storage is now a volume the containers and file tools
+share by construction, wherever the daemon is.
 
 The SSH machinery lives on inside `sandbox/docker` as a TRANSPORT: a pure-Go
 dialer (x/crypto/ssh) that opens direct-streamlocal channels to the remote
@@ -1361,3 +1362,41 @@ further: the files live at that address and do not travel
 (`ErrSandboxMoveDestination`). Both rows are read inside the write's
 transaction with the destination locked, so a sandbox cannot be re-addressed
 between the check and the write.
+
+### 5.37 A port preview is served on its own origin; the E2B sandbox defaults to no network
+
+Decided 2026-08-28, hardening §5.35's port preview and §5.34's E2B backend.
+
+**The preview runs on a separate origin.** A preview reverse-proxies whatever a
+sandbox's dev server returns — an untrusted page: agent-fetched HTML, an
+AI-generated page with an injection, a compromised dependency. §5.35 stripped
+the workbench's `Authorization` and `Cookie` from the request INTO the dev
+server, but missed the reverse direction: the workbench's bearer token lives in
+`localStorage`, and a page served from the app's own origin can read it with
+`localStorage.getItem`. Stripping cookies does nothing when the credential is
+not a cookie. So the preview is no longer served on the app's origin at all: a
+second listener (`--preview-port`, the app port + 1 by default; or
+`--preview-base-url` behind a reverse proxy) serves ONLY the proxy, on an
+origin that has no app, no bearer middleware, and no stored token. A grant URL
+is absolute, on that origin. The app engine stops serving `/preview/`
+entirely, and the isolated engine sets `Referrer-Policy: no-referrer` so the
+grant in the path does not leak through a sub-resource's `Referer`. The grant
+stays short-lived and reusable within its TTL, not single-use: one page pulls
+many sub-resources, each a request carrying the same grant. Previews remain off
+by default (`preview_enabled`), so nothing here is reachable until an admin
+turns it on.
+
+Origin isolation, not CSP, is the mechanism: a CSP on the preview would not
+stop a script that is same-origin with the token. The one universal way to deny
+a page another origin's storage is to put it on another origin, and for a
+self-hosted binary a second port is the isolation that works for localhost, a
+LAN address and a reverse proxy alike.
+
+**The E2B sandbox joins no network by default.** The `sandbox` package promises
+isolation by default, and the docker backend keeps it (`NetworkMode("none")`).
+The E2B create now sends `allow_internet_access` explicitly on every create —
+`false` unless the sandbox opts in — rather than omitting it and inheriting the
+service's own default, which is internet ON. The two backends now read the same
+way: an un-opted-in sandbox has no outbound network. NOTE: the exact field name
+and its effect on the real service could not be verified from the compatible
+fake; a real-service check is owed before this is relied on.

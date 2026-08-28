@@ -720,8 +720,33 @@ When a change genuinely doesn't fit, update this list in the same PR.
     own, and the same list on a shared sandbox row would rebuild every project
     on it. The one thing a person cannot see for themselves — that a
     `127.0.0.1` listener is invisible through a published port — is said where
-    it is actionable: the port field's caption, the 502 that names which of the
-    two causes it was, and `exec_command`'s description when the project
-    publishes anything. On an E2B-compatible service nothing is declared and
-    the field is hidden: every port is already public there, which also makes
-    the grant a convenience rather than a gate.
+    it is actionable: the port field's caption, the 502 that names the two
+    possible causes (nothing listening, or a `127.0.0.1`-bound server), and
+    `exec_command`'s description when the project publishes anything. On an
+    E2B-compatible service nothing is declared and the field is hidden: every
+    port is already public there, which also makes the grant a convenience
+    rather than a gate.
+
+48. **A preview is served on its own origin, never the app's.** The preview
+    reverse-proxies an untrusted page (a sandbox's dev server); the workbench
+    bearer token lives in the app origin's `localStorage`, so a page on that
+    origin could read it. The preview therefore runs on a separate origin — a
+    second listener (`--preview-port`, the app port + 1 by default; or
+    `--preview-base-url` behind a proxy) that serves ONLY the proxy, with no app,
+    no bearer middleware and no stored token. The grant URL is absolute on that
+    origin, the app engine serves no `/preview/` path at all, and the preview
+    responses carry `Referrer-Policy: no-referrer` so the grant does not leak
+    through a sub-resource's `Referer`
+    ([decisions §5.37](decisions.md)). The grant is reusable within its TTL
+    (a page pulls many sub-resources), not single-use.
+
+49. **The top bar re-reads the sandbox state on the edges that move it.** The
+    compute state a project menu shows comes from `GET /projects/:id/sandbox`,
+    read when the bound project changes, when the menu opens, AND when a run
+    starts or ends — a run's first command starts the container and its end lets
+    the idle timer stop it, neither of which notifies the client. A stale read
+    never wins a race: each refresh carries a sequence, and only the newest for
+    the current project lands, so a slow response for a project just switched
+    away from cannot overwrite the current one. A read in flight shows
+    "Checking…" only on the FIRST read (no prior value); a failed read leaves
+    the last value, or offers Start — never a permanent "Checking…".

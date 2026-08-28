@@ -903,22 +903,31 @@ as names with masked values, and only to the project's owner: listings never
 carry it at all, and an admin's management reach does not extend to reading
 one.
 
-`POST /projects/{id}/preview/{port}` mints a short-lived URL under `/preview/`
-for a service listening on that port inside the sandbox, and
-`ANY /preview/{grant}/{path}` proxies to it. The grant exists because a
-browser TAB carries no bearer token: it is unguessable, single (project, port),
-30 minutes, in-memory, and revoked when the project is deleted — so the
-preview route lives outside `/api` with its own per-IP rate limit
-(decisions §5.35). Owner only, and **off unless `preview_enabled` is set**.
-The proxy strips `Authorization` and `Cookie` before forwarding and does not
+`POST /projects/{id}/preview/{port}` mints a short-lived URL for a service
+listening on that port inside the sandbox, and `ANY /preview/{grant}/{path}`
+proxies to it. The grant exists because a browser TAB carries no bearer token:
+it is unguessable, single (project, port), 30 minutes, in-memory, and revoked
+when the project is deleted — reusable within its TTL (a page pulls many
+sub-resources), not single-use. Owner only, and **off unless `preview_enabled`
+is set**.
+
+**The preview is served on a SEPARATE origin, not the app's.** The URL the mint
+returns is absolute, on a second listener (`--preview-port`, the app port + 1
+by default; or `--preview-base-url` behind a reverse proxy) that serves ONLY the
+proxy — no app, no bearer middleware, no stored token — so the untrusted page a
+preview serves cannot read the workbench token out of the app origin's
+`localStorage` (decisions §5.37). The app origin serves no `/preview/` path at
+all. The proxy strips `Authorization` and `Cookie` before forwarding, carries
+its own per-IP rate limit, sets `Referrer-Policy: no-referrer`, and does not
 impose this app's CSP on the previewed page.
 
 **On docker the project declares which ports to publish.** `projects.ports` is
 content like the environment: each is published to the daemon's loopback on an
 ephemeral host port, the proxy dials that, and a change replaces the container
 at the next run (spec §2.7r). A server inside must listen on `0.0.0.0` — a
-`127.0.0.1` listener is invisible through a published port, and the 502 says
-which of the two happened. An undeclared port still resolves over the
+`127.0.0.1` listener is invisible through a published port, and the 502 names
+the two possible causes (nothing listening, or a `127.0.0.1`-bound server). An
+undeclared port still resolves over the
 container's docker network, which works from a Linux host and through the SSH
 tunnel to a remote daemon but not on Docker Desktop; that attempt is bounded to
 five seconds so it fails with the reason rather than hanging.

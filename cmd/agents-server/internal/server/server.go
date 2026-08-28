@@ -226,20 +226,17 @@ func buildCSP(scriptHashes, imgHosts []string) string {
 
 func (s *Server) cspMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// A previewed page is somebody's own dev server, not this app: our
-		// policy would break its scripts and styles for no security gain —
-		// it is served from this origin only because that is where the tunnel
-		// comes out (decisions §5.35).
-		if !strings.HasPrefix(c.Request.URL.Path, PreviewPrefix) {
-			c.Header("Content-Security-Policy", s.cspPolicy)
-		}
+		// The app engine never serves a preview — that lives on its own engine
+		// and origin (NewPreviewEngine) — so the policy applies to everything
+		// here, with no path exempt.
+		c.Header("Content-Security-Policy", s.cspPolicy)
 		c.Next()
 	}
 }
 
 // PreviewPrefix is where a sandbox port preview is served. It sits OUTSIDE
 // /api on purpose: a browser tab carries no bearer token, so the preview
-// authorizes itself with the one-time grant in its path instead.
+// authorizes itself with the grant in its path instead.
 const PreviewPrefix = "/preview/"
 
 // inlineScriptRE matches bare inline <script> blocks; tagged scripts
