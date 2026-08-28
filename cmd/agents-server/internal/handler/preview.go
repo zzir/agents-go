@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
 // The port preview: a service running inside a project's sandbox, reachable
@@ -21,6 +23,21 @@ import (
 // collide on a port two people both want, and be unreachable on a remote
 // daemon — the gateway has none of those problems and carries the workbench's
 // own auth for free (decisions §5.35).
+
+// unreachableHint explains a failed preview by what the port IS. A published
+// port is bound on this machine, so routing is not the question — a server
+// listening on 127.0.0.1 inside the container is invisible through it. An
+// unpublished one is reached across the container network, which the local
+// daemon of Docker Desktop does not expose at all.
+func unreachableHint(port int, published bool, target string) string {
+	head := "could not reach port " + strconv.Itoa(port) + " in the sandbox (" + target + "): "
+	if published {
+		return head + "the port is published, so either nothing is listening on it, " +
+			"or the server inside is bound to 127.0.0.1 — it must listen on 0.0.0.0 to be reachable from outside the container."
+	}
+	return head + "this port is not published. Add it to the project's ports, or — where the server can reach the " +
+		"container network directly — check that something is listening on it."
+}
 
 // previewGrantResp is what a mint returns: the URL to open, and when it stops
 // working.
@@ -89,6 +106,10 @@ func (h *ProjectHandler) Preview(c *gin.Context) {
 		return
 	}
 	port := grant.port
+	// Whether the container publishes this port decides what a failure MEANS,
+	// so it is read before the attempt rather than guessed from the error.
+	declared, _ := store.DecodeProjectPorts(p.Ports)
+	published := slices.Contains(declared, port)
 	target, dial, release, err := h.manager.Preview(c.Request.Context(), spec, port)
 	if err != nil {
 		c.String(http.StatusBadGateway, err.Error())
@@ -118,13 +139,7 @@ func (h *ProjectHandler) Preview(c *gin.Context) {
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, perr error) {
 			logging.Ctx(r.Context()).Debug("preview upstream failed", "error", perr, "target", target)
 			w.WriteHeader(http.StatusBadGateway)
-			// Two causes look identical from here, and a person needs both:
-			// nothing is listening, or this machine cannot route to the
-			// container at all (Docker Desktop keeps its container network
-			// inside a VM — see decisions §5.35).
-			_, _ = w.Write([]byte("could not reach port " + strconv.Itoa(port) + " in the sandbox (" + target + "): " +
-				"either nothing is listening on it, or this server cannot route to the sandbox's network — " +
-				"which is the case for Docker Desktop's local daemon on macOS and Windows."))
+			_, _ = w.Write([]byte(unreachableHint(port, published, target)))
 		},
 	}
 	if dial != nil {

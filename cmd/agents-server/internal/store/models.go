@@ -546,6 +546,13 @@ type Project struct {
 	// that keeps it off every listing: GET /projects/{id} is the one endpoint
 	// that returns it, and it returns names with masked values.
 	Env string `bun:"env,type:text,nullzero" json:"-"`
+	// Ports are the container ports published to the daemon's loopback, so a
+	// service inside is reachable through the preview (spec §2.7r). Canonical
+	// JSON (NormalizeProjectPorts); empty publishes nothing. Content like the
+	// environment: a change replaces the container at the next run. The
+	// column is the canonical text; PortList is what responses carry.
+	Ports    string `bun:"ports,type:text,nullzero" json:"-"`
+	PortList []int  `bun:"-" json:"ports,omitempty"`
 	// InstanceRef is the backend's own handle on the project's live sandbox,
 	// for a backend whose instance id it does not derive from the project id.
 	// Docker derives its container name and needs none; it exists so a remote

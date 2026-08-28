@@ -14,6 +14,9 @@ export interface Project {
   id: string;
   name: string;
   sandbox_id: string;
+  /* The container ports published to the machine's loopback — what Preview
+     can open. Docker only. */
+  ports?: number[];
   /* The volume the files live in, and the daemon it is on — shown by the
      delete dialog, which destroys it. */
   storage_hint?: string;

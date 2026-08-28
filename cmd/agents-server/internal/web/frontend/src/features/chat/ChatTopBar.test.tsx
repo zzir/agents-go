@@ -55,7 +55,7 @@ function render(props: Partial<Parameters<typeof ChatTopBar>[0]> = {}): HTMLElem
         terminalEnabled
         onTerminalOpen={noop}
         binding={{ title: 'sb — proj', projectName: 'proj' }}
-        projectMenu={{ busy: false, state: 'running', rebuildable: true, onEnv: noop, onStart: noop, onStop: noop, onExport: noop, onPreview: noop, onRebuild: noop, onOpen: noop }}
+        projectMenu={{ busy: false, state: 'running', rebuildable: true, ports: [3000], onEnv: noop, onStart: noop, onStop: noop, onExport: noop, onPreview: noop, onRebuild: noop, onOpen: noop }}
         {...props}
       />,
     );
@@ -67,12 +67,12 @@ describe('ChatTopBar', () => {
   it('offers the terminal, the environment, the compute switch and the rebuild, in that order', () => {
     const host = render();
     const items = [...host.querySelectorAll('li')].map(li => li.textContent);
-    expect(items).toEqual(['Terminal panel', 'Environment…', 'Preview a port…', 'Export as tar…', 'Stop sandbox', 'Rebuild container']);
+    expect(items).toEqual(['Terminal panel', 'Settings…', 'Preview port 3000', 'Export as tar…', 'Stop sandbox', 'Rebuild container']);
   });
 
   // A running sandbox offers Stop; anything else offers Start, and says why.
   it('offers Start when the sandbox is not running', () => {
-    const host = render({ projectMenu: { busy: false, state: 'absent', rebuildable: true, onEnv: noop, onStart: noop, onStop: noop, onExport: noop, onPreview: noop, onRebuild: noop, onOpen: noop } });
+    const host = render({ projectMenu: { busy: false, state: 'absent', rebuildable: true, ports: [3000], onEnv: noop, onStart: noop, onStop: noop, onExport: noop, onPreview: noop, onRebuild: noop, onOpen: noop } });
     const items = [...host.querySelectorAll('li')].map(li => li.textContent);
     expect(items[4]).toBe('Start sandbox');
   });
@@ -80,7 +80,7 @@ describe('ChatTopBar', () => {
   // On a backend where the sandbox IS the storage there is nothing to rebuild
   // into: offering it would be offering to delete the working tree.
   it('drops the rebuild on a backend that cannot rebuild', () => {
-    const host = render({ projectMenu: { busy: false, state: 'running', rebuildable: false, onEnv: noop, onStart: noop, onStop: noop, onExport: noop, onPreview: noop, onRebuild: noop, onOpen: noop } });
+    const host = render({ projectMenu: { busy: false, state: 'running', rebuildable: false, ports: [3000], onEnv: noop, onStart: noop, onStop: noop, onExport: noop, onPreview: noop, onRebuild: noop, onOpen: noop } });
     const items = [...host.querySelectorAll('li')].map(li => li.textContent);
     expect(items).not.toContain('Rebuild container');
   });

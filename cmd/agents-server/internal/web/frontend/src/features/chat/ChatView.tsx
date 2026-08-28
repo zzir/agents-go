@@ -26,7 +26,7 @@ import { WorkflowStrip } from '@/features/chat/WorkflowStrip';
 import { TraceDrawer, type TraceReveal } from '@/features/chat/TracePanel';
 import { ContextPanel } from '@/features/chat/ContextPanel';
 import { ChatTopBar } from '@/features/chat/ChatTopBar';
-import { ProjectEnvDialog } from '@/features/chat/ProjectEnvDialog';
+import { ProjectEnvDialog, parsePorts } from '@/features/chat/ProjectEnvDialog';
 import { EnvEditor, cleanEnv, envError } from '@/components/EnvEditor';
 import { ArrowDownIcon, CommentDiscussionIcon, DependabotIcon, FileDirectoryIcon, PlusIcon } from '@primer/octicons-react';
 import { toast } from '@/lib/toast';
@@ -177,6 +177,7 @@ export function ChatView({
   const [projSandboxId, setProjSandboxId] = useState('');
   const [projName, setProjName] = useState('');
   const [projEnv, setProjEnv] = useState<EnvVar[]>([]);
+  const [projPorts, setProjPorts] = useState('');
   const [projSaving, setProjSaving] = useState(false);
   // The bound project whose environment is open for editing, and whether a
   // container call is in flight (both disable the menu).
@@ -362,15 +363,8 @@ export function ChatView({
 
   // The port is asked for rather than guessed: a project may run several
   // services, and the one a person wants is the one they type.
-  const previewPort = async () => {
+  const previewPort = async (port: number) => {
     if (!boundProject || containerBusy) return;
-    const raw = window.prompt('Which port inside the sandbox?', '3000');
-    if (!raw) return;
-    const port = parseInt(raw, 10);
-    if (!Number.isFinite(port) || port <= 0 || port > 65535) {
-      toast.error('That is not a port');
-      return;
-    }
     setContainerBusy(true);
     try {
       const grant = await api.projects.previewGrant(boundProject.id, port);
@@ -717,7 +711,8 @@ export function ChatView({
         onStart: () => { void startSandbox(); },
         onStop: () => { void stopSandbox(); },
         onExport: () => { void exportProject(); },
-        onPreview: () => { void previewPort(); },
+        ports: boundProject.ports || [],
+        onPreview: (port: number) => { void previewPort(port); },
         onRebuild: () => { void rebuildContainer(); },
         onOpen: () => { void refreshSandboxState(boundProject.id); },
       } : null}
@@ -805,6 +800,7 @@ export function ChatView({
                     setProjSandboxId(selectedProject?.sandbox_id || sandboxDefs[0].id);
                     setProjName('');
                     setProjEnv([]);
+                    setProjPorts('');
                     setProjDialogOpen(true);
                   }}
                 >
@@ -833,6 +829,7 @@ export function ChatView({
                 name: projName.trim(),
                 sandbox_id: projSandbox.id,
                 env: cleanEnv(projEnv),
+                ports: parsePorts(projPorts) ?? [],
               }) as Project;
               // Seed the cached list before selecting: the stale-id guard
               // below runs against `projects` on the very next commit, and a
@@ -859,7 +856,7 @@ export function ChatView({
                 {
                   content: projSaving ? 'Creating…' : 'Create',
                   buttonType: 'primary',
-                  disabled: !projSandbox || !projName.trim() || projSaving || !!envError(projEnv),
+                  disabled: !projSandbox || !projName.trim() || projSaving || !!envError(projEnv) || parsePorts(projPorts) === null,
                   onClick: () => { void create(); },
                 },
               ]}
@@ -885,6 +882,18 @@ export function ChatView({
                 {fc('Environment', (
                   <EnvEditor vars={projEnv} onChange={setProjEnv} disabled={projSaving} />
                 ), envError(projEnv))}
+                {/* Docker only: on an E2B-compatible service every port is
+                    already published. */}
+                {projSandbox?.type !== 'e2b' && fc('Published ports', (
+                  <TextInput
+                    block
+                    value={projPorts}
+                    placeholder="3000, 5173"
+                    onChange={e => setProjPorts(e.target.value)}
+                  />
+                ), parsePorts(projPorts) === null
+                  ? 'Ports must be numbers between 1 and 65535, separated by commas'
+                  : 'What Preview can open. A server inside must listen on 0.0.0.0. Changeable later.')}
               </Stack>
             </Dialog>
           );

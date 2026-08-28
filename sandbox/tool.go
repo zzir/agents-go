@@ -71,13 +71,19 @@ type CodeToolConfig struct {
 
 const defaultMaxTimeout = 10 * time.Minute
 
+// DefaultDescription is what an empty Description falls back to, exported so
+// a caller can extend it rather than restate it.
+func (CodeToolConfig) DefaultDescription() string {
+	return "Execute a shell command in a sandboxed environment and return its stdout, stderr and exit code. " +
+		"The command is run via bash -c. " +
+		"Use timeout_seconds to override the default timeout for long-running commands. " +
+		"Use workdir to run the command in a specific directory (relative paths are resolved from /workspace)."
+}
+
 func (c CodeToolConfig) withDefaults() CodeToolConfig {
 	c.Name = cmp.Or(c.Name, "exec_command")
 	if c.Description == "" {
-		c.Description = "Execute a shell command in a sandboxed environment and return its stdout, stderr and exit code. " +
-			"The command is run via bash -c. " +
-			"Use timeout_seconds to override the default timeout for long-running commands. " +
-			"Use workdir to run the command in a specific directory (relative paths are resolved from /workspace)."
+		c.Description = c.DefaultDescription()
 	}
 	if c.MaxOutputBytes <= 0 {
 		c.MaxOutputBytes = 8192

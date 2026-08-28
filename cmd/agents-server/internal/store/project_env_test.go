@@ -115,3 +115,35 @@ func TestEnvMap(t *testing.T) {
 		t.Error("an undecodable environment produced a map instead of an error")
 	}
 }
+
+// A port list is stored canonically — deduplicated and ordered — so the
+// container fingerprint and the change comparison answer in one order.
+func TestNormalizeProjectPorts(t *testing.T) {
+	got, err := NormalizeProjectPorts([]int{5173, 3000, 5173})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "[3000,5173]" {
+		t.Fatalf("canonical = %s, want [3000,5173]", got)
+	}
+	if empty, err := NormalizeProjectPorts(nil); err != nil || empty != "" {
+		t.Fatalf("no ports = %q/%v, want \"\"/nil", empty, err)
+	}
+	for _, bad := range [][]int{{0}, {65536}, {-1}} {
+		if _, err := NormalizeProjectPorts(bad); err == nil {
+			t.Errorf("%v was accepted", bad)
+		}
+	}
+	if _, err := NormalizeProjectPorts(make([]int, MaxProjectPorts+1)); err == nil {
+		t.Error("an oversized list was accepted")
+	}
+	// Order of writing must not read as a change.
+	a, _ := NormalizeProjectPorts([]int{3000, 5173})
+	b, _ := NormalizeProjectPorts([]int{5173, 3000})
+	if !PortsContentEqual(a, b) {
+		t.Errorf("%s and %s compared unequal", a, b)
+	}
+	if PortsContentEqual(a, "[3000]") {
+		t.Error("a shorter list compared equal")
+	}
+}

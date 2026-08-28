@@ -313,3 +313,26 @@ func TestDemuxLogs_LateStderrNotStarved(t *testing.T) {
 		t.Errorf("stderr = %q, want %q (must not be starved by stdout volume)", stderr, "boom")
 	}
 }
+
+// A published port is part of what a persistent container IS: changing the
+// list must replace the container rather than adopt one publishing something
+// else. Order and duplicates are not a change.
+func TestPublishedPortsFingerprint(t *testing.T) {
+	fp := func(ports ...int) string {
+		s := &Sandbox{opts: Options{Image: "i", Ports: ports}}
+		return s.configFingerprint()
+	}
+	if fp() == fp(3000) {
+		t.Error("publishing a port did not change the fingerprint")
+	}
+	if fp(3000) == fp(3000, 5173) {
+		t.Error("adding a port did not change the fingerprint")
+	}
+	if fp(3000, 5173) != fp(5173, 3000, 5173) {
+		t.Error("order or a duplicate changed the fingerprint")
+	}
+	// Out of range is dropped, not hashed.
+	if fp(3000) != fp(3000, 0, 70000) {
+		t.Error("an out-of-range port reached the fingerprint")
+	}
+}

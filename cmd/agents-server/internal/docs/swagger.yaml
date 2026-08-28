@@ -887,6 +887,11 @@ components:
           type: string
         owner_id:
           type: string
+        ports:
+          items:
+            type: integer
+          type: array
+          uniqueItems: false
         revision:
           description: |-
             Revision is the expected-revision CAS every update lands against.
@@ -930,6 +935,14 @@ components:
           uniqueItems: false
         name:
           type: string
+        ports:
+          description: |-
+            Ports are published so the preview can reach a service inside;
+            optional, and docker only.
+          items:
+            type: integer
+          type: array
+          uniqueItems: false
         sandbox_id:
           description: SandboxID is what the project runs on — the machine and the
             image.
@@ -947,6 +960,11 @@ components:
           uniqueItems: false
         name:
           type: string
+        ports:
+          items:
+            type: integer
+          type: array
+          uniqueItems: false
         revision:
           type: integer
         sandbox_id:
@@ -1709,6 +1727,11 @@ components:
           type: string
         owner_id:
           type: string
+        ports:
+          items:
+            type: integer
+          type: array
+          uniqueItems: false
         revision:
           description: |-
             Revision is the expected-revision CAS every update lands against.

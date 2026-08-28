@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -519,7 +520,7 @@ func (m *Manager) SandboxTools(spec Spec, commandApproval bool) ([]*agents.Tool,
 	if err != nil {
 		return nil, nil, err
 	}
-	codeCfg := sandbox.CodeToolConfig{MaxOutputBytes: execToolMaxOutputBytes}
+	codeCfg := sandbox.CodeToolConfig{MaxOutputBytes: execToolMaxOutputBytes, Description: execToolDescription(spec)}
 	var pools []io.Closer
 	codeCfg.Sessions = true
 	codeCfg.RegisterCloser = func(c io.Closer) { pools = append(pools, c) }
@@ -537,6 +538,24 @@ func (m *Manager) SandboxTools(spec Spec, commandApproval bool) ([]*agents.Tool,
 		release()
 	}
 	return tools, releaseTools, nil
+}
+
+// execToolDescription appends the one thing a model cannot discover: a
+// published port only reaches a server listening on 0.0.0.0, so a server bound
+// to 127.0.0.1 is invisible to the preview however correctly it runs. Said
+// only where it is actionable — where the project publishes something.
+func execToolDescription(spec Spec) string {
+	ports, err := store.DecodeProjectPorts(spec.Project.Ports)
+	if err != nil || len(ports) == 0 {
+		return ""
+	}
+	list := make([]string, 0, len(ports))
+	for _, p := range ports {
+		list = append(list, strconv.Itoa(p))
+	}
+	return sandbox.CodeToolConfig{}.DefaultDescription() +
+		" This sandbox publishes port(s) " + strings.Join(list, ", ") +
+		"; a server you start on one of them must listen on 0.0.0.0 (not 127.0.0.1) to be reachable from outside the container."
 }
 
 // buildSandbox hands spec to its target type's backend, with the callback a
@@ -651,6 +670,9 @@ func (r *releasingReader) Close() error {
 	return err
 }
 
+// previewDialTimeout bounds one preview connection attempt.
+const previewDialTimeout = 5 * time.Second
+
 // Preview resolves where a port inside the project's sandbox answers, and how
 // to reach it: the URL a proxy forwards to, and — for a backend whose ports
 // are not routable from this process — the dial that gets there. The returned
@@ -672,7 +694,14 @@ func (m *Manager) Preview(ctx context.Context, spec Spec, port int) (target stri
 		return "", nil, nil, err
 	}
 	if d, ok := sb.(sandbox.PortDialer); ok {
-		dial = func(ctx context.Context, _, _ string) (net.Conn, error) { return d.DialPort(ctx, port) }
+		dial = func(ctx context.Context, _, _ string) (net.Conn, error) {
+			// Bounded: an unpublished port on a network this host cannot route
+			// to does not refuse, it hangs — and a preview that spins for a
+			// TCP timeout tells a person nothing. The error handler explains.
+			ctx, cancel := context.WithTimeout(ctx, previewDialTimeout)
+			defer cancel()
+			return d.DialPort(ctx, port)
+		}
 	}
 	return target, dial, release, nil
 }
@@ -706,6 +735,9 @@ func BuildOptions(spec Spec) (dockersb.Options, error) {
 		return dockersb.Options{}, err
 	}
 	if opts.Env, err = store.EnvMap(spec.Project.Env); err != nil {
+		return dockersb.Options{}, fmt.Errorf("project %s: %w", spec.Project.Name, err)
+	}
+	if opts.Ports, err = store.DecodeProjectPorts(spec.Project.Ports); err != nil {
 		return dockersb.Options{}, fmt.Errorf("project %s: %w", spec.Project.Name, err)
 	}
 	opts.Persistent = true

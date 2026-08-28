@@ -81,6 +81,7 @@ renumbered — which is why the letters run out of alphabetical order in places.
 | [§2.7o](#27o-a-docker-sandbox-runs-as-the-images-user-and-joins-no-network) | A docker sandbox runs as the image's user and joins no network | Empty `User` = the image's own user; empty `Network` = none |
 | [§2.7p](#27p-stop-keeps-the-filesystem-and-promises-nothing-else) | Stop keeps the filesystem and promises nothing else | `Lifecycle.Stop` guarantees the tree, never the processes |
 | [§2.7q](#27q-a-sandbox-makes-its-working-directory) | A sandbox makes its working directory | A stock image need not ship one |
+| [§2.7r](#27r-a-published-port-is-bound-to-the-daemons-loopback-and-reaches-only-0000) | A published port is bound to the daemon's loopback, and reaches only 0.0.0.0 | Declared at create; a 127.0.0.1 listener is invisible through it |
 | [§2.8](#28-nested-agent-as-tool-attribution) | Nested agent-as-tool attribution | How usage, spans and errors attribute across a nested agent-as-tool |
 | [§2.9](#29-budgets-) | Budgets 🚧 | `MaxTurns` is the one budget dimension implemented |
 | [§2.10](#210-errors-and-recovery) | Errors and recovery | Stable `ErrorCode`s, and which errors a run can recover from |
@@ -1520,6 +1521,30 @@ exist`.
 
 It is done on the FIRST use, not on every one: a resumed sandbox already has
 the directory, and a caller that removed it meant to.
+
+### 2.7r A published port is bound to the daemon's loopback, and reaches only 0.0.0.0
+
+`docker.Options.Ports` publishes each container port to **127.0.0.1 on the
+daemon's host, on a port the daemon picks** (`HostPort: "0"`). Loopback rather
+than every interface: a member's dev server is not something the machine
+should serve to its network. Ephemeral rather than fixed: two projects
+publishing 3000 must not collide, and nobody has to keep an allocation table.
+
+`URLForPort` and `DialPort` return the PUBLISHED address for a published port,
+and the container's own address on its docker network for any other. The
+difference matters on a remote daemon: the published address is on the
+daemon's loopback, which the SSH transport lands in, while a container address
+needs that network to be routable from the daemon's host.
+
+**A published port reaches only what listens on the container's network
+interface.** Docker forwards to the container's address, so a server bound to
+`127.0.0.1` inside the container is unreachable through a published port,
+however correctly it runs. That is docker's model, not a workbench choice, and
+the caller is told so rather than left to find out.
+
+Ports are part of the adoption fingerprint (§2.7n): changing the list replaces
+a persistent container rather than adopting it, because publishing is decided
+once, at create.
 
 ### 2.8 Nested agent-as-tool attribution
 

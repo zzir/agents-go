@@ -38,10 +38,13 @@ export interface ProjectMenu {
      would take the working tree with it. */
   rebuildable: boolean;
   onEnv: () => void;
+  /* The ports this project publishes — what Preview can open. Empty offers
+     the settings dialog instead of a link that cannot work. */
+  ports: number[];
+  onPreview: (port: number) => void;
   onStart: () => void;
   onStop: () => void;
   onExport: () => void;
-  onPreview: () => void;
   onRebuild: () => void;
   /* Re-read the compute state as the menu opens: a run that started the
      sandbox did not tell this component. */
@@ -91,12 +94,21 @@ export function ChatTopBar({
                 </ActionList.Item>
                 <ActionList.Item onSelect={projectMenu.onEnv}>
                   <ActionList.LeadingVisual><KeyAsteriskIcon /></ActionList.LeadingVisual>
-                  Environment…
+                  Settings…
                 </ActionList.Item>
-                <ActionList.Item onSelect={projectMenu.onPreview}>
-                  <ActionList.LeadingVisual><BrowserIcon /></ActionList.LeadingVisual>
-                  Preview a port…
-                </ActionList.Item>
+                {projectMenu.ports.length === 0 ? (
+                  // Nothing to open: the item leads where a port is declared,
+                  // rather than asking for one the container never published.
+                  <ActionList.Item onSelect={projectMenu.onEnv}>
+                    <ActionList.LeadingVisual><BrowserIcon /></ActionList.LeadingVisual>
+                    Publish a port to preview…
+                  </ActionList.Item>
+                ) : projectMenu.ports.map(port => (
+                  <ActionList.Item key={port} onSelect={() => projectMenu.onPreview(port)}>
+                    <ActionList.LeadingVisual><BrowserIcon /></ActionList.LeadingVisual>
+                    Preview port {port}
+                  </ActionList.Item>
+                ))}
                 <ActionList.Item onSelect={projectMenu.onExport}>
                   <ActionList.LeadingVisual><DownloadIcon /></ActionList.LeadingVisual>
                   Export as tar…

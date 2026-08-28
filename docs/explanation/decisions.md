@@ -1279,16 +1279,44 @@ address means nothing here, so the proxy dials through the same SSH transport
 the docker API uses; a `tcp://` daemon exposes its API and not its container
 network, and is refused with that sentence.
 
-**Where a docker preview actually works.** The proxy dials the container's
-address on its docker network, which the server can only reach where that
-network is routable from it: a Linux host with the local daemon, or an
-`ssh://` daemon on a Linux host (the tunnel lands inside its namespace).
-Docker Desktop on macOS and Windows keeps the container network inside a VM,
-so a LOCAL-daemon preview cannot reach it — the 502 says exactly that rather
-than blaming the service. Publishing an ephemeral loopback port would fix that
-one case, and was not taken: it must be decided at container create, when the
-port nobody has typed yet is unknown. An e2b sandbox has no such problem — the
-service publishes a host per port.
+**Revised 2026-08-28: the port is PUBLISHED, and the project declares it.**
+The first version dialed the container's address on its docker network, which
+only works where that network is routable from the server — and Docker Desktop
+on macOS and Windows keeps it inside a VM, so the whole feature was dead on
+the most common developer machine. It also could not reach a server bound to
+`127.0.0.1` inside the container even on Linux.
+
+So a project carries `ports`, and the container publishes each to the daemon's
+loopback on an ephemeral host port (spec §2.7r). The proxy dials that. It
+works on every daemon the workbench supports, including Docker Desktop.
+
+The objection that killed publishing the first time — "it must be decided at
+container create, when the port nobody has typed yet is unknown" — is answered
+by putting the list on the **project**, not the sandbox: a project's container
+is its own, its ports are content exactly like its environment (§5.32), and a
+change replaces that one container at its next run. On the shared sandbox row
+the same list would apply to every project on it and rebuild all of them.
+
+Two costs, taken deliberately over the alternative (a TCP tunnel over
+`docker exec`, which needs a forwarder inside the image):
+
+- **You declare before you preview.** An undeclared port still resolves the old
+  way, so nothing is lost where the container network IS routable, and the
+  attempt is bounded so it fails in seconds with the reason instead of hanging.
+- **The server inside must listen on `0.0.0.0`.** Docker forwards to the
+  container's interface; a `127.0.0.1` listener is invisible through a
+  published port. Most dev servers bind loopback by default, so this is said
+  in three places: the port field's caption, the 502 when it happens, and
+  `exec_command`'s own description when the project publishes anything — the
+  model is the one starting the server.
+
+**An e2b sandbox publishes nothing, because the service already did.** Every
+port answers at `<port>-<sandbox id>.<domain>`, so there is nothing to declare
+and the field is not shown. **Those hosts are PUBLIC**: probed against both
+services (2026-08-28), an unauthenticated GET to an application port answers
+200 while envd's own port answers 401/403. `secure: true` protects the daemon,
+not the workload. So on e2b the grant is a convenience, not a gate — anyone
+with the sandbox id reaches the service directly, and the UI says so.
 
 ### 5.36 A sandbox is one row, and only its destination freezes
 

@@ -116,3 +116,64 @@ func EnvContentEqual(a, b string) bool {
 		return x.Key == y.Key && x.Value == y.Value
 	})
 }
+
+// MaxProjectPorts bounds the published set: every one is a host-side binding
+// the daemon holds for the container's whole life.
+const MaxProjectPorts = 16
+
+// NormalizeProjectPorts validates ports and returns the canonical payload to
+// store: deduplicated and ordered, so storage, the container fingerprint
+// (spec §2.7r) and PortsContentEqual all answer in one order. An empty list
+// stores as "" — nothing published, which keeps a project without ports off
+// the fingerprint.
+func NormalizeProjectPorts(ports []int) (string, error) {
+	if len(ports) == 0 {
+		return "", nil
+	}
+	if len(ports) > MaxProjectPorts {
+		return "", fmt.Errorf("at most %d published ports, got %d", MaxProjectPorts, len(ports))
+	}
+	out := make([]int, 0, len(ports))
+	seen := make(map[int]bool, len(ports))
+	for _, p := range ports {
+		if p <= 0 || p > 65535 {
+			return "", fmt.Errorf("port %d is out of range (1-65535)", p)
+		}
+		if seen[p] {
+			continue // a repeated port is one binding, not an error
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	slices.Sort(out)
+	b, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encoding project ports: %w", err)
+	}
+	return string(b), nil
+}
+
+// DecodeProjectPorts reads a stored payload; an empty one is no ports. An
+// undecodable one is an error: publishing nothing where a port was configured
+// silently breaks the preview that was the point of declaring it.
+func DecodeProjectPorts(raw string) ([]int, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	var out []int
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil, fmt.Errorf("decoding project ports: %w", err)
+	}
+	return out, nil
+}
+
+// PortsContentEqual reports whether two canonical payloads produce the same
+// CONTAINER. Semantics match EnvContentEqual's.
+func PortsContentEqual(a, b string) bool {
+	pa, aerr := DecodeProjectPorts(a)
+	pb, berr := DecodeProjectPorts(b)
+	if aerr != nil || berr != nil {
+		return false
+	}
+	return slices.Equal(pa, pb)
+}

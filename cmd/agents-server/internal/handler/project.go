@@ -95,7 +95,16 @@ func (h *ProjectHandler) detail(p *store.Project) (*projectDetail, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &projectDetail{Project: *p, Env: maskProjectEnv(vars)}, nil
+	out := &projectDetail{Project: *p, Env: maskProjectEnv(vars)}
+	withPorts(&out.Project)
+	return out, nil
+}
+
+// withPorts decodes the stored port list into the field responses carry. An
+// undecodable payload reads as none: a listing must not fail over it, and
+// every path that BUILDS a container decodes it strictly instead.
+func withPorts(p *store.Project) {
+	p.PortList, _ = store.DecodeProjectPorts(p.Ports)
 }
 
 // own resolves the caller's project by id; an admin's management reach does
@@ -172,9 +181,10 @@ func (h *ProjectHandler) List(c *gin.Context) {
 	if out == nil {
 		out = []store.Project{}
 	}
-	if admin {
-		hosts := map[string]string{}
-		for i := range out {
+	hosts := map[string]string{}
+	for i := range out {
+		withPorts(&out[i])
+		if admin {
 			out[i].StorageHint = h.storageHint(c, hosts, &out[i])
 		}
 	}
@@ -233,6 +243,9 @@ type projectReq struct {
 	// Env is the environment the project's container is created with;
 	// optional, and empty means none.
 	Env []store.EnvVar `json:"env,omitempty"`
+	// Ports are published so the preview can reach a service inside;
+	// optional, and docker only.
+	Ports []int `json:"ports,omitempty"`
 }
 
 // projectUpdateReq is the update body: the name, the sandbox, the whole
@@ -242,6 +255,7 @@ type projectUpdateReq struct {
 	Name      string         `json:"name" binding:"required"`
 	SandboxID string         `json:"sandbox_id" binding:"required"`
 	Env       []store.EnvVar `json:"env,omitempty"`
+	Ports     []int          `json:"ports,omitempty"`
 	Revision  int64          `json:"revision,omitempty"`
 }
 
@@ -272,9 +286,14 @@ func (h *ProjectHandler) Create(c *gin.Context) {
 		badRequest(c, err.Error())
 		return
 	}
+	ports, err := store.NormalizeProjectPorts(req.Ports)
+	if err != nil {
+		badRequest(c, err.Error())
+		return
+	}
 	// Existence is the create's own guard (the store locks the row), so a
 	// missing sandbox 404s from the insert itself.
-	p := &store.Project{OwnerID: ownerID, SandboxID: req.SandboxID, Name: req.Name, Env: env}
+	p := &store.Project{OwnerID: ownerID, SandboxID: req.SandboxID, Name: req.Name, Env: env, Ports: ports}
 	if err := h.store.Create(c.Request.Context(), p); err != nil {
 		saveError(c, err)
 		return
@@ -366,9 +385,16 @@ func (h *ProjectHandler) Update(c *gin.Context) {
 	if req.Revision != 0 {
 		expected = req.Revision
 	}
-	contentChanged := !store.EnvContentEqual(prev.Env, env) || req.SandboxID != prev.SandboxID
+	ports, err := store.NormalizeProjectPorts(req.Ports)
+	if err != nil {
+		badRequest(c, err.Error())
+		return
+	}
+	contentChanged := !store.EnvContentEqual(prev.Env, env) ||
+		!store.PortsContentEqual(prev.Ports, ports) ||
+		req.SandboxID != prev.SandboxID
 	next := *prev
-	next.Name, next.SandboxID, next.Env = req.Name, req.SandboxID, env
+	next.Name, next.SandboxID, next.Env, next.Ports = req.Name, req.SandboxID, env, ports
 	if err := h.store.Update(c.Request.Context(), prev.ID, &next, expected, contentChanged); err != nil {
 		saveError(c, err)
 		return

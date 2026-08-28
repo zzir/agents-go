@@ -703,3 +703,18 @@ When a change genuinely doesn't fit, update this list in the same PR.
     everything else edits freely and reaches bound sessions at their next run.
     There is no separate template entity, and therefore no pair that can
     disagree about its type.
+
+46. **A preview reaches a port the project PUBLISHED.** `projects.ports` is
+    content like the environment: each port is published to the daemon's
+    loopback on an ephemeral host port, the preview proxy dials that, and a
+    change replaces that one project's container at its next run
+    ([decisions §5.35](decisions.md), [spec §2.7r](../reference/spec.md#27r-a-published-port-is-bound-to-the-daemons-loopback-and-reaches-only-0000)).
+    The list is on the PROJECT, not the sandbox: a container is a project's
+    own, and the same list on a shared sandbox row would rebuild every project
+    on it. The one thing a person cannot see for themselves — that a
+    `127.0.0.1` listener is invisible through a published port — is said where
+    it is actionable: the port field's caption, the 502 that names which of the
+    two causes it was, and `exec_command`'s description when the project
+    publishes anything. On an E2B-compatible service nothing is declared and
+    the field is hidden: every port is already public there, which also makes
+    the grant a convenience rather than a gate.

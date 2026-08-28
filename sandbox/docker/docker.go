@@ -25,10 +25,12 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"net/netip"
 	"os"
 	"path"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -37,6 +39,7 @@ import (
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 
 	"github.com/zzir/agents-go/sandbox"
@@ -66,8 +69,8 @@ const (
 )
 
 // configFingerprint hashes the options that decide what a persistent container
-// IS security-wise: image, runtime, user, network, the bind source, and the
-// resource limits. ContainerWorkDir is deliberately excluded — persistent mode
+// IS security-wise: image, runtime, user, network, the published ports, the
+// bind source, and the resource limits. ContainerWorkDir is deliberately excluded — persistent mode
 // passes the working directory per exec, so it does not change the container.
 // Effective values are hashed, not raw ones (the PIDs default is applied here
 // as in buildHostConfig), so equivalent configurations produce one
@@ -87,7 +90,29 @@ func (s *Sandbox) configFingerprint() string {
 	if env := envSlice(s.opts.Env); len(env) > 0 {
 		fmt.Fprintf(h, "env=%s\n", strings.Join(env, "\x00"))
 	}
+	if ports := s.publishedPorts(); len(ports) > 0 {
+		fmt.Fprintf(h, "ports=%v\n", ports)
+	}
 	return hex.EncodeToString(h.Sum(nil)[:16])
+}
+
+// publishedPorts is Options.Ports canonicalized: in range, deduplicated and
+// ordered, so one list produces one fingerprint however it was written.
+func (s *Sandbox) publishedPorts() []int {
+	if len(s.opts.Ports) == 0 {
+		return nil
+	}
+	seen := make(map[int]bool, len(s.opts.Ports))
+	out := make([]int, 0, len(s.opts.Ports))
+	for _, p := range s.opts.Ports {
+		if p <= 0 || p > 65535 || seen[p] {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	slices.Sort(out)
+	return out
 }
 
 // Options configures the Docker sandbox.
@@ -111,6 +136,13 @@ type Options struct {
 	// own user, which for most images is root — the user a container needs to
 	// be able to install packages into itself.
 	User string
+	// Ports are published from the container to the DAEMON's loopback on
+	// ephemeral host ports, so a service inside is reachable without putting
+	// it on any other interface. Part of the fingerprint: changing the list
+	// replaces a persistent container. A published port only reaches a
+	// process listening on the container's network interface — a server bound
+	// to 127.0.0.1 inside is not reachable through it (spec §2.7r).
+	Ports []int
 	// Network names the docker network the container joins. Empty means "none"
 	// — no network at all, the default. "default" or "bridge" gives the
 	// daemon's ordinary networking; a user-defined network name puts the
@@ -193,6 +225,9 @@ type Sandbox struct {
 
 	// sshDial is set for an ssh:// Host and closed with the sandbox.
 	sshDial *sshDialer
+	// exposed is the port set buildHostConfig derived, kept so the container
+	// config declares what the host config binds.
+	exposed network.PortSet
 
 	// persistent container state
 	mu          sync.Mutex
@@ -798,6 +833,21 @@ func (s *Sandbox) buildHostConfig(persistent bool) *container.HostConfig {
 			Config: map[string]string{"max-size": logMaxSize, "max-file": "1"},
 		},
 	}
+	if ports := s.publishedPorts(); len(ports) > 0 {
+		exposed, bindings := network.PortSet{}, network.PortMap{}
+		for _, p := range ports {
+			port, err := network.ParsePort(strconv.Itoa(p) + "/tcp")
+			if err != nil {
+				continue // publishedPorts already dropped anything out of range
+			}
+			exposed[port] = struct{}{}
+			// Host port 0 = the daemon picks a free one; loopback so the
+			// service reaches no other interface of the daemon's host.
+			bindings[port] = []network.PortBinding{{HostIP: netip.AddrFrom4([4]byte{127, 0, 0, 1}), HostPort: "0"}}
+		}
+		hostCfg.PortBindings = bindings
+		s.exposed = exposed
+	}
 	hostCfg.Memory = s.opts.Limits.MemoryBytes
 	if s.opts.Limits.CPUs > 0 {
 		hostCfg.NanoCPUs = int64(s.opts.Limits.CPUs * 1e9)
@@ -837,7 +887,11 @@ func (s *Sandbox) buildPersistentConfig() (*container.Config, *container.HostCon
 		Labels: map[string]string{fingerprintLabel: s.configFingerprint()},
 	}
 	cfg.User = s.opts.User
-	return cfg, s.buildHostConfig(true)
+	hostCfg := s.buildHostConfig(true)
+	// buildHostConfig fills s.exposed alongside the bindings: the container
+	// config must declare the same ports.
+	cfg.ExposedPorts = s.exposed
+	return cfg, hostCfg
 }
 
 // readLogs fetches the container output, capping each stream at max bytes.

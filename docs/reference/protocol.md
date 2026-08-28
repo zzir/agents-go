@@ -904,12 +904,22 @@ browser TAB carries no bearer token: it is unguessable, single (project, port),
 preview route lives outside `/api` with its own per-IP rate limit
 (decisions §5.35). Owner only, and **off unless `preview_enabled` is set**.
 The proxy strips `Authorization` and `Cookie` before forwarding and does not
-impose this app's CSP on the previewed page. A docker template that joins no
-network has no reachable ports at all, and the preview says so. The proxy
-reaches a container over its docker network, which works from a Linux host
-(local daemon) and through the SSH tunnel to a remote daemon; Docker Desktop
-on macOS/Windows keeps that network inside a VM, so a local-daemon preview
-there answers 502 saying so. An e2b target has no such limit.
+impose this app's CSP on the previewed page.
+
+**On docker the project declares which ports to publish.** `projects.ports` is
+content like the environment: each is published to the daemon's loopback on an
+ephemeral host port, the proxy dials that, and a change replaces the container
+at the next run (spec §2.7r). A server inside must listen on `0.0.0.0` — a
+`127.0.0.1` listener is invisible through a published port, and the 502 says
+which of the two happened. An undeclared port still resolves over the
+container's docker network, which works from a Linux host and through the SSH
+tunnel to a remote daemon but not on Docker Desktop; that attempt is bounded to
+five seconds so it fails with the reason rather than hanging.
+
+**On e2b nothing is declared** — the service already answers every port at
+`<port>-<sandbox id>.<domain>`, so the field is not shown. Those hosts are
+PUBLIC: `secure: true` protects the sandbox daemon, not the workload, so the
+grant is a convenience rather than a gate (decisions §5.35).
 
 `GET /projects/{id}/export` streams the working tree as an uncompressed tar
 (`application/x-tar`) — the way files leave a sandbox whose storage the host

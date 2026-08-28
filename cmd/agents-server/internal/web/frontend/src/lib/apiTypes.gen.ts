@@ -7619,6 +7619,7 @@ export interface components {
              */
             name?: string;
             owner_id?: string;
+            ports?: number[];
             /**
              * @description Revision is the expected-revision CAS every update lands against.
              *     RuntimeGen is the workbench's ONE runtime axis: it moves when this
@@ -7656,12 +7657,18 @@ export interface components {
              */
             env?: components["schemas"]["store.EnvVar"][];
             name: string;
+            /**
+             * @description Ports are published so the preview can reach a service inside;
+             *     optional, and docker only.
+             */
+            ports?: number[];
             /** @description SandboxID is what the project runs on — the machine and the image. */
             sandbox_id: string;
         };
         "handler.projectUpdateReq": {
             env?: components["schemas"]["store.EnvVar"][];
             name: string;
+            ports?: number[];
             revision?: number;
             sandbox_id: string;
         };
@@ -8122,6 +8129,7 @@ export interface components {
              */
             name?: string;
             owner_id?: string;
+            ports?: number[];
             /**
              * @description Revision is the expected-revision CAS every update lands against.
              *     RuntimeGen is the workbench's ONE runtime axis: it moves when this

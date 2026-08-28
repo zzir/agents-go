@@ -54,8 +54,8 @@ func (s *ProjectStore) Create(ctx context.Context, p *Project) error {
 	return nil
 }
 
-// Update overwrites the project's editable fields — name, sandbox and
-// environment — under the same compare-and-set the sandbox uses: the write
+// Update overwrites the project's editable fields — name, sandbox,
+// environment and published ports — under the same compare-and-set the sandbox uses: the write
 // lands only while the row is still at expectedRevision (see
 // ErrRevisionConflict). contentChanged bumps the runtime generation alongside
 // the revision; a rename moves the revision alone so nothing downstream
@@ -91,7 +91,7 @@ func (s *ProjectStore) Update(ctx context.Context, id string, p *Project, expect
 			}
 			var uerr error
 			res, uerr = tx.NewUpdate().Model(p).
-				Column("name", "sandbox_id", "env", "updated_at").
+				Column("name", "sandbox_id", "env", "ports", "updated_at").
 				Set("revision = revision + 1").
 				Set("runtime_gen = runtime_gen + ?", genBump).
 				Where("id = ?", id).

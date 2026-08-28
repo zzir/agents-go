@@ -180,6 +180,8 @@ remembers which one, so a restart resumes it rather than provisioning a second
 a stock one: the working directory is created on the sandbox rather than
 expected of the image ([spec §2.7q](../reference/spec.md#27q-a-sandbox-makes-its-working-directory)).
 
+`Ports` publishes container ports to the **daemon's loopback**, on ports the daemon picks: a service inside becomes reachable from the machine running the daemon without going on any other interface. It is part of the adoption fingerprint, so changing the list replaces a persistent container. Docker forwards to the container's network interface, so a server bound to `127.0.0.1` inside is NOT reachable through a published port ([spec §2.7r](../reference/spec.md#27r-a-published-port-is-bound-to-the-daemons-loopback-and-reaches-only-0000)).
+
 `Env` sets variables on the **container**, so a command, a persistent shell and a terminal opened into it all read the same values; an `ExecRequest.Env` entry of the same name wins for that one call. It is part of the adoption fingerprint: changing it replaces a persistent container instead of adopting the old one, keeping `/workspace` but discarding whatever was installed into the container itself ([spec §2.7n](../reference/spec.md#27n-a-sandboxs-environment-is-part-of-its-container-identity)).
 
 ### Remote daemon over SSH
