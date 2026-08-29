@@ -63,14 +63,14 @@ func BackendFor(typ string) (Backend, error) {
 // checkHealthCmd is what a Check runs. It needs nothing an image might lack.
 var checkHealthCmd = []string{"sh", "-c", "echo ok"}
 
-// checkExec runs the health command and turns a non-zero exit into an error:
-// a Check either proves the sandbox usable or says why not.
 // ErrHealthCommandFailed marks the health check's SECOND kind of failure: the
 // service was reached and ran the command, which then timed out or exited
 // non-zero. The handler answers it 200 ok=false, reserving 502 for the first
 // kind — the service could not be reached at all.
 var ErrHealthCommandFailed = errors.New("the health command ran and did not succeed")
 
+// checkExec runs the health command and turns a non-zero exit into an error:
+// a Check either proves the sandbox usable or says why not.
 func checkExec(ctx context.Context, sb sandbox.Sandbox) error {
 	runCtx, cancel := context.WithTimeout(ctx, sandbox.DefaultTimeout+5*time.Second)
 	defer cancel()
