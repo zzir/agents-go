@@ -812,8 +812,13 @@ path validation wholesale.
 `agents-<project tail>` — deterministic, so restarts re-adopt by fingerprint
 (§5.19) instead of duplicating. `KeepOnClose` stops rather than removes on
 teardown: installed packages survive idle and restarts; a config edit
-replaces the container via the stale-ours adoption rule. /tmp is a tmpfs
-capped at 1g (RAM-backed — size accordingly).
+replaces the container via the stale-ours adoption rule. A container found
+stopped — by the admin panel, a manual `docker stop`, a daemon restart — is
+restarted in place; remove-and-recreate is the fallback only when the start
+fails or the container is gone. Restart-by-cached-id needs no fingerprint
+re-check: the id only ever came from our own create or a verified adopt, and
+ids, unlike names, cannot change hands. /tmp is a tmpfs capped at 1g
+(RAM-backed — size accordingly).
 
 Deletion contracts settle in SQL: the bind CAS carries an EXISTS on the
 project row, a project delete carries NOT EXISTS over bound sessions, and a

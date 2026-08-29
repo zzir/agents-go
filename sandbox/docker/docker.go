@@ -299,7 +299,7 @@ func (s *Sandbox) ensureImage(ctx context.Context) error {
 }
 
 // ensureContainer lazily creates and starts the persistent container, or
-// recreates it if the existing one has exited (e.g. OOM-killed).
+// restarts (failing that, recreates) one that has exited (e.g. OOM-killed).
 //
 // Creation runs while s.mu is held — three daemon round-trips (create, copy,
 // start) under the lock. That is deliberate: it is what guarantees a single
@@ -322,10 +322,10 @@ func (s *Sandbox) ensureContainer(ctx context.Context) (string, error) {
 }
 
 // lookupRunning returns the persistent container's ID when one is known AND
-// still running. A container that is positively gone (inspected: not running,
-// or not found) is force-removed, forgotten, and reported as "" so the caller
-// creates a fresh one. The inspect runs without s.mu: it is a daemon round-trip
-// and every Exec passes through here.
+// still running. A stopped container is restarted in place; only one that is
+// positively gone (not found) or refuses to start is force-removed, forgotten,
+// and reported as "" so the caller creates a fresh one. The inspect runs
+// without s.mu: it is a daemon round-trip and every Exec passes through here.
 func (s *Sandbox) lookupRunning(ctx context.Context) (string, error) {
 	s.mu.Lock()
 	id := s.containerID
@@ -345,6 +345,15 @@ func (s *Sandbox) lookupRunning(ctx context.Context) (string, error) {
 		// workspace volume. Only a positive answer (inspected: not running
 		// / not found) may retire it.
 		return "", fmt.Errorf("inspecting persistent container: %w", err)
+	case err == nil:
+		// Stopped, not gone (docker stop, a daemon restart): start it again —
+		// it is ours by construction (the cached id came from our create or a
+		// fingerprint-verified adopt, §5.19), and a remove would destroy its
+		// installed packages and an anonymous volume's workspace. Only a
+		// failed start falls through to remove+recreate.
+		if _, serr := s.cli.ContainerStart(ctx, id, client.ContainerStartOptions{}); serr == nil {
+			return id, nil
+		}
 	}
 
 	s.mu.Lock()
@@ -741,7 +750,12 @@ func (s *Sandbox) streamEphemeral(ctx context.Context, req sandbox.ExecRequest, 
 	// copyAttached.)
 	_, _ = stdcopy.StdCopy(stdout, stderr, rc)
 
+	// The caller's ending is checked before tctx's, as in execEphemeral — see
+	// spec §2.7m.
 	res := &sandbox.ExecResult{}
+	if cerr := ctx.Err(); cerr != nil {
+		return nil, cerr
+	}
 	if tctx.Err() == context.DeadlineExceeded {
 		res.TimedOut = true
 		res.ExitCode = -1
@@ -749,7 +763,10 @@ func (s *Sandbox) streamEphemeral(ctx context.Context, req sandbox.ExecRequest, 
 		return res, nil
 	}
 
-	wait := s.cli.ContainerWait(ctx, id, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	// The log stream can end early with the process still running (a broken
+	// follow), so the wait rides tctx too: the deadline must still kill the
+	// container and report TimedOut, never hang on the caller's ctx.
+	wait := s.cli.ContainerWait(tctx, id, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
 	select {
 	case status := <-wait.Result:
 		if status.Error != nil {
@@ -757,7 +774,14 @@ func (s *Sandbox) streamEphemeral(ctx context.Context, req sandbox.ExecRequest, 
 		}
 		res.ExitCode = int(status.StatusCode)
 	case werr := <-wait.Error:
-		if werr != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return nil, cerr
+		}
+		if tctx.Err() == context.DeadlineExceeded {
+			res.TimedOut = true
+			res.ExitCode = -1
+			_, _ = s.cli.ContainerKill(context.WithoutCancel(ctx), id, client.ContainerKillOptions{Signal: "KILL"})
+		} else if werr != nil {
 			return nil, fmt.Errorf("docker sandbox: wait: %w", werr)
 		}
 	}

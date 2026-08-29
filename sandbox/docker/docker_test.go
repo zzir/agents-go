@@ -7,7 +7,11 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -326,6 +330,176 @@ func TestDemuxLogs_LateStderrNotStarved(t *testing.T) {
 	if stderr != "boom" {
 		t.Errorf("stderr = %q, want %q (must not be starved by stdout volume)", stderr, "boom")
 	}
+}
+
+// The write-path tar carries ONLY the file: any dir header would be re-applied
+// by the daemon's untar to the already-existing parent, resetting its
+// mode/owner/mtime.
+func TestBuildFileTar_SingleFileEntry(t *testing.T) {
+	r, err := buildFileTar("a.txt", []byte("hi"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, modes, dirs := readTar(t, r)
+	if len(dirs) != 0 {
+		t.Errorf("dir headers in the write tar: %v", dirs)
+	}
+	if len(files) != 1 || files["a.txt"] != "hi" {
+		t.Errorf("files = %v, want only a.txt", files)
+	}
+	if modes["a.txt"] != 0o644 {
+		t.Errorf("mode = %o, want 644", modes["a.txt"])
+	}
+}
+
+// fakeEphemeralDaemon serves the API slice streamEphemeral touches. Its wait
+// endpoint never answers, and its log stream ends early with the container
+// still "running"; kills are recorded.
+func fakeEphemeralDaemon(t *testing.T) (host string, acted *[]string) {
+	t.Helper()
+	var mu sync.Mutex
+	var actions []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := strings.TrimSuffix(r.URL.Path, "/")
+		switch {
+		case strings.HasSuffix(p, "/_ping"):
+			w.Header().Set("API-Version", "1.44")
+		case strings.HasSuffix(p, "/images/img/json"):
+			_, _ = w.Write([]byte("{}"))
+		case strings.HasSuffix(p, "/containers/create"):
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"Id":"cid"}`))
+		case strings.HasSuffix(p, "/containers/cid/archive"),
+			strings.HasSuffix(p, "/containers/cid/start"):
+			w.WriteHeader(http.StatusNoContent)
+		case strings.HasSuffix(p, "/containers/cid/logs"):
+			var mux bytes.Buffer
+			muxWrite(&mux, stdcopy.Stdout, []byte("early"))
+			_, _ = w.Write(mux.Bytes()) // then EOF: the follow broke, the process runs on
+		case strings.HasSuffix(p, "/containers/cid/wait"):
+			<-r.Context().Done() // answers only when the client gives up
+		case strings.HasSuffix(p, "/containers/cid/kill"):
+			mu.Lock()
+			actions = append(actions, "kill")
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodDelete:
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return "tcp://" + srv.Listener.Addr().String(), &actions
+}
+
+// When the follow-log stream ends early with the container still running, the
+// wait must ride the request timeout — killing the container and reporting
+// TimedOut — never hang on the caller's ctx (spec §2.7m).
+func TestStreamEphemeralWaitHonorsTimeout(t *testing.T) {
+	host, acted := fakeEphemeralDaemon(t)
+	sb, err := New(Options{Host: host, Image: "img"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sb.Close() })
+
+	var stdout, stderr strings.Builder
+	start := time.Now()
+	res, err := sb.ExecStream(t.Context(), sandbox.ExecRequest{
+		Cmd:     []string{"sleep", "infinity"},
+		Timeout: 300 * time.Millisecond,
+	}, &stdout, &stderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.TimedOut || res.ExitCode != -1 {
+		t.Errorf("TimedOut = %v, exit = %d; want true, -1", res.TimedOut, res.ExitCode)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("ExecStream took %v; the wait was not bounded by the timeout", elapsed)
+	}
+	if stdout.String() != "early" {
+		t.Errorf("stdout = %q, want the pre-break output", stdout.String())
+	}
+	if !slices.Contains(*acted, "kill") {
+		t.Errorf("actions = %v, want the timed-out container killed", *acted)
+	}
+}
+
+// fakeStoppedDaemon reports the cached container as existing but stopped;
+// startStatus is the start endpoint's answer.
+func fakeStoppedDaemon(t *testing.T, startStatus int) (host string, acted *[]string) {
+	t.Helper()
+	var mu sync.Mutex
+	var actions []string
+	record := func(s string) {
+		mu.Lock()
+		defer mu.Unlock()
+		actions = append(actions, s)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := strings.TrimSuffix(r.URL.Path, "/")
+		switch {
+		case strings.HasSuffix(p, "/_ping"):
+			w.Header().Set("API-Version", "1.44")
+		case strings.HasSuffix(p, "/containers/cid/json"):
+			_, _ = w.Write([]byte(`{"Id":"cid","State":{"Running":false}}`))
+		case strings.HasSuffix(p, "/containers/cid/start"):
+			record("start")
+			w.WriteHeader(startStatus)
+		case r.Method == http.MethodDelete:
+			record("remove")
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return "tcp://" + srv.Listener.Addr().String(), &actions
+}
+
+// A cached container that turns out merely STOPPED (docker stop, an admin
+// panel, a daemon restart) is started again in place: remove+recreate would
+// destroy its installed packages — and, on an anonymous volume, the whole
+// workspace. Only a failed start falls back to remove+recreate.
+func TestLookupRunningRestartsStoppedContainer(t *testing.T) {
+	t.Run("start succeeds", func(t *testing.T) {
+		host, acted := fakeStoppedDaemon(t, http.StatusNoContent)
+		sb, err := New(Options{Host: host, Image: "img", Persistent: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sb.containerID = "cid"
+		id, err := sb.lookupRunning(t.Context())
+		if err != nil || id != "cid" {
+			t.Fatalf("lookupRunning = %q, %v; want cid, nil", id, err)
+		}
+		if want := []string{"start"}; !slices.Equal(*acted, want) {
+			t.Errorf("actions = %v, want %v (no remove)", *acted, want)
+		}
+		if sb.containerID != "cid" {
+			t.Errorf("containerID = %q, want kept", sb.containerID)
+		}
+	})
+	t.Run("start fails", func(t *testing.T) {
+		host, acted := fakeStoppedDaemon(t, http.StatusInternalServerError)
+		sb, err := New(Options{Host: host, Image: "img", Persistent: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sb.containerID = "cid"
+		id, err := sb.lookupRunning(t.Context())
+		if err != nil || id != "" {
+			t.Fatalf("lookupRunning = %q, %v; want a forgotten container", id, err)
+		}
+		if want := []string{"start", "remove"}; !slices.Equal(*acted, want) {
+			t.Errorf("actions = %v, want %v", *acted, want)
+		}
+		if sb.containerID != "" {
+			t.Errorf("containerID = %q, want cleared", sb.containerID)
+		}
+	})
 }
 
 // A published port is part of what a persistent container IS: changing the
