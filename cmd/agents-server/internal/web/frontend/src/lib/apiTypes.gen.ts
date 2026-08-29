@@ -3832,7 +3832,7 @@ export interface paths {
         put?: never;
         /**
          * Create sandbox
-         * @description type "docker" config: host ("" = local daemon, tcp://, or ssh://user@host with ssh_* auth), image (required), runtime, user ("" = root), network (docker network name; "" = no network), memory_mb/cpus caps, max_read_file_bytes. type "e2b" config: api_url, domain, api_key, data_plane_auth, template_id (required — build it on the service first), timeout_seconds, auto_pause, allow_internet, max_read_file_bytes. ssh_password and api_key are write-only, ******** mask semantics.
+         * @description type "docker" config: host ("" = local daemon, tcp://, or ssh://user@host with ssh_* auth), image (required), runtime, user ("" = root), network (docker network name; "" = no network), memory_mb/cpus caps, max_read_file_bytes. type "e2b" config: api_url, domain, api_key, data_plane_auth, template_id (required — build it on the service first), timeout_seconds, auto_pause, allow_internet, max_read_file_bytes. ssh_password and api_key are write-only, ******** mask semantics. Every returned row carries "supports" — the type's capability flags (rebuild, any_port, public_ports), derived and read-only.
          */
         post: {
             parameters: {
@@ -8248,9 +8248,25 @@ export interface components {
              *     on every project that names this sandbox.
              */
             revision?: number;
-            /** @description Type is the backend: "docker" or "e2b". */
+            supports?: components["schemas"]["store.SandboxSupports"];
+            /** @description Type is the backend — one of SandboxTypes. */
             type?: string;
             updated_at?: string;
+        };
+        /**
+         * @description Supports is the type's capability row, derived per response (never
+         *     stored) — see SandboxSupports.
+         */
+        "store.SandboxSupports": {
+            /** @description AnyPort: the preview reaches any port, with no declared list. */
+            any_port?: boolean;
+            /**
+             * @description PublicPorts: a previewed port is served from a PUBLIC host — anyone
+             *     with the URL reaches it.
+             */
+            public_ports?: boolean;
+            /** @description Rebuild: the compute can be thrown away in place, keeping the storage. */
+            rebuild?: boolean;
         };
         "store.Session": {
             agent_config_id?: string;

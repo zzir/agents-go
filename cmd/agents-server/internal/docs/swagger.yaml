@@ -1889,11 +1889,31 @@ components:
             project's (decisions §5.33), and a content change to this row bumps it
             on every project that names this sandbox.
           type: integer
+        supports:
+          $ref: '#/components/schemas/store.SandboxSupports'
         type:
-          description: 'Type is the backend: "docker" or "e2b".'
+          description: Type is the backend — one of SandboxTypes.
           type: string
         updated_at:
           type: string
+      type: object
+    store.SandboxSupports:
+      description: |-
+        Supports is the type's capability row, derived per response (never
+        stored) — see SandboxSupports.
+      properties:
+        any_port:
+          description: 'AnyPort: the preview reaches any port, with no declared list.'
+          type: boolean
+        public_ports:
+          description: |-
+            PublicPorts: a previewed port is served from a PUBLIC host — anyone
+            with the URL reaches it.
+          type: boolean
+        rebuild:
+          description: 'Rebuild: the compute can be thrown away in place, keeping
+            the storage.'
+          type: boolean
       type: object
     store.Session:
       properties:
@@ -4739,7 +4759,8 @@ paths:
         type "e2b" config: api_url, domain, api_key, data_plane_auth, template_id
         (required — build it on the service first), timeout_seconds, auto_pause, allow_internet,
         max_read_file_bytes. ssh_password and api_key are write-only, ******** mask
-        semantics.'
+        semantics. Every returned row carries "supports" — the type''s capability
+        flags (rebuild, any_port, public_ports), derived and read-only.'
       requestBody:
         content:
           application/json:

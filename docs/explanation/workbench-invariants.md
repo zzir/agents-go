@@ -825,3 +825,21 @@ When a change genuinely doesn't fit, update this list in the same PR.
     409. Reassigning a session must never be the act that hands one member's
     files and secrets to another; an admin manages the plane, they do not
     redistribute its contents.
+
+53. **A sandbox type's semantics live in the store's kind descriptor; the UI
+    offers capabilities from `supports`, never by sniffing `type`.** Every
+    per-type answer — content/destination/identity comparison, declared
+    ports, the freeze message, the storage hint, the capability flags — comes
+    from `sandboxKinds` in store/sandbox.go; a binary type branch anywhere
+    else gives a WRONG answer for a third backend, not an error (the inverted
+    ports check and the decode-as-the-other-type destination were real).
+    Every sandbox API row carries `supports` (`rebuild`, `any_port`,
+    `public_ports`), derived per type in `sanitizeSandboxConfig` — never
+    stored, never client-writable — and the frontend keys Rebuild, the ports
+    field, the public-URL warning and the default sandbox pick off it (the
+    per-type CONFIG form in SandboxPanel is the one legitimate type switch).
+    exec_command advertises `session_id` only when the built sandbox
+    implements `TerminalOpener` (spec §2.7k). Adding backend #3 is then: a
+    descriptor entry, a `Backend` registry entry, a config struct +
+    `NormalizeSandboxConfig` case, secret key names, and a form panel — no
+    hunt for scattered branches.

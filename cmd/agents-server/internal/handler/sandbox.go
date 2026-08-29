@@ -134,7 +134,7 @@ func (h *SandboxHandler) validate(c *gin.Context, req *sandboxReq) bool {
 // Create persists a new sandbox from the request body.
 //
 //	@Summary		Create sandbox
-//	@Description	type "docker" config: host ("" = local daemon, tcp://, or ssh://user@host with ssh_* auth), image (required), runtime, user ("" = root), network (docker network name; "" = no network), memory_mb/cpus caps, max_read_file_bytes. type "e2b" config: api_url, domain, api_key, data_plane_auth, template_id (required — build it on the service first), timeout_seconds, auto_pause, allow_internet, max_read_file_bytes. ssh_password and api_key are write-only, ******** mask semantics.
+//	@Description	type "docker" config: host ("" = local daemon, tcp://, or ssh://user@host with ssh_* auth), image (required), runtime, user ("" = root), network (docker network name; "" = no network), memory_mb/cpus caps, max_read_file_bytes. type "e2b" config: api_url, domain, api_key, data_plane_auth, template_id (required — build it on the service first), timeout_seconds, auto_pause, allow_internet, max_read_file_bytes. ssh_password and api_key are write-only, ******** mask semantics. Every returned row carries "supports" — the type's capability flags (rebuild, any_port, public_ports), derived and read-only.
 //	@Tags			sandboxes
 //	@Accept			json
 //	@Produce		json
@@ -269,11 +269,8 @@ func (h *SandboxHandler) Update(c *gin.Context) {
 			return
 		}
 		if projects > 0 {
-			frozen := "its type and machine are frozen — the image, the limits, the credential and the name stay editable"
-			if prev.Type == "e2b" {
-				frozen = "its type, service address, template and lifecycle (auto-pause, internet) are frozen — the api key, timeout, read limit and name stay editable"
-			}
-			conflict(c, fmt.Sprintf("%d project(s) live on this sandbox; %s, or create a new sandbox for the new location", projects, frozen))
+			conflict(c, fmt.Sprintf("%d project(s) live on this sandbox; %s, or create a new sandbox for the new location",
+				projects, store.SandboxFrozenFields(prev.Type)))
 			return
 		}
 	} else if err := h.store.Update(ctx, id, sb, expected); err != nil {

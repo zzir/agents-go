@@ -604,8 +604,9 @@ const (
 // instance that the returned release drops (see Acquire — the caller releases
 // when the run using the tools is over). apply_patch (Codex-style multi-file
 // edits) and the file tools all edit through the same Sandbox, so they target
-// the same filesystem exec_command runs in. Every container is persistent, so
-// exec_command always offers named shells (session_id); they are scoped to
+// the same filesystem exec_command runs in. exec_command offers named shells
+// (session_id) when the built sandbox can hold a PTY open (both current
+// backends can); they are scoped to
 // this toolset, so the release also closes any the run opened. When
 // commandApproval is set, exec_command is gated per call through the session
 // command-trust store: a command is approved on first use, then trusted per
@@ -617,7 +618,9 @@ func (m *Manager) SandboxTools(spec Spec, commandApproval bool) ([]*agents.Tool,
 	}
 	codeCfg := sandbox.CodeToolConfig{MaxOutputBytes: execToolMaxOutputBytes, Description: execToolDescription(spec)}
 	var pools []io.Closer
-	codeCfg.Sessions = true
+	// The schema advertises session_id only when the backend can actually hold
+	// a shell open — spec §2.7k's conditional-schema rule.
+	_, codeCfg.Sessions = sb.(sandbox.TerminalOpener)
 	codeCfg.RegisterCloser = func(c io.Closer) { pools = append(pools, c) }
 	if commandApproval {
 		codeCfg.NeedsApprovalFunc = m.commandGate

@@ -769,6 +769,13 @@ Built-in: `content_filter` (input + tool_input, regex — jailbreak keywords),
 A **sandbox** is one row: WHERE it runs and WHAT runs on it. A project names
 one (decisions §5.36). Two types: `docker` and `e2b`.
 
+Every returned row carries `supports` — the type's capability flags, derived
+and read-only: `rebuild` (the container can be replaced while the working
+tree survives), `any_port` (preview reaches any port; there is no declared
+ports list), `public_ports` (a previewed port is served on a public host —
+anyone with the URL). Clients offer actions from these flags, never from the
+`type` string (workbench invariant 53).
+
 For `e2b` — any service speaking the E2B API: E2B's own cloud, a self-hosted
 E2B, or a compatible service such as Alibaba Cloud's Function Compute cloud
 sandbox (decisions §5.34) — the config is `api_url` (control plane; empty =

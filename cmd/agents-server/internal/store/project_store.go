@@ -152,9 +152,10 @@ var ErrPortsUnsupported = errors.New("this sandbox type does not support publish
 
 // checkPortsSupported gates published ports by the sandbox's type, read from
 // the row locked in the write's transaction so the answer cannot race a type
-// change.
+// change. The zero-value map read is deliberate: a type without declaredPorts
+// — unknown included — refuses, never keeps a phantom port list.
 func checkPortsSupported(sandboxType, portsJSON string) error {
-	if sandboxType != "e2b" {
+	if sandboxKinds[sandboxType].declaredPorts {
 		return nil
 	}
 	if ports, _ := DecodeProjectPorts(portsJSON); len(ports) > 0 {

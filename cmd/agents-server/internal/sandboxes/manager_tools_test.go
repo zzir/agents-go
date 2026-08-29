@@ -21,26 +21,31 @@ func execTool(t *testing.T, tools []*agents.Tool) *agents.Tool {
 	return nil
 }
 
-// exec_command always advertises session_id: every container is persistent,
-// so a named shell can be held open on any sandbox.
-func TestSandboxToolsSessionSchemaPerBackend(t *testing.T) {
+// terminalSandbox is closeCountingSandbox plus a TerminalOpener, matching the
+// real backends — SandboxTools gates named shells on that capability.
+type terminalSandbox struct{ closeCountingSandbox }
+
+func (*terminalSandbox) OpenTerminal(context.Context, sandbox.TerminalOptions) (sandbox.Terminal, error) {
+	return nil, sandbox.ErrTerminalUnsupported
+}
+
+// exec_command advertises session_id only when the built sandbox can hold a
+// shell open (TerminalOpener) — a PTY-less backend gets the honest schema
+// (spec §2.7k).
+func TestSandboxToolsSessionSchemaByCapability(t *testing.T) {
 	cases := []struct {
 		name string
-		host string
+		sb   sandbox.Sandbox
 		want bool
 	}{
-		{"local daemon", "", true},
-		{"remote daemon", "ssh://u@h", true},
+		{"terminal-capable", &terminalSandbox{}, true},
+		{"pty-less", &closeCountingSandbox{}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			m := NewManager()
-			m.buildOverride = func(Spec) (sandbox.Sandbox, error) {
-				return &closeCountingSandbox{}, nil
-			}
-			spec := testSpec("p")
-			spec.Sandbox.Config = json.RawMessage(`{"host":"` + tc.host + `","image":"i"}`)
-			tools, release, err := m.SandboxTools(spec, false)
+			m.buildOverride = func(Spec) (sandbox.Sandbox, error) { return tc.sb, nil }
+			tools, release, err := m.SandboxTools(testSpec("p"), false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -62,7 +67,7 @@ func TestSandboxToolsSessionSchemaPerBackend(t *testing.T) {
 func TestSandboxToolsReleaseClosesSessionPool(t *testing.T) {
 	m := NewManager()
 	m.buildOverride = func(Spec) (sandbox.Sandbox, error) {
-		return &closeCountingSandbox{}, nil
+		return &terminalSandbox{}, nil
 	}
 	tools, release, err := m.SandboxTools(testSpec("p"), false)
 	if err != nil {

@@ -6,21 +6,105 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect"
+
+	e2bsb "github.com/zzir/agents-go/sandbox/e2b"
 )
 
 // This file is the single home of sandbox semantics: what a payload must
 // contain to be storable (NormalizeSandboxConfig), when two payloads mean the
 // same runtime content (SandboxContentEqual), and when an update moves the
-// sandbox's identity (SandboxIdentityChanged). All three decode through the
-// same typed config and the same canonicalizer, so a question answered one way
-// at save time cannot be answered another way at compare time.
+// sandbox's identity (SandboxIdentityChanged). Every other per-type question
+// — ports, capabilities, freeze messages, storage hints — is a sandboxKinds
+// row, so a new backend is one entry here plus its sandboxes.Backend.
 
-// SandboxTypes are the backends a sandbox may name.
-var SandboxTypes = []string{"docker", "e2b"}
+// sandboxKind is one backend type's semantics. Each field answers exactly one
+// question; the exported functions below route through it.
+type sandboxKind struct {
+	contentEqual func(a, b json.RawMessage) bool           // see SandboxContentEqual
+	destination  func(raw json.RawMessage) (string, error) // see destinationOf
+	identity     func(raw json.RawMessage) (string, error) // see identityOf
+	// declaredPorts: projects on this type declare their published ports;
+	// false refuses a declared list (checkPortsSupported).
+	declaredPorts bool
+	// frozenFields finishes the identity-conflict 409: what freezes while
+	// projects live on the sandbox, and what stays editable.
+	frozenFields string
+	// storageWhere is the per-sandbox half of a storage hint (see
+	// SandboxStorageWhere).
+	storageWhere func(raw json.RawMessage) string
+	supports     SandboxSupports
+}
+
+// SandboxSupports is a type's capability row, carried on every sandbox the
+// API returns — derived from the type, read-only.
+type SandboxSupports struct {
+	// Rebuild: the compute can be thrown away in place, keeping the storage.
+	Rebuild bool `json:"rebuild"`
+	// AnyPort: the preview reaches any port, with no declared list.
+	AnyPort bool `json:"any_port"`
+	// PublicPorts: a previewed port is served from a PUBLIC host — anyone
+	// with the URL reaches it.
+	PublicPorts bool `json:"public_ports"`
+}
+
+var sandboxKinds = map[string]sandboxKind{
+	"docker": {
+		contentEqual:  func(a, b json.RawMessage) bool { return canonicalEqual(a, b, func(*DockerConfig) {}) },
+		destination:   dockerDestination,
+		identity:      dockerDestination, // nothing beyond the destination freezes
+		declaredPorts: true,
+		frozenFields:  "its type and machine are frozen — the image, the limits, the credential and the name stay editable",
+		storageWhere:  dockerStorageWhere,
+		supports:      SandboxSupports{Rebuild: true},
+	},
+	"e2b": {
+		contentEqual: func(a, b json.RawMessage) bool { return canonicalEqual(a, b, func(*E2BConfig) {}) },
+		destination:  e2bDestination,
+		identity:     e2bIdentity,
+		frozenFields: "its type, service address, template and lifecycle (auto-pause, internet) are frozen — the api key, timeout, read limit and name stay editable",
+		storageWhere: e2bStorageWhere,
+		supports:     SandboxSupports{AnyPort: true, PublicPorts: true},
+	},
+}
+
+// kindOf resolves a type's descriptor. An unknown type panics:
+// NormalizeSandboxConfig refuses to store one, so reaching here with it is a
+// programming error a quiet per-type default would answer wrongly.
+func kindOf(typ string) sandboxKind {
+	k, ok := sandboxKinds[typ]
+	if !ok {
+		panic(fmt.Sprintf("store: unknown sandbox type %q", typ))
+	}
+	return k
+}
+
+// SandboxTypes are the backends a sandbox may name — the descriptor map's
+// keys, in stable order.
+var SandboxTypes = slices.Sorted(maps.Keys(sandboxKinds))
+
+// SandboxSupportsFor is the capability row for a type.
+func SandboxSupportsFor(typ string) SandboxSupports {
+	return kindOf(typ).supports
+}
+
+// SandboxFrozenFields names, for the identity-conflict refusal, what freezes
+// on this type while projects live on the sandbox and what stays editable.
+func SandboxFrozenFields(typ string) string {
+	return kindOf(typ).frozenFields
+}
+
+// SandboxStorageWhere names WHERE a project's files live on this sandbox: the
+// daemon address for docker, "sandbox on <service>" where the instance IS the
+// storage. An undecodable config falls back to the type's zero config.
+func SandboxStorageWhere(sb *Sandbox) string {
+	return kindOf(sb.Type).storageWhere(sb.Config)
+}
 
 // NormalizeSandboxConfig strictly decodes raw and returns the canonical
 // payload to store. It gates the API write path: a payload that decodes here
@@ -81,7 +165,7 @@ func NormalizeSandboxConfig(typ string, raw json.RawMessage) (json.RawMessage, e
 		}
 		return json.Marshal(ec)
 	default:
-		return nil, fmt.Errorf("sandbox type must be docker or e2b, got %q", typ)
+		return nil, fmt.Errorf("sandbox type must be one of %s, got %q", strings.Join(SandboxTypes, ", "), typ)
 	}
 }
 
@@ -92,10 +176,7 @@ func NormalizeSandboxConfig(typ string, raw json.RawMessage) (json.RawMessage, e
 // fields, unknown keys — from tearing down a container; a payload that cannot
 // decode compares UNEQUAL, the safe side.
 func SandboxContentEqual(typ string, a, b json.RawMessage) bool {
-	if typ == "e2b" {
-		return canonicalEqual(a, b, func(*E2BConfig) {})
-	}
-	return canonicalEqual(a, b, func(*DockerConfig) {})
+	return kindOf(typ).contentEqual(a, b)
 }
 
 // SandboxIdentityChanged reports whether an update moves the sandbox's
@@ -140,13 +221,17 @@ func SandboxDestinationChanged(typ string, prev, incoming json.RawMessage) bool 
 // — live at: the daemon host for docker, the control plane AND the public-host
 // domain for e2b (both, so a domain-only move is still a move).
 func destinationOf(typ string, raw json.RawMessage) (string, error) {
-	if typ == "e2b" {
-		var ec E2BConfig
-		if err := unmarshalConfigJSON(raw, &ec); err != nil {
-			return "", err
-		}
-		return jsonKey(ec.APIURL, ec.Domain), nil
-	}
+	return kindOf(typ).destination(raw)
+}
+
+// identityOf is the destination plus, for e2b, the fields a resume cannot
+// change on an existing sandbox — so a referenced sandbox freezes them rather
+// than accept an edit that silently never applies.
+func identityOf(typ string, raw json.RawMessage) (string, error) {
+	return kindOf(typ).identity(raw)
+}
+
+func dockerDestination(raw json.RawMessage) (string, error) {
 	var dc DockerConfig
 	if err := unmarshalConfigJSON(raw, &dc); err != nil {
 		return "", err
@@ -154,18 +239,41 @@ func destinationOf(typ string, raw json.RawMessage) (string, error) {
 	return jsonKey(dc.Host), nil
 }
 
-// identityOf is the destination plus, for e2b, the fields a resume cannot
-// change on an existing sandbox — so a referenced sandbox freezes them rather
-// than accept an edit that silently never applies.
-func identityOf(typ string, raw json.RawMessage) (string, error) {
-	if typ != "e2b" {
-		return destinationOf(typ, raw)
+func e2bDestination(raw json.RawMessage) (string, error) {
+	var ec E2BConfig
+	if err := unmarshalConfigJSON(raw, &ec); err != nil {
+		return "", err
 	}
+	return jsonKey(ec.APIURL, ec.Domain), nil
+}
+
+func e2bIdentity(raw json.RawMessage) (string, error) {
 	var ec E2BConfig
 	if err := unmarshalConfigJSON(raw, &ec); err != nil {
 		return "", err
 	}
 	return jsonKey(ec.APIURL, ec.Domain, ec.TemplateID, ec.AutoPause, ec.AllowInternet), nil
+}
+
+// The storageWhere pair ignores decode errors deliberately: a hint is
+// best-effort and the zero config still names the right service.
+func dockerStorageWhere(raw json.RawMessage) string {
+	var dc DockerConfig
+	_ = json.Unmarshal(raw, &dc)
+	if dc.Host == "" {
+		return "the local daemon"
+	}
+	return dc.Host
+}
+
+func e2bStorageWhere(raw json.RawMessage) string {
+	var ec E2BConfig
+	_ = json.Unmarshal(raw, &ec)
+	host := ec.APIURL
+	if host == "" {
+		host = e2bsb.DefaultAPIURL
+	}
+	return "sandbox on " + host
 }
 
 // jsonKey renders fields as a self-delimiting equality key: JSON quotes and

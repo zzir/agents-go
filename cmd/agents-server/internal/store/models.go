@@ -445,7 +445,7 @@ type Sandbox struct {
 
 	ID   string `bun:"id,pk,type:uuid" json:"id"`
 	Name string `bun:"name,notnull" json:"name"`
-	// Type is the backend: "docker" or "e2b".
+	// Type is the backend — one of SandboxTypes.
 	Type string `bun:"type,notnull" json:"type"`
 
 	// Config holds the settings as JSON (DockerConfig or E2BConfig). Stored
@@ -465,6 +465,10 @@ type Sandbox struct {
 
 	CreatedAt time.Time `bun:"created_at,notnull" json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,notnull" json:"updated_at"`
+
+	// Supports is the type's capability row, derived per response (never
+	// stored) — see SandboxSupports.
+	Supports SandboxSupports `bun:"-" json:"supports"`
 }
 
 // DockerConfig is the Sandbox.Config payload for type "docker". The first

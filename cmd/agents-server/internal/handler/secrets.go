@@ -257,10 +257,11 @@ func maskAcrossDestination(incoming, prev json.RawMessage, field string) bool {
 	return is != os
 }
 
-// sanitizeSandboxConfig returns sb with its credential masked: an SSH
-// password, or a service's API key.
+// sanitizeSandboxConfig returns sb shaped for a response: the credential (an
+// SSH password, or a service's API key) masked, the type's supports filled.
 func sanitizeSandboxConfig(sb store.Sandbox) store.Sandbox {
 	sb.Config = maskJSONFields(sb.Config, false, sandboxSecretFields...)
+	sb.Supports = store.SandboxSupportsFor(sb.Type)
 	return sb
 }
 

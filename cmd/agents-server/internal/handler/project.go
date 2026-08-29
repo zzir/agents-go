@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,7 +15,6 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
-	e2bsb "github.com/zzir/agents-go/sandbox/e2b"
 )
 
 // ProjectHandler manages projects — per-user working trees on a sandbox
@@ -221,7 +219,7 @@ func (h *ProjectHandler) storageHint(c *gin.Context, hints map[string]string, p 
 		if err != nil {
 			return ""
 		}
-		where = sandboxStorageWhere(sb)
+		where = store.SandboxStorageWhere(sb)
 		hints[p.SandboxID] = where
 	}
 	if strings.HasPrefix(where, "sandbox on ") {
@@ -232,26 +230,6 @@ func (h *ProjectHandler) storageHint(c *gin.Context, hints map[string]string, p 
 		return ref + " — a " + where
 	}
 	return "docker volume " + sandboxes.ProjectVolumeName(p.ID) + " on " + where
-}
-
-// sandboxStorageWhere is the per-sandbox half of a storage hint: a daemon
-// address for docker, the service for anything whose instance IS the storage.
-func sandboxStorageWhere(sb *store.Sandbox) string {
-	if sb.Type != "docker" {
-		var ec store.E2BConfig
-		_ = json.Unmarshal(sb.Config, &ec)
-		host := ec.APIURL
-		if host == "" {
-			host = e2bsb.DefaultAPIURL
-		}
-		return "sandbox on " + host
-	}
-	var dc store.DockerConfig
-	_ = json.Unmarshal(sb.Config, &dc)
-	if dc.Host == "" {
-		return "the local daemon"
-	}
-	return dc.Host
 }
 
 type projectReq struct {
