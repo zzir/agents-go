@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect"
 
 	"github.com/zzir/agents-go/agents/session"
 )
@@ -175,11 +176,14 @@ func (s *SessionStore) BindAgentIfEmpty(ctx context.Context, id, agentConfigID s
 // the bind, so the winner (and only the winner) can announce it; a caller that
 // lost re-reads the session to adopt the standing value.
 //
-// The EXISTS predicate makes "the project is still there" part of the same
-// atomic statement, so a concurrent delete cannot bind the session to a
-// vanished row. Nothing else needs pinning: a project's owner and target are
-// immutable (decisions §5.33), and its template and environment are content
-// that reaches the session at its next run.
+// "The project is still there" is checked inside the write, so a concurrent
+// delete cannot bind the session to a vanished row: SQLite's single writer
+// makes the EXISTS predicate atomic with the update; PostgreSQL locks the
+// project row FOR KEY SHARE first, pinning its existence until commit
+// (ProjectStore.DeleteIfUnreferenced takes FOR UPDATE on the same row).
+// Nothing else needs pinning: a project's owner and target are immutable
+// (decisions §5.33), and its template and environment are content that
+// reaches the session at its next run.
 //
 // An empty projectID binds nothing (a run without a project leaves the session
 // bindable later). A missing session is (false, nil) — the caller's own
@@ -189,14 +193,39 @@ func (s *SessionStore) BindProjectIfEmpty(ctx context.Context, id, projectID str
 	if projectID == "" {
 		return false, nil
 	}
-	res, err := s.db.NewUpdate().Model((*Session)(nil)).
-		Set("project_id = ?", projectID).
-		Where("id = ?", id).
-		Where("project_id IS NULL").
-		Where("EXISTS (SELECT 1 FROM projects WHERE id = ?)", projectID).
-		Exec(ctx)
+	var res sql.Result
+	var err error
+	if s.db.Dialect().Name() == dialect.PG {
+		err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+			var pid string
+			lerr := tx.NewSelect().Model((*Project)(nil)).Column("id").
+				Where("id = ?", projectID).For("KEY SHARE").Scan(ctx, &pid)
+			if errors.Is(lerr, sql.ErrNoRows) {
+				return nil // no project row: bind nothing (res stays nil)
+			}
+			if lerr != nil {
+				return lerr
+			}
+			res, lerr = tx.NewUpdate().Model((*Session)(nil)).
+				Set("project_id = ?", projectID).
+				Where("id = ?", id).
+				Where("project_id IS NULL").
+				Exec(ctx)
+			return lerr
+		})
+	} else {
+		res, err = s.db.NewUpdate().Model((*Session)(nil)).
+			Set("project_id = ?", projectID).
+			Where("id = ?", id).
+			Where("project_id IS NULL").
+			Where("EXISTS (SELECT 1 FROM projects WHERE id = ?)", projectID).
+			Exec(ctx)
+	}
 	if err != nil {
 		return false, fmt.Errorf("binding session %s to project %s: %w", id, projectID, err)
+	}
+	if res == nil {
+		return false, nil // the project vanished before the lock
 	}
 	n, err := res.RowsAffected()
 	if err != nil {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect"
 )
 
 // ProjectStore persists projects — per-user working trees on a sandbox
@@ -270,13 +271,40 @@ func (s *ProjectStore) List(ctx context.Context, ownerID string) ([]Project, err
 	return out, nil
 }
 
-// DeleteIfUnreferenced deletes the project only while no session binds it —
-// one atomic statement, the same race-free guard a target delete uses
-// (mirrored by BindProjectIfEmpty's EXISTS on this table). It returns how
-// many sessions blocked the delete; 0 with a nil error means deleted.
-// Reclaiming the storage is the caller's act, once the row is gone
-// (decisions §5.33).
+// DeleteIfUnreferenced deletes the project only while no session binds it:
+// SQLite's single writer makes the in-statement NOT EXISTS guard atomic;
+// PostgreSQL locks the project row FOR UPDATE — which serializes against
+// BindProjectIfEmpty's FOR KEY SHARE on the same row — then re-reads the
+// guard in a fresh statement. It returns how many sessions blocked the
+// delete; 0 with a nil error means deleted. Reclaiming the storage is the
+// caller's act, once the row is gone (decisions §5.33).
 func (s *ProjectStore) DeleteIfUnreferenced(ctx context.Context, id string) (refs int, err error) {
+	if s.db.Dialect().Name() == dialect.PG {
+		err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+			var pid string
+			lerr := tx.NewSelect().Model((*Project)(nil)).Column("id").
+				Where("id = ?", id).For("UPDATE").Scan(ctx, &pid)
+			if errors.Is(lerr, sql.ErrNoRows) {
+				return fmt.Errorf("deleting project %s: %w", id, ErrNotFound)
+			}
+			if lerr != nil {
+				return lerr
+			}
+			n, cerr := tx.NewSelect().Model((*Session)(nil)).Where("project_id = ?", id).Count(ctx)
+			if cerr != nil {
+				return fmt.Errorf("counting sessions on project %s: %w", id, cerr)
+			}
+			if n > 0 {
+				refs = n
+				return nil
+			}
+			if _, derr := tx.NewDelete().Model((*Project)(nil)).Where("id = ?", id).Exec(ctx); derr != nil {
+				return fmt.Errorf("deleting project %s: %w", id, derr)
+			}
+			return nil
+		})
+		return refs, err
+	}
 	res, err := s.db.NewDelete().Model((*Project)(nil)).
 		Where("id = ?", id).
 		Where("NOT EXISTS (SELECT 1 FROM sessions WHERE project_id = ?)", id).

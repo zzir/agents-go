@@ -820,11 +820,18 @@ re-check: the id only ever came from our own create or a verified adopt, and
 ids, unlike names, cannot change hands. /tmp is a tmpfs capped at 1g
 (RAM-backed — size accordingly).
 
-Deletion contracts settle in SQL: the bind CAS carries an EXISTS on the
-project row, a project delete carries NOT EXISTS over bound sessions, and a
-target delete carries NOT EXISTS over project rows (revised 2026-08-28: the
-old cascade is gone — a project delete now reclaims storage, so cascading one
-would destroy working trees as a side effect of removing a machine). The
+Deletion contracts settle in SQL, per dialect (revised 2026-08-29): on
+SQLite the single writer makes the in-statement guards atomic — the bind
+CAS's EXISTS on the project row, the project delete's NOT EXISTS over bound
+sessions, the target delete's NOT EXISTS over project rows. On PostgreSQL,
+where READ COMMITTED lets two such single-statement guards commit as write
+skew, each write first locks the parent row — the bind takes FOR KEY SHARE on
+the project row, the project delete FOR UPDATE on its own row, the sandbox
+guarded writes FOR UPDATE on the sandbox row (the lock a project create
+takes) — and re-evaluates its guard in a fresh statement under the lock.
+(Revised 2026-08-28: the old cascade is gone — a project delete now reclaims
+storage, so cascading one would destroy working trees as a side effect of
+removing a machine.) The
 project create locks both the target and the template row for the insert's
 duration, so a racing delete of either arrives first and refuses the create —
 never an orphan. **A project delete DESTROYS its storage** (revised

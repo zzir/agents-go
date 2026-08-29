@@ -10,8 +10,8 @@ import (
 )
 
 // createSandboxRow persists a sandbox under the given id.
-// BindProjectIfEmpty refuses a bind whose project is gone (the EXISTS
-// predicate), so binding tests must create what they bind.
+// BindProjectIfEmpty refuses a bind whose project is gone (the in-write
+// existence guard), so binding tests must create what they bind.
 func createSandboxRow(t *testing.T, db *bun.DB, id string) {
 	t.Helper()
 	sb := &Sandbox{ID: id, Name: id, Type: "docker", Config: []byte(`{"host":"ssh://u@h","image":"i"}`)}
@@ -21,7 +21,7 @@ func createSandboxRow(t *testing.T, db *bun.DB, id string) {
 }
 
 // createProjectRow persists a project on the given sandbox — a bind's project
-// must exist (the EXISTS guard mirrors ProjectStore.DeleteIfUnreferenced).
+// must exist (the existence guard mirrors ProjectStore.DeleteIfUnreferenced).
 func createProjectRow(t *testing.T, db *bun.DB, id, sandboxID string) {
 	t.Helper()
 	p := &Project{ID: id, OwnerID: LocalUserID, SandboxID: sandboxID, Name: id}
@@ -183,7 +183,7 @@ func TestCountProjectRefs(t *testing.T) {
 	}
 }
 
-// The EXISTS predicate: a bind whose project vanished between the caller's
+// The in-write existence guard: a bind whose project vanished between the caller's
 // validation and the write must lose, not point the session at nothing
 // forever — the caller's re-plan then reports the project as missing.
 func TestBindProjectRefusesVanishedTarget(t *testing.T) {

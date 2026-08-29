@@ -345,8 +345,10 @@ When a change genuinely doesn't fit, update this list in the same PR.
     land — a run refused as busy/deleting/draining has NOT silently fixed the
     session's file system context (`hub.unregister` withdraws a registration
     whose bind failed). The binding's target is protected in both directions,
-    atomically: the delete refusals live in the delete statements themselves
-    and the bind carries the mirror `EXISTS` guard over the project row (the
+    atomically: on SQLite the delete refusals live in the delete statements
+    themselves and the bind carries the mirror `EXISTS` guard over the project
+    row; on PostgreSQL each write locks the parent row first and re-reads its
+    guard under the lock ([decisions §5.28](decisions.md)) (the
     operational surface is [Sandboxes](../reference/protocol.md#sandboxes--apiv1sandboxes) and
     [Projects](../reference/protocol.md#projects--apiv1projects)); a project create
     locks the sandbox row so a racing delete refuses the create; and an update

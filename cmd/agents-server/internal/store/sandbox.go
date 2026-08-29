@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect"
 )
 
 // This file is the single home of sandbox semantics: what a payload must
@@ -205,11 +206,29 @@ func (s *SandboxStore) Create(ctx context.Context, sb *Sandbox) error {
 }
 
 // noProjectsOnSandbox is the guard the identity update and the delete share:
-// no project's tree lives on this sandbox. It sits in the statement's WHERE
-// clause, not in a prior read, so a project create landing concurrently loses
-// to the database's serialization instead of slipping through a
-// check-then-act window.
+// no project's tree lives on this sandbox. In the statement's WHERE clause it
+// is atomic only under SQLite's single writer; the PostgreSQL paths instead
+// lock the sandbox row FOR UPDATE and re-read the guard (pgGuardSandbox).
 const noProjectsOnSandbox = "NOT EXISTS (SELECT 1 FROM projects WHERE sandbox_id = ?)"
+
+// pgGuardSandbox locks the sandbox row FOR UPDATE — the lock project
+// Create/Update take on it — and returns its revision and how many projects
+// live on it, both read fresh under the lock. ErrNotFound when the row is gone.
+func pgGuardSandbox(ctx context.Context, tx bun.Tx, id string) (revision int64, projects int, err error) {
+	err = tx.NewSelect().Model((*Sandbox)(nil)).Column("revision").
+		Where("id = ?", id).For("UPDATE").Scan(ctx, &revision)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, 0, ErrNotFound
+	}
+	if err != nil {
+		return 0, 0, err
+	}
+	projects, err = tx.NewSelect().Model((*Project)(nil)).Where("sandbox_id = ?", id).Count(ctx)
+	if err != nil {
+		return 0, 0, fmt.Errorf("counting projects on sandbox %s: %w", id, err)
+	}
+	return revision, projects, nil
+}
 
 // Update overwrites the sandbox, shadowing the generic CrudStore update with
 // the revision counter and a compare-and-set: the write lands only while the
@@ -243,6 +262,33 @@ func (s *SandboxStore) Update(ctx context.Context, id string, sb *Sandbox, expec
 // ErrRevisionConflict.
 func (s *SandboxStore) UpdateIdentityIfUnreferenced(ctx context.Context, id string, sb *Sandbox, expectedRevision int64) (projects int, err error) {
 	sb.ID = id
+	if s.db.Dialect().Name() == dialect.PG {
+		err = sealedWrite(sb, sealSandbox, openSandbox, func() error {
+			return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+				revision, n, gerr := pgGuardSandbox(ctx, tx, id)
+				if gerr != nil {
+					return gerr
+				}
+				if revision != expectedRevision {
+					return ErrRevisionConflict
+				}
+				if n > 0 {
+					projects = n
+					return nil
+				}
+				_, uerr := tx.NewUpdate().Model(sb).
+					ExcludeColumn("id", "created_at", "revision").
+					Set("revision = revision + 1").
+					Where("id = ?", id).
+					Exec(ctx)
+				return uerr
+			})
+		})
+		if err != nil && !errors.Is(err, ErrRevisionConflict) {
+			err = fmt.Errorf("updating sandbox %s: %w", id, err)
+		}
+		return projects, err
+	}
 	var res sql.Result
 	err = sealedWrite(sb, sealSandbox, openSandbox, func() (err error) {
 		res, err = s.db.NewUpdate().Model(sb).
@@ -271,16 +317,34 @@ func (s *SandboxStore) UpdateIdentityIfUnreferenced(ctx context.Context, id stri
 }
 
 // DeleteIfUnreferenced deletes the sandbox only while no project lives on it —
-// one atomic statement, closing the race where a project create lands between
-// a reference count and the delete. It returns how many projects blocked the
-// delete: 0 with a nil error means deleted; >0 means refused. A missing
-// sandbox is ErrNotFound — a different answer from refused, and the handler
-// maps them to 404 vs 409.
+// atomic under SQLite's single writer; on PostgreSQL it locks the row FOR
+// UPDATE (the lock a project create takes) and re-reads the guard, so a
+// project create cannot land between the reference count and the delete. It
+// returns how many projects blocked the delete: 0 with a nil error means
+// deleted; >0 means refused. A missing sandbox is ErrNotFound — a different
+// answer from refused, and the handler maps them to 404 vs 409.
 //
 // There is no cascade: a project delete reclaims its storage
 // (decisions §5.33), so taking projects along would destroy working trees as a
 // side effect of removing a machine.
 func (s *SandboxStore) DeleteIfUnreferenced(ctx context.Context, id string) (projects int, err error) {
+	if s.db.Dialect().Name() == dialect.PG {
+		err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+			_, n, gerr := pgGuardSandbox(ctx, tx, id)
+			if gerr != nil {
+				return gerr
+			}
+			if n > 0 {
+				projects = n
+				return nil
+			}
+			if _, derr := tx.NewDelete().Model((*Sandbox)(nil)).Where("id = ?", id).Exec(ctx); derr != nil {
+				return fmt.Errorf("deleting sandbox %s: %w", id, derr)
+			}
+			return nil
+		})
+		return projects, err
+	}
 	res, err := s.db.NewDelete().Model((*Sandbox)(nil)).
 		Where("id = ?", id).
 		Where(noProjectsOnSandbox, id).
