@@ -294,13 +294,18 @@ func (r *runner) executeToolsAndSideEffects(
 
 	// Unknown tool calls (ToolNotFoundReturnToModel): feed an error output back so
 	// the model can correct itself. hasToolsToRun stays true, forcing another turn.
-	for _, call := range pr.UnknownTools {
-		// Attach the tool-not-found error to the current agent span. The tool name
-		// is model-chosen metadata, not user data, so it is recorded regardless of
-		// the sensitive-data setting.
-		r.agentSpan.SetError("Tool not found", map[string]any{"tool_name": call.Name})
-		msg := fmt.Sprintf("Tool '%s' not found.", call.Name)
-		newStepItems = append(newStepItems, newFunctionCallOutputItem(agent, call.CallID, msg))
+	if len(pr.UnknownTools) > 0 {
+		names := make([]string, len(pr.UnknownTools))
+		for i, call := range pr.UnknownTools {
+			names[i] = call.Name
+			newStepItems = append(newStepItems, newFunctionCallOutputItem(agent, call.CallID, fmt.Sprintf("Tool '%s' not found.", call.Name)))
+		}
+		// Record on the span as data, not SetError: the model is handed the
+		// failure and recovers next turn, so the run is not failed — a red agent
+		// span would misreport a run that completed. The name is model-chosen
+		// metadata, not user data, so it is recorded regardless of the
+		// sensitive-data setting.
+		r.agentSpan.Set("tool_not_found", names)
 	}
 
 	// Handoffs take precedence: switch to the first requested target agent.
