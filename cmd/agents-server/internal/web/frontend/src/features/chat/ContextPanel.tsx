@@ -155,6 +155,14 @@ export function ContextPanel({ sessionId, running, reloadKey, onClose, onCompact
   // plus estimates), so the tick is where the fold roughly lands, not a second
   // meter; the numbers line below keeps the exact comparison.
   const thresholdPct = windowSize > 0 && threshold > 0 ? Math.min(100, (threshold / windowSize) * 100) : 0;
+  // The estimated size of the NEXT request (all composition rows summed). The
+  // big number above is the LAST MEASURED call, which does not move until a
+  // real request follows — so right after "Compact now" it still shows the
+  // pre-fold total. This estimate reflects the fold immediately; surfaced only
+  // when it diverges from the measured figure, so steady state stays quiet.
+  const composition = data ? compositionRows(data) : [];
+  const estNext = composition.reduce((n, r) => n + r.tokens, 0);
+  const showNext = windowSize > 0 && estNext > 0 && Math.abs(estNext - used) >= Math.max(500, used * 0.1);
 
   return (
     <SidePanel
@@ -211,6 +219,13 @@ export function ContextPanel({ sessionId, running, reloadKey, onClose, onCompact
                   {thresholdPct > 0 && <span className="ctx-muted">compacts at ~{Math.round(thresholdPct)}%</span>}
                   <span className="ctx-muted">{fmt(Math.max(0, windowSize - used))} free</span>
                 </div>
+                {showNext && (
+                  <div className="ctx-legend">
+                    <span className="ctx-muted" title="Estimated tokens the NEXT request will send. The figure above is the last measured call and only updates when one follows — so after Compact now this is what the folded conversation now costs.">
+                      next call {approx(estNext)}
+                    </span>
+                  </div>
+                )}
               </>
             ) : threshold > 0 ? (
               <>
@@ -234,7 +249,7 @@ export function ContextPanel({ sessionId, running, reloadKey, onClose, onCompact
           </section>
 
           {(() => {
-            const rows = compositionRows(data);
+            const rows = composition;
             if (rows.length === 0) return null;
             const total = rows.reduce((n, r) => n + r.tokens, 0);
             return (

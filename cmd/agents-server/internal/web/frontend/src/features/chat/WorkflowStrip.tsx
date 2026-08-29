@@ -1,10 +1,17 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button, Label } from '@primer/react';
 import { WorkflowIcon } from '@primer/octicons-react';
 import { useChatActions, useChatBackground } from '@/features/chat/ChatSessionContext';
 import { useDecisionHold } from '@/features/chat/useDecisionHold';
 import { STEP_APPROVAL_TOOL } from '@/lib/protocol';
 import './workflow.css';
+
+// A running step can sit for minutes on a slow model; a live elapsed clock says
+// "still working" so the thin bar doesn't read as stuck.
+function elapsed(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+}
 
 // WorkflowStrip is what a background sequence looks like from the conversation
 // that asked for it: how far it has got, and — the part that cannot be left out
@@ -26,6 +33,15 @@ export function WorkflowStrip() {
   // hook order between those two renders (React #310).
   const { held, decide } = useDecisionHold();
   const live = items.filter(it => it.kind === 'workflow' && it.status !== 'completed' && it.status !== 'cancelled' && !it.dismissed);
+  // A once-a-second tick drives the elapsed clock — only while a step is
+  // actually running, so a paused or empty strip keeps no timer alive.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const anyRunning = live.some(it => it.status === 'working');
+  useEffect(() => {
+    if (!anyRunning) return;
+    const h = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(h);
+  }, [anyRunning]);
   if (live.length === 0) return null;
 
   const act = async (id: string, fn: () => Promise<void>) => {
@@ -84,6 +100,9 @@ export function WorkflowStrip() {
               <span className="wf-bar-track">
                 <span className="wf-bar-fill" style={{ width: `${(it.progress || 0) * 100}%` }} />
               </span>
+              {it.status === 'working' && it.createdAt && (
+                <span className="wf-bar-elapsed" title="Elapsed since this sequence started">{elapsed(nowMs - it.createdAt)}</span>
+              )}
               <span className="wf-bar-actions" onClick={e => e.stopPropagation()}>
                 <Button size="small" variant="invisible" disabled={busy.has(it.id)} onClick={() => act(it.id, () => stopTask(it.id))}>
                   Stop

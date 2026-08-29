@@ -40,6 +40,14 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.wf-bar-elapsed {
+  flex: none;
+  color: var(--fgColor-muted);
+  font-family: var(--fontStack-monospace);
+  font-size: 11px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
 /* The bar takes the leftover width, so the step label never fights it. */
 .wf-bar-track {
   flex: 1;
