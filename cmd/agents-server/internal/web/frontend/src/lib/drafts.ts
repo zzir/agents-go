@@ -23,6 +23,12 @@ export const clearDraft = (sessionId: string): void => saveKey('draft', sessionI
 export const loadSessionAgent = (sessionId: string): string => loadKey('agent', sessionId);
 export const saveSessionAgent = (sessionId: string, agentConfigId: string): void => saveKey('agent', sessionId, agentConfigId);
 
+// The agent the user picked most recently, across sessions: a new, unbound
+// conversation opens on it rather than always resetting to the first in the
+// list. A per-session draft or the session's server-side agent still win.
+export const loadLastAgent = (): string => { try { return localStorage.getItem('chat.lastAgent') || ''; } catch { return ''; } };
+export const saveLastAgent = (agentConfigId: string): void => { try { if (agentConfigId) localStorage.setItem('chat.lastAgent', agentConfigId); } catch { /* ignore */ } };
+
 // The user's pre-binding project choice; once the first run binds the session,
 // the server value wins and this draft stops mattering.
 export const loadSessionProject = (sessionId: string): string => loadKey('project', sessionId);

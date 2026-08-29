@@ -6,7 +6,7 @@ import { api } from '@/lib/api';
 import { CHECK_ICON } from '@/lib/markdownShared';
 import { type TurnPart, type TimelineEntry, type Branches, type WorkflowStartedNote } from '@/lib/timeline';
 import { useScrollToBottom, useApi } from '@/lib/hooks';
-import { loadSessionAgent, saveSessionAgent, loadSessionProject, saveSessionProject } from '@/lib/drafts';
+import { loadSessionAgent, saveSessionAgent, loadLastAgent, saveLastAgent, loadSessionProject, saveSessionProject } from '@/lib/drafts';
 import { composerSandboxView, groupProjects, projectLabel, type EnvVar, type Project, type SandboxSupports, type SessionBinding } from '@/lib/binding';
 import { useProjects } from '@/lib/useProjects';
 import { fc } from '@/lib/form';
@@ -140,6 +140,11 @@ interface ChatViewProps {
   sessionId: string | null;
   // The session's display name for the top bar ('' until known).
   sessionName?: string;
+  // The session's server-side agent binding. `undefined` means "not loaded
+  // yet"; the composer's agent falls back to it (before the first agent in the
+  // list) when this browser holds no local draft — e.g. a fork or another
+  // device. '' is a resolved session with no agent bound.
+  sessionAgentId?: string;
   // The session's permanent project binding, or null while unbound. Set by
   // the first project-carrying run; server-authoritative and immutable
   // afterwards — switching projects means starting a new session.
@@ -159,7 +164,7 @@ interface ChatViewProps {
 }
 
 export function ChatView({
-  sessionId, sessionName, sessionBinding, state, awaiting, settingsReloadKey, bindingsVersion, panel, actions,
+  sessionId, sessionName, sessionAgentId, sessionBinding, state, awaiting, settingsReloadKey, bindingsVersion, panel, actions,
 }: ChatViewProps) {
   // The rendered timeline drops the entries no longer on the active branch;
   // the trace panel still lists their runs, so it reads the raw entries.
@@ -199,6 +204,12 @@ export function ChatView({
     setAgentConfigIdState(id);
     saveSessionAgent(sessionId || '', id);
   }, [sessionId]);
+  // A user's explicit pick (not the auto-resolve below) is what a new chat
+  // reopens on. Kept separate so merely opening old sessions doesn't move it.
+  const pickAgent = useCallback((id: string) => {
+    setAgentConfigId(id);
+    saveLastAgent(id);
+  }, [setAgentConfigId]);
 
   const setProjectId = useCallback((id: string) => {
     setProjectIdState(id);
@@ -226,11 +237,21 @@ export function ChatView({
 
   useEffect(() => {
     if (!agentConfigs || agentConfigs.length === 0) return;
-    const valid = agentConfigs.some(a => a.id === agentConfigId);
-    if (!valid) {
-      setAgentConfigId(agentConfigs[0].id);
+    if (agentConfigs.some(a => a.id === agentConfigId)) return; // a valid draft wins
+    // No local draft for this session (a fork, another device, cleared storage).
+    // Adopt the session's server-side agent once it has loaded — only then fall
+    // back to the first agent — so the composer never silently runs a different
+    // agent than the session is bound to.
+    if (sessionAgentId === undefined) return; // still loading; don't guess yet
+    if (sessionAgentId && agentConfigs.some(a => a.id === sessionAgentId)) {
+      setAgentConfigId(sessionAgentId); // the session's server-side agent
+      return;
     }
-  }, [agentConfigs, agentConfigId, setAgentConfigId]);
+    // A new, unbound conversation: reopen on the last agent the user picked,
+    // then fall back to the first in the list.
+    const last = loadLastAgent();
+    setAgentConfigId(agentConfigs.some(a => a.id === last) ? last : agentConfigs[0].id);
+  }, [agentConfigs, agentConfigId, sessionAgentId, setAgentConfigId]);
 
   const confirmDialog = useConfirm();
   const deleteProject = async (p: Project) => {
@@ -999,7 +1020,7 @@ export function ChatView({
             <ActionMenu.Overlay>
               <ActionList selectionVariant="single">
                 {agentConfigs.map(a => (
-                  <ActionList.Item key={a.id} selected={agentConfigId === a.id} onSelect={() => setAgentConfigId(a.id)}>
+                  <ActionList.Item key={a.id} selected={agentConfigId === a.id} onSelect={() => pickAgent(a.id)}>
                     <ActionList.LeadingVisual>
                       <AgentAvatar name={a.name} avatar={a.avatar} size={20} />
                     </ActionList.LeadingVisual>

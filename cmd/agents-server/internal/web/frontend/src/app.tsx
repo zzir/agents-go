@@ -53,6 +53,8 @@ function GlobalToast() {
   const [items, setItems] = useState<Array<{ id: number; msg: string; type: string; exiting?: boolean }>>([]);
   const seqRef = useRef(0);
   const timersRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
 
   const dismiss = useCallback((id: number) => {
     const t = timersRef.current.get(id);
@@ -63,6 +65,18 @@ function GlobalToast() {
 
   useEffect(() => {
     onToast(({ msg, type }) => {
+      // Collapse a repeat of a toast that's still on screen: a double-click on
+      // Save shouldn't stack two identical errors. A still-visible
+      // auto-dismissing toast just gets its timer refreshed.
+      const dup = itemsRef.current.find(it => !it.exiting && it.msg === msg && it.type === type);
+      if (dup) {
+        if (type !== 'error') {
+          const prev = timersRef.current.get(dup.id);
+          if (prev) clearTimeout(prev);
+          timersRef.current.set(dup.id, setTimeout(() => dismiss(dup.id), 4000));
+        }
+        return;
+      }
       const id = ++seqRef.current;
       setItems(prev => [...prev.slice(-4), { id, msg, type }]);
       if (type !== 'error') timersRef.current.set(id, setTimeout(() => dismiss(id), 4000));
@@ -74,8 +88,6 @@ function GlobalToast() {
     };
   }, [dismiss]);
 
-  const itemsRef = useRef(items);
-  itemsRef.current = items;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.defaultPrevented) return;
@@ -437,7 +449,7 @@ function App() {
   // existence-check fetch below and kept fresh by the title_updated /
   // project_bound events; the id guards against a stale response landing after
   // a session switch.
-  const [sessionMeta, setSessionMeta] = useState<{ id: string; name: string; projectId: string } | null>(null);
+  const [sessionMeta, setSessionMeta] = useState<{ id: string; name: string; projectId: string; agentConfigId: string } | null>(null);
   // Bindings announced over the socket, per session. The session GET races the
   // session.project_bound broadcast (meta is cleared before the fetch, so the
   // event can arrive while prev is null), and a binding is immutable once set
@@ -599,7 +611,7 @@ function App() {
     api.sessions.get(activeSession)
       .then((sess) => {
         if (cancelled) return;
-        const s = sess as { name?: string; project_id?: string };
+        const s = sess as { name?: string; project_id?: string; agent_config_id?: string };
         // A binding announced while this fetch was in flight wins: the fetch
         // read the row before the bind landed, and bindings never change.
         const announced = announcedBindings.current[activeSession];
@@ -607,6 +619,10 @@ function App() {
           id: activeSession,
           name: s?.name || '',
           projectId: announced || s?.project_id || '',
+          // The session's server-side agent: the composer falls back to it when
+          // this browser has no local draft (a fork, another device), instead
+          // of defaulting to the first agent in the list.
+          agentConfigId: s?.agent_config_id || '',
         });
         tryLoad();
       })
@@ -1075,6 +1091,7 @@ function App() {
     <MemoizedChatView
       sessionId={activeSession}
       sessionName={sessionMeta && sessionMeta.id === activeSession ? sessionMeta.name : ''}
+      sessionAgentId={sessionMeta && sessionMeta.id === activeSession ? sessionMeta.agentConfigId : undefined}
       sessionBinding={sessionBinding}
       state={currentSS}
       awaiting={!!activeSession && awaitingSessions.has(activeSession)}
