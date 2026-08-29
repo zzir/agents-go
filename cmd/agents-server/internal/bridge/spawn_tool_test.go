@@ -230,6 +230,40 @@ func TestSpawnToolListsWorkflowsOnlyWhenThereAreAny(t *testing.T) {
 	}
 }
 
+// behavior.disable_subagents drops the whole task surface — spawn_task and the
+// task_* verbs — from a chat build, while a default agent keeps them.
+func TestDisableSubagentsDropsTaskTools(t *testing.T) {
+	ctx := context.Background()
+	runner, _, _, agentConfigs := newTaskTestRunner(t)
+	on := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "delegator", Model: "gpt-test"}
+	off := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "lean", Model: "gpt-test",
+		Behavior: store.BehaviorGroup{DisableSubagents: true}}
+	for _, ac := range []*store.AgentConfig{on, off} {
+		if err := agentConfigs.Create(ctx, ac); err != nil {
+			t.Fatal(err)
+		}
+	}
+	toolsOf := func(id string) []string {
+		built, err := buildFullAgent(ctx, runner.Deps, id, "", false, "")
+		if err != nil {
+			t.Fatalf("build %s: %v", id, err)
+		}
+		names := make([]string, 0, len(built.Agent.Tools))
+		for _, tl := range built.Agent.Tools {
+			names = append(names, tl.Name)
+		}
+		return names
+	}
+	if names := toolsOf(on.ID); !slices.Contains(names, SpawnToolName) {
+		t.Fatalf("default agent tools = %v, want %s offered", names, SpawnToolName)
+	}
+	for _, name := range toolsOf(off.ID) {
+		if name == SpawnToolName || strings.HasPrefix(name, "task_") {
+			t.Errorf("disable_subagents agent still offers %q; the task surface must be gone", name)
+		}
+	}
+}
+
 // task_status says where a workflow stands — the step it is on, the bound
 // that stopped it — through the manager's DescribeState, so the model needs
 // no second status tool for sequences.

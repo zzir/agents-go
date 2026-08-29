@@ -7951,6 +7951,13 @@ export interface components {
          *     setting needs no schema change. In the REST API each is a nested object.
          */
         "store.BehaviorGroup": {
+            /**
+             * @description DisableSubagents drops the agent's spawn_task / task_status / task_stop /
+             *     task_retry tools. Negated so the default (absent/false) keeps subagents
+             *     ON, matching every agent built before the flag existed; a chat-only agent
+             *     that never delegates opts out to reclaim the task schema from every request.
+             */
+            disable_subagents?: boolean;
             disable_tool_choice_reset?: boolean;
             handoff_description?: string;
             handoff_input_filter?: string;

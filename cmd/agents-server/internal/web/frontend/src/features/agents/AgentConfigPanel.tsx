@@ -21,7 +21,7 @@ import { providerMeta, providerFacts, type ProviderTypeInfo } from '@/lib/provid
 // objects. The form state stays flat, so flattenConfig lifts a loaded config's
 // group keys to the top level and nestConfig folds them back before saving.
 const CONFIG_GROUPS: Record<string, string[]> = {
-  behavior: ['max_turns', 'handoff_description', 'disable_tool_choice_reset', 'stop_at_tools', 'handoff_input_filter', 'max_tool_concurrency', 'tool_not_found_behavior', 'reasoning_item_id_policy', 'workflow_authoring'],
+  behavior: ['max_turns', 'handoff_description', 'disable_tool_choice_reset', 'stop_at_tools', 'handoff_input_filter', 'max_tool_concurrency', 'tool_not_found_behavior', 'reasoning_item_id_policy', 'workflow_authoring', 'disable_subagents'],
   resilience: ['retry_enabled', 'retry_policy', 'fallback_models'],
   guardrails: ['guardrails', 'output_schema'],
   session: ['prompt_id', 'prompt_version', 'history_limit'],
@@ -80,6 +80,7 @@ interface AgentFormData {
   tool_not_found_behavior: string;
   reasoning_item_id_policy: string;
   workflow_authoring: boolean;
+  disable_subagents: boolean;
   approve_tools: string;
   compaction_enabled: boolean;
   compaction_threshold_tokens: number;
@@ -148,12 +149,13 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
   const initTools = (): (string | number)[] => {
     try { return JSON.parse((initial && initial.tools) || '[]'); } catch { return []; }
   };
-  // undefined/absent `skills` means this agent predates per-agent skill
-  // scoping (or is brand new) — null here signals "not customized yet", so
-  // the effective set below defaults to every currently installed skill
-  // instead of none, preserving the old "every agent gets every skill" behavior.
+  // A brand-new agent starts with NO skills selected — skills are opt-in, so a
+  // bot unrelated to any installed skill doesn't silently carry them all. Only
+  // an EXISTING agent whose `skills` is unset (predates per-agent scoping) falls
+  // back to "every installed skill" (null below), so an edit never strips them.
   const initSkills = (): string[] | null => {
-    if (!initial || typeof initial.skills !== 'string' || initial.skills === '') return null;
+    if (!initial) return [];
+    if (typeof initial.skills !== 'string' || initial.skills === '') return null;
     try { return JSON.parse(initial.skills); } catch { return null; }
   };
   const parseModelSettings = (): Record<string, unknown> => {
@@ -170,7 +172,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
     guardrails: '', output_schema: '', error_handlers: '',
     prompt_id: '', prompt_version: '', history_limit: 0,
     handoff_input_filter: '', max_tool_concurrency: 0,
-    tool_not_found_behavior: '', reasoning_item_id_policy: '', workflow_authoring: false, approve_tools: '',
+    tool_not_found_behavior: '', reasoning_item_id_policy: '', workflow_authoring: false, disable_subagents: false, approve_tools: '',
     compaction_enabled: false, compaction_threshold_tokens: 0,
     compaction_window: 0, compaction_model: '', compaction_prompt: '',
     ...flattenConfig(initial as Record<string, unknown> | undefined),
@@ -407,15 +409,27 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
         {fc('Handoff description', <TextInput value={form.handoff_description || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('handoff_description', e.target.value)} placeholder="Description when this agent is a handoff target" block />)}
       </div>
 
-      {/* Opt-in, unlike the task and todo tools every chat agent carries: the
-          save schema costs every request, and authoring workflows is one
+      {/* On by default (unlike workflow authoring): most chat agents delegate.
+          A lean chat agent that never spawns subagents can opt out to drop the
+          spawn_task / task_* schema from every request. */}
+      <div className="form-group">
+        <div className="form-group-title">Subagents</div>
+        <FormControl>
+          <Checkbox checked={!form.disable_subagents} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('disable_subagents', !e.target.checked)} />
+          <FormControl.Label>Spawn subagents & background tasks</FormControl.Label>
+          <FormControl.Caption>spawn_task / task_status / task_stop / task_retry. Turn off for a chat-only agent to reclaim the task schema from every request. The /workflow command still runs workflows either way.</FormControl.Caption>
+        </FormControl>
+      </div>
+
+      {/* Opt-in, unlike the task and todo tools a chat agent carries by default:
+          the save schema costs every request, and authoring workflows is one
           agent's job, not every agent's. */}
       <div className="form-group">
         <div className="form-group-title">Workflows</div>
         <FormControl>
           <Checkbox checked={form.workflow_authoring || false} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('workflow_authoring', e.target.checked)} />
           <FormControl.Label>Author workflows from the chat</FormControl.Label>
-          <FormControl.Caption>get_workflow / save_workflow — every save is shown to you for approval before it is written. Running one is spawn_task's, which every agent has.</FormControl.Caption>
+          <FormControl.Caption>get_workflow / save_workflow — every save is shown to you for approval before it is written. Running one is spawn_task's, which an agent has unless subagents are turned off above.</FormControl.Caption>
         </FormControl>
       </div>
 

@@ -524,7 +524,12 @@ When a change genuinely doesn't fit, update this list in the same PR.
     the agent's own prompt may well tell it to ask. A run learns it is
     background from its session being a task's child (a workflow step's is —
     an execution is a task), and a lookup that FAILS is an error, not a "no" —
-    reading it as a chat run is exactly how the deadlock happens.
+    reading it as a chat run is exactly how the deadlock happens. A CHAT run
+    carries the task tools by default, but an agent may drop them —
+    `behavior.disable_subagents` — so a chat-only agent that never delegates
+    stops paying the `spawn_task`/`task_*` schema on every request; the
+    `/workflow` command runs a workflow server-side regardless, so opting out
+    never blocks that.
 
 35. **A step's approval is answerable from the conversation that asked.**
     `GET /sessions/:id/approvals` returns the approvals paused inside this

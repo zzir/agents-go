@@ -214,11 +214,12 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, project
 			result.AgentIDs[r.Agent.Name] = id
 		}
 	}
-	if err == nil && !background && deps.TaskManager != nil {
+	if err == nil && !background && deps.TaskManager != nil && !result.Behavior.DisableSubagents {
 		// The model's background surface: four verbs — spawn (the server's,
 		// which starts a workflow when told a name), status, retry, stop. A
 		// background run never gets them: an execution is a task, and a task
-		// cannot start one — that is what bounds recursion. The session id
+		// cannot start one — that is what bounds recursion. An agent may also opt
+		// out (behavior.disable_subagents) to shed the schema. The session id
 		// reaches the tools through the run context, not the model: otherwise
 		// one conversation could spawn tasks onto another.
 		mark := len(result.Agent.Tools)

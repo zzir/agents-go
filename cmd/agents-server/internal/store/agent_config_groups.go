@@ -30,6 +30,11 @@ type BehaviorGroup struct {
 	// WorkflowAuthoring gives the agent's chat runs get_workflow / save_workflow
 	// (workbench invariant 39). Off by default: the save schema costs every request.
 	WorkflowAuthoring bool `json:"workflow_authoring,omitempty"`
+	// DisableSubagents drops the agent's spawn_task / task_status / task_stop /
+	// task_retry tools. Negated so the default (absent/false) keeps subagents
+	// ON, matching every agent built before the flag existed; a chat-only agent
+	// that never delegates opts out to reclaim the task schema from every request.
+	DisableSubagents bool `json:"disable_subagents,omitempty"`
 }
 
 // ResilienceGroup holds model retry/fallback settings.
