@@ -1,9 +1,7 @@
 package agents
 
 import (
-	"os"
 	"slices"
-	"strings"
 
 	"github.com/zzir/agents-go/tracing"
 )
@@ -20,14 +18,14 @@ func setGenerationUsage(span *tracing.SpanHandle, u *Usage) {
 	span.Set("total_tokens", u.TotalTokens)
 }
 
-// traceIncludeSensitiveData resolves RunOptions.Observe.IncludeSensitiveData,
-// falling back to the OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA environment
-// variable where anything but "false" means true.
+// traceIncludeSensitiveData resolves RunOptions.Observe.IncludeSensitiveData;
+// nil means include (the default). The SDK reads no environment variable — the
+// caller decides. See spec §2.14.
 func (r *runner) traceIncludeSensitiveData() bool {
 	if r.opts.Observe.IncludeSensitiveData != nil {
 		return *r.opts.Observe.IncludeSensitiveData
 	}
-	return !strings.EqualFold(strings.TrimSpace(os.Getenv("OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA")), "false")
+	return true
 }
 
 // traceTools projects the request's tools into a serializable form — the

@@ -269,16 +269,15 @@ func TestGenerationSpanExcludesSensitiveData(t *testing.T) {
 	}
 }
 
-// The OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA env var supplies the default
-// when RunOptions leaves the flag nil; "false" opts out.
-func TestGenerationSpanEnvOptOut(t *testing.T) {
-	t.Setenv("OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA", "false")
+// A nil IncludeSensitiveData defaults to include: no environment variable is
+// consulted, so leaving the option unset records the full request (spec §2.20).
+func TestGenerationSpanDefaultsInclude(t *testing.T) {
 	agent, proc := tracingAgent(t)
 	if _, err := RunSync(context.Background(), agent, "hi", RunOptions{Observe: ObserveOptions{Tracer: tracing.NewTracer(proc)}}); err != nil {
 		t.Fatal(err)
 	}
-	if d := proc.generationSpans()[0].Data; d["input"] != nil {
-		t.Fatalf("env opt-out ignored: %v", d)
+	if d := proc.generationSpans()[0].Data; d["input"] == nil {
+		t.Fatalf("nil IncludeSensitiveData should default to include: %v", d)
 	}
 }
 

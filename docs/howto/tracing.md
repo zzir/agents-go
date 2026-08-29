@@ -69,13 +69,14 @@ include := false
 agents.Run(ctx, agent, input, agents.RunOptions{
 	Observe: agents.ObserveOptions{
 		Tracer:               tracer,
-		IncludeSensitiveData: &include, // nil reads the env var below
+		IncludeSensitiveData: &include, // nil means include (the default)
 	},
 })
 ```
 
-When the option is nil, the `OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA`
-environment variable decides: anything but `false` means include. Opting out keeps ids and token usage, drops content.
+When the option is nil the span includes content — the default. The SDK reads
+no environment variable for this; the caller decides (spec §2.14). Opting out
+keeps ids and token usage, drops content.
 
 IDs are `trace_<32 hex>` / `span_<16 hex>`, the shape trace backends already parse, generated from `crypto/rand`.
 

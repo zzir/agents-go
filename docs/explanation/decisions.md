@@ -1495,3 +1495,29 @@ not memory and CPU, and its package doc was corrected to stop implying
 otherwise. The default belongs in the layer that knows it is running untrusted
 agent code for many users; a library embedded on its own has no such context to
 assume.
+
+### 5.39 The SDK reads no environment variable of its own
+
+Decided 2026-08-29. `Observe.IncludeSensitiveData` used to fall back, when nil,
+to `OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA` — a name inherited verbatim from
+the Python port. It was the one place the `agents` package read process
+environment to decide run behavior, and it contradicted the SDK's own stated
+stance (config.md: "no global registry, no init hook and no ambient default").
+It also fought the embedder: the workbench always passes an explicit value and
+had to carry a comment explaining that the SDK's variable "is not consulted" —
+a second authority that existed only to be overridden.
+
+So nil now simply means include, and the variable is gone. The rule is written
+as an invariant (spec §2.14): the `agents` package calls no `os.Getenv`, and
+`rg 'os\.(Getenv|LookupEnv)' agents/` is the standing guard. Two touchpoints sit
+outside it by design and are not exceptions to be closed: openai-go's own
+`OPENAI_API_KEY` default (a wrapped vendor library's contract, reached only
+through its constructor, never by our code) and the docker backend's
+`SSH_AUTH_SOCK` (the standard variable of the `ssh` tool it drives, overridable
+by an explicit dial option). The distinction that matters is authorship: the SDK
+decides nothing from ambient state; a library it wraps or an OS tool it invokes
+may keep its own, visibly and overridably.
+
+The cost is that the handful of users who turned tracing content off through the
+environment must now pass `IncludeSensitiveData: new(false)` — an explicit,
+per-run decision, which is the point.

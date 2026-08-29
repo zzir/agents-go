@@ -218,11 +218,11 @@ type ObserveOptions struct {
 	// Build one with tracing.NewTracer(processor).
 	Tracer *tracing.Tracer
 
-	// TraceIncludeSensitiveData controls whether generation spans record the full
+	// IncludeSensitiveData controls whether generation spans record the full
 	// model request (model, system instructions, input items) and output items.
-	// nil reads the OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA environment
-	// variable, where anything but "false" means true. Set to false when trace
-	// exports must not carry conversation content.
+	// nil means include (the default). Set to false when trace exports must not
+	// carry conversation content. The SDK reads no environment variable — the
+	// caller decides (spec §2.14).
 	IncludeSensitiveData *bool
 
 	// TraceGroupID links this run's trace to a group of related traces (e.g. one

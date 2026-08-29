@@ -2320,6 +2320,32 @@ below are behavior, not implementation detail — see [tasks.md](../howto/tasks.
   result — the same reasoning that makes the label and summary escape their
   delimiters.
 
+### 2.14 The SDK reads no environment variable
+
+Everything the SDK acts on is passed in: `RunOptions`, the `Agent`, its
+`ModelSettings`, and the provider/backend constructor options. The `agents`
+package calls no `os.Getenv`, so two differently-configured runs in one process
+are fully determined by what each was handed — nothing ambient decides behavior
+behind the caller's back. `rg 'os\.(Getenv|LookupEnv)' agents/` is the guard,
+and must stay empty.
+
+Two touchpoints are outside this rule and are not violations of it:
+
+- **A wrapped vendor client library keeps its own env contract.** The OpenAI
+  provider delegates to openai-go, which defaults its key from `OPENAI_API_KEY`
+  when the caller passes no `option.WithAPIKey`. The `agents` code never reads
+  that variable; the caller opts into the default by constructing the provider
+  without a key, and overrides it with an explicit option.
+- **An OS-integration backend may consult the standard variable of the tool it
+  drives.** The docker sandbox reaches an SSH agent through `SSH_AUTH_SOCK`,
+  exactly as `ssh` itself does. It is documented on the backend and overridable
+  by an explicit dial option; it configures a transport, not run behavior.
+
+The trace sensitive-data toggle (`Observe.IncludeSensitiveData`) is the one
+knob this rule reclaimed: nil now means include (§4), decided by the caller, not
+by a `OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA` variable — see
+[decisions §5.39](../explanation/decisions.md).
+
 ---
 
 ## 4. Reference behavior you can rely on

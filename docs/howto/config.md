@@ -6,8 +6,14 @@ it and the agent it is given, which is what makes two differently-configured
 runs safe to execute concurrently in one process.
 
 This page covers the knobs that are not about a single capability: API keys and
-clients, logging, and the environment variables that exist. For a capability's
-own options see its page.
+clients, logging, and the environment. For a capability's own options see its
+page.
+
+The SDK reads **no environment variable of its own** (spec §2.14): the `agents`
+package calls no `os.Getenv`, so nothing ambient changes a run's behavior behind
+your back. The only environment default in play is openai-go's own
+`OPENAI_API_KEY`, resolved inside the OpenAI provider below — a vendor library's
+contract you opt into by not passing a key, not something this SDK reads.
 
 ## API keys and clients
 
