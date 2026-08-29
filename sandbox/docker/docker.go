@@ -714,10 +714,12 @@ func (s *Sandbox) execEphemeral(ctx context.Context, req sandbox.ExecRequest) (*
 		defer lcancel()
 	}
 	stdout, stderr, lerr := s.readLogs(lctx, id, req.EffectiveMaxOutputBytes())
-	if lerr != nil {
+	res.Stdout, res.Stderr = stdout, stderr
+	if lerr != nil && !res.TimedOut {
 		return nil, lerr
 	}
-	res.Stdout, res.Stderr = stdout, stderr
+	// On timeout a broken log read costs only output, never the TimedOut
+	// verdict — that came from ContainerWait, as in streamEphemeral.
 	return res, nil
 }
 
@@ -802,8 +804,9 @@ func (s *Sandbox) startEphemeral(ctx context.Context, req sandbox.ExecRequest) (
 		_, _ = s.cli.ContainerRemove(context.WithoutCancel(ctx), id, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
 	}
 
-	// Always sent, even with no request files: the tarball also creates the
-	// writable working directory inside the root-owned volume.
+	// Copies the request files in before start; with none the tar is empty and
+	// the copy is a no-op — the working directory comes from the daemon's
+	// WorkingDir handling (spec §2.7q).
 	tarball, terr := buildTar(req.Files)
 	if terr != nil {
 		remove()
@@ -921,6 +924,8 @@ func (s *Sandbox) buildPersistentConfig() (*container.Config, *container.HostCon
 }
 
 // readLogs fetches the container output, capping each stream at max bytes.
+// Like demuxLogs, the output collected so far is returned even when err is
+// non-nil, so a timed-out caller can surface the partial output.
 func (s *Sandbox) readLogs(ctx context.Context, id string, maxBytes int64) (string, string, error) {
 	rc, err := s.cli.ContainerLogs(ctx, id, client.ContainerLogsOptions{ShowStdout: true, ShowStderr: true})
 	if err != nil {
@@ -929,7 +934,7 @@ func (s *Sandbox) readLogs(ctx context.Context, id string, maxBytes int64) (stri
 	defer rc.Close()
 	stdout, stderr, derr := demuxLogs(rc, maxBytes)
 	if derr != nil {
-		return "", "", fmt.Errorf("docker sandbox: read logs: %w", derr)
+		return stdout, stderr, fmt.Errorf("docker sandbox: read logs: %w", derr)
 	}
 	return stdout, stderr, nil
 }
@@ -1014,11 +1019,15 @@ func (s *Sandbox) Close() error {
 	s.containerID = ""
 	s.mu.Unlock()
 	if id != "" {
+		// Close takes no context, so the bound is self-imposed, as for the
+		// terminal ops: a hung daemon must not hang Close forever.
+		ctx, cancel := context.WithTimeout(context.Background(), terminalOpTimeout)
+		defer cancel()
 		if s.opts.Persistent && s.opts.KeepOnClose {
 			timeout := 10
-			_, _ = s.cli.ContainerStop(context.Background(), id, client.ContainerStopOptions{Timeout: &timeout})
+			_, _ = s.cli.ContainerStop(ctx, id, client.ContainerStopOptions{Timeout: &timeout})
 		} else {
-			_, _ = s.cli.ContainerRemove(context.Background(), id, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
+			_, _ = s.cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
 		}
 	}
 	err := s.cli.Close()

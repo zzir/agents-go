@@ -43,8 +43,9 @@ func TestDockerSandbox_WritableWorkdirAndTmp(t *testing.T) {
 	}
 	defer sb.Close()
 
-	// The process runs as 65534 with a read-only root fs: the working
-	// directory and /tmp must still be writable, including nested dirs.
+	// The process runs as the image's own user (spec §2.7o) with a read-only
+	// root fs: the working directory and /tmp must still be writable,
+	// including nested dirs.
 	res, err := sb.Exec(context.Background(), sandbox.ExecRequest{
 		Files: map[string]string{
 			"main.py":         "import pkg.helper\nopen('out.txt','w').write('cwd')\nopen('/tmp/t','w').write('tmp')\nprint('writable ok')",

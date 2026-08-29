@@ -427,6 +427,97 @@ func TestStreamEphemeralWaitHonorsTimeout(t *testing.T) {
 	}
 }
 
+// fakeCorruptLogsDaemon serves execEphemeral's API slice: its wait endpoint
+// hangs (waitHangs) or answers exit 0, and its log stream carries one valid
+// stdout frame then a corrupt header, so the demux fails mid-stream.
+func fakeCorruptLogsDaemon(t *testing.T, waitHangs bool) (host string, acted *[]string) {
+	t.Helper()
+	var mu sync.Mutex
+	var actions []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := strings.TrimSuffix(r.URL.Path, "/")
+		switch {
+		case strings.HasSuffix(p, "/_ping"):
+			w.Header().Set("API-Version", "1.44")
+		case strings.HasSuffix(p, "/images/img/json"):
+			_, _ = w.Write([]byte("{}"))
+		case strings.HasSuffix(p, "/containers/create"):
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"Id":"cid"}`))
+		case strings.HasSuffix(p, "/containers/cid/archive"),
+			strings.HasSuffix(p, "/containers/cid/start"):
+			w.WriteHeader(http.StatusNoContent)
+		case strings.HasSuffix(p, "/containers/cid/logs"):
+			var mux bytes.Buffer
+			muxWrite(&mux, stdcopy.Stdout, []byte("started"))
+			mux.Write([]byte{9, 0, 0, 0, 0, 0, 0, 1, 'x'}) // unknown stream type: a real demux error
+			_, _ = w.Write(mux.Bytes())
+		case strings.HasSuffix(p, "/containers/cid/wait"):
+			if waitHangs {
+				<-r.Context().Done() // answers only when the client gives up
+				return
+			}
+			_, _ = w.Write([]byte(`{"StatusCode":0}`))
+		case strings.HasSuffix(p, "/containers/cid/kill"):
+			mu.Lock()
+			actions = append(actions, "kill")
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodDelete:
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return "tcp://" + srv.Listener.Addr().String(), &actions
+}
+
+// A timed-out ephemeral exec whose log read then breaks must still present the
+// TimedOut result, carrying whatever output was collected — losing it turned a
+// timeout into a bare error.
+func TestExecEphemeralTimeoutKeepsPartialLogs(t *testing.T) {
+	host, acted := fakeCorruptLogsDaemon(t, true)
+	sb, err := New(Options{Host: host, Image: "img"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sb.Close() })
+
+	res, err := sb.Exec(t.Context(), sandbox.ExecRequest{
+		Cmd:     []string{"sleep", "infinity"},
+		Timeout: 300 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.TimedOut || res.ExitCode != -1 {
+		t.Errorf("TimedOut = %v, exit = %d; want true, -1", res.TimedOut, res.ExitCode)
+	}
+	if res.Stdout != "started" {
+		t.Errorf("stdout = %q, want the partial output collected before the demux error", res.Stdout)
+	}
+	if !slices.Contains(*acted, "kill") {
+		t.Errorf("actions = %v, want the timed-out container killed", *acted)
+	}
+}
+
+// Without a timeout the same broken log read stays an error: the exit code is
+// fine but the output is not trustworthy, and nothing else needs presenting.
+func TestExecEphemeralLogReadFailureIsAnError(t *testing.T) {
+	host, _ := fakeCorruptLogsDaemon(t, false)
+	sb, err := New(Options{Host: host, Image: "img"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sb.Close() })
+
+	if _, err := sb.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"true"}}); err == nil ||
+		!strings.Contains(err.Error(), "read logs") {
+		t.Errorf("Exec err = %v, want the log-read failure surfaced", err)
+	}
+}
+
 // fakeStoppedDaemon reports the cached container as existing but stopped;
 // startStatus is the start endpoint's answer.
 func fakeStoppedDaemon(t *testing.T, startStatus int) (host string, acted *[]string) {

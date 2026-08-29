@@ -205,10 +205,13 @@ func (s *Sandbox) publishedHostPort(ctx context.Context, port int) (string, erro
 	if err := s.ensureImage(ctx); err != nil {
 		return "", err
 	}
-	if _, err := s.ensureContainer(ctx); err != nil {
+	// Inspect the id ensureContainer vouched for, never the name — a name can
+	// change hands between the two calls (see containers.go).
+	id, err := s.ensureContainer(ctx)
+	if err != nil {
 		return "", err
 	}
-	info, err := s.cli.ContainerInspect(ctx, s.opts.ContainerName, client.ContainerInspectOptions{})
+	info, err := s.cli.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
 	if err != nil {
 		return "", fmt.Errorf("docker sandbox: inspecting %s: %w", s.opts.ContainerName, err)
 	}
@@ -259,10 +262,12 @@ func (s *Sandbox) containerIP(ctx context.Context) (string, error) {
 	if err := s.ensureImage(ctx); err != nil {
 		return "", err
 	}
-	if _, err := s.ensureContainer(ctx); err != nil {
+	// By id, not name, as in publishedHostPort.
+	id, err := s.ensureContainer(ctx)
+	if err != nil {
 		return "", err
 	}
-	info, err := s.cli.ContainerInspect(ctx, s.opts.ContainerName, client.ContainerInspectOptions{})
+	info, err := s.cli.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
 	if err != nil {
 		return "", fmt.Errorf("docker sandbox: inspecting %s: %w", s.opts.ContainerName, err)
 	}

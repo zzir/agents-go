@@ -361,6 +361,10 @@ second path universe. The model learns real absolute paths from exec output
 surfaces sharing one view is what makes those calls work. (An earlier
 workdir-rooted "virtual chroot" design was dropped for exactly that failure:
 absolute paths got re-joined under `WorkDir` and read as "not found".)
+`ReadFile` behaves like the OS everywhere: it follows symlinks to the file
+they name (bounded hops) and fails on a directory with an is-a-directory
+error — docker's copy-out API does neither itself, so that backend normalizes
+the raw tar semantics rather than exposing daemon quirks.
 
 **The one exception is docker bind-mount mode**, where file operations run on
 the *host* side of the mount while exec runs inside the container — the

@@ -24,6 +24,10 @@ import (
 // these reach it the same way a command does — with tar over the daemon API for
 // bulk content and with exec for everything the API does not expose.
 
+// maxReadLinkHops bounds how many symlinks readFileContainer follows before
+// declaring a loop, mirroring the OS's ELOOP behavior on the other backends.
+const maxReadLinkHops = 8
+
 func (s *Sandbox) readFileContainer(ctx context.Context, p string) ([]byte, error) {
 	if err := s.ensureImage(ctx); err != nil {
 		return nil, err
@@ -32,23 +36,51 @@ func (s *Sandbox) readFileContainer(ctx context.Context, p string) ([]byte, erro
 	if err != nil {
 		return nil, err
 	}
-	result, err := s.cli.CopyFromContainer(ctx, id, client.CopyFromContainerOptions{
-		SourcePath: s.containerPath(p),
-	})
+	// The daemon neither follows a symlink at SourcePath nor errors on a
+	// directory — the first tar header says which arrived. Follow links here
+	// (bounded) and reject directories, as the local/ssh backends do.
+	src := s.containerPath(p)
+	for range maxReadLinkHops {
+		data, next, err := s.copyOutFile(ctx, id, p, src)
+		if err != nil || next == "" {
+			return data, err
+		}
+		src = next
+	}
+	return nil, fmt.Errorf("docker sandbox: read %s: too many levels of symbolic links", p)
+}
+
+// copyOutFile fetches one absolute in-container path. A regular file returns
+// its content; a symlink returns the (absolute) target to retry; a directory
+// is an error, shaped like the local backend's EISDIR.
+func (s *Sandbox) copyOutFile(ctx context.Context, id, p, src string) (data []byte, next string, err error) {
+	result, err := s.cli.CopyFromContainer(ctx, id, client.CopyFromContainerOptions{SourcePath: src})
 	if err != nil {
 		// The daemon reports a missing path as its own not-found; map it so
 		// callers see fs.ErrNotExist, as every other backend gives them.
 		if cerrdefs.IsNotFound(err) || strings.Contains(err.Error(), "Could not find the file") {
-			return nil, fmt.Errorf("docker sandbox: read file %q: %w", p, fs.ErrNotExist)
+			return nil, "", fmt.Errorf("docker sandbox: read file %q: %w", p, fs.ErrNotExist)
 		}
-		return nil, fmt.Errorf("docker sandbox: read file: %w", err)
+		return nil, "", fmt.Errorf("docker sandbox: read file: %w", err)
 	}
 	defer result.Content.Close()
 	tr := tar.NewReader(result.Content)
-	if _, err := tr.Next(); err != nil {
-		return nil, fmt.Errorf("docker sandbox: read file: %w", err)
+	hdr, err := tr.Next()
+	if err != nil {
+		return nil, "", fmt.Errorf("docker sandbox: read file: %w", err)
 	}
-	return sandbox.ReadAllLimited(tr, s.opts.MaxReadFileBytes)
+	switch hdr.Typeflag {
+	case tar.TypeDir:
+		return nil, "", fmt.Errorf("docker sandbox: read %s: is a directory", p)
+	case tar.TypeSymlink:
+		target := hdr.Linkname
+		if !path.IsAbs(target) {
+			target = path.Join(path.Dir(src), target)
+		}
+		return nil, path.Clean(target), nil
+	}
+	data, err = sandbox.ReadAllLimited(tr, s.opts.MaxReadFileBytes)
+	return data, "", err
 }
 
 func (s *Sandbox) writeFileContainer(ctx context.Context, p string, content []byte) error {

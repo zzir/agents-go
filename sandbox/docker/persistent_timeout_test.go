@@ -173,6 +173,36 @@ func TestPersistentReadFileLimit(t *testing.T) {
 	}
 }
 
+// The real daemon's copy-out answers with a dir or symlink header instead of
+// erroring or following; ReadFile must reject the directory and resolve the
+// links, as in TestReadFileContainer_DirAndSymlink against the fake daemon.
+func TestPersistentReadFileDirAndSymlink(t *testing.T) {
+	sb := newPersistentSandbox(t, Options{Image: testImage, Persistent: true})
+	ctx := t.Context()
+
+	res, err := sb.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"sh", "-c",
+		"mkdir -p adir && printf hi > real.txt && ln -s real.txt l1 && ln -s l1 l2 && ln -s loop-b loop-a && ln -s loop-a loop-b"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ExitCode != 0 {
+		t.Fatalf("setup exit %d, stderr %q", res.ExitCode, res.Stderr)
+	}
+
+	if _, err := sb.ReadFile(ctx, "adir"); err == nil || !strings.Contains(err.Error(), "is a directory") {
+		t.Errorf("ReadFile(adir) err = %v, want an is-a-directory error", err)
+	}
+	if data, err := sb.ReadFile(ctx, "l2"); err != nil || string(data) != "hi" {
+		t.Errorf("ReadFile(l2) = %q, %v; want the chain followed to real.txt", data, err)
+	}
+	// A loop errors either way: some daemons trip on it themselves ("too many
+	// links"), others hand back link headers until our own hop cap does.
+	if _, err := sb.ReadFile(ctx, "loop-a"); err == nil ||
+		!(strings.Contains(err.Error(), "too many levels of symbolic links") || strings.Contains(err.Error(), "too many links")) {
+		t.Errorf("ReadFile(loop-a) err = %v, want a symlink-loop error", err)
+	}
+}
+
 // WriteFile must leave existing parent directories alone: the seeded tar used
 // to carry dir headers (mode 0777, uid/gid 0, epoch mtime) that the daemon's
 // untar re-applied to /workspace and every parent on the path.

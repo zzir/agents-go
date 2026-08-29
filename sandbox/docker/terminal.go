@@ -17,10 +17,11 @@ var _ sandbox.TerminalOpener = (*Sandbox)(nil)
 // after output EOF; Docker has no exec-wait API.
 const terminalWaitPoll = 2 * time.Second
 
-// terminalOpTimeout bounds one daemon call made by a Terminal method. The
-// interface takes no context — these are keystroke-scale operations — so the
-// bound is self-imposed: a daemon that stops answering must not turn a resize
-// or a close into a goroutine parked forever.
+// terminalOpTimeout bounds one daemon call made by a Terminal method (and by
+// Sandbox.Close, which shares the constraint). The interface takes no context
+// — these are keystroke-scale operations — so the bound is self-imposed: a
+// daemon that stops answering must not turn a resize or a close into a
+// goroutine parked forever.
 const terminalOpTimeout = 10 * time.Second
 
 // OpenTerminal implements sandbox.TerminalOpener. Persistent mode only: an

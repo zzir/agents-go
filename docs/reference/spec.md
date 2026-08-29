@@ -1474,6 +1474,10 @@ The two backends answer the same way, which is the point: a tool that reads
 `TimedOut` to tell the model "that command took too long" must not say it about
 a run the human just cancelled.
 
+A timed-out result carries whatever output was collected before the kill; a
+failure reading the tail of the output (a broken log stream after the
+deadline) costs output, never the `TimedOut` verdict.
+
 ### 2.7n A sandbox's environment is part of its container identity
 
 `Options.Env` (docker) sets variables on the CONTAINER, so `exec_command`, a
