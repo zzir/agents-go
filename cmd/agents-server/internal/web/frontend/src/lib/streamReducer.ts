@@ -336,9 +336,10 @@ export function appendToolProgress(msgs: Msgs, toolCallId: string, delta: string
 // appendHandoffPart records a completed agent switch inside the live turn.
 // Live-only by design: reloads convey the same transfer via the transfer_to_*
 // tool-call card (see the isomorphism test's documented differences).
-export function appendHandoffPart(msgs: Msgs, content: string): Msgs | null {
+export function appendHandoffPart(msgs: Msgs, handoff: { from: string; to: string; fromId?: string; toId?: string }): Msgs | null {
   const turn = lastTurn(msgs);
   if (!turn) return null;
+  const content = handoff.from + ' → ' + handoff.to;
   if ((turn.parts || []).some(pt => pt.type === 'handoff' && pt.content === content)) return null;
-  return withParts(msgs, turn, [...(turn.parts || []), { type: 'handoff', content }]);
+  return withParts(msgs, turn, [...(turn.parts || []), { type: 'handoff', content, ...handoff }]);
 }

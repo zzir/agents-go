@@ -7857,8 +7857,7 @@ export interface components {
         "settings.Def": {
             /**
              * @description Default is the value that applies when the setting is unset. Empty means
-             *     the feature is off (or, for KeyTraceIncludeSensitiveData, that the SDK
-             *     decides) — never "the zero value happens to be right".
+             *     the feature is off — never "the zero value happens to be right".
              */
             default?: string;
             description?: string;
@@ -7875,6 +7874,12 @@ export interface components {
         "settings.Kind": "string" | "text" | "secret" | "int" | "bool";
         "store.AgentConfig": {
             approval?: components["schemas"]["store.ApprovalGroup"];
+            /**
+             * @description Avatar is the agent's picture as a same-origin path into the built-in
+             *     catalog ("/avatars/<name>.svg"); empty renders an initial. Handlers
+             *     reject anything else — external URLs would be blocked by CSP anyway.
+             */
+            avatar?: string;
             behavior?: components["schemas"]["store.BehaviorGroup"];
             compaction?: components["schemas"]["store.CompactionGroup"];
             /**

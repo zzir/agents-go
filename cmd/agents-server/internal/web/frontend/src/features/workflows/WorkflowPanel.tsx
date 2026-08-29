@@ -12,6 +12,7 @@ import { useMe } from '@/lib/me';
 import { OwnerBadge, RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
 import { fc } from '@/lib/form';
 import { nameOf } from '@/lib/named';
+import { AgentPicker } from '@/components/AgentPicker';
 import { BADGE } from '@/lib/badges';
 import { toast } from '@/lib/toast';
 import { EdgeGraph, END, stepLabel, type Workflow, type WorkflowBudget, type WorkflowStep } from '@/features/workflows/graph';
@@ -26,6 +27,7 @@ import './hub.css';
 interface AgentRef {
   id: string;
   name: string;
+  avatar?: string;
 }
 
 interface WorkflowFormData {
@@ -143,11 +145,8 @@ function WorkflowForm({ initial, onSave, onCancel, onDelete, saving, agents }: W
               </span>
               {/* The agent beside the name, at a fixed width: the name takes the rest. */}
               <span className="wf-step-agent">
-                <Select block size="small" aria-label="Agent" value={step.agent_config_id}
-                  onChange={e => setStep(i, { agent_config_id: e.target.value })}>
-                  <Select.Option value="">Select an agent…</Select.Option>
-                  {(agents || []).map(a => <Select.Option key={a.id} value={a.id}>{a.name}</Select.Option>)}
-                </Select>
+                <AgentPicker block size="small" agents={agents || []} value={step.agent_config_id}
+                  onChange={id => setStep(i, { agent_config_id: id })} />
               </span>
               <IconButton icon={ChevronUpIcon} aria-label="Move up" size="small" variant="invisible"
                 disabled={i === 0} onClick={() => move(i, -1)} />

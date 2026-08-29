@@ -2,6 +2,7 @@ import './trace.css';
 import { useState, useEffect, useMemo, useRef, useCallback, type ChangeEvent } from 'react';
 import { Button, Checkbox, CounterLabel, Dialog, Flash, Link, SegmentedControl, Select, SelectPanel, Textarea, TextInput } from '@primer/react';
 import type { SelectPanelItemInput } from '@primer/react';
+import { AgentPicker } from '@/components/AgentPicker';
 import { api } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { diffLines } from '@/lib/diff';
@@ -157,6 +158,7 @@ function FunctionPayload({ data, indent }: { data: PayloadRecord; indent: number
 interface AgentOption {
   id: string | number;
   name: string;
+  avatar?: string;
   model?: string;
   model_settings?: string;
   provider?: { provider_type?: string };
@@ -453,9 +455,7 @@ function ReplayDialog({ data, onClose }: { data: PayloadRecord; onClose: () => v
     >
       <div className="trace-replay">
         <div className="trace-replay-toolbar">
-          <Select value={agentId} onChange={e => applyAgent(e.target.value)} className="trace-replay-agent">
-            {agents.map(a => <Select.Option key={a.id} value={String(a.id)}>{a.name}</Select.Option>)}
-          </Select>
+          <AgentPicker className="trace-replay-agent" agents={agents} value={agentId} onChange={applyAgent} />
           <TextInput value={model} onChange={e => setModel(e.target.value)} placeholder="model (agent default)" className="trace-replay-model" />
           <SettingsKnobs
             parsed={settingsParsed.error ? null : (settingsParsed.value || {})}

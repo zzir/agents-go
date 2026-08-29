@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-labelledby="title desc">
+  <title id="title">Marketing role avatar</title>
+  <desc id="desc">A scalable GitHub Primer-inspired illustrated professional avatar without visible text.</desc>
+  <style>
+    .outline { stroke: #1f2328; stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; }
+    .thin { stroke-width: 3.5; }
+  </style>
+  <defs><clipPath id="avatar-clip"><rect x="4" y="4" width="248" height="248" rx="52"/></clipPath></defs>
+  <g clip-path="url(#avatar-clip)">
+    <rect x="4" y="4" width="248" height="248" rx="52" fill="#ffffff"/>
+    <path d="M-12 95C42 18 121 19 164 61c29 29 54 24 105-7v214H-12z" fill="#ffeff7"/>
+    <circle cx="210" cy="52" r="34" fill="#bf3989" opacity=".12"/>
+    <path d="M24 64h32M40 48v32M201 108h22M212 97v22" fill="none" stroke="#bf3989" stroke-width="4" stroke-linecap="round" opacity=".45"/>
+    <circle cx="47" cy="122" r="5" fill="#bf3989" opacity=".5"/>
+    <circle cx="205" cy="143" r="5" fill="#bf3989" opacity=".5"/>
+    <path d="M197 50h8l14-8v20l-14-7h-8zM202 55l3 10M224 45l4-3M225 52h5M224 59l4 3" fill="none" stroke="#bf3989" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <path d="M31 256c2-42 34-64 78-73h38c44 9 76 31 78 73z" fill="#bf3989" class="outline"/><path d="M109 175h38l7 19c-15 14-37 14-52 0z" fill="#d7a06f" class="outline"/><path d="M91 194c16 10 29 15 40 14 10-1 21-7 34-17" fill="none" stroke="#f6f8fa" stroke-width="7" stroke-linecap="round"/><path d="M145 208l20 22" fill="none" class="outline thin" opacity=".55"/><circle cx="169" cy="234" r="6" fill="#f6f8fa" stroke="#1f2328" stroke-width="3"/>
+    
+          <path d="M164 53c27 8 38 31 27 52-8-15-23-22-45-20z" fill="#9a4b6f" stroke="#1f2328" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M76 116C68 78 88 48 127 46c39 2 60 33 52 71l-13-12c-7-18-20-30-38-38-18 9-31 21-39 39z" fill="#9a4b6f" stroke="#1f2328" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M162 58c12 5 19 13 22 25" fill="none" class="outline thin"/>
+        
+    <circle cx="81" cy="139" r="16" fill="#d7a06f" class="outline"/>
+    <circle cx="175" cy="139" r="16" fill="#d7a06f" class="outline"/>
+    <path d="M82 111c0-36 18-58 46-58s46 22 46 58l-2 35c-2 29-21 48-44 48s-42-19-44-48z" fill="#d7a06f" class="outline"/>
+    <path d="M86 149c-5-8-7-14-5-19M170 149c5-8 7-14 5-19" fill="none" class="outline thin" opacity=".52"/>
+    <path d="M85 106c10-19 24-32 43-39 19 8 33 21 42 40l-8-34-34-20-35 20z" fill="#9a4b6f" stroke="#1f2328" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    
+      <path d="M98 109q8-4 16 0" fill="none" class="outline thin"/>
+      <path d="M142 109q8-4 16 0" fill="none" class="outline thin"/>
+      <circle cx="110" cy="126" r="4.5" fill="#1f2328"/><circle cx="150" cy="126" r="4.5" fill="#1f2328"/>
+      <path d="M128 132l-3 15 7 2" fill="none" class="outline thin" opacity=".72"/>
+      <path d="M113 155q15 21 30 0" fill="#f6f8fa" class="outline thin"/>
+    
+    <path d="M178 78l4 9 10 1-8 7 3 10-9-5-9 5 3-10-8-7 10-1z" fill="#bf3989" stroke="#1f2328" stroke-width="2.5"/>
+  </g>
+  <rect x="4" y="4" width="248" height="248" rx="52" fill="none" stroke="#d0d7de" stroke-width="4"/>
+</svg>

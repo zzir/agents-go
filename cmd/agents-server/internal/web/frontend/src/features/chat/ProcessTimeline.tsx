@@ -5,6 +5,7 @@ import { DIAGNOSTIC_LABELS, type RunDiagnostic } from '@/lib/protocol';
 import type { TurnPart } from '@/lib/timeline';
 import { ToolCallCard } from '@/features/chat/ToolCallCard';
 import { useChatSession, useChatActions } from '@/features/chat/ChatSessionContext';
+import { AgentAvatar } from '@/components/AgentAvatar';
 
 function TimelineThinking({ content }: { content: string }) {
   return (
@@ -14,12 +15,23 @@ function TimelineThinking({ content }: { content: string }) {
   );
 }
 
-function TimelineHandoff({ content }: { content: string }) {
+function TimelineHandoff({ part }: { part: Extract<TurnPart, { type: 'handoff' }> }) {
+  const { agentAvatars } = useChatSession();
   return (
     <div className="pt-entry">
       <div className="pt-handoff">
         <ArrowSwitchIcon size={14} />
-        <span>{content}</span>
+        {part.from && part.to ? (
+          <span className="pt-handoff-agents">
+            <AgentAvatar name={part.from} avatar={part.fromId ? agentAvatars[part.fromId] : undefined} size={20} />
+            {part.from}
+            <span className="pt-handoff-arrow">→</span>
+            <AgentAvatar name={part.to} avatar={part.toId ? agentAvatars[part.toId] : undefined} size={20} />
+            {part.to}
+          </span>
+        ) : (
+          <span>{part.content}</span>
+        )}
       </div>
     </div>
   );
@@ -134,7 +146,7 @@ export function ProcessTimeline({ parts, live, reasoning, textStreaming }: Proce
         <div className="process-timeline">
           {parts.map((p, i) => {
             if (p.type === 'thinking') return <TimelineThinking key={'pt-' + i} content={p.content || ''} />;
-            if (p.type === 'handoff') return <TimelineHandoff key={'pt-' + i} content={p.content || ''} />;
+            if (p.type === 'handoff') return <TimelineHandoff key={'pt-' + i} part={p} />;
             if (p.type === 'tools') {
               return p.toolCalls.map(tc => (
                 <ToolCallCard key={tc.tool_call_id} toolCall={tc} live={live} onInspectTask={inspectTask} onRetryTask={retryTask} />

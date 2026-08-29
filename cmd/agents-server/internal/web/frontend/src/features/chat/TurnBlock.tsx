@@ -8,6 +8,7 @@ import { StreamingMarkdown } from '@/features/chat/StreamingMarkdown';
 import { TextContent } from '@/features/chat/TextContent';
 import { ProcessTimeline } from '@/features/chat/ProcessTimeline';
 import { useChatSession, useChatActions } from '@/features/chat/ChatSessionContext';
+import { AgentAvatar } from '@/components/AgentAvatar';
 
 // STAGE_NOTES says what a trip at each stage actually stopped. A guardrail runs
 // at four of them, and telling someone "the request was blocked before the
@@ -101,7 +102,7 @@ interface TurnBlockProps {
 export const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive, prompt, duration, messageId, branches }: TurnBlockProps) {
   // Live-run state applies to the live turn only — every read below is gated
   // on isLive.
-  const { running, compacting, liveAgentName, liveStartedAt } = useChatSession();
+  const { running, compacting, liveAgentName, liveAgentAvatar, liveStartedAt } = useChatSession();
   const { regenerate, fork, switchBranch } = useChatActions();
   const isEmpty = parts.length === 0 && !streaming && !reasoning;
   const { copied, copy } = useCopy();
@@ -156,7 +157,10 @@ export const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, 
           <div className="thinking-dots">
             <span /><span /><span />
           </div>
-          {liveAgentName && <span className="thinking-agent">{liveAgentName}</span>}
+          {liveAgentName && <span className="thinking-agent">
+            <AgentAvatar name={liveAgentName} avatar={liveAgentAvatar || undefined} size={20} />
+            {liveAgentName}
+          </span>}
         </div>
       )}
       {isLive && compacting && activeIdx === -1 && !liveTail && (

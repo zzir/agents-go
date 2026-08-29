@@ -429,6 +429,14 @@
   white-space: pre-wrap;
   word-break: break-word;
 }
+.pt-handoff-agents {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--base-size-4);
+}
+.pt-handoff-arrow {
+  color: var(--fgColor-muted);
+}
 .pt-handoff {
   display: inline-flex;
   align-items: center;
@@ -743,6 +751,9 @@
 
 /* Live agent name next to the thinking dots */
 .thinking-agent {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--base-size-4);
   margin-left: var(--base-size-8);
   font-size: var(--base-text-size-xs);
   color: var(--fgColor-muted);

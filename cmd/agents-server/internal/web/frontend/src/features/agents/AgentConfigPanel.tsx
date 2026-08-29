@@ -12,6 +12,8 @@ import { fc, seg } from '@/lib/form';
 import { JsonField } from '@/lib/JsonField';
 import { toast } from '@/lib/toast';
 import { Disclosure } from '@/components/Disclosure';
+import { AgentAvatar } from '@/components/AgentAvatar';
+import { AvatarPicker } from './AvatarPicker';
 import { type Skill, type SkillGroup, groupSkills, qualifiedName } from '@/lib/skills';
 import { providerMeta, providerFacts, type ProviderTypeInfo } from '@/lib/providers';
 
@@ -54,6 +56,7 @@ function nestConfig(flat: Record<string, unknown>): Record<string, unknown> {
 
 interface AgentFormData {
   name: string;
+  avatar: string;
   description: string;
   instructions: string;
   model: string;
@@ -100,6 +103,7 @@ interface McpServer {
 interface Agent {
   id: string | number;
   name: string;
+  avatar?: string;
   description?: string;
   model: string;
   provider_id?: string;
@@ -157,7 +161,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
   };
   const initMs = parseModelSettings() as { reasoning?: { effort?: string }; service_tier?: string; extra_body?: Record<string, unknown>; temperature?: number; top_p?: number; max_tokens?: number };
   const [form, setForm] = useState<AgentFormData>({
-    name: '', description: '', instructions: '', model: 'gpt-5.5',
+    name: '', avatar: '', description: '', instructions: '', model: 'gpt-5.5',
     provider_id: '', context_window: 0,
     max_turns: 0, handoff_description: '',
     disable_tool_choice_reset: false, stop_at_tools: '',
@@ -251,7 +255,12 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
 
   return (
     <Stack gap="normal">
-      {fc('Name', <TextInput value={form.name} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('name', e.target.value)} placeholder="e.g. Code Assistant" block />)}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+        <div style={{ flex: 1 }}>
+          {fc('Name', <TextInput value={form.name} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('name', e.target.value)} placeholder="e.g. Code Assistant" block />)}
+        </div>
+        <AvatarPicker name={form.name} value={form.avatar || ''} onChange={v => set('avatar', v)} />
+      </div>
       {fc('Description',
         <TextInput value={form.description} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('description', e.target.value)} placeholder="What this agent is for, in a sentence" block />,
         'Used to pick the right agent automatically — not sent to the model as instructions')}
@@ -379,7 +388,12 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
             {handoffTargets.map(a => (
               <FormControl key={a.id}>
                 <Checkbox checked={selectedHandoffs.includes(a.id)} onChange={() => toggleHandoff(a.id)} />
-                <FormControl.Label>{a.name}</FormControl.Label>
+                <FormControl.Label>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    <AgentAvatar name={a.name} avatar={a.avatar} size={20} />
+                    {a.name}
+                  </span>
+                </FormControl.Label>
                 <FormControl.Caption>{a.model || 'default model'}</FormControl.Caption>
               </FormControl>
             ))}
@@ -566,6 +580,7 @@ export function AgentConfigPanel() {
           const rowProvider = (providers || []).find(p => p.id === a.provider_id);
           return (
             <ResourceRow key={a.id}
+              leading={<AgentAvatar name={a.name} avatar={a.avatar} size={32} />}
               title={a.name}
               badges={<ScopeBadge row={a} meId={me?.id} />}
               sub={a.description || undefined}

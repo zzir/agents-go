@@ -518,6 +518,12 @@ a:hover {
     border-bottom: 1px solid var(--borderColor-muted);
 }
 
+.resource-row-leading {
+    display: flex;
+    flex-shrink: 0;
+    margin-right: var(--base-size-12);
+}
+
 .resource-row-main {
     flex: 1;
     min-width: 0;
@@ -880,6 +886,40 @@ a:hover {
   font-weight: 600;
   flex-shrink: 0;
   object-fit: cover;
+}
+/* The illustrated avatars carry their own light background; a hairline ring
+   keeps them seated on both themes (letter fallbacks need none). */
+img.user-avatar {
+  border: 1px solid var(--borderColor-muted);
+  box-sizing: border-box;
+}
+.avatar-picker-button {
+  padding-inline: 8px;
+}
+.avatar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 40px);
+  gap: 4px;
+  padding: 8px;
+}
+.avatar-grid-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--borderRadius-medium);
+  background: transparent;
+  cursor: pointer;
+}
+.avatar-grid-cell:hover {
+  background: var(--bgColor-neutral-muted);
+}
+.avatar-grid-cell--selected {
+  outline: 2px solid var(--borderColor-accent-emphasis);
+  outline-offset: -2px;
 }
 .account-name {
   font-weight: 600;

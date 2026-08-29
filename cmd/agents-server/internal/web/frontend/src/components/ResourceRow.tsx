@@ -1,8 +1,11 @@
 import { type ReactNode } from 'react';
 
 /** One entity row in a settings list: dot + title + badges on the head line,
- * an optional sub or meta line under it, actions held to the right edge. */
-export function ResourceRow({ status, title, badges, sub, meta, actions }: {
+ * an optional sub or meta line under it, actions held to the right edge.
+ * leading is a left column spanning every line — an avatar, not a status dot,
+ * which belongs on the head line via status. */
+export function ResourceRow({ leading, status, title, badges, sub, meta, actions }: {
+  leading?: ReactNode;
   status?: ReactNode;
   title: ReactNode;
   badges?: ReactNode;
@@ -12,6 +15,7 @@ export function ResourceRow({ status, title, badges, sub, meta, actions }: {
 }) {
   return (
     <div className="Box-row">
+      {leading ? <div className="resource-row-leading">{leading}</div> : null}
       <div className="resource-row-main">
         <div className="resource-row-head">
           {status}

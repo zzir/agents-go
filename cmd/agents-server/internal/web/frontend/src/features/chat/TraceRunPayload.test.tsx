@@ -32,7 +32,7 @@ afterAll(() => { if (savedActEnv === undefined) delete g.IS_REACT_ACT_ENVIRONMEN
 
 const noop = () => {};
 const resolve = async () => {};
-const session: ChatSessionState = { sessionId: 's1', running: false, compacting: false, liveAgentName: null, liveStartedAt: null };
+const session: ChatSessionState = { sessionId: 's1', running: false, compacting: false, liveAgentName: null, liveAgentAvatar: null, liveStartedAt: null, agentAvatars: {} };
 
 function Harness({ events, loadSpan }: { events: TraceEventData[]; loadSpan: ChatActions['loadSpan'] }) {
   const actions: ChatActions = { openTrace: noop, inspectTask: noop, retryTask: resolve, stopTask: resolve, dismissTask: resolve, loadSpan };

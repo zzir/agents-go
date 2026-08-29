@@ -14,6 +14,7 @@ import { parseTaskNotification, TASK_KIND_WORKFLOW, type TaskStatus } from '@/li
 import type { SessionState, TaskState } from '@/lib/useAgentSocket';
 import { ChatSessionProvider, useDerivedChatTasks, type ChatSessionState, type ChatActions } from '@/features/chat/ChatSessionContext';
 import { BackgroundListPanel, BackgroundDetailPanel, BackgroundMissingPanel } from '@/features/chat/BackgroundPanel';
+import { AgentAvatar } from '@/components/AgentAvatar';
 import { MessageBubble } from '@/features/chat/MessageBubble';
 import { TurnBlock } from '@/features/chat/TurnBlock';
 import { UserMessage } from '@/features/chat/UserMessage';
@@ -28,7 +29,7 @@ import { ContextPanel } from '@/features/chat/ContextPanel';
 import { ChatTopBar } from '@/features/chat/ChatTopBar';
 import { ProjectEnvDialog, parsePorts } from '@/features/chat/ProjectEnvDialog';
 import { EnvEditor, cleanEnv, envError } from '@/components/EnvEditor';
-import { ArrowDownIcon, CommentDiscussionIcon, DependabotIcon, FileDirectoryIcon, PlusIcon } from '@primer/octicons-react';
+import { ArrowDownIcon, CommentDiscussionIcon, FileDirectoryIcon, PlusIcon } from '@primer/octicons-react';
 import { toast } from '@/lib/toast';
 
 /* ---------- types ---------- */
@@ -79,6 +80,7 @@ function entryKey(
 interface AgentConfig {
   id: string;
   name: string;
+  avatar?: string;
 }
 
 interface SandboxDef {
@@ -164,7 +166,7 @@ export function ChatView({
   const messages: ChatMessage[] = state.messages;
   const {
     entries, loaded, streaming, reasoning, running, compacting, diagnostics, traceRuns, runQuestions,
-    liveRunId, liveStartedAt, liveAgentName, tasks, tasksLoaded, taskView, hasMore, loadingMore,
+    liveRunId, liveStartedAt, liveAgentName, liveAgentId, tasks, tasksLoaded, taskView, hasMore, loadingMore,
   } = state;
   const {
     onSend, onCancel, onApprove, onReject, onFork, onLoadEarlier, onSwitchBranch, onCompact, onRegenerate,
@@ -730,9 +732,17 @@ export function ChatView({
   // The session scope every transcript component reads (see
   // ChatSessionContext for the split). Each value is memoized on its inputs so
   // a streaming delta — which changes none of them — re-renders no consumer.
+  const agentAvatars = useMemo<Record<string, string>>(() => {
+    const m: Record<string, string> = {};
+    for (const a of agentConfigs || []) if (a.avatar) m[a.id] = a.avatar;
+    return m;
+  }, [agentConfigs]);
   const session = useMemo<ChatSessionState>(
-    () => ({ sessionId, running, compacting, liveAgentName, liveStartedAt, diagnostics }),
-    [sessionId, running, compacting, liveAgentName, liveStartedAt, diagnostics],
+    () => ({
+      sessionId, running, compacting, liveAgentName, liveStartedAt, diagnostics, agentAvatars,
+      liveAgentAvatar: (liveAgentId && agentAvatars[liveAgentId]) || null,
+    }),
+    [sessionId, running, compacting, liveAgentName, liveAgentId, agentAvatars, liveStartedAt, diagnostics],
   );
   const turnActions = useMemo<ChatActions>(() => ({
     approve: onApprove, reject: onReject, fork: onFork, switchBranch: onSwitchBranch,
@@ -810,7 +820,8 @@ export function ChatView({
     );
   }
 
-  const selectedAgentLabel = agentConfigs?.find(a => a.id === agentConfigId)?.name || 'Agent';
+  const selectedAgent = agentConfigs?.find(a => a.id === agentConfigId);
+  const selectedAgentLabel = selectedAgent?.name || 'Agent';
 
   const inputToolbar: ReactNode = (
     <>
@@ -980,13 +991,18 @@ export function ChatView({
       <div className="chat-input-toolbar-right">
         {agentConfigs && agentConfigs.length > 0 ? (
           <ActionMenu>
-            <ActionMenu.Button size="small" variant="invisible" leadingVisual={DependabotIcon}>
+            {/* Text-only: at composer size an avatar reads as clutter; the
+                dropdown rows carry the avatars. */}
+            <ActionMenu.Button size="small" variant="invisible">
               {selectedAgentLabel}
             </ActionMenu.Button>
             <ActionMenu.Overlay>
               <ActionList selectionVariant="single">
                 {agentConfigs.map(a => (
                   <ActionList.Item key={a.id} selected={agentConfigId === a.id} onSelect={() => setAgentConfigId(a.id)}>
+                    <ActionList.LeadingVisual>
+                      <AgentAvatar name={a.name} avatar={a.avatar} size={20} />
+                    </ActionList.LeadingVisual>
                     {a.name}
                   </ActionList.Item>
                 ))}

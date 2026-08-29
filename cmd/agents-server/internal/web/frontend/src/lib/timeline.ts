@@ -175,6 +175,12 @@ interface ThinkingPart {
 interface HandoffPart {
   type: 'handoff';
   content: string;
+  // The structured halves of content ("from → to"), with the config ids
+  // behind the names when the server knew them — for the avatars.
+  from?: string;
+  to?: string;
+  fromId?: string;
+  toId?: string;
 }
 
 type TurnPart = ToolsPart | TextPart | ErrorPart | CancelledPart | ThinkingPart | HandoffPart;
@@ -201,6 +207,7 @@ interface WorkflowStartedNote {
   workflowName: string;
   // A trigger's agent turn, instead of a workflow.
   agentName?: string;
+  agentConfigId?: string;
   runId?: string;
   brief: string;
   origin: { kind: string; trigger_id?: string; trigger_kind?: string; schedule?: string };
@@ -456,7 +463,7 @@ function assemble(
           note: {
             taskId: String(x.task_id || ''), workflowId: String(x.workflow_id || ''),
             workflowName: String(x.workflow_name || ''), brief: String(x.brief || ''), origin,
-            ...(d.kind === DISPLAY.triggerFired ? { agentName: String(x.agent_name || ''), runId: String(x.run_id || '') } : {}),
+            ...(d.kind === DISPLAY.triggerFired ? { agentName: String(x.agent_name || ''), agentConfigId: String(x.agent_config_id || ''), runId: String(x.run_id || '') } : {}),
           },
         });
         continue;

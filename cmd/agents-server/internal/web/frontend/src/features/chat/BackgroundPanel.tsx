@@ -11,6 +11,7 @@ import type { TaskViewState } from '@/lib/useAgentSocket';
 import type { TurnPart } from '@/lib/timeline';
 import { useChatActions, useChatSession, useChatBackground } from '@/features/chat/ChatSessionContext';
 import { useDecisionHold } from '@/features/chat/useDecisionHold';
+import { AgentAvatar } from '@/components/AgentAvatar';
 import { api } from '@/lib/api';
 import { toast } from '@/lib/toast';
 import { isLive, statusDot } from '@/lib/status';
@@ -95,6 +96,22 @@ export function BackgroundListPanel({ onClose }: { onClose: () => void }) {
 }
 
 // MdBlock renders one settled markdown text part (worker pipeline, same as chat).
+// TaskViewHandoff is the agent switch inside a task's transcript — the
+// avatars when the event carried the config ids, the plain line otherwise.
+function TaskViewHandoff({ part }: { part: Extract<TurnPart, { type: 'handoff' }> }) {
+  const { agentAvatars } = useChatSession();
+  if (!part.from || !part.to) return <div className="task-view-handoff">{part.content}</div>;
+  return (
+    <div className="task-view-handoff pt-handoff-agents">
+      <AgentAvatar name={part.from} avatar={part.fromId ? agentAvatars[part.fromId] : undefined} size={20} />
+      {part.from}
+      <span className="pt-handoff-arrow">→</span>
+      <AgentAvatar name={part.to} avatar={part.toId ? agentAvatars[part.toId] : undefined} size={20} />
+      {part.to}
+    </div>
+  );
+}
+
 const MdBlock = memo(function MdBlock({ text }: { text: string }) {
   const html = useAsyncMarkdown(text);
   return <div className="markdown-body task-view-text" dangerouslySetInnerHTML={{ __html: html }} />;
@@ -267,7 +284,7 @@ export function BackgroundDetailPanel({ item, view, onBack, onClose }: Backgroun
                     case 'cancelled':
                       return <div key={j} className="task-view-error">Cancelled</div>;
                     case 'handoff':
-                      return <div key={j} className="task-view-handoff">{part.content}</div>;
+                      return <TaskViewHandoff key={j} part={part} />;
                     default:
                       return null;
                   }

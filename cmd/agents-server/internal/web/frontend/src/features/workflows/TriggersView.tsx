@@ -20,6 +20,7 @@ export function TriggersView({ sessionId }: { sessionId: string | null }) {
 
   const sessionName = (id: string) => nameOf(sessions, id);
   const targetName = (t: Trigger) => t.target === 'agent' ? nameOf(agents, t.agent_config_id || '') : nameOf(workflows, t.workflow_id || '');
+  const targetAvatar = (t: Trigger) => t.target === 'agent' ? (agents || []).find(a => a.id === t.agent_config_id)?.avatar : undefined;
   const actions = useTriggerActions(reload, sessionName);
 
   const list = triggers || [];
@@ -44,7 +45,7 @@ export function TriggersView({ sessionId }: { sessionId: string | null }) {
         <Paged page={page} total={list.length} label="Trigger pages">
           <div className="Box">
             {page.items.map(t => (
-              <TriggerRow key={t.id} t={t} sessionName={sessionName(t.session_id)} targetName={targetName(t)} actions={actions} />
+              <TriggerRow key={t.id} t={t} sessionName={sessionName(t.session_id)} targetName={targetName(t)} targetAvatar={targetAvatar(t)} actions={actions} />
             ))}
           </div>
         </Paged>

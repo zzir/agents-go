@@ -775,3 +775,20 @@ When a change genuinely doesn't fit, update this list in the same PR.
     away from cannot overwrite the current one. A read in flight shows
     "Checking…" only on the FIRST read (no prior value); a failed read leaves
     the last value, or offers Start — never a permanent "Checking…".
+
+50. **Wherever the UI names an agent, `AgentAvatar` draws it.** The agent's
+    `avatar` is a path into the built-in catalog shipped with the frontend
+    (`public/avatars/`, mirrored by `lib/avatars.ts` and its sync test); the
+    server rejects anything else, since the CSP (`img-src 'self'`) would
+    render an external URL as a broken image anyway. No avatar renders as the
+    name's initial — the same circle `UserAvatar` draws for people — never an
+    icon standing in for one agent. Where only a name string crosses the wire,
+    the protocol carries the config id beside it (`run.agent_start`'s
+    `agent_config_id`, `run.handoff`'s `from_id`/`to_id`, the trigger note's
+    `agent_config_id`) and the client resolves the avatar from its agent list;
+    single-agent pickers render through the shared `AgentPicker`, not a native
+    `<select>`, which cannot show an image. Three sizes only — 20px inline
+    beside a line of text, 24px on the avatar-picker button, 32px where the
+    avatar spans a two-line row (the settings list, the picker grid); the one
+    exception is inside a Primer `Label`, whose height caps the avatar at
+    16px.

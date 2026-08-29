@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-labelledby="title desc">
+  <title id="title">Reviewer role avatar</title>
+  <desc id="desc">A scalable GitHub Primer-inspired illustrated professional avatar without visible text.</desc>
+  <style>
+    .outline { stroke: #1f2328; stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; }
+    .thin { stroke-width: 3.5; }
+  </style>
+  <defs><clipPath id="avatar-clip"><rect x="4" y="4" width="248" height="248" rx="52"/></clipPath></defs>
+  <g clip-path="url(#avatar-clip)">
+    <rect x="4" y="4" width="248" height="248" rx="52" fill="#ffffff"/>
+    <path d="M-12 95C42 18 121 19 164 61c29 29 54 24 105-7v214H-12z" fill="#dafbe1"/>
+    <circle cx="210" cy="52" r="34" fill="#1a7f37" opacity=".12"/>
+    <path d="M24 64h32M40 48v32M201 108h22M212 97v22" fill="none" stroke="#1a7f37" stroke-width="4" stroke-linecap="round" opacity=".45"/>
+    <circle cx="47" cy="122" r="5" fill="#1a7f37" opacity=".5"/>
+    <circle cx="205" cy="143" r="5" fill="#1a7f37" opacity=".5"/>
+    <path d="M197 52q14-17 28 0-14 17-28 0z" fill="none" stroke="#1a7f37" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="211" cy="52" r="5" fill="none" stroke="#1a7f37" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <path d="M31 256c2-42 34-64 78-73h38c44 9 76 31 78 73z" fill="#1a7f37" class="outline"/><path d="M109 175h38l7 19c-15 14-37 14-52 0z" fill="#8d5524" class="outline"/><path d="M106 187h44v24c-13 8-31 8-44 0z" fill="#f6f8fa" class="outline thin"/><path d="M106 200h44" fill="none" class="outline thin"/>
+    
+          <path d="M79 116C70 77 90 46 128 44c38 2 58 33 49 72l-12-11c-7-18-19-31-37-38-16 7-29 20-37 38z" fill="#1f2328" stroke="#1f2328" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M83 93c-14 29-8 55-18 81M96 99c-10 31-3 58-10 82M160 99c10 31 3 58 10 82M173 93c14 29 8 55 18 81" fill="none" stroke="#1f2328" stroke-width="12" stroke-linecap="round"/>
+          <path d="M83 93c-14 29-8 55-18 81M96 99c-10 31-3 58-10 82M160 99c10 31 3 58 10 82M173 93c14 29 8 55 18 81" fill="none" class="outline"/>
+        
+    <circle cx="81" cy="139" r="16" fill="#8d5524" class="outline"/>
+    <circle cx="175" cy="139" r="16" fill="#8d5524" class="outline"/>
+    <path d="M82 111c0-36 18-58 46-58s46 22 46 58l-2 35c-2 29-21 48-44 48s-42-19-44-48z" fill="#8d5524" class="outline"/>
+    <path d="M86 149c-5-8-7-14-5-19M170 149c5-8 7-14 5-19" fill="none" class="outline thin" opacity=".52"/>
+    <path d="M86 106c9-19 23-31 42-39 19 8 33 21 42 40l-8-34-34-19-34 19z" fill="#1f2328" stroke="#1f2328" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    
+      <path d="M98 112l16-4" fill="none" class="outline thin"/>
+      <path d="M142 108l16 4" fill="none" class="outline thin"/>
+      <circle cx="106" cy="126" r="4.5" fill="#1f2328"/><circle cx="146" cy="126" r="4.5" fill="#1f2328"/>
+      <path d="M128 132l-3 15 7 2" fill="none" class="outline thin" opacity=".72"/>
+      <path d="M116 160q12-3 24 0" fill="none" class="outline thin"/>
+    
+    <circle cx="108" cy="126" r="15" fill="none" class="outline thin"/><circle cx="148" cy="126" r="15" fill="none" class="outline thin"/><path d="M123 126h10M93 124l-11-4M163 124l11-4" fill="none" class="outline thin"/>
+  </g>
+  <rect x="4" y="4" width="248" height="248" rx="52" fill="none" stroke="#d0d7de" stroke-width="4"/>
+</svg>

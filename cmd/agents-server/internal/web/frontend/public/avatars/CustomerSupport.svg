@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-labelledby="title desc">
+  <title id="title">Customer support role avatar</title>
+  <desc id="desc">A scalable GitHub Primer-inspired illustrated professional avatar without visible text.</desc>
+  <style>
+    .outline { stroke: #1f2328; stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; }
+    .thin { stroke-width: 3.5; }
+  </style>
+  <defs><clipPath id="avatar-clip"><rect x="4" y="4" width="248" height="248" rx="52"/></clipPath></defs>
+  <g clip-path="url(#avatar-clip)">
+    <rect x="4" y="4" width="248" height="248" rx="52" fill="#ffffff"/>
+    <path d="M-12 95C42 18 121 19 164 61c29 29 54 24 105-7v214H-12z" fill="#ddf4ff"/>
+    <circle cx="210" cy="52" r="34" fill="#0969da" opacity=".12"/>
+    <path d="M24 64h32M40 48v32M201 108h22M212 97v22" fill="none" stroke="#0969da" stroke-width="4" stroke-linecap="round" opacity=".45"/>
+    <circle cx="47" cy="122" r="5" fill="#0969da" opacity=".5"/>
+    <circle cx="205" cy="143" r="5" fill="#0969da" opacity=".5"/>
+    <path d="M198 53v-3a13 13 0 0126 0v9M198 53h5v10h-5zM219 53h5v10h-5zM219 64c-2 4-5 5-10 5" fill="none" stroke="#0969da" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="207" cy="69" r="2.5" fill="#0969da"/>
+
+    <path d="M31 256c2-42 34-64 78-73h38c44 9 76 31 78 73z" fill="#0969da" class="outline"/><path d="M109 175h38l7 19c-15 14-37 14-52 0z" fill="#c68642" class="outline"/><path d="M99 189l29 22-18 18-19-34M157 189l-29 22 18 18 19-34" fill="#f6f8fa" class="outline thin"/><circle cx="128" cy="236" r="4" fill="#f6f8fa"/>
+    
+          <path d="M73 127C66 81 86 49 128 47c42 2 62 34 55 80l-7 47-25-2 14-69c-12-16-25-27-39-34-10 16-22 27-36 35l15 68-25 2z" fill="#3b2f2f" stroke="#1f2328" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M82 88c27-17 61-18 92 1" fill="none" stroke="#0969da" stroke-width="10" stroke-linecap="round"/>
+          <path d="M82 88c27-17 61-18 92 1" fill="none" class="outline thin"/>
+        
+    <circle cx="81" cy="139" r="16" fill="#c68642" class="outline"/>
+    <circle cx="175" cy="139" r="16" fill="#c68642" class="outline"/>
+    <path d="M82 111c0-36 18-58 46-58s46 22 46 58l-2 35c-2 29-21 48-44 48s-42-19-44-48z" fill="#c68642" class="outline"/>
+    <path d="M86 149c-5-8-7-14-5-19M170 149c5-8 7-14 5-19" fill="none" class="outline thin" opacity=".52"/>
+    <path d="M86 106c9-18 22-30 40-37 18 7 32 20 43 38l-7-35-36-20-34 21z" fill="#3b2f2f" stroke="#1f2328" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><path d="M84 91c27-14 58-14 86 1" fill="none" stroke="#0969da" stroke-width="9" stroke-linecap="round"/><path d="M84 91c27-14 58-14 86 1" fill="none" class="outline thin"/>
+    
+      <path d="M98 109q8-4 16 0" fill="none" class="outline thin"/>
+      <path d="M142 109q8-4 16 0" fill="none" class="outline thin"/>
+      <circle cx="108" cy="126" r="4.5" fill="#1f2328"/><circle cx="148" cy="126" r="4.5" fill="#1f2328"/>
+      <path d="M128 132l-3 15 7 2" fill="none" class="outline thin" opacity=".72"/>
+      <path d="M114 156q14 17 28 0" fill="none" class="outline thin"/>
+    
+    <path d="M84 136v-8a44 44 0 0188 0v8" fill="none" stroke="#1f2328" stroke-width="5" stroke-linecap="round"/><rect x="76" y="132" width="13" height="27" rx="6" fill="#0969da" class="outline thin"/><rect x="167" y="132" width="13" height="27" rx="6" fill="#0969da" class="outline thin"/><path d="M175 157c-2 11-10 15-23 15" fill="none" class="outline thin"/><circle cx="149" cy="172" r="4" fill="#0969da" stroke="#1f2328" stroke-width="2.5"/>
+  </g>
+  <rect x="4" y="4" width="248" height="248" rx="52" fill="none" stroke="#d0d7de" stroke-width="4"/>
+</svg>

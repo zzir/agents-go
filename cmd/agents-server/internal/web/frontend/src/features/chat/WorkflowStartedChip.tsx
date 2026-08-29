@@ -2,7 +2,8 @@ import { memo } from 'react';
 import { Label } from '@primer/react';
 import { WorkflowIcon, ZapIcon } from '@primer/octicons-react';
 import type { WorkflowStartedNote } from '@/lib/timeline';
-import { useChatActions } from '@/features/chat/ChatSessionContext';
+import { useChatActions, useChatSession } from '@/features/chat/ChatSessionContext';
+import { AgentAvatar } from '@/components/AgentAvatar';
 
 // originText says who started the execution, the way the trace card and the
 // chip both phrase it.
@@ -24,6 +25,7 @@ export function originText(origin: WorkflowStartedNote['origin']): string {
 export const WorkflowStartedChip = memo(function WorkflowStartedChip({ note, content, traceRunId, msgIdx, entryId }:
   { note: WorkflowStartedNote; content: string; traceRunId?: string | null; msgIdx: number; entryId?: string }) {
   const { inspectTask } = useChatActions();
+  const { agentAvatars } = useChatSession();
   // The note's data names the workflow or the agent; a row without either
   // (the extra missing) shows the line of text the server wrote instead of
   // an empty name.
@@ -38,6 +40,7 @@ export const WorkflowStartedChip = memo(function WorkflowStartedChip({ note, con
     // renders as nothing.
     <Label variant="secondary" className="wf-started-label">
       <Icon size={12} />
+      {agentTurn && <AgentAvatar name={note.agentName} avatar={note.agentConfigId ? agentAvatars[note.agentConfigId] : undefined} size={14} />}
       <span>{label}</span>
     </Label>
   );

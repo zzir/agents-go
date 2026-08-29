@@ -355,9 +355,9 @@ describe('stream/replay isomorphism', () => {
 
   it('documented difference: handoff parts are live-only', () => {
     let live = ensureLiveTurn([], RUN)!;
-    live = appendHandoffPart(live, 'triage → coder')!;
+    live = appendHandoffPart(live, { from: 'triage', to: 'coder', fromId: 'id-t', toId: 'id-c' })!;
     const streamParts = (live[live.length - 1] as TurnEntry).parts;
-    expect(streamParts).toEqual([{ type: 'handoff', content: 'triage → coder' }]);
+    expect(streamParts).toEqual([{ type: 'handoff', content: 'triage → coder', from: 'triage', to: 'coder', fromId: 'id-t', toId: 'id-c' }]);
 
     // The backend persists no handoff row — the transfer_to_* tool call is the
     // durable record. A replay therefore has no handoff part, by design.
@@ -478,8 +478,8 @@ describe('stream/replay isomorphism', () => {
     expect(ensureLiveTurn(live, RUN)).toBeNull(); // second run.started: no second turn
     live = appendMessageItem(live, 'hello', false)!;
     expect(appendMessageItem(live, 'hello', true)).toBeNull(); // no-item-id text replay
-    live = appendHandoffPart(live, 'a → b')!;
-    expect(appendHandoffPart(live, 'a → b')).toBeNull(); // handoff replay
+    live = appendHandoffPart(live, { from: 'a', to: 'b' })!;
+    expect(appendHandoffPart(live, { from: 'a', to: 'b' })).toBeNull(); // handoff replay
     live = appendCancelledPart(live, '', '')!;
     const again = appendCancelledPart(live, '', '')!;
     const parts = (again[again.length - 1] as TurnEntry).parts;

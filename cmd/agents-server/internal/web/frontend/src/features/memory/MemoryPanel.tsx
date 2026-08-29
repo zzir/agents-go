@@ -1,5 +1,7 @@
 import { useState } from 'react';
-import { TextInput, Textarea, Label, Select, Stack } from '@primer/react';
+import { TextInput, Textarea, Label, Stack } from '@primer/react';
+import { AgentAvatar } from '@/components/AgentAvatar';
+import { AgentPicker } from '@/components/AgentPicker';
 import { FormActions } from '@/components/FormActions';
 import { CrudPanel, RowActionsMenu } from '@/components/CrudPanel';
 import { ResourceRow } from '@/components/ResourceRow';
@@ -23,6 +25,7 @@ interface Memory {
 interface AgentConfig {
   id: string;
   name: string;
+  avatar?: string;
 }
 
 interface MemoryFormData {
@@ -52,18 +55,12 @@ function MemoryForm({ initial, onSave, onCancel, onDelete, saving, agents }: Mem
     <Stack gap="normal">
       {fc(
         'Agent',
-        <Select
+        <AgentPicker
+          agents={agents || []}
           value={form.agent_config_id || ''}
-          onChange={e => set('agent_config_id', e.target.value)}
-        >
-          <Select.Option value="">(Global - all agents)</Select.Option>
-          {agents &&
-            agents.map(a => (
-              <Select.Option key={a.id} value={a.id}>
-                {a.name}
-              </Select.Option>
-            ))}
-        </Select>,
+          onChange={id => set('agent_config_id', id)}
+          emptyLabel="(Global - all agents)"
+        />,
       )}
       {fc(
         'Key',
@@ -112,7 +109,12 @@ export function MemoryPanel() {
       {memories.map(m => (
         <ResourceRow key={m.id}
           title={m.key}
-          badges={m.agent_config_id && <Label variant={BADGE.ref}>{agentName(m.agent_config_id)}</Label>}
+          badges={m.agent_config_id && <Label variant={BADGE.ref}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <AgentAvatar name={agentName(m.agent_config_id)} avatar={(agents || []).find(a => a.id === m.agent_config_id)?.avatar} size={14} />
+              {agentName(m.agent_config_id)}
+            </span>
+          </Label>}
           sub={m.content.substring(0, 120) + (m.content.length > 120 ? '...' : '')}
           actions={<RowActionsMenu name={m.key} onEdit={() => startEdit(m)} />}
         />

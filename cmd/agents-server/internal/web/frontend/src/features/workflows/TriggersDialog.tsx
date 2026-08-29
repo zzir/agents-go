@@ -9,6 +9,8 @@ import { fc } from '@/lib/form';
 import { toast } from '@/lib/toast';
 import { BADGE } from '@/lib/badges';
 import { Disclosure } from '@/components/Disclosure';
+import { AgentAvatar } from '@/components/AgentAvatar';
+import { AgentPicker } from '@/components/AgentPicker';
 import { SessionPicker, UnboundHint } from '@/features/sessions/SessionPicker';
 import { shortTime } from '@/lib/format';
 
@@ -127,8 +129,8 @@ export function useTriggerActions(reload: () => void, sessionName: (id: string) 
 // tree from its portal) so none of them toggles the row. targetName is the
 // workflow's or the agent's; a list under one workflow passes none, and the
 // kind takes the title's place.
-export function TriggerRow({ t, sessionName, targetName, actions }:
-  { t: Trigger; sessionName: string; targetName?: string; actions: ReturnType<typeof useTriggerActions> }) {
+export function TriggerRow({ t, sessionName, targetName, targetAvatar, actions }:
+  { t: Trigger; sessionName: string; targetName?: string; targetAvatar?: string; actions: ReturnType<typeof useTriggerActions> }) {
   const busy = actions.busy(t.id);
   const started = t.last_started_id ? ` · ${t.target === 'agent' ? 'run' : 'task'} ${t.last_started_id.slice(0, 8)}` : '';
   // The dot: what the last fire says — red for an error, green for a fire
@@ -143,7 +145,10 @@ export function TriggerRow({ t, sessionName, targetName, actions }:
           <span className="form-status-dot" style={{ background: dot }} title={!t.enabled ? 'off' : t.last_error ? 'last fire failed' : t.last_fired_at ? 'last fire went' : 'never fired'} />
           {targetName ? (
             <>
-              <span className="resource-row-title wf-trigger-title"><TargetIcon size={14} />{targetName}</span>
+              <span className="resource-row-title wf-trigger-title">
+                {t.target === 'agent' ? <AgentAvatar name={targetName} avatar={targetAvatar} size={20} /> : <TargetIcon size={14} />}
+                {targetName}
+              </span>
               <Label variant={t.kind === 'cron' ? BADGE.type : 'accent'}>{t.kind}</Label>
             </>
           ) : (
@@ -163,7 +168,7 @@ export function TriggerRow({ t, sessionName, targetName, actions }:
             <ActionList>
               {t.kind === 'webhook' && <ActionList.Item onSelect={() => actions.rotate(t)}>Rotate secret</ActionList.Item>}
               <ActionList.Item variant="danger" onSelect={() => actions.remove(t)}>
-                <ActionList.LeadingVisual><TrashIcon size={16} /></ActionList.LeadingVisual>
+                <ActionList.LeadingVisual><TrashIcon size={20} /></ActionList.LeadingVisual>
                 Delete
               </ActionList.Item>
             </ActionList>
@@ -235,10 +240,8 @@ export function TriggerForm({ fixedWorkflow, sessionId, onCreated, onCancel }:
                   <Select.Option value="">Select a workflow…</Select.Option>
                   {(workflows || []).map(w => <Select.Option key={w.id} value={w.id}>{w.name || w.id.slice(0, 8)}</Select.Option>)}
                 </Select>)
-              : fc('Agent', <Select block value={form.agent_config_id} onChange={e => set({ agent_config_id: e.target.value })}>
-                  <Select.Option value="">Select an agent…</Select.Option>
-                  {(agents || []).map(a => <Select.Option key={a.id} value={a.id}>{a.name || a.id.slice(0, 8)}</Select.Option>)}
-                </Select>, 'Runs the brief as an ordinary turn, with the conversation’s own sandbox')}
+              : fc('Agent', <AgentPicker block agents={agents || []} value={form.agent_config_id}
+                  onChange={id => set({ agent_config_id: id })} />, 'Runs the brief as an ordinary turn, with the conversation’s own sandbox')}
           </>
         )}
         {fc('Fires', <Select block value={form.kind} onChange={e => set({ kind: e.target.value as TriggerForm['kind'] })}>

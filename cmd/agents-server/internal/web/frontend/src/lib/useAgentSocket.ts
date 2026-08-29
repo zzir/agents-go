@@ -144,6 +144,8 @@ export interface SessionState {
   liveRunId: string | null;
   liveStartedAt: number | null;
   liveAgentName: string | null;
+  // The config id behind liveAgentName (run.agent_start), for its avatar.
+  liveAgentId: string | null;
   loaded: boolean;
   // Backwards pagination over the persisted history. entries are the raw rows
   // fetched so far, kept because a later page has to be REBUILT with the ones
@@ -204,7 +206,7 @@ function staleTaskRow(cur: TaskState, status: TaskStatus, attempt?: number): boo
 export function defaultSS(): SessionState {
   return {
     messages: [], streaming: '', reasoning: '', running: false, compacting: false, diagnostics: [],
-    traceRuns: {}, runQuestions: {}, liveRunId: null, liveStartedAt: null, liveAgentName: null, loaded: false,
+    traceRuns: {}, runQuestions: {}, liveRunId: null, liveStartedAt: null, liveAgentName: null, liveAgentId: null, loaded: false,
     entries: [], hasMore: false, loadingMore: false, tasks: {}, tasksLoaded: false, taskView: null,
   };
 }
@@ -638,7 +640,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
         return {
           ...s, running: true, compacting: false, diagnostics: [], liveRunId: p.run_id,
           liveStartedAt: appended ? Date.now() : (s.liveStartedAt ?? Date.now()),
-          liveAgentName: null, loaded: true,
+          liveAgentName: null, liveAgentId: null, loaded: true,
           messages: appended || s.messages,
           traceRuns: { ...s.traceRuns, [p.run_id]: s.traceRuns[p.run_id] || [] },
         };
@@ -922,7 +924,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       delete sessionRunRef.current[sid];
       updateSS(sid, s => {
         const msgs = finalizeTurn(s.messages, text, thinking);
-        return { ...s, messages: msgs || s.messages, streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null, liveStartedAt: null, liveAgentName: null };
+        return { ...s, messages: msgs || s.messages, streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null, liveStartedAt: null, liveAgentName: null, liveAgentId: null };
       });
       reloadMessages(sid);
     });
@@ -992,7 +994,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
         }
         if (staleSid) {
           delete sessionRunRef.current[staleSid];
-          updateSS(staleSid, s => ({ ...s, streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null, liveStartedAt: null, liveAgentName: null }));
+          updateSS(staleSid, s => ({ ...s, streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null, liveStartedAt: null, liveAgentName: null, liveAgentId: null }));
           reloadMessages(staleSid);
         }
         return;
@@ -1020,7 +1022,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
         : { type: 'error' as const, content: p.message };
       updateSS(sid, s => ({
         ...s, messages: appendErrorPart(s.messages, errPart, thinking, remaining),
-        streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null, liveStartedAt: null, liveAgentName: null,
+        streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null, liveStartedAt: null, liveAgentName: null, liveAgentId: null,
       }));
       // A guardrail block already rendered its typed card (with the retracted
       // answer above it) optimistically. A reload would replace that with the
@@ -1062,7 +1064,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       // run's start can also skip).
       updateSS(sid, s => {
         const msgs = appendCancelledPart(s.messages, thinking, remaining);
-        return { ...s, messages: msgs || s.messages, streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null, liveStartedAt: null, liveAgentName: null };
+        return { ...s, messages: msgs || s.messages, streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null, liveStartedAt: null, liveAgentName: null, liveAgentId: null };
       });
       reloadMessages(sid);
     });
@@ -1181,14 +1183,15 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       // live timer; clearing liveStartedAt would lose the original timestamp.
       updateSS(sid, s => ({
         ...s, streaming: '', reasoning: '', running: false, compacting: false,
-        liveRunId: null, liveAgentName: null,
+        liveRunId: null, liveAgentName: null, liveAgentId: null,
       }));
     });
 
-    ws.on(EV.runAgentStart, (p: { run_id: string; agent_name?: string }) => {
+    ws.on(EV.runAgentStart, (p: { run_id: string; agent_name?: string; agent_config_id?: string }) => {
       const sid = runMapRef.current[p.run_id];
       if (!sid || !p.agent_name) return;
-      updateSS(sid, s => s.liveAgentName === p.agent_name ? s : { ...s, liveAgentName: p.agent_name || null });
+      updateSS(sid, s => s.liveAgentName === p.agent_name && s.liveAgentId === (p.agent_config_id || null)
+        ? s : { ...s, liveAgentName: p.agent_name || null, liveAgentId: p.agent_config_id || null });
     });
 
     // This connection fell behind and the server dropped events for it — for
@@ -1236,11 +1239,12 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
     // isLive check anchor on it, so a message appended after it would freeze
     // live rendering for the rest of the run. handoff_requested events (no
     // `to` yet) are preview noise and are skipped.
-    ws.on(EV.runHandoff, (p: { run_id: string; from: string; to?: string }) => {
+    ws.on(EV.runHandoff, (p: { run_id: string; from: string; to?: string; from_id?: string; to_id?: string }) => {
+      const handoff = { from: p.from, to: p.to || '', fromId: p.from_id, toId: p.to_id };
       if (isBackgroundRun(p.run_id)) {
         if (p.to) {
           updateTaskView(p.run_id, v => {
-            const msgs = appendHandoffPart(ensureLiveTurn(v.messages, p.run_id) || v.messages, p.from + ' → ' + p.to);
+            const msgs = appendHandoffPart(ensureLiveTurn(v.messages, p.run_id) || v.messages, handoff);
             return msgs ? { ...v, messages: msgs } : v;
           });
         }
@@ -1251,7 +1255,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       // Hub replays (reconnect) re-deliver run.handoff; the reducer dedups like
       // run.message / run.reasoning_item so a reconnect mid-run doesn't stack rows.
       updateSS(sid, s => {
-        const msgs = appendHandoffPart(s.messages, p.from + ' → ' + p.to);
+        const msgs = appendHandoffPart(s.messages, handoff);
         return msgs ? { ...s, messages: msgs } : s;
       });
     });

@@ -3,6 +3,7 @@ import { ActionList, Dialog, Flash, FormControl, Label, PageHeader, Select, Stac
 import { Blankslate, type Column } from '@primer/react/experimental';
 import { GearIcon } from '@primer/octicons-react';
 import { ListTable, RowMenu, actionsColumn } from '@/components/ListTable';
+import { AgentAvatar } from '@/components/AgentAvatar';
 import { api } from '@/lib/api';
 import { BADGE } from '@/lib/badges';
 import { useMe } from '@/lib/me';
@@ -17,6 +18,8 @@ interface ConfigRow {
   detail: string;
   scope: string;
   owner_id?: string;
+  // Agents only: the built-in avatar path, rendered before the name.
+  avatar?: string;
 }
 
 // The five entities members compose runs from (spec §5.29). Each knows how to
@@ -26,6 +29,8 @@ interface EntityKind {
   label: string;
   // One line under the title: what this tab manages, and what it does not.
   blurb: string;
+  // Rows are agents: render an avatar before each name.
+  avatars?: boolean;
   list: () => Promise<ConfigRow[]>;
   setScope: (id: string, scope: 'global' | 'private') => Promise<null>;
   setOwner: (id: string, userId: string) => Promise<null>;
@@ -33,16 +38,16 @@ interface EntityKind {
   scopePerRow: (row: ConfigRow) => boolean;
 }
 
-type Listed = { id?: string; name?: string; scope?: string; owner_id?: string };
+type Listed = { id?: string; name?: string; scope?: string; owner_id?: string; avatar?: string };
 
 const base = (r: Listed, detail: string): ConfigRow => ({
   id: r.id || '', name: r.name || '', detail, scope: r.scope || 'private',
-  owner_id: r.owner_id,
+  owner_id: r.owner_id, avatar: r.avatar,
 });
 
 const ENTITIES: Record<string, EntityKind> = {
   agents: {
-    key: 'agents', label: 'Agents',
+    key: 'agents', label: 'Agents', avatars: true,
     blurb: "Every member's agents. Publishing shares one with the team; transferring hands it to another account. Editing stays with its author, under Settings › Agents.",
     list: async () => ((await api.agents.list()) ?? []).map(a => base(a, a.model || '')),
     setScope: api.agents.setScope, setOwner: api.agents.setOwner, scopePerRow: () => true,
@@ -123,7 +128,14 @@ function ScopedRowsPanel({ kind }: { kind: EntityKind }) {
   }, [confirm, kind, reload, labelFor]);
 
   const columns = useMemo<Column<ConfigRow>[]>(() => [
-    { header: 'Name', id: 'name', rowHeader: true, width: 'growCollapse', minWidth: 140, renderCell: r => <span className="list-clip" title={r.name}>{r.name}</span> },
+    {
+      header: 'Name', id: 'name', rowHeader: true, width: 'growCollapse', minWidth: 140,
+      renderCell: r => kind.avatars
+        ? <span className="list-clip" title={r.name} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <AgentAvatar name={r.name} avatar={r.avatar} size={20} />{r.name}
+          </span>
+        : <span className="list-clip" title={r.name}>{r.name}</span>,
+    },
     {
       // A badge needs its own room: 'auto' collapses the column to the header
       // and the label spills over the next one.

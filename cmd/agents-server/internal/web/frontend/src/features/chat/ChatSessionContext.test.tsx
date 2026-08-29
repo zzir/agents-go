@@ -68,7 +68,7 @@ function Harness() {
   setRunning = _setRunning;
   setTasks = _setTasks;
   const session = useMemo<ChatSessionState>(
-    () => ({ sessionId: 's1', running, compacting: false, liveAgentName: null, liveStartedAt: null }),
+    () => ({ sessionId: 's1', running, compacting: false, liveAgentName: null, liveAgentAvatar: null, liveStartedAt: null, agentAvatars: {} }),
     [running],
   );
   const chatTasks = useDerivedChatTasks(tasks);
