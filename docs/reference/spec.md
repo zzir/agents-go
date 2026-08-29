@@ -82,6 +82,7 @@ renumbered — which is why the letters run out of alphabetical order in places.
 | [§2.7p](#27p-stop-keeps-the-filesystem-and-promises-nothing-else) | Stop keeps the filesystem and promises nothing else | `Lifecycle.Stop` guarantees the tree, never the processes |
 | [§2.7q](#27q-a-sandbox-makes-its-working-directory) | A sandbox makes its working directory | A stock image need not ship one |
 | [§2.7r](#27r-a-published-port-is-bound-to-the-daemons-loopback-and-reaches-only-0000) | A published port is bound to the daemon's loopback, and reaches only 0.0.0.0 | Declared at create; a 127.0.0.1 listener is invisible through it |
+| [§2.7s](#27s-apply_patch-locates-hunks-by-whole-lines) | apply_patch locates hunks by whole lines | Context can never bind inside a longer line |
 | [§2.8](#28-nested-agent-as-tool-attribution) | Nested agent-as-tool attribution | How usage, spans and errors attribute across a nested agent-as-tool |
 | [§2.9](#29-budgets-) | Budgets 🚧 | `MaxTurns` is the one budget dimension implemented |
 | [§2.10](#210-errors-and-recovery) | Errors and recovery | Stable `ErrorCode`s, and which errors a run can recover from |
@@ -1393,6 +1394,11 @@ an activated environment survive between calls.
 - **A timed-out session is closed, not reused.** The command may still be
   running, and its output arriving inside the next one is worse than a shell
   startup.
+- **The output awaited for the sentinel is bounded.** A flooding command's
+  middle is dropped, keeping the head and the live tail the sentinel must
+  land in — a named session cannot buffer unbounded bytes any more than the
+  one-shot path's capped streams can, and the result the model sees is
+  truncated as usual.
 - Reading happens on a background goroutine, because `Terminal` has no read
   deadline and a blocked `Read` on the calling goroutine cannot be interrupted
   by any timer.
@@ -1561,6 +1567,17 @@ a persistent container rather than adopting it, because publishing is decided
 once, at create. An ephemeral one-shot container publishes nothing — it has no
 service to serve between commands — so only the persistent container binds
 ports.
+
+### 2.7s apply_patch locates hunks by whole lines
+
+An Update hunk's context matches **whole lines only**: a match begins at the
+start of the file or of a line and ends at the end of the file or of a line,
+so `x = 1` can never bind to the tail of `max = 10` and silently edit the
+wrong line. The first line-anchored occurrence at or after the previous
+hunk's end is the one edited. The `@@` anchor — one context line — binds the
+same way, with one tolerance: when no line matches it exactly, the first line
+whose space-trimmed text equals the trimmed anchor is taken, so an anchor
+written without the file's indentation still lands.
 
 ### 2.8 Nested agent-as-tool attribution
 

@@ -182,13 +182,19 @@ func (s *ShellSession) Run(ctx context.Context, cmd string, timeout time.Duratio
 	return out, code, nil
 }
 
+// sessionBufCap bounds the output retained while waiting for the sentinel; a
+// flooding command drops its middle, keeping the head and the live tail.
+const sessionBufCap = int(DefaultMaxOutputBytes)
+
 // readUntilSentinel reads until the token appears, returning what came before
 // it and the exit status that follows it.
 func (s *ShellSession) readUntilSentinel(ctx context.Context, timeout time.Duration) (string, int, error) {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
+	scanFrom := 0 // settled bytes are never rescanned; new chunks extend the window
 	for {
-		if idx := bytes.Index(s.buf, []byte(s.sentinel)); idx >= 0 {
+		if idx := bytes.Index(s.buf[scanFrom:], []byte(s.sentinel)); idx >= 0 {
+			idx += scanFrom
 			// The exit status follows the token on the same line.
 			rest := s.buf[idx+len(s.sentinel):]
 			if before, after, ok := bytes.Cut(rest, []byte{'\n'}); ok {
@@ -197,7 +203,9 @@ func (s *ShellSession) readUntilSentinel(ctx context.Context, timeout time.Durat
 				s.buf = append([]byte(nil), after...)
 				return trimEcho(out, s.lastLine), code, nil
 			}
-			// The status line is not complete yet; keep reading.
+			scanFrom = idx // status line incomplete; keep the token in the window
+		} else {
+			scanFrom = max(0, len(s.buf)-len(s.sentinel)+1)
 		}
 		select {
 		case chunk, ok := <-s.chunks:
@@ -205,6 +213,7 @@ func (s *ShellSession) readUntilSentinel(ctx context.Context, timeout time.Durat
 				return string(s.buf), -1, errors.New("sandbox: shell session ended")
 			}
 			s.buf = append(s.buf, chunk...)
+			scanFrom = s.capBuf(scanFrom)
 		case err := <-s.readErr:
 			return string(s.buf), -1, fmt.Errorf("sandbox: reading from shell session: %w", err)
 		case <-timer.C:
@@ -213,6 +222,20 @@ func (s *ShellSession) readUntilSentinel(ctx context.Context, timeout time.Durat
 			return string(s.buf), -1, ctx.Err()
 		}
 	}
+}
+
+// capBuf drops the middle of s.buf once it doubles sessionBufCap, keeping the
+// head and the tail the sentinel arrives in, and returns scanFrom remapped.
+// scanFrom trails the buffer's end, so the cut (and the seam it creates) stays
+// below the scan window and can never be misread as a sentinel.
+func (s *ShellSession) capBuf(scanFrom int) int {
+	headKeep := sessionBufCap * 3 / 5 // truncateWithInfo's head/tail split
+	cut := len(s.buf) - (sessionBufCap - headKeep)
+	if len(s.buf) <= 2*sessionBufCap || cut > scanFrom {
+		return scanFrom
+	}
+	s.buf = append(s.buf[:headKeep], s.buf[cut:]...)
+	return scanFrom - (cut - headKeep)
 }
 
 // trimEcho removes the shell's echo of what was written.

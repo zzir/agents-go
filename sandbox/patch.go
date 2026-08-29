@@ -267,20 +267,24 @@ func moreBodyFollows(lines []string, i int) bool {
 }
 
 // applyHunks applies each hunk to content in order. A hunk is located by the
-// first occurrence of its oldBlock at or after the previous hunk's end (the
-// "@@ anchor", when present, first advances the search point). A hunk whose
-// context can't be found is an error — the whole apply is abandoned upstream.
+// first line-anchored occurrence of its oldBlock at or after the previous
+// hunk's end (the "@@ anchor", when present, first advances the search point).
+// A hunk whose context can't be found is an error — the whole apply is
+// abandoned upstream.
 func applyHunks(content string, hunks []patchHunk) (string, error) {
 	result := content
 	searchFrom := 0
 	for hi, h := range hunks {
 		from := searchFrom
 		if h.anchor != "" {
-			idx := strings.Index(result[from:], h.anchor)
+			idx := indexLines(result, h.anchor, from)
+			if idx < 0 {
+				idx = indexTrimmedLine(result, h.anchor, from)
+			}
 			if idx < 0 {
 				return "", fmt.Errorf("apply_patch: hunk %d: anchor %q not found", hi+1, h.anchor)
 			}
-			from += idx
+			from = idx
 		}
 		if h.insert {
 			nl := strings.IndexByte(result[from:], '\n')
@@ -298,15 +302,58 @@ func applyHunks(content string, hunks []patchHunk) (string, error) {
 			searchFrom = pos + len(h.newBlock) + 1
 			continue
 		}
-		idx := strings.Index(result[from:], h.oldBlock)
-		if idx < 0 {
+		start := indexLines(result, h.oldBlock, from)
+		if start < 0 {
 			return "", fmt.Errorf("apply_patch: hunk %d: context not found in file", hi+1)
 		}
-		start := from + idx
 		result = result[:start] + h.newBlock + result[start+len(h.oldBlock):]
 		searchFrom = start + len(h.newBlock)
 	}
 	return result, nil
+}
+
+// indexLines returns the first occurrence of block in s at or after from that
+// spans whole lines — starting at 0 or right after '\n', ending at len(s) or
+// right before '\n' — so "x = 1" cannot match inside "max = 10".
+func indexLines(s, block string, from int) int {
+	for i := from; i <= len(s); {
+		idx := strings.Index(s[i:], block)
+		if idx < 0 {
+			return -1
+		}
+		start := i + idx
+		end := start + len(block)
+		if (start == 0 || s[start-1] == '\n') && (end == len(s) || s[end] == '\n') {
+			return start
+		}
+		i = start + 1
+	}
+	return -1
+}
+
+// indexTrimmedLine returns the start of the first whole line at or after from
+// whose space-trimmed text equals the space-trimmed anchor — the fallback for
+// an "@@" anchor written without the file's indentation.
+func indexTrimmedLine(s, anchor string, from int) int {
+	want := strings.TrimSpace(anchor)
+	if want == "" {
+		return -1
+	}
+	for i := from; i <= len(s); {
+		end := strings.IndexByte(s[i:], '\n')
+		line := s[i:]
+		if end >= 0 {
+			line = s[i : i+end]
+		}
+		if strings.TrimSpace(line) == want {
+			return i
+		}
+		if end < 0 {
+			return -1
+		}
+		i += end + 1
+	}
+	return -1
 }
 
 func isSectionStart(l string) bool {

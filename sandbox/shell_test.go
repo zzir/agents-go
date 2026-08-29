@@ -19,10 +19,12 @@ type fakeTerminal struct {
 	ready  chan struct{}
 	// respond produces the output for one command line; the harness appends
 	// the sentinel line itself.
-	respond  func(cmd string) (string, int)
-	partial  string
-	written  string
-	lastCode int
+	respond func(cmd string) (string, int)
+	// noSentinel suppresses the sentinel line: the command never finishes.
+	noSentinel bool
+	partial    string
+	written    string
+	lastCode   int
 }
 
 func newFakeTerminal(respond func(string) (string, int)) *fakeTerminal {
@@ -52,7 +54,9 @@ func (f *fakeTerminal) Write(p []byte) (int, error) {
 		if strings.HasPrefix(line, "printf ") {
 			// The sentinel line: emit the token and the status of the command
 			// before it. The harness tracks that in lastCode.
-			f.out = append(f.out, []byte(f.sentinelLine(line))...)
+			if !f.noSentinel {
+				f.out = append(f.out, []byte(f.sentinelLine(line))...)
+			}
 			continue
 		}
 		body, code := f.respond(line)
@@ -269,6 +273,68 @@ func TestShellSession_TimeoutClosesTheSession(t *testing.T) {
 	}
 	if _, _, err := s.Run(context.Background(), "ls", time.Second); err == nil {
 		t.Error("a timed-out session accepted another command")
+	}
+}
+
+// floodBody is a command's output far past the retained cap: enough to force
+// the middle to be dropped, with markers at both ends to prove the head and
+// the tail survive.
+func floodBody() string {
+	return "first-line\n" + strings.Repeat("x", 3*sessionBufCap) + "\nlast-line\n"
+}
+
+// A command that floods the session must not buffer its whole output: the
+// retained buffer is capped, the sentinel at the very end is still found, and
+// the exit status still comes through.
+func TestShellSession_FloodingCommandIsCappedAndCompletes(t *testing.T) {
+	body := floodBody()
+	s, _ := newSession(t, func(cmd string) (string, int) {
+		if cmd == "flood" {
+			return body, 7
+		}
+		return "", 0
+	})
+	defer s.Close()
+
+	out, code, err := s.Run(context.Background(), "flood", 30*time.Second)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if code != 7 {
+		t.Errorf("exit code = %d, want 7", code)
+	}
+	if len(out) > 2*sessionBufCap {
+		t.Errorf("retained %d bytes of output, want at most %d", len(out), 2*sessionBufCap)
+	}
+	if !strings.Contains(out, "first-line") {
+		t.Error("the output's head was dropped")
+	}
+	if !strings.Contains(out, "last-line") {
+		t.Error("the output's tail was dropped")
+	}
+}
+
+// The timeout path returns the partial output a flooding command produced,
+// bounded by the same cap.
+func TestShellSession_FloodTimeoutReturnsBoundedPartialOutput(t *testing.T) {
+	body := floodBody()
+	term := newFakeTerminal(func(string) (string, int) { return body, 0 })
+	term.noSentinel = true // the command never finishes
+	s := newShellSession(term)
+	defer s.Close()
+
+	out, code, err := s.Run(context.Background(), "flood", 200*time.Millisecond)
+	if err == nil {
+		t.Fatal("the command did not time out")
+	}
+	if code != -1 {
+		t.Errorf("exit code = %d, want -1 for an unknown outcome", code)
+	}
+	if len(out) > 2*sessionBufCap {
+		t.Errorf("retained %d bytes of partial output, want at most %d", len(out), 2*sessionBufCap)
+	}
+	if !strings.Contains(out, "first-line") {
+		t.Error("the partial output lost its head")
 	}
 }
 

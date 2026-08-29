@@ -72,6 +72,94 @@ func TestParsePatchErrors(t *testing.T) {
 	}
 }
 
+// A hunk's context matches whole lines only: "x = 1" is a substring of
+// "max = 10", and a raw Index match silently edited that line instead.
+func TestApplyHunksNoMidLineSuffixMatch(t *testing.T) {
+	edits, err := parsePatch("*** Begin Patch\n*** Update File: f\n-x = 1\n+x = 2\n*** End Patch\n")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	got, err := applyHunks("max = 10\nx = 1\n", edits[0].hunks)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if got != "max = 10\nx = 2\n" {
+		t.Fatalf("got %q, want the whole line edited, not another line's suffix", got)
+	}
+}
+
+// The block's first line must start a line: "foo\nbar" is a substring of
+// "notfoo\nbar" but matches no whole lines there.
+func TestApplyHunksFirstLineIsNotALineSuffix(t *testing.T) {
+	edits, err := parsePatch("*** Begin Patch\n*** Update File: f\n-foo\n-bar\n+X\n*** End Patch\n")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, err := applyHunks("notfoo\nbar\n", edits[0].hunks); err == nil {
+		t.Fatal("a block whose first line only matched a line suffix was applied")
+	}
+}
+
+// The block's last line must end a line: "a\nbc" is a substring of "a\nbcd"
+// but matches no whole lines there.
+func TestApplyHunksLastLineIsNotALinePrefix(t *testing.T) {
+	edits, err := parsePatch("*** Begin Patch\n*** Update File: f\n-a\n-bc\n+X\n*** End Patch\n")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, err := applyHunks("a\nbcd\n", edits[0].hunks); err == nil {
+		t.Fatal("a block whose last line only matched a line prefix was applied")
+	}
+}
+
+// Line anchoring must not break a legitimate match that starts mid-file, after
+// an earlier rejected mid-line candidate.
+func TestApplyHunksMidFileMatchStillWorks(t *testing.T) {
+	edits, err := parsePatch("*** Begin Patch\n*** Update File: f\n p\n-q\n+Q\n r\n*** End Patch\n")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	got, err := applyHunks("zp\nq\nrz\np\nq\nr\n", edits[0].hunks)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if got != "zp\nq\nrz\np\nQ\nr\n" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+// An "@@" anchor is one context line and must match a complete one: anchor "b"
+// belongs to the line "b", not to "ab".
+func TestApplyHunksAnchorMatchesWholeLine(t *testing.T) {
+	edits, err := parsePatch("*** Begin Patch\n*** Update File: f\n@@ b\n+inserted\n*** End Patch\n")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	got, err := applyHunks("ab\nb\nc\n", edits[0].hunks)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if got != "ab\nb\ninserted\nc\n" {
+		t.Fatalf("got %q, want the insertion after the line %q, not after %q", got, "b", "ab")
+	}
+}
+
+// An anchor written without the file's indentation still binds — to the whole
+// trimmed-equal line, never to a substring of a longer one.
+func TestApplyHunksAnchorTrimFallback(t *testing.T) {
+	edits, err := parsePatch("*** Begin Patch\n*** Update File: f\n@@ def foo():\n+inserted\n*** End Patch\n")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	got, err := applyHunks("undef foo():x\n    def foo():\n    pass\n", edits[0].hunks)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if got != "undef foo():x\n    def foo():\ninserted\n    pass\n" {
+		t.Fatalf("got %q", got)
+	}
+}
+
 // A model may emit git-style hunk headers ("@@ -a,b +c,d @@"). The line-number
 // range is ignored (we locate by context); the patch must still apply.
 func TestApplyGitStyleHunkHeader(t *testing.T) {
