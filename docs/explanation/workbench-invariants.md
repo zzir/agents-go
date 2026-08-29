@@ -765,7 +765,12 @@ When a change genuinely doesn't fit, update this list in the same PR.
     entry point plants, so a typical dev server works through the preview; one
     origin means one active grant per browser, so a second project's preview
     replaces the cookie, and the cookie is stripped before the request reaches
-    the dev server.
+    the dev server. The cookie is `Secure` whenever the request came over TLS
+    or `--preview-base-url` is https (a proxy terminating TLS in front). A
+    content change that replaces the container — the project's own edit, or a
+    sandbox change through the Retirer — revokes the project's outstanding
+    grants along with its terminals: a grant must never proxy into the
+    replacement container, least of all to a port it no longer declares.
 
 49. **The top bar re-reads the sandbox state on the edges that move it.** The
     compute state a project menu shows comes from `GET /projects/:id/sandbox`,

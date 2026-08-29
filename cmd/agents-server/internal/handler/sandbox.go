@@ -36,20 +36,24 @@ func NewSandboxHandler(s *store.SandboxStore, m *sandboxes.Manager, r *Retirer) 
 }
 
 // Retirer turns a content change on a sandbox into the project generations it
-// invalidates, then retires each project's live instance and terminals. It is
-// the one place the "one runtime axis" rule is applied (decisions §5.33).
+// invalidates, then retires each project's live instance, terminals and
+// preview grants. It is the one place the "one runtime axis" rule is applied
+// (decisions §5.33).
 type Retirer struct {
 	projects  *store.ProjectStore
 	manager   *sandboxes.Manager
 	terminals *TerminalHandler
+	// revokeGrants is ProjectHandler.RevokePreviewGrants — the grants live
+	// there, and an outstanding one must not proxy into a replaced container.
+	revokeGrants func(projectID string)
 }
 
-// NewRetirer wires the three things a retirement touches.
-func NewRetirer(projects *store.ProjectStore, m *sandboxes.Manager, terminals *TerminalHandler) *Retirer {
-	if projects == nil || terminals == nil {
-		panic("handler: NewRetirer needs the project store and the terminal handler")
+// NewRetirer wires the things a retirement touches.
+func NewRetirer(projects *store.ProjectStore, m *sandboxes.Manager, terminals *TerminalHandler, revokeGrants func(projectID string)) *Retirer {
+	if projects == nil || terminals == nil || revokeGrants == nil {
+		panic("handler: NewRetirer needs the project store, the terminal handler and the grants revoker")
 	}
-	return &Retirer{projects: projects, manager: m, terminals: terminals}
+	return &Retirer{projects: projects, manager: m, terminals: terminals, revokeGrants: revokeGrants}
 }
 
 // bump moves the runtime generation of every project on the sandbox and
@@ -66,6 +70,7 @@ func (r *Retirer) bump(ctx context.Context, sandboxID string) error {
 			r.manager.RetireProject(g.ID, g.RuntimeGen)
 		}
 		r.terminals.CloseProjectTerminals(g.ID, g.RuntimeGen)
+		r.revokeGrants(g.ID)
 	}
 	return nil
 }

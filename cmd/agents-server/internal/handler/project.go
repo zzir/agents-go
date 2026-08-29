@@ -47,6 +47,13 @@ func NewProjectHandler(s *store.ProjectStore, sbs *store.SandboxStore, m *sandbo
 	return &ProjectHandler{store: s, sandboxes: sbs, manager: m, terminals: terminals, settings: cfg, grants: newPreviewGrants()}
 }
 
+// RevokePreviewGrants drops every preview grant on a project — what the
+// Retirer calls when a sandbox content change replaced the container the
+// grants pointed into.
+func (h *ProjectHandler) RevokePreviewGrants(projectID string) {
+	h.grants.revokeProject(projectID)
+}
+
 // projectDetail is the single-project response: the row plus the NAMES of
 // its environment, every value masked. Env shadows the row's own (json:"-")
 // field on purpose — a listing must never carry one.
@@ -348,7 +355,7 @@ func (h *ProjectHandler) Get(c *gin.Context) {
 // Update renames the caller's project and replaces its environment.
 //
 //	@Summary		Update project
-//	@Description	A value sent back as its mask keeps what is stored; any other value replaces it. An environment change replaces the project's container at its next run and severs its terminals; a rename does neither.
+//	@Description	A value sent back as its mask keeps what is stored; any other value replaces it. An environment change replaces the project's container at its next run, severs its terminals and revokes its preview links; a rename does none of that.
 //	@Tags			projects
 //	@Accept			json
 //	@Produce		json
@@ -415,10 +422,13 @@ func (h *ProjectHandler) Update(c *gin.Context) {
 	// which a concurrent sandbox-content bump can leave short — and not from a
 	// re-read a cancelled request could fail, which would leave the new
 	// environment stored while live containers and terminals keep serving the
-	// old one.
+	// old one. Preview grants go with the terminals: an outstanding one would
+	// otherwise proxy into the REPLACEMENT container, ports it no longer
+	// declares included.
 	if contentChanged {
 		h.manager.RetireProject(prev.ID, newGen)
 		h.terminals.CloseProjectTerminals(prev.ID, newGen)
+		h.grants.revokeProject(prev.ID)
 	}
 	// Re-read for the response: the counters the write moved live in the
 	// row, and a client that answered with a stale revision would have its

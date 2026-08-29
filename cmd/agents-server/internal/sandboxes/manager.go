@@ -72,11 +72,11 @@ type sandboxInstance struct {
 	// started with instead of having its connection torn out from under it.
 	// Guarded by mu.
 	doomed bool
-	// expired marks an idle expiry mid-stop: the instance stays under its key
-	// so an acquire waits on gone instead of adopting a stopping container
-	// (which would look dead and be force-recreated, wiping its packages —
-	// decisions §5.28). gone closes when the stop finished and the key is free.
-	// Guarded by mu.
+	// expired marks a stop in flight — an idle expiry or a user Stop: the
+	// instance stays under its key so an acquire waits on gone instead of
+	// adopting a stopping container (which would look dead and be
+	// force-recreated, wiping its packages — decisions §5.28). gone closes when
+	// the stop finished and the key is free. Guarded by mu.
 	expired bool
 	gone    chan struct{}
 	// stopOnRelease pauses the compute when the last holder of a doomed
@@ -326,6 +326,20 @@ func (m *Manager) release(inst *sandboxInstance) {
 	inst.refs--
 	dead := inst.doomed && inst.refs <= 0
 	stopIntent := inst.stopOnRelease
+	if dead && stopIntent {
+		if m.projectCachedLocked(inst.key.projectID) {
+			// New work acquired the project after the deferred Stop was asked
+			// for: pausing now would stop the container out from under it. The
+			// stale stop is superseded; only this connection closes.
+			stopIntent = false
+		} else {
+			// Fence the pause like the idle expiry: reclaim the key as an
+			// expired placeholder so a racing Acquire waits the stop out.
+			inst.expired = true
+			inst.gone = make(chan struct{})
+			m.instances[inst.key] = inst
+		}
+	}
 	if !dead && inst.refs <= 0 && !m.closed && idle > 0 {
 		if inst.idle != nil {
 			inst.idle.Stop()
@@ -335,30 +349,49 @@ func (m *Manager) release(inst *sandboxInstance) {
 	m.mu.Unlock()
 	if dead {
 		if stopIntent {
-			inst.stop()
+			m.stopFenced(inst)
 		} else {
 			inst.close()
 		}
 	}
 }
 
+// projectCachedLocked reports whether any instance of the project occupies the
+// cache — live, building, or mid-stop. Callers hold m.mu.
+func (m *Manager) projectCachedLocked(projectID string) bool {
+	for key := range m.instances {
+		if key.projectID == projectID {
+			return true
+		}
+	}
+	return false
+}
+
 // idleExpire is the idle timer's body: evict and close the instance — unless
 // a new holder arrived (the acquire disarms the timer, but a fire already in
-// flight loses this race and must check) or a successor replaced it under
-// the key.
+// flight loses this race and must check), a successor replaced it under the
+// key, or a user Stop already fenced it and owns its teardown.
 func (m *Manager) idleExpire(inst *sandboxInstance) {
 	m.mu.Lock()
-	if m.instances[inst.key] != inst || inst.refs > 0 {
+	if m.instances[inst.key] != inst || inst.refs > 0 || inst.expired {
 		m.mu.Unlock()
 		return
 	}
-	// Stop the container BEFORE freeing the key: an acquire during the stop
-	// waits on gone rather than adopting a container it would then judge
-	// dead and recreate from scratch.
+	// Fence BEFORE stopping: an acquire during the stop waits on gone rather
+	// than adopting a container it would then judge dead and recreate from
+	// scratch.
 	inst.expired = true
 	inst.gone = make(chan struct{})
 	m.mu.Unlock()
-	inst.stop() // idle expiry pauses the compute, not just the connection
+	m.stopFenced(inst)
+}
+
+// stopFenced pauses inst's compute (not just the connection), then frees its
+// key and its waiters. While the stop runs the instance stays under its key
+// marked expired, so a racing Acquire waits on gone (see acquire); the caller
+// set that fence under the lock.
+func (m *Manager) stopFenced(inst *sandboxInstance) {
+	inst.stop()
 	m.mu.Lock()
 	if m.instances[inst.key] == inst {
 		delete(m.instances, inst.key)
@@ -507,28 +540,32 @@ func (m *Manager) EvictProject(projectID string) {
 func (m *Manager) stopProjectOnRelease(projectID string) {
 	var toStop []*sandboxInstance
 	m.mu.Lock()
-	for key := range m.instances {
-		if key.projectID != projectID {
-			continue
+	for key, inst := range m.instances {
+		if key.projectID != projectID || inst.expired {
+			continue // an idle expiry mid-stop already owns that one's teardown
 		}
-		inst := m.instances[key]
-		delete(m.instances, key)
 		inst.stopOnRelease = true
 		if inst.refs > 0 {
+			// Holders keep it; the key frees now so nothing new joins, and the
+			// last release pauses it (see release).
+			delete(m.instances, key)
 			inst.doomed = true
-		} else {
-			// Disarm any idle timer so it does not also fire stop() on this
-			// instance; the timer's own guard already no-ops on an evicted key,
-			// this just avoids the redundant wake.
-			if inst.idle != nil {
-				inst.idle.Stop()
-			}
-			toStop = append(toStop, inst)
+			continue
 		}
+		// No holders: stop it now, fenced under its key like the idle expiry,
+		// so a racing Acquire waits instead of adopting the stopping container.
+		// Disarm the idle timer; a fire already in flight no-ops on expired.
+		if inst.idle != nil {
+			inst.idle.Stop()
+			inst.idle = nil
+		}
+		inst.expired = true
+		inst.gone = make(chan struct{})
+		toStop = append(toStop, inst)
 	}
 	m.mu.Unlock()
 	for _, inst := range toStop {
-		inst.stop()
+		m.stopFenced(inst)
 	}
 }
 
@@ -665,41 +702,62 @@ func (m *Manager) Stop(ctx context.Context, spec Spec) (stopped bool, err error)
 	if !ok {
 		return false, fmt.Errorf("%s sandbox: %w", spec.Sandbox.Type, sandbox.ErrLifecycleUnsupported)
 	}
-	// "Am I the only holder?" and "take the instance out of the cache" happen
-	// under one lock: otherwise a concurrent Acquire slipping in between the
-	// count and lc.Stop would adopt the very container this call stops out from
-	// under it. detachIfSole removes the instance so a later Acquire builds a
-	// fresh one; this call's own release then closes what it detached.
-	if !m.detachIfSole(spec.Project.ID) {
+	// "Am I the only holder?" and "fence the instance as stopping" happen under
+	// one lock: otherwise a concurrent Acquire slipping in between the count
+	// and lc.Stop would build against the very container this call stops.
+	// The fence is the idle expiry's (expired/gone): the racing Acquire waits
+	// out the stop; finish then frees the keys, and this call's own release
+	// closes what it detached.
+	finish, sole := m.detachIfSole(spec.Project.ID)
+	if !sole {
 		// Someone is still working in it; leave the container up and let the
 		// last holder's release PAUSE it — close alone releases nothing remote
 		// for e2b, so a plain eviction would never stop the billed sandbox.
 		m.stopProjectOnRelease(spec.Project.ID)
 		return false, nil
 	}
-	if err := lc.Stop(ctx); err != nil {
-		return false, err
-	}
-	return true, nil
+	err = lc.Stop(ctx)
+	finish()
+	return err == nil, err
 }
 
 // detachIfSole reports whether this caller holds the project's only reference,
-// and if so removes every instance of the project from the cache and dooms it,
-// so no concurrent Acquire adopts an instance about to be stopped and the
-// caller's own release closes it. Callers hold one reference (from Acquire).
-func (m *Manager) detachIfSole(projectID string) bool {
+// and if so dooms every instance of the project and fences each as stopping
+// (expired + gone) WITHOUT freeing its key, so a racing Acquire waits for the
+// stop to complete instead of adopting a container mid-stop — idleExpire's
+// shape. The returned finish frees the keys and the waiters; the caller runs
+// it after Lifecycle.Stop, error or not. Callers hold one reference (from
+// Acquire).
+func (m *Manager) detachIfSole(projectID string) (finish func(), sole bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.projectRefsLocked(projectID) != 1 {
-		return false
+		return nil, false
 	}
+	var fenced []*sandboxInstance
 	for key, inst := range m.instances {
-		if key.projectID == projectID {
-			delete(m.instances, key)
-			inst.doomed = true
+		if key.projectID != projectID || inst.expired {
+			continue // an idle expiry mid-stop frees its own key
 		}
+		inst.doomed = true
+		if inst.idle != nil {
+			inst.idle.Stop()
+			inst.idle = nil
+		}
+		inst.expired = true
+		inst.gone = make(chan struct{})
+		fenced = append(fenced, inst)
 	}
-	return true
+	return func() {
+		m.mu.Lock()
+		for _, inst := range fenced {
+			if m.instances[inst.key] == inst {
+				delete(m.instances, inst.key)
+			}
+			close(inst.gone)
+		}
+		m.mu.Unlock()
+	}, true
 }
 
 // projectRefsLocked sums the live holders across every cached generation of

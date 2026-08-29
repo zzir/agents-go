@@ -379,3 +379,12 @@ func (r *Runner) ReleaseSessionBinding(projectID string) {
 	// container stay for the next session that binds it.
 	r.Deps.SandboxManager.EvictProject(projectID)
 }
+
+// ForgetSessionTrust drops a deleted session's exec_command trust grants.
+// Trust is keyed by the chat session id (trustSessionID), so the root of the
+// deleted tree is the key that accumulated them.
+func (r *Runner) ForgetSessionTrust(sessionID string) {
+	if r.Deps.SandboxManager != nil {
+		r.Deps.SandboxManager.Trust().Forget(sessionID)
+	}
+}

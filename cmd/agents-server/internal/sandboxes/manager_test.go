@@ -776,3 +776,108 @@ func TestBackendForUnknownType(t *testing.T) {
 		t.Fatalf("Acquire on an unknown type = %v, want a refusal naming it", err)
 	}
 }
+
+// blockingStopSandbox is a Lifecycle sandbox whose Stop holds until released —
+// the window a user Stop is mid-stop and a racing acquire must wait out.
+type blockingStopSandbox struct {
+	closeCountingSandbox
+	stopping chan struct{} // closed when Stop was entered
+	release  chan struct{} // Stop returns when this closes
+}
+
+func (b *blockingStopSandbox) Start(context.Context) error { return nil }
+
+func (b *blockingStopSandbox) Status(context.Context) (sandbox.State, error) {
+	return sandbox.StateRunning, nil
+}
+
+func (b *blockingStopSandbox) Stop(context.Context) error {
+	close(b.stopping)
+	<-b.release
+	return nil
+}
+
+// A user Stop fences the instance the way the idle expiry does: an acquire
+// racing the stop waits until it completes and then builds fresh — it must
+// never build against the container mid-stop.
+func TestManagerAcquireWaitsOutUserStop(t *testing.T) {
+	m := NewManager()
+	blocking := &blockingStopSandbox{stopping: make(chan struct{}), release: make(chan struct{})}
+	fresh := &closeCountingSandbox{}
+	first := true
+	m.buildOverride = func(Spec) (sandbox.Sandbox, error) {
+		if first {
+			first = false
+			return blocking, nil
+		}
+		return fresh, nil
+	}
+
+	stopped := make(chan bool, 1)
+	go func() {
+		ok, err := m.Stop(context.Background(), testSpec("p"))
+		if err != nil {
+			t.Error(err)
+		}
+		stopped <- ok
+	}()
+	<-blocking.stopping
+
+	// The Stop is mid-flight. A concurrent acquire must block on gone.
+	got := make(chan *sandboxInstance, 1)
+	go func() {
+		inst, r, err := m.acquire(testSpec("p"))
+		if err != nil {
+			t.Error(err)
+			got <- nil
+			return
+		}
+		defer r()
+		got <- inst
+	}()
+	select {
+	case <-got:
+		t.Fatal("acquire returned while the user Stop was still in flight")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(blocking.release)
+	if ok := <-stopped; !ok {
+		t.Fatal("Stop with no other holder must report an immediate stop")
+	}
+	select {
+	case inst := <-got:
+		if inst == nil || inst.sb != fresh {
+			t.Fatalf("acquire after the stop must build fresh, got %+v", inst)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("acquire never returned after the stop finished")
+	}
+}
+
+// A deferred Stop that new work overtook is superseded: the last holder's
+// release must not pause the container out from under the new acquire.
+func TestManagerDeferredStopSupersededByNewAcquire(t *testing.T) {
+	m, sb := lifecycleManager(t)
+	_, release, err := m.acquire(testSpec("p"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stopped, err := m.Stop(t.Context(), testSpec("p"))
+	if err != nil || stopped {
+		t.Fatalf("Stop = %v, %v; want a deferred stop", stopped, err)
+	}
+	// New work arrives before the holder finishes: the stale stop must yield.
+	_, r2, err := m.acquire(testSpec("p"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r2()
+	release()
+	if sb.stops != 0 {
+		t.Fatalf("stops = %d, want 0 — the superseded stop paused the new acquire's container", sb.stops)
+	}
+	if sb.closes.Load() != 1 {
+		t.Errorf("closes = %d, want 1 — the doomed instance's connection still closes", sb.closes.Load())
+	}
+}

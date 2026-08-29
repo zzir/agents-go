@@ -821,8 +821,13 @@ stopped — by the admin panel, a manual `docker stop`, a daemon restart — is
 restarted in place; remove-and-recreate is the fallback only when the start
 fails or the container is gone. Restart-by-cached-id needs no fingerprint
 re-check: the id only ever came from our own create or a verified adopt, and
-ids, unlike names, cannot change hands. /tmp is a tmpfs capped at 1g
-(RAM-backed — size accordingly).
+ids, unlike names, cannot change hands. In the workbench's manager the
+expired/gone fence is the ONE shape for every stop — idle expiry, a user
+Stop, and a deferred stop's last release: the instance keeps its cache key
+until `Lifecycle.Stop` returns, so a racing acquire waits it out instead of
+building against a container mid-stop; a deferred stop that new work overtook
+is superseded, not executed. /tmp is a tmpfs capped at 1g (RAM-backed — size
+accordingly).
 
 Deletion contracts settle in SQL, per dialect (revised 2026-08-29): on
 SQLite the single writer makes the in-statement guards atomic — the bind

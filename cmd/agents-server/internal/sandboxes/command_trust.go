@@ -65,6 +65,14 @@ func (s *TrustStore) ForSession(id string) *CommandTrust {
 	return t
 }
 
+// Forget drops a session's trust — the session-delete path calls it, since the
+// map otherwise grows for the process lifetime.
+func (s *TrustStore) Forget(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.bySession, id)
+}
+
 // CommandHash canonicalizes an exec_command argsJSON to a stable key, so
 // "approve this exact command" matches only a byte-identical (cmd, workdir)
 // pair. It is exact, not prefix/substring: approving `go test` never green-lights

@@ -178,11 +178,11 @@ type handlers struct {
 // connection registry.
 func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL string, previewOrigin handler.PreviewOrigin) *handlers {
 	terminal := handler.NewTerminalHandler(st.SandboxDefs, st.Projects, svc.Sandboxes, st.SettingReader)
-	retirer := handler.NewRetirer(st.Projects, svc.Sandboxes, terminal)
 	terminal.Audit = audit
 	ws := handler.NewWSHandler(svc.Runner, st.Sessions, st.PendingApprovals)
 	ws.Audit = audit
 	projects := handler.NewProjectHandler(st.Projects, st.SandboxDefs, svc.Sandboxes, terminal, st.SettingReader)
+	retirer := handler.NewRetirer(st.Projects, svc.Sandboxes, terminal, projects.RevokePreviewGrants)
 	projects.Audit = audit
 	projects.PreviewOrigin = previewOrigin
 	return &handlers{

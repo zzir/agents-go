@@ -57,6 +57,14 @@ func (o PreviewOrigin) urlFor(r *http.Request, token string) string {
 	return scheme + "://" + net.JoinHostPort(host, strconv.Itoa(o.Port)) + tail
 }
 
+// secure reports whether the grant cookie needs the Secure attribute: this
+// request came in over TLS, or the configured preview origin is https — a
+// proxy terminating TLS in front of us, where r.TLS is nil but the browser
+// still speaks https.
+func (o PreviewOrigin) secure(r *http.Request) bool {
+	return r.TLS != nil || strings.HasPrefix(o.BaseURL, "https://")
+}
+
 // The port preview: a service running inside a project's sandbox, reachable
 // through THIS server rather than published to the world. Publishing the port
 // instead would put a member's dev server on every interface of the host,
@@ -177,7 +185,7 @@ func (h *ProjectHandler) Preview(c *gin.Context) {
 			Value:    token,
 			Path:     "/",
 			HttpOnly: true,
-			Secure:   c.Request.TLS != nil,
+			Secure:   h.PreviewOrigin.secure(c.Request),
 			SameSite: http.SameSiteLaxMode,
 			Expires:  grant.expires,
 		})

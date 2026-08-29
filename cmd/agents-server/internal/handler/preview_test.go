@@ -28,6 +28,10 @@ type previewSandbox struct {
 
 func (p previewSandbox) URLForPort(context.Context, int) (string, error) { return p.base, nil }
 
+// Close overrides the embedded nil interface's: a config change closes the
+// cached instance.
+func (p previewSandbox) Close() error { return nil }
+
 func (p previewSandbox) DialPort(ctx context.Context, _ int) (net.Conn, error) {
 	var d net.Dialer
 	return d.DialContext(ctx, "tcp", strings.TrimPrefix(p.base, "http://"))
@@ -71,6 +75,7 @@ func previewFixture(t *testing.T, upstream string, enabled bool) (*gin.Engine, *
 
 	e := newTestEngine()
 	e.POST("/api/v1/projects/:id/preview/:port", h.PreviewGrant)
+	e.PUT("/api/v1/projects/:id", h.Update)
 	e.Any(server.PreviewPrefix+":token/*path", h.Preview)
 	e.NoRoute(h.Preview) // the cookie route for a page's absolute-path sub-resources
 	return e, h, p
@@ -213,6 +218,93 @@ func TestPreviewGrantRevokedWithTheProject(t *testing.T) {
 	if out.Code != http.StatusNotFound {
 		t.Fatalf("revoked grant = %d, want 404", out.Code)
 	}
+}
+
+// A content change replaces the project's container, so it revokes the
+// project's grants along with its terminals — an outstanding grant must not
+// proxy into the replacement. A rename replaces nothing and revokes nothing.
+func TestPreviewGrantRevokedByConfigChange(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) }))
+	defer upstream.Close()
+	e, _, p := previewFixture(t, upstream.URL, true)
+	rec := doJSON(t, e, http.MethodPost, "/api/v1/projects/"+p.ID+"/preview/8000", "")
+	var grant previewGrantResp
+	if err := json.Unmarshal(rec.Body.Bytes(), &grant); err != nil {
+		t.Fatal(err)
+	}
+
+	// A rename is not a content change: the grant survives it.
+	if rec := doJSON(t, e, http.MethodPut, "/api/v1/projects/"+p.ID,
+		`{"name":"renamed","sandbox_id":"`+p.SandboxID+`"}`); rec.Code != http.StatusOK {
+		t.Fatalf("rename: %d %s", rec.Code, rec.Body)
+	}
+	out := httptest.NewRecorder()
+	e.ServeHTTP(out, previewRequest(t, grant.URL))
+	if out.Code != http.StatusOK {
+		t.Fatalf("grant after a rename = %d, want 200", out.Code)
+	}
+
+	// An environment change replaces the container: the grant dies with it.
+	if rec := doJSON(t, e, http.MethodPut, "/api/v1/projects/"+p.ID,
+		`{"name":"renamed","sandbox_id":"`+p.SandboxID+`","env":[{"key":"A","value":"1"}]}`); rec.Code != http.StatusOK {
+		t.Fatalf("env update: %d %s", rec.Code, rec.Body)
+	}
+	out = httptest.NewRecorder()
+	e.ServeHTTP(out, previewRequest(t, grant.URL))
+	if out.Code != http.StatusNotFound {
+		t.Fatalf("grant after a config change = %d, want 404", out.Code)
+	}
+}
+
+// A sandbox-side content change reaches every project on it through the
+// Retirer, grants included.
+func TestRetirerBumpRevokesPreviewGrants(t *testing.T) {
+	db := testdb.New(t)
+	projects := store.NewProjectStore(db)
+	sandboxID := mkSandboxRow(t, db)
+	p := &store.Project{ID: store.NewID(), OwnerID: store.LocalUserID, SandboxID: sandboxID, Name: "p"}
+	if err := projects.Create(t.Context(), p); err != nil {
+		t.Fatal(err)
+	}
+	var revoked []string
+	sbs := store.NewSandboxStore(db)
+	r := NewRetirer(projects, nil, NewTerminalHandler(sbs, projects, nil, settings.NewReader(nil)),
+		func(id string) { revoked = append(revoked, id) })
+	if err := r.bump(t.Context(), sandboxID); err != nil {
+		t.Fatal(err)
+	}
+	if len(revoked) != 1 || revoked[0] != p.ID {
+		t.Fatalf("revoked = %v, want [%s]", revoked, p.ID)
+	}
+}
+
+// Behind --preview-base-url https://… a TLS-terminating proxy fronts the
+// preview: the request arrives over plain HTTP (r.TLS nil) but the browser
+// speaks https, so the grant cookie must still carry Secure.
+func TestPreviewCookieSecureBehindHTTPSBase(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) }))
+	defer upstream.Close()
+	e, h, p := previewFixture(t, upstream.URL, true)
+	h.PreviewOrigin = PreviewOrigin{BaseURL: "https://preview.example", Port: 9528}
+	rec := doJSON(t, e, http.MethodPost, "/api/v1/projects/"+p.ID+"/preview/8000", "")
+	var grant previewGrantResp
+	if err := json.Unmarshal(rec.Body.Bytes(), &grant); err != nil {
+		t.Fatal(err)
+	}
+	out := httptest.NewRecorder()
+	e.ServeHTTP(out, previewRequest(t, grant.URL))
+	if out.Code != http.StatusOK {
+		t.Fatalf("tokenized entry: %d %s", out.Code, out.Body)
+	}
+	for _, ck := range out.Result().Cookies() {
+		if ck.Name == previewCookie {
+			if !ck.Secure {
+				t.Error("grant cookie behind an https preview base is not Secure")
+			}
+			return
+		}
+	}
+	t.Fatal("the tokenized entry point did not plant the preview cookie")
 }
 
 // The grant URL opens on the preview ORIGIN, not the app's: a fixed base when

@@ -34,6 +34,9 @@ type RunStopper interface {
 	// references the pair — the instance (an ssh connection, a docker
 	// container) would otherwise live until process exit.
 	ReleaseSessionBinding(projectID string)
+	// ForgetSessionTrust drops a deleted session's exec_command trust grants —
+	// in-memory state that would otherwise outlive the row until restart.
+	ForgetSessionTrust(sessionID string)
 	// SessionBusy reports whether a run is live on the session.
 	SessionBusy(sessionID string) bool
 }
@@ -387,6 +390,7 @@ func (h *SessionHandler) Delete(c *gin.Context) {
 	if boundProject != "" {
 		h.stopper.ReleaseSessionBinding(boundProject)
 	}
+	h.stopper.ForgetSessionTrust(id)
 	c.Status(http.StatusNoContent)
 }
 

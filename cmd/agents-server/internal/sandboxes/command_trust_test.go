@@ -55,3 +55,21 @@ func TestCommandGate(t *testing.T) {
 		t.Fatal("approveAll → should NOT require approval")
 	}
 }
+
+// Forget drops a session's grants: the next command re-asks, and the entry is
+// actually gone from the map rather than emptied.
+func TestTrustStoreForget(t *testing.T) {
+	s := NewTrustStore()
+	s.ForSession("sess1").AllowAll()
+	s.Forget("sess1")
+	if s.ForSession("sess1").trusted(CommandHash(`{"cmd":"ls"}`)) {
+		t.Fatal("a forgotten session's trust survived")
+	}
+	s.Forget("sess1") // ForSession above re-created it; drop it again
+	s.mu.Lock()
+	n := len(s.bySession)
+	s.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("bySession holds %d entries after Forget, want 0", n)
+	}
+}

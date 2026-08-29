@@ -4000,7 +4000,8 @@ paths:
     put:
       description: A value sent back as its mask keeps what is stored; any other value
         replaces it. An environment change replaces the project's container at its
-        next run and severs its terminals; a rename does neither.
+        next run, severs its terminals and revokes its preview links; a rename does
+        none of that.
       parameters:
       - description: Project id
         in: path
