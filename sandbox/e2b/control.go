@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // The control plane: the six calls a sandbox's life needs. Everything else
@@ -48,13 +49,20 @@ func (i sandboxInfo) paused() bool {
 // holds the lock across the round trip so two concurrent commands cannot
 // create two sandboxes for one client.
 func (s *Sandbox) ensure(ctx context.Context) (string, error) {
+	return s.ensureFor(ctx, 0)
+}
+
+// ensureFor is ensure with a minimum lease runway: an operation bounded by
+// runway (a tar export, a long exec) gets a lease that outlasts it. There is
+// no keepalive, so an open-ended session can at best start from a full lease.
+func (s *Sandbox) ensureFor(ctx context.Context, runway time.Duration) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// Fast path: a bound sandbox with a lease that is not near expiry needs no
 	// control-plane call — the common case for a chatty session. If the sandbox
 	// died under us the data-plane call fails once and the next ensure rebuilds;
 	// that beats a control round trip on every command.
-	if s.id != "" && s.leaseValid() {
+	if s.id != "" && s.leaseValid(runway) {
 		return s.id, nil
 	}
 	if s.id != "" {
@@ -64,9 +72,9 @@ func (s *Sandbox) ensure(ctx context.Context) (string, error) {
 			// Running: adopt its credential and extend the lease so a long
 			// session does not lose the sandbox to its TTL.
 			s.adopt(info)
-			switch rerr := s.refresh(ctx, s.id); {
+			switch rerr := s.refresh(ctx, s.id, runway); {
 			case rerr == nil:
-				s.markLeased()
+				s.markLeased(runway)
 				return s.id, nil
 			case isNotFound(rerr):
 				s.forget() // vanished between the read and the refresh; rebuild
@@ -74,12 +82,12 @@ func (s *Sandbox) ensure(ctx context.Context) (string, error) {
 				return "", rerr
 			}
 		case err == nil:
-			resumed, rerr := s.resume(ctx, s.id)
+			resumed, rerr := s.resume(ctx, s.id, runway)
 			if rerr != nil {
 				return "", rerr
 			}
 			s.adopt(resumed)
-			s.markLeased()
+			s.markLeased(runway)
 			return s.id, nil
 		case isNotFound(err):
 			// The sandbox is gone for good (killed, or expired without
@@ -90,7 +98,7 @@ func (s *Sandbox) ensure(ctx context.Context) (string, error) {
 			return "", err
 		}
 	}
-	info, err := s.create(ctx)
+	info, err := s.create(ctx, runway)
 	if err != nil {
 		return "", err
 	}
@@ -101,10 +109,13 @@ func (s *Sandbox) ensure(ctx context.Context) (string, error) {
 	// Record BEFORE adopting: a sandbox this client cannot hand back to its
 	// owner is billed compute nobody will ever stop. If recording fails, kill
 	// the sandbox we just made rather than leak it — the record was the only
-	// thing that would ever have let anyone stop it.
+	// thing that would ever have let anyone stop it. The kill is bounded: a
+	// hung control plane must not wedge s.mu forever.
 	if s.opts.OnSandboxID != nil {
 		if rerr := s.opts.OnSandboxID(ctx, id); rerr != nil {
-			if kerr := s.kill(context.WithoutCancel(ctx), id); kerr != nil {
+			kctx, kcancel := context.WithTimeout(context.WithoutCancel(ctx), controlCallTimeout)
+			defer kcancel()
+			if kerr := s.kill(kctx, id); kerr != nil {
 				return "", fmt.Errorf("e2b: recording sandbox %s failed (%w) and killing it also failed: %w", id, rerr, kerr)
 			}
 			return "", fmt.Errorf("e2b: recording sandbox %s: %w", id, rerr)
@@ -113,7 +124,7 @@ func (s *Sandbox) ensure(ctx context.Context) (string, error) {
 	s.id = id
 	s.freshWorkDir = true
 	s.adopt(info)
-	s.markLeased()
+	s.markLeased(runway)
 	return s.id, nil
 }
 
@@ -128,10 +139,10 @@ func (s *Sandbox) adopt(info sandboxInfo) {
 }
 
 // create provisions a new sandbox from the configured template.
-func (s *Sandbox) create(ctx context.Context) (sandboxInfo, error) {
+func (s *Sandbox) create(ctx context.Context, runway time.Duration) (sandboxInfo, error) {
 	body := map[string]any{
 		"templateID": s.opts.TemplateID,
-		"timeout":    s.timeout(),
+		"timeout":    s.leaseSeconds(runway),
 		// ALWAYS secure. Without it E2B's daemon takes no credential at all:
 		// anyone who learns the sandbox id — which is in the public hostname
 		// of every port a sandbox serves — can read its files and run
@@ -169,9 +180,9 @@ func (s *Sandbox) get(ctx context.Context, id string) (sandboxInfo, error) {
 // resume wakes a paused sandbox and extends its lease. `connect` rather than
 // the deprecated `resume`: it is the endpoint both E2B and the compatible
 // services document, and it does the resume when one is needed.
-func (s *Sandbox) resume(ctx context.Context, id string) (sandboxInfo, error) {
+func (s *Sandbox) resume(ctx context.Context, id string, runway time.Duration) (sandboxInfo, error) {
 	var out sandboxInfo
-	err := s.control(ctx, http.MethodPost, "/sandboxes/"+id+"/connect", map[string]any{"timeout": s.timeout()}, &out)
+	err := s.control(ctx, http.MethodPost, "/sandboxes/"+id+"/connect", map[string]any{"timeout": s.leaseSeconds(runway)}, &out)
 	return out, err
 }
 
@@ -186,8 +197,8 @@ func (s *Sandbox) kill(ctx context.Context, id string) error {
 }
 
 // refresh extends the sandbox's lease without touching anything else.
-func (s *Sandbox) refresh(ctx context.Context, id string) error {
-	return s.control(ctx, http.MethodPost, "/sandboxes/"+id+"/timeout", map[string]any{"timeout": s.timeout()}, nil)
+func (s *Sandbox) refresh(ctx context.Context, id string, runway time.Duration) error {
+	return s.control(ctx, http.MethodPost, "/sandboxes/"+id+"/timeout", map[string]any{"timeout": s.leaseSeconds(runway)}, nil)
 }
 
 // control performs one control-plane call. A 404 comes back as a not_found

@@ -1,13 +1,19 @@
 package e2b_test
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/zzir/agents-go/sandbox"
 	"github.com/zzir/agents-go/sandbox/e2b"
@@ -194,6 +200,162 @@ func TestE2BDestroyThenReprovision(t *testing.T) {
 	f.mu.Unlock()
 	if got != 2 {
 		t.Fatalf("creates = %d, want 2 — a destroyed sandbox is replaced, not mourned", got)
+	}
+}
+
+// Closing an export's reader aborts the stream: the write error reaches the
+// chunk callback, the client stops consuming, and the abandoned tar process is
+// killed — not streamed to nobody for the rest of the export's timeout.
+func TestE2BExportReaderCloseAbortsTheStream(t *testing.T) {
+	sb, f := fakeBackedSandbox(t)
+	// More output than one pipe hand-off: io.Pipe is unbuffered, so the export
+	// goroutine is mid-Write when the reader closes.
+	if err := sb.WriteFile(t.Context(), "big.bin", bytes.Repeat([]byte("x"), 1<<20)); err != nil {
+		t.Fatal(err)
+	}
+	rc, err := sb.ExportTar(t.Context(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.ReadFull(rc, make([]byte, 512)); err != nil {
+		t.Fatal(err)
+	}
+	_ = rc.Close()
+	// The abort is visible as the kill of the abandoned tar process.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		f.mu.Lock()
+		n := f.signalCalls
+		f.mu.Unlock()
+		if n > 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the export stream was not aborted after the reader closed")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// timeoutCalls snapshots the TTLs the fake's /timeout endpoint was asked for.
+func timeoutCalls(f *fakeService) []int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.timeoutCalls)
+}
+
+// leasedAtLeast reports whether some call in calls asked for at least secs.
+func leasedAtLeast(calls []int, secs int) bool {
+	return slices.ContainsFunc(calls, func(v int) bool { return v >= secs })
+}
+
+// An export can outrun the default lease: the lease is extended to at least
+// the export's own bound before the tar starts.
+func TestE2BExportExtendsTheLease(t *testing.T) {
+	sb, f := fakeBackedSandbox(t)
+	// Provision first, so the export's ensure takes the refresh path.
+	if _, err := sb.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err != nil {
+		t.Fatal(err)
+	}
+	rc, err := sb.ExportTar(t.Context(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.Copy(io.Discard, rc); err != nil {
+		t.Fatal(err)
+	}
+	_ = rc.Close()
+	if calls := timeoutCalls(f); !leasedAtLeast(calls, 600) {
+		t.Fatalf("no refresh covered the 600s export bound; /timeout calls = %v", calls)
+	}
+}
+
+// An exec bounded past the lease's refresh margin extends the lease to cover
+// its own deadline first.
+func TestE2BLongExecExtendsTheLease(t *testing.T) {
+	sb, f := fakeBackedSandbox(t)
+	if _, err := sb.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sb.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}, Timeout: 20 * time.Minute}); err != nil {
+		t.Fatal(err)
+	}
+	if calls := timeoutCalls(f); !leasedAtLeast(calls, 1200) {
+		t.Fatalf("no refresh covered the 20m exec deadline; /timeout calls = %v", calls)
+	}
+}
+
+// A terminal session is open-ended and there is no keepalive: opening one at
+// least starts it from a freshly refreshed full lease.
+func TestE2BOpenTerminalRefreshesTheLease(t *testing.T) {
+	sb, f := fakeBackedSandbox(t)
+	if _, err := sb.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err != nil {
+		t.Fatal(err)
+	}
+	term, err := sb.OpenTerminal(t.Context(), sandbox.TerminalOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer term.Close()
+	if calls := timeoutCalls(f); !leasedAtLeast(calls, e2b.DefaultTimeout) {
+		t.Fatalf("opening a terminal did not refresh the lease; /timeout calls = %v", calls)
+	}
+	// End the shell: the fake's SendSignal is a stub, and a lingering process
+	// would hold its stream request open past the server's Close.
+	if _, err := term.Write([]byte("exit 0\n")); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, term)
+	_, _ = term.Wait()
+}
+
+// deadlineRecorder notes whether the control-plane DELETE — ensure's rollback
+// kill — carried a deadline. It runs while s.mu is held, so an unbounded one
+// against a hung control plane would wedge every future call.
+type deadlineRecorder struct {
+	next http.RoundTripper
+
+	mu                sync.Mutex
+	sawDelete         bool
+	deleteHadDeadline bool
+}
+
+func (d *deadlineRecorder) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.Method == http.MethodDelete {
+		_, ok := r.Context().Deadline()
+		d.mu.Lock()
+		d.sawDelete, d.deleteHadDeadline = true, ok
+		d.mu.Unlock()
+	}
+	return d.next.RoundTrip(r)
+}
+
+func TestE2BRollbackKillCarriesADeadline(t *testing.T) {
+	root := t.TempDir()
+	f := newFakeService(t, root)
+	base, err := url.Parse(f.URL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := &deadlineRecorder{next: envdRedirect{to: base, next: http.DefaultTransport}}
+	sb, err := e2b.New(e2b.Options{
+		APIURL: f.URL(), Domain: "test", APIKey: "key", TemplateID: "base", WorkDir: root,
+		HTTPClient:  &http.Client{Transport: rec},
+		OnSandboxID: func(context.Context, string) error { return errors.New("no record") },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sb.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err == nil {
+		t.Fatal("a create nobody could record must fail")
+	}
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if !rec.sawDelete {
+		t.Fatal("the rollback never killed the sandbox")
+	}
+	if !rec.deleteHadDeadline {
+		t.Fatal("the rollback kill ran without a deadline")
 	}
 }
 

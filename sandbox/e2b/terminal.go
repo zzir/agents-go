@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/zzir/agents-go/sandbox"
 )
@@ -17,6 +18,11 @@ import (
 // as SendInput calls, and a resize as Update — the same three the JS and
 // Python SDKs make.
 func (s *Sandbox) OpenTerminal(ctx context.Context, opts sandbox.TerminalOptions) (sandbox.Terminal, error) {
+	// The session is open-ended and there is no keepalive: the best available
+	// is to open it on a freshly refreshed full lease.
+	if _, err := s.ensureFor(ctx, time.Duration(s.timeout())*time.Second); err != nil {
+		return nil, err
+	}
 	shell := opts.Shell
 	if len(shell) == 0 {
 		shell = []string{"/bin/sh", "-l"}

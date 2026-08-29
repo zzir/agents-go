@@ -106,7 +106,10 @@ func (e2bBackend) Check(ctx context.Context, sb *store.Sandbox) error {
 	}
 	defer func() {
 		// WithoutCancel: a cancelled request must not leave a billed sandbox.
-		if derr := inst.Destroy(context.WithoutCancel(ctx)); derr != nil {
+		// Bounded, so a hung control plane cannot wedge the check forever.
+		dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), stopTimeout)
+		defer cancel()
+		if derr := inst.Destroy(dctx); derr != nil {
 			logging.Ctx(ctx).Warn("destroying the health-check sandbox", "error", derr)
 		}
 	}()

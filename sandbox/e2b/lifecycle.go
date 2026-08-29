@@ -19,7 +19,7 @@ func (s *Sandbox) Start(ctx context.Context) error {
 	if err := s.ensureWorkDir(ctx); err != nil {
 		return err
 	}
-	return s.refresh(ctx, id)
+	return s.refresh(ctx, id, 0)
 }
 
 // Stop pauses the sandbox, keeping its filesystem. On a service that

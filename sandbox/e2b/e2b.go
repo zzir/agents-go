@@ -44,9 +44,9 @@ const (
 // is not a 30-second command.
 const exportTimeout = 10 * time.Minute
 
-// controlCallTimeout bounds a one-shot envd call that has no deadline of its
-// own — a signal, a terminal write or resize — so a hung sandbox ends the call
-// rather than blocking the goroutine that made it forever.
+// controlCallTimeout bounds a one-shot call that has no deadline of its own —
+// a signal, a terminal write or resize, ensure's rollback kill — so a hung
+// endpoint ends the call rather than blocking the goroutine that made it forever.
 const controlCallTimeout = 30 * time.Second
 
 // DataPlaneAuth selects how envd is authenticated. It is configuration rather
@@ -139,20 +139,28 @@ type Sandbox struct {
 }
 
 // leaseValid reports whether the lease has enough runway to skip a
-// control-plane refresh. Refreshing at half the TTL keeps a busy sandbox alive
-// without a round trip on every data-plane call. Callers hold s.mu.
-func (s *Sandbox) leaseValid() bool {
+// control-plane refresh: at least half the TTL (which keeps a busy sandbox
+// alive without a round trip on every data-plane call), and at least the
+// caller's runway — an operation bounded longer than the lease must extend it
+// first, or the service kills the sandbox mid-operation. Callers hold s.mu.
+func (s *Sandbox) leaseValid(runway time.Duration) bool {
 	if s.leaseUntil.IsZero() {
 		return false
 	}
-	margin := time.Duration(s.timeout()) * time.Second / 2
+	margin := max(runway, time.Duration(s.timeout())*time.Second/2)
 	return time.Now().Before(s.leaseUntil.Add(-margin))
+}
+
+// leaseSeconds is the TTL to request from the service: the configured lease,
+// or the operation's runway when that is longer.
+func (s *Sandbox) leaseSeconds(runway time.Duration) int {
+	return max(s.timeout(), int((runway+time.Second-1)/time.Second))
 }
 
 // markLeased records a fresh TTL after a create, resume or refresh. Callers
 // hold s.mu.
-func (s *Sandbox) markLeased() {
-	s.leaseUntil = time.Now().Add(time.Duration(s.timeout()) * time.Second)
+func (s *Sandbox) markLeased(runway time.Duration) {
+	s.leaseUntil = time.Now().Add(time.Duration(s.leaseSeconds(runway)) * time.Second)
 }
 
 // forget drops a sandbox that is gone, so the next ensure builds a new one.

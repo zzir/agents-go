@@ -1213,6 +1213,15 @@ record fails the create. Finding it again by metadata query would need a
 filter syntax the compatible services do not document identically; a column
 does not.
 
+**The lease is extended on demand, never by a keepalive.** Every control
+call that takes a timeout sends `max(configured TTL, the operation's own
+bound)`: a tar export or a long exec asks `ensure` for that much runway and
+gets a lease that outlasts it, and a terminal opens on a freshly refreshed
+full lease. The extension rides the control call the operation already
+forces, keeping the client free of background goroutines — and accepting the
+honest limit of a lease-based TTL: an open-ended terminal idle past one full
+lease can still lose its sandbox.
+
 **Stop is pause, and Reclaim is kill.** On these services the sandbox IS the
 storage, so §5.33's "a project delete destroys its storage" needs no separate
 volume removal — killing the sandbox is the whole of it. It also means

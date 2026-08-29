@@ -42,6 +42,12 @@ type fakeService struct {
 	// createCalls counts provisioning, so a test can assert a client does not
 	// create a second sandbox for one project.
 	createCalls int
+	// timeoutCalls records each /timeout request's requested TTL in seconds,
+	// so a test can assert a long operation extended the lease enough.
+	timeoutCalls []int
+	// signalCalls counts SendSignal RPCs — the client's cleanup of a process
+	// whose stream it abandoned.
+	signalCalls int
 }
 
 type fakeBox struct {
@@ -136,6 +142,10 @@ func (f *fakeService) control(w http.ResponseWriter, r *http.Request) {
 		f.setPaused(box, false)
 		writeJSON(w, f.infoOf(box))
 	case action == "timeout":
+		req, _ := body(r)
+		f.mu.Lock()
+		f.timeoutCalls = append(f.timeoutCalls, int(num(req["timeout"])))
+		f.mu.Unlock()
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		http.Error(w, `{"message":"unknown action"}`, http.StatusNotFound)
@@ -263,7 +273,12 @@ func (f *fakeService) rpc(w http.ResponseWriter, r *http.Request) {
 		f.start(w, req)
 	case "/process.Process/SendInput":
 		f.sendInput(w, req)
-	case "/process.Process/SendSignal", "/process.Process/Update":
+	case "/process.Process/SendSignal":
+		f.mu.Lock()
+		f.signalCalls++
+		f.mu.Unlock()
+		writeJSON(w, map[string]any{})
+	case "/process.Process/Update":
 		writeJSON(w, map[string]any{})
 	case "/filesystem.Filesystem/ListDir":
 		f.listDir(w, req)

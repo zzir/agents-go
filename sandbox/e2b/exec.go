@@ -68,6 +68,11 @@ func (s *Sandbox) ExecStream(ctx context.Context, req sandbox.ExecRequest, stdou
 	if req.Stdin != "" {
 		return nil, errors.New("e2b: ExecRequest.Stdin is not supported")
 	}
+	// A command bounded longer than the lease's refresh margin needs the lease
+	// extended first, or the service kills the sandbox mid-command.
+	if _, err := s.ensureFor(ctx, req.EffectiveTimeout()); err != nil {
+		return nil, err
+	}
 	if err := s.writeRequestFiles(ctx, req.Files); err != nil {
 		return nil, err
 	}
@@ -99,8 +104,12 @@ func (s *Sandbox) ExecStream(ctx context.Context, req sandbox.ExecRequest, stdou
 		case ev.Event.Start != nil:
 			pid = ev.Event.Start.PID
 		case ev.Event.Data != nil:
-			writeChunk(stdout, ev.Event.Data.Stdout)
-			writeChunk(stderr, ev.Event.Data.Stderr)
+			if err := writeChunk(stdout, ev.Event.Data.Stdout); err != nil {
+				return err
+			}
+			if err := writeChunk(stderr, ev.Event.Data.Stderr); err != nil {
+				return err
+			}
 		case ev.Event.End != nil:
 			result.ExitCode = ev.exitCode()
 			sawEnd = true
@@ -138,14 +147,18 @@ func (s *Sandbox) ExecStream(ctx context.Context, req sandbox.ExecRequest, stdou
 
 // writeChunk decodes one base64 output chunk into w. A chunk that will not
 // decode is dropped rather than failing the command: partial output is worth
-// more to the model than none.
-func writeChunk(w io.Writer, encoded string) {
+// more to the model than none. A WRITE failure is returned — the caller
+// stopped taking output (a closed export pipe), so streaming on is waste.
+func writeChunk(w io.Writer, encoded string) error {
 	if encoded == "" || w == nil {
-		return
+		return nil
 	}
-	if raw, err := base64.StdEncoding.DecodeString(encoded); err == nil {
-		_, _ = w.Write(raw)
+	raw, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil //nolint:nilerr // see above
 	}
+	_, werr := w.Write(raw)
+	return werr
 }
 
 // writeRequestFiles materializes ExecRequest.Files before the command runs.
