@@ -5019,7 +5019,7 @@ export interface paths {
                         "application/json": components["schemas"]["handler.ErrorResponse"];
                     };
                 };
-                /** @description a run is live on the session */
+                /** @description a run is live on the session, or it is bound to a project the new owner does not own */
                 409: {
                     headers: {
                         [name: string]: unknown;

@@ -91,7 +91,7 @@ func testSessionDeps(db *bun.DB, tune ...func(*SessionDeps)) SessionDeps {
 		Sessions: store.NewSessionStore(db), Entries: store.NewSharedEntryStore(db), Traces: store.NewTraceStore(db),
 		Agents: store.NewAgentConfigStore(db), Profiles: store.NewContextProfileStore(db),
 		MCP: noLister{}, MCPServers: store.NewMcpServerStore(db), Users: store.NewUserStore(db),
-		Stopper: noopStopper{}, Compactor: noopCompactor{},
+		Projects: store.NewProjectStore(db), Stopper: noopStopper{}, Compactor: noopCompactor{},
 	}
 	for _, f := range tune {
 		f(&d)

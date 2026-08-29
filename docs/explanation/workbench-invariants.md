@@ -810,3 +810,11 @@ When a change genuinely doesn't fit, update this list in the same PR.
     view stands its live work down — `RunsView`'s per-second duration ticker
     gates on an `active` flag — while its event-driven refetch (`tasksSig`)
     keeps running, so returning to it is both instant and current.
+
+52. **A project-bound session transfers only to the project's owner.** The
+    binding is immutable (invariant 27), and the session's runs execute in the
+    bound project's container — working tree and write-only environment
+    included — so `PUT /sessions/{id}/owner` refuses any other target with
+    409. Reassigning a session must never be the act that hands one member's
+    files and secrets to another; an admin manages the plane, they do not
+    redistribute its contents.

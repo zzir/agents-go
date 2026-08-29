@@ -514,6 +514,53 @@ func TestSessionReassignIsAdminManagement(t *testing.T) {
 	}
 }
 
+// A session bound to a project transfers only to the project's owner: the
+// binding is immutable and its runs execute in that project's container, so a
+// reassignment elsewhere would hand a stranger the original owner's files and
+// write-only env. An unbound session reassigns as before.
+func TestSessionReassignRespectsProjectBinding(t *testing.T) {
+	r := authzRig(t)
+	engine, sessions, db := r.engine, r.sessions, r.db
+	ctx := context.Background()
+	for _, u := range []protocol.UserInfo{adminUser, memberUser, otherUser} {
+		if _, err := db.NewInsert().Model(&store.User{ID: u.ID, Email: u.Email, Role: u.Role}).Exec(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	proj := &store.Project{ID: store.NewID(), OwnerID: memberUser.ID, SandboxID: mkSandboxRow(t, db), Name: "p"}
+	if err := store.NewProjectStore(db).Create(ctx, proj); err != nil {
+		t.Fatal(err)
+	}
+	unbound := &store.Session{ID: store.NewID(), OwnerID: memberUser.ID, Name: "free"}
+	bound := &store.Session{ID: store.NewID(), OwnerID: otherUser.ID, Name: "bound", ProjectID: proj.ID}
+	for _, s := range []*store.Session{unbound, bound} {
+		if err := sessions.Create(ctx, s); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	toOther := `{"user_id":"` + otherUser.ID + `"}`
+	if rec := serve(engine, as(adminUser, http.MethodPut, "/api/v1/sessions/"+unbound.ID+"/owner", toOther)); rec.Code != http.StatusOK {
+		t.Fatalf("reassign unbound = %d (%s)", rec.Code, rec.Body.String())
+	}
+	// Bound: neither the current owner nor the admin owns the project.
+	for _, target := range []string{otherUser.ID, adminUser.ID} {
+		rec := serve(engine, as(adminUser, http.MethodPut, "/api/v1/sessions/"+bound.ID+"/owner", `{"user_id":"`+target+`"}`))
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("reassign bound to non-owner %s = %d, want 409 (%s)", target, rec.Code, rec.Body.String())
+		}
+	}
+	if got, _ := sessions.Get(ctx, bound.ID); got.OwnerID != otherUser.ID {
+		t.Fatalf("a refused reassign moved the session to %s", got.OwnerID)
+	}
+	if rec := serve(engine, as(adminUser, http.MethodPut, "/api/v1/sessions/"+bound.ID+"/owner", `{"user_id":"`+memberUser.ID+`"}`)); rec.Code != http.StatusOK {
+		t.Fatalf("reassign bound to the project's owner = %d (%s)", rec.Code, rec.Body.String())
+	}
+	if got, _ := sessions.Get(ctx, bound.ID); got.OwnerID != memberUser.ID {
+		t.Fatalf("session owner = %s, want the project's owner", got.OwnerID)
+	}
+}
+
 // Run events reach the owner's connections and nobody else's: a second user
 // watching the bus hears nothing of a run in a session they do not own.
 func TestRunEventsStayWithTheOwner(t *testing.T) {

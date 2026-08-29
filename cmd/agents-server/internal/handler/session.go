@@ -71,8 +71,10 @@ type SessionDeps struct {
 	Profiles   *store.ContextProfileStore
 	MCP        MCPToolLister
 	MCPServers *store.McpServerStore
-	// Users resolves the account a session is reassigned to.
-	Users *store.UserStore
+	// Users resolves the account a session is reassigned to; Projects answers
+	// whether that account owns a bound session's project (SetOwner's gate).
+	Users    *store.UserStore
+	Projects *store.ProjectStore
 	// Stopper stops the session tree before a delete's cascade; Compactor is
 	// the manual compaction pass. Both the bridge Runner.
 	Stopper   RunStopper
@@ -89,6 +91,7 @@ type SessionHandler struct {
 	mcp        MCPToolLister
 	mcpServers *store.McpServerStore
 	users      *store.UserStore
+	projects   *store.ProjectStore
 	stopper    RunStopper
 	compactor  SessionCompactor
 }
@@ -98,7 +101,7 @@ type SessionHandler struct {
 func NewSessionHandler(d SessionDeps) *SessionHandler {
 	switch {
 	case d.Sessions == nil, d.Entries == nil, d.Traces == nil, d.Agents == nil,
-		d.Profiles == nil, d.MCPServers == nil, d.Users == nil:
+		d.Profiles == nil, d.MCPServers == nil, d.Users == nil, d.Projects == nil:
 		panic("handler: SessionDeps has a nil store")
 	case d.MCP == nil, d.Stopper == nil, d.Compactor == nil:
 		panic("handler: SessionDeps has a nil MCP lister, stopper or compactor")
@@ -106,7 +109,7 @@ func NewSessionHandler(d SessionDeps) *SessionHandler {
 	return &SessionHandler{
 		sessions: d.Sessions, entries: d.Entries, traces: d.Traces, agents: d.Agents,
 		profiles: d.Profiles, mcp: d.MCP, mcpServers: d.MCPServers, users: d.Users,
-		stopper: d.Stopper, compactor: d.Compactor,
+		projects: d.Projects, stopper: d.Stopper, compactor: d.Compactor,
 	}
 }
 
@@ -271,7 +274,10 @@ func (h *SessionHandler) Patch(c *gin.Context) {
 // SetOwner reassigns the session (and the hidden sessions serving it) to
 // another account — management, for an admin: the way a session made under
 // one auth mode reaches someone after a switch. Refused while a run is live
-// on it, so the run's stream keeps one owner from start to end.
+// on it, so the run's stream keeps one owner from start to end. A session
+// bound to a project transfers only to that project's owner (409 otherwise):
+// its runs execute in the project's container, files and write-only env
+// included, and the binding is immutable.
 //
 //	@Summary	Reassign session owner (admin)
 //	@Tags		sessions
@@ -282,7 +288,7 @@ func (h *SessionHandler) Patch(c *gin.Context) {
 //	@Failure	400		{object}	ErrorResponse	"malformed body, or no such user"
 //	@Failure	403		{object}	ErrorResponse
 //	@Failure	404		{object}	ErrorResponse
-//	@Failure	409		{object}	ErrorResponse	"a run is live on the session"
+//	@Failure	409		{object}	ErrorResponse	"a run is live on the session, or it is bound to a project the new owner does not own"
 //	@Security	BearerAuth
 //	@Router		/sessions/{id}/owner [put]
 func (h *SessionHandler) SetOwner(c *gin.Context) {
@@ -300,6 +306,24 @@ func (h *SessionHandler) SetOwner(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
+	sess, err := h.sessions.Get(c.Request.Context(), id)
+	if err != nil {
+		storeError(c, err)
+		return
+	}
+	// The immutable project binding runs the session in that project's
+	// container: only the project's owner may receive it.
+	if sess.ProjectID != "" {
+		proj, perr := h.projects.Get(c.Request.Context(), sess.ProjectID)
+		if perr != nil && !errors.Is(perr, store.ErrNotFound) {
+			storeError(c, perr)
+			return
+		}
+		if perr != nil || proj.OwnerID != req.UserID {
+			conflict(c, "the session is bound to a project the new owner does not own")
+			return
+		}
+	}
 	if h.stopper.SessionBusy(id) {
 		conflict(c, "a run is live on this session; stop it first")
 		return
@@ -308,7 +332,7 @@ func (h *SessionHandler) SetOwner(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
-	sess, err := h.sessions.Get(c.Request.Context(), id)
+	sess, err = h.sessions.Get(c.Request.Context(), id)
 	if err != nil {
 		storeError(c, err)
 		return
