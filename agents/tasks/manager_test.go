@@ -98,7 +98,7 @@ func TestTask_DepthLimitIsConfigurable(t *testing.T) {
 // #5: a model told it can delegate will delegate.
 func TestTask_ConcurrencyIsCapped(t *testing.T) {
 	ctx := context.Background()
-	h := newHarness(t, func(c *Config) { c.MaxConcurrentPerParent = 2 })
+	h := newHarness(t, func(c *Config) { c.MaxConcurrentPerParent = func() int { return 2 } })
 	h.spawn(t)
 	h.spawn(t)
 
@@ -637,7 +637,7 @@ func TestStatus_WaitNoticesAFinalizeItDidNotMake(t *testing.T) {
 // concurrently, so a read-then-create check would let them all through.
 func TestSpawnCapHoldsUnderConcurrentSpawns(t *testing.T) {
 	const limit = 2
-	h := newHarness(t, func(c *Config) { c.MaxConcurrentPerParent = limit })
+	h := newHarness(t, func(c *Config) { c.MaxConcurrentPerParent = func() int { return limit } })
 	ctx := context.Background()
 
 	var wg sync.WaitGroup

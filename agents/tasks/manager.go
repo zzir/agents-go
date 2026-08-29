@@ -86,10 +86,13 @@ type Config struct {
 	// Stopper cancels a running task. Without one, Stop still finalizes the
 	// row but cannot interrupt the run.
 	Stopper Stopper
-	// MaxConcurrentPerParent caps a parent session's live tasks. One Manager
-	// enforces it exactly; several Managers over one Store can each admit up to
-	// the cap, so run one Manager per parent or enforce the ceiling above them.
-	MaxConcurrentPerParent int
+	// MaxConcurrentPerParent resolves the cap on a parent session's live tasks.
+	// It is called at each spawn and retry, so an embedder can back it with a
+	// live setting rather than a value fixed at construction. nil, or a resolved
+	// value <= 0, means DefaultMaxConcurrentPerParent. One Manager enforces it
+	// exactly; several Managers over one Store can each admit up to the cap, so
+	// run one Manager per parent or enforce the ceiling above them.
+	MaxConcurrentPerParent func() int
 	SummaryLimit           int
 	MaxStatusWait          time.Duration
 	MaxDepth               int
@@ -242,9 +245,6 @@ func New(cfg Config) *Manager {
 	case cfg.Launcher == nil:
 		panic("tasks: Config.Launcher is required")
 	}
-	if cfg.MaxConcurrentPerParent <= 0 {
-		cfg.MaxConcurrentPerParent = DefaultMaxConcurrentPerParent
-	}
 	if cfg.SummaryLimit <= 0 {
 		cfg.SummaryLimit = DefaultSummaryLimit
 	}
@@ -268,6 +268,17 @@ func New(cfg Config) *Manager {
 		log = slog.New(slog.DiscardHandler)
 	}
 	return &Manager{cfg: cfg, log: log.With(slog.String("component", "tasks")), waiters: map[string][]chan struct{}{}}
+}
+
+// maxConcurrentPerParent resolves the live-task cap, flooring a nil resolver or
+// a non-positive result at DefaultMaxConcurrentPerParent.
+func (m *Manager) maxConcurrentPerParent() int {
+	if m.cfg.MaxConcurrentPerParent != nil {
+		if n := m.cfg.MaxConcurrentPerParent(); n > 0 {
+			return n
+		}
+	}
+	return DefaultMaxConcurrentPerParent
 }
 
 // Meta describes a session's role in the task system.
@@ -332,8 +343,8 @@ func (m *Manager) Spawn(ctx context.Context, req SpawnRequest) (*Info, error) {
 	if err != nil {
 		return nil, fmt.Errorf("tasks: counting live tasks: %w", err)
 	}
-	if len(live) >= m.cfg.MaxConcurrentPerParent {
-		return nil, ErrTaskLimit{Limit: m.cfg.MaxConcurrentPerParent}
+	if limit := m.maxConcurrentPerParent(); len(live) >= limit {
+		return nil, ErrTaskLimit{Limit: limit}
 	}
 
 	spec, err := m.cfg.Resolver(ctx, req.ParentSessionID, req.AgentName)
@@ -462,10 +473,10 @@ func (m *Manager) Retry(ctx context.Context, taskID string) (*Info, error) {
 	if err != nil {
 		return nil, fmt.Errorf("tasks: counting live tasks: %w", err)
 	}
-	if len(live) >= m.cfg.MaxConcurrentPerParent {
+	if limit := m.maxConcurrentPerParent(); len(live) >= limit {
 		// A retry queues behind the same ceiling a spawn does; exempting it
 		// would make retry the way around the cap.
-		return infoFrom(t, ""), ErrTaskLimit{Limit: m.cfg.MaxConcurrentPerParent}
+		return infoFrom(t, ""), ErrTaskLimit{Limit: limit}
 	}
 
 	// Read the failure BEFORE the claim clears it: it is what tells the next

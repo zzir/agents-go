@@ -497,11 +497,6 @@ components:
       type: object
     handler.ServerInfo:
       properties:
-        max_tasks:
-          description: |-
-            MaxTasks is the effective cap, never the raw flag — 0 on the command
-            line means the built-in default, and reporting the 0 would be a lie.
-          type: integer
         version:
           type: string
       type: object

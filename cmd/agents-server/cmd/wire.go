@@ -149,7 +149,6 @@ func newBridge(ctx, bgCtx context.Context, db *bun.DB, st *stores, audit protoco
 		Workflows:        st.Workflows,
 		Users:            st.Users,
 		Wakeups:          st.Wakeups,
-		MaxTasks:         flagMaxTasks,
 		Audit:            audit,
 	}
 	svc.Runner = bridge.NewRunner(ctx, db, svc.Deps)
@@ -216,8 +215,7 @@ func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL st
 			Playground: handler.NewPlaygroundHandler(svc.Deps),
 			ChatGPT:    handler.NewChatGPTOAuthHandler(svc.ChatGPT, st.Providers),
 			Server: handler.ServerInfo{
-				Version:  buildVersion,
-				MaxTasks: svc.Runner.Hub().MaxTasks(),
+				Version: buildVersion,
 			},
 		},
 	}
@@ -235,7 +233,12 @@ func newAuth(ctx context.Context, st *stores, baseURL string, log *slog.Logger) 
 	}
 	switch flagAuthMode {
 	case "token":
+		// Flag wins, then env (keeps the secret off argv/ps, like the secret-key
+		// and google-secret env vars), then a fresh one.
 		token := flagToken
+		if token == "" {
+			token = os.Getenv("AGENTS_TOKEN")
+		}
 		if token == "" {
 			token = server.GenerateToken()
 		}

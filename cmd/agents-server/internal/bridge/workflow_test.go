@@ -491,7 +491,7 @@ func TestWorkflowRefusesPastTheBackgroundBudget(t *testing.T) {
 	defer srv.Close()
 	runner, sess, wf := workflowFixture(t, srv.URL)
 
-	for range runner.hub.maxTasks {
+	for range runner.hub.maxTasks() {
 		if err := runner.Deps.Tasks.Create(ctx, &store.Task{
 			ID: store.NewID(), RunID: store.NewID(), ParentSessionID: sess.ID, ChildSessionID: store.NewID(),
 			Label: "other", Status: "working",

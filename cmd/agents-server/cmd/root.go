@@ -29,7 +29,6 @@ var (
 	flagPreviewBaseURL string
 	flagDB             string
 	flagToken          string
-	flagMaxTasks       int
 	flagLogLevel       string
 	flagLogFormat      string
 	flagBaseURL        string
@@ -56,8 +55,7 @@ func init() {
 	rootCmd.Flags().IntVar(&flagPreviewPort, "preview-port", 0, "Port for the isolated sandbox-preview origin (0 = port+1); must differ from --port so a previewed page cannot read the app's token")
 	rootCmd.Flags().StringVar(&flagPreviewBaseURL, "preview-base-url", "", "Public origin the preview listener is reached at, scheme://host[:port] (behind a reverse proxy that routes a second hostname to the preview port)")
 	rootCmd.Flags().StringVar(&flagDB, "db", "data.db", "SQLite database path, or a postgres:// DSN")
-	rootCmd.Flags().StringVar(&flagToken, "token", "", "Authentication token (auto-generated if empty)")
-	rootCmd.Flags().IntVar(&flagMaxTasks, "max-tasks", 0, "Max live background tasks per session (0 = default 6)")
+	rootCmd.Flags().StringVar(&flagToken, "token", "", "Authentication token (or env AGENTS_TOKEN; auto-generated if empty)")
 	rootCmd.Flags().StringVar(&flagLogLevel, "log-level", "info", "Log level: debug, info, warn, error")
 	rootCmd.Flags().StringVar(&flagLogFormat, "log-format", "text", "Log format: text, json")
 	rootCmd.Flags().StringVar(&flagBaseURL, "base-url", "", "Public origin of this server, scheme://host[:port] (required behind a reverse proxy for OAuth flows)")

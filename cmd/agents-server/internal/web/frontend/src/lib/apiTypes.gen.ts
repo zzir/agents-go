@@ -7364,11 +7364,6 @@ export interface components {
             error?: components["schemas"]["protocol.APIError"];
         };
         "handler.ServerInfo": {
-            /**
-             * @description MaxTasks is the effective cap, never the raw flag — 0 on the command
-             *     line means the built-in default, and reporting the 0 would be a lie.
-             */
-            max_tasks?: number;
             version?: string;
         };
         "handler.SessionApproval": {

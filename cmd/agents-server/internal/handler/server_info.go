@@ -13,9 +13,6 @@ import (
 // allowed" with nowhere to learn why.
 type ServerInfo struct {
 	Version string `json:"version"`
-	// MaxTasks is the effective cap, never the raw flag — 0 on the command
-	// line means the built-in default, and reporting the 0 would be a lie.
-	MaxTasks int `json:"max_tasks"`
 }
 
 // ServerInfoHandler answers with info. Bound at registration rather than read

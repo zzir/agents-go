@@ -13,6 +13,7 @@ import (
 	"github.com/zzir/agents-go/agents/tasks"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -58,8 +59,11 @@ func NewRunner(rootCtx context.Context, db *bun.DB, deps *AgentDeps) *Runner {
 		Deps: deps,
 		hub:  NewRunHub(rootCtx),
 	}
-	if deps.MaxTasks > 0 {
-		r.hub.maxTasks = deps.MaxTasks
+	// The per-parent task cap is a live setting: resolve it at each check rather
+	// than freeze it here. Both gates — the hub's register and the SDK task
+	// manager's spawn/retry — read the same resolver.
+	if deps.Settings != nil {
+		r.hub.maxTasks = func() int { return deps.Settings.Int(rootCtx, settings.KeyMaxTasksPerSession) }
 	}
 	if deps.Tasks != nil {
 		r.tasks = tasks.New(tasks.Config{

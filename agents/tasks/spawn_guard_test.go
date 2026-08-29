@@ -56,7 +56,7 @@ func TestMetaForReportsAStoreFailure(t *testing.T) {
 // grows is a leak in a long-lived server. Every path out of Spawn must release
 // its entry — including the ones that never create a task.
 func TestSpawnLockTableDoesNotGrow(t *testing.T) {
-	h := newHarness(t, func(cfg *Config) { cfg.MaxConcurrentPerParent = 1 })
+	h := newHarness(t, func(cfg *Config) { cfg.MaxConcurrentPerParent = func() int { return 1 } })
 	ctx := context.Background()
 
 	// A successful spawn, an over-cap refusal, and a resolver failure: three

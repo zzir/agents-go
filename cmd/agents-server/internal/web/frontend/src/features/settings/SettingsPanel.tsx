@@ -29,7 +29,6 @@ interface SettingDef {
 interface ServerInfo {
   version: string;
   workspace: string;
-  max_tasks: number;
 }
 
 const GROUP_TITLES: Record<string, string> = {
@@ -270,7 +269,6 @@ function ServerSection() {
   const rows: [string, string][] = [
     ['Version', info.version],
     ['Workspace', info.workspace],
-    ['Background tasks per session', String(info.max_tasks)],
   ];
   return (
     <div className="form-group">

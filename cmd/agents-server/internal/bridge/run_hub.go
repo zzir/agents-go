@@ -212,9 +212,10 @@ type runRecord struct {
 type RunHub struct {
 	rootCtx context.Context
 
-	// maxTasks caps live background tasks per parent session (--max-tasks;
-	// set once at construction time, read under mu with everything else).
-	maxTasks int
+	// maxTasks resolves the per-parent live-task cap, called at each register so
+	// the setting can change without a restart. Read OUTSIDE mu (it hits the DB)
+	// and compared under mu.
+	maxTasks func() int
 
 	mu        sync.Mutex
 	runs      map[string]*runRecord
@@ -228,19 +229,16 @@ type RunHub struct {
 	deleting map[string]bool
 }
 
-// MaxTasks reports the per-parent live-task cap in force — the flag when one
-// was given, the built-in default otherwise. Resolved here rather than at each
-// reader, so nothing has to re-derive what "0 means default" came to.
-func (h *RunHub) MaxTasks() int { return h.maxTasks }
-
-// NewRunHub returns a hub scoped to rootCtx and starts its GC loop.
+// NewRunHub returns a hub scoped to rootCtx and starts its GC loop. The cap
+// resolver defaults to the built-in; NewRunner overrides it with the
+// settings-backed one.
 func NewRunHub(rootCtx context.Context) *RunHub {
 	if rootCtx == nil {
 		rootCtx = context.Background()
 	}
 	h := &RunHub{
 		rootCtx:   rootCtx,
-		maxTasks:  tasks.DefaultMaxConcurrentPerParent,
+		maxTasks:  func() int { return tasks.DefaultMaxConcurrentPerParent },
 		runs:      make(map[string]*runRecord),
 		bySession: make(map[string]string),
 		deleting:  make(map[string]bool),
@@ -368,6 +366,12 @@ func (e ErrTaskLimit) Error() string {
 // once when it ends. It fails with ErrSessionBusy if the session already has a
 // live run, or ErrSessionDeleting if the session is being torn down.
 func (h *RunHub) register(runID, sessionID, ownerID, agentConfigID, projectID string, task *TaskMeta) (*runSegment, context.Context, error) {
+	// Resolve the cap before the lock: the resolver reads the DB, and h.mu gates
+	// every register/deregister.
+	var limit int
+	if task != nil {
+		limit = h.maxTasks()
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.draining {
@@ -379,8 +383,8 @@ func (h *RunHub) register(runID, sessionID, ownerID, agentConfigID, projectID st
 	if existing, ok := h.bySession[sessionID]; ok {
 		return nil, nil, ErrSessionBusy{RunID: existing}
 	}
-	if task != nil && h.liveTaskCountLocked(task.ParentSessionID) >= h.maxTasks {
-		return nil, nil, ErrTaskLimit{Limit: h.maxTasks}
+	if task != nil && h.liveTaskCountLocked(task.ParentSessionID) >= limit {
+		return nil, nil, ErrTaskLimit{Limit: limit}
 	}
 	ctx, cancel := context.WithCancel(h.rootCtx)
 	seg := &runSegment{done: make(chan struct{}), cancel: cancel}

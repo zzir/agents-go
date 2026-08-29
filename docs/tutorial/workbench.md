@@ -22,22 +22,18 @@ On startup the server prints an auto-generated auth token. Open
 
 ### Flags
 
+The ones you reach for first:
+
 | Flag                    | Default     | Description                                            |
 |-------------------------|-------------|--------------------------------------------------------|
 | `--host`                | `127.0.0.1` | Bind address (use `0.0.0.0` for LAN access)            |
 | `--port`                | `9527`      | HTTP listen port                                       |
-| `--preview-port`        | `0`         | Port for the isolated sandbox-preview origin (`0` = `--port` + 1); must differ from `--port` so a previewed page cannot read the app's token |
-| `--preview-base-url`    | —           | Public origin the preview listener is reached at, `scheme://host[:port]` (reverse proxy that routes a second hostname to the preview port) |
 | `--db`                  | `data.db`   | SQLite file path, or a `postgres://` / `postgresql://` DSN |
-| `--token`               | auto        | Auth token; randomly generated when omitted            |
-| `--max-tasks`           | `0`         | Max live background tasks per session (`0` = default 6) |
-| `--log-level`           | `info`      | `debug`, `info`, `warn` or `error`                     |
-| `--log-format`          | `text`      | `text` for a terminal, `json` for a collector          |
-| `--base-url`            | —           | Public origin, `scheme://host[:port]` — see [Deployment](../howto/workbench-deploy.md#deployment) |
-| `--trusted-proxies`     | —           | Comma-separated proxy IPs/CIDRs whose `X-Forwarded-For` is believed for client IPs |
+| `--token`               | auto        | Auth token; randomly generated when omitted (or env `AGENTS_TOKEN`) |
 | `--auth`                | `token`     | `token` (single static token) or `oauth` (per-user login — see [OAuth mode](../howto/workbench-auth.md#oauth-mode)) |
-| `--oauth-google-client-id` / `--oauth-google-client-secret` | — | Google login credentials (secret also via `AGENTS_OAUTH_GOOGLE_CLIENT_SECRET`) |
-| `--allowed-domains` / `--allowed-emails` | — | OAuth admission allowlist (comma-separated)  |
-| `--bootstrap-admin`     | —           | Email that signs in as admin; implicitly admitted        |
-| `--audit-retention-days` | `0`        | Prune audit log entries older than N days (0 = keep forever) — see [Audit log](../howto/workbench-auth.md#audit-log) |
-| `--secret-key-file`     | —           | File holding the 32-byte key that seals stored credentials; or env `AGENTS_SECRET_KEY` — see [Secret handling](../reference/protocol.md#secret-handling) |
+| `--log-level`           | `info`      | `debug`, `info`, `warn` or `error`                     |
+
+`agents-server --help` lists every flag. For the full picture — all flags, the
+`AGENTS_*` environment variables, and the runtime settings tuned live in the UI,
+each with the rule for which plane it lives on — see
+[Configuration reference](../reference/configuration.md).

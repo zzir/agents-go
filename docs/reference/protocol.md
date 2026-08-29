@@ -278,7 +278,7 @@ read live from the hub for a running task and from the store after it ends.
 `stop` returns `200` with the task info, `409` if the task is already final.
 `retry` returns `200` with the reopened task, `409` when the task is not
 failed, has used every attempt (3 by default), or its session is at the
-live-task cap — which is the `--max-tasks` flag, and which a retry queues
+live-task cap — the `max_tasks_per_session` setting, which a retry queues
 behind like a spawn.
 
 ### Agents — `/api/v1/agents`
@@ -470,11 +470,10 @@ registry's — read them at `GET /setting-defs`):
 
 *(Endpoints and payload schemas: see the OpenAPI spec — `/openapi.yaml`, browsable at `/docs`.)*
 
-`{version, max_tasks}` — the flags this process was started with, not
-settings. They are here because a client that cannot see them meets them only
-as unexplained refusals — a task cap with nowhere to learn that a flag decides
-it. `max_tasks` is the EFFECTIVE cap, not the raw flag — `--max-tasks 0`
-means the built-in default, and reporting the zero would be a lie.
+`{version}` — the process facts a client is subject to but cannot change. The
+live-task cap moved to the `max_tasks_per_session` setting (readable and
+editable via `/settings` like the other caps), so it is no longer reported
+here.
 
 ### Skills — `/api/v1/skills`
 
@@ -1168,9 +1167,9 @@ what a session's history costs to open no longer grows with what its model
 calls carried. Payloads past `trace_span_data_kb` are replaced with a
 truncation marker in the row itself. The `trace_include_sensitive_data`
 setting (default on) keeps conversation content out of traces entirely when
-off; the server always passes its resolved value explicitly, so the SDK's
-`OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA` environment variable is not
-consulted.
+off; the server always passes its resolved value explicitly as
+`Observe.IncludeSensitiveData`, which is the SDK's one authority for it — the
+SDK reads no environment variable (spec §2.14).
 
 ### Terminal endpoint — `GET /ws/terminal`
 

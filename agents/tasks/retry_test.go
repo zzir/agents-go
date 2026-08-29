@@ -192,7 +192,7 @@ func TestRetry_LimitOfOneDisablesRetrying(t *testing.T) {
 // spawn does. Exempting it would make retry the way around the cap.
 func TestRetry_TakesAConcurrencySlot(t *testing.T) {
 	ctx := context.Background()
-	h := newHarness(t, func(c *Config) { c.MaxConcurrentPerParent = 2 })
+	h := newHarness(t, func(c *Config) { c.MaxConcurrentPerParent = func() int { return 2 } })
 	first := h.spawn(t)
 	h.fail(t, first.TaskID, "boom")
 	// Two live tasks fill the cap the failed one vacated.
@@ -881,7 +881,7 @@ func TestStop_AnOutcomeThatNeverLandsDoesNotWedgeTheTask(t *testing.T) {
 // someone taking it, so a precomputed answer would be wrong as often as right.
 func TestRetryable_IsAboutTheTaskNotTheParentsCapacity(t *testing.T) {
 	ctx := context.Background()
-	h := newHarness(t, func(c *Config) { c.MaxConcurrentPerParent = 2 })
+	h := newHarness(t, func(c *Config) { c.MaxConcurrentPerParent = func() int { return 2 } })
 	first := h.spawn(t)
 	h.fail(t, first.TaskID, "boom")
 	h.spawn(t)

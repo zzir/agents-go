@@ -36,6 +36,7 @@ const (
 	KeyTraceSpanDataKB           = "trace_span_data_kb"
 	KeyLogSensitiveData          = "log_sensitive_data"
 	KeyApprovalTTLMinutes        = "approval_ttl_minutes"
+	KeyMaxTasksPerSession        = "max_tasks_per_session"
 	KeyMaxTerminalsPerSandbox    = "max_terminals_per_sandbox"
 	KeySandboxIdleMinutes        = "sandbox_idle_minutes"
 	KeyPreviewEnabled            = "preview_enabled"
@@ -100,9 +101,9 @@ var defs = []Def{{
 	Default:     "30",
 	Min:         0,
 }, {
-	// Defaulted on purpose: the server always passes an explicit value, so
-	// the SDK's OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA variable is not
-	// consulted here — this switch is the one authority.
+	// The server always passes this resolved value explicitly as
+	// Observe.IncludeSensitiveData; the SDK reads no env var (spec §2.14), so
+	// this switch is the one authority.
 	Key:         KeyTraceIncludeSensitiveData,
 	Kind:        KindBool,
 	Group:       GroupTracing,
@@ -134,6 +135,14 @@ var defs = []Def{{
 	Description: "How long a run may sit awaiting tool approval before it is expired and the wait is recorded in the transcript. 0 disables expiry.",
 	Default:     "1440",
 	Min:         0,
+}, {
+	Key:         KeyMaxTasksPerSession,
+	Kind:        KindInt,
+	Group:       GroupLimits,
+	Label:       "Background tasks per session",
+	Description: "Concurrent live background tasks one session may have — a fat-finger guard against a runaway fan-out, not a scheduler. Read at each spawn, so a change applies to the next one.",
+	Default:     "6", // mirrors tasks.DefaultMaxConcurrentPerParent
+	Min:         1,
 }, {
 	Key:         KeyMaxTerminalsPerSandbox,
 	Kind:        KindInt,

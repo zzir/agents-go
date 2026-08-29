@@ -644,10 +644,11 @@ When a change genuinely doesn't fit, update this list in the same PR.
     registered default and renders as two states — unset reads as that
     default (`Reader.Bool`), so a third "Default" option would be the same
     answer twice. This is deliberate for `trace_include_sensitive_data` as
-    well: the server resolves and passes the value explicitly, so the SDK's
-    `OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA` variable is not consulted —
-    the settings panel is the one switch, rather than a tri-state control
-    guarding an env-var escape hatch nobody could see.
+    well: the server resolves and passes the value explicitly as
+    `Observe.IncludeSensitiveData`, the SDK's one authority for it (the SDK
+    reads no environment variable — spec §2.14). The settings panel is the one
+    switch, rather than a tri-state control guarding an escape hatch nobody
+    could see.
     Bool clicks store immediately (a segmented control reads as applied on
     click), and the control gets an `onChange`: without one Primer's
     `SegmentedControl` is uncontrolled — the selection freezes at first
@@ -843,3 +844,31 @@ When a change genuinely doesn't fit, update this list in the same PR.
     descriptor entry, a `Backend` registry entry, a config struct +
     `NormalizeSandboxConfig` case, secret key names, and a form panel — no
     hunt for scattered branches.
+
+54. **A configuration value lives on exactly one of three planes, and the plane
+    is decided by a rule, not by habit.** (1) A **process flag** (cobra, in
+    `cmd/root.go`) is for what must be fixed for the process's life, for one of
+    two reasons: it is needed before the DB and API exist (`--host`, `--port`,
+    `--db`, `--secret-key-file`, `--auth`, `--base-url`, the OAuth bootstrap
+    flags); or it is security-load-bearing such that letting a signed-in admin
+    mutate it through the API would defeat its purpose (`--token`,
+    `--trusted-proxies`, `--audit-retention-days` — the audit log must not be
+    shortened through the API it records). (2) An **environment variable**
+    exists *only* to keep a secret off argv/`ps`; it is always the env fallback
+    of an explicit flag, never a standalone knob — `AGENTS_SECRET_KEY`
+    (↔ `--secret-key-file`), `AGENTS_OAUTH_GOOGLE_CLIENT_SECRET`
+    (↔ `--oauth-google-client-secret`), `AGENTS_TOKEN` (↔ `--token`), each
+    resolved flag-wins-then-env. The server adds no viper-style "every flag is
+    also an env var"; that ambient magic is what the SDK's own no-env rule
+    (spec §2.14) exists to avoid. (3) Everything an operator tunes live without
+    a restart is a **DB setting** in the `settings` registry (invariant 40):
+    `proxy_url`, the trace/log toggles, and the caps — `approval_ttl_minutes`,
+    `max_tasks_per_session`, `max_terminals_per_sandbox`, `sandbox_idle_minutes`.
+
+    A cap being an input to the embedded SDK is **not** a reason to make it a
+    flag: `max_tasks_per_session` feeds `tasks.Config.MaxConcurrentPerParent`,
+    which is a `func() int` the manager calls at each spawn — so the server
+    backs it with the live setting, both the SDK's spawn gate and the hub's
+    register gate read the one resolver, and no enforcement splits. A value only
+    forces plane 1 when it is genuinely construction-fixed (a bind address) or
+    security-load-bearing, never merely because the SDK consumes it.

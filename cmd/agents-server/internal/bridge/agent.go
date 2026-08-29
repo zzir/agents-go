@@ -52,9 +52,6 @@ type AgentDeps struct {
 	// Users answers the run owner's role; nil withholds the tools only an
 	// admin gets.
 	Users *store.UserStore
-	// MaxTasks overrides the per-session live background-task cap when > 0
-	// (--max-tasks; 0 keeps the built-in default).
-	MaxTasks int
 	// TaskManager is set by NewRunner; when non-nil, chat agents get the
 	// spawn_task / task_status / task_stop tools. A BACKGROUND run never gets
 	// them — that is what bounds recursion.
