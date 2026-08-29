@@ -1,19 +1,22 @@
 import { useState } from 'react';
-import { ActionMenu, Button, Tooltip } from '@primer/react';
+import { ActionMenu, Tooltip } from '@primer/react';
+import { PencilIcon } from '@primer/octicons-react';
 import { AgentAvatar } from '@/components/AgentAvatar';
 import { AVATARS } from '@/lib/avatars';
 
-// AvatarPicker: the button beside the Name input, opening the built-in avatar
-// catalog as a grid. Selecting only changes the form value — Save persists it.
+// AvatarPicker: the avatar itself is the button — a bare circle beside the
+// Name input with a hover pencil badge, opening the built-in catalog as a
+// grid. Selecting only changes the form value — Save persists it.
 export function AvatarPicker({ name, value, onChange }: { name: string; value: string; onChange: (path: string) => void }) {
   const [open, setOpen] = useState(false);
   const pick = (path: string) => { onChange(path); setOpen(false); };
   return (
     <ActionMenu open={open} onOpenChange={setOpen}>
       <ActionMenu.Anchor>
-        <Button aria-label="Choose avatar" className="avatar-picker-button">
-          <AgentAvatar name={name} avatar={value} size={24} />
-        </Button>
+        <button type="button" aria-label="Choose avatar" className="avatar-picker-anchor">
+          <AgentAvatar name={name} avatar={value} size={56} />
+          <span className="avatar-picker-edit" aria-hidden><PencilIcon size={12} /></span>
+        </button>
       </ActionMenu.Anchor>
       <ActionMenu.Overlay width="auto">
         <div className="avatar-grid" role="listbox" aria-label="Built-in avatars">

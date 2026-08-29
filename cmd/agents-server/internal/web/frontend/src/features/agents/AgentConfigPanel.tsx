@@ -255,7 +255,9 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
 
   return (
     <Stack gap="normal">
-      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+      {/* Avatar and name are one identity unit: the circle sits right of the
+          name block, sized to span its label and field together. */}
+      <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
         <div style={{ flex: 1 }}>
           {fc('Name', <TextInput value={form.name} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('name', e.target.value)} placeholder="e.g. Code Assistant" block />)}
         </div>

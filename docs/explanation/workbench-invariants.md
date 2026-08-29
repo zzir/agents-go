@@ -788,7 +788,10 @@ When a change genuinely doesn't fit, update this list in the same PR.
     `agent_config_id`) and the client resolves the avatar from its agent list;
     single-agent pickers render through the shared `AgentPicker`, not a native
     `<select>`, which cannot show an image. Three sizes only — 20px inline
-    beside a line of text, 24px on the avatar-picker button, 32px where the
-    avatar spans a two-line row (the settings list, the picker grid); the one
-    exception is inside a Primer `Label`, whose height caps the avatar at
-    16px.
+    beside a line of text, 32px where the avatar spans a two-line row (the
+    settings list, the picker grid), 56px on the agent form's picker (the
+    bare circle right of the Name block, spanning its label and field — the
+    avatar IS the button, with a hover pencil badge, never an avatar boxed
+    inside a bordered button); the
+    one exception is inside a Primer `Label`, whose height caps the avatar
+    at 16px.

@@ -893,8 +893,41 @@ img.user-avatar {
   border: 1px solid var(--borderColor-muted);
   box-sizing: border-box;
 }
-.avatar-picker-button {
-  padding-inline: 8px;
+/* The avatar IS the button: a bare circle whose focus ring hugs it, with a
+   pencil badge surfacing on hover/focus. Sized to span the Name label and
+   field beside it, centered by the flex row. */
+.avatar-picker-anchor {
+  position: relative;
+  display: inline-flex;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.avatar-picker-anchor:focus-visible {
+  outline: 2px solid var(--focus-outlineColor, var(--borderColor-accent-emphasis));
+  outline-offset: 2px;
+}
+.avatar-picker-edit {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--bgColor-default);
+  border: 1px solid var(--borderColor-default);
+  color: var(--fgColor-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.avatar-picker-anchor:hover .avatar-picker-edit,
+.avatar-picker-anchor:focus-visible .avatar-picker-edit {
+  opacity: 1;
 }
 .avatar-grid {
   display: grid;
