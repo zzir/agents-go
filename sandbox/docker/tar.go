@@ -11,10 +11,9 @@ import (
 	"time"
 )
 
-// buildTar packs files into a tar stream extracted at workDir. Parent
-// directories of nested files are created world-writable — and the daemon's
-// untar re-applies dir headers to directories that already exist, which is why
-// WriteFile uses buildFileTar instead.
+// buildTar packs files into a tar stream extracted at workDir, used to stage
+// ExecRequest.Files (and WriteFile's payload) in the workspace volume. Parent
+// directories of nested files are created world-writable.
 func buildTar(files map[string]string) (io.Reader, error) {
 	names := make([]string, 0, len(files))
 	clean := make(map[string]string, len(files))
@@ -65,29 +64,6 @@ func buildTar(files map[string]string) (io.Reader, error) {
 		if _, err := tw.Write([]byte(content)); err != nil {
 			return nil, err
 		}
-	}
-	if err := tw.Close(); err != nil {
-		return nil, err
-	}
-	return &buf, nil
-}
-
-// buildFileTar packs a single file entry — no directory headers — so untarring
-// into an existing directory touches nothing but the file itself.
-func buildFileTar(name string, content []byte) (io.Reader, error) {
-	var buf bytes.Buffer
-	tw := tar.NewWriter(&buf)
-	hdr := &tar.Header{
-		Name:    name,
-		Mode:    0o644,
-		Size:    int64(len(content)),
-		ModTime: time.Unix(0, 0),
-	}
-	if err := tw.WriteHeader(hdr); err != nil {
-		return nil, err
-	}
-	if _, err := tw.Write(content); err != nil {
-		return nil, err
 	}
 	if err := tw.Close(); err != nil {
 		return nil, err

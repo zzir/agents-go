@@ -362,9 +362,18 @@ surfaces sharing one view is what makes those calls work. (An earlier
 workdir-rooted "virtual chroot" design was dropped for exactly that failure:
 absolute paths got re-joined under `WorkDir` and read as "not found".)
 `ReadFile` behaves like the OS everywhere: it follows symlinks to the file
-they name (bounded hops) and fails on a directory with an is-a-directory
-error — docker's copy-out API does neither itself, so that backend normalizes
-the raw tar semantics rather than exposing daemon quirks.
+they name and fails on a directory with an is-a-directory error.
+
+**Persistent-mode docker runs every file operation through `exec`, not the
+daemon's archive API (`docker cp`).** The archive API reads and writes only the
+graph-driver filesystem: it cannot see a `tmpfs` or volume mount, so a file
+`exec` had just written under `/tmp` (a tmpfs on the workbench image) read back
+as "not found", and a `WriteFile` there was silently swallowed — the two
+surfaces diverging on exactly the paths §5.14 promises they share. `exec`
+enters the container's mount namespace and sees every mount, so a base64
+round-trip over `sh -c` (`wc -c` size-guarded on read, an `ExecRequest.Files`
+stage-and-move on write) restores one view. The kernel resolves symlinks in the
+redirect, so the loop-following and directory rejection above come for free.
 
 **The one exception is docker bind-mount mode**, where file operations run on
 the *host* side of the mount while exec runs inside the container — the

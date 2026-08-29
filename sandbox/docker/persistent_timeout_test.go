@@ -8,6 +8,7 @@ package docker
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"strings"
 	"testing"
 	"time"
@@ -173,9 +174,8 @@ func TestPersistentReadFileLimit(t *testing.T) {
 	}
 }
 
-// The real daemon's copy-out answers with a dir or symlink header instead of
-// erroring or following; ReadFile must reject the directory and resolve the
-// links, as in TestReadFileContainer_DirAndSymlink against the fake daemon.
+// ReadFile goes through exec (base64 over `< "$f"`): it must reject a directory
+// and let the kernel resolve a symlink chain, matching the local/ssh backends.
 func TestPersistentReadFileDirAndSymlink(t *testing.T) {
 	sb := newPersistentSandbox(t, Options{Image: testImage, Persistent: true})
 	ctx := t.Context()
@@ -200,6 +200,38 @@ func TestPersistentReadFileDirAndSymlink(t *testing.T) {
 	if _, err := sb.ReadFile(ctx, "loop-a"); err == nil ||
 		!(strings.Contains(err.Error(), "too many levels of symbolic links") || strings.Contains(err.Error(), "too many links")) {
 		t.Errorf("ReadFile(loop-a) err = %v, want a symlink-loop error", err)
+	}
+}
+
+// F1 regression: persistent-mode file tools go through exec, so they see the
+// /tmp tmpfs the backend mounts. The archive API (the old read/write path)
+// cannot reach a tmpfs mount, so a file exec wrote under /tmp once read back
+// "not found" and a WriteFile there silently vanished. decisions §5.14.
+func TestPersistentFileToolsSeeTmpfs(t *testing.T) {
+	sb := newPersistentSandbox(t, Options{Image: testImage, Persistent: true})
+	ctx := t.Context()
+
+	// exec writes under the tmpfs; the file tool must read it back.
+	if res, err := sb.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", "printf hello > /tmp/probe.txt"}}); err != nil || res.ExitCode != 0 {
+		t.Fatalf("seed exec: %v, exit %d", err, res.ExitCode)
+	}
+	if got, err := sb.ReadFile(ctx, "/tmp/probe.txt"); err != nil || string(got) != "hello" {
+		t.Fatalf("ReadFile(/tmp/probe.txt) = %q, %v; want \"hello\" (the archive API cannot see tmpfs)", got, err)
+	}
+
+	// the file tool writes under the tmpfs; exec must see it.
+	if err := sb.WriteFile(ctx, "/tmp/w.txt", []byte("wrote-via-tool")); err != nil {
+		t.Fatalf("WriteFile(/tmp/w.txt): %v", err)
+	}
+	if res, err := sb.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"cat", "/tmp/w.txt"}}); err != nil || res.ExitCode != 0 {
+		t.Fatalf("read-back exec: %v, exit %d, stderr %q", err, res.ExitCode, res.Stderr)
+	} else if res.Stdout != "wrote-via-tool" {
+		t.Errorf("exec cat /tmp/w.txt = %q, want the tool-written content", res.Stdout)
+	}
+
+	// a missing tmpfs file is fs.ErrNotExist, not a generic failure.
+	if _, err := sb.ReadFile(ctx, "/tmp/nope.txt"); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("ReadFile(/tmp/nope.txt) err = %v, want fs.ErrNotExist", err)
 	}
 }
 

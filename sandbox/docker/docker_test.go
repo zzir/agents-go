@@ -332,26 +332,6 @@ func TestDemuxLogs_LateStderrNotStarved(t *testing.T) {
 	}
 }
 
-// The write-path tar carries ONLY the file: any dir header would be re-applied
-// by the daemon's untar to the already-existing parent, resetting its
-// mode/owner/mtime.
-func TestBuildFileTar_SingleFileEntry(t *testing.T) {
-	r, err := buildFileTar("a.txt", []byte("hi"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	files, modes, dirs := readTar(t, r)
-	if len(dirs) != 0 {
-		t.Errorf("dir headers in the write tar: %v", dirs)
-	}
-	if len(files) != 1 || files["a.txt"] != "hi" {
-		t.Errorf("files = %v, want only a.txt", files)
-	}
-	if modes["a.txt"] != 0o644 {
-		t.Errorf("mode = %o, want 644", modes["a.txt"])
-	}
-}
-
 // fakeEphemeralDaemon serves the API slice streamEphemeral touches. Its wait
 // endpoint never answers, and its log stream ends early with the container
 // still "running"; kills are recorded.

@@ -1,7 +1,6 @@
 package docker
 
 import (
-	"archive/tar"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -13,103 +12,106 @@ import (
 	"strings"
 	"time"
 
-	cerrdefs "github.com/containerd/errdefs"
-	"github.com/moby/moby/client"
-
 	"github.com/zzir/agents-go/sandbox"
 )
 
 // The container side of the file operations, used in persistent mode without a
-// bind mount: the working directory lives inside the long-lived container, so
-// these reach it the same way a command does — with tar over the daemon API for
-// bulk content and with exec for everything the API does not expose.
-
-// maxReadLinkHops bounds how many symlinks readFileContainer follows before
-// declaring a loop, mirroring the OS's ELOOP behavior on the other backends.
-const maxReadLinkHops = 8
+// bind mount: the working directory lives inside the long-lived container.
+// Every operation goes through exec, so the file tools see exactly what a
+// command does — including tmpfs and other mounts the daemon's archive API
+// (docker cp) cannot reach (decisions §5.14).
 
 func (s *Sandbox) readFileContainer(ctx context.Context, p string) ([]byte, error) {
 	if err := s.ensureImage(ctx); err != nil {
 		return nil, err
 	}
-	id, err := s.ensureContainer(ctx)
+	limit := s.opts.MaxReadFileBytes
+	if limit <= 0 {
+		limit = sandbox.DefaultMaxReadFileBytes
+	}
+	// base64 over exec, not CopyFromContainer: the archive API cannot see a
+	// tmpfs or volume mount, so a file exec just wrote under /tmp would read
+	// back as "not found". `< "$f"` follows symlinks and fails on a missing
+	// file; the size is checked before reading so the exec output stays bounded.
+	script := fmt.Sprintf(
+		"f=%s\n"+
+			"if [ -d \"$f\" ]; then exit 21; fi\n"+
+			"sz=$(wc -c < \"$f\") || exit 22\n"+
+			"if [ \"$((sz))\" -gt %d ]; then exit 23; fi\n"+
+			"exec base64 < \"$f\"",
+		sandbox.ShellQuote(s.containerPath(p)), limit)
+	// base64 inflates by 4/3; keep the exec cap above that so a file at the
+	// limit is never truncated mid-stream.
+	res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", script}, MaxOutputBytes: limit + limit/2 + 1024})
 	if err != nil {
 		return nil, err
 	}
-	// The daemon neither follows a symlink at SourcePath nor errors on a
-	// directory — the first tar header says which arrived. Follow links here
-	// (bounded) and reject directories, as the local/ssh backends do.
-	src := s.containerPath(p)
-	for range maxReadLinkHops {
-		data, next, err := s.copyOutFile(ctx, id, p, src)
-		if err != nil || next == "" {
-			return data, err
+	switch res.ExitCode {
+	case 0:
+		// Strip the wrapping GNU base64 inserts every 76 columns (busybox emits
+		// none); the StdEncoding decoder rejects embedded newlines.
+		clean := strings.NewReplacer("\n", "", "\r", "").Replace(res.Stdout)
+		data, derr := base64.StdEncoding.DecodeString(clean)
+		if derr != nil {
+			return nil, fmt.Errorf("docker sandbox: read %q: decoding output: %w", p, derr)
 		}
-		src = next
-	}
-	return nil, fmt.Errorf("docker sandbox: read %s: too many levels of symbolic links", p)
-}
-
-// copyOutFile fetches one absolute in-container path. A regular file returns
-// its content; a symlink returns the (absolute) target to retry; a directory
-// is an error, shaped like the local backend's EISDIR.
-func (s *Sandbox) copyOutFile(ctx context.Context, id, p, src string) (data []byte, next string, err error) {
-	result, err := s.cli.CopyFromContainer(ctx, id, client.CopyFromContainerOptions{SourcePath: src})
-	if err != nil {
-		// The daemon reports a missing path as its own not-found; map it so
-		// callers see fs.ErrNotExist, as every other backend gives them.
-		if cerrdefs.IsNotFound(err) || strings.Contains(err.Error(), "Could not find the file") {
-			return nil, "", fmt.Errorf("docker sandbox: read file %q: %w", p, fs.ErrNotExist)
+		if int64(len(data)) > limit {
+			return nil, fmt.Errorf("docker sandbox: read %q: %w", p, sandbox.ErrReadLimitExceeded)
 		}
-		return nil, "", fmt.Errorf("docker sandbox: read file: %w", err)
-	}
-	defer result.Content.Close()
-	tr := tar.NewReader(result.Content)
-	hdr, err := tr.Next()
-	if err != nil {
-		return nil, "", fmt.Errorf("docker sandbox: read file: %w", err)
-	}
-	switch hdr.Typeflag {
-	case tar.TypeDir:
-		return nil, "", fmt.Errorf("docker sandbox: read %s: is a directory", p)
-	case tar.TypeSymlink:
-		target := hdr.Linkname
-		if !path.IsAbs(target) {
-			target = path.Join(path.Dir(src), target)
+		return data, nil
+	case 21:
+		return nil, fmt.Errorf("docker sandbox: read %s: is a directory", p)
+	case 23:
+		return nil, fmt.Errorf("docker sandbox: read %q: %w", p, sandbox.ErrReadLimitExceeded)
+	default:
+		// exit 22 (the `< "$f"` open failed) and anything else carry the shell's
+		// message. "Absent" must stay distinguishable from a real failure — the
+		// file tools render them differently, and apply_patch's rollback needs it.
+		low := strings.ToLower(res.Stderr)
+		if strings.Contains(low, "no such file") {
+			return nil, fmt.Errorf("docker sandbox: read %q: %w", p, fs.ErrNotExist)
 		}
-		return nil, path.Clean(target), nil
+		if strings.Contains(low, "permission denied") {
+			return nil, fmt.Errorf("docker sandbox: read %q: %w", p, fs.ErrPermission)
+		}
+		// The kernel resolves symlinks in the redirect; an ELOOP comes back as
+		// the shell's message. Normalize to the lowercase phrasing the OS-backed
+		// backends use, so callers match one wording.
+		if strings.Contains(low, "too many levels of symbolic links") {
+			return nil, fmt.Errorf("docker sandbox: read %s: too many levels of symbolic links", p)
+		}
+		return nil, fmt.Errorf("docker sandbox: read %q: %s", p, strings.TrimSpace(res.Stderr))
 	}
-	data, err = sandbox.ReadAllLimited(tr, s.opts.MaxReadFileBytes)
-	return data, "", err
 }
 
 func (s *Sandbox) writeFileContainer(ctx context.Context, p string, content []byte) error {
 	if err := s.ensureImage(ctx); err != nil {
 		return err
 	}
-	id, err := s.ensureContainer(ctx)
-	if err != nil {
-		return err
-	}
 	full := s.containerPath(p)
 	if full == "/" {
 		return fmt.Errorf("docker sandbox: invalid file path %q", p)
 	}
-	// Parents come from mkdir, never from tar dir headers: the daemon's untar
-	// re-applies a dir header's mode/owner/mtime to directories that already
-	// exist, which would reset every parent on the path.
-	parent := path.Dir(full)
-	if res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"mkdir", "-p", "--", parent}}); err != nil {
+	// Stage the bytes in the workspace volume — ExecRequest.Files uses tar, so
+	// it is binary-safe and size-unbounded — then move them into place with
+	// exec, which reaches every mount the archive API cannot (tmpfs included).
+	buf := make([]byte, 8)
+	// As of Go 1.24 crypto/rand.Read never fails; it aborts the program if the
+	// OS source is unavailable.
+	_, _ = rand.Read(buf)
+	stageName := ".agents-write." + hex.EncodeToString(buf)
+	stageAbs := path.Join(workDir, stageName)
+	script := fmt.Sprintf("mkdir -p -- %s && cat -- %s > %s; rc=$?; rm -f -- %s; exit $rc",
+		sandbox.ShellQuote(path.Dir(full)), sandbox.ShellQuote(stageAbs), sandbox.ShellQuote(full), sandbox.ShellQuote(stageAbs))
+	res, err := s.Exec(ctx, sandbox.ExecRequest{Files: map[string]string{stageName: string(content)}, Cmd: []string{"sh", "-c", script}})
+	if err != nil {
 		return err
-	} else if res.ExitCode != 0 {
-		return fmt.Errorf("docker sandbox: mkdir %s: %s", parent, res.Stderr)
 	}
-	tarball, terr := buildFileTar(path.Base(full), content)
-	if terr != nil {
-		return terr
-	}
-	if _, err := s.cli.CopyToContainer(ctx, id, client.CopyToContainerOptions{DestinationPath: parent, Content: tarball}); err != nil {
-		return fmt.Errorf("docker sandbox: write file: %w", err)
+	if res.ExitCode != 0 {
+		if strings.Contains(res.Stderr, "Permission denied") {
+			return fmt.Errorf("docker sandbox: write %q: %w", p, fs.ErrPermission)
+		}
+		return fmt.Errorf("docker sandbox: write file %q: %s", p, strings.TrimSpace(res.Stderr))
 	}
 	return nil
 }
