@@ -173,6 +173,56 @@ func TestPersistentReadFileLimit(t *testing.T) {
 	}
 }
 
+// WriteFile must leave existing parent directories alone: the seeded tar used
+// to carry dir headers (mode 0777, uid/gid 0, epoch mtime) that the daemon's
+// untar re-applied to /workspace and every parent on the path.
+func TestPersistentWriteFileKeepsParentDirMetadata(t *testing.T) {
+	sb := newPersistentSandbox(t, Options{Image: testImage, Persistent: true})
+	ctx := t.Context()
+
+	mustExec := func(cmd string) string {
+		t.Helper()
+		res, err := sb.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", cmd}})
+		if err != nil {
+			t.Fatalf("%s: %v", cmd, err)
+		}
+		if res.ExitCode != 0 {
+			t.Fatalf("%s: exit %d, stderr %q", cmd, res.ExitCode, res.Stderr)
+		}
+		return strings.TrimSpace(res.Stdout)
+	}
+
+	// chown is unavailable (CapDrop ALL), so the mode — 750, which the old dir
+	// headers reset to 777 — and the epoch mtime carry the assertion.
+	mustExec("mkdir -p /workspace/keep && chmod 750 /workspace/keep")
+	workspaceBefore := mustExec("stat -c '%a %u %g' /workspace")
+	rootBefore := mustExec("stat -c '%a %u %g' /root")
+
+	if err := sb.WriteFile(ctx, "keep/sub/new.txt", []byte("hi")); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := sb.ReadFile(ctx, "keep/sub/new.txt"); err != nil || string(got) != "hi" {
+		t.Fatalf("read back = %q, %v; want hi", got, err)
+	}
+	if got := mustExec("stat -c %a /workspace/keep"); got != "750" {
+		t.Errorf("keep mode = %q, want 750 (WriteFile reset the existing dir)", got)
+	}
+	if got := mustExec("stat -c %Y /workspace/keep"); got == "0" {
+		t.Error("keep mtime reset to the tar's epoch")
+	}
+	if got := mustExec("stat -c '%a %u %g' /workspace"); got != workspaceBefore {
+		t.Errorf("/workspace = %q, want %q", got, workspaceBefore)
+	}
+
+	// An absolute path must not clobber ITS parents either (e.g. /root).
+	if err := sb.WriteFile(ctx, "/root/probe/x.txt", []byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustExec("stat -c '%a %u %g' /root"); got != rootBefore {
+		t.Errorf("/root = %q, want %q", got, rootBefore)
+	}
+}
+
 // waitGone polls the container's /proc until no process command line contains
 // needle (the entrypoint "sleep infinity" never matches "sleep 20").
 func waitGone(t *testing.T, sb *Sandbox, needle string) {

@@ -59,13 +59,24 @@ func (s *Sandbox) writeFileContainer(ctx context.Context, p string, content []by
 	if err != nil {
 		return err
 	}
-	// The tar is built with root-relative names and extracted at "/", so an
-	// absolute in-container path works the same as a workdir-relative one.
-	tarball, terr := buildTar(map[string]string{s.containerPath(p)[1:]: string(content)})
+	full := s.containerPath(p)
+	if full == "/" {
+		return fmt.Errorf("docker sandbox: invalid file path %q", p)
+	}
+	// Parents come from mkdir, never from tar dir headers: the daemon's untar
+	// re-applies a dir header's mode/owner/mtime to directories that already
+	// exist, which would reset every parent on the path.
+	parent := path.Dir(full)
+	if res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"mkdir", "-p", "--", parent}}); err != nil {
+		return err
+	} else if res.ExitCode != 0 {
+		return fmt.Errorf("docker sandbox: mkdir %s: %s", parent, res.Stderr)
+	}
+	tarball, terr := buildFileTar(path.Base(full), content)
 	if terr != nil {
 		return terr
 	}
-	if _, err := s.cli.CopyToContainer(ctx, id, client.CopyToContainerOptions{DestinationPath: "/", Content: tarball}); err != nil {
+	if _, err := s.cli.CopyToContainer(ctx, id, client.CopyToContainerOptions{DestinationPath: parent, Content: tarball}); err != nil {
 		return fmt.Errorf("docker sandbox: write file: %w", err)
 	}
 	return nil
