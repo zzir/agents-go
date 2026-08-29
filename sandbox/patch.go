@@ -72,7 +72,9 @@ func rejectDuplicateSections(edits []fileEdit) error {
 	moves := make(map[string]bool, len(edits))
 	for _, e := range edits {
 		ops[e.path] = append(ops[e.path], e.op)
-		if e.movePath != "" {
+		// A move onto the section's own path is a plain update, not a second
+		// section touching that path.
+		if e.movePath != "" && e.movePath != e.path {
 			moves[e.movePath] = true
 			ops[e.movePath] = append(ops[e.movePath], opAdd) // a rename creates it
 		}

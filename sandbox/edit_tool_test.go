@@ -62,6 +62,27 @@ func TestApplyPatchEndToEnd(t *testing.T) {
 	t.Logf("summary:\n%s", out)
 }
 
+// A "Move to:" naming the section's own path is a plain update, not a
+// duplicate-section conflict.
+func TestApplyPatchDegenerateMoveIsPlainUpdate(t *testing.T) {
+	ctx := context.Background()
+	sb := NewLocalWithOptions(LocalOptions{WorkDir: t.TempDir()})
+	seed(t, sb, "f.go", "old\n")
+
+	patch := "*** Begin Patch\n" +
+		"*** Update File: f.go\n" +
+		"*** Move to: f.go\n" +
+		"-old\n" +
+		"+new\n" +
+		"*** End Patch\n"
+	if _, err := applyPatch(ctx, sb, patch); err != nil {
+		t.Fatalf("applyPatch: %v", err)
+	}
+	if got := mustRead(t, sb, "f.go"); got != "new\n" {
+		t.Errorf("f.go = %q, want %q", got, "new\n")
+	}
+}
+
 // Validation atomicity: a patch whose later hunk can't be located changes
 // nothing — the earlier Add is never committed.
 func TestApplyPatchValidationAtomic(t *testing.T) {

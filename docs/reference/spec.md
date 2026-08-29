@@ -1399,6 +1399,14 @@ an activated environment survive between calls.
   land in — a named session cannot buffer unbounded bytes any more than the
   one-shot path's capped streams can, and the result the model sees is
   truncated as usual.
+- **A session command that fails still returns the output it produced.** A
+  timeout, a dead session or a read error carries the partial output —
+  echo-stripped and truncated as usual — alongside the error, matching the
+  one-shot path; the tail is often the clue the model needs.
+- **Closing the pool preempts a command in flight.** The terminal closes
+  first, unblocking the reader, so shutdown never waits out a running
+  command's timeout; the interrupted command returns an error, never a
+  fabricated exit status.
 - Reading happens on a background goroutine, because `Terminal` has no read
   deadline and a blocked `Read` on the calling goroutine cannot be interrupted
   by any timer.
@@ -1577,7 +1585,8 @@ wrong line. The first line-anchored occurrence at or after the previous
 hunk's end is the one edited. The `@@` anchor — one context line — binds the
 same way, with one tolerance: when no line matches it exactly, the first line
 whose space-trimmed text equals the trimmed anchor is taken, so an anchor
-written without the file's indentation still lands.
+written without the file's indentation still lands. `*** Move to:` naming the
+section's own path is a plain update, not a duplicate-section conflict.
 
 ### 2.8 Nested agent-as-tool attribution
 

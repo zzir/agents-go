@@ -47,6 +47,11 @@ type ShellSession struct {
 	// output) for the life of the process.
 	done chan struct{}
 
+	// closeOnce closes the terminal at most once: Close preempting a command
+	// in flight can race that command's own error-path close.
+	closeOnce sync.Once
+	closeErr  error
+
 	mu sync.Mutex
 	// lastLine is what was written for the command in flight, so its echo can
 	// be stripped from the output exactly rather than guessed at.
@@ -187,8 +192,10 @@ func (s *ShellSession) Run(ctx context.Context, cmd string, timeout time.Duratio
 const sessionBufCap = int(DefaultMaxOutputBytes)
 
 // readUntilSentinel reads until the token appears, returning what came before
-// it and the exit status that follows it.
+// it and the exit status that follows it. Every failure return carries the
+// partial output read so far, echo-stripped like a completed command's.
 func (s *ShellSession) readUntilSentinel(ctx context.Context, timeout time.Duration) (string, int, error) {
+	partial := func() string { return trimEcho(string(s.buf), s.lastLine) }
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	scanFrom := 0 // settled bytes are never rescanned; new chunks extend the window
@@ -210,16 +217,16 @@ func (s *ShellSession) readUntilSentinel(ctx context.Context, timeout time.Durat
 		select {
 		case chunk, ok := <-s.chunks:
 			if !ok {
-				return string(s.buf), -1, errors.New("sandbox: shell session ended")
+				return partial(), -1, errors.New("sandbox: shell session ended")
 			}
 			s.buf = append(s.buf, chunk...)
 			scanFrom = s.capBuf(scanFrom)
 		case err := <-s.readErr:
-			return string(s.buf), -1, fmt.Errorf("sandbox: reading from shell session: %w", err)
+			return partial(), -1, fmt.Errorf("sandbox: reading from shell session: %w", err)
 		case <-timer.C:
-			return string(s.buf), -1, fmt.Errorf("sandbox: shell session command timed out after %s", timeout)
+			return partial(), -1, fmt.Errorf("sandbox: shell session command timed out after %s", timeout)
 		case <-ctx.Done():
-			return string(s.buf), -1, ctx.Err()
+			return partial(), -1, ctx.Err()
 		}
 	}
 }
@@ -262,11 +269,15 @@ func trimEcho(out, written string) string {
 	return strings.TrimLeft(strings.Join(outLines, "\n"), "\r\n")
 }
 
-// Close ends the session.
+// Close ends the session. The terminal closes BEFORE s.mu is taken, so a
+// command in flight is preempted — its reader sees the close and Run returns an
+// error — rather than Close waiting out the rest of the command's timeout.
 func (s *ShellSession) Close() error {
+	err := s.closeTerm()
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.closeLocked()
+	s.closed = true
+	s.mu.Unlock()
+	return err
 }
 
 func (s *ShellSession) closeLocked() error {
@@ -274,8 +285,17 @@ func (s *ShellSession) closeLocked() error {
 		return nil
 	}
 	s.closed = true
-	close(s.done)
-	return s.term.Close()
+	return s.closeTerm()
+}
+
+// closeTerm closes the terminal once, releasing the reader goroutine and with
+// it any Run blocked on the sentinel.
+func (s *ShellSession) closeTerm() error {
+	s.closeOnce.Do(func() {
+		close(s.done)
+		s.closeErr = s.term.Close()
+	})
+	return s.closeErr
 }
 
 // sessionPool holds the named shells one exec_command tool has open.

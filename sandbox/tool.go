@@ -252,10 +252,15 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.Tool {
 			if session := string(args.SessionID); cfg.Sessions && session != "" {
 				out, code, err := sessions.run(ctx, sb, session, cmd, timeout)
 				if err != nil {
-					return agents.TextResult(fmt.Sprintf("session %q: %v", session, err)).
+					// The partial output still reaches the model: on a timeout
+					// it is often the clue (the last log line, a hung prompt).
+					span.SetError(err.Error(), nil)
+					return agents.TextResult(fmt.Sprintf("session %q: %v\n%s",
+						session, err, formatSessionResult(out, code, cfg.MaxOutputBytes))).
 						WithDisplay("terminal").
 						WithDetails(map[string]any{"command": cmd, "session_id": session}), nil
 				}
+				span.Set("exit_code", code)
 				return agents.TextResult(formatSessionResult(out, code, cfg.MaxOutputBytes)).
 					WithDisplay("terminal").
 					WithDetails(map[string]any{

@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	agents "github.com/zzir/agents-go/agents"
 )
 
 // fakeTerminal is a shell stand-in: it echoes what is written (as a PTY does)
@@ -22,9 +24,13 @@ type fakeTerminal struct {
 	respond func(cmd string) (string, int)
 	// noSentinel suppresses the sentinel line: the command never finishes.
 	noSentinel bool
-	partial    string
-	written    string
-	lastCode   int
+	// noSentinelFor suppresses the sentinel for one command only, so it hangs
+	// while the session's settle still completes.
+	noSentinelFor string
+	lastCmd       string
+	partial       string
+	written       string
+	lastCode      int
 }
 
 func newFakeTerminal(respond func(string) (string, int)) *fakeTerminal {
@@ -54,11 +60,12 @@ func (f *fakeTerminal) Write(p []byte) (int, error) {
 		if strings.HasPrefix(line, "printf ") {
 			// The sentinel line: emit the token and the status of the command
 			// before it. The harness tracks that in lastCode.
-			if !f.noSentinel {
+			if !f.noSentinel && (f.noSentinelFor == "" || f.lastCmd != f.noSentinelFor) {
 				f.out = append(f.out, []byte(f.sentinelLine(line))...)
 			}
 			continue
 		}
+		f.lastCmd = line
 		body, code := f.respond(line)
 		f.lastCode = code
 		if body != "" {
@@ -362,6 +369,10 @@ type fakeTerminalSandbox struct {
 	opens     atomic.Int64
 	firstOpen sync.Once
 	release   chan struct{}
+	// respond and noSentinelFor configure the terminals handed out; a nil
+	// respond answers every command with empty output and status 0.
+	respond       func(string) (string, int)
+	noSentinelFor string
 
 	mu    sync.Mutex
 	terms []*fakeTerminal
@@ -379,7 +390,12 @@ func (f *fakeTerminalSandbox) OpenTerminal(ctx context.Context, _ TerminalOption
 			return nil, ctx.Err()
 		}
 	}
-	term := newFakeTerminal(func(string) (string, int) { return "", 0 })
+	respond := f.respond
+	if respond == nil {
+		respond = func(string) (string, int) { return "", 0 }
+	}
+	term := newFakeTerminal(respond)
+	term.noSentinelFor = f.noSentinelFor
 	f.mu.Lock()
 	f.terms = append(f.terms, term)
 	f.mu.Unlock()
@@ -500,6 +516,88 @@ func TestSessionPool_CloseClosesASessionOpenedConcurrently(t *testing.T) {
 	defer p.mu.Unlock()
 	if len(p.sessions) != 0 {
 		t.Errorf("pool holds %d sessions after Close, want 0", len(p.sessions))
+	}
+}
+
+// waitForWritten blocks until some terminal has been sent cmd — the command is
+// in flight, its Run awaiting the sentinel.
+func waitForWritten(t *testing.T, sb *fakeTerminalSandbox, cmd string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		sb.mu.Lock()
+		for _, term := range sb.terms {
+			term.mu.Lock()
+			seen := strings.Contains(term.written, cmd)
+			term.mu.Unlock()
+			if seen {
+				sb.mu.Unlock()
+				return
+			}
+		}
+		sb.mu.Unlock()
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("the command never reached the terminal")
+}
+
+// A session command that times out still hands the model what it printed: the
+// partial output is often the clue (the last log line, a hung prompt).
+func TestCodeTool_SessionTimeoutReturnsPartialOutput(t *testing.T) {
+	sb := &fakeTerminalSandbox{
+		started: make(chan struct{}, 8),
+		respond: func(cmd string) (string, int) {
+			if cmd == "slow" {
+				return "partial clue\n", 0
+			}
+			return "", 0
+		},
+		noSentinelFor: "slow",
+	}
+	tool := CodeTool(sb, CodeToolConfig{Sessions: true, Timeout: 100 * time.Millisecond})
+	out, err := tool.OnInvoke(context.Background(), &agents.ToolContext{},
+		`{"cmd":"slow","timeout_seconds":0,"workdir":"","session_id":"build"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, _ := out.ModelOutput().(string)
+	if !strings.Contains(s, "timed out") {
+		t.Errorf("output does not report the timeout: %q", s)
+	}
+	if !strings.Contains(s, "partial clue") {
+		t.Errorf("output lost the partial output: %q", s)
+	}
+}
+
+// Close must preempt a command in flight rather than wait out its timeout:
+// pool.Close holds the pool lock, so every other named command — and shutdown
+// itself — would queue behind the slowest running command.
+func TestSessionPool_ClosePreemptsInFlightCommand(t *testing.T) {
+	sb := &fakeTerminalSandbox{started: make(chan struct{}, 8), noSentinelFor: "hang"}
+	p := newSessionPool()
+
+	ran := make(chan error, 1)
+	go func() {
+		_, _, err := p.run(context.Background(), sb, "build", "hang", 10*time.Minute)
+		ran <- err
+	}()
+	waitForWritten(t, sb, "hang")
+
+	closed := make(chan error, 1)
+	go func() { closed <- p.Close() }()
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("pool.Close blocked behind the in-flight command")
+	}
+	if err := <-ran; err == nil {
+		t.Error("the preempted command reported success")
+	}
+	if n := sb.openTerminals(); n != 0 {
+		t.Errorf("%d terminals still open after Close, want 0", n)
 	}
 }
 
