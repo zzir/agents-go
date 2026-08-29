@@ -41,7 +41,7 @@ func TestHandleStreamEvent_HandoffToolCalledSuppressed(t *testing.T) {
 
 	// The handoff wrapper: suppressed, no run.tool_call.
 	called := false
-	(&Runner{}).handleStreamEvent(ev, "run_1", func(string, any) { called = true })
+	(&Runner{}).handleStreamEvent(ev, "run_1", func(string, any) { called = true }, nil)
 	if called {
 		t.Error("handoff tool_called should be suppressed (no run.tool_call)")
 	}
@@ -50,7 +50,7 @@ func TestHandleStreamEvent_HandoffToolCalledSuppressed(t *testing.T) {
 	gotType := ""
 	(&Runner{}).handleStreamEvent(
 		&agents.RunItemStreamEvent{Name: "tool_called", Item: toolCallItem(t, "get_weather", "c1")},
-		"run_1", func(typ string, _ any) { gotType = typ })
+		"run_1", func(typ string, _ any) { gotType = typ }, nil)
 	if gotType != "run.tool_call" {
 		t.Errorf("regular tool event type = %q, want run.tool_call", gotType)
 	}
@@ -71,7 +71,7 @@ func TestHandleStreamEvent_MessageOutputCreated(t *testing.T) {
 	(&Runner{}).handleStreamEvent(ev, "run_1", func(typ string, payload any) {
 		gotType = typ
 		gotPayload = payload
-	})
+	}, nil)
 
 	if gotType != "run.message" {
 		t.Fatalf("event type = %q, want run.message", gotType)
@@ -94,7 +94,7 @@ func TestHandleStreamEvent_EmptyMessageSkipped(t *testing.T) {
 	}
 
 	called := false
-	(&Runner{}).handleStreamEvent(ev, "run_1", func(string, any) { called = true })
+	(&Runner{}).handleStreamEvent(ev, "run_1", func(string, any) { called = true }, nil)
 	if called {
 		t.Error("expected no event for an empty message")
 	}
@@ -112,7 +112,7 @@ func TestHandleStreamEvent_InjectedInputDropped(t *testing.T) {
 	}
 
 	gotType := ""
-	(&Runner{}).handleStreamEvent(ev, "run_1", func(typ string, _ any) { gotType = typ })
+	(&Runner{}).handleStreamEvent(ev, "run_1", func(typ string, _ any) { gotType = typ }, nil)
 	if gotType != "" {
 		t.Errorf("injected input emitted %q, want no event", gotType)
 	}
@@ -151,7 +151,7 @@ func TestHandleStreamEvent_ReasoningItemCreated(t *testing.T) {
 			(&Runner{}).handleStreamEvent(ev, "run_1", func(typ string, payload any) {
 				gotType = typ
 				gotPayload = payload
-			})
+			}, nil)
 			if gotType != "run.reasoning_item" {
 				t.Fatalf("event type = %q, want run.reasoning_item", gotType)
 			}
@@ -175,7 +175,7 @@ func TestHandleStreamEvent_EmptyReasoningSkipped(t *testing.T) {
 	}
 
 	called := false
-	(&Runner{}).handleStreamEvent(ev, "run_1", func(string, any) { called = true })
+	(&Runner{}).handleStreamEvent(ev, "run_1", func(string, any) { called = true }, nil)
 	if called {
 		t.Error("expected no event for empty reasoning")
 	}

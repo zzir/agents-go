@@ -285,11 +285,14 @@ behind like a spawn.
 
 *(Endpoints and payload schemas: see the OpenAPI spec — `/openapi.yaml`, browsable at `/docs`.)*
 
-Agent config shape — three top-level scalars, then the knobs as **grouped
+Agent config shape — the top-level scalars, then the knobs as **grouped
 nested objects** (each group is one JSON column in the table, so a new knob
 needs no schema change), then a few top-level JSON blobs:
 
-- **Top level**: `name`, `description` (what the agent is FOR, in a sentence
+- **Top level**: `name`, `avatar` (the agent's picture as a path into the
+  UI's built-in catalog, `/avatars/<name>.svg`; empty renders an initial, and
+  anything else — an external URL included — is rejected with 400, since the
+  CSP would block it anyway), `description` (what the agent is FOR, in a sentence
   — the text an automatic agent picker matches a request against; never sent
   to the model), `instructions`, `model`, `provider_id` (the endpoint
   this agent reaches its model through — see [providers](#providers--apiv1providers);
@@ -1123,7 +1126,7 @@ a run streams live again instead of showing the session idle until it ends).
 | type                    | Description                                                                                                                                             |
 |-------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `run.started`           | Run begun — `{run_id, session_id, input}`; `input` is the user prompt, so a browser that didn't send it can render the user bubble. A background task run additionally carries `{task_id, parent_session_id, parent_run_id, tool_call_id, label}` — clients key task state by the durable `task_id`, route events by `run_id`, and send it to the parent session's task list, never a chat timeline |
-| `run.agent_start`       | Agent taking its turn — `{run_id, agent_name}`                                                                                                          |
+| `run.agent_start`       | Agent taking its turn — `{run_id, agent_name, agent_config_id?}`; the id names the config behind the agent so the client can show its avatar            |
 | `run.step`              | Streaming text delta — `{run_id, delta}`                                                                                                                |
 | `run.reasoning`         | Streaming reasoning delta — `{run_id, delta}`                                                                                                           |
 | `run.message`           | One completed assistant message: a turn's full text, interim narration or final answer, authoritative over its `run.step` deltas — `{run_id, text}`     |
@@ -1131,7 +1134,7 @@ a run streams live again instead of showing the session idle until it ends).
 | `run.tool_call`         | Tool invoked — `{run_id, tool_call_id, tool_name, arguments, needs_approval}`                                                                           |
 | `run.tool_progress`     | Partial output from a running tool — `{run_id, call_id, tool_name, delta, renderer?}`; `delta` appends to what the client holds for the call, `renderer` is a display hint (e.g. `terminal`) |
 | `run.tool_result`       | Tool output — `{run_id, tool_call_id, output, title?, summary?, renderer?, is_error?, extra?}`; the optional display fields mirror the stored output entry's `display` (`extra` is the tool's `Details` bag), so the live card carries the same data a reload rebuilds. A multimodal result's `output` is the Responses content list as JSON (`[{"type":"input_text",…},{"type":"input_image","image_url":…},{"type":"input_file",…}]`, SDK spec §2.7b) — the card shows the image and offers the file; anything else is text |
-| `run.handoff`           | Agent handoff — `{run_id, from, to}`                                                                                                                    |
+| `run.handoff`           | Agent handoff — `{run_id, from, to, from_id?, to_id?}`; the ids name the config rows behind the agents, for their avatars                               |
 | `run.compaction`        | Session compaction running at end of turn — `{run_id, phase: started\|finished, detail?}`                                                               |
 | `run.output`            | Final output — `{run_id, final_output}`                                                                                                                 |
 | `run.interrupted`       | Paused for tool approval — `{run_id}`; NOT final: the decision resumes the SAME run id, and its events continue the sequence on the same subscription. Sent only once the pause is durable (the `pending_approvals` row written) — a pause that cannot be recorded ends the run as `run.error` (`persist_error`) instead, so nothing is ever announced as awaiting a decision nobody can make |

@@ -24,7 +24,7 @@ import (
 // announce, not this bridge's to reverse-engineer from raw response events;
 // deltas cannot race the reset because the SDK persists between model calls,
 // where no delta is in flight.
-func (r *Runner) drainStream(stream agents.RunStream, runID string, send func(string, any), partial *streamedPartial) (res *agents.RunResult, runErr error) {
+func (r *Runner) drainStream(stream agents.RunStream, runID string, send func(string, any), partial *streamedPartial, agentIDs map[string]string) (res *agents.RunResult, runErr error) {
 	text, reasoning := &partial.text, &partial.reasoning
 	for event, err := range stream {
 		if err != nil {
@@ -62,7 +62,7 @@ func (r *Runner) drainStream(stream agents.RunStream, runID string, send func(st
 				reasoning.WriteString(raw.Data.Delta)
 			}
 		}
-		r.handleStreamEvent(event, runID, send)
+		r.handleStreamEvent(event, runID, send, agentIDs)
 	}
 	return res, runErr
 }
@@ -95,7 +95,9 @@ func runErrorFor(runID string, err error, fallback string) protocol.RunError {
 	return e
 }
 
-func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, send func(string, any)) {
+// agentIDs maps built agent names to config ids (BuildResult.AgentIDs); the
+// events that announce an agent by name carry the id along for its avatar.
+func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, send func(string, any), agentIDs map[string]string) {
 	switch e := event.(type) {
 	case *agents.RawResponsesStreamEvent:
 		if e.Data == nil {
@@ -173,8 +175,9 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, send 
 		case "handoff_requested":
 			if e.Item.Kind == agents.ItemHandoffCall && e.Item.Agent != nil {
 				send(protocol.EventRunHandoff, protocol.RunHandoff{
-					RunID: runID,
-					From:  e.Item.Agent.Name,
+					RunID:  runID,
+					From:   e.Item.Agent.Name,
+					FromID: agentIDs[e.Item.Agent.Name],
 				})
 			}
 		case "injected_input_created":
@@ -189,9 +192,11 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, send 
 		case "handoff_occured":
 			if e.Item.Kind == agents.ItemHandoffOutput && e.Item.HandoffFrom != nil && e.Item.HandoffTo != nil {
 				send(protocol.EventRunHandoff, protocol.RunHandoff{
-					RunID: runID,
-					From:  e.Item.HandoffFrom.Name,
-					To:    e.Item.HandoffTo.Name,
+					RunID:  runID,
+					From:   e.Item.HandoffFrom.Name,
+					To:     e.Item.HandoffTo.Name,
+					FromID: agentIDs[e.Item.HandoffFrom.Name],
+					ToID:   agentIDs[e.Item.HandoffTo.Name],
 				})
 			}
 		}
@@ -210,8 +215,9 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, send 
 
 	case *agents.AgentUpdatedStreamEvent:
 		send(protocol.EventRunAgentStart, protocol.RunAgentStart{
-			RunID:     runID,
-			AgentName: e.NewAgent.Name,
+			RunID:         runID,
+			AgentName:     e.NewAgent.Name,
+			AgentConfigID: agentIDs[e.NewAgent.Name],
 		})
 	}
 }

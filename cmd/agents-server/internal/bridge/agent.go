@@ -78,6 +78,12 @@ type BuildResult struct {
 	Agent    *agents.Agent
 	Provider agents.ModelProvider
 
+	// AgentIDs maps each built agent's name — the entry and every handoff
+	// target — to its config id, for the events that announce an agent by
+	// name (run.agent_start, run.handoff) so the client can show its avatar.
+	// Set only on the entry build.
+	AgentIDs map[string]string
+
 	// Behavior, Compaction and Session are the agent config's own groups,
 	// carried whole rather than copied knob by knob: a new knob is one field
 	// on one group struct, with no mirror field here and no copy line in the
@@ -206,6 +212,10 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, project
 	if err == nil {
 		result.TraceIncludeSensitive = deps.Settings.Bool(ctx, settings.KeyTraceIncludeSensitiveData)
 		result.LogSensitive = deps.Settings.Bool(ctx, settings.KeyLogSensitiveData)
+		result.AgentIDs = make(map[string]string, len(bc.cache))
+		for id, r := range bc.cache {
+			result.AgentIDs[r.Agent.Name] = id
+		}
 	}
 	if err == nil && !background && deps.TaskManager != nil {
 		// The model's background surface: four verbs — spawn (the server's,

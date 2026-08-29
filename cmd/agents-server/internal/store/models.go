@@ -138,7 +138,11 @@ type AgentConfig struct {
 	// Description is what this agent is FOR, in a sentence — the text an
 	// automatic agent picker will match a request against (not the model-facing
 	// instructions).
-	Description  string `bun:"description,nullzero" json:"description,omitempty"`
+	Description string `bun:"description,nullzero" json:"description,omitempty"`
+	// Avatar is the agent's picture as a same-origin path into the built-in
+	// catalog ("/avatars/<name>.svg"); empty renders an initial. Handlers
+	// reject anything else — external URLs would be blocked by CSP anyway.
+	Avatar       string `bun:"avatar,nullzero"      json:"avatar,omitempty"`
 	Instructions string `bun:"instructions"   json:"instructions"`
 	Model        string `bun:"model"          json:"model"`
 	// ProviderID names the Provider row this agent reaches its model through —

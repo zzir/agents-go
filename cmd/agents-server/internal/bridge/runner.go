@@ -384,7 +384,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	}
 
 	if spec.fresh {
-		sendEvent(protocol.EventRunAgentStart, protocol.RunAgentStart{RunID: runID, AgentName: agent.Name})
+		sendEvent(protocol.EventRunAgentStart, protocol.RunAgentStart{RunID: runID, AgentName: agent.Name, AgentConfigID: agentConfigID})
 	}
 
 	sessionRef, refErr := store.RefFor(ctx, r.db, sessionID)
@@ -421,7 +421,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	r.hub.setControl(runID, ctrl)
 	// The stream carries both halves of the outcome: the run's result as its
 	// terminal event, or a terminal error. There is no second place to consult.
-	res, err := r.drainStream(stream, runID, sendEvent, &partial)
+	res, err := r.drainStream(stream, runID, sendEvent, &partial, built.AgentIDs)
 	streamedText, streamedReasoning := partial.Text(), partial.Reasoning()
 	if err != nil {
 		return failTurn(agent.Model, spec.failCode, err, streamedReasoning, streamedText)

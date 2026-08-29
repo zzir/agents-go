@@ -295,6 +295,9 @@ type RunDiagnostic struct {
 type RunAgentStart struct {
 	RunID     string `json:"run_id"`
 	AgentName string `json:"agent_name"`
+	// AgentConfigID is the config row behind the named agent, so the client
+	// can render its avatar; empty when the name resolves to no config.
+	AgentConfigID string `json:"agent_config_id,omitempty"`
 }
 
 // RunStep streams an incremental chunk of the agent's output text.
@@ -373,6 +376,10 @@ type RunHandoff struct {
 	RunID string `json:"run_id"`
 	From  string `json:"from"`
 	To    string `json:"to"`
+	// FromID/ToID name the config rows behind the agents, for avatars;
+	// empty when a name resolves to no config.
+	FromID string `json:"from_id,omitempty"`
+	ToID   string `json:"to_id,omitempty"`
 }
 
 // RunOutput carries the run's final output once the agent has finished.

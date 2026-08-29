@@ -4,6 +4,7 @@ package handler
 import (
 	"errors"
 	"net/http"
+	"regexp"
 
 	"github.com/gin-gonic/gin"
 
@@ -40,6 +41,10 @@ func NewAgentConfigHandler(s *store.AgentConfigStore, mcpServers *store.McpServe
 	return &AgentConfigHandler{store: s, mcpServers: mcpServers, providers: providers, skills: skills, guardrails: guardrails}
 }
 
+// avatarPath is the shape of a built-in avatar reference — a same-origin path
+// into the catalog shipped with the UI, never an arbitrary URL.
+var avatarPath = regexp.MustCompile(`^/avatars/[A-Za-z0-9_-]+\.svg$`)
+
 // validateAgentConfig checks an incoming Create/Update body against the
 // constraints the run would otherwise only hit at run time. It reports the
 // failure to c and returns false when the request is rejected. Name uniqueness
@@ -54,6 +59,12 @@ func (h *AgentConfigHandler) validateAgentConfig(c *gin.Context, ac *store.Agent
 	// at save time with a clear message instead.
 	if ac.Model == "" {
 		badRequest(c, "model is required")
+		return false
+	}
+	// Only the built-in catalog: an external URL would be blocked by the CSP
+	// (img-src 'self') and render as a broken image, so refuse it honestly.
+	if ac.Avatar != "" && !avatarPath.MatchString(ac.Avatar) {
+		badRequest(c, "avatar must be a built-in path (/avatars/<name>.svg) or empty")
 		return false
 	}
 	// An agent naming a provider that does not exist — or one its scope may

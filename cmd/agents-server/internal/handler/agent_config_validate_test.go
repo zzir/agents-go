@@ -71,6 +71,32 @@ func TestAgentConfigRejectsEmptyModel(t *testing.T) {
 	}
 }
 
+// Only the built-in catalog is a valid avatar: an external URL would be
+// blocked by the CSP and render as a broken image, so it is refused at save.
+func TestAgentConfigAvatarShape(t *testing.T) {
+	engine, _ := newAgentEngine(t)
+
+	for _, bad := range []string{"https://evil.example/x.svg", "/avatars/../secret.svg", "/avatars/x.png", "avatars/X.svg"} {
+		w := doJSON(t, engine, http.MethodPost, "/agents", `{"name":"a","model":"gpt-4o","avatar":"`+bad+`"}`)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("avatar %q: got %d, want 400 (body %s)", bad, w.Code, w.Body.String())
+			continue
+		}
+		if msg := errMessage(t, w.Body.Bytes()); !strings.Contains(msg, "avatar") {
+			t.Errorf("error should name the avatar field: %q", msg)
+		}
+	}
+
+	w := doJSON(t, engine, http.MethodPost, "/agents", `{"name":"a","model":"gpt-4o","avatar":"/avatars/Architect.svg"}`)
+	if w.Code != http.StatusCreated {
+		t.Errorf("built-in avatar: got %d, want 201 (body %s)", w.Code, w.Body.String())
+	}
+	w = doJSON(t, engine, http.MethodPost, "/agents", `{"name":"b","model":"gpt-4o"}`)
+	if w.Code != http.StatusCreated {
+		t.Errorf("no avatar: got %d, want 201 (body %s)", w.Code, w.Body.String())
+	}
+}
+
 // use_previous_response_id was removed end to end; a client still sending the
 // stale key is simply ignored (unknown JSON field), not rejected — legacy
 // callers keep working.
