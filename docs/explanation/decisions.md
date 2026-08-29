@@ -768,7 +768,12 @@ The SSH machinery lives on inside `sandbox/docker` as a TRANSPORT: a pure-Go
 dialer (x/crypto/ssh) that opens direct-streamlocal channels to the remote
 `docker.sock` over one shared, self-healing connection. It requires only
 sshd with streamlocal forwarding and socket access for the SSH user — no
-remote docker CLI, no local ssh binary. The `sandbox/ssh` module is deleted,
+remote docker CLI, no local ssh binary. Self-healing is for transport
+failures only: a rejected channel open (a container port nothing listens on
+yet) arrives on a healthy transport, and reconnecting on it would sever every
+stream multiplexed on the shared client — the preview proxy probing a dev
+server that has not started must not kill the terminals riding the same
+connection. The `sandbox/ssh` module is deleted,
 not parked: its Sandbox implementation had become the workbench's only
 consumer, and an embedder who wants raw remote exec can use x/crypto/ssh
 directly — the value this repo added was the sandboxing, which SSH never

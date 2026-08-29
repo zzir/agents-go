@@ -2,10 +2,16 @@ package docker
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"errors"
 	"net"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/ssh"
 )
 
 // The ssh:// URL carries everything the dialer needs: user (required), host
@@ -85,6 +91,93 @@ func TestSSHDialTimeoutCoversHandshake(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Fatalf("connect took %v, want ~ConnectTimeout", elapsed)
+	}
+}
+
+// startRejectingSSHD runs a minimal sshd that completes handshakes (counting
+// them) but rejects every channel open — a healthy transport whose target
+// port is not listening.
+func startRejectingSSHD(t *testing.T) (addr string, handshakes *atomic.Int32) {
+	t.Helper()
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := ssh.NewSignerFromKey(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &ssh.ServerConfig{
+		PasswordCallback: func(ssh.ConnMetadata, []byte) (*ssh.Permissions, error) { return nil, nil },
+	}
+	cfg.AddHostKey(signer)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	count := &atomic.Int32{}
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				sconn, chans, reqs, err := ssh.NewServerConn(c, cfg)
+				if err != nil {
+					_ = c.Close()
+					return
+				}
+				count.Add(1)
+				go ssh.DiscardRequests(reqs)
+				for nc := range chans {
+					_ = nc.Reject(ssh.ConnectionFailed, "port not listening")
+				}
+				_ = sconn.Close()
+			}()
+		}
+	}()
+	return ln.Addr().String(), count
+}
+
+// A refused direct-tcpip channel rides a HEALTHY transport (the container port
+// is not listening yet): dialThrough must surface it without reconnecting, or
+// the teardown severs every in-flight stream multiplexed on the shared client.
+// A transport-level failure still reconnects.
+func TestDialThroughChannelRejectionKeepsTransport(t *testing.T) {
+	addr, handshakes := startRejectingSSHD(t)
+	d, err := newSSHDialer("ssh://u@"+addr, SSHAuth{
+		Password:              "pw",
+		InsecureIgnoreHostKey: true,
+		ConnectTimeout:        5 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
+	ctx := t.Context()
+	for range 2 {
+		_, err := d.dialThrough(ctx, "tcp", "127.0.0.1:1")
+		if _, ok := errors.AsType[*ssh.OpenChannelError](err); !ok {
+			t.Fatalf("dialThrough err = %v, want the channel rejection", err)
+		}
+	}
+	if n := handshakes.Load(); n != 1 {
+		t.Fatalf("handshakes = %d, want 1: a rejected channel must not tear down the transport", n)
+	}
+
+	// Severing the transport is the case that DOES reconnect.
+	d.mu.Lock()
+	c := d.client
+	d.mu.Unlock()
+	_ = c.Close()
+	if _, err := d.dialThrough(ctx, "tcp", "127.0.0.1:1"); err == nil {
+		t.Fatal("dialThrough after a severed transport: want the channel rejection, got nil")
+	}
+	if n := handshakes.Load(); n != 2 {
+		t.Fatalf("handshakes = %d, want 2: a severed transport must reconnect", n)
 	}
 }
 

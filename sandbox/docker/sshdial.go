@@ -120,7 +120,7 @@ func newSSHDialer(hostURL string, auth SSHAuth) (*sshDialer, error) {
 }
 
 // DialContext opens one channel to the remote daemon socket, (re)connecting
-// the SSH transport as needed: a channel-open failure drops the cached client
+// the SSH transport as needed: a transport failure drops the cached client
 // and retries once on a fresh connection, so a severed transport heals
 // without surfacing every queued request's error.
 func (d *sshDialer) DialContext(ctx context.Context, _, _ string) (net.Conn, error) {
@@ -138,6 +138,11 @@ func (d *sshDialer) dialThrough(ctx context.Context, network, addr string) (net.
 	conn, err := client.Dial(network, addr)
 	if err == nil {
 		return conn, nil
+	}
+	// A rejected channel open (the target port not listening yet) arrives on a
+	// healthy transport: reconnecting would sever every stream multiplexed on it.
+	if _, ok := errors.AsType[*ssh.OpenChannelError](err); ok {
+		return nil, fmt.Errorf("docker sandbox: dialing %s %s over ssh: %w", network, addr, err)
 	}
 	client, rerr := d.connect(ctx, client)
 	if rerr != nil {
