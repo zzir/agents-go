@@ -336,9 +336,3 @@ func withTimeout(ctx context.Context, d time.Duration) (context.Context, context
 	}
 	return context.WithTimeout(ctx, d)
 }
-
-// errUnsupported names a capability this service does not offer, wrapped so
-// callers can branch on it.
-func errUnsupported(what string) error {
-	return fmt.Errorf("e2b: %s: %w", what, sandbox.ErrLifecycleUnsupported)
-}
