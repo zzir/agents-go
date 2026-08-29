@@ -7,7 +7,7 @@ import { api, type ApiSchemas } from '@/lib/api';
 import { shortTime } from '@/lib/format';
 import { OwnerName, useOwnerLabels } from '@/lib/owners';
 
-type ProjectRow = Omit<ApiSchemas['store.Project'], 'id'> & { id: string; sandbox: string; sandboxType: string };
+type ProjectRow = Omit<ApiSchemas['store.Project'], 'id'> & { id: string; sandbox: string; rebuildable: boolean };
 
 // The Storage column shows just the docker volume name; a backend whose
 // sandbox IS the storage has no volume, so its cell stays empty. The full
@@ -37,7 +37,7 @@ export function ProjectsPanel() {
           ...p,
           id: p.id || '',
           sandbox: of(p.sandbox_id)?.name || p.sandbox_id || '',
-          sandboxType: of(p.sandbox_id)?.type || '',
+          rebuildable: !!of(p.sandbox_id)?.supports?.rebuild,
         })));
         setError('');
       })
@@ -98,9 +98,9 @@ export function ProjectsPanel() {
     actionsColumn<ProjectRow>(p => (
       <RowMenu label={`Actions for ${p.name}`}>
         <ActionList.Item onSelect={() => { void act(p, 'stop'); }}>Stop sandbox</ActionList.Item>
-        {/* Rebuild replaces the compute and keeps the tree — which a backend
-            whose sandbox IS the storage cannot do, so it is not offered. */}
-        {p.sandboxType === 'docker' && (
+        {/* Rebuild replaces the compute and keeps the tree — offered only
+            where the sandbox row declares it (`supports.rebuild`). */}
+        {p.rebuildable && (
           <ActionList.Item variant="danger" onSelect={() => { void act(p, 'rebuild'); }}>Rebuild container</ActionList.Item>
         )}
         <ActionList.Item variant="danger" onSelect={() => { void remove(p); }}>Delete</ActionList.Item>

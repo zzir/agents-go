@@ -7,7 +7,7 @@ import { CHECK_ICON } from '@/lib/markdownShared';
 import { type TurnPart, type TimelineEntry, type Branches, type WorkflowStartedNote } from '@/lib/timeline';
 import { useScrollToBottom, useApi } from '@/lib/hooks';
 import { loadSessionAgent, saveSessionAgent, loadSessionProject, saveSessionProject } from '@/lib/drafts';
-import { composerSandboxView, groupProjects, projectLabel, type EnvVar, type Project, type SessionBinding } from '@/lib/binding';
+import { composerSandboxView, groupProjects, projectLabel, type EnvVar, type Project, type SandboxSupports, type SessionBinding } from '@/lib/binding';
 import { useProjects } from '@/lib/useProjects';
 import { fc } from '@/lib/form';
 import { parseTaskNotification, TASK_KIND_WORKFLOW, type TaskStatus } from '@/lib/protocol';
@@ -86,8 +86,8 @@ interface AgentConfig {
 interface SandboxDef {
   id: string;
   name: string;
-  /* docker | e2b — which backend runs it. */
-  type?: string;
+  /* Capabilities as the API row declares them — never sniffed from a type. */
+  supports?: SandboxSupports;
 }
 
 // Restartable jump-target flash, shared by trace reverse-navigation and the
@@ -316,7 +316,6 @@ export function ChatView({
   // its binding's, never the composer's current pick.
   const boundProject = sessionBinding?.projectId ? projects?.find(p => p.id === sessionBinding.projectId) || null : null;
   const boundSandbox = sandboxDefs?.find(sb => sb.id === boundProject?.sandbox_id);
-  const boundSandboxType = boundSandbox?.type || '';
   // Whether the bound project's sandbox row is known: false while sandboxDefs
   // load, and for an orphan project whose row was deleted. The menu leans on
   // this so a danger action (Rebuild) is never offered on a guess.
@@ -392,14 +391,14 @@ export function ChatView({
   };
 
   // The port is asked for rather than guessed: a project may run several
-  // services, and the one a person wants is the one they type.
-  // Where every port is already published (an E2B-compatible service), the
-  // port is asked for: there is no declared list to choose from.
+  // services, and the one a person wants is the one they type. Where Preview
+  // reaches any port (`any_port`), asking is the only way in: there is no
+  // declared list to choose from.
   const askPreviewPort = async () => {
-    // On E2B the port is reached at a PUBLIC host (<port>-<id>.<domain>);
-    // the grant is only a convenience, not a guard, so say so before opening.
-    const msg = boundSandboxType === 'e2b'
-      ? 'Which port inside the sandbox?\n\nHeads up: on E2B this opens a public URL — anyone with the link can reach the port.'
+    // A backend that serves previewed ports on a PUBLIC host must say so
+    // before opening: the grant is only a convenience, not a guard.
+    const msg = boundSandbox?.supports?.public_ports
+      ? 'Which port inside the sandbox?\n\nHeads up: this opens a public URL — anyone with the link can reach the port.'
       : 'Which port inside the sandbox?';
     const raw = window.prompt(msg, '3000');
     if (!raw) return;
@@ -776,12 +775,12 @@ export function ChatView({
         busy: containerBusy,
         state: sandboxState,
         stateLoading,
-        // The backend comes from the sandbox the project names. Until that row
-        // is known, Rebuild is withheld rather than offered on a guess: an E2B
-        // sandbox cannot be rebuilt (its store IS the compute), and a
+        // Capabilities come from the sandbox row the project names. Until that
+        // row declares `rebuild`, Rebuild is withheld rather than offered on a
+        // guess: a backend whose store IS the compute cannot be rebuilt, and a
         // mislabelled Rebuild there would read as "safe" when it is refused.
-        rebuildable: boundSandboxKnown && boundSandboxType !== 'e2b',
-        anyPort: boundSandboxType === 'e2b',
+        rebuildable: boundSandboxKnown && !!boundSandbox?.supports?.rebuild,
+        anyPort: !!boundSandbox?.supports?.any_port,
         onEnv: () => setEnvProject(boundProject),
         onStart: () => { void startSandbox(); },
         onStop: () => { void stopSandbox(); },
@@ -876,9 +875,10 @@ export function ChatView({
                 <ActionList.Item
                   onSelect={() => {
                     // Default to the composer's current project's sandbox, else
-                    // a docker one over an E2B one: a first-in-list default that
-                    // lands on a paid, internet-on cloud sandbox is a footgun.
-                    const fallback = sandboxDefs.find(sb => sb.type === 'docker') || sandboxDefs[0];
+                    // one that does not serve ports publicly: a first-in-list
+                    // default that lands on a paid, publicly-reachable cloud
+                    // sandbox is a footgun.
+                    const fallback = sandboxDefs.find(sb => !sb.supports?.public_ports) || sandboxDefs[0];
                     setProjSandboxId(selectedProject?.sandbox_id || fallback.id);
                     setProjName('');
                     setProjEnv([]);
@@ -964,9 +964,9 @@ export function ChatView({
                 {fc('Environment', (
                   <EnvEditor vars={projEnv} onChange={setProjEnv} disabled={projSaving} />
                 ), envError(projEnv))}
-                {/* Docker only: on an E2B-compatible service every port is
-                    already published. */}
-                {projSandbox?.type !== 'e2b' && fc('Published ports', (
+                {/* Hidden where Preview already reaches any port (`any_port`):
+                    there is nothing to declare. */}
+                {!projSandbox?.supports?.any_port && fc('Published ports', (
                   <TextInput
                     block
                     value={projPorts}

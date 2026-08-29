@@ -46,8 +46,8 @@ export interface ProjectMenu {
      the settings dialog instead of a link that cannot work. Not consulted on
      a backend that publishes every port itself (see anyPort). */
   ports: number[];
-  /* True where any port is reachable without declaring it (E2B-compatible
-     services publish them all), so the menu asks for one instead of listing. */
+  /* True where any port is reachable without declaring it (the sandbox's
+     `supports.any_port`), so the menu asks for one instead of listing. */
   anyPort: boolean;
   onPreview: (port: number) => void;
   onPreviewAsk: () => void;

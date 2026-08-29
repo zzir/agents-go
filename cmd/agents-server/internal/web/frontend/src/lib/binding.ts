@@ -1,11 +1,25 @@
 /* Pure projection of the composer's project area — kept out of the component
    so the node-environment vitest suite can cover it. */
 
+/* What a sandbox backend can do, as its API row declares it. The UI offers a
+   capability only when it is declared true — an undefined `supports` (older
+   server, row still loading) offers nothing beyond the safe baseline. */
+export interface SandboxSupports {
+  /* The container can be rebuilt in place. */
+  rebuild?: boolean;
+  /* Preview reaches any port; there is no declared ports list. */
+  any_port?: boolean;
+  /* A previewed port is served on a PUBLIC host — anyone with the link. */
+  public_ports?: boolean;
+}
+
 export interface SandboxLite {
   id: string;
   name: string;
-  /* docker | e2b — which backend, so a client offers only what it can do. */
+  /* docker | e2b — display and form data only; capabilities come from
+     `supports`, never from sniffing this. */
   type?: string;
+  supports?: SandboxSupports;
 }
 
 /* A project row as GET /projects returns it: the named working tree a
@@ -15,7 +29,7 @@ export interface Project {
   name: string;
   sandbox_id: string;
   /* The container ports published to the machine's loopback — what Preview
-     can open. Docker only. */
+     can open. Absent where the sandbox reaches any port (`supports.any_port`). */
   ports?: number[];
   /* The volume the files live in, and the daemon it is on — shown by the
      delete dialog, which destroys it. */

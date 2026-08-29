@@ -4,7 +4,7 @@ import type { ReactElement } from 'react';
 import { api } from '@/lib/api';
 import { toast } from '@/lib/toast';
 import { EnvEditor, cleanEnv, envError } from '@/components/EnvEditor';
-import type { EnvVar, Project, ProjectDetail } from '@/lib/binding';
+import type { EnvVar, Project, ProjectDetail, SandboxSupports } from '@/lib/binding';
 
 /* The project's settings: the environment (loaded on open — a listing never
    carries one) and the ports its container publishes. Values arrive masked and
@@ -23,8 +23,9 @@ interface ProjectEnvDialogProps {
 /* The sandbox's settings, read-only: the image the container starts from and
    whether it has a network. Both answer questions this dialog provokes —
    "why can't the setup reach the internet?" above all — and both are the
-   admin's to change, in Settings. `type` decides whether ports are shown at
-   all: on an E2B-compatible service every port is already published. */
+   admin's to change, in Settings. `supports.any_port` decides whether ports
+   are shown at all: where Preview already reaches any port, there is nothing
+   to declare. */
 interface SandboxSummary {
   image?: string;
   network?: string;
@@ -55,7 +56,7 @@ export function ProjectEnvDialog({ project, sessionCount, onClose }: ProjectEnvD
   const [ports, setPorts] = useState('');
   const [loadedPorts, setLoadedPorts] = useState('');
   const [sandbox, setSandbox] = useState<SandboxSummary | null>(null);
-  const [sandboxType, setSandboxType] = useState('');
+  const [supports, setSupports] = useState<SandboxSupports | undefined>(undefined);
   const [revision, setRevision] = useState<number | undefined>(project.revision);
   const [loaded, setLoaded] = useState('');
   const [saving, setSaving] = useState(false);
@@ -87,7 +88,7 @@ export function ProjectEnvDialog({ project, sessionCount, onClose }: ProjectEnvD
         // still editable without knowing the image.
         if (!live) return;
         setSandbox((sb as { config?: SandboxSummary }).config || {});
-        setSandboxType((sb as { type?: string }).type || '');
+        setSupports((sb as { supports?: SandboxSupports }).supports);
       })
       .catch(() => {});
     return () => { live = false; };
@@ -112,9 +113,10 @@ export function ProjectEnvDialog({ project, sessionCount, onClose }: ProjectEnvD
     try {
       await api.projects.update(project.id, {
         name: project.name, sandbox_id: project.sandbox_id,
-        // e2b ignores ports and the server rejects them; the field is hidden
-        // for e2b, so never send a stray one that would 400 the save.
-        env: cleanEnv(vars), ports: sandboxType === 'e2b' ? [] : (portList ?? []), revision,
+        // Where Preview reaches any port, the server rejects a declared list;
+        // the field is hidden there, so never send a stray one that would 400
+        // the save.
+        env: cleanEnv(vars), ports: supports?.any_port ? [] : (portList ?? []), revision,
       });
       toast.success(changed ? 'Saved — the container is recreated on the next run' : 'Saved');
       onClose();
@@ -173,9 +175,9 @@ export function ProjectEnvDialog({ project, sessionCount, onClose }: ProjectEnvD
         <>
           <EnvEditor vars={vars} onChange={setVars} disabled={saving} />
           {invalid && <Flash variant="danger">{invalid}</Flash>}
-          {/* Docker only: on an E2B-compatible service every port is already
-              published, and there is nothing to declare. */}
-          {sandboxType === 'docker' && (
+          {/* Hidden where Preview already reaches any port (`any_port`):
+              there is nothing to declare. */}
+          {!supports?.any_port && (
             <FormControl>
               <FormControl.Label>Published ports</FormControl.Label>
               <TextInput
