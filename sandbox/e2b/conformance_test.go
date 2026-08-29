@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
@@ -356,6 +357,123 @@ func TestE2BRollbackKillCarriesADeadline(t *testing.T) {
 	}
 	if !rec.deleteHadDeadline {
 		t.Fatal("the rollback kill ran without a deadline")
+	}
+}
+
+// A MakeDir failure whose MESSAGE mentions "exists" but whose code is not
+// already_exists is a real failure, not an existing directory: it must
+// propagate rather than being sniffed into success.
+func TestE2BMakeDirFailureMentioningExistsPropagates(t *testing.T) {
+	sb, f := fakeBackedSandbox(t)
+	if _, err := sb.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	f.makeDirHook = func(string) (string, string) { return "internal", "a lease on the path exists" }
+	f.mu.Unlock()
+	if err := sb.WriteFile(t.Context(), "deep/dir/file.txt", []byte("x")); err == nil {
+		t.Fatal("a MakeDir failure whose message mentions \"exists\" was treated as success")
+	}
+}
+
+// A kill that fails transiently leaves the id remembered, so Destroy can be
+// retried; forgetting first would make the retry a no-op and leak the billed
+// sandbox.
+func TestE2BDestroyRetriesAfterAFailedKill(t *testing.T) {
+	sb, f := fakeBackedSandbox(t)
+	if _, err := sb.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	f.failDeletes = 1
+	f.mu.Unlock()
+	if err := sb.Destroy(t.Context()); err == nil {
+		t.Fatal("a Destroy whose kill failed must report it")
+	}
+	if f.only() == nil {
+		t.Fatal("the fake deleted the sandbox despite the injected failure")
+	}
+	if err := sb.Destroy(t.Context()); err != nil {
+		t.Fatalf("the retried Destroy: %v", err)
+	}
+	if f.only() != nil {
+		t.Fatal("the retried Destroy never issued the DELETE")
+	}
+}
+
+// Content far past Linux's ~128KB per-argument cap goes through: the argv
+// carries only the exclusive create, never the content.
+func TestE2BCreateExclusiveLargeContent(t *testing.T) {
+	sb, f := fakeBackedSandbox(t)
+	content := bytes.Repeat([]byte("0123456789abcdefghijklmnopqrstuv"), 7000) // 224KB
+	if err := sb.CreateExclusive(t.Context(), "big.bin", content); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(f.root, "big.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, content) {
+		t.Fatalf("content = %d bytes and differs, want the %d written", len(got), len(content))
+	}
+	if err := sb.CreateExclusive(t.Context(), "big.bin", []byte("clobber")); !errors.Is(err, fs.ErrExist) {
+		t.Fatalf("second CreateExclusive = %v, want fs.ErrExist", err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(f.root, "big.bin")); !bytes.Equal(got, content) {
+		t.Fatal("a refused create modified the file")
+	}
+}
+
+// An out-of-range port is invalid input, not a missing capability: a caller
+// keying UI off ErrLifecycleUnsupported must not see it here.
+func TestE2BURLForPortRejectsOutOfRange(t *testing.T) {
+	sb, _ := fakeBackedSandbox(t)
+	for _, port := range []int{0, -1, 70000} {
+		_, err := sb.URLForPort(t.Context(), port)
+		if err == nil {
+			t.Fatalf("URLForPort(%d) succeeded", port)
+		}
+		if errors.Is(err, sandbox.ErrLifecycleUnsupported) {
+			t.Fatalf("URLForPort(%d) = %v, must not read as a missing capability", port, err)
+		}
+	}
+}
+
+// The first-use mkdir completes exactly once before any command proceeds: a
+// concurrent first command must wait for /workspace, not run without it.
+func TestE2BConcurrentFirstCommandsWaitForTheWorkDir(t *testing.T) {
+	root := t.TempDir()
+	f := newFakeService(t, root)
+	base, err := url.Parse(f.URL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sb, err := e2b.New(e2b.Options{
+		APIURL: f.URL(), Domain: "test", APIKey: "key", TemplateID: "base",
+		HTTPClient: &http.Client{Transport: envdRedirect{to: base, next: http.DefaultTransport}},
+		// A directory the template did not ship; the fake fails a command
+		// whose cwd is missing, like real envd.
+		WorkDir: filepath.Join(root, "workspace"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Stall the mkdir so a racing command would run before it completed.
+	f.mu.Lock()
+	f.makeDirHook = func(string) (string, string) { time.Sleep(100 * time.Millisecond); return "", "" }
+	f.mu.Unlock()
+	var wg sync.WaitGroup
+	errs := make([]error, 4)
+	for i := range errs {
+		wg.Go(func() {
+			_, errs[i] = sb.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}})
+		})
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			t.Fatalf("a concurrent first command ran before the workdir existed: %v", err)
+		}
 	}
 }
 

@@ -58,11 +58,20 @@ func isNotFound(err error) bool {
 
 // unary performs one request/response call and decodes the reply into out.
 func (s *Sandbox) unary(ctx context.Context, procedure string, in, out any) error {
+	base, err := s.envdBase(ctx)
+	if err != nil {
+		return err
+	}
+	return s.unaryAt(ctx, base, procedure, in, out)
+}
+
+// unaryAt is unary against an explicit base — see envdRequestAt.
+func (s *Sandbox) unaryAt(ctx context.Context, base, procedure string, in, out any) error {
 	body, err := json.Marshal(in)
 	if err != nil {
 		return fmt.Errorf("e2b: encoding %s: %w", procedure, err)
 	}
-	req, err := s.envdRequest(ctx, http.MethodPost, procedure, bytes.NewReader(body))
+	req, err := s.envdRequestAt(ctx, base, http.MethodPost, procedure, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}

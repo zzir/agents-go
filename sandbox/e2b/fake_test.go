@@ -48,6 +48,12 @@ type fakeService struct {
 	// signalCalls counts SendSignal RPCs — the client's cleanup of a process
 	// whose stream it abandoned.
 	signalCalls int
+	// failDeletes makes the next n control-plane DELETEs answer 500 — a
+	// transient kill failure.
+	failDeletes int
+	// makeDirHook, when set, runs in the MakeDir handler; a non-empty code
+	// answers the RPC with that error instead of touching the filesystem.
+	makeDirHook func(path string) (code, msg string)
 }
 
 type fakeBox struct {
@@ -132,6 +138,12 @@ func (f *fakeService) control(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, f.infoOf(box))
 	case r.Method == http.MethodDelete && action == "":
 		f.mu.Lock()
+		if f.failDeletes > 0 {
+			f.failDeletes--
+			f.mu.Unlock()
+			http.Error(w, `{"message":"transient"}`, http.StatusInternalServerError)
+			return
+		}
 		delete(f.boxes, box.id)
 		f.mu.Unlock()
 		w.WriteHeader(http.StatusNoContent)
@@ -330,6 +342,15 @@ func (f *fakeService) listDir(w http.ResponseWriter, req map[string]any) {
 }
 
 func (f *fakeService) makeDir(w http.ResponseWriter, req map[string]any) {
+	f.mu.Lock()
+	hook := f.makeDirHook
+	f.mu.Unlock()
+	if hook != nil {
+		if code, msg := hook(str(req["path"])); code != "" {
+			connectErr(w, http.StatusInternalServerError, code, msg)
+			return
+		}
+	}
 	full, ok := f.hostPath(str(req["path"]))
 	if !ok {
 		connectErr(w, http.StatusForbidden, "permission_denied", "outside the sandbox")
@@ -364,14 +385,12 @@ func (f *fakeService) move(w http.ResponseWriter, req map[string]any) {
 	writeJSON(w, map[string]any{})
 }
 
+// remove is IDEMPOTENT, like real envd's: a missing path answers OK. The
+// client's stat-first guard is what turns that into fs.ErrNotExist.
 func (f *fakeService) remove(w http.ResponseWriter, req map[string]any) {
 	full, ok := f.hostPath(str(req["path"]))
 	if !ok {
 		connectErr(w, http.StatusForbidden, "permission_denied", "outside the sandbox")
-		return
-	}
-	if _, err := os.Stat(full); err != nil {
-		connectErr(w, http.StatusNotFound, "not_found", err.Error())
 		return
 	}
 	if err := os.RemoveAll(full); err != nil {
@@ -408,7 +427,12 @@ func (f *fakeService) start(w http.ResponseWriter, req map[string]any) {
 		}
 	}
 	cmd := exec.Command(name, args...) //nolint:gosec // a test fake, running what the test asked for
+	// Honor the requested cwd like real envd: a command whose cwd does not
+	// exist must fail, not silently run somewhere else.
 	cmd.Dir = f.root
+	if cwd, ok := f.hostPath(str(proc["cwd"])); ok && str(proc["cwd"]) != "" {
+		cmd.Dir = cwd
+	}
 	if envs, ok := proc["envs"].(map[string]any); ok {
 		cmd.Env = append(os.Environ(), envSlice(envs)...)
 	}

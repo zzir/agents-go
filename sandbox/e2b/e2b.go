@@ -112,7 +112,10 @@ type Options struct {
 	DataPlaneAuth DataPlaneAuth
 	// MaxReadFileBytes caps ReadFile; zero means the SDK default.
 	MaxReadFileBytes int64
-	// HTTPClient overrides the client used for both planes.
+	// HTTPClient overrides the client used for both planes. The default refuses
+	// cross-host redirects because Go forwards the X-API-Key / X-Access-Token
+	// credential across them; a replacement without that CheckRedirect guard
+	// can leak the credential to wherever a redirect points.
 	HTTPClient *http.Client
 }
 
@@ -136,6 +139,8 @@ type Sandbox struct {
 	// freshWorkDir marks a sandbox created in this process, whose working
 	// directory has yet to be made.
 	freshWorkDir bool
+	// wdMu serializes that first-use mkdir; taken before (never under) s.mu.
+	wdMu sync.Mutex
 }
 
 // leaseValid reports whether the lease has enough runway to skip a
@@ -268,26 +273,40 @@ func (s *Sandbox) envdBase(ctx context.Context) (string, error) {
 	if err := s.ensureWorkDir(ctx); err != nil {
 		return "", err
 	}
-	return "https://" + s.hostFor(id, EnvdPort), nil
+	return s.envdHost(id), nil
+}
+
+func (s *Sandbox) envdHost(id string) string {
+	return "https://" + s.hostFor(id, EnvdPort)
 }
 
 // ensureWorkDir creates the working directory of a freshly created sandbox.
-// A stock template has no /workspace, and everything here runs there.
+// A stock template has no /workspace, and everything here runs there. The
+// mkdir completes exactly once before any command proceeds: the flag falls
+// only on success, and concurrent first commands wait on wdMu.
 func (s *Sandbox) ensureWorkDir(ctx context.Context) error {
 	s.mu.Lock()
-	// Cleared before the call, which comes back through envdBase.
 	pending := s.freshWorkDir
-	s.freshWorkDir = false
 	s.mu.Unlock()
 	if !pending {
 		return nil
 	}
-	if err := s.makeDir(ctx, s.workDir()); err != nil {
-		s.mu.Lock()
-		s.freshWorkDir = true
-		s.mu.Unlock()
+	s.wdMu.Lock()
+	defer s.wdMu.Unlock()
+	s.mu.Lock()
+	pending, id := s.freshWorkDir, s.id
+	s.mu.Unlock()
+	if !pending || id == "" {
+		return nil
+	}
+	// makeDirAt, not makeDir: the plain path comes back here through envdBase
+	// and would deadlock on wdMu.
+	if err := s.makeDirAt(ctx, s.envdHost(id), s.workDir()); err != nil {
 		return err
 	}
+	s.mu.Lock()
+	s.freshWorkDir = false
+	s.mu.Unlock()
 	return nil
 }
 

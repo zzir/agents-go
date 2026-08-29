@@ -3,7 +3,6 @@ package e2b
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -39,6 +38,12 @@ func (s *Sandbox) envdRequest(ctx context.Context, method, path string, body io.
 	if err != nil {
 		return nil, err
 	}
+	return s.envdRequestAt(ctx, base, method, path, body)
+}
+
+// envdRequestAt is envdRequest against an explicit base, skipping envdBase's
+// provisioning — for ensureWorkDir, which envdBase itself waits on.
+func (s *Sandbox) envdRequestAt(ctx context.Context, base, method, path string, body io.Reader) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, method, base+path, body)
 	if err != nil {
 		return nil, fmt.Errorf("e2b: %s %s: %w", method, path, err)
@@ -145,14 +150,16 @@ func (s *Sandbox) filesPath(p string) string {
 }
 
 // CreateExclusive writes p only when it does not exist. envd has no atomic
-// create, so the check-and-write happens INSIDE the sandbox, in one shell
-// command under `set -C` — the shell's own noclobber, which is atomic against
-// a concurrent tool call the way a check-then-upload from here would not be.
+// create, so the check happens INSIDE the sandbox: one shell command creates
+// the file EMPTY under `set -C` — the shell's own noclobber, atomic against a
+// concurrent tool call the way a check-then-upload from here would not be. The
+// content then follows over /files (inlined in the argv it would hit Linux's
+// ~128KB per-argument cap); a failure between the two leaves the empty file —
+// content is not atomic here, matching the other backends.
 func (s *Sandbox) CreateExclusive(ctx context.Context, p string, content []byte) error {
 	full := s.resolvePath(p)
 	script := "set -C; mkdir -p " + sandbox.ShellQuote(path.Dir(full)) +
-		" && printf %s " + sandbox.ShellQuote(base64.StdEncoding.EncodeToString(content)) +
-		" | base64 -d > " + sandbox.ShellQuote(full)
+		" && : > " + sandbox.ShellQuote(full)
 	res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", script}})
 	if err != nil {
 		return err
@@ -166,7 +173,10 @@ func (s *Sandbox) CreateExclusive(ctx context.Context, p string, content []byte)
 		}
 		return fmt.Errorf("e2b: create %q: %s", p, strings.TrimSpace(res.Stderr))
 	}
-	return nil
+	if len(content) == 0 {
+		return nil
+	}
+	return s.upload(ctx, p, content)
 }
 
 /* ---------- directory operations ---------- */
@@ -267,11 +277,21 @@ func (s *Sandbox) Rename(ctx context.Context, oldPath, newPath string) error {
 }
 
 // makeDir creates a directory and its parents. An already-existing directory
-// is success: every caller here wants it to exist, not to have made it.
+// is success: every caller here wants it to exist, not to have made it. Only
+// the CODE is matched — both verified services send "already_exists", and a
+// real failure whose message merely mentions "exists" must propagate.
 func (s *Sandbox) makeDir(ctx context.Context, dir string) error {
-	err := s.unary(ctx, procMakeDir, map[string]any{"path": dir}, nil)
-	var ce *connectError
-	if errors.As(err, &ce) && (ce.Code == "already_exists" || strings.Contains(ce.Message, "exists")) {
+	base, err := s.envdBase(ctx)
+	if err != nil {
+		return err
+	}
+	return s.makeDirAt(ctx, base, dir)
+}
+
+// makeDirAt is makeDir against an explicit base — see envdRequestAt.
+func (s *Sandbox) makeDirAt(ctx context.Context, base, dir string) error {
+	err := s.unaryAt(ctx, base, procMakeDir, map[string]any{"path": dir}, nil)
+	if ce, ok := errors.AsType[*connectError](err); ok && ce.Code == "already_exists" {
 		return nil
 	}
 	return err

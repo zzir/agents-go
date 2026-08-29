@@ -2,7 +2,7 @@ package e2b
 
 import (
 	"context"
-	"strconv"
+	"fmt"
 	"time"
 
 	"github.com/zzir/agents-go/sandbox"
@@ -78,7 +78,9 @@ func (s *Sandbox) Status(ctx context.Context) (sandbox.State, error) {
 // its own — but it does need the sandbox to exist.
 func (s *Sandbox) URLForPort(ctx context.Context, port int) (string, error) {
 	if port <= 0 || port > 65535 {
-		return "", errUnsupported("port " + strconv.Itoa(port) + " is out of range")
+		// A plain validation error: ErrLifecycleUnsupported would read as a
+		// missing capability, which this service has.
+		return "", fmt.Errorf("e2b: port %d is out of range", port)
 	}
 	id, err := s.ensure(ctx)
 	if err != nil {
@@ -93,14 +95,19 @@ func (s *Sandbox) URLForPort(ctx context.Context, port int) (string, error) {
 func (s *Sandbox) Destroy(ctx context.Context) error {
 	s.mu.Lock()
 	id := s.id
-	s.forget()
 	s.mu.Unlock()
 	if id == "" {
 		return nil
 	}
-	err := s.kill(ctx, id)
-	if isNotFound(err) {
-		return nil
+	// Kill FIRST, forget only once it worked (already-gone counts): forgetting
+	// on a failed kill would make a retry a no-op and leak the billed sandbox.
+	if err := s.kill(ctx, id); err != nil && !isNotFound(err) {
+		return err
 	}
-	return err
+	s.mu.Lock()
+	if s.id == id {
+		s.forget()
+	}
+	s.mu.Unlock()
+	return nil
 }

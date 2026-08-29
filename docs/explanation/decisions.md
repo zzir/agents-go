@@ -1217,6 +1217,15 @@ there are none to keep out.
 built (the service's own console or CLI builds them); no metrics, no logs, no
 fork, no snapshots, no egress rules, no volumes, no code interpreter.
 
+Three edges the probe runs settled: MakeDir's success-on-exists is matched by
+the `already_exists` code alone — both verified services send it, and message
+text is never sniffed. `Destroy` forgets the sandbox id only after the kill
+succeeds or the service reports it gone, so a failed Destroy retries instead
+of leaking billed compute. `CreateExclusive` is atomic only in its existence
+check (`set -C` inside the sandbox); the content follows as a separate
+upload — no argv size ceiling, and the same non-atomic-content caveat every
+backend has.
+
 **The sandbox is remembered, not searched for.** A created sandbox's id is
 written to `projects.instance_ref` before the client will use it: a sandbox
 nobody recorded is billed compute nobody will ever stop, so a failure to
