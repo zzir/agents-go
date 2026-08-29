@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { SegmentedControl } from '@primer/react';
 import { HistoryIcon, WorkflowIcon, ZapIcon } from '@primer/octicons-react';
 import { WorkflowPanel } from '@/features/workflows/WorkflowPanel';
@@ -27,6 +28,16 @@ interface WorkflowsHubProps {
 // WorkflowsHub is the middle column when the sidebar's Workflows entry is
 // selected. Its header sits on the same 48px line as the chat top bar.
 export function WorkflowsHub({ tab, onTabChange, sessionId, tasksSig, onOpenRun }: WorkflowsHubProps) {
+  // Keep-alive: a view is mounted on first visit and then kept (hidden), so
+  // switching back is instant — its data, scroll and pagination intact —
+  // instead of re-mounting from an empty state (the flash). RunsView stays
+  // fresh off tasksSig even while hidden; its live ticker stands down until
+  // it is the shown view again.
+  const [visited, setVisited] = useState<Set<HubTab>>(() => new Set([tab]));
+  useEffect(() => {
+    setVisited(prev => (prev.has(tab) ? prev : new Set(prev).add(tab)));
+  }, [tab]);
+
   return (
     <div className="hub">
       <div className="chat-topbar hub-topbar">
@@ -43,11 +54,21 @@ export function WorkflowsHub({ tab, onTabChange, sessionId, tasksSig, onOpenRun 
         <div className="chat-topbar-info" aria-hidden="true" />
       </div>
       <div className="hub-body">
-        <div className="hub-content">
-          {tab === 'definitions' && <WorkflowPanel sessionId={sessionId} />}
-          {tab === 'triggers' && <TriggersView sessionId={sessionId} />}
-          {tab === 'runs' && <RunsView version={tasksSig} onOpenRun={onOpenRun} />}
-        </div>
+        {visited.has('definitions') && (
+          <div className="hub-view" hidden={tab !== 'definitions'}>
+            <div className="hub-content"><WorkflowPanel sessionId={sessionId} /></div>
+          </div>
+        )}
+        {visited.has('triggers') && (
+          <div className="hub-view" hidden={tab !== 'triggers'}>
+            <div className="hub-content"><TriggersView sessionId={sessionId} /></div>
+          </div>
+        )}
+        {visited.has('runs') && (
+          <div className="hub-view" hidden={tab !== 'runs'}>
+            <div className="hub-content"><RunsView version={tasksSig} onOpenRun={onOpenRun} active={tab === 'runs'} /></div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -165,26 +165,30 @@ const SCOPED_TABS = new Set(['providers', 'agents', 'mcp', 'skills']);
 // the panel waits, so an admin never sees the read-only note flash.
 function PanelDialog({ title, tabs, readOnly, onClose }: { title: string; tabs: DialogTab[]; readOnly?: boolean | null; onClose: () => void }) {
   const [tab, setTab] = useState(tabs[0].key);
-  const [TabComp, setTabComp] = useState<React.ComponentType | null>(null);
+  // Keep-alive: a tab's panel is loaded on first visit and then STAYS mounted
+  // (hidden), so switching back shows it instantly — data, form and scroll
+  // intact — instead of re-mounting from an empty state and re-fetching (the
+  // skeleton/blankslate flash the switch used to show, worst in dark mode).
+  // The value is the loaded component, or TabLoadError if its chunk 404'd.
+  const [loaded, setLoaded] = useState<Record<string, React.ComponentType>>({});
+
   const narrow = useNarrow();
 
   useEffect(() => {
-    // The previous panel stays on screen while the next chunk loads — clearing
-    // first blanked the dialog on every switch, even for already-cached
-    // modules (the import still resolves a microtask later). The stale flag
-    // drops a resolution that no longer matches the selected tab: a slow
-    // first-load chunk must not overwrite a faster later click's panel.
+    if (loaded[tab]) return; // already mounted — keep-alive, never reload
     let stale = false;
     const entry = tabs.find(t => t.key === tab);
     if (!entry) return;
+    // Never overwrite a key already loaded: a slow first-load chunk resolving
+    // after a faster later click must not clobber the panel that click mounted.
     entry.load().then(mod => {
-      if (!stale) setTabComp(() => mod.default);
+      if (!stale) setLoaded(prev => (prev[tab] ? prev : { ...prev, [tab]: mod.default }));
     }).catch(() => {
       // A stale chunk 404 would otherwise leave the panel blank forever.
-      if (!stale) setTabComp(() => TabLoadError);
+      if (!stale) setLoaded(prev => (prev[tab] ? prev : { ...prev, [tab]: TabLoadError }));
     });
     return () => { stale = true; };
-  }, [tab, tabs]);
+  }, [tab, tabs, loaded]);
 
   return (
     <Dialog
@@ -223,24 +227,34 @@ function PanelDialog({ title, tabs, readOnly, onClose }: { title: string; tabs: 
           </PrimerNavList>
         </nav>
         <div className="settings-content">
-          {/* The why behind the read-only panels — once, above whichever
-              admin-written panel is open; Account is the member's own, and
-              the scoped panels take member writes. */}
-          {readOnly && tab !== 'account' && !SCOPED_TABS.has(tab) && (
-            <Flash variant="default" className="settings-readonly-note">
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                <LockIcon size={16} />
-                Read-only. Shared configuration is managed by admins; you can use all of it in your own sessions.
-              </span>
-            </Flash>
-          )}
-          {TabComp && readOnly !== null ? (
-            // Scoped panels are excluded from the blanket: they gate per row
-            // (canEditRow) and set the context themselves around their form.
-            <ReadOnlyContext value={!!readOnly && !SCOPED_TABS.has(tab)}>
-              <ErrorBoundary resetKey={tab}><TabComp /></ErrorBoundary>
-            </ReadOnlyContext>
-          ) : null}
+          {/* readOnly null (/auth/me still loading) holds every panel, so an
+              admin never sees the read-only note flash. Once known, each
+              visited tab's panel is mounted and kept — the active one shown,
+              the rest hidden. */}
+          {readOnly !== null && tabs.map(t => {
+            const Comp = loaded[t.key];
+            if (!Comp) return null; // never visited → never mounted
+            // Scoped panels are excluded from the read-only blanket: they gate
+            // per row (canEditRow) and set the context themselves around their
+            // form. The note above them is keyed to the same exclusion.
+            const scoped = SCOPED_TABS.has(t.key);
+            const showNote = !!readOnly && t.key !== 'account' && !scoped;
+            return (
+              <div key={t.key} className="settings-panel" hidden={t.key !== tab}>
+                {showNote && (
+                  <Flash variant="default" className="settings-readonly-note">
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                      <LockIcon size={16} />
+                      Read-only. Shared configuration is managed by admins; you can use all of it in your own sessions.
+                    </span>
+                  </Flash>
+                )}
+                <ReadOnlyContext value={!!readOnly && !scoped}>
+                  <ErrorBoundary resetKey={t.key}><Comp /></ErrorBoundary>
+                </ReadOnlyContext>
+              </div>
+            );
+          })}
         </div>
       </div>
     </Dialog>

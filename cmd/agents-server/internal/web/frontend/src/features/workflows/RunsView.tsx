@@ -31,7 +31,10 @@ function fmtStarted(ms?: number): string {
 // every session's task.updated), so the page follows live work without
 // polling; a row opens its conversation with the execution's detail in the
 // Inspector.
-export function RunsView({ version, onOpenRun }: { version: string; onOpenRun: (sessionId: string, taskId: string) => void }) {
+// active is false while the hub keeps this view mounted but hidden: the live
+// duration ticker stands down (no per-second re-render of an unseen table),
+// while the version-driven refetch keeps running so returning is instant.
+export function RunsView({ version, onOpenRun, active = true }: { version: string; onOpenRun: (sessionId: string, taskId: string) => void; active?: boolean }) {
   const [pageIndex, setPageIndex] = useState(0);
   const { data, loading, error, reload } = useApi<TaskPage>(
     () => api.tasks.list({ kind: TASK_KIND_WORKFLOW, limit: PAGE_SIZE, offset: pageIndex * PAGE_SIZE }) as Promise<TaskPage>,
@@ -58,7 +61,7 @@ export function RunsView({ version, onOpenRun }: { version: string; onOpenRun: (
 
   // Live durations tick; a page with nothing live stands still.
   const anyLive = rows.some(r => isLive(r.status));
-  const now = useNowTicker(anyLive);
+  const now = useNowTicker(anyLive && active);
 
   const columns: Column<RunRow>[] = [
     {

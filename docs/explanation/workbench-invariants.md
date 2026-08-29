@@ -795,3 +795,18 @@ When a change genuinely doesn't fit, update this list in the same PR.
     inside a bordered button); the
     one exception is inside a Primer `Label`, whose height caps the avatar
     at 16px.
+
+51. **A tabbed dialog (Settings, Admin) and the Workflows hub keep each panel
+    mounted once visited and switch by visibility — never by remount.** A
+    remount re-runs the panel's `useApi` from its empty state, which flashed a
+    skeleton or blankslate and threw away open-form and scroll state on every
+    tab switch — worst in dark mode, where the light placeholder is the most
+    visible. So each visited panel stays in the DOM and inactive ones are
+    `hidden`. Two things this makes load-bearing: (a) the pure-form column
+    narrowing (`:has(.settings-form)`) is scoped to the individual panel, not
+    the shared scroll box, or a hidden panel showing a form would narrow the
+    visible one; each panel is its own scroller with `scrollbar-gutter: stable`
+    so switching never blinks a scrollbar in and out. (b) A kept-but-hidden
+    view stands its live work down — `RunsView`'s per-second duration ticker
+    gates on an `active` flag — while its event-driven refetch (`tasksSig`)
+    keeps running, so returning to it is both instant and current.

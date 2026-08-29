@@ -392,17 +392,36 @@ a:hover {
     font-weight: var(--base-text-weight-normal);
 }
 
+/* Hosts the kept-alive panels: the active one fills it, the rest are
+   display:none. It does not scroll itself — each panel does, so every tab
+   keeps its own scroll position across switches. */
 .settings-content {
     flex: 1;
     min-width: 0;
+    display: flex;
+    overflow: hidden;
+}
+
+/* One tab's panel, mounted once and kept. It is the scroller, with the
+   gutter reserved so switching to a panel that overflows (or back) never
+   blinks a scrollbar in and out — the reflow that read as a flash. */
+.settings-panel {
+    flex: 1;
+    min-width: 0;
     overflow-y: auto;
+    scrollbar-gutter: stable;
     padding: var(--base-size-24) 0;
+}
+
+.settings-panel[hidden] {
+    display: none;
 }
 
 /* A centered content column, like the Workflows hub's: lists and tables
    take its width. Side margins (not padding) so the scrollbar sits at the
-   dialog's edge. */
-.settings-content > * {
+   panel's edge. Scoped to the panel — not the shared content box — so a
+   hidden panel showing a form can't narrow the visible one's column. */
+.settings-panel > * {
     max-width: 1100px;
     margin-inline: max(var(--base-size-24), calc((100% - 1100px) / 2));
 }
@@ -410,7 +429,7 @@ a:hover {
 /* A pure-form page (it renders a .settings-form) narrows the whole column
    to the form's reading width and keeps it centered — symmetric margins
    instead of a lopsided gap on the form's right. */
-.settings-content:has(.settings-form) > * {
+.settings-panel:has(.settings-form) > * {
     max-width: 768px;
     margin-inline: max(var(--base-size-24), calc((100% - 768px) / 2));
 }

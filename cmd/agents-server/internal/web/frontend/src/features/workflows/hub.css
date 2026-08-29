@@ -12,14 +12,32 @@
   justify-content: flex-end;
 }
 
+/* Hosts the kept-alive views: the active one fills it, the rest are
+   display:none. It does not scroll itself — each view does, so every tab
+   keeps its own scroll position across switches. */
 .hub-body {
   flex: 1;
   min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+/* One view, mounted once and kept. It is the scroller, with the gutter
+   reserved so switching to a view that overflows (or back) never blinks a
+   scrollbar in and out — the reflow that read as a flash. */
+.hub-view {
+  flex: 1;
+  min-width: 0;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   /* Anchor absolute descendants (Primer's VisuallyHidden) so they scroll and
      clip with the pane instead of extending the document. */
   position: relative;
   padding: var(--base-size-24);
+}
+
+.hub-view[hidden] {
+  display: none;
 }
 
 .hub-content {
