@@ -17,6 +17,7 @@ type SessionRow = Omit<ApiSchemas['store.Session'], 'id'> & { id: string };
 // reading is not offered.
 export function SessionsPanel() {
   const [sessions, setSessions] = useState<SessionRow[] | null>(null);
+  const [projectNames, setProjectNames] = useState<Record<string, string>>({});
   const [reassigning, setReassigning] = useState<SessionRow | null>(null);
   const [error, setError] = useState('');
   const confirm = useConfirm();
@@ -29,6 +30,11 @@ export function SessionsPanel() {
     api.sessions.listAll()
       .then(s => { setSessions((s ?? []).map(row => ({ ...row, id: row.id || '' }))); setError(''); })
       .catch(() => setError('Failed to load sessions.'));
+    // The Project column's id→name map; a failure leaves ids unnamed rather
+    // than failing the listing.
+    api.projects.listAll()
+      .then(ps => setProjectNames(Object.fromEntries((ps ?? []).map(p => [p.id || '', p.name || '']))))
+      .catch(() => {});
   }, []);
   useEffect(() => { reload(); }, [reload]);
 
@@ -50,9 +56,14 @@ export function SessionsPanel() {
     }
   }, [confirm, reload, labelFor]);
 
+  // A bound project always resolves (its delete is refused while sessions
+  // bind it); the raw id is the honest fallback for a map that failed to load.
+  const projectOf = useCallback((s: SessionRow) => s.project_id ? (projectNames[s.project_id] ?? s.project_id) : '', [projectNames]);
+
   const columns = useMemo<Column<SessionRow>[]>(() => [
     { header: 'Session', id: 'name', rowHeader: true, width: 'growCollapse', minWidth: 160, renderCell: s => <span className="list-clip" title={s.name}>{s.name}</span> },
     { header: 'Owner', id: 'owner', width: 'growCollapse', minWidth: 120, maxWidth: 260, renderCell: s => <OwnerName owner={ownerOf(s.owner_id)} fallback={labelFor(s.owner_id)} /> },
+    { header: 'Project', id: 'project', width: 'growCollapse', minWidth: 100, maxWidth: 220, renderCell: s => <span className="list-clip" title={projectOf(s)}>{projectOf(s)}</span> },
     { header: 'Updated', id: 'updated', width: 'auto', renderCell: s => <span className="list-nowrap">{shortTime(s.updated_at)}</span> },
     actionsColumn<SessionRow>(s => (
       <RowMenu label={`Actions for ${s.name}`}>
@@ -60,7 +71,7 @@ export function SessionsPanel() {
         <ActionList.Item variant="danger" onSelect={() => { void remove(s); }}>Delete</ActionList.Item>
       </RowMenu>
     )),
-  ], [remove, ownerOf, labelFor]);
+  ], [remove, ownerOf, labelFor, projectOf]);
 
   return (
     <Stack gap="normal">
@@ -80,7 +91,7 @@ export function SessionsPanel() {
         rows={sessions ?? []}
         columns={columns}
         loading={sessions === null}
-        search={{ placeholder: 'Search sessions', match: (s, q) => `${s.name || ''} ${labelFor(s.owner_id)}`.toLowerCase().includes(q) }}
+        search={{ placeholder: 'Search sessions', match: (s, q) => `${s.name || ''} ${labelFor(s.owner_id)} ${projectOf(s)}`.toLowerCase().includes(q) }}
         empty={(
           <Blankslate>
             <Blankslate.Visual><CommentDiscussionIcon size={24} /></Blankslate.Visual>

@@ -5,7 +5,6 @@ const sk = (name: string, over: Partial<Skill> = {}): Skill =>
   ({ id: name, name, description: '', ...over });
 
 const me = 'admin-1';
-const label = (id?: string) => ({ 'u-2': 'two@example.com' } as Record<string, string>)[id || ''] || id || '';
 
 describe('repoLabel / qualifiedName', () => {
   it('qualifies a github source by owner/repo and any other by host', () => {
@@ -30,8 +29,8 @@ describe('groupSkills', () => {
       sk('b', { owner_id: me, scope: 'global', source_repo: 'https://github.com/o/r' }),
       sk('mine', { owner_id: me, scope: 'private' }),
       sk('theirs', { owner_id: 'u-2', scope: 'private', source_repo: 'https://github.com/o/r' }),
-    ], me, label);
-    expect(groups.map(g => g.label)).toEqual(['o/r', 'Local', 'o/r — two@example.com']);
+    ]);
+    expect(groups.map(g => g.label)).toEqual(['o/r', 'Local', 'o/r']);
     expect(groups[0].skills.map(s => s.name).sort()).toEqual(['a', 'b']);
     expect(groups[0].scope).toBe('global');
     expect(groups[2].ownerId).toBe('u-2');
@@ -43,7 +42,7 @@ describe('groupSkills', () => {
     const groups = groupSkills([
       sk('newest', { owner_id: me, scope: 'private', source_repo: 'https://github.com/o/new' }),
       sk('older', { owner_id: me, scope: 'private', source_repo: 'https://github.com/o/old' }),
-    ], me, label);
+    ]);
     expect(groups.map(g => g.label)).toEqual(['o/new', 'o/old']);
   });
 
@@ -51,13 +50,17 @@ describe('groupSkills', () => {
     const groups = groupSkills([
       sk('mine', { owner_id: me, scope: 'private' }),
       sk('published', { owner_id: me, scope: 'global' }),
-    ], me, label);
+    ]);
     expect(groups).toHaveLength(1);
     expect(groups[0].scope).toBeUndefined();
   });
 
-  it('names another member as the owner of their own bucket', () => {
-    const groups = groupSkills([sk('theirs', { owner_id: 'u-2', scope: 'private' })], me, label);
-    expect(groups.map(g => g.label)).toEqual(['Local — two@example.com']);
+  it('buckets another member into their own group without naming them', () => {
+    const groups = groupSkills([
+      sk('mine', { owner_id: me, scope: 'private' }),
+      sk('theirs', { owner_id: 'u-2', scope: 'private' }),
+    ]);
+    expect(groups.map(g => g.label)).toEqual(['Local', 'Local']);
+    expect(groups[0].key).not.toBe(groups[1].key);
   });
 });

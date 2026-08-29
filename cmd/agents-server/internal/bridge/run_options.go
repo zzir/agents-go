@@ -61,7 +61,7 @@ func runOptionsFor(built *BuildResult, sess *session.Session, provider agents.Mo
 		},
 		Guardrails: built.RunGuardrails,
 		Model:      agents.ModelOptions{Provider: provider},
-		Observe:    agents.ObserveOptions{Tracer: tracer, IncludeSensitiveData: built.TraceIncludeSensitive},
+		Observe:    agents.ObserveOptions{Tracer: tracer, IncludeSensitiveData: &built.TraceIncludeSensitive},
 		// The run loop's own records join the server's stream. Most of what it
 		// says is Debug, so this shows only at --log-level debug.
 		Log: agents.LogConfig{Logger: log, SensitiveData: built.LogSensitive},

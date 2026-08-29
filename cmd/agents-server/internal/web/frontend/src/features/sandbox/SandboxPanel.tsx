@@ -365,7 +365,7 @@ export function SandboxPanel() {
           sub={summary(s)}
           actions={<>
             {!readOnly && (
-              <Button onClick={() => handleTest(s)} size="small" disabled={testingId === s.id} style={{ color: 'var(--fgColor-success)' }}>
+              <Button onClick={() => handleTest(s)} size="small" variant="invisible" disabled={testingId === s.id}>
                 {testingId === s.id ? 'Testing...' : 'Test'}
               </Button>
             )}

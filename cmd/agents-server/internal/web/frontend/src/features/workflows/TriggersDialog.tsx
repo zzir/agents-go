@@ -250,7 +250,7 @@ export function TriggerForm({ fixedWorkflow, sessionId, onCreated, onCancel }:
         {fc('Conversation', <SessionPicker value={form.session_id} onChange={id => set({ session_id: id })} />,
           form.target === 'agent' ? 'Where the turn happens' : 'Where each run reports back')}
         <UnboundHint key={form.session_id} sessionId={form.session_id} what={form.target === 'agent' ? 'the turn' : 'each run'} />
-        {fc('Brief', <Textarea block rows={4} value={form.brief}
+        {fc('Brief', <Textarea block rows={8} value={form.brief}
           placeholder={form.target === 'agent' ? 'The message to send each time — say everything the agent needs' : 'What each run is about — it cannot see the conversation, so say everything it needs'}
           onChange={e => set({ brief: e.target.value })} />,
           form.kind === 'webhook' ? 'The call’s body is appended as the payload' : null)}

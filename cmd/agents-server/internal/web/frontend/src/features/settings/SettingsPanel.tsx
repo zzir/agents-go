@@ -50,14 +50,16 @@ export function SettingsPanel() {
     return settings?.find(s => s.key === key)?.value ?? '';
   }, [settings]);
 
-  const handleSave = async (key: string, value: string) => {
+  const handleSave = async (key: string, value: string): Promise<boolean> => {
     setSaving(prev => ({ ...prev, [key]: true }));
     try {
       await api.settings.set(key, value);
       reload();
+      return true;
     } catch (e) {
       // A rejected value now carries the server's reason ("… must be at most 32").
       toast.error((e as Error).message);
+      return false;
     } finally {
       setSaving(prev => ({ ...prev, [key]: false }));
     }
@@ -123,13 +125,21 @@ interface SettingRowProps {
   def: SettingDef;
   value: string;
   saving?: boolean;
-  onSave: (value: string) => void;
+  onSave: (value: string) => Promise<boolean>;
 }
 
 function SettingRow({ def, value, saving, onSave }: SettingRowProps) {
   const [draft, setDraft] = useState(value);
   const changed = draft !== value;
   useEffect(() => { setDraft(value); }, [value]);
+
+  // A segmented control reads as applied on click, so for bools it is: the
+  // click stores the value at once and reverts on failure. The draft-and-Save
+  // step exists only for the typed kinds.
+  const instant = def.kind === 'bool';
+  const setOrSave = instant
+    ? (v: string) => { setDraft(v); void onSave(v).then(ok => { if (!ok) setDraft(value); }); }
+    : setDraft;
 
   // The default belongs in the caption, not in a placeholder the operator has
   // to guess at: it is what the server actually applies when the box is empty.
@@ -140,8 +150,8 @@ function SettingRow({ def, value, saving, onSave }: SettingRowProps) {
     <FormControl>
       <FormControl.Label>{def.label}</FormControl.Label>
       {caption && <FormControl.Caption>{caption}</FormControl.Caption>}
-      <SettingInput def={def} draft={draft} setDraft={setDraft} />
-      {changed && (
+      <SettingInput def={def} draft={draft} setDraft={setOrSave} />
+      {changed && !instant && (
         <Button onClick={() => onSave(draft)} disabled={saving} variant="primary" size="small">
           {saving ? 'Saving…' : 'Save'}
         </Button>
@@ -157,26 +167,31 @@ function SettingInput({ def, draft, setDraft }: { def: SettingDef; draft: string
         <Textarea
           value={draft}
           onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setDraft(e.target.value)}
-          rows={3}
+          rows={8}
           placeholder={def.placeholder}
           block
           style={{ fontFamily: 'var(--fontStack-monospace)' }}
         />
       );
-    case 'bool':
-      // Three states, not a checkbox: an empty value is its own answer —
-      // "whatever the server decides" — and for trace_include_sensitive_data
-      // that is what lets the SDK read its environment variable. A checkbox
-      // would silently convert unset into an explicit choice on first save.
+    case 'bool': {
+      // Two states: every bool has a registered default, and the server reads
+      // unset as that default (Reader.Bool) — so the control is On/Off with
+      // the default side holding until a value is stored.
+      const options: [string, string][] = [['true', 'On'], ['false', 'Off']];
+      const selected = draft === '' ? def.default : draft;
       return (
-        <SegmentedControl aria-label={def.label} size="small">
-          {([['', def.default ? `Default (${def.default})` : 'Default'], ['true', 'On'], ['false', 'Off']] as const).map(([v, text]) => (
-            <SegmentedControl.Button key={v || 'default'} selected={draft === v} onClick={() => setDraft(v)}>
+        // onChange makes the control controlled. Without it Primer keeps the
+        // selection in internal state seeded on first render — before the
+        // settings fetch resolves — and ignores `selected` from then on.
+        <SegmentedControl aria-label={def.label} size="small" onChange={i => setDraft(options[i][0])}>
+          {options.map(([v, text]) => (
+            <SegmentedControl.Button key={v} selected={selected === v}>
               {text}
             </SegmentedControl.Button>
           ))}
         </SegmentedControl>
       );
+    }
     case 'int':
       return (
         <TextInput

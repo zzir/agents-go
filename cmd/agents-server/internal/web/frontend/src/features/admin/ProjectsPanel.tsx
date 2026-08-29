@@ -9,6 +9,12 @@ import { OwnerName, useOwnerLabels } from '@/lib/owners';
 
 type ProjectRow = Omit<ApiSchemas['store.Project'], 'id'> & { id: string; sandbox: string; sandboxType: string };
 
+// The Storage column shows just the docker volume name; a backend whose
+// sandbox IS the storage has no volume, so its cell stays empty. The full
+// hint ("docker volume X on Y" / "ref — a sandbox on host") still backs the
+// delete confirmation.
+const volumeOf = (hint?: string) => hint?.match(/^docker volume (\S+) on /)?.[1] ?? '';
+
 // ProjectsPanel: every owner's working trees and where their files live — the
 // operator's map of what exists, and of what a delete destroys. Newest first:
 // what an admin watches here is what has just appeared.
@@ -85,7 +91,7 @@ export function ProjectsPanel() {
     { header: 'Project', id: 'name', rowHeader: true, width: 'growCollapse', minWidth: 120, renderCell: p => <span className="list-clip" title={p.name}>{p.name}</span> },
     { header: 'Owner', id: 'owner', width: 'growCollapse', minWidth: 100, maxWidth: 220, renderCell: p => <OwnerName owner={ownerOf(p.owner_id)} fallback={labelFor(p.owner_id)} /> },
     { header: 'Sandbox', id: 'sandbox', width: 'growCollapse', minWidth: 90, maxWidth: 180, renderCell: p => <span className="list-clip" title={p.sandbox}>{p.sandbox}</span> },
-    { header: 'Storage', id: 'storage', width: 'growCollapse', minWidth: 140, renderCell: p => <span className="list-clip" title={p.storage_hint}>{p.storage_hint}</span> },
+    { header: 'Storage', id: 'storage', width: 'growCollapse', minWidth: 140, renderCell: p => <span className="list-clip" title={p.storage_hint}>{volumeOf(p.storage_hint)}</span> },
     { header: 'Sessions', id: 'sessions', width: 'auto', renderCell: p => <span className="list-nowrap">{p.session_count ?? 0}</span> },
     // The list is newest first, so the date it sorts on is on the row.
     { header: 'Created', id: 'created', width: 'auto', renderCell: p => <span className="list-nowrap">{p.created_at ? shortTime(p.created_at) : ''}</span> },

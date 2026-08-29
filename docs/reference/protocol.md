@@ -1157,9 +1157,10 @@ one span whole (`GET /sessions/:id/traces/:span_id`) when it is opened —
 what a session's history costs to open no longer grows with what its model
 calls carried. Payloads past `trace_span_data_kb` are replaced with a
 truncation marker in the row itself. The `trace_include_sensitive_data`
-setting keeps conversation content out of traces entirely. Unset, that key
-defers to the SDK's `OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA` environment
-variable.
+setting (default on) keeps conversation content out of traces entirely when
+off; the server always passes its resolved value explicitly, so the SDK's
+`OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA` environment variable is not
+consulted.
 
 ### Terminal endpoint — `GET /ws/terminal`
 

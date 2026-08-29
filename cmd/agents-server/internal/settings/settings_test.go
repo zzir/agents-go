@@ -125,27 +125,27 @@ func TestReaderReadsStoredValues(t *testing.T) {
 	}
 }
 
-// trace_include_sensitive_data is the one tri-state: unset must stay nil so
-// the SDK can read OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA. Defaulting it
-// here would take that escape hatch away.
-func TestTraceSensitiveStaysTriState(t *testing.T) {
+// trace_include_sensitive_data resolves like every other bool: the registered
+// default (true) when unset or unusable, the stored value otherwise. The
+// server always passes the result explicitly — the SDK's environment variable
+// is not consulted here.
+func TestTraceSensitiveResolvesDefault(t *testing.T) {
 	r, w := newReader(t)
 	ctx := t.Context()
-	if got := r.BoolPtr(ctx, settings.KeyTraceIncludeSensitiveData); got != nil {
-		t.Fatalf("unset must be nil, got %v", *got)
+	if !r.Bool(ctx, settings.KeyTraceIncludeSensitiveData) {
+		t.Fatal("unset must resolve to the default true")
 	}
 	if err := w.Set(ctx, settings.KeyTraceIncludeSensitiveData, "false"); err != nil {
 		t.Fatal(err)
 	}
-	got := r.BoolPtr(ctx, settings.KeyTraceIncludeSensitiveData)
-	if got == nil || *got {
-		t.Fatalf("explicit false must come through as a pointer, got %v", got)
+	if r.Bool(ctx, settings.KeyTraceIncludeSensitiveData) {
+		t.Fatal("explicit false must come through")
 	}
 	if err := w.Set(ctx, settings.KeyTraceIncludeSensitiveData, "garbage"); err != nil {
 		t.Fatal(err)
 	}
-	if got := r.BoolPtr(ctx, settings.KeyTraceIncludeSensitiveData); got != nil {
-		t.Fatalf("an unusable value must defer to the SDK, got %v", *got)
+	if !r.Bool(ctx, settings.KeyTraceIncludeSensitiveData) {
+		t.Fatal("an unusable value must fall back to the default true")
 	}
 }
 

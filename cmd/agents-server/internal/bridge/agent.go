@@ -108,10 +108,9 @@ type BuildResult struct {
 
 	// TraceIncludeSensitive gates whether generation spans record request and
 	// response content (the global trace_include_sensitive_data setting).
-	// nil = the SDK default (include). With it off, traces keep only
-	// timing/usage metadata — and the trace panel's Replay has nothing to
-	// seed from, by design.
-	TraceIncludeSensitive *bool
+	// With it off, traces keep only timing/usage metadata — and the trace
+	// panel's Replay has nothing to seed from, by design.
+	TraceIncludeSensitive bool
 
 	// LogSensitive gates whether the SDK's own log records carry conversation
 	// content (the log_sensitive_data setting). Separate from the trace
@@ -205,7 +204,7 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, project
 	}
 	result, err := buildAgentFromConfig(ctx, deps, agentConfigID, bc)
 	if err == nil {
-		result.TraceIncludeSensitive = deps.Settings.BoolPtr(ctx, settings.KeyTraceIncludeSensitiveData)
+		result.TraceIncludeSensitive = deps.Settings.Bool(ctx, settings.KeyTraceIncludeSensitiveData)
 		result.LogSensitive = deps.Settings.Bool(ctx, settings.KeyLogSensitiveData)
 	}
 	if err == nil && !background && deps.TaskManager != nil {

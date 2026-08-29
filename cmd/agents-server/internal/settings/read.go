@@ -78,20 +78,6 @@ func (r *Reader) Bool(ctx context.Context, key string) bool {
 	return v
 }
 
-// BoolPtr is Bool for a key whose default is "let the layer below decide":
-// nil when nothing usable is stored and the registry names no default.
-func (r *Reader) BoolPtr(ctx context.Context, key string) *bool {
-	raw := r.resolve(ctx, key)
-	if raw == "" {
-		return nil
-	}
-	v, err := strconv.ParseBool(raw)
-	if err != nil {
-		return nil
-	}
-	return &v
-}
-
 // ProxyClient returns an *http.Client routed through the proxy_url setting,
 // or nil when none is set.
 //

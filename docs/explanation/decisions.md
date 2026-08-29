@@ -1073,8 +1073,9 @@ worth more than a review of each added file. The same repo imported by two
 people is two independent groups, each moving alone; the qualified names
 collide and resolve own-over-global, exactly as §5.29 says.
 
-The UI mirrors the invariant: the visibility and owner badges sit on a repo
-group's heading rather than on each row, because the group is what moves.
+The UI mirrors the invariant: the visibility badge sits on a repo group's
+heading rather than on each row, because the group is what moves. Who owns
+which group is the Admin dialog's Skills tab, not a badge in Settings.
 
 ### 5.32 A project's environment is write-only, like every other credential here
 

@@ -55,11 +55,7 @@ export function qualifiedName(sk: Skill): string {
 // Groups follow the scoped-listing order the flat panels use (store's
 // scopedListOrder): published first, then whichever group was added most
 // recently — the rows arrive in that order, so first-seen IS newest-first.
-export function groupSkills(
-  skills: Skill[],
-  meId: string | undefined,
-  labelFor: (ownerId?: string) => string,
-): SkillGroup[] {
+export function groupSkills(skills: Skill[]): SkillGroup[] {
   const map = new Map<string, SkillGroup>();
   for (const sk of skills) {
     const repo = sk.source_repo || '';
@@ -67,11 +63,10 @@ export function groupSkills(
     const key = repo + '\u0000' + owner; // NUL: neither a URL nor a uuid holds one
     let group = map.get(key);
     if (!group) {
-      const base = repo ? (sk.repo_label || repoLabel(repo)) : 'Local';
       group = {
         repo,
         ownerId: owner,
-        label: owner && owner !== meId ? `${base} — ${labelFor(owner)}` : base,
+        label: repo ? (sk.repo_label || repoLabel(repo)) : 'Local',
         scope: sk.scope,
         skills: [],
         key,

@@ -2,9 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, TextInput, Label, SegmentedControl, Stack } from '@primer/react';
 import { SecretInput } from '@/components/SecretInput';
 import { FormActions } from '@/components/FormActions';
-import { CrudPanel, OwnerBadge, RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
+import { CrudPanel, RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
 import { ReadOnlyContext, canDeleteRow, canDemoteRow, canEditRow } from '@/lib/access';
-import { useOwnerLabels } from '@/lib/owners';
 import { useMe } from '@/lib/me';
 import { ResourceRow } from '@/components/ResourceRow';
 import { api } from '@/lib/api';
@@ -113,7 +112,6 @@ function ProviderForm({ initial, onSave, onCancel, onDelete, saving, providerTyp
 export function ProviderPanel() {
   const { me } = useMe();
   const isAdmin = me?.role === 'admin';
-  const { labelFor } = useOwnerLabels();
   const rowEditable = (p: Provider) => canEditRow(isAdmin, me?.id, p);
   const { items: providers, adding, editing, startAdd, startEdit, cancel, save, saving, remove, reload } =
     useCrud<Provider, ProviderFormData>(api.providers);
@@ -207,7 +205,7 @@ export function ProviderPanel() {
                 title={p.chatgpt_logged_in ? 'ChatGPT signed in' : 'ChatGPT not signed in'}
               />}
               title={p.name}
-              badges={<><ScopeBadge row={p} meId={me?.id} /><OwnerBadge row={p} meId={me?.id} labelFor={labelFor} /><Label variant={meta.badgeVariant}>{meta.badge}</Label></>}
+              badges={<><ScopeBadge row={p} meId={me?.id} /><Label variant={meta.badgeVariant}>{meta.badge}</Label></>}
               sub={p.base_url || meta.baseURLPlaceholder}
               actions={<>
                 {chatgpt && rowEditable(p) && (p.chatgpt_logged_in

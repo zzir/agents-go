@@ -638,6 +638,19 @@ When a change genuinely doesn't fit, update this list in the same PR.
     A default lives in the registry, never in a `const` beside its one reader:
     a default the panel cannot show is one the operator has to read the source
     to learn.
+    Presentation derives from the registry too: every bool carries a
+    registered default and renders as two states — unset reads as that
+    default (`Reader.Bool`), so a third "Default" option would be the same
+    answer twice. This is deliberate for `trace_include_sensitive_data` as
+    well: the server resolves and passes the value explicitly, so the SDK's
+    `OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA` variable is not consulted —
+    the settings panel is the one switch, rather than a tri-state control
+    guarding an env-var escape hatch nobody could see.
+    Bool clicks store immediately (a segmented control reads as applied on
+    click), and the control gets an `onChange`: without one Primer's
+    `SegmentedControl` is uncontrolled — the selection freezes at first
+    render, before the settings fetch resolves, which is how a stored
+    `preview_enabled` used to show as unset after every refresh.
 
 41. **A destructive action confirms once, in one place.** Every settings
     panel's Delete goes through `useCrud.remove`, which asks (Primer

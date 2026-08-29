@@ -60,8 +60,7 @@ type Def struct {
 	Description string `json:"description,omitempty"`
 	Placeholder string `json:"placeholder,omitempty"`
 	// Default is the value that applies when the setting is unset. Empty means
-	// the feature is off (or, for KeyTraceIncludeSensitiveData, that the SDK
-	// decides) — never "the zero value happens to be right".
+	// the feature is off — never "the zero value happens to be right".
 	Default string `json:"default,omitempty"`
 	// Min and Max bound a KindInt value. A zero Max means unbounded.
 	Min int `json:"min,omitempty"`
@@ -101,14 +100,15 @@ var defs = []Def{{
 	Default:     "30",
 	Min:         0,
 }, {
-	// No default: unset must stay unset, because the SDK then reads
-	// OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA. Defaulting it here would
-	// take that escape hatch away.
+	// Defaulted on purpose: the server always passes an explicit value, so
+	// the SDK's OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA variable is not
+	// consulted here — this switch is the one authority.
 	Key:         KeyTraceIncludeSensitiveData,
 	Kind:        KindBool,
 	Group:       GroupTracing,
 	Label:       "Trace sensitive data",
-	Description: "On (the default) records prompts, outputs and tool arguments in stored traces. Off leaves spans with only timing and usage metadata, and the trace panel's Replay nothing to seed from. Applies to new runs.",
+	Default:     "true",
+	Description: "On records prompts, outputs and tool arguments in stored traces. Off leaves spans with only timing and usage metadata, and the trace panel's Replay nothing to seed from. Applies to new runs.",
 }, {
 	Key:         KeyTraceSpanDataKB,
 	Kind:        KindInt,

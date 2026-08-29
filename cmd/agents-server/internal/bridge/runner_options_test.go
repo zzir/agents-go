@@ -74,16 +74,18 @@ func TestUnknownToolReturnsToTheModelByDefault(t *testing.T) {
 }
 
 // The resolved flag reaches the run options — this is what actually gates
-// what generation spans record.
+// what generation spans record. Always explicit: the server resolves the
+// setting's default itself, never the SDK's environment variable.
 func TestRunOptionsForCarriesSensitiveFlag(t *testing.T) {
-	off := false
-	built := &BuildResult{TraceIncludeSensitive: &off}
+	built := &BuildResult{TraceIncludeSensitive: false}
 	opts := runOptionsFor(built, nil, nil, nil, "", nil)
 	if opts.Observe.IncludeSensitiveData == nil || *opts.Observe.IncludeSensitiveData {
 		t.Fatal("TraceIncludeSensitive=false must reach Observe.IncludeSensitiveData")
 	}
-	if got := runOptionsFor(&BuildResult{}, nil, nil, nil, "", nil); got.Observe.IncludeSensitiveData != nil {
-		t.Fatal("unset flag must stay nil (SDK default)")
+	built.TraceIncludeSensitive = true
+	opts = runOptionsFor(built, nil, nil, nil, "", nil)
+	if opts.Observe.IncludeSensitiveData == nil || !*opts.Observe.IncludeSensitiveData {
+		t.Fatal("TraceIncludeSensitive=true must reach Observe.IncludeSensitiveData")
 	}
 }
 

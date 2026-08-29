@@ -9,8 +9,7 @@ import { type Skill, type SkillGroup, groupSkills } from '@/lib/skills';
 import { BADGE } from '@/lib/badges';
 import { canDeleteRow, canDemoteRow, canEditRow } from '@/lib/access';
 import { useMe } from '@/lib/me';
-import { useOwnerLabels } from '@/lib/owners';
-import { OwnerBadge, ScopeBadge } from '@/components/CrudPanel';
+import { ScopeBadge } from '@/components/CrudPanel';
 
 const NEW_SKILL_TEMPLATE = `---
 name: my-skill
@@ -61,7 +60,7 @@ function SkillEditor({ initial, onSave, onCancel, onDelete, saving, readOnly }: 
         value={content}
         onChange={e => setContent(e.target.value)}
         readOnly={readOnly}
-        rows={18}
+        rows={40}
         block
         resize="vertical"
         style={{ fontFamily: 'var(--fontStack-monospace)', fontSize: 12 }}
@@ -215,11 +214,10 @@ export function SkillsPanel() {
     }
   };
 
-  // Groups are (repo, owner): a listing carrying other people's rows — the
-  // admin's, or a published repo — names whose each group is, and a group
-  // flip's blast radius is exactly what its heading says.
-  const { labelFor } = useOwnerLabels();
-  const grouped = groupSkills(skills || [], me?.id, labelFor);
+  // Groups are (repo, owner): the same repo imported by two people is two
+  // groups, each flipping on its own. Who owns which is the Admin dialog's
+  // business, not this panel's.
+  const grouped = groupSkills(skills || []);
 
   return (
     <Stack gap="normal">
@@ -298,13 +296,14 @@ export function SkillsPanel() {
         const groupItems = (canSync ? 1 : 0) + (canPublish ? 1 : 0) + (canUnpublish ? 1 : 0);
         return (
         <div key={group.key} className="Box">
-          <div className="Box-row" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {/* justifyContent overrides .Box-row's space-between: the heading
+              clusters left, only the menu rides the right edge. */}
+          <div className="Box-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: 8 }}>
             <span className="resource-row-title">{group.label}</span>
-            {/* Scope and author sit on the GROUP: a repo publishes as one. */}
+            {/* Scope sits on the GROUP: a repo publishes as one. */}
             {group.scope && <ScopeBadge row={owner} meId={me?.id} />}
-            <OwnerBadge row={owner} meId={me?.id} labelFor={labelFor} />
-            <span className="resource-row-sub">{group.skills.length} skill{group.skills.length === 1 ? '' : 's'}</span>
-            {syncing.has(group.key) && <span className="resource-row-sub">Syncing…</span>}
+            <span className="resource-row-sub" style={{ marginTop: 0 }}>{group.skills.length} skill{group.skills.length === 1 ? '' : 's'}</span>
+            {syncing.has(group.key) && <span className="resource-row-sub" style={{ marginTop: 0 }}>Syncing…</span>}
             {groupItems > 0 && (
               <div style={{ marginLeft: 'auto' }}>
                 <RowMenu label={`Actions for ${group.label}`}>

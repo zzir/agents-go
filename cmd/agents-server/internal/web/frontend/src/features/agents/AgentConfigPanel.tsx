@@ -2,9 +2,8 @@ import React, { useState } from 'react';
 import { TextInput, Textarea, FormControl, Checkbox, Select, Stack } from '@primer/react';
 import { TokenListInput } from '@/components/TokenListInput';
 import { FormActions } from '@/components/FormActions';
-import { CrudPanel, OwnerBadge, RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
+import { CrudPanel, RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
 import { ReadOnlyContext, canDeleteRow, canDemoteRow, canEditRow, canReference } from '@/lib/access';
-import { useOwnerLabels } from '@/lib/owners';
 import { useMe } from '@/lib/me';
 import { ResourceRow } from '@/components/ResourceRow';
 import { api } from '@/lib/api';
@@ -139,7 +138,6 @@ interface AgentFormProps {
 function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, skills, allAgents, providerTypes, providers }: AgentFormProps) {
   const { me } = useMe();
   const meId = me?.id;
-  const { labelFor } = useOwnerLabels();
   const initHandoffs = (): (string | number)[] => {
     try { return JSON.parse((initial && initial.handoffs) || '[]'); } catch { return []; }
   };
@@ -233,7 +231,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
   // Skills are grouped by their import source (a repo can bundle dozens) so
   // the list stays manageable — collapsed by default, with a group-level
   // checkbox to select/deselect the whole source at once.
-  const skillGroups = groupSkills(visibleSkills, meId, labelFor);
+  const skillGroups = groupSkills(visibleSkills);
   const [expandedSkillRepos, setExpandedSkillRepos] = useState<Set<string>>(new Set());
   const toggleSkillRepoExpanded = (repo: string) => {
     setExpandedSkillRepos(prev => {
@@ -315,7 +313,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
 
       <div className="form-group">
         <div className="form-group-title">Instructions</div>
-        {fc('Instructions', <Textarea value={form.instructions} onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('instructions', e.target.value)} rows={5} placeholder="System prompt / instructions for this agent..." block style={{ fontFamily: 'var(--fontStack-monospace)' }} />, null, { hideLabel: true })}
+        {fc('Instructions', <Textarea value={form.instructions} onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('instructions', e.target.value)} rows={8} placeholder="System prompt / instructions for this agent..." block style={{ fontFamily: 'var(--fontStack-monospace)' }} />, null, { hideLabel: true })}
       </div>
 
       {visibleMcp.length > 0 && <div className="form-group">
@@ -416,7 +414,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
           {fc('Threshold (tokens)', <TextInput block type="number" min={0} value={String(form.compaction_threshold_tokens || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_threshold_tokens', parseInt(e.target.value) || 0)} />, 'Token count that triggers compaction (0 = default 50000); sized from real usage, byte-estimated where unmeasured')}
           {fc('Window size', <TextInput block type="number" min={0} value={String(form.compaction_window || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_window', parseInt(e.target.value) || 0)} />, 'Recent items to keep intact (0 = default 10)')}
           {fc('Summary model', <TextInput value={form.compaction_model || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_model', e.target.value)} placeholder="e.g. gpt-4.1-mini" block />, "Model used to generate conversation summaries (empty = the agent's model)")}
-          {fc('Summary prompt', <Textarea value={form.compaction_prompt || ''} onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('compaction_prompt', e.target.value)} rows={3} placeholder="Custom summarization instructions (leave empty for default)" block style={{ fontFamily: 'var(--fontStack-monospace)' }} />)}
+          {fc('Summary prompt', <Textarea value={form.compaction_prompt || ''} onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('compaction_prompt', e.target.value)} rows={8} placeholder="Custom summarization instructions (leave empty for default)" block style={{ fontFamily: 'var(--fontStack-monospace)' }} />)}
         </>}
       </div>
 
@@ -512,7 +510,6 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
 export function AgentConfigPanel() {
   const { me } = useMe();
   const isAdmin = me?.role === 'admin';
-  const { labelFor } = useOwnerLabels();
   const rowEditable = (a: Agent) => canEditRow(isAdmin, me?.id, a);
   const { items: agents, adding, editing, startAdd, startEdit, cancel, save, saving, remove, reload } =
     useCrud<Agent, AgentFormData & { handoffs: string; tools: string; skills: string; model_settings: string }>(api.agents);
@@ -570,7 +567,7 @@ export function AgentConfigPanel() {
           return (
             <ResourceRow key={a.id}
               title={a.name}
-              badges={<><ScopeBadge row={a} meId={me?.id} /><OwnerBadge row={a} meId={me?.id} labelFor={labelFor} /></>}
+              badges={<ScopeBadge row={a} meId={me?.id} />}
               sub={a.description || undefined}
               // One meta line instead of a strip of labels: model@endpoint. An
               // unset or vanished provider is a row that cannot run — say so.

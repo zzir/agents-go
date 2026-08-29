@@ -66,9 +66,6 @@ const TEMPLATES: { key: string; label: string; form: () => WorkflowFormData }[] 
   },
 ];
 
-// promptRows sizes the prompt box to its text: a one-liner stays small, a
-// paragraph gets room, nothing scrolls before a dozen lines.
-const promptRows = (text: string) => Math.min(12, Math.max(3, text.split('\n').length + 1));
 
 interface WorkflowFormProps {
   initial?: WorkflowFormData | null;
@@ -159,7 +156,7 @@ function WorkflowForm({ initial, onSave, onCancel, onDelete, saving, agents }: W
               <IconButton icon={TrashIcon} aria-label="Remove step" size="small" variant="invisible"
                 disabled={form.steps.length === 1} onClick={() => removeStep(i)} />
             </div>
-            <Textarea block rows={promptRows(step.prompt)} value={step.prompt}
+            <Textarea block rows={8} value={step.prompt}
               onChange={e => setStep(i, { prompt: e.target.value })}
               placeholder="What this step should do — the previous steps are already in the conversation" />
             <div className="wf-step-opts">
@@ -295,7 +292,7 @@ function RunDialog({ workflow, sessionId, onClose }: { workflow: Workflow; sessi
               .map(p => <Select.Option key={p.id} value={p.id}>{projectLabel(p.name, nameOf(sandboxDefs, p.sandbox_id))}</Select.Option>)}
           </Select>, 'This conversation has no project bound yet; the one picked here becomes its binding, as a first message\'s would')
         )}
-        <Textarea block rows={6} value={input} onChange={e => setInput(e.target.value)} autoFocus
+        <Textarea block rows={8} value={input} onChange={e => setInput(e.target.value)} autoFocus
           placeholder="What this run is about — the brief that leads the first step" />
       </Stack>
     </Dialog>
