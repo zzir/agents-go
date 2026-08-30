@@ -42,14 +42,23 @@ func (r *Runner) maybeGenerateTitle(parentCtx context.Context, sessionID, model,
 	}
 	prompt := "Generate a short title for this chat:\n\n" + userInput
 	res, err := agents.RunSync(ctx, titleAgent, prompt, agents.RunOptions{Exec: agents.ExecOptions{MaxTurns: 1}, Model: agents.ModelOptions{Provider: provider}})
+	var title string
 	if err != nil {
-		log.Warn("title gen: run failed", "error", err)
-		return
+		log.Warn("title gen: run failed, using first message", "error", err)
+	} else {
+		title = strings.Trim(strings.TrimSpace(res.FinalOutputString()), "\"'")
+		if len([]rune(title)) > 50 {
+			log.Warn("title gen: too long, using first message", "raw", title)
+			title = ""
+		}
 	}
-	title := strings.TrimSpace(res.FinalOutputString())
-	title = strings.Trim(title, "\"'")
-	if title == "" || len([]rune(title)) > 50 {
-		log.Warn("title gen: empty or too long", "raw", title)
+	// A reachable provider that still failed (or garbled the title) leaves the
+	// session nameless; fall back to the user's first message so it is not stuck
+	// as "New Session". Provider absence bailed earlier — that stays a no-op.
+	if title == "" {
+		title = fallbackTitle(userInput)
+	}
+	if title == "" {
 		return
 	}
 
@@ -69,4 +78,19 @@ func (r *Runner) maybeGenerateTitle(parentCtx context.Context, sessionID, model,
 		SessionID: sessionID,
 		Title:     title,
 	})
+}
+
+// fallbackTitle derives a readable name from the user's first message when the
+// title model is unavailable: its first line, trimmed to 50 runes with an
+// ellipsis when clipped.
+func fallbackTitle(userInput string) string {
+	line := userInput
+	if i := strings.IndexAny(line, "\r\n"); i >= 0 {
+		line = line[:i]
+	}
+	line = strings.TrimSpace(line)
+	if r := []rune(line); len(r) > 50 {
+		return strings.TrimSpace(string(r[:50])) + "…"
+	}
+	return line
 }
