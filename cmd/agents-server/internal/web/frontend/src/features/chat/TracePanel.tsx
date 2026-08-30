@@ -199,7 +199,7 @@ const BUILTIN_TOOL_NAMES = new Set([
 
 // toolGroup buckets a traced tool by provenance for the tools picker.
 function toolGroup(name: string): string {
-  if (name === 'read_skill_file') return 'Skills';
+  if (name === 'read_skill') return 'Skills';
   if (BUILTIN_TOOL_NAMES.has(name)) return 'Built-in';
   const sep = name.indexOf('__');
   if (sep > 0) return 'MCP: ' + name.slice(0, sep);

@@ -163,7 +163,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
   };
   const initMs = parseModelSettings() as { reasoning?: { effort?: string }; service_tier?: string; extra_body?: Record<string, unknown>; temperature?: number; top_p?: number; max_tokens?: number };
   const [form, setForm] = useState<AgentFormData>({
-    name: '', avatar: '', description: '', instructions: '', model: 'gpt-5.5',
+    name: '', avatar: '', description: '', instructions: '', model: '',
     provider_id: '', context_window: 0,
     max_turns: 0, handoff_description: '',
     disable_tool_choice_reset: false, stop_at_tools: '',
