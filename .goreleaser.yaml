@@ -42,6 +42,29 @@ archives:
       - src: cmd/agents-server/README.md
         dst: README.md
 
+# Build one multi-arch image from the prebuilt binaries (no rebuild) and push the same tags to both
+# registries. buildx stitches the arches into a single manifest per tag; :latest is skipped on
+# pre-release tags. Requires QEMU + buildx and a login to each registry — set up in release.yml.
+dockers_v2:
+  - id: server
+    ids: [ agents-server ]
+    dockerfile: scripts/Dockerfile.server
+    images:
+      - ghcr.io/zzir/agents-server
+      - docker.io/zzir/agents-server
+    tags:
+      - "{{ .Version }}"
+      - "{{ if not .Prerelease }}latest{{ end }}"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels:
+      org.opencontainers.image.title: agents-server
+      org.opencontainers.image.source: https://github.com/zzir/agents-go
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.created: "{{ .Date }}"
+
 checksum:
   name_template: checksums.txt
 

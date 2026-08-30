@@ -1,0 +1,9 @@
+FROM busybox:1.37 AS prep
+RUN mkdir -p /data
+
+FROM gcr.io/distroless/static-debian13:nonroot
+COPY --from=prep --chown=65532:65532 /data /data
+COPY agents-server /usr/local/bin/agents-server
+WORKDIR /data
+EXPOSE 9527 9528
+ENTRYPOINT ["/usr/local/bin/agents-server"]

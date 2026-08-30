@@ -33,6 +33,18 @@ your data, embeddable SDK. Solo or as a team.
    clears it.) Or build from source:
    [Running the workbench](docs/tutorial/workbench.md).
 
+   Or run the container image (published to GHCR and Docker Hub on each release):
+
+   ```bash
+   docker run -p 9527:9527 -v agents-data:/data ghcr.io/zzir/agents-server:latest --host 0.0.0.0
+   ```
+
+   Pass `--host 0.0.0.0` — the default `127.0.0.1` is unreachable from outside the
+   container. State persists in the `/data` volume (the default `data.db` lands
+   there) and the startup token is printed to the container logs. Any other flags
+   go on the same line; swap the image for `zzir/agents-server:latest` to pull from
+   Docker Hub.
+
 2. **Run it.**
 
    ```bash
