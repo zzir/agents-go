@@ -529,6 +529,10 @@ type E2BConfig struct {
 
 	// TemplateID names a template that already exists on the service.
 	TemplateID string `json:"template_id"`
+	// User is the account commands run as; "" = e2b's default ("user"). It must
+	// be an account the template provides, so a template that names its account
+	// differently is reachable. Passed per request, so editing it needs no rebuild.
+	User string `json:"user,omitempty"`
 	// TimeoutSeconds is the lease a sandbox is created and refreshed with;
 	// 0 uses the backend default.
 	TimeoutSeconds int `json:"timeout_seconds,omitempty"`

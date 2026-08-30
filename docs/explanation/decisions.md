@@ -1428,7 +1428,8 @@ reaches three more fields — `template_id`, `auto_pause`, `allow_internet` —
 because a `/connect` resume re-attaches to the already-provisioned instance and
 cannot re-apply them: accepting the edit would look saved yet silently never
 take effect, so it is `409` instead. `timeout_seconds` is exempt — resume
-re-sends it, so a change lands on the next refresh. Nothing about the lifecycle
+re-sends it, so a change lands on the next refresh; `user` is likewise editable,
+riding every command so an edit takes the next one. Nothing about the lifecycle
 changed; what changed is that the mutability line is drawn between FIELDS
 instead of between TABLES, which is where it always was.
 

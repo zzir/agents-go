@@ -72,6 +72,7 @@ interface E2BShape {
   api_key?: string;
   data_plane_auth?: string;
   template_id?: string;
+  user?: string;
   timeout_seconds?: number;
   auto_pause?: boolean;
   allow_internet?: boolean;
@@ -143,6 +144,7 @@ function pack(form: FormState): PackedForm {
       api_url: form.api_url, domain: form.domain,
       api_key: form.api_key, data_plane_auth: form.data_plane_auth,
       template_id: form.template_id,
+      user: form.user,
       auto_pause: form.auto_pause,
       allow_internet: form.allow_internet,
     };
@@ -270,6 +272,10 @@ function SandboxForm({ initial, seed, onSave, onCancel, onDelete, saving }: {
       {form.type === 'e2b' && fc('Template id',
         <TextInput block value={form.template_id} onChange={e => set('template_id', e.target.value)} placeholder="base" />,
         'A template that already exists on the service — the workbench builds none. Its console or CLI is where they are made.',
+      )}
+      {form.type === 'e2b' && fc('User',
+        <TextInput block value={form.user} onChange={e => set('user', e.target.value)} placeholder="user (default)" />,
+        'The account commands run as — must be one the template provides. Empty = the service default, "user".',
       )}
       {form.type === 'e2b' && fc('Lease (seconds)',
         <TextInput block type="number" value={form.timeout_seconds} onChange={e => set('timeout_seconds', e.target.value)} placeholder="300" />,

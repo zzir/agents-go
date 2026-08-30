@@ -64,6 +64,7 @@ func e2bOptions(spec Spec) (e2bsb.Options, error) {
 		APIKey:           c.APIKey,
 		DataPlaneAuth:    e2bsb.DataPlaneAuth(c.DataPlaneAuth),
 		TemplateID:       c.TemplateID,
+		User:             c.User,
 		SandboxID:        spec.Project.InstanceRef,
 		TimeoutSeconds:   c.TimeoutSeconds,
 		AutoPause:        c.AutoPause,

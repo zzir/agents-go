@@ -837,7 +837,8 @@ the projects that block it. For an e2b sandbox the freeze also covers
 `template_id`, `auto_pause` and `allow_internet`: a `/connect` resume
 re-attaches to the already-provisioned instance and cannot re-apply them, so an
 edit that projects block is `409` rather than a save that silently never takes
-effect. `timeout_seconds` is exempt — resume re-sends it. The image, the limits,
+effect. `timeout_seconds` is exempt — resume re-sends it — as is `user`, which
+rides every command and so lands on the next one. The image, the limits,
 the credentials and the name stay freely editable; key rotation is routine, and
 an image change replaces the containers at their next run. The `prompt` is
 editable too, but unlike the image it is NOT a content change: it retires no
