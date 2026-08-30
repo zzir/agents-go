@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'scripts/Dockerfile'
+      - 'scripts/Dockerfile.sandbox'
       - '.github/workflows/sandbox-image.yml'
   workflow_dispatch:
 
@@ -46,7 +46,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: scripts
-          file: scripts/Dockerfile
+          file: scripts/Dockerfile.sandbox
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}

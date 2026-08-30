@@ -35,10 +35,10 @@ RUN apt-get update && \
 
 RUN ln -sf /usr/bin/fdfind /usr/local/bin/fd
 
-RUN useradd -m -u 1000 -s /bin/bash sandbox && \
-    echo "sandbox ALL=(ALL) NOPASSWD:ALL" >/etc/sudoers.d/sandbox && \
+RUN useradd -m -s /bin/bash dev && \
+    echo "dev ALL=(ALL) NOPASSWD:ALL" >/etc/sudoers.d/dev && \
     mkdir -p /workspace && \
-    chown -R sandbox:sandbox /workspace
+    chown -R dev:dev /workspace
 
 ENV MISE_DATA_DIR=/opt/mise \
     MISE_INSTALL_PATH=/usr/local/bin/mise \
@@ -46,14 +46,14 @@ ENV MISE_DATA_DIR=/opt/mise \
     UV_INSTALL_DIR=/usr/local/bin
 
 RUN curl -fsSL https://mise.run | sh && mise --version && \
-    mkdir -p /opt/mise && chown -R sandbox:sandbox /opt/mise
+    mkdir -p /opt/mise && chown -R dev:dev /opt/mise
 
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh && uv --version
 
-USER sandbox
-
-ENV HOME=/home/sandbox
+ENV HOME=/home/dev
 
 WORKDIR /workspace
+
+USER dev
 
 CMD ["/bin/bash"]
