@@ -1,15 +1,16 @@
-/* The toast stack: fixed, centered, newest at the bottom. The container is
-   always in the DOM so its live region exists before the first message. */
+/* The toast stack: fixed to the top-right corner (out of the content column so a
+   toast never covers a control), newest at the bottom. The container is always
+   in the DOM so its live region exists before the first message. */
 .global-toast-stack {
   position: fixed;
   top: var(--base-size-16);
-  left: 50%;
-  transform: translateX(-50%);
+  right: var(--base-size-16);
   z-index: var(--zIndex-toast);
   display: flex;
   flex-direction: column;
+  align-items: flex-end;
   gap: var(--base-size-8);
-  max-width: min(480px, calc(100vw - 32px));
+  max-width: min(420px, calc(100vw - 32px));
   pointer-events: none;
 }
 
@@ -22,6 +23,21 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--base-size-8);
+}
+
+/* The message row: icon + a single clamped line of text (full text is in the
+   title attribute and the console). min-width:0 lets the text child shrink so
+   text-overflow can ellipsize instead of forcing the toast wider. */
+.global-toast-body {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--base-size-8);
+  min-width: 0;
+}
+.global-toast-msg {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* An error's keyboard-reachable dismiss (Escape also takes the newest). */

@@ -45,10 +45,10 @@ const FLASH_ICON: Record<string, React.ReactNode> = {
 type FlashProps = React.ComponentProps<typeof Flash>;
 
 // A queue, not one slot: three errors during a long run stack up instead of
-// each overwriting the last. Errors stay until dismissed — a click, their
-// close button, or Escape (the newest first); everything else auto-dismisses.
-// The stack div always exists so the live region is established before the
-// first announcement.
+// each overwriting the last. Errors linger (10s) so they can be read, then
+// auto-dismiss; a click, their close button, or Escape (the newest first) takes
+// one sooner. The stack div always exists so the live region is established
+// before the first announcement.
 function GlobalToast() {
   const [items, setItems] = useState<Array<{ id: number; msg: string; type: string; exiting?: boolean }>>([]);
   const seqRef = useRef(0);
@@ -66,20 +66,19 @@ function GlobalToast() {
   useEffect(() => {
     onToast(({ msg, type }) => {
       // Collapse a repeat of a toast that's still on screen: a double-click on
-      // Save shouldn't stack two identical errors. A still-visible
-      // auto-dismissing toast just gets its timer refreshed.
+      // Save shouldn't stack two identical errors — the visible one just gets
+      // its dismiss timer refreshed.
+      const ttl = type === 'error' ? 10000 : 4000;
       const dup = itemsRef.current.find(it => !it.exiting && it.msg === msg && it.type === type);
       if (dup) {
-        if (type !== 'error') {
-          const prev = timersRef.current.get(dup.id);
-          if (prev) clearTimeout(prev);
-          timersRef.current.set(dup.id, setTimeout(() => dismiss(dup.id), 4000));
-        }
+        const prev = timersRef.current.get(dup.id);
+        if (prev) clearTimeout(prev);
+        timersRef.current.set(dup.id, setTimeout(() => dismiss(dup.id), ttl));
         return;
       }
       const id = ++seqRef.current;
       setItems(prev => [...prev.slice(-4), { id, msg, type }]);
-      if (type !== 'error') timersRef.current.set(id, setTimeout(() => dismiss(id), 4000));
+      timersRef.current.set(id, setTimeout(() => dismiss(id), ttl));
     });
     const timers = timersRef.current;
     return () => {
@@ -108,8 +107,8 @@ function GlobalToast() {
           className={'global-toast' + (it.exiting ? ' global-toast-exit' : '')}
           onClick={() => dismiss(it.id)}
         >
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-            {FLASH_ICON[it.type]}{it.msg}
+          <span className="global-toast-body" title={it.msg}>
+            {FLASH_ICON[it.type]}<span className="global-toast-msg">{it.msg}</span>
           </span>
           {it.type === 'error' && (
             <IconButton icon={XIcon} size="small" variant="invisible" aria-label="Dismiss" className="global-toast-close"
