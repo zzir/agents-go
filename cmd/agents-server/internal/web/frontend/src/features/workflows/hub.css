@@ -12,6 +12,15 @@
   justify-content: flex-end;
 }
 
+/* On a phone the Definitions/Triggers/Runs control eats the row; the redundant
+   "Workflows" heading would clip to a lone "W", so drop it and let the tabs
+   name the hub. */
+@media (max-width: 767px) {
+  .hub-topbar .chat-topbar-title {
+    display: none;
+  }
+}
+
 /* Hosts the kept-alive views: the active one fills it, the rest are
    display:none. It does not scroll itself — each view does, so every tab
    keeps its own scroll position across switches. */
@@ -79,6 +88,14 @@
 .hub-runs th {
   min-width: 0;
   white-space: nowrap;
+}
+
+/* Six columns collapse onto each other below this width (the grid squeezes
+   tracks until nowrap cells overlap); a min-width floors it so Primer's
+   ScrollableRegion scrolls instead — the hub is narrow on a phone or beside
+   the sidebar on a tablet. */
+.hub-runs table {
+  min-width: 620px;
 }
 
 .hub-clip {

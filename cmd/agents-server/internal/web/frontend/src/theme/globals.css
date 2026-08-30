@@ -356,7 +356,9 @@ a:hover {
         top: 0;
         left: 0;
         bottom: 0;
-        width: 35vw;
+        /* An overlay drawer over a backdrop, not a persistent rail: wide enough
+           to read a session title, capped so it never swallows the whole phone. */
+        width: min(80vw, 300px);
         border-right: 1px solid var(--borderColor-muted);
         z-index: var(--zIndex-drawer);
         transform: translateX(-100%);
@@ -827,6 +829,12 @@ a:hover {
 .list-table th {
   min-width: 0;
   white-space: nowrap;
+}
+/* Below this width the 4–6 columns collapse onto each other (the DataTable
+   grid squeezes tracks until nowrap cells overlap); a min-width floors the
+   grid so Primer's own ScrollableRegion scrolls it instead. */
+.list-table table {
+  min-width: 560px;
 }
 .list-clip {
   display: block;

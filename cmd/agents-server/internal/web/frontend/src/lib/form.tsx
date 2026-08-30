@@ -25,8 +25,12 @@ export function seg(
   onChange: (v: string) => void,
   hint?: string | null,
 ) {
+  // Past four options the row overflows a phone; there Primer collapses it to
+  // a dropdown (its onSelect still fires each Button's onClick, so selection
+  // works in both shapes). Small sets stay inline — the point of a segment.
+  const variant = options.length > 4 ? ({ narrow: 'dropdown' } as const) : undefined;
   return fc(label, (
-    <SegmentedControl aria-label={label} size="small">
+    <SegmentedControl aria-label={label} size="small" variant={variant}>
       {options.map(([v, text]) => (
         <SegmentedControl.Button key={v || 'default'} selected={value === v} onClick={() => onChange(v)}>
           {text}
