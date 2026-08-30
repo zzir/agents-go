@@ -383,10 +383,11 @@ func newHandoffOutputItem(agent, from, to *Agent, raw InputItem) *RunItem {
 	}
 }
 
-// handoffOutputInput builds the function_call_output input item acknowledging a
-// handoff, carrying the standard transfer message {"assistant": <agent name>}.
+// handoffOutputInput builds the function_call_output acknowledging a handoff: the
+// transfer marker {"assistant": <agent name>} plus a plain-language identity line
+// so a weak target model reads that IT now owns the conversation — see spec §2.4.
 func handoffOutputInput(callID, targetAgentName string) InputItem {
-	msg := fmt.Sprintf(`{"assistant":%q}`, targetAgentName)
+	msg := fmt.Sprintf("{\"assistant\":%q}\n\nYou are now %q, handling this conversation directly.", targetAgentName, targetAgentName)
 	return responses.ResponseInputItemParamOfFunctionCallOutput(callID, msg)
 }
 

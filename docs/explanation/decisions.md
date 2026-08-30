@@ -1530,3 +1530,20 @@ may keep its own, visibly and overridably.
 The cost is that the handful of users who turned tracing content off through the
 environment must now pass `IncludeSensitiveData: new(false)` — an explicit,
 per-run decision, which is the point.
+
+### 5.40 A handoff acknowledgement tells the target it owns the turn
+
+Decided 2026-08-30. The function-call output the runner synthesizes for a handoff
+([spec §2.4](../reference/spec.md#24-handoffs)) carried only the transfer marker
+`{"assistant": <target name>}`, the shape inherited from openai-agents-python. A
+capable model reads that marker as "you are now this agent"; a weak one reads it
+as the output of a tool *it* called and narrates the transfer in the third person
+— answering as if it had handed the conversation to someone else (observed with a
+small flash model handing off, then saying it had "transferred the question" to
+the very agent it had just become).
+
+The marker stays — it is machine-readable and keeps the lineage — but a
+plain-language line, `You are now "<name>", handling this conversation directly.`,
+is appended after it. Small models act on the sentence; large ones are unaffected
+by the redundancy. Dropping the marker for prose alone would trade a working
+signal for nothing, so the line is additive rather than a replacement.

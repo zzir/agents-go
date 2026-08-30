@@ -405,6 +405,10 @@ points.
 - `MaxTurns` **keeps accumulating** across a handoff; it is not reset.
 - `InputFilter` may rewrite the history handed to the target agent. **The session
   always retains the unfiltered conversation.**
+- The acknowledgement the target reads for the transfer call is the marker
+  `{"assistant": <target name>}` followed by a plain-language identity line, so a
+  weaker target model does not mistake the transfer for a call it made itself
+  ([§5.40](../explanation/decisions.md#540-a-handoff-acknowledgement-tells-the-target-it-owns-the-turn)).
 - The target agent's `OnStart` fires at the beginning of the next turn.
 - A handoff happens **inside the same run**, so it shares the run's session and
   usage. Contrast with agent-as-tool ([§2.8](#28-nested-agent-as-tool-attribution)),
