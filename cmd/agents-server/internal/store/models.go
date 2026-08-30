@@ -358,10 +358,11 @@ type ContextProfile struct {
 // NOT the provider's — see workbench invariant 28.
 type PromptProfile struct {
 	// The instruction layers, in the order WrapInstructions composed them.
-	InstructionsChars int `json:"instructions_chars,omitempty"`
-	GlobalPromptChars int `json:"global_prompt_chars,omitempty"`
-	MemoryChars       int `json:"memory_chars,omitempty"`
-	SkillsIndexChars  int `json:"skills_index_chars,omitempty"`
+	InstructionsChars  int `json:"instructions_chars,omitempty"`
+	GlobalPromptChars  int `json:"global_prompt_chars,omitempty"`
+	MemoryChars        int `json:"memory_chars,omitempty"`
+	SandboxPromptChars int `json:"sandbox_prompt_chars,omitempty"`
+	SkillsIndexChars   int `json:"skills_index_chars,omitempty"`
 	// Tools are the locally attached tools, bucketed by what attached them.
 	// MCP is absent here: its tools live on the server, not on the agent, and
 	// are sized by the read path (which is also the only place a live server
@@ -452,6 +453,12 @@ type Sandbox struct {
 	// as TEXT and sent to/received from the API as a raw JSON object (no
 	// double-encoding).
 	Config json.RawMessage `bun:"config,type:text,nullzero" json:"config,omitempty"`
+
+	// Prompt is appended to the instructions of every agent in a session bound
+	// to a project on this sandbox — content, not identity, and not a
+	// retirement trigger: an edit reaches the next run without replacing live
+	// instances.
+	Prompt string `bun:"prompt" json:"prompt,omitempty"`
 
 	// Revision counts this row's WRITES: 1 at creation, +1 on every update,
 	// name-only included. It is the row's concurrency control — the

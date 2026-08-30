@@ -775,6 +775,15 @@ ports list), `public_ports` (a previewed port is served on a public host —
 anyone with the URL). Clients offer actions from these flags, never from the
 `type` string (workbench invariant 53).
 
+A sandbox may also carry a top-level `prompt` (both types) — free text
+describing the machine: the toolchain the image ships, whether it has network,
+which package manager to reach for. It is appended as a SUFFIX to the
+instructions of every agent in a session bound to a project on this sandbox,
+after the agent's own instructions and its memories and before the skills
+index. No project means no sandbox tools and no prompt (decisions §5.33): a chat
+with no working tree never sees it. It is not a credential — it round-trips
+unmasked.
+
 For `e2b` — any service speaking the E2B API: E2B's own cloud, a self-hosted
 E2B, or a compatible service such as Alibaba Cloud's Function Compute cloud
 sandbox (decisions §5.34) — the config is `api_url` (control plane; empty =
@@ -830,7 +839,10 @@ re-attaches to the already-provisioned instance and cannot re-apply them, so an
 edit that projects block is `409` rather than a save that silently never takes
 effect. `timeout_seconds` is exempt — resume re-sends it. The image, the limits,
 the credentials and the name stay freely editable; key rotation is routine, and
-an image change replaces the containers at their next run.
+an image change replaces the containers at their next run. The `prompt` is
+editable too, but unlike the image it is NOT a content change: it retires no
+instance and severs no terminal, reaching bound sessions at their next run — the
+same as a rename.
 
 A sandbox carries one monotonic counter, `revision`: every write bumps it. A
 `PUT` MAY carry the `revision` the edit was based on (from GET/List) to make the

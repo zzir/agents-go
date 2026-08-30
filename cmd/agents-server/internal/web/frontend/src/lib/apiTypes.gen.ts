@@ -3832,7 +3832,7 @@ export interface paths {
         put?: never;
         /**
          * Create sandbox
-         * @description type "docker" config: host ("" = local daemon, tcp://, or ssh://user@host with ssh_* auth), image (required), runtime, user ("" = root), network (docker network name; "" = no network), memory_mb/cpus caps, max_read_file_bytes. type "e2b" config: api_url, domain, api_key, data_plane_auth, template_id (required — build it on the service first), timeout_seconds, auto_pause, allow_internet, max_read_file_bytes. ssh_password and api_key are write-only, ******** mask semantics. Every returned row carries "supports" — the type's capability flags (rebuild, any_port, public_ports), derived and read-only.
+         * @description type "docker" config: host ("" = local daemon, tcp://, or ssh://user@host with ssh_* auth), image (required), runtime, user ("" = root), network (docker network name; "" = no network), memory_mb/cpus caps, max_read_file_bytes. type "e2b" config: api_url, domain, api_key, data_plane_auth, template_id (required — build it on the service first), timeout_seconds, auto_pause, allow_internet, max_read_file_bytes. ssh_password and api_key are write-only, ******** mask semantics. Top-level optional "prompt" (both types) is appended to the agent instructions of every session bound to a project on this sandbox — no project, no sandbox tools, no prompt; editing it reaches the next run without retiring the container. Every returned row carries "supports" — the type's capability flags (rebuild, any_port, public_ports), derived and read-only.
          */
         post: {
             parameters: {
@@ -3925,7 +3925,7 @@ export interface paths {
         };
         /**
          * Update sandbox
-         * @description Include the revision the edit was based on (from GET/List) to make the write conditional: 409 if the row changed meanwhile. Omitting it falls back to last-writer-wins.
+         * @description Include the revision the edit was based on (from GET/List) to make the write conditional: 409 if the row changed meanwhile. Omitting it falls back to last-writer-wins. Editing the top-level "prompt" is NOT a content change: it retires no container and severs no terminal, reaching bound sessions at their next run (unlike an image change).
          */
         put: {
             parameters: {
@@ -7708,6 +7708,12 @@ export interface components {
             config?: number[];
             name?: string;
             /**
+             * @description Prompt is appended to the instructions of every agent in a session bound
+             *     to a project on this sandbox — type-agnostic, and content rather than
+             *     identity (an edit reaches the next run without retiring live instances).
+             */
+            prompt?: string;
+            /**
              * @description Revision, on update only, is the revision the client's edit was based
              *     on (from GET/List): editing from a stale form is then 409 instead of
              *     silently overwriting a concurrent update. Absent (0) keeps
@@ -8180,6 +8186,7 @@ export interface components {
             /** @description MCPServerIDs are the servers the build wired up, in config order. */
             mcp_server_ids?: string[];
             memory_chars?: number;
+            sandbox_prompt_chars?: number;
             skills_index_chars?: number;
             /**
              * @description Tools are the locally attached tools, bucketed by what attached them.
@@ -8239,6 +8246,13 @@ export interface components {
             created_at?: string;
             id?: string;
             name?: string;
+            /**
+             * @description Prompt is appended to the instructions of every agent in a session bound
+             *     to a project on this sandbox — content, not identity, and not a
+             *     retirement trigger: an edit reaches the next run without replacing live
+             *     instances.
+             */
+            prompt?: string;
             /**
              * @description Revision counts this row's WRITES: 1 at creation, +1 on every update,
              *     name-only included. It is the row's concurrency control — the

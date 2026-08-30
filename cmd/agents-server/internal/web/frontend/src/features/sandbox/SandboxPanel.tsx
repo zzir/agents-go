@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Button, TextInput, Label, Checkbox, FormControl, Select, Stack } from '@primer/react';
+import { Button, TextInput, Textarea, Label, Checkbox, FormControl, Select, Stack } from '@primer/react';
 import { SecretInput } from '@/components/SecretInput';
 import { FormActions } from '@/components/FormActions';
 import { CrudPanel, RowActionsMenu } from '@/components/CrudPanel';
@@ -29,6 +29,9 @@ interface SandboxRow {
   name: string;
   type: string;
   config: Record<string, unknown>;
+  // A type-agnostic top-level field (NOT inside config): appended to the agent
+  // instructions of any session working on this sandbox.
+  prompt?: string;
   // Row version from the server; sent back on save so an edit made on a
   // stale form is refused (409) instead of overwriting a concurrent update.
   revision?: number;
@@ -43,6 +46,7 @@ interface PackedForm {
   name: string;
   type: string;
   config?: Record<string, unknown>;
+  prompt?: string;
   revision?: number;
 }
 
@@ -77,6 +81,8 @@ interface E2BShape {
 interface FormState {
   name: string;
   type: SandboxType;
+  // Type-agnostic: appended to the agent's instructions on this sandbox.
+  prompt: string;
   // docker: where
   host: string;
   ssh_key_file: string;
@@ -111,6 +117,7 @@ function flatten(s: Partial<SandboxRow>): FormState {
   return {
     name: s.name || '',
     type,
+    prompt: s.prompt || '',
     host: c.host || '',
     ssh_key_file: c.ssh_key_file || '', ssh_password: c.ssh_password || '',
     ssh_use_agent: !!c.ssh_use_agent, ssh_known_hosts: c.ssh_known_hosts || '',
@@ -142,7 +149,7 @@ function pack(form: FormState): PackedForm {
     const timeout = parseInt(form.timeout_seconds, 10);
     if (Number.isFinite(timeout) && timeout > 0) config.timeout_seconds = timeout;
     if (Number.isFinite(maxRead) && maxRead > 0) config.max_read_file_bytes = maxRead;
-    return { name: form.name, type: 'e2b', config };
+    return { name: form.name, type: 'e2b', config, prompt: form.prompt };
   }
   const config: Record<string, unknown> = {
     host: form.host,
@@ -160,7 +167,7 @@ function pack(form: FormState): PackedForm {
   const cpus = parseFloat(form.cpus);
   if (Number.isFinite(cpus) && cpus > 0) config.cpus = cpus;
   if (Number.isFinite(maxRead) && maxRead > 0) config.max_read_file_bytes = maxRead;
-  return { name: form.name, type: 'docker', config };
+  return { name: form.name, type: 'docker', config, prompt: form.prompt };
 }
 
 function SandboxForm({ initial, seed, onSave, onCancel, onDelete, saving }: {
@@ -285,6 +292,11 @@ function SandboxForm({ initial, seed, onSave, onCancel, onDelete, saving }: {
           <FormControl.Label>Allow outbound network access</FormControl.Label>
         </FormControl>
       )}
+      {fc('Prompt',
+        <Textarea block rows={3} value={form.prompt} onChange={e => set('prompt', e.target.value)}
+          placeholder="e.g. Python 3.12 and Node 20 are installed. No outbound network; use the vendored packages." />,
+        'Appended to the agent\'s instructions for any session working on this sandbox — what the image has, how to use it. Edits reach the next run without replacing the container.',
+      )}
       {fc('Max read_file bytes',
         <TextInput block type="number" value={form.max_read_file_bytes} onChange={e => set('max_read_file_bytes', e.target.value)} placeholder="8388608" />,
         'Cap on bytes a single read_file returns; larger files fail instead of loading into memory. Empty = 8 MiB default.',
@@ -325,7 +337,7 @@ function copyOf(s: SandboxRow): SandboxRow {
   const config = { ...(s.config || {}) };
   delete config.ssh_password;
   delete config.api_key;
-  return { id: '', name: s.name + ' copy', type: s.type, config };
+  return { id: '', name: s.name + ' copy', type: s.type, config, prompt: s.prompt };
 }
 
 export function SandboxPanel() {

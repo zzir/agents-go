@@ -100,6 +100,10 @@ type sandboxReq struct {
 	Name   string          `json:"name"`
 	Type   string          `json:"type"`
 	Config json.RawMessage `json:"config"`
+	// Prompt is appended to the instructions of every agent in a session bound
+	// to a project on this sandbox — type-agnostic, and content rather than
+	// identity (an edit reaches the next run without retiring live instances).
+	Prompt string `json:"prompt,omitempty"`
 	// Revision, on update only, is the revision the client's edit was based
 	// on (from GET/List): editing from a stale form is then 409 instead of
 	// silently overwriting a concurrent update. Absent (0) keeps
@@ -108,7 +112,7 @@ type sandboxReq struct {
 }
 
 func (r sandboxReq) toSandbox() *store.Sandbox {
-	return &store.Sandbox{Name: r.Name, Type: r.Type, Config: r.Config}
+	return &store.Sandbox{Name: r.Name, Type: r.Type, Config: r.Config, Prompt: r.Prompt}
 }
 
 // validate enforces the POLICY layer of a sandbox write: a name, and a type
@@ -134,7 +138,7 @@ func (h *SandboxHandler) validate(c *gin.Context, req *sandboxReq) bool {
 // Create persists a new sandbox from the request body.
 //
 //	@Summary		Create sandbox
-//	@Description	type "docker" config: host ("" = local daemon, tcp://, or ssh://user@host with ssh_* auth), image (required), runtime, user ("" = root), network (docker network name; "" = no network), memory_mb/cpus caps, max_read_file_bytes. type "e2b" config: api_url, domain, api_key, data_plane_auth, template_id (required — build it on the service first), timeout_seconds, auto_pause, allow_internet, max_read_file_bytes. ssh_password and api_key are write-only, ******** mask semantics. Every returned row carries "supports" — the type's capability flags (rebuild, any_port, public_ports), derived and read-only.
+//	@Description	type "docker" config: host ("" = local daemon, tcp://, or ssh://user@host with ssh_* auth), image (required), runtime, user ("" = root), network (docker network name; "" = no network), memory_mb/cpus caps, max_read_file_bytes. type "e2b" config: api_url, domain, api_key, data_plane_auth, template_id (required — build it on the service first), timeout_seconds, auto_pause, allow_internet, max_read_file_bytes. ssh_password and api_key are write-only, ******** mask semantics. Top-level optional "prompt" (both types) is appended to the agent instructions of every session bound to a project on this sandbox — no project, no sandbox tools, no prompt; editing it reaches the next run without retiring the container. Every returned row carries "supports" — the type's capability flags (rebuild, any_port, public_ports), derived and read-only.
 //	@Tags			sandboxes
 //	@Accept			json
 //	@Produce		json
@@ -198,7 +202,7 @@ func (h *SandboxHandler) Get(c *gin.Context) {
 // reach bound sessions at their next run.
 //
 //	@Summary		Update sandbox
-//	@Description	Include the revision the edit was based on (from GET/List) to make the write conditional: 409 if the row changed meanwhile. Omitting it falls back to last-writer-wins.
+//	@Description	Include the revision the edit was based on (from GET/List) to make the write conditional: 409 if the row changed meanwhile. Omitting it falls back to last-writer-wins. Editing the top-level "prompt" is NOT a content change: it retires no container and severs no terminal, reaching bound sessions at their next run (unlike an image change).
 //	@Tags			sandboxes
 //	@Accept			json
 //	@Produce		json

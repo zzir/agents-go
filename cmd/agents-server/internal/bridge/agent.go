@@ -426,8 +426,10 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID string,
 
 	mark := len(agent.Tools)
 
-	// Sandbox tools — "" means none; a build failure fails the run.
-	if err := attachSandboxTools(ctx, deps, bc, agent, approveCommands); err != nil {
+	// Sandbox tools — "" means none; a build failure fails the run. Also
+	// appends the sandbox's own prompt to the instructions (measured into the
+	// profile), so it lands after memories and before the skills index below.
+	if err := attachSandboxTools(ctx, deps, bc, agent, approveCommands, &result.Profile); err != nil {
 		return nil, err
 	}
 	mark = bucketToolsSince(agent, mark, store.ToolSourceSandbox, &result.Profile)
@@ -543,7 +545,7 @@ func attachMCPServers(ctx context.Context, deps *AgentDeps, agent *agents.Agent,
 // fails the run rather than silently downgrading — a bound session must not
 // run coding prompts with no file system. The instance reference is recorded
 // on bc for the build's Release.
-func attachSandboxTools(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx, agent *agents.Agent, approveCommands bool) error {
+func attachSandboxTools(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx, agent *agents.Agent, approveCommands bool, prof *store.PromptProfile) error {
 	if bc.projectID == "" {
 		return nil
 	}
@@ -564,6 +566,13 @@ func attachSandboxTools(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx,
 	}
 	bc.releases = append(bc.releases, release)
 	agent.Tools = append(agent.Tools, tools...)
+	// The sandbox's own prompt — what this machine is and how to use it — as a
+	// SUFFIX, so it lands after the agent's instructions and memories and
+	// before the skills index the caller adds next.
+	if p := spec.Sandbox.Prompt; p != "" {
+		agent.Instructions = agents.WrapInstructions(agent.Instructions, "", p)
+		prof.SandboxPromptChars = len(p)
+	}
 	return nil
 }
 
