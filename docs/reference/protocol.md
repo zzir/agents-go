@@ -960,10 +960,14 @@ current revision.
 
 ### ChatGPT OAuth
 
-Login, logout, and status are per-provider, under the provider resource —
-see [Providers](#providers--apiv1providers). The browser OAuth redirect lands
-on a temporary listener at the fixed ChatGPT port (localhost:1455), not on an
-API route.
+Login, complete, logout, and status are per-provider, under the provider
+resource — see [Providers](#providers--apiv1providers). `login` returns an
+authorize URL; the browser redirect after authorizing lands on
+`http://localhost:1455/auth/callback`, where nothing on the server listens. The
+user copies that URL and submits it to `complete`, which redeems the code
+server-side. This replaces the CLI-style loopback listener so a remotely deployed
+server — where the browser's `localhost` is not the server's — can still sign in
+([decisions §5.41](../explanation/decisions.md#541-chatgpt-login-redeems-a-pasted-callback-url-not-a-loopback-listener)).
 
 A `chatgpt_login` provider talks to the Codex backend
 (`chatgpt.com/backend-api/codex`), which differs from the standard API in two

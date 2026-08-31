@@ -58,8 +58,9 @@ func CurrentUser(c *gin.Context) (protocol.UserInfo, bool) {
 //
 // Every entry must name a route that exists — an exemption for a path nothing
 // serves silently unauthenticates whatever gets mounted there later. The
-// ChatGPT OAuth callback is not here for that reason: it is served by a
-// temporary listener on localhost:1455, never by this router.
+// ChatGPT OAuth flow needs no exemption: its browser redirect lands on
+// localhost (never on this server), and the code returns through the
+// authenticated /providers/:id/chatgpt/complete route.
 func authExempt(path string) bool {
 	switch {
 	case path == APIPrefix+"/auth/login",

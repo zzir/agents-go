@@ -235,8 +235,10 @@ server — the handler builds it from `server.APIPrefix` and the one
 `mcpOAuthCallbackPath` constant its route is mounted on; `bridge` receives the
 finished URI and knows no path. A callback that lands anywhere else under
 `/api/` is neither routed nor exempt, so every login ends in `401 unauthorized`. The
-ChatGPT login callback is deliberately absent — its redirect lands on a
-temporary listener at 127.0.0.1:1455, never on this server. Webhook triggers
+ChatGPT login callback is deliberately absent — its redirect lands on
+`localhost` (never on this server), and the user pastes the resulting URL back
+through the authenticated `/providers/:id/chatgpt/complete` route, which redeems
+the code server-side ([decisions §5.41](../explanation/decisions.md#541-chatgpt-login-redeems-a-pasted-callback-url-not-a-loopback-listener)). Webhook triggers
 (`POST /hooks/:id`) live outside `/api/` for the same reason a callback does —
 the caller is another system, with no token — and are authenticated by HMAC
 signature instead (see [Workflows](../reference/protocol.md#workflows--apiv1workflows)).

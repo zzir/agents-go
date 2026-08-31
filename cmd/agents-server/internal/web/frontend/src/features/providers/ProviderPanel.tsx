@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { Button, TextInput, Label, SegmentedControl, Stack } from '@primer/react';
 import { SecretInput } from '@/components/SecretInput';
 import { FormActions } from '@/components/FormActions';
@@ -116,46 +116,37 @@ export function ProviderPanel() {
   const { items: providers, adding, editing, startAdd, startEdit, cancel, save, saving, remove, reload } =
     useCrud<Provider, ProviderFormData>(api.providers);
   const { data: providerTypes } = useApi<ProviderTypeInfo[]>(() => api.providerTypes.list() as Promise<ProviderTypeInfo[]>);
-  const [signingIn, setSigningIn] = useState<Record<string, boolean>>({});
-  const pollRef = useRef<Record<string, { interval: number; timeout: number }>>({});
+  // Sign-in is a two-step manual-paste flow — there is no loopback listener to
+  // catch the redirect (see the API's chatgpt.complete). handleLogin opens the
+  // authorize popup and reveals the paste field; handleComplete redeems the
+  // callback URL the user copies back from that popup.
+  const [pasteURL, setPasteURL] = useState<Record<string, string>>({});
+  const [awaiting, setAwaiting] = useState<Record<string, boolean>>({});
+  const [completing, setCompleting] = useState<Record<string, boolean>>({});
 
-  const stopPoll = useCallback((id: string | number) => {
-    const p = pollRef.current[id];
-    if (p) {
-      clearInterval(p.interval);
-      clearTimeout(p.timeout);
-      delete pollRef.current[id];
-    }
-    setSigningIn(prev => ({ ...prev, [id]: false }));
-  }, []);
-
-  useEffect(() => () => {
-    for (const id of Object.keys(pollRef.current)) stopPoll(id);
-  }, [stopPoll]);
-
-  // The ChatGPT callback runs on a separate localhost server, so there is no
-  // postMessage from the popup — polling the status endpoint is the only
-  // completion signal. A re-click supersedes the stale attempt instead of
-  // leaving the user stuck when the popup was closed or denied.
   const handleLogin = async (id: string) => {
-    stopPoll(id);
-    setSigningIn(prev => ({ ...prev, [id]: true }));
     try {
       const d = await api.chatgpt.login(id) as { authorize_url: string };
       window.open(d.authorize_url, 'chatgpt_oauth', 'width=500,height=700');
-      const interval = setInterval(async () => {
-        try {
-          const s = await api.chatgpt.status(id) as { logged_in: boolean };
-          if (s.logged_in) { stopPoll(id); reload(); }
-        } catch { /* ignore transient */ }
-      }, 2000) as unknown as number;
-      // Give up after 2 minutes: the button reverts to "Sign in" and a later
-      // completed login still shows up on the next reload.
-      const timeout = setTimeout(() => { stopPoll(id); reload(); }, 2 * 60 * 1000) as unknown as number;
-      pollRef.current[id] = { interval, timeout };
+      setPasteURL(prev => ({ ...prev, [id]: '' }));
+      setAwaiting(prev => ({ ...prev, [id]: true }));
     } catch (e) {
       toast.error((e as Error).message);
-      setSigningIn(prev => ({ ...prev, [id]: false }));
+    }
+  };
+
+  const handleComplete = async (id: string) => {
+    const url = (pasteURL[id] || '').trim();
+    if (!url) return;
+    setCompleting(prev => ({ ...prev, [id]: true }));
+    try {
+      await api.chatgpt.complete(id, url);
+      setAwaiting(prev => ({ ...prev, [id]: false }));
+      reload();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setCompleting(prev => ({ ...prev, [id]: false }));
     }
   };
 
@@ -210,7 +201,20 @@ export function ProviderPanel() {
               actions={<>
                 {chatgpt && rowEditable(p) && (p.chatgpt_logged_in
                   ? <Button onClick={() => handleLogout(p.id)} size="small" variant="invisible">Sign out</Button>
-                  : <Button onClick={() => handleLogin(p.id)} size="small" variant="invisible" loading={!!signingIn[p.id]}>Sign in</Button>)}
+                  : awaiting[p.id]
+                    ? <Stack direction="horizontal" gap="condensed" align="center">
+                        <TextInput size="small" style={{ width: 220 }}
+                          aria-label="Paste the ChatGPT callback URL"
+                          placeholder="Paste callback URL from popup…"
+                          value={pasteURL[p.id] || ''}
+                          onChange={e => setPasteURL(prev => ({ ...prev, [p.id]: e.target.value }))}
+                          onKeyDown={e => { if (e.key === 'Enter') handleComplete(p.id); }} />
+                        <Button size="small" variant="primary" loading={!!completing[p.id]}
+                          onClick={() => handleComplete(p.id)}>Complete</Button>
+                        <Button size="small" variant="invisible"
+                          onClick={() => setAwaiting(prev => ({ ...prev, [p.id]: false }))}>Cancel</Button>
+                      </Stack>
+                    : <Button onClick={() => handleLogin(p.id)} size="small" variant="invisible">Sign in</Button>)}
                 <RowActionsMenu name={p.name} editReadOnly={!rowEditable(p)} onEdit={() => startEdit(p)}
                   scope={{ row: p, setScope: api.providers.setScope, canPromote: isAdmin, canDemote: canDemoteRow(isAdmin, me?.id, p), onDone: reload }} />
               </>}

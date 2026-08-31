@@ -442,6 +442,10 @@ export const api = {
   // credential, shared by every agent pointed at it.
   chatgpt: {
     login: (providerId: string | number) => request(`/providers/${providerId}/chatgpt/login`, { method: 'POST' }),
+    // Redeem the callback URL the user pastes after authorizing; the loopback
+    // redirect has no listener, so this is how a login completes.
+    complete: (providerId: string | number, redirectUrl: string) =>
+      request(`/providers/${providerId}/chatgpt/complete`, { method: 'POST', body: JSON.stringify({ redirect_url: redirectUrl }) }),
     logout: (providerId: string | number) => request(`/providers/${providerId}/chatgpt/logout`, { method: 'POST' }),
     status: (providerId: string | number) => request(`/providers/${providerId}/chatgpt/status`),
   },

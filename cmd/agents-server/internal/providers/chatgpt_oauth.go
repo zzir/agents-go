@@ -9,8 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
-	"net"
 	"net/http"
 	"net/url"
 	"slices"
@@ -24,15 +22,23 @@ import (
 
 // ChatGPT OAuth configuration constants.
 const (
-	chatgptClientID    = "app_EMoamEEZ73f0CkXaXp7hrann"
-	chatgptAuthURL     = "https://auth.openai.com/oauth/authorize"
-	chatgptTokenURL    = "https://auth.openai.com/oauth/token"
-	chatgptScope       = "openid profile email offline_access api.connectors.read api.connectors.invoke"
+	chatgptClientID = "app_EMoamEEZ73f0CkXaXp7hrann"
+	chatgptAuthURL  = "https://auth.openai.com/oauth/authorize"
+	chatgptTokenURL = "https://auth.openai.com/oauth/token"
+	chatgptScope    = "openid profile email offline_access api.connectors.read api.connectors.invoke"
+	// chatgptRedirectURI is fixed: OpenAI's Codex client only registers loopback
+	// callbacks, and the token exchange must echo the same value the authorize
+	// request used. Nothing on the server listens here — the user pastes the
+	// redirected URL back to CompleteLogin (see decisions §5.41).
 	chatgptRedirectURI = "http://localhost:1455/auth/callback"
-	chatgptFallbackURI = "http://localhost:1457/auth/callback"
 	// ChatGPTBaseURL is the base URL for the ChatGPT Codex API.
 	ChatGPTBaseURL = "https://chatgpt.com/backend-api/codex"
 )
+
+// chatgptLoginTTL bounds a pending login: the user must paste the callback URL
+// within this window before the PKCE verifier is dropped. It matches the short
+// life of the authorization code the callback carries.
+const chatgptLoginTTL = 5 * time.Minute
 
 // chatgptHTTPTimeout bounds every ChatGPT token endpoint call (exchange and
 // refresh). Without it the default client waits forever, so a stalled OpenAX
@@ -57,8 +63,9 @@ type ChatGPTOAuth struct {
 type chatgptPending struct {
 	providerID   string
 	codeVerifier string
-	redirectURI  string
-	cancel       context.CancelFunc
+	// timer drops this entry after chatgptLoginTTL so an abandoned login (the
+	// user never pastes the callback) cannot leak the verifier forever.
+	timer *time.Timer
 }
 
 // NewChatGPTOAuth returns the OAuth manager over the provider rows it logs in
@@ -84,10 +91,11 @@ func (o *ChatGPTOAuth) httpClient(ctx context.Context) *http.Client {
 	return &http.Client{Timeout: chatgptHTTPTimeout}
 }
 
-// ChatGPTLoginResult is returned by StartLogin with the authorize URL.
+// ChatGPTLoginResult is returned by StartLogin with the authorize URL. The
+// state is not exposed: it rides back inside the callback URL the user pastes
+// to CompleteLogin, which is where the server reads it.
 type ChatGPTLoginResult struct {
 	AuthorizeURL string `json:"authorize_url"`
-	State        string `json:"state"`
 }
 
 // StartLogin begins the ChatGPT OAuth PKCE flow for the given provider. It
@@ -120,15 +128,10 @@ func (o *ChatGPTOAuth) StartLogin(ctx context.Context, providerID string) (*Chat
 	}
 	challenge := pkceChallenge(verifier)
 
-	redirectURI, listener, err := listenCallback()
-	if err != nil {
-		return nil, fmt.Errorf("starting callback listener: %w", err)
-	}
-
 	params := url.Values{
 		"response_type":              {"code"},
 		"client_id":                  {chatgptClientID},
-		"redirect_uri":               {redirectURI},
+		"redirect_uri":               {chatgptRedirectURI},
 		"scope":                      {chatgptScope},
 		"code_challenge":             {challenge},
 		"code_challenge_method":      {"S256"},
@@ -139,119 +142,85 @@ func (o *ChatGPTOAuth) StartLogin(ctx context.Context, providerID string) (*Chat
 	}
 	authorizeURL := chatgptAuthURL + "?" + params.Encode()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	p := &chatgptPending{providerID: providerID, codeVerifier: verifier}
+	o.mu.Lock()
+	o.pending[state] = p
+	p.timer = time.AfterFunc(chatgptLoginTTL, func() { o.cleanupPending(state) })
+	o.mu.Unlock()
 
-	p := &chatgptPending{
-		providerID:   providerID,
-		codeVerifier: verifier,
-		redirectURI:  redirectURI,
-		cancel:       cancel,
+	return &ChatGPTLoginResult{AuthorizeURL: authorizeURL}, nil
+}
+
+// CompleteLogin finishes a login begun by StartLogin. It reads the
+// authorization code and state from the callback URL the user pastes after
+// authorizing, redeems the code for tokens server-side against the stored PKCE
+// verifier, and saves them on the provider. This replaces the loopback listener
+// the CLI-style flow used, so a remotely deployed server — where the browser's
+// localhost is not the server's — can still be signed in (decisions §5.41).
+func (o *ChatGPTOAuth) CompleteLogin(ctx context.Context, providerID, callback string) error {
+	if providerID == "" {
+		return fmt.Errorf("provider_id is required")
+	}
+	code, state, oauthErr, err := parseChatGPTCallback(callback)
+	if err != nil {
+		return err
+	}
+	if oauthErr != "" {
+		return fmt.Errorf("%w: authorization failed: %s", ErrChatGPTCallbackInvalid, oauthErr)
+	}
+	if code == "" || state == "" {
+		return fmt.Errorf("%w: no authorization code found in the URL", ErrChatGPTCallbackInvalid)
 	}
 
 	o.mu.Lock()
-	o.pending[state] = p
+	p, ok := o.pending[state]
 	o.mu.Unlock()
+	if !ok {
+		return ErrChatGPTLoginExpired
+	}
+	// The state is the only thing binding a callback to its verifier, so a URL
+	// whose flow was started for another provider must not complete this one.
+	if p.providerID != providerID {
+		return fmt.Errorf("%w: this callback belongs to a different sign-in", ErrChatGPTCallbackInvalid)
+	}
 
-	go o.serveCallback(ctx, listener, state)
-
-	return &ChatGPTLoginResult{
-		AuthorizeURL: authorizeURL,
-		State:        state,
-	}, nil
+	tokens, err := exchangeCode(ctx, o.httpClient(ctx), code, p.codeVerifier, chatgptRedirectURI)
+	if err != nil {
+		return err
+	}
+	if err := o.saveTokens(ctx, providerID, tokens); err != nil {
+		return err
+	}
+	// Redeem exactly once: only a stored token clears the pending entry, so a
+	// transient exchange failure leaves the flow for the user to paste again
+	// (until the TTL timer drops it).
+	o.cleanupPending(state)
+	return nil
 }
 
-func listenCallback() (string, net.Listener, error) {
-	ln, err := net.Listen("tcp", "127.0.0.1:1455")
-	if err == nil {
-		return chatgptRedirectURI, ln, nil
+// parseChatGPTCallback pulls the code, state, and any OAuth error out of the
+// value the user pasted. It accepts a full redirect URL
+// (http://localhost:1455/auth/callback?code=…&state=…), a bare query string, or
+// one with a leading '?'.
+func parseChatGPTCallback(raw string) (code, state, oauthErr string, err error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", "", "", fmt.Errorf("%w: empty", ErrChatGPTCallbackInvalid)
 	}
-	ln, err = net.Listen("tcp", "127.0.0.1:1457")
-	if err == nil {
-		return chatgptFallbackURI, ln, nil
+	var q url.Values
+	if u, e := url.Parse(raw); e == nil && u.RawQuery != "" {
+		q = u.Query()
+	} else if vals, e := url.ParseQuery(strings.TrimPrefix(raw, "?")); e == nil {
+		q = vals
+	} else {
+		return "", "", "", fmt.Errorf("%w: could not parse", ErrChatGPTCallbackInvalid)
 	}
-	return "", nil, fmt.Errorf("cannot listen on port 1455 or 1457: %w", err)
+	return q.Get("code"), q.Get("state"), q.Get("error"), nil
 }
 
-func (o *ChatGPTOAuth) serveCallback(ctx context.Context, ln net.Listener, state string) {
-	mux := http.NewServeMux()
-	srv := &http.Server{Handler: mux}
-
-	writeHTML := func(w http.ResponseWriter, status, errMsg string) {
-		// The hash-pinned CSP means only the page's own script runs even if an
-		// escape is ever missed; the sibling MCP callback got this hardening
-		// first and this page predated it.
-		w.Header().Set("Content-Security-Policy",
-			"default-src 'none'; script-src 'sha256-"+chatgptCallbackScriptHash+"'")
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = fmt.Fprint(w, callbackHTML(status, errMsg))
-	}
-	shutdown := func() { go func() { _ = srv.Shutdown(context.Background()) }() }
-
-	mux.HandleFunc("/auth/callback", func(w http.ResponseWriter, r *http.Request) {
-		code := r.URL.Query().Get("code")
-		gotState := r.URL.Query().Get("state")
-		errMsg := r.URL.Query().Get("error")
-
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-
-		if errMsg != "" {
-			writeHTML(w, "error", errMsg)
-			o.cleanupPending(state)
-			shutdown()
-			return
-		}
-		if gotState != state || code == "" {
-			writeHTML(w, "error", "invalid state or missing code")
-			o.cleanupPending(state)
-			shutdown()
-			return
-		}
-
-		o.mu.Lock()
-		p, ok := o.pending[state]
-		o.mu.Unlock()
-		if !ok {
-			writeHTML(w, "error", "expired")
-			shutdown()
-			return
-		}
-
-		// Bound the token exchange by the flow context (5-minute timeout) and a
-		// timed client, so a stalled auth host can't wedge the callback.
-		tokens, err := exchangeCode(ctx, o.httpClient(ctx), code, p.codeVerifier, p.redirectURI)
-		if err != nil {
-			writeHTML(w, "error", err.Error())
-			o.cleanupPending(state)
-			shutdown()
-			return
-		}
-
-		if err := o.saveTokens(r.Context(), p.providerID, tokens); err != nil {
-			writeHTML(w, "error", err.Error())
-			o.cleanupPending(state)
-			shutdown()
-			return
-		}
-
-		writeHTML(w, "success", "")
-		o.cleanupPending(state)
-		shutdown()
-	})
-
-	go func() {
-		<-ctx.Done()
-		// The flow ended (success, error, or the 5-minute timeout): drop any
-		// pending entry so an abandoned login can't leak it forever.
-		o.cleanupPending(state)
-		_ = srv.Shutdown(context.Background())
-	}()
-
-	_ = srv.Serve(ln)
-}
-
-// cleanupPending removes the pending flow for state and cancels its context.
-// Idempotent: the callback handler and the flow's context watcher both call it,
-// and whichever runs second is a no-op.
+// cleanupPending removes the pending flow for state and stops its expiry timer.
+// Idempotent: CompleteLogin and the timer both call it, and whichever runs
+// second finds nothing and is a no-op.
 func (o *ChatGPTOAuth) cleanupPending(state string) {
 	o.mu.Lock()
 	p, ok := o.pending[state]
@@ -259,8 +228,8 @@ func (o *ChatGPTOAuth) cleanupPending(state string) {
 		delete(o.pending, state)
 	}
 	o.mu.Unlock()
-	if ok {
-		p.cancel()
+	if ok && p.timer != nil {
+		p.timer.Stop()
 	}
 }
 
@@ -386,6 +355,16 @@ type chatgptTokens struct {
 // ErrChatGPTLoginUnavailable marks a login attempt this provider configuration
 // can never use — a client error the handler maps to 400, not a server fault.
 var ErrChatGPTLoginUnavailable = errors.New("chatgpt login unavailable")
+
+// ErrChatGPTLoginExpired marks a completion whose pending flow is gone: the TTL
+// elapsed, the state was already redeemed, or the server restarted since
+// StartLogin. The user starts the sign-in again. The handler maps it to 400.
+var ErrChatGPTLoginExpired = errors.New("chatgpt login expired — start the sign-in again")
+
+// ErrChatGPTCallbackInvalid marks a pasted callback URL the server cannot act
+// on: unparseable, missing the code/state, carrying an OAuth error from the
+// provider, or bound to a different provider's flow. The handler maps it to 400.
+var ErrChatGPTCallbackInvalid = errors.New("invalid callback URL")
 
 // chatGPTLoginAvailable reports whether the provider backend offers
 // chatgpt_login. It gates BOTH ends of the OAuth flow: StartLogin, and
@@ -520,33 +499,4 @@ func randomString(n int) (string, error) {
 func pkceChallenge(verifier string) string {
 	h := sha256.Sum256([]byte(verifier))
 	return base64.RawURLEncoding.EncodeToString(h[:])
-}
-
-// chatgptCallbackScript reads its status from a data attribute rather than
-// being assembled around interpolated values: the provider-controlled error
-// string once flowed into the HTML unescaped — a reflected XSS on the
-// localhost callback origin while a login was pending.
-const chatgptCallbackScript = `var s=document.body.getAttribute('data-status');
-if (window.opener) {
-  window.opener.postMessage({type:'chatgpt-oauth-done',status:s}, '*');
-}
-setTimeout(function(){ window.close(); }, 1500);`
-
-// chatgptCallbackScriptHash pins the script above in the page's CSP.
-var chatgptCallbackScriptHash = func() string {
-	h := sha256.Sum256([]byte(chatgptCallbackScript))
-	return base64.StdEncoding.EncodeToString(h[:])
-}()
-
-func callbackHTML(status, errMsg string) string {
-	msg := "Authorization successful. You can close this window."
-	if status != "success" {
-		msg = "Authorization failed: " + errMsg
-	}
-	if status != "success" {
-		status = "error"
-	}
-	return `<!DOCTYPE html><html><body data-status="` + status + `"><p>` +
-		html.EscapeString(msg) +
-		`</p><script>` + chatgptCallbackScript + `</script></body></html>`
 }

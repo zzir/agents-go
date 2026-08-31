@@ -3296,6 +3296,78 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/providers/{id}/chatgpt/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Complete ChatGPT login
+         * @description Redeems the callback URL the user pastes after authorizing (accepts the full URL or its query string).
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Provider ID */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            /** @description Pasted callback URL */
+            requestBody: {
+                content: {
+                    "application/json": Record<string, never> | components["schemas"]["handler.chatgptCompleteReq"];
+                };
+            };
+            responses: {
+                /** @description logged in */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description Internal Server Error */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/providers/{id}/chatgpt/login": {
         parameters: {
             query?: never;
@@ -3307,7 +3379,7 @@ export interface paths {
         put?: never;
         /**
          * Start ChatGPT login
-         * @description Starts the OAuth flow; open authorize_url in a browser. The callback is served by a temporary local server on port 1455.
+         * @description Starts the OAuth flow; open authorize_url in a browser, authorize, then submit the resulting callback URL to /chatgpt/complete.
          */
         post: {
             parameters: {
@@ -7403,6 +7475,9 @@ export interface components {
         "handler.branchReq": {
             entry_id?: string;
         };
+        "handler.chatgptCompleteReq": {
+            redirect_url?: string;
+        };
         "handler.chatgptStatusResp": {
             logged_in?: boolean;
         };
@@ -7739,7 +7814,6 @@ export interface components {
         };
         "providers.ChatGPTLoginResult": {
             authorize_url?: string;
-            state?: string;
         };
         "providers.TypeInfo": {
             /**

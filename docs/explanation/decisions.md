@@ -1462,3 +1462,33 @@ plain-language line, `You are now "<name>", handling this conversation directly.
 is appended after it. Small models act on the sentence; large ones are unaffected
 by the redundancy. Dropping the marker for prose alone would trade a working
 signal for nothing, so the line is additive rather than a replacement.
+
+### 5.41 ChatGPT login redeems a pasted callback URL, not a loopback listener
+
+Decided 2026-08-31. OpenAI's Codex OAuth client registers only loopback redirect
+URIs (`http://localhost:1455/auth/callback`) — the shape a local CLI uses: the
+CLI opens a browser on the same machine and catches the redirect on a listener it
+runs on that port. The workbench first copied that shape — `StartLogin` bound
+`127.0.0.1:1455` (or a `1457` fallback) and served the callback itself.
+
+That breaks the moment the server is not the browser's machine. Deployed to a
+remote host, the popup's `localhost:1455` is the *user's* laptop, not the server,
+so the redirect never reaches the listener, the token is never stored, and the
+login silently never completes. Repeated attempts also hold both ports for five
+minutes each and surface as `address already in use`.
+
+So the listener is gone. `StartLogin` builds the authorize URL against the fixed
+`localhost:1455` redirect (still required — it must match the client's registered
+set and be echoed in the token exchange) and stores the PKCE verifier keyed by
+`state`, expired by a TTL timer. The browser redirect fails to load — nothing
+listens — but its URL carries `code` and `state`; the user pastes that URL back
+and the authenticated `POST /providers/:id/chatgpt/complete` redeems the code
+server-side against the stored verifier. This is the standard headless-OAuth
+"paste the URL back" pattern, and it behaves identically whether the server is
+local or remote. The trade-off — one manual paste instead of an automatic catch
+— is accepted: a workbench meant to be deployed
+([scope](scope.md)) cannot depend on the browser and the server sharing a
+loopback interface. It also retires the callback's own HTTP server, its CSP-pinned
+success page, and the frontend's status-polling loop
+([workbench-invariants §7](workbench-invariants.md)); completion is now one
+request, not a background settle.

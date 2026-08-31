@@ -14,8 +14,9 @@ import (
 // Every exempt path must name a route this router actually serves. An
 // exemption for a path nothing serves is worse than dead config: whatever gets
 // mounted there later is unauthenticated without a line changing here. The
-// ChatGPT OAuth callback is the standing example — its redirect lands on a
-// temporary listener at localhost:1455, never on an API route.
+// ChatGPT OAuth flow is the standing example of a path that needs NO exemption:
+// its redirect lands on localhost, never on this server, and the pasted code
+// returns through the authenticated /providers/:id/chatgpt/complete route.
 func TestAuthExemptCoversOnlyServedRoutes(t *testing.T) {
 	for _, p := range []string{
 		"/api/v1/auth/login",

@@ -657,6 +657,11 @@ components:
         entry_id:
           type: string
       type: object
+    handler.chatgptCompleteReq:
+      properties:
+        redirect_url:
+          type: string
+      type: object
     handler.chatgptStatusResp:
       properties:
         logged_in:
@@ -1210,8 +1215,6 @@ components:
     providers.ChatGPTLoginResult:
       properties:
         authorize_url:
-          type: string
-        state:
           type: string
       type: object
     providers.TypeInfo:
@@ -4401,10 +4404,58 @@ paths:
       summary: Update a provider
       tags:
       - providers
+  /providers/{id}/chatgpt/complete:
+    post:
+      description: Redeems the callback URL the user pastes after authorizing (accepts
+        the full URL or its query string).
+      parameters:
+      - description: Provider ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.chatgptCompleteReq'
+                description: Pasted callback URL
+                summary: request
+        description: Pasted callback URL
+        required: true
+      responses:
+        "204":
+          description: logged in
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Complete ChatGPT login
+      tags:
+      - providers
   /providers/{id}/chatgpt/login:
     post:
-      description: Starts the OAuth flow; open authorize_url in a browser. The callback
-        is served by a temporary local server on port 1455.
+      description: Starts the OAuth flow; open authorize_url in a browser, authorize,
+        then submit the resulting callback URL to /chatgpt/complete.
       parameters:
       - description: Provider ID
         in: path

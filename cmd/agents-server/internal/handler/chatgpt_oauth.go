@@ -41,7 +41,7 @@ func (h *ChatGPTOAuthHandler) editable(c *gin.Context) bool {
 // path parameter and responds with the authorize URL.
 //
 //	@Summary		Start ChatGPT login
-//	@Description	Starts the OAuth flow; open authorize_url in a browser. The callback is served by a temporary local server on port 1455.
+//	@Description	Starts the OAuth flow; open authorize_url in a browser, authorize, then submit the resulting callback URL to /chatgpt/complete.
 //	@Tags			providers
 //	@Produce		json
 //	@Param			id	path		string	true	"Provider ID"
@@ -67,11 +67,55 @@ func (h *ChatGPTOAuthHandler) Login(c *gin.Context) {
 			badRequest(c, err.Error())
 			return
 		}
-		// The message is actionable local detail (e.g. callback port in use).
 		abortError(c, http.StatusInternalServerError, protocol.CodeInternal, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, result)
+}
+
+// chatgptCompleteReq carries the callback URL the user pastes after authorizing.
+type chatgptCompleteReq struct {
+	RedirectURL string `json:"redirect_url"`
+}
+
+// Complete finishes the ChatGPT OAuth flow by redeeming the callback URL the
+// user pasted. It replaces the loopback listener the CLI-style flow used, so a
+// remotely deployed server can be signed in.
+//
+//	@Summary		Complete ChatGPT login
+//	@Description	Redeems the callback URL the user pastes after authorizing (accepts the full URL or its query string).
+//	@Tags			providers
+//	@Accept			json
+//	@Param			id		path	string				true	"Provider ID"
+//	@Param			request	body	chatgptCompleteReq	true	"Pasted callback URL"
+//	@Success		204		"logged in"
+//	@Failure		400		{object}	ErrorResponse
+//	@Failure		404		{object}	ErrorResponse
+//	@Failure		500		{object}	ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/providers/{id}/chatgpt/complete [post]
+func (h *ChatGPTOAuthHandler) Complete(c *gin.Context) {
+	if !h.editable(c) {
+		return
+	}
+	var req chatgptCompleteReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		badRequest(c, "redirect_url is required")
+		return
+	}
+	err := h.oauth.CompleteLogin(c.Request.Context(), c.Param("id"), req.RedirectURL)
+	switch {
+	case err == nil:
+		c.Status(http.StatusNoContent)
+	case errors.Is(err, store.ErrNotFound):
+		notFound(c)
+	case errors.Is(err, providers.ErrChatGPTLoginUnavailable),
+		errors.Is(err, providers.ErrChatGPTLoginExpired),
+		errors.Is(err, providers.ErrChatGPTCallbackInvalid):
+		badRequest(c, err.Error())
+	default:
+		abortError(c, http.StatusInternalServerError, protocol.CodeInternal, err.Error())
+	}
 }
 
 // chatgptStatusResp is the Status response.
