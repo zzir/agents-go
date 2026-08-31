@@ -2620,7 +2620,7 @@ export interface paths {
         };
         /**
          * Update project
-         * @description A value sent back as its mask keeps what is stored; any other value replaces it. An environment change replaces the project's container at its next run, severs its terminals and revokes its preview links; a rename does none of that.
+         * @description A value sent back as its mask keeps what is stored; any other value replaces it. An environment change replaces the project's container at its next run and severs its terminals; a rename does none of that.
          */
         put: {
             parameters: {
@@ -2782,77 +2782,6 @@ export interface paths {
         };
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/projects/{id}/preview/{port}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Grant a preview URL for a port inside the project's sandbox
-         * @description Returns a short-lived, unguessable URL under /preview/ on the preview origin. Owner only, and off unless `preview_enabled` is set. A docker template must name a network for its ports to be reachable at all.
-         */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description Project id */
-                    id: string;
-                    /** @description Port inside the sandbox */
-                    port: number;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.previewGrantResp"];
-                    };
-                };
-                /** @description Bad Request */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-                /** @description previews are disabled */
-                403: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-                /** @description Not Found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-            };
-        };
         delete?: never;
         options?: never;
         head?: never;
@@ -3832,7 +3761,7 @@ export interface paths {
         put?: never;
         /**
          * Create sandbox
-         * @description type "docker" config: host ("" = local daemon, tcp://, or ssh://user@host with ssh_* auth), image (required), runtime, user ("" = root), network (docker network name; "" = no network), memory_mb/cpus caps, max_read_file_bytes. type "e2b" config: api_url, domain, api_key, data_plane_auth, template_id (required — build it on the service first), user ("" = the template's default account, "user"), timeout_seconds, auto_pause, allow_internet, max_read_file_bytes. ssh_password and api_key are write-only, ******** mask semantics. Top-level optional "prompt" (both types) is appended to the agent instructions of every session bound to a project on this sandbox — no project, no sandbox tools, no prompt; editing it reaches the next run without retiring the container. Every returned row carries "supports" — the type's capability flags (rebuild, any_port, public_ports), derived and read-only.
+         * @description type "docker" config: host ("" = local daemon, tcp://, or ssh://user@host with ssh_* auth), image (required), runtime, user ("" = root), network (docker network name; "" = no network), memory_mb/cpus caps, max_read_file_bytes. type "e2b" config: api_url, domain, api_key, data_plane_auth, template_id (required — build it on the service first), user ("" = the template's default account, "user"), timeout_seconds, auto_pause, allow_internet, max_read_file_bytes. ssh_password and api_key are write-only, ******** mask semantics. Top-level optional "prompt" (both types) is appended to the agent instructions of every session bound to a project on this sandbox — no project, no sandbox tools, no prompt; editing it reaches the next run without retiring the container. Every returned row carries "supports" — the type's capability flags (rebuild), derived and read-only.
          */
         post: {
             parameters: {
@@ -7602,10 +7531,6 @@ export interface components {
                 [key: string]: unknown;
             };
         };
-        "handler.previewGrantResp": {
-            expires_at?: string;
-            url?: string;
-        };
         "handler.projectDeleteResp": {
             deleted?: boolean;
             storage_error?: string;
@@ -7620,7 +7545,6 @@ export interface components {
              */
             name?: string;
             owner_id?: string;
-            ports?: number[];
             /**
              * @description Revision is the expected-revision CAS every update lands against.
              *     RuntimeGen is the workbench's ONE runtime axis: it moves when this
@@ -7658,18 +7582,12 @@ export interface components {
              */
             env?: components["schemas"]["store.EnvVar"][];
             name: string;
-            /**
-             * @description Ports are published so the preview can reach a service inside;
-             *     optional, and docker only.
-             */
-            ports?: number[];
             /** @description SandboxID is what the project runs on — the machine and the image. */
             sandbox_id: string;
         };
         "handler.projectUpdateReq": {
             env?: components["schemas"]["store.EnvVar"][];
             name: string;
-            ports?: number[];
             revision?: number;
             sandbox_id: string;
         };
@@ -8143,7 +8061,6 @@ export interface components {
              */
             name?: string;
             owner_id?: string;
-            ports?: number[];
             /**
              * @description Revision is the expected-revision CAS every update lands against.
              *     RuntimeGen is the workbench's ONE runtime axis: it moves when this
@@ -8274,13 +8191,6 @@ export interface components {
          *     stored) — see SandboxSupports.
          */
         "store.SandboxSupports": {
-            /** @description AnyPort: the preview reaches any port, with no declared list. */
-            any_port?: boolean;
-            /**
-             * @description PublicPorts: a previewed port is served from a PUBLIC host — anyone
-             *     with the URL reaches it.
-             */
-            public_ports?: boolean;
             /** @description Rebuild: the compute can be thrown away in place, keeping the storage. */
             rebuild?: boolean;
         };

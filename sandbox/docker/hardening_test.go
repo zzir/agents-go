@@ -13,7 +13,7 @@ func TestBuildHostConfig_LogCapped(t *testing.T) {
 	s := &Sandbox{opts: Options{Image: "x"}}
 	for name, persistent := range map[string]bool{"ephemeral": false, "persistent": true} {
 		t.Run(name, func(t *testing.T) {
-			host, _ := s.buildHostConfig(persistent)
+			host := s.buildHostConfig(persistent)
 			if host.LogConfig.Type != "json-file" {
 				t.Errorf("log driver = %q, want json-file", host.LogConfig.Type)
 			}

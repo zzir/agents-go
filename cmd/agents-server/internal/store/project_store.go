@@ -51,9 +51,6 @@ func (s *ProjectStore) Create(ctx context.Context, p *Project) error {
 				}
 				return err
 			}
-			if err := checkPortsSupported(sb.Type, p.Ports); err != nil {
-				return err
-			}
 			_, ierr := tx.NewInsert().Model(p).Exec(ctx)
 			return ierr
 		})
@@ -104,12 +101,9 @@ func (s *ProjectStore) Update(ctx context.Context, id string, p *Project, expect
 			if err := checkMove(ctx, tx, id, next); err != nil {
 				return err
 			}
-			if err := checkPortsSupported(next.Type, p.Ports); err != nil {
-				return err
-			}
 			var uerr error
 			res, uerr = tx.NewUpdate().Model(p).
-				Column("name", "sandbox_id", "env", "ports", "updated_at").
+				Column("name", "sandbox_id", "env", "updated_at").
 				Set("revision = revision + 1").
 				Set("runtime_gen = runtime_gen + ?", genBump).
 				Where("id = ?", id).
@@ -144,25 +138,6 @@ func (s *ProjectStore) Update(ctx context.Context, id string, p *Project, expect
 // ErrSandboxMoveDestination refuses a project move that would change the
 // machine its files live on.
 var ErrSandboxMoveDestination = errors.New("a project cannot move to a sandbox on another machine: its files stay where they are")
-
-// ErrPortsUnsupported refuses published ports on a sandbox type that does not
-// serve them: e2b routes its own public hosts, so a stored port would be
-// silently ignored — a phantom the API must reject rather than keep.
-var ErrPortsUnsupported = errors.New("this sandbox type does not support published ports")
-
-// checkPortsSupported gates published ports by the sandbox's type, read from
-// the row locked in the write's transaction so the answer cannot race a type
-// change. The zero-value map read is deliberate: a type without declaredPorts
-// — unknown included — refuses, never keeps a phantom port list.
-func checkPortsSupported(sandboxType, portsJSON string) error {
-	if sandboxKinds[sandboxType].declaredPorts {
-		return nil
-	}
-	if ports, _ := DecodeProjectPorts(portsJSON); len(ports) > 0 {
-		return ErrPortsUnsupported
-	}
-	return nil
-}
 
 // checkMove permits a project's sandbox to change only among sandboxes that
 // address the same machine. Read inside the caller's transaction, after the

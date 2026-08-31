@@ -657,8 +657,8 @@ When a change genuinely doesn't fit, update this list in the same PR.
     Bool clicks store immediately (a segmented control reads as applied on
     click), and the control gets an `onChange`: without one Primer's
     `SegmentedControl` is uncontrolled — the selection freezes at first
-    render, before the settings fetch resolves, which is how a stored
-    `preview_enabled` used to show as unset after every refresh.
+    render, before the settings fetch resolves, which is how a stored bool
+    setting used to show as unset after every refresh.
 
 41. **A destructive action confirms once, in one place.** Every settings
     panel's Delete goes through `useCrud.remove`, which asks (Primer
@@ -736,47 +736,11 @@ When a change genuinely doesn't fit, update this list in the same PR.
     told a client the opposite, and a client that then skipped its refresh
     kept offering a project the server no longer had.
 
-47. **A preview reaches a port the project PUBLISHED.** `projects.ports` is
-    content like the environment: each port is published to the daemon's
-    loopback on an ephemeral host port, the preview proxy dials that, and a
-    change replaces that one project's container at its next run
-    ([decisions §5.35](decisions.md), [spec §2.7r](../reference/spec.md#27r-a-published-port-is-bound-to-the-daemons-loopback-and-reaches-only-0000)).
-    The list is on the PROJECT, not the sandbox: a container is a project's
-    own, and the same list on a shared sandbox row would rebuild every project
-    on it. The one thing a person cannot see for themselves — that a
-    `127.0.0.1` listener is invisible through a published port — is said where
-    it is actionable: the port field's caption, the 502 that names the two
-    possible causes (nothing listening, or a `127.0.0.1`-bound server), and
-    `exec_command`'s description when the project publishes anything. On an
-    E2B-compatible service nothing is declared and the field is hidden: every
-    port is already public there, which also makes the grant a convenience
-    rather than a gate — and a project create or update carrying `ports` on an
-    e2b sandbox is refused (`400`), since a stored port the service would ignore
-    is a phantom, not configuration.
+47. **(retired 2026-08-31)** Port preview removed — the workbench no longer
+    proxies a sandbox port to the browser (decisions §5.35).
 
-48. **A preview is served on its own origin, never the app's.** The preview
-    reverse-proxies an untrusted page (a sandbox's dev server); the workbench
-    bearer token lives in the app origin's `localStorage`, so a page on that
-    origin could read it. The preview therefore runs on a separate origin — a
-    second listener (`--preview-port`, the app port + 1 by default; or
-    `--preview-base-url` behind a proxy) that serves ONLY the proxy, with no app,
-    no bearer middleware and no stored token. The grant URL is absolute on that
-    origin, the app engine serves no `/preview/` path at all, and the preview
-    responses carry `Referrer-Policy: no-referrer` so the grant does not leak
-    through a sub-resource's `Referer`
-    ([decisions §5.37](decisions.md)). The grant is reusable within its TTL
-    (a page pulls many sub-resources), not single-use. A page's absolute-path
-    sub-resources carry no token in their URL and — with `Referer` denied —
-    resolve through a short-lived HttpOnly `preview_token` cookie the tokenized
-    entry point plants, so a typical dev server works through the preview; one
-    origin means one active grant per browser, so a second project's preview
-    replaces the cookie, and the cookie is stripped before the request reaches
-    the dev server. The cookie is `Secure` whenever the request came over TLS
-    or `--preview-base-url` is https (a proxy terminating TLS in front). A
-    content change that replaces the container — the project's own edit, or a
-    sandbox change through the Retirer — revokes the project's outstanding
-    grants along with its terminals: a grant must never proxy into the
-    replacement container, least of all to a port it no longer declares.
+48. **(retired 2026-08-31)** Port preview removed — see invariant 47 and
+    decisions §5.35.
 
 49. **The top bar re-reads the sandbox state on the edges that move it.** The
     compute state a project menu shows comes from `GET /projects/:id/sandbox`,
@@ -839,11 +803,10 @@ When a change genuinely doesn't fit, update this list in the same PR.
     from `sandboxKinds` in store/sandbox.go; a binary type branch anywhere
     else gives a WRONG answer for a third backend, not an error (the inverted
     ports check and the decode-as-the-other-type destination were real).
-    Every sandbox API row carries `supports` (`rebuild`, `any_port`,
-    `public_ports`), derived per type in `sanitizeSandboxConfig` — never
-    stored, never client-writable — and the frontend keys Rebuild, the ports
-    field, the public-URL warning and the default sandbox pick off it (the
-    per-type CONFIG form in SandboxPanel is the one legitimate type switch).
+    Every sandbox API row carries `supports` (`rebuild`), derived per type in
+    `sanitizeSandboxConfig` — never stored, never client-writable — and the
+    frontend keys Rebuild off it (the per-type CONFIG form in SandboxPanel is
+    the one legitimate type switch).
     exec_command advertises `session_id` only when the built sandbox
     implements `TerminalOpener` (spec §2.7k). Adding backend #3 is then: a
     descriptor entry, a `Backend` registry entry, a config struct +

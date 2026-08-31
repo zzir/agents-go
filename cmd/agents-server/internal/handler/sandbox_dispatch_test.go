@@ -33,7 +33,7 @@ func TestSandboxRowsCarrySupports(t *testing.T) {
 
 	want := map[string]store.SandboxSupports{
 		docker.ID: {Rebuild: true},
-		cloud.ID:  {AnyPort: true, PublicPorts: true},
+		cloud.ID:  {},
 	}
 	var rows []store.Sandbox
 	if err := json.Unmarshal(doJSON(t, e, http.MethodGet, "/sandboxes", "").Body.Bytes(), &rows); err != nil {

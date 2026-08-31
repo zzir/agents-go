@@ -770,9 +770,7 @@ one (decisions §5.36). Two types: `docker` and `e2b`.
 
 Every returned row carries `supports` — the type's capability flags, derived
 and read-only: `rebuild` (the container can be replaced while the working
-tree survives), `any_port` (preview reaches any port; there is no declared
-ports list), `public_ports` (a previewed port is served on a public host —
-anyone with the URL). Clients offer actions from these flags, never from the
+tree survives). Clients offer actions from these flags, never from the
 `type` string (workbench invariant 53).
 
 A sandbox may also carry a top-level `prompt` (both types) — free text
@@ -902,7 +900,7 @@ by owner rather than the admin gate. An admin additionally manages the
 plane (decisions §5.29's manage-not-author line): `?all=true` lists every
 owner's rows — the Admin dialog's Projects tab — and delete, stop and rebuild
 work on any project (each is less than the delete already allowed there);
-reading a tree — export, preview — stays the owner's. Listings carry each
+reading a tree — export — stays the owner's. Listings carry each
 row's `session_count`; `storage_hint` (where the files live) is reported to
 admins only.
 
@@ -937,53 +935,6 @@ rest. `GET /projects/{id}` is the ONE endpoint that returns an environment,
 as names with masked values, and only to the project's owner: listings never
 carry it at all, and an admin's management reach does not extend to reading
 one.
-
-`POST /projects/{id}/preview/{port}` mints a short-lived URL for a service
-listening on that port inside the sandbox, and `ANY /preview/{grant}/{path}`
-proxies to it. The grant exists because a browser TAB carries no bearer token:
-it is unguessable, single (project, port), 30 minutes, in-memory, and revoked
-when the project is deleted — reusable within its TTL (a page pulls many
-sub-resources), not single-use. Owner only, and **off unless `preview_enabled`
-is set**.
-
-**The preview is served on a SEPARATE origin, not the app's.** The URL the mint
-returns is absolute, on a second listener (`--preview-port`, the app port + 1
-by default; or `--preview-base-url` behind a reverse proxy) that serves ONLY the
-proxy — no app, no bearer middleware, no stored token — so the untrusted page a
-preview serves cannot read the workbench token out of the app origin's
-`localStorage` (decisions §5.37). The app origin serves no `/preview/` path at
-all. The proxy strips `Authorization` and `Cookie` before forwarding, carries
-its own per-IP rate limit, sets `Referrer-Policy: no-referrer`, and does not
-impose this app's CSP on the previewed page.
-
-A page's absolute-path sub-resources — `/asset.js`, a redirect to `/login`, an
-HMR socket — carry no token in their URL, and with `Referer` denied the
-tokenized entry point plants the grant in a short-lived HttpOnly `preview_token`
-cookie that those requests resolve through, so a typical dev server (Vite,
-Webpack, an SPA) works through the preview instead of 404ing. One origin means
-one active grant per browser: opening a second project's preview replaces the
-cookie, and the cookie is stripped with the rest before the request reaches the
-dev server.
-
-**On docker the project declares which ports to publish.** `projects.ports` is
-content like the environment: each is published to the daemon's loopback on an
-ephemeral host port, the proxy dials that, and a change replaces the container
-at the next run (spec §2.7r). A server inside must listen on `0.0.0.0` — a
-`127.0.0.1` listener is invisible through a published port, and the 502 names
-the two possible causes (nothing listening, or a `127.0.0.1`-bound server). An
-undeclared port still resolves over the
-container's docker network, which works from a Linux host and through the SSH
-tunnel to a remote daemon but not on Docker Desktop; that attempt is bounded to
-five seconds so it fails with the reason rather than hanging.
-
-**On e2b nothing is declared** — the service already answers every port at
-`<port>-<sandbox id>.<domain>`, so the field is not shown and the menu asks
-for a port instead of listing any. A project create or update carrying `ports`
-on an e2b sandbox is therefore `400`: the service routes its own public hosts
-and would ignore the list, so a stored port is a phantom, not configuration.
-Those hosts are
-PUBLIC: `secure: true` protects the sandbox daemon, not the workload, so the
-grant is a convenience rather than a gate (decisions §5.35).
 
 `GET /projects/{id}/export` streams the working tree as an uncompressed tar
 (`application/x-tar`) — the way files leave a sandbox whose storage the host

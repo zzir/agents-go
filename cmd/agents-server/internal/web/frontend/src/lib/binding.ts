@@ -7,10 +7,6 @@
 export interface SandboxSupports {
   /* The container can be rebuilt in place. */
   rebuild?: boolean;
-  /* Preview reaches any port; there is no declared ports list. */
-  any_port?: boolean;
-  /* A previewed port is served on a PUBLIC host — anyone with the link. */
-  public_ports?: boolean;
 }
 
 export interface SandboxLite {
@@ -28,9 +24,6 @@ export interface Project {
   id: string;
   name: string;
   sandbox_id: string;
-  /* The container ports published to the machine's loopback — what Preview
-     can open. Absent where the sandbox reaches any port (`supports.any_port`). */
-  ports?: number[];
   /* The volume the files live in, and the daemon it is on — shown by the
      delete dialog, which destroys it. */
   storage_hint?: string;

@@ -214,7 +214,6 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		projects.PUT("/:id", h.Projects.Update)
 		projects.DELETE("/:id", h.Projects.Delete)
 		projects.GET("/:id/export", h.Projects.Export)
-		projects.POST("/:id/preview/:port", h.Projects.PreviewGrant)
 		projects.GET("/:id/sandbox", h.Projects.SandboxStatus)
 		projects.POST("/:id/sandbox/start", h.Projects.SandboxStart)
 		projects.POST("/:id/sandbox/stop", h.Projects.SandboxStop)

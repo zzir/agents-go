@@ -20,7 +20,7 @@ import (
 // contain to be storable (NormalizeSandboxConfig), when two payloads mean the
 // same runtime content (SandboxContentEqual), and when an update moves the
 // sandbox's identity (SandboxIdentityChanged). Every other per-type question
-// — ports, capabilities, freeze messages, storage hints — is a sandboxKinds
+// — capabilities, freeze messages, storage hints — is a sandboxKinds
 // row, so a new backend is one entry here plus its sandboxes.Backend.
 
 // sandboxKind is one backend type's semantics. Each field answers exactly one
@@ -29,9 +29,6 @@ type sandboxKind struct {
 	contentEqual func(a, b json.RawMessage) bool           // see SandboxContentEqual
 	destination  func(raw json.RawMessage) (string, error) // see destinationOf
 	identity     func(raw json.RawMessage) (string, error) // see identityOf
-	// declaredPorts: projects on this type declare their published ports;
-	// false refuses a declared list (checkPortsSupported).
-	declaredPorts bool
 	// frozenFields finishes the identity-conflict 409: what freezes while
 	// projects live on the sandbox, and what stays editable.
 	frozenFields string
@@ -46,22 +43,16 @@ type sandboxKind struct {
 type SandboxSupports struct {
 	// Rebuild: the compute can be thrown away in place, keeping the storage.
 	Rebuild bool `json:"rebuild"`
-	// AnyPort: the preview reaches any port, with no declared list.
-	AnyPort bool `json:"any_port"`
-	// PublicPorts: a previewed port is served from a PUBLIC host — anyone
-	// with the URL reaches it.
-	PublicPorts bool `json:"public_ports"`
 }
 
 var sandboxKinds = map[string]sandboxKind{
 	"docker": {
-		contentEqual:  func(a, b json.RawMessage) bool { return canonicalEqual(a, b, func(*DockerConfig) {}) },
-		destination:   dockerDestination,
-		identity:      dockerDestination, // nothing beyond the destination freezes
-		declaredPorts: true,
-		frozenFields:  "its type and machine are frozen — the image, the limits, the credential and the name stay editable",
-		storageWhere:  dockerStorageWhere,
-		supports:      SandboxSupports{Rebuild: true},
+		contentEqual: func(a, b json.RawMessage) bool { return canonicalEqual(a, b, func(*DockerConfig) {}) },
+		destination:  dockerDestination,
+		identity:     dockerDestination, // nothing beyond the destination freezes
+		frozenFields: "its type and machine are frozen — the image, the limits, the credential and the name stay editable",
+		storageWhere: dockerStorageWhere,
+		supports:     SandboxSupports{Rebuild: true},
 	},
 	"e2b": {
 		contentEqual: func(a, b json.RawMessage) bool { return canonicalEqual(a, b, func(*E2BConfig) {}) },
@@ -69,7 +60,7 @@ var sandboxKinds = map[string]sandboxKind{
 		identity:     e2bIdentity,
 		frozenFields: "its type, service address, template and lifecycle (auto-pause, internet) are frozen — the api key, timeout, read limit and name stay editable",
 		storageWhere: e2bStorageWhere,
-		supports:     SandboxSupports{AnyPort: true, PublicPorts: true},
+		supports:     SandboxSupports{},
 	},
 }
 

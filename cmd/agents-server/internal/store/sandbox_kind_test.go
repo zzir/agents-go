@@ -2,7 +2,6 @@ package store
 
 import (
 	"encoding/json"
-	"errors"
 	"slices"
 	"testing"
 )
@@ -19,31 +18,13 @@ func TestSandboxKindUnknownTypePanics(t *testing.T) {
 	SandboxSupportsFor("quantum")
 }
 
-// Published ports are declared only on types that say so; a type without the
-// flag — unknown included — refuses a declared list instead of storing a
-// phantom.
-func TestCheckPortsSupportedByKind(t *testing.T) {
-	ports := `[8080]`
-	if err := checkPortsSupported("docker", ports); err != nil {
-		t.Errorf("docker refused declared ports: %v", err)
-	}
-	for _, typ := range []string{"e2b", "quantum"} {
-		if err := checkPortsSupported(typ, ports); !errors.Is(err, ErrPortsUnsupported) {
-			t.Errorf("%s: err = %v, want ErrPortsUnsupported", typ, err)
-		}
-		if err := checkPortsSupported(typ, ""); err != nil {
-			t.Errorf("%s with no ports: %v", typ, err)
-		}
-	}
-}
-
 // The capability row the API exposes, per type — pinned: the frontend keys
 // off these exact values.
 func TestSandboxSupportsPerType(t *testing.T) {
 	if got, want := SandboxSupportsFor("docker"), (SandboxSupports{Rebuild: true}); got != want {
 		t.Errorf("docker = %+v, want %+v", got, want)
 	}
-	if got, want := SandboxSupportsFor("e2b"), (SandboxSupports{AnyPort: true, PublicPorts: true}); got != want {
+	if got, want := SandboxSupportsFor("e2b"), (SandboxSupports{}); got != want {
 		t.Errorf("e2b = %+v, want %+v", got, want)
 	}
 	if want := []string{"docker", "e2b"}; !slices.Equal(SandboxTypes, want) {

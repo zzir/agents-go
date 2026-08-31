@@ -226,18 +226,10 @@ func buildCSP(scriptHashes, imgHosts []string) string {
 
 func (s *Server) cspMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// The app engine never serves a preview — that lives on its own engine
-		// and origin (NewPreviewEngine) — so the policy applies to everything
-		// here, with no path exempt.
 		c.Header("Content-Security-Policy", s.cspPolicy)
 		c.Next()
 	}
 }
-
-// PreviewPrefix is where a sandbox port preview is served. It sits OUTSIDE
-// /api on purpose: a browser tab carries no bearer token, so the preview
-// authorizes itself with the grant in its path instead.
-const PreviewPrefix = "/preview/"
 
 // inlineScriptRE matches bare inline <script> blocks; tagged scripts
 // (type="module", src=…) are external and covered by 'self'.

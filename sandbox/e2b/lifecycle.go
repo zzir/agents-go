@@ -2,7 +2,6 @@ package e2b
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/zzir/agents-go/sandbox"
@@ -71,22 +70,6 @@ func (s *Sandbox) Status(ctx context.Context) (sandbox.State, error) {
 		return sandbox.StateStopped, nil
 	}
 	return sandbox.StateRunning, nil
-}
-
-// URLForPort returns the public URL a service listening inside the sandbox is
-// reachable at. The service builds one host per port, so this needs no call of
-// its own — but it does need the sandbox to exist.
-func (s *Sandbox) URLForPort(ctx context.Context, port int) (string, error) {
-	if port <= 0 || port > 65535 {
-		// A plain validation error: ErrLifecycleUnsupported would read as a
-		// missing capability, which this service has.
-		return "", fmt.Errorf("e2b: port %d is out of range", port)
-	}
-	id, err := s.ensure(ctx)
-	if err != nil {
-		return "", err
-	}
-	return "https://" + s.hostFor(id, port), nil
 }
 
 // Destroy kills the sandbox AND the stored state behind it. It is not part of

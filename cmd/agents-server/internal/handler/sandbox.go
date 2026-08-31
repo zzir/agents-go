@@ -36,24 +36,20 @@ func NewSandboxHandler(s *store.SandboxStore, m *sandboxes.Manager, r *Retirer) 
 }
 
 // Retirer turns a content change on a sandbox into the project generations it
-// invalidates, then retires each project's live instance, terminals and
-// preview grants. It is the one place the "one runtime axis" rule is applied
-// (decisions §5.33).
+// invalidates, then retires each project's live instance and terminals. It is
+// the one place the "one runtime axis" rule is applied (decisions §5.33).
 type Retirer struct {
 	projects  *store.ProjectStore
 	manager   *sandboxes.Manager
 	terminals *TerminalHandler
-	// revokeGrants is ProjectHandler.RevokePreviewGrants — the grants live
-	// there, and an outstanding one must not proxy into a replaced container.
-	revokeGrants func(projectID string)
 }
 
 // NewRetirer wires the things a retirement touches.
-func NewRetirer(projects *store.ProjectStore, m *sandboxes.Manager, terminals *TerminalHandler, revokeGrants func(projectID string)) *Retirer {
-	if projects == nil || terminals == nil || revokeGrants == nil {
-		panic("handler: NewRetirer needs the project store, the terminal handler and the grants revoker")
+func NewRetirer(projects *store.ProjectStore, m *sandboxes.Manager, terminals *TerminalHandler) *Retirer {
+	if projects == nil || terminals == nil {
+		panic("handler: NewRetirer needs the project store and the terminal handler")
 	}
-	return &Retirer{projects: projects, manager: m, terminals: terminals, revokeGrants: revokeGrants}
+	return &Retirer{projects: projects, manager: m, terminals: terminals}
 }
 
 // bump moves the runtime generation of every project on the sandbox and
@@ -70,7 +66,6 @@ func (r *Retirer) bump(ctx context.Context, sandboxID string) error {
 			r.manager.RetireProject(g.ID, g.RuntimeGen)
 		}
 		r.terminals.CloseProjectTerminals(g.ID, g.RuntimeGen)
-		r.revokeGrants(g.ID)
 	}
 	return nil
 }
@@ -138,7 +133,7 @@ func (h *SandboxHandler) validate(c *gin.Context, req *sandboxReq) bool {
 // Create persists a new sandbox from the request body.
 //
 //	@Summary		Create sandbox
-//	@Description	type "docker" config: host ("" = local daemon, tcp://, or ssh://user@host with ssh_* auth), image (required), runtime, user ("" = root), network (docker network name; "" = no network), memory_mb/cpus caps, max_read_file_bytes. type "e2b" config: api_url, domain, api_key, data_plane_auth, template_id (required — build it on the service first), user ("" = the template's default account, "user"), timeout_seconds, auto_pause, allow_internet, max_read_file_bytes. ssh_password and api_key are write-only, ******** mask semantics. Top-level optional "prompt" (both types) is appended to the agent instructions of every session bound to a project on this sandbox — no project, no sandbox tools, no prompt; editing it reaches the next run without retiring the container. Every returned row carries "supports" — the type's capability flags (rebuild, any_port, public_ports), derived and read-only.
+//	@Description	type "docker" config: host ("" = local daemon, tcp://, or ssh://user@host with ssh_* auth), image (required), runtime, user ("" = root), network (docker network name; "" = no network), memory_mb/cpus caps, max_read_file_bytes. type "e2b" config: api_url, domain, api_key, data_plane_auth, template_id (required — build it on the service first), user ("" = the template's default account, "user"), timeout_seconds, auto_pause, allow_internet, max_read_file_bytes. ssh_password and api_key are write-only, ******** mask semantics. Top-level optional "prompt" (both types) is appended to the agent instructions of every session bound to a project on this sandbox — no project, no sandbox tools, no prompt; editing it reaches the next run without retiring the container. Every returned row carries "supports" — the type's capability flags (rebuild), derived and read-only.
 //	@Tags			sandboxes
 //	@Accept			json
 //	@Produce		json

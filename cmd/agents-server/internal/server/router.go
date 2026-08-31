@@ -5,8 +5,6 @@
 package server
 
 import (
-	"log/slog"
-
 	"github.com/gin-gonic/gin"
 )
 
@@ -28,34 +26,6 @@ const HooksPrefix = "/hooks"
 // limit — signature verification alone would let anyone spend our reads.
 func (s *Server) RegisterHook(hook gin.HandlerFunc) {
 	s.Engine.POST(HooksPrefix+"/:id", RateLimit(hookRatePerMinute, hookRateBurst), hook)
-}
-
-// NewPreviewEngine builds the engine that serves ONLY sandbox port previews,
-// on its own listener and origin (a separate port). It shares nothing with the
-// app engine — no static assets, no bearer auth, no app HTML — so the
-// untrusted page a preview serves runs on an origin that never held the
-// workbench token (decisions §5.37). The bearer middleware is absent because a
-// browser tab sends no Authorization header, and the unguessable grant in the
-// path authorizes the request. Every response carries Referrer-Policy: no-referrer so a sub-resource
-// cannot leak the grant through its Referer, and the per-IP rate limit stands
-// in for the missing bearer. trustedProxies mirrors the app engine's, so
-// per-IP limiting is correct behind the same proxy.
-func NewPreviewEngine(log *slog.Logger, preview gin.HandlerFunc, trustedProxies []string) (*gin.Engine, error) {
-	gin.SetMode(gin.ReleaseMode)
-	e := gin.New()
-	if err := e.SetTrustedProxies(trustedProxies); err != nil {
-		return nil, err
-	}
-	e.Use(gin.Recovery())
-	e.Use(logMiddleware(log))
-	e.Use(func(c *gin.Context) { c.Header("Referrer-Policy", "no-referrer"); c.Next() })
-	e.Any(PreviewPrefix+":token/*path", RateLimit(previewRatePerMinute, previewRateBurst), preview)
-	// A previewed page's absolute-path sub-resources (/asset.js, a redirect to
-	// /login, HMR) arrive without the token in the path; the same handler reads
-	// it from the cookie the tokenized entry point planted. With no valid grant
-	// cookie this is a plain 404 — this origin is not the app, never the SPA.
-	e.NoRoute(RateLimit(previewRatePerMinute, previewRateBurst), preview)
-	return e, nil
 }
 
 // RegisterWS mounts the WebSocket endpoints with application-level auth (the

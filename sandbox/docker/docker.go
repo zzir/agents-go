@@ -24,12 +24,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/netip"
 	"os"
 	"path"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -38,7 +36,6 @@ import (
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
-	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 
 	"github.com/zzir/agents-go/sandbox"
@@ -89,29 +86,7 @@ func (s *Sandbox) configFingerprint() string {
 	if env := envSlice(s.opts.Env); len(env) > 0 {
 		fmt.Fprintf(h, "env=%s\n", strings.Join(env, "\x00"))
 	}
-	if ports := s.publishedPorts(); len(ports) > 0 {
-		fmt.Fprintf(h, "ports=%v\n", ports)
-	}
 	return hex.EncodeToString(h.Sum(nil)[:16])
-}
-
-// publishedPorts is Options.Ports canonicalized: in range, deduplicated and
-// ordered, so one list produces one fingerprint however it was written.
-func (s *Sandbox) publishedPorts() []int {
-	if len(s.opts.Ports) == 0 {
-		return nil
-	}
-	seen := make(map[int]bool, len(s.opts.Ports))
-	out := make([]int, 0, len(s.opts.Ports))
-	for _, p := range s.opts.Ports {
-		if p <= 0 || p > 65535 || seen[p] {
-			continue
-		}
-		seen[p] = true
-		out = append(out, p)
-	}
-	slices.Sort(out)
-	return out
 }
 
 // Options configures the Docker sandbox.
@@ -135,13 +110,6 @@ type Options struct {
 	// own user, which for most images is root — the user a container needs to
 	// be able to install packages into itself.
 	User string
-	// Ports are published from the container to the DAEMON's loopback on
-	// ephemeral host ports, so a service inside is reachable without putting
-	// it on any other interface. Part of the fingerprint: changing the list
-	// replaces a persistent container. A published port only reaches a
-	// process listening on the container's network interface — a server bound
-	// to 127.0.0.1 inside is not reachable through it (spec §2.7r).
-	Ports []int
 	// Network names the docker network the container joins. Empty means "none"
 	// — no network at all, the default. "default" or "bridge" gives the
 	// daemon's ordinary networking; a user-defined network name puts the
@@ -827,7 +795,7 @@ func (s *Sandbox) startEphemeral(ctx context.Context, req sandbox.ExecRequest) (
 // set of ports it exposes (empty otherwise). Persistent mode relaxes the
 // read-only root filesystem, so a container whose User can write to it can
 // install packages into itself.
-func (s *Sandbox) buildHostConfig(persistent bool) (*container.HostConfig, network.PortSet) {
+func (s *Sandbox) buildHostConfig(persistent bool) *container.HostConfig {
 	netMode := container.NetworkMode("none")
 	if s.opts.Network != "" {
 		netMode = container.NetworkMode(s.opts.Network)
@@ -857,26 +825,6 @@ func (s *Sandbox) buildHostConfig(persistent bool) (*container.HostConfig, netwo
 			Config: map[string]string{"max-size": logMaxSize, "max-file": "1"},
 		},
 	}
-	// Ports are published only for the persistent container: an ephemeral
-	// one-shot has nothing to serve between commands, and publishing is decided
-	// once, at create (spec §2.7r). Returning the set keeps it off a shared
-	// field that concurrent ephemeral Execs would race on.
-	var exposed network.PortSet
-	if ports := s.publishedPorts(); persistent && len(ports) > 0 {
-		exposed = network.PortSet{}
-		bindings := network.PortMap{}
-		for _, p := range ports {
-			port, err := network.ParsePort(strconv.Itoa(p) + "/tcp")
-			if err != nil {
-				continue // publishedPorts already dropped anything out of range
-			}
-			exposed[port] = struct{}{}
-			// Host port 0 = the daemon picks a free one; loopback so the
-			// service reaches no other interface of the daemon's host.
-			bindings[port] = []network.PortBinding{{HostIP: netip.AddrFrom4([4]byte{127, 0, 0, 1}), HostPort: "0"}}
-		}
-		hostCfg.PortBindings = bindings
-	}
 	hostCfg.Memory = s.opts.Limits.MemoryBytes
 	if s.opts.Limits.CPUs > 0 {
 		hostCfg.NanoCPUs = int64(s.opts.Limits.CPUs * 1e9)
@@ -886,7 +834,7 @@ func (s *Sandbox) buildHostConfig(persistent bool) (*container.HostConfig, netwo
 		pids = 128
 	}
 	hostCfg.PidsLimit = &pids
-	return hostCfg, exposed
+	return hostCfg
 }
 
 // buildConfig assembles the container and host configuration for ephemeral mode.
@@ -899,7 +847,7 @@ func (s *Sandbox) buildConfig(req sandbox.ExecRequest) (*container.Config, *cont
 		Tty:        false,
 	}
 	cfg.User = s.opts.User
-	hostCfg, _ := s.buildHostConfig(false)
+	hostCfg := s.buildHostConfig(false)
 	return cfg, hostCfg
 }
 
@@ -917,9 +865,7 @@ func (s *Sandbox) buildPersistentConfig() (*container.Config, *container.HostCon
 		Labels: map[string]string{fingerprintLabel: s.configFingerprint()},
 	}
 	cfg.User = s.opts.User
-	// The container config declares the same ports the host config binds.
-	hostCfg, exposed := s.buildHostConfig(true)
-	cfg.ExposedPorts = exposed
+	hostCfg := s.buildHostConfig(true)
 	return cfg, hostCfg
 }
 

@@ -24,17 +24,12 @@ import (
 type ProjectHandler struct {
 	// Audit, when set, records every working-tree export: the one call that
 	// takes a whole project off the machine. Wired at bootstrap.
-	Audit protocol.AuditFunc
-	// PreviewOrigin is the separate origin a preview URL opens on, so its
-	// untrusted page cannot read the app's token. Wired at bootstrap; the zero
-	// value keeps a same-origin relative URL for tests (decisions §5.37).
-	PreviewOrigin PreviewOrigin
-	store         *store.ProjectStore
-	sandboxes     *store.SandboxStore
-	manager       *sandboxes.Manager
-	terminals     *TerminalHandler
-	settings      *settings.Reader
-	grants        *previewGrants
+	Audit     protocol.AuditFunc
+	store     *store.ProjectStore
+	sandboxes *store.SandboxStore
+	manager   *sandboxes.Manager
+	terminals *TerminalHandler
+	settings  *settings.Reader
 }
 
 // NewProjectHandler returns a handler over the project store; sandboxes
@@ -42,14 +37,7 @@ type ProjectHandler struct {
 // storage and runs the container calls, and terminals is the registry a
 // content change severs.
 func NewProjectHandler(s *store.ProjectStore, sbs *store.SandboxStore, m *sandboxes.Manager, terminals *TerminalHandler, cfg *settings.Reader) *ProjectHandler {
-	return &ProjectHandler{store: s, sandboxes: sbs, manager: m, terminals: terminals, settings: cfg, grants: newPreviewGrants()}
-}
-
-// RevokePreviewGrants drops every preview grant on a project — what the
-// Retirer calls when a sandbox content change replaced the container the
-// grants pointed into.
-func (h *ProjectHandler) RevokePreviewGrants(projectID string) {
-	h.grants.revokeProject(projectID)
+	return &ProjectHandler{store: s, sandboxes: sbs, manager: m, terminals: terminals, settings: cfg}
 }
 
 // projectDetail is the single-project response: the row plus the NAMES of
@@ -105,15 +93,7 @@ func (h *ProjectHandler) detail(p *store.Project) (*projectDetail, error) {
 		return nil, err
 	}
 	out := &projectDetail{Project: *p, Env: maskProjectEnv(vars)}
-	withPorts(&out.Project)
 	return out, nil
-}
-
-// withPorts decodes the stored port list into the field responses carry. An
-// undecodable payload reads as none: a listing must not fail over it, and
-// every path that BUILDS a container decodes it strictly instead.
-func withPorts(p *store.Project) {
-	p.PortList, _ = store.DecodeProjectPorts(p.Ports)
 }
 
 // projectDeleteResp answers a delete. The row is always gone when this is
@@ -146,8 +126,8 @@ func (h *ProjectHandler) own(c *gin.Context) (*store.Project, bool) {
 // manage resolves the project for an operation on its COMPUTE — status,
 // start, stop, rebuild. An admin passes on any project: they can already
 // delete one outright (decisions §5.29), and every one of these is strictly
-// less than that. It is deliberately NOT what preview and export use: those
-// disclose the owner's files, which managing the plane does not include.
+// less than that. It is deliberately NOT what export uses: that discloses the
+// owner's files, which managing the plane does not include.
 func (h *ProjectHandler) manage(c *gin.Context) (*store.Project, bool) {
 	ownerID, admin, ok := callerScope(c)
 	if !ok {
@@ -199,7 +179,6 @@ func (h *ProjectHandler) List(c *gin.Context) {
 	}
 	hosts := map[string]string{}
 	for i := range out {
-		withPorts(&out[i])
 		if admin {
 			out[i].StorageHint = h.storageHint(c, hosts, &out[i])
 		}
@@ -239,9 +218,6 @@ type projectReq struct {
 	// Env is the environment the project's container is created with;
 	// optional, and empty means none.
 	Env []store.EnvVar `json:"env,omitempty"`
-	// Ports are published so the preview can reach a service inside;
-	// optional, and docker only.
-	Ports []int `json:"ports,omitempty"`
 }
 
 // projectUpdateReq is the update body: the name, the sandbox, the whole
@@ -251,7 +227,6 @@ type projectUpdateReq struct {
 	Name      string         `json:"name" binding:"required"`
 	SandboxID string         `json:"sandbox_id" binding:"required"`
 	Env       []store.EnvVar `json:"env,omitempty"`
-	Ports     []int          `json:"ports,omitempty"`
 	Revision  int64          `json:"revision,omitempty"`
 }
 
@@ -282,14 +257,9 @@ func (h *ProjectHandler) Create(c *gin.Context) {
 		badRequest(c, err.Error())
 		return
 	}
-	ports, err := store.NormalizeProjectPorts(req.Ports)
-	if err != nil {
-		badRequest(c, err.Error())
-		return
-	}
 	// Existence is the create's own guard (the store locks the row), so a
 	// missing sandbox 404s from the insert itself.
-	p := &store.Project{OwnerID: ownerID, SandboxID: req.SandboxID, Name: req.Name, Env: env, Ports: ports}
+	p := &store.Project{OwnerID: ownerID, SandboxID: req.SandboxID, Name: req.Name, Env: env}
 	if err := h.store.Create(c.Request.Context(), p); err != nil {
 		saveError(c, err)
 		return
@@ -333,7 +303,7 @@ func (h *ProjectHandler) Get(c *gin.Context) {
 // Update renames the caller's project and replaces its environment.
 //
 //	@Summary		Update project
-//	@Description	A value sent back as its mask keeps what is stored; any other value replaces it. An environment change replaces the project's container at its next run, severs its terminals and revokes its preview links; a rename does none of that.
+//	@Description	A value sent back as its mask keeps what is stored; any other value replaces it. An environment change replaces the project's container at its next run and severs its terminals; a rename does none of that.
 //	@Tags			projects
 //	@Accept			json
 //	@Produce		json
@@ -381,16 +351,10 @@ func (h *ProjectHandler) Update(c *gin.Context) {
 	if req.Revision != 0 {
 		expected = req.Revision
 	}
-	ports, err := store.NormalizeProjectPorts(req.Ports)
-	if err != nil {
-		badRequest(c, err.Error())
-		return
-	}
 	contentChanged := !store.EnvContentEqual(prev.Env, env) ||
-		!store.PortsContentEqual(prev.Ports, ports) ||
 		req.SandboxID != prev.SandboxID
 	next := *prev
-	next.Name, next.SandboxID, next.Env, next.Ports = req.Name, req.SandboxID, env, ports
+	next.Name, next.SandboxID, next.Env = req.Name, req.SandboxID, env
 	newGen, err := h.store.Update(c.Request.Context(), prev.ID, &next, expected, contentChanged)
 	if err != nil {
 		saveError(c, err)
@@ -400,13 +364,10 @@ func (h *ProjectHandler) Update(c *gin.Context) {
 	// which a concurrent sandbox-content bump can leave short — and not from a
 	// re-read a cancelled request could fail, which would leave the new
 	// environment stored while live containers and terminals keep serving the
-	// old one. Preview grants go with the terminals: an outstanding one would
-	// otherwise proxy into the REPLACEMENT container, ports it no longer
-	// declares included.
+	// old one.
 	if contentChanged {
 		h.manager.RetireProject(prev.ID, newGen)
 		h.terminals.CloseProjectTerminals(prev.ID, newGen)
-		h.grants.revokeProject(prev.ID)
 	}
 	// Re-read for the response: the counters the write moved live in the
 	// row, and a client that answered with a stale revision would have its
@@ -653,10 +614,8 @@ func (h *ProjectHandler) Delete(c *gin.Context) {
 		return
 	}
 	// The project is gone: its shells must die with it — nothing may keep
-	// serving a tree that is about to be destroyed — and so must its preview
-	// links.
+	// serving a tree that is about to be destroyed.
 	h.terminals.CloseProjectTerminals(p.ID, maxTerminalGen)
-	h.grants.revokeProject(p.ID)
 	// The row is gone; reclaim the storage. A failure here leaves reclaimable
 	// storage rather than a row pointing at nothing, so it is REPORTED — but
 	// as part of a successful delete, not as a failed one: an error status

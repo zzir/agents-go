@@ -26,11 +26,6 @@ const (
 	flowRateBurst     = 30
 	hookRatePerMinute = 60
 	hookRateBurst     = 30
-	// A preview serves a real web page: one navigation is dozens of requests
-	// for assets, so the budget is a page-load's worth per second, not a
-	// webhook's worth per minute.
-	previewRatePerMinute = 1200
-	previewRateBurst     = 300
 )
 
 // ipLimiter is a per-key (client IP) token-bucket rate limiter.

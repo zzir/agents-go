@@ -27,7 +27,7 @@ import { WorkflowStrip } from '@/features/chat/WorkflowStrip';
 import { TraceDrawer, type TraceReveal } from '@/features/chat/TracePanel';
 import { ContextPanel } from '@/features/chat/ContextPanel';
 import { ChatTopBar } from '@/features/chat/ChatTopBar';
-import { ProjectEnvDialog, parsePorts } from '@/features/chat/ProjectEnvDialog';
+import { ProjectEnvDialog } from '@/features/chat/ProjectEnvDialog';
 import { EnvEditor, cleanEnv, envError } from '@/components/EnvEditor';
 import { ArrowDownIcon, CommentDiscussionIcon, FileDirectoryIcon, PlusIcon } from '@primer/octicons-react';
 import { toast } from '@/lib/toast';
@@ -184,7 +184,6 @@ export function ChatView({
   const [projSandboxId, setProjSandboxId] = useState('');
   const [projName, setProjName] = useState('');
   const [projEnv, setProjEnv] = useState<EnvVar[]>([]);
-  const [projPorts, setProjPorts] = useState('');
   const [projSaving, setProjSaving] = useState(false);
   // The bound project whose environment is open for editing, and whether a
   // container call is in flight (both disable the menu).
@@ -411,53 +410,11 @@ export function ChatView({
     }
   };
 
-  // The port is asked for rather than guessed: a project may run several
-  // services, and the one a person wants is the one they type. Where Preview
-  // reaches any port (`any_port`), asking is the only way in: there is no
-  // declared list to choose from.
-  const askPreviewPort = async () => {
-    // A backend that serves previewed ports on a PUBLIC host must say so
-    // before opening: the grant is only a convenience, not a guard.
-    const msg = boundSandbox?.supports?.public_ports
-      ? 'Which port inside the sandbox?\n\nHeads up: this opens a public URL — anyone with the link can reach the port.'
-      : 'Which port inside the sandbox?';
-    const raw = window.prompt(msg, '3000');
-    if (!raw) return;
-    const port = parseInt(raw, 10);
-    if (!Number.isFinite(port) || port <= 0 || port > 65535) {
-      toast.error('That is not a port');
-      return;
-    }
-    await previewPort(port);
-  };
-
-  // Preview and export read the container; they do not change its lifecycle, so
-  // they never take the containerBusy lock that Start/Stop/Rebuild hold — a
-  // slow export must not lock the menu shut on the state itself. Their own refs
-  // only stop a double-click.
-  const previewBusy = useRef(false);
+  // Export reads the container; it does not change its lifecycle, so it never
+  // takes the containerBusy lock that Start/Stop/Rebuild hold — a slow export
+  // must not lock the menu shut on the state itself. Its own ref only stops a
+  // double-click.
   const exportBusy = useRef(false);
-
-  const previewPort = async (port: number) => {
-    if (!boundProject || previewBusy.current) return;
-    previewBusy.current = true;
-    // Open the tab inside the click, before the await: a window.open after the
-    // grant resolves is outside the gesture and pop-up blockers eat it. The
-    // opener is severed at once so the untrusted preview (a separate origin)
-    // cannot reach back through window.opener.
-    const win = window.open('about:blank', '_blank');
-    if (win) win.opener = null;
-    try {
-      const grant = await api.projects.previewGrant(boundProject.id, port);
-      if (win) win.location.href = grant.url;
-      else toast.error('A pop-up blocker stopped the preview tab');
-    } catch (e) {
-      win?.close();
-      toast.error((e as Error).message || 'Could not open a preview');
-    } finally {
-      previewBusy.current = false;
-    }
-  };
 
   const exportProject = async () => {
     if (!boundProject || exportBusy.current) return;
@@ -801,14 +758,10 @@ export function ChatView({
         // guess: a backend whose store IS the compute cannot be rebuilt, and a
         // mislabelled Rebuild there would read as "safe" when it is refused.
         rebuildable: boundSandboxKnown && !!boundSandbox?.supports?.rebuild,
-        anyPort: !!boundSandbox?.supports?.any_port,
         onEnv: () => setEnvProject(boundProject),
         onStart: () => { void startSandbox(); },
         onStop: () => { void stopSandbox(); },
         onExport: () => { void exportProject(); },
-        ports: boundProject.ports || [],
-        onPreview: (port: number) => { void previewPort(port); },
-        onPreviewAsk: () => { void askPreviewPort(); },
         onRebuild: () => { void rebuildContainer(); },
         onOpen: () => { void refreshSandboxState(boundProject.id); },
       } : null}
@@ -895,15 +848,9 @@ export function ChatView({
                 <ActionList.Divider />
                 <ActionList.Item
                   onSelect={() => {
-                    // Default to the composer's current project's sandbox, else
-                    // one that does not serve ports publicly: a first-in-list
-                    // default that lands on a paid, publicly-reachable cloud
-                    // sandbox is a footgun.
-                    const fallback = sandboxDefs.find(sb => !sb.supports?.public_ports) || sandboxDefs[0];
-                    setProjSandboxId(selectedProject?.sandbox_id || fallback.id);
+                    setProjSandboxId(selectedProject?.sandbox_id || sandboxDefs[0].id);
                     setProjName('');
                     setProjEnv([]);
-                    setProjPorts('');
                     setProjDialogOpen(true);
                   }}
                 >
@@ -932,7 +879,6 @@ export function ChatView({
                 name: projName.trim(),
                 sandbox_id: projSandbox.id,
                 env: cleanEnv(projEnv),
-                ports: parsePorts(projPorts) ?? [],
               }) as Project;
               // Seed the cached list before selecting: the stale-id guard
               // below runs against `projects` on the very next commit, and a
@@ -959,7 +905,7 @@ export function ChatView({
                 {
                   content: projSaving ? 'Creating…' : 'Create',
                   buttonType: 'primary',
-                  disabled: !projSandbox || !projName.trim() || projSaving || !!envError(projEnv) || parsePorts(projPorts) === null,
+                  disabled: !projSandbox || !projName.trim() || projSaving || !!envError(projEnv),
                   onClick: () => { void create(); },
                 },
               ]}
@@ -985,18 +931,6 @@ export function ChatView({
                 {fc('Environment', (
                   <EnvEditor vars={projEnv} onChange={setProjEnv} disabled={projSaving} />
                 ), envError(projEnv))}
-                {/* Hidden where Preview already reaches any port (`any_port`):
-                    there is nothing to declare. */}
-                {!projSandbox?.supports?.any_port && fc('Published ports', (
-                  <TextInput
-                    block
-                    value={projPorts}
-                    placeholder="3000, 5173"
-                    onChange={e => setProjPorts(e.target.value)}
-                  />
-                ), parsePorts(projPorts) === null
-                  ? 'Ports must be numbers between 1 and 65535, separated by commas'
-                  : 'What Preview can open. A server inside must listen on 0.0.0.0. Changeable later.')}
               </Stack>
             </Dialog>
           );

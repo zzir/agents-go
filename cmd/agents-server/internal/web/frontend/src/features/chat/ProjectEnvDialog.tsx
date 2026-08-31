@@ -1,18 +1,18 @@
 import { useEffect, useState } from 'react';
-import { Dialog, Flash, FormControl, Spinner, TextInput } from '@primer/react';
+import { Dialog, Flash, Spinner } from '@primer/react';
 import type { ReactElement } from 'react';
 import { api } from '@/lib/api';
 import { toast } from '@/lib/toast';
 import { EnvEditor, cleanEnv, envError } from '@/components/EnvEditor';
-import type { EnvVar, Project, ProjectDetail, SandboxSupports } from '@/lib/binding';
+import type { EnvVar, Project, ProjectDetail } from '@/lib/binding';
 
 /* The project's settings: the environment (loaded on open — a listing never
-   carries one) and the ports its container publishes. Values arrive masked and
-   go back masked unless the person rewrites one.
+   carries one). Values arrive masked and go back masked unless the person
+   rewrites one.
 
-   Saving a CHANGED environment or port list replaces the container at the
-   project's next run, so the confirm step spells out what that costs; a save
-   that rewrote nothing goes through without asking. */
+   Saving a CHANGED environment replaces the container at the project's next
+   run, so the confirm step spells out what that costs; a save that rewrote
+   nothing goes through without asking. */
 
 interface ProjectEnvDialogProps {
   project: Project;
@@ -23,9 +23,7 @@ interface ProjectEnvDialogProps {
 /* The sandbox's settings, read-only: the image the container starts from and
    whether it has a network. Both answer questions this dialog provokes —
    "why can't the setup reach the internet?" above all — and both are the
-   admin's to change, in Settings. `supports.any_port` decides whether ports
-   are shown at all: where Preview already reaches any port, there is nothing
-   to declare. */
+   admin's to change, in Settings. */
 interface SandboxSummary {
   image?: string;
   network?: string;
@@ -37,26 +35,9 @@ interface SandboxSummary {
 const containerEnv = (vars: EnvVar[]) =>
   JSON.stringify(cleanEnv(vars).map(v => [v.key, v.value]).sort((a, b) => a[0].localeCompare(b[0])));
 
-/* "3000, 5173" -> [3000, 5173]; null when any entry is not a port. Empty is
-   an empty list, not an error. */
-export function parsePorts(raw: string): number[] | null {
-  const parts = raw.split(',').map(s => s.trim()).filter(Boolean);
-  const out: number[] = [];
-  for (const p of parts) {
-    if (!/^\d+$/.test(p)) return null;
-    const n = Number(p);
-    if (n < 1 || n > 65535) return null;
-    out.push(n);
-  }
-  return out;
-}
-
 export function ProjectEnvDialog({ project, sessionCount, onClose }: ProjectEnvDialogProps): ReactElement {
   const [vars, setVars] = useState<EnvVar[] | null>(null);
-  const [ports, setPorts] = useState('');
-  const [loadedPorts, setLoadedPorts] = useState('');
   const [sandbox, setSandbox] = useState<SandboxSummary | null>(null);
-  const [supports, setSupports] = useState<SandboxSupports | undefined>(undefined);
   const [revision, setRevision] = useState<number | undefined>(project.revision);
   const [loaded, setLoaded] = useState('');
   const [saving, setSaving] = useState(false);
@@ -72,9 +53,6 @@ export function ProjectEnvDialog({ project, sessionCount, onClose }: ProjectEnvD
         setVars(env);
         setRevision((d as ProjectDetail).revision);
         setLoaded(containerEnv(env));
-        const list = ((d as ProjectDetail).ports || []).join(', ');
-        setPorts(list);
-        setLoadedPorts(list);
       })
       .catch((e: Error) => { if (live) setError(e.message || 'Could not load the environment'); });
     return () => { live = false; };
@@ -88,24 +66,13 @@ export function ProjectEnvDialog({ project, sessionCount, onClose }: ProjectEnvD
         // still editable without knowing the image.
         if (!live) return;
         setSandbox((sb as { config?: SandboxSummary }).config || {});
-        setSupports((sb as { supports?: SandboxSupports }).supports);
       })
       .catch(() => {});
     return () => { live = false; };
   }, [project.sandbox_id]);
 
-  // Compare ports by the canonical set the server stores — sorted and
-  // deduplicated — not by their text: "5173, 3000", "3000,5173" and
-  // "3000, 3000, 5173" are the same published set and must not read as an edit
-  // that recreates the container.
-  const canonPorts = (raw: string) => {
-    const p = parsePorts(raw);
-    return p ? [...new Set(p)].sort((a, b) => a - b).join(',') : raw.trim();
-  };
-  const changed = vars !== null && (containerEnv(vars) !== loaded || canonPorts(ports) !== canonPorts(loadedPorts));
+  const changed = vars !== null && containerEnv(vars) !== loaded;
   const invalid = vars ? envError(vars) : null;
-  const portList = parsePorts(ports);
-  const portError = portList === null ? 'Ports must be numbers between 1 and 65535, separated by commas' : null;
 
   const save = async () => {
     if (!vars || saving) return;
@@ -113,10 +80,7 @@ export function ProjectEnvDialog({ project, sessionCount, onClose }: ProjectEnvD
     try {
       await api.projects.update(project.id, {
         name: project.name, sandbox_id: project.sandbox_id,
-        // Where Preview reaches any port, the server rejects a declared list;
-        // the field is hidden there, so never send a stray one that would 400
-        // the save.
-        env: cleanEnv(vars), ports: supports?.any_port ? [] : (portList ?? []), revision,
+        env: cleanEnv(vars), revision,
       });
       toast.success(changed ? 'Saved — the container is recreated on the next run' : 'Saved');
       onClose();
@@ -162,9 +126,9 @@ export function ProjectEnvDialog({ project, sessionCount, onClose }: ProjectEnvD
         {
           content: saving ? 'Saving…' : 'Save',
           buttonType: 'primary',
-          disabled: !vars || saving || !!invalid || !!portError,
-          // Only a change to what the container gets is worth a warning; a
-          // visibility toggle saves straight through.
+          disabled: !vars || saving || !!invalid,
+          // Only a change to what the container gets is worth a warning;
+          // anything else saves straight through.
           onClick: () => { if (changed) setConfirming(true); else void save(); },
         },
       ]}
@@ -175,26 +139,6 @@ export function ProjectEnvDialog({ project, sessionCount, onClose }: ProjectEnvD
         <>
           <EnvEditor vars={vars} onChange={setVars} disabled={saving} />
           {invalid && <Flash variant="danger">{invalid}</Flash>}
-          {/* Hidden where Preview already reaches any port (`any_port`):
-              there is nothing to declare. */}
-          {!supports?.any_port && (
-            <FormControl>
-              <FormControl.Label>Published ports</FormControl.Label>
-              <TextInput
-                block
-                value={ports}
-                disabled={saving}
-                placeholder="3000, 5173"
-                onChange={e => setPorts(e.target.value)}
-              />
-              <FormControl.Caption>
-                The ports Preview can open, bound to this machine&apos;s loopback only. A server
-                inside must listen on <code>0.0.0.0</code> — one bound to <code>127.0.0.1</code>
-                {' '}is not reachable through a published port.
-              </FormControl.Caption>
-            </FormControl>
-          )}
-          {portError && <Flash variant="danger">{portError}</Flash>}
           {sandbox?.image && (
             <p className="env-editor-hint">
               Container image <code>{sandbox.image}</code>

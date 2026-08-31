@@ -177,7 +177,6 @@ func (s *Sandbox) forget() {
 var (
 	_ sandbox.Sandbox        = (*Sandbox)(nil)
 	_ sandbox.Lifecycle      = (*Sandbox)(nil)
-	_ sandbox.PortForwarder  = (*Sandbox)(nil)
 	_ sandbox.Exporter       = (*Sandbox)(nil)
 	_ sandbox.TerminalOpener = (*Sandbox)(nil)
 )

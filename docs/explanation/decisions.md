@@ -784,9 +784,8 @@ sshd with streamlocal forwarding and socket access for the SSH user — no
 remote docker CLI, no local ssh binary. Self-healing is for transport
 failures only: a rejected channel open (a container port nothing listens on
 yet) arrives on a healthy transport, and reconnecting on it would sever every
-stream multiplexed on the shared client — the preview proxy probing a dev
-server that has not started must not kill the terminals riding the same
-connection. The `sandbox/ssh` module is deleted,
+stream multiplexed on the shared client — a dial to a container port that has
+not opened yet must not kill the terminals riding the same connection. The `sandbox/ssh` module is deleted,
 not parked: its Sandbox implementation had become the workbench's only
 consumer, and an embedder who wants raw remote exec can use x/crypto/ssh
 directly — the value this repo added was the sandboxing, which SSH never
@@ -1308,95 +1307,28 @@ through verbatim rather than replacing with a status line. That is a service
 configuration, not a client defect, and the template form says so where the
 checkbox is.
 
-### 5.35 A port preview is a gateway with a grant, not a published port
+### 5.35 A port preview is a gateway with a grant, not a published port (retired)
 
-Decided 2026-08-28. Losing the host bind mount (§5.33) took away the way a
-person looked at what the agent built; a **port preview** gives it back:
-`/preview/<grant>/…` reverse-proxies into a service listening inside the
-project's sandbox.
+Decided 2026-08-28; **retired 2026-08-31**, the feature removed.
 
-**Not `-p 3000:3000`.** Publishing puts a member's dev server on every
-interface of the host — in a multi-user workbench that is someone else's
-service, reachable by anyone who can route to the machine. Host ports are also
-globally unique, so two people wanting 3000 need an allocation table nobody
-asked for, and on a remote daemon a published port is on the wrong machine
-anyway. The gateway has none of those problems, and it is the shape both
-compatible services already use (E2B's per-port host, OpenSandbox's ingress).
+The workbench once proxied a port inside a project's sandbox to the browser —
+`/preview/<grant>/…` reverse-proxied into the container, off by default behind a
+grant token and (§5.37) its own origin, with the project declaring the docker
+`ports` to publish. It was removed because the path never held together across
+deployments: when agents-server itself runs in a container reaching the daemon
+through a mounted `docker.sock` — the shipped `docker-compose` topology — a
+published port binds the daemon host's loopback, which the in-container process
+cannot reach, while the container-network path that would work had no UI entry
+at all. Rather than keep a feature that worked on some deployments and silently
+failed on others, the workbench drops it and leaves "see what the agent built"
+to the agent itself — a headless browser inside the sandbox, screenshotting
+through an image tool result — which is topology-independent and feeds the
+agent's own verify loop.
 
-**A grant, because a browser tab carries no bearer token.** Every other route
-authenticates with a header; opening a URL sends none. So the owner asks the
-authenticated API for a grant, and gets a short-lived, unguessable, single
-(project, port) token in the path. The preview route therefore lives OUTSIDE
-`/api`, where the bearer middleware would refuse it, and carries its own
-per-IP rate limit — a route without a bearer must not let anyone spend our
-sandbox. Grants live in memory and die with the process, which is right: a
-preview is a live view of a live sandbox. They are revoked when the project is
-deleted.
-
-**The grant rides the path once, then a cookie.** A previewed page's own
-sub-resources — its `/asset.js`, a redirect to `/login`, an HMR socket — are
-absolute paths that carry no token, so the tokenized entry point
-(`/preview/<token>/`) plants the grant in a short-lived HttpOnly `preview_token`
-cookie and those requests resolve through it; a typical dev server (Vite,
-Webpack, an SPA) then works through the preview instead of 404ing. `Referer`
-cannot stand in — the preview origin sends `Referrer-Policy: no-referrer`
-(§5.37). One preview origin means ONE active grant per browser: opening a second
-project's preview replaces the cookie.
-
-**Off by default** (`preview_enabled`). It makes whatever is listening inside
-the sandbox reachable by anyone who can sign in, and that is a decision an
-operator takes rather than inherits.
-
-Two things the proxy does deliberately: it strips `Authorization` and `Cookie`
-(the `preview_token` included) before forwarding, so neither the workbench's own
-credential nor the grant reaches somebody's dev server; and it does not apply
-this app's Content-Security-Policy to a previewed page, which is not this app and
-would simply break.
-
-A docker sandbox that joins **no network** has no address at all, and the
-preview says so rather than timing out. On a remote daemon the container's
-address means nothing here, so the proxy dials through the same SSH transport
-the docker API uses; a `tcp://` daemon exposes its API and not its container
-network, and is refused with that sentence.
-
-**Revised 2026-08-28: the port is PUBLISHED, and the project declares it.**
-The first version dialed the container's address on its docker network, which
-only works where that network is routable from the server — and Docker Desktop
-on macOS and Windows keeps it inside a VM, so the whole feature was dead on
-the most common developer machine. It also could not reach a server bound to
-`127.0.0.1` inside the container even on Linux.
-
-So a project carries `ports`, and the container publishes each to the daemon's
-loopback on an ephemeral host port (spec §2.7r). The proxy dials that. It
-works on every daemon the workbench supports, including Docker Desktop.
-
-The objection that killed publishing the first time — "it must be decided at
-container create, when the port nobody has typed yet is unknown" — is answered
-by putting the list on the **project**, not the sandbox: a project's container
-is its own, its ports are content exactly like its environment (§5.32), and a
-change replaces that one container at its next run. On the shared sandbox row
-the same list would apply to every project on it and rebuild all of them.
-
-Two costs, taken deliberately over the alternative (a TCP tunnel over
-`docker exec`, which needs a forwarder inside the image):
-
-- **You declare before you preview.** An undeclared port still resolves the old
-  way, so nothing is lost where the container network IS routable, and the
-  attempt is bounded so it fails in seconds with the reason instead of hanging.
-- **The server inside must listen on `0.0.0.0`.** Docker forwards to the
-  container's interface; a `127.0.0.1` listener is invisible through a
-  published port. Most dev servers bind loopback by default, so this is said
-  in three places: the port field's caption, the 502 when it happens, and
-  `exec_command`'s own description when the project publishes anything — the
-  model is the one starting the server.
-
-**An e2b sandbox publishes nothing, because the service already did.** Every
-port answers at `<port>-<sandbox id>.<domain>`, so there is nothing to declare
-and the field is not shown. **Those hosts are PUBLIC**: probed against both
-services (2026-08-28), an unauthenticated GET to an application port answers
-200 while envd's own port answers 401/403. `secure: true` protects the daemon,
-not the workload. So on e2b the grant is a convenience, not a gate — anyone
-with the sandbox id reaches the service directly, and the UI says so.
+Removed with it: the `ports` project field and its docker port publishing, the
+`sandbox.PortForwarder` / `sandbox.PortDialer` SDK interfaces (and docker's
+`URLForPort`/`DialPort`, e2b's `URLForPort`), the `manager.Preview` gateway and
+its second `--preview-port` listener, and the `preview_enabled` setting.
 
 ### 5.36 A sandbox is one row, and only its identity freezes
 
@@ -1448,36 +1380,11 @@ further: the files live at that address and do not travel
 transaction with the destination locked, so a sandbox cannot be re-addressed
 between the check and the write.
 
-### 5.37 A port preview is served on its own origin; the E2B sandbox defaults to no network
+### 5.37 The E2B sandbox defaults to no network
 
-Decided 2026-08-28, hardening §5.35's port preview and §5.34's E2B backend.
-
-**The preview runs on a separate origin.** A preview reverse-proxies whatever a
-sandbox's dev server returns — an untrusted page: agent-fetched HTML, an
-AI-generated page with an injection, a compromised dependency. §5.35 stripped
-the workbench's `Authorization` and `Cookie` from the request INTO the dev
-server, but missed the reverse direction: the workbench's bearer token lives in
-`localStorage`, and a page served from the app's own origin can read it with
-`localStorage.getItem`. Stripping cookies does nothing when the credential is
-not a cookie. So the preview is no longer served on the app's origin at all: a
-second listener (`--preview-port`, the app port + 1 by default; or
-`--preview-base-url` behind a reverse proxy) serves ONLY the proxy, on an
-origin that has no app, no bearer middleware, and no stored token. A grant URL
-is absolute, on that origin. The app engine stops serving `/preview/`
-entirely, and the isolated engine sets `Referrer-Policy: no-referrer` so the
-grant in the path does not leak through a sub-resource's `Referer`. With
-`Referer` denied and the token absent from an absolute-path sub-resource's URL,
-those requests carry the grant in the `preview_token` cookie the entry point
-plants (§5.35). The grant stays short-lived and reusable within its TTL, not
-single-use: one page pulls many sub-resources, each carrying that cookie. Previews remain off
-by default (`preview_enabled`), so nothing here is reachable until an admin
-turns it on.
-
-Origin isolation, not CSP, is the mechanism: a CSP on the preview would not
-stop a script that is same-origin with the token. The one universal way to deny
-a page another origin's storage is to put it on another origin, and for a
-self-hosted binary a second port is the isolation that works for localhost, a
-LAN address and a reverse proxy alike.
+Decided 2026-08-28, hardening §5.34's E2B backend. (This section also
+established the port preview's origin isolation; that half went with the
+preview's removal — see §5.35.)
 
 **The E2B sandbox joins no network by default.** The `sandbox` package promises
 isolation by default, and the docker backend keeps it (`NetworkMode("none")`).

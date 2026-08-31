@@ -167,19 +167,6 @@ func TestE2BStopStartKeepsTheTree(t *testing.T) {
 	}
 }
 
-// A port's public host is built from the sandbox id and the domain, with no
-// call of its own beyond provisioning.
-func TestE2BURLForPort(t *testing.T) {
-	sb, _ := fakeBackedSandbox(t)
-	host, err := sb.URLForPort(t.Context(), 3000)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasPrefix(host, "https://3000-sb") || !strings.HasSuffix(host, ".test") {
-		t.Fatalf("url = %q, want https://3000-<id>.test", host)
-	}
-}
-
 // Destroy kills the sandbox; afterwards the client provisions a new one
 // rather than failing every command against a dead id.
 func TestE2BDestroyThenReprovision(t *testing.T) {
@@ -421,21 +408,6 @@ func TestE2BCreateExclusiveLargeContent(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(filepath.Join(f.root, "big.bin")); !bytes.Equal(got, content) {
 		t.Fatal("a refused create modified the file")
-	}
-}
-
-// An out-of-range port is invalid input, not a missing capability: a caller
-// keying UI off ErrLifecycleUnsupported must not see it here.
-func TestE2BURLForPortRejectsOutOfRange(t *testing.T) {
-	sb, _ := fakeBackedSandbox(t)
-	for _, port := range []int{0, -1, 70000} {
-		_, err := sb.URLForPort(t.Context(), port)
-		if err == nil {
-			t.Fatalf("URLForPort(%d) succeeded", port)
-		}
-		if errors.Is(err, sandbox.ErrLifecycleUnsupported) {
-			t.Fatalf("URLForPort(%d) = %v, must not read as a missing capability", port, err)
-		}
 	}
 }
 

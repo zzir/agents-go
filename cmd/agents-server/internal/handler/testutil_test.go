@@ -111,7 +111,7 @@ func testAgentConfigHandler(db *bun.DB) *AgentConfigHandler {
 func testSandboxHandler(db *bun.DB, manager *sandboxes.Manager) *SandboxHandler {
 	sbs, projects := store.NewSandboxStore(db), store.NewProjectStore(db)
 	terminals := NewTerminalHandler(sbs, projects, manager, settings.NewReader(nil))
-	return NewSandboxHandler(sbs, manager, NewRetirer(projects, manager, terminals, func(string) {}))
+	return NewSandboxHandler(sbs, manager, NewRetirer(projects, manager, terminals))
 }
 
 // mkSandboxRow persists a docker sandbox and returns its id — what every

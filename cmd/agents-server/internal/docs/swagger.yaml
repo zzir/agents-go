@@ -857,13 +857,6 @@ components:
           additionalProperties: {}
           type: object
       type: object
-    handler.previewGrantResp:
-      properties:
-        expires_at:
-          type: string
-        url:
-          type: string
-      type: object
     handler.projectDeleteResp:
       properties:
         deleted:
@@ -889,11 +882,6 @@ components:
           type: string
         owner_id:
           type: string
-        ports:
-          items:
-            type: integer
-          type: array
-          uniqueItems: false
         revision:
           description: |-
             Revision is the expected-revision CAS every update lands against.
@@ -937,14 +925,6 @@ components:
           uniqueItems: false
         name:
           type: string
-        ports:
-          description: |-
-            Ports are published so the preview can reach a service inside;
-            optional, and docker only.
-          items:
-            type: integer
-          type: array
-          uniqueItems: false
         sandbox_id:
           description: SandboxID is what the project runs on — the machine and the
             image.
@@ -962,11 +942,6 @@ components:
           uniqueItems: false
         name:
           type: string
-        ports:
-          items:
-            type: integer
-          type: array
-          uniqueItems: false
         revision:
           type: integer
         sandbox_id:
@@ -1742,11 +1717,6 @@ components:
           type: string
         owner_id:
           type: string
-        ports:
-          items:
-            type: integer
-          type: array
-          uniqueItems: false
         revision:
           description: |-
             Revision is the expected-revision CAS every update lands against.
@@ -1919,14 +1889,6 @@ components:
         Supports is the type's capability row, derived per response (never
         stored) — see SandboxSupports.
       properties:
-        any_port:
-          description: 'AnyPort: the preview reaches any port, with no declared list.'
-          type: boolean
-        public_ports:
-          description: |-
-            PublicPorts: a previewed port is served from a PUBLIC host — anyone
-            with the URL reaches it.
-          type: boolean
         rebuild:
           description: 'Rebuild: the compute can be thrown away in place, keeping
             the storage.'
@@ -4037,8 +3999,7 @@ paths:
     put:
       description: A value sent back as its mask keeps what is stored; any other value
         replaces it. An environment change replaces the project's container at its
-        next run, severs its terminals and revokes its preview links; a rename does
-        none of that.
+        next run and severs its terminals; a rename does none of that.
       parameters:
       - description: Project id
         in: path
@@ -4121,54 +4082,6 @@ paths:
       security:
       - BearerAuth: []
       summary: Export the project's working tree
-      tags:
-      - projects
-  /projects/{id}/preview/{port}:
-    post:
-      description: Returns a short-lived, unguessable URL under /preview/ on the preview
-        origin. Owner only, and off unless `preview_enabled` is set. A docker template
-        must name a network for its ports to be reachable at all.
-      parameters:
-      - description: Project id
-        in: path
-        name: id
-        required: true
-        schema:
-          type: string
-      - description: Port inside the sandbox
-        in: path
-        name: port
-        required: true
-        schema:
-          type: integer
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.previewGrantResp'
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Bad Request
-        "403":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: previews are disabled
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Not Found
-      security:
-      - BearerAuth: []
-      summary: Grant a preview URL for a port inside the project's sandbox
       tags:
       - projects
   /projects/{id}/sandbox:
@@ -4780,8 +4693,8 @@ paths:
         optional "prompt" (both types) is appended to the agent instructions of every
         session bound to a project on this sandbox — no project, no sandbox tools,
         no prompt; editing it reaches the next run without retiring the container.
-        Every returned row carries "supports" — the type''s capability flags (rebuild,
-        any_port, public_ports), derived and read-only.'
+        Every returned row carries "supports" — the type''s capability flags (rebuild),
+        derived and read-only.'
       requestBody:
         content:
           application/json:

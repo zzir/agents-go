@@ -76,20 +76,6 @@ func TestBuildConfig_NetworkEnabled(t *testing.T) {
 	}
 }
 
-// Ports are a persistent container's concern: an ephemeral one-shot has nothing
-// to serve, and publishing on it would both race a shared field and bind a host
-// port for a container that exits after one command (spec §2.7r).
-func TestBuildHostConfig_PortsOnlyPersistent(t *testing.T) {
-	s := &Sandbox{opts: Options{Image: "x", Ports: []int{8000}}}
-	if _, exposed := s.buildHostConfig(false); len(exposed) != 0 {
-		t.Errorf("ephemeral exposed = %v, want none", exposed)
-	}
-	host, exposed := s.buildHostConfig(true)
-	if len(exposed) != 1 || len(host.PortBindings) != 1 {
-		t.Errorf("persistent exposed = %v, bindings = %v, want one each", exposed, host.PortBindings)
-	}
-}
-
 // readTar collects header-by-content (files) and header-by-mode (all entries).
 func readTar(t *testing.T, r io.Reader) (files map[string]string, modes map[string]int64, dirs map[string]bool) {
 	t.Helper()
@@ -571,27 +557,4 @@ func TestLookupRunningRestartsStoppedContainer(t *testing.T) {
 			t.Errorf("containerID = %q, want cleared", sb.containerID)
 		}
 	})
-}
-
-// A published port is part of what a persistent container IS: changing the
-// list must replace the container rather than adopt one publishing something
-// else. Order and duplicates are not a change.
-func TestPublishedPortsFingerprint(t *testing.T) {
-	fp := func(ports ...int) string {
-		s := &Sandbox{opts: Options{Image: "i", Ports: ports}}
-		return s.configFingerprint()
-	}
-	if fp() == fp(3000) {
-		t.Error("publishing a port did not change the fingerprint")
-	}
-	if fp(3000) == fp(3000, 5173) {
-		t.Error("adding a port did not change the fingerprint")
-	}
-	if fp(3000, 5173) != fp(5173, 3000, 5173) {
-		t.Error("order or a duplicate changed the fingerprint")
-	}
-	// Out of range is dropped, not hashed.
-	if fp(3000) != fp(3000, 0, 70000) {
-		t.Error("an out-of-range port reached the fingerprint")
-	}
 }
