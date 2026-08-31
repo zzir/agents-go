@@ -25,7 +25,9 @@ func (s *Sandbox) OpenTerminal(ctx context.Context, opts sandbox.TerminalOptions
 	}
 	shell := opts.Shell
 	if len(shell) == 0 {
-		shell = []string{"/bin/sh", "-l"}
+		// Prefer bash when the image ships it (as the docker backend does): the
+		// e2b image's /bin/sh is dash, which chokes on bash-style login profiles.
+		shell = []string{"/bin/sh", "-c", "command -v bash >/dev/null 2>&1 && exec bash -l || exec sh -l"}
 	}
 	envs := map[string]string{"TERM": opts.EffectiveTerm()}
 	for k, v := range s.opts.Env {
