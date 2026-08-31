@@ -49,14 +49,31 @@ func FunctionCallItem(id, name, callID, argsJSON string) agents.OutputItem {
 	return must(modelkit.FunctionCallItem(id, callID, name, argsJSON))
 }
 
+// reasoningSummaryPart is the wire shape of a native reasoning summary part.
+type reasoningSummaryPart struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
 // ReasoningItem builds a reasoning item with a single summary part.
 //
 // Deliberately NOT modelkit.ReasoningItem: that one places text in the content
 // parts (raw reasoning, what a translated backend has), while this fake mimics
 // the native Responses shape where the API returns a summary.
 func ReasoningItem(id, text string) agents.OutputItem {
-	return RawItem(`{"type":"reasoning","id":` + quote(id) +
-		`,"summary":[{"type":"summary_text","text":` + quote(text) + `}]}`)
+	raw, err := json.Marshal(struct {
+		Type    string                 `json:"type"`
+		ID      string                 `json:"id"`
+		Summary []reasoningSummaryPart `json:"summary"`
+	}{
+		Type:    "reasoning",
+		ID:      id,
+		Summary: []reasoningSummaryPart{{Type: "summary_text", Text: text}},
+	})
+	if err != nil { // test literals always marshal
+		panic(err)
+	}
+	return RawItem(string(raw))
 }
 
 func must(item agents.OutputItem, err error) agents.OutputItem {
@@ -64,12 +81,4 @@ func must(item agents.OutputItem, err error) agents.OutputItem {
 		panic(fmt.Sprintf("agentstest: %v", err))
 	}
 	return item
-}
-
-func quote(s string) string {
-	b, err := json.Marshal(s)
-	if err != nil { // strings always marshal
-		panic(err)
-	}
-	return string(b)
 }
