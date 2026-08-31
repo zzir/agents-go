@@ -4,7 +4,7 @@ import { Button, Checkbox, CounterLabel, Dialog, Flash, Link, SegmentedControl, 
 import type { SelectPanelItemInput } from '@primer/react';
 import { AgentPicker } from '@/components/AgentPicker';
 import { api } from '@/lib/api';
-import { useApi } from '@/lib/hooks';
+import { useApi, useNarrow } from '@/lib/hooks';
 import { diffLines } from '@/lib/diff';
 import { providerMeta } from '@/lib/providers';
 import {
@@ -247,6 +247,11 @@ function ReplayDialog({ data, onClose }: { data: PayloadRecord; onClose: () => v
   const [selected, setSelected] = useState(0);
   const [view, setView] = useState<'output' | 'diff'>('output');
   const [itemsView, setItemsView] = useState<'list' | 'json'>('list');
+  // Narrow layout: the two panes collapse to a Request/Response tab switch and
+  // the request knobs/tool pickers hide behind an Options toggle.
+  const narrow = useNarrow();
+  const [pane, setPane] = useState<'request' | 'response'>('request');
+  const [optsOpen, setOptsOpen] = useState(false);
   const [streamText, setStreamText] = useState('');
   const [streamReasoning, setStreamReasoning] = useState('');
   const abortRef = useRef<AbortController | null>(null);
@@ -444,9 +449,11 @@ function ReplayDialog({ data, onClose }: { data: PayloadRecord; onClose: () => v
       // Primer's named sizes cap out well below what a request/response
       // editor needs; explicit style wins over both (same as SettingsDialog).
       // BOTH axes are capped: an uncapped 100vh height with a fixed width cap
-      // turned the dialog into a tall narrow slab on large displays.
+      // turned the dialog into a tall narrow slab on large displays. A narrow
+      // screen takes Primer's fullscreen — no room for a centered slab.
       height="large"
-      style={{ width: 'min(1440px, calc(100vw - 48px))', height: 'min(900px, calc(100vh - 96px))' }}
+      position={{ narrow: 'fullscreen', regular: 'center' }}
+      style={narrow ? undefined : { width: 'min(1440px, calc(100vw - 48px))', height: 'min(900px, calc(100vh - 96px))' }}
       // The scroll wrapper between dialog and body is not a flex container,
       // so the body must claim the height explicitly for the panes to fill.
       renderBody={({ children }) => (
@@ -456,27 +463,34 @@ function ReplayDialog({ data, onClose }: { data: PayloadRecord; onClose: () => v
       <div className="trace-replay">
         <div className="trace-replay-toolbar">
           <AgentPicker className="trace-replay-agent" agents={agents} value={agentId} onChange={applyAgent} />
-          <TextInput value={model} onChange={e => setModel(e.target.value)} placeholder="model (agent default)" className="trace-replay-model" />
-          <SettingsKnobs
-            parsed={settingsParsed.error ? null : (settingsParsed.value || {})}
-            onChange={s => setSettingsText(Object.keys(s).length > 0 ? JSON.stringify(s, null, 2) : '')}
-            effortOptions={providerMeta(selectedAgent?.provider?.provider_type).effortOptions}
-          />
-          <ToolPicker label="Built-in" items={pickerData.builtin} enabled={enabledTools} onSelect={applyPanelSelection} />
-          <ToolPicker label="MCP" items={pickerData.mcp} groupMetadata={pickerData.mcpGroups} enabled={enabledTools} onSelect={applyPanelSelection} />
-          <ToolPicker label="Skills" items={pickerData.skills} enabled={enabledTools} onSelect={applyPanelSelection} />
-          {handoffTools.length > 0 && (
-            <label className="trace-replay-tools-toggle">
-              <Checkbox checked={includeHandoffs} onChange={e => setIncludeHandoffs(e.target.checked)} />
-              {'Handoffs (' + handoffTools.length + ')'}
-            </label>
+          {narrow && (
+            <Button trailingVisual={TriangleDownIcon} aria-expanded={optsOpen} onClick={() => setOptsOpen(o => !o)} className="trace-replay-optsbtn">
+              Options
+            </Button>
           )}
-          {outputSchema && (
-            <label className="trace-replay-tools-toggle" title="Replay with the traced structured-output schema">
-              <Checkbox checked={includeSchema} onChange={e => setIncludeSchema(e.target.checked)} />
-              Schema
-            </label>
-          )}
+          {/* Inline on desktop (display:contents); a collapsible panel on narrow. */}
+          <div className={'trace-replay-secondary' + (optsOpen ? ' open' : '')}>
+            <SettingsKnobs
+              parsed={settingsParsed.error ? null : (settingsParsed.value || {})}
+              onChange={s => setSettingsText(Object.keys(s).length > 0 ? JSON.stringify(s, null, 2) : '')}
+              effortOptions={providerMeta(selectedAgent?.provider?.provider_type).effortOptions}
+            />
+            <ToolPicker label="Built-in" items={pickerData.builtin} enabled={enabledTools} onSelect={applyPanelSelection} />
+            <ToolPicker label="MCP" items={pickerData.mcp} groupMetadata={pickerData.mcpGroups} enabled={enabledTools} onSelect={applyPanelSelection} />
+            <ToolPicker label="Skills" items={pickerData.skills} enabled={enabledTools} onSelect={applyPanelSelection} />
+            {handoffTools.length > 0 && (
+              <label className="trace-replay-tools-toggle">
+                <Checkbox checked={includeHandoffs} onChange={e => setIncludeHandoffs(e.target.checked)} />
+                {'Handoffs (' + handoffTools.length + ')'}
+              </label>
+            )}
+            {outputSchema && (
+              <label className="trace-replay-tools-toggle" title="Replay with the traced structured-output schema">
+                <Checkbox checked={includeSchema} onChange={e => setIncludeSchema(e.target.checked)} />
+                Schema
+              </label>
+            )}
+          </div>
           {busy ? (
             <Button variant="danger" onClick={() => abortRef.current?.abort()} className="trace-replay-run">
               Cancel
@@ -492,10 +506,16 @@ function ReplayDialog({ data, onClose }: { data: PayloadRecord; onClose: () => v
             </Button>
           )}
         </div>
-        <div className="trace-replay-cols">
-          <div className="trace-replay-col">
+        {narrow && (
+          <SegmentedControl aria-label="Pane" fullWidth size="small" className="trace-replay-paneseg" onChange={i => setPane(i === 0 ? 'request' : 'response')}>
+            <SegmentedControl.Button selected={pane === 'request'}>Request</SegmentedControl.Button>
+            <SegmentedControl.Button selected={pane === 'response'}>Response</SegmentedControl.Button>
+          </SegmentedControl>
+        )}
+        <div className="trace-replay-cols" data-pane={pane}>
+          <div className="trace-replay-col trace-replay-col-request">
             <div className="trace-replay-sec">System instructions</div>
-            <Textarea value={instructions} onChange={e => setInstructions(e.target.value)} rows={4} block resize="none" placeholder="System instructions" />
+            <Textarea value={instructions} onChange={e => setInstructions(e.target.value)} rows={4} block resize="none" placeholder="System instructions" className="trace-replay-instructions" />
             <div className="trace-replay-sec">
               Model settings
               {settingsParsed.error
@@ -544,7 +564,7 @@ function ReplayDialog({ data, onClose }: { data: PayloadRecord; onClose: () => v
               </div>
             )}
           </div>
-          <div className="trace-replay-col">
+          <div className="trace-replay-col trace-replay-col-response">
             {error && <Flash variant="danger" className="trace-replay-error">{error}</Flash>}
             <div className="trace-replay-sec">
               Replay response
@@ -578,7 +598,7 @@ function ReplayDialog({ data, onClose }: { data: PayloadRecord; onClose: () => v
                     : !streamReasoning && <div className="trace-empty">Waiting for the first token…</div>}
                 </div>
               ) : !attempt ? (
-                <div className="trace-empty">Edit the request on the left, then Run.</div>
+                <div className="trace-empty">Edit the request, then Run.</div>
               ) : view === 'diff' && diff ? (
                 <div className="trace-replay-diff">
                   {diff.length === 0 || diff.every(d => d.type === 'same')

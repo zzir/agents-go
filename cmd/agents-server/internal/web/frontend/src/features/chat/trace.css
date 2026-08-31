@@ -227,12 +227,6 @@
   min-width: 140px;
   max-width: 240px;
 }
-.trace-replay-model {
-  flex: 1;
-  min-width: 120px;
-  max-width: 320px;
-  font-family: var(--fontStack-monospace);
-}
 .trace-replay-tools-toggle {
   display: inline-flex;
   align-items: center;
@@ -244,6 +238,11 @@
 }
 .trace-replay-run {
   margin-left: auto;
+}
+/* The secondary call controls sit inline in the toolbar on desktop; the
+   wrapper only becomes a real box on narrow (the Options panel). */
+.trace-replay-secondary {
+  display: contents;
 }
 .trace-replay-cols {
   display: flex;
@@ -296,6 +295,10 @@
   font-weight: var(--base-text-weight-normal);
   text-transform: none;
   letter-spacing: 0;
+}
+/* Prose instructions stay sans, but match the sibling editors' size. */
+.trace-replay-instructions textarea {
+  font-size: var(--base-text-size-xs);
 }
 .trace-replay-settings textarea {
   font-family: var(--fontStack-monospace);
@@ -418,6 +421,42 @@
   background: var(--bgColor-danger-muted);
   color: var(--fgColor-muted);
   text-decoration: line-through;
+}
+
+/* Narrow (mobile): the dialog goes fullscreen (Dialog position prop), the two
+   panes become a Request/Response tab switch, and the request knobs and tool
+   pickers collapse behind the Options toggle. */
+@media (max-width: 767px) {
+  .trace-replay-optsbtn {
+    flex-shrink: 0;
+  }
+  .trace-replay-secondary {
+    display: none;
+    flex-basis: 100%;
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--base-size-8);
+    margin-top: var(--base-size-4);
+    padding: var(--base-size-8);
+    border: 1px solid var(--borderColor-default);
+    border-radius: var(--borderRadius-medium);
+  }
+  .trace-replay-secondary.open {
+    display: flex;
+  }
+  .trace-replay-secondary .trace-replay-knob {
+    justify-content: space-between;
+  }
+  .trace-replay-paneseg {
+    flex-shrink: 0;
+  }
+  .trace-replay-cols {
+    flex-direction: column;
+  }
+  .trace-replay-cols[data-pane="request"] .trace-replay-col-response,
+  .trace-replay-cols[data-pane="response"] .trace-replay-col-request {
+    display: none;
+  }
 }
 
 /* Failed spans: red name, error tag, and the expanded error message */
