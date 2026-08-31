@@ -22,10 +22,6 @@ export interface ChatSessionState {
   sessionId: string | null;
   running: boolean;
   compacting: boolean;
-  liveAgentName: string | null;
-  // liveAgentName's avatar path, resolved by ChatView from the agent list.
-  liveAgentAvatar: string | null;
-  liveStartedAt: number | null;
   // Agent-config id → avatar path, for the parts that name an agent by id
   // (handoffs, trigger notes). Only configs WITH an avatar appear.
   agentAvatars: Record<string, string>;

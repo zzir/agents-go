@@ -142,10 +142,6 @@ export interface SessionState {
   // the traces do not.
   runQuestions: Record<string, { question: string; onPath: boolean }>;
   liveRunId: string | null;
-  liveStartedAt: number | null;
-  liveAgentName: string | null;
-  // The config id behind liveAgentName (run.agent_start), for its avatar.
-  liveAgentId: string | null;
   loaded: boolean;
   // Backwards pagination over the persisted history. entries are the raw rows
   // fetched so far, kept because a later page has to be REBUILT with the ones
@@ -206,7 +202,7 @@ function staleTaskRow(cur: TaskState, status: TaskStatus, attempt?: number): boo
 export function defaultSS(): SessionState {
   return {
     messages: [], streaming: '', reasoning: '', running: false, compacting: false, diagnostics: [],
-    traceRuns: {}, runQuestions: {}, liveRunId: null, liveStartedAt: null, liveAgentName: null, liveAgentId: null, loaded: false,
+    traceRuns: {}, runQuestions: {}, liveRunId: null, loaded: false,
     entries: [], hasMore: false, loadingMore: false, tasks: {}, tasksLoaded: false, taskView: null,
   };
 }
@@ -639,8 +635,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
         const appended = ensureLiveTurn(s.messages, p.run_id, p.input);
         return {
           ...s, running: true, compacting: false, diagnostics: [], liveRunId: p.run_id,
-          liveStartedAt: appended ? Date.now() : (s.liveStartedAt ?? Date.now()),
-          liveAgentName: null, liveAgentId: null, loaded: true,
+          loaded: true,
           messages: appended || s.messages,
           traceRuns: { ...s.traceRuns, [p.run_id]: s.traceRuns[p.run_id] || [] },
         };
@@ -924,7 +919,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       delete sessionRunRef.current[sid];
       updateSS(sid, s => {
         const msgs = finalizeTurn(s.messages, text, thinking);
-        return { ...s, messages: msgs || s.messages, streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null, liveStartedAt: null, liveAgentName: null, liveAgentId: null };
+        return { ...s, messages: msgs || s.messages, streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null };
       });
       reloadMessages(sid);
     });
@@ -994,7 +989,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
         }
         if (staleSid) {
           delete sessionRunRef.current[staleSid];
-          updateSS(staleSid, s => ({ ...s, streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null, liveStartedAt: null, liveAgentName: null, liveAgentId: null }));
+          updateSS(staleSid, s => ({ ...s, streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null }));
           reloadMessages(staleSid);
         }
         return;
@@ -1022,7 +1017,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
         : { type: 'error' as const, content: p.message };
       updateSS(sid, s => ({
         ...s, messages: appendErrorPart(s.messages, errPart, thinking, remaining),
-        streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null, liveStartedAt: null, liveAgentName: null, liveAgentId: null,
+        streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null,
       }));
       // A guardrail block already rendered its typed card (with the retracted
       // answer above it) optimistically. A reload would replace that with the
@@ -1064,7 +1059,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       // run's start can also skip).
       updateSS(sid, s => {
         const msgs = appendCancelledPart(s.messages, thinking, remaining);
-        return { ...s, messages: msgs || s.messages, streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null, liveStartedAt: null, liveAgentName: null, liveAgentId: null };
+        return { ...s, messages: msgs || s.messages, streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null };
       });
       reloadMessages(sid);
     });
@@ -1178,20 +1173,10 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       if (!sid) return;
       delete streamBufsRef.current[p.run_id];
       delete reasoningBufsRef.current[p.run_id];
-      // Keep liveStartedAt so the timer resumes from the original start when
-      // the run continues after approval. running=false already hides the
-      // live timer; clearing liveStartedAt would lose the original timestamp.
       updateSS(sid, s => ({
         ...s, streaming: '', reasoning: '', running: false, compacting: false,
-        liveRunId: null, liveAgentName: null, liveAgentId: null,
+        liveRunId: null,
       }));
-    });
-
-    ws.on(EV.runAgentStart, (p: { run_id: string; agent_name?: string; agent_config_id?: string }) => {
-      const sid = runMapRef.current[p.run_id];
-      if (!sid || !p.agent_name) return;
-      updateSS(sid, s => s.liveAgentName === p.agent_name && s.liveAgentId === (p.agent_config_id || null)
-        ? s : { ...s, liveAgentName: p.agent_name || null, liveAgentId: p.agent_config_id || null });
     });
 
     // This connection fell behind and the server dropped events for it — for

@@ -76,9 +76,9 @@ type BuildResult struct {
 	Provider agents.ModelProvider
 
 	// AgentIDs maps each built agent's name — the entry and every handoff
-	// target — to its config id, for the events that announce an agent by
-	// name (run.agent_start, run.handoff) so the client can show its avatar.
-	// Set only on the entry build.
+	// target — to its config id, carried on the events that announce an agent
+	// by name (run.agent_start, run.handoff); run.handoff resolves it to the
+	// agent's avatar. Set only on the entry build.
 	AgentIDs map[string]string
 
 	// Behavior, Compaction and Session are the agent config's own groups,

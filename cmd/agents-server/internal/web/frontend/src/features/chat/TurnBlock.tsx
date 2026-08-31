@@ -1,14 +1,13 @@
-import { useState, useEffect, useCallback, useMemo, memo } from 'react';
+import { useCallback, useMemo, memo } from 'react';
 import { IconButton } from '@primer/react';
 import { useCopy } from '@/lib/hooks';
 import { ChevronRightIcon, ChevronLeftIcon, RepoForkedIcon, CopyIcon, CheckIcon, SyncIcon, AlertIcon, StopIcon, ShieldIcon } from '@primer/octicons-react';
 import { Disclosure } from '@/components/Disclosure';
-import { formatDuration, type TurnPart, type ErrorPart, type CancelledPart, type Branches } from '@/lib/timeline';
+import { type TurnPart, type ErrorPart, type CancelledPart, type Branches } from '@/lib/timeline';
 import { StreamingMarkdown } from '@/features/chat/StreamingMarkdown';
 import { TextContent } from '@/features/chat/TextContent';
 import { ProcessTimeline } from '@/features/chat/ProcessTimeline';
 import { useChatSession, useChatActions } from '@/features/chat/ChatSessionContext';
-import { AgentAvatar } from '@/components/AgentAvatar';
 
 // STAGE_NOTES says what a trip at each stage actually stopped. A guardrail runs
 // at four of them, and telling someone "the request was blocked before the
@@ -74,15 +73,6 @@ function buildSegments(parts: TurnPart[]): { segments: TurnSegment[]; notices: (
   return { segments, notices };
 }
 
-function LiveTimer({ startedAt }: { startedAt: number }) {
-  const [elapsed, setElapsed] = useState(() => Date.now() - startedAt);
-  useEffect(() => {
-    const id = setInterval(() => setElapsed(Date.now() - startedAt), 1000);
-    return () => clearInterval(id);
-  }, [startedAt]);
-  return <span className="turn-duration turn-duration-live">{formatDuration(elapsed)}</span>;
-}
-
 interface TurnBlockProps {
   parts: TurnPart[];
   // Per-delta live text, set on the ONE live turn only (null elsewhere), so a
@@ -102,7 +92,7 @@ interface TurnBlockProps {
 export const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive, prompt, duration, messageId, branches }: TurnBlockProps) {
   // Live-run state applies to the live turn only — every read below is gated
   // on isLive.
-  const { running, compacting, liveAgentName, liveAgentAvatar, liveStartedAt } = useChatSession();
+  const { running, compacting } = useChatSession();
   const { regenerate, fork, switchBranch } = useChatActions();
   const isEmpty = parts.length === 0 && !streaming && !reasoning;
   const { copied, copy } = useCopy();
@@ -157,10 +147,6 @@ export const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, 
           <div className="thinking-dots">
             <span /><span /><span />
           </div>
-          {liveAgentName && <span className="thinking-agent">
-            <AgentAvatar name={liveAgentName} avatar={liveAgentAvatar || undefined} size={20} />
-            {liveAgentName}
-          </span>}
         </div>
       )}
       {isLive && compacting && activeIdx === -1 && !liveTail && (
@@ -171,7 +157,6 @@ export const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, 
           <span className="thinking-agent">Compacting context…</span>
         </div>
       )}
-      {isLive && liveStartedAt && <LiveTimer startedAt={liveStartedAt} />}
       {/* The bar shows for anything a person can act on: a failed or
           cancelled turn with no assistant text still regenerates, forks and
           switches attempts — only Copy needs text. */}

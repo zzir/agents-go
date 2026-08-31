@@ -127,12 +127,6 @@
   margin-left: var(--base-size-4);
   user-select: none;
 }
-.turn-duration-live {
-  display: block;
-  margin-left: 0;
-  margin-top: var(--base-size-4);
-  font-variant-numeric: tabular-nums;
-}
 
 /* Scroll area wrapper — positions the "jump to latest" button. isolation
    keeps the button's z-index scoped here, so it never paints above overlays
@@ -749,7 +743,7 @@
 }
 .cancelled-card-icon { color: var(--fgColor-muted); flex-shrink: 0; }
 
-/* Live agent name next to the thinking dots */
+/* Muted status label next to the thinking dots (compaction) */
 .thinking-agent {
   display: inline-flex;
   align-items: center;

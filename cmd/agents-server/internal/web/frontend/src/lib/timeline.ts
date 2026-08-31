@@ -98,18 +98,6 @@ interface CompactionInfo {
   tokens_after?: number;
 }
 
-export function formatDuration(ms: number): string {
-  if (ms < 1000) return '<1s';
-  const s = ms / 1000;
-  if (s < 60) return s.toFixed(1) + 's';
-  const m = Math.floor(s / 60);
-  const rs = Math.round(s % 60);
-  if (m < 60) return m + 'm ' + rs + 's';
-  const h = Math.floor(m / 60);
-  const rm = m % 60;
-  return h + 'h ' + rm + 'm';
-}
-
 // The ONE ToolCall / TurnPart definition — the streaming path (streamReducer),
 // the replay path (buildTimeline) and every renderer (ChatView, ToolCallCard)
 // import these. A second local copy is how the two paths drift apart.

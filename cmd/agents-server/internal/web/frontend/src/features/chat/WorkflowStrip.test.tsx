@@ -27,7 +27,7 @@ function Harness() {
   const [tasks, _setTasks] = useState<Record<string, TaskState>>({});
   setTasks = _setTasks;
   const session = useMemo<ChatSessionState>(
-    () => ({ sessionId: 's1', running: false, compacting: false, liveAgentName: null, liveAgentAvatar: null, liveStartedAt: null, agentAvatars: {} }), []);
+    () => ({ sessionId: 's1', running: false, compacting: false, agentAvatars: {} }), []);
   const chatTasks = useDerivedChatTasks(tasks);
   return (
     <ChatSessionProvider session={session} actions={ACTIONS} tasks={chatTasks}>
