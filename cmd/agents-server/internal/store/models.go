@@ -130,11 +130,8 @@ const TaskKindWorkflow = "workflow"
 type AgentConfig struct {
 	bun.BaseModel `bun:"table:agent_configs,alias:ac"`
 
-	// Scope/OwnerID: row visibility and its permanent creator — decisions §5.29.
-	Scope   string `bun:"scope,notnull"                 json:"scope"`
-	OwnerID string `bun:"owner_id,nullzero,type:uuid"   json:"owner_id,omitempty"`
-	ID      string `bun:"id,pk,type:uuid" json:"id"`
-	Name    string `bun:"name,notnull"   json:"name"`
+	ID   string `bun:"id,pk,type:uuid" json:"id"`
+	Name string `bun:"name,notnull"   json:"name"`
 	// Description is what this agent is FOR, in a sentence — the text an
 	// automatic agent picker will match a request against (not the model-facing
 	// instructions).
@@ -179,6 +176,10 @@ type AgentConfig struct {
 	// Empty means every run error stays fatal.
 	ErrorHandlers string `bun:"error_handlers" json:"error_handlers,omitempty"`
 
+	// Scope/OwnerID: row visibility and its permanent creator — decisions §5.29.
+	Scope   string `bun:"scope,notnull"                 json:"scope"`
+	OwnerID string `bun:"owner_id,nullzero,type:uuid"   json:"owner_id,omitempty"`
+
 	CreatedAt time.Time `bun:"created_at,notnull" json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,notnull" json:"updated_at"`
 }
@@ -192,11 +193,8 @@ type AgentConfig struct {
 type Provider struct {
 	bun.BaseModel `bun:"table:providers,alias:pv"`
 
-	// Scope/OwnerID: row visibility and its permanent creator — decisions §5.29.
-	Scope   string `bun:"scope,notnull"                 json:"scope"`
-	OwnerID string `bun:"owner_id,nullzero,type:uuid"   json:"owner_id,omitempty"`
-	ID      string `bun:"id,pk,type:uuid" json:"id"`
-	Name    string `bun:"name,notnull" json:"name"`
+	ID   string `bun:"id,pk,type:uuid" json:"id"`
+	Name string `bun:"name,notnull" json:"name"`
 	// Type selects the backend (bridge.ProviderType*). Empty means openai, the
 	// value that predates the field.
 	Type string `bun:"type"      json:"type,omitempty"`
@@ -216,6 +214,10 @@ type Provider struct {
 	// sanitizing); the token itself never leaves the server.
 	ChatGPTLoggedIn bool `bun:"-" json:"chatgpt_logged_in,omitempty"`
 
+	// Scope/OwnerID: row visibility and its permanent creator — decisions §5.29.
+	Scope   string `bun:"scope,notnull"                 json:"scope"`
+	OwnerID string `bun:"owner_id,nullzero,type:uuid"   json:"owner_id,omitempty"`
+
 	CreatedAt time.Time `bun:"created_at,notnull" json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,notnull" json:"updated_at"`
 }
@@ -225,11 +227,8 @@ type Provider struct {
 type McpServerConfig struct {
 	bun.BaseModel `bun:"table:mcp_servers,alias:ms"`
 
-	// Scope/OwnerID: row visibility and its permanent creator — decisions §5.29.
-	Scope   string `bun:"scope,notnull"                 json:"scope"`
-	OwnerID string `bun:"owner_id,nullzero,type:uuid"   json:"owner_id,omitempty"`
-	ID      string `bun:"id,pk,type:uuid"        json:"id"`
-	Name    string `bun:"name,notnull"           json:"name"`
+	ID   string `bun:"id,pk,type:uuid"        json:"id"`
+	Name string `bun:"name,notnull"           json:"name"`
 	// Enabled deliberately carries no bun default tag: with `default:true`,
 	// bun swaps a zero-value false for SQL DEFAULT on insert, silently
 	// enabling a server that was created with enabled=false.
@@ -246,6 +245,10 @@ type McpServerConfig struct {
 	// separately from Config so that regular CRUD updates (which overwrite
 	// Config) don't erase it, and hidden from the API (json:"-").
 	OAuthToken string `bun:"oauth_token,type:text,nullzero" json:"-"`
+
+	// Scope/OwnerID: row visibility and its permanent creator — decisions §5.29.
+	Scope   string `bun:"scope,notnull"                 json:"scope"`
+	OwnerID string `bun:"owner_id,nullzero,type:uuid"   json:"owner_id,omitempty"`
 
 	CreatedAt time.Time `bun:"created_at,notnull"     json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,notnull"     json:"updated_at"`
@@ -294,9 +297,6 @@ type HTTPMcpConfig struct {
 type Skill struct {
 	bun.BaseModel `bun:"table:skills,alias:sk"`
 
-	// Scope/OwnerID: row visibility and its permanent creator — decisions §5.29.
-	Scope       string `bun:"scope,notnull"                 json:"scope"`
-	OwnerID     string `bun:"owner_id,nullzero,type:uuid"   json:"owner_id,omitempty"`
 	ID          string `bun:"id,pk,type:uuid" json:"id"`
 	Name        string `bun:"name,notnull"    json:"name"` // unique per scope (decisions §5.29)
 	Description string `bun:"description,notnull" json:"description"`
@@ -321,6 +321,10 @@ type Skill struct {
 	// Detached marks an imported skill edited in the workbench: a re-import
 	// skips it instead of overwriting the local edit.
 	Detached bool `bun:"detached,notnull" json:"detached,omitempty"`
+
+	// Scope/OwnerID: row visibility and its permanent creator — decisions §5.29.
+	Scope   string `bun:"scope,notnull"                 json:"scope"`
+	OwnerID string `bun:"owner_id,nullzero,type:uuid"   json:"owner_id,omitempty"`
 
 	CreatedAt time.Time `bun:"created_at,notnull" json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,notnull" json:"updated_at"`
