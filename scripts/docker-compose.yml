@@ -1,0 +1,24 @@
+services:
+  agents-server:
+    image: ghcr.io/zzir/agents-server:latest
+    container_name: agents-server
+    restart: unless-stopped
+    user: root
+    command:
+      - --host=0.0.0.0
+      - --db=/data/agents.db
+    ports:
+      - "9527:9527"
+    environment:
+      - AGENTS_TOKEN=change-me-please
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - agents-data:/data
+
+volumes:
+  agents-data:
+    name: agents-server-data
+
+networks:
+  default:
+    name: agents-server-network

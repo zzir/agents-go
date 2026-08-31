@@ -34,8 +34,6 @@ below, and [invariant 54](../explanation/workbench-invariants.md).)
 |---|---|---|
 | `--host` | `127.0.0.1` | Bind address (`0.0.0.0` for LAN) |
 | `--port` | `9527` | HTTP port |
-| `--preview-port` | `0` (= `port+1`) | Isolated sandbox-preview origin; must differ from `--port` |
-| `--preview-base-url` | — | Public origin of the preview listener behind a proxy |
 | `--db` | `data.db` | SQLite path, or a `postgres://` DSN |
 | `--base-url` | — | Public origin of this server (required behind a proxy for OAuth) |
 | `--auth` | `token` | `token` (one static token) or `oauth` (per-user login) |
@@ -88,4 +86,3 @@ masking and validation all derive from it. Current keys:
 | `max_tasks_per_session` | `6` | Concurrent live background tasks per session; read at each spawn (feeds the SDK's `tasks.Config.MaxConcurrentPerParent` resolver) |
 | `max_terminals_per_sandbox` | `4` | Concurrent interactive terminals on one sandbox |
 | `sandbox_idle_minutes` | `30` | Stop a project's container after N idle minutes (`0` disables) |
-| `preview_enabled` | `false` | Let a project owner reach a port inside its sandbox through this server |

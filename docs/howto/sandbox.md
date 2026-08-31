@@ -163,9 +163,8 @@ With `Persistent: true` a single container is reused across `Exec` calls (state 
 Optional capabilities are discovered by type assertion, the way `ExecStreamer`
 and `TerminalOpener` already are ([spec §2.7p](../reference/spec.md#27p-stop-keeps-the-filesystem-and-promises-nothing-else)):
 `Lifecycle` (`Start`/`Stop`/`Status` — Stop keeps the filesystem and promises
-nothing else), `PortForwarder` + `PortDialer` (where a port inside the sandbox
-answers, and how to reach it), and `Exporter` (the working tree as a tar
-stream). A backend that cannot offer one simply does not implement it.
+nothing else) and `Exporter` (the working tree as a tar stream). A backend
+that cannot offer one simply does not implement it.
 `sandbox/sandboxtest` is the conformance suite every backend runs; it detects
 the capabilities, so a backend implementing none still passes the core.
 

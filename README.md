@@ -88,8 +88,7 @@ developers who want the same machinery in their own programs.
   machine or a remote daemon, or a sandbox on any E2B-compatible service. The
   model reads files, edits them with `apply_patch`, runs commands. Approve a
   command once, trust that command, or trust the session; open a terminal into
-  it from the browser, preview a port it is serving, or export the whole
-  working tree as a tar.
+  it from the browser, or export the whole working tree as a tar.
 - **Work that outlives the turn.** `spawn_task` sub-agents that wake the parent
   when they finish and resume in place when they fail; workflows as fixed step
   sequences, started by the model, by hand, by cron or by a signed webhook.
