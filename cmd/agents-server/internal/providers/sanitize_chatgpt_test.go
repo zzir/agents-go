@@ -93,10 +93,57 @@ func TestSanitizeChatGPTInput_Reasoning(t *testing.T) {
 			t.Errorf("reasoning should not contain %q", banned)
 		}
 	}
-	for _, required := range []string{"type", "content", "summary", "encrypted_content"} {
+	for _, required := range []string{"type", "summary", "encrypted_content"} {
 		if _, ok := m[required]; !ok {
 			t.Errorf("reasoning missing required field %q", required)
 		}
+	}
+	// The codex backend caps reasoning content at length 0.
+	if c, ok := m["content"].([]any); !ok || len(c) != 0 {
+		t.Errorf("reasoning content should be an empty array, got %v", m["content"])
+	}
+}
+
+// A reasoning item replayed from another provider carries reasoning_text content
+// (rejected: "content array too long, maximum length 0") and a foreign signature
+// (rejected: "invalid_encrypted_content"). The codex backend can use neither, so
+// the whole reasoning item is dropped and the surrounding turn is left intact.
+func TestSanitizeChatGPTInput_ReasoningCrossProviderDropped(t *testing.T) {
+	input := []any{
+		map[string]any{"type": "message", "role": "user", "content": "hello"},
+		map[string]any{
+			"type":              "reasoning",
+			"summary":           []any{},
+			"encrypted_content": "thinking_signature:abc123",
+			"content":           []any{map[string]any{"type": "reasoning_text", "text": "the user said hello"}},
+			"id":                "msg_x-0",
+		},
+		map[string]any{"type": "message", "role": "assistant", "content": []any{map[string]any{"type": "output_text", "text": "hi"}}},
+	}
+	out := sanitizeChatGPTInput(input)
+	if len(out) != 2 {
+		t.Fatalf("cross-provider reasoning should be dropped, leaving 2 items, got %d", len(out))
+	}
+	for _, item := range out {
+		if item.(map[string]any)["type"] == "reasoning" {
+			t.Error("reasoning item with a foreign signature should be dropped")
+		}
+	}
+}
+
+// A reasoning item with no encrypted_content (e.g. only reasoning_text content)
+// carries nothing the codex backend can use once content is emptied, so it too
+// is dropped rather than sent as a bare shell.
+func TestSanitizeChatGPTInput_ReasoningNoEncryptedDropped(t *testing.T) {
+	input := []any{
+		map[string]any{
+			"type":    "reasoning",
+			"summary": []any{},
+			"content": []any{map[string]any{"type": "reasoning_text", "text": "thinking"}},
+		},
+	}
+	if out := sanitizeChatGPTInput(input); len(out) != 0 {
+		t.Fatalf("reasoning without encrypted_content should be dropped, got %d items", len(out))
 	}
 }
 

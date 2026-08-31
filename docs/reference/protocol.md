@@ -968,7 +968,11 @@ API route.
 A `chatgpt_login` provider talks to the Codex backend
 (`chatgpt.com/backend-api/codex`), which differs from the standard API in two
 ways the bridge absorbs: request bodies are rewritten (`store: false`, no
-`previous_response_id`, input sanitized to the fields the backend accepts),
+`previous_response_id`, input sanitized to the fields the backend accepts, and a
+reasoning item dropped unless it carries a codex-native `encrypted_content` — the
+backend caps reasoning `content` at length 0 and rejects a blob it did not
+produce, so a reasoning trace replayed from another provider is stripped rather
+than 400'd),
 and **only streaming requests are accepted** — the provider is wrapped in
 `agents.NewStreamOnlyProvider`, so blocking callers (title generation,
 compaction summaries, playground) are served by an internal stream instead of

@@ -20,10 +20,12 @@ import (
 // the fields the backend accepts are kept; unknown types get a conservative
 // fallback (strip id + status, pass the rest through).
 //
-// Nested content/summary arrays are NOT cleaned — the codex backend accepts
-// its own nested format and external providers (e.g. Volcengine) produce
-// minimal nested parts anyway.  If a future 400 points at a nested path
-// (input[N].content[M].xxx), extend the per-type branch to walk the array.
+// Message content is passed through untouched — the codex backend accepts its
+// own nested format and external providers (e.g. Volcengine) produce minimal
+// nested parts anyway. Reasoning is the exception: the backend caps its content
+// at length 0 and rejects any encrypted_content it did not produce, so a
+// reasoning item replayed from another provider is dropped and a genuine one
+// keeps only its (emptied) content — see sanitizeChatGPTItem.
 func sanitizeChatGPTInput(input []any) []any {
 	out := make([]any, 0, len(input))
 	for _, item := range input {
@@ -35,23 +37,39 @@ func sanitizeChatGPTInput(input []any) []any {
 		if m["type"] == "item_reference" {
 			continue
 		}
-		out = append(out, sanitizeChatGPTItem(m))
+		if s, keep := sanitizeChatGPTItem(m); keep {
+			out = append(out, s)
+		}
 	}
 	return out
 }
 
-func sanitizeChatGPTItem(m map[string]any) map[string]any {
+// sanitizeChatGPTItem returns the cleaned item and whether to keep it; a
+// reasoning item the codex backend can't use is dropped (keep=false).
+func sanitizeChatGPTItem(m map[string]any) (map[string]any, bool) {
 	switch m["type"] {
 	case "message":
-		return pick(m, "type", "role", "content")
+		return pick(m, "type", "role", "content"), true
 	case "function_call":
-		return pick(m, "type", "call_id", "name", "arguments")
+		return pick(m, "type", "call_id", "name", "arguments"), true
 	case "function_call_output":
-		return pick(m, "type", "call_id", "output")
+		return pick(m, "type", "call_id", "output"), true
 	case "reasoning":
-		return pick(m, "type", "content", "summary", "encrypted_content")
+		// The codex backend caps reasoning content at length 0 and rejects any
+		// encrypted_content it did not produce. A reasoning item replayed from
+		// another provider carries reasoning_text content and a foreign signature
+		// (the Anthropic adapter marks its blob "thinking_signature:"); Codex can
+		// use neither, so drop the whole item — it reasons fresh, as if the turn
+		// had none. A genuine codex reasoning item is kept, its content emptied.
+		enc, _ := m["encrypted_content"].(string)
+		if enc == "" || strings.HasPrefix(enc, "thinking_signature:") {
+			return nil, false
+		}
+		r := pick(m, "type", "summary", "encrypted_content")
+		r["content"] = []any{}
+		return r, true
 	default:
-		return stripResponseMeta(m)
+		return stripResponseMeta(m), true
 	}
 }
 
