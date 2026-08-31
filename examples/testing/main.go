@@ -58,27 +58,33 @@ func (m *scriptedModel) StreamResponse(ctx context.Context, req agents.ModelRequ
 	panic("this script only serves RunSync")
 }
 
-// An output item is a Responses-API wire item; build one by decoding its JSON.
-func outputItem(raw string) agents.OutputItem {
+// An output item is a Responses-API wire item; build one by encoding a value to
+// JSON and decoding it back — encoding/json escapes every field, so no string
+// concatenation hand-quotes the wire shape.
+func outputItem(v any) agents.OutputItem {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		panic("marshal output item: " + err.Error())
+	}
 	var item agents.OutputItem
-	if err := json.Unmarshal([]byte(raw), &item); err != nil {
+	if err := json.Unmarshal(raw, &item); err != nil {
 		panic("build output item: " + err.Error())
 	}
 	return item
 }
 
 func message(text string) agents.OutputItem {
-	b, _ := json.Marshal(text)
-	return outputItem(`{"type":"message","id":"msg_1","status":"completed","role":"assistant",` +
-		`"content":[{"type":"output_text","text":` + string(b) + `,"annotations":[]}]}`)
+	return outputItem(map[string]any{
+		"type": "message", "id": "msg_1", "status": "completed", "role": "assistant",
+		"content": []any{map[string]any{"type": "output_text", "text": text, "annotations": []any{}}},
+	})
 }
 
 func functionCall(name, callID, argsJSON string) agents.OutputItem {
-	n, _ := json.Marshal(name)
-	c, _ := json.Marshal(callID)
-	a, _ := json.Marshal(argsJSON)
-	return outputItem(`{"type":"function_call","id":"fc_1","call_id":` + string(c) +
-		`,"name":` + string(n) + `,"arguments":` + string(a) + `,"status":"completed"}`)
+	return outputItem(map[string]any{
+		"type": "function_call", "id": "fc_1", "call_id": callID,
+		"name": name, "arguments": argsJSON, "status": "completed",
+	})
 }
 
 // "call the tool, then answer" is a two-response script: the first turn's
