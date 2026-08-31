@@ -118,38 +118,6 @@ func (h *ChatGPTOAuthHandler) Complete(c *gin.Context) {
 	}
 }
 
-// chatgptStatusResp is the Status response.
-type chatgptStatusResp struct {
-	LoggedIn bool `json:"logged_in"`
-}
-
-// Status reports whether the provider identified by the id path parameter has a
-// valid ChatGPT token.
-//
-//	@Summary	ChatGPT login status
-//	@Tags		providers
-//	@Produce	json
-//	@Param		id	path		string	true	"Provider ID"
-//	@Success	200	{object}	chatgptStatusResp
-//	@Security	BearerAuth
-//	@Router		/providers/{id}/chatgpt/status [get]
-func (h *ChatGPTOAuthHandler) Status(c *gin.Context) {
-	pv, err := h.providers.Get(c.Request.Context(), c.Param("id"))
-	if err != nil {
-		storeError(c, err)
-		return
-	}
-	if !visibleRow(c, pv.Scope, pv.OwnerID) {
-		return
-	}
-	loggedIn, err := h.oauth.IsLoggedIn(c.Request.Context(), c.Param("id"))
-	if err != nil {
-		storeError(c, err) // ErrNotFound -> 404, else 500
-		return
-	}
-	c.JSON(http.StatusOK, chatgptStatusResp{LoggedIn: loggedIn})
-}
-
 // Logout clears the ChatGPT token for the provider identified by the id path
 // parameter.
 //

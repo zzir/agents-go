@@ -960,8 +960,10 @@ current revision.
 
 ### ChatGPT OAuth
 
-Login, complete, logout, and status are per-provider, under the provider
-resource — see [Providers](#providers--apiv1providers). `login` returns an
+Login, complete, and logout are per-provider, under the provider resource — see
+[Providers](#providers--apiv1providers). Whether a provider is signed in is read
+from the provider list's derived `chatgpt_logged_in` field, not a separate
+status call. `login` returns an
 authorize URL; the browser redirect after authorizing lands on
 `http://localhost:1455/auth/callback`, where nothing on the server listens. The
 user copies that URL and submits it to `complete`, which redeems the code

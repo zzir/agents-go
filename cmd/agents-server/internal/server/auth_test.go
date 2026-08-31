@@ -39,7 +39,7 @@ func TestAuthExemptCoversOnlyServedRoutes(t *testing.T) {
 		"/api/v1/auth/logout",
 		"/api/v1/auth/tokens",
 		"/api/v1/sessions",
-		"/api/v1/agents/a1/chatgpt/status",
+		"/api/v1/providers/p1/chatgpt/login",
 	} {
 		if authExempt(p) {
 			t.Errorf("authExempt(%q) = true, want false", p)

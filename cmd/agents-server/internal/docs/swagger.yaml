@@ -662,11 +662,6 @@ components:
         redirect_url:
           type: string
       type: object
-    handler.chatgptStatusResp:
-      properties:
-        logged_in:
-          type: boolean
-      type: object
     handler.createRunReq:
       properties:
         agent_config_id:
@@ -4514,27 +4509,6 @@ paths:
       security:
       - BearerAuth: []
       summary: ChatGPT logout
-      tags:
-      - providers
-  /providers/{id}/chatgpt/status:
-    get:
-      parameters:
-      - description: Provider ID
-        in: path
-        name: id
-        required: true
-        schema:
-          type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.chatgptStatusResp'
-          description: OK
-      security:
-      - BearerAuth: []
-      summary: ChatGPT login status
       tags:
       - providers
   /providers/{id}/owner:

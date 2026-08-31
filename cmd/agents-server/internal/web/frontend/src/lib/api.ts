@@ -447,6 +447,5 @@ export const api = {
     complete: (providerId: string | number, redirectUrl: string) =>
       request(`/providers/${providerId}/chatgpt/complete`, { method: 'POST', body: JSON.stringify({ redirect_url: redirectUrl }) }),
     logout: (providerId: string | number) => request(`/providers/${providerId}/chatgpt/logout`, { method: 'POST' }),
-    status: (providerId: string | number) => request(`/providers/${providerId}/chatgpt/status`),
   },
 };

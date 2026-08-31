@@ -325,21 +325,6 @@ func decodeAccountID(jwt string) string {
 	return claims.Auth.AccountID
 }
 
-// IsLoggedIn reports whether the provider has a stored ChatGPT token. It
-// returns the store error (e.g. store.ErrNotFound) so callers can distinguish
-// "provider does not exist" from "exists but not logged in" — matching the 404
-// the login/logout endpoints give for a missing provider.
-func (o *ChatGPTOAuth) IsLoggedIn(ctx context.Context, providerID string) (bool, error) {
-	if providerID == "" {
-		return false, fmt.Errorf("provider_id is required")
-	}
-	pv, err := o.providers.Get(ctx, providerID)
-	if err != nil {
-		return false, err
-	}
-	return pv.ChatGPTToken != "", nil
-}
-
 // Logout clears the provider stored ChatGPT token.
 func (o *ChatGPTOAuth) Logout(ctx context.Context, providerID string) error {
 	return o.providers.ClearChatGPTToken(ctx, providerID)

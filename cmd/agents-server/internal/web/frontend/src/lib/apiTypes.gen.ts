@@ -3483,45 +3483,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/providers/{id}/chatgpt/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** ChatGPT login status */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description Provider ID */
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.chatgptStatusResp"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/providers/{id}/owner": {
         parameters: {
             query?: never;
@@ -7477,9 +7438,6 @@ export interface components {
         };
         "handler.chatgptCompleteReq": {
             redirect_url?: string;
-        };
-        "handler.chatgptStatusResp": {
-            logged_in?: boolean;
         };
         "handler.createRunReq": {
             agent_config_id?: string;

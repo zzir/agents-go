@@ -188,7 +188,6 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		providers.POST("/:id/chatgpt/login", h.ChatGPT.Login)
 		providers.POST("/:id/chatgpt/complete", h.ChatGPT.Complete)
 		providers.POST("/:id/chatgpt/logout", h.ChatGPT.Logout)
-		providers.GET("/:id/chatgpt/status", h.ChatGPT.Status)
 	}
 	{
 		workflows := api.Group("/workflows")
