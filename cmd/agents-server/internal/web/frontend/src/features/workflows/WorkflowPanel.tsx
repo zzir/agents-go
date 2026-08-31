@@ -7,9 +7,8 @@ import { ChevronUpIcon, ChevronDownIcon, TrashIcon, PlayIcon, ZapIcon } from '@p
 import { api } from '@/lib/api';
 import { PAGE_SIZE, useApi, useCrud, usePage } from '@/lib/hooks';
 import { ReadOnlyContext, canDeleteRow, canDemoteRow, canEditRow } from '@/lib/access';
-import { useOwnerLabels } from '@/lib/owners';
 import { useMe } from '@/lib/me';
-import { OwnerBadge, RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
+import { RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
 import { fc } from '@/lib/form';
 import { nameOf } from '@/lib/named';
 import { AgentPicker } from '@/components/AgentPicker';
@@ -303,7 +302,6 @@ export function WorkflowPanel({ sessionId }: { sessionId: string | null }) {
   // follows canEditRow per row. While /auth/me loads, no write affordances.
   const { me, loading: meLoading } = useMe();
   const isAdmin = me?.role === 'admin';
-  const { labelFor } = useOwnerLabels();
   const canCreate = !meLoading;
   const rowEditable = (w: Workflow) => canEditRow(isAdmin, me?.id, w);
   const { items: workflows, adding, editing, startAdd, startEdit, cancel, save, saving, remove, reload } =
@@ -370,7 +368,7 @@ export function WorkflowPanel({ sessionId }: { sessionId: string | null }) {
               <div className="resource-row-main">
                 <div className="resource-row-head">
                   <span className="resource-row-title">{w.name}</span>
-                  <ScopeBadge row={w} meId={me?.id} /><OwnerBadge row={w} meId={me?.id} labelFor={labelFor} />
+                  <ScopeBadge row={w} meId={me?.id} />
                   <Label variant={BADGE.count}>{'Steps·' + (w.steps || []).length}</Label>
                 </div>
                 <div className="resource-row-sub">

@@ -121,12 +121,3 @@ export function ScopeBadge({ row, meId }: { row: ScopedRow; meId?: string }) {
   return null;
 }
 
-/** Who authored a row — shown on rows that are not the caller's own, so a
- * shared listing says whose configuration (and whose credentials) it is. */
-export function OwnerBadge({ row, meId, labelFor }: {
-  row: ScopedRow; meId?: string; labelFor: (ownerId?: string) => string;
-}) {
-  if (!row.owner_id || row.owner_id === meId) return null;
-  return <Label variant={BADGE.owner}>{labelFor(row.owner_id)}</Label>;
-}
-
