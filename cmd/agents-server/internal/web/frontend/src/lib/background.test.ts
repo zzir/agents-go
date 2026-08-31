@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { backgroundItems, stepProgress, stepRows, taskItem } from '@/lib/background';
+import { backgroundItems, hasTaskInStatus, stepProgress, stepRows, taskItem } from '@/lib/background';
 import type { TaskState } from '@/lib/useAgentSocket';
 
 const steps = [{ id: 's1', name: 'write' }, { id: 's2', name: 'test' }];
@@ -131,5 +131,33 @@ describe('stepRows', () => {
     // Spans, when loaded, win — they bound the actual work.
     const rows = stepRows(stamped, 'completed', { r1: [{ kind: 'span', type: 'function', started_at: '2026-01-01T00:00:00Z', ended_at: '2026-01-01T00:00:03Z' }] });
     expect(rows[0].durationMs).toBe(3000);
+  });
+});
+
+describe('hasTaskInStatus', () => {
+  const t = (status: TaskState['status']): TaskState => ({ taskId: 't', label: '', status });
+
+  it('finds a session whose background workflow is running or paused', () => {
+    // A running step lights the sidebar orange; a paused one, red — even for a
+    // session that is not the open conversation.
+    expect(hasTaskInStatus({ a: t('working') }, 'working')).toBe(true);
+    expect(hasTaskInStatus({ a: t('input_required') }, 'input_required')).toBe(true);
+  });
+
+  it('keeps the two signals distinct', () => {
+    // A paused task is not "working": awaiting (red) must win over running
+    // (orange), so the running scan must not also match it.
+    expect(hasTaskInStatus({ a: t('input_required') }, 'working')).toBe(false);
+    expect(hasTaskInStatus({ a: t('working') }, 'input_required')).toBe(false);
+  });
+
+  it('ignores ended tasks and an empty/absent map', () => {
+    expect(hasTaskInStatus({ a: t('completed'), b: t('failed'), c: t('cancelled') }, 'working')).toBe(false);
+    expect(hasTaskInStatus({}, 'working')).toBe(false);
+    expect(hasTaskInStatus(undefined, 'input_required')).toBe(false);
+  });
+
+  it('matches when any one of several tasks qualifies', () => {
+    expect(hasTaskInStatus({ a: t('completed'), b: t('working') }, 'working')).toBe(true);
   });
 });

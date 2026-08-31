@@ -51,6 +51,18 @@ export function stepProgress(state?: WorkflowState): { activity?: string; progre
   };
 }
 
+// hasTaskInStatus reports whether any of a session's background tasks sits in
+// the given status. The sidebar reads it twice — 'working' feeds the running
+// (orange) marker, 'input_required' the awaiting (red) one — so a session whose
+// only live work is a background workflow still shows the colour its state calls
+// for, even when it is not the open conversation.
+export function hasTaskInStatus(tasks: Record<string, TaskState> | undefined, status: TaskStatus): boolean {
+  for (const t of Object.values(tasks || {})) {
+    if (t.status === status) return true;
+  }
+  return false;
+}
+
 export function taskItem(t: TaskState): BackgroundItem {
   const workflow = t.kind === TASK_KIND_WORKFLOW;
   const live = t.status === 'working' || t.status === 'input_required';

@@ -21,6 +21,7 @@ const TerminalPanel = React.lazy(() =>
 );
 import { login, checkAuth, getToken, api, authConfig, exchangeCode, TOKEN_KEY, type AuthConfig } from '@/lib/api';
 import { EV, TASK_KIND_WORKFLOW } from '@/lib/protocol';
+import { hasTaskInStatus } from '@/lib/background';
 import { WorkflowsHub, type HubTab } from '@/features/workflows/WorkflowsHub';
 import { WORKFLOW_COMMAND } from '@/features/chat/SlashMenu';
 import { SESSIONS_CHANGED, SESSION_REMOVED } from '@/features/sessions/SessionPicker';
@@ -984,7 +985,7 @@ function App() {
   const runningSessions = useMemo(() => {
     const set = new Set<string>();
     for (const [sid, state] of Object.entries(ss)) {
-      if (state.running) set.add(sid);
+      if (state.running || hasTaskInStatus(state.tasks, 'working')) set.add(sid);
     }
     if (sameMembers(runningRef.current, set)) return runningRef.current;
     runningRef.current = set;
@@ -1000,10 +1001,10 @@ function App() {
   [sessionMeta, activeSession]);
 
   // A session is awaiting approval when its latest turn holds a tool call that
-  // needs approval and has no decision yet. Derived from the messages (not a
-  // transient socket flag), so it survives a reload — the paused turn is rebuilt
-  // from the durable approvals — and self-clears the moment approve/reject sets
-  // a status.
+  // needs approval and has no decision yet, or a background task (a workflow
+  // step) is paused for one. Derived from the messages (not a transient socket
+  // flag), so it survives a reload — the paused turn is rebuilt from the durable
+  // approvals — and self-clears the moment approve/reject sets a status.
   // The scan is per MESSAGE LIST, cached by its identity: a streaming delta
   // replaces the session's streaming text, not its messages, so the frame
   // pays one map lookup per session rather than a walk of every turn.
@@ -1017,7 +1018,7 @@ function App() {
         awaiting = hasPendingApproval(state.messages);
         awaitingCache.current.set(state.messages, awaiting);
       }
-      if (awaiting) set.add(sid);
+      if (awaiting || hasTaskInStatus(state.tasks, 'input_required')) set.add(sid);
     }
     if (sameMembers(awaitingRef.current, set)) return awaitingRef.current;
     awaitingRef.current = set;
