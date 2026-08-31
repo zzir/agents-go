@@ -147,6 +147,8 @@
 .chat-messages {
   height: 100%;
   overflow-y: auto;
+  /* A drag past the top/bottom stays here instead of chaining to the window. */
+  overscroll-behavior: contain;
   /* Native scroll anchoring OFF: useScrollToBottom owns anchoring, and the
      browser's anchor re-selection jitters (~1px) during subpixel trackpad
      scrolling across fractional-height content (KaTeX/SVG). New content only

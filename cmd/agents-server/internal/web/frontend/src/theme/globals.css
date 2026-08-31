@@ -6,6 +6,11 @@
 html, body {
     margin: 0;
     padding: 0;
+    /* Lock the document: the app shell owns every scroll region, so the window
+       must never scroll. Without this, iOS Safari's shrinking toolbars let the
+       body scroll and drag the fixed top bar / composer out of view. */
+    height: 100%;
+    overflow: hidden;
     overscroll-behavior: none;
 }
 
@@ -85,7 +90,8 @@ a:hover {
 .app-layout {
     display: flex;
     flex-direction: column;
-    height: 100vh;
+    height: 100vh;   /* fallback for engines without dvh */
+    height: 100dvh;  /* tracks iOS Safari's shrinking toolbars — no overflow, no window scroll */
     overflow: hidden;
     /* Positioned so an absolute stray inside any pane clips here instead of
        giving the document scroll range (the window must never scroll). */
@@ -338,6 +344,7 @@ a:hover {
 .side-panel-body {
     flex: 1;
     overflow-y: auto;
+    overscroll-behavior: contain;
     padding: var(--base-size-8);
 }
 
@@ -788,6 +795,7 @@ a:hover {
     align-items: center;
     justify-content: center;
     height: 100vh;
+    height: 100dvh;
     background: var(--bgColor-muted);
 }
 
