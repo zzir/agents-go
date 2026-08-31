@@ -6,5 +6,5 @@ ARG TARGETPLATFORM
 COPY --from=prep --chown=65532:65532 /data /data
 COPY ${TARGETPLATFORM}/agents-server /usr/local/bin/agents-server
 WORKDIR /data
-EXPOSE 9527 9528
+EXPOSE 9527
 ENTRYPOINT ["/usr/local/bin/agents-server"]
