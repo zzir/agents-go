@@ -106,6 +106,11 @@ func (s *Sandbox) stream(ctx context.Context, procedure string, in any, fn func(
 	if err != nil {
 		return fmt.Errorf("e2b: encoding %s: %w", procedure, err)
 	}
+	// Outgoing frames obey the same cap as inbound ones (readFrame): the length
+	// rides a uint32 prefix, and a control request never approaches it.
+	if len(body) > maxFrameBytes {
+		return fmt.Errorf("e2b: %s: request of %d bytes exceeds the %d cap", procedure, len(body), maxFrameBytes)
+	}
 	req, err := s.envdRequest(ctx, http.MethodPost, procedure, bytes.NewReader(envelope(0, body)))
 	if err != nil {
 		return err
