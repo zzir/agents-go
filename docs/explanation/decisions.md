@@ -872,7 +872,8 @@ read files the member's runs wrote.
 
 ### 5.29 Configuration is scoped per row: private to its owner or global
 
-Decided 2026-08-24, owner semantics revised 2026-08-25. The five
+Decided 2026-08-24, owner semantics revised 2026-08-25, listing order revised
+2026-08-31. The five
 configuration entities members compose runs from — agent configs, providers,
 MCP servers, skills, workflows — carry two independent columns: `scope ∈
 {private, global}` decides **who sees** the row, and `owner_id` names **who
@@ -927,15 +928,21 @@ same name. Owning the global row is not shadowing (`store.Shadows`): an
 author who published a name still gets their own private row of it, since
 scope, not authorship, is what "own" means here.
 
-Scoped listings use ONE order everywhere — the settings panels, the admin
-plane, and the sets a run is built from: **global rows first, then each group
-newest first** (`created_at DESC`, id the final tiebreaker). Shared rows lead
-because they are what a member picks from; newest leads within a group
-because what somebody just made is where they look for it. The sort key is
-creation time alone, never a name or a scope, so a rename never moves a row
-and a scope flip only moves it between the two groups. The skills panel groups
-by repository and keeps that same order — published groups first, the rest as
-the rows arrived. The skills index deduplicates by model-facing name; the
+Scoped listings order by AUTHORSHIP, not scope. For the four owner-grouped
+entities — agent configs, providers, MCP servers, workflows — a member sees
+**others' shared rows first, then their own, each group newest first**
+(`created_at DESC`, id the final tiebreaker); an admin sees the whole table
+**newest first, ungrouped**. Others lead because they are the shared pool a
+member picks from — and a member sees another's row only when it is global, so
+ordering by author still puts the shared rows on top. The group key is
+`owner_id`, which is **permanent**, so neither a rename (names are not a sort
+key) nor a scope flip (it changes `scope`, not `owner_id`) ever reorders a
+row — only a transfer does, and a transfer is exactly "this row is someone
+else's now". The admin plane drops the grouping: managing everyone's rows at
+once, newest-touched-first matters more than whose. Skills are the exception —
+their panel groups by repository, a repo flips as a whole (§5.31), so they keep
+the older global-first order: published groups first, the rest as the rows
+arrived. The skills index deduplicates by model-facing name; the
 owned row's description wins outright, matching own-over-global reads. Every
 authenticated member may read `GET /auth/user-labels` (id, name, email) so a
 listing can say whose each row is; roles and account state stay admin-only.

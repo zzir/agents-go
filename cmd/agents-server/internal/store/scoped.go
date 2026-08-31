@@ -46,14 +46,12 @@ func NormalizeScope(scope string) string {
 	return ScopePrivate
 }
 
-// ListVisibleOf returns the scoped-entity rows ownerID may see, in the
-// listing order decisions §5.29 promises (global first, each group newest first).
-// ONLY for the five scoped tables; a table without the scope/owner columns
-// fails the query loudly.
+// ListVisibleOf returns the scoped-entity rows ownerID may see, in the listing
+// order decisions §5.29 promises — see orderScoped. ONLY for the owner-grouped
+// scoped tables; a table without the scope/owner columns fails the query loudly.
 func ListVisibleOf[T any](ctx context.Context, s *CrudStore[T], ownerID string, admin bool) ([]T, error) {
 	var out []T
-	q := visibleTo(s.db.NewSelect().Model(&out), ownerID, admin).
-		OrderExpr(scopedListOrder)
+	q := orderScoped(visibleTo(s.db.NewSelect().Model(&out), ownerID, admin), ownerID, admin)
 	if err := q.Scan(ctx); err != nil {
 		return nil, fmt.Errorf("listing %s: %w", s.label, err)
 	}
@@ -65,12 +63,24 @@ func ListVisibleOf[T any](ctx context.Context, s *CrudStore[T], ownerID string, 
 	return out, nil
 }
 
-// scopedListOrder is the one order every scoped listing uses: the shared rows
-// first — they are what a member picks from — then each group newest first,
-// so what somebody just made is where they look for it. The sort key is
-// creation time, never a name or a scope, so a rename never moves a row and a
-// scope flip only moves it between the two groups (decisions §5.29). The id
-// tiebreak keeps same-instant rows in one order across reloads.
+// orderScoped applies the listing order for the four owner-grouped scoped
+// entities — agent configs, providers, MCP servers, workflows (decisions
+// §5.29). A member sees OTHERS' shared rows first, then their own, each group
+// newest first; an admin sees the whole table newest first, ungrouped. The
+// group key is owner_id, which is permanent, so neither a rename nor a scope
+// flip ever reorders a row — only a transfer does. id is the final tiebreak.
+func orderScoped(q *bun.SelectQuery, ownerID string, admin bool) *bun.SelectQuery {
+	if admin {
+		return q.OrderExpr("created_at DESC, id DESC")
+	}
+	return q.OrderExpr("CASE WHEN owner_id = ? THEN 1 ELSE 0 END, created_at DESC, id DESC", ownerID)
+}
+
+// scopedListOrder is the SKILLS listing order: the shared rows first, then each
+// group newest first (decisions §5.29). Skills keep this global-first shape —
+// their panel groups by repository and a repo flips as a whole — while the four
+// owner-grouped entities above use orderScoped. The id tiebreak keeps
+// same-instant rows in one order across reloads.
 const scopedListOrder = `CASE WHEN scope = 'global' THEN 0 ELSE 1 END, created_at DESC, id DESC`
 
 // ErrSameScope marks a scope flip refused because the row already holds the
