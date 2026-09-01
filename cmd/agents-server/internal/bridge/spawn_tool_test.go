@@ -124,7 +124,7 @@ func TestModelStartsAWorkflow(t *testing.T) {
 	}
 
 	done := make(chan struct{})
-	chatRunID, err := runner.StartRun(sess.ID, ac.ID, "", "add a feature", nil, func(*RunOutcome) { close(done) })
+	chatRunID, err := runner.StartRun(sess.ID, ac.ID, "", TextInput("add a feature"), nil, func(*RunOutcome) { close(done) })
 	if err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
@@ -230,14 +230,15 @@ func TestSpawnToolListsWorkflowsOnlyWhenThereAreAny(t *testing.T) {
 	}
 }
 
-// behavior.disable_subagents drops the whole task surface — spawn_task and the
+// behavior.subagents=false drops the whole task surface — spawn_task and the
 // task_* verbs — from a chat build, while a default agent keeps them.
-func TestDisableSubagentsDropsTaskTools(t *testing.T) {
+func TestSubagentsOffDropsTaskTools(t *testing.T) {
+	noSub := false
 	ctx := context.Background()
 	runner, _, _, agentConfigs := newTaskTestRunner(t)
 	on := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "delegator", Model: "gpt-test"}
 	off := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "lean", Model: "gpt-test",
-		Behavior: store.BehaviorGroup{DisableSubagents: true}}
+		Behavior: store.BehaviorGroup{Subagents: &noSub}}
 	for _, ac := range []*store.AgentConfig{on, off} {
 		if err := agentConfigs.Create(ctx, ac); err != nil {
 			t.Fatal(err)
@@ -259,7 +260,7 @@ func TestDisableSubagentsDropsTaskTools(t *testing.T) {
 	}
 	for _, name := range toolsOf(off.ID) {
 		if name == SpawnToolName || strings.HasPrefix(name, "task_") {
-			t.Errorf("disable_subagents agent still offers %q; the task surface must be gone", name)
+			t.Errorf("subagents-off agent still offers %q; the task surface must be gone", name)
 		}
 	}
 }

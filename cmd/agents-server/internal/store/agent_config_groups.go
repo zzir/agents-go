@@ -13,10 +13,18 @@ import (
 // the REST API.
 
 // BehaviorGroup holds the run-behavior knobs.
+//
+// Booleans are stated POSITIVELY (decisions §5.43): the field names the
+// capability, true turns it on. A knob whose default is ON uses *bool — nil
+// (the key absent, every row from before the knob existed) means the
+// default, so shipping the knob never flips existing agents.
 type BehaviorGroup struct {
-	MaxTurns               int    `json:"max_turns,omitempty"`
-	HandoffDescription     string `json:"handoff_description,omitempty"`
-	DisableToolChoiceReset bool   `json:"disable_tool_choice_reset,omitempty"`
+	MaxTurns           int    `json:"max_turns,omitempty"`
+	HandoffDescription string `json:"handoff_description,omitempty"`
+	// ToolChoiceReset resets a pinned tool_choice after a tool runs (the
+	// SDK's default loop-guard). nil/true = on; false keeps tool_choice
+	// as-is across turns.
+	ToolChoiceReset *bool `json:"tool_choice_reset,omitempty"`
 	// StopAtTools is a comma-separated list of tool names; the run ends after a
 	// turn that called any of them, instead of feeding the results back to the
 	// model. Empty means the run continues until the model stops on its own.
@@ -30,16 +38,25 @@ type BehaviorGroup struct {
 	// WorkflowAuthoring gives the agent's chat runs get_workflow / save_workflow
 	// (workbench invariant 39). Off by default: the save schema costs every request.
 	WorkflowAuthoring bool `json:"workflow_authoring,omitempty"`
-	// DisableSubagents drops the agent's spawn_task / task_status / task_stop /
-	// task_retry tools. Negated so the default (absent/false) keeps subagents
-	// ON, matching every agent built before the flag existed; a chat-only agent
-	// that never delegates opts out to reclaim the task schema from every request.
-	DisableSubagents bool `json:"disable_subagents,omitempty"`
+	// Subagents grants the agent's chat runs spawn_task / task_status /
+	// task_stop / task_retry. nil/true = on; a chat-only agent that never
+	// delegates sets false to reclaim the task schema from every request.
+	Subagents *bool `json:"subagents,omitempty"`
 	// Vision admits image attachments on this agent's runs. Off by default:
 	// the gate is what turns "model returned 400" into a config error a
 	// person can act on, so it must be an explicit claim that the model
 	// accepts image input.
 	Vision bool `json:"vision,omitempty"`
+}
+
+// SubagentsOn reports whether the agent's chat runs get the task tools;
+// nil (unset) is on.
+func (g BehaviorGroup) SubagentsOn() bool { return g.Subagents == nil || *g.Subagents }
+
+// ToolChoiceResetOn reports whether tool_choice resets after a tool runs;
+// nil (unset) is on.
+func (g BehaviorGroup) ToolChoiceResetOn() bool {
+	return g.ToolChoiceReset == nil || *g.ToolChoiceReset
 }
 
 // ResilienceGroup holds model retry/fallback settings.

@@ -21,7 +21,7 @@ import { providerMeta, providerFacts, type ProviderTypeInfo } from '@/lib/provid
 // objects. The form state stays flat, so flattenConfig lifts a loaded config's
 // group keys to the top level and nestConfig folds them back before saving.
 const CONFIG_GROUPS: Record<string, string[]> = {
-  behavior: ['max_turns', 'handoff_description', 'disable_tool_choice_reset', 'stop_at_tools', 'handoff_input_filter', 'max_tool_concurrency', 'tool_not_found_behavior', 'reasoning_item_id_policy', 'workflow_authoring', 'disable_subagents', 'vision'],
+  behavior: ['max_turns', 'handoff_description', 'tool_choice_reset', 'stop_at_tools', 'handoff_input_filter', 'max_tool_concurrency', 'tool_not_found_behavior', 'reasoning_item_id_policy', 'workflow_authoring', 'subagents', 'vision'],
   resilience: ['retry_enabled', 'retry_policy', 'fallback_models'],
   guardrails: ['guardrails', 'output_schema'],
   session: ['prompt_id', 'prompt_version', 'history_limit'],
@@ -64,7 +64,7 @@ interface AgentFormData {
   context_window: number;
   max_turns: number;
   handoff_description: string;
-  disable_tool_choice_reset: boolean;
+  tool_choice_reset: boolean;
   stop_at_tools: string;
   retry_enabled: boolean;
   retry_policy: string;
@@ -80,7 +80,7 @@ interface AgentFormData {
   tool_not_found_behavior: string;
   reasoning_item_id_policy: string;
   workflow_authoring: boolean;
-  disable_subagents: boolean;
+  subagents: boolean;
   vision: boolean;
   approve_tools: string;
   compaction_enabled: boolean;
@@ -167,13 +167,13 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
     name: '', avatar: '', description: '', instructions: '', model: '',
     provider_id: '', context_window: 0,
     max_turns: 0, handoff_description: '',
-    disable_tool_choice_reset: false, stop_at_tools: '',
+    tool_choice_reset: true, stop_at_tools: '',
     retry_enabled: false, retry_policy: '',
     fallback_models: '',
     guardrails: '', output_schema: '', error_handlers: '',
     prompt_id: '', prompt_version: '', history_limit: 0,
     handoff_input_filter: '', max_tool_concurrency: 0,
-    tool_not_found_behavior: '', reasoning_item_id_policy: '', workflow_authoring: false, disable_subagents: false, vision: false, approve_tools: '',
+    tool_not_found_behavior: '', reasoning_item_id_policy: '', workflow_authoring: false, subagents: true, vision: false, approve_tools: '',
     compaction_enabled: false, compaction_threshold_tokens: 0,
     compaction_window: 0, compaction_model: '', compaction_prompt: '',
     ...flattenConfig(initial as Record<string, unknown> | undefined),
@@ -416,7 +416,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
       <div className="form-group">
         <div className="form-group-title">Subagents</div>
         <FormControl>
-          <Checkbox checked={!form.disable_subagents} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('disable_subagents', !e.target.checked)} />
+          <Checkbox checked={form.subagents !== false} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('subagents', e.target.checked)} />
           <FormControl.Label>Spawn subagents & background tasks</FormControl.Label>
           <FormControl.Caption>spawn_task / task_status / task_stop / task_retry. Turn off for a chat-only agent to reclaim the task schema from every request. The /workflow command still runs workflows either way.</FormControl.Caption>
         </FormControl>
@@ -479,9 +479,9 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
               'Whether reasoning-item ids are kept when prior items are re-sent to the model on later turns')}
             <div className="form-checkbox-group">
               <FormControl>
-                <Checkbox checked={form.disable_tool_choice_reset || false} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('disable_tool_choice_reset', e.target.checked)} />
-                <FormControl.Label>Disable tool choice reset</FormControl.Label>
-                <FormControl.Caption>Keep tool_choice across turns instead of resetting</FormControl.Caption>
+                <Checkbox checked={form.tool_choice_reset !== false} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('tool_choice_reset', e.target.checked)} />
+                <FormControl.Label>Reset tool choice after use</FormControl.Label>
+                <FormControl.Caption>Clears a pinned tool_choice once a tool has run (the loop guard). Off keeps tool_choice across turns.</FormControl.Caption>
               </FormControl>
             </div>
           </div>

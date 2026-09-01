@@ -1525,3 +1525,21 @@ The scheme constant lives in `store` beside the row it names — `attachments`
 imports `settings` imports `store`, so the client package cannot own it
 without a cycle, and the store is where every reader already looks.
 
+### 5.43 Config booleans are stated positively
+
+Every boolean in stored configuration names the capability it grants, and
+`true` turns it on. Negated flags (`disable_x`) existed only to keep a
+late-added default-on knob from flipping existing rows — the zero value had
+to mean "unchanged". That job is done by type, not by name: a default-on
+knob is a `*bool` where nil (the key absent, every row predating the knob)
+means the default. `behavior.subagents` and `behavior.tool_choice_reset`
+were converted from their `disable_*` forms under this rule (no stored row
+carried either old key, so nothing migrated); the old keys decode past
+silently, the compaction_threshold precedent.
+
+The rule governs the CONFIG surface — stored JSON, REST bodies, the panel.
+The SDK keeps Go's own idiom for zero-value structs (`Agent.
+DisableToolChoiceReset`, like `http.Transport.DisableKeepAlives`): a plain
+struct field must make the zero value the default, which for a default-on
+behavior forces the negated name. The bridge flips polarity in one place
+when it maps config onto the SDK.

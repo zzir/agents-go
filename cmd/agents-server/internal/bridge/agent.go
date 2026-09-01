@@ -95,7 +95,7 @@ type BuildResult struct {
 	// copy quietly yields the unconverted value: StopAtTools (comma-separated
 	// string here, []string below) and ReasoningItemIDPolicy (string here,
 	// enum below). Other group fields are already spent when the build
-	// returns — HandoffDescription, DisableToolChoiceReset and
+	// returns — HandoffDescription, the tool-choice reset flag and
 	// Session.PromptID/PromptVersion live on Agent from then on.
 	//
 	// Compaction.Threshold is in tokens, Compaction.Window in entries — see
@@ -217,12 +217,12 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, project
 			result.AgentIDs[r.Agent.Name] = id
 		}
 	}
-	if err == nil && !background && deps.TaskManager != nil && !result.Behavior.DisableSubagents {
+	if err == nil && !background && deps.TaskManager != nil && result.Behavior.SubagentsOn() {
 		// The model's background surface: four verbs — spawn (the server's,
 		// which starts a workflow when told a name), status, retry, stop. A
 		// background run never gets them: an execution is a task, and a task
 		// cannot start one — that is what bounds recursion. An agent may also opt
-		// out (behavior.disable_subagents) to shed the schema. The session id
+		// out (behavior.subagents=false) to shed the schema. The session id
 		// reaches the tools through the run context, not the model: otherwise
 		// one conversation could spawn tasks onto another.
 		mark := len(result.Agent.Tools)
@@ -362,7 +362,7 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID string,
 		Name:                   ac.Name,
 		Model:                  ac.Model,
 		HandoffDescription:     ac.Behavior.HandoffDescription,
-		DisableToolChoiceReset: ac.Behavior.DisableToolChoiceReset,
+		DisableToolChoiceReset: !ac.Behavior.ToolChoiceResetOn(),
 	}
 	result.Behavior = ac.Behavior
 	result.Compaction = ac.Compaction

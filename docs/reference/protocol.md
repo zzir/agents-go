@@ -298,7 +298,7 @@ needs no schema change), then a few top-level JSON blobs:
   this agent reaches its model through — see [providers](#providers--apiv1providers);
   empty reaches no credential, so the run fails its pre-flight until the
   agent names a provider), `context_window` (declared, 0 = unknown)
-- **`behavior`**: `max_turns`, `handoff_description`, `disable_tool_choice_reset`,
+- **`behavior`**: `max_turns`, `handoff_description`, `tool_choice_reset`,
   `stop_at_tools` (comma-separated tool names — the run ends after a turn that
   called any of them), `handoff_input_filter`, `max_tool_concurrency`,
   `tool_not_found_behavior` (unset feeds a tool name the agent does not have
