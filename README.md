@@ -92,6 +92,9 @@ developers who want the same machinery in their own programs.
 - **Work that outlives the turn.** `spawn_task` sub-agents that wake the parent
   when they finish and resume in place when they fail; workflows as fixed step
   sequences, started by the model, by hand, by cron or by a signed webhook.
+- **Image input.** Paste or drop screenshots into the chat; bytes go to your
+  S3-compatible bucket, the model gets a URL, history keeps a reference
+  ([details](docs/howto/attachments.md)).
 - **The rest of the surface.** MCP servers over streamable HTTP with OAuth,
   Agent Skills, projects, memories, guardrails.
 - **Solo, or a team.** `--auth oauth` swaps the single token for Google sign-in

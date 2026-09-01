@@ -114,3 +114,40 @@ func TestPGWorkflowNameCaseInsensitive(t *testing.T) {
 		t.Fatalf("want a UniqueViolation, got %v", err)
 	}
 }
+
+// The attachment lifecycle on PostgreSQL: uuid-typed columns, bun.List IN
+// clauses and the bool/timestamp comparisons all behave as the SQLite tests
+// established.
+func TestPGAttachmentStore(t *testing.T) {
+	ctx := context.Background()
+	s := NewAttachmentStore(pgTestDB(t))
+
+	a := &Attachment{OwnerID: NewID(), Key: "att/a.png", Mime: "image/png", Size: 10}
+	if err := s.Create(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	meta, err := s.MetaBatch(ctx, []string{a.ID, NewID()})
+	if err != nil || len(meta) != 1 {
+		t.Fatalf("MetaBatch = %v, %v", meta, err)
+	}
+	if err := s.MarkBound(ctx, []string{a.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Get(ctx, a.ID); got == nil || !got.Bound {
+		t.Fatal("not bound")
+	}
+	orphan := &Attachment{OwnerID: NewID(), Key: "att/o.png", Mime: "image/png", Size: 1}
+	if err := s.Create(ctx, orphan); err != nil {
+		t.Fatal(err)
+	}
+	old, err := s.ListUnboundBefore(ctx, time.Now().UTC().Add(time.Minute))
+	if err != nil || len(old) != 1 || old[0].ID != orphan.ID {
+		t.Fatalf("orphans = %v, %v", old, err)
+	}
+	if err := s.Delete(ctx, orphan.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Delete(ctx, orphan.ID); err != nil {
+		t.Fatal(err) // idempotent for the reaper's retry
+	}
+}

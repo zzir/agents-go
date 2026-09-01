@@ -65,7 +65,7 @@ func TestInventedToolNameDoesNotEndTheRun(t *testing.T) {
 	}
 
 	done := make(chan *RunOutcome, 1)
-	if _, err := runner.StartRun(sess.ID, ac.ID, "", "write a quicksort", nil, func(o *RunOutcome) {
+	if _, err := runner.StartRun(sess.ID, ac.ID, "", TextInput("write a quicksort"), nil, func(o *RunOutcome) {
 		done <- o
 	}); err != nil {
 		t.Fatalf("StartRun: %v", err)

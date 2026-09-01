@@ -1492,3 +1492,36 @@ loopback interface. It also retires the callback's own HTTP server, its CSP-pinn
 success page, and the frontend's status-polling loop
 ([workbench-invariants §7](workbench-invariants.md)); completion is now one
 request, not a background settle.
+
+### 5.42 Image attachments live in an S3 bucket as stable public URLs
+
+Image input needed the bytes somewhere a model provider can fetch them. The
+database was rejected as the only backend: every turn would re-inline every
+image as base64 — payload and memory grow with history, and a local-first
+server cannot hand OpenAI a `localhost` URL. So the bytes go to a configured
+S3-compatible bucket and the request carries a URL. Within that, three
+decisions:
+
+- **Public-read, unsigned, stable URLs — not presigned.** Both providers cache
+  prompts by prefix; a presigned URL is different on every request, so every
+  turn after an image would re-bill the whole history at full price, and an
+  expired signature would 404 a replay. Secrecy rests on unguessable keys
+  (`attachments/<owner>/<uuid v4>.<ext>`, the extension from the decoded format) — v4 deliberately, not the repo's usual v7, whose
+  timestamp prefix narrows a brute-force window. The trade — anyone holding a
+  link can read that image — is stated on the setting itself.
+- **Sentinel refs in entries, hydration at the model boundary.** The first
+  design hydrated in `EntryStore.load()`, which covers only HISTORY: the
+  current turn's input and a resumed state's input reach the model without
+  passing a storage read, and would have carried the sentinel to the provider.
+  A ModelProvider decorator is the one seam every path crosses (fresh, resume,
+  replay, compaction, fallbacks), which is also why the rule is phrased as
+  "the model boundary" (workbench invariant 56).
+- **sigv4 implemented in-repo (~150 lines), not the AWS SDK.** The surface is
+  PUT and DELETE with one signing algorithm; the SDK would be the server
+  module's heaviest dependency for two calls. The signature is verified in
+  tests against an independently computed (openssl) reference vector.
+
+The scheme constant lives in `store` beside the row it names — `attachments`
+imports `settings` imports `store`, so the client package cannot own it
+without a cycle, and the store is where every reader already looks.
+

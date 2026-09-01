@@ -68,6 +68,32 @@ func (s *SettingStore) Set(ctx context.Context, key, value string) error {
 	return nil
 }
 
+// SetMany writes a group of settings in ONE transaction: a non-empty value
+// upserts, an empty one deletes the row (back to the default). It exists for
+// section-shaped configuration (attachment storage) whose keys are only
+// valid together — per-key writes would pass validation through states the
+// section never meant to be in.
+func (s *SettingStore) SetMany(ctx context.Context, kv map[string]string) error {
+	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		for key, value := range kv {
+			if value == "" {
+				if _, err := tx.NewDelete().Model((*Setting)(nil)).Where("key = ?", key).Exec(ctx); err != nil {
+					return fmt.Errorf("clearing %s: %w", key, err)
+				}
+				continue
+			}
+			st := &Setting{Key: key, Value: s.seal(key, value)}
+			if _, err := tx.NewInsert().Model(st).
+				On("CONFLICT (key) DO UPDATE").
+				Set("value = EXCLUDED.value").
+				Exec(ctx); err != nil {
+				return fmt.Errorf("setting %s: %w", key, err)
+			}
+		}
+		return nil
+	})
+}
+
 // Modify sets key from its stored value: one transaction reads the current
 // value (locked; found is false when there is none), asks value for the new
 // one, and upserts it — how a masked secret keeps what is stored with no

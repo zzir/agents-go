@@ -32,6 +32,7 @@ type Handlers struct {
 	Traces     *TraceHandler
 	Playground *PlaygroundHandler
 	ChatGPT    *ChatGPTOAuthHandler
+	Files      *AttachmentHandler
 	// Server is the start-up configuration, served as read-only facts.
 	Server ServerInfo
 }
@@ -240,6 +241,18 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		sbs.DELETE("/:id/containers/:name", admin, h.Sandboxes.RemoveContainer)
 	}
 	api.POST("/playground/generate", h.Playground.Generate)
+
+	{
+		atts := api.Group("/attachments")
+		atts.GET("/config", h.Files.Config)
+		atts.POST("", h.Files.Upload)
+		// The storage form: the section saves, tests and clears as one group
+		// (workbench invariant 58). Static routes registered before the :id
+		// param so gin matches them first.
+		atts.PUT("/storage", adminOnly(), h.Files.SaveStorage)
+		atts.POST("/storage/test", adminOnly(), h.Files.TestStorage)
+		atts.DELETE("/:id", h.Files.Delete)
+	}
 }
 
 // registerTriggers mounts the trigger endpoints (the webhook itself is mounted

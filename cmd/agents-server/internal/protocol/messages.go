@@ -113,15 +113,26 @@ func NewEnvelope(typ string, payload any) (*Envelope, error) {
 
 // Client → Server messages
 
+// AttachmentRef is one image attachment as run events carry it: enough for a
+// client to render the thumbnail without a second request.
+type AttachmentRef struct {
+	ID  string `json:"id"`
+	URL string `json:"url"`
+}
+
 // RunCreate is the client request to start a new run within a session.
 // ProjectID only matters until the session's first project-carrying run binds
 // it permanently; after that the server uses the bound value and ignores what
 // the client sends.
 type RunCreate struct {
-	SessionID     string `json:"session_id"`
-	Input         string `json:"input"`
-	AgentConfigID string `json:"agent_config_id,omitempty"`
-	ProjectID     string `json:"project_id,omitempty"`
+	SessionID string `json:"session_id"`
+	Input     string `json:"input"`
+	// AttachmentIDs name previously uploaded images (POST /attachments) to
+	// send with the message. Only chat runs carry them, and only when the
+	// agent's Vision behavior flag is on.
+	AttachmentIDs []string `json:"attachment_ids,omitempty"`
+	AgentConfigID string   `json:"agent_config_id,omitempty"`
+	ProjectID     string   `json:"project_id,omitempty"`
 	// Plan is what this request asks of the session's plan phase: true runs it
 	// read-only until a plan is approved, false leaves planning, and ABSENT
 	// leaves the phase as it stands — a client that knows nothing about plan
@@ -217,6 +228,9 @@ type RunStarted struct {
 	// browser that did not send the prompt renders its user bubble from this
 	// (the sender dedups against its own optimistic bubble).
 	Input string `json:"input,omitempty"`
+	// Attachments are the message's images, for the same reason Input rides
+	// here: a browser that did not send them still renders the thumbnails.
+	Attachments []AttachmentRef `json:"attachments,omitempty"`
 	// Task metadata, set only for background task runs (spawn_task — a
 	// sub-agent or a workflow): the parent chat session/run this task belongs to and the
 	// spawning tool call. The client routes such runs into the parent session's

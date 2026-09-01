@@ -39,6 +39,13 @@ const (
 	KeyMaxTasksPerSession        = "max_tasks_per_session"
 	KeyMaxTerminalsPerSandbox    = "max_terminals_per_sandbox"
 	KeySandboxIdleMinutes        = "sandbox_idle_minutes"
+	KeyS3Endpoint                = "s3_endpoint"
+	KeyS3Region                  = "s3_region"
+	KeyS3Bucket                  = "s3_bucket"
+	KeyS3AccessKeyID             = "s3_access_key_id"
+	KeyS3SecretAccessKey         = "s3_secret_access_key"
+	KeyS3PublicBaseURL           = "s3_public_base_url"
+	KeyS3PathStyle               = "s3_path_style"
 )
 
 // The groups the panel renders as sections, in the order defs are listed.
@@ -48,6 +55,7 @@ const (
 	GroupTracing = "tracing"
 	GroupLogging = "logging"
 	GroupLimits  = "limits"
+	GroupStorage = "storage"
 )
 
 // Def is one global setting: what it is called, what it holds, what it means
@@ -159,7 +167,55 @@ var defs = []Def{{
 	Label:       "Sandbox idle stop (minutes)",
 	Default:     "30",
 	Min:         0,
-	Description: "Stop a project's container after this many minutes with no run or terminal using it; 0 disables. The next run starts it again."}}
+	Description: "Stop a project's container after this many minutes with no run or terminal using it; 0 disables. The next run starts it again.",
+}, {
+	Key:         KeyS3Endpoint,
+	Kind:        KindString,
+	Group:       GroupStorage,
+	Label:       "S3 endpoint",
+	Placeholder: "https://<account>.r2.cloudflarestorage.com",
+	Description: "S3-compatible API endpoint image attachments are uploaded to. The section saves as one form: Save probes the bucket end to end and refuses a broken configuration, Clear disables image input.",
+	Validate:    validateHTTPURL(KeyS3Endpoint),
+}, {
+	Key:         KeyS3Region,
+	Kind:        KindString,
+	Group:       GroupStorage,
+	Label:       "S3 region",
+	Placeholder: "auto",
+	Default:     "auto",
+	Description: "Signing region. R2 and MinIO accept \"auto\"; AWS needs the bucket's real region.",
+}, {
+	Key:         KeyS3Bucket,
+	Kind:        KindString,
+	Group:       GroupStorage,
+	Label:       "S3 bucket",
+	Description: "Bucket the image objects live in. It must allow PUBLIC READS: model providers fetch attachment URLs anonymously, and so does anyone else holding a link.",
+}, {
+	Key:   KeyS3AccessKeyID,
+	Kind:  KindString,
+	Group: GroupStorage,
+	Label: "S3 access key ID",
+}, {
+	Key:   KeyS3SecretAccessKey,
+	Kind:  KindSecret,
+	Group: GroupStorage,
+	Label: "S3 secret access key",
+}, {
+	Key:         KeyS3PublicBaseURL,
+	Kind:        KindString,
+	Group:       GroupStorage,
+	Label:       "Public base URL",
+	Placeholder: "https://pub-….r2.dev or a CDN domain",
+	Description: "Public prefix an object's key is appended to — what model providers and browsers fetch. Anyone with a URL can read that image. Changing this (or the bucket) without moving the objects breaks images already in session history.",
+	Validate:    validateHTTPURL(KeyS3PublicBaseURL),
+}, {
+	Key:         KeyS3PathStyle,
+	Kind:        KindBool,
+	Group:       GroupStorage,
+	Label:       "Path-style addressing",
+	Default:     "false",
+	Description: "On puts the bucket in the URL path (MinIO); off uses virtual-hosted addressing (AWS, R2).",
+}}
 
 // Defs returns the registry in panel order.
 func Defs() []Def { return defs }
@@ -216,6 +272,21 @@ func Validate(key, value string) error {
 		return d.Validate(v)
 	}
 	return nil
+}
+
+// validateHTTPURL requires an absolute http(s) URL — for the endpoints the
+// server (or a model provider) will dial.
+func validateHTTPURL(key string) func(string) error {
+	return func(v string) error {
+		u, err := url.Parse(v)
+		if err != nil {
+			return fmt.Errorf("%s is not a URL: %w", key, err)
+		}
+		if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Errorf("%s must be an absolute http(s) URL", key)
+		}
+		return nil
+	}
 }
 
 // validateProxyURL rejects what Reader.ProxyClient would drop on the floor: an

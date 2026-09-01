@@ -175,7 +175,7 @@ func TestPlanIntentIsNotAppliedWhenTheRunIsRefused(t *testing.T) {
 	}
 
 	plan := true
-	if _, err := runner.StartRun(sess.ID, ac.ID, "", "hi", &plan, nil); err == nil {
+	if _, err := runner.StartRun(sess.ID, ac.ID, "", TextInput("hi"), &plan, nil); err == nil {
 		t.Fatal("a busy session must refuse the run")
 	}
 	ref, err := store.RefFor(ctx, runner.db, sess.ID)

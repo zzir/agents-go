@@ -15,9 +15,11 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/attachments"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -82,6 +84,8 @@ type SessionDeps struct {
 	// the manual compaction pass. Both the bridge Runner.
 	Stopper   RunStopper
 	Compactor SessionCompactor
+	// Settings resolves the attachment public base URL for message views.
+	Settings *settings.Reader
 }
 
 // SessionHandler serves CRUD endpoints for chat sessions and their entries.
@@ -97,6 +101,7 @@ type SessionHandler struct {
 	projects   *store.ProjectStore
 	stopper    RunStopper
 	compactor  SessionCompactor
+	settings   *settings.Reader
 }
 
 // NewSessionHandler returns a handler over d. It panics on a missing
@@ -106,13 +111,13 @@ func NewSessionHandler(d SessionDeps) *SessionHandler {
 	case d.Sessions == nil, d.Entries == nil, d.Traces == nil, d.Agents == nil,
 		d.Profiles == nil, d.MCPServers == nil, d.Users == nil, d.Projects == nil:
 		panic("handler: SessionDeps has a nil store")
-	case d.MCP == nil, d.Stopper == nil, d.Compactor == nil:
-		panic("handler: SessionDeps has a nil MCP lister, stopper or compactor")
+	case d.MCP == nil, d.Stopper == nil, d.Compactor == nil, d.Settings == nil:
+		panic("handler: SessionDeps has a nil MCP lister, stopper, compactor or settings")
 	}
 	return &SessionHandler{
 		sessions: d.Sessions, entries: d.Entries, traces: d.Traces, agents: d.Agents,
 		profiles: d.Profiles, mcp: d.MCP, mcpServers: d.MCPServers, users: d.Users,
-		projects: d.Projects, stopper: d.Stopper, compactor: d.Compactor,
+		projects: d.Projects, stopper: d.Stopper, compactor: d.Compactor, settings: d.Settings,
 	}
 }
 
@@ -502,6 +507,15 @@ func (h *SessionHandler) Messages(c *gin.Context) {
 	if err != nil {
 		internalError(c, err)
 		return
+	}
+	// The store contributes the attachment rows; the URL is a deployment
+	// fact (the current public base), filled here.
+	if base := h.settings.S3Config(ctx).PublicBaseURL; base != "" {
+		for i := range entries {
+			for j := range entries[i].Attachments {
+				entries[i].Attachments[j].URL = attachments.PublicURL(base, entries[i].Attachments[j].Key)
+			}
+		}
 	}
 	c.JSON(http.StatusOK, entries)
 }

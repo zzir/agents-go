@@ -28,8 +28,11 @@ func NewRunHandler(runner *bridge.Runner) *RunHandler {
 }
 
 type createRunReq struct {
-	Input         string `json:"input"`
-	AgentConfigID string `json:"agent_config_id"`
+	Input string `json:"input"`
+	// AttachmentIDs name previously uploaded images (POST /attachments) to
+	// send with the message; the agent must have Vision enabled.
+	AttachmentIDs []string `json:"attachment_ids,omitempty"`
+	AgentConfigID string   `json:"agent_config_id"`
 	// ProjectID only matters until the session's first project-carrying run
 	// permanently binds it; after that the server uses the bound value and
 	// ignores this field.
@@ -82,7 +85,7 @@ func (h *RunHandler) Create(c *gin.Context) {
 		return
 	}
 
-	runID, err := h.runner.StartRun(sessionID, req.AgentConfigID, req.ProjectID, req.Input, req.Plan, nil)
+	runID, err := h.runner.StartRun(sessionID, req.AgentConfigID, req.ProjectID, bridge.RunInput{Text: req.Input, AttachmentIDs: req.AttachmentIDs}, req.Plan, nil)
 	if err != nil {
 		h.startError(c, err)
 		return
@@ -128,7 +131,7 @@ func (h *RunHandler) createAndWait(c *gin.Context, sessionID string, req createR
 	// just marshaled. Buffered so the callback never blocks if the client
 	// hangs up first.
 	done := make(chan *bridge.RunOutcome, 1)
-	runID, err := h.runner.StartRun(sessionID, req.AgentConfigID, req.ProjectID, req.Input, req.Plan, func(res *bridge.RunOutcome) {
+	runID, err := h.runner.StartRun(sessionID, req.AgentConfigID, req.ProjectID, bridge.RunInput{Text: req.Input, AttachmentIDs: req.AttachmentIDs}, req.Plan, func(res *bridge.RunOutcome) {
 		done <- res
 	})
 	if err != nil {

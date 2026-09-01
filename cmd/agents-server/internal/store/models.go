@@ -343,6 +343,27 @@ type Memory struct {
 	UpdatedAt     time.Time `bun:"updated_at,notnull"   json:"updated_at"`
 }
 
+// Attachment is one uploaded image: metadata only — the bytes live in the
+// configured S3-compatible bucket under Key, and session entries reference
+// the row by id (an "agents-attachment:<id>" sentinel URL) that is resolved
+// to the bucket's public URL only at the model boundary.
+type Attachment struct {
+	bun.BaseModel `bun:"table:attachments,alias:att"`
+
+	ID      string `bun:"id,pk,type:uuid"           json:"id"`
+	OwnerID string `bun:"owner_id,notnull,type:uuid" json:"owner_id"`
+	// Key addresses the object in the bucket; the public URL is derived from
+	// the CURRENT s3_public_base_url setting, so moving buckets means moving
+	// objects, never rewriting history.
+	Key  string `bun:"key,notnull"  json:"key"`
+	Mime string `bun:"mime,notnull" json:"mime"`
+	Size int64  `bun:"size,notnull" json:"size"`
+	// Bound flips when a run accepts the attachment; an unbound row past the
+	// grace window is an orphan the reaper collects, object included.
+	Bound     bool      `bun:"bound,notnull"      json:"bound"`
+	CreatedAt time.Time `bun:"created_at,notnull" json:"created_at"`
+}
+
 // ContextProfile is what a session's last build put in front of the model
 // before the conversation itself. It is a SNAPSHOT, written per run rather
 // than derived on demand: the sizes depend on the sandbox that was attached,

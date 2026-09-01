@@ -11,6 +11,7 @@ import (
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/agents/tasks"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/attachments"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
@@ -130,19 +131,19 @@ type RunOutcome struct {
 // started it). It returns the run id; subscribe via Hub() to stream events.
 // onDone, if non-nil, is invoked once when the run terminates. It fails with
 // ErrSessionBusy when the session already has a live run.
-func (r *Runner) StartRun(sessionID, agentConfigID, projectID, input string, plan *bool, onDone func(*RunOutcome)) (string, error) {
+func (r *Runner) StartRun(sessionID, agentConfigID, projectID string, input RunInput, plan *bool, onDone func(*RunOutcome)) (string, error) {
 	return r.startRunWithID(store.NewID(), sessionID, agentConfigID, projectID, input, "", plan, onDone)
 }
 
 // StartWakeRun is StartRun for a task notification delivery: same launch, plus
 // the lineage (the run whose spawn started the chain) the trace records.
 func (r *Runner) StartWakeRun(sessionID, agentConfigID, projectID, input, parentRunID string, onDone func(*RunOutcome)) (string, error) {
-	return r.startRunWithID(store.NewID(), sessionID, agentConfigID, projectID, input, parentRunID, nil, onDone)
+	return r.startRunWithID(store.NewID(), sessionID, agentConfigID, projectID, TextInput(input), parentRunID, nil, onDone)
 }
 
 // startRunWithID is StartRun with a caller-chosen run id — SpawnTask mints the
 // task's run id up front so the row can carry it before the run launches.
-func (r *Runner) startRunWithID(runID, sessionID, agentConfigID, projectID, input, wakeParentRunID string, planIntent *bool, onDone func(*RunOutcome)) (string, error) {
+func (r *Runner) startRunWithID(runID, sessionID, agentConfigID, projectID string, input RunInput, wakeParentRunID string, planIntent *bool, onDone func(*RunOutcome)) (string, error) {
 	return r.startRunReserved(runID, sessionID, agentConfigID, projectID, input, wakeParentRunID, planIntent, onDone, nil)
 }
 
@@ -150,7 +151,7 @@ func (r *Runner) startRunWithID(runID, sessionID, agentConfigID, projectID, inpu
 // is RESERVED for the run and before it launches — for a write that must
 // precede the run's own (a trigger's note before the message it sends) and
 // must not happen when the run is refused.
-func (r *Runner) startRunReserved(runID, sessionID, agentConfigID, projectID, input, wakeParentRunID string, planIntent *bool, onDone func(*RunOutcome), reserved func()) (string, error) {
+func (r *Runner) startRunReserved(runID, sessionID, agentConfigID, projectID string, input RunInput, wakeParentRunID string, planIntent *bool, onDone func(*RunOutcome), reserved func()) (string, error) {
 	seg, ctx, plan, boundNow, err := r.reserveRun(runID, sessionID, agentConfigID, projectID)
 	if err != nil {
 		return "", err
@@ -219,6 +220,9 @@ type segmentSpec struct {
 	// input is the user text announced in run.started and persisted when the
 	// segment fails before the SDK's own per-turn save.
 	input string
+	// attachmentIDs are the message's image attachments (fresh runs only;
+	// resumes re-announce text alone — the entries already hold the images).
+	attachmentIDs []string
 	// wakeParentRunID is a wake-up run's lineage: the run whose spawn started
 	// the chain, stamped on every trace span (see wsProcessor.parentRunID).
 	// Empty for ordinary runs — and for resumes, which is fine: the fresh
@@ -260,10 +264,25 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	if info, ok := r.hub.Info(runID); ok {
 		task, ownerID = info.Task, info.OwnerID
 	}
+	// The message's attachments, validated before anything is announced:
+	// counted, present, and owned by the session's owner. The metadata also
+	// feeds the announcement below, so clients render thumbnails without a
+	// second request.
+	attMeta, attErr := r.validateAttachments(ctx, ownerID, spec.attachmentIDs)
+
 	// A resumed segment re-announces the original prompt so a late-joining
 	// browser (attached at resume) can render the user bubble; earlier
 	// subscribers dedup it against the bubble they already show.
 	started := protocol.RunStarted{RunID: runID, SessionID: sessionID, Input: spec.input}
+	if attErr == nil && len(spec.attachmentIDs) > 0 {
+		base := r.Deps.Settings.S3Config(ctx).PublicBaseURL
+		for _, id := range spec.attachmentIDs {
+			a := attMeta[id]
+			started.Attachments = append(started.Attachments, protocol.AttachmentRef{
+				ID: a.ID, URL: attachments.PublicURL(base, a.Key),
+			})
+		}
+	}
 	if task != nil {
 		started.ParentSessionID = task.ParentSessionID
 		started.ParentRunID = task.ParentRunID
@@ -289,6 +308,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	// then run.cancelled. savePartialTurn writes on its own context, so the
 	// cancellation does not also stop the record of it from landing.
 	failCancelled := func(turn partialTurn) *RunOutcome {
+		turn.userAttachments = spec.attachmentIDs
 		turn.annRole = "cancelled"
 		r.savePartialTurn(turn)
 		sendEvent(protocol.EventRunCancelled, protocol.RunCancelled{RunID: runID})
@@ -326,6 +346,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 			runID:            runID,
 			model:            model,
 			userInput:        spec.input,
+			userAttachments:  spec.attachmentIDs,
 			partialReasoning: partialReasoning,
 			partialText:      partialText,
 		}
@@ -351,6 +372,10 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 			out = failTurn("", protocol.CodeInternal, fmt.Errorf("internal error: %v", p), partial.Reasoning(), partial.Text())
 		}
 	}()
+
+	if attErr != nil {
+		return failTurn("", protocol.CodeConfigError, attErr, "", "")
+	}
 
 	// Refuse to run against a session that doesn't exist — otherwise the run
 	// would write orphaned messages under an arbitrary session id.
@@ -383,6 +408,24 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 
 	agent := built.Agent
 	provider := built.Provider
+
+	if len(spec.attachmentIDs) > 0 {
+		if !built.Behavior.Vision {
+			return failTurn(agent.Model, protocol.CodeConfigError,
+				errors.New("this agent does not accept images — enable Vision in its Behavior settings"), "", "")
+		}
+		if !r.Deps.Settings.S3Config(ctx).Complete() {
+			return failTurn(agent.Model, protocol.CodeConfigError,
+				errors.New("image attachments are not configured — an admin must fill the Attachment storage settings"), "", "")
+		}
+		// Bound NOW, not when the entry lands: a run paused on an approval
+		// can outlive the orphan reaper's grace window, and a bound row is
+		// what the reaper leaves alone.
+		if err := r.Deps.Attachments.MarkBound(ctx, spec.attachmentIDs); err != nil {
+			return failTurn(agent.Model, "persist_error", err, "", "")
+		}
+	}
+
 	if provider == nil {
 		return failTurn(agent.Model, protocol.CodeConfigError, errors.New("no API key configured for this agent"), "", "")
 	}
@@ -444,9 +487,10 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 
 // runStreamed executes one fresh run segment to completion, publishing events
 // to the hub, and returns its outcome.
-func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigID, projectID, input, wakeParentRunID string) *RunOutcome {
+func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigID, projectID string, input RunInput, wakeParentRunID string) *RunOutcome {
 	return r.execStreamed(ctx, runID, sessionID, agentConfigID, projectID, segmentSpec{
-		input:           input,
+		input:           input.Text,
+		attachmentIDs:   input.AttachmentIDs,
 		wakeParentRunID: wakeParentRunID,
 		failCode:        "stream_error",
 		fresh:           true,
@@ -456,8 +500,10 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 			// user's message. Passing "" through would append an empty user
 			// turn, so the run gets an empty ITEM LIST instead: nothing to
 			// add, history to answer.
-			var runInput any = input
-			if input == "" {
+			var runInput any = input.Text
+			if len(input.AttachmentIDs) > 0 {
+				runInput = input.items()
+			} else if input.Text == "" {
 				runInput = []agents.InputItem{}
 			}
 			return agents.Run(ctx, agent, runInput, opts)

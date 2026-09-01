@@ -30,6 +30,7 @@ var schemaModels = []any{
 	(*Task)(nil),
 	(*Wakeup)(nil),
 	(*ContextProfile)(nil),
+	(*Attachment)(nil),
 	(*User)(nil),
 	(*Identity)(nil),
 	(*AuthToken)(nil),

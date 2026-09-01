@@ -139,7 +139,7 @@ func TestSessionSubtreesAreTheOwnersAlone(t *testing.T) {
 	// run fails on config at once (no provider), but the hub keeps its record
 	// for a while — long enough to be looked up.
 	done := make(chan struct{})
-	runID, err := r.runner.StartRun(sess.ID, "", "", "hi", nil, func(*bridge.RunOutcome) { close(done) })
+	runID, err := r.runner.StartRun(sess.ID, "", "", bridge.TextInput("hi"), nil, func(*bridge.RunOutcome) { close(done) })
 	if err != nil {
 		t.Fatal(err)
 	}

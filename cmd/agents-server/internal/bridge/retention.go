@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/zzir/agents-go/cmd/agents-server/internal/attachments"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
@@ -167,6 +168,53 @@ func RunWakeupCleanup(ctx context.Context, wakeups *store.WakeupStore) {
 		}
 		if n > 0 {
 			log.Info("pruned settled wake-ups", "removed", n)
+		}
+	}
+
+	runEvery(ctx, time.Hour, sweep)
+}
+
+// attachmentGrace is how long an uploaded image may wait unsent. Uploads are
+// bound the moment a run accepts them, so past this an unbound row is a
+// composer draft nobody sent.
+const attachmentGrace = 24 * time.Hour
+
+// RunAttachmentReaper collects orphan attachments — uploaded, never accepted
+// by a run — hourly: the bucket object first, then the row. That order is
+// load-bearing: a row whose object delete failed is retried next sweep,
+// while the reverse would leave an unreferenced object forever. The bucket's
+// own lifecycle rule is the backstop for objects this best-effort pass
+// misses. It blocks until ctx ends — run it in a goroutine.
+func RunAttachmentReaper(ctx context.Context, cfg *settings.Reader, atts *store.AttachmentStore) {
+	log := logging.Ctx(ctx)
+	sweep := func() {
+		orphans, err := atts.ListUnboundBefore(ctx, time.Now().UTC().Add(-attachmentGrace))
+		if err != nil {
+			log.Error("attachment reaper failed", "error", err)
+			return
+		}
+		if len(orphans) == 0 {
+			return
+		}
+		client := attachments.ClientFrom(cfg.S3Config(ctx), cfg.ProxyClient(ctx))
+		removed := 0
+		for _, a := range orphans {
+			// With storage unconfigured the object is unreachable anyway;
+			// drop the row so the sentinel degrades cleanly.
+			if client != nil {
+				if err := client.Delete(ctx, a.Key); err != nil {
+					log.Warn("attachment reaper: object delete failed, will retry", "key", a.Key, "error", err)
+					continue
+				}
+			}
+			if err := atts.Delete(ctx, a.ID); err != nil {
+				log.Warn("attachment reaper: row delete failed, will retry", "id", a.ID, "error", err)
+				continue
+			}
+			removed++
+		}
+		if removed > 0 {
+			log.Info("pruned orphan attachments", "removed", removed)
 		}
 	}
 

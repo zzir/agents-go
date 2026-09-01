@@ -173,7 +173,7 @@ func invokeText(t *testing.T, tool *agents.Tool, args string) string {
 func runChat(t *testing.T, runner *Runner, sess *store.Session, ac *store.AgentConfig, input string) *RunOutcome {
 	t.Helper()
 	done := make(chan *RunOutcome, 1)
-	if _, err := runner.StartRun(sess.ID, ac.ID, "", input, nil, func(o *RunOutcome) { done <- o }); err != nil {
+	if _, err := runner.StartRun(sess.ID, ac.ID, "", TextInput(input), nil, func(o *RunOutcome) { done <- o }); err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
 	select {

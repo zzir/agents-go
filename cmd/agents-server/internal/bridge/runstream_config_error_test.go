@@ -29,7 +29,7 @@ func TestRunStreamed_NoAPIKeyPersistsPromptAndError(t *testing.T) {
 		t.Fatalf("create session: %v", err)
 	}
 
-	res := runner.runStreamed(ctx, store.NewID(), sess.ID, cfgID, "", "hello", "")
+	res := runner.runStreamed(ctx, store.NewID(), sess.ID, cfgID, "", TextInput("hello"), "")
 	if res == nil {
 		t.Fatal("runStreamed returned nil result")
 	}
@@ -53,7 +53,7 @@ func TestRunStreamed_NoAPIKeyPersistsPromptAndError(t *testing.T) {
 func TestRunStreamed_ClassifiesTheSessionLookup(t *testing.T) {
 	t.Run("absent session", func(t *testing.T) {
 		runner, _ := newBareRunner(t)
-		res := runner.runStreamed(context.Background(), store.NewID(), store.NewID(), "", "", "hello", "")
+		res := runner.runStreamed(context.Background(), store.NewID(), store.NewID(), "", "", TextInput("hello"), "")
 		if res.ErrCode != protocol.CodeSessionNotFound {
 			t.Errorf("err code = %q, want %q", res.ErrCode, protocol.CodeSessionNotFound)
 		}
@@ -70,7 +70,7 @@ func TestRunStreamed_ClassifiesTheSessionLookup(t *testing.T) {
 			t.Fatalf("close db: %v", err)
 		}
 
-		res := runner.runStreamed(context.Background(), store.NewID(), sess.ID, "", "", "hello", "")
+		res := runner.runStreamed(context.Background(), store.NewID(), sess.ID, "", "", TextInput("hello"), "")
 		if res.ErrCode == protocol.CodeSessionNotFound {
 			t.Fatal("a dead database reported as session_not_found")
 		}
@@ -93,7 +93,7 @@ func TestRunStreamed_ClassifiesTheSessionLookup(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		res := runner.runStreamed(ctx, store.NewID(), sess.ID, "", "", "hello", "")
+		res := runner.runStreamed(ctx, store.NewID(), sess.ID, "", "", TextInput("hello"), "")
 		if !res.Cancelled {
 			t.Errorf("Cancelled = false, want true (err code %q: %s)", res.ErrCode, res.ErrMessage)
 		}

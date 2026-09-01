@@ -849,3 +849,40 @@ When a change genuinely doesn't fit, update this list in the same PR.
     drop it. A token minted under the previous identity silently authenticating
     the new one is how a swapped OAuth client keeps failing with the old client's
     token while looking freshly configured.
+
+56. **An image attachment is stored as a reference; only the model boundary
+    expands it.** Session entries carry `agents-attachment:<id>`, never the
+    bucket URL — a `hydratingProvider` wrapped around the run's ModelProvider
+    resolves the sentinel against the CURRENT `s3_public_base_url` on every
+    request edge (fresh input, replayed history, a resumed RunState, the
+    compaction summary), so moving buckets rewires every conversation at once
+    and never rewrites history. REST never expands: `GET /messages` ships the
+    row facts (`attachments`) beside the entry, and the browser renders those.
+    A sentinel whose row is gone degrades to an `[image unavailable]` text
+    part — one lost image never takes the conversation with it.
+
+57. **Attachments enter through the composer alone, and leave only by the
+    reaper.** `attachment_ids` exists on run creation (REST and WS) and
+    nowhere else — task spawns, workflow steps, triggers and mid-run
+    injections stay text-only. A run ACCEPTING the ids is what binds them
+    (checked ids exist, are the session owner's, are ≤ the per-message cap,
+    and the agent's `vision` flag is on — before anything executes); bound
+    rows are permanent, surviving session deletion and forks, because a fork
+    makes one image answer to two histories. Only never-accepted uploads are
+    collected, object before row, after a 24h grace.
+
+58. **The attachment bucket is public-read by design, and the settings save
+    proves it.** URLs are stable and unsigned — a presigned URL changes every
+    request and with it the prompt prefix, so signing would buy secrecy by
+    forfeiting the provider's prompt cache; secrecy rests on unguessable v4
+    keys instead. The section saves as ONE group (the Attachment storage
+    form; per-key writes are refused) — a change to any field is validated
+    with the siblings it will actually be stored with, where per-key saves
+    validated a new bucket against the OLD public base and refused the
+    change. Every non-empty save (and the form's Test) probes end to end
+    (signed upload, ANONYMOUS public read, delete) and refuses on failure,
+    because the first symptom otherwise is a model provider's opaque
+    download error mid-run; an all-empty save clears the section. The CSP's img-src follows the configured public
+    host at runtime (`SetImageHosts` is re-applied on storage-key writes) —
+    burned in at startup, a changed bucket shows blank thumbnails until a
+    restart.

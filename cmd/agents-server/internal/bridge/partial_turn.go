@@ -22,8 +22,10 @@ type partialTurn struct {
 	runID     string
 	model     string
 	// userInput is the run's prompt, saved only as a fallback — see
-	// savePartialTurn.
-	userInput string
+	// savePartialTurn; userAttachments are its image attachment ids, so the
+	// fallback write carries the same message the run would have persisted.
+	userInput       string
+	userAttachments []string
 	// annRole is the trailing marker's kind, "cancelled" or "error", and annMsg
 	// its optional detail. Empty annRole writes no marker.
 	annRole string
@@ -60,8 +62,8 @@ func (r *Runner) savePartialTurn(t partialTurn) {
 
 	entries := make([]session.Entry, 0, 4)
 
-	if t.userInput != "" && !runHasPersistedItems(ctx, es, t.runID) {
-		for _, item := range agents.InputItemsFromText(t.userInput) {
+	if (t.userInput != "" || len(t.userAttachments) > 0) && !runHasPersistedItems(ctx, es, t.runID) {
+		for _, item := range (RunInput{Text: t.userInput, AttachmentIDs: t.userAttachments}).items() {
 			e, err := session.NewItemEntry(item, agents.Source{Type: agents.SourceUser})
 			if err != nil {
 				continue

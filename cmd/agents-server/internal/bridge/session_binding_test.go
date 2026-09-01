@@ -41,7 +41,7 @@ func createProject(t *testing.T, r *Runner, id, sandboxID string) string {
 func startAndWait(t *testing.T, r *Runner, sessionID, projectID string) string {
 	t.Helper()
 	done := make(chan struct{})
-	runID, err := r.StartRun(sessionID, "", projectID, "hi", nil, func(*RunOutcome) { close(done) })
+	runID, err := r.StartRun(sessionID, "", projectID, TextInput("hi"), nil, func(*RunOutcome) { close(done) })
 	if err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestRefusedRunDoesNotBind(t *testing.T) {
 	}
 	defer runner.hub.unregister("run-live", seg)
 
-	if _, err := runner.StartRun(sess.ID, "", p, "hi", nil, nil); err == nil {
+	if _, err := runner.StartRun(sess.ID, "", p, TextInput("hi"), nil, nil); err == nil {
 		t.Fatal("StartRun succeeded on a busy session")
 	}
 	if got, _ := runner.Deps.Sessions.Get(ctx, sess.ID); got.ProjectID != "" {
@@ -205,7 +205,7 @@ func TestInvalidBindingRefusedUnbound(t *testing.T) {
 		"unknown project": store.NewID(),
 		"foreign project": foreign.ID,
 	} {
-		_, err := runner.StartRun(sess.ID, "", projectID, "hi", nil, nil)
+		_, err := runner.StartRun(sess.ID, "", projectID, TextInput("hi"), nil, nil)
 		if _, ok := errorsAsInvalidBinding(err); !ok {
 			t.Errorf("%s: err = %v, want ErrInvalidBinding", name, err)
 		}

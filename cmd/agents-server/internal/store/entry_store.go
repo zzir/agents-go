@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -584,10 +585,73 @@ type EntryView struct {
 	// off-path entry is an abandoned attempt — still recorded, still offerable,
 	// but not part of the conversation as it currently stands.
 	OnPath bool `json:"on_path"`
+	// Attachments are the entry's image attachments, resolved from the
+	// sentinel refs its item carries. URL is filled by the handler, which
+	// knows the public base; the store contributes the row facts.
+	Attachments []EntryAttachment `json:"attachments,omitempty"`
 	// Compaction is present on a checkpoint: what the pass folded away, so a
 	// reader can collapse those entries under it and offer them back.
 	Compaction *CompactionInfo `json:"compaction,omitempty"`
 	CreatedAt  time.Time       `json:"created_at"`
+}
+
+// EntryAttachment is one image attachment on an entry. Key is internal — the
+// handler turns it into URL against the current public base.
+type EntryAttachment struct {
+	ID  string `json:"id"`
+	Key string `json:"-"`
+	URL string `json:"url"`
+}
+
+// entryAttachmentIDs pulls the attachment sentinel ids out of an item's wire
+// JSON; nil for the vast majority of items, rejected by a byte scan first.
+func entryAttachmentIDs(item json.RawMessage) []string {
+	if !bytes.Contains(item, []byte(AttachmentScheme)) {
+		return nil
+	}
+	var probe struct {
+		Content []struct {
+			ImageURL string `json:"image_url"`
+		} `json:"content"`
+	}
+	if json.Unmarshal(item, &probe) != nil {
+		return nil
+	}
+	var ids []string
+	for _, p := range probe.Content {
+		if id := AttachmentSentinelID(p.ImageURL); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// attachEntryAttachments fills views' Attachments from the sentinel ids their
+// items carry, with one batch read. A deleted attachment row simply drops off
+// the view — the model boundary degrades it the same way.
+func (s *EntryStore) attachEntryAttachments(ctx context.Context, views []EntryView, perView [][]string) {
+	var all []string
+	for _, ids := range perView {
+		all = append(all, ids...)
+	}
+	if len(all) == 0 {
+		return
+	}
+	var rows []Attachment
+	if err := s.db.NewSelect().Model(&rows).Where("id IN (?)", bun.List(all)).Scan(ctx); err != nil {
+		return // a panel nicety, never worth failing the page
+	}
+	byID := make(map[string]Attachment, len(rows))
+	for _, a := range rows {
+		byID[a.ID] = a
+	}
+	for i, ids := range perView {
+		for _, id := range ids {
+			if a, ok := byID[id]; ok {
+				views[i].Attachments = append(views[i].Attachments, EntryAttachment{ID: a.ID, Key: a.Key})
+			}
+		}
+	}
 }
 
 // CompactionInfo is a checkpoint's payload minus the retained tail, which is
@@ -636,8 +700,10 @@ func (s *EntryStore) GetEntries(ctx context.Context, ref session.Ref, beforeID s
 	onPath := activeBranch(entries)
 	folded := session.FoldUpdates(entries)
 	views := make([]EntryView, 0, len(folded))
+	attIDs := make([][]string, 0, len(folded))
 	for _, e := range folded {
 		row := meta[e.ID]
+		attIDs = append(attIDs, entryAttachmentIDs(e.Item))
 		views = append(views, EntryView{
 			ID:          row.ID,
 			EntryID:     e.ID,
@@ -655,6 +721,7 @@ func (s *EntryStore) GetEntries(ctx context.Context, ref session.Ref, beforeID s
 			CreatedAt:   e.CreatedAt,
 		})
 	}
+	s.attachEntryAttachments(ctx, views, attIDs)
 
 	// The cursor applies to the folded list: paging on raw row ids would return
 	// short pages wherever an update was folded away. It names a row; the cut

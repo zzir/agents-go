@@ -83,6 +83,11 @@ func resolveProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig
 	if len(spec.FallbackModels) > 0 {
 		provider = wrapFallbackProvider(provider, spec.FallbackModels, proxyClient)
 	}
+	// Outermost, so every model — fallbacks included — resolves attachment
+	// sentinels at the request edge (see attachment_hydrate.go).
+	provider = hydrateAttachments(provider, deps.Attachments, func(ctx context.Context) string {
+		return deps.Settings.S3Config(ctx).PublicBaseURL
+	})
 	return provider, def.Type, nil
 }
 

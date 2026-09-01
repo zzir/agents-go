@@ -35,6 +35,11 @@ type BehaviorGroup struct {
 	// ON, matching every agent built before the flag existed; a chat-only agent
 	// that never delegates opts out to reclaim the task schema from every request.
 	DisableSubagents bool `json:"disable_subagents,omitempty"`
+	// Vision admits image attachments on this agent's runs. Off by default:
+	// the gate is what turns "model returned 400" into a config error a
+	// person can act on, so it must be an explicit claim that the model
+	// accepts image input.
+	Vision bool `json:"vision,omitempty"`
 }
 
 // ResilienceGroup holds model retry/fallback settings.

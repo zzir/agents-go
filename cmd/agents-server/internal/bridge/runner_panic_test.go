@@ -58,7 +58,7 @@ func TestRunPanicFailsTheRunWithAnError(t *testing.T) {
 
 	var outcome *RunOutcome
 	done := make(chan struct{})
-	runID, err := runner.StartRun(sess.ID, ac.ID, "", "go", nil, func(o *RunOutcome) { outcome = o; close(done) })
+	runID, err := runner.StartRun(sess.ID, ac.ID, "", TextInput("go"), nil, func(o *RunOutcome) { outcome = o; close(done) })
 	if err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestRunPanicFailsTheRunWithAnError(t *testing.T) {
 	// And the session runs again.
 	runner.Deps.SpawnTool = nil
 	again := make(chan struct{})
-	if _, err := runner.StartRun(sess.ID, ac.ID, "", "again", nil, func(*RunOutcome) { close(again) }); err != nil {
+	if _, err := runner.StartRun(sess.ID, ac.ID, "", TextInput("again"), nil, func(*RunOutcome) { close(again) }); err != nil {
 		t.Fatalf("the session must accept a run after the panic: %v", err)
 	}
 	select {

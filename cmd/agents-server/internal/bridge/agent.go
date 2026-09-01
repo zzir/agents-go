@@ -46,6 +46,9 @@ type AgentDeps struct {
 	ContextProfiles  *store.ContextProfileStore
 	Workflows        *store.WorkflowStore
 	Wakeups          *store.WakeupStore
+	// Attachments resolves image-attachment sentinels at the model boundary
+	// (see hydratingProvider) and validates a run's attachment_ids.
+	Attachments *store.AttachmentStore
 	// Audit records the acts a run performs on shared configuration (a
 	// save_workflow), attributed to the session's owner; nil records nothing.
 	Audit protocol.AuditFunc

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -55,6 +56,7 @@ type stores struct {
 	AuthTokens       *store.AuthTokenStore
 	ContextProfiles  *store.ContextProfileStore
 	Audit            *store.AuditStore
+	Attachments      *store.AttachmentStore
 }
 
 func newStores(db *bun.DB) *stores {
@@ -83,6 +85,7 @@ func newStores(db *bun.DB) *stores {
 		AuthTokens:       store.NewAuthTokenStore(db),
 		ContextProfiles:  store.NewContextProfileStore(db),
 		Audit:            store.NewAuditStore(db),
+		Attachments:      store.NewAttachmentStore(db),
 	}
 }
 
@@ -149,6 +152,7 @@ func newBridge(ctx, bgCtx context.Context, db *bun.DB, st *stores, audit protoco
 		Workflows:        st.Workflows,
 		Users:            st.Users,
 		Wakeups:          st.Wakeups,
+		Attachments:      st.Attachments,
 		Audit:            audit,
 	}
 	svc.Runner = bridge.NewRunner(ctx, db, svc.Deps)
@@ -194,7 +198,7 @@ func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL st
 			Sessions: handler.NewSessionHandler(handler.SessionDeps{
 				Sessions: st.Sessions, Entries: st.Entries, Traces: st.Traces, Agents: st.AgentConfigs,
 				Profiles: st.ContextProfiles, MCP: svc.Mcp, MCPServers: st.McpServers, Users: st.Users,
-				Projects: st.Projects, Stopper: svc.Runner, Compactor: svc.Runner,
+				Projects: st.Projects, Stopper: svc.Runner, Compactor: svc.Runner, Settings: st.SettingReader,
 			}),
 			Runs:       handler.NewRunHandler(svc.Runner),
 			Approvals:  handler.NewApprovalHandler(st.PendingApprovals, svc.Runner),
@@ -213,6 +217,7 @@ func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL st
 			Traces:     handler.NewTraceHandler(st.Traces),
 			Playground: handler.NewPlaygroundHandler(svc.Deps),
 			ChatGPT:    handler.NewChatGPTOAuthHandler(svc.ChatGPT, st.Providers),
+			Files:      handler.NewAttachmentHandler(st.Attachments, st.SettingReader, st.Settings),
 			Server: handler.ServerInfo{
 				Version: buildVersion,
 			},
@@ -308,11 +313,28 @@ func newAuth(ctx context.Context, st *stores, baseURL string, log *slog.Logger) 
 // the embedded SPA.
 func newServer(ctx context.Context, log *slog.Logger, authSvc *authn.Service, audit protocol.AuditFunc, st *stores, hs *handlers, baseURL string) (*server.Server, error) {
 	srv := server.New(log, authSvc.Authenticate, audit)
-	srv.SetImageHosts(authSvc.AvatarHosts())
+	// img-src admits the avatar hosts plus the attachment bucket's public
+	// host; the latter is a runtime-editable setting, so the settings handler
+	// re-applies the list whenever a storage key changes.
+	imgHosts := func() []string {
+		hosts := authSvc.AvatarHosts()
+		if cfg := st.SettingReader.S3Config(ctx); cfg.Complete() {
+			if u, err := url.Parse(cfg.PublicBaseURL); err == nil && u.Host != "" {
+				hosts = append(hosts, u.Scheme+"://"+u.Host)
+			}
+		}
+		return hosts
+	}
+	srv.SetImageHosts(imgHosts())
+	hs.API.Files.OnStorageChange = func() { srv.SetImageHosts(imgHosts()) }
 	// A replay posts a stored span payload back: the body cap follows the
 	// size the settings let a span keep, plus room for the rest of the request.
 	srv.SetBodyLimit(server.APIPrefix+"/playground/generate", func() int64 {
 		return int64(st.SettingReader.Int(ctx, settings.KeyTraceSpanDataKB))*1024 + 256*1024
+	})
+	// An image upload legitimately exceeds the 1 MiB default body cap.
+	srv.SetBodyLimit(server.APIPrefix+"/attachments", func() int64 {
+		return handler.MaxAttachmentBytes + 64<<10
 	})
 	if flagTrustedProxies != "" {
 		if err := srv.SetTrustedProxies(splitList(flagTrustedProxies)); err != nil {

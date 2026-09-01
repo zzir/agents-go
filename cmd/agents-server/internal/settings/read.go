@@ -103,3 +103,73 @@ func (r *Reader) ProxyClient(ctx context.Context) *http.Client {
 	actual, _ := r.clients.LoadOrStore(key, client)
 	return actual.(*http.Client)
 }
+
+// S3Config is the attachment-storage section read as one value. Complete()
+// gates the feature: all-empty means image input is off, and a partial fill
+// reads as off too (the settings handler refuses to store one, but rows
+// predating a key's deletion must not half-configure the feature).
+type S3Config struct {
+	Endpoint      string
+	Region        string
+	Bucket        string
+	AccessKeyID   string
+	SecretKey     string
+	PublicBaseURL string
+	PathStyle     bool
+}
+
+// Complete reports whether every required field is set.
+func (c S3Config) Complete() bool {
+	return c.Endpoint != "" && c.Bucket != "" && c.AccessKeyID != "" && c.SecretKey != "" && c.PublicBaseURL != ""
+}
+
+// IsS3Key reports whether key belongs to the attachment-storage section.
+func IsS3Key(key string) bool {
+	switch key {
+	case KeyS3Endpoint, KeyS3Region, KeyS3Bucket, KeyS3AccessKeyID,
+		KeyS3SecretAccessKey, KeyS3PublicBaseURL, KeyS3PathStyle:
+		return true
+	}
+	return false
+}
+
+// With returns the config with one key's field replaced — how the settings
+// handler previews the configuration a pending write would produce, so the
+// probe tests what WOULD be stored.
+func (c S3Config) With(key, value string) S3Config {
+	switch key {
+	case KeyS3Endpoint:
+		c.Endpoint = value
+	case KeyS3Region:
+		// An empty write returns the key to its default, so preview that.
+		if value == "" {
+			d, _ := Lookup(KeyS3Region)
+			value = d.Default
+		}
+		c.Region = value
+	case KeyS3Bucket:
+		c.Bucket = value
+	case KeyS3AccessKeyID:
+		c.AccessKeyID = value
+	case KeyS3SecretAccessKey:
+		c.SecretKey = value
+	case KeyS3PublicBaseURL:
+		c.PublicBaseURL = value
+	case KeyS3PathStyle:
+		c.PathStyle, _ = strconv.ParseBool(value)
+	}
+	return c
+}
+
+// S3Config reads the attachment-storage settings.
+func (r *Reader) S3Config(ctx context.Context) S3Config {
+	return S3Config{
+		Endpoint:      r.String(ctx, KeyS3Endpoint),
+		Region:        r.String(ctx, KeyS3Region),
+		Bucket:        r.String(ctx, KeyS3Bucket),
+		AccessKeyID:   r.String(ctx, KeyS3AccessKeyID),
+		SecretKey:     r.String(ctx, KeyS3SecretAccessKey),
+		PublicBaseURL: r.String(ctx, KeyS3PublicBaseURL),
+		PathStyle:     r.Bool(ctx, KeyS3PathStyle),
+	}
+}

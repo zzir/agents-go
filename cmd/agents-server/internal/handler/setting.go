@@ -117,6 +117,14 @@ func (h *SettingHandler) Set(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 	key := c.Param("key")
+	// The attachment-storage section saves as ONE group (PUT
+	// /attachments/storage): its keys are only valid together, and a per-key
+	// write would validate a new value against the OLD siblings — the exact
+	// failure the form replaced.
+	if settings.IsS3Key(key) {
+		badRequest(c, "attachment-storage keys are saved together — use the Attachment storage form (PUT /attachments/storage)")
+		return
+	}
 	// A client echoing the mask keeps the stored secret, resolved inside the
 	// store's transaction (nothing stored resolves to ""). Validated AFTER the
 	// mask resolves, so what is checked is what is stored.
@@ -151,7 +159,12 @@ func (h *SettingHandler) Set(c *gin.Context) {
 //	@Security	BearerAuth
 //	@Router		/settings/{key} [delete]
 func (h *SettingHandler) Delete(c *gin.Context) {
-	if err := h.store.Delete(c.Request.Context(), c.Param("key")); err != nil {
+	key := c.Param("key")
+	if settings.IsS3Key(key) {
+		badRequest(c, "attachment-storage keys are cleared together — use the Attachment storage form's Clear")
+		return
+	}
+	if err := h.store.Delete(c.Request.Context(), key); err != nil {
 		storeError(c, err)
 		return
 	}

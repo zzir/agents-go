@@ -16,6 +16,8 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/gin-gonic/gin"
 
@@ -35,16 +37,24 @@ type Server struct {
 	bodyLimits map[string]func() int64
 	// cspPolicy is the Content-Security-Policy every response carries; base
 	// policy from New, extended by ServeStatic with the hashes of the served
-	// page's inline scripts and by SetImageHosts with the avatar hosts.
-	cspPolicy string
-	imgHosts  []string
+	// page's inline scripts and by SetImageHosts with the avatar and
+	// attachment hosts. Read per request, rewritten at runtime (the
+	// attachment bucket is a runtime-editable setting), hence atomic; the
+	// inputs are guarded by cspMu.
+	cspPolicy    atomic.Value // string
+	cspMu        sync.Mutex
+	scriptHashes []string
+	imgHosts     []string
 }
 
 // SetImageHosts admits extra img-src sources — the login providers' picture
-// hosts, the one hole the policy opens. Call before ServeStatic.
+// hosts and the attachment bucket's public host. Callable at any time: a
+// changed attachment setting re-admits its host without a restart.
 func (s *Server) SetImageHosts(hosts []string) {
+	s.cspMu.Lock()
+	defer s.cspMu.Unlock()
 	s.imgHosts = hosts
-	s.cspPolicy = buildCSP(nil, hosts)
+	s.cspPolicy.Store(buildCSP(s.scriptHashes, hosts))
 }
 
 // maxBodyBytes caps any request body read, matching the WebSocket frame limit
@@ -94,7 +104,8 @@ func New(log *slog.Logger, auth AuthFunc, audit protocol.AuditFunc) *Server {
 	engine := gin.New()
 	_ = engine.SetTrustedProxies(nil)
 	engine.Use(gin.Recovery())
-	s := &Server{Engine: engine, auth: auth, guard: NewAuthGuard(), Conns: NewConnTracker(), cspPolicy: buildCSP(nil, nil), bodyLimits: map[string]func() int64{}}
+	s := &Server{Engine: engine, auth: auth, guard: NewAuthGuard(), Conns: NewConnTracker(), bodyLimits: map[string]func() int64{}}
+	s.cspPolicy.Store(buildCSP(nil, nil))
 	engine.Use(s.limitBody)
 	engine.Use(s.cspMiddleware())
 	engine.Use(logMiddleware(log))
@@ -137,7 +148,10 @@ func (s *Server) ServeHealth(version string) {
 // Assets may be pre-compressed as .gz files; they are served transparently
 // with Content-Encoding: gzip (decompressed for a client that accepts none).
 func (s *Server) ServeStatic(staticFS fs.FS) {
-	s.cspPolicy = buildCSP(inlineScriptHashes(staticFS), s.imgHosts)
+	s.cspMu.Lock()
+	s.scriptHashes = inlineScriptHashes(staticFS)
+	s.cspPolicy.Store(buildCSP(s.scriptHashes, s.imgHosts))
+	s.cspMu.Unlock()
 	httpFS := http.FS(staticFS)
 	s.Engine.NoRoute(func(c *gin.Context) {
 		// Unmatched API paths are client errors, not SPA routes: answer with a
@@ -226,7 +240,7 @@ func buildCSP(scriptHashes, imgHosts []string) string {
 
 func (s *Server) cspMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		c.Header("Content-Security-Policy", s.cspPolicy)
+		c.Header("Content-Security-Policy", s.cspPolicy.Load().(string))
 		c.Next()
 	}
 }

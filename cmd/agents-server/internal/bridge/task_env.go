@@ -87,7 +87,7 @@ func (t taskLauncher) Launch(ctx context.Context, req tasks.LaunchRequest) error
 	// The task's own run. It shares the parent's project, and thereby its
 	// command-trust scope; the child's first run CAS-binds its hidden session
 	// with the same project.
-	_, err := t.r.startRunWithID(req.RunID, req.SessionID, in.TaskAgentID, in.ProjectID, req.Input, "", nil, nil)
+	_, err := t.r.startRunWithID(req.RunID, req.SessionID, in.TaskAgentID, in.ProjectID, TextInput(req.Input), "", nil, nil)
 	return err
 }
 

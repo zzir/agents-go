@@ -330,7 +330,7 @@ func (r *Runner) startWorkflowStep(ctx context.Context, req tasks.LaunchRequest,
 	// The sandbox comes from the PARENT (Inherit) — every step shares the
 	// project of the conversation that asked; the agent is the step's own.
 	in := store.DecodeInherit(req.Inherit)
-	_, err = r.startRunWithID(req.RunID, req.SessionID, step.AgentConfigID, in.ProjectID, req.Input, "", nil, nil)
+	_, err = r.startRunWithID(req.RunID, req.SessionID, step.AgentConfigID, in.ProjectID, TextInput(req.Input), "", nil, nil)
 	return err
 }
 
