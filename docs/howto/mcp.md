@@ -92,7 +92,9 @@ srv, _ := mcp.NewStreamableHTTPServer(ctx, "my-server", endpoint, mcp.Options{
 })
 ```
 
-The `agents-server` web UI handles this automatically: configure a server with **Authentication → OAuth**, and the Connect button will open an authorization popup when needed.
+The `agents-server` web UI handles this automatically: configure a server with **Authentication → OAuth**, and the Connect button will open an authorization popup when needed. An authorization server that doesn't support dynamic client registration rejects that default flow with `no configured client registration methods are supported by the authorization server` — register an OAuth client with the provider, set its redirect URI to `<base-url>/api/v1/mcp-servers/oauth/callback`, and fill in **Client ID / Client secret**. The **Scopes** field only feeds dynamic registration; with a pre-registered client the requested scopes come from the server's own metadata.
+
+Changing the endpoint, auth mode or Client ID drops the stored authorization — the grant was minted for the previous identity — so the next connect prompts again.
 
 ## Prompts and resources
 

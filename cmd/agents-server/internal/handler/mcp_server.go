@@ -289,6 +289,12 @@ func (h *McpServerHandler) Update(c *gin.Context) {
 				return badRequestError("endpoint changed: the stored secrets belong to the previous endpoint — replace them or clear them")
 			}
 			cfg.Config = restoreMcpConfig(cfg.Config, prev.Config)
+			// A grant is bound to endpoint + auth mode + client id; when any
+			// moved, drop it in the same transaction — the old identity's
+			// token must not silently authenticate the new one (invariant 55).
+			if oauthIdentityChanged(cfg.Config, prev.Config) {
+				cfg.OAuthToken = ""
+			}
 			return nil
 		}))
 	if err != nil {
@@ -305,6 +311,19 @@ func (h *McpServerHandler) Update(c *gin.Context) {
 	// ordering; the response status typically reads "connecting".
 	h.manager.Reconcile(updated, h.oauth)
 	c.JSON(http.StatusOK, h.listItem(updated))
+}
+
+// oauthIdentityChanged reports whether an update moved a field the persisted
+// OAuth grant is bound to — the endpoint (the grant's audience), the auth mode,
+// or the client id the grant was minted for. Unparseable configs report false:
+// validation upstream makes that unreachable for the new config, and a legacy
+// stored one is better left with its grant than stripped blind.
+func oauthIdentityChanged(next, prev json.RawMessage) bool {
+	var n, p store.HTTPMcpConfig
+	if json.Unmarshal(next, &n) != nil || json.Unmarshal(prev, &p) != nil {
+		return false
+	}
+	return n.Endpoint != p.Endpoint || n.AuthMode != p.AuthMode || n.OAuthClientID != p.OAuthClientID
 }
 
 // Delete disconnects and removes the MCP server identified by the id path parameter.

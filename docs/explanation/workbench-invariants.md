@@ -841,3 +841,11 @@ When a change genuinely doesn't fit, update this list in the same PR.
     register gate read the one resolver, and no enforcement splits. A value only
     forces plane 1 when it is genuinely construction-fixed (a bind address) or
     security-load-bearing, never merely because the SDK consumes it.
+
+55. **A persisted MCP OAuth grant is bound to the config identity it was minted
+    under.** An update that moves the endpoint (the grant's audience), the auth
+    mode, or the client id clears the stored grant in the same transaction — the
+    store preserves the token by copying it forward, so the handler's prepare can
+    drop it. A token minted under the previous identity silently authenticating
+    the new one is how a swapped OAuth client keeps failing with the old client's
+    token while looking freshly configured.
