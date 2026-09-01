@@ -64,6 +64,12 @@ func persistGrant(ctx context.Context, s *store.McpServerStore, configID string,
 	if err := s.SaveOAuthToken(ctx, configID, string(b)); err != nil {
 		log.Error("persisting MCP OAuth grant failed; connection works now but won't survive a restart", "error", err, "mcp", configID)
 	}
+	// The token response's "scope" field is what the server ACTUALLY granted —
+	// the requested set is not binding, and a missing scope surfaces only as an
+	// opaque permission error at tool-call time.
+	if granted, _ := tok.Extra("scope").(string); granted != "" {
+		log.Info("mcp oauth grant persisted", "mcp", configID, "granted_scopes", granted)
+	}
 }
 
 // persistingTokenSource wraps a refreshing oauth2.TokenSource and re-persists

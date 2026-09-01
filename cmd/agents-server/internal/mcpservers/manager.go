@@ -4,10 +4,13 @@
 package mcpservers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -239,16 +242,17 @@ func (m *Manager) httpTransport(ctx context.Context, hc *store.HTTPMcpConfig, oa
 
 // httpClientFor builds the HTTP client an HTTP-based MCP transport should use,
 // combining the optional proxy client with optional static request headers.
-// Returns nil (so the SDK uses its default client) when neither is configured.
+// Every client logs error-response bodies (see errorBodyRoundTripper).
 func httpClientFor(proxy *http.Client, headers map[string]string) *http.Client {
-	if len(headers) == 0 {
-		return proxy
-	}
 	base := http.DefaultTransport
 	if proxy != nil && proxy.Transport != nil {
 		base = proxy.Transport
 	}
-	client := &http.Client{Transport: &headerRoundTripper{base: base, headers: headers}}
+	var rt http.RoundTripper = &errorBodyRoundTripper{base: base}
+	if len(headers) > 0 {
+		rt = &headerRoundTripper{base: rt, headers: headers}
+	}
+	client := &http.Client{Transport: rt}
 	if proxy != nil {
 		client.Timeout = proxy.Timeout
 	}
@@ -268,6 +272,33 @@ func (h *headerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 		req.Header.Set(k, v)
 	}
 	return h.base.RoundTrip(req)
+}
+
+// errorBodyRoundTripper logs the body of an error response from an MCP server.
+// The transport's own error is just the status line ("Forbidden"), while the
+// body spells out the actual reason — a disabled API, an insufficient scope.
+// Two spec-sanctioned answers stay quiet: 401 (the normal authorization dance)
+// and 405 to a GET (a server that offers no standalone SSE stream — the client
+// proceeds without it). The sniffed bytes are stitched back so the caller reads
+// the body unchanged.
+type errorBodyRoundTripper struct {
+	base http.RoundTripper
+}
+
+func (rt *errorBodyRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := rt.base.RoundTrip(req)
+	if err != nil || resp.StatusCode < 400 || resp.StatusCode == http.StatusUnauthorized ||
+		(resp.StatusCode == http.StatusMethodNotAllowed && req.Method == http.MethodGet) {
+		return resp, err
+	}
+	head, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<10))
+	logging.Ctx(req.Context()).Warn("mcp server error response",
+		"url", req.URL.String(), "status", resp.Status, "body", strings.TrimSpace(string(head)))
+	resp.Body = struct {
+		io.Reader
+		io.Closer
+	}{io.MultiReader(bytes.NewReader(head), resp.Body), resp.Body}
+	return resp, nil
 }
 
 // ConnectHTTPWithOAuth connects a streamable HTTP MCP server with the given
