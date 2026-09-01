@@ -227,11 +227,12 @@ When a change genuinely doesn't fit, update this list in the same PR.
     assembled with the same streamReducer/timeline code as the chat) are lenses
     of one panel — a new inspection surface is a new lens, not a second drawer.
     Task detail accumulates live child-run events only while open
-    (watchTask/unwatchTask). Persisted spans load on the first open of a lens
-    that reads them (trace or context), not on session open — a stored
-    generation span can carry a whole model request, and every session open
-    paying that download for a panel nobody may open is the wrong default.
-    Live runs stream their spans over the WS regardless. Run LINEAGE — which
+    (watchTask/unwatchTask). The persisted span SUMMARY loads on session open —
+    the chat labels each turn with its run span's duration, so the data can't
+    wait for a lens — but a span's PAYLOAD stays lazy: a stored generation span
+    can carry a whole model request (nearly all of a session's trace bytes),
+    fetched whole only when its row is expanded (loadSpanPayload). Live runs
+    stream their spans over the WS regardless. Run LINEAGE — which
     run's spawn a wake-up belongs to, what nests the "task result" card under
     its originating card — is recorded on the trace itself
     (`trace_events.parent_run_id`, stamped at launch from

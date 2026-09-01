@@ -483,14 +483,13 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
     return msgP;
   }, [fetchTimeline, updateSS]);
 
-  // loadTraces pulls the session's persisted spans, once per session — on the
-  // first open of a lens that reads them (trace / context), not on session
-  // open: stored generation spans carry whole model requests, and every
-  // session open paying that download for lenses nobody may open is the wrong
-  // default. Live runs stream their spans over the WS regardless; this
-  // backfills history. The runs' questions come with them: the traces cover
-  // the whole session while the timeline is paged, so a card's exchange may
-  // not be on screen to label it from.
+  // loadTraces pulls the session's persisted span SUMMARY (payloads stay lazy,
+  // fetched per span by loadSpanPayload), once per session, on session load:
+  // the chat labels each turn with its run span's duration, so the data can't
+  // wait for a lens to open. Live runs stream their spans over the WS
+  // regardless; this backfills history. The runs' questions come with them: the
+  // traces cover the whole session while the timeline is paged, so a card's
+  // exchange may not be on screen to label it from.
   const loadTraces = useCallback((sid: string) => {
     if (!sid || tracesLoadedRef.current.has(sid)) return;
     tracesLoadedRef.current.add(sid);

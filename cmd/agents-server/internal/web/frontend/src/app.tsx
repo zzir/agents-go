@@ -634,13 +634,12 @@ function App() {
     return () => { cancelled = true; };
   }, [activeSession, loadSession]);
 
-  // Persisted traces backfill on the first open of a lens that reads them —
-  // the trace panel, or the context panel (it joins its items to spans). Also
-  // covers deep links (#/session/x/trace): the hash seeds activePanel.
+  // Backfill the session's persisted trace summary on load: the chat labels
+  // each turn with its run span's duration, and the trace/context lenses join
+  // to the same spans. Once per session (loadTraces guards); payloads stay lazy.
   useEffect(() => {
-    if (!activeSession) return;
-    if (activePanel?.kind === 'trace' || activePanel?.kind === 'context') loadTraces(activeSession);
-  }, [activeSession, activePanel, loadTraces]);
+    if (activeSession) loadTraces(activeSession);
+  }, [activeSession, loadTraces]);
 
   useEffect(() => {
     if (!wsRef.current) return;
