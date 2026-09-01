@@ -23,6 +23,7 @@ import { CompactionCard } from '@/features/chat/CompactionCard';
 import { Greeting } from '@/features/chat/Greeting';
 import { ChatToc } from '@/features/chat/ChatToc';
 import { MessageInput } from '@/features/chat/MessageInput';
+import type { AttachmentMeta } from '@/lib/attachments';
 import { WorkflowStrip } from '@/features/chat/WorkflowStrip';
 import { TraceDrawer, type TraceReveal } from '@/features/chat/TracePanel';
 import { ContextPanel } from '@/features/chat/ContextPanel';
@@ -81,6 +82,8 @@ interface AgentConfig {
   id: string;
   name: string;
   avatar?: string;
+  // The behavior group, read for the Vision flag (image input gate).
+  behavior?: { vision?: boolean };
 }
 
 interface SandboxDef {
@@ -105,7 +108,7 @@ function flashMessage(el: Element) {
 // ChatViewActions is what the view can ask the app to do. Every member is a
 // stable callback, so the object is memoized once and the memo'd view holds.
 export interface ChatViewActions {
-  onSend: (text: string, agentConfigId: string, projectId?: string) => void;
+  onSend: (text: string, agentConfigId: string, projectId?: string, attachments?: AttachmentMeta[]) => void;
   onCancel: (graceful?: boolean) => boolean;
   onApprove?: (id: string, scope?: string) => void;
   onReject?: (id: string) => void;
@@ -452,13 +455,17 @@ export function ChatView({
   };
   const sandboxView = composerSandboxView(sessionBinding || null, projects, sandboxDefs);
 
-  const handleSend = useCallback((text: string) => {
+  const handleSend = useCallback((text: string, attachments?: AttachmentMeta[]) => {
     // No sessionId is fine: sending with no active session starts a new session
     // (app-level onSend auto-creates it). Only an agent is required.
     if (!agentConfigId) return;
     // Bound: the server uses the binding regardless — send no project claim.
-    onSend(text, agentConfigId, sessionBinding ? '' : projectId);
+    onSend(text, agentConfigId, sessionBinding ? '' : projectId, attachments);
   }, [agentConfigId, projectId, sessionBinding, onSend]);
+
+  // Image affordances follow the PICKED agent's Vision flag; the server
+  // re-checks at run start, so this is presentation, not the gate.
+  const allowAttachments = Boolean(agentConfigs?.find(a => a.id === agentConfigId)?.behavior?.vision);
 
 
   const handleCancel = useCallback((graceful?: boolean) => {
@@ -1002,6 +1009,7 @@ export function ChatView({
           <UserMessage
             key={entryKey(m, i, 'user')}
             content={m.content || ''}
+            attachments={(m as { attachments?: AttachmentMeta[] }).attachments}
             traceRunId={rid || null}
             msgIdx={i}
             entryId={m.entryId}
@@ -1097,6 +1105,7 @@ export function ChatView({
               onCancel={handleCancel}
               disabled={running || awaiting || !agentConfigId}
               running={running}
+              allowAttachments={allowAttachments}
               toolbar={inputToolbar}
             />
           </div>
@@ -1137,6 +1146,7 @@ export function ChatView({
           onCancel={handleCancel}
           disabled={running || awaiting || !agentConfigId}
           running={running}
+          allowAttachments={allowAttachments}
           toolbar={inputToolbar}
         />
       </div>

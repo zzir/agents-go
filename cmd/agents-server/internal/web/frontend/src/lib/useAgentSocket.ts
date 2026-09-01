@@ -1,3 +1,4 @@
+import type { AttachmentMeta } from '@/lib/attachments';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { WSClient } from '@/lib/ws';
 import { EV, ERR, TASK_KIND_WORKFLOW, type RunDiagnostic, type TaskRow, type TaskStatus, type WorkflowState } from '@/lib/protocol';
@@ -585,7 +586,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
 
     ws.onStatus = setConnected;
 
-    ws.on(EV.runStarted, (p: { session_id?: string; run_id: string; input?: string; parent_session_id?: string; parent_run_id?: string; task_id?: string; kind?: string; tool_call_id?: string; label?: string; attempt?: number; max_attempts?: number }) => {
+    ws.on(EV.runStarted, (p: { session_id?: string; run_id: string; input?: string; attachments?: AttachmentMeta[]; parent_session_id?: string; parent_run_id?: string; task_id?: string; kind?: string; tool_call_id?: string; label?: string; attempt?: number; max_attempts?: number }) => {
       // A background task run — a sub-agent's or a workflow step's: track it
       // under its parent session's task list and keep it out of every
       // chat-timeline path. Task identity (task_id) and run (run_id) are
@@ -631,7 +632,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       updateSS(sid, s => {
         // Hub replays (reconnect / re-subscribe) re-deliver run.started; the
         // reducer returns null instead of growing a second live turn.
-        const appended = ensureLiveTurn(s.messages, p.run_id, p.input);
+        const appended = ensureLiveTurn(s.messages, p.run_id, p.input, p.attachments);
         return {
           ...s, running: true, compacting: false, diagnostics: [], liveRunId: p.run_id,
           loaded: true,

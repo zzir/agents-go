@@ -17,6 +17,19 @@ function saveKey(kind: string, sessionId: string, value: string): void {
 }
 
 export const loadDraft = (sessionId: string): string => loadKey('draft', sessionId);
+
+// Attachment drafts hold already-uploaded images (id + url + dims) so a
+// session switch does not orphan them; in-flight uploads are not saved.
+export function loadAttachmentDraft(sessionId: string): { id: string; url: string }[] {
+  try {
+    return JSON.parse(loadKey('attdraft', sessionId) || '[]');
+  } catch {
+    return [];
+  }
+}
+export function saveAttachmentDraft(sessionId: string, list: { id: string; url: string }[]): void {
+  saveKey('attdraft', sessionId, list.length ? JSON.stringify(list) : '');
+}
 export const saveDraft = (sessionId: string, text: string): void => saveKey('draft', sessionId, text);
 export const clearDraft = (sessionId: string): void => saveKey('draft', sessionId, '');
 

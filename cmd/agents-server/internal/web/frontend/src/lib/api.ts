@@ -222,6 +222,30 @@ export const api = {
     fork: (id: string | number, messageId?: string, opts?: { exclusive?: boolean; label?: string }) => request<S['store.Session']>(`/sessions/${id}/fork`, { method: 'POST', body: JSON.stringify({ ...(messageId ? { message_id: messageId } : {}), ...opts }) }),
     pin: (id: string | number, pinned: boolean) => request(`/sessions/${id}`, { method: 'PATCH', body: JSON.stringify({ pinned }) }),
   },
+  attachments: {
+    config: () => request('/attachments/config'),
+    // Multipart, not JSON: hand-rolled fetch because request() stamps a JSON
+    // Content-Type the multipart boundary must replace.
+    upload: async (blob: Blob, name: string) => {
+      const form = new FormData();
+      form.append('file', blob, name);
+      const headers: Record<string, string> = {};
+      const t = getToken();
+      if (t) headers['Authorization'] = `Bearer ${t}`;
+      const res = await fetch(`${BASE}/attachments`, { method: 'POST', body: form, headers });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error?.message || res.statusText);
+      }
+      return res.json();
+    },
+    remove: (id: string) => request(`/attachments/${id}`, { method: 'DELETE' }),
+    // The storage section saves/tests/clears as ONE group — per-key writes
+    // are refused server-side (a new value must validate with the siblings
+    // it will actually be stored with).
+    storageSave: (body: Record<string, unknown>) => request('/attachments/storage', { method: 'PUT', body: JSON.stringify(body) }),
+    storageTest: (body: Record<string, unknown>) => request('/attachments/storage/test', { method: 'POST', body: JSON.stringify(body) }),
+  },
   agents: {
     ...crud<S['store.AgentConfig']>('/agents'),
     setScope: setScope('/agents'),

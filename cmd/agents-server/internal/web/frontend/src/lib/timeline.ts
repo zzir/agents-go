@@ -1,3 +1,4 @@
+import type { AttachmentMeta } from '@/lib/attachments';
 // ItemDisplay mirrors the SDK's agents.ItemDisplay: what the RUNNER decided an
 // entry looks like, recorded when it happened. The frontend never parses
 // wire-format item JSON, and the server no longer re-derives this at read time —
@@ -77,6 +78,8 @@ interface EntryView {
   // switchable-to, but not part of the conversation as it currently stands.
   on_path?: boolean;
   compaction?: CompactionInfo;
+  // Image attachments the entry's message carries, URL-resolved server-side.
+  attachments?: AttachmentMeta[];
 }
 
 // Branches describes one fork point: the sibling attempts that hang off a
@@ -183,6 +186,8 @@ interface UserEntry {
   // messageId is a row id, and branching is expressed in entry ids.
   entryId?: string;
   runId?: string;
+  // The message's image attachments, for the thumbnail grid.
+  attachments?: AttachmentMeta[];
 }
 
 // WorkflowStartedNote is the data of a started note: a workflow's start (which
@@ -373,7 +378,10 @@ function assemble(
     }
     if (e.role === 'user') {
       finishTurn();
-      if (e.content) timeline.push({ role: 'user', content: e.content, messageId: e.id, entryId: e.entry_id, runId: e.run_id });
+      // An image-only message has no text — the attachments alone earn the bubble.
+      if (e.content || e.attachments?.length) {
+        timeline.push({ role: 'user', content: e.content || '', messageId: e.id, entryId: e.entry_id, runId: e.run_id, attachments: e.attachments });
+      }
       continue;
     }
     switch (d?.kind) {

@@ -1038,3 +1038,66 @@
   min-width: 2.5em;
   text-align: center;
 }
+
+/* ---- Image attachments ---- */
+
+/* Composer strip: thumbnails of images queued for the next message. */
+.chat-attachment-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--base-size-8);
+  padding: var(--base-size-8) var(--base-size-8) 0;
+}
+.chat-attachment-chip {
+  position: relative;
+  width: 50px;
+  height: 50px;
+  border-radius: var(--borderRadius-medium);
+  overflow: hidden;
+  border: 1px solid var(--borderColor-default);
+  background: var(--bgColor-muted);
+}
+.chat-attachment-chip img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.chat-attachment-chip.is-error { border-color: var(--borderColor-danger-emphasis); }
+.chat-attachment-chip .chat-attachment-busy {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--bgColor-default) 60%, transparent);
+}
+.chat-attachment-chip .chat-attachment-remove,
+.chat-attachment-chip .chat-attachment-retry {
+  position: absolute;
+  top: 1px;
+  background: color-mix(in srgb, var(--bgColor-default) 80%, transparent);
+}
+.chat-attachment-chip .chat-attachment-remove { right: 1px; }
+.chat-attachment-chip .chat-attachment-retry { left: 1px; }
+
+/* Sent message: thumbnail grid above the bubble text. */
+.message-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--base-size-8);
+  justify-content: flex-end;
+  margin-bottom: var(--base-size-4);
+}
+/* Uniform 50px squares: mixed aspect ratios line up instead of a ragged
+   row; the image scales to fit inside (contain) and the zoom overlay is
+   where it reads at full size. */
+.message-attachments img {
+  width: 50px;
+  height: 50px;
+  object-fit: contain;
+  background: var(--bgColor-muted);
+  border-radius: var(--borderRadius-medium);
+  border: 1px solid var(--borderColor-default);
+  cursor: zoom-in;
+}

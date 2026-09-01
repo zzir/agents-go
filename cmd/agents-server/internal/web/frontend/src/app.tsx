@@ -1,3 +1,4 @@
+import type { AttachmentMeta } from '@/lib/attachments';
 import React, { useState, useCallback, useEffect, useRef, useMemo, memo } from 'react';
 import { Dialog, NavList as PrimerNavList, Flash, Button, IconButton } from '@primer/react';
 import { SecretInput } from '@/components/SecretInput';
@@ -733,7 +734,7 @@ function App() {
     }
   }, [activeSession, sessionMeta, reloadTimeline]);
 
-  const handleSend = useCallback(async (input: string, agentConfigId?: string, projectId?: string) => {
+  const handleSend = useCallback(async (input: string, agentConfigId?: string, projectId?: string, attachments?: AttachmentMeta[]) => {
     if (!wsRef.current) return;
     if (!wsRef.current.isConnected()) {
       toast.error('WebSocket disconnected — message not sent');
@@ -785,11 +786,12 @@ function App() {
       }
     }
     const clientMsgId = nextClientMsgId();
-    updateSS(sid, s => ({ ...s, messages: [...s.messages, { role: 'user', content: text, clientMsgId }], ...(isNew ? { loaded: true } : {}) }));
+    updateSS(sid, s => ({ ...s, messages: [...s.messages, { role: 'user', content: text, clientMsgId, attachments }], ...(isNew ? { loaded: true } : {}) }));
     // The phase travels WITH the message: only a /plan message says anything,
     // and an absent `plan` leaves the session's phase alone — an approved plan
     // is what unlocks it again.
     const payload: Record<string, unknown> = { session_id: sid, input: text, agent_config_id: agentConfigId };
+    if (attachments?.length) payload.attachment_ids = attachments.map(a => a.id);
     if (planned) payload.plan = true;
     if (planOff) payload.plan = false;
     if (projectId) payload.project_id = projectId;

@@ -21,7 +21,7 @@ import { providerMeta, providerFacts, type ProviderTypeInfo } from '@/lib/provid
 // objects. The form state stays flat, so flattenConfig lifts a loaded config's
 // group keys to the top level and nestConfig folds them back before saving.
 const CONFIG_GROUPS: Record<string, string[]> = {
-  behavior: ['max_turns', 'handoff_description', 'disable_tool_choice_reset', 'stop_at_tools', 'handoff_input_filter', 'max_tool_concurrency', 'tool_not_found_behavior', 'reasoning_item_id_policy', 'workflow_authoring', 'disable_subagents'],
+  behavior: ['max_turns', 'handoff_description', 'disable_tool_choice_reset', 'stop_at_tools', 'handoff_input_filter', 'max_tool_concurrency', 'tool_not_found_behavior', 'reasoning_item_id_policy', 'workflow_authoring', 'disable_subagents', 'vision'],
   resilience: ['retry_enabled', 'retry_policy', 'fallback_models'],
   guardrails: ['guardrails', 'output_schema'],
   session: ['prompt_id', 'prompt_version', 'history_limit'],
@@ -81,6 +81,7 @@ interface AgentFormData {
   reasoning_item_id_policy: string;
   workflow_authoring: boolean;
   disable_subagents: boolean;
+  vision: boolean;
   approve_tools: string;
   compaction_enabled: boolean;
   compaction_threshold_tokens: number;
@@ -172,7 +173,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
     guardrails: '', output_schema: '', error_handlers: '',
     prompt_id: '', prompt_version: '', history_limit: 0,
     handoff_input_filter: '', max_tool_concurrency: 0,
-    tool_not_found_behavior: '', reasoning_item_id_policy: '', workflow_authoring: false, disable_subagents: false, approve_tools: '',
+    tool_not_found_behavior: '', reasoning_item_id_policy: '', workflow_authoring: false, disable_subagents: false, vision: false, approve_tools: '',
     compaction_enabled: false, compaction_threshold_tokens: 0,
     compaction_window: 0, compaction_model: '', compaction_prompt: '',
     ...flattenConfig(initial as Record<string, unknown> | undefined),
@@ -418,6 +419,19 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
           <Checkbox checked={!form.disable_subagents} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('disable_subagents', !e.target.checked)} />
           <FormControl.Label>Spawn subagents & background tasks</FormControl.Label>
           <FormControl.Caption>spawn_task / task_status / task_stop / task_retry. Turn off for a chat-only agent to reclaim the task schema from every request. The /workflow command still runs workflows either way.</FormControl.Caption>
+        </FormControl>
+      </div>
+
+      {/* Off by default: the flag is a claim that the MODEL accepts image
+          input, and only a person can make it — turning it on for a text-only
+          model just moves the failure from a clear config error to an opaque
+          provider 400. */}
+      <div className="form-group">
+        <div className="form-group-title">Vision</div>
+        <FormControl>
+          <Checkbox checked={form.vision || false} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('vision', e.target.checked)} />
+          <FormControl.Label>Accept image input</FormControl.Label>
+          <FormControl.Caption>Lets messages to this agent carry images (the model must support vision). Requires the Attachment storage settings to be configured.</FormControl.Caption>
         </FormControl>
       </div>
 

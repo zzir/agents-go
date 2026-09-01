@@ -11,6 +11,7 @@
 // deliberately changed nothing (no live turn, replay dedup hit) — callers keep
 // their existing state object in that case.
 
+import { attachmentIdsEqual, type AttachmentMeta } from '@/lib/attachments';
 import { patchToolCall, findToolCall } from '@/lib/timeline';
 import type { TimelineEntry, TurnEntry, TurnPart, ToolCall, ToolCallPatch, DisplayExtra, ErrorPart, UserEntry } from '@/lib/timeline';
 
@@ -41,14 +42,18 @@ function withParts(msgs: Msgs, turn: TurnEntry, parts: TurnPart[]): Msgs {
 // it. The sender's own optimistic bubble (same trailing content) wins the
 // dedup. Returns null when a turn for this run already exists (hub replays
 // re-deliver run.started).
-export function ensureLiveTurn(msgs: Msgs, runId: string, input?: string): Msgs | null {
+export function ensureLiveTurn(msgs: Msgs, runId: string, input?: string, attachments?: AttachmentMeta[]): Msgs | null {
   const hasTurn = msgs.some(m => m.role === 'turn' && (m as TurnEntry).runId === runId);
   if (hasTurn) return null;
   const out = [...msgs];
-  if (input) {
+  if (input || attachments?.length) {
     const last = out[out.length - 1];
-    const dup = last?.role === 'user' && (last as UserEntry).content === input;
-    if (!dup) out.push({ role: 'user', content: input, runId } as UserEntry);
+    // Text AND attachment set together are the message's identity: an
+    // image-only resend of the same picture is still the same message, and
+    // two different pictures with the same caption are not.
+    const dup = last?.role === 'user' && (last as UserEntry).content === (input || '')
+      && attachmentIdsEqual((last as UserEntry).attachments, attachments);
+    if (!dup) out.push({ role: 'user', content: input || '', runId, attachments } as UserEntry);
   }
   out.push({ role: 'turn', parts: [], runId } as TurnEntry);
   return out;
@@ -101,7 +106,7 @@ export function mergeLiveTail(persisted: Msgs, current: Msgs, liveRunId?: string
           const pu = p as UserEntry & { clientMsgId?: string };
           if (pu.runId && u.runId) continue;
           if (pu.clientMsgId && u.clientMsgId) continue;
-          if (pu.content === u.content) { contentConsumed.add(idx); dup = true; break; }
+          if (pu.content === u.content && attachmentIdsEqual(pu.attachments, u.attachments)) { contentConsumed.add(idx); dup = true; break; }
         }
       }
       if (!dup) out.push(m);

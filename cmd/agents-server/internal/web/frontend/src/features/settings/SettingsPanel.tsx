@@ -37,6 +37,7 @@ const GROUP_TITLES: Record<string, string> = {
   tracing: 'Tracing',
   logging: 'Logging',
   limits: 'Limits',
+  storage: 'Attachment storage',
 };
 
 export function SettingsPanel() {
@@ -100,17 +101,21 @@ export function SettingsPanel() {
               <PageHeader.Title as="h3">{GROUP_TITLES[g.name] || g.name}</PageHeader.Title>
             </PageHeader.TitleArea>
           </PageHeader>
-          <Stack gap="spacious">
-            {g.defs.map(def => (
-              <SettingRow
-                key={def.key}
-                def={def}
-                value={getValue(def.key)}
-                saving={saving[def.key]}
-                onSave={v => handleSave(def.key, v)}
-              />
-            ))}
-          </Stack>
+          {g.name === 'storage' ? (
+            <StorageForm defs={g.defs} getValue={getValue} onSaved={reload} />
+          ) : (
+            <Stack gap="spacious">
+              {g.defs.map(def => (
+                <SettingRow
+                  key={def.key}
+                  def={def}
+                  value={getValue(def.key)}
+                  saving={saving[def.key]}
+                  onSave={v => handleSave(def.key, v)}
+                />
+              ))}
+            </Stack>
+          )}
         </div>
       ))}
       </fieldset>
@@ -225,6 +230,85 @@ function SettingInput({ def, draft, setDraft }: { def: SettingDef; draft: string
         />
       );
   }
+}
+
+// The storage-section keys mapped to the group endpoint's field names. The
+// section's values are only valid together (changing the bucket re-probes
+// against the same public base), so this is a FORM — one Save, one Test, one
+// Clear — not click-to-store rows; the server refuses per-key writes of
+// these keys.
+const STORAGE_FIELDS: Record<string, string> = {
+  s3_endpoint: 'endpoint',
+  s3_region: 'region',
+  s3_bucket: 'bucket',
+  s3_access_key_id: 'access_key_id',
+  s3_secret_access_key: 'secret_access_key',
+  s3_public_base_url: 'public_base_url',
+  s3_path_style: 'path_style',
+};
+
+function StorageForm({ defs, getValue, onSaved }: { defs: SettingDef[]; getValue: (key: string) => string; onSaved: () => void }) {
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState<'save' | 'test' | 'clear' | null>(null);
+  const stored = defs.map(d => getValue(d.key)).join('\u0000');
+  useEffect(() => {
+    const next: Record<string, string> = {};
+    for (const d of defs) next[d.key] = getValue(d.key);
+    setDraft(next);
+    // Re-seed when the stored values change (initial load, save, clear).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stored]);
+
+  const body = (clear: boolean): Record<string, unknown> => {
+    if (clear) return {};
+    const out: Record<string, unknown> = {};
+    for (const d of defs) {
+      const field = STORAGE_FIELDS[d.key] ?? d.key;
+      out[field] = d.kind === 'bool' ? (draft[d.key] || d.default) === 'true' : (draft[d.key] ?? '').trim();
+    }
+    return out;
+  };
+
+  const run = async (kind: 'save' | 'test' | 'clear') => {
+    setBusy(kind);
+    try {
+      if (kind === 'test') {
+        await api.attachments.storageTest(body(false));
+        toast.success('Bucket verified — upload, anonymous read and delete all passed');
+      } else {
+        await api.attachments.storageSave(body(kind === 'clear'));
+        toast.success(kind === 'clear' ? 'Attachment storage cleared — image input is off' : 'Attachment storage saved');
+        onSaved();
+      }
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <Stack gap="spacious">
+      {defs.map(def => (
+        <FormControl key={def.key}>
+          <FormControl.Label>{def.label}</FormControl.Label>
+          {def.description && <FormControl.Caption>{def.description}</FormControl.Caption>}
+          <SettingInput def={def} draft={draft[def.key] ?? ''} setDraft={v => setDraft(prev => ({ ...prev, [def.key]: v }))} />
+        </FormControl>
+      ))}
+      <Stack direction="horizontal" gap="condensed">
+        <Button variant="primary" size="small" onClick={() => run('save')} disabled={busy !== null}>
+          {busy === 'save' ? 'Saving…' : 'Save'}
+        </Button>
+        <Button size="small" onClick={() => run('test')} disabled={busy !== null}>
+          {busy === 'test' ? 'Testing…' : 'Test'}
+        </Button>
+        <Button variant="danger" size="small" onClick={() => run('clear')} disabled={busy !== null}>
+          {busy === 'clear' ? 'Clearing…' : 'Clear'}
+        </Button>
+      </Stack>
+    </Stack>
+  );
 }
 
 // Rows the registry does not define: written before writes were validated, or
