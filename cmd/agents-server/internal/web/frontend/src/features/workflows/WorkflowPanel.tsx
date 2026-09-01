@@ -323,9 +323,7 @@ export function WorkflowPanel({ sessionId }: { sessionId: string | null }) {
     <Stack gap="normal">
       <div className="hub-toolbar">
         <div className="wf-run-hint">
-          A fixed sequence of steps, each an ordinary turn by the agent you pick. It runs in the
-          background, in a session of its own — started by the agent when a request matches its
-          description, by you with a brief, or by a trigger.
+          A fixed sequence of agent turns that runs in the background — started by an agent, by you with a brief, or by a trigger.
         </div>
         {canCreate && !adding && !editing && <Button onClick={startAdd} variant="primary" size="small">+ Add</Button>}
       </div>
@@ -399,10 +397,6 @@ export function WorkflowPanel({ sessionId }: { sessionId: string | null }) {
           ))}
           {workflows.length === 0 && (
             <Blankslate>
-              <Blankslate.Description>
-                No workflows yet. A workflow runs a fixed sequence of agents on one session — plan, then execute,
-                then verify, each on the model you choose for it.{canCreate ? ' Start from a shape:' : ''}
-              </Blankslate.Description>
               {canCreate && <div className="wf-templates">
                 {TEMPLATES.map(t => (
                   <Button key={t.key} size="small" onClick={() => { setTemplate(t.form()); startAdd(); }}>{t.label}</Button>

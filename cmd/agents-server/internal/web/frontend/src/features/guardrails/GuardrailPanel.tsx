@@ -157,7 +157,7 @@ export function GuardrailPanel() {
 
   return (
     <CrudPanel title="Guardrails" onAdd={startAdd} onCancel={cancel} form={form} isEmpty={guardrails.length === 0}
-      empty="No guardrails configured. Built-in guardrails (content_filter, max_input_length, max_output_length) are always available.">
+      empty="No guardrails configured. content_filter, max_input_length and max_output_length are always available.">
       {guardrails.map((g, i) => (
         <ResourceRow key={g.id || ('builtin-' + i)}
           title={g.name}

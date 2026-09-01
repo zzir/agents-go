@@ -111,10 +111,6 @@ export function RunsView({ version, onOpenRun, active = true }: { version: strin
       <Blankslate>
         <Blankslate.Visual><HistoryIcon size={24} /></Blankslate.Visual>
         <Blankslate.Heading>No runs yet</Blankslate.Heading>
-        <Blankslate.Description>
-          Every execution of a workflow — started from a conversation, by its agent, or by a trigger — lists here
-          with the conversation it reports back to.
-        </Blankslate.Description>
       </Blankslate>
     );
   }

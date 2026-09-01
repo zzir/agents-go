@@ -29,7 +29,7 @@ export function TriggersView({ sessionId }: { sessionId: string | null }) {
     <Stack gap="normal">
       <div className="hub-toolbar">
         <div className="wf-run-hint">
-          What runs without anyone asking — a workflow, or a turn of an agent — on a schedule or when its webhook is called, and how it last went.
+          What runs on its own — a workflow or an agent turn, on a schedule or a webhook call — and how it last went.
         </div>
         {!adding && <Button size="small" leadingVisual={ZapIcon} onClick={() => setAdding(true)}>Add trigger</Button>}
       </div>
@@ -54,10 +54,6 @@ export function TriggersView({ sessionId }: { sessionId: string | null }) {
         <Blankslate>
           <Blankslate.Visual><ZapIcon size={24} /></Blankslate.Visual>
           <Blankslate.Heading>No triggers yet</Blankslate.Heading>
-          <Blankslate.Description>
-            A trigger starts a workflow, or sends an agent a message, into a conversation of your choice — on a cron
-            schedule or from a signed webhook, with a brief written in advance.
-          </Blankslate.Description>
         </Blankslate>
       )}
     </Stack>

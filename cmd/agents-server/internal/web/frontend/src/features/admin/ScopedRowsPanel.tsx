@@ -48,25 +48,25 @@ const base = (r: Listed, detail: string): ConfigRow => ({
 const ENTITIES: Record<string, EntityKind> = {
   agents: {
     key: 'agents', label: 'Agents', avatars: true,
-    blurb: "Every member's agents. Publishing shares one with the team; transferring hands it to another account. Editing stays with its author, under Settings › Agents.",
+    blurb: "Every member's agents. Publishing shares one with the team; transferring hands it to another account.",
     list: async () => ((await api.agents.list()) ?? []).map(a => base(a, a.model || '')),
     setScope: api.agents.setScope, setOwner: api.agents.setOwner, scopePerRow: () => true,
   },
   providers: {
     key: 'providers', label: 'Providers',
-    blurb: 'Every endpoint and the credential that reaches it. A transfer moves the key too, and is refused while agents outside the new owner\'s set reference it.',
+    blurb: "Every endpoint and its credential. A transfer moves the key and is refused while other owners' agents reference it.",
     list: async () => ((await api.providers.list()) ?? []).map(p => base(p, p.base_url || p.type || '')),
     setScope: api.providers.setScope, setOwner: api.providers.setOwner, scopePerRow: () => true,
   },
   'mcp-servers': {
     key: 'mcp-servers', label: 'MCP servers',
-    blurb: "Every member's MCP servers. Publishing shares one with the team; connecting and clearing its authorization stay with its author.",
+    blurb: "Every member's MCP servers. Publishing shares one with the team; its authorization stays with its author.",
     list: async () => ((await api.mcpServers.list()) ?? []).map(s => base(s, s.status || '')),
     setScope: api.mcpServers.setScope, setOwner: api.mcpServers.setOwner, scopePerRow: () => true,
   },
   skills: {
     key: 'skills', label: 'Skills',
-    blurb: 'Every stored SKILL.md. An imported one moves — scope and owner alike — with its whole repository; only workbench-authored skills act alone.',
+    blurb: 'Every stored SKILL.md. An imported one moves with its whole repository; only workbench-authored skills act alone.',
     list: async () => (((await api.skills.list()) as Skill[]) ?? []).map(sk => ({
       ...base(sk, repoLabel(sk.source_repo || '') || 'workbench'), name: qualifiedName(sk),
     })),
@@ -77,7 +77,7 @@ const ENTITIES: Record<string, EntityKind> = {
   },
   workflows: {
     key: 'workflows', label: 'Workflows',
-    blurb: "Every member's workflow definitions. Publishing shares one with the team; its steps are re-validated for the new owner on a transfer.",
+    blurb: "Every member's workflow definitions. Publishing shares one with the team; steps are re-validated on a transfer.",
     list: async () => ((await api.workflows.list()) ?? []).map(w => base(w, `${(w.steps || []).length} steps`)),
     setScope: api.workflows.setScope, setOwner: api.workflows.setOwner, scopePerRow: () => true,
   },

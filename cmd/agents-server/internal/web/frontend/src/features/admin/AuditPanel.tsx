@@ -50,8 +50,7 @@ export function AuditPanel() {
         </PageHeader.TitleArea>
         <PageHeader.Description>
           <span>
-            Who did what: every configuration change, approval decision, run start,
-            terminal opened and login. Retention is the server's
+            Every config change, approval, run start, terminal and login. Retention is
             <code> --audit-retention-days</code>, not a setting.
           </span>
         </PageHeader.Description>

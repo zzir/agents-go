@@ -782,7 +782,6 @@ export function ChatView({
                 <CommentDiscussionIcon size={24} />
               </Blankslate.Visual>
               <Blankslate.Heading>Start a conversation</Blankslate.Heading>
-              <Blankslate.Description>Pick a chat from the sidebar, or create a new one to begin.</Blankslate.Description>
             </Blankslate>
           </div>
         </div>

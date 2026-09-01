@@ -119,8 +119,8 @@ function PatSection() {
           <Button size="small" variant="primary" onClick={() => setCreating(true)}>New token</Button>
         </PageHeader.Actions>
         <PageHeader.Description>
-          A token authenticates like your session — REST and WebSocket — for
-          scripts and CI. The secret is shown once, at creation.
+          A token authenticates like your session, REST/WebSocket/CI.
+          The secret is shown once, at creation.
         </PageHeader.Description>
       </PageHeader>
       {error ? <Flash variant="danger">{error}</Flash> : null}
@@ -144,8 +144,6 @@ function PatSection() {
           <Blankslate>
             <Blankslate.Visual><KeyIcon size={24} /></Blankslate.Visual>
             <Blankslate.Heading>No tokens yet</Blankslate.Heading>
-            <Blankslate.Description>Create one for a script or CI job; it signs in as you.</Blankslate.Description>
-            <Blankslate.PrimaryAction onClick={() => setCreating(true)}>New token</Blankslate.PrimaryAction>
           </Blankslate>
         )}
       />

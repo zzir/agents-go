@@ -80,9 +80,8 @@ export function SessionsPanel() {
           <PageHeader.Title><span id="sessions-title">Sessions</span></PageHeader.Title>
         </PageHeader.TitleArea>
         <PageHeader.Description>
-          Every owner's conversations, by recency. Content is the owner's alone;
-          an admin may delete one, or reassign it — the way a conversation made
-          under the other auth mode reaches someone.
+          Every owner's conversations, newest first. Content is theirs alone;
+          an admin may delete or reassign one.
         </PageHeader.Description>
       </PageHeader>
       {error ? <Flash variant="danger">{error}</Flash> : null}

@@ -115,9 +115,8 @@ export function ProjectsPanel() {
           <PageHeader.Title><span id="admin-projects-title">Projects</span></PageHeader.Title>
         </PageHeader.TitleArea>
         <PageHeader.Description>
-          Every owner&apos;s working trees, and where each one&apos;s files live.
-          Deleting a row DESTROYS its storage — the volume, or the sandbox
-          holding it — so there is nothing left to reclaim afterwards.
+          Every owner&apos;s working trees and where their files live. Deleting
+          a row DESTROYS that storage — the volume or sandbox holding it.
         </PageHeader.Description>
       </PageHeader>
       {error ? <Flash variant="danger">{error}</Flash> : null}

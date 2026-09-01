@@ -182,7 +182,7 @@ export function ProviderPanel() {
       <CrudPanel title="Providers" onAdd={startAdd} onCancel={cancel} form={form} isEmpty={providers.length === 0}
         onDelete={editing && canDeleteRow(isAdmin, me?.id, editing)
           ? async () => { if (await remove(editing.id, editing.name)) cancel(); } : null}
-        empty="No providers yet. A provider carries the endpoint and the API key that reaches it; an agent naming none has no credential and fails its pre-flight.">
+        empty="No providers yet. A provider holds an endpoint and its API key; an agent that names none fails pre-flight.">
         {providers.map(p => {
           const meta = providerMeta(p.type || '');
           const chatgpt = p.auth_mode === 'chatgpt_login';
