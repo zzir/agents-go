@@ -577,6 +577,269 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/attachments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload attachment
+         * @description Multipart upload of one image (field "file", png or jpeg, max 10 MiB, longest side max 8000px). The bytes go to the configured bucket under a public URL; the response carries the id to pass as attachment_ids when starting a run. An upload never sent with a message is garbage-collected after 24h. 503 when attachment storage is not configured.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            /** @description Image file (png/jpeg) */
+            requestBody: {
+                content: {
+                    "application/x-www-form-urlencoded": Record<string, never>;
+                    "multipart/form-data": Record<string, never>;
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.attachmentResp"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description attachment storage not configured */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/attachments/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete attachment
+         * @description Removes an uploaded image that has not been sent with a message yet (the composer's ✕). One already accepted by a run is part of session history and answers 409.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Attachment ID */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description deleted */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description already sent with a message */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/attachments/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Attachment config
+         * @description Whether image attachments are configured (the Attachment storage settings are complete) and the limits the client should apply: max bytes per image, max images per message, and the longest-side pixel target to downscale to before uploading.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.attachmentConfigResp"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/attachments/storage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Save attachment storage
+         * @description Saves the whole attachment-storage section atomically. A non-empty section is probed end to end first (signed upload, anonymous public read, delete) and refused with 400 if any stage fails — so changing one field is validated against the section it will actually be stored with. An all-empty body clears the section and turns image input off. A masked secret_access_key ("********") keeps the stored secret.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            /** @description The whole section */
+            requestBody: {
+                content: {
+                    "application/json": Record<string, never> | components["schemas"]["handler.storageReq"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.attachmentConfigResp"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/attachments/storage/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test attachment storage
+         * @description Probes the submitted section (signed upload, anonymous public read through the public base URL, delete) without storing it. 200 when the bucket is usable; 400 with the failing stage otherwise. A masked secret_access_key uses the stored secret.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            responses: {
+                /** @description bucket verified */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/audit": {
         parameters: {
             query?: never;
@@ -7433,6 +7696,22 @@ export interface components {
         "handler.approveReq": {
             scope?: string;
         };
+        "handler.attachmentConfigResp": {
+            downscale_px?: number;
+            /**
+             * @description Enabled reports whether attachment storage is configured; off hides the
+             *     upload affordances entirely.
+             */
+            enabled?: boolean;
+            max_bytes?: number;
+            max_count?: number;
+        };
+        "handler.attachmentResp": {
+            id?: string;
+            mime?: string;
+            size?: number;
+            url?: string;
+        };
         "handler.branchReq": {
             entry_id?: string;
         };
@@ -7441,6 +7720,11 @@ export interface components {
         };
         "handler.createRunReq": {
             agent_config_id?: string;
+            /**
+             * @description AttachmentIDs name previously uploaded images (POST /attachments) to
+             *     send with the message; the agent must have Vision enabled.
+             */
+            attachment_ids?: string[];
             input?: string;
             /**
              * @description Plan asks the session to start this run in the planning phase (true) or
@@ -7726,6 +8010,15 @@ export interface components {
             /** @description Scope on create only: "global" (admin) or the "private" default. */
             scope?: string;
         };
+        "handler.storageReq": {
+            access_key_id?: string;
+            bucket?: string;
+            endpoint?: string;
+            path_style?: boolean;
+            public_base_url?: string;
+            region?: string;
+            secret_access_key?: string;
+        };
         "handler.taskStopReq": {
             graceful?: boolean;
         };
@@ -7907,14 +8200,6 @@ export interface components {
          *     setting needs no schema change. In the REST API each is a nested object.
          */
         "store.BehaviorGroup": {
-            /**
-             * @description DisableSubagents drops the agent's spawn_task / task_status / task_stop /
-             *     task_retry tools. Negated so the default (absent/false) keeps subagents
-             *     ON, matching every agent built before the flag existed; a chat-only agent
-             *     that never delegates opts out to reclaim the task schema from every request.
-             */
-            disable_subagents?: boolean;
-            disable_tool_choice_reset?: boolean;
             handoff_description?: string;
             handoff_input_filter?: string;
             max_tool_concurrency?: number;
@@ -7930,7 +8215,26 @@ export interface components {
              *     model. Empty means the run continues until the model stops on its own.
              */
             stop_at_tools?: string;
+            /**
+             * @description Subagents grants the agent's chat runs spawn_task / task_status /
+             *     task_stop / task_retry. nil/true = on; a chat-only agent that never
+             *     delegates sets false to reclaim the task schema from every request.
+             */
+            subagents?: boolean;
+            /**
+             * @description ToolChoiceReset resets a pinned tool_choice after a tool runs (the
+             *     SDK's default loop-guard). nil/true = on; false keeps tool_choice
+             *     as-is across turns.
+             */
+            tool_choice_reset?: boolean;
             tool_not_found_behavior?: string;
+            /**
+             * @description Vision admits image attachments on this agent's runs. Off by default:
+             *     the gate is what turns "model returned 400" into a config error a
+             *     person can act on, so it must be an explicit claim that the model
+             *     accepts image input.
+             */
+            vision?: boolean;
             /**
              * @description WorkflowAuthoring gives the agent's chat runs get_workflow / save_workflow
              *     (workbench invariant 39). Off by default: the save schema costs every request.
@@ -8013,7 +8317,17 @@ export interface components {
             session_input_tokens?: number;
             session_output_tokens?: number;
         };
+        "store.EntryAttachment": {
+            id?: string;
+            url?: string;
+        };
         "store.EntryView": {
+            /**
+             * @description Attachments are the entry's image attachments, resolved from the
+             *     sentinel refs its item carries. URL is filled by the handler, which
+             *     knows the public base; the store contributes the row facts.
+             */
+            attachments?: components["schemas"]["store.EntryAttachment"][];
             compacted?: boolean;
             compaction?: components["schemas"]["store.CompactionInfo"];
             /** @description Content is the readable text, for a renderer that wants one string. */

@@ -652,6 +652,31 @@ components:
         scope:
           type: string
       type: object
+    handler.attachmentConfigResp:
+      properties:
+        downscale_px:
+          type: integer
+        enabled:
+          description: |-
+            Enabled reports whether attachment storage is configured; off hides the
+            upload affordances entirely.
+          type: boolean
+        max_bytes:
+          type: integer
+        max_count:
+          type: integer
+      type: object
+    handler.attachmentResp:
+      properties:
+        id:
+          type: string
+        mime:
+          type: string
+        size:
+          type: integer
+        url:
+          type: string
+      type: object
     handler.branchReq:
       properties:
         entry_id:
@@ -666,6 +691,14 @@ components:
       properties:
         agent_config_id:
           type: string
+        attachment_ids:
+          description: |-
+            AttachmentIDs name previously uploaded images (POST /attachments) to
+            send with the message; the agent must have Vision enabled.
+          items:
+            type: string
+          type: array
+          uniqueItems: false
         input:
           type: string
         plan:
@@ -1125,6 +1158,23 @@ components:
       required:
       - content
       type: object
+    handler.storageReq:
+      properties:
+        access_key_id:
+          type: string
+        bucket:
+          type: string
+        endpoint:
+          type: string
+        path_style:
+          type: boolean
+        public_base_url:
+          type: string
+        region:
+          type: string
+        secret_access_key:
+          type: string
+      type: object
     handler.taskStopReq:
       properties:
         graceful:
@@ -1454,15 +1504,6 @@ components:
         agent_config_groups.go) so the table holds only category columns and a new
         setting needs no schema change. In the REST API each is a nested object.
       properties:
-        disable_subagents:
-          description: |-
-            DisableSubagents drops the agent's spawn_task / task_status / task_stop /
-            task_retry tools. Negated so the default (absent/false) keeps subagents
-            ON, matching every agent built before the flag existed; a chat-only agent
-            that never delegates opts out to reclaim the task schema from every request.
-          type: boolean
-        disable_tool_choice_reset:
-          type: boolean
         handoff_description:
           type: string
         handoff_input_filter:
@@ -1482,8 +1523,27 @@ components:
             turn that called any of them, instead of feeding the results back to the
             model. Empty means the run continues until the model stops on its own.
           type: string
+        subagents:
+          description: |-
+            Subagents grants the agent's chat runs spawn_task / task_status /
+            task_stop / task_retry. nil/true = on; a chat-only agent that never
+            delegates sets false to reclaim the task schema from every request.
+          type: boolean
+        tool_choice_reset:
+          description: |-
+            ToolChoiceReset resets a pinned tool_choice after a tool runs (the
+            SDK's default loop-guard). nil/true = on; false keeps tool_choice
+            as-is across turns.
+          type: boolean
         tool_not_found_behavior:
           type: string
+        vision:
+          description: |-
+            Vision admits image attachments on this agent's runs. Off by default:
+            the gate is what turns "model returned 400" into a config error a
+            person can act on, so it must be an explicit claim that the model
+            accepts image input.
+          type: boolean
         workflow_authoring:
           description: |-
             WorkflowAuthoring gives the agent's chat runs get_workflow / save_workflow
@@ -1587,8 +1647,24 @@ components:
         session_output_tokens:
           type: integer
       type: object
+    store.EntryAttachment:
+      properties:
+        id:
+          type: string
+        url:
+          type: string
+      type: object
     store.EntryView:
       properties:
+        attachments:
+          description: |-
+            Attachments are the entry's image attachments, resolved from the
+            sentinel refs its item carries. URL is filled by the handler, which
+            knows the public base; the store contributes the row facts.
+          items:
+            $ref: '#/components/schemas/store.EntryAttachment'
+          type: array
+          uniqueItems: false
         compacted:
           type: boolean
         compaction:
@@ -2682,6 +2758,160 @@ paths:
       summary: Reject tool call
       tags:
       - approvals
+  /attachments:
+    post:
+      description: Multipart upload of one image (field "file", png or jpeg, max 10
+        MiB, longest side max 8000px). The bytes go to the configured bucket under
+        a public URL; the response carries the id to pass as attachment_ids when starting
+        a run. An upload never sent with a message is garbage-collected after 24h.
+        503 when attachment storage is not configured.
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              title: file
+              type: file
+          multipart/form-data:
+            schema:
+              type: object
+        description: Image file (png/jpeg)
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.attachmentResp'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: attachment storage not configured
+      security:
+      - BearerAuth: []
+      summary: Upload attachment
+      tags:
+      - attachments
+  /attachments/{id}:
+    delete:
+      description: Removes an uploaded image that has not been sent with a message
+        yet (the composer's ✕). One already accepted by a run is part of session history
+        and answers 409.
+      parameters:
+      - description: Attachment ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: deleted
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: already sent with a message
+      security:
+      - BearerAuth: []
+      summary: Delete attachment
+      tags:
+      - attachments
+  /attachments/config:
+    get:
+      description: 'Whether image attachments are configured (the Attachment storage
+        settings are complete) and the limits the client should apply: max bytes per
+        image, max images per message, and the longest-side pixel target to downscale
+        to before uploading.'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.attachmentConfigResp'
+          description: OK
+      security:
+      - BearerAuth: []
+      summary: Attachment config
+      tags:
+      - attachments
+  /attachments/storage:
+    put:
+      description: Saves the whole attachment-storage section atomically. A non-empty
+        section is probed end to end first (signed upload, anonymous public read,
+        delete) and refused with 400 if any stage fails — so changing one field is
+        validated against the section it will actually be stored with. An all-empty
+        body clears the section and turns image input off. A masked secret_access_key
+        ("********") keeps the stored secret.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.storageReq'
+                description: The whole section
+                summary: storage
+        description: The whole section
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.attachmentConfigResp'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+      security:
+      - BearerAuth: []
+      summary: Save attachment storage
+      tags:
+      - attachments
+  /attachments/storage/test:
+    post:
+      description: Probes the submitted section (signed upload, anonymous public read
+        through the public base URL, delete) without storing it. 200 when the bucket
+        is usable; 400 with the failing stage otherwise. A masked secret_access_key
+        uses the stored secret.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "204":
+          description: bucket verified
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+      security:
+      - BearerAuth: []
+      summary: Test attachment storage
+      tags:
+      - attachments
   /auth/audit:
     get:
       parameters:
