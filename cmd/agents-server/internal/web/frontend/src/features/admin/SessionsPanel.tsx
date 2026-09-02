@@ -9,7 +9,7 @@ import { useMe } from '@/lib/me';
 import { useOwnerLabels, type UserLabel } from '@/lib/owners';
 import { formatTime } from '@/lib/time';
 import { toast } from '@/lib/toast';
-import { LOCAL_USER_ID } from '@/features/admin/MembersPanel';
+import { LOCAL_USER_ID } from '@/lib/owners';
 import { OwnerCell, ownerLabel } from '@/features/admin/OwnerCell';
 import { useLoadError } from '@/features/admin/useLoadError';
 import { SESSION_REMOVED } from '@/features/sessions/SessionPicker';

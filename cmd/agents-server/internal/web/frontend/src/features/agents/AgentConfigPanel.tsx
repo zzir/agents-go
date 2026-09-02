@@ -2,7 +2,10 @@ import React, { useState } from 'react';
 import { TextInput, Textarea, FormControl, Checkbox, Select, Stack } from '@primer/react';
 import { TokenListInput } from '@/components/TokenListInput';
 import { FormActions } from '@/components/FormActions';
-import { CrudPanel, RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
+import { CrudPanel, OwnerTag, RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
+import { useScopeFilter } from '@/components/ScopeFilter';
+import { useTransfer } from '@/components/TransferDialog';
+import { filterRows } from '@/lib/listFilter';
 import { ReadOnlyContext, canDeleteRow, canDemoteRow, canEditRow, canReference } from '@/lib/access';
 import { useMe } from '@/lib/me';
 import { ResourceRow } from '@/components/ResourceRow';
@@ -560,6 +563,10 @@ export function AgentConfigPanel() {
   const rowEditable = (a: Agent) => canEditRow(isAdmin, me?.id, a);
   const { items: agents, loading, adding, editing, startAdd, startEdit, cancel, save, saving, remove, reload } =
     useCrud<Agent, AgentFormData & { handoffs: string; tools: string; skills: string; model_settings: string }>(api.agents, 'agents');
+  const [query, setQuery] = useState('');
+  const scopeFilter = useScopeFilter();
+  const rows = filterRows(agents, { mine: !!scopeFilter?.mine, meId: me?.id, query }, a => `${a.name} ${a.description || ''} ${a.model || ''}`);
+  const transfer = useTransfer({ kindLabel: 'Agents', setOwner: api.agents.setOwner, onDone: reload });
   // Fork seeds the CREATE form from a row — nothing is written until Save.
   // Cleared on a plain "+ Add" so a stale seed never leaks into a blank form.
   const [forkOf, setForkOf] = useState<Agent | null>(null);
@@ -605,28 +612,32 @@ export function AgentConfigPanel() {
     // Scoped rows: the form is a disabled view exactly when the opened row is
     // not the caller's to edit (canEditRow), not for every member.
     <ReadOnlyContext value={!!editing && !rowEditable(editing)}>
-      <CrudPanel title="Agents" onAdd={startBlankAdd} onCancel={cancel} form={form} loading={loading} isEmpty={agents.length === 0}
+      <CrudPanel title="Agents" onAdd={startBlankAdd} onCancel={cancel} form={form} loading={loading} isEmpty={rows.length === 0}
+        search={{ value: query, onChange: setQuery, placeholder: 'Search agents' }}
         onDelete={editing && canDeleteRow(isAdmin, me?.id, editing)
           ? async () => { if (await remove(editing.id, editing.name)) cancel(); } : null}
-        empty="No agents yet." emptyHint="An agent is a model on an endpoint with its instructions and tools.">
-        {agents.map(a => {
+        empty={agents.length === 0 ? 'No agents yet.' : 'No matching agents.'}
+        emptyHint={agents.length === 0 ? 'An agent is a model on an endpoint with its instructions and tools.' : undefined}>
+        {rows.map(a => {
           const rowProvider = (providers || []).find(p => p.id === a.provider_id);
           return (
             <ResourceRow key={a.id}
               leading={<AgentAvatar name={a.name} avatar={a.avatar} size={32} />}
               title={a.name}
-              badges={<ScopeBadge row={a} meId={me?.id} />}
+              badges={<><ScopeBadge row={a} meId={me?.id} /><OwnerTag row={a} meId={me?.id} /></>}
               sub={a.description || undefined}
               // One meta line instead of a strip of labels: model@endpoint. An
               // unset or vanished provider is a row that cannot run — say so.
               meta={<span>{(a.model || 'no model') + (rowProvider ? '@' + rowProvider.name : ' · no endpoint')}</span>}
               actions={<RowActionsMenu name={a.name} editReadOnly={!rowEditable(a)} onEdit={() => startEdit(a)}
                 onFork={() => startFork(a)}
+                onTransfer={isAdmin ? () => transfer.start(a) : undefined}
                 scope={{ row: a, setScope: api.agents.setScope, canPromote: isAdmin, canDemote: canDemoteRow(isAdmin, me?.id, a), onDone: reload }} />}
             />
           );
         })}
       </CrudPanel>
+      {transfer.dialog}
     </ReadOnlyContext>
   );
 }

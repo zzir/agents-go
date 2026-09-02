@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react';
 import { Tooltip } from '@primer/react';
 import { api } from '@/lib/api';
 
+// The token-mode admin: never a transfer target, never listed as a member.
+export const LOCAL_USER_ID = '00000000-0000-0000-0000-000000000001';
+
 export interface UserLabel {
   id: string;
   name?: string;

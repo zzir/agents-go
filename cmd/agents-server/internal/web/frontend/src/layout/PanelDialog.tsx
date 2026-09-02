@@ -96,9 +96,10 @@ export function PanelDialog({ title, tabs, adminTabs, readOnly, onClose }: {
               </React.Fragment>
             ))}
             {adminTabs && adminTabs.length > 0 && (
-              <PrimerNavList.Group title="Administration">
+              <>
+                <PrimerNavList.Divider />
                 {adminTabs.map(item)}
-              </PrimerNavList.Group>
+              </>
             )}
           </PrimerNavList>
         </nav>

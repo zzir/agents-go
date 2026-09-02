@@ -36,26 +36,27 @@ import { useNarrow } from '@/lib/hooks';
 import { readHash, writeHash, consumeAuthFragment, restoreReturnHash } from '@/lib/route';
 import { isTooLarge } from '@/lib/messageSize';
 
-// The one settings hub (invariant 61). Ordered so each section builds on the
-// ones above it: a provider is what an agent talks to, an agent is what runs,
-// then what an agent attaches (tools, execution, state, the checks around
-// it); the person's own below the line. A scoped entity's tab carries the
-// admin's "All members" view inside it. Workflows are authored and watched
-// in the sidebar's hub, so only their management view is here, under
-// Administration.
+// The one settings hub (invariant 61). The person's own first (account,
+// host-wide settings), then what a run is built from, each section below the
+// ones it depends on: a provider is what an agent talks to, an agent is what
+// runs, then what an agent attaches (tools, execution, state, the checks
+// around it). A scoped entity's tab is one list in which an admin also sees
+// every member's rows. The admin entries come last, under no heading; workflows are
+// authored and watched in the sidebar's hub, so only their management view
+// is here.
 const scopedTab = (name: 'ProvidersTab' | 'AgentsTab' | 'McpServersTab' | 'SkillsTab') =>
   () => import('@/features/settings/ScopedEntityPanel').then(m => ({ default: m[name] }));
 
 const SETTINGS_TABS: DialogTab[] = [
-  { key: 'providers',  label: 'Providers',   icon: CpuIcon,         load: scopedTab('ProvidersTab'), scoped: true },
+  { key: 'account',    label: 'Account',     icon: PersonIcon,      load: () => import('@/features/account/AccountPanel') },
+  { key: 'general',    label: 'General',     icon: GearIcon,        load: () => import('@/features/settings/SettingsPanel') },
+  { key: 'providers',  label: 'Providers',   icon: CpuIcon,         load: scopedTab('ProvidersTab'), scoped: true, dividerBefore: true },
   { key: 'agents',     label: 'Agents',      icon: DependabotIcon,  load: scopedTab('AgentsTab'), scoped: true },
   { key: 'mcp',        label: 'MCP servers', icon: McpIcon,         load: scopedTab('McpServersTab'), scoped: true },
   { key: 'skills',     label: 'Skills',      icon: SparkleIcon,     load: scopedTab('SkillsTab'), scoped: true },
   { key: 'sandbox',    label: 'Sandboxes',   icon: ContainerIcon,   load: () => import('@/features/sandbox/SandboxPanel') },
   { key: 'memory',     label: 'Memory',      icon: DatabaseIcon,    load: () => import('@/features/memory/MemoryPanel') },
   { key: 'guardrails', label: 'Guardrails',  icon: ShieldCheckIcon, load: () => import('@/features/guardrails/GuardrailPanel') },
-  { key: 'account',    label: 'Account',     icon: PersonIcon,      load: () => import('@/features/account/AccountPanel'), dividerBefore: true },
-  { key: 'general',    label: 'General',     icon: GearIcon,        load: () => import('@/features/settings/SettingsPanel') },
 ];
 
 // Administration: people, then what members own, then the record of it all.

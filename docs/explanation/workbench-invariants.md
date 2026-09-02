@@ -931,18 +931,21 @@ per-feature decisions rather than cross-cutting rules.
     imported".
 
 61. **Settings is ONE hub; an admin's views are a toggle inside the same
-    panel, never a second dialog.** The gear opens one `PanelDialog`: the
-    personal sections (Providers, Agents, MCP servers, Skills, Sandboxes,
-    Memory, Guardrails, Account, General) and, for an admin only, an
-    "Administration" group in the same nav (Members, Sessions, Projects,
-    Workflows, Audit logs). A scoped entity's tab (invariant 42's
-    scope/owner rows) carries a "Mine | All members" segmented toggle at the
-    top of its body, switching between the personal panel and the
-    cross-member management view (`ScopedRowsPanel`: publish/unpublish,
-    transfer) — the same rows in one place, not the same entity listed under
-    two menu entries. Workflows have no personal settings panel (the sidebar's
-    hub is where they are authored and watched), so only their management view
-    appears, under Administration. The hub opens from the account menu. The rule exists
+    panel, never a second dialog.** The account menu opens one `PanelDialog`:
+    the person's own sections first (Account, General), then what runs are
+    built from (Providers, Agents, MCP servers, Skills, Sandboxes, Memory,
+    Guardrails) and, for an admin only, the management entries last (Members,
+    Sessions, Projects, Workflows, Audit logs) after a divider and under no
+    heading. A scoped entity's tab (invariant 42's scope/owner rows) is ONE
+    list: a member sees their own rows and the published ones, an admin sees
+    every member's rows in the same list, each foreign row naming its author
+    (`OwnerTag`), with a "Mine | All" filter in the list toolbar that only
+    narrows — it never swaps the layout. Management is in the row's own
+    menu, by right: Edit/Fork for what the caller may edit, Make global /
+    Make private per `canDemoteRow`, and the admin's Transfer… on any row —
+    not a second view of the same rows. Only Workflows, which have no
+    personal panel (the sidebar's hub is where they are authored and
+    watched), keep the management table (`ScopedRowsPanel`). The rule exists
     because a separate Admin dialog listed the five scoped entities a second
     time with a different meaning, and a person managing a provider had to
     know which of two identically named tabs to open.

@@ -1,100 +1,56 @@
 import { useCallback, useMemo, useState } from 'react';
-import { ActionList, Dialog, FormControl, Label, PageHeader, Select, Stack, useConfirm } from '@primer/react';
+import { ActionList, Label, PageHeader, Stack, useConfirm } from '@primer/react';
 import { Blankslate, type Column } from '@primer/react/experimental';
 import { GearIcon } from '@primer/octicons-react';
 import { ListTable, RowMenu, actionsColumn } from '@/components/ListTable';
-import { AgentAvatar } from '@/components/AgentAvatar';
+import { TransferDialog } from '@/components/TransferDialog';
 import { api } from '@/lib/api';
 import { BADGE } from '@/lib/badges';
 import { useApi } from '@/lib/hooks';
 import { useMe } from '@/lib/me';
-import { LOCAL_USER_ID } from '@/features/admin/MembersPanel';
 import { OwnerCell, ownerLabel } from '@/features/admin/OwnerCell';
 import { useLoadError } from '@/features/admin/useLoadError';
-import { useOwnerLabels } from '@/lib/owners';
-import { qualifiedName, repoLabel, type Skill } from '@/lib/skills';
+import { LOCAL_USER_ID, useOwnerLabels } from '@/lib/owners';
 import { toast } from '@/lib/toast';
 
-// One row of any scoped entity, flattened to what this panel shows.
+// One row, flattened to what this table shows.
 interface ConfigRow {
   id: string;
   name: string;
   detail: string;
   scope: string;
   owner_id?: string;
-  // Agents only: the built-in avatar path, rendered before the name.
-  avatar?: string;
 }
 
+// The scoped entities (spec §5.29). Four have a settings panel that lists
+// every member's rows itself (invariant 61); only workflows are managed here.
 export type ScopedEntity = 'agents' | 'providers' | 'mcp-servers' | 'skills' | 'workflows';
 
-// The five entities members compose runs from (spec §5.29). Each knows how to
-// list itself, how to name a row, and which endpoints move it.
 interface EntityKind {
   key: ScopedEntity;
   label: string;
   // One line under the title: what this tab manages, and what it does not.
   blurb: string;
-  // Rows are agents: render an avatar before each name.
-  avatars?: boolean;
   list: () => Promise<ConfigRow[]>;
   setScope: (id: string, scope: 'global' | 'private') => Promise<null>;
   setOwner: (id: string, userId: string) => Promise<null>;
-  // Skills flip with their repo group, not one row at a time.
-  scopePerRow: (row: ConfigRow) => boolean;
 }
 
-type Listed = { id?: string; name?: string; scope?: string; owner_id?: string; avatar?: string };
-
-const base = (r: Listed, detail: string): ConfigRow => ({
-  id: r.id || '', name: r.name || '', detail, scope: r.scope || 'private',
-  owner_id: r.owner_id, avatar: r.avatar,
-});
-
-const ENTITIES: Record<ScopedEntity, EntityKind> = {
-  agents: {
-    key: 'agents', label: 'Agents', avatars: true,
-    blurb: "Every member's agents. Publishing shares one with the team; transferring hands it to another account.",
-    list: async () => ((await api.agents.list()) ?? []).map(a => base(a, a.model || '')),
-    setScope: api.agents.setScope, setOwner: api.agents.setOwner, scopePerRow: () => true,
-  },
-  providers: {
-    key: 'providers', label: 'Providers',
-    blurb: "Every endpoint and its credential. A transfer moves the key and is refused while other owners' agents reference it.",
-    list: async () => ((await api.providers.list()) ?? []).map(p => base(p, p.base_url || p.type || '')),
-    setScope: api.providers.setScope, setOwner: api.providers.setOwner, scopePerRow: () => true,
-  },
-  'mcp-servers': {
-    key: 'mcp-servers', label: 'MCP servers',
-    blurb: "Every member's MCP servers. Publishing shares one with the team; its authorization stays with its author.",
-    list: async () => ((await api.mcpServers.list()) ?? []).map(s => base(s, s.status || '')),
-    setScope: api.mcpServers.setScope, setOwner: api.mcpServers.setOwner, scopePerRow: () => true,
-  },
-  skills: {
-    key: 'skills', label: 'Skills',
-    blurb: 'Every stored SKILL.md. An imported one moves with its whole repository; only workbench-authored skills act alone.',
-    list: async () => (((await api.skills.list()) as Skill[]) ?? []).map(sk => ({
-      ...base(sk, repoLabel(sk.source_repo || '') || 'workbench'), name: qualifiedName(sk),
-    })),
-    setScope: api.skills.setScope, setOwner: api.skills.setOwner,
-    // An imported skill's scope belongs to its repo group — the Skills panel
-    // flips it there; here only workbench-authored rows offer it.
-    scopePerRow: row => row.detail === 'workbench',
-  },
-  workflows: {
-    key: 'workflows', label: 'Workflows',
-    blurb: "Every member's workflow definitions. Publishing shares one with the team; steps are re-validated on a transfer.",
-    list: async () => ((await api.workflows.list()) ?? []).map(w => base(w, `${(w.steps || []).length} steps`)),
-    setScope: api.workflows.setScope, setOwner: api.workflows.setOwner, scopePerRow: () => true,
-  },
+const WORKFLOWS: EntityKind = {
+  key: 'workflows', label: 'Workflows',
+  blurb: "Every member's workflow definitions. Publishing shares one with the team; steps are re-validated on a transfer.",
+  list: async () => ((await api.workflows.list()) ?? []).map(w => ({
+    id: w.id || '', name: w.name || '', detail: `${(w.steps || []).length} steps`,
+    scope: w.scope || 'private', owner_id: w.owner_id,
+  })),
+  setScope: api.workflows.setScope, setOwner: api.workflows.setOwner,
 };
 
 // ScopedRowsPanel: one entity's rows across every member — who authored each,
 // whether it is published, and the two management acts an admin has over it
 // (publish/unpublish, and transfer to another account). Editing stays where
 // authorship is: the entity's own settings panel.
-export function ScopedRowsPanel({ entity }: { entity: ScopedEntity }) {
-  const kind = ENTITIES[entity];
+export function ScopedRowsPanel({ kind }: { kind: EntityKind }) {
   const { data: rows, error, reload } = useApi<ConfigRow[]>(kind.list, [kind], `admin:${kind.key}`);
   useLoadError(error, kind.label.toLowerCase());
   const [transferring, setTransferring] = useState<ConfigRow | null>(null);
@@ -124,11 +80,7 @@ export function ScopedRowsPanel({ entity }: { entity: ScopedEntity }) {
   const columns = useMemo<Column<ConfigRow>[]>(() => [
     {
       header: 'Name', id: 'name', rowHeader: true, width: 'growCollapse', minWidth: 140,
-      renderCell: r => kind.avatars
-        ? <span className="list-clip agent-inline" title={r.name}>
-            <AgentAvatar name={r.name} avatar={r.avatar} size={20} />{r.name}
-          </span>
-        : <span className="list-clip" title={r.name}>{r.name}</span>,
+      renderCell: r => <span className="list-clip" title={r.name}>{r.name}</span>,
     },
     {
       // A badge needs its own room: 'auto' collapses the column to the header
@@ -140,13 +92,11 @@ export function ScopedRowsPanel({ entity }: { entity: ScopedEntity }) {
     { header: 'Detail', id: 'detail', width: 'growCollapse', minWidth: 100, maxWidth: 220, renderCell: r => <span className="list-clip" title={r.detail}>{r.detail}</span> },
     actionsColumn<ConfigRow>(r => (
       <RowMenu label={`Actions for ${r.name}`}>
-        {kind.scopePerRow(r)
-          ? <ActionList.Item onSelect={() => { void flip(r); }}>{r.scope === 'global' ? 'Unpublish' : 'Publish'}</ActionList.Item>
-          : <ActionList.Item disabled>Scope follows its repository</ActionList.Item>}
+        <ActionList.Item onSelect={() => { void flip(r); }}>{r.scope === 'global' ? 'Unpublish' : 'Publish'}</ActionList.Item>
         <ActionList.Item onSelect={() => setTransferring(r)}>Transfer…</ActionList.Item>
       </RowMenu>
     )),
-  ], [flip, kind, ownerOf, labelFor]);
+  ], [flip, ownerOf, labelFor]);
 
   return (
     <Stack gap="normal">
@@ -186,61 +136,6 @@ export function ScopedRowsPanel({ entity }: { entity: ScopedEntity }) {
   );
 }
 
-// TransferDialog picks the account a scoped row moves to. Scope stays put: a
-// published row stays published, under its new author.
-function TransferDialog({ row, kindLabel, owner, users, transfer, onClose, onDone, meId }: {
-  row: ConfigRow;
-  kindLabel: string;
-  owner: string;
-  users: { id: string; name?: string; email: string }[];
-  transfer: (userId: string) => Promise<null>;
-  onClose: () => void;
-  onDone: () => void;
-  meId?: string;
-}) {
-  const [userId, setUserId] = useState(users[0]?.id || '');
-  const [busy, setBusy] = useState(false);
-
-  const run = useCallback(async () => {
-    setBusy(true);
-    try {
-      await transfer(userId);
-      onDone();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to transfer.');
-      setBusy(false);
-    }
-  }, [transfer, userId, onDone]);
-
-  return (
-    <Dialog
-      title={`Transfer ${kindLabel.replace(/s$/, '').toLowerCase()}`}
-      onClose={onClose}
-      width="medium"
-      footerButtons={[
-        { buttonType: 'default', content: 'Cancel', onClick: onClose },
-        { buttonType: 'primary', content: 'Transfer', disabled: busy || !userId, onClick: () => { void run(); } },
-      ]}
-    >
-      <Stack gap="normal">
-        <FormControl required>
-          <FormControl.Label>New owner</FormControl.Label>
-          <FormControl.Caption>
-            &quot;{row.name}&quot; ({owner}) becomes theirs to edit — any credential on it
-            included. It stays {row.scope === 'global' ? 'published to the team' : 'private'}.
-            {kindLabel === 'Skills' && row.detail !== 'workbench' ? ' Every skill imported from the same repository moves with it.' : ''}
-            {row.owner_id === meId ? ' You will no longer be its author.' : ''}
-          </FormControl.Caption>
-          <Select block value={userId} onChange={e => setUserId(e.target.value)}>
-            {users.length === 0 ? <Select.Option value="">No other account</Select.Option> : null}
-            {users.map(u => <Select.Option key={u.id} value={u.id}>{u.name ? `${u.name} (${u.email})` : u.email}</Select.Option>)}
-          </Select>
-        </FormControl>
-      </Stack>
-    </Dialog>
-  );
-}
-
 // Workflows have no personal settings panel (the hub is where they are
 // authored), so the management view is their whole settings tab.
-export const AdminWorkflows = () => <ScopedRowsPanel entity="workflows" />;
+export const AdminWorkflows = () => <ScopedRowsPanel kind={WORKFLOWS} />;

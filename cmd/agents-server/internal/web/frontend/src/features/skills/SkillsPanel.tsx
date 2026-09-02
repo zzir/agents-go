@@ -3,7 +3,10 @@ import { ActionList, Button, TextInput, Textarea, Label, Stack } from '@primer/r
 import { Blankslate } from '@primer/react/experimental';
 import { RowMenu } from '@/components/ListTable';
 import { FormActions } from '@/components/FormActions';
-import { CrudPanel, ScopeBadge } from '@/components/CrudPanel';
+import { CrudPanel, OwnerTag, ScopeBadge } from '@/components/CrudPanel';
+import { useScopeFilter } from '@/components/ScopeFilter';
+import { useTransfer } from '@/components/TransferDialog';
+import { filterRows } from '@/lib/listFilter';
 import { api } from '@/lib/api';
 import { useCrud } from '@/lib/hooks';
 import { ReadOnlyContext, canDeleteRow, canDemoteRow, canEditRow } from '@/lib/access';
@@ -73,6 +76,11 @@ export function SkillsPanel() {
   const skillEditable = (sk: Skill) => canEditRow(isAdmin, me?.id, sk);
   const { items: skills, loading, error, reload, adding, editing, startAdd, startEdit, cancel, save, saving, remove } =
     useCrud<Skill, { content: string }>(api.skills, 'skills');
+  const [query, setQuery] = useState('');
+  const scopeFilter = useScopeFilter();
+  const rows = filterRows(skills, { mine: !!scopeFilter?.mine, meId: me?.id, query }, sk => `${sk.name} ${sk.description || ''}`);
+  const transfer = useTransfer({ kindLabel: 'Skills', setOwner: api.skills.setOwner, onDone: reload,
+    note: () => 'Every skill imported from the same repository moves with it.' });
   const [importing, setImporting] = useState(false);
   const [importUrl, setImportUrl] = useState('');
   const [busy, setBusy] = useState(false);
@@ -160,9 +168,9 @@ export function SkillsPanel() {
   };
 
   // Groups are (repo, owner): the same repo imported by two people is two
-  // groups, each flipping on its own. Who owns which is the Admin dialog's
-  // business, not this panel's.
-  const grouped = groupSkills(skills);
+  // groups, each flipping on its own; a group not the caller's names its
+  // author.
+  const grouped = groupSkills(rows);
 
   const closeImport = () => { setImporting(false); setImportUrl(''); };
   const form = importing ? (
@@ -205,10 +213,12 @@ export function SkillsPanel() {
     <ReadOnlyContext value={!!editing && !skillEditable(editing)}>
       <CrudPanel title="Skills" onAdd={startAdd} onCancel={importing ? closeImport : cancel} form={form}
         loading={loading} isEmpty={grouped.length === 0}
+        search={{ value: query, onChange: setQuery, placeholder: 'Search skills' }}
         actions={<Button onClick={() => setImporting(true)} size="small">Import</Button>}
         onDelete={editing && canDeleteRow(isAdmin, me?.id, editing)
           ? async () => { if (await remove(editing.id, editing.name)) cancel(); } : null}
-        empty="No skills yet." emptyHint="Create a SKILL.md in the workbench, or import every skill from a GitHub repository.">
+        empty={skills.length === 0 ? 'No skills yet.' : 'No matching skills.'}
+        emptyHint={skills.length === 0 ? 'Create a SKILL.md in the workbench, or import every skill from a GitHub repository.' : undefined}>
         {grouped.map(group => {
           // Sync re-imports the repo, updating every row in the group — so it
           // is offered only when every row is the caller's to update. Publishing
@@ -222,13 +232,15 @@ export function SkillsPanel() {
           const canUnpublish = isRepo
             ? group.scope === 'global' && canDemoteRow(isAdmin, me?.id, owner)
             : group.skills.some(sk => sk.scope === 'global' && canDemoteRow(isAdmin, me?.id, sk));
-          const groupItems = (canSync ? 1 : 0) + (canPublish ? 1 : 0) + (canUnpublish ? 1 : 0);
+          // A repo group moves as one; the admin transfers it from its heading.
+          const canTransfer = isAdmin && isRepo && group.skills.length > 0;
+          const groupItems = (canSync ? 1 : 0) + (canPublish ? 1 : 0) + (canUnpublish ? 1 : 0) + (canTransfer ? 1 : 0);
           return (
             <div key={group.key}>
               <div className="Box-row skills-group-head">
                 <span className="resource-row-title">{group.label}</span>
                 {/* Scope sits on the GROUP: a repo publishes as one. */}
-                {group.scope && <ScopeBadge row={owner} meId={me?.id} />}
+                {group.scope && <><ScopeBadge row={owner} meId={me?.id} /><OwnerTag row={owner} meId={me?.id} /></>}
                 <span className="resource-row-sub">{group.skills.length} skill{group.skills.length === 1 ? '' : 's'}</span>
                 {syncing.has(group.key) && <span className="resource-row-sub">Syncing…</span>}
                 {groupItems > 0 && (
@@ -237,6 +249,7 @@ export function SkillsPanel() {
                       {canSync && <ActionList.Item disabled={syncing.has(group.key)} onSelect={() => void handleSync(group)}>Sync</ActionList.Item>}
                       {canPublish && <ActionList.Item onSelect={() => void setGroupScope(group, 'global')}>{isRepo ? 'Make global' : 'Make all global'}</ActionList.Item>}
                       {canUnpublish && <ActionList.Item onSelect={() => void setGroupScope(group, 'private')}>{isRepo ? 'Make private' : 'Make all private'}</ActionList.Item>}
+                      {canTransfer && <ActionList.Item onSelect={() => transfer.start({ id: group.skills[0].id, name: group.label, scope: group.scope, owner_id: group.ownerId })}>Transfer…</ActionList.Item>}
                     </RowMenu>
                   </div>
                 )}
@@ -250,7 +263,7 @@ export function SkillsPanel() {
                       <span className="resource-row-title">{sk.name}</span>
                       {/* A Local bucket can hold both scopes; a repo group's scope
                           is on its heading, so the row stays quiet. */}
-                      {!group.scope && <ScopeBadge row={sk} meId={me?.id} />}
+                      {!group.scope && <><ScopeBadge row={sk} meId={me?.id} /><OwnerTag row={sk} meId={me?.id} /></>}
                       {sk.detached && <Label variant={BADGE.type}>edited</Label>}
                     </div>
                     <div className="resource-row-sub">{sk.description}</div>
@@ -261,6 +274,7 @@ export function SkillsPanel() {
           );
         })}
       </CrudPanel>
+      {transfer.dialog}
     </ReadOnlyContext>
   );
 }

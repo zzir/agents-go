@@ -1,5 +1,8 @@
 import { type ReactNode } from 'react';
-import { ActionList, Button, Label, PageHeader, Stack } from '@primer/react';
+import { ActionList, Button, Label, PageHeader, Stack, TextInput } from '@primer/react';
+import { SearchIcon } from '@primer/octicons-react';
+import { ScopeFilter, useScopeFilter } from '@/components/ScopeFilter';
+import { useOwnerLabels } from '@/lib/owners';
 import { Blankslate } from '@primer/react/experimental';
 import { RowMenu } from '@/components/ListTable';
 import { Loading } from '@/components/Loading';
@@ -16,12 +19,14 @@ import { toast } from '@/lib/toast';
  * no Add, and the form opens disabled — a view of the record — with Back
  * where Cancel would be, plus Delete when onDelete allows it (the admin's
  * one write on a foreign private row). */
-export function CrudPanel({ title, as, description, actions, onAdd, onCancel, onDelete, form, loading, isEmpty, empty, emptyHint, children }: {
+export function CrudPanel({ title, as, description, actions, search, onAdd, onCancel, onDelete, form, loading, isEmpty, empty, emptyHint, children }: {
   title: string;
   as?: 'page' | 'section';
   description?: ReactNode;
   // Extra header buttons beside "+ Add" (an Import), shown when it is.
   actions?: ReactNode;
+  // The toolbar's search box; the owner filter beside it comes from context.
+  search?: { value: string; onChange: (value: string) => void; placeholder: string };
   onAdd: () => void;
   // Closes the form; read-only mode's Back button, since the form's own
   // actions are disabled with the rest of it.
@@ -40,6 +45,7 @@ export function CrudPanel({ title, as, description, actions, onAdd, onCancel, on
   children: ReactNode;
 }) {
   const readOnly = useReadOnly();
+  const filter = useScopeFilter();
   const body = (
     <>
       <PageHeader>
@@ -56,6 +62,16 @@ export function CrudPanel({ title, as, description, actions, onAdd, onCancel, on
         </PageHeader.Actions>}
         {description && <PageHeader.Description>{description}</PageHeader.Description>}
       </PageHeader>
+      {!form && (search || filter) && (
+        <div className="list-toolbar">
+          {search && (
+            <TextInput className="list-toolbar-search" size="small" leadingVisual={SearchIcon}
+              placeholder={search.placeholder} aria-label={search.placeholder}
+              value={search.value} onChange={e => search.onChange(e.target.value)} />
+          )}
+          <div className="list-toolbar-filter"><ScopeFilter /></div>
+        </div>
+      )}
       {form && (readOnly
         ? <fieldset disabled className="readonly-form settings-form">{form}</fieldset>
         : <div className="settings-form">{form}</div>)}
@@ -84,7 +100,7 @@ export function CrudPanel({ title, as, description, actions, onAdd, onCancel, on
  * (open the CREATE form pre-filled from this row — nothing is written until
  * Save), the admin's scope flip, and a Delete the caller confirms. Renders
  * nothing when the caller can do none of it. */
-export function RowActionsMenu({ name, onEdit, editReadOnly, onDuplicate, onFork, scope, onDelete }: {
+export function RowActionsMenu({ name, onEdit, editReadOnly, onDuplicate, onFork, scope, onTransfer, onDelete }: {
   name: string;
   onEdit?: () => void;
   editReadOnly?: boolean;
@@ -105,13 +121,15 @@ export function RowActionsMenu({ name, onEdit, editReadOnly, onDuplicate, onFork
     canDemote: boolean;
     onDone: () => void;
   };
+  // The admin's transfer to another account (PUT /<entity>/:id/owner).
+  onTransfer?: () => void;
   // Delete where edit is not offered (the admin on a foreign private row).
   onDelete?: () => void;
 }) {
   const ctx = useReadOnly();
   const global = scope?.row.scope === 'global';
   const showScope = !!scope && (global ? scope.canDemote : scope.canPromote);
-  if (!onEdit && !onDuplicate && !onFork && !showScope && !onDelete) return null;
+  if (!onEdit && !onDuplicate && !onFork && !showScope && !onTransfer && !onDelete) return null;
   const flip = async () => {
     if (!scope) return;
     try {
@@ -127,6 +145,7 @@ export function RowActionsMenu({ name, onEdit, editReadOnly, onDuplicate, onFork
       {onDuplicate && <ActionList.Item onSelect={onDuplicate}>Duplicate</ActionList.Item>}
       {onFork && <ActionList.Item onSelect={onFork}>Fork</ActionList.Item>}
       {showScope && <ActionList.Item onSelect={() => void flip()}>{global ? 'Make private' : 'Make global'}</ActionList.Item>}
+      {onTransfer && <ActionList.Item onSelect={onTransfer}>Transfer…</ActionList.Item>}
       {onDelete && <ActionList.Item variant="danger" onSelect={onDelete}>Delete</ActionList.Item>}
     </RowMenu>
   );
@@ -138,4 +157,13 @@ export function ScopeBadge({ row, meId }: { row: ScopedRow; meId?: string }) {
   if (row.scope === 'global') return <Label variant={BADGE.scope}>Global</Label>;
   if (meId && row.owner_id && row.owner_id !== meId) return <Label variant={BADGE.scope}>Private</Label>;
   return null;
+}
+
+/** OwnerTag names a row's author when it is not the caller — the row was
+ * shared by someone (a member's view of a global row) or belongs to someone
+ * (the admin's view of every row). Quiet on the caller's own rows. */
+export function OwnerTag({ row, meId }: { row: ScopedRow; meId?: string }) {
+  const { labelFor } = useOwnerLabels();
+  if (meId && row.owner_id === meId) return null;
+  return <span className="resource-row-owner">{row.owner_id ? labelFor(row.owner_id) : 'no author'}</span>;
 }

@@ -3,7 +3,10 @@ import { Button, TextInput, Label, Select, Checkbox, FormControl, Stack, ToggleS
 import { SecretInput } from '@/components/SecretInput';
 import { TokenListInput } from '@/components/TokenListInput';
 import { FormActions } from '@/components/FormActions';
-import { CrudPanel, RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
+import { CrudPanel, OwnerTag, RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
+import { useScopeFilter } from '@/components/ScopeFilter';
+import { useTransfer } from '@/components/TransferDialog';
+import { filterRows } from '@/lib/listFilter';
 import { ReadOnlyContext, canDeleteRow, canDemoteRow, canEditRow } from '@/lib/access';
 import { useMe } from '@/lib/me';
 import { ResourceRow } from '@/components/ResourceRow';
@@ -243,6 +246,10 @@ export function McpServerPanel() {
   const isAdmin = me?.role === 'admin';
   const rowEditable = (s: McpServer) => canEditRow(isAdmin, me?.id, s);
   const { items: servers, loading, reload, adding, editing, startAdd, startEdit, cancel, save, saving, remove } = useCrud<McpServer, Partial<McpServer>>(api.mcpServers, 'mcp-servers');
+  const [query, setQuery] = useState('');
+  const scopeFilter = useScopeFilter();
+  const rows = filterRows(servers, { mine: !!scopeFilter?.mine, meId: me?.id, query }, s => `${s.name} ${(s.config && s.config.endpoint) || ''}`);
+  const transfer = useTransfer({ kindLabel: 'MCP servers', setOwner: api.mcpServers.setOwner, onDone: reload });
   const confirmDialog = useConfirm();
   // busy covers only the POST /connect round-trip; every longer-lived state
   // (connecting, authorizing) is reported by the backend via status.
@@ -331,11 +338,13 @@ export function McpServerPanel() {
     // Scoped rows: the form is a disabled view exactly when the opened row is
     // not the caller's to edit (canEditRow), not for every member.
     <ReadOnlyContext value={!!editing && !rowEditable(editing)}>
-      <CrudPanel title="MCP servers" onAdd={startAdd} onCancel={cancel} form={form} loading={loading} isEmpty={servers.length === 0}
-        empty="No MCP servers yet." emptyHint="An MCP server lends its tools to the agents that select it."
+      <CrudPanel title="MCP servers" onAdd={startAdd} onCancel={cancel} form={form} loading={loading} isEmpty={rows.length === 0}
+        search={{ value: query, onChange: setQuery, placeholder: 'Search MCP servers' }}
+        empty={servers.length === 0 ? 'No MCP servers yet.' : 'No matching MCP servers.'}
+        emptyHint={servers.length === 0 ? 'An MCP server lends its tools to the agents that select it.' : undefined}
         onDelete={editing && canDeleteRow(isAdmin, me?.id, editing)
           ? async () => { if (await remove(editing.id, editing.name)) cancel(); } : null}>
-        {servers.map(s => {
+        {rows.map(s => {
           const action = STATUS_ACTION[s.status];
           const editable = rowEditable(s);
           return (
@@ -344,6 +353,7 @@ export function McpServerPanel() {
               title={s.name}
               badges={<>
                 <ScopeBadge row={s} meId={me?.id} />
+                <OwnerTag row={s} meId={me?.id} />
                 {s.config && s.config.auth_mode === 'oauth' && <Label variant={BADGE.type}>OAuth</Label>}
               </>}
               sub={(s.config && s.config.endpoint) || ''}
@@ -366,12 +376,14 @@ export function McpServerPanel() {
                 )}
                 {editable && <EnabledToggle server={s} onToggle={handleToggleEnabled} />}
                 <RowActionsMenu name={s.name} editReadOnly={!editable} onEdit={() => startEdit(s)}
+                  onTransfer={isAdmin ? () => transfer.start(s) : undefined}
                   scope={{ row: s, setScope: api.mcpServers.setScope, canPromote: isAdmin, canDemote: canDemoteRow(isAdmin, me?.id, s), onDone: reload }} />
               </>}
             />
           );
         })}
       </CrudPanel>
+      {transfer.dialog}
     </ReadOnlyContext>
   );
 }

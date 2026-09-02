@@ -7,7 +7,7 @@ import { ListTable, RowMenu, actionsColumn } from '@/components/ListTable';
 import { api, type ApiSchemas } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { useMe } from '@/lib/me';
-import { reloadDirectory } from '@/lib/owners';
+import { LOCAL_USER_ID, reloadDirectory } from '@/lib/owners';
 import { formatTime } from '@/lib/time';
 import { toast } from '@/lib/toast';
 import { useLoadError } from '@/features/admin/useLoadError';
@@ -15,7 +15,6 @@ import { useLoadError } from '@/features/admin/useLoadError';
 type UserRow = Omit<ApiSchemas['store.User'], 'id'> & { id: string };
 
 // The implicit token-mode account (store.LocalUserID): not a person to manage.
-export const LOCAL_USER_ID = '00000000-0000-0000-0000-000000000001';
 
 const listMembers = async (): Promise<UserRow[]> =>
   ((await api.auth.users.list()) ?? []).filter(x => x.id && x.id !== LOCAL_USER_ID).map(x => ({ ...x, id: x.id || '' }));

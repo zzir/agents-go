@@ -2,7 +2,10 @@ import { useState } from 'react';
 import { Button, TextInput, Label, SegmentedControl, Stack } from '@primer/react';
 import { SecretInput } from '@/components/SecretInput';
 import { FormActions } from '@/components/FormActions';
-import { CrudPanel, RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
+import { CrudPanel, OwnerTag, RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
+import { useScopeFilter } from '@/components/ScopeFilter';
+import { useTransfer } from '@/components/TransferDialog';
+import { filterRows } from '@/lib/listFilter';
 import { ReadOnlyContext, canDeleteRow, canDemoteRow, canEditRow } from '@/lib/access';
 import { useMe } from '@/lib/me';
 import { ResourceRow } from '@/components/ResourceRow';
@@ -115,6 +118,10 @@ export function ProviderPanel() {
   const rowEditable = (p: Provider) => canEditRow(isAdmin, me?.id, p);
   const { items: providers, loading, adding, editing, startAdd, startEdit, cancel, save, saving, remove, reload } =
     useCrud<Provider, ProviderFormData>(api.providers, 'providers');
+  const [query, setQuery] = useState('');
+  const scopeFilter = useScopeFilter();
+  const rows = filterRows(providers, { mine: !!scopeFilter?.mine, meId: me?.id, query }, p => `${p.name} ${p.base_url || ''} ${p.type || ''}`);
+  const transfer = useTransfer({ kindLabel: 'Providers', setOwner: api.providers.setOwner, onDone: reload });
   const { data: providerTypes } = useApi<ProviderTypeInfo[]>(() => api.providerTypes.list() as Promise<ProviderTypeInfo[]>, [], 'provider-types');
   // Sign-in is a two-step manual-paste flow — there is no loopback listener to
   // catch the redirect (see the API's chatgpt.complete). handleLogin opens the
@@ -179,11 +186,13 @@ export function ProviderPanel() {
     // Scoped rows: the form is a disabled view exactly when the opened row is
     // not the caller's to edit (canEditRow), not for every member.
     <ReadOnlyContext value={!!editing && !rowEditable(editing)}>
-      <CrudPanel title="Providers" onAdd={startAdd} onCancel={cancel} form={form} loading={loading} isEmpty={providers.length === 0}
+      <CrudPanel title="Providers" onAdd={startAdd} onCancel={cancel} form={form} loading={loading} isEmpty={rows.length === 0}
+        search={{ value: query, onChange: setQuery, placeholder: 'Search providers' }}
         onDelete={editing && canDeleteRow(isAdmin, me?.id, editing)
           ? async () => { if (await remove(editing.id, editing.name)) cancel(); } : null}
-        empty="No providers yet." emptyHint="A provider holds an endpoint and its API key; an agent that names none fails pre-flight.">
-        {providers.map(p => {
+        empty={providers.length === 0 ? 'No providers yet.' : 'No matching providers.'}
+        emptyHint={providers.length === 0 ? 'A provider holds an endpoint and its API key; an agent that names none fails pre-flight.' : undefined}>
+        {rows.map(p => {
           const meta = providerMeta(p.type || '');
           const chatgpt = p.auth_mode === 'chatgpt_login';
           return (
@@ -196,7 +205,7 @@ export function ProviderPanel() {
                 title={p.chatgpt_logged_in ? 'ChatGPT signed in' : 'ChatGPT not signed in'}
               />}
               title={p.name}
-              badges={<><ScopeBadge row={p} meId={me?.id} /><Label variant={meta.badgeVariant}>{meta.badge}</Label></>}
+              badges={<><ScopeBadge row={p} meId={me?.id} /><OwnerTag row={p} meId={me?.id} /><Label variant={meta.badgeVariant}>{meta.badge}</Label></>}
               sub={p.base_url || meta.defaultBaseURL}
               actions={<>
                 {chatgpt && rowEditable(p) && (p.chatgpt_logged_in
@@ -216,12 +225,14 @@ export function ProviderPanel() {
                       </Stack>
                     : <Button onClick={() => handleLogin(p.id)} size="small" variant="invisible">Sign in</Button>)}
                 <RowActionsMenu name={p.name} editReadOnly={!rowEditable(p)} onEdit={() => startEdit(p)}
+                  onTransfer={isAdmin ? () => transfer.start(p) : undefined}
                   scope={{ row: p, setScope: api.providers.setScope, canPromote: isAdmin, canDemote: canDemoteRow(isAdmin, me?.id, p), onDone: reload }} />
               </>}
             />
           );
         })}
       </CrudPanel>
+      {transfer.dialog}
     </ReadOnlyContext>
   );
 }

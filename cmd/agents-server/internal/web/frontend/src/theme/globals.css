@@ -863,6 +863,26 @@ textarea.textarea-grow {
 
 /* Settings lists (ListTable): the search box sits in Table.Container's
    filter slot; an empty state takes the table's slot. */
+/* A list's toolbar under its header: search on the left, the owner filter
+   on the right. */
+.list-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--base-size-8);
+}
+.list-toolbar-search {
+  flex: 1;
+  max-width: 320px;
+}
+.list-toolbar-filter {
+  margin-left: auto;
+}
+/* A row's author, when it is not the caller. */
+.resource-row-owner {
+  font-size: var(--base-text-size-xs);
+  color: var(--fgColor-muted);
+}
+
 .list-table-filter {
   grid-area: filter;
   margin-block: var(--base-size-8);

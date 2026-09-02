@@ -1,8 +1,3 @@
-/* The "Mine | All members" switch at the top of a scoped entity's panel. */
-.scope-toggle {
-  margin-bottom: var(--base-size-16);
-}
-
 /* Attachment storage is one form with its own Save — a bordered card sets it
    apart from the click-to-store rows above it. */
 .settings-card {
