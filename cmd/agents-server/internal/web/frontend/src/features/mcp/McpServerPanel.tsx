@@ -3,7 +3,7 @@ import { Button, TextInput, Label, Select, Checkbox, FormControl, Stack, ToggleS
 import { SecretInput } from '@/components/SecretInput';
 import { TokenListInput } from '@/components/TokenListInput';
 import { FormActions } from '@/components/FormActions';
-import { CrudPanel, OwnerTag, RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
+import { CrudPanel, RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
 import { useScopeFilter } from '@/components/ScopeFilter';
 import { useTransfer } from '@/components/TransferDialog';
 import { filterRows } from '@/lib/listFilter';
@@ -353,7 +353,6 @@ export function McpServerPanel() {
               title={s.name}
               badges={<>
                 <ScopeBadge row={s} meId={me?.id} />
-                <OwnerTag row={s} meId={me?.id} />
                 {s.config && s.config.auth_mode === 'oauth' && <Label variant={BADGE.type}>OAuth</Label>}
               </>}
               sub={(s.config && s.config.endpoint) || ''}

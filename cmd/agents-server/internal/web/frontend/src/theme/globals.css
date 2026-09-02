@@ -877,12 +877,6 @@ textarea.textarea-grow {
 .list-toolbar-filter {
   margin-left: auto;
 }
-/* A row's author, when it is not the caller. */
-.resource-row-owner {
-  font-size: var(--base-text-size-xs);
-  color: var(--fgColor-muted);
-}
-
 .list-table-filter {
   grid-area: filter;
   margin-block: var(--base-size-8);

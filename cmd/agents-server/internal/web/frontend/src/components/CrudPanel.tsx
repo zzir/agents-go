@@ -2,7 +2,6 @@ import { type ReactNode } from 'react';
 import { ActionList, Button, Label, PageHeader, Stack, TextInput } from '@primer/react';
 import { SearchIcon } from '@primer/octicons-react';
 import { ScopeFilter, useScopeFilter } from '@/components/ScopeFilter';
-import { useOwnerLabels } from '@/lib/owners';
 import { Blankslate } from '@primer/react/experimental';
 import { RowMenu } from '@/components/ListTable';
 import { Loading } from '@/components/Loading';
@@ -157,13 +156,4 @@ export function ScopeBadge({ row, meId }: { row: ScopedRow; meId?: string }) {
   if (row.scope === 'global') return <Label variant={BADGE.scope}>Global</Label>;
   if (meId && row.owner_id && row.owner_id !== meId) return <Label variant={BADGE.scope}>Private</Label>;
   return null;
-}
-
-/** OwnerTag names a row's author when it is not the caller — the row was
- * shared by someone (a member's view of a global row) or belongs to someone
- * (the admin's view of every row). Quiet on the caller's own rows. */
-export function OwnerTag({ row, meId }: { row: ScopedRow; meId?: string }) {
-  const { labelFor } = useOwnerLabels();
-  if (meId && row.owner_id === meId) return null;
-  return <span className="resource-row-owner">{row.owner_id ? labelFor(row.owner_id) : 'no author'}</span>;
 }

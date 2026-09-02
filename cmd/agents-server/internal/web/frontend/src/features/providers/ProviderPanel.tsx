@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Button, TextInput, Label, SegmentedControl, Stack } from '@primer/react';
 import { SecretInput } from '@/components/SecretInput';
 import { FormActions } from '@/components/FormActions';
-import { CrudPanel, OwnerTag, RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
+import { CrudPanel, RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
 import { useScopeFilter } from '@/components/ScopeFilter';
 import { useTransfer } from '@/components/TransferDialog';
 import { filterRows } from '@/lib/listFilter';
@@ -205,7 +205,7 @@ export function ProviderPanel() {
                 title={p.chatgpt_logged_in ? 'ChatGPT signed in' : 'ChatGPT not signed in'}
               />}
               title={p.name}
-              badges={<><ScopeBadge row={p} meId={me?.id} /><OwnerTag row={p} meId={me?.id} /><Label variant={meta.badgeVariant}>{meta.badge}</Label></>}
+              badges={<><ScopeBadge row={p} meId={me?.id} /><Label variant={meta.badgeVariant}>{meta.badge}</Label></>}
               sub={p.base_url || meta.defaultBaseURL}
               actions={<>
                 {chatgpt && rowEditable(p) && (p.chatgpt_logged_in

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { TextInput, Textarea, FormControl, Checkbox, Select, Stack } from '@primer/react';
 import { TokenListInput } from '@/components/TokenListInput';
 import { FormActions } from '@/components/FormActions';
-import { CrudPanel, OwnerTag, RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
+import { CrudPanel, RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
 import { useScopeFilter } from '@/components/ScopeFilter';
 import { useTransfer } from '@/components/TransferDialog';
 import { filterRows } from '@/lib/listFilter';
@@ -624,7 +624,7 @@ export function AgentConfigPanel() {
             <ResourceRow key={a.id}
               leading={<AgentAvatar name={a.name} avatar={a.avatar} size={32} />}
               title={a.name}
-              badges={<><ScopeBadge row={a} meId={me?.id} /><OwnerTag row={a} meId={me?.id} /></>}
+              badges={<ScopeBadge row={a} meId={me?.id} />}
               sub={a.description || undefined}
               // One meta line instead of a strip of labels: model@endpoint. An
               // unset or vanished provider is a row that cannot run — say so.

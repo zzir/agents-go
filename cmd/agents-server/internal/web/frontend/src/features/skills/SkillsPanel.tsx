@@ -3,7 +3,7 @@ import { ActionList, Button, TextInput, Textarea, Label, Stack } from '@primer/r
 import { Blankslate } from '@primer/react/experimental';
 import { RowMenu } from '@/components/ListTable';
 import { FormActions } from '@/components/FormActions';
-import { CrudPanel, OwnerTag, ScopeBadge } from '@/components/CrudPanel';
+import { CrudPanel, ScopeBadge } from '@/components/CrudPanel';
 import { useScopeFilter } from '@/components/ScopeFilter';
 import { useTransfer } from '@/components/TransferDialog';
 import { filterRows } from '@/lib/listFilter';
@@ -240,7 +240,7 @@ export function SkillsPanel() {
               <div className="Box-row skills-group-head">
                 <span className="resource-row-title">{group.label}</span>
                 {/* Scope sits on the GROUP: a repo publishes as one. */}
-                {group.scope && <><ScopeBadge row={owner} meId={me?.id} /><OwnerTag row={owner} meId={me?.id} /></>}
+                {group.scope && <ScopeBadge row={owner} meId={me?.id} />}
                 <span className="resource-row-sub">{group.skills.length} skill{group.skills.length === 1 ? '' : 's'}</span>
                 {syncing.has(group.key) && <span className="resource-row-sub">Syncing…</span>}
                 {groupItems > 0 && (
@@ -263,7 +263,7 @@ export function SkillsPanel() {
                       <span className="resource-row-title">{sk.name}</span>
                       {/* A Local bucket can hold both scopes; a repo group's scope
                           is on its heading, so the row stays quiet. */}
-                      {!group.scope && <><ScopeBadge row={sk} meId={me?.id} /><OwnerTag row={sk} meId={me?.id} /></>}
+                      {!group.scope && <ScopeBadge row={sk} meId={me?.id} />}
                       {sk.detached && <Label variant={BADGE.type}>edited</Label>}
                     </div>
                     <div className="resource-row-sub">{sk.description}</div>

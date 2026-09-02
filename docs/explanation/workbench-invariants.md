@@ -939,9 +939,8 @@ per-feature decisions rather than cross-cutting rules.
     Sessions, Projects, Workflows, Audit logs) after a divider and under no
     heading. A scoped entity's tab (invariant 42's scope/owner rows) is ONE
     list: a member sees their own rows and the published ones, an admin sees
-    every member's rows in the same list, each foreign row naming its author
-    (`OwnerTag`), with a "Mine | All" filter in the list toolbar that only
-    narrows — it never swaps the layout. Management is in the row's own
+    every member's rows in the same list, with a "Mine | All" filter in the
+    list toolbar that only narrows — it never swaps the layout. Management is in the row's own
     menu, by right: Edit/Fork for what the caller may edit, Make global /
     Make private per `canDemoteRow`, and the admin's Transfer… on any row —
     not a second view of the same rows. Only Workflows, which have no
