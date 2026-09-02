@@ -1204,15 +1204,9 @@ func (m *Manager) launchFailed(ctx context.Context, t *Task, reason string) {
 	m.finishedTask(ctx, &done)
 }
 
-// Recover reconciles after a restart: tasks recorded as running can never
-// progress (their run died with the process), so they are failed and reported
-// through OnFinished, which is where a host arranges to tell their parents.
-func (m *Manager) Recover(ctx context.Context) error {
-	return m.FailOrphans(ctx)
-}
-
-// FailOrphans is the first half of Recover: every task still recorded as
-// running is failed, which owes its parent a wake-up.
+// FailOrphans reconciles after a restart: every task still recorded as running
+// can never progress (its run died with the process), so it is failed, which
+// owes its parent a wake-up through OnFinished.
 //
 // It must complete BEFORE the host accepts a retry: the sweep fails every
 // working row there is, so a retry that got in first would have its fresh run

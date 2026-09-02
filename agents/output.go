@@ -70,9 +70,8 @@ func (s *dynamicOutputSchema) ValidateJSON(raw string) (any, error) {
 	if s.schemaErr != nil {
 		return nil, s.schemaErr
 	}
-	// A runtime-loaded schema used to be checked for nothing beyond "is this
-	// JSON" — the schema was sent to the provider and then never consulted, so
-	// output that ignored it came back as an untyped map and looked fine.
+	// Validated locally too: the provider was sent the schema, but the output
+	// is what the caller decodes.
 	if err := s.validator.Validate([]byte(raw)); err != nil {
 		return nil, fmt.Errorf("dynamic output schema %q: %w", s.name, err)
 	}

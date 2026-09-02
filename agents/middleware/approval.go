@@ -87,7 +87,7 @@ func (a Approval) Run(ctx context.Context, next agents.RunFunc, in agents.RunInp
 				// The policy deferred at least one call, so the pause is real.
 				break
 			}
-			res, live, err = collect(resume(ctx, res.State, in.Opts), yield)
+			res, live, err = collect(resume(ctx, res.State, in), yield)
 			if !live {
 				return
 			}
@@ -122,17 +122,17 @@ func (a Approval) decide(ctx context.Context, res *agents.RunResult) bool {
 	return settled
 }
 
-// resume continues a paused run from inside the chain.
+// resume continues a paused run from inside the chain, under the caller's own
+// control handle so a stop or queued input still reaches the run.
 //
 // Middlewares are stripped: the chain is already unwound at this point, so
 // resuming with the run's own options would re-enter this middleware and every
 // one outside it. This is a continuation of the run the chain already started,
 // not a new one.
-func resume(ctx context.Context, state *agents.RunState, opts *agents.RunOptions) agents.RunStream {
-	o := *opts
+func resume(ctx context.Context, state *agents.RunState, in agents.RunInput) agents.RunStream {
+	o := *in.Opts
 	o.Middlewares = nil
-	stream, _ := agents.ResumeRun(ctx, state, o)
-	return stream
+	return agents.ResumeRunWith(ctx, state, o, in.Control)
 }
 
 var _ agents.RunMiddleware = Approval{}

@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/zzir/agents-go/agents"
 )
@@ -89,15 +90,20 @@ func (l Loop) Run(ctx context.Context, next agents.RunFunc, in agents.RunInput) 
 				break
 			}
 			// Carry the attempt forward: the next run sees what it said and
-			// what was wrong with it, or it will simply say it again.
+			// what was wrong with it, or it will simply say it again. With a
+			// session the attempt is already in the history, so only the
+			// feedback goes (spec §2.12).
+			feedback := agents.InputItemsFromText(ev.Feedback)
+			if in.Opts.Conversation.Session != nil {
+				input = feedback
+				continue
+			}
 			prior, ierr := res.ToInputList()
 			if ierr != nil {
 				yield(nil, fmt.Errorf("middleware: carrying attempt %d forward: %w", attempt, ierr))
 				return
 			}
-			input = make([]agents.InputItem, 0, len(prior)+1)
-			input = append(input, prior...)
-			input = append(input, agents.InputItemsFromText(ev.Feedback)...)
+			input = slices.Concat(prior, feedback)
 		}
 		finish(last, yield)
 	}

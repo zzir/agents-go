@@ -37,9 +37,7 @@ const RunStateSchemaVersion = "1.6"
 //
 // Raise it whenever a bump REPLACES or reinterprets a field rather than only
 // adding one — such a state would decode with its old fields silently dropped,
-// worse than a refusal. It sits at 4 because 1.3 was stamped both before and
-// after the guardrail-result keys collapsed into one, a shape the version string
-// cannot disambiguate; 1.5 and 1.6 only added fields, so a 1.4 state decodes.
+// worse than a refusal. Why the floor sits where it does: decisions §5.18.
 const runStateOldestDecodableMinor = 4
 
 // RunState is the serializable state of a run paused for human-in-the-loop tool
@@ -182,15 +180,39 @@ func (s *RunState) Reject(item *ToolApprovalItem, always bool, message string) {
 // Run does. A middleware may edit in.Opts, but the paused state's agent and
 // input are already decided, so edits to those do not apply.
 func ResumeRun(ctx context.Context, state *RunState, opts RunOptions) (RunStream, RunControl) {
-	ctrl := newRunControl()
+	ctrl := newResumedControl(state)
 	return resumeWithMiddleware(ctx, state, opts, ctrl, true), ctrl
 }
 
 // ResumeRunSync continues a paused run to completion and returns its result.
 // It is ResumeRun without the stream, matching RunSync.
 func ResumeRunSync(ctx context.Context, state *RunState, opts RunOptions) (*RunResult, error) {
-	ctrl := newRunControl()
+	ctrl := newResumedControl(state)
 	return resumeWithMiddleware(ctx, state, opts, ctrl, false).Collect()
+}
+
+// ResumeRunWith is ResumeRun under the control of the run that paused: the
+// caller's StopAfterTurn and queued input keep working across the resume, and
+// the control's live queue is carried as is rather than reseeded from
+// RunState.PendingInput. ctrl must have come from Run or ResumeRun; anything
+// else panics.
+func ResumeRunWith(ctx context.Context, state *RunState, opts RunOptions, ctrl RunControl) RunStream {
+	c, ok := ctrl.(*runControl)
+	if !ok {
+		panic(fmt.Sprintf("agents: ResumeRunWith: the RunControl must come from Run or ResumeRun, got %T", ctrl))
+	}
+	return resumeWithMiddleware(ctx, state, opts, c, true)
+}
+
+// newResumedControl mints a control seeded from the paused state's queue —
+// before the control reaches the caller, so a Steer enqueued in that window
+// sequences after the restored pre-pause backlog.
+func newResumedControl(state *RunState) *runControl {
+	ctrl := newRunControl()
+	if state != nil {
+		ctrl.restore(state.PendingInput)
+	}
+	return ctrl
 }
 
 // resumeWithMiddleware is ResumeRun's counterpart of withMiddleware.
@@ -202,17 +224,12 @@ func resumeWithMiddleware(ctx context.Context, state *RunState, opts RunOptions,
 			resumeStream(ctx, nil, opts, ctrl, rawEvents, yield)
 		})
 	}
-	// Seed the queue from the paused state before the control reaches the caller,
-	// not lazily when ranging begins: a Steer enqueued in that window would
-	// otherwise sequence ahead of the restored pre-pause backlog. (restore seeds
-	// once per control.)
-	ctrl.restore(state.PendingInput)
 	base := func(ctx context.Context, in RunInput) RunStream {
 		return func(yield func(StreamEvent, error) bool) {
 			resumeStream(ctx, state, *in.Opts, ctrl, rawEvents, yield)
 		}
 	}
-	return runViaMiddleware(ctx, state.CurrentAgent, state.OriginalInput, opts, base)
+	return runViaMiddleware(ctx, state.CurrentAgent, state.OriginalInput, opts, ctrl, base)
 }
 
 func resumeStream(ctx context.Context, state *RunState, opts RunOptions, ctrl *runControl, rawEvents bool, yield func(StreamEvent, error) bool) {
@@ -301,18 +318,7 @@ func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, ctrl *run
 			r.toolsUsedBy[name] = true
 		}
 	}
-	ctx = WithDiagnostics(ctx, r.diagnostics)
-	// Same cancellation root a fresh run installs (see runStream): emit
-	// cancels it when the consumer stops ranging mid-resume.
-	ctx, cancel := context.WithCancelCause(ctx)
-	defer cancel(nil)
-	r.cancelRun = cancel
-	res, err := r.loop(ctx, state.CurrentAgent, state.OriginalInput)
-	if err == nil && res != nil && res.State != nil {
-		// The resumed run interrupted again: carry the effective budget on the
-		// new state so repeated interrupt/resume cycles keep it.
-		res.State.MaxTurns = maxTurns
-	}
+	res, err := r.execute(ctx, state.CurrentAgent, state.OriginalInput)
 	return r, res, err
 }
 
@@ -742,7 +748,7 @@ func RunStateFromJSON(data []byte, registry map[string]*Agent) (*RunState, error
 		GuardrailResults:      fromSerialGuardrailResults(in.GuardrailResults),
 		Extra:                 in.Extra,
 		Approvals:             NewApprovalStore(),
-		// Absent (a pre-flag state) resumes with the old always-re-arm behavior.
+		// Absent means the debt exists: re-arming is the safe direction.
 		usagePending: in.UsagePending == nil || *in.UsagePending,
 	}
 	if st.CurrentAgent == nil {

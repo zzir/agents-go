@@ -18,8 +18,9 @@ import (
 //
 // A run that already produced items is retried from the start, not resumed.
 // Resuming a failure means guessing which of its side effects happened, and
-// the SDK cannot know: a tool may have written a file. Attach a Session if the
-// history must survive the retry.
+// the SDK cannot know: a tool may have written a file. With a Session the
+// completed turns survive the retry, and the input is not sent again once an
+// attempt has stored it (spec §2.12).
 type Retry struct {
 	// MaxAttempts includes the first. Zero means 2 — one retry.
 	MaxAttempts int
@@ -41,10 +42,24 @@ func (r Retry) Run(ctx context.Context, next agents.RunFunc, in agents.RunInput)
 		should = retriable
 	}
 	return func(yield func(agents.StreamEvent, error) bool) {
+		input := in.Input
 		for attempt := 1; ; attempt++ {
-			res, live, err := collect(next(ctx, in), yield)
+			turn := in
+			turn.Input = input
+			// An attempt that announced a save has stored the input: the next
+			// one sends none, or the session holds it twice.
+			persisted := false
+			res, live, err := collect(next(ctx, turn), func(ev agents.StreamEvent, err error) bool {
+				if _, ok := ev.(*agents.ItemsPersistedEvent); ok {
+					persisted = true
+				}
+				return yield(ev, err)
+			})
 			if !live {
 				return
+			}
+			if persisted {
+				input = nil
 			}
 			if err == nil {
 				finish(res, yield)

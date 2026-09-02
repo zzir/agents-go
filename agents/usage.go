@@ -160,8 +160,10 @@ func (r *runner) attributeUsage(entries []session.Entry) {
 	for i := len(entries) - 1; i >= 0; i-- {
 		// Match the response when the provider named one; a backend that
 		// returns no id still gets its usage recorded, on the batch's last
-		// entry, rather than silently losing it.
-		if r.lastResponseID != "" && entries[i].ResponseID != r.lastResponseID {
+		// entry, rather than silently losing it. Caller input in the batch
+		// (an injection) is not the response's.
+		if entries[i].Source.Type == SourceUser ||
+			r.lastResponseID != "" && entries[i].ResponseID != r.lastResponseID {
 			continue
 		}
 		entries[i].Usage = u

@@ -107,7 +107,7 @@ func DefaultToolCallFormatter(g *Group) string {
 	byTool := map[string][]string{}
 	var order []string
 	for _, e := range g.Entries {
-		p := probe(e)
+		p := session.ProbeItem(e.Item)
 		switch p.Type {
 		case "function_call":
 			if _, seen := byTool[p.Name]; !seen {
@@ -153,7 +153,7 @@ func DefaultToolCallFormatter(g *Group) string {
 
 func toolNameForCall(g *Group, callID string) string {
 	for _, e := range g.Entries {
-		p := probe(e)
+		p := session.ProbeItem(e.Item)
 		if p.Type == "function_call" && p.CallID == callID {
 			return p.Name
 		}

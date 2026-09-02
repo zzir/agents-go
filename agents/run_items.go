@@ -429,7 +429,8 @@ func contentListJSON(parts []ToolOutputContent) string {
 }
 
 // EntryFromRunItem builds a session entry from a run item, carrying its
-// provenance, display and owning agent.
+// provenance, display and owning agent. responseID is the response the item
+// came from; injected input came from the caller and gets none.
 func EntryFromRunItem(it *RunItem, responseID string) (session.Entry, error) {
 	in, err := it.ToInputItem()
 	if err != nil {
@@ -444,7 +445,9 @@ func EntryFromRunItem(it *RunItem, responseID string) (session.Entry, error) {
 	}
 	d := it.Display()
 	e.Display = &d
-	e.ResponseID = responseID
+	if it.Kind != ItemInjectedInput {
+		e.ResponseID = responseID
+	}
 	if it.NestedUsage != nil {
 		u := it.NestedUsage.Request()
 		e.NestedUsage = &u

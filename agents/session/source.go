@@ -34,14 +34,6 @@ type Source struct {
 	ID string `json:"id,omitzero"`
 }
 
-// IsExternal reports whether the item came from outside the SDK — the model or
-// the caller — as opposed to something the runner synthesized. The distinction
-// matters where the SDK must not feed itself: a compaction summary must not be
-// summarized again, an injected item must not be re-ingested.
-func (s Source) IsExternal() bool {
-	return s.Type == SourceModel || s.Type == SourceUser
-}
-
 // String renders the source for logs and traces.
 func (s Source) String() string {
 	t := string(s.Type)

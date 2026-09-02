@@ -191,9 +191,6 @@ func TestSource_ErrorHandlerFallback(t *testing.T) {
 	if src.ID != "max_turns" {
 		t.Errorf("fallback source id = %q, want the handler kind", src.ID)
 	}
-	if src.IsExternal() {
-		t.Error("a synthesized fallback must not read as external")
-	}
 	// It carries no id at all now — the sentinel is gone, not renamed.
 	if fallback.Raw.ID != "" {
 		t.Errorf("synthesized message has id %q; it should have none", fallback.Raw.ID)

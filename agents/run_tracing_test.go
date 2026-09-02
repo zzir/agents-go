@@ -270,7 +270,7 @@ func TestGenerationSpanExcludesSensitiveData(t *testing.T) {
 }
 
 // A nil IncludeSensitiveData defaults to include: no environment variable is
-// consulted, so leaving the option unset records the full request (spec §2.20).
+// consulted, so leaving the option unset records the full request (spec §2.14).
 func TestGenerationSpanDefaultsInclude(t *testing.T) {
 	agent, proc := tracingAgent(t)
 	if _, err := RunSync(context.Background(), agent, "hi", RunOptions{Observe: ObserveOptions{Tracer: tracing.NewTracer(proc)}}); err != nil {

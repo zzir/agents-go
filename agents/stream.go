@@ -42,9 +42,8 @@ func (*AgentUpdatedStreamEvent) streamEvent() {}
 // is emitted exactly once, last, on a run that ends without error; a run that
 // fails ends with a non-nil error and emits no completion.
 //
-// It is how a stream carries its result, and why there is no separate
-// FinalResult call to forget. Collect exists so consumers rarely match on it by
-// hand.
+// It is how a stream carries its result. Collect exists so consumers rarely
+// match on it by hand.
 type RunCompletedEvent struct {
 	Result *RunResult
 }
@@ -72,10 +71,11 @@ func (*ToolProgressEvent) streamEvent() {}
 
 // ItemsPersistedEvent reports that every run item that appeared on the stream
 // before it has been written to the session. It fires at each persist boundary
-// that leaves nothing behind — the per-turn save, a handoff, overflow
-// recovery, the final save — so a consumer buffering streamed content against
-// a crash can drop what this event just guaranteed, instead of inferring the
-// SDK's persist timing from raw response events.
+// that leaves nothing behind — the user-input save ahead of the first model
+// call, the per-turn save, a handoff, overflow recovery, the final save — so a
+// consumer buffering streamed content against a crash can drop what this event
+// just guaranteed, instead of inferring the SDK's persist timing from raw
+// response events.
 //
 // The implication is one-way: no event does not mean nothing persisted. A run
 // without a session never emits it; history restored on resume was persisted
@@ -133,25 +133,19 @@ var errConsumerStopped = errors.New("agents: stream consumer stopped")
 // site must propagate a false return; the loop turns it into errConsumerStopped
 // so the unwind path is the same as any other abort.
 func (r *runner) emit(event StreamEvent) bool {
-	if r.yield == nil {
-		return true
-	}
-	// A tool emitting progress runs on its own goroutine, and several emit at
-	// once. An iterator's yield is not safe for concurrent calls, so this mutex
-	// is what makes ToolContext.Emit possible at all.
+	// Tool progress arrives from other goroutines, and an iterator's yield is
+	// not safe for concurrent calls: the mutex is what makes Emit possible.
 	r.emitMu.Lock()
 	defer r.emitMu.Unlock()
-	if r.consumerStopped.Load() {
-		// Another goroutine already saw the consumer leave; calling yield again
-		// after it returned false is undefined.
+	if r.closed.Load() {
+		// The consumer left, or the terminal event went out: a yield after
+		// either has nowhere to go.
 		return false
 	}
 	if !r.yield(event, nil) {
-		r.consumerStopped.Store(true)
-		// Tell everything riding the run's context — the model call the loop
-		// is streaming, the tool batch it is waiting on — to stop now: the
-		// loop only observes the flag at emit points, and a batch in
-		// g.Wait() has none.
+		r.closed.Store(true)
+		// Cancel the in-flight work — a streamed model call, a tool batch in
+		// g.Wait() — which has no emit point of its own to observe the flag at.
 		if r.cancelRun != nil {
 			r.cancelRun(errConsumerStopped)
 		}

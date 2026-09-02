@@ -30,18 +30,13 @@ func NewIndex(entries []session.Entry, est TokenEstimator) *Index {
 	return idx
 }
 
-// Update folds newly-arrived entries into the index.
-//
-// When the entries it already grouped are no longer a prefix of what it is
-// given — a branch switch, a compaction, a fork, or an entirely different
-// session — it rebuilds from scratch rather than trying to reconcile.
-// Reconciling a rewritten history is where incremental indexes go wrong, and
-// both rebuilding and the prefix check are cheap next to a model call.
+// Update folds newly-arrived entries into the index. When the entries it
+// already grouped are no longer a prefix of what it is given — a branch
+// switch, a compaction, a fork, another session — it rebuilds from scratch
+// rather than reconcile.
 func (idx *Index) Update(entries []session.Entry) {
 	start, ok := idx.prefixMatches(entries)
 	if !ok {
-		// Not a continuation of what we hold: a different session, a branch
-		// switch, a compaction, a fork. Rebuild rather than reconcile.
 		idx.Groups = nil
 		idx.turn = 0
 		start = 0
@@ -62,18 +57,8 @@ func (idx *Index) Update(entries []session.Entry) {
 }
 
 // prefixMatches reports whether entries still begins with exactly the entries
-// already grouped, and how many of them that is.
-//
-// The comparison is against the entries the groups already hold, field for
-// field, rather than against a digest of some of their fields. An id alone
-// would not do: entry ids are unique within a SESSION, not globally — the
-// in-memory store numbers them e1, e2 with no session prefix at all — so a
-// Compactor reused across sessions would see a matching id, treat the second
-// conversation as a continuation of the first, and return one session's history
-// to the other. Nor would a subset of the fields: ContextTokens reads Usage,
-// so two sessions with identical text and different token counts must not
-// share an index, or one gets the other's accounting and is compacted against
-// the wrong budget.
+// already grouped — whole entries, never ids alone (spec §2.5f) — and how many
+// of them that is.
 func (idx *Index) prefixMatches(entries []session.Entry) (n int, ok bool) {
 	for _, g := range idx.Groups {
 		for _, have := range g.Entries {
@@ -95,8 +80,7 @@ func (idx *Index) group(entries []session.Entry) {
 
 		// Reasoning looks ahead: a reasoning block followed by a tool call led
 		// to that call, and separating them makes the replayed history
-		// incoherent. This and the call/output pairing below are the two cases
-		// the old hand-written split point existed to handle.
+		// incoherent.
 		if isReasoning {
 			if j := nextConversational(entries, i+1); j >= 0 {
 				if _, nextIsCall, _, _ := classify(entries[j]); nextIsCall {
@@ -143,11 +127,11 @@ func (idx *Index) toolCallGroupEnd(entries []session.Entry, start int) int {
 			// Leading reasoning joins the group.
 		case isCall:
 			sawCall = true
-			if id := probe(entries[i]).CallID; id != "" {
+			if id := session.ProbeItem(entries[i].Item).CallID; id != "" {
 				open[id] = true
 			}
 		case isOutput:
-			if id := probe(entries[i]).CallID; id != "" {
+			if id := session.ProbeItem(entries[i].Item).CallID; id != "" {
 				delete(open, id)
 			}
 		case kind == GroupOther:
@@ -244,26 +228,10 @@ func (idx *Index) Counts() Counts {
 	return c
 }
 
-// ContextTokens estimates the included context's size.
-//
-// It is a hybrid, and that is the point. The provider's own usage number is
-// authoritative for everything up to the last model call it covers; estimating
-// that part again would replace a measurement with a guess. Only what came
-// after has to be estimated, and that is a handful of entries rather than a
-// whole conversation.
-//
-// The measurement predates THIS pass's exclusions: its InputTokens counted
-// every group in the context when the call was made, including any a strategy
-// has excluded since. Those unsettled exclusions are subtracted at their
-// estimated size (their replacement, which now stands in, added back) —
-// imprecise, but the point is movement: a number exclusion cannot lower keeps
-// every threshold trigger firing all the way to the preserve floor, and
-// a tokens-below Target can never be reached. Exclusions from earlier passes are
-// settled by Update once a newer call has priced them in, and are not
-// subtracted twice.
-//
-// With no usable usage anywhere — a fresh session, or one whose calls all
-// failed — it falls back to estimating everything.
+// ContextTokens estimates the included context's size: the newest measured
+// usage as fact, minus this pass's unsettled exclusions (their replacements
+// added back), plus an estimate of everything after it. With no usable usage
+// anywhere it estimates everything. The rule and its reason: spec §2.5f.
 func (idx *Index) ContextTokens() int {
 	// Locate the newest included entry carrying usage, and where it sits.
 	usageGroup, usageEntry := -1, -1

@@ -233,23 +233,34 @@ func (r *runner) executeToolsAndSideEffects(
 	// Run the approved function tools in parallel, then merge with the rejected
 	// results in original call order so item order and the turn-boundary hooks
 	// see every call.
-	var executed []functionToolResult
+	var executed, refusedHandoffs []functionToolResult
+	handoffs := pr.Handoffs
 	if resp.Truncated() {
-		// The response was cut off at the output-token limit, so a call's
-		// arguments may stop mid-JSON. None of them run.
+		// None of the calls run, the handoffs included: each is answered with
+		// a refusal and the model resends (spec §2.7e).
 		r.log.component("tool").Warn(ctx, "response truncated; refusing to run its tool calls",
-			slog.Int("calls", len(toRun)))
+			slog.Int("calls", len(toRun)+len(handoffs)))
 		RecordDiagnostic(ctx, DiagResponseTruncated, nil, map[string]any{
-			"calls": len(toRun), "response_id": resp.ResponseID,
+			"calls": len(toRun) + len(handoffs), "response_id": resp.ResponseID,
 		})
-		executed = truncatedCallResults(agent, toRun)
+		calls := make([]functionCall, 0, len(toRun))
+		for _, run := range toRun {
+			calls = append(calls, run.Call)
+		}
+		executed = truncatedCallResults(agent, calls)
+		calls = calls[:0]
+		for _, h := range handoffs {
+			calls = append(calls, h.Call)
+		}
+		refusedHandoffs = truncatedCallResults(agent, calls)
+		handoffs = nil
 	} else {
 		executed, err = r.runFunctionTools(ctx, agent, toRun)
 		if err != nil {
 			return nil, err
 		}
 	}
-	functionResults := orderToolResults(functions, executed, rejected)
+	functionResults := append(orderToolResults(functions, executed, rejected), refusedHandoffs...)
 
 	// A model stuck calling a broken tool would otherwise burn the whole turn
 	// budget rediscovering that it is broken, and bill for it.
@@ -309,8 +320,8 @@ func (r *runner) executeToolsAndSideEffects(
 	}
 
 	// Handoffs take precedence: switch to the first requested target agent.
-	if len(pr.Handoffs) > 0 {
-		return r.executeHandoff(ctx, agent, pr.Handoffs, newStepItems)
+	if len(handoffs) > 0 {
+		return r.executeHandoff(ctx, agent, handoffs, newStepItems)
 	}
 
 	// Every tool in the batch asked to stop: honor it, using the last output as
@@ -427,7 +438,7 @@ func (r *runner) decideFinalOutput(
 // orderToolResults merges the executed and rejected tool results back into the
 // original call order given by calls, so run items and the turn hooks observe
 // every call in the sequence the model emitted. Results are matched by call
-// id; any unmatched executed/rejected results are appended defensively.
+// id; every result came from one of calls.
 func orderToolResults(calls []toolRunFunction, executed, rejected []functionToolResult) []functionToolResult {
 	byCallID := make(map[string]functionToolResult, len(executed)+len(rejected))
 	for _, r := range executed {
@@ -437,19 +448,10 @@ func orderToolResults(calls []toolRunFunction, executed, rejected []functionTool
 		byCallID[r.callID] = r
 	}
 	out := make([]functionToolResult, 0, len(byCallID))
-	seen := make(map[string]bool, len(byCallID))
 	for _, c := range calls {
-		if res, ok := byCallID[c.Call.CallID]; ok && !seen[c.Call.CallID] {
+		if res, ok := byCallID[c.Call.CallID]; ok {
 			out = append(out, res)
-			seen[c.Call.CallID] = true
-		}
-	}
-	// Defensive: include any result whose call id was not in calls (should not
-	// happen, but never drop a produced output).
-	for _, r := range append(executed, rejected...) {
-		if !seen[r.callID] {
-			out = append(out, r)
-			seen[r.callID] = true
+			delete(byCallID, c.Call.CallID)
 		}
 	}
 	return out

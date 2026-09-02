@@ -164,8 +164,8 @@ func (r *runner) seedLoop(startAgent *Agent, originalInput []InputItem) loopSeed
 	seed.rawResponses = append([]*ModelResponse{}, r.resume.RawResponses...)
 	seed.pendingResponse = r.resume.InterruptedResponse
 	seed.cursor = r.resume.cursor
-	// GeneratedItems is the tail of the log the model still sees. A state
-	// without SessionItems (pre-field) saw no filter, so the two are one.
+	// GeneratedItems is the tail of the log the model still sees; a state with
+	// no SessionItems saw no filter, so the two are one.
 	sessionSeed := r.resume.SessionItems
 	if sessionSeed == nil {
 		sessionSeed = r.resume.GeneratedItems

@@ -502,3 +502,27 @@ func TestFanoutAheadOfHeadCursorResetsImmediately(t *testing.T) {
 		t.Fatal("an ahead-of-head cursor produced no gap; the consumer would sit in silence")
 	}
 }
+
+// Without a replay window a cursor behind the head still names items that can
+// never be delivered; the gap runs forward from it like any evicted range.
+func TestFanoutNoReplayReportsAGapBehindTheHead(t *testing.T) {
+	f := NewFanout[int](FanoutOptions{})
+	for i := 1; i <= 5; i++ {
+		f.Publish(i)
+	}
+	stream, cancel := f.Subscribe(2)
+	defer cancel()
+	f.Publish(6)
+	f.Close()
+
+	got, gaps := drainFanout(stream)
+	if len(got) != 1 || got[0] != 6 {
+		t.Fatalf("got %v, want [6]", got)
+	}
+	if len(gaps) != 1 {
+		t.Fatalf("gaps = %v, want one for seq 3..5", gaps)
+	}
+	if g := gaps[0]; g.Dropped != 3 || g.LastGood != 2 || g.Next != 6 {
+		t.Errorf("gap = %+v, want Dropped 3, LastGood 2, Next 6", g)
+	}
+}

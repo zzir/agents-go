@@ -1,6 +1,10 @@
 package agents
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/zzir/agents-go/agents/session"
+)
 
 // RunResult is the outcome of a completed (non-streaming) run.
 type RunResult struct {
@@ -112,12 +116,7 @@ func (r *RunResult) UsageByResponse() map[string]RequestUsage {
 		// rather than overwrite, so a repeat is visible in the total instead of
 		// silently replacing what came before.
 		if prev, ok := out[resp.ResponseID]; ok {
-			u.InputTokens += prev.InputTokens
-			u.OutputTokens += prev.OutputTokens
-			u.TotalTokens += prev.TotalTokens
-			u.InputTokensDetails.CachedTokens += prev.InputTokensDetails.CachedTokens
-			u.InputTokensDetails.CacheWriteTokens += prev.InputTokensDetails.CacheWriteTokens
-			u.OutputTokensDetails.ReasoningTokens += prev.OutputTokensDetails.ReasoningTokens
+			session.AddRequestUsage(&u, &prev)
 		}
 		out[resp.ResponseID] = u
 	}
@@ -137,12 +136,7 @@ func (r *RunResult) NestedUsage() RequestUsage {
 			continue
 		}
 		u := it.NestedUsage.Request()
-		total.InputTokens += u.InputTokens
-		total.OutputTokens += u.OutputTokens
-		total.TotalTokens += u.TotalTokens
-		total.InputTokensDetails.CachedTokens += u.InputTokensDetails.CachedTokens
-		total.InputTokensDetails.CacheWriteTokens += u.InputTokensDetails.CacheWriteTokens
-		total.OutputTokensDetails.ReasoningTokens += u.OutputTokensDetails.ReasoningTokens
+		session.AddRequestUsage(&total, &u)
 	}
 	return total
 }

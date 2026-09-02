@@ -33,8 +33,7 @@ const (
 //
 // The code is DERIVED from the error's type, so there is exactly one source of
 // truth: an SDK error cannot be built with a mismatched code, because there is
-// no code to set. (A previous design carried a Code field beside the types, and
-// the two disagreed exactly as often as a constructor was bypassed.)
+// no code to set.
 //
 // This is the accessor a transport should use. Branching on the concrete error
 // types instead means a code added later is invisible to it.
@@ -112,12 +111,8 @@ func Classify(code ErrorCode, err error) error {
 //
 // Result carries the partial progress — input, generated items, raw responses,
 // usage, guardrail results, diagnostics — as a *RunResult with a nil
-// FinalOutput. It is the same shape a completed run reports, because a failed
-// run and a finished one describe the same thing; the difference is that one
-// has an answer. (A previous design duplicated seven RunResult fields into a
-// separate details struct, and attached it only when the cause happened to be
-// an SDK-typed error — a plain error from a hook or the session lost the
-// progress entirely.)
+// FinalOutput: a failed run and a finished one describe the same thing, and
+// only one has an answer.
 //
 // Reach it with errors.AsType; classify the cause with CodeOf, which sees
 // through this wrapper:

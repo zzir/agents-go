@@ -26,13 +26,9 @@ type Ref struct {
 // Direct returns a ref for the scope where the id names the storage.
 func Direct(id string) Ref { return Ref{ID: id} }
 
-// IsDirect reports whether r addresses the scope where the id names the
-// storage, rather than one generation of a repo-managed session.
-func (r Ref) IsDirect() bool { return r.Gen == "" }
-
 // String renders the ref for logs and errors.
 func (r Ref) String() string {
-	if r.IsDirect() {
+	if r.Gen == "" {
 		return r.ID
 	}
 	return r.ID + "@" + r.Gen

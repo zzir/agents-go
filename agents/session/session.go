@@ -2,9 +2,7 @@ package session
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 
 	"github.com/zzir/agents-go/tracing"
 )
@@ -220,38 +218,4 @@ type CompactionArgs struct {
 // one: compaction rewrites what is stored.
 type CompactionAware interface {
 	RunCompaction(ctx context.Context, args CompactionArgs) error
-}
-
-// MarshalItems serializes a slice of input items to JSON, suitable for database
-// storage. It handles nil slices gracefully (returning "[]").
-func MarshalItems(items []InputItem) ([]byte, error) {
-	if items == nil {
-		items = []InputItem{}
-	}
-	return json.Marshal(items)
-}
-
-// UnmarshalItems deserializes a JSON byte slice (as produced by MarshalItems)
-// back into input items, tolerating nil, empty, and "null" as a nil slice.
-//
-// Each element goes through UnmarshalInputItem so the union fix-ups apply — a
-// plain slice decode matches EasyInputMessageParam first and silently drops
-// assistant output_text/refusal content — keeping the round-trip lossless.
-func UnmarshalItems(data []byte) ([]InputItem, error) {
-	if len(data) == 0 || string(data) == "null" {
-		return nil, nil
-	}
-	var raws []json.RawMessage
-	if err := json.Unmarshal(data, &raws); err != nil {
-		return nil, fmt.Errorf("unmarshal session items: %w", err)
-	}
-	items := make([]InputItem, 0, len(raws))
-	for i, raw := range raws {
-		item, err := UnmarshalInputItem(raw)
-		if err != nil {
-			return nil, fmt.Errorf("unmarshal session item %d: %w", i, err)
-		}
-		items = append(items, item)
-	}
-	return items, nil
 }

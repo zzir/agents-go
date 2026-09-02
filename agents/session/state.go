@@ -109,25 +109,38 @@ func AddRequestUsage(dst *RequestUsage, src *RequestUsage) {
 	dst.OutputTokensDetails.ReasoningTokens += src.OutputTokensDetails.ReasoningTokens
 }
 
+// ItemProbe is the classifying fields of a stored item, read off its wire JSON
+// without decoding the union — the item may be a type this build does not
+// model. A field the item lacks is zero.
+type ItemProbe struct {
+	Type    string          `json:"type"`
+	Role    string          `json:"role"`
+	CallID  string          `json:"call_id"`
+	Name    string          `json:"name"`
+	Args    string          `json:"arguments"`
+	Content json.RawMessage `json:"content"`
+	Output  json.RawMessage `json:"output"`
+	Summary json.RawMessage `json:"summary"`
+}
+
+// ProbeItem reads the classifying fields of an item's wire JSON; malformed or
+// empty JSON probes as the zero value.
+func ProbeItem(item json.RawMessage) ItemProbe {
+	var p ItemProbe
+	if len(item) > 0 {
+		_ = json.Unmarshal(item, &p)
+	}
+	return p
+}
+
 // entryCallID reports an item entry's tool call id and whether it is a call or
-// an output, by probing the stored wire JSON rather than decoding the whole
-// union — the item may be a type this build does not model.
+// an output.
 func entryCallID(e Entry) (id string, isCall, isOutput bool) {
-	if len(e.Item) == 0 {
-		return "", false, false
-	}
-	var probe struct {
-		Type   string `json:"type"`
-		CallID string `json:"call_id"`
-	}
-	if err := json.Unmarshal(e.Item, &probe); err != nil {
-		return "", false, false
-	}
-	switch probe.Type {
+	switch p := ProbeItem(e.Item); p.Type {
 	case "function_call":
-		return probe.CallID, true, false
+		return p.CallID, true, false
 	case "function_call_output":
-		return probe.CallID, false, true
+		return p.CallID, false, true
 	}
 	return "", false, false
 }

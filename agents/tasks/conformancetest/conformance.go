@@ -1,12 +1,7 @@
 // Package conformancetest holds the behavioral contract every tasks.Store
 // implementation must satisfy, as one reusable test suite — the same shape as
-// modelkit/conformancetest for Model implementations.
-//
-// It exists because the contract used to be enforced by three hand-written,
-// near-duplicate test files (the SDK's in-memory store, the server's, the
-// sessions module's) whose coverage drifted apart: each store had predicates
-// the others' tests locked and its own did not. A store passes this suite or
-// it does not implement the interface, whatever its comments claim.
+// modelkit/conformancetest for Model implementations. A store passes this
+// suite or it does not implement the interface, whatever its comments claim.
 //
 // Store-SPECIFIC behavior stays in each store's own tests — above all the SQL
 // stores' session-generation predicates, which the in-memory store does not

@@ -57,13 +57,6 @@ func (m *ModelResponse) Truncated() bool {
 	return m != nil && m.Status == "incomplete" && m.IncompleteReason == "max_output_tokens"
 }
 
-// ToInputItems converts the model output items into input items suitable for the
-// next model call. Output and input share the same wire format, so the
-// conversion round-trips through JSON.
-func (m *ModelResponse) ToInputItems() ([]InputItem, error) {
-	return OutputToInput(m.Output)
-}
-
 // OutputToInput converts a slice of model output items into input items by
 // re-encoding each item's wire JSON into the input union.
 func OutputToInput(out []OutputItem) ([]InputItem, error) {

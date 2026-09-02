@@ -1,6 +1,9 @@
 package agents
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 // usageSnapshot returns a detached copy of the run's usage accumulator for
 // anything handed to the caller — a RunResult, a RunState, error details. The
@@ -114,6 +117,10 @@ func (r *runner) recoverMaxTurns(ctx context.Context, cause *MaxTurnsError) (*Ru
 // *RunError carrying the run's progress so far, so a caller reaches the
 // completed turns through RunError.Result instead of getting a bare error.
 func (r *runner) fail(err error) error {
+	if errors.Is(err, errConsumerStopped) {
+		// Not a failure: the consumer left, and nobody is told anything.
+		return err
+	}
 	// Mark the current agent span failed so the error is visible in traces;
 	// child spans (generation, function) set their own errors at the source.
 	r.agentSpan.SetError(err.Error(), nil)

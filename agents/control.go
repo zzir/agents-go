@@ -107,7 +107,7 @@ func newRunControl() *runControl { return &runControl{} }
 
 func (c *runControl) StopAfterTurn() { c.stopAfterTurn.Store(true) }
 
-func (c *runControl) stopRequested() bool { return c != nil && c.stopAfterTurn.Load() }
+func (c *runControl) stopRequested() bool { return c.stopAfterTurn.Load() }
 
 // Steer implements RunControl.
 func (c *runControl) Steer(input any) error { return c.enqueue(injectSteer, input) }
@@ -173,9 +173,6 @@ func (c *runControl) takeContinuation() []InputItem {
 // commitInjected and rollbackInjected settle what happened to the attempt the
 // items were handed to.
 func (c *runControl) take(want func(injectKind) bool) []InputItem {
-	if c == nil {
-		return nil
-	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var out []InputItem
@@ -197,9 +194,6 @@ func (c *runControl) take(want func(injectKind) bool) []InputItem {
 // the attempt completed, or a RunState carrying them in its item log was
 // built. After a commit no retry re-delivers them.
 func (c *runControl) commitInjected() {
-	if c == nil {
-		return
-	}
 	c.mu.Lock()
 	c.inFlight = nil
 	c.mu.Unlock()
@@ -210,9 +204,6 @@ func (c *runControl) commitInjected() {
 // retried resume — delivers what the failed attempt consumed but never made
 // durable.
 func (c *runControl) rollbackInjected() {
-	if c == nil {
-		return
-	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if len(c.inFlight) == 0 {
@@ -243,7 +234,7 @@ func (c *runControl) rollbackInjected() {
 // retry exactly once. PendingInput keeps the three-list wire shape, so cross-kind
 // arrival order is not preserved across a pause; within a live queue it is.
 func (c *runControl) restore(p PendingInput) {
-	if c == nil || p.Empty() {
+	if p.Empty() {
 		return
 	}
 	c.mu.Lock()

@@ -3,7 +3,6 @@ package session
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/openai/openai-go/v3/responses"
@@ -157,13 +156,8 @@ func toolNamesByCallID(entries []Entry) map[string]string {
 			out[e.Display.CallID] = e.Display.ToolName
 			continue
 		}
-		if id, isCall, _ := entryCallID(e); isCall && id != "" {
-			var probe struct {
-				Name string `json:"name"`
-			}
-			if json.Unmarshal(e.Item, &probe) == nil && probe.Name != "" {
-				out[id] = probe.Name
-			}
+		if p := ProbeItem(e.Item); p.Type == "function_call" && p.CallID != "" && p.Name != "" {
+			out[p.CallID] = p.Name
 		}
 	}
 	return out

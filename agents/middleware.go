@@ -14,6 +14,10 @@ type RunInput struct {
 	Agent *Agent
 	Input []InputItem
 	Opts  *RunOptions
+	// Control is the handle the caller holds on this run. A middleware that
+	// resumes a paused attempt hands it to ResumeRunWith, so the caller's stop
+	// request and queued input survive the resume (spec §2.12).
+	Control RunControl
 }
 
 // RunFunc executes a run and returns its stream. A middleware receives one as

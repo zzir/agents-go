@@ -15,21 +15,6 @@ import (
 // the plan review, and the plan text is in the call's arguments.
 const PlanToolName = "submit_plan"
 
-// NOTE for hosts: "is this run past its plan phase" has exactly one durable
-// answer — the record your PlanPhase.OnUnlock hook wrote. Do not infer it
-// from anything else: a REJECTED submit_plan persists as the same
-// function_call shape, the executed call's output text can be rewritten by a
-// tool-output guardrail, and an approval record can outlive an execution
-// that failed (argument validation) — every one of those proxies has
-// produced a wrong unlock.
-//
-// The same record is what re-arms a RESUMED run: Apply returns a fresh,
-// locked PlanPhase, so rebuilding the agent for agents.RunStateFromJSON
-// resets the phase, and a run that paused mid-execution would come back
-// without its write tools. Consult your unlock record (or the copy a pause
-// carried in agents.RunState.Extra) and call Unlock before ResumeRun — see
-// docs/human_in_the_loop.md "Rebuilding transformed agents".
-
 // DefaultReadOnlyTools are extra tool names Plan leaves usable while planning,
 // on top of every tool that declares `Tool.ReadOnly`. The list covers what a
 // caller does not own: a tool from another package, or an MCP server that
@@ -60,26 +45,16 @@ is rejected, revise it using the feedback and submit again.`
 // feeds its message back and the model revises; the write tools stay locked.
 //
 // Gating DENIES rather than hides: a gated tool stays in the model's toolset
-// and answers a call while planning with a refusal naming what to do instead.
-// A model that cannot see a tool it expects reaches for it anyway and gets
-// "tool not found", which teaches it nothing; a refusal teaches it the phase.
-// A FIRST-PARTY tool declares itself read-only through Tool.ReadOnly; an MCP
-// tool's ReadOnly is the server's own readOnlyHint, which the gate does NOT
-// trust — an MCP tool is admitted only when named in ReadOnlyTools.
-//
-// The refusal outranks approval: a gated call while planning raises NO human
-// approval — not the tool's own and not the agent's ApproveTools listing,
-// which Apply translates into per-tool predicates (and clears) so the phase
-// can suppress it. Read-only tools keep their approval in both phases.
-//
-// The middleware rewrites the ENTRY agent only. A handoff target keeps its
-// own toolset — same scoping as every instruction-injecting middleware.
+// and answers a call while planning with a refusal, and raises no approval —
+// not the tool's own, not the agent's ApproveTools listing (Apply translates
+// it into per-tool predicates). A direct tool is read-only by Tool.ReadOnly;
+// an MCP tool only when ReadOnlyTools names it. The middleware rewrites the
+// ENTRY agent only; a handoff target keeps its own toolset. The invariants and
+// their reasons: spec §2.12.
 //
 // Apply is safe to call unconditionally: an already-unlocked phase gates
-// nothing, offers no submit_plan and adds no preamble. Whether THIS run plans
-// is the returned PlanPhase's answer, not a build-time one — which is what
-// lets plan mode be a property of the session (or the person's request)
-// rather than of the agent.
+// nothing, offers no submit_plan and adds no preamble, so whether THIS run
+// plans is the returned PlanPhase's answer, not a build-time one.
 type Plan struct {
 	// ReadOnlyTools are the tool names usable while planning.
 	// Nil means DefaultReadOnlyTools; an explicit empty slice means none.
@@ -95,15 +70,10 @@ type planArgs struct {
 
 // PlanPhase is one run's plan/execute switch, shared by every gate that
 // Apply installed on the agent. The approved submit_plan flips it; a host
-// that REBUILDS the agent to resume a run whose plan phase already ended —
-// durable HITL, where the paused state is deserialized against a fresh
-// registry — calls Unlock so the rebuilt run starts in the executing phase
-// instead of demanding a second plan.
-//
-// What such a host must persist is the UNLOCK itself (via OnUnlock), not the
-// approval: an approved submit_plan can still fail to execute (argument
-// validation, say), and its recorded approval would then unlock a later
-// resume whose new plan was never accepted.
+// that REBUILDS the agent to resume a run whose plan phase already ended
+// calls Unlock so the rebuilt run starts executing instead of demanding a
+// second plan. What such a host persists is the UNLOCK (OnUnlock), never the
+// approval — spec §2.12.
 type PlanPhase struct {
 	executing atomic.Bool
 	mu        sync.Mutex
@@ -113,21 +83,18 @@ type PlanPhase struct {
 // OnUnlock registers fn to run at the FIRST unlock — the moment the approved
 // submit_plan actually executes. Hosts persist their durable "plan phase
 // over" mark here. The hook is a PRECONDITION, not a notification: its error
-// fails the unlock and the phase stays planning, so the run can never be
-// executing ahead of its durable record (a mark that only followed the flip
-// left exactly that gap — writes fail).
+// fails the unlock and the phase stays planning, so the run is never
+// executing ahead of its durable record.
 func (p *PlanPhase) OnUnlock(fn func() error) {
 	p.mu.Lock()
 	p.onUnlock = fn
 	p.mu.Unlock()
 }
 
-// Unlock moves the run into the executing phase: gated tools become visible
-// and submit_plan disappears. The first transition runs the OnUnlock hook
-// first and keeps the phase locked if it fails — the caller (the submit_plan
-// tool) surfaces that as a tool error, the model resubmits, and the human
-// re-approves; brief friction on a failed write beats a run whose durable
-// state disagrees with its behavior.
+// Unlock moves the run into the executing phase: gated tools run and
+// submit_plan disappears. The first transition runs the OnUnlock hook first
+// and keeps the phase locked if it fails; submit_plan reports that as a tool
+// error and the review repeats.
 func (p *PlanPhase) Unlock() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -175,11 +142,9 @@ func (p Plan) Apply(agent *agents.Agent) (*agents.Agent, *PlanPhase) {
 	phase := &PlanPhase{}
 
 	out := agent.Clone()
-	// The agent-level ApproveTools list is consulted by the runner BEFORE a
-	// tool runs, so it would pause a human over a call the planning gate is
-	// about to refuse. Apply therefore translates the list into each tool's own
-	// predicate — where the gate can suppress it while planning — and clears
-	// it; after unlock the translated predicates answer exactly as the list did.
+	// The runner consults ApproveTools ahead of the gate (spec §2.7), so the
+	// list is translated into each tool's own predicate — where the gate can
+	// suppress it while planning — and cleared.
 	listed := approvalListMatcher(out.ApproveTools)
 	out.ApproveTools = nil
 	tools := make([]*agents.Tool, 0, len(out.Tools)+1)
@@ -231,11 +196,8 @@ func (p Plan) Apply(agent *agents.Agent) (*agents.Agent, *PlanPhase) {
 		out.Handoffs = hs
 	}
 
-	// MCP tools are listed fresh each turn, so a wrapper gates them per listing
-	// — the same refusal as a direct tool, applied to a set Plan cannot see at
-	// build time. The wrapper also carries the translated ApproveTools listing:
-	// the list was cleared above, and an MCP tool it named must keep requiring
-	// approval once executing.
+	// MCP tools are listed fresh each turn, so a wrapper gates them per
+	// listing and carries the translated ApproveTools listing.
 	if len(out.MCPServers) > 0 {
 		wrapped := make([]agents.MCPServer, 0, len(out.MCPServers))
 		for _, s := range out.MCPServers {
@@ -244,10 +206,8 @@ func (p Plan) Apply(agent *agents.Agent) (*agents.Agent, *PlanPhase) {
 		out.MCPServers = wrapped
 	}
 
-	// The preamble is emitted only while the phase is LOCKED. Instructions are
-	// computed per run, so an agent that starts (or is rebuilt) already
-	// unlocked carries none of it — which is what lets a host apply Plan
-	// unconditionally and decide the phase separately.
+	// The preamble is emitted only while the phase is LOCKED, so an agent
+	// that starts (or is rebuilt) already unlocked carries none of it.
 	preamble := strings.TrimSpace(firstNonEmpty(p.Instructions, DefaultPlanInstructions))
 	inner := out.Instructions
 	out.Instructions = func(ctx context.Context, rc *agents.RunContext, agent *agents.Agent) (string, error) {
@@ -263,15 +223,9 @@ func (p Plan) Apply(agent *agents.Agent) (*agents.Agent, *PlanPhase) {
 }
 
 // gateTool returns a copy of t that refuses to run while the plan phase is
-// still planning. The refusal is a normal tool OUTPUT, not an error: an error
-// without a FailureErrorFunction aborts the run, and a phase decision is not a
-// failure — the model is meant to read it and submit a plan.
-//
-// The refusal fires BEFORE the approval gate: while planning the copy answers
-// "no approval needed", because pausing a human over a call the phase refuses
-// anyway wastes the interruption on a no-op. Once executing, the tool's own
-// predicate answers, then the agent-level listing (`listed`) Apply translated
-// out of ApproveTools — see spec §"Plan gates by DENYING".
+// still planning — a normal tool OUTPUT, not an error — and needs no approval
+// while it refuses. Once executing, the tool's own predicate answers, then
+// the agent-level listing Apply translated out of ApproveTools (spec §2.12).
 func gateTool(t *agents.Tool, phase *PlanPhase, listed bool) *agents.Tool {
 	gated := *t
 	inner := t.OnInvoke
@@ -361,16 +315,12 @@ func (m planMCP) ListTools(ctx context.Context, rc *agents.RunContext, agent *ag
 		return tools, err
 	}
 	// A fresh slice, never tools[:0]: the inner server may hand out a cached
-	// slice, and rewriting in place would corrupt it for every later turn.
-	// The gates check the phase per CALL, so one wrapping serves both phases.
+	// slice. The gates check the phase per CALL, so one wrapping serves both
+	// phases.
 	out := make([]*agents.Tool, 0, len(tools))
 	for _, t := range tools {
-		// By NAME only — never the tool's own ReadOnly. On an MCP tool that flag
-		// is the server's readOnlyHint, a claim the external server makes about
-		// itself; trusting it would let a server mark a write tool "read-only"
-		// and run it while the person believes nothing can change. Plan mode's
-		// guarantee cannot rest on an outside declaration, so an MCP tool is
-		// admitted only when the CALLER named it in ReadOnlyTools.
+		// By NAME only, never the tool's own ReadOnly: on an MCP tool that is
+		// the server's readOnlyHint, an outside claim (spec §2.12).
 		if m.readOnly[t.Name] {
 			out = append(out, keepListedApproval(t, m.listed(t.Name)))
 			continue

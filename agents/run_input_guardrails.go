@@ -79,19 +79,19 @@ func (r *runner) firstTurnInputGuardrails(
 ) (inputGateResult, error) {
 	out := inputGateResult{original: originalInput}
 	all := selectStage(r.runGuardrails(startAgent), StageInput)
-	var sequential, parallel []Guardrail
+	var blocking, parallel []Guardrail
 	for _, g := range all {
 		if g.Blocking {
-			sequential = append(sequential, g)
+			blocking = append(blocking, g)
 		} else {
 			parallel = append(parallel, g)
 		}
 	}
 
-	// Sequential (blocking) guardrails: a tripwire prevents the model call.
-	if len(sequential) > 0 {
+	// Blocking guardrails gate the call: a tripwire prevents it.
+	if len(blocking) > 0 {
 		gspan := r.trace.StartGuardrailSpan("input", r.agentParentID())
-		res, gerr := runStageConcurrent(ctx, r.rc, sequential,
+		res, gerr := runStageConcurrent(ctx, r.rc, blocking,
 			GuardrailPayload{Stage: StageInput, Agent: startAgent, Input: out.original})
 		r.recordGuardrailResults(res...)
 		if repl, ok := inputReplacement(res); ok {
@@ -187,7 +187,7 @@ func (r *runner) raceModelCall(span *tracing.SpanHandle, call func(context.Conte
 	// wait on the guardrails here, or a slow one parks the consumer's break for
 	// its full duration. Cancel them and leave — their verdict is about a turn
 	// nobody will read.
-	if r.consumerStopped.Load() || errors.Is(err, errConsumerStopped) {
+	if r.closed.Load() || errors.Is(err, errConsumerStopped) {
 		race.stop()
 		span.Finish()
 		out.resp, out.stopped = nil, true

@@ -38,9 +38,9 @@ type functionToolResult struct {
 // toolPanicError is what a panic recovered from user tool code is converted
 // into. Error() is deliberately a single line — a FailureErrorFunction feeds it
 // back to the model like any other tool error — while the captured stack is
-// appended only on the fatal path (see fatalError). It is built at three recover
-// points: the per-tool errgroup goroutine, invokeTool's timeout goroutine, and
-// toolHandleFailure.
+// appended only on the fatal path (see fatalError). invokeTool builds it for
+// the tool body, toolHandleFailure for the failure handler, and the errgroup
+// goroutine as a last resort for anything else on it.
 type toolPanicError struct {
 	toolName string
 	value    any
@@ -87,213 +87,19 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 	}
 	for i, run := range runs {
 		g.Go(func() (err error) {
-			// Record this call's aborting error (if any) by index for the
-			// deterministic pick below. Registered first so it runs last —
-			// after the panic-recovery defer may have set err.
 			defer func() {
+				// errgroup does not recover panics. The tool body's own panic
+				// is already an error by now (invokeTool); anything else that
+				// panics on this goroutine aborts the run.
+				if p := recover(); p != nil {
+					err = newToolPanicError(run.Call.Name, p).fatalError()
+				}
 				if err != nil {
 					fatalErrs[i] = err
 				}
 			}()
-			tc := &ToolContext{
-				RunContext:    r.rc,
-				ToolName:      run.Call.Name,
-				ToolCallID:    run.Call.CallID,
-				ToolArguments: run.Call.Arguments,
-				Agent:         agent,
-				ToolCall:      run.Call.Raw,
-			}
-			// Progress is delivered only on a streamed run; on a blocking run
-			// nobody is watching and buffering it would grow without bound.
-			if r.rawEvents {
-				tc.emit = func(partial ToolResult) {
-					r.emit(&ToolProgressEvent{
-						ToolName: run.Call.Name,
-						CallID:   run.Call.CallID,
-						Agent:    agent,
-						Result:   partial,
-					})
-				}
-			}
-			defer tc.finish()
-
-			tlog := r.log.component("tool").with(
-				slog.String("tool", run.Call.Name), slog.String("call_id", run.Call.CallID))
-			tlog.Debug(ctx, "tool started", Sensitive("arguments", run.Call.Arguments))
-			started := time.Now()
-			defer func() {
-				if err != nil {
-					tlog.Error(ctx, "tool failed",
-						slog.Duration("elapsed", time.Since(started)),
-						slog.String("error", err.Error()))
-					return
-				}
-				tlog.Debug(ctx, "tool finished", slog.Duration("elapsed", time.Since(started)))
-			}()
-			// This goroutine runs user code and errgroup does not recover
-			// panics, so convert a panic into the tool's regular error path: a
-			// FailureErrorFunction feeds it back to the model, else it aborts
-			// the run (with the stack attached).
-			defer func() {
-				p := recover()
-				if p == nil {
-					return
-				}
-				perr := newToolPanicError(run.Call.Name, p)
-				RecordDiagnostic(ctx, DiagToolPanic, perr, map[string]any{
-					"tool": run.Call.Name, "call_id": run.Call.CallID,
-				})
-				if run.Tool.FailureErrorFunction == nil {
-					err = perr.fatalError()
-					return
-				}
-				msg, herr := toolHandleFailure(gctx, run.Tool, tc, perr)
-				if herr != nil {
-					// The failure handler panicked too. Report it instead of
-					// letting the second panic unwind the process.
-					err = herr
-					return
-				}
-				results[i] = functionToolResult{
-					tool:       run.Tool,
-					outputItem: newFunctionCallOutputItem(agent, run.Call.CallID, msg),
-					output:     msg,
-					callID:     run.Call.CallID,
-				}
-				err = nil
-			}()
-
-			// Tool input guardrails run BEFORE the tool executes: a
-			// reject_content guardrail resolves the call with a substituted
-			// output and the tool itself never runs.
-			if rejected, msg, err := r.runToolStage(gctx, agent, StageToolInput, run, nil); err != nil {
-				return err
-			} else if rejected {
-				results[i] = functionToolResult{
-					tool:       run.Tool,
-					outputItem: newFunctionCallOutputItem(agent, run.Call.CallID, msg),
-					output:     msg,
-					callID:     run.Call.CallID,
-				}
-				return nil
-			}
-
-			span := r.trace.StartFunctionSpan(run.Call.Name, r.agentParentID())
-			defer span.Finish() // idempotent; covers panics in user tool code
-			if span.Span != nil {
-				tc.functionSpanID = span.Span.SpanID
-			}
-			// The call id is what ties this span back to the conversation item
-			// the tool produced — an id, not payload, so it is recorded whether
-			// or not sensitive data is.
-			span.Set("call_id", run.Call.CallID)
-			// Record the call arguments and result on the span, gated like generation
-			// payloads.
-			logToolData := r.traceIncludeSensitiveData()
-			if logToolData {
-				span.Set("input", run.Call.Arguments)
-			}
-			// The function span becomes the parent for anything the tool does —
-			// an MCP round trip, a sandbox exec — via the context.
-			result, err := invokeTool(tracing.WithSpan(gctx, span), run.Tool, tc, run.Call.Arguments)
-			out := result.ModelOutput()
-			if err != nil {
-				// An agent-as-tool whose nested run paused for approval is not a
-				// failure: record the surfaced interruptions and the paused
-				// nested state (no output item) so the parent run pauses too.
-				if ni, ok := errors.AsType[*nestedRunInterrupt](err); ok {
-					span.Finish()
-					results[i] = functionToolResult{
-						tool:                run.Tool,
-						callID:              run.Call.CallID,
-						nestedInterruptions: ni.interruptions,
-						nestedState:         ni.state,
-					}
-					return nil
-				}
-				// A panic recovered inside invokeTool's timeout goroutine
-				// arrives here as a regular error. Record the same diagnostic
-				// the direct-path recover records, so a panic is observable
-				// whether or not the tool had a Timeout.
-				if pe, ok := errors.AsType[*toolPanicError](err); ok {
-					RecordDiagnostic(ctx, DiagToolPanic, pe, map[string]any{
-						"tool": run.Call.Name, "call_id": run.Call.CallID,
-					})
-				}
-				// A timeout is recorded whether or not a FailureErrorFunction
-				// converts it into model-visible output below.
-				if te, ok := errors.AsType[*ToolTimeoutError](err); ok {
-					RecordDiagnostic(ctx, DiagToolTimeout, te, map[string]any{
-						"tool": run.Call.Name, "call_id": run.Call.CallID,
-					})
-				}
-				// Tool errors routinely embed the call arguments, so the span error is
-				// gated like input/output.
-				if logToolData {
-					span.SetError(err.Error(), nil)
-				} else {
-					span.SetError(redactedToolErrorMessage, nil)
-				}
-				span.Finish()
-				// Without a FailureErrorFunction the error aborts the run.
-				if run.Tool.FailureErrorFunction == nil {
-					// A panic recovered inside invokeTool's timeout goroutine
-					// gets its stack attached here, like the direct path above.
-					if pe, ok := errors.AsType[*toolPanicError](err); ok {
-						err = pe.fatalError()
-					}
-					return fmt.Errorf("tool %q failed: %w", run.Call.Name, err)
-				}
-				// The failure message becomes the tool output and flows through the same
-				// tail as a success — output guardrails and custom data see it.
-				var herr error
-				out, herr = toolHandleFailure(gctx, run.Tool, tc, err)
-				if herr != nil {
-					// The handler itself panicked: fatal, like a tool without one.
-					return herr
-				}
-				// A handled failure is still a failure as far as the UI is
-				// concerned; the model sees the message either way.
-				result = TextResult(stringifyToolOutput(out))
-				result.IsError = true
-			} else {
-				if logToolData {
-					span.Set("output", stringifyToolOutput(out))
-				}
-				span.Finish()
-			}
-
-			// Common tail for success and handled-error outputs.
-			// Tool output guardrails: may reject (substitute content) or raise.
-			if rejected, msg, err := r.runToolStage(gctx, agent, StageToolOutput, run, out); err != nil {
-				return err
-			} else if rejected {
-				out = msg
-			}
-
-			outputItem := newFunctionCallOutputItem(agent, run.Call.CallID, out)
-			// The tool's own view of its call: UI data, renderer, error flag,
-			// straight from the result.
-			details, derr := normalizeDetails(result.Details)
-			if derr != nil {
-				return fmt.Errorf("tool %q: %w", run.Call.Name, derr)
-			}
-			outputItem.Extra = details
-			outputItem.Renderer = result.Display
-			outputItem.Title = result.Title
-			outputItem.Summary = result.Summary
-			outputItem.IsError = result.IsError
-			outputItem.NestedUsage = result.Usage
-			results[i] = functionToolResult{
-				callID:     run.Call.CallID,
-				tool:       run.Tool,
-				outputItem: outputItem,
-				output:     out,
-				usage:      result.Usage,
-				terminate:  result.Terminate,
-				addedTools: result.AddedTools,
-			}
-			return nil
+			results[i], err = r.runOneTool(gctx, agent, run)
+			return err
 		})
 	}
 	if werr := g.Wait(); werr != nil {
@@ -317,6 +123,164 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 		return nil, werr
 	}
 	return results, nil
+}
+
+// runOneTool executes one function tool call end to end: the input guardrails,
+// the invocation under its span, and the one tail every outcome shares — a
+// handled failure (a returned error, a panic, a timeout) is an IsError output
+// that passes the output guardrails and counts toward spec §2.7d like any other.
+func (r *runner) runOneTool(ctx context.Context, agent *Agent, run toolRunFunction) (res functionToolResult, err error) {
+	tc := &ToolContext{
+		RunContext:    r.rc,
+		ToolName:      run.Call.Name,
+		ToolCallID:    run.Call.CallID,
+		ToolArguments: run.Call.Arguments,
+		Agent:         agent,
+		ToolCall:      run.Call.Raw,
+	}
+	// Progress is delivered only on a streamed run; on a blocking run nobody
+	// is watching and buffering it would grow without bound.
+	if r.rawEvents {
+		tc.emit = func(partial ToolResult) {
+			r.emit(&ToolProgressEvent{
+				ToolName: run.Call.Name,
+				CallID:   run.Call.CallID,
+				Agent:    agent,
+				Result:   partial,
+			})
+		}
+	}
+	defer tc.finish()
+
+	tlog := r.log.component("tool").with(
+		slog.String("tool", run.Call.Name), slog.String("call_id", run.Call.CallID))
+	tlog.Debug(ctx, "tool started", Sensitive("arguments", run.Call.Arguments))
+	started := time.Now()
+	defer func() {
+		if err != nil {
+			tlog.Error(ctx, "tool failed",
+				slog.Duration("elapsed", time.Since(started)),
+				slog.String("error", err.Error()))
+			return
+		}
+		tlog.Debug(ctx, "tool finished", slog.Duration("elapsed", time.Since(started)))
+	}()
+
+	// Tool input guardrails run BEFORE the tool executes: a reject_content
+	// guardrail resolves the call with a substituted output and the tool
+	// itself never runs.
+	if rejected, msg, err := r.runToolStage(ctx, agent, StageToolInput, run, nil); err != nil {
+		return functionToolResult{}, err
+	} else if rejected {
+		return functionToolResult{
+			tool:       run.Tool,
+			outputItem: newFunctionCallOutputItem(agent, run.Call.CallID, msg),
+			output:     msg,
+			callID:     run.Call.CallID,
+		}, nil
+	}
+
+	span := r.trace.StartFunctionSpan(run.Call.Name, r.agentParentID())
+	defer span.Finish() // idempotent
+	if span.Span != nil {
+		tc.functionSpanID = span.Span.SpanID
+	}
+	// The call id ties the span to the conversation item the tool produced —
+	// an id, not payload, so it is recorded whether or not sensitive data is.
+	span.Set("call_id", run.Call.CallID)
+	logToolData := r.traceIncludeSensitiveData()
+	if logToolData {
+		span.Set("input", run.Call.Arguments)
+	}
+	// The function span parents whatever the tool does — an MCP round trip, a
+	// sandbox exec — via the context.
+	result, err := invokeTool(tracing.WithSpan(ctx, span), run.Tool, tc, run.Call.Arguments)
+	out := result.ModelOutput()
+	if err != nil {
+		// An agent-as-tool whose nested run paused for approval is not a
+		// failure: record the surfaced interruptions and the paused nested
+		// state (no output item) so the parent run pauses too.
+		if ni, ok := errors.AsType[*nestedRunInterrupt](err); ok {
+			return functionToolResult{
+				tool:                run.Tool,
+				callID:              run.Call.CallID,
+				nestedInterruptions: ni.interruptions,
+				nestedState:         ni.state,
+			}, nil
+		}
+		// A panic and a timeout are recorded whether or not a
+		// FailureErrorFunction converts them into model-visible output below.
+		if pe, ok := errors.AsType[*toolPanicError](err); ok {
+			RecordDiagnostic(ctx, DiagToolPanic, pe, map[string]any{
+				"tool": run.Call.Name, "call_id": run.Call.CallID,
+			})
+		}
+		if te, ok := errors.AsType[*ToolTimeoutError](err); ok {
+			RecordDiagnostic(ctx, DiagToolTimeout, te, map[string]any{
+				"tool": run.Call.Name, "call_id": run.Call.CallID,
+			})
+		}
+		// Tool errors routinely embed the call arguments, so the span error is
+		// gated like input/output.
+		if logToolData {
+			span.SetError(err.Error(), nil)
+		} else {
+			span.SetError(redactedToolErrorMessage, nil)
+		}
+		// Without a FailureErrorFunction the error aborts the run; a panic gets
+		// its stack attached on the way out.
+		if run.Tool.FailureErrorFunction == nil {
+			if pe, ok := errors.AsType[*toolPanicError](err); ok {
+				err = pe.fatalError()
+			}
+			return functionToolResult{}, fmt.Errorf("tool %q failed: %w", run.Call.Name, err)
+		}
+		// The failure message becomes the tool output and flows through the same
+		// tail as a success — output guardrails and custom data see it.
+		var herr error
+		out, herr = toolHandleFailure(ctx, run.Tool, tc, err)
+		if herr != nil {
+			// The handler itself panicked: fatal, like a tool without one.
+			return functionToolResult{}, herr
+		}
+		// A handled failure is still a failure as far as the UI is concerned;
+		// the model sees the message either way.
+		result = TextResult(stringifyToolOutput(out))
+		result.IsError = true
+	} else if logToolData {
+		span.Set("output", stringifyToolOutput(out))
+	}
+	span.Finish()
+
+	// Tool output guardrails: may reject (substitute content) or raise.
+	if rejected, msg, err := r.runToolStage(ctx, agent, StageToolOutput, run, out); err != nil {
+		return functionToolResult{}, err
+	} else if rejected {
+		out = msg
+	}
+
+	outputItem := newFunctionCallOutputItem(agent, run.Call.CallID, out)
+	// The tool's own view of its call: UI data, renderer, error flag, straight
+	// from the result.
+	details, derr := normalizeDetails(result.Details)
+	if derr != nil {
+		return functionToolResult{}, fmt.Errorf("tool %q: %w", run.Call.Name, derr)
+	}
+	outputItem.Extra = details
+	outputItem.Renderer = result.Display
+	outputItem.Title = result.Title
+	outputItem.Summary = result.Summary
+	outputItem.IsError = result.IsError
+	outputItem.NestedUsage = result.Usage
+	return functionToolResult{
+		callID:     run.Call.CallID,
+		tool:       run.Tool,
+		outputItem: outputItem,
+		output:     out,
+		usage:      result.Usage,
+		terminate:  result.Terminate,
+		addedTools: result.AddedTools,
+	}, nil
 }
 
 // DefaultRejectionMessage is sent back to the model when a tool call is rejected
@@ -442,7 +406,8 @@ func (r *runner) runToolStage(ctx context.Context, agent *Agent, stage Guardrail
 	return replaced, msg, nil
 }
 
-// invokeTool runs a tool's OnInvoke, enforcing Tool.Timeout when set.
+// invokeTool runs a tool's OnInvoke, enforcing Tool.Timeout when set. A panic
+// in OnInvoke is returned as a *toolPanicError either way.
 //
 // With a timeout, OnInvoke runs in its own goroutine so the deadline holds
 // even for tools that never check their context: when the deadline fires,
@@ -451,12 +416,19 @@ func (r *runner) runToolStage(ctx context.Context, agent *Agent, stage Guardrail
 // result (or panic) is delivered to a buffered channel private to this call
 // and discarded — it never touches shared state. Cancellation of the caller's
 // ctx is reported as ctx.Err(), never as a timeout.
-func invokeTool(ctx context.Context, tool *Tool, tc *ToolContext, argsJSON string) (ToolResult, error) {
+func invokeTool(ctx context.Context, tool *Tool, tc *ToolContext, argsJSON string) (out ToolResult, err error) {
 	if tool.OnInvoke == nil {
 		return ToolResult{}, NewUserError("tool %q has no OnInvoke", tool.Name)
 	}
 	timeout := tool.Timeout
 	if timeout <= 0 {
+		// User code: a panic becomes the call's error, on the path a returned
+		// error takes.
+		defer func() {
+			if p := recover(); p != nil {
+				out, err = ToolResult{}, newToolPanicError(tool.Name, p)
+			}
+		}()
 		return tool.OnInvoke(ctx, tc, argsJSON)
 	}
 	tctx, cancel := context.WithTimeout(ctx, timeout)
@@ -470,9 +442,7 @@ func invokeTool(ctx context.Context, tool *Tool, tc *ToolContext, argsJSON strin
 	// and exit, even after the select below has returned on the timeout.
 	ch := make(chan invokeOutcome, 1)
 	go func() {
-		// This goroutine runs user tool code; like runFunctionTools, recover a
-		// panic (it would otherwise kill the process) and surface it as an
-		// error on the tool's normal error path.
+		// The same recovery as the direct path, delivered through the channel.
 		defer func() {
 			if p := recover(); p != nil {
 				ch <- invokeOutcome{err: newToolPanicError(tool.Name, p)}

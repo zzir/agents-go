@@ -190,3 +190,51 @@ func TestUsage_SnapshotConcurrentWithAdd(t *testing.T) {
 type errModelProvider struct{ err error }
 
 func (p errModelProvider) Model(string) (Model, error) { return nil, p.err }
+
+// Injected input is the caller's, not the model's: it carries no response id
+// and never takes a response's usage, even when it is the last entry of the
+// batch the response's items were saved in (spec §2.7f).
+func TestUsage_InjectedInputTakesNoResponseUsage(t *testing.T) {
+	ctx := context.Background()
+	sess := session.NewInMemorySession()
+	model := &fakeModel{responses: []*ModelResponse{
+		modelResp(messageOutput(t, "one")),
+		modelResp(messageOutput(t, "two")),
+	}}
+	agent := &Agent{Name: "a", ModelImpl: model}
+
+	stream, ctrl := Run(ctx, agent, "go", RunOptions{Conversation: ConversationOptions{Session: sess}})
+	if err := ctrl.FollowUp("and then"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stream.Collect(); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := sess.Entries(ctx, session.Cursor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	modelWithUsage, injected := 0, 0
+	for _, e := range entries {
+		if e.Kind != session.EntryKindItem {
+			continue
+		}
+		if e.Source.Type == SourceUser {
+			injected++
+			if e.ResponseID != "" || e.Usage != nil {
+				t.Errorf("user entry %s carries response %q and usage %v", e.ID, e.ResponseID, e.Usage)
+			}
+			continue
+		}
+		if e.Usage != nil {
+			modelWithUsage++
+		}
+	}
+	if injected != 2 {
+		t.Errorf("%d user entries, want 2 (the prompt and the follow-up)", injected)
+	}
+	if modelWithUsage != 2 {
+		t.Errorf("%d model entries carry usage, want one per model call (2)", modelWithUsage)
+	}
+}

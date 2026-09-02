@@ -227,7 +227,7 @@ func TestNotify_RestartFailsOrphansAndReports(t *testing.T) {
 	h := newHarness(t)
 	info := h.spawn(t)
 
-	if err := h.m.Recover(ctx); err != nil {
+	if err := h.m.FailOrphans(ctx); err != nil {
 		t.Fatal(err)
 	}
 	task := h.get(t, info.TaskID)
@@ -252,7 +252,7 @@ func TestNotify_RecoverKeepsInputRequired(t *testing.T) {
 	info := h.spawn(t)
 	h.m.OnRunFinished(ctx, h.childOf(t, info.TaskID), RunOutcome{Status: StatusInputRequired})
 
-	if err := h.m.Recover(ctx); err != nil {
+	if err := h.m.FailOrphans(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if got := h.get(t, info.TaskID).Status; got != StatusInputRequired {

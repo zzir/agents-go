@@ -10,12 +10,6 @@ import (
 // SafeSplit snaps a count-based split index to the nearest group boundary at or
 // before it, so neither side holds half of something that must stay together.
 //
-// It replaces the hand-written pair walker this package's grouping made
-// redundant. That walker knew about one pairing (function_call and its output)
-// and had a second rule bolted on for reasoning items; grouping answers the
-// same question by construction, and answers it for pairings added later
-// without being taught them.
-//
 // It returns 0 when no non-empty prefix is safe — the caller should skip rather
 // than split somewhere that corrupts the history.
 func SafeSplit(entries []session.Entry, split int) int {
@@ -57,7 +51,7 @@ func IsSummaryOnly(entries []session.Entry) bool {
 		if kind, _, _, _ := classify(e); kind == GroupOther {
 			continue
 		}
-		p := probe(e)
+		p := session.ProbeItem(e.Item)
 		if p.Role != "system" || !strings.Contains(entryText(e), session.SummaryMarker) {
 			return false
 		}
@@ -68,7 +62,7 @@ func IsSummaryOnly(entries []session.Entry) bool {
 // entryText pulls an entry's readable text, whether its content is a bare
 // string or the parts array the Responses API also accepts.
 func entryText(e session.Entry) string {
-	p := probe(e)
+	p := session.ProbeItem(e.Item)
 	if len(p.Content) == 0 {
 		return ""
 	}

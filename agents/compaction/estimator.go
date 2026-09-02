@@ -46,7 +46,7 @@ func (CharEstimator) Estimate(e session.Entry) int {
 		return 0
 	}
 
-	p := probe(e)
+	p := session.ProbeItem(e.Item)
 	chars := 0
 	if p.Name != "" {
 		chars += len(p.Name)

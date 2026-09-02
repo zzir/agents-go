@@ -272,3 +272,84 @@ func TestSequentialTool_AbsentMeansParallel(t *testing.T) {
 		t.Errorf("peak concurrency = %d, want 2 — an ordinary batch runs in parallel", peak.Load())
 	}
 }
+
+// A panic is a failure like any other: with the default FailureErrorFunction it
+// becomes an IsError output that passes through the same tail and counts
+// toward the consecutive-error valve (spec §2.7d).
+func TestToolLoop_PanicsCountAsFailedTurns(t *testing.T) {
+	panicking := NewTool("boom", "", func(context.Context, *ToolContext, struct{}) (string, error) {
+		panic("kaboom")
+	})
+	responses := make([]*ModelResponse, 8)
+	for i := range responses {
+		responses[i] = modelResp(functionCallOutput(t, "boom", "c1", `{}`))
+	}
+	model := &fakeModel{responses: responses}
+	agent := &Agent{Name: "a", Tools: []*Tool{panicking}, ModelImpl: model}
+
+	_, err := RunSync(context.Background(), agent, "go", RunOptions{
+		Exec: ExecOptions{MaxTurns: 20, ToolLoop: ToolLoopPolicy{MaxConsecutiveErrorTurns: 3}},
+	})
+	var tle *ToolLoopError
+	if !errors.As(err, &tle) {
+		t.Fatalf("err = %v, want *ToolLoopError — a panicking tool never tripped the valve", err)
+	}
+	if model.calls != 3 {
+		t.Errorf("model calls = %d, want 3", model.calls)
+	}
+	re, ok := errors.AsType[*RunError](err)
+	if !ok {
+		t.Fatalf("err = %v, want a *RunError with the partial progress", err)
+	}
+	outputs := 0
+	for _, it := range re.Result.NewItems {
+		if it.Kind != ItemToolCallOutput {
+			continue
+		}
+		outputs++
+		if !it.IsError {
+			t.Error("a panic's output is not marked IsError")
+		}
+		if !strings.Contains(stringifyToolOutput(it.Output), "kaboom") {
+			t.Errorf("output = %v, want the panic fed back to the model", it.Output)
+		}
+	}
+	// The turn that trips the valve aborts before its items are recorded, as
+	// with a tool that returns an error.
+	if outputs != 2 {
+		t.Errorf("%d tool outputs, want 2", outputs)
+	}
+}
+
+// A truncated response's handoff calls are refused like its tool calls: the
+// switch never happens and the model is told to resend (spec §2.7e).
+func TestTruncatedResponse_HandoffsDoNotExecute(t *testing.T) {
+	targetModel := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "from target"))}}
+	target := &Agent{Name: "target", ModelImpl: targetModel}
+	h := HandoffTo(target)
+	truncated := modelResp(functionCallOutput(t, h.ToolName, "h1", `{`))
+	truncated.Status = "incomplete"
+	truncated.IncompleteReason = "max_output_tokens"
+	model := &fakeModel{responses: []*ModelResponse{truncated, modelResp(messageOutput(t, "resent"))}}
+	agent := &Agent{Name: "a", Handoffs: []Handoff{h}, ModelImpl: model}
+
+	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if targetModel.calls != 0 || res.LastAgent.Name != "a" {
+		t.Errorf("the handoff executed: target calls = %d, last agent = %q", targetModel.calls, res.LastAgent.Name)
+	}
+	if res.FinalOutputString() != "resent" {
+		t.Errorf("final = %q", res.FinalOutputString())
+	}
+	out := findToolOutput(res.NewItems)
+	if out == nil || !out.IsError || !strings.Contains(stringifyToolOutput(out.Output), "truncated") {
+		t.Errorf("handoff call output = %v, want the truncation refusal", out)
+	}
+	for _, it := range res.NewItems {
+		if it.Kind == ItemHandoffOutput {
+			t.Error("a handoff output item was recorded for a refused handoff")
+		}
+	}
+}

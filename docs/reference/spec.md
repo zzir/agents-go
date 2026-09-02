@@ -222,15 +222,14 @@ them.
 
 Beyond its payload, every item reports two things:
 
-- **`Source` — who produced it.** The zero value is the model.
-  `IsExternal()` separates what came from outside the SDK (the model, the
-  caller) from what the runner synthesized (a tool output, a handoff
-  acknowledgement, an error handler's fallback). A context provider uses it to
-  avoid re-ingesting its own injections, and the runner reads it to find the
-  last model-produced item — the frontier of what a server-side response chain
-  can hold ([§2.5f](#25f-compaction)). It does not settle that question on its
-  own: input the caller injected after the last model call is external and is
-  still off the chain.
+- **`Source` — who produced it.** The zero value is the model; the rest name
+  what the runner synthesized (a tool output, a handoff acknowledgement, an
+  error handler's fallback) or what the caller injected. A context provider
+  reads it to avoid re-ingesting its own injections, and the runner reads it
+  to find the last model-produced item — the frontier of what a server-side
+  response chain can hold ([§2.5f](#25f-compaction)). Position settles that
+  question, not provenance: input the caller injected after the last model
+  call is off the chain too.
 
   Provenance is a field, not a sentinel response id stamped on synthesized
   items that every consumer would have to know and string-compare.
@@ -770,7 +769,7 @@ configuration does too (`RunOptions.Compaction`).
   |---|---|
   | `CompactBeforeRun` | after reading the session, before the first model call |
   | `CompactAtSavePoint` | at each turn boundary, after the turn is persisted |
-  | `CompactAfterRun` | once the final output is persisted |
+  | `CompactAfterRun` | once the final output is persisted — only for a `Compactor` that is a `CompactionCheckpointer`, since the pass exists to write one |
 
 - **A save-point pass rebuilds the context from the log**, rather than editing
   the items in flight. The log is the truth; recomputing a projection is cheap
@@ -1020,7 +1019,7 @@ that tool only.
 |---|---|---|
 | `input` | First turn, before the model call (`Blocking`) or concurrently with it (default) | Allow / Replace / Trip |
 | `output` | After the final output is produced, before persistence | Allow / Replace / Trip |
-| `tool_input` | After arguments are parsed, **before tool lifecycle callbacks**, before execution | Allow / Replace / Trip |
+| `tool_input` | Before execution, on the raw argument JSON | Allow / Replace / Trip |
 | `tool_output` | After the tool runs, before the result is fed back | Allow / Replace / Trip |
 
 **Ordering, concurrency and cancellation:**
@@ -1105,6 +1104,12 @@ An empty result with no error is a **success with no output**, not a failure.
 #### Approval
 
 - `NeedsApproval` / `NeedsApprovalFunc` decide; the function takes precedence.
+- `Agent.ApproveTools` lists tool names (or `"*"`) that need approval whatever
+  the tool itself says. Precedence for one call: a decision already recorded
+  on the `RunState` (approve/reject, per call or per tool) settles it and
+  nothing else is consulted; else the tool's own answer (`NeedsApprovalFunc`,
+  then `NeedsApproval`); else the agent's listing. The listing only ever adds
+  a pause — it cannot exempt a tool that asks for one.
 - If **any** call in a turn needs approval, the whole turn pauses
   (step 4 of [§2.2](#22-ordering-within-a-turn)).
 - Approval decisions may be scoped ("this call", "all calls to this tool", …);
@@ -1212,8 +1217,9 @@ where an agent keeps going and gets nowhere:
 A response the provider marks `status="incomplete"` with reason
 `max_output_tokens` was cut off at the output-token limit.
 
-- **None of its tool calls execute.** Each is answered with an explanation that
-  the response was truncated and the call was not run, so the model resends.
+- **None of its tool calls execute** — handoff calls included. Each is
+  answered with an explanation that the response was truncated and the call
+  was not run, so the model resends; a refused handoff switches no agent.
 - This is a **correctness** rule, not a policy. A truncated response looks
   ordinary — items present, no error — but its tail may be half-formed, and a
   tool call's arguments are exactly the kind of tail that gets cut. Executing
@@ -1247,6 +1253,11 @@ A response the provider marks `status="incomplete"` with reason
   few entries early.
 - A backend that returns **no response id** still has its usage recorded, on
   the batch's last entry.
+- **Injected input carries no response id and takes no usage.** It is the
+  caller's, not the model's: an `ItemInjectedInput` entry has an empty
+  `ResponseID`, and attribution skips a `SourceUser` entry even when it closes
+  the batch — a follow-up saved together with the turn it extends must not
+  become that turn's usage-bearing entry.
 - **Nested usage is separate.** `session.Entry.NestedUsage` and
   `RunItem.NestedUsage` hold what a tool spent on model calls of its
   own. It is not merged into `Usage`, because the two answer different
@@ -1677,7 +1688,9 @@ One producer's events reach many independent consumers through `Fanout[T]`.
   content from one that never had it.
 - **Including a cursor from outside the reachable range.** Subscribing below
   the replay window reports the evicted range as a gap running forward from
-  the cursor. Subscribing AHEAD of the head — a cursor issued by a previous
+  the cursor — and with no replay window at all, every cursor behind the head
+  is below it, so the gap runs from the cursor to the head. Subscribing AHEAD
+  of the head — a cursor issued by a previous
   life of the stream, before a restart renumbered it — is a **timeline
   reset**: the gap reports `LastGood` 0 with the stale cursor as its `Dropped`
   count and the timeline's next sequence as `Next`, so the documented recovery
@@ -1760,6 +1773,12 @@ by kind, and only two kinds may extend a run that was ending:
   enqueued in that window, delivering "new, then old" when the old input was
   said first. The transaction, not reseeding, is what makes input survive
   retries.
+- **A resume can keep the control it paused under.** `ResumeRunWith(ctx,
+  state, opts, ctrl)` continues a paused run on the control `Run` returned —
+  `StopAfterTurn` and queued input still reach the run — and carries that
+  control's live queue as is: it already holds what `PendingInput` records,
+  so reseeding would queue it twice. `ResumeRun` mints a fresh control and
+  seeds it, as above ([§5.45](../explanation/decisions.md#545-a-middleware-resumes-under-the-callers-control)).
 - **A follow-up continues the same run**, rather than starting a new one, so
   the trace, the usage total and the session stay one thing.
 - **Injected input becomes a run item** with `Source{Type: SourceUser}`. That
@@ -1932,6 +1951,30 @@ single-turn agents, which never reach a turn boundary at all.
 **A middleware that resumes strips `Middlewares` first.** The chain is already
 unwound at that point; resuming with the run's own options would re-enter that
 middleware and every one outside it.
+
+**A middleware that resumes keeps the caller's control.** `RunInput.Control`
+is the handle `Run` returned; an in-chain resume goes through `ResumeRunWith`
+with it. A fresh control (`ResumeRun`) would leave the caller holding a dead
+one — a `StopAfterTurn` or a `Steer` on it would reach a run that had already
+ended ([§5.45](../explanation/decisions.md#545-a-middleware-resumes-under-the-callers-control)).
+
+**The session is the memory, not the input.** A middleware that re-enters a
+run never re-sends what the session already holds
+([§5.44](../explanation/decisions.md#544-middleware-and-sessions-the-session-is-the-memory-not-the-input)):
+
+- `Loop`, with a `Session` attached, carries only the evaluator's feedback
+  into the next attempt — the attempt it judged is already in the history.
+  Without one it carries the whole attempt forward, as before.
+- `Retry` re-runs with **no input** once an attempt has announced its save —
+  an `ItemsPersistedEvent`, which the user-input save ahead of the first model
+  call emits like every other save that leaves nothing behind
+  ([§2.5](#25-session-persistence-boundaries)) — and re-sends the input
+  otherwise (no session, or a failure ahead of that save). Keying on the
+  announcement rather than on "a session is attached" is what keeps a retry
+  after a failed session read from dropping the message.
+
+Re-sending would store the input twice and hand the model a history with two
+copies of it.
 
 **The public `ResumeRun` applies `opts.Middlewares` exactly as `Run` does.** A
 caller resuming with the options it ran with gets the wrapping it ran with —

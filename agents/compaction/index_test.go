@@ -166,7 +166,7 @@ func TestGrouping_NoSplitCanStrandACall(t *testing.T) {
 		}
 		calls, outputs := map[string]bool{}, map[string]bool{}
 		for _, e := range idx.IncludedEntries() {
-			p := probe(e)
+			p := session.ProbeItem(e.Item)
 			switch p.Type {
 			case "function_call":
 				calls[p.CallID] = true

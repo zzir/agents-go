@@ -9,9 +9,11 @@ import (
 	"github.com/zzir/agents-go/tracing"
 )
 
-// persistUserInput writes the run's new user input to the session once, at loop
-// start. Later per-turn saves persist only generated items, so the prompt is
-// never rewritten. No-op without a session or when there is no new input.
+// persistUserInput writes the run's new user input to the session once, ahead
+// of the first model call, and announces it: nothing the stream has shown is
+// unstored at that point. Later per-turn saves persist only generated items, so
+// the prompt is never rewritten. No-op without a session, when there is no
+// new input, or on a resume (its input was saved before the pause).
 func (r *runner) persistUserInput(ctx context.Context) error {
 	if r.opts.Conversation.Session == nil || r.userInputSaved || len(r.userInput) == 0 {
 		return nil
@@ -20,6 +22,9 @@ func (r *runner) persistUserInput(ctx context.Context) error {
 		return err
 	}
 	r.userInputSaved = true
+	if !r.emit(&ItemsPersistedEvent{}) {
+		return errConsumerStopped
+	}
 	return nil
 }
 
@@ -51,11 +56,6 @@ func (r *runner) persistSessionItems(ctx context.Context) error {
 			return err
 		}
 		r.log.Debug(ctx, "turn persisted", slog.Int("entries", len(toSave)))
-		if end == len(r.sessionItems) {
-			// The store now holds everything the stream has shown —
-			// ItemsPersistedEvent's contract. A held-back boundary stays silent.
-			_ = r.emit(&ItemsPersistedEvent{})
-		}
 	}
 	r.persistedSessionItems = end
 	// Injected input commits once a write has persisted past its position; a
@@ -63,6 +63,11 @@ func (r *runner) persistSessionItems(ctx context.Context) error {
 	// rollback.
 	if r.persistedSessionItems >= r.injectedUpTo {
 		r.ctrl.commitInjected()
+	}
+	// The store now holds everything the stream has shown —
+	// ItemsPersistedEvent's contract. A held-back boundary stays silent.
+	if len(toSave) > 0 && end == len(r.sessionItems) && !r.emit(&ItemsPersistedEvent{}) {
+		return errConsumerStopped
 	}
 	return nil
 }

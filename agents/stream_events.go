@@ -1,31 +1,10 @@
 package agents
 
-// The Responses stream vocabulary — the event names the SDK is written
-// against (decisions §5.10).
-//
-// These live here, in the runner's own package, because that is the only home
-// every user can reach: modelkit (the adapter toolkit that synthesizes these
-// events) imports agents, so agents cannot import modelkit back. The runner's
-// classifiers below, the modelkit event constructors, the OpenAI adapter's
-// terminal-event switch and conformancetest's closed set all build from this
-// one list, so an event name exists in exactly one place and a misspelled
-// REFERENCE is a compile error rather than a branch that silently never fires.
-//
-// A misspelled VALUE is neither, and not a conformance failure either: the
-// synthesized events and the closed set that checks them read the same
-// constant, so they agree on a wrong name as readily as a right one. That is
-// what stream_events_test.go is for — it pins every name below to its wire
-// string, spelled independently. Adding a constant here means adding a row
-// there, or the name arrives unpinned.
-//
-// The list is the whole vocabulary, not only the names this repo switches on:
-// it is exported for adapter authors outside it, who need to know which events
-// the runner accepts and the golden matrix allows. A name earns a place here
-// by belonging to the Responses stream contract, not by having a caller here.
-//
-// The names are the wire strings and the constants are untyped, so they
-// compare against ResponseStreamEvent.Type (a plain string on the Responses
-// union) without conversion.
+// The Responses stream vocabulary, spelled once for the runner, modelkit, the
+// adapters and the conformance suite (decisions §5.10). The whole vocabulary
+// is here, not only the names this repo switches on; stream_events_test.go
+// pins each to its wire string, so a constant added here needs a row there.
+// Untyped, so they compare against ResponseStreamEvent.Type unconverted.
 const (
 	// EventResponseCreated opens every stream — the "a response is now in
 	// flight" signal, and the first event an adapter must emit.

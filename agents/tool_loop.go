@@ -64,24 +64,18 @@ func (r *runner) noteToolTurn(results []functionToolResult) error {
 	return nil
 }
 
-// truncatedCallResults fails every tool call in a truncated response without
-// running any of them: a response cut off at the output-token limit may have
-// half-formed arguments (`{"path": "/ho`), so the model is told to resend
-// rather than the call executed as if complete.
-func truncatedCallResults(agent *Agent, runs []toolRunFunction) []functionToolResult {
+// truncatedCallResults answers every call of a truncated response — function
+// and handoff calls alike — with a refusal instead of running it: the
+// arguments may stop mid-JSON (spec §2.7e).
+func truncatedCallResults(agent *Agent, calls []functionCall) []functionToolResult {
 	const msg = "The model response was truncated at the output-token limit, so this tool call's " +
 		"arguments may be incomplete. It was NOT executed. Resend the call with complete arguments, " +
 		"keeping the response shorter."
-	out := make([]functionToolResult, 0, len(runs))
-	for _, run := range runs {
-		item := newFunctionCallOutputItem(agent, run.Call.CallID, msg)
+	out := make([]functionToolResult, 0, len(calls))
+	for _, call := range calls {
+		item := newFunctionCallOutputItem(agent, call.CallID, msg)
 		item.IsError = true
-		out = append(out, functionToolResult{
-			callID:     run.Call.CallID,
-			tool:       run.Tool,
-			output:     msg,
-			outputItem: item,
-		})
+		out = append(out, functionToolResult{callID: call.CallID, output: msg, outputItem: item})
 	}
 	return out
 }

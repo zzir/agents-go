@@ -1543,3 +1543,68 @@ DisableToolChoiceReset`, like `http.Transport.DisableKeepAlives`): a plain
 struct field must make the zero value the default, which for a default-on
 behavior forces the negated name. The bridge flips polarity in one place
 when it maps config onto the SDK.
+
+### 5.44 Middleware and sessions: the session is the memory, not the input
+
+A middleware that re-enters a run (`Loop`, `Retry`) originally rebuilt the
+next attempt's input by hand: `Loop` fed the whole attempt back through
+`RunResult.ToInputList`, `Retry` re-sent the original input. Both are right
+without a session and wrong with one. The loop prepends the session's history
+to every attempt's input and persists the new input ahead of the first model
+call (§2.5), so the second attempt stored the prompt again and sent the model
+a history holding it twice — and `Loop` sent the prior turns three times over
+(history, `ToInputList`, and the persist of that list as new user input).
+
+The rule: with a session, a middleware sends only what the session does not
+yet hold. `Loop` sends the evaluator's feedback alone, since the attempt it
+judged completed and is therefore persisted. `Retry` cannot assume as much —
+its attempt failed, possibly ahead of the save — so it keys on the SDK's own
+announcement: the user-input save emits `ItemsPersistedEvent` like every
+other save that leaves nothing behind, and an attempt that announced one
+stored the input. The alternative, keying on "a session is attached", was
+rejected because a transient failure ahead of the save (a session read, a
+tool listing, a start hook) would then retry without the message and the
+run would answer a history that lacks it.
+
+Announcing the user-input save is a widening of an existing contract, not a
+new event: §2.5 already says a save that leaves nothing behind is announced,
+and at that moment nothing the stream has shown is unstored. The one consumer
+that mirrors persisted state from it (the workbench's stream bridge) resets
+buffers that are still empty.
+
+### 5.45 A middleware resumes under the caller's control
+
+`middleware.Approval` resumes a paused attempt from inside the chain. It did
+so through `ResumeRun`, which mints a fresh `RunControl` — correct for a
+caller resuming a serialized state in a new process, and wrong here: the
+caller still holds the control `Run` returned, and every `StopAfterTurn` or
+`Steer` on it after the first policy resume reached a run that had already
+ended. The caller had no way to know; `Run` returned one handle and the
+documentation said it drove the run.
+
+`RunInput` now carries that handle (`Control`), and `ResumeRunWith` continues
+a paused run under it. Two consequences follow. The control's queue is
+carried as is, never reseeded from `RunState.PendingInput`: the pause copied
+the queue into the state without draining it, so a reseed would deliver every
+queued item twice. And `ResumeRunWith` accepts only a control this package
+minted — the interface exists so a host can hold one, not implement one — and
+panics on anything else rather than silently driving a run from a handle the
+loop cannot read.
+
+### 5.46 A tool panic takes the tool-error path
+
+A panic in a tool body was recovered at two places with two outcomes. With a
+`Timeout` it surfaced from the invocation goroutine as an error and took the
+ordinary error tail; without one the per-call goroutine's recover built the
+result directly — no `IsError`, no output guardrails, no result details, no
+span error, and a turn of nothing but panics never counted toward the
+consecutive-error valve (§2.7d). Same failure, two contracts, chosen by a
+field that has nothing to do with panics.
+
+The recover now lives in `invokeTool` on both paths, so a panic is an error
+from the call like any other and there is one tail. The per-call goroutine
+keeps a recover of its own only as a net for a panic outside the tool body —
+errgroup does not recover, and that panic would take the process — and that
+net aborts the run, since it is not the tool's failure to hand back to the
+model.
+

@@ -7,15 +7,9 @@
 // pairings structural: once entries are grouped, cutting through a pair is not
 // something a strategy can do wrong, because a strategy only ever includes or
 // excludes whole groups.
-//
-// The previous design got this by hand, with a split-point function that walked
-// the history looking for straddling pairs and nudged the cut until it found a
-// safe one. That code was correct and unnecessary.
 package compaction
 
 import (
-	"encoding/json"
-
 	"github.com/zzir/agents-go/agents/session"
 )
 
@@ -86,28 +80,6 @@ type Group struct {
 	Replacement []session.Entry
 }
 
-// itemProbe is the minimum needed to classify a stored item without decoding
-// the whole union, which matters because the item may be a type this build does
-// not model.
-type itemProbe struct {
-	Type    string          `json:"type"`
-	Role    string          `json:"role"`
-	CallID  string          `json:"call_id"`
-	Name    string          `json:"name"`
-	Args    string          `json:"arguments"`
-	Content json.RawMessage `json:"content"`
-	Output  json.RawMessage `json:"output"`
-	Summary json.RawMessage `json:"summary"`
-}
-
-func probe(e session.Entry) itemProbe {
-	var p itemProbe
-	if len(e.Item) > 0 {
-		_ = json.Unmarshal(e.Item, &p)
-	}
-	return p
-}
-
 // classify reports an entry's role in the conversation.
 func classify(e session.Entry) (kind GroupKind, isCall, isOutput, isReasoning bool) {
 	switch e.Kind {
@@ -118,7 +90,7 @@ func classify(e session.Entry) (kind GroupKind, isCall, isOutput, isReasoning bo
 		return GroupOther, false, false, false
 	}
 
-	p := probe(e)
+	p := session.ProbeItem(e.Item)
 	switch p.Type {
 	case "function_call":
 		return GroupToolCall, true, false, false

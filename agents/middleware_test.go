@@ -2,11 +2,10 @@ package agents
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
-
-	"github.com/zzir/agents-go/agents/session"
 )
 
 func simpleAgent(t *testing.T, answer string) *Agent {
@@ -69,7 +68,7 @@ func TestMiddleware_CanEditInputAndOptions(t *testing.T) {
 		t.Errorf("final = %q", res.FinalOutputString())
 	}
 
-	sent, err := session.MarshalItems(model.lastReq.Input)
+	sent, err := json.Marshal(model.lastReq.Input)
 	if err != nil {
 		t.Fatal(err)
 	}

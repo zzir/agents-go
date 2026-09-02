@@ -38,7 +38,7 @@ func TestItemsPersistedEventGuaranteesStoredPrefix(t *testing.T) {
 		Conversation: agents.ConversationOptions{Session: sess},
 	})
 	itemsSeen, persistEvents := 0, 0
-	sawToolOutputBeforeFirstEvent := false
+	sawToolOutputBeforeTurnSave := false
 	for ev, err := range stream {
 		if err != nil {
 			t.Fatal(err)
@@ -46,8 +46,8 @@ func TestItemsPersistedEventGuaranteesStoredPrefix(t *testing.T) {
 		switch e := ev.(type) {
 		case *agents.RunItemStreamEvent:
 			itemsSeen++
-			if e.Name == "tool_output" && persistEvents == 0 {
-				sawToolOutputBeforeFirstEvent = true
+			if e.Name == "tool_output" && persistEvents == 1 {
+				sawToolOutputBeforeTurnSave = true
 			}
 		case *agents.ItemsPersistedEvent:
 			persistEvents++
@@ -66,13 +66,13 @@ func TestItemsPersistedEventGuaranteesStoredPrefix(t *testing.T) {
 			}
 		}
 	}
-	// One save per boundary that left nothing behind: the post-tool turn save
-	// and the final save.
-	if persistEvents != 2 {
-		t.Errorf("persist events = %d, want 2 (turn save + final save)", persistEvents)
+	// One save per boundary that left nothing behind: the user-input save
+	// ahead of the first model call, the post-tool turn save, the final save.
+	if persistEvents != 3 {
+		t.Errorf("persist events = %d, want 3 (user input + turn save + final save)", persistEvents)
 	}
-	if !sawToolOutputBeforeFirstEvent {
-		t.Error("first persist event arrived before the turn's tool_output; the turn save follows tool execution")
+	if !sawToolOutputBeforeTurnSave {
+		t.Error("the turn save's event arrived before the turn's tool_output; the turn save follows tool execution")
 	}
 }
 
@@ -112,15 +112,22 @@ func TestItemsPersistedEventSilentOnInterruption(t *testing.T) {
 		Conversation: agents.ConversationOptions{Session: sess},
 	})
 	var res *agents.RunResult
+	items := 0
 	for ev, err := range stream {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, ok := ev.(*agents.ItemsPersistedEvent); ok {
-			t.Fatal("ItemsPersistedEvent on a save that held the pending call back")
-		}
-		if done, ok := ev.(*agents.RunCompletedEvent); ok {
-			res = done.Result
+		switch e := ev.(type) {
+		case *agents.RunItemStreamEvent:
+			items++
+		case *agents.ItemsPersistedEvent:
+			// The user-input save announces itself before any item; the
+			// interruption's save must not.
+			if items > 0 {
+				t.Fatal("ItemsPersistedEvent on a save that held the pending call back")
+			}
+		case *agents.RunCompletedEvent:
+			res = e.Result
 		}
 	}
 	if res == nil || len(res.Interruptions) != 1 {
