@@ -51,6 +51,8 @@ type fakeService struct {
 	// failDeletes makes the next n control-plane DELETEs answer 500 — a
 	// transient kill failure.
 	failDeletes int
+	// failUploads makes the next n /files uploads answer 500.
+	failUploads int
 	// makeDirHook, when set, runs in the MakeDir handler; a non-empty code
 	// answers the RPC with that error instead of touching the filesystem.
 	makeDirHook func(path string) (code, msg string)
@@ -221,6 +223,16 @@ func (f *fakeService) files(w http.ResponseWriter, r *http.Request) {
 		}
 		_, _ = w.Write(data)
 	case http.MethodPost:
+		f.mu.Lock()
+		fail := f.failUploads > 0
+		if fail {
+			f.failUploads--
+		}
+		f.mu.Unlock()
+		if fail {
+			http.Error(w, `{"message":"disk full"}`, http.StatusInternalServerError)
+			return
+		}
 		if err := r.ParseMultipartForm(32 << 20); err != nil {
 			http.Error(w, `{"message":"bad form"}`, http.StatusBadRequest)
 			return
@@ -286,9 +298,15 @@ func (f *fakeService) rpc(w http.ResponseWriter, r *http.Request) {
 	case "/process.Process/SendInput":
 		f.sendInput(w, req)
 	case "/process.Process/SendSignal":
+		// Counted, and honored like real envd's: the process is killed.
+		sel, _ := req["process"].(map[string]any)
 		f.mu.Lock()
 		f.signalCalls++
+		proc := f.procs[uint32(num(sel["pid"]))]
 		f.mu.Unlock()
+		if proc != nil && proc.cmd.Process != nil {
+			_ = proc.cmd.Process.Kill()
+		}
 		writeJSON(w, map[string]any{})
 	case "/process.Process/Update":
 		writeJSON(w, map[string]any{})
@@ -457,11 +475,9 @@ func (f *fakeService) start(w http.ResponseWriter, req map[string]any) {
 		writeFrame(w, endStreamFlagTest, map[string]any{"error": map[string]any{"code": "internal", "message": err.Error()}})
 		return
 	}
-	if stdin != nil {
-		f.mu.Lock()
-		f.procs[pid] = &fakeProc{cmd: cmd, stdin: stdin}
-		f.mu.Unlock()
-	}
+	f.mu.Lock()
+	f.procs[pid] = &fakeProc{cmd: cmd, stdin: stdin}
+	f.mu.Unlock()
 	writeFrame(w, 0, map[string]any{"event": map[string]any{"start": map[string]any{"pid": pid}}})
 	if flusher != nil {
 		flusher.Flush()
@@ -529,7 +545,9 @@ func (f *fakeService) sendInput(w http.ResponseWriter, req map[string]any) {
 	}
 	in, _ := req["input"].(map[string]any)
 	raw, _ := base64.StdEncoding.DecodeString(str(in["pty"]))
-	_, _ = proc.stdin.Write(raw)
+	if proc.stdin != nil {
+		_, _ = proc.stdin.Write(raw)
+	}
 	writeJSON(w, map[string]any{})
 }
 

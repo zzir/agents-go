@@ -29,8 +29,7 @@ type TerminalOptions struct {
 	// means DefaultTerminalTerm.
 	Term string
 	// Shell overrides the command started in the PTY. Empty selects the
-	// backend default: the remote login shell for SSH; for docker and e2b, bash
-	// when the image ships it, otherwise /bin/sh.
+	// backend default: bash when the image ships it, otherwise /bin/sh.
 	Shell []string
 	// Env sets additional environment variables for the shell.
 	Env map[string]string
@@ -60,13 +59,10 @@ func (o TerminalOptions) EffectiveTerm() string {
 	return o.Term
 }
 
-// Terminal is a live interactive shell session inside a sandbox. Read returns
-// terminal output (including ANSI escape sequences) and reports io.EOF when
-// the shell exits; Write sends raw user input. Both directions carry the raw
-// byte stream as seen by the PTY.
-//
-// Close terminates the session and releases transport resources; it is safe
-// to call more than once and concurrently with Read/Write.
+// Terminal is a live interactive shell session inside a sandbox: Read returns
+// the raw PTY output (ANSI escapes included) and io.EOF when the shell exits,
+// Write sends raw user input. Close terminates the session; it is safe to
+// call more than once and concurrently with Read/Write.
 type Terminal interface {
 	io.ReadWriteCloser
 	// Resize changes the PTY size.

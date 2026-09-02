@@ -1,7 +1,6 @@
 package anthropic
 
 import (
-	"errors"
 	"net/http"
 	"time"
 
@@ -10,19 +9,14 @@ import (
 	"github.com/zzir/agents-go/models/modelkit"
 )
 
-// unwrapAPIError extracts the anthropic-sdk-go API error from err's chain, for
-// the shared modelkit retry classification.
-func unwrapAPIError(err error) (int, http.Header, bool) {
-	apiErr, ok := errors.AsType[*ant.Error](err)
-	if !ok {
-		return 0, nil, false
+// unwrapAPIError reads the anthropic-sdk-go API error for the shared modelkit
+// retry classification.
+var unwrapAPIError = modelkit.UnwrapAs(func(e *ant.Error) (int, http.Header) {
+	if e.Response == nil {
+		return e.StatusCode, nil
 	}
-	var h http.Header
-	if apiErr.Response != nil {
-		h = apiErr.Response.Header
-	}
-	return apiErr.StatusCode, h, true
-}
+	return e.StatusCode, e.Response.Header
+})
 
 // RetryableError reports whether err from a Messages API call is transient and
 // worth retrying: HTTP 408/409/429 and any 5xx — including Anthropic's 529

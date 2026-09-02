@@ -12,22 +12,16 @@ import (
 // OpenAI client. It implements agents.ModelProvider.
 type Provider struct {
 	client oai.Client
-	// defaultModel is used for agents that omit a model name. It is unset by
-	// default: the SDK ships no built-in default model, because the right one
-	// changes faster than a release does, so a model must be named per agent
-	// (Agent.Model) or configured here via WithDefaultModel. Resolving an empty name with no default is a UserError.
+	// defaultModel is used for agents that omit a model name; the SDK ships
+	// no built-in default, so unset it makes an empty name a UserError.
 	defaultModel string
 }
 
 // NewProvider builds a Provider. Pass openai-go request options such as
 // option.WithAPIKey or option.WithBaseURL to configure the client. With no
 // options, the API key is read from the OPENAI_API_KEY environment variable.
-//
-// The client's own transport-level retries are DISABLED (openai-go defaults to
-// 2): retry policy belongs to one layer, and the SDK's is agents.NewRetryModel.
-// Stacked, the two multiply — every transient error costs MaxAttempts × 3
-// requests. A caller that wants the transport layer to retry instead passes
-// option.WithMaxRetries explicitly; options given here override the default.
+// The client's own transport-level retries are DISABLED (decisions §5.22);
+// pass option.WithMaxRetries explicitly to re-enable them.
 func NewProvider(opts ...option.RequestOption) *Provider {
 	all := append([]option.RequestOption{option.WithMaxRetries(0)}, opts...)
 	return &Provider{client: oai.NewClient(all...)}
@@ -40,10 +34,9 @@ func (p *Provider) WithDefaultModel(name string) *Provider {
 	return p
 }
 
-// Capabilities declares this adapter's unsupported request features — none:
-// the Responses API is the SDK's native format, so every ModelRequest feature
-// maps directly. It exists so hosting layers can treat all providers through
-// one declaration (modelkit.Capabilities) instead of special-casing this one.
+// Capabilities declares this adapter's unsupported request features — none,
+// the Responses API being the SDK's native format — so hosting layers treat
+// every provider through one declaration.
 func Capabilities() modelkit.Capabilities {
 	return modelkit.Capabilities{}
 }

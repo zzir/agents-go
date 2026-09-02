@@ -98,9 +98,6 @@ func (s *ConversationsSession) Entries(ctx context.Context, cur session.Cursor) 
 	}
 	page := session.Cursor{AfterSeq: cur.AfterSeq}
 	if cur.Limit > 0 {
-		// A positive limit is part of the session.Storage contract too; it was
-		// once silently dropped, and a pager asking for 50 got the whole
-		// conversation.
 		page.Limit = cur.Limit
 	}
 	return session.PageEntries(entries, page), nil

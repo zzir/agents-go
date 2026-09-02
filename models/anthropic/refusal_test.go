@@ -27,7 +27,7 @@ func refusalProvider(t *testing.T) agents.ModelProvider {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, refusalJSON)
+		_, _ = fmt.Fprint(w, refusalJSON)
 	}))
 	t.Cleanup(srv.Close)
 	return NewProvider(option.WithBaseURL(srv.URL), option.WithAPIKey("test-key"))
@@ -105,7 +105,7 @@ func TestStreamedRunRefusalSurfacesModelRefusalError(t *testing.T) {
 func TestRunSyncRefusalDropsToolCalls(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
+		_, _ = fmt.Fprint(w, `{
 			"id": "msg_r", "type": "message", "role": "assistant", "model": "claude-test",
 			"content": [
 				{"type": "text", "text": "I cannot help with that."},
@@ -140,7 +140,7 @@ func TestRunSyncRefusalDropsToolCalls(t *testing.T) {
 func TestRunSyncRefusalEmptyContentUsesExplanation(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
+		_, _ = fmt.Fprint(w, `{
 			"id": "msg_r", "type": "message", "role": "assistant", "model": "claude-test",
 			"content": [],
 			"stop_reason": "refusal",

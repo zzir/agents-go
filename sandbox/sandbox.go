@@ -1,13 +1,12 @@
 // Package sandbox runs untrusted, agent-generated code in an isolated
 // environment and exposes it to an agent as a tool. The Sandbox interface is
-// backend-agnostic; the Docker backend lives in a subpackage so that callers
-// who do not use it pull no heavy dependencies.
+// backend-agnostic: LocalSandbox lives here, the Docker backend in the
+// sandbox/docker module and the E2B backend in sandbox/e2b.
 //
 // A sandbox executes a command in a working directory after writing the request
 // files into it. Backends enforce isolation (no network, read-only root,
 // dropped capabilities) and a per-command time limit by default; memory and CPU
-// limits apply when the caller sets Options.Limits (the workbench sets a safe
-// default cap of its own).
+// limits apply when the caller sets Options.Limits.
 package sandbox
 
 import (
@@ -16,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 )
@@ -28,20 +28,17 @@ const DefaultTimeout = 30 * time.Second
 const DefaultMaxOutputBytes int64 = 1 << 20 // 1 MiB
 
 // DefaultMaxReadFileBytes caps ReadFile when a backend's MaxReadFileBytes
-// option is zero. It keeps a single model-issued read_file call from loading
-// an arbitrarily large sandbox file into host memory.
+// option is zero, so one read_file call cannot load an arbitrarily large file
+// into host memory.
 const DefaultMaxReadFileBytes int64 = 8 << 20 // 8 MiB
 
 // ErrReadLimitExceeded is returned (wrapped) by ReadFile when the file is
-// larger than the backend's read limit. An explicit error — rather than a
-// silent truncation — because callers may treat the returned bytes as the
-// complete file content.
+// larger than the backend's read limit — an error, never a silent truncation.
 var ErrReadLimitExceeded = errors.New("file exceeds read limit")
 
 // ReadAllLimited reads r to completion but fails with ErrReadLimitExceeded
 // when the content exceeds limit bytes; limit <= 0 means
-// DefaultMaxReadFileBytes. At most limit+1 bytes are read, so memory stays
-// bounded regardless of the source size.
+// DefaultMaxReadFileBytes. At most limit+1 bytes are read.
 func ReadAllLimited(r io.Reader, limit int64) ([]byte, error) {
 	if limit <= 0 {
 		limit = DefaultMaxReadFileBytes
@@ -71,6 +68,17 @@ func ShellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
+// WriteAndClose writes content to f and closes it, reporting the first
+// failure. It is the write half of an O_EXCL create for backends on an OS
+// filesystem; the caller removes the file on error.
+func WriteAndClose(f *os.File, content []byte) error {
+	if _, err := f.Write(content); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
 // Sandbox executes commands and performs file operations in an isolated
 // environment.
 type Sandbox interface {
@@ -82,16 +90,17 @@ type Sandbox interface {
 	// WriteFile writes a file in the sandbox, creating parent directories.
 	WriteFile(ctx context.Context, path string, content []byte) error
 	// CreateExclusive atomically creates path with content (creating parent
-	// directories) and fails with fs.ErrExist if it already exists — it never
-	// overwrites. apply_patch's Add/Move use it so the filesystem itself rejects
-	// a clobber, closing the check-then-write race between concurrent tool calls.
+	// directories) and fails with fs.ErrExist if it already exists; it leaves
+	// no partial file behind on failure. apply_patch's Add/Move rely on it.
 	CreateExclusive(ctx context.Context, path string, content []byte) error
-	// ListDir lists entries in a sandbox directory (empty path = working dir).
+	// ListDir lists entries in a sandbox directory (empty path = working dir),
+	// in no particular order.
 	ListDir(ctx context.Context, path string) ([]DirEntry, error)
 	// RemoveFile removes a file in the sandbox's persistent working directory.
 	RemoveFile(ctx context.Context, path string) error
 	// Rename moves a file within the sandbox's persistent working directory,
-	// creating the destination's parent directories.
+	// creating the destination's parent directories. apply_patch parks a file
+	// too large to snapshot with it (spec §2.7s).
 	Rename(ctx context.Context, oldPath, newPath string) error
 	// Close releases any resources held by the sandbox.
 	Close() error
@@ -104,13 +113,8 @@ type ExecRequest struct {
 	// Files maps a path (relative to the working directory) to its content; they
 	// are written before Cmd runs.
 	Files map[string]string
-	// Stdin is fed to the process's standard input. LocalSandbox and the SSH
-	// backend support it; the docker backend rejects requests that set it.
-	Stdin string
-	// Env sets environment variables for the process. Backends do not pass the
-	// host environment through: LocalSandbox provides only a minimal set of
-	// host variables by default (see LocalOptions.InheritHostEnv), and the
-	// container backends start from the image environment.
+	// Env sets environment variables for the process, over the sandbox's own.
+	// The host environment is never passed through (see LocalOptions.InheritHostEnv).
 	Env map[string]string
 	// Timeout bounds the execution; zero means DefaultTimeout.
 	Timeout time.Duration
@@ -207,11 +211,8 @@ type DirEntry struct {
 var ErrNoWorkDir = errors.New("sandbox: no persistent working directory configured")
 
 // ErrOutsideWorkDir is returned (wrapped) by file operations that refuse a
-// path outside the sandbox working directory. Only a backend whose file
-// operations run on a DIFFERENT filesystem than exec enforces this — the
-// docker bind-mount mode, where they run on the host side of the mount and
-// the container's isolation cannot cover them. Everywhere else the file tools
-// share exec's view of the filesystem and the error does not arise.
+// path outside the working directory. Only docker's bind-mount mode raises it:
+// its file operations run on the host side of the mount (decisions §5.14).
 var ErrOutsideWorkDir = errors.New("sandbox: path outside the working directory")
 
 // ExecStreamer is optionally implemented by Sandbox backends that support

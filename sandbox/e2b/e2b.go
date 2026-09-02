@@ -125,7 +125,11 @@ type Options struct {
 type Sandbox struct {
 	opts Options
 
-	mu sync.Mutex
+	// provMu serializes provisioning (ensureFor's slow path) and is held
+	// across its round trips and the OnSandboxID callback; mu guards the
+	// fields below and is never held across I/O. provMu is taken before mu.
+	provMu sync.Mutex
+	mu     sync.Mutex
 	// id is the sandbox this client is bound to; empty until the first
 	// ensure. accessToken is envd's credential when the service minted one.
 	id          string
@@ -133,8 +137,7 @@ type Sandbox struct {
 	// domain the service told us to use for this sandbox, when it did.
 	domain string
 	// leaseUntil is when the sandbox's TTL expires, as of the last create,
-	// resume or refresh. ensure refreshes it before it runs out — a lease that
-	// lapses mid-session takes the whole working tree with it (decisions §5.37).
+	// resume or refresh; ensure refreshes it before it runs out (decisions §5.34).
 	leaseUntil time.Time
 	// freshWorkDir marks a sandbox created in this process, whose working
 	// directory has yet to be made.
@@ -144,10 +147,9 @@ type Sandbox struct {
 }
 
 // leaseValid reports whether the lease has enough runway to skip a
-// control-plane refresh: at least half the TTL (which keeps a busy sandbox
-// alive without a round trip on every data-plane call), and at least the
-// caller's runway — an operation bounded longer than the lease must extend it
-// first, or the service kills the sandbox mid-operation. Callers hold s.mu.
+// control-plane refresh: at least half the TTL, and at least the caller's
+// runway — an operation bounded longer than the lease must extend it first.
+// Callers hold s.mu.
 func (s *Sandbox) leaseValid(runway time.Duration) bool {
 	if s.leaseUntil.IsZero() {
 		return false
@@ -162,16 +164,21 @@ func (s *Sandbox) leaseSeconds(runway time.Duration) int {
 	return max(s.timeout(), int((runway+time.Second-1)/time.Second))
 }
 
-// markLeased records a fresh TTL after a create, resume or refresh. Callers
-// hold s.mu.
+// markLeased records a fresh TTL after a create, resume or refresh.
 func (s *Sandbox) markLeased(runway time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.leaseUntil = time.Now().Add(time.Duration(s.leaseSeconds(runway)) * time.Second)
 }
 
-// forget drops a sandbox that is gone, so the next ensure builds a new one.
-// Callers hold s.mu.
-func (s *Sandbox) forget() {
-	s.id, s.accessToken, s.domain, s.leaseUntil = "", "", "", time.Time{}
+// forget drops the binding to id, if it is still the current one, so the next
+// ensure builds a new sandbox.
+func (s *Sandbox) forget(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.id == id {
+		s.id, s.accessToken, s.domain, s.leaseUntil = "", "", "", time.Time{}
+	}
 }
 
 var (
@@ -201,10 +208,8 @@ func (s *Sandbox) httpClient() *http.Client {
 }
 
 // defaultClient refuses a redirect that leaves the host the request was sent
-// to. The data plane talks to envd INSIDE the sandbox — a host untrusted
-// agent code can influence — so a cross-host redirect it returns would
-// otherwise carry the X-API-Key / X-Access-Token credential (which Go forwards
-// across redirects, unlike Authorization) to wherever it points.
+// to: envd runs inside the sandbox, and Go forwards the X-API-Key /
+// X-Access-Token credential across redirects (unlike Authorization).
 var defaultClient = &http.Client{
 	CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		if len(via) > 0 && req.URL.Host != via[0].URL.Host {
@@ -279,10 +284,9 @@ func (s *Sandbox) envdHost(id string) string {
 	return "https://" + s.hostFor(id, EnvdPort)
 }
 
-// ensureWorkDir creates the working directory of a freshly created sandbox.
-// A stock template has no /workspace, and everything here runs there. The
-// mkdir completes exactly once before any command proceeds: the flag falls
-// only on success, and concurrent first commands wait on wdMu.
+// ensureWorkDir creates the working directory of a freshly created sandbox
+// (spec §2.7q), exactly once before any command proceeds: the flag falls only
+// on success, and concurrent first commands wait on wdMu.
 func (s *Sandbox) ensureWorkDir(ctx context.Context) error {
 	s.mu.Lock()
 	pending := s.freshWorkDir
@@ -310,8 +314,7 @@ func (s *Sandbox) ensureWorkDir(ctx context.Context) error {
 }
 
 // Close releases nothing remote: the sandbox outlives this client, and which
-// of stop and destroy is wanted is the caller's call (Stop / the backend's
-// Reclaim). Closing must not silently end someone's work.
+// of Stop and Destroy is wanted is the caller's call.
 func (s *Sandbox) Close() error { return nil }
 
 // resolvePath makes a sandbox-absolute path out of a caller's, which may be
@@ -327,8 +330,7 @@ func (s *Sandbox) resolvePath(p string) string {
 	return s.workDir() + "/" + p
 }
 
-// deadline turns a request timeout into a context, so a hung sandbox ends the
-// call rather than the process.
+// withTimeout turns a request timeout into a context; d <= 0 means no deadline.
 func withTimeout(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
 	if d <= 0 {
 		return context.WithCancel(ctx)

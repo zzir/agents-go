@@ -223,11 +223,8 @@ func messageBlocks(parts []modelkit.Part) ([]ant.ContentBlockParamUnion, error) 
 				blocks = append(blocks, ant.NewTextBlock(p.Text))
 			}
 		case p.Type == "refusal":
-			// The Messages API has no refusal part; the refusal text is still
-			// what the assistant said, so it goes back as text.
-			if p.Refusal != "" {
-				blocks = append(blocks, ant.NewTextBlock(p.Refusal))
-			}
+			// Dropped, not replayed as assistant text: a refusal is not an
+			// answer the model gave (decisions §5.49).
 		case p.Type == "input_image":
 			block, err := imageBlock(p)
 			if err != nil {
@@ -455,14 +452,12 @@ func convertToolChoice(choice agents.ToolChoice, parallel *bool, hasTools bool) 
 	}
 }
 
-// blockToItem converts one response content block into a canonical output
-// item. Item ids are synthesized from the message id and block index for
-// blocks the API leaves anonymous; a tool_use block's own id doubles as both
-// item id and call id.
+// blockToItem converts one non-text response content block into a canonical
+// output item (text blocks are merged by convertOutput). Item ids are
+// synthesized from the message id and block index for blocks the API leaves
+// anonymous; a tool_use block's own id doubles as both item id and call id.
 func blockToItem(msgID string, index int, block ant.ContentBlockUnion) (agents.OutputItem, error) {
 	switch block.Type {
-	case "text":
-		return modelkit.MessageItem(blockItemID(msgID, index), block.Text)
 	case "tool_use":
 		return modelkit.FunctionCallItem(block.ID, block.ID, block.Name, string(block.Input))
 	case "thinking":
@@ -482,14 +477,11 @@ func blockToItem(msgID string, index int, block ant.ContentBlockUnion) (agents.O
 	}
 }
 
-// convertOutput converts a complete response message into canonical items.
-//
-// A refusal terminal produces ONE canonical refusal message and nothing else.
-// The Messages API reports refusal OUT-OF-BAND (stop_reason), and a refused
-// response may still carry partially generated content — tool_use blocks in
-// particular. Those must not survive into items: the runner EXECUTES tool
-// calls before it ever looks for a refusal, and a refused response's actions
-// must not have side effects.
+// convertOutput converts a complete response message into canonical items
+// (decisions §5.49): consecutive text blocks become ONE message item with a
+// part each, since the runner reads only a turn's last message; a refusal
+// terminal produces ONE refusal item and nothing else, so the partially
+// generated tool_use blocks a refused response may carry never execute.
 func convertOutput(msg *ant.Message) ([]agents.OutputItem, error) {
 	if msg.StopReason == ant.StopReasonRefusal {
 		item, err := modelkit.RefusalItem(blockItemID(msg.ID, 0), refusalText(msg))
@@ -499,8 +491,20 @@ func convertOutput(msg *ant.Message) ([]agents.OutputItem, error) {
 		return []agents.OutputItem{item}, nil
 	}
 	items := make([]agents.OutputItem, 0, len(msg.Content))
-	for i, block := range msg.Content {
-		item, err := blockToItem(msg.ID, i, block)
+	for i := 0; i < len(msg.Content); {
+		var item agents.OutputItem
+		var err error
+		if msg.Content[i].Type == "text" {
+			start := i
+			var texts []string
+			for ; i < len(msg.Content) && msg.Content[i].Type == "text"; i++ {
+				texts = append(texts, msg.Content[i].Text)
+			}
+			item, err = modelkit.MessageItem(blockItemID(msg.ID, start), texts...)
+		} else {
+			item, err = blockToItem(msg.ID, i, msg.Content[i])
+			i++
+		}
 		if err != nil {
 			return nil, err
 		}

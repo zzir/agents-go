@@ -70,8 +70,7 @@ func convertToolChoice(choice agents.ToolChoice) (responses.ResponseNewParamsToo
 }
 
 // responseFormat builds the Responses API text/format payload for the agent's
-// output schema. It mirrors Converter.get_response_format. The bool reports
-// whether a structured format was set.
+// output schema. The bool reports whether a structured format was set.
 func responseFormat(schema agents.OutputSchema) (responses.ResponseTextConfigParam, bool) {
 	if schema == nil || schema.IsPlainText() {
 		return responses.ResponseTextConfigParam{}, false
@@ -87,8 +86,7 @@ func responseFormat(schema agents.OutputSchema) (responses.ResponseTextConfigPar
 	}, true
 }
 
-// applySettings overlays the model settings onto the request params, mirroring
-// the field mapping in _build_response_create_kwargs.
+// applySettings overlays the model settings onto the request params.
 func applySettings(params *responses.ResponseNewParams, s *agents.ModelSettings, hasTools bool) {
 	if s == nil {
 		return

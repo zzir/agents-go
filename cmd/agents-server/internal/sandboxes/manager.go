@@ -785,7 +785,7 @@ func (m *Manager) ExportProject(ctx context.Context, spec Spec) (io.ReadCloser, 
 		release()
 		return nil, fmt.Errorf("%s sandbox: cannot export", spec.Sandbox.Type)
 	}
-	rc, err := ex.ExportTar(ctx, "")
+	rc, err := ex.ExportTar(ctx)
 	if err != nil {
 		release()
 		return nil, err

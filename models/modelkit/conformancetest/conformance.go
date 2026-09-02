@@ -1,15 +1,16 @@
 // Package conformancetest is the golden test matrix every agents.Model
 // adapter in this repository must pass.
 //
-// It checks the adapter against the runner's consumption contract (spec
+// It checks the adapter against the runner's consumption contract (decisions
 // §5.10): which output item types come back, which stream events appear and
-// in what order, how usage is accounted, and that every synthesized item
-// round-trips into next-turn input. The suite drives the Model interface
-// only — each adapter supplies a NewModel hook that returns a Model backed by
-// a fake backend speaking that adapter's own wire protocol, primed to answer
-// the scenario. The suite cannot know wire formats; translating a TurnSpec
-// into wire bytes is the adapter test's half of the bargain, and is itself
-// the translation being verified.
+// in what order, how usage is accounted, that every synthesized item
+// round-trips into next-turn input, and that the canonical histories a run
+// replays are accepted. The suite drives the Model interface only — each
+// adapter supplies a NewModel hook that returns a Model backed by a fake
+// backend speaking that adapter's own wire protocol, primed to answer the
+// scenario. The suite cannot know wire formats; translating a TurnSpec into
+// wire bytes is the adapter test's half of the bargain, and is itself the
+// translation being verified.
 package conformancetest
 
 import (
@@ -55,9 +56,16 @@ type ReasoningSpec struct {
 
 // TurnSpec is what the model must answer for a scenario, in canonical terms.
 // The adapter's fixture encodes this meaning in its own wire format.
+//
+// Refusal makes the turn a refused response: the output must be exactly one
+// message whose single part is a refusal carrying this text, and nothing
+// else. ToolCalls on such a turn describe what the WIRE may carry (a backend
+// reporting refusal out-of-band can ship partially generated calls); none
+// may surface as an item.
 type TurnSpec struct {
 	ResponseID string
 	Text       string
+	Refusal    string
 	Reasoning  *ReasoningSpec
 	ToolCalls  []ToolCallSpec
 	Truncated  bool
@@ -65,10 +73,13 @@ type TurnSpec struct {
 }
 
 // Scenario is one request/turn pair the suite runs, in both blocking and
-// streaming mode.
+// streaming mode. Input, when set, is the conversation the request carries
+// instead of UserText — the input-side scenarios replay canonical histories
+// every adapter must accept.
 type Scenario struct {
 	Name     string
 	UserText string
+	Input    []agents.InputItem
 	Tools    []*agents.Tool
 	Settings *agents.ModelSettings
 	Turn     TurnSpec
@@ -76,12 +87,34 @@ type Scenario struct {
 
 // Request builds the ModelRequest the suite sends for this scenario.
 func (s Scenario) Request() agents.ModelRequest {
+	input := s.Input
+	if input == nil {
+		input = agents.InputItemsFromText(s.UserText)
+	}
 	return agents.ModelRequest{
 		SystemInstructions: "You are a test fixture.",
-		Input:              agents.InputItemsFromText(s.UserText),
+		Input:              input,
 		Settings:           s.Settings,
 		Tools:              s.Tools,
 	}
+}
+
+// inputItem decodes a canonical wire item for a fixture; a fixture that does
+// not parse is a programming error.
+func inputItem(raw string) agents.InputItem {
+	item, err := session.UnmarshalInputItem([]byte(raw))
+	if err != nil {
+		panic("conformancetest: fixture item: " + err.Error())
+	}
+	return item
+}
+
+// toolLoopHistory is the input a run sends after one tool round trip: the
+// user's ask, the model's call, and the tool's result.
+func toolLoopHistory() []agents.InputItem {
+	items := agents.InputItemsFromText("Look up the weather.")
+	items = append(items, inputItem(`{"type":"function_call","id":"fc_1","call_id":"call_1","name":"lookup","arguments":"{\"query\":\"weather\"}","status":"completed"}`))
+	return append(items, responses.ResponseInputItemParamOfFunctionCallOutput("call_1", "sunny"))
 }
 
 type lookupArgs struct {
@@ -161,6 +194,65 @@ func Scenarios() []Scenario {
 				Usage:      UsageSpec{Input: 100, Output: 5, CachedRead: 60, CacheWrite: 20},
 			},
 		},
+		{
+			// The wire carries a partially generated tool call alongside the
+			// refusal; only the refusal may surface.
+			Name:     "refusal",
+			UserText: "Do something harmful.",
+			Tools:    []*agents.Tool{lookupTool()},
+			Turn: TurnSpec{
+				ResponseID: "resp_refusal",
+				Refusal:    "I cannot help with that.",
+				ToolCalls:  []ToolCallSpec{{CallID: "call_1", Name: "lookup", ArgumentsJSON: `{"query":"harm"}`}},
+				Usage:      UsageSpec{Input: 15, Output: 9},
+			},
+		},
+		// Input-side scenarios: the canonical histories a multi-turn run
+		// replays. Each must be accepted and answered; what the wire looks
+		// like is the adapter's own unit tests' business.
+		{
+			Name:  "history_tool_result",
+			Input: toolLoopHistory(),
+			Tools: []*agents.Tool{lookupTool()},
+			Turn: TurnSpec{
+				ResponseID: "resp_history_tool",
+				Text:       "It is sunny.",
+				Usage:      UsageSpec{Input: 40, Output: 6},
+			},
+		},
+		{
+			Name: "history_system",
+			Input: append(agents.InputItemsFromText("Hi."),
+				append(agents.InputItemsFromSystemText("The earlier conversation was compacted."),
+					agents.InputItemsFromText("Continue.")...)...),
+			Turn: TurnSpec{
+				ResponseID: "resp_history_system",
+				Text:       "Continuing.",
+				Usage:      UsageSpec{Input: 30, Output: 4},
+			},
+		},
+		{
+			Name: "history_image",
+			Input: []agents.InputItem{inputItem(`{"type":"message","role":"user","content":[` +
+				`{"type":"input_text","text":"What is this?"},` +
+				`{"type":"input_image","image_url":"data:image/png;base64,QUJD","detail":"auto"}]}`)},
+			Turn: TurnSpec{
+				ResponseID: "resp_history_image",
+				Text:       "A tiny image.",
+				Usage:      UsageSpec{Input: 50, Output: 5},
+			},
+		},
+		{
+			Name: "history_refusal",
+			Input: append(agents.InputItemsFromText("Do something harmful."),
+				inputItem(`{"type":"message","role":"assistant","status":"completed","content":[{"type":"refusal","refusal":"I cannot help with that."}]}`),
+				agents.InputItemsFromText("Then help with something else.")[0]),
+			Turn: TurnSpec{
+				ResponseID: "resp_history_refusal",
+				Text:       "Gladly.",
+				Usage:      UsageSpec{Input: 35, Output: 3},
+			},
+		},
 	}
 }
 
@@ -203,7 +295,8 @@ func assertResponse(t *testing.T, spec TurnSpec, resp *agents.ModelResponse) {
 			got, resp.Status, resp.IncompleteReason, spec.Truncated)
 	}
 
-	var text strings.Builder
+	var text, refusal strings.Builder
+	var refusalParts int
 	var calls []ToolCallSpec
 	var reasonings []agents.OutputItem
 	for i, item := range resp.Output {
@@ -213,6 +306,11 @@ func assertResponse(t *testing.T, spec TurnSpec, resp *agents.ModelResponse) {
 		switch item.Type {
 		case "message":
 			for _, part := range item.AsMessage().Content {
+				if part.Type == "refusal" {
+					refusalParts++
+					refusal.WriteString(part.AsRefusal().Refusal)
+					continue
+				}
 				text.WriteString(part.AsOutputText().Text)
 			}
 		case "function_call":
@@ -228,7 +326,17 @@ func assertResponse(t *testing.T, spec TurnSpec, resp *agents.ModelResponse) {
 	if text.String() != spec.Text {
 		t.Errorf("message text = %q, want %q", text.String(), spec.Text)
 	}
-	assertToolCalls(t, spec.ToolCalls, calls)
+	wantCalls := spec.ToolCalls
+	if spec.Refusal != "" {
+		wantCalls = nil
+		if refusalParts != 1 || refusal.String() != spec.Refusal || len(resp.Output) != 1 {
+			t.Errorf("refused turn = %d items with %d refusal parts carrying %q, want exactly one item carrying %q",
+				len(resp.Output), refusalParts, refusal.String(), spec.Refusal)
+		}
+	} else if refusalParts != 0 {
+		t.Errorf("unexpected refusal part: %q", refusal.String())
+	}
+	assertToolCalls(t, wantCalls, calls)
 	assertReasoning(t, spec.Reasoning, reasonings)
 	assertRoundTrip(t, spec, resp.Output)
 	assertUsage(t, spec.Usage, resp.Usage)
@@ -537,10 +645,10 @@ func assertDoneItemsMatchFinal(t *testing.T, done, final []agents.OutputItem) {
 //
 // Sharing that mapping rather than restating it here is deliberate. What is
 // under test is the ADAPTER — does its terminal event report the tokens its
-// backend reported, in Responses semantics (§5.10)? — and assertUsage checks
-// that against the scenario's expected numbers. A hand-written copy of the
-// field list here would assert only that two copies agree, and would go stale
-// the day a detail field is added.
+// backend reported, in Responses semantics (decisions §5.10)? — and
+// assertUsage checks that against the scenario's expected numbers. A
+// hand-written copy of the field list here would assert only that two copies
+// agree, and would go stale the day a detail field is added.
 func usageFromFinal(resp *responses.Response) *agents.Usage {
 	if !resp.JSON.Usage.Valid() {
 		return agents.NewUsage()

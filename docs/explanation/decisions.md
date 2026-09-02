@@ -362,7 +362,13 @@ surfaces sharing one view is what makes those calls work. (An earlier
 workdir-rooted "virtual chroot" design was dropped for exactly that failure:
 absolute paths got re-joined under `WorkDir` and read as "not found".)
 `ReadFile` behaves like the OS everywhere: it follows symlinks to the file
-they name and fails on a directory with an is-a-directory error.
+they name and fails on a directory with an is-a-directory error; a missing
+path is `fs.ErrNotExist` from every operation, on every backend — the
+in-container docker scripts report absence by exit code, never by sniffing a
+shell's wording. `ListDir` promises no order; `list_files` sorts by name, so
+the model sees one listing whichever backend answered. `Rename` exists for
+one caller: `apply_patch` parks a file too large to snapshot with it
+(spec §2.7s).
 
 **Persistent-mode docker runs every file operation through `exec`, not the
 daemon's archive API (`docker cp`).** The archive API reads and writes only the
@@ -383,14 +389,6 @@ absolute paths must lie under the in-container mount point (`/workspace`, the
 only view the model ever sees) and are translated to their host-side names,
 and anything else fails with `sandbox.ErrOutsideWorkDir` — an explicit
 "outside the working directory" to the model, never a silent re-rooting.
-
-Docker's working directory may be narrowed to a **subtree of the mount**
-(`Options.ContainerWorkDir`, `/workspace` by default, validated by `New` to be
-`/workspace` or below it): the mount point never moves, but commands run — and
-relative paths in the file tools resolve — in that subdirectory, exec and file
-tools moving together per this section's rule. Absolute `/workspace/...` paths
-keep addressing the whole mount, exactly like a shell `cd`'d into the subtree
-still can.
 
 ### 5.15 Streaming-only backends adapt with a Model decorator
 
@@ -553,8 +551,7 @@ created under a laxer policy (network on, root user, no limits) passed both
 checks and silently served a config that no longer allows any of it. The
 fingerprint hashes **effective** values (the resolved user, the applied PIDs
 default), so equivalent spellings of one configuration still adopt.
-`ContainerWorkDir` is excluded on purpose — persistent mode passes the working
-directory per exec, so it does not change what the container *is*. A container
+A container
 without the label (foreign) is a hard error naming the remedy: remove or
 rename it.
 
@@ -585,11 +582,16 @@ seconds, each blamed on its own agent's MCP server rather than on the stop that
 actually did it.
 
 The price is one in-flight request outliving its caller, bounded by the
-connection's own lifetime (`Close` ends it). That is the right trade against
-a connection outage for every other user of the server. The rule generalizes:
-**a resource shared between runs may not be handed a single run's
-cancellation** — a per-run deadline on a per-process resource is a way for one
-run to break another.
+connection's own lifetime (`Close` ends it) and by a **request ceiling** of
+its own (30 minutes): a server that never answers would otherwise pin the
+goroutine and its request until Close. The ceiling is generous precisely so
+it fires only on a request that is already lost, and in the go-sdk's
+transport a cancellation reaches the connection only when it interrupts a
+response body read — a connection lost that way heals like any other
+(§5.21). That is the right trade against a connection outage for every other
+user of the server. The rule generalizes: **a resource shared between runs
+may not be handed a single run's cancellation** — a per-run deadline on a
+per-process resource is a way for one run to break another.
 
 ### 5.21 A dead shared connection repairs itself, and a tool call is not repeated
 
@@ -1608,3 +1610,51 @@ errgroup does not recover, and that panic would take the process — and that
 net aborts the run, since it is not the tool's failure to hand back to the
 model.
 
+### 5.47 Zero-setter sandbox options were removed
+
+Three sandbox surfaces had no setter anywhere in the repository and were cut
+under the standing rule (a zero-consumer feature is removed, not kept):
+`ExecRequest.Stdin`, which only the local backend honored and the container
+backends rejected; `docker.Options.ContainerWorkDir`, the /workspace-subtree
+working directory with its host-side path translation — the workbench never
+narrowed a container, and the translation was a second path universe kept
+alive for nobody; and the `path` parameter of `Exporter.ExportTar`, which
+both callers passed empty. Each comes back the day a caller needs it, as an
+option with that caller.
+
+### 5.48 apply_patch parks a large file instead of snapshotting it
+
+apply_patch's atomicity rests on an in-memory snapshot of every file it
+touches, taken before the commit, so a failed commit rolls each one back.
+`ReadFile` refuses a file over the backend's read limit (8 MiB by default),
+which made a plain `*** Delete File:` of a large artifact fail outright — the
+one operation that needs no content at all. The delete now parks the file by
+renaming it beside itself for the duration of the commit: the rename is atomic
+on every backend, the rollback is the reverse rename, and the commit removes
+the parked copy last, after every other operation has landed (spec §2.7s).
+`Sandbox.Rename` — until then a method with no production caller — is what
+makes it possible, which is why it stays on the interface. Update and Move are
+not parked: they need the content, and the read limit is the limit.
+
+### 5.49 The Anthropic adapter decides its output items at the stop reason
+
+Three translation choices in the Messages adapter share one reason: the
+runner reads a turn as ONE assistant message and executes its tool calls
+before it looks for a refusal, while the Messages API reports its verdict
+LAST (`stop_reason` arrives after every content block).
+
+- Consecutive `text` blocks become one message item with a part each. The
+  runner keeps only a turn's last message item, so a block per item silently
+  dropped every text but the last.
+- When streaming, `output_item.done` is emitted only at `message_stop`, from
+  the same `convertOutput` the blocking path uses. Emitting it per block leaked
+  a `function_call` done event for a response whose stop reason then turned
+  out to be `refusal` — an item the terminal output (rightly) did not carry,
+  breaking the contract that the two are interchangeable. Text deltas still
+  stream live; only the finished items wait for the verdict.
+- A `refusal` part in the replayed history is dropped rather than sent back as
+  assistant text: a refusal is not an answer the model gave, and replaying it
+  as one teaches the next turn that it was. The other lossy input
+  translations (image `detail`, text `annotations`, unsigned reasoning,
+  response citations) are listed in the models how-to; they lose nothing the
+  backend could use.

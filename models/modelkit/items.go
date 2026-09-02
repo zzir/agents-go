@@ -32,9 +32,16 @@ type messagePartJSON struct {
 	Annotations []any  `json:"annotations"`
 }
 
-// MessageItem synthesizes a canonical assistant message item with a single
-// output_text part. id may be empty when the backend does not assign item ids.
-func MessageItem(id, text string) (agents.OutputItem, error) {
+// MessageItem synthesizes a canonical assistant message item with one
+// output_text part per text. Several parts is how a backend that splits one
+// assistant turn into consecutive text blocks keeps them ONE message: the
+// runner reads only a turn's last message item. id may be empty when the
+// backend does not assign item ids.
+func MessageItem(id string, texts ...string) (agents.OutputItem, error) {
+	parts := make([]messagePartJSON, 0, len(texts))
+	for _, text := range texts {
+		parts = append(parts, messagePartJSON{Type: "output_text", Text: text, Annotations: []any{}})
+	}
 	raw, err := json.Marshal(struct {
 		ID      string            `json:"id"`
 		Type    string            `json:"type"`
@@ -46,7 +53,7 @@ func MessageItem(id, text string) (agents.OutputItem, error) {
 		Type:    "message",
 		Role:    "assistant",
 		Status:  "completed",
-		Content: []messagePartJSON{{Type: "output_text", Text: text, Annotations: []any{}}},
+		Content: parts,
 	})
 	if err != nil {
 		return agents.OutputItem{}, err

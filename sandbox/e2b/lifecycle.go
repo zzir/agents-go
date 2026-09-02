@@ -87,10 +87,6 @@ func (s *Sandbox) Destroy(ctx context.Context) error {
 	if err := s.kill(ctx, id); err != nil && !isNotFound(err) {
 		return err
 	}
-	s.mu.Lock()
-	if s.id == id {
-		s.forget()
-	}
-	s.mu.Unlock()
+	s.forget(id)
 	return nil
 }

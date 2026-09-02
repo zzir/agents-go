@@ -24,22 +24,16 @@ import (
 type Provider struct {
 	client       ant.Client
 	defaultModel string
-	// promptCaching applies the request-level cache_control marker, which
-	// caches the request prefix up to its last cacheable block. On by default:
-	// an agent loop resends a growing prefix every turn, which is the exact
-	// shape prompt caching exists for, and the marker is free when nothing is
-	// cacheable. WithPromptCaching(false) opts out.
+	// promptCaching applies the request-level cache_control marker: on by
+	// default, since an agent loop resends a growing prefix every turn.
 	promptCaching bool
 }
 
 // NewProvider builds a Provider. Pass anthropic-sdk-go request options such as
 // option.WithAPIKey or option.WithBaseURL to configure the client. With no
 // options, the API key is read from the ANTHROPIC_API_KEY environment variable.
-//
-// The client's own transport-level retries are DISABLED (anthropic-sdk-go
-// defaults to 2), for the same reason models/openai does it: retry policy
-// belongs to one layer — agents.NewRetryModel — and stacked layers multiply.
-// Pass option.WithMaxRetries explicitly to re-enable the transport layer.
+// The client's own transport-level retries are DISABLED, as in models/openai
+// (decisions §5.22); pass option.WithMaxRetries explicitly to re-enable them.
 func NewProvider(opts ...option.RequestOption) *Provider {
 	all := append([]option.RequestOption{option.WithMaxRetries(0)}, opts...)
 	return &Provider{client: ant.NewClient(all...), promptCaching: true}

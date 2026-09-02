@@ -201,7 +201,7 @@ func TestE2BExportReaderCloseAbortsTheStream(t *testing.T) {
 	if err := sb.WriteFile(t.Context(), "big.bin", bytes.Repeat([]byte("x"), 1<<20)); err != nil {
 		t.Fatal(err)
 	}
-	rc, err := sb.ExportTar(t.Context(), "")
+	rc, err := sb.ExportTar(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +245,7 @@ func TestE2BExportExtendsTheLease(t *testing.T) {
 	if _, err := sb.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err != nil {
 		t.Fatal(err)
 	}
-	rc, err := sb.ExportTar(t.Context(), "")
+	rc, err := sb.ExportTar(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,8 +288,7 @@ func TestE2BOpenTerminalRefreshesTheLease(t *testing.T) {
 	if calls := timeoutCalls(f); !leasedAtLeast(calls, e2b.DefaultTimeout) {
 		t.Fatalf("opening a terminal did not refresh the lease; /timeout calls = %v", calls)
 	}
-	// End the shell: the fake's SendSignal is a stub, and a lingering process
-	// would hold its stream request open past the server's Close.
+	// End the shell so its stream request does not outlive the server.
 	if _, err := term.Write([]byte("exit 0\n")); err != nil {
 		t.Fatal(err)
 	}
@@ -446,6 +445,88 @@ func TestE2BConcurrentFirstCommandsWaitForTheWorkDir(t *testing.T) {
 		if err != nil {
 			t.Fatalf("a concurrent first command ran before the workdir existed: %v", err)
 		}
+	}
+}
+
+// A create whose content upload fails leaves NO file behind: apply_patch's
+// Add relies on a failed CreateExclusive having created nothing, so the empty
+// file the exclusive create made first is removed again.
+func TestE2BCreateExclusiveUploadFailureLeavesNoFile(t *testing.T) {
+	sb, f := fakeBackedSandbox(t)
+	if _, err := sb.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	f.failUploads = 1
+	f.mu.Unlock()
+	if err := sb.CreateExclusive(t.Context(), "half.txt", []byte("content")); err == nil {
+		t.Fatal("a create whose upload failed must report it")
+	}
+	if _, err := os.Stat(filepath.Join(f.root, "half.txt")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the failed create left a file behind: %v", err)
+	}
+	if err := sb.CreateExclusive(t.Context(), "half.txt", []byte("content")); err != nil {
+		t.Fatalf("a retried create after the cleanup: %v", err)
+	}
+}
+
+// OnSandboxID runs outside the sandbox's field lock, so a host that records
+// the id and then looks at the sandbox — Status, here — does not deadlock,
+// and sees the sandbox it was just handed.
+func TestE2BOnSandboxIDMayReenterStatus(t *testing.T) {
+	root := t.TempDir()
+	f := newFakeService(t, root)
+	base, err := url.Parse(f.URL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sb *e2b.Sandbox
+	seen := make(chan sandbox.State, 1)
+	sb, err = e2b.New(e2b.Options{
+		APIURL: f.URL(), Domain: "test", APIKey: "key", TemplateID: "base", WorkDir: root,
+		HTTPClient: &http.Client{Transport: envdRedirect{to: base, next: http.DefaultTransport}},
+		OnSandboxID: func(ctx context.Context, _ string) error {
+			st, err := sb.Status(ctx)
+			if err != nil {
+				return err
+			}
+			seen <- st
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := sb.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the first command deadlocked on the OnSandboxID callback")
+	}
+	if st := <-seen; st != sandbox.StateRunning {
+		t.Fatalf("Status inside OnSandboxID = %v, want running", st)
+	}
+}
+
+// A run the caller cancelled comes back as the caller's own error, bare —
+// never as a wrapped transport failure or a TimedOut result (spec §2.7m).
+func TestE2BCallerCancelReturnsBareContextError(t *testing.T) {
+	sb, _ := fakeBackedSandbox(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+	res, err := sb.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", "sleep 5"}, Timeout: 10 * time.Second})
+	if err != context.Canceled { //nolint:errorlint // the contract is the bare error, not a wrapped one
+		t.Fatalf("Exec = %v, %v; want the bare context.Canceled", res, err)
 	}
 }
 

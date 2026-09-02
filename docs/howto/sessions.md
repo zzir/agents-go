@@ -103,7 +103,7 @@ bubble shows when rebuilding a view from a paused run's pending input.
 
 ## Managing many sessions
 
-A `SessionRepo` owns which sessions exist, separately from what each one holds.
+A `session.Repo` owns which sessions exist, separately from what each one holds.
 
 ```go
 repo := session.NewInMemoryRepo()                // or sessions.NewRepo(db)
@@ -144,7 +144,7 @@ Not every store can do everything, and the interface does not pretend otherwise.
 ## Projection: what the model reads
 
 Recording something and sending it to the model are different acts. An
-`EntryProjector` decides, per kind, which entries become model input:
+A `session.Projector` decides, per kind, which entries become model input:
 
 | Kind | Projected by default? |
 |---|---|
@@ -239,7 +239,7 @@ sess, db := sessions.NewPostgres(sqldb, "user-123")
 err = sessions.CreateSchema(ctx, db)
 ```
 
-Both store one row per entry in an `agent_entries` table — the whole entry serialized as JSON, with the id, parent and kind lifted into columns for indexed lookups. A single `*bun.DB` can serve many session IDs (`sessions.New(db, id)`); rows are isolated by `session_id`. One schema and CRUD path serves both backends — bun smooths over the dialect differences.
+Both store one row per entry in an `agent_entries` table — the whole entry serialized as JSON, with the id, parent and kind lifted into columns for indexed lookups. A single `*bun.DB` can serve many session IDs (`sessions.New(db, id)`); rows are isolated by `(session_id, gen)` — the generation a repo mints per created session, so a deleted-and-recreated id never reads its predecessor's rows. One schema and CRUD path serves both backends — bun smooths over the dialect differences.
 
 ### OpenAI Conversations (server-side)
 

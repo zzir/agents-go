@@ -21,7 +21,7 @@ func sseModel(t *testing.T, sse string) agents.Model {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, sse)
+		_, _ = fmt.Fprint(w, sse)
 	}))
 	t.Cleanup(srv.Close)
 	provider := NewProvider(option.WithBaseURL(srv.URL), option.WithAPIKey("test-key"))
@@ -37,8 +37,8 @@ func sseModel(t *testing.T, sse string) agents.Model {
 func sseEvents(events ...string) string {
 	var b strings.Builder
 	for _, data := range events {
-		typ := data[strings.Index(data, `"type":"`)+len(`"type":"`):]
-		typ = typ[:strings.Index(typ, `"`)]
+		_, rest, _ := strings.Cut(data, `"type":"`)
+		typ, _, _ := strings.Cut(rest, `"`)
 		b.WriteString("event: " + typ + "\ndata: " + data + "\n\n")
 	}
 	return b.String()
@@ -192,5 +192,91 @@ func TestStreamAbandonedByConsumerStops(t *testing.T) {
 	}
 	if count != 2 {
 		t.Fatalf("consumed %d events, want 2", count)
+	}
+}
+
+// Streamed consecutive text blocks are one message item: one output_item.added,
+// every text delta on that item's id, and one output_item.done carrying both
+// parts, agreeing with the terminal output (decisions §5.49).
+func TestStreamConsecutiveTextBlocksAreOneItem(t *testing.T) {
+	model := sseModel(t, sseEvents(
+		`{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-test","content":[],"usage":{"input_tokens":10,"output_tokens":0}}}`,
+		`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+		`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"first "}}`,
+		`{"type":"content_block_stop","index":0}`,
+		`{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}`,
+		`{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"second"}}`,
+		`{"type":"content_block_stop","index":1}`,
+		`{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":2}}`,
+		`{"type":"message_stop"}`,
+	))
+	var added, done int
+	var deltaIDs []string
+	var final []agents.OutputItem
+	for event, err := range model.StreamResponse(context.Background(), agents.ModelRequest{
+		Input: agents.InputItemsFromText("hi"),
+	}) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch event.Type {
+		case agents.EventResponseOutputItemAdded:
+			added++
+		case agents.EventResponseOutputTextDelta:
+			deltaIDs = append(deltaIDs, event.AsResponseOutputTextDelta().ItemID)
+		case agents.EventResponseOutputItemDone:
+			done++
+			if n := len(event.AsResponseOutputItemDone().Item.AsMessage().Content); n != 2 {
+				t.Errorf("done item has %d parts, want 2", n)
+			}
+		case agents.EventResponseCompleted:
+			final = event.AsResponseCompleted().Response.Output
+		}
+	}
+	if added != 1 || done != 1 || len(final) != 1 {
+		t.Fatalf("added=%d done=%d final=%d, want one message item throughout", added, done, len(final))
+	}
+	for _, id := range deltaIDs {
+		if id != "msg_1-0" {
+			t.Errorf("text delta on item %q, want every delta on msg_1-0", id)
+		}
+	}
+}
+
+// A streamed refusal that arrives after a tool_use block was opened: no
+// output_item.done may name the tool call, since the stop reason collapses the
+// response to its refusal — the done items must match the terminal output.
+func TestStreamRefusalDoneItemsMatchTerminal(t *testing.T) {
+	model := sseModel(t, sseEvents(
+		`{"type":"message_start","message":{"id":"msg_r","type":"message","role":"assistant","model":"claude-test","content":[],"usage":{"input_tokens":10,"output_tokens":0}}}`,
+		`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+		`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I cannot help with that."}}`,
+		`{"type":"content_block_stop","index":0}`,
+		`{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"rm_rf","input":{}}}`,
+		`{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{}"}}`,
+		`{"type":"content_block_stop","index":1}`,
+		`{"type":"message_delta","delta":{"stop_reason":"refusal","stop_sequence":null},"usage":{"output_tokens":6}}`,
+		`{"type":"message_stop"}`,
+	))
+	var doneTypes []string
+	var final []agents.OutputItem
+	for event, err := range model.StreamResponse(context.Background(), agents.ModelRequest{
+		Input: agents.InputItemsFromText("go"),
+	}) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch event.Type {
+		case agents.EventResponseOutputItemDone:
+			doneTypes = append(doneTypes, event.AsResponseOutputItemDone().Item.Type)
+		case agents.EventResponseCompleted:
+			final = event.AsResponseCompleted().Response.Output
+		}
+	}
+	if len(doneTypes) != 1 || doneTypes[0] != "message" {
+		t.Fatalf("output_item.done types = %v, want only the refusal message", doneTypes)
+	}
+	if len(final) != 1 || final[0].AsMessage().Content[0].AsRefusal().Refusal != "I cannot help with that." {
+		t.Fatalf("terminal output = %d items, want the single refusal", len(final))
 	}
 }

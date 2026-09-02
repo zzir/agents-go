@@ -10,16 +10,39 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/zzir/agents-go/sandbox"
 )
 
 // The container side of the file operations, used in persistent mode without a
-// bind mount: the working directory lives inside the long-lived container.
-// Every operation goes through exec, so the file tools see exactly what a
-// command does — including tmpfs and other mounts the daemon's archive API
-// (docker cp) cannot reach (decisions §5.14).
+// bind mount: every operation goes through exec, so the file tools see exactly
+// what a command does — tmpfs and other mounts the daemon's archive API cannot
+// reach included (decisions §5.14).
+
+// Exit codes the in-container scripts use for the outcomes a caller branches
+// on. A code rather than a phrase in stderr: the wording is the image's shell
+// and locale to choose.
+const (
+	exitIsDir      = 21
+	exitOpenFailed = 22
+	exitTooLarge   = 23
+	exitNotFound   = 24
+	exitNotDir     = 25
+)
+
+// readFileScript writes full as base64 on stdout, size-guarded by limit. The
+// redirect follows symlinks and fails on a missing file.
+func readFileScript(full string, limit int64) string {
+	return fmt.Sprintf(
+		"f=%s\n"+
+			"if [ -d \"$f\" ]; then exit %d; fi\n"+
+			"sz=$(wc -c < \"$f\") || exit %d\n"+
+			"if [ \"$((sz))\" -gt %d ]; then exit %d; fi\n"+
+			"exec base64 < \"$f\"",
+		sandbox.ShellQuote(full), exitIsDir, exitOpenFailed, limit, exitTooLarge)
+}
 
 func (s *Sandbox) readFileContainer(ctx context.Context, p string) ([]byte, error) {
 	if err := s.ensureImage(ctx); err != nil {
@@ -29,22 +52,20 @@ func (s *Sandbox) readFileContainer(ctx context.Context, p string) ([]byte, erro
 	if limit <= 0 {
 		limit = sandbox.DefaultMaxReadFileBytes
 	}
-	// base64 over exec, not CopyFromContainer: the archive API cannot see a
-	// tmpfs or volume mount, so a file exec just wrote under /tmp would read
-	// back as "not found". `< "$f"` follows symlinks and fails on a missing
-	// file; the size is checked before reading so the exec output stays bounded.
-	script := fmt.Sprintf(
-		"f=%s\n"+
-			"if [ -d \"$f\" ]; then exit 21; fi\n"+
-			"sz=$(wc -c < \"$f\") || exit 22\n"+
-			"if [ \"$((sz))\" -gt %d ]; then exit 23; fi\n"+
-			"exec base64 < \"$f\"",
-		sandbox.ShellQuote(s.containerPath(p)), limit)
-	// base64 inflates by 4/3; keep the exec cap above that so a file at the
-	// limit is never truncated mid-stream.
-	res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", script}, MaxOutputBytes: limit + limit/2 + 1024})
+	// The exec cap sits above base64's 4/3 inflation so a file at the limit
+	// is never cut mid-stream, and the timeout grows with the limit: a big
+	// file over a remote daemon is not a 30-second read.
+	timeout := sandbox.DefaultTimeout + time.Duration(limit>>20)*time.Second
+	res, err := s.Exec(ctx, sandbox.ExecRequest{
+		Cmd:            []string{"sh", "-c", readFileScript(s.containerPath(p), limit)},
+		Timeout:        timeout,
+		MaxOutputBytes: limit + limit/2 + 1024,
+	})
 	if err != nil {
 		return nil, err
+	}
+	if res.TimedOut {
+		return nil, fmt.Errorf("docker sandbox: read %q: timed out after %s: %w", p, timeout, context.DeadlineExceeded)
 	}
 	switch res.ExitCode {
 	case 0:
@@ -59,14 +80,13 @@ func (s *Sandbox) readFileContainer(ctx context.Context, p string) ([]byte, erro
 			return nil, fmt.Errorf("docker sandbox: read %q: %w", p, sandbox.ErrReadLimitExceeded)
 		}
 		return data, nil
-	case 21:
-		return nil, fmt.Errorf("docker sandbox: read %s: is a directory", p)
-	case 23:
+	case exitIsDir:
+		return nil, &fs.PathError{Op: "read", Path: p, Err: syscall.EISDIR}
+	case exitTooLarge:
 		return nil, fmt.Errorf("docker sandbox: read %q: %w", p, sandbox.ErrReadLimitExceeded)
 	default:
-		// exit 22 (the `< "$f"` open failed) and anything else carry the shell's
-		// message. "Absent" must stay distinguishable from a real failure — the
-		// file tools render them differently, and apply_patch's rollback needs it.
+		// exitOpenFailed (the redirect failed) and anything else carry the
+		// shell's message, which tells absence from permission from a loop.
 		low := strings.ToLower(res.Stderr)
 		if strings.Contains(low, "no such file") {
 			return nil, fmt.Errorf("docker sandbox: read %q: %w", p, fs.ErrNotExist)
@@ -74,9 +94,6 @@ func (s *Sandbox) readFileContainer(ctx context.Context, p string) ([]byte, erro
 		if strings.Contains(low, "permission denied") {
 			return nil, fmt.Errorf("docker sandbox: read %q: %w", p, fs.ErrPermission)
 		}
-		// The kernel resolves symlinks in the redirect; an ELOOP comes back as
-		// the shell's message. Normalize to the lowercase phrasing the OS-backed
-		// backends use, so callers match one wording.
 		if strings.Contains(low, "too many levels of symbolic links") {
 			return nil, fmt.Errorf("docker sandbox: read %s: too many levels of symbolic links", p)
 		}
@@ -96,9 +113,7 @@ func (s *Sandbox) writeFileContainer(ctx context.Context, p string, content []by
 	// it is binary-safe and size-unbounded — then move them into place with
 	// exec, which reaches every mount the archive API cannot (tmpfs included).
 	buf := make([]byte, 8)
-	// As of Go 1.24 crypto/rand.Read never fails; it aborts the program if the
-	// OS source is unavailable.
-	_, _ = rand.Read(buf)
+	_, _ = rand.Read(buf) // never fails as of Go 1.24
 	stageName := ".agents-write." + hex.EncodeToString(buf)
 	stageAbs := path.Join(workDir, stageName)
 	script := fmt.Sprintf("mkdir -p -- %s && cat -- %s > %s; rc=$?; rm -f -- %s; exit $rc",
@@ -126,20 +141,16 @@ func (s *Sandbox) createExclusiveContainer(ctx context.Context, p string, conten
 	}
 	b64 := base64.StdEncoding.EncodeToString(content)
 	buf := make([]byte, 8)
-	// As of Go 1.24 crypto/rand.Read never fails; it aborts the program if
-	// the OS source is unavailable.
-	_, _ = rand.Read(buf)
+	_, _ = rand.Read(buf) // never fails as of Go 1.24
 	tmpPath := path.Join(path.Dir(full), ".ap."+hex.EncodeToString(buf))
 	createScript, cleanupScript, rmTmpScript := exclusiveCreateScripts(full, tmpPath, b64)
 	res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", createScript}})
 	cleanupCtx, cancelCleanup := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancelCleanup()
-	// Both a hard error and a timeout (Exec returns TimedOut:true, ExitCode:-1,
-	// err:nil) are outcome-unknown: ln may have published the target before Exec
-	// stopped, and the temp link is about to be removed. Run the inode-checked
-	// cleanup so a returned error always means "target not created" — unless the
-	// cleanup itself can't be confirmed (same daemon failure / timeout), in
-	// which case we must NOT claim the target is gone.
+	// A hard error or a timeout is outcome-unknown: ln may have published the
+	// target before Exec stopped. The inode-checked cleanup makes a returned
+	// error mean "target not created" — unless the cleanup itself cannot be
+	// confirmed, in which case the target may still exist and we say so.
 	if err != nil || res.TimedOut {
 		cres, cerr := s.Exec(cleanupCtx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", cleanupScript}})
 		if cerr != nil || cres.TimedOut || cres.ExitCode != 0 {
@@ -150,9 +161,8 @@ func (s *Sandbox) createExclusiveContainer(ctx context.Context, p string, conten
 		}
 		return fmt.Errorf("docker sandbox: create %q timed out", p)
 	}
-	// Exec ran to completion; drop our temp link (the target, if published,
-	// keeps its own independent hard link). A tmp-remove failure only leaks the
-	// temp file, so it's non-fatal.
+	// Exec ran to completion; drop the temp link (a published target keeps its
+	// own hard link). A tmp-remove failure only leaks the temp file.
 	_, _ = s.Exec(cleanupCtx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", rmTmpScript}})
 	if res.ExitCode != 0 {
 		if res.ExitCode == exitTargetExists {
@@ -163,21 +173,29 @@ func (s *Sandbox) createExclusiveContainer(ctx context.Context, p string, conten
 	return nil
 }
 
+// removeFileScript removes full, reporting absence by exit code. -L as well as
+// -e: a dangling symlink is there to remove.
+func removeFileScript(full string) string {
+	return fmt.Sprintf(
+		"f=%s\n"+
+			"if [ ! -e \"$f\" ] && [ ! -L \"$f\" ]; then exit %d; fi\n"+
+			"exec rm -- \"$f\"",
+		sandbox.ShellQuote(full), exitNotFound)
+}
+
 func (s *Sandbox) removeFileContainer(ctx context.Context, p string) error {
-	res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"rm", "--", s.containerPath(p)}})
+	res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", removeFileScript(s.containerPath(p))}})
 	if err != nil {
 		return err
 	}
-	if res.ExitCode != 0 {
-		// "Absent" must be distinguishable from a real failure — the file
-		// tools render the two differently, and apply_patch's rollback
-		// depends on it.
-		if strings.Contains(res.Stderr, "No such file") {
-			return fmt.Errorf("docker sandbox: rm %q: %w", p, fs.ErrNotExist)
-		}
-		return fmt.Errorf("docker sandbox: rm %q: %s", p, res.Stderr)
+	switch res.ExitCode {
+	case 0:
+		return nil
+	case exitNotFound:
+		return fmt.Errorf("docker sandbox: rm %q: %w", p, fs.ErrNotExist)
+	default:
+		return fmt.Errorf("docker sandbox: rm %q: %s", p, strings.TrimSpace(res.Stderr))
 	}
-	return nil
 }
 
 func (s *Sandbox) renameContainer(ctx context.Context, oldPath, newPath string) error {
@@ -200,69 +218,65 @@ func (s *Sandbox) renameContainer(ctx context.Context, oldPath, newPath string) 
 	return nil
 }
 
+// listDirScript lists dir one level deep, one NUL-terminated "type\tsize\tname"
+// record per entry; absence and a non-directory are exit codes.
+//
+// NUL rather than newline, because a filename may contain a newline or a tab:
+// the name is the final field, so a tab inside it survives the 3-way split.
+// The formatting is a batched `sh` rather than find's GNU-only -printf, so
+// busybox find (every alpine-based image) works. `wc -c` runs only on a
+// REGULAR file — on a fifo it would block until a writer appeared — and its
+// count goes through $(( )) so a wc that pads with spaces still parses.
+func listDirScript(dir string) string {
+	return fmt.Sprintf(
+		"d=%s\n"+
+			"if [ ! -e \"$d\" ]; then exit %d; fi\n"+
+			"if [ ! -d \"$d\" ]; then exit %d; fi\n"+
+			"exec find \"$d\" -maxdepth 1 -mindepth 1 -exec sh -c %s _ {} +",
+		sandbox.ShellQuote(dir), exitNotFound, exitNotDir,
+		sandbox.ShellQuote(`for f; do if [ -d "$f" ]; then printf "d\t0\t%s\0" "${f##*/}"; elif [ -f "$f" ]; then printf "f\t%s\t%s\0" "$(($(wc -c < "$f")))" "${f##*/}"; else printf "f\t0\t%s\0" "${f##*/}"; fi; done`))
+}
+
 func (s *Sandbox) listDirContainer(ctx context.Context, p string) ([]sandbox.DirEntry, error) {
 	if err := s.ensureImage(ctx); err != nil {
 		return nil, err
 	}
-	dir := s.containerPath(p)
-	// NUL-terminate each record instead of newline: a filename may contain
-	// a newline (or a tab), which would otherwise split into a phantom
-	// entry or corrupt the next line. The name is the final \t-field, so a
-	// tab inside it is preserved by the 3-way split; NUL can never appear
-	// in a filename, so records stay unambiguous.
-	//
-	// The formatting is a batched `sh` rather than find's `-printf`: that
-	// flag is GNU-only, and busybox find — every alpine-based image — fails
-	// the whole listing on it. `-exec … +` runs ONE shell for the entire
-	// directory, so the cost is one `wc -c` per regular file.
-	// wc runs only on a REGULAR file: `wc -c < fifo` blocks on open until a
-	// writer appears, so a named pipe in the tree would otherwise hang the
-	// whole listing until the exec timeout. Anything else non-directory
-	// reports size 0 without being opened.
-	cmd := fmt.Sprintf("find %s -maxdepth 1 -mindepth 1 -exec sh -c %s _ {} +",
-		sandbox.ShellQuote(dir),
-		sandbox.ShellQuote(`for f; do if [ -d "$f" ]; then printf "d\t0\t%s\0" "${f##*/}"; elif [ -f "$f" ]; then printf "f\t%s\t%s\0" "$(wc -c < "$f")" "${f##*/}"; else printf "f\t0\t%s\0" "${f##*/}"; fi; done`))
-	res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", cmd}})
+	res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", listDirScript(s.containerPath(p))}})
 	if err != nil {
 		return nil, err
 	}
-	if res.ExitCode != 0 {
-		// A missing directory must surface as fs.ErrNotExist so callers can
-		// tell "absent" from a real failure, uniform with the bind-mount and
-		// local/ssh backends.
-		if strings.Contains(res.Stderr, "No such file") {
-			return nil, fmt.Errorf("docker sandbox: list dir %q: %w", p, fs.ErrNotExist)
-		}
-		return nil, fmt.Errorf("docker sandbox: list dir: %s", res.Stderr)
+	switch res.ExitCode {
+	case 0:
+		return parseFindEntries(res.Stdout), nil
+	case exitNotFound:
+		return nil, fmt.Errorf("docker sandbox: list dir %q: %w", p, fs.ErrNotExist)
+	case exitNotDir:
+		return nil, &fs.PathError{Op: "list", Path: p, Err: syscall.ENOTDIR}
+	default:
+		return nil, fmt.Errorf("docker sandbox: list dir %q: %s", p, strings.TrimSpace(res.Stderr))
 	}
-	return parseFindEntries(res.Stdout), nil
 }
 
 // containerPath maps a model-supplied path onto the container filesystem with
-// shell semantics, mirroring exec (whose cwd is the working directory): an
-// absolute path is used as-is, a relative one resolves under the container's
-// working directory (ContainerWorkDir — the directory exec runs in). The
-// container itself is the isolation boundary — exec already reaches the whole
-// container filesystem — so persistent-mode file operations share exec's view
-// rather than pretending to a narrower one.
+// shell semantics, mirroring exec: an absolute path is used as-is, a relative
+// one resolves under /workspace. The container is the isolation boundary, so
+// the file operations share exec's view (decisions §5.14).
 func (s *Sandbox) containerPath(p string) string {
 	if path.IsAbs(p) {
 		return path.Clean(p)
 	}
-	return path.Join(s.containerWorkDir(), p)
+	return path.Join(workDir, p)
 }
 
 // exclusiveCreateScripts builds the in-container shell scripts for an atomic
 // exclusive-create of fullPath (absolute in-container) via a temp hard link.
 // Absolute paths start with "/", so mkdir/ln/rm can never mistake one for an
-// option (e.g. a "-f" filename) — sandbox.ShellQuote stops shell expansion,
-// not option parsing. The temp file has a Go-generated unpredictable name (not
-// a shell glob), so we never touch a user file. Returns:
+// option — sandbox.ShellQuote stops shell expansion, not option parsing. The
+// temp file has a Go-generated unpredictable name. Returns:
 //   - create: write tmp from b64, then hard-link it onto the target. ln fails
 //     with EEXIST if the target exists — the atomic exclusive create.
 //   - cleanup: run when the outcome is unknown (Exec error or timeout). Undo a
-//     target that ln may have published (same inode as tmp), then drop tmp,
-//     propagating any rm failure to the exit code.
+//     target that ln may have published (same inode as tmp), then drop tmp.
 //   - rmTmp: drop just the temp link after a completed Exec (non-fatal).
 //
 // exitTargetExists is the create script's exit code for "the target is already
@@ -273,12 +287,9 @@ func exclusiveCreateScripts(fullPath, tmpPath, b64 string) (create, cleanup, rmT
 	target := sandbox.ShellQuote(fullPath)
 	dirQ := sandbox.ShellQuote(path.Dir(fullPath))
 	tmpQ := sandbox.ShellQuote(tmpPath)
-	// "Already there" leaves as an exit CODE, not as a phrase in ln's stderr:
-	// the wording is the image's to choose (GNU ln, BusyBox ln, any locale),
-	// and a create that silently stopped reporting fs.ErrExist would turn
-	// apply_patch's Add-over-an-existing-file conflict into a generic failure.
-	// -L as well as -e, or a dangling symlink — which ln refuses and -e does
-	// not see — would read as "not there".
+	// "Already there" leaves as an exit CODE, not as a phrase in ln's stderr.
+	// -L as well as -e: a dangling symlink, which ln refuses and -e does not
+	// see, would otherwise read as "not there".
 	create = "mkdir -p " + dirQ + " || exit 1\n" +
 		"printf %s " + sandbox.ShellQuote(b64) + " | base64 -d > " + tmpQ + " || exit 1\n" +
 		"if ln " + tmpQ + " " + target + "; then exit 0; fi\n" +
@@ -289,11 +300,8 @@ func exclusiveCreateScripts(fullPath, tmpPath, b64 string) (create, cleanup, rmT
 	return
 }
 
-// parseFindEntries parses the NUL-separated output of the persistent-mode
-// ListDir "find" command. Each record is "%y\t%s\t%f" — type char, size,
-// filename — and records are separated by NUL so a filename containing a tab or
-// newline cannot corrupt the listing. A trailing NUL yields an empty final
-// record, which is skipped.
+// parseFindEntries parses listDirScript's NUL-separated output. A trailing
+// NUL yields an empty final record, which is skipped.
 func parseFindEntries(out string) []sandbox.DirEntry {
 	records := strings.Split(out, "\x00")
 	entries := make([]sandbox.DirEntry, 0, len(records))

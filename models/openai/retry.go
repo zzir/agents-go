@@ -1,7 +1,6 @@
 package openai
 
 import (
-	"errors"
 	"net/http"
 	"time"
 
@@ -10,19 +9,14 @@ import (
 	"github.com/zzir/agents-go/models/modelkit"
 )
 
-// unwrapAPIError extracts the openai-go API error from err's chain, for the
-// shared modelkit retry classification.
-func unwrapAPIError(err error) (int, http.Header, bool) {
-	apiErr, ok := errors.AsType[*oai.Error](err)
-	if !ok {
-		return 0, nil, false
+// unwrapAPIError reads the openai-go API error for the shared modelkit retry
+// classification.
+var unwrapAPIError = modelkit.UnwrapAs(func(e *oai.Error) (int, http.Header) {
+	if e.Response == nil {
+		return e.StatusCode, nil
 	}
-	var h http.Header
-	if apiErr.Response != nil {
-		h = apiErr.Response.Header
-	}
-	return apiErr.StatusCode, h, true
-}
+	return e.StatusCode, e.Response.Header
+})
 
 // RetryableError reports whether err from a Responses API call is transient and
 // worth retrying: HTTP 408/409/429 and any 5xx (with an explicit X-Should-Retry

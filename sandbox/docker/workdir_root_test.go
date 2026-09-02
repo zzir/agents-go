@@ -167,10 +167,9 @@ func TestExclusiveCreateScripts_LeadingDashSafe(t *testing.T) {
 }
 
 // rootRel confines bind-mount file operations — which run on the HOST side of
-// the mount — to the working directory: relative paths resolve against the
-// container-side working directory for os.Root to police, absolute paths must
-// lie under the in-container mount point (/workspace) and are translated,
-// anything else is refused.
+// the mount — to the working directory: relative paths pass through for
+// os.Root to police, absolute paths must lie under the in-container mount
+// point (/workspace) and are translated, anything else is refused.
 func TestRootRel(t *testing.T) {
 	s := &Sandbox{}
 	ok := map[string]string{
@@ -190,49 +189,6 @@ func TestRootRel(t *testing.T) {
 		if got, err := s.rootRel(in); !errors.Is(err, sandbox.ErrOutsideWorkDir) {
 			t.Errorf("rootRel(%q) = %q, %v; want ErrOutsideWorkDir", in, got, err)
 		}
-	}
-}
-
-// With ContainerWorkDir set to a /workspace subdirectory, relative paths
-// resolve against that subdirectory (the directory exec runs in) while
-// absolute /workspace/... paths keep addressing the whole mount — both stay
-// inside the same os.Root.
-func TestRootRelSubdir(t *testing.T) {
-	s := &Sandbox{opts: Options{ContainerWorkDir: "/workspace/proj"}}
-	ok := map[string]string{
-		"a/b":            filepath.FromSlash("proj/a/b"),
-		"":               "proj",
-		"/workspace/a/b": filepath.FromSlash("a/b"), // absolute: whole mount stays reachable
-		"/workspace":     ".",
-	}
-	for in, want := range ok {
-		got, err := s.rootRel(in)
-		if err != nil || got != want {
-			t.Errorf("rootRel(%q) = %q, %v; want %q", in, got, err, want)
-		}
-	}
-	if got, err := s.rootRel("/etc/passwd"); !errors.Is(err, sandbox.ErrOutsideWorkDir) {
-		t.Errorf("rootRel(/etc/passwd) = %q, %v; want ErrOutsideWorkDir", got, err)
-	}
-}
-
-// New rejects a ContainerWorkDir outside /workspace and normalizes a valid
-// one; the mount point itself and clean subdirectories pass.
-func TestNewValidatesContainerWorkDir(t *testing.T) {
-	for _, bad := range []string{"/etc", "/", "/workspace/../etc", "relative"} {
-		if _, err := New(Options{Image: "i", ContainerWorkDir: bad}); err == nil {
-			t.Errorf("New(ContainerWorkDir=%q): no error, want rejection", bad)
-		}
-	}
-	sb, err := New(Options{Image: "i", ContainerWorkDir: "/workspace/a/../b/"})
-	if err != nil {
-		t.Fatalf("New(valid subdir): %v", err)
-	}
-	if got := sb.containerWorkDir(); got != "/workspace/b" {
-		t.Errorf("containerWorkDir = %q, want normalized /workspace/b", got)
-	}
-	if got := sb.subDir(); got != "b" {
-		t.Errorf("subDir = %q, want b", got)
 	}
 }
 

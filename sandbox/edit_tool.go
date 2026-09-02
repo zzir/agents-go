@@ -2,9 +2,12 @@ package sandbox
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
+	"path"
 	"slices"
 	"strings"
 	"time"
@@ -35,11 +38,10 @@ const applyPatchDesc = "Apply a patch to one or more files in the sandbox. Forma
 
 // ApplyPatchTool returns a tool that applies a Codex-style patch to files in the
 // sandbox. It edits through the Sandbox abstraction, so it targets the same
-// filesystem the exec/read/write tools do (local dir, bind-mounted container, or
-// remote host over SFTP). Multiple files change atomically: new content is
-// computed entirely in memory first — any hunk that can't be located aborts
-// before a single file is touched — and if a write fails mid-commit the
-// already-applied operations are rolled back from an in-memory snapshot.
+// filesystem the exec/read/write tools do. Multiple files change atomically:
+// new content is computed entirely in memory first — any hunk that can't be
+// located aborts before a single file is touched — and if a write fails
+// mid-commit the already-applied operations are rolled back from a snapshot.
 func ApplyPatchTool(sb Sandbox, cfg FileToolConfig) *agents.Tool {
 	cfg = cfg.withDefaults()
 	return agents.NewTool(
@@ -72,15 +74,10 @@ func ApplyPatchTool(sb Sandbox, cfg FileToolConfig) *agents.Tool {
 	)
 }
 
-// applyPatchSem is a global cap-1 semaphore serializing ALL apply_patch commits
-// process-wide. A rollback's RemoveFile could otherwise delete a file a
-// concurrent patch just wrote on the same filesystem; exclusive-create only
-// stops two Adds racing, not a rollback racing an Update. It is a channel (not a
-// sync.Mutex) so acquisition honors ctx.Done() — a cancelled/timed-out run
-// queued behind a slow patch unblocks instead of hanging. A single global gate
-// (rather than one keyed on the Sandbox) avoids requiring Sandbox to be
-// comparable and avoids leaking an entry per closed sandbox, at the cost of
-// serializing applies across sandboxes — fine for a low-frequency op.
+// applyPatchSem serializes ALL apply_patch commits process-wide: a rollback's
+// RemoveFile could otherwise delete a file a concurrent patch just wrote. A
+// channel rather than a mutex so acquisition honors ctx.Done(); one global
+// gate rather than one per Sandbox so nothing is keyed on a closed sandbox.
 var applyPatchSem = make(chan struct{}, 1)
 
 // fsOp is a single filesystem mutation paired with its inverse, so a failed
@@ -90,15 +87,20 @@ type fsOp struct {
 	undo func(context.Context) error
 	desc string
 	// undoOnError marks an op whose undo is safe to run when its OWN do()
-	// failed. WriteFile/RemoveFile are not atomic — os.WriteFile truncates
-	// before it writes, so a full disk or a dropped SFTP connection leaves the
-	// file truncated or half-written — so the failing op itself has to be
-	// restored from the snapshot, not just the ops before it. It is deliberately
-	// NOT set on CreateExclusive ops: their most common failure is fs.ErrExist,
-	// where the target is someone ELSE's file and the undo (RemoveFile) would
-	// delete it; CreateExclusive also already guarantees it leaves no partial
-	// file behind.
+	// failed: WriteFile is not atomic (a truncate-then-write can leave the
+	// file half-written), so the failing op is restored from the snapshot too.
+	// Never set on CreateExclusive or Rename ops — their failure leaves the
+	// target untouched, and for a create it is usually someone ELSE's file.
 	undoOnError bool
+}
+
+// parkedName is where apply_patch parks a file it cannot snapshot while the
+// patch commits: a dotfile beside it with a random suffix, on the same
+// filesystem and impossible for a model-chosen path to collide with.
+func parkedName(p string) string {
+	var b [6]byte
+	_, _ = rand.Read(b[:]) // never fails as of Go 1.24
+	return path.Join(path.Dir(p), ".apply-patch."+path.Base(p)+"."+hex.EncodeToString(b[:]))
 }
 
 // rbLabel names an op in a rollback-failure report. The second half of a move
@@ -124,15 +126,16 @@ func applyPatch(ctx context.Context, sb Sandbox, patch string) (string, error) {
 	// Nothing is written yet, so a hunk that can't be located fails here, before
 	// any file is touched (validation atomicity).
 	var ops []fsOp
+	// parked are the temp names of deleted files too large to snapshot; they
+	// are removed once every op has landed (spec §2.7s).
+	var parked []string
 	for _, e := range edits {
 		switch e.op {
 		case opAdd:
 			p, body := e.path, []byte(e.addBody)
-			// Codex apply_patch semantics: adding over an existing file is an
-			// error, not a silent overwrite. CreateExclusive is atomic (O_EXCL),
-			// so concurrent adds of the same path can't both succeed, and because
-			// it only creates when the file is absent, the undo (RemoveFile) can
-			// never delete a file another patch already had.
+			// Adding over an existing file is an error, not an overwrite;
+			// CreateExclusive makes that race-free, and its undo can never
+			// delete a file another patch already had.
 			ops = append(ops, fsOp{
 				do: func() error {
 					if err := sb.CreateExclusive(ctx, p, body); err != nil {
@@ -149,6 +152,18 @@ func applyPatch(ctx context.Context, sb Sandbox, patch string) (string, error) {
 		case opDelete:
 			p := e.path
 			orig, rerr := sb.ReadFile(ctx, p)
+			if errors.Is(rerr, ErrReadLimitExceeded) {
+				// Too large to snapshot in memory: park it beside itself.
+				// Rollback renames it back, commit removes it (spec §2.7s).
+				tmp := parkedName(p)
+				ops = append(ops, fsOp{
+					do:   func() error { return sb.Rename(ctx, p, tmp) },
+					undo: func(ctx context.Context) error { return sb.Rename(ctx, tmp, p) },
+					desc: "D " + p,
+				})
+				parked = append(parked, tmp)
+				continue
+			}
 			if rerr != nil {
 				return "", fmt.Errorf("delete %s: %w", p, rerr)
 			}
@@ -170,10 +185,8 @@ func applyPatch(ctx context.Context, sb Sandbox, patch string) (string, error) {
 			}
 			newContent := []byte(nc)
 			if e.movePath != "" && e.movePath != p {
-				// Codex apply_patch semantics: renaming onto an existing file is
-				// an error. CreateExclusive is atomic, so the move can't clobber a
-				// destination that appeared concurrently, and its rollback (undo =
-				// RemoveFile dst) only ever deletes the file this move created.
+				// Renaming onto an existing file is an error; the exclusive
+				// create's undo only ever deletes the file this move created.
 				dst, src, snap := e.movePath, p, orig
 				ops = append(ops,
 					fsOp{
@@ -212,17 +225,11 @@ func applyPatch(ctx context.Context, sb Sandbox, patch string) (string, error) {
 	var summary []string
 	for _, op := range ops {
 		if derr := op.do(); derr != nil {
-			// Roll back on a detached context with a short timeout: if do() failed
-			// because ctx was cancelled/timed out, the undo ops must not inherit
-			// that cancellation, or they'd silently fail and leave a half-applied
-			// patch falsely reported as "rolled back".
-			rbCtx, cancelRB := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			// Detached context: a do() that failed on the caller's cancellation
+			// must not have its undo fail on it too.
+			rbCtx, cancelRB := detachedCtx(ctx)
 			var rbErrs []string
-			// The op that just failed may have partially applied: WriteFile
-			// truncates before it writes, so a full disk or a dropped connection
-			// leaves the file damaged even though do() returned an error. Restore
-			// it from the snapshot first, where doing so is safe — otherwise a
-			// single-file Update would report "rolled back" over a truncated file.
+			// The failing op itself may have partially applied — see undoOnError.
 			if op.undoOnError {
 				if uerr := op.undo(rbCtx); uerr != nil {
 					rbErrs = append(rbErrs, rbLabel(op)+": "+uerr.Error())
@@ -244,5 +251,22 @@ func applyPatch(ctx context.Context, sb Sandbox, patch string) (string, error) {
 			summary = append(summary, op.desc)
 		}
 	}
-	return "applied patch:\n" + strings.Join(summary, "\n"), nil
+	out := "applied patch:\n" + strings.Join(summary, "\n")
+	if len(parked) > 0 {
+		// Every op has landed, so nothing rolls back over the parked copies;
+		// one that will not go is reported rather than silently left behind.
+		rmCtx, cancel := detachedCtx(ctx)
+		defer cancel()
+		for _, tmp := range parked {
+			if err := sb.RemoveFile(rmCtx, tmp); err != nil {
+				out += "\nwarning: the parked copy " + tmp + " was not removed: " + err.Error()
+			}
+		}
+	}
+	return out, nil
+}
+
+// detachedCtx bounds cleanup that must outlive the caller's cancellation.
+func detachedCtx(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 }

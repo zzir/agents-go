@@ -5,11 +5,13 @@ The `sandbox` packages run **model-generated code** in an isolated environment a
 ```
 agents.Agent ── CodeTool  ──► sandbox.Sandbox (interface)
              ── FileTools ──►   ├── sandbox.LocalSandbox      (dev only, no isolation)
-                                └── sandbox/docker.Sandbox    (ephemeral / persistent containers,
-                                                               local daemon or remote over SSH)
+                                ├── sandbox/docker.Sandbox    (ephemeral / persistent containers,
+                                │                              local daemon or remote over SSH)
+                                └── sandbox/e2b.Sandbox       (E2B API: E2B's cloud, self-hosted,
+                                                               or a compatible service)
 ```
 
-The Docker backend is a **separate Go module** (`sandbox/docker`) so the core module stays dependency-light.
+The Docker backend is a **separate Go module** (`sandbox/docker`) so the core module stays dependency-light; the E2B backend needs only the standard library and lives in the root module.
 
 ## Restricting what may run
 
@@ -82,7 +84,7 @@ A session that times out is **closed**, not reused: the command may still be
 running, and its output arriving in the middle of the next one is worse than a
 shell startup.
 
-Requires a backend with interactive terminal support (persistent Docker).
+Requires a backend with interactive terminal support (persistent Docker, e2b).
 
 Off by default, because a held-open shell is a resource with a lifetime and a
 caller that never closes one leaks it.
@@ -149,7 +151,7 @@ sb := sandbox.NewLocalWithOptions(sandbox.LocalOptions{WorkDir: "/path/to/worksp
 
 ```go
 sb, err := docker.New(docker.Options{
-	Image:   "python:3.12-slim",          // must be pulled already
+	Image:   "python:3.12-slim",          // pulled on first use when absent
 	Network: "",                          // "" = no network; else the docker network name
 	Limits:  sandbox.Limits{MemoryBytes: 256 << 20, CPUs: 0.5, PIDs: 128},
 	Env:     map[string]string{"TZ": "UTC"}, // set on the container itself
@@ -178,8 +180,6 @@ remembers which one, so a restart resumes it rather than provisioning a second
 ([decisions §5.34](../explanation/decisions.md)). Any template works, including
 a stock one: the working directory is created on the sandbox rather than
 expected of the image ([spec §2.7q](../reference/spec.md#27q-a-sandbox-makes-its-working-directory)).
-
-`Ports` publishes container ports to the **daemon's loopback**, on ports the daemon picks: a service inside becomes reachable from the machine running the daemon without going on any other interface. It is part of the adoption fingerprint, so changing the list replaces a persistent container. Docker forwards to the container's network interface, so a server bound to `127.0.0.1` inside is NOT reachable through a published port ([spec §2.7r](../reference/spec.md#27r-a-published-port-is-bound-to-the-daemons-loopback-and-reaches-only-0000)).
 
 `Env` sets variables on the **container**, so a command, a persistent shell and a terminal opened into it all read the same values; an `ExecRequest.Env` entry of the same name wins for that one call. It is part of the adoption fingerprint: changing it replaces a persistent container instead of adopting the old one, keeping `/workspace` but discarding whatever was installed into the container itself ([spec §2.7n](../reference/spec.md#27n-a-sandboxs-environment-is-part-of-its-container-identity)).
 
@@ -210,9 +210,9 @@ File operations require a **persistent working directory** (`WorkDir`). Backends
 
 **Path resolution follows shell semantics, the same view `exec_command` has** ([decisions §5.14](../explanation/decisions.md)): a relative path resolves under the working directory, an absolute path is used as-is — the model learns real paths from `pwd`/`ls` output and both spellings reach the same file. The sandbox, not the working directory, is the isolation boundary; the file tools do not pretend to a narrower view than exec already has. The one exception is **docker bind-mount mode**, whose file operations run on the *host* side of the mount: they are confined to `WorkDir` via `os.Root`, absolute paths must lie under the in-container mount point `/workspace` (translated to the host directory), and anything else fails with `sandbox.ErrOutsideWorkDir` (rendered to the model as "outside the working directory").
 
-Docker's working directory can be narrowed to a subtree of the mount with `Options.ContainerWorkDir` (`/workspace` by default; validated to be `/workspace` or below it): commands run there, relative paths in the file tools resolve there, and absolute `/workspace/...` paths keep addressing the whole mount — one mounted directory can host several projects, each session working in its own subdirectory.
+Every backend answers the file tools the same way: a missing path is `fs.ErrNotExist` ("not found" to the model), a directory read is "is a directory", and `list_files` sorts entries by name whatever order the backend returned them in.
 
-`ReadFile` is size-capped on every backend: files larger than the backend's `MaxReadFileBytes` option (0 = `sandbox.DefaultMaxReadFileBytes`, 8 MiB) fail with `sandbox.ErrReadLimitExceeded` instead of being read into memory — model code cannot OOM the host by creating a huge file and reading it back. Errors returned to the model contain only the requested relative path and the error kind, never host or remote absolute paths.
+`ReadFile` is size-capped on every backend: files larger than the backend's `MaxReadFileBytes` option (0 = `sandbox.DefaultMaxReadFileBytes`, 8 MiB) fail with `sandbox.ErrReadLimitExceeded` instead of being read into memory — model code cannot OOM the host by creating a huge file and reading it back. `apply_patch` still deletes such a file: it parks it under a temp name beside itself for the commit instead of snapshotting it in memory ([spec §2.7s](../reference/spec.md#27s-apply_patch-locates-hunks-by-whole-lines)). Errors returned to the model contain only the requested relative path and the error kind, never host or remote absolute paths.
 
 ## The Sandbox interface
 
@@ -224,12 +224,13 @@ type Sandbox interface {
 	ReadFile(ctx context.Context, path string) ([]byte, error)
 	WriteFile(ctx context.Context, path string, content []byte) error
 	// CreateExclusive atomically creates path, failing with fs.ErrExist if it
-	// already exists; apply_patch's Add/Move rely on it to reject a clobber
-	// race-free. Added in this version — a source-breaking change: external
-	// backends must implement it (atomic O_EXCL / shell-noclobber create).
+	// already exists and leaving no partial file on failure; apply_patch's
+	// Add/Move rely on it to reject a clobber race-free.
 	CreateExclusive(ctx context.Context, path string, content []byte) error
-	ListDir(ctx context.Context, path string) ([]DirEntry, error)
+	ListDir(ctx context.Context, path string) ([]DirEntry, error) // any order
 	RemoveFile(ctx context.Context, path string) error
+	// Rename moves a file, creating the destination's parents; apply_patch
+	// parks a file too large to snapshot with it.
 	Rename(ctx context.Context, oldPath, newPath string) error
 	Close() error
 }
@@ -238,7 +239,6 @@ type ExecRequest struct {
 	Cmd            []string          // argv, run exactly as given
 	Files          map[string]string // path (relative to the workdir) -> content
 	Env            map[string]string
-	Stdin          string            // local backend (docker rejects it)
 	Timeout        time.Duration     // 0 = DefaultTimeout (30s)
 	MaxOutputBytes int64             // per stream; 0 = DefaultMaxOutputBytes (1 MiB)
 }
@@ -269,7 +269,7 @@ type ExecStreamer interface {
 }
 ```
 
-Output is written to the provided `io.Writer`s in real time; the returned `ExecResult` contains `ExitCode` and `TimedOut` but its `Stdout`/`Stderr` fields are empty (output went to the writers). Both built-in backends implement this interface.
+Output is written to the provided `io.Writer`s in real time; the returned `ExecResult` contains `ExitCode` and `TimedOut` but its `Stdout`/`Stderr` fields are empty (output went to the writers). All three built-in backends implement this interface.
 
 ## TerminalOpener (optional)
 
@@ -297,7 +297,8 @@ type Terminal interface {
 
 The **docker** backend supports it only
 in `Persistent` mode — an interactive shell needs a long-lived container to
-attach to — and force-kills the shell's process tree on `Close`. The **local**
+attach to — and force-kills the shell's process tree on `Close`; the **e2b**
+backend always does, over the sandbox daemon's PTY stream. The **local**
 backend does not implement it: handing out a host shell is a deliberately
 bigger grant than running individual commands, so it is excluded by design.
 `OpenTerminal` returns an error wrapping `ErrTerminalUnsupported` when the

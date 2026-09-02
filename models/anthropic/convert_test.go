@@ -4,9 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/openai/openai-go/v3/responses"
 
 	"github.com/zzir/agents-go/agents"
@@ -405,5 +409,73 @@ func TestContextWindowExceededFeedsOverflowPolicy(t *testing.T) {
 	}
 	if !agents.DetectContextOverflow(err) {
 		t.Fatalf("the overflow detector must recognize the error: %v", err)
+	}
+}
+
+// A refusal part in the replayed history is dropped, not sent back as
+// assistant text: a refusal is not an answer the model gave (decisions §5.49).
+func TestBuildParamsRefusalPartDropped(t *testing.T) {
+	refused, err := session.UnmarshalInputItem([]byte(`{"type":"message","role":"assistant","status":"completed","content":[{"type":"refusal","refusal":"I cannot help with that."}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := agents.InputItemsFromText("do it")
+	input = append(input, refused)
+	input = append(input, agents.InputItemsFromText("then something else")...)
+	wire := wireParams(t, testModel(), agents.ModelRequest{Input: input})
+	for _, m := range wire["messages"].([]any) {
+		msg := m.(map[string]any)
+		if msg["role"] == "assistant" {
+			t.Fatalf("the refusal was replayed as an assistant turn: %v", msg)
+		}
+		for _, b := range msg["content"].([]any) {
+			if strings.Contains(b.(map[string]any)["text"].(string), "cannot help") {
+				t.Fatalf("the refusal text reached the wire: %v", msg)
+			}
+		}
+	}
+}
+
+// Consecutive text blocks are ONE message item with a part each: the runner
+// keeps only a turn's last message, so one item per block would drop all but
+// the last (decisions §5.49).
+func TestRespondMergesConsecutiveTextBlocks(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{
+			"id": "msg_m", "type": "message", "role": "assistant", "model": "claude-test",
+			"content": [
+				{"type": "thinking", "thinking": "hmm", "signature": "sig-1"},
+				{"type": "text", "text": "First part. "},
+				{"type": "text", "text": "Second part."},
+				{"type": "tool_use", "id": "toolu_1", "name": "lookup", "input": {}}
+			],
+			"stop_reason": "tool_use",
+			"usage": {"input_tokens": 10, "output_tokens": 5}
+		}`)
+	}))
+	t.Cleanup(srv.Close)
+	provider := NewProvider(option.WithBaseURL(srv.URL), option.WithAPIKey("test-key"))
+	model, err := provider.Model("claude-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := model.Respond(context.Background(), agents.ModelRequest{Input: agents.InputItemsFromText("hi")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	types := make([]string, len(resp.Output))
+	for i, it := range resp.Output {
+		types[i] = it.Type
+	}
+	if strings.Join(types, ",") != "reasoning,message,function_call" {
+		t.Fatalf("output types = %v, want one merged message between the reasoning and the call", types)
+	}
+	msg := resp.Output[1].AsMessage()
+	if msg.ID != "msg_m-1" || len(msg.Content) != 2 {
+		t.Fatalf("message = id %q with %d parts, want msg_m-1 with 2 parts", msg.ID, len(msg.Content))
+	}
+	if got := msg.Content[0].AsOutputText().Text + msg.Content[1].AsOutputText().Text; got != "First part. Second part." {
+		t.Errorf("merged text = %q", got)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"slices"
 	"strings"
 	"time"
 
@@ -38,8 +39,8 @@ func (c FileToolConfig) effectiveTimeout() time.Duration {
 // fileToolError renders a backend error for the model without leaking
 // host/remote absolute paths: only the operation, the path the model asked
 // for and the error kind survive. Raw backend errors routinely embed the
-// host-side working directory (e.g. *fs.PathError, SFTP or daemon messages),
-// which the model has no business seeing.
+// host-side working directory (a *fs.PathError, a daemon's message), which
+// the model has no business seeing.
 func fileToolError(op, reqPath string, err error) string {
 	var kind string
 	pathErr, isPathErr := errors.AsType[*fs.PathError](err)
@@ -131,7 +132,8 @@ type listFilesArgs struct {
 	Path string `json:"path" jsonschema:"directory path to list; empty uses the working directory"`
 }
 
-// ListFilesTool returns a tool that lists files in a sandbox directory.
+// ListFilesTool returns a tool that lists files in a sandbox directory, sorted
+// by name so every backend answers in one order.
 func ListFilesTool(sb Sandbox, cfg FileToolConfig) *agents.Tool {
 	cfg = cfg.withDefaults()
 	t := agents.NewTool(
@@ -146,6 +148,7 @@ func ListFilesTool(sb Sandbox, cfg FileToolConfig) *agents.Tool {
 			if err != nil {
 				return fileToolError("list", dir, err), nil
 			}
+			slices.SortFunc(entries, func(a, b DirEntry) int { return strings.Compare(a.Name, b.Name) })
 			var b strings.Builder
 			for _, e := range entries {
 				typ := "file"

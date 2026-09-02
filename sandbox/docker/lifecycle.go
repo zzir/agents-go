@@ -106,11 +106,10 @@ func (s *Sandbox) inspectOwned(ctx context.Context) (id string, running, ok bool
 	return c.ID, c.State != nil && c.State.Running, true, nil
 }
 
-// ExportTar streams path (empty = the whole working directory) out of the
-// container as a tar archive. It goes through the same CopyFromContainer the
-// file tools use, so it sees exactly what a command sees — and it starts the
-// container when it is not running, because the daemon's copy needs one.
-func (s *Sandbox) ExportTar(ctx context.Context, path string) (io.ReadCloser, error) {
+// ExportTar streams the working directory out of the container as a tar
+// archive, starting the container when it is not running because the daemon's
+// copy needs one. The archive API cannot see a tmpfs, which /workspace never is.
+func (s *Sandbox) ExportTar(ctx context.Context) (io.ReadCloser, error) {
 	if err := s.requirePersistent(); err != nil {
 		return nil, err
 	}
@@ -121,13 +120,9 @@ func (s *Sandbox) ExportTar(ctx context.Context, path string) (io.ReadCloser, er
 	if err != nil {
 		return nil, err
 	}
-	src := s.containerWorkDir()
-	if path != "" {
-		src = s.containerPath(path)
-	}
-	result, err := s.cli.CopyFromContainer(ctx, id, client.CopyFromContainerOptions{SourcePath: src})
+	result, err := s.cli.CopyFromContainer(ctx, id, client.CopyFromContainerOptions{SourcePath: workDir})
 	if err != nil {
-		return nil, fmt.Errorf("docker sandbox: export %s: %w", src, err)
+		return nil, fmt.Errorf("docker sandbox: export %s: %w", workDir, err)
 	}
 	return result.Content, nil
 }

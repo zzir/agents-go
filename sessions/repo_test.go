@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/zzir/agents-go/agents"
@@ -110,5 +111,40 @@ func TestSQLSession_EntryLookupIsIndexed(t *testing.T) {
 	// a reload rather than only in memory.
 	if entries[1].ParentID != entries[0].ID {
 		t.Errorf("parent link lost through SQL: %q != %q", entries[1].ParentID, entries[0].ID)
+	}
+}
+
+// Listing the visible sessions newest-first is what the sidebar does on every
+// load; the index exists so it never becomes a scan of the whole table.
+func TestSQLRepo_ListingIsIndexed(t *testing.T) {
+	ctx := context.Background()
+	dsn := "file:" + filepath.Join(t.TempDir(), "listing.db")
+	_, db, err := sessions.NewSQLite(dsn, "unused")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := sessions.CreateSchema(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	if err := sessions.CreateSchema(ctx, db); err != nil {
+		t.Fatalf("a second CreateSchema must be a no-op: %v", err)
+	}
+	rows, err := db.QueryContext(ctx, "EXPLAIN QUERY PLAN SELECT id FROM agent_sessions WHERE hidden = 0 ORDER BY updated_at DESC")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var plan []string
+	for rows.Next() {
+		var id, parent, notused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &notused, &detail); err != nil {
+			t.Fatal(err)
+		}
+		plan = append(plan, detail)
+	}
+	if joined := strings.Join(plan, "\n"); !strings.Contains(joined, "idx_agent_sessions_listing") {
+		t.Fatalf("the listing does not use its index; plan:\n%s", joined)
 	}
 }

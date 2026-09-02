@@ -66,6 +66,10 @@ func wireBlocks(t *testing.T, turn conformancetest.TurnSpec) []map[string]any {
 	if turn.Text != "" {
 		blocks = append(blocks, map[string]any{"type": "text", "text": turn.Text})
 	}
+	if turn.Refusal != "" {
+		// Reported out-of-band by stop_reason; the text block is the refusal.
+		blocks = append(blocks, map[string]any{"type": "text", "text": turn.Refusal})
+	}
 	for _, call := range turn.ToolCalls {
 		var input any
 		if err := json.Unmarshal([]byte(call.ArgumentsJSON), &input); err != nil {
@@ -80,6 +84,8 @@ func wireBlocks(t *testing.T, turn conformancetest.TurnSpec) []map[string]any {
 
 func wireStopReason(turn conformancetest.TurnSpec) string {
 	switch {
+	case turn.Refusal != "":
+		return "refusal"
 	case turn.Truncated:
 		return "max_tokens"
 	case len(turn.ToolCalls) > 0:
@@ -126,7 +132,7 @@ func writeMessagesStream(t *testing.T, w http.ResponseWriter, turn conformancete
 		if err != nil {
 			t.Fatal(err)
 		}
-		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, data)
+		_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, data)
 	}
 
 	// message_start carries input/cache counts but no output yet — the real

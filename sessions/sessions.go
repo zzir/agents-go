@@ -27,14 +27,9 @@ import (
 	"github.com/zzir/agents-go/agents/session"
 )
 
-// entry is the row model: one stored session entry, ordered by the
-// autoincrement id within a session.
-//
-// EntryID, ParentID and Kind are lifted out of the JSON so the database can
-// answer point lookups and kind filters with an index, instead of the whole
-// session being loaded and scanned in Go. Everything else stays in the blob:
-// entry kinds and payloads are an open set, and a column per field would make
-// each new kind a schema migration.
+// entry is the row model: one stored session entry. EntryID, ParentID and
+// Kind are lifted out of the JSON for indexed lookups; everything else stays
+// in the blob, since entry kinds and payloads are an open set.
 type entry struct {
 	bun.BaseModel `bun:"table:agent_entries,alias:e"`
 
@@ -44,12 +39,9 @@ type entry struct {
 	// session.Ref. Empty is the direct scope, which is a scope like any
 	// other and not a wildcard.
 	Gen string `bun:"gen,notnull"`
-	// Seq is the entry's cursor position, allocated by session.PrepareAppend.
-	//
-	// It is a column rather than the row's autoincrement id because the two are
-	// not the same number: an id is unique per TABLE and assigned on insert,
-	// while Seq is the session-local position a Cursor pages on and has to
-	// survive a fork or an export that carries entries between stores.
+	// Seq is the entry's cursor position, allocated by session.PrepareAppend —
+	// session-local, unlike the table-wide autoincrement id, so it survives a
+	// fork or an export between stores.
 	Seq      int64  `bun:"seq,notnull"`
 	EntryID  string `bun:"entry_id,notnull"`
 	ParentID string `bun:"parent_id"`
@@ -113,24 +105,11 @@ func NewSQLite(dsn, sessionID string) (*Session, *bun.DB, error) {
 	return New(db, sessionID), db, nil
 }
 
-// tuneSQLite makes concurrent writers work at all.
-//
-// SQLite allows one writer, and with the default busy timeout of zero a second
-// one fails IMMEDIATELY with SQLITE_BUSY rather than waiting. That turns every
-// ordinary race — two runs finishing at once, a stop meeting a completion —
-// into an error, and a conditional UPDATE used as a compare-and-set then cannot
-// tell "somebody else won" from "the database was busy", which is the
-// difference between correct and silently broken.
-//
-// Capping the pool at one connection is the portable fix. A busy_timeout pragma
-// would be finer, but it applies PER CONNECTION and database/sql hands out
-// connections from a pool, so a pragma executed once lands on whichever one it
-// happened to get — and the DSN syntax for setting it differs between the
-// drivers sqliteshim may resolve to. Serializing in Go costs a little
-// throughput on a database that has one writer regardless.
-//
-// The pragmas that follow are best-effort: an in-memory or read-only database
-// rejects them, which is not a reason to fail to open.
+// tuneSQLite makes concurrent writers work at all: SQLite allows one writer
+// and fails a second IMMEDIATELY with SQLITE_BUSY, which a compare-and-set
+// UPDATE cannot tell from "somebody else won". Capping the pool at one
+// connection is the portable fix (a busy_timeout pragma is per connection).
+// The pragmas are best-effort: an in-memory or read-only database rejects them.
 func tuneSQLite(sqldb *sql.DB) {
 	sqldb.SetMaxOpenConns(1)
 	for _, pragma := range []string{
@@ -149,23 +128,14 @@ func NewPostgres(sqldb *sql.DB, sessionID string) (*Session, *bun.DB) {
 }
 
 // CreateSchema creates the agent_entries table and its lookup indexes if they
-// do not already exist. It is safe to call repeatedly.
-//
-// Both indexes are UNIQUE, and that is load-bearing rather than an
-// optimization: sequence numbers and entry ids are never handed out twice
-// (spec §2.5e2), and a backend that can constrain them does — so a race or a
-// bug that would mint a duplicate becomes a failed write instead of two rows
-// answering to one name.
-//
-// The schema changed shape when sessions moved from items to entries; there is
-// no migration from agent_messages, and none for the indexes turning unique.
-// This project does not ship migrations — rebuild the database.
+// do not already exist. It is safe to call repeatedly. The entry indexes are
+// UNIQUE, and that is load-bearing: sequence numbers and entry ids are never
+// handed out twice (spec §2.5e2), so a duplicate becomes a failed write. This
+// project ships no migrations — rebuild the database on a schema change.
 func CreateSchema(ctx context.Context, db *bun.DB) error {
-	// The task table comes with it: Repo.Delete cascades task rows, so a
-	// database created by this call alone must have somewhere for that delete
-	// to look. CreateTaskSchema in turn creates the session table it resolves
-	// generations against, so either entry point leaves a consistent schema
-	// and calling both changes nothing (every creation is IfNotExists).
+	// The task table comes with it: Repo.Delete cascades task rows, and
+	// CreateTaskSchema creates the session table too, so either entry point
+	// leaves a consistent schema.
 	if err := CreateTaskSchema(ctx, db); err != nil {
 		return err
 	}
@@ -183,11 +153,21 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 	}
 	// Point lookups by entry id: without this, resolving one entry means
 	// reading the whole session.
-	_, err := db.NewCreateIndex().
+	if _, err := db.NewCreateIndex().
 		Model((*entry)(nil)).
 		Index("idx_agent_entries_entry_id").
 		Unique().
 		Column("session_id", "gen", "entry_id").
+		IfNotExists().
+		Exec(ctx); err != nil {
+		return err
+	}
+	// Repo.List: newest first among the visible sessions, without a scan.
+	_, err := db.NewCreateIndex().
+		Model((*sessionRow)(nil)).
+		Index("idx_agent_sessions_listing").
+		Column("hidden").
+		ColumnExpr("updated_at DESC").
 		IfNotExists().
 		Exec(ctx)
 	return err
@@ -233,22 +213,12 @@ func (s *Session) entriesIn(ctx context.Context, db bun.IDB, cur session.Cursor)
 	return out, nil
 }
 
-// lockForWrite serializes this session's read-plan-write sequences.
-//
-// Reading the append point and writing the entries must be one step (spec
-// §2.5e2): two writers that both read the same tip mint the same sequence
-// numbers and fork the branch, silently. A transaction alone does not give
-// that — under read committed both transactions still read the old tip — so:
-//
-//   - PostgreSQL takes a transaction-scoped advisory lock on (id, gen),
-//     released automatically at commit or rollback.
-//   - SQLite needs nothing here: NewSQLite caps the pool at one connection,
-//     and a transaction holds it for its whole extent, so a competing write
-//     cannot interleave. (A caller wiring their own multi-connection SQLite
-//     pool through New gives that serialization up. The unique indexes still
-//     catch a doubly-issued seq or id, but two appends against one tip with
-//     distinct sequence numbers fork the branch without tripping anything —
-//     cap the pool, as NewSQLite does.)
+// lockForWrite serializes this session's read-plan-write sequences: reading
+// the append point and writing the entries must be one step (spec §2.5e2),
+// and read committed alone does not give that. PostgreSQL takes a
+// transaction-scoped advisory lock on (id, gen); SQLite needs nothing, since
+// NewSQLite caps the pool at one connection (a caller's own multi-connection
+// pool through New gives that up — cap it).
 func (s *Session) lockForWrite(ctx context.Context, tx bun.Tx) error {
 	if s.db.Dialect().Name() != dialect.PG {
 		return nil
@@ -261,17 +231,11 @@ func (s *Session) lockForWrite(ctx context.Context, tx bun.Tx) error {
 	return nil
 }
 
-// touchIn records that the session changed, on the transaction that changed it
-// — one step, so the record cannot exist without the write or the write
-// without the record.
-//
-// For a repo-created session (non-empty generation) it doubles as the proof
-// the session still EXISTS: zero rows updated means the row is gone — deleted
-// under a live handle — and the write must fail and roll back rather than
-// leave entries no session references, unreachable forever (spec §2.5e2:
-// writing and proving the destination still exists are one step). A session
-// used directly (empty generation) never had a row; for it, zero rows is
-// simply nothing to record.
+// touchIn records that the session changed, on the transaction that changed
+// it. For a repo-created session (non-empty generation) it doubles as the
+// proof the session still EXISTS: zero rows updated means it was deleted under
+// a live handle, and the write rolls back rather than orphan its entries
+// (spec §2.5e2). A session used directly never had a row.
 func (s *Session) touchIn(ctx context.Context, tx bun.Tx) error {
 	res, err := tx.NewUpdate().Model((*sessionRow)(nil)).
 		Set("updated_at = ?", time.Now().UTC()).
@@ -314,12 +278,9 @@ func (s *Session) Append(ctx context.Context, entries ...session.Entry) error {
 	})
 }
 
-// Clear implements session.Storage, removing every entry for this session ID.
-// Clearing is a change like any other: it moves the session in a listing, and
-// it holds the same write lock every other entry write holds — an unlocked
-// clear interleaving with a locked append can otherwise land between the
-// append's tip-read and its insert, leaving the new entry parented at a row
-// the clear removed.
+// Clear implements session.Storage, removing every entry for this session ID
+// under the same write lock every other entry write holds — an unlocked clear
+// could land between an append's tip-read and its insert.
 func (s *Session) Clear(ctx context.Context) error {
 	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if err := s.lockForWrite(ctx, tx); err != nil {
@@ -423,13 +384,10 @@ func (s *Session) encodeEntries(entries []session.Entry, at session.AppendPoint)
 	return rows, nil
 }
 
-// appendPointIn reports the session's current branch tip, for linking an
-// append, reading through the caller's transaction so tip and write are one
-// step.
-//
-// Only the last row is read: the tip is either that entry, or — when it is a
-// leaf move — the entry it points at. Folding the whole session to learn the
-// same thing would make every append cost a full read.
+// appendPointIn reports the session's current branch tip through the caller's
+// transaction, so tip and write are one step. Only the newest row is read: it
+// carries the highest sequence number, and the tip is either it or — for a
+// leaf move — the entry it points at.
 func (s *Session) appendPointIn(ctx context.Context, db bun.IDB) (session.AppendPoint, error) {
 	var row entry
 	err := s.scoped(db.NewSelect().Model(&row)).
@@ -444,9 +402,6 @@ func (s *Session) appendPointIn(ctx context.Context, db bun.IDB) (session.Append
 	if derr != nil {
 		return session.AppendPoint{}, derr
 	}
-	// The newest row answers both questions: it carries the highest sequence
-	// number this session has issued, and the tip is either it or — when it is
-	// a leaf move — the entry it points at.
 	return session.AppendPoint{
 		Leaf:    session.LeafOf([]session.Entry{e}),
 		LastSeq: row.Seq,

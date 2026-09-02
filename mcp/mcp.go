@@ -132,9 +132,10 @@ type Server struct {
 
 	// rpcCtx is the context every request on this session rides. It belongs to
 	// the CONNECTION and ends only with Close — see callSession for why it can
-	// never be a caller's.
-	rpcCtx  context.Context
-	rpcStop context.CancelFunc
+	// never be a caller's. requestCeiling bounds one request on it.
+	rpcCtx         context.Context
+	rpcStop        context.CancelFunc
+	requestCeiling time.Duration
 
 	mu       sync.Mutex
 	cached   []cachedTool // populated lazily when CacheToolsList is set
@@ -148,8 +149,14 @@ type cachedTool struct {
 	tool         *agents.Tool
 }
 
+// requestCeiling bounds a request whose caller has already left: a server
+// that never answers would otherwise pin the goroutine, and the request, for
+// the connection's whole lifetime. Generous, so it fires only on a request
+// that is already lost (decisions §5.20).
+const requestCeiling = 30 * time.Minute
+
 func newServer(name string, opts Options) *Server {
-	s := &Server{name: name, opts: opts, allowed: map[string]bool{}, blocked: map[string]bool{}}
+	s := &Server{name: name, opts: opts, allowed: map[string]bool{}, blocked: map[string]bool{}, requestCeiling: requestCeiling}
 	// Rooted at Background, not at whoever connects: this context outlives
 	// every caller and must carry none of their deadlines.
 	s.rpcCtx, s.rpcStop = context.WithCancel(context.Background())
@@ -163,21 +170,10 @@ func newServer(name string, opts Options) *Server {
 }
 
 // callSession runs one request against the shared session and returns as soon
-// as EITHER the request answers or the caller's context ends.
-//
-// The request itself rides the connection's context, never the caller's. A
-// session is shared by every agent configured with this server — several runs,
-// their background tasks, other conversations — and the streamable HTTP
-// transport issues each request on the context it is handed. Cancelling one
-// mid-flight fails the whole CONNECTION, permanently and for everyone: the
-// go-sdk reads the response body, sees context.Canceled, and calls fail(),
-// which is a sync.Once closing the connection's failure gate. Every later call
-// by anyone then answers "client is closing" until something reconnects. One
-// person stopping one run must not take out every other run's tools.
-//
-// The caller still gets its cancellation honored — it returns here at once —
-// while the request finishes in the background and its answer is dropped. That
-// costs one in-flight request; the alternative costs the connection.
+// as EITHER the request answers or the caller's context ends. The request
+// rides the connection's context, never the caller's — a request cancelled
+// mid-flight fails the whole shared connection — so a caller's cancellation
+// is honored by returning, and the late answer is dropped (decisions §5.20).
 func callSession[T any](ctx context.Context, s *Server, fn func(context.Context) (T, error)) (T, error) {
 	type answer struct {
 		val T
@@ -186,7 +182,9 @@ func callSession[T any](ctx context.Context, s *Server, fn func(context.Context)
 	// Buffered, so the request goroutine never blocks on a caller that left.
 	ch := make(chan answer, 1)
 	go func() {
-		val, err := fn(s.rpcCtx)
+		rctx, cancel := context.WithTimeout(s.rpcCtx, s.requestCeiling)
+		defer cancel()
+		val, err := fn(rctx)
 		ch <- answer{val, err}
 	}()
 	select {
@@ -236,12 +234,8 @@ func (s *Server) connect(ctx context.Context, transport mcpsdk.Transport) error 
 }
 
 // watch heals the connection the moment it dies, instead of leaving the next
-// caller to trip over it.
-//
-// Without it, every death costs somebody a failed turn — and the callers who
-// pay are whoever happens to be mid-run, which in practice is every background
-// task at once. The watcher is one goroutine per live connection, ending with
-// the connection it watches.
+// caller to trip over it (decisions §5.21): one goroutine per live connection,
+// ending with the connection it watches.
 func (s *Server) watch(session *mcpsdk.ClientSession) {
 	if s.opts.Redial == nil {
 		return
@@ -256,18 +250,9 @@ func (s *Server) watch(session *mcpsdk.ClientSession) {
 }
 
 // redial replaces a dead session with a fresh one, and reports whether this
-// call is the one that did it.
-//
-// A connection dies for reasons that have nothing to do with the caller who
-// finds out: the server restarted, a proxy dropped an idle socket, a request
-// somebody else made failed mid-body. Nothing in the go-sdk reconnects, so
-// without this the FIRST such failure is permanent — every agent configured
-// with the server answers "client is closing" until a person notices and
-// reconnects it by hand. That is what this repairs.
-//
-// failed is the session the caller was using. Serialized and compared against
-// what is current, so a dozen callers discovering the same dead connection
-// dial once between them and the rest simply retry.
+// call is the one that did it (decisions §5.21). failed is the session the
+// caller was using: serialized and compared against what is current, so a
+// dozen callers discovering the same dead connection dial once between them.
 func (s *Server) redial(failed *mcpsdk.ClientSession) bool {
 	if s.opts.Redial == nil || s.closed.Load() {
 		return false
@@ -784,7 +769,7 @@ func requiredKeys(schema map[string]any) []string {
 
 // resolveToolDescription returns the best model-facing description for an MCP
 // tool: its description, falling back to the display title, then the annotations
-// title. Mirrors resolve_mcp_tool_description_for_model.
+// title.
 func resolveToolDescription(mt *mcpsdk.Tool) string {
 	if mt.Description != "" {
 		return mt.Description

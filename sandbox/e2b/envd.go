@@ -154,8 +154,8 @@ func (s *Sandbox) filesPath(p string) string {
 // the file EMPTY under `set -C` — the shell's own noclobber, atomic against a
 // concurrent tool call the way a check-then-upload from here would not be. The
 // content then follows over /files (inlined in the argv it would hit Linux's
-// ~128KB per-argument cap); a failure between the two leaves the empty file —
-// content is not atomic here, matching the other backends.
+// ~128KB per-argument cap); an upload that fails takes the empty file with it,
+// so a failed create never leaves a partial file behind.
 func (s *Sandbox) CreateExclusive(ctx context.Context, p string, content []byte) error {
 	full := s.resolvePath(p)
 	script := "set -C; mkdir -p " + sandbox.ShellQuote(path.Dir(full)) +
@@ -176,7 +176,13 @@ func (s *Sandbox) CreateExclusive(ctx context.Context, p string, content []byte)
 	if len(content) == 0 {
 		return nil
 	}
-	return s.upload(ctx, p, content)
+	if err := s.upload(ctx, p, content); err != nil {
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), controlCallTimeout)
+		defer cancel()
+		_ = s.unary(rctx, procRemove, map[string]any{"path": full}, nil)
+		return err
+	}
+	return nil
 }
 
 /* ---------- directory operations ---------- */

@@ -63,6 +63,12 @@ func conformanceItems(t *testing.T, turn conformancetest.TurnSpec) []agents.Outp
 		}
 		items = append(items, item)
 	}
+	if turn.Refusal != "" {
+		// The Responses API reports a refusal in-band, as the message itself;
+		// there is no partial content beside it.
+		add(modelkit.RefusalItem("msg_1", turn.Refusal))
+		return items
+	}
 	if turn.Reasoning != nil {
 		add(modelkit.ReasoningItem("rs_1", turn.Reasoning.Text, turn.Reasoning.Encrypted))
 	}
@@ -137,8 +143,10 @@ func writeConformanceStream(t *testing.T, w http.ResponseWriter, turn conformanc
 		switch item.Type {
 		case "message":
 			add(modelkit.OutputItemAddedEvent(i, "message", item.ID, "", ""))
-			for _, chunk := range splitInTwo(turn.Text) {
-				add(modelkit.OutputTextDeltaEvent(item.ID, i, chunk))
+			if turn.Text != "" {
+				for _, chunk := range splitInTwo(turn.Text) {
+					add(modelkit.OutputTextDeltaEvent(item.ID, i, chunk))
+				}
 			}
 		case "reasoning":
 			add(modelkit.OutputItemAddedEvent(i, "reasoning", item.ID, "", ""))

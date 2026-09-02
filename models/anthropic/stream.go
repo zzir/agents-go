@@ -10,14 +10,21 @@ import (
 	"github.com/zzir/agents-go/models/modelkit"
 )
 
+// streamItem is one canonical output item under construction.
+type streamItem struct {
+	id  string
+	typ string
+}
+
 // synthesizeStream translates the Messages SSE stream into canonical
 // response.* events, yielding them to the consumer.
 //
-// The SDK's Message accumulator is the source of truth for final content:
-// deltas are forwarded as presentation events the moment they arrive, but the
-// items in output_item.done and the terminal event are converted from the
-// accumulated blocks — the same code path as the blocking response — so the
-// two paths cannot drift.
+// Deltas are forwarded as presentation events the moment they arrive. The
+// finished items — output_item.done and the terminal event — are converted
+// from the accumulated message at message_stop, once the stop reason is
+// known, through the same convertOutput the blocking path uses: a refusal
+// collapses the items, and consecutive text blocks are one message item, so
+// nothing emitted earlier can contradict the terminal output (decisions §5.49).
 func synthesizeStream(stream *ssestream.Stream[ant.MessageStreamEventUnion], yield func(*agents.ResponseStreamEvent, error) bool) {
 	emit := func(ev agents.ResponseStreamEvent, err error) bool {
 		if err != nil {
@@ -28,7 +35,10 @@ func synthesizeStream(stream *ssestream.Stream[ant.MessageStreamEventUnion], yie
 	}
 
 	var acc ant.Message
-	itemIDs := map[int]string{}
+	// itemOf maps a content block index to the output index of the item it
+	// belongs to; consecutive text blocks share one message item.
+	itemOf := map[int]int{}
+	var items []streamItem
 	terminalSent := false
 
 	for stream.Next() {
@@ -48,6 +58,11 @@ func synthesizeStream(stream *ssestream.Stream[ant.MessageStreamEventUnion], yie
 			var itemType, id, callID, name string
 			switch cb.Type {
 			case "text":
+				// A text block directly after another continues that message.
+				if prev, ok := itemOf[idx-1]; ok && items[prev].typ == "message" {
+					itemOf[idx] = prev
+					continue
+				}
 				itemType, id = "message", blockItemID(acc.ID, idx)
 			case "thinking", "redacted_thinking":
 				itemType, id = "reasoning", blockItemID(acc.ID, idx)
@@ -58,54 +73,45 @@ func synthesizeStream(stream *ssestream.Stream[ant.MessageStreamEventUnion], yie
 					"anthropic: response contained an unexpected content block of type %q", cb.Type))
 				return
 			}
-			itemIDs[idx] = id
-			if !emit(modelkit.OutputItemAddedEvent(idx, itemType, id, callID, name)) {
+			itemOf[idx] = len(items)
+			items = append(items, streamItem{id: id, typ: itemType})
+			if !emit(modelkit.OutputItemAddedEvent(len(items)-1, itemType, id, callID, name)) {
 				return
 			}
 		case "content_block_delta":
-			idx := int(event.Index)
+			oi, ok := itemOf[int(event.Index)]
+			if !ok {
+				yield(nil, agents.NewModelBehaviorError("anthropic: content_block_delta for unknown block index %d", event.Index))
+				return
+			}
+			id := items[oi].id
 			switch event.Delta.Type {
 			case "text_delta":
-				if !emit(modelkit.OutputTextDeltaEvent(itemIDs[idx], idx, event.Delta.Text)) {
+				if !emit(modelkit.OutputTextDeltaEvent(id, oi, event.Delta.Text)) {
 					return
 				}
 			case "thinking_delta":
-				if !emit(modelkit.ReasoningTextDeltaEvent(itemIDs[idx], idx, event.Delta.Thinking)) {
+				if !emit(modelkit.ReasoningTextDeltaEvent(id, oi, event.Delta.Thinking)) {
 					return
 				}
 			case "input_json_delta":
-				if !emit(modelkit.FunctionCallArgumentsDeltaEvent(itemIDs[idx], idx, event.Delta.PartialJSON)) {
+				if !emit(modelkit.FunctionCallArgumentsDeltaEvent(id, oi, event.Delta.PartialJSON)) {
 					return
 				}
 			case "signature_delta", "citations_delta":
 				// Folded into the accumulated block; nothing incremental to show.
 			}
 		case "content_block_stop":
-			idx := int(event.Index)
-			if idx < 0 || idx >= len(acc.Content) {
+			// The finished item is emitted at message_stop, with the stop
+			// reason known — see the doc comment.
+			if idx := int(event.Index); idx < 0 || idx >= len(acc.Content) {
 				yield(nil, agents.NewModelBehaviorError("anthropic: content_block_stop for unknown block index %d", idx))
 				return
 			}
-			// stop_reason usually lands AFTER the per-block stops, so a
-			// refusal's mid-stream item.done still says output_text (and may
-			// name a tool call); the terminal rebuild below has the real stop
-			// reason, collapses a refusal to its single refusal item, and is
-			// what the runner reads.
-			item, err := blockToItem(acc.ID, idx, acc.Content[idx])
-			if err != nil {
-				yield(nil, err)
-				return
-			}
-			if !emit(modelkit.OutputItemDoneEvent(idx, item)) {
-				return
-			}
 		case "message_delta":
-			// Stop reason and output usage fold into acc — except the output
-			// token breakdown, which Accumulate drops (it copies OutputTokens
-			// and the cache fields from the delta but not OutputTokensDetails),
-			// and message_start carries it as 0. Without this, streamed calls
-			// would always report zero reasoning tokens while blocking calls
-			// report the real count.
+			// Accumulate copies OutputTokens and the cache fields from the
+			// delta but not OutputTokensDetails, and message_start carries it
+			// as 0: without this a streamed call reports zero reasoning tokens.
 			if event.Usage.JSON.OutputTokensDetails.Valid() {
 				acc.Usage.OutputTokensDetails = event.Usage.OutputTokensDetails
 			}
@@ -115,18 +121,18 @@ func synthesizeStream(stream *ssestream.Stream[ant.MessageStreamEventUnion], yie
 				yield(nil, err)
 				return
 			}
-			// The terminal output is rebuilt from the accumulator in INDEX
-			// order, not content_block_stop arrival order: the protocol only
-			// guarantees start events are index-ordered — deltas and stops for
-			// still-open blocks may interleave — and a stop-ordered history
-			// could replay with thinking after text, which the API rejects.
-			// The refusal collapse and the block conversion share one
-			// implementation with the blocking path — convertOutput reads
-			// the accumulated message directly.
+			// Rebuilt from the accumulator in INDEX order: the protocol only
+			// orders start events, and a stop-ordered history could replay
+			// with thinking after text, which the API rejects.
 			output, err := convertOutput(&acc)
 			if err != nil {
 				yield(nil, err)
 				return
+			}
+			for i, item := range output {
+				if !emit(modelkit.OutputItemDoneEvent(i, item)) {
+					return
+				}
 			}
 			final := modelkit.FinalResponse{ID: acc.ID, Output: output, Usage: responseUsage(acc.Usage)}
 			if status == "incomplete" {
@@ -140,8 +146,7 @@ func synthesizeStream(stream *ssestream.Stream[ant.MessageStreamEventUnion], yie
 		}
 	}
 	// A transport error AFTER the terminal event is not surfaced: the response
-	// is already complete and delivered, and failing the call now would throw
-	// it away over a connection that had nothing left to say.
+	// is already complete and delivered.
 	if terminalSent {
 		return
 	}
@@ -149,18 +154,14 @@ func synthesizeStream(stream *ssestream.Stream[ant.MessageStreamEventUnion], yie
 		yield(nil, fmt.Errorf("anthropic messages stream: %w", err))
 		return
 	}
-	// The SSE layer reports a clean end but message_stop never arrived: the
-	// connection was severed at an event boundary and the response is cut
-	// off. Surfaced retryably (modelkit.TruncatedStreamError wraps
-	// io.ErrUnexpectedEOF) instead of ending the stream silently, which would
-	// leave the runner to report a vague, unretryable "ended without a
-	// completed response".
+	// A clean SSE end without message_stop is a severed connection, surfaced
+	// retryably rather than as a vague, unretryable early end.
 	yield(nil, modelkit.TruncatedStreamError("anthropic messages stream"))
 }
 
 // blockItemID synthesizes a stable item id for blocks the API leaves
 // anonymous. It must agree between the delta events and the finished item —
-// blockToItem uses the same derivation.
+// convertOutput uses the same derivation.
 func blockItemID(msgID string, index int) string {
 	return fmt.Sprintf("%s-%d", msgID, index)
 }
@@ -179,18 +180,4 @@ func responseUsage(u ant.Usage) modelkit.ResponseUsage {
 		CacheWriteTokens: u.CacheCreationInputTokens,
 		ReasoningTokens:  u.OutputTokensDetails.ThinkingTokens,
 	}
-}
-
-func settingsToolChoice(s *agents.ModelSettings) agents.ToolChoice {
-	if s == nil {
-		return ""
-	}
-	return s.ToolChoice
-}
-
-func settingsParallel(s *agents.ModelSettings) *bool {
-	if s == nil {
-		return nil
-	}
-	return s.ParallelToolCalls
 }

@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -41,7 +40,7 @@ type LocalOptions struct {
 // (only PATH, HOME and TMPDIR from the host plus ExecRequest.Env, unless
 // LocalOptions.InheritHostEnv is set) and must only be used for development
 // and tests with trusted code — never for untrusted, agent-generated code in
-// production. Use the docker backend for real isolation.
+// production. Use the docker or e2b backend for real isolation.
 type LocalSandbox struct {
 	opts LocalOptions
 }
@@ -90,9 +89,6 @@ func (s *LocalSandbox) exec(ctx context.Context, req ExecRequest, stdout, stderr
 
 	cmd := exec.CommandContext(cctx, req.Cmd[0], req.Cmd[1:]...)
 	cmd.Dir = dir
-	if req.Stdin != "" {
-		cmd.Stdin = strings.NewReader(req.Stdin)
-	}
 	cmd.Env = s.buildEnv(req.Env)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
@@ -213,14 +209,9 @@ func (s *LocalSandbox) CreateExclusive(_ context.Context, p string, content []by
 	if err != nil {
 		return err // fs.ErrExist when it already exists
 	}
-	if _, werr := f.Write(content); werr != nil {
-		_ = f.Close()
-		_ = os.Remove(full) // don't leave a partial file the caller believes was rolled back
+	if werr := WriteAndClose(f, content); werr != nil {
+		_ = os.Remove(full) // no partial file the caller believes was rolled back
 		return werr
-	}
-	if cerr := f.Close(); cerr != nil {
-		_ = os.Remove(full)
-		return cerr
 	}
 	return nil
 }

@@ -15,7 +15,7 @@ import (
 // The host side of the file operations, used when Options.WorkDir bind-mounts a
 // host directory into the container: these run on the HOST filesystem, outside
 // the container's isolation, so every path is resolved through an os.Root
-// opened on WorkDir (see rootRel).
+// opened on WorkDir (see rootRel; decisions §5.14).
 
 // hostRoot opens the os.Root guarding the bind-mounted working directory and
 // resolves p to a name relative to it. The caller closes the root.
@@ -79,21 +79,11 @@ func (s *Sandbox) createExclusiveHost(p string, content []byte) error {
 	if err != nil {
 		return err
 	}
-	if werr := writeAndClose(f, content); werr != nil {
-		// Don't leave a partial file the caller believes was rolled back.
-		_ = root.Remove(rel)
+	if werr := sandbox.WriteAndClose(f, content); werr != nil {
+		_ = root.Remove(rel) // no partial file the caller believes was rolled back
 		return werr
 	}
 	return nil
-}
-
-// writeAndClose writes content to f and closes it, reporting the first failure.
-func writeAndClose(f *os.File, content []byte) error {
-	if _, err := f.Write(content); err != nil {
-		_ = f.Close()
-		return err
-	}
-	return f.Close()
 }
 
 func (s *Sandbox) removeFileHost(p string) error {
@@ -160,29 +150,14 @@ func (s *Sandbox) listDirHost(p string) ([]sandbox.DirEntry, error) {
 }
 
 // rootRel maps a model-supplied path into a name relative to the os.Root
-// opened on the bind-mounted working directory. Bind-mount mode is the one
-// place the file tools do NOT share exec's view: they run on the HOST side of
-// the mount, where the container's isolation cannot cover them, so everything
-// must stay inside WorkDir. A relative path passes through — os.Root itself
-// rejects any ".." or symlink escape — and an absolute path must lie under
-// the in-container mount point (/workspace, the only view the model ever
-// sees) and is translated to its host-side name. Anything else is refused
-// with sandbox.ErrOutsideWorkDir rather than silently re-rooted.
-//
-// Relative paths resolve against the container-side working directory
-// (ContainerWorkDir), not the mount point — the same directory exec runs in —
-// while absolute /workspace/... paths keep addressing the whole mount, again
-// matching what a shell inside the container can reach.
+// opened on the bind-mounted working directory. A relative path passes
+// through (os.Root itself rejects a ".." or symlink escape); an absolute path
+// must lie under the in-container mount point, /workspace, and is translated
+// to its host-side name; anything else is refused with
+// sandbox.ErrOutsideWorkDir rather than silently re-rooted (decisions §5.14).
 func (s *Sandbox) rootRel(p string) (string, error) {
 	if !path.IsAbs(p) {
-		if p == "" {
-			p = "."
-		}
-		joined := path.Join(s.subDir(), p)
-		if joined == "" || joined == "." {
-			return ".", nil
-		}
-		return filepath.FromSlash(joined), nil
+		return filepath.FromSlash(path.Clean(p)), nil
 	}
 	clean := path.Clean(p)
 	if clean == workDir {

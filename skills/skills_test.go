@@ -64,6 +64,7 @@ func TestParseRejectsInvalid(t *testing.T) {
 		{"leading hyphen", "---\nname: -a\ndescription: d\n---\nbody", "invalid name"},
 		{"name too long", "---\nname: " + strings.Repeat("a", 65) + "\ndescription: d\n---\nbody", "invalid name"},
 		{"description too long", "---\nname: a\ndescription: " + strings.Repeat("d", 1025) + "\n---\nbody", "exceeds 1024"},
+		{"multibyte description too long", "---\nname: a\ndescription: " + strings.Repeat("描", 1025) + "\n---\nbody", "exceeds 1024"},
 		{"bad yaml", "---\nname: [\n---\nbody", "parsing frontmatter"},
 	}
 	for _, tc := range cases {
@@ -73,6 +74,35 @@ func TestParseRejectsInvalid(t *testing.T) {
 				t.Fatalf("Parse = %v, want error containing %q", err, tc.wantSub)
 			}
 		})
+	}
+}
+
+// The description cap counts characters, not bytes: 1024 CJK characters (3072
+// bytes) are within the limit.
+func TestParseMultibyteDescription(t *testing.T) {
+	desc := strings.Repeat("描", 1024)
+	sk, err := skills.Parse([]byte("---\nname: a\ndescription: " + desc + "\n---\nbody"))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if sk.Description != desc {
+		t.Errorf("Description = %q", sk.Description)
+	}
+}
+
+// The closing delimiter is "---" alone on its line: a quoted value whose
+// continuation line starts with dashes does not end the frontmatter early.
+func TestParseDashLineInsideFrontmatter(t *testing.T) {
+	src := "---\nname: a\ndescription: \"first\n---- second\"\n---\nbody"
+	sk, err := skills.Parse([]byte(src))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if sk.Description != "first ---- second" {
+		t.Errorf("Description = %q", sk.Description)
+	}
+	if _, err := skills.Parse([]byte("---\nname: a\ndescription: d\n--- \nbody")); err == nil {
+		t.Fatal("Parse accepted a closing delimiter with trailing text")
 	}
 }
 

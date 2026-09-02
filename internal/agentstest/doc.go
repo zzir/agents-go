@@ -19,15 +19,6 @@
 // [ToolCallNames], …) and item constructors ([MessageItem], [RawItem], …) for
 // tests that need to assemble responses by hand.
 //
-// It is part of the root module and pulls in no dependencies beyond the SDK
-// itself, so importing it from a test binary costs nothing at runtime.
-//
-// # Scope
-//
-// agentstest is to this SDK what net/http/httptest is to net/http: a public
-// harness for code that *uses* the package. The agents package's own internal
-// tests cannot import it — that would be an import cycle — and keep their own
-// unexported fakes, which they need anyway to reach unexported behavior.
-// Everything outside package agents (submodules, examples, and your code) can
-// use it.
+// It is internal to this repository; the agents package cannot import it (an
+// import cycle) and keeps its own unexported fakes.
 package agentstest

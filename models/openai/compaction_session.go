@@ -54,11 +54,8 @@ type CompactionOptions struct {
 // CompactionSession decorates any session.Storage, calling the OpenAI
 // responses.compact API to summarize stored history once it grows past a
 // threshold, then replacing the underlying history with the compacted result.
-//
-// The runner persists a run's items once at completion, so compaction is
-// attempted once per run (when
-// the run finishes and its items are saved). The decision hook still bounds how
-// often the responses.compact API is actually called.
+// Compaction is attempted once per run, when its items are saved; the decision
+// hook bounds how often the API is actually called.
 type CompactionSession struct {
 	underlying session.Storage
 	svc        responses.ResponseService
@@ -140,34 +137,26 @@ func (s *CompactionSession) Clear(ctx context.Context) error {
 // history via responses.compact when the decision hook (or args.Force) says so,
 // replacing the underlying session's items with the compacted output.
 //
-// A nil error does not promise the history was replaced. The pass is abandoned
-// when something was appended while the compact call was in flight, since the
-// replacement no longer covers the whole log, and before the call at all when
+// A nil error does not promise the history was replaced: the pass is abandoned
+// when something was appended while the compact call was in flight, or when
 // the caller pinned previous_response_id for a log holding items that chain
-// never saw (both are recorded on the compaction span as "abandoned"). A caller
-// that needs to know whether the pass landed compares the entries before and
-// after, as the overflow path does.
+// never saw (both recorded on the compaction span as "abandoned"). A caller
+// that needs to know compares the entries before and after.
 func (s *CompactionSession) RunCompaction(ctx context.Context, args session.CompactionArgs) error {
 	all, err := s.underlying.Entries(ctx, session.Cursor{})
 	if err != nil {
 		return err
 	}
-	// Where the log stands now. The replacement written at the end covers
-	// exactly these entries, and a network round trip separates the two, so a
-	// store that can compare this back is asked to — see the swap below.
+	// Where the log stands now; the guarded swap at the end compares it back.
 	expect := session.AppendPointOf(all).LastSeq
-	// The replacement below is a FLAT item list — a shape that cannot express
-	// a tree. A branched session (any leaf-move entry, or entries off the
-	// active path) would have its abandoned attempts summarized into the
-	// active context and then destroyed by the rewrite, so the pass skips
-	// rather than flattens. Compaction is housekeeping: skipping costs
-	// nothing but size (use run-level compaction for branching sessions).
+	// The replacement is a FLAT item list, which cannot express a tree: a
+	// branched session skips rather than flattens its abandoned attempts
+	// into the active context. Skipping costs nothing but size.
 	if isBranched(all) {
 		return nil
 	}
-	// Server-side compaction operates on the conversation the model reads, so
-	// it starts from the branch view and its projection: an annotation is not
-	// context and must not be sent to responses.compact as if it were.
+	// Server-side compaction operates on the conversation the model reads:
+	// the branch view and its projection, never an annotation.
 	entries, err := session.NewSession(s.underlying).ContextEntries(ctx, session.Cursor{})
 	if err != nil {
 		return err
@@ -191,13 +180,8 @@ func (s *CompactionSession) RunCompaction(ctx context.Context, args session.Comp
 
 	mode, ok := resolveCompactionMode(s.mode, args)
 	if !ok {
-		// The caller pinned previous_response_id and the log holds items that
-		// chain never saw. Compacting anyway would replace them with a summary
-		// written without them; switching modes behind the caller's back would
-		// ignore the one thing they configured. Skipping is what compaction can
-		// always afford — the next pass starts from the history as it then
-		// stands — and the span says so rather than leaving a pinned mode
-		// looking silently broken.
+		// A pinned previous_response_id over a log its chain never saw: skip
+		// rather than summarize without those items or switch modes unasked.
 		span.Set("abandoned", "off_chain_items")
 		return nil
 	}
@@ -227,33 +211,18 @@ func (s *CompactionSession) RunCompaction(ctx context.Context, args session.Comp
 	if err != nil {
 		return fmt.Errorf("compaction: encoding compacted history: %w", err)
 	}
-	// Display records survive the rewrite. The projection above deliberately
-	// excluded them from the compact INPUT — an annotation is not context —
-	// and the same reasoning forbids destroying them on the way out: a
-	// cancelled-run banner or a terminal record is what the projection refuses
-	// to treat as history, not something history's rewrite may delete. Their
-	// position among the summarized items is no longer meaningful, so they
-	// carry over first, in their stored order.
-	//
-	// A previous compaction CHECKPOINT does not survive: its summary already
-	// entered the compact input via the projection, so the output supersedes
-	// it — carrying it over would front the stale summary a second time on
-	// every later read, and its ExcludedIDs would name entries this rewrite
-	// deletes. (Leaf moves cannot appear here — isBranched refused them — but
-	// are excluded on the same grounds.)
+	// Display records survive the rewrite (an annotation is not context, so
+	// history's rewrite may not delete it) and carry over first, in stored
+	// order. A previous compaction CHECKPOINT does not: its summary already
+	// entered the compact input, so the output supersedes it.
 	var replacement []session.Entry
 	for _, e := range all {
 		switch e.Kind {
 		case session.EntryKindItem, session.EntryKindCompaction, session.EntryKindLeaf:
 			continue
 		default:
-			// The id is kept. An update entry names its target by id, and the
-			// two travel together through this rewrite: re-minting would leave
-			// the update pointing at an entry no longer there, and a fold that
-			// finds no target is silently dropped — the late display it carried
-			// (a background task's card) lost for good. Position is not
-			// preserved, so the link is re-derived: parent and sequence number
-			// are the store's to assign.
+			// The id is kept — an update entry names its target by it — while
+			// the link is re-derived: parent and seq are the store's to assign.
 			e.ParentID, e.Seq = "", 0
 			replacement = append(replacement, e)
 		}
@@ -264,9 +233,7 @@ func (s *CompactionSession) RunCompaction(ctx context.Context, args session.Comp
 	// leave the history cleared but empty.
 	g, ok := s.underlying.(session.GuardedReplacer)
 	if !ok {
-		// A store that cannot compare the log back keeps the unguarded rewrite:
-		// refusing to compact for it would take the feature away from every
-		// third-party store rather than from the race.
+		// A store that cannot compare the log back keeps the unguarded rewrite.
 		if err := session.ReplaceEntries(ctx, s.underlying, replacement...); err != nil {
 			return fmt.Errorf("compaction: replacing history: %w", err)
 		}
@@ -277,34 +244,23 @@ func (s *CompactionSession) RunCompaction(ctx context.Context, args session.Comp
 		return fmt.Errorf("compaction: replacing history: %w", err)
 	}
 	if !replaced {
-		// Something was appended while the compact call was in flight, so the
-		// replacement no longer covers the whole history and writing it would
-		// delete what arrived. Compaction is housekeeping: abandoning the pass
-		// costs nothing but size, and the next one starts from the history as it
-		// now stands.
+		// Something was appended while the compact call was in flight;
+		// writing the replacement would delete it.
 		span.Set("abandoned", "concurrent_append")
 	}
 	return nil
 }
 
 // isBranched reports whether the session's history is a tree rather than a
-// line. ActiveBranchOf is the one shared answer for what a branch view holds —
-// a linkless flat history (legacy entries, custom stores) reads WHOLE there,
-// so it is not "branched" merely because a raw tree walk of parentless entries
-// would stop at the last one. Leaf-move entries are excluded from the walk, so
-// their presence alone makes the lengths differ.
+// line, by the one shared definition of a branch view (ActiveBranchOf): a
+// linkless flat history reads WHOLE there, and leaf moves are excluded.
 func isBranched(entries []session.Entry) bool {
 	return len(session.ActiveBranchOf(entries)) != len(entries)
 }
 
-// ReplaceEntries implements session.AtomicReplacer by delegation — and only by
-// delegation: the interface PROMISES atomicity, so when the wrapped store
-// cannot give it, this refuses before touching anything rather than quietly
-// degrading to Clear+Append. A caller that type-asserted AtomicReplacer chose
-// this method precisely to avoid the failure mode where an Append error leaves
-// the history empty; handing them that failure mode anyway would make the
-// assertion a lie. (RunCompaction itself goes through session.ReplaceEntries,
-// whose documented contract IS best-effort-with-fallback.)
+// ReplaceEntries implements session.AtomicReplacer by delegation only: the
+// interface PROMISES atomicity, so a wrapped store that cannot give it is
+// refused rather than degraded to Clear+Append.
 func (s *CompactionSession) ReplaceEntries(ctx context.Context, entries ...session.Entry) error {
 	r, ok := s.underlying.(session.AtomicReplacer)
 	if !ok {
@@ -313,11 +269,8 @@ func (s *CompactionSession) ReplaceEntries(ctx context.Context, entries ...sessi
 	return r.ReplaceEntries(ctx, entries...)
 }
 
-// ReplaceEntriesIf implements session.GuardedReplacer by delegation — wrapping
-// a session must not take a capability away from it. A wrapped store without
-// the guard gets an error rather than an unguarded rewrite: replaced=false
-// says the log moved, which is a fact about the log this wrapper is in no
-// position to invent.
+// ReplaceEntriesIf implements session.GuardedReplacer by delegation only: a
+// wrapped store without the guard gets an error, not an unguarded rewrite.
 func (s *CompactionSession) ReplaceEntriesIf(ctx context.Context, expect int64, entries ...session.Entry) (bool, error) {
 	g, ok := s.underlying.(session.GuardedReplacer)
 	if !ok {
@@ -327,17 +280,11 @@ func (s *CompactionSession) ReplaceEntriesIf(ctx context.Context, expect int64, 
 }
 
 // resolveCompactionMode decides how to feed the compaction call: under "auto",
-// use the full input when the last response is unstored or has no id, otherwise
-// chain from previous_response_id.
-//
-// Items the chain cannot hold (CompactionArgs.OffChainItems) rule
-// previous_response_id out either way, because the replacement it produces is
-// built from that chain and this rewrite REPLACES the log with it: what the
-// chain never saw would be deleted having never been read. Under "auto" the
-// answer is the input mode — the items handed to the compact call are exactly
-// the ones the replacement stands in for, which is the mode's own semantics —
-// and ok=true. A caller who pinned previous_response_id gets ok=false instead:
-// the pass is theirs to skip, not this function's to silently redirect.
+// the full input when the last response is unstored or has no id, otherwise
+// previous_response_id. Items the chain never saw (OffChainItems) rule the
+// chain out — the rewrite would delete them unread — so "auto" falls back to
+// the input mode, while a caller who pinned previous_response_id gets
+// ok=false: the pass is theirs to skip.
 func resolveCompactionMode(configured CompactionMode, args session.CompactionArgs) (mode CompactionMode, ok bool) {
 	mode = configured
 	if mode == CompactionModeAuto {

@@ -15,6 +15,7 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/models/modelkit"
 )
 
 // fakeSchema is a minimal OutputSchema for exercising response_format building
@@ -379,5 +380,59 @@ func TestStreamResponseTrailingTransportErrorAfterCompletedIsIgnored(t *testing.
 	}
 	if streamErr != nil {
 		t.Fatalf("err = %v, want nil (terminal event already delivered)", streamErr)
+	}
+}
+
+// A response the API reports failed still billed tokens: the error carries
+// them (modelkit.UsageError) so the run's accounting does not lose them, and
+// it still reads as a ModelBehaviorError through the wrapping.
+func TestRespondFailedResponseCarriesUsage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"id":"resp_f","status":"failed","error":{"code":"server_error","message":"boom"},"output":[],
+			"usage":{"input_tokens":42,"output_tokens":7,"total_tokens":49}}`)
+	}))
+	t.Cleanup(srv.Close)
+	model, err := NewProvider(option.WithBaseURL(srv.URL), option.WithAPIKey("k")).Model("gpt-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = model.Respond(context.Background(), agents.ModelRequest{Input: agents.InputItemsFromText("hi")})
+	ue, ok := errors.AsType[*modelkit.UsageError](err)
+	if !ok {
+		t.Fatalf("err = %T %v, want a *modelkit.UsageError", err, err)
+	}
+	if ue.Usage.InputTokens != 42 || ue.Usage.OutputTokens != 7 || ue.Usage.Requests != 1 {
+		t.Errorf("usage = %+v, want in 42 / out 7 / 1 request", ue.Usage)
+	}
+	if _, ok := errors.AsType[*agents.ModelBehaviorError](err); !ok {
+		t.Errorf("err = %T, want it to still read as a ModelBehaviorError", err)
+	}
+}
+
+// The streamed terminal failure carries its usage the same way.
+func TestStreamResponseFailedEventCarriesUsage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "event: response.created\ndata: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_f\",\"status\":\"in_progress\",\"output\":[]}}\n\n")
+		_, _ = fmt.Fprint(w, "event: response.failed\ndata: {\"type\":\"response.failed\",\"sequence_number\":1,\"response\":{\"id\":\"resp_f\",\"status\":\"failed\",\"output\":[],\"error\":{\"code\":\"server_error\",\"message\":\"boom\"},\"usage\":{\"input_tokens\":42,\"output_tokens\":7,\"total_tokens\":49}}}\n\n")
+	}))
+	t.Cleanup(srv.Close)
+	model, err := NewProvider(option.WithBaseURL(srv.URL), option.WithAPIKey("k")).Model("gpt-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var streamErr error
+	for _, err := range model.StreamResponse(context.Background(), agents.ModelRequest{Input: agents.InputItemsFromText("hi")}) {
+		if err != nil {
+			streamErr = err
+		}
+	}
+	ue, ok := errors.AsType[*modelkit.UsageError](streamErr)
+	if !ok {
+		t.Fatalf("stream err = %T %v, want a *modelkit.UsageError", streamErr, streamErr)
+	}
+	if ue.Usage.InputTokens != 42 || ue.Usage.OutputTokens != 7 {
+		t.Errorf("usage = %+v, want in 42 / out 7", ue.Usage)
 	}
 }

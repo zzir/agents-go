@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 )
@@ -26,6 +27,10 @@ import (
 // nameRe enforces the spec's name rules: lowercase alphanumerics in
 // hyphen-separated groups, so it cannot start/end with a hyphen or contain "--".
 var nameRe = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
+
+// closeRe matches the closing frontmatter delimiter: "---" alone on its line,
+// so a line that merely starts with "---" (inside a quoted value) does not end it.
+var closeRe = regexp.MustCompile(`(?m)^---$`)
 
 // Skill is a parsed SKILL.md's frontmatter metadata: what the index shows and
 // what a read_skill tool is keyed by. The body stays with the caller — the
@@ -66,12 +71,12 @@ func parseFrontmatter(content []byte) (frontmatter, error) {
 		return frontmatter{}, fmt.Errorf("must start with YAML frontmatter (---)")
 	}
 	rest := text[len("---\n"):]
-	yamlPart, _, found := strings.Cut(rest, "\n---")
-	if !found {
+	loc := closeRe.FindStringIndex(rest)
+	if loc == nil {
 		return frontmatter{}, fmt.Errorf("unterminated frontmatter (missing closing ---)")
 	}
 	var fm frontmatter
-	if err := yaml.Unmarshal([]byte(yamlPart), &fm); err != nil {
+	if err := yaml.Unmarshal([]byte(rest[:loc[0]]), &fm); err != nil {
 		return frontmatter{}, fmt.Errorf("parsing frontmatter: %w", err)
 	}
 	return fm, nil
@@ -87,7 +92,7 @@ func validate(fm frontmatter) error {
 	if strings.TrimSpace(fm.Description) == "" {
 		return fmt.Errorf("frontmatter is missing required field 'description'")
 	}
-	if len(fm.Description) > 1024 {
+	if utf8.RuneCountInString(fm.Description) > 1024 {
 		return fmt.Errorf("description exceeds 1024 characters")
 	}
 	return nil

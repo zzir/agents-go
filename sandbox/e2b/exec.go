@@ -65,9 +65,6 @@ func (s *Sandbox) ExecStream(ctx context.Context, req sandbox.ExecRequest, stdou
 	if len(req.Cmd) == 0 {
 		return nil, errors.New("e2b: ExecRequest.Cmd is empty")
 	}
-	if req.Stdin != "" {
-		return nil, errors.New("e2b: ExecRequest.Stdin is not supported")
-	}
 	// A command bounded longer than the lease's refresh margin needs the lease
 	// extended first, or the service kills the sandbox mid-command.
 	if _, err := s.ensureFor(ctx, req.EffectiveTimeout()); err != nil {
@@ -117,18 +114,16 @@ func (s *Sandbox) ExecStream(ctx context.Context, req sandbox.ExecRequest, stdou
 		return nil
 	})
 	if err != nil {
-		// A deadline is not a failure: it is the sandbox's answer, reported
-		// the way every backend reports one (spec §2.7m).
-		if errors.Is(runCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
-			s.signal(context.WithoutCancel(ctx), pid, "SIGNAL_SIGKILL")
-			return &sandbox.ExecResult{ExitCode: -1, TimedOut: true}, nil
+		// Any failure leaves a process that started still running in the
+		// sandbox; kill it so it does not outlive the request (best-effort).
+		s.signal(context.WithoutCancel(ctx), pid, "SIGNAL_SIGKILL")
+		// The caller's ending comes back as that error, bare; only the
+		// command's own deadline is a result (spec §2.7m).
+		if cerr := ctx.Err(); cerr != nil {
+			return nil, cerr
 		}
-		// Any other failure — a caller cancel, a dropped stream, a decode error
-		// — leaves a process that started still running in the sandbox; kill it
-		// so it does not outlive the request (best-effort: the transport may be
-		// the thing that failed).
-		if pid != 0 {
-			s.signal(context.WithoutCancel(ctx), pid, "SIGNAL_SIGKILL")
+		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+			return &sandbox.ExecResult{ExitCode: -1, TimedOut: true}, nil
 		}
 		return nil, err
 	}
@@ -189,11 +184,8 @@ func (s *Sandbox) signal(ctx context.Context, pid uint32, sig string) {
 // ExportTar streams the working tree as a tar archive, produced by the
 // sandbox itself: there is no host-side filesystem to read, and the tool is
 // already in every image these run.
-func (s *Sandbox) ExportTar(ctx context.Context, p string) (io.ReadCloser, error) {
+func (s *Sandbox) ExportTar(ctx context.Context) (io.ReadCloser, error) {
 	dir := s.workDir()
-	if p != "" {
-		dir = s.resolvePath(p)
-	}
 	pr, pw := io.Pipe()
 	go func() {
 		// -C the parent and name the leaf, so the archive carries one top

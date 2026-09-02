@@ -1484,9 +1484,10 @@ arriving, not the command's. The caller's ending is therefore checked first,
 and a context that ended for the caller's own reason — cancelled, or a deadline
 the caller set — is returned as that error, with no result.
 
-The two backends answer the same way, which is the point: a tool that reads
-`TimedOut` to tell the model "that command took too long" must not say it about
-a run the human just cancelled.
+Every backend — local, docker, e2b — answers the same way, which is the point:
+a tool that reads `TimedOut` to tell the model "that command took too long"
+must not say it about a run the human just cancelled. The caller's own error is
+returned bare (`ctx.Err()`), never wrapped in a transport failure.
 
 A timed-out result carries whatever output was collected before the kill; a
 failure reading the tail of the output (a broken log stream after the
@@ -1579,6 +1580,15 @@ same way, with one tolerance: when no line matches it exactly, the first line
 whose space-trimmed text equals the trimmed anchor is taken, so an anchor
 written without the file's indentation still lands. `*** Move to:` naming the
 section's own path is a plain update, not a duplicate-section conflict.
+
+**A Delete of a file too large to snapshot is parked, not refused.** The
+commit's rollback restores every touched file from an in-memory copy, and a
+file over the backend's read limit (`ErrReadLimitExceeded`) has none — so it
+is renamed to a temp name beside itself (`.apply-patch.<name>.<random>`) for
+the commit: rollback renames it back, and once every operation has landed the
+parked copy is removed. A parked copy that will not go is reported in the
+tool's result rather than silently left behind. Update and Move still need
+the content and fail on such a file.
 
 ### 2.8 Nested agent-as-tool attribution
 
@@ -2356,10 +2366,13 @@ Two touchpoints are outside this rule and are not violations of it:
   when the caller passes no `option.WithAPIKey`. The `agents` code never reads
   that variable; the caller opts into the default by constructing the provider
   without a key, and overrides it with an explicit option.
-- **An OS-integration backend may consult the standard variable of the tool it
-  drives.** The docker sandbox reaches an SSH agent through `SSH_AUTH_SOCK`,
-  exactly as `ssh` itself does. It is documented on the backend and overridable
-  by an explicit dial option; it configures a transport, not run behavior.
+- **An OS-integration backend may consult the standard variables of the tool
+  it drives.** The docker sandbox honors `DOCKER_HOST` and its siblings the
+  way the docker CLI does (and `SSH_AUTH_SOCK` for an `ssh://` daemon, as
+  `ssh` itself does); the local sandbox passes `PATH`, `HOME` and `TMPDIR`
+  through to the child process. Each is documented on the backend and
+  overridable by an explicit option; they configure a transport or a child
+  process, not run behavior.
 
 The trace sensitive-data toggle (`Observe.IncludeSensitiveData`) is the one
 knob this rule reclaimed: nil now means include (§4), decided by the caller, not

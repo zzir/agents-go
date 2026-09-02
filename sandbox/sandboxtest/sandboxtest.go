@@ -164,8 +164,7 @@ func testRenameRemove(t *testing.T, open Backend) {
 	}
 }
 
-// The file operations and exec share ONE filesystem — the invariant the
-// bind-mount era kept threatening (decisions §5.14).
+// The file operations and exec share ONE filesystem (decisions §5.14).
 //
 //nolint:thelper // a subtest BODY, not a helper: t.Helper() would attribute every failure to the caller's dispatch line instead of the assertion that failed.
 func testExecSeesFiles(t *testing.T, open Backend) {
@@ -277,7 +276,7 @@ func testExport(t *testing.T, open Backend) {
 	if err := s.WriteFile(ctx, "exported.txt", []byte("in-the-archive")); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	rc, err := ex.ExportTar(ctx, "")
+	rc, err := ex.ExportTar(ctx)
 	if err != nil {
 		t.Fatalf("ExportTar: %v", err)
 	}

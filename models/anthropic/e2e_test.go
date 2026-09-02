@@ -51,7 +51,7 @@ func TestRunSyncToolLoop(t *testing.T) {
 				"usage": {"input_tokens": 30, "output_tokens": 6}
 			}`
 		}
-		fmt.Fprint(w, reply)
+		_, _ = fmt.Fprint(w, reply)
 	}))
 	t.Cleanup(srv.Close)
 

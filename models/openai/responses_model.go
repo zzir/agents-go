@@ -60,12 +60,13 @@ func (m *ResponsesModel) buildParams(req agents.ModelRequest) (responses.Respons
 	if len(tools) > 0 {
 		params.Tools = tools
 	}
-	if tc, ok := convertToolChoice(settingsToolChoice(req.Settings)); ok {
+	settings := modelkit.Settings(req.Settings)
+	if tc, ok := convertToolChoice(settings.ToolChoice); ok {
 		params.ToolChoice = tc
 	}
 
 	text, hasFormat := responseFormat(req.OutputSchema)
-	if v := settingsVerbosity(req.Settings); v != "" {
+	if v := settings.Verbosity; v != "" {
 		text.Verbosity = responses.ResponseTextConfigVerbosity(v)
 		hasFormat = true
 	}
@@ -96,22 +97,7 @@ func (m *ResponsesModel) buildParams(req agents.ModelRequest) (responses.Respons
 // requestOptions builds per-request openai-go options from the model settings'
 // extra headers, query parameters and body fields.
 func requestOptions(s *agents.ModelSettings) []option.RequestOption {
-	if s == nil {
-		return nil
-	}
-	var opts []option.RequestOption
-	for k, v := range s.ExtraHeaders {
-		opts = append(opts, option.WithHeader(k, v))
-	}
-	for k, v := range s.ExtraQuery {
-		opts = append(opts, option.WithQuery(k, v))
-	}
-	for k, v := range s.ExtraBody {
-		// WithJSONSet interprets the key as an sjson path, so escape its
-		// special characters to set a literal top-level key.
-		opts = append(opts, option.WithJSONSet(modelkit.EscapeJSONPath(k), v))
-	}
-	return opts
+	return modelkit.ExtraOptions(s, option.WithHeader, option.WithQuery, option.WithJSONSet)
 }
 
 // Respond implements agents.Model.
@@ -136,32 +122,43 @@ func (m *ResponsesModel) Respond(ctx context.Context, req agents.ModelRequest) (
 	if httpResp != nil {
 		requestID = httpResp.Header.Get("X-Request-Id")
 	}
-	// Terminal statuses fail here exactly as they fail the streaming path: the
-	// same response must not be a hard failure when streamed and a silent
-	// partial answer when not. Incomplete-for-length is the one recoverable
-	// case (the runner refuses its tool calls and the model resends); every
-	// other incomplete reason, and a failed response, is terminal.
+	// Terminal statuses fail here as they fail the streaming path; incomplete
+	// for length is the one recoverable case (spec §2.7e).
 	switch resp.Status {
 	case responses.ResponseStatusFailed:
-		return nil, responseTerminalFailure(agents.EventResponseFailed, string(resp.Status),
-			string(resp.Error.Code), resp.Error.Message, "")
+		return nil, withUsage(responseTerminalFailure(agents.EventResponseFailed, string(resp.Status),
+			string(resp.Error.Code), resp.Error.Message, ""), usage)
 	case responses.ResponseStatusIncomplete:
 		if resp.IncompleteDetails.Reason != "max_output_tokens" {
-			return nil, responseTerminalFailure(agents.EventResponseIncomplete, string(resp.Status),
-				"", "", resp.IncompleteDetails.Reason)
+			return nil, withUsage(responseTerminalFailure(agents.EventResponseIncomplete, string(resp.Status),
+				"", "", resp.IncompleteDetails.Reason), usage)
 		}
 	}
 	return &agents.ModelResponse{
-		Output:     resp.Output,
-		Usage:      usageFromResponse(usage),
-		ResponseID: resp.ID,
-		RequestID:  requestID,
-		// The blocking path used to drop these while the streaming path read
-		// them, so the same truncated response was a hard failure when streamed
-		// and a silent partial answer when not.
+		Output:           resp.Output,
+		Usage:            usageFromResponse(usage),
+		ResponseID:       resp.ID,
+		RequestID:        requestID,
 		Status:           string(resp.Status),
 		IncompleteReason: resp.IncompleteDetails.Reason,
 	}, nil
+}
+
+// withUsage attaches the usage a failed response still billed to its error;
+// a response without a usage block is returned as is.
+func withUsage(err error, usage *responses.ResponseUsage) error {
+	if usage == nil {
+		return err
+	}
+	return &modelkit.UsageError{Err: err, Usage: usageFromResponse(usage)}
+}
+
+// terminalUsage is the usage block a terminal stream event carries, or nil.
+func terminalUsage(r *responses.Response) *responses.ResponseUsage {
+	if !r.JSON.Usage.Valid() {
+		return nil
+	}
+	return &r.Usage
 }
 
 // StreamResponse implements agents.Model.
@@ -191,40 +188,32 @@ func (m *ResponsesModel) StreamResponse(ctx context.Context, req agents.ModelReq
 				return
 			case agents.EventResponseFailed:
 				r := event.AsResponseFailed().Response
-				yield(nil, responseTerminalFailure(event.Type, string(r.Status), string(r.Error.Code), r.Error.Message, ""))
+				yield(nil, withUsage(responseTerminalFailure(event.Type, string(r.Status), string(r.Error.Code), r.Error.Message, ""), terminalUsage(&r)))
 				return
 			case agents.EventResponseIncomplete:
 				r := event.AsResponseIncomplete().Response
 				if r.IncompleteDetails.Reason == "max_output_tokens" {
-					// Not a failure: the response arrived, it is just cut off.
-					// The runner refuses to execute its tool calls and tells
-					// the model to resend, which is recoverable — failing the
-					// run here would throw away a turn's work over a length
-					// limit. Every other incomplete reason still fails.
+					// Not a failure: the response arrived, cut off, and the
+					// runner handles that (spec §2.7e).
 					return
 				}
-				yield(nil, responseTerminalFailure(event.Type, string(r.Status), "", "", r.IncompleteDetails.Reason))
+				yield(nil, withUsage(responseTerminalFailure(event.Type, string(r.Status), "", "", r.IncompleteDetails.Reason), terminalUsage(&r)))
 				return
 			case agents.EventResponseCompleted:
 				sawTerminal = true
 			}
 		}
 		if sawTerminal {
-			// A transport error AFTER the terminal event is not surfaced
-			// (same rule as the Anthropic adapter): the response is already
-			// complete and delivered, and failing the call now would throw it
-			// away over a connection that had nothing left to say.
+			// A transport error AFTER the terminal event is not surfaced: the
+			// response is already complete and delivered.
 			return
 		}
 		if err := stream.Err(); err != nil {
 			yield(nil, fmt.Errorf("openai responses stream: %w", err))
 			return
 		}
-		// The SSE layer reports a clean end: a connection severed at an
-		// event boundary looks like a normal EOF, but no terminal event
-		// ever arrived — the response was cut off. Surfaced retryably
-		// (modelkit.TruncatedStreamError wraps io.ErrUnexpectedEOF) so a
-		// retry decorator can run the request again.
+		// A clean SSE end without a terminal event is a severed connection,
+		// surfaced retryably.
 		yield(nil, modelkit.TruncatedStreamError("openai responses stream"))
 	}
 }
@@ -276,29 +265,12 @@ func responseErrorEventFailure(eventType string, e responses.ResponseErrorEvent)
 	return agents.NewModelBehaviorError("%s", msg)
 }
 
-// usageFromResponse maps a blocking response's usage block, which the
-// Responses API omits for some responses — nil then counts as zero requests,
-// the same rule the streaming path applies through the same
-// resp.JSON.Usage.Valid() predicate at the call site above. The mapping itself
-// is shared (agents.UsageFromResponseUsage) so the two paths cannot report
-// different numbers for the same response.
+// usageFromResponse maps a usage block, which the Responses API omits for
+// some responses — nil counts as zero requests. The mapping is shared with
+// the streaming path (agents.UsageFromResponseUsage).
 func usageFromResponse(u *responses.ResponseUsage) *agents.Usage {
 	if u == nil {
 		return agents.NewUsage()
 	}
 	return agents.UsageFromResponseUsage(*u)
-}
-
-func settingsToolChoice(s *agents.ModelSettings) agents.ToolChoice {
-	if s == nil {
-		return ""
-	}
-	return s.ToolChoice
-}
-
-func settingsVerbosity(s *agents.ModelSettings) agents.Verbosity {
-	if s == nil {
-		return ""
-	}
-	return s.Verbosity
 }

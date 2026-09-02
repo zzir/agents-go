@@ -16,18 +16,8 @@ import (
 
 // ShellSession is a shell that stays alive between commands, so `cd`, exported
 // variables, an activated virtualenv and a started background process all
-// survive into the next call.
-//
-// Each Exec in a fresh shell is stateless, which reads as a bug to a model:
-// it runs `cd build`, then `make`, and make runs in the wrong directory. The
-// alternative it reaches for on its own — chaining everything into one enormous
-// `&&` line — is worse to read, worse to fail, and loses the output boundaries.
-//
-// Completion is detected with a SENTINEL: after each command the session prints
-// a token and the exit status, and output is read until that token appears.
-// There is no other reliable signal on a PTY — a prompt is configurable, silence
-// means nothing, and a command that prints nothing is indistinguishable from one
-// still running.
+// survive into the next call. Completion is detected with a SENTINEL printed
+// after each command — the only reliable signal on a PTY (spec §2.7k).
 type ShellSession struct {
 	term Terminal
 	// sentinel is what appears in the OUTPUT; head and tail are the two halves
@@ -35,16 +25,12 @@ type ShellSession struct {
 	sentinel   string
 	head, tail string
 
-	// chunks carries what the reader goroutine has read. A background reader
-	// is what makes the timeout real: Terminal is an io.ReadWriteCloser with no
-	// deadline, so a Read on the calling goroutine blocks forever on a command
-	// that never finishes and no timer can interrupt it.
+	// chunks carries what the reader goroutine has read; Terminal has no read
+	// deadline, so only a background reader makes the timeout real.
 	chunks  chan []byte
 	readErr chan error
-	// done releases the reader when the session closes with chunks full: a
-	// channel send is not unblocked by closing the Terminal, so a timed-out
-	// flooding command would otherwise pin the goroutine (and its buffered
-	// output) for the life of the process.
+	// done releases a reader blocked on a full chunks channel when the session
+	// closes; closing the Terminal does not unblock a channel send.
 	done chan struct{}
 
 	// closeOnce closes the terminal at most once: Close preempting a command
@@ -123,17 +109,9 @@ func (s *ShellSession) readLoop() {
 	}
 }
 
-// newSentinel mints a token for one session, in two halves.
-//
-// Random and per session, because a fixed token is one a command can print:
-// `echo __DONE__` would end the read early and hand the model a truncated
-// result with a garbage exit code.
-//
-// Two halves, because a PTY echoes what is written to it. A command line
-// carrying the whole token would come back in the output, and that echo is
-// indistinguishable from the real thing — the read would stop at the echo, one
-// command early, forever after. The command line carries the halves as separate
-// printf arguments; only the OUTPUT ever contains them joined.
+// newSentinel mints a random per-session token in two halves: the command
+// line carries them as separate printf arguments, so the PTY's echo never
+// contains the joined token (spec §2.7k).
 func newSentinel() (head, tail string) {
 	var b [12]byte
 	// As of Go 1.24 crypto/rand.Read never fails; it aborts the program if the
@@ -151,10 +129,6 @@ func (s *ShellSession) settle(ctx context.Context) error {
 }
 
 // Run executes one command and returns its output and exit status.
-//
-// The command is sent verbatim, then the sentinel echo. Splitting them with a
-// newline rather than `;` means a command ending in a comment, a heredoc or a
-// trailing backslash cannot swallow the sentinel and hang the read forever.
 func (s *ShellSession) Run(ctx context.Context, cmd string, timeout time.Duration) (output string, exitCode int, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -165,10 +139,8 @@ func (s *ShellSession) Run(ctx context.Context, cmd string, timeout time.Duratio
 		timeout = DefaultTimeout
 	}
 
-	// The halves are separate arguments, so the echoed line never contains the
-	// token the reader is looking for. The newline before printf (rather than
-	// `;`) means a command ending in a comment, a heredoc or a trailing
-	// backslash cannot swallow it and hang the read forever.
+	// A newline before printf (not `;`): a command ending in a comment, a
+	// heredoc or a trailing backslash cannot swallow the sentinel.
 	line := cmd + "\nprintf '%s%s %d\\n' '" + s.head + "' '" + s.tail + "' $?\n"
 	s.lastLine = line
 	if _, err := io.WriteString(s.term, line); err != nil {
@@ -177,10 +149,8 @@ func (s *ShellSession) Run(ctx context.Context, cmd string, timeout time.Duratio
 
 	out, code, err := s.readUntilSentinel(ctx, timeout)
 	if err != nil {
-		// The session is no longer at a known state: the command may still be
-		// running and its output will arrive in the middle of the next one.
-		// Closing is the honest outcome — a session that silently interleaves
-		// two commands' output is worse than one that is gone.
+		// The session is no longer at a known state; close rather than
+		// interleave the next command's output with this one's (spec §2.7k).
 		_ = s.closeLocked()
 		return out, -1, err
 	}
@@ -245,16 +215,9 @@ func (s *ShellSession) capBuf(scanFrom int) int {
 	return scanFrom - (cut - headKeep)
 }
 
-// trimEcho removes the shell's echo of what was written.
-//
-// A PTY echoes its input, so the command AND the printf that carries the
-// sentinel come back as output — reported to the model as part of the result
-// unless dropped. The echo is a prefix and is stripped as one, line by line
-// against what was actually written, rather than by pattern: a heuristic would
-// also eat a command that legitimately printed its own text back.
-//
-// A terminal with echo disabled emits nothing to strip, and the loop simply
-// finds no matches.
+// trimEcho removes the PTY's echo of what was written, as an exact line-by-line
+// prefix rather than by pattern (spec §2.7k). With echo disabled the loop
+// simply finds no match.
 func trimEcho(out, written string) string {
 	outLines := strings.Split(out, "\n")
 	for echoed := range strings.SplitSeq(strings.TrimRight(written, "\n"), "\n") {
@@ -298,24 +261,12 @@ func (s *ShellSession) closeTerm() error {
 	return s.closeErr
 }
 
-// sessionPool holds the named shells one exec_command tool has open.
-//
-// It belongs to the tool rather than the sandbox because the names are the
-// model's: two agents sharing a sandbox should not collide on "build", and a
-// pool per tool gives each its own namespace for free.
-//
-// The namespace is per TOOL, not per run: a *Tool built once and used by
-// several concurrent runs gives all of them the same pool, so two runs of the
-// same agent that both open "build" get the SAME shell — their commands
-// interleave in one PTY, and one run's `cd` moves the other. A host that runs
-// an agent concurrently and wants isolation builds the tool per run.
+// sessionPool holds the named shells one exec_command tool has open. The
+// namespace is per TOOL, not per run (spec §2.7k).
 type sessionPool struct {
 	mu sync.Mutex
-	// closed is the pool's terminal state. It exists because the open runs
-	// outside the lock (see session): without it, a shell that landed after
-	// Close emptied the map would be held by a pool nobody closes again — the
-	// leaked PTY (a remote ssh session on that backend) that
-	// CodeToolConfig.RegisterCloser exists to prevent.
+	// closed is final: the open runs outside the lock (see session), and a
+	// shell landing after Close would otherwise be held by nobody.
 	closed   bool
 	sessions map[string]*ShellSession
 }
@@ -329,12 +280,8 @@ func newSessionPool() *sessionPool {
 	return &sessionPool{sessions: map[string]*ShellSession{}}
 }
 
-// run executes cmd in the named session, opening it on first use.
-//
-// A session that failed is dropped rather than reused: a timed-out shell may
-// still be running the previous command, and its output would arrive in the
-// middle of the next one. Reopening costs a shell startup; getting two
-// commands' output interleaved costs the model's trust in every result.
+// run executes cmd in the named session, opening it on first use. A session
+// that failed is dropped rather than reused (spec §2.7k).
 func (p *sessionPool) run(ctx context.Context, sb Sandbox, name, cmd string, timeout time.Duration) (string, int, error) {
 	s, err := p.session(ctx, sb, name)
 	if err != nil {
@@ -353,18 +300,10 @@ func (p *sessionPool) run(ctx context.Context, sb Sandbox, name, cmd string, tim
 	return out, code, err
 }
 
-// session returns the named session, opening one on first use.
-//
-// The open runs OUTSIDE p.mu: on the ssh backend it is a network round-trip
-// plus a PTY handshake and a settle command, and holding the lock across it
-// stalls every OTHER name's command for that whole time. Under the lock there
-// is only a map lookup and a map write. Two callers racing the same NEW name
-// therefore both open a shell; the loser closes its own and takes the winner's,
-// so the pool still holds exactly one session per name.
-//
-// The same window lets Close run while a shell is being opened, which is why
-// the second critical section re-checks p.closed: Close only reaches the
-// sessions the map holds, so one landing after it has to close itself.
+// session returns the named session, opening one on first use. The open runs
+// OUTSIDE p.mu (on a remote backend it is a network round-trip): two callers
+// racing the same new name both open one and the loser takes the winner's,
+// and the second critical section re-checks closed (spec §2.7k).
 func (p *sessionPool) session(ctx context.Context, sb Sandbox, name string) (*ShellSession, error) {
 	p.mu.Lock()
 	s, ok := p.sessions[name]

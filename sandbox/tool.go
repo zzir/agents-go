@@ -36,36 +36,21 @@ type CodeToolConfig struct {
 	MaxOutputBytes int
 	// Sessions enables the session_id argument: a named shell held open between
 	// calls, so `cd`, exported variables and an activated virtualenv survive.
-	//
-	// Off by default because a held-open shell is a resource with a lifetime,
-	// and a caller that never closes one leaks it. Requires a backend that
-	// supports interactive terminals.
-	//
-	// The names are the TOOL's, not a run's: one *Tool used by several
-	// concurrent runs gives all of them the same pool, so two runs of the same
-	// agent that both open "build" share one shell — their commands interleave
-	// in one PTY and one run's `cd` moves the other. Build the tool per run to
-	// isolate them. Closing the pool (see RegisterCloser) is final: a named
-	// command afterwards fails instead of opening a shell nobody will close.
+	// Off by default (a held-open shell must be closed — see RegisterCloser)
+	// and needs a backend with interactive terminals. The pool is the TOOL's,
+	// shared by every run using it; build the tool per run to isolate them
+	// (spec §2.7k).
 	Sessions bool
-	// Policy filters commands before they reach a human or the sandbox. It runs
-	// BEFORE the approval gate: a person asked to judge forty commands an hour
-	// stops reading them, so what was never going to be allowed should not
-	// reach the prompt.
+	// Policy filters commands before the approval gate (spec §2.7j).
 	Policy Policy
 	// NeedsApprovalFunc, when set, is forwarded to the tool as its per-call
 	// approval gate: given the command in argsJSON and the model-assigned callID
 	// it decides whether this execution must be approved first. nil = never gate.
-	// The sandbox package attaches no policy of its own — the caller supplies the
-	// decision.
 	NeedsApprovalFunc func(ctx context.Context, rc *agents.RunContext, argsJSON string, callID string) (bool, error)
 
 	// RegisterCloser, when set, receives the closer that releases every named
-	// shell the tool's Sessions pool holds open. Without it there was no path
-	// to those shells at all: *agents.Tool has no close, so a host that rebuilt
-	// its tools accumulated live PTYs (and remote ssh sessions) for the life of
-	// the process. Wire it to whatever owns the sandbox's lifetime and call
-	// Close there.
+	// shell the Sessions pool holds open; *agents.Tool has no close of its own.
+	// Wire it to whatever owns the sandbox's lifetime and call Close there.
 	RegisterCloser func(io.Closer)
 }
 
@@ -95,16 +80,8 @@ func (c CodeToolConfig) withDefaults() CodeToolConfig {
 }
 
 // lenientString is a string that also accepts the JSON zero-value sentinels
-// null, 0 and false, decoding each to "". The schema still says string — but a
-// backend that does not enforce strict schemas (Anthropic, ChatGPT) lets the
-// model fill an unused required field with a zero value, and a whole run is
-// not worth losing over that spelling of "none". Only those three normalize:
-// each reads unambiguously as "not used", never as a real directory or
-// session name. Any other non-string scalar (true, 42, 3.14) is a value whose
-// intent is unknown — keeping its literal text would run `cd '42'` or open a
-// persistent shell named "3.14" — so it is rejected, which OnInvoke returns to
-// the model as correctable text. A model that genuinely wants a session named
-// "0" can still say so with a string.
+// null, 0 and false, decoding each to ""; any other non-string scalar is
+// rejected, which OnInvoke feeds back as correctable text (spec §2.7l).
 type lenientString string
 
 func (s *lenientString) UnmarshalJSON(data []byte) error {
@@ -144,10 +121,7 @@ type codeToolArgs struct {
 // to the model as output so it can correct itself.
 func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.Tool {
 	cfg = cfg.withDefaults()
-	// The pool exists only when named sessions do: a tool built without
-	// Sessions never uses it, and unconditionally creating and registering one
-	// accumulated an empty pool (and a closer entry) per tool build for the
-	// life of the host.
+	// The pool exists only when named sessions do.
 	var sessions *sessionPool
 	if cfg.Sessions {
 		sessions = newSessionPool()
@@ -164,30 +138,22 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.Tool {
 		schema, err = agents.SchemaFor[codeToolArgsNoSession](true)
 	}
 	if err != nil {
-		// Both argument types are fixed at compile time, so this is a
-		// deterministic programmer error, surfaced at construction like NewTool's.
+		// A deterministic programmer error (both argument types are fixed at
+		// compile time), surfaced at construction like NewTool's.
 		panic(fmt.Sprintf("sandbox: CodeTool(%q): schema generation failed: %v", cfg.Name, err))
 	}
-	// Compiled once here and shared, read-only, by both closures below: the
-	// runner executes a turn's tool calls in parallel, so a compiled form
-	// filled in on the way through would be several goroutines writing one
-	// cache. The zero Policy compiles to a check that refuses nothing.
+	// Compiled once and shared read-only by both closures: the runner runs a
+	// turn's tool calls in parallel. The zero Policy refuses nothing.
 	compiled, policyErr := cfg.Policy.compile()
 	checkPolicy := func(cmd string) error {
 		if policyErr != nil {
-			// A policy that cannot be compiled refuses everything, as Check
-			// does — falling open would turn a configuration typo into no
-			// protection at all, silently.
-			return policyErr
+			return policyErr // an uncompilable policy refuses everything (spec §2.7j)
 		}
 		return compiled.check(cmd)
 	}
-	// A call OnInvoke will refuse as text — a policy veto (spec §2.7j) or
-	// malformed arguments — must never reach a human: the runner would ask,
-	// get a yes, and then refuse anyway, which wastes the approval and
-	// teaches the user their answers change nothing. Such a call reports "no
-	// approval needed" here and OnInvoke refuses it as text the model can act
-	// on.
+	// A call OnInvoke will refuse as text — a policy veto or malformed
+	// arguments — reports "no approval needed", so it never reaches a human
+	// (spec §2.7j, §2.7l).
 	needsApproval := cfg.NeedsApprovalFunc
 	if needsApproval != nil {
 		inner := needsApproval
@@ -208,26 +174,19 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.Tool {
 		OnInvoke: func(ctx context.Context, tc *agents.ToolContext, argsJSON string) (agents.ToolResult, error) {
 			var args codeToolArgs
 			if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
-				// Refused as TEXT like a policy veto, not an error: malformed
-				// arguments are the model's own mistake to correct on its next
-				// call, and CodeTool sets no FailureErrorFunction — an error
-				// here would abort the whole run over a spelling slip. The
-				// error return below (sandbox infrastructure failure) is the
-				// one that stays fatal.
+				// Refused as TEXT, not an error: an error return would abort
+				// the run over a spelling slip (spec §2.7l).
 				res := agents.TextResult(fmt.Sprintf("invalid arguments: %v", err))
 				res.IsError = true
 				return res, nil
 			}
 
-			timeout := cfg.Timeout
+			timeout := cmp.Or(cfg.Timeout, DefaultTimeout)
 			if args.TimeoutSeconds > 0 {
-				requested := min(time.Duration(args.TimeoutSeconds)*time.Second, cfg.MaxTimeout)
-				timeout = requested
+				timeout = min(time.Duration(args.TimeoutSeconds)*time.Second, cfg.MaxTimeout)
 			}
 
-			// Refused as TEXT, not an error: the model can pick a different
-			// command, and the reason names the rule so it is not left
-			// guessing at variations.
+			// Refused as TEXT naming the rule, not an error (spec §2.7j).
 			if err := checkPolicy(args.Cmd); err != nil {
 				return agents.TextResult(err.Error()).WithDisplay("terminal").
 					WithDetails(map[string]any{"command": args.Cmd, "refused": true}), nil
@@ -238,22 +197,17 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.Tool {
 				cmd = "cd " + ShellQuote(string(args.Workdir)) + " && " + cmd
 			}
 
-			// Instrumented here rather than in each backend: this is the one
-			// place every sandbox — local, Docker, SSH — is reached through.
+			// Instrumented here, the one place every backend is reached through.
 			span, ctx := tracing.StartSpanFrom(ctx, "sandbox.exec", tracing.SpanTypeSandbox,
 				map[string]any{"tool": cfg.Name, "timeout_ms": timeout.Milliseconds()})
 			defer span.Finish()
 
-			// A named session runs in a shell held open from the last call, so
-			// `cd build` then `make` does what it reads as. A fresh Exec per
-			// call is stateless, which a model experiences as its `cd` being
-			// ignored — and the workaround it reaches for, chaining everything
-			// into one enormous `&&` line, is worse to read and worse to fail.
+			// A named session runs in a shell held open from the last call
+			// (spec §2.7k).
 			if session := string(args.SessionID); cfg.Sessions && session != "" {
 				out, code, err := sessions.run(ctx, sb, session, cmd, timeout)
 				if err != nil {
-					// The partial output still reaches the model: on a timeout
-					// it is often the clue (the last log line, a hung prompt).
+					// The partial output still reaches the model (spec §2.7k).
 					span.SetError(err.Error(), nil)
 					return agents.TextResult(fmt.Sprintf("session %q: %v\n%s",
 						session, err, formatSessionResult(out, code, cfg.MaxOutputBytes))).
@@ -274,12 +228,8 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.Tool {
 			var res *ExecResult
 			var err error
 			if streamer, ok := sb.(ExecStreamer); ok && tc != nil {
-				// A command producing output for two minutes is unwatchable
-				// otherwise; the model still gets only the final result.
-				//
-				// ExecStream hands output to the writers instead of capturing
-				// it, so the capped buffers below are what the result is built
-				// from — streaming must not cost the model its output.
+				// Streamed as progress events; the model still gets only the
+				// final result, built from the capped buffers below.
 				maxOut := req.EffectiveMaxOutputBytes()
 				outBuf := &CappedBuffer{Max: maxOut}
 				errBuf := &CappedBuffer{Max: maxOut}
@@ -299,9 +249,7 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.Tool {
 			}
 			span.Set("exit_code", res.ExitCode)
 			span.Set("timed_out", res.TimedOut)
-			// The exit code and streams belong in Details, not only folded into
-			// the text the model reads: a UI showing a command should not have
-			// to parse "exit_code: 1" back out of a formatted blob.
+			// Details carry the exit code too, so a UI need not parse the text.
 			return agents.TextResult(formatResult(res, cfg.MaxOutputBytes)).
 				WithDisplay("terminal").
 				WithDetails(map[string]any{
@@ -333,17 +281,9 @@ func formatResult(res *ExecResult, limit int) string {
 	return b.String()
 }
 
-// truncateWithInfo cuts s to at most limit bytes, keeping the **head and the
-// tail** and eliding the middle.
-//
-// Head-only truncation loses exactly the part that matters most: a build or
-// test command prints its progress first and its failure summary last, so
-// cutting the tail hands the model the least useful half of the output. The
-// split is 60/40 in favor of the head, which keeps the command's context while
-// still reaching the verdict.
-//
-// Rune boundaries are respected on both sides so a multi-byte UTF-8 sequence is
-// never split, and the elision line reports how much was dropped.
+// truncateWithInfo cuts s to at most limit bytes, keeping the head (60%) and
+// the tail (40%) and eliding the middle — a build prints its progress first
+// and its failure summary last. Rune boundaries are respected on both sides.
 func truncateWithInfo(s string, limit int) string {
 	if limit <= 0 || len(s) <= limit {
 		return s
@@ -388,17 +328,9 @@ func forwardToRuneStart(s string, i int) int {
 	return i
 }
 
-// progressWriter turns a sandbox's output stream into tool-progress events.
-//
-// It batches: a command emitting a line at a time would otherwise produce an
-// event per line, and a consumer redrawing per event would spend more time
-// rendering than the command spends running. Output is coalesced until a write
-// completes a line, which is the granularity a terminal view wants anyway.
-//
-// One writer serves BOTH the stdout and stderr streams, and most backends
-// pump those from separate goroutines (os/exec starts one copier per pipe;
-// the ssh client does the same) — so the buffer is guarded. Interleaving
-// stays at line granularity, which is the best a merged view can promise.
+// progressWriter turns a sandbox's output stream into tool-progress events,
+// coalesced per completed line. One writer serves BOTH stdout and stderr,
+// which most backends pump from separate goroutines, so the buffer is guarded.
 type progressWriter struct {
 	tc  *agents.ToolContext
 	cmd string

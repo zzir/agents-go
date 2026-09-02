@@ -45,9 +45,7 @@ func (i sandboxInfo) paused() bool {
 }
 
 // ensure returns the sandbox id, creating or resuming the remote sandbox when
-// needed. It is the single gate every data-plane call passes through, and it
-// holds the lock across the round trip so two concurrent commands cannot
-// create two sandboxes for one client.
+// needed. It is the single gate every data-plane call passes through.
 func (s *Sandbox) ensure(ctx context.Context) (string, error) {
 	return s.ensureFor(ctx, 0)
 }
@@ -55,45 +53,50 @@ func (s *Sandbox) ensure(ctx context.Context) (string, error) {
 // ensureFor is ensure with a minimum lease runway: an operation bounded by
 // runway (a tar export, a long exec) gets a lease that outlasts it. There is
 // no keepalive, so an open-ended session can at best start from a full lease.
+//
+// Provisioning is serialized on provMu, so two concurrent commands cannot
+// create two sandboxes for one client; s.mu is never held across a round trip
+// or the OnSandboxID callback, so the callback may look at the sandbox.
 func (s *Sandbox) ensureFor(ctx context.Context, runway time.Duration) (string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	// Fast path: a bound sandbox with a lease that is not near expiry needs no
-	// control-plane call — the common case for a chatty session. If the sandbox
-	// died under us the data-plane call fails once and the next ensure rebuilds;
-	// that beats a control round trip on every command.
-	if s.id != "" && s.leaseValid(runway) {
-		return s.id, nil
+	// control-plane call. If the sandbox died under us the data-plane call
+	// fails once and the next ensure rebuilds.
+	if id, ok := s.leased(runway); ok {
+		return id, nil
 	}
-	if s.id != "" {
-		info, err := s.get(ctx, s.id)
+	s.provMu.Lock()
+	defer s.provMu.Unlock()
+	if id, ok := s.leased(runway); ok {
+		return id, nil // provisioned while waiting for the lock
+	}
+	if id := s.currentID(); id != "" {
+		info, err := s.get(ctx, id)
 		switch {
 		case err == nil && !info.paused():
 			// Running: adopt its credential and extend the lease so a long
 			// session does not lose the sandbox to its TTL.
 			s.adopt(info)
-			switch rerr := s.refresh(ctx, s.id, runway); {
+			switch rerr := s.refresh(ctx, id, runway); {
 			case rerr == nil:
 				s.markLeased(runway)
-				return s.id, nil
+				return id, nil
 			case isNotFound(rerr):
-				s.forget() // vanished between the read and the refresh; rebuild
+				s.forget(id) // vanished between the read and the refresh; rebuild
 			default:
 				return "", rerr
 			}
 		case err == nil:
-			resumed, rerr := s.resume(ctx, s.id, runway)
+			resumed, rerr := s.resume(ctx, id, runway)
 			if rerr != nil {
 				return "", rerr
 			}
 			s.adopt(resumed)
 			s.markLeased(runway)
-			return s.id, nil
+			return id, nil
 		case isNotFound(err):
-			// The sandbox is gone for good (killed, or expired without
-			// auto-pause). Forget it and build a fresh one rather than
-			// failing every command from here on.
-			s.forget()
+			// Gone for good (killed, or expired without auto-pause): build a
+			// fresh one rather than failing every command from here on.
+			s.forget(id)
 		default:
 			return "", err
 		}
@@ -106,30 +109,52 @@ func (s *Sandbox) ensureFor(ctx context.Context, runway time.Duration) (string, 
 	if id == "" {
 		return "", fmt.Errorf("e2b: the create returned no sandbox id")
 	}
-	// Record BEFORE adopting: a sandbox this client cannot hand back to its
-	// owner is billed compute nobody will ever stop. If recording fails, kill
-	// the sandbox we just made rather than leak it — the record was the only
-	// thing that would ever have let anyone stop it. The kill is bounded: a
-	// hung control plane must not wedge s.mu forever.
+	// Bound before recorded, with the lease still unset: a concurrent command
+	// waits on provMu rather than running on a sandbox the record may yet
+	// reject, while the callback itself can inspect it (Status).
+	s.mu.Lock()
+	s.id = id
+	s.freshWorkDir = true
+	s.mu.Unlock()
+	s.adopt(info)
+	// A sandbox this client cannot hand back to its owner is billed compute
+	// nobody will ever stop: a failed record kills it rather than leaking it.
+	// The kill is bounded — a hung control plane must not wedge provMu forever.
 	if s.opts.OnSandboxID != nil {
 		if rerr := s.opts.OnSandboxID(ctx, id); rerr != nil {
 			kctx, kcancel := context.WithTimeout(context.WithoutCancel(ctx), controlCallTimeout)
 			defer kcancel()
-			if kerr := s.kill(kctx, id); kerr != nil {
+			kerr := s.kill(kctx, id)
+			s.forget(id)
+			if kerr != nil {
 				return "", fmt.Errorf("e2b: recording sandbox %s failed (%w) and killing it also failed: %w", id, rerr, kerr)
 			}
 			return "", fmt.Errorf("e2b: recording sandbox %s: %w", id, rerr)
 		}
 	}
-	s.id = id
-	s.freshWorkDir = true
-	s.adopt(info)
 	s.markLeased(runway)
-	return s.id, nil
+	return id, nil
+}
+
+// leased returns the bound sandbox id when its lease has enough runway to
+// skip a control-plane call.
+func (s *Sandbox) leased(runway time.Duration) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.id, s.id != "" && s.leaseValid(runway)
+}
+
+// currentID returns the sandbox this client is bound to, or "".
+func (s *Sandbox) currentID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.id
 }
 
 // adopt keeps the per-sandbox facts a response carried.
 func (s *Sandbox) adopt(info sandboxInfo) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if info.EnvdAccessToken != "" {
 		s.accessToken = info.EnvdAccessToken
 	}
@@ -155,9 +180,7 @@ func (s *Sandbox) create(ctx context.Context, runway time.Duration) (sandboxInfo
 	}
 	// Internet is OFF by default, matching the docker backend and the sandbox
 	// package's isolation contract — so the field is sent either way, never
-	// left to the service's own default (which is internet ON). NOTE: the field
-	// name and its effect must be confirmed against the real service; the
-	// compatible fake cannot prove it (decisions §5.37).
+	// left to the service's own default (which is internet ON) — decisions §5.37.
 	body["allow_internet_access"] = s.opts.AllowInternet
 	if len(s.opts.Metadata) > 0 {
 		body["metadata"] = s.opts.Metadata
@@ -233,10 +256,8 @@ func (s *Sandbox) control(ctx context.Context, method, path string, in, out any)
 		return &connectError{Code: "not_found", Message: method + " " + path}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		// The message the service gave is what an operator needs: a quota, a
-		// region, a template that is still building. Pass it through rather
-		// than replacing it with a status line (protocol.md's rule for the
-		// compatible services).
+		// The service's own message (a quota, a region, a template still
+		// building) is what an operator needs; pass it through.
 		return controlError(resp.StatusCode, payload)
 	}
 	if out == nil || len(payload) == 0 {

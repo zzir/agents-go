@@ -1,8 +1,14 @@
 package sandbox
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -207,5 +213,58 @@ func TestApplyPatchRestoresPartiallyWrittenFile(t *testing.T) {
 	}
 	if string(got) != orig {
 		t.Fatalf("file left damaged after a failed apply: %q, want %q", got, orig)
+	}
+}
+
+// A Delete of a file too large to snapshot in memory parks it by renaming
+// rather than failing: the commit removes the parked copy and a rollback puts
+// the file back, byte for byte (spec §2.7s).
+func TestApplyPatchDeleteLargeFileParks(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	sb := NewLocalWithOptions(LocalOptions{WorkDir: dir, MaxReadFileBytes: 16})
+	big := bytes.Repeat([]byte("x"), 64)
+	if err := os.WriteFile(filepath.Join(dir, "big.bin"), big, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	leftovers := func() []string {
+		entries, _ := os.ReadDir(dir)
+		var names []string
+		for _, e := range entries {
+			if strings.HasPrefix(e.Name(), ".apply-patch.") {
+				names = append(names, e.Name())
+			}
+		}
+		return names
+	}
+
+	// Rollback: the Add that follows fails, so the parked file must come back.
+	if err := os.WriteFile(filepath.Join(dir, "taken.txt"), []byte("mine"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := applyPatch(ctx, sb, "*** Begin Patch\n*** Delete File: big.bin\n*** Add File: taken.txt\n+clobber\n*** End Patch\n")
+	if err == nil {
+		t.Fatal("adding over an existing file must fail the patch")
+	}
+	if got, rerr := os.ReadFile(filepath.Join(dir, "big.bin")); rerr != nil || !bytes.Equal(got, big) {
+		t.Fatalf("big.bin after rollback = %d bytes, %v; want it restored intact", len(got), rerr)
+	}
+	if names := leftovers(); len(names) != 0 {
+		t.Fatalf("rollback left parked copies behind: %v", names)
+	}
+
+	// Commit: the file is gone and so is its parked copy.
+	out, err := applyPatch(ctx, sb, "*** Begin Patch\n*** Delete File: big.bin\n*** End Patch\n")
+	if err != nil {
+		t.Fatalf("deleting a large file: %v", err)
+	}
+	if !strings.Contains(out, "D big.bin") {
+		t.Errorf("summary = %q, want it to report the delete", out)
+	}
+	if _, serr := os.Stat(filepath.Join(dir, "big.bin")); !errors.Is(serr, fs.ErrNotExist) {
+		t.Fatalf("big.bin after the delete: %v", serr)
+	}
+	if names := leftovers(); len(names) != 0 {
+		t.Fatalf("commit left parked copies behind: %v", names)
 	}
 }

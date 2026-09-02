@@ -43,7 +43,7 @@ func (m *MessagesModel) buildParams(req agents.ModelRequest) (ant.MessageNewPara
 
 	messages, leadingSystem := hoistLeadingSystem(messages)
 	params := ant.MessageNewParams{
-		Model:    ant.Model(m.model),
+		Model:    m.model,
 		Messages: messages,
 	}
 	if req.SystemInstructions != "" {
@@ -56,7 +56,8 @@ func (m *MessagesModel) buildParams(req agents.ModelRequest) (ant.MessageNewPara
 	// "has tools" means tools ON THE WIRE: handoffs are sent as tools too, so
 	// a handoff-only agent's parallel-calls setting must still be carried.
 	hasTools := len(req.Tools) > 0 || len(req.Handoffs) > 0
-	if tc, ok := convertToolChoice(settingsToolChoice(req.Settings), settingsParallel(req.Settings), hasTools); ok {
+	settings := modelkit.Settings(req.Settings)
+	if tc, ok := convertToolChoice(settings.ToolChoice, settings.ParallelToolCalls, hasTools); ok {
 		params.ToolChoice = tc
 	}
 	if req.OutputSchema != nil && !req.OutputSchema.IsPlainText() {
@@ -146,23 +147,7 @@ func applyMetadata(params *ant.MessageNewParams, metadata map[string]string) err
 // requestOptions builds per-request options from the model settings' extra
 // headers, query parameters and body fields.
 func requestOptions(s *agents.ModelSettings) []option.RequestOption {
-	if s == nil {
-		return nil
-	}
-	var opts []option.RequestOption
-	for k, v := range s.ExtraHeaders {
-		opts = append(opts, option.WithHeader(k, v))
-	}
-	for k, v := range s.ExtraQuery {
-		opts = append(opts, option.WithQuery(k, v))
-	}
-	for k, v := range s.ExtraBody {
-		// WithJSONSet interprets the key as an sjson path; escape its
-		// metacharacters so k is a literal top-level key (same contract as the
-		// OpenAI provider's ExtraBody).
-		opts = append(opts, option.WithJSONSet(modelkit.EscapeJSONPath(k), v))
-	}
-	return opts
+	return modelkit.ExtraOptions(s, option.WithHeader, option.WithQuery, option.WithJSONSet)
 }
 
 // Respond implements agents.Model.

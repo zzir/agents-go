@@ -11,10 +11,22 @@ import (
 )
 
 // UnwrapAPIError extracts a provider's API error from err's chain as its HTTP
-// status code and response headers. Each backend adapter supplies one — they
-// differ only in the SDK error type they errors.As for — and passes it to
-// RetryableError / RetryAfter, which hold the shared classification.
+// status code and response headers, for RetryableError / RetryAfter, which
+// hold the shared classification. Build one with UnwrapAs.
 type UnwrapAPIError func(err error) (statusCode int, header http.Header, ok bool)
+
+// UnwrapAs builds the UnwrapAPIError for one SDK's error type E: errors.As
+// finds it in the chain, and status reads its code and headers off it.
+func UnwrapAs[E error](status func(E) (int, http.Header)) UnwrapAPIError {
+	return func(err error) (int, http.Header, bool) {
+		e, ok := errors.AsType[E](err)
+		if !ok {
+			return 0, nil, false
+		}
+		code, h := status(e)
+		return code, h, true
+	}
+}
 
 // RetryableError reports whether a model-call error is transient and worth
 // retrying. It is the shared half of each adapter's RetryableError.
