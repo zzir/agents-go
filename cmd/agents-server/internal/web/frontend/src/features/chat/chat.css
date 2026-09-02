@@ -373,10 +373,12 @@
    (see StreamingMarkdown.tsx). */
 .turn-text.streaming > :last-child::after { content: '▋'; }
 
-/* Process messages (tool calls) collapsible */
+/* Process messages (tool calls) collapsible; enters with the same fade-up
+   as a message (see msg-in below). */
 .process-group {
   margin: var(--base-size-8) 0;
   width: 100%;
+  animation: msg-in var(--base-duration-300) var(--base-easing-easeOut) backwards;
 }
 .process-group-toggle {
   display: inline-flex;
@@ -413,11 +415,6 @@
   display: flex;
   gap: var(--base-size-6);
   align-items: flex-start;
-}
-.pt-icon {
-  flex-shrink: 0;
-  color: var(--fgColor-muted);
-  margin-top: var(--base-size-2);
 }
 .pt-thinking {
   font-size: var(--base-text-size-xs);
@@ -655,13 +652,20 @@
   border-radius: var(--borderRadius-medium);
   cursor: zoom-in;
 }
-.ToolCallCard-file { display: inline-flex; align-items: center; gap: var(--base-size-4); font-size: var(--base-text-size-xs); color: var(--fgColor-muted); }
+/* A file or image part named rather than shown: icon + name in the code font. */
+.ToolCallCard-file {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--base-size-4);
+  font-family: var(--fontStack-monospace);
+  font-size: var(--base-text-size-xs);
+  color: var(--fgColor-muted);
+}
 
 /* apply_patch preview: highlighted as a ```diff block via the markdown pipeline
    (same hljs theme + dark mode as every other code block) */
 .ToolCallCard-diff { margin: 0; }
 .ToolCallCard-diff pre { margin: 0; }
-.ToolCallCard-file { font-family: var(--fontStack-monospace); font-size: var(--base-text-size-xs); color: var(--fgColor-muted); }
 
 .ToolCallCard-approval {
   display: flex;
@@ -804,8 +808,7 @@
    every historical message forever. */
 .message,
 .message-turn,
-.ToolCallCard,
-.process-group {
+.ToolCallCard {
   animation: msg-in var(--base-duration-300) var(--base-easing-easeOut) backwards;
 }
 @keyframes msg-in {
@@ -813,9 +816,8 @@
   to   { opacity: 1; transform: none; }
 }
 
-/* Focus rings */
-.process-group-toggle:focus-visible,
-.chat-input-btn:focus-visible {
+/* Focus ring */
+.process-group-toggle:focus-visible {
   outline: none;
   box-shadow: 0 0 0 3px var(--bgColor-accent-muted);
 }
@@ -854,8 +856,6 @@
   display: block;
   cursor: default;
 }
-.mermaid-diagram { cursor: zoom-in; }
-
 /* Mobile */
 @media (max-width: 767px) {
   .chat-messages { padding: var(--base-size-8) var(--base-size-16); }

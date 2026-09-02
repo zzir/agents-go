@@ -123,3 +123,13 @@
   overflow-x: auto;
   white-space: pre;
 }
+/* The edit form takes a row's place inside the list: the Box already draws
+   the border, so the form keeps only its padding. */
+.wf-trigger-form--inline {
+  border: 0;
+  border-radius: 0;
+  border-bottom: 1px solid var(--borderColor-muted);
+}
+.wf-trigger-form--inline:last-child {
+  border-bottom: 0;
+}

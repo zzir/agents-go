@@ -214,12 +214,14 @@ When a change genuinely doesn't fit, update this list in the same PR.
     non-terminal update is dropped when the task row is already terminal, so a
     reordered notify cannot roll a finished card back. The live path mirrors
     the fold: pre-terminal status rides run events (the card's badge), and a
-    terminal outcome lands on the spawn card live via `applyTaskTerminal` —
-    same shape as the replayed fold, terminal only, never backwards, and
-    re-applied by `runToolCall` when the task's independent subscription
-    outran the card. Durable status always comes from the folded entry, never
-    from the hub after the fact. Completion wakes
-    the parent at its next run boundary via a `[task-notification] ` input;
+    terminal outcome lands on the spawn card live via `syncTaskCard`
+    (`lib/streamReducer.ts`, called from the task router in
+    `lib/taskEvents.ts`) — same shape as the replayed fold, terminal only,
+    never backwards, and re-applied by the chat's `run.tool_call` handler
+    when the task's independent subscription outran the card. Durable status
+    always comes from the folded entry, never from the hub after the fact.
+    Completion wakes the parent at its next run boundary via a
+    `[task-notification] ` input;
     the debt is a `wakeups` row inserted in the same transaction as the
     terminal status (invariant 32), consumed by an in-turn `task_status`
     read or delivered by the wake-up run — the auto-wake survives restarts
@@ -590,19 +592,26 @@ When a change genuinely doesn't fit, update this list in the same PR.
     nothing to resume, so the resume machinery never sees it (`Kind` says so
     before the state is read).
 
-38. **The chat's session scope is THREE contexts, split by how often each
+38. **The chat's session scope is FOUR contexts, split by how often each
     moves — and what moves per streaming delta is in none of them.** A React
     context has no selectors: every consumer re-renders when its value
     changes, so one context holding the run's `streaming` text would re-render
     every finished turn of a long transcript on every delta. `ChatSessionState`
     (the run lifecycle: flips per run), `ChatActions` (callbacks: change on a
-    session switch), `ChatTasks` (the task-derived lookups: change per task
-    event) are memoized on their inputs in `ChatView`; `streaming`, `reasoning`
-    and the live turn's `parts` stay props of the ONE live `TurnBlock`. A test
-    pins it: a delta re-renders the live turn and nothing else. This is why the
-    deep components (`TurnBlock` → `ProcessTimeline` → `ToolCallCard`, the
-    strip, the Tasks panel) read the scope with `useChatSession` /
-    `useChatActions` / `useChatTasks` instead of receiving it four levels down.
+    session switch), `ChatTaskLookups` (the per-call maps a tool card reads:
+    identity-stable, moving only when a map's CONTENT changes) and the
+    background items (the list the strip, the Tasks panel and the top bar
+    show: moves per task event) are memoized on their inputs in `ChatView`;
+    `streaming`, `reasoning` and the live turn's `parts` stay props of the ONE
+    live `TurnBlock`. The lookups and the items are two contexts, not one,
+    because a child run's every tool call patches its task's `lastTool` — an
+    event the items must carry and the cards must not see, or every tool card
+    of a long transcript would re-render per task event. A test pins it: a
+    delta re-renders the live turn and nothing else, and a task event leaves
+    the cards alone. This is why the deep components (`TurnBlock` →
+    `ProcessTimeline` → `ToolCallCard`, the strip, the Tasks panel) read the
+    scope with `useChatSession` / `useChatActions` / `useChatTaskLookups` /
+    `useChatBackground` instead of receiving it four levels down.
 
 39. **A workflow definition the model writes lands only through an approved
     `save_workflow`, names steps rather than ids, and never reaches a
@@ -676,10 +685,11 @@ When a change genuinely doesn't fit, update this list in the same PR.
     panel's Delete goes through `useCrud.remove`, which asks (Primer
     `useConfirm`) before calling the API — a new panel gets the guard by
     construction rather than by remembering to add it. Deletes that live
-    outside `useCrud` (conversations, skills, background tasks, triggers) use the same
-    `useConfirm` dialog, never `window.confirm` and never a bare button. The
-    rule exists because the guard used to be per-panel and eight of ten
-    destructive flows had none.
+    outside `useCrud` (conversations, skills, background tasks, triggers, the
+    unrecognized-settings delete included) use the same `useConfirm` dialog,
+    never `window.confirm` and never a bare button. The rule exists because
+    the guard used to be per-panel and eight of ten destructive flows had
+    none.
 
 42. **Ownership is sessions' owner column, configuration scope, or projects'
     per-user ownership — nothing invents a fourth scheme.** A task's hidden

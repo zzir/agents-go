@@ -16,13 +16,12 @@ function compactTokens(n: number): string {
 // that now stands in for that history in the model's view.
 interface CompactionCardProps {
   content?: string;
-  entryId?: string;
   tokensBefore?: number;
   tokensAfter?: number;
 }
 
 export const CompactionCard = memo(function CompactionCard(
-  { content, entryId, tokensBefore, tokensAfter }: CompactionCardProps,
+  { content, tokensBefore, tokensAfter }: CompactionCardProps,
 ) {
   const [expanded, setExpanded] = useState(false);
   const summaryText = (content || '').replace(/^\[Conversation Summary\]\s*/, '');
@@ -30,9 +29,7 @@ export const CompactionCard = memo(function CompactionCard(
   const shrank = tokensBefore && tokensAfter && tokensBefore > tokensAfter;
 
   return (
-    // data-anchor-id: a checkpoint's summary can rank among the heaviest
-    // items, and this marker is what that item jumps to.
-    <div className="compaction-card" data-anchor-id={entryId || undefined}>
+    <div className="compaction-card">
       <div
         className={'compaction-card-toggle' + (expanded ? ' expanded' : '')}
         onClick={() => setExpanded(!expanded)}

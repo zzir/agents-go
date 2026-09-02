@@ -2,6 +2,7 @@ import { useState, useMemo, memo } from 'react';
 import { Button, IconButton, useConfirm } from '@primer/react';
 import { ArrowLeftIcon, StackIcon, CopyIcon, CheckIcon, WorkflowIcon } from '@primer/octicons-react';
 import { SidePanel } from '@/layout/SidePanel';
+import { Loading } from '@/components/Loading';
 import { ToolCallCard } from '@/features/chat/ToolCallCard';
 import { StreamingMarkdown } from '@/features/chat/StreamingMarkdown';
 import { TraceRun, type TraceEventData } from '@/features/chat/TracePanel';
@@ -58,7 +59,7 @@ export function BackgroundListPanel({ onClose }: { onClose: () => void }) {
           <div className="task-group-title">{g.title}</div>
           {g.items.map(it => (
             <div key={it.id} className="task-row" onClick={() => onOpen(it.id)} role="button" tabIndex={0}
-              onKeyDown={e => { if (e.key === 'Enter') onOpen(it.id); }}>
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(it.id); } }}>
               <div className="task-row-head">
                 {statusDot(it.status)}
                 {/* A sequence is marked; a task is the unmarked default. */}
@@ -95,7 +96,6 @@ export function BackgroundListPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-// MdBlock renders one settled markdown text part (worker pipeline, same as chat).
 // TaskViewHandoff is the agent switch inside a task's transcript — the
 // avatars when the event carried the config ids, the plain line otherwise.
 function TaskViewHandoff({ part }: { part: Extract<TurnPart, { type: 'handoff' }> }) {
@@ -112,6 +112,7 @@ function TaskViewHandoff({ part }: { part: Extract<TurnPart, { type: 'handoff' }
   );
 }
 
+// MdBlock renders one settled markdown text part (worker pipeline, same as chat).
 const MdBlock = memo(function MdBlock({ text }: { text: string }) {
   const html = useAsyncMarkdown(text);
   return <div className="markdown-body task-view-text" dangerouslySetInnerHTML={{ __html: html }} />;
@@ -124,10 +125,6 @@ interface BackgroundDetailPanelProps {
   onClose: () => void;
 }
 
-// BackgroundDetailPanel is the Inspector's "task" lens: the child session's
-// transcript (read-only, live-tailing while the work runs) and its trace. For a
-// workflow that transcript is every step's turns in order — the sequence shares
-// one session, which is the point of it.
 // BackgroundMissingPanel stands in for the detail lens while the task named
 // by a deep link is not in the conversation's list: still loading, or gone —
 // a row removed with its conversation, or one a fork's copy never carried.
@@ -136,17 +133,21 @@ export function BackgroundMissingPanel({ taskId, loading, onBack, onClose }: { t
   return (
     <SidePanel icon={StackIcon} title={loading ? 'Task' : 'Task not found'} onClose={onClose} storageKey="inspectorWidth">
       <div className="task-detail-head">
-        <IconButton icon={ArrowLeftIcon} variant="invisible" size="small" aria-label="Back to tasks" onClick={onBack} />
+        <IconButton icon={ArrowLeftIcon} variant="invisible" size="small" aria-label="Back to tasks" tooltipDirection="se" onClick={onBack} />
         <div className="task-detail-spacer" />
         <span className="task-detail-id"><span className="task-detail-id-text">{taskId}</span></span>
       </div>
-      <div className="trace-empty">
-        {loading ? 'Loading the task…' : 'This task is not in the conversation\'s list — it may have been removed, belong to another conversation, or the list could not be loaded (reopen the conversation to try again).'}
-      </div>
+      {loading
+        ? <Loading kind="inline" />
+        : <div className="trace-empty">This task is not in the conversation's list — it may have been removed, belong to another conversation, or the list could not be loaded (reopen the conversation to try again).</div>}
     </SidePanel>
   );
 }
 
+// BackgroundDetailPanel is the Inspector's "task" lens: the child session's
+// transcript (read-only, live-tailing while the work runs) and its trace. For a
+// workflow that transcript is every step's turns in order — the sequence shares
+// one session, which is the point of it.
 export function BackgroundDetailPanel({ item, view, onBack, onClose }: BackgroundDetailPanelProps) {
   const { approve: onApprove, reject: onReject, stopTask, retryTask } = useChatActions();
   const { sessionId } = useChatSession();
@@ -199,13 +200,13 @@ export function BackgroundDetailPanel({ item, view, onBack, onClose }: Backgroun
   return (
     <SidePanel icon={item.kind === 'workflow' ? WorkflowIcon : StackIcon} title={item.label} onClose={onClose} storageKey="inspectorWidth">
       <div className="task-detail-head">
-        <IconButton icon={ArrowLeftIcon} variant="invisible" size="small" aria-label="Back to tasks" onClick={onBack} />
+        <IconButton icon={ArrowLeftIcon} variant="invisible" size="small" aria-label="Back to tasks" tooltipDirection="se" onClick={onBack} />
         {statusDot(item.status)}
         {item.activity && <span className="task-row-activity">{item.activity}</span>}
         <div className="task-detail-spacer" />
         {/* Full id, right-aligned; only the action buttons (live work) may
             compress it — then the text ellipsizes, never the buttons. */}
-        <button className="task-detail-id" title="Copy id" onClick={() => copy(item.id)}>
+        <button className="task-detail-id" title="Copy id" aria-label="Copy id" onClick={() => copy(item.id)}>
           <span className="task-detail-id-text">{item.id}</span> {copied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
         </button>
         {item.status === 'input_required' && item.pendingCallId && onApprove && onReject && (
@@ -238,12 +239,23 @@ export function BackgroundDetailPanel({ item, view, onBack, onClose }: Backgroun
             <div className="trace-empty">No step has started yet.</div>
           ) : (
             <table className="wf-steps">
+              <thead>
+                <tr>
+                  <th scope="col" className="wf-steps-index" aria-label="Step number">#</th>
+                  <th scope="col">Step</th>
+                  <th scope="col">Status</th>
+                  <th scope="col">Verdict</th>
+                  <th scope="col" className="wf-steps-num">Duration</th>
+                  <th scope="col" className="wf-steps-num">Tokens</th>
+                </tr>
+              </thead>
               <tbody>
                 {steps.map((row, i) => (
                   <tr key={row.runId} className={i === steps.length - 1 && isLive(item.status) ? 'wf-steps-live' : undefined}>
                     <td className="wf-steps-index">{row.index}</td>
                     <td className="wf-steps-name">{row.name}{row.retry && <span className="wf-steps-retry"> · retry</span>}</td>
-                    <td className="wf-steps-outcome"><span className={'wf-outcome wf-outcome-' + row.outcome}>{row.outcome}</span></td>
+                    <td className="wf-steps-outcome">{row.outcome && <span className={'wf-outcome wf-outcome-' + row.outcome}>{row.outcome}</span>}</td>
+                    <td className="wf-steps-outcome">{row.verdict && <span className={'wf-outcome wf-outcome-' + row.verdict}>{row.verdict}</span>}</td>
                     <td className="wf-steps-num">{row.durationMs !== undefined ? fmtDuration(row.durationMs) : ''}</td>
                     <td className="wf-steps-num">{row.tokens ? `↑${row.tokens.input} ↓${row.tokens.output}` : ''}</td>
                   </tr>
@@ -254,7 +266,7 @@ export function BackgroundDetailPanel({ item, view, onBack, onClose }: Backgroun
           {item.state?.input && <div className="wf-steps-brief"><span className="wf-steps-brief-label">Brief</span>{item.state.input}</div>}
         </div>
       ) : !view || !view.loaded ? (
-        <div className="trace-empty">Loading…</div>
+        <Loading kind="panel" />
       ) : tab === 'transcript' ? (
         <div className="task-view">
           {view.messages.map((m, i) => {

@@ -58,7 +58,7 @@ export function WorkflowStrip() {
       {live.map(it => (
         <div key={it.id} className="wf-bar" role="button" tabIndex={0}
           onClick={() => inspectTask(it.id)}
-          onKeyDown={e => { if (e.key === 'Enter') inspectTask(it.id); }}>
+          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); inspectTask(it.id); } }}>
           <WorkflowIcon size={14} />
           <span className="wf-bar-name">{it.label}</span>
           {it.status === 'failed' ? (

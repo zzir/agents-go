@@ -54,7 +54,7 @@ const STAGE_LABELS: Record<string, string> = {
   tool_output: 'Tool result',
 };
 const MODES = ['regex', 'max_length'] as const;
-const MODE_LABELS: Record<string, string> = { regex: 'Regex Pattern', max_length: 'Max Length' };
+const MODE_LABELS: Record<string, string> = { regex: 'Regex pattern', max_length: 'Max length' };
 
 function GuardrailForm({ initial, onSave, onCancel, onDelete, saving }: GuardrailFormProps) {
   const [form, setForm] = useState<GuardrailFormData>(initial || {
@@ -146,8 +146,8 @@ function GuardrailForm({ initial, onSave, onCancel, onDelete, saving }: Guardrai
 }
 
 export function GuardrailPanel() {
-  const { items: guardrails, adding, editing, startAdd, startEdit, cancel, save, saving, remove } =
-    useCrud<Guardrail, GuardrailFormData>(api.guardrails);
+  const { items: guardrails, loading, adding, editing, startAdd, startEdit, cancel, save, saving, remove } =
+    useCrud<Guardrail, GuardrailFormData>(api.guardrails, 'guardrails');
 
   const isBuiltin = (g: Guardrail): boolean => !g.id;
 
@@ -156,8 +156,8 @@ export function GuardrailPanel() {
     : null;
 
   return (
-    <CrudPanel title="Guardrails" onAdd={startAdd} onCancel={cancel} form={form} isEmpty={guardrails.length === 0}
-      empty="No guardrails configured. content_filter, max_input_length and max_output_length are always available.">
+    <CrudPanel title="Guardrails" onAdd={startAdd} onCancel={cancel} form={form} loading={loading} isEmpty={guardrails.length === 0}
+      empty="No guardrails yet." emptyHint="content_filter, max_input_length and max_output_length are always available.">
       {guardrails.map((g, i) => (
         <ResourceRow key={g.id || ('builtin-' + i)}
           title={g.name}

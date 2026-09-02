@@ -1,43 +1,44 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActionList, Flash, Label, PageHeader, Stack, useConfirm } from '@primer/react';
+import { useCallback, useEffect, useMemo } from 'react';
+import { ActionList, Label, PageHeader, Stack, useConfirm } from '@primer/react';
 import { Blankslate, type Column } from '@primer/react/experimental';
 import { PeopleIcon } from '@primer/octicons-react';
 import { UserAvatar, displayName } from '@/components/UserAvatar';
 import { ListTable, RowMenu, actionsColumn } from '@/components/ListTable';
 import { api, type ApiSchemas } from '@/lib/api';
-import { shortDate } from '@/lib/format';
+import { useApi } from '@/lib/hooks';
 import { useMe } from '@/lib/me';
+import { reloadDirectory } from '@/lib/owners';
+import { formatTime } from '@/lib/time';
+import { toast } from '@/lib/toast';
+import { useLoadError } from '@/features/admin/useLoadError';
 
 type UserRow = Omit<ApiSchemas['store.User'], 'id'> & { id: string };
 
 // The implicit token-mode account (store.LocalUserID): not a person to manage.
 export const LOCAL_USER_ID = '00000000-0000-0000-0000-000000000001';
 
+const listMembers = async (): Promise<UserRow[]> =>
+  ((await api.auth.users.list()) ?? []).filter(x => x.id && x.id !== LOCAL_USER_ID).map(x => ({ ...x, id: x.id || '' }));
+
 // MembersPanel: every account and its role. An admin promotes or demotes
 // anyone but themself (the server refuses a self-demotion too).
 export function MembersPanel() {
   const { me } = useMe();
-  const [users, setUsers] = useState<UserRow[] | null>(null);
-  const [error, setError] = useState('');
+  const { data: users, error, reload } = useApi<UserRow[]>(listMembers, [], 'admin:users');
+  useLoadError(error, 'members');
   const confirm = useConfirm();
 
-  const reload = useCallback(() => {
-    api.auth.users.list()
-      .then(list => {
-        setUsers((list ?? []).filter(x => x.id && x.id !== LOCAL_USER_ID).map(x => ({ ...x, id: x.id || '' })));
-        setError('');
-      })
-      .catch(() => setError('Failed to load members.'));
-  }, []);
-  useEffect(() => { reload(); }, [reload]);
+  // The owner directory the other tables name people from follows this view:
+  // refreshed on open, and after any change here.
+  useEffect(() => { void reloadDirectory(); }, []);
 
   const patch = useCallback(async (u: UserRow, p: { role?: 'admin' | 'member'; disabled?: boolean }) => {
-    setError('');
     try {
       await api.auth.users.patch(u.id, p);
       reload();
+      void reloadDirectory();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to change the account.');
+      toast.error(e instanceof Error ? e.message : 'Failed to change the account.');
     }
   }, [reload]);
 
@@ -50,9 +51,9 @@ export function MembersPanel() {
     }))) return;
     try {
       await api.auth.users.revokeTokens(u.id);
-      setError('');
+      toast.success(`${displayName(u)} is signed out everywhere`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to revoke the tokens.');
+      toast.error(e instanceof Error ? e.message : 'Failed to revoke the tokens.');
     }
   }, [confirm]);
 
@@ -70,7 +71,7 @@ export function MembersPanel() {
       ),
     },
     {
-      header: 'Role', id: 'role', width: 'auto',
+      header: 'Role', id: 'role', width: 'auto', minWidth: 90,
       renderCell: u => (
         <span className="list-nowrap">
           <Label variant={u.role === 'admin' ? 'accent' : 'secondary'}>{u.role}</Label>
@@ -78,8 +79,8 @@ export function MembersPanel() {
         </span>
       ),
     },
-    { header: 'Joined', id: 'joined', width: 'auto', renderCell: u => <span className="list-nowrap">{shortDate(u.created_at)}</span> },
-    { header: 'Last sign-in', id: 'seen', width: 'auto', renderCell: u => <span className="list-nowrap">{u.last_login_at ? shortDate(u.last_login_at) : ''}</span> },
+    { header: 'Joined', id: 'joined', width: 'auto', minWidth: 120, renderCell: u => <span className="list-nowrap">{u.created_at ? formatTime(u.created_at) : ''}</span> },
+    { header: 'Last sign-in', id: 'seen', width: 'auto', minWidth: 120, renderCell: u => <span className="list-nowrap">{u.last_login_at ? formatTime(u.last_login_at) : ''}</span> },
     actionsColumn<UserRow>(u => {
       const self = u.id === me?.id;
       return (
@@ -114,7 +115,6 @@ export function MembersPanel() {
           sessions; members run their own.
         </PageHeader.Description>
       </PageHeader>
-      {error ? <Flash variant="danger">{error}</Flash> : null}
       <ListTable
         labelledBy="members-title"
         rows={users ?? []}

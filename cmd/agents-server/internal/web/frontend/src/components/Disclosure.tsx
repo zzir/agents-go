@@ -18,8 +18,6 @@ interface DisclosureProps {
   open?: boolean;
   onToggle?: () => void;
   className?: string;
-  /** Scroll target id, emitted as data-anchor-id — what the Context panel jumps to. */
-  anchorId?: string;
   ref?: Ref<HTMLDivElement>;
   children: ReactNode;
 }
@@ -27,7 +25,7 @@ interface DisclosureProps {
 export function Disclosure({
   icon: IconCmp, label, variant = 'default', as = 'button',
   defaultOpen = false, forceOpen, open: controlledOpen, onToggle,
-  className, anchorId, ref, children,
+  className, ref, children,
 }: DisclosureProps) {
   const [uncontrolled, setUncontrolled] = useState(defaultOpen);
   const isControlled = controlledOpen !== undefined;
@@ -53,7 +51,6 @@ export function Disclosure({
     <div
       ref={ref}
       data-variant={variant}
-      data-anchor-id={anchorId}
       className={'disclosure' + (expanded ? ' expanded' : '') + (className ? ' ' + className : '')}
     >
       {as === 'div' ? (

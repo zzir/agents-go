@@ -1,21 +1,21 @@
 import { ActionList, ActionMenu } from '@primer/react';
-import { GearIcon, ShieldLockIcon, SignOutIcon, SyncIcon } from '@primer/octicons-react';
+import { GearIcon, SignOutIcon, SyncIcon } from '@primer/octicons-react';
 import { UserAvatar, displayName } from '@/components/UserAvatar';
 import { logout } from '@/lib/api';
 import { useMe } from '@/lib/me';
 
 interface UserMenuProps {
   onSettingsOpen: () => void;
-  onAdminOpen: () => void;
   // Avatar only (the narrow header); the sidebar footer shows the name too.
   compact?: boolean;
 }
 
 // UserMenu is the signed-in person's corner: their picture and name open
-// Settings, Admin (admins only) and Sign out. Until /auth/me answers the
-// trigger is a placeholder so the footer does not jump; once it has answered
-// — even with a failure — the menu opens, so Sign out is always reachable.
-export function UserMenu({ onSettingsOpen, onAdminOpen, compact }: UserMenuProps) {
+// Settings (the one hub, administration included — invariant 61) and Sign
+// out. Until /auth/me answers the trigger is a placeholder so the footer does
+// not jump; once it has answered — even with a failure — the menu opens, so
+// Sign out is always reachable.
+export function UserMenu({ onSettingsOpen, compact }: UserMenuProps) {
   const { me: user, loading, error, reload } = useMe();
   return (
     <ActionMenu>
@@ -46,12 +46,6 @@ export function UserMenu({ onSettingsOpen, onAdminOpen, compact }: UserMenuProps
             <ActionList.LeadingVisual><GearIcon /></ActionList.LeadingVisual>
             Settings
           </ActionList.Item>
-          {user?.role === 'admin' && (
-            <ActionList.Item onSelect={onAdminOpen}>
-              <ActionList.LeadingVisual><ShieldLockIcon /></ActionList.LeadingVisual>
-              Admin
-            </ActionList.Item>
-          )}
           <ActionList.Divider />
           <ActionList.Item onSelect={() => { void logout(); }}>
             <ActionList.LeadingVisual><SignOutIcon /></ActionList.LeadingVisual>

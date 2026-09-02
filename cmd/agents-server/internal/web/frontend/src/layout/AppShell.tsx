@@ -12,14 +12,13 @@ const PANE_DEFAULT = 300;
 
 interface AppShellProps {
   onSettingsOpen: () => void;
-  onAdminOpen: () => void;
   sidebarPane: ReactNode;
   sidebarOpen: boolean;
   onSidebarToggle: (open: boolean) => void;
   children: ReactNode;
 }
 
-export function AppShell({ onSettingsOpen, onAdminOpen, sidebarPane, sidebarOpen, onSidebarToggle, children }: AppShellProps) {
+export function AppShell({ onSettingsOpen, sidebarPane, sidebarOpen, onSidebarToggle, children }: AppShellProps) {
   const { theme, toggle } = useTheme();
   const narrow = useNarrow();
   const closeSidebar = useCallback(() => onSidebarToggle(false), [onSidebarToggle]);
@@ -33,7 +32,7 @@ export function AppShell({ onSettingsOpen, onAdminOpen, sidebarPane, sidebarOpen
           <IconButton icon={ThreeBarsIcon} variant="invisible" aria-label="Open sidebar" onClick={() => onSidebarToggle(true)} />
           <span className="mobile-header-title" />
           <IconButton icon={theme === 'day' ? MoonIcon : SunIcon} variant="invisible" aria-label="Toggle theme" onClick={toggle} />
-          <UserMenu onSettingsOpen={onSettingsOpen} onAdminOpen={onAdminOpen} compact />
+          <UserMenu onSettingsOpen={onSettingsOpen} compact />
         </header>
       )}
 
@@ -47,7 +46,7 @@ export function AppShell({ onSettingsOpen, onAdminOpen, sidebarPane, sidebarOpen
             </div>
             {!narrow && (
               <div className="sidebar-footer">
-                <UserMenu onSettingsOpen={onSettingsOpen} onAdminOpen={onAdminOpen} />
+                <UserMenu onSettingsOpen={onSettingsOpen} />
                 <IconButton icon={theme === 'day' ? MoonIcon : SunIcon} variant="invisible" size="small" aria-label="Toggle theme" onClick={toggle} />
               </div>
             )}

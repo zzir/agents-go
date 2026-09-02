@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react';
-import { ProgressBar, Spinner } from '@primer/react';
+import { ProgressBar } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { MeterIcon } from '@primer/octicons-react';
 import { SidePanel } from '@/layout/SidePanel';
+import { Loading } from '@/components/Loading';
 import { api } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import './context.css';
@@ -175,7 +176,7 @@ export function ContextPanel({ sessionId, running, reloadKey, onClose, onCompact
       storageKey="inspectorWidth"
     >
       {loading && !data ? (
-        <div className="ctx-loading"><Spinner size="small" /></div>
+        <Loading kind="panel" />
       ) : !data || (used === 0 && !data.compaction_tokens) ? (
         <Blankslate>
           <Blankslate.Description>Nothing in context yet — the first model call reports what it sent.</Blankslate.Description>

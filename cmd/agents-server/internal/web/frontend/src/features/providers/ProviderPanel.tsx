@@ -101,7 +101,7 @@ function ProviderForm({ initial, onSave, onCancel, onDelete, saving, providerTyp
         {fc('API key', <SecretInput block value={form.api_key}
           onChange={e => set('api_key', e.target.value)} placeholder={meta.keyPlaceholder} />, staleKeyHint)}
         {fc('Base URL', <TextInput block value={form.base_url}
-          onChange={e => set('base_url', e.target.value)} placeholder={meta.baseURLPlaceholder} />)}
+          onChange={e => set('base_url', e.target.value)} placeholder={meta.defaultBaseURL + ' (leave empty for default)'} />)}
       </>}
 
       <FormActions saving={saving} onSave={() => onSave(form)} onCancel={onCancel} onDelete={onDelete} />
@@ -113,9 +113,9 @@ export function ProviderPanel() {
   const { me } = useMe();
   const isAdmin = me?.role === 'admin';
   const rowEditable = (p: Provider) => canEditRow(isAdmin, me?.id, p);
-  const { items: providers, adding, editing, startAdd, startEdit, cancel, save, saving, remove, reload } =
-    useCrud<Provider, ProviderFormData>(api.providers);
-  const { data: providerTypes } = useApi<ProviderTypeInfo[]>(() => api.providerTypes.list() as Promise<ProviderTypeInfo[]>);
+  const { items: providers, loading, adding, editing, startAdd, startEdit, cancel, save, saving, remove, reload } =
+    useCrud<Provider, ProviderFormData>(api.providers, 'providers');
+  const { data: providerTypes } = useApi<ProviderTypeInfo[]>(() => api.providerTypes.list() as Promise<ProviderTypeInfo[]>, [], 'provider-types');
   // Sign-in is a two-step manual-paste flow — there is no loopback listener to
   // catch the redirect (see the API's chatgpt.complete). handleLogin opens the
   // authorize popup and reveals the paste field; handleComplete redeems the
@@ -179,10 +179,10 @@ export function ProviderPanel() {
     // Scoped rows: the form is a disabled view exactly when the opened row is
     // not the caller's to edit (canEditRow), not for every member.
     <ReadOnlyContext value={!!editing && !rowEditable(editing)}>
-      <CrudPanel title="Providers" onAdd={startAdd} onCancel={cancel} form={form} isEmpty={providers.length === 0}
+      <CrudPanel title="Providers" onAdd={startAdd} onCancel={cancel} form={form} loading={loading} isEmpty={providers.length === 0}
         onDelete={editing && canDeleteRow(isAdmin, me?.id, editing)
           ? async () => { if (await remove(editing.id, editing.name)) cancel(); } : null}
-        empty="No providers yet. A provider holds an endpoint and its API key; an agent that names none fails pre-flight.">
+        empty="No providers yet." emptyHint="A provider holds an endpoint and its API key; an agent that names none fails pre-flight.">
         {providers.map(p => {
           const meta = providerMeta(p.type || '');
           const chatgpt = p.auth_mode === 'chatgpt_login';
@@ -197,13 +197,13 @@ export function ProviderPanel() {
               />}
               title={p.name}
               badges={<><ScopeBadge row={p} meId={me?.id} /><Label variant={meta.badgeVariant}>{meta.badge}</Label></>}
-              sub={p.base_url || meta.baseURLPlaceholder}
+              sub={p.base_url || meta.defaultBaseURL}
               actions={<>
                 {chatgpt && rowEditable(p) && (p.chatgpt_logged_in
                   ? <Button onClick={() => handleLogout(p.id)} size="small" variant="invisible">Sign out</Button>
                   : awaiting[p.id]
                     ? <Stack direction="horizontal" gap="condensed" align="center">
-                        <TextInput size="small" style={{ width: 220 }}
+                        <TextInput size="small" className="provider-paste-input"
                           aria-label="Paste the ChatGPT callback URL"
                           placeholder="Paste callback URL from popup…"
                           value={pasteURL[p.id] || ''}

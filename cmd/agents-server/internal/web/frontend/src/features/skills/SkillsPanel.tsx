@@ -1,15 +1,16 @@
 import { useState } from 'react';
-import { ActionList, Button, TextInput, Textarea, Label, Stack, PageHeader, useConfirm } from '@primer/react';
+import { ActionList, Button, TextInput, Textarea, Label, Stack } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { RowMenu } from '@/components/ListTable';
+import { FormActions } from '@/components/FormActions';
+import { CrudPanel, ScopeBadge } from '@/components/CrudPanel';
 import { api } from '@/lib/api';
-import { useApi } from '@/lib/hooks';
+import { useCrud } from '@/lib/hooks';
+import { ReadOnlyContext, canDeleteRow, canDemoteRow, canEditRow } from '@/lib/access';
 import { toast } from '@/lib/toast';
 import { type Skill, type SkillGroup, groupSkills } from '@/lib/skills';
 import { BADGE } from '@/lib/badges';
-import { canDeleteRow, canDemoteRow, canEditRow } from '@/lib/access';
 import { useMe } from '@/lib/me';
-import { ScopeBadge } from '@/components/CrudPanel';
 
 const NEW_SKILL_TEMPLATE = `---
 name: my-skill
@@ -42,16 +43,13 @@ function importSummary(r: ImportResult): string {
 }
 
 // The editor is one Textarea: the document is the skill, its frontmatter is
-// the metadata — no separate name/description fields to drift. readOnly is a
-// skill the caller may not edit (a member's view of a global one); Delete can
-// still show there (an admin may delete what it cannot edit).
-function SkillEditor({ initial, onSave, onCancel, onDelete, saving, readOnly }: {
+// the metadata — no separate name/description fields to drift.
+function SkillEditor({ initial, onSave, onCancel, onDelete, saving }: {
   initial: string;
   onSave: (content: string) => void;
   onCancel: () => void;
   onDelete?: () => void;
   saving: boolean;
-  readOnly?: boolean;
 }) {
   const [content, setContent] = useState(initial);
   return (
@@ -59,33 +57,23 @@ function SkillEditor({ initial, onSave, onCancel, onDelete, saving, readOnly }: 
       <Textarea
         value={content}
         onChange={e => setContent(e.target.value)}
-        readOnly={readOnly}
         rows={40}
         block
         resize="vertical"
-        style={{ fontFamily: 'var(--fontStack-monospace)', fontSize: 12 }}
+        className="skill-editor"
       />
-      <Stack direction="horizontal" gap="condensed">
-        {!readOnly && <Button variant="primary" size="small" disabled={saving} onClick={() => onSave(content)}>Save</Button>}
-        <Button size="small" onClick={onCancel}>{readOnly ? 'Back' : 'Cancel'}</Button>
-        {onDelete && <Button variant="danger" size="small" onClick={onDelete} style={{ marginLeft: 'auto' }}>Delete</Button>}
-      </Stack>
+      <FormActions saving={saving} onSave={() => onSave(content)} onCancel={onCancel} onDelete={onDelete} />
     </Stack>
   );
 }
-
-type Mode =
-  | { kind: 'import' }
-  | { kind: 'new' }
-  | { kind: 'edit'; skill: Skill };
 
 export function SkillsPanel() {
   const { me } = useMe();
   const isAdmin = me?.role === 'admin';
   const skillEditable = (sk: Skill) => canEditRow(isAdmin, me?.id, sk);
-  const confirmDialog = useConfirm();
-  const { data: skills, loading, error, reload } = useApi<Skill[]>(() => api.skills.list() as Promise<Skill[]>);
-  const [mode, setMode] = useState<Mode | null>(null);
+  const { items: skills, loading, error, reload, adding, editing, startAdd, startEdit, cancel, save, saving, remove } =
+    useCrud<Skill, { content: string }>(api.skills, 'skills');
+  const [importing, setImporting] = useState(false);
   const [importUrl, setImportUrl] = useState('');
   const [busy, setBusy] = useState(false);
   const [syncing, setSyncing] = useState<Set<string>>(new Set());
@@ -110,7 +98,7 @@ export function SkillsPanel() {
     try {
       await runImport(url);
       setImportUrl('');
-      setMode(null);
+      setImporting(false);
       reload();
     } catch (e) {
       toast.error((e as Error).message || 'Import failed');
@@ -162,53 +150,10 @@ export function SkillsPanel() {
     reload();
   };
 
-  const handleCreate = async (content: string) => {
-    setBusy(true);
-    try {
-      await api.skills.create({ content });
-      setMode(null);
-      reload();
-    } catch (e) {
-      toast.error((e as Error).message || 'Save failed');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleUpdate = async (id: string, content: string) => {
-    setBusy(true);
-    try {
-      await api.skills.update(id, { content });
-      setMode(null);
-      reload();
-    } catch (e) {
-      toast.error((e as Error).message || 'Save failed');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleDelete = async (sk: Skill) => {
-    const ok = await confirmDialog({
-      title: `Delete “${sk.name}”?`,
-      content: 'Agents that select this skill simply stop advertising it. This cannot be undone.',
-      confirmButtonContent: 'Delete',
-      confirmButtonType: 'danger',
-    });
-    if (!ok) return;
-    try {
-      await api.skills.delete(sk.id);
-      setMode(null);
-      reload();
-    } catch (e) {
-      toast.error((e as Error).message || 'Delete failed');
-    }
-  };
-
+  // The list carries metadata only; the editor needs the document.
   const openEditor = async (sk: Skill) => {
     try {
-      const full = (await api.skills.get(sk.id)) as Skill;
-      setMode({ kind: 'edit', skill: full });
+      startEdit((await api.skills.get(sk.id)) as Skill);
     } catch (e) {
       toast.error((e as Error).message || 'Load failed');
     }
@@ -217,123 +162,106 @@ export function SkillsPanel() {
   // Groups are (repo, owner): the same repo imported by two people is two
   // groups, each flipping on its own. Who owns which is the Admin dialog's
   // business, not this panel's.
-  const grouped = groupSkills(skills || []);
+  const grouped = groupSkills(skills);
+
+  const closeImport = () => { setImporting(false); setImportUrl(''); };
+  const form = importing ? (
+    <Stack gap="normal" direction="horizontal" align="center">
+      <TextInput block
+        placeholder="https://github.com/owner/repo — or a raw SKILL.md URL"
+        value={importUrl}
+        onChange={e => setImportUrl(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') void handleImport(); }}
+        autoFocus
+      />
+      <Button variant="primary" size="small" disabled={busy || !importUrl.trim()} onClick={handleImport}>
+        {busy ? 'Importing…' : 'Import'}
+      </Button>
+      <Button size="small" onClick={closeImport}>Cancel</Button>
+    </Stack>
+  ) : adding ? (
+    <SkillEditor initial={NEW_SKILL_TEMPLATE} saving={saving} onSave={content => save({ content })} onCancel={cancel} />
+  ) : editing ? (
+    <SkillEditor initial={editing.content || ''} saving={saving}
+      onSave={content => save({ content })}
+      onCancel={cancel}
+      onDelete={canDeleteRow(isAdmin, me?.id, editing) ? async () => { if (await remove(editing.id, editing.name)) cancel(); } : undefined} />
+  ) : null;
+
+  if (error) {
+    return (
+      <Blankslate>
+        <Blankslate.Heading>Could not load skills</Blankslate.Heading>
+        <Blankslate.Description>{error}</Blankslate.Description>
+        <Blankslate.PrimaryAction onClick={() => reload()}>Retry</Blankslate.PrimaryAction>
+      </Blankslate>
+    );
+  }
 
   return (
-    <Stack gap="normal">
-      <PageHeader>
-        <PageHeader.TitleArea>
-          <PageHeader.Title>Skills</PageHeader.Title>
-        </PageHeader.TitleArea>
-        {/* Creating is every member's: a new or imported skill lands private,
-            owned by them. */}
-        {!mode && (
-          <PageHeader.Actions>
-            <Button onClick={() => setMode({ kind: 'import' })} size="small">Import</Button>
-            <Button onClick={() => setMode({ kind: 'new' })} variant="primary" size="small">+ New</Button>
-          </PageHeader.Actions>
-        )}
-      </PageHeader>
-
-      {mode?.kind === 'import' && (
-        <Stack gap="normal" direction="horizontal" align="center">
-          <TextInput block
-            placeholder="https://github.com/owner/repo — or a raw SKILL.md URL"
-            value={importUrl}
-            onChange={e => setImportUrl(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') void handleImport(); }}
-            autoFocus
-          />
-          <Button variant="primary" size="small" disabled={busy || !importUrl.trim()} onClick={handleImport}>
-            {busy ? 'Importing…' : 'Import'}
-          </Button>
-          <Button size="small" onClick={() => { setMode(null); setImportUrl(''); }}>Cancel</Button>
-        </Stack>
-      )}
-
-      {mode?.kind === 'new' && (
-        <SkillEditor initial={NEW_SKILL_TEMPLATE} saving={busy}
-          onSave={handleCreate} onCancel={() => setMode(null)} />
-      )}
-      {mode?.kind === 'edit' && (
-        <SkillEditor initial={mode.skill.content || ''} saving={busy}
-          readOnly={!skillEditable(mode.skill)}
-          onSave={content => handleUpdate(mode.skill.id, content)}
-          onCancel={() => setMode(null)}
-          onDelete={canDeleteRow(isAdmin, me?.id, mode.skill) ? () => handleDelete(mode.skill) : undefined} />
-      )}
-
-      {loading && !error && <div className="resource-row-sub">Loading…</div>}
-      {error && (
-        <Blankslate>
-          <Blankslate.Heading>Could not load skills</Blankslate.Heading>
-          <Blankslate.Description>{error}</Blankslate.Description>
-          <Blankslate.PrimaryAction onClick={() => reload()}>Retry</Blankslate.PrimaryAction>
-        </Blankslate>
-      )}
-      {!loading && !error && grouped.length === 0 && mode === null && (
-        <Blankslate>
-          <Blankslate.Heading>No skills installed</Blankslate.Heading>
-          <Blankslate.Description>
-            Create a SKILL.md in the workbench, or import every skill from a GitHub repository.
-          </Blankslate.Description>
-        </Blankslate>
-      )}
-
-      {mode === null && grouped.map(group => {
-        // Sync re-imports the repo, updating every row in the group — so it
-        // is offered only when every row is the caller's to update. Publishing
-        // a group is the admin's; unpublishing is theirs or its author's.
-        const canSync = group.repo !== '' && group.skills.every(skillEditable);
-        const owner = { scope: group.scope, owner_id: group.ownerId };
-        const isRepo = group.repo !== '';
-        // A Local bucket flips per row, so it offers both directions while it
-        // holds rows to move; a repo group has one scope and one direction.
-        const canPublish = isAdmin && (isRepo ? group.scope !== 'global' : group.skills.some(sk => sk.scope !== 'global'));
-        const canUnpublish = isRepo
-          ? group.scope === 'global' && canDemoteRow(isAdmin, me?.id, owner)
-          : group.skills.some(sk => sk.scope === 'global' && canDemoteRow(isAdmin, me?.id, sk));
-        const groupItems = (canSync ? 1 : 0) + (canPublish ? 1 : 0) + (canUnpublish ? 1 : 0);
-        return (
-        <div key={group.key} className="Box">
-          {/* justifyContent overrides .Box-row's space-between: the heading
-              clusters left, only the menu rides the right edge. */}
-          <div className="Box-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: 8 }}>
-            <span className="resource-row-title">{group.label}</span>
-            {/* Scope sits on the GROUP: a repo publishes as one. */}
-            {group.scope && <ScopeBadge row={owner} meId={me?.id} />}
-            <span className="resource-row-sub" style={{ marginTop: 0 }}>{group.skills.length} skill{group.skills.length === 1 ? '' : 's'}</span>
-            {syncing.has(group.key) && <span className="resource-row-sub" style={{ marginTop: 0 }}>Syncing…</span>}
-            {groupItems > 0 && (
-              <div style={{ marginLeft: 'auto' }}>
-                <RowMenu label={`Actions for ${group.label}`}>
-                  {canSync && <ActionList.Item disabled={syncing.has(group.key)} onSelect={() => void handleSync(group)}>Sync</ActionList.Item>}
-                  {canPublish && <ActionList.Item onSelect={() => void setGroupScope(group, 'global')}>{isRepo ? 'Make global' : 'Make all global'}</ActionList.Item>}
-                  {canUnpublish && <ActionList.Item onSelect={() => void setGroupScope(group, 'private')}>{isRepo ? 'Make private' : 'Make all private'}</ActionList.Item>}
-                </RowMenu>
+    // Scoped rows: the form is a disabled view exactly when the opened row is
+    // not the caller's to edit (canEditRow), not for every member. Creating
+    // and importing are every member's: the rows land private, owned by them.
+    <ReadOnlyContext value={!!editing && !skillEditable(editing)}>
+      <CrudPanel title="Skills" onAdd={startAdd} onCancel={importing ? closeImport : cancel} form={form}
+        loading={loading} isEmpty={grouped.length === 0}
+        actions={<Button onClick={() => setImporting(true)} size="small">Import</Button>}
+        onDelete={editing && canDeleteRow(isAdmin, me?.id, editing)
+          ? async () => { if (await remove(editing.id, editing.name)) cancel(); } : null}
+        empty="No skills yet." emptyHint="Create a SKILL.md in the workbench, or import every skill from a GitHub repository.">
+        {grouped.map(group => {
+          // Sync re-imports the repo, updating every row in the group — so it
+          // is offered only when every row is the caller's to update. Publishing
+          // a group is the admin's; unpublishing is theirs or its author's.
+          const canSync = group.repo !== '' && group.skills.every(skillEditable);
+          const owner = { scope: group.scope, owner_id: group.ownerId };
+          const isRepo = group.repo !== '';
+          // A Local bucket flips per row, so it offers both directions while it
+          // holds rows to move; a repo group has one scope and one direction.
+          const canPublish = isAdmin && (isRepo ? group.scope !== 'global' : group.skills.some(sk => sk.scope !== 'global'));
+          const canUnpublish = isRepo
+            ? group.scope === 'global' && canDemoteRow(isAdmin, me?.id, owner)
+            : group.skills.some(sk => sk.scope === 'global' && canDemoteRow(isAdmin, me?.id, sk));
+          const groupItems = (canSync ? 1 : 0) + (canPublish ? 1 : 0) + (canUnpublish ? 1 : 0);
+          return (
+            <div key={group.key}>
+              <div className="Box-row skills-group-head">
+                <span className="resource-row-title">{group.label}</span>
+                {/* Scope sits on the GROUP: a repo publishes as one. */}
+                {group.scope && <ScopeBadge row={owner} meId={me?.id} />}
+                <span className="resource-row-sub">{group.skills.length} skill{group.skills.length === 1 ? '' : 's'}</span>
+                {syncing.has(group.key) && <span className="resource-row-sub">Syncing…</span>}
+                {groupItems > 0 && (
+                  <div className="skills-group-menu">
+                    <RowMenu label={`Actions for ${group.label}`}>
+                      {canSync && <ActionList.Item disabled={syncing.has(group.key)} onSelect={() => void handleSync(group)}>Sync</ActionList.Item>}
+                      {canPublish && <ActionList.Item onSelect={() => void setGroupScope(group, 'global')}>{isRepo ? 'Make global' : 'Make all global'}</ActionList.Item>}
+                      {canUnpublish && <ActionList.Item onSelect={() => void setGroupScope(group, 'private')}>{isRepo ? 'Make private' : 'Make all private'}</ActionList.Item>}
+                    </RowMenu>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-          {group.skills.map(sk => (
-            <div key={sk.id} className="Box-row" style={{ cursor: 'pointer' }} role="button" tabIndex={0}
-              onClick={() => void openEditor(sk)}
-              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); void openEditor(sk); } }}>
-              <div className="resource-row-main">
-                <div className="resource-row-head">
-                  <span className="resource-row-title">{sk.name}</span>
-                  {/* A Local bucket can hold both scopes; a repo group's scope
-                      is on its heading, so the row stays quiet. */}
-                  {!group.scope && <ScopeBadge row={sk} meId={me?.id} />}
-                  {sk.detached && <Label variant={BADGE.type}>edited</Label>}
+              {group.skills.map(sk => (
+                <div key={sk.id} className="Box-row" style={{ cursor: 'pointer' }} role="button" tabIndex={0}
+                  onClick={() => void openEditor(sk)}
+                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); void openEditor(sk); } }}>
+                  <div className="resource-row-main">
+                    <div className="resource-row-head">
+                      <span className="resource-row-title">{sk.name}</span>
+                      {/* A Local bucket can hold both scopes; a repo group's scope
+                          is on its heading, so the row stays quiet. */}
+                      {!group.scope && <ScopeBadge row={sk} meId={me?.id} />}
+                      {sk.detached && <Label variant={BADGE.type}>edited</Label>}
+                    </div>
+                    <div className="resource-row-sub">{sk.description}</div>
+                  </div>
                 </div>
-                <div className="resource-row-sub">{sk.description}</div>
-              </div>
+              ))}
             </div>
-          ))}
-        </div>
-        );
-      })}
-    </Stack>
+          );
+        })}
+      </CrudPanel>
+    </ReadOnlyContext>
   );
 }
 

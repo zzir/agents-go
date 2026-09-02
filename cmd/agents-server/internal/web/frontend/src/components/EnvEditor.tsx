@@ -1,6 +1,6 @@
 import { IconButton, TextInput } from '@primer/react';
 import { PlusIcon, TrashIcon } from '@primer/octicons-react';
-import type { ReactElement } from 'react';
+import { useRef, type ReactElement } from 'react';
 import { SECRET_MASK, type EnvVar } from '@/lib/binding';
 import '@/components/env-editor.css';
 
@@ -43,11 +43,23 @@ export function cleanEnv(vars: EnvVar[]): EnvVar[] {
 export function EnvEditor({ vars, onChange, disabled }: EnvEditorProps): ReactElement {
   const set = (i: number, patch: Partial<EnvVar>) =>
     onChange(vars.map((v, n) => (n === i ? { ...v, ...patch } : v)));
+  // One local id per row, kept in step with `vars` by position: a row's key
+  // must survive its own edits (a new object every keystroke) and a removal
+  // above it, or React remounts the inputs under the cursor.
+  const idsRef = useRef<number[]>([]);
+  const nextId = useRef(1);
+  const ids = idsRef.current;
+  while (ids.length < vars.length) ids.push(nextId.current++);
+  if (ids.length > vars.length) ids.length = vars.length;
+  const remove = (i: number) => {
+    ids.splice(i, 1);
+    onChange(vars.filter((_, n) => n !== i));
+  };
 
   return (
     <div className="env-editor">
       {vars.map((v, i) => (
-        <div className="env-editor-row" key={i}>
+        <div className="env-editor-row" key={ids[i]}>
           <TextInput
             aria-label="Name"
             placeholder="NAME"
@@ -81,7 +93,7 @@ export function EnvEditor({ vars, onChange, disabled }: EnvEditorProps): ReactEl
             size="small"
             aria-label={`Remove ${v.key || 'variable'}`}
             disabled={disabled}
-            onClick={() => onChange(vars.filter((_, n) => n !== i))}
+            onClick={() => remove(i)}
           />
         </div>
       ))}

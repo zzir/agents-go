@@ -1,7 +1,7 @@
 import './sessions.css';
-import { useState, useEffect, useRef, type ReactElement, type RefObject, type SyntheticEvent } from 'react';
-import { ActionList, ActionMenu, IconButton, TextInput, useConfirm } from '@primer/react';
-import { KebabHorizontalIcon, PinIcon, PinSlashIcon, PlusIcon, RepoForkedIcon, SearchIcon, TrashIcon, WorkflowIcon } from '@primer/octicons-react';
+import { useState, useEffect, useRef, type FormEvent, type ReactElement, type RefObject, type SyntheticEvent } from 'react';
+import { ActionList, ActionMenu, Dialog, FormControl, IconButton, TextInput, useConfirm } from '@primer/react';
+import { KebabHorizontalIcon, PencilIcon, PinIcon, PinSlashIcon, PlusIcon, RepoForkedIcon, SearchIcon, TrashIcon, WorkflowIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { filterSessionsByName } from '@/lib/sessionFilter';
@@ -23,6 +23,7 @@ interface SessionItemProps {
   isAwaiting: boolean;
   onSelect: (id: string | null) => void;
   onPin: (id: string, pinned: boolean) => void;
+  onRename: (s: Session) => void;
   onFork: (id: string) => void;
   onDelete: (id: string) => void;
 }
@@ -31,21 +32,20 @@ interface SessionListProps {
   activeId: string | null;
   onSelect: (id: string | null) => void;
   onDelete?: (id: string) => void;
+  // A rename landed: the app patches the open conversation's title.
+  onRenamed?: (id: string, name: string) => void;
   onCreated?: () => void;
   reloadKey: unknown;
   runningSessions?: Set<string>;
   awaitingSessions?: Set<string>;
-  // Opens the Workflows hub — the one place in the sidebar that is not a
-  // conversation, so it sits with the list's controls, not in the list.
+  // The two places in the sidebar that are not a conversation sit with the
+  // list's controls, not in the list.
   onOpenHub: () => void;
 }
 
-// ActionMenu.Overlay renders through a portal, but React synthetic events still
-// bubble along the REACT tree — so a click on a menu item ALSO reaches the
-// enclosing session row's onSelect and silently switches the active chat. That
-// turned "delete another chat" into: switch to the chat being deleted, delete
-// it, then 404 on the now-missing id and land on the empty state. Every menu
-// action therefore stops the event before it leaves the menu.
+// A menu item's click also bubbles along the React tree — through the
+// portal — to the enclosing row's onSelect, which would switch the active
+// chat; every menu action stops it first.
 function menuAction(fn: () => void) {
   return (e: SyntheticEvent) => {
     e.stopPropagation();
@@ -53,7 +53,7 @@ function menuAction(fn: () => void) {
   };
 }
 
-function SessionItem({ s, activeId, isRunning, isAwaiting, onSelect, onPin, onFork, onDelete }: SessionItemProps): ReactElement {
+function SessionItem({ s, activeId, isRunning, isAwaiting, onSelect, onPin, onRename, onFork, onDelete }: SessionItemProps): ReactElement {
   const [menuOpen, setMenuOpen] = useState(false);
   const anchorRef = useRef<HTMLButtonElement>(null);
   const isActive = s.id === activeId;
@@ -76,7 +76,7 @@ function SessionItem({ s, activeId, isRunning, isAwaiting, onSelect, onPin, onFo
         ref={anchorRef}
         className="session-kebab"
         icon={KebabHorizontalIcon}
-        label=""
+        label={`Actions for ${s.name}`}
         onClick={() => setMenuOpen(o => !o)}
       />
       <ActionMenu open={menuOpen} onOpenChange={setMenuOpen} anchorRef={anchorRef as RefObject<HTMLElement>}>
@@ -87,6 +87,10 @@ function SessionItem({ s, activeId, isRunning, isAwaiting, onSelect, onPin, onFo
                 {s.pinned ? <PinSlashIcon size={16} /> : <PinIcon size={16} />}
               </ActionList.LeadingVisual>
               {s.pinned ? 'Unpin' : 'Pin'}
+            </ActionList.Item>
+            <ActionList.Item onSelect={menuAction(() => onRename(s))}>
+              <ActionList.LeadingVisual><PencilIcon size={16} /></ActionList.LeadingVisual>
+              Rename
             </ActionList.Item>
             <ActionList.Item onSelect={menuAction(() => onFork(s.id))}>
               <ActionList.LeadingVisual><RepoForkedIcon size={16} /></ActionList.LeadingVisual>
@@ -104,7 +108,45 @@ function SessionItem({ s, activeId, isRunning, isAwaiting, onSelect, onPin, onFo
   );
 }
 
-export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onCreated, reloadKey, runningSessions, awaitingSessions, onOpenHub }: SessionListProps): ReactElement {
+// RenameDialog takes the new name; Enter saves like the footer button.
+function RenameDialog({ session, onClose, onRenamed }: { session: Session; onClose: () => void; onRenamed: (id: string, name: string) => void }) {
+  const [name, setName] = useState(session.name);
+  const [busy, setBusy] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const trimmed = name.trim();
+  const save = async () => {
+    if (busy || !trimmed) return;
+    setBusy(true);
+    try {
+      await api.sessions.update(session.id, trimmed);
+      onRenamed(session.id, trimmed);
+    } catch (e) {
+      toast.error((e as Error).message || 'Could not rename chat');
+      setBusy(false);
+    }
+  };
+  return (
+    <Dialog
+      title="Rename conversation"
+      onClose={onClose}
+      width="medium"
+      initialFocusRef={inputRef}
+      footerButtons={[
+        { buttonType: 'default', content: 'Cancel', onClick: onClose },
+        { buttonType: 'primary', content: busy ? 'Saving…' : 'Save', disabled: busy || !trimmed || trimmed === session.name, onClick: () => { void save(); } },
+      ]}
+    >
+      <form onSubmit={(e: FormEvent) => { e.preventDefault(); void save(); }}>
+        <FormControl required>
+          <FormControl.Label>Name</FormControl.Label>
+          <TextInput ref={inputRef} block value={name} onChange={e => setName(e.target.value)} />
+        </FormControl>
+      </form>
+    </Dialog>
+  );
+}
+
+export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onRenamed: onRenamedNotify, onCreated, reloadKey, runningSessions, awaitingSessions, onOpenHub }: SessionListProps): ReactElement {
   const confirmDialog = useConfirm();
   const { data: sessions, reload, mutateData } = useApi(() => api.sessions.list() as Promise<Session[]>);
 
@@ -113,6 +155,7 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onCr
   }, [reloadKey, reload]);
   const [creating, setCreating] = useState(false);
   const [query, setQuery] = useState('');
+  const [renaming, setRenaming] = useState<Session | null>(null);
 
   // For every mutation: optimistically update the cached list AND migrate active
   // state as soon as the server call succeeds, then reconcile with a background
@@ -178,8 +221,17 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onCr
     reload();
   };
 
+  // The server does not announce a rename over the socket: the list and the
+  // open conversation's title are patched here, then reconciled.
+  const handleRenamed = (id: string, name: string) => {
+    setRenaming(null);
+    mutateData(prev => (prev ? prev.map(s => (s.id === id ? { ...s, name } : s)) : prev));
+    if (onRenamedNotify) onRenamedNotify(id, name);
+    reload();
+  };
+
   // Search filters before the pinned/recents split so both groups narrow
-  // together and the group-collapse logic below keeps working.
+  // together.
   const visible = sessions ? filterSessionsByName(sessions, query) : [];
   const pinned = visible.filter(s => s.pinned);
   const recents = visible.filter(s => !s.pinned);
@@ -195,6 +247,7 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onCr
       isAwaiting={!!(awaitingSessions && awaitingSessions.has(s.id))}
       onSelect={onSelect}
       onPin={handlePin}
+      onRename={setRenaming}
       onFork={handleFork}
       onDelete={handleDelete}
     />
@@ -253,6 +306,7 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onCr
           </ActionList>
         )}
       </div>
+      {renaming && <RenameDialog session={renaming} onClose={() => setRenaming(null)} onRenamed={handleRenamed} />}
     </>
   );
 }

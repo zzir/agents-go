@@ -62,13 +62,9 @@ export const EV = {
   terminalExit: 'terminal.exit',
 } as const;
 
-// RunError.code values the client branches on for recovery behavior.
-//
-// Two origins share one flat namespace (see cmd/agents-server/PROTOCOL.md F3):
-// TRANSPORT codes mirror internal/protocol/messages.go — failures that happen
-// before or outside a run; SDK codes mirror agents.ErrorCode and grow with the
-// SDK, so an unrecognized code MUST fall back to generic error rendering rather
-// than being treated as impossible.
+// RunError.code values the client branches on. Transport codes mirror
+// internal/protocol/messages.go, SDK codes agents.ErrorCode; the SDK's grow, so
+// an unrecognized code falls back to generic error rendering.
 export const ERR = {
   // Transport — mirrors protocol.Code* in messages.go
   sessionBusy: 'session_busy',
@@ -90,15 +86,10 @@ export const ERR = {
   unknown: 'unknown',
 } as const;
 
-// Mirror of protocol.TaskNotificationPrefix: a user-input message the server
-// injects when a background task finishes. Rendered as a notification card,
-// not a user bubble.
+// Mirror of protocol.TaskNotificationPrefix: the user-input message the
+// server injects when a background task finishes (invariant 21).
 export const TASK_NOTIFICATION_PREFIX = '[task-notification] ';
 
-// parseTaskNotification is THE way the UI recognizes a server-injected task
-// notification (a user-role item the model reads verbatim). Every place that
-// special-cases user messages (TOC rail, trace labels, bubble rendering) must
-// go through it so the notification is exempted consistently.
 export interface TaskNotificationItem {
   label: string;
   taskId: string;
@@ -109,16 +100,14 @@ export interface TaskNotificationItem {
   truncated: boolean;
 }
 
-// The wire format is produced by the SDK's tasks.DefaultNotifyFormatter, and
-// this mirrors its tasks.ParseNotification. Keep the two in step: a change to
-// the wording there is a change here.
-//
-// The label is Go-quoted (%q), so it may contain escaped quotes and the naive
-// `"([^"]+)"` would stop at the first one. The id is opaque — the host mints
-// it — so it is not assumed to be hex.
+// Mirrors the SDK's tasks.ParseNotification — a wording change there is a
+// change here. The label is Go-quoted (%q), so escaped quotes are allowed
+// inside it; the id is opaque, never assumed hex.
 const TASK_LINE = /^Task "((?:[^"\\]|\\.)*)" \(([^)]+)\) (\w+)\.(?: Result: (.*))?$/;
 const TRUNCATION = / \[truncated — call task_status\([^)]+\) for the full result\]$/;
 
+// parseTaskNotification is THE way the UI recognizes a server-injected task
+// notification; every place that special-cases user messages goes through it.
 export function parseTaskNotification(content: string | undefined | null): null | { text: string; label: string | null; taskId: string | null; items: TaskNotificationItem[] } {
   if (!content || !content.startsWith(TASK_NOTIFICATION_PREFIX)) return null;
   const text = content.slice(TASK_NOTIFICATION_PREFIX.length);

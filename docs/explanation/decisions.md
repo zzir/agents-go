@@ -1118,7 +1118,7 @@ collide and resolve own-over-global, exactly as §5.29 says.
 
 The UI mirrors the invariant: the visibility badge sits on a repo group's
 heading rather than on each row, because the group is what moves. Who owns
-which group is the Admin dialog's Skills tab, not a badge in Settings.
+which group is the Settings hub's Skills panel in its All members view, not a badge on the personal list.
 
 ### 5.32 A project's environment is write-only, like every other credential here
 

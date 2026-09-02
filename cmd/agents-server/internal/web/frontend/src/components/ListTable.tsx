@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { ActionList, ActionMenu, IconButton, TextInput } from '@primer/react';
 import { Blankslate, DataTable, Table, type Column, type UniqueRow } from '@primer/react/experimental';
 import { KebabHorizontalIcon, SearchIcon } from '@primer/octicons-react';
@@ -8,6 +8,9 @@ interface ListTableProps<T extends UniqueRow> {
   // Labels the table; the element with this id is the page's heading.
   labelledBy: string;
   rows: T[];
+  // A column's `minWidth` (px) floors its track; their sum floors the table,
+  // which then scrolls sideways inside Primer's ScrollableRegion instead of
+  // squeezing the headers into each other.
   columns: Column<T>[];
   // Client-side search over the rows; the page resets with the query.
   search?: { placeholder: string; match: (row: T, q: string) => boolean };
@@ -18,6 +21,19 @@ interface ListTableProps<T extends UniqueRow> {
   footer?: ReactNode;
 }
 
+// The floor for a table whose columns declare no minimum: below it 4–6
+// nowrap columns collapse onto each other.
+const DEFAULT_MIN_WIDTH = 560;
+
+function tableMinWidth<T extends UniqueRow>(columns: Column<T>[]): number {
+  let sum = 0;
+  for (const c of columns) {
+    const w = typeof c.minWidth === 'number' ? c.minWidth : parseFloat(String(c.minWidth ?? ''));
+    if (Number.isFinite(w)) sum += w;
+  }
+  return Math.max(sum, DEFAULT_MIN_WIDTH);
+}
+
 // ListTable is the settings pages' list: a search box in the container's
 // filter slot, a DataTable over the matching rows, a pager past one page.
 export function ListTable<T extends UniqueRow>({ labelledBy, rows, columns, search, empty, loading, footer }: ListTableProps<T>) {
@@ -25,6 +41,7 @@ export function ListTable<T extends UniqueRow>({ labelledBy, rows, columns, sear
   const q = query.trim().toLowerCase();
   const filtered = useMemo(() => q && search ? rows.filter(r => search.match(r, q)) : rows, [rows, q, search]);
   const page = usePage(filtered, PAGE_SIZE);
+  const minWidth = useMemo(() => tableMinWidth(columns), [columns]);
 
   let body: ReactNode;
   if (loading && rows.length === 0) {
@@ -42,7 +59,7 @@ export function ListTable<T extends UniqueRow>({ labelledBy, rows, columns, sear
   }
 
   return (
-    <Table.Container className="list-table">
+    <Table.Container className="list-table" style={{ '--list-table-min': `${minWidth}px` } as CSSProperties}>
       {search && rows.length > 0 && (
         <div className="list-table-filter">
           <TextInput

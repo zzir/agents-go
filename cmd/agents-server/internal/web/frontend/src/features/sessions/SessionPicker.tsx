@@ -28,9 +28,13 @@ const NEW_SESSION = '__new_session__';
 // search — with a way to make a new one from inside the picker: a form that
 // names a conversation must not send the person to the sidebar first. One
 // flat list, "New session" its first row: the choice is short enough not to
-// need headings, and the panel scrolls at a bounded height rather than
-// growing to the page. A row is one line, however long the name (the whole
-// of it is the row's title).
+// need headings. A row is one line, however long the name (the whole of it
+// is the row's title).
+// The panel is capped at a SMALL height, and grows only to its content: the
+// anchored overlay flips above the anchor when it does not fit below, and
+// when it fits neither it tries the sides — beside a block-wide anchor that
+// is off the viewport's edge, and the panel lands clamped at the far left of
+// the screen. A short panel fits one side or the other.
 export function SessionPicker({ value, onChange, placeholder = 'Select a conversation…' }:
   { value: string; onChange: (id: string) => void; placeholder?: string }) {
   const { data: sessions, mutateData } = useApi<SessionRef[]>(() => api.sessions.list() as Promise<SessionRef[]>);
@@ -89,8 +93,7 @@ export function SessionPicker({ value, onChange, placeholder = 'Select a convers
       }}
       onFilterChange={setFilter}
       placeholderText="Search"
-      height="medium"
-      overlayProps={{ width: 'medium' }}
+      overlayProps={{ width: 'medium', maxHeight: 'small' }}
     />
   );
 }

@@ -105,3 +105,9 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* The kebab keeps its accessible name but shows no tooltip: the bubble sat
+   over the session title. */
+.sidebar-scroll .session-row [data-component="Tooltip"] {
+  display: none !important;
+}

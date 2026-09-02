@@ -654,17 +654,6 @@ a:hover {
     margin-left: var(--base-size-4);
 }
 
-.form-status-text {
-    font-size: var(--base-text-size-xs);
-    color: var(--fgColor-muted);
-}
-
-/* OAuth connect block */
-.form-oauth > .form-status,
-.form-oauth > .FormControl {
-    margin-bottom: var(--base-size-16);
-}
-
 /* Footer action row — set off from the fields above; Delete on the far edge */
 .form-actions {
     display: flex;
@@ -716,6 +705,88 @@ a:hover {
     font-size: var(--base-text-size-xs);
     color: var(--fgColor-muted);
     margin-top: var(--base-size-2);
+}
+
+/* Two or three fields on one line, each taking an equal share. */
+.form-row {
+    display: flex;
+    gap: var(--base-size-12);
+}
+.form-row > * {
+    flex: 1;
+    min-width: 0;
+}
+
+/* The Name block with the avatar picker riding its right edge. */
+.form-identity {
+    display: flex;
+    align-items: center;
+    gap: var(--base-size-16);
+}
+.form-identity > :first-child {
+    flex: 1;
+}
+
+/* An avatar beside a name, inside a label or a checkbox label. */
+.agent-inline {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--base-size-4);
+}
+
+/* A textarea that grows with its text up to most of the viewport, then
+   scrolls — a long prompt never traps the wheel in an eight-line box. */
+.textarea-grow textarea,
+textarea.textarea-grow {
+    field-sizing: content;
+    max-height: 60vh;
+    overflow: auto;
+}
+
+/* Per-panel controls sized by class, not by an inline pixel count. */
+.provider-paste-input {
+    width: 220px;
+}
+.mcp-connect-btn {
+    min-width: 90px;
+    color: var(--fgColor-success);
+}
+.form-label-note {
+    margin-left: var(--base-size-4);
+}
+.skill-editor textarea {
+    font-family: var(--fontStack-monospace);
+    font-size: var(--base-text-size-xs);
+}
+/* A skill group's heading row: the repo (or Local), its scope, its count. */
+.skills-group-head {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: var(--base-size-8);
+    background: var(--bgColor-muted);
+}
+.skills-group-head .resource-row-sub {
+    margin-top: 0;
+}
+.skills-group-menu {
+    margin-left: auto;
+}
+
+/* Loading states (components/Loading): the list skeleton sits where rows
+   will, the panel spinner centers in its body, the inline line is muted. */
+.loading-list {
+    padding: var(--base-size-12) var(--base-size-16);
+}
+.loading-panel {
+    display: flex;
+    justify-content: center;
+    padding: var(--base-size-24);
+}
+.loading-inline {
+    font-size: var(--base-text-size-xs);
+    color: var(--fgColor-muted);
+    padding: var(--base-size-4) 0;
 }
 
 .form-checkbox-group {
@@ -790,26 +861,6 @@ a:hover {
 }
 
 
-.login-page {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    height: 100vh;
-    height: 100dvh;
-    background: var(--bgColor-muted);
-}
-
-.login-card {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: var(--base-size-16);
-}
-
-.login-card .form-control {
-    width: 240px;
-}
-
 /* Settings lists (ListTable): the search box sits in Table.Container's
    filter slot; an empty state takes the table's slot. */
 .list-table-filter {
@@ -842,7 +893,7 @@ a:hover {
    grid squeezes tracks until nowrap cells overlap); a min-width floors the
    grid so Primer's own ScrollableRegion scrolls it instead. */
 .list-table table {
-  min-width: 560px;
+  min-width: var(--list-table-min, 560px);
 }
 .list-clip {
   display: block;

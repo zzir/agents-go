@@ -9,10 +9,10 @@ interface ChatTopBarProps {
   panel: InspectorPanel;
   onPanelChange: (panel: InspectorPanel) => void;
   /* The terminal panel opens from the project menu, not from a button of its
-     own: what it opens is this project's terminal, and the three buttons on
-     the right are inspector lenses — it never belonged among them. The cost
-     is that an unbound session has no way in, which is the trade taken: a
-     session binds on its first message. */
+     own: what it opens is the BOUND project's terminal (the menu renders only
+     once the session is bound), and the three buttons on the right are
+     inspector lenses — it never belonged among them. An unbound session has
+     no way in, by design: a session binds on its first message. */
   terminalEnabled: boolean;
   onTerminalOpen?: () => void;
   /* The session's sandbox binding, rendered as a quiet read-only label beside

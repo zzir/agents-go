@@ -12,11 +12,9 @@ interface UserMessageProps {
   attachments?: AttachmentMeta[];
   traceRunId?: string | null;
   msgIdx: number;
-  // The durable entry id, so the Context panel can scroll to this bubble.
-  entryId?: string;
 }
 
-export const UserMessage = memo(function UserMessage({ content, attachments, traceRunId, msgIdx, entryId }: UserMessageProps) {
+export const UserMessage = memo(function UserMessage({ content, attachments, traceRunId, msgIdx }: UserMessageProps) {
   const { openTrace } = useChatActions();
   const { copied, copy } = useCopy();
   const [zoomed, setZoomed] = useState<AttachmentMeta | null>(null);
@@ -32,7 +30,7 @@ export const UserMessage = memo(function UserMessage({ content, attachments, tra
   if (parseTaskNotification(content)) return null;
 
   return (
-    <div className="message message-user message-forkable" data-run-id={traceRunId || undefined} data-msg-idx={msgIdx} data-anchor-id={entryId || undefined}>
+    <div className="message message-user message-forkable" data-run-id={traceRunId || undefined} data-msg-idx={msgIdx}>
       {attachments && attachments.length > 0 && (
         <div className="message-attachments">
           {attachments.map(a => (

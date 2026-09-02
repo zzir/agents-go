@@ -1,15 +1,19 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActionList, Dialog, Flash, FormControl, Label, PageHeader, Select, Stack, useConfirm } from '@primer/react';
+import { useCallback, useMemo, useState } from 'react';
+import { ActionList, Dialog, FormControl, Label, PageHeader, Select, Stack, useConfirm } from '@primer/react';
 import { Blankslate, type Column } from '@primer/react/experimental';
 import { GearIcon } from '@primer/octicons-react';
 import { ListTable, RowMenu, actionsColumn } from '@/components/ListTable';
 import { AgentAvatar } from '@/components/AgentAvatar';
 import { api } from '@/lib/api';
 import { BADGE } from '@/lib/badges';
+import { useApi } from '@/lib/hooks';
 import { useMe } from '@/lib/me';
 import { LOCAL_USER_ID } from '@/features/admin/MembersPanel';
-import { OwnerName, useOwnerLabels } from '@/lib/owners';
+import { OwnerCell, ownerLabel } from '@/features/admin/OwnerCell';
+import { useLoadError } from '@/features/admin/useLoadError';
+import { useOwnerLabels } from '@/lib/owners';
 import { qualifiedName, repoLabel, type Skill } from '@/lib/skills';
+import { toast } from '@/lib/toast';
 
 // One row of any scoped entity, flattened to what this panel shows.
 interface ConfigRow {
@@ -22,10 +26,12 @@ interface ConfigRow {
   avatar?: string;
 }
 
+export type ScopedEntity = 'agents' | 'providers' | 'mcp-servers' | 'skills' | 'workflows';
+
 // The five entities members compose runs from (spec §5.29). Each knows how to
 // list itself, how to name a row, and which endpoints move it.
 interface EntityKind {
-  key: string;
+  key: ScopedEntity;
   label: string;
   // One line under the title: what this tab manages, and what it does not.
   blurb: string;
@@ -45,7 +51,7 @@ const base = (r: Listed, detail: string): ConfigRow => ({
   owner_id: r.owner_id, avatar: r.avatar,
 });
 
-const ENTITIES: Record<string, EntityKind> = {
+const ENTITIES: Record<ScopedEntity, EntityKind> = {
   agents: {
     key: 'agents', label: 'Agents', avatars: true,
     blurb: "Every member's agents. Publishing shares one with the team; transferring hands it to another account.",
@@ -87,28 +93,14 @@ const ENTITIES: Record<string, EntityKind> = {
 // whether it is published, and the two management acts an admin has over it
 // (publish/unpublish, and transfer to another account). Editing stays where
 // authorship is: the entity's own settings panel.
-// The last rows each tab showed. Switching tabs remounts the panel, and a
-// skeleton on every visit to a list already seen reads as a flash — so the
-// cached rows paint at once and the refetch replaces them in place.
-const lastRows = new Map<string, ConfigRow[]>();
-
-function ScopedRowsPanel({ kind }: { kind: EntityKind }) {
-  const [rows, setRows] = useState<ConfigRow[] | null>(() => lastRows.get(kind.key) ?? null);
-  const [error, setError] = useState('');
+export function ScopedRowsPanel({ entity }: { entity: ScopedEntity }) {
+  const kind = ENTITIES[entity];
+  const { data: rows, error, reload } = useApi<ConfigRow[]>(kind.list, [kind], `admin:${kind.key}`);
+  useLoadError(error, kind.label.toLowerCase());
   const [transferring, setTransferring] = useState<ConfigRow | null>(null);
   const { me } = useMe();
   const { users, ownerOf, labelFor } = useOwnerLabels();
   const confirm = useConfirm();
-
-  // Owner labels are resolved at RENDER time, not folded into the rows: a
-  // reload keyed on the directory would blank the table a second time the
-  // moment it arrived.
-  const reload = useCallback(() => {
-    kind.list()
-      .then(list => { lastRows.set(kind.key, list); setRows(list); setError(''); })
-      .catch(e => setError(e instanceof Error ? e.message : `Failed to load ${kind.label.toLowerCase()}.`));
-  }, [kind]);
-  useEffect(() => { reload(); }, [reload]);
 
   const flip = useCallback(async (row: ConfigRow) => {
     const target = row.scope === 'global' ? 'private' : 'global';
@@ -116,14 +108,16 @@ function ScopedRowsPanel({ kind }: { kind: EntityKind }) {
       title: target === 'global' ? `Publish “${row.name}”?` : `Unpublish “${row.name}”?`,
       content: target === 'global'
         ? 'Every member will see it. Its author keeps it and can still edit it.'
-        : `It returns to ${labelFor(row.owner_id)} alone; members using it lose access.`,
+        : row.owner_id
+          ? `It returns to ${labelFor(row.owner_id)} alone; members using it lose access.`
+          : 'Members using it lose access. It has no author to return to — transfer it first if someone should keep it.',
       confirmButtonContent: target === 'global' ? 'Publish' : 'Unpublish',
     }))) return;
     try {
       await kind.setScope(row.id, target);
       reload();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to change the scope.');
+      toast.error(e instanceof Error ? e.message : 'Failed to change the scope.');
     }
   }, [confirm, kind, reload, labelFor]);
 
@@ -131,7 +125,7 @@ function ScopedRowsPanel({ kind }: { kind: EntityKind }) {
     {
       header: 'Name', id: 'name', rowHeader: true, width: 'growCollapse', minWidth: 140,
       renderCell: r => kind.avatars
-        ? <span className="list-clip" title={r.name} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+        ? <span className="list-clip agent-inline" title={r.name}>
             <AgentAvatar name={r.name} avatar={r.avatar} size={20} />{r.name}
           </span>
         : <span className="list-clip" title={r.name}>{r.name}</span>,
@@ -142,7 +136,7 @@ function ScopedRowsPanel({ kind }: { kind: EntityKind }) {
       header: 'Visibility', id: 'scope', width: 'growCollapse', minWidth: 88, maxWidth: 110,
       renderCell: r => (r.scope === 'global' ? <Label variant={BADGE.scope}>Global</Label> : <span className="resource-row-sub">Private</span>),
     },
-    { header: 'Owner', id: 'owner', width: 'growCollapse', minWidth: 120, maxWidth: 240, renderCell: r => <OwnerName owner={ownerOf(r.owner_id)} fallback={labelFor(r.owner_id)} /> },
+    { header: 'Owner', id: 'owner', width: 'growCollapse', minWidth: 120, maxWidth: 240, renderCell: r => <OwnerCell ownerId={r.owner_id} ownerOf={ownerOf} labelFor={labelFor} /> },
     { header: 'Detail', id: 'detail', width: 'growCollapse', minWidth: 100, maxWidth: 220, renderCell: r => <span className="list-clip" title={r.detail}>{r.detail}</span> },
     actionsColumn<ConfigRow>(r => (
       <RowMenu label={`Actions for ${r.name}`}>
@@ -162,13 +156,12 @@ function ScopedRowsPanel({ kind }: { kind: EntityKind }) {
         </PageHeader.TitleArea>
         <PageHeader.Description>{kind.blurb}</PageHeader.Description>
       </PageHeader>
-      {error ? <Flash variant="danger">{error}</Flash> : null}
       <ListTable
         labelledBy={`admin-${kind.key}-title`}
         rows={rows ?? []}
         columns={columns}
         loading={rows === null}
-        search={{ placeholder: `Search ${kind.label.toLowerCase()}`, match: (r, q) => `${r.name} ${labelFor(r.owner_id)} ${r.detail}`.toLowerCase().includes(q) }}
+        search={{ placeholder: `Search ${kind.label.toLowerCase()}`, match: (r, q) => `${r.name} ${ownerLabel(labelFor, r.owner_id)} ${r.detail}`.toLowerCase().includes(q) }}
         empty={(
           <Blankslate>
             <Blankslate.Visual><GearIcon size={24} /></Blankslate.Visual>
@@ -181,7 +174,7 @@ function ScopedRowsPanel({ kind }: { kind: EntityKind }) {
         <TransferDialog
           row={transferring}
           kindLabel={kind.label}
-          owner={labelFor(transferring.owner_id)}
+          owner={ownerLabel(labelFor, transferring.owner_id)}
           users={users.filter(u => u.id !== LOCAL_USER_ID && u.id !== transferring.owner_id)}
           transfer={userId => kind.setOwner(transferring.id, userId)}
           onClose={() => setTransferring(null)}
@@ -207,16 +200,14 @@ function TransferDialog({ row, kindLabel, owner, users, transfer, onClose, onDon
 }) {
   const [userId, setUserId] = useState(users[0]?.id || '');
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
 
   const run = useCallback(async () => {
     setBusy(true);
-    setError('');
     try {
       await transfer(userId);
       onDone();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to transfer.');
+      toast.error(e instanceof Error ? e.message : 'Failed to transfer.');
       setBusy(false);
     }
   }, [transfer, userId, onDone]);
@@ -232,7 +223,6 @@ function TransferDialog({ row, kindLabel, owner, users, transfer, onClose, onDon
       ]}
     >
       <Stack gap="normal">
-        {error ? <Flash variant="danger">{error}</Flash> : null}
         <FormControl required>
           <FormControl.Label>New owner</FormControl.Label>
           <FormControl.Caption>
@@ -251,11 +241,6 @@ function TransferDialog({ row, kindLabel, owner, users, transfer, onClose, onDon
   );
 }
 
-// One default-exported panel per entity: the admin dialog gives each its own
-// tab, so a management view is reached in one click rather than a click and a
-// segmented control.
-export const AdminAgents = () => <ScopedRowsPanel kind={ENTITIES.agents} />;
-export const AdminProviders = () => <ScopedRowsPanel kind={ENTITIES.providers} />;
-export const AdminMcpServers = () => <ScopedRowsPanel kind={ENTITIES['mcp-servers']} />;
-export const AdminSkills = () => <ScopedRowsPanel kind={ENTITIES.skills} />;
-export const AdminWorkflows = () => <ScopedRowsPanel kind={ENTITIES.workflows} />;
+// Workflows have no personal settings panel (the hub is where they are
+// authored), so the management view is their whole settings tab.
+export const AdminWorkflows = () => <ScopedRowsPanel entity="workflows" />;

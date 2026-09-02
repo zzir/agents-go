@@ -65,7 +65,7 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
   const viewRefs = useRef(new Map<number, TerminalViewHandle | null>());
 
   const { data: targets, reload: reloadTargets } = useApi<SandboxTarget[]>(
-    () => api.sandboxes.list() as Promise<SandboxTarget[]>,
+    () => api.sandboxes.list() as Promise<SandboxTarget[]>, [], 'sandboxes',
   );
   useEffect(() => {
     if (settingsReloadKey) reloadTargets();
@@ -151,35 +151,43 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openRequest]);
 
-  // Drag-to-resize on the panel's top edge.
+  // Drag-to-resize on the panel's top edge: pointer events, so a touch drag
+  // resizes too, with capture holding the drag past the strip's few pixels.
   useEffect(() => {
     const handle = dragRef.current;
     if (!handle) return;
-    const onMouseDown = (down: MouseEvent) => {
-      down.preventDefault();
-      const startY = down.clientY;
-      const startHeight = panelRef.current?.offsetHeight ?? 300;
-      setDragging(true);
-      const onMove = (move: MouseEvent) => {
-        const raw = startHeight + (startY - move.clientY);
-        if (raw < COLLAPSE_AT) {
-          // Dragged (nearly) to the bottom: collapse to the header strip.
-          setCollapsed(true);
-          return;
-        }
-        setCollapsed(false);
-        setHeight(Math.min(Math.max(raw, MIN_HEIGHT), Math.round(window.innerHeight * 0.8)));
-      };
-      const onUp = () => {
-        setDragging(false);
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
-      };
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
+    let startY = 0;
+    let startHeight = 0;
+    const onMove = (move: PointerEvent) => {
+      if (!handle.hasPointerCapture(move.pointerId)) return;
+      const raw = startHeight + (startY - move.clientY);
+      if (raw < COLLAPSE_AT) {
+        // Dragged (nearly) to the bottom: collapse to the header strip.
+        setCollapsed(true);
+        return;
+      }
+      setCollapsed(false);
+      setHeight(Math.min(Math.max(raw, MIN_HEIGHT), Math.round(window.innerHeight * 0.8)));
     };
-    handle.addEventListener('mousedown', onMouseDown);
-    return () => handle.removeEventListener('mousedown', onMouseDown);
+    const onUp = () => setDragging(false);
+    const onDown = (down: PointerEvent) => {
+      if (down.button !== 0) return;
+      down.preventDefault();
+      try { handle.setPointerCapture(down.pointerId); } catch { /* capture is a nice-to-have */ }
+      startY = down.clientY;
+      startHeight = panelRef.current?.offsetHeight ?? 300;
+      setDragging(true);
+    };
+    handle.addEventListener('pointerdown', onDown);
+    handle.addEventListener('pointermove', onMove);
+    handle.addEventListener('pointerup', onUp);
+    handle.addEventListener('lostpointercapture', onUp);
+    return () => {
+      handle.removeEventListener('pointerdown', onDown);
+      handle.removeEventListener('pointermove', onMove);
+      handle.removeEventListener('pointerup', onUp);
+      handle.removeEventListener('lostpointercapture', onUp);
+    };
   }, []);
 
   return (
@@ -199,7 +207,7 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
               tabIndex={0}
               className={'terminal-tab' + (tab.id === activeId ? ' terminal-tab-active' : '')}
               onClick={() => activateTab(tab.id)}
-              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') activateTab(tab.id); }}
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activateTab(tab.id); } }}
             >
               <TerminalIcon size={12} />
               <span className="terminal-tab-name" title={tab.projectName || undefined}>

@@ -139,9 +139,73 @@ interface UseApiResult<T> {
   mutateData: (fn: (prev: T | null) => T | null) => void;
 }
 
-export function useApi<T>(fetcher: () => Promise<T>, deps: DependencyList = []): UseApiResult<T> {
-  const [data, setData] = useState<T | null>(null);
-  const [loading, setLoading] = useState(true);
+// The shared response cache behind keyed useApi calls: one entry per key,
+// served to every mount, revalidated once it is older than CACHE_TTL_MS, and
+// dropped by invalidate(). A fetch in flight is shared, so eight panels asking
+// for the agent list at once make one request.
+const CACHE_TTL_MS = 30_000;
+
+interface CacheEntry {
+  data: unknown;
+  at: number;
+  inflight: Promise<unknown> | null;
+}
+
+type CacheListener = (ev: { kind: 'data'; data: unknown } | { kind: 'invalidate' }) => void;
+
+const cache = new Map<string, CacheEntry>();
+const listeners = new Map<string, Set<CacheListener>>();
+
+function subscribe(key: string, fn: CacheListener): () => void {
+  let set = listeners.get(key);
+  if (!set) { set = new Set(); listeners.set(key, set); }
+  set.add(fn);
+  return () => { set.delete(fn); if (set.size === 0) listeners.delete(key); };
+}
+
+function notify(key: string, ev: Parameters<CacheListener>[0]): void {
+  for (const fn of listeners.get(key) || []) fn(ev);
+}
+
+// fetchShared runs the fetcher once per key at a time: a second caller joins
+// the request in flight, and the answer lands in the cache before it resolves.
+function fetchShared<T>(key: string, fetcher: () => Promise<T>): Promise<T> {
+  const cur = cache.get(key);
+  if (cur?.inflight) return cur.inflight as Promise<T>;
+  const p = fetcher().then(result => {
+    cache.set(key, { data: result, at: Date.now(), inflight: null });
+    notify(key, { kind: 'data', data: result });
+    return result;
+  }, err => {
+    const e = cache.get(key);
+    if (e?.inflight === p) e.inflight = null;
+    throw err;
+  });
+  cache.set(key, { data: cur?.data, at: cur?.at ?? 0, inflight: p });
+  return p;
+}
+
+/** Drops every cached response whose key matches, and has each mounted
+ * consumer of it refetch. A mutation that changes a list elsewhere (a save
+ * outside useCrud, a scope flip) calls this with the list's key. */
+export function invalidate(key: string | RegExp): void {
+  const matches = (k: string) => (typeof key === 'string' ? k === key : key.test(k));
+  const keys = new Set([...cache.keys(), ...listeners.keys()].filter(matches));
+  for (const k of keys) {
+    cache.delete(k);
+    notify(k, { kind: 'invalidate' });
+  }
+}
+
+/** Fetches once on mount and again when `deps` change. With a `key`, the
+ * response is shared through the cache above: a mount finds the last answer
+ * at once (revalidating it in the background past the TTL), a reload anywhere
+ * reaches every consumer, and invalidate(key) refetches them all. Pick a key
+ * that changes with `deps` (put the id in it). */
+export function useApi<T>(fetcher: () => Promise<T>, deps: DependencyList = [], key?: string): UseApiResult<T> {
+  const cached = key ? cache.get(key) : undefined;
+  const [data, setData] = useState<T | null>(cached && cached.at > 0 ? cached.data as T : null);
+  const [loading, setLoading] = useState(!(cached && cached.at > 0));
   const [error, setError] = useState<string | null>(null);
   // Monotonic request id: only the newest reload/mutateData may write data,
   // error and loading — a slow earlier reload can't overwrite a newer result or
@@ -152,7 +216,7 @@ export function useApi<T>(fetcher: () => Promise<T>, deps: DependencyList = []):
     const gen = ++genRef.current;
     setLoading(true);
     try {
-      const result = await fetcher();
+      const result = await (key ? fetchShared(key, fetcher) : fetcher());
       if (gen === genRef.current) {
         setData(result);
         setError(null);
@@ -167,16 +231,43 @@ export function useApi<T>(fetcher: () => Promise<T>, deps: DependencyList = []):
       if (gen === genRef.current) setLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
+  }, [...deps, key]);
 
   const mutateData = useCallback((fn: (prev: T | null) => T | null) => {
     // Bump the generation so any in-flight reload's result is discarded — the
     // optimistic update is the source of truth until a newer reload lands.
     genRef.current++;
-    setData(prev => fn(prev));
-  }, []);
+    setData(prev => {
+      const next = fn(prev);
+      if (key) {
+        const e = cache.get(key);
+        cache.set(key, { data: next, at: e?.at ?? Date.now(), inflight: e?.inflight ?? null });
+      }
+      return next;
+    });
+  }, [key]);
 
-  useEffect(() => { reload(); }, [reload]);
+  useEffect(() => {
+    if (!key) { reload(); return; }
+    const entry = cache.get(key);
+    if (entry && entry.at > 0) {
+      setData(entry.data as T);
+      setError(null);
+      setLoading(false);
+      if (Date.now() - entry.at <= CACHE_TTL_MS) return;
+    }
+    reload();
+  }, [reload, key]);
+
+  useEffect(() => {
+    if (!key) return;
+    return subscribe(key, ev => {
+      if (ev.kind === 'invalidate') { reload(); return; }
+      setData(ev.data as T);
+      setError(null);
+      setLoading(false);
+    });
+  }, [key, reload]);
 
   return { data, loading, error, reload, mutateData };
 }
@@ -193,6 +284,7 @@ interface CrudResource<F> {
 interface UseCrudResult<T, F> {
   items: T[];
   loading: boolean;
+  error: string | null;
   reload: () => Promise<void>;
   adding: boolean;
   editing: T | null;
@@ -211,12 +303,15 @@ interface UseCrudResult<T, F> {
  * write, and routes every mutation failure through `toast.error` — so panels
  * don't each re-implement (and forget) error handling. Special per-panel
  * actions (OAuth connect, sandbox exec, …) stay in the panel and use `reload`.
+ * `key` is the list's cache key (see useApi): every write reloads through it,
+ * so a picker elsewhere holding the same list sees the change.
  */
 export function useCrud<T extends { id: CrudId }, F = Partial<T>>(
   resource: CrudResource<F>,
+  key?: string,
 ): UseCrudResult<T, F> {
   const confirmDialog = useConfirm();
-  const { data, loading, reload } = useApi<T[]>(() => resource.list() as Promise<T[]>);
+  const { data, loading, error, reload } = useApi<T[]>(() => resource.list() as Promise<T[]>, [], key);
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<T | null>(null);
   const [saving, setSaving] = useState(false);
@@ -275,27 +370,32 @@ export function useCrud<T extends { id: CrudId }, F = Partial<T>>(
     }
   }, [confirmDialog, resource, reload]);
 
-  return { items: data ?? [], loading, reload, adding, editing, saving, startAdd, startEdit, cancel, save, remove };
+  return { items: data ?? [], loading, error, reload, adding, editing, saving, startAdd, startEdit, cancel, save, remove };
 }
 
 /** Copy-to-clipboard with the 1.5s "Copied" flip every copy button shows.
  * `copied` holds the key passed to `copy` (default 'default') until the flip
  * ends, null otherwise — so one hook serves multi-target boxes too. A denied
- * clipboard permission reports via toast instead of failing silently. */
-export function useCopy(): { copied: string | null; copy: (text: string, key?: string) => void } {
+ * clipboard permission reports via toast instead of failing silently; the
+ * promise says whether the copy happened, for a caller that flips its own
+ * button (markup outside React). */
+export function useCopy(): { copied: string | null; copy: (text: string, key?: string) => Promise<boolean> } {
   const [copied, setCopied] = useState<string | null>(null);
   const timer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(timer.current), []);
-  const copy = useCallback((text: string, key = 'default') => {
+  const copy = useCallback(async (text: string, key = 'default') => {
     // No clipboard API on an insecure (plain-http LAN) origin.
-    if (!navigator.clipboard) { toast.error('Could not copy — select it and copy by hand'); return; }
-    navigator.clipboard.writeText(text)
-      .then(() => {
-        setCopied(key);
-        window.clearTimeout(timer.current);
-        timer.current = window.setTimeout(() => setCopied(null), 1500);
-      })
-      .catch(() => toast.error('Could not copy — select it and copy by hand'));
+    if (!navigator.clipboard) { toast.error('Could not copy — select it and copy by hand'); return false; }
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      toast.error('Could not copy — select it and copy by hand');
+      return false;
+    }
+    setCopied(key);
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setCopied(null), 1500);
+    return true;
   }, []);
   return { copied, copy };
 }

@@ -1,10 +1,12 @@
-import { useState, useCallback, useEffect, type ChangeEvent } from 'react';
-import { Button, TextInput, Textarea, FormControl, Stack, PageHeader, SegmentedControl, Label } from '@primer/react';
+import { useState, useCallback, useEffect, type ChangeEvent, type ReactNode } from 'react';
+import { Button, TextInput, Textarea, FormControl, Stack, PageHeader, SegmentedControl, Label, useConfirm } from '@primer/react';
 import { SecretInput } from '@/components/SecretInput';
 import { useReadOnly } from '@/lib/access';
 import { api } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { toast } from '@/lib/toast';
+import { UNSEALED_TEXT, useServerInfo } from '@/features/settings/serverInfo';
+import './settings.css';
 
 // A stored row. `unknown` marks a key the server's registry no longer defines
 // — listed so it can be deleted, since nothing else would ever show it.
@@ -24,13 +26,6 @@ interface SettingDef {
   max?: number;
 }
 
-// The start-up configuration (GET /server): shown, never edited — it comes
-// from the command line, not this table.
-interface ServerInfo {
-  version: string;
-  workspace: string;
-}
-
 const GROUP_TITLES: Record<string, string> = {
   network: 'Network',
   prompt: 'Prompt',
@@ -42,8 +37,9 @@ const GROUP_TITLES: Record<string, string> = {
 
 export function SettingsPanel() {
   const readOnly = useReadOnly();
-  const { data: defs } = useApi<SettingDef[]>(() => api.settings.defs() as Promise<SettingDef[]>);
-  const { data: settings, reload } = useApi<Setting[]>(() => api.settings.list() as Promise<Setting[]>);
+  const confirm = useConfirm();
+  const { data: defs } = useApi<SettingDef[]>(() => api.settings.defs() as Promise<SettingDef[]>, [], 'settings:defs');
+  const { data: settings, reload } = useApi<Setting[]>(() => api.settings.list() as Promise<Setting[]>, [], 'settings');
   const [saving, setSaving] = useState<Record<string, boolean>>({});
 
   const getValue = useCallback((key: string): string => {
@@ -65,7 +61,14 @@ export function SettingsPanel() {
     }
   };
 
+  // Confirms like every other delete (invariant 41).
   const handleDelete = async (key: string) => {
+    if (!(await confirm({
+      title: `Delete “${key}”?`,
+      content: 'The stored value is removed. Nothing reads it, so nothing else changes.',
+      confirmButtonContent: 'Delete',
+      confirmButtonType: 'danger',
+    }))) return;
     try {
       await api.settings.delete(key);
       reload();
@@ -100,9 +103,14 @@ export function SettingsPanel() {
             <PageHeader.TitleArea>
               <PageHeader.Title as="h3">{GROUP_TITLES[g.name] || g.name}</PageHeader.Title>
             </PageHeader.TitleArea>
+            {g.name === 'storage' && (
+              <PageHeader.Description>Saved as one group — the fields below store together on Save, not one at a time.</PageHeader.Description>
+            )}
           </PageHeader>
           {g.name === 'storage' ? (
-            <StorageForm defs={g.defs} getValue={getValue} onSaved={reload} />
+            <div className="settings-card">
+              <StorageForm defs={g.defs} getValue={getValue} onSaved={reload} />
+            </div>
           ) : (
             <Stack gap="spacious">
               {g.defs.map(def => (
@@ -167,13 +175,16 @@ function SettingRow({ def, value, saving, onSave }: SettingRowProps) {
 function SettingInput({ def, draft, setDraft }: { def: SettingDef; draft: string; setDraft: (v: string) => void }) {
   switch (def.kind) {
     case 'text':
+      // Grows with its content (to a cap) so a long prompt never becomes a
+      // scroll trap inside the page.
       return (
         <Textarea
           value={draft}
           onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setDraft(e.target.value)}
-          rows={8}
+          rows={4}
           placeholder={def.placeholder}
           block
+          className="textarea-grow"
           style={{ fontFamily: 'var(--fontStack-monospace)' }}
         />
       );
@@ -236,7 +247,7 @@ function SettingInput({ def, draft, setDraft }: { def: SettingDef; draft: string
 // section's values are only valid together (changing the bucket re-probes
 // against the same public base), so this is a FORM — one Save, one Test, one
 // Clear — not click-to-store rows; the server refuses per-key writes of
-// these keys.
+// these keys (invariant 58).
 const STORAGE_FIELDS: Record<string, string> = {
   s3_endpoint: 'endpoint',
   s3_region: 'region',
@@ -296,7 +307,7 @@ function StorageForm({ defs, getValue, onSaved }: { defs: SettingDef[]; getValue
           <SettingInput def={def} draft={draft[def.key] ?? ''} setDraft={v => setDraft(prev => ({ ...prev, [def.key]: v }))} />
         </FormControl>
       ))}
-      <Stack direction="horizontal" gap="condensed">
+      <Stack direction="horizontal" gap="condensed" align="center">
         <Button variant="primary" size="small" onClick={() => run('save')} disabled={busy !== null}>
           {busy === 'save' ? 'Saving…' : 'Save'}
         </Button>
@@ -306,6 +317,7 @@ function StorageForm({ defs, getValue, onSaved }: { defs: SettingDef[]; getValue
         <Button variant="danger" size="small" onClick={() => run('clear')} disabled={busy !== null}>
           {busy === 'clear' ? 'Clearing…' : 'Clear'}
         </Button>
+        <span className="settings-card-note">Save writes every field above at once; Test probes the bucket without saving.</span>
       </Stack>
     </Stack>
   );
@@ -345,15 +357,25 @@ function UnknownSection({ rows, onDelete }: { rows: Setting[]; onDelete: ((key: 
   );
 }
 
-// The flags in force. Not editable — but a rule you cannot see is one you can
-// only meet as an unexplained refusal.
+function ServerRow({ label, children, mono }: { label: string; children: ReactNode; mono?: boolean }) {
+  return (
+    <div className="Box-row">
+      <div className="resource-row-main">
+        <div className="resource-row-head">
+          <span className="resource-row-title">{label}</span>
+        </div>
+        <div className="resource-row-sub" style={mono ? { fontFamily: 'var(--fontStack-monospace)' } : undefined}>{children}</div>
+      </div>
+    </div>
+  );
+}
+
+// The facts in force at start-up. Not editable — but a rule you cannot see is
+// one you can only meet as an unexplained refusal.
 function ServerSection() {
-  const { data: info } = useApi<ServerInfo>(() => api.server() as Promise<ServerInfo>);
+  const { data: info } = useServerInfo();
   if (!info) return null;
-  const rows: [string, string][] = [
-    ['Version', info.version],
-    ['Workspace', info.workspace],
-  ];
+  const sealed = info.credentials_sealed;
   return (
     <div className="form-group">
       <PageHeader>
@@ -363,16 +385,15 @@ function ServerSection() {
         <PageHeader.Description>Set on the command line at start-up. Restart to change.</PageHeader.Description>
       </PageHeader>
       <div className="Box">
-        {rows.map(([label, value]) => (
-          <div key={label} className="Box-row">
-            <div className="resource-row-main">
-              <div className="resource-row-head">
-                <span className="resource-row-title">{label}</span>
-              </div>
-              <div className="resource-row-sub" style={{ fontFamily: 'var(--fontStack-monospace)' }}>{value}</div>
-            </div>
-          </div>
-        ))}
+        <ServerRow label="Version" mono>{info.version}</ServerRow>
+        <ServerRow label="Timezone" mono>{info.timezone || '—'}</ServerRow>
+        <ServerRow label="Credentials at rest">
+          {sealed === false
+            ? <><Label variant="attention">unsealed</Label> {UNSEALED_TEXT.replace(/^Credentials at rest: unsealed — /, '')}</>
+            : sealed
+              ? <><Label variant="success">sealed</Label> Stored credentials are encrypted with the server&apos;s secret key.</>
+              : '—'}
+        </ServerRow>
       </div>
     </div>
   );

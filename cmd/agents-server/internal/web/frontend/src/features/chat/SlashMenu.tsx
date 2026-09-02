@@ -39,7 +39,7 @@ export function slashQuery(text: string): string | null {
 // "/workflow <name>" per workflow on this server.
 export function useSlashCommands(): SlashCommand[] {
   const { data: workflows } = useApi<{ id: string; name: string; description?: string }[]>(
-    () => api.workflows.list() as Promise<{ id: string; name: string; description?: string }[]>,
+    () => api.workflows.list() as Promise<{ id: string; name: string; description?: string }[]>, [], 'workflows',
   );
   return useMemo<SlashCommand[]>(() => [
     {

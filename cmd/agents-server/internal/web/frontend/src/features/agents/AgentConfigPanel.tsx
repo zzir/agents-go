@@ -13,6 +13,7 @@ import { JsonField } from '@/lib/JsonField';
 import { toast } from '@/lib/toast';
 import { Disclosure } from '@/components/Disclosure';
 import { AgentAvatar } from '@/components/AgentAvatar';
+import { ScopeHint, collidingNames } from '@/components/AgentPicker';
 import { AvatarPicker } from './AvatarPicker';
 import { type Skill, type SkillGroup, groupSkills, qualifiedName } from '@/lib/skills';
 import { providerMeta, providerFacts, type ProviderTypeInfo } from '@/lib/providers';
@@ -218,6 +219,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
   const visibleMcp = (mcpServers || []).filter(refOK);
   const visibleSkills = (skills || []).filter(refOK);
   const handoffTargets = (allAgents || []).filter(a => a.id !== initial?.id && refOK(a));
+  const handoffCollisions = collidingNames(handoffTargets);
   const toggleHandoff = (id: string | number) => {
     setSelectedHandoffs(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
@@ -260,8 +262,8 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
     <Stack gap="normal">
       {/* Avatar and name are one identity unit: the circle sits right of the
           name block, sized to span its label and field together. */}
-      <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
-        <div style={{ flex: 1 }}>
+      <div className="form-identity">
+        <div>
           {fc('Name', <TextInput value={form.name} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('name', e.target.value)} placeholder="e.g. Code Assistant" block />)}
         </div>
         <AvatarPicker name={form.name} value={form.avatar || ''} onChange={v => set('avatar', v)} />
@@ -294,14 +296,14 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
           <TextInput block type="number" min={0} step={1000} value={String(form.context_window || 0)}
             onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('context_window', parseInt(e.target.value) || 0)} />,
           'Tokens this model accepts — the Context panel needs it to show how full the window is (0 = unknown, no provider reports it)')}
-        <div style={{ display: 'flex', gap: 12 }}>
-          <div style={{ flex: 1 }}>
+        <div className="form-row">
+          <div>
             {fc('Temperature', <TextInput type="number" step={0.1} min={0} max={2} value={temperature} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTemperature(e.target.value)} block />)}
           </div>
-          <div style={{ flex: 1 }}>
+          <div>
             {fc('Top-p', <TextInput type="number" step={0.05} min={0} max={1} value={topP} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTopP(e.target.value)} block />)}
           </div>
-          <div style={{ flex: 1 }}>
+          <div>
             {fc('Max tokens', <TextInput type="number" step={1} min={1} value={maxTokens} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setMaxTokens(e.target.value)} block />)}
           </div>
         </div>
@@ -319,7 +321,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
             unsupported.includes('service_tier') ? 'Not supported by this provider — a set value fails runs' : undefined)}
         <JsonField label="Extra body (JSON)" value={extraBody} onChange={setExtraBody} placeholder='{"enable_thinking": true, "thinking_budget": 1024}' caption="Provider-specific parameters injected into every API request" />
         {Object.keys(preservedMs).length > 0 && (
-          <span style={{ color: 'var(--fgColor-muted)', fontSize: 'var(--text-body-size-small)' }}>
+          <span className="FormControl-caption">
             Set via API, preserved on save: {Object.keys(preservedMs).sort().join(', ')}
           </span>
         )}
@@ -327,11 +329,11 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
 
       <div className="form-group">
         <div className="form-group-title">Instructions</div>
-        {fc('Instructions', <Textarea value={form.instructions} onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('instructions', e.target.value)} rows={8} placeholder="System prompt / instructions for this agent..." block style={{ fontFamily: 'var(--fontStack-monospace)' }} />, null, { hideLabel: true })}
+        {fc('Instructions', <Textarea value={form.instructions} onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('instructions', e.target.value)} rows={8} placeholder="System prompt / instructions for this agent…" block className="textarea-grow" style={{ fontFamily: 'var(--fontStack-monospace)' }} />, null, { hideLabel: true })}
       </div>
 
       {visibleMcp.length > 0 && <div className="form-group">
-        <div className="form-group-title">MCP Servers</div>
+        <div className="form-group-title">MCP servers</div>
         <div className="form-checkbox-group">
           {visibleMcp.map(s => {
             const usable = s.status === 'connected';
@@ -342,7 +344,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
                   {s.name}
                   {usable
                     ? <span className="form-status-dot form-status-dot--success form-status-dot--inline" />
-                    : <span className="resource-row-sub" style={{ marginLeft: 4 }}>({s.status === 'disabled' ? 'disabled' : 'not connected'})</span>}
+                    : <span className="resource-row-sub form-label-note">({s.status === 'disabled' ? 'disabled' : 'not connected'})</span>}
                 </FormControl.Label>
               </FormControl>
             );
@@ -394,9 +396,10 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
               <FormControl key={a.id}>
                 <Checkbox checked={selectedHandoffs.includes(a.id)} onChange={() => toggleHandoff(a.id)} />
                 <FormControl.Label>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <span className="agent-inline">
                     <AgentAvatar name={a.name} avatar={a.avatar} size={20} />
                     {a.name}
+                    <ScopeHint agent={a} colliding={handoffCollisions} />
                   </span>
                 </FormControl.Label>
                 <FormControl.Caption>{a.model || 'default model'}</FormControl.Caption>
@@ -458,7 +461,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
           {fc('Threshold (tokens)', <TextInput block type="number" min={0} value={String(form.compaction_threshold_tokens || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_threshold_tokens', parseInt(e.target.value) || 0)} />, 'Token count that triggers compaction (0 = default 50000); sized from real usage, byte-estimated where unmeasured')}
           {fc('Window size', <TextInput block type="number" min={0} value={String(form.compaction_window || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_window', parseInt(e.target.value) || 0)} />, 'Recent items to keep intact (0 = default 10)')}
           {fc('Summary model', <TextInput value={form.compaction_model || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_model', e.target.value)} placeholder="e.g. gpt-4.1-mini" block />, "Model used to generate conversation summaries (empty = the agent's model)")}
-          {fc('Summary prompt', <Textarea value={form.compaction_prompt || ''} onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('compaction_prompt', e.target.value)} rows={8} placeholder="Custom summarization instructions (leave empty for default)" block style={{ fontFamily: 'var(--fontStack-monospace)' }} />)}
+          {fc('Summary prompt', <Textarea value={form.compaction_prompt || ''} onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('compaction_prompt', e.target.value)} rows={8} placeholder="Custom summarization instructions (leave empty for default)" block className="textarea-grow" style={{ fontFamily: 'var(--fontStack-monospace)' }} />)}
         </>}
       </div>
 
@@ -555,8 +558,8 @@ export function AgentConfigPanel() {
   const { me } = useMe();
   const isAdmin = me?.role === 'admin';
   const rowEditable = (a: Agent) => canEditRow(isAdmin, me?.id, a);
-  const { items: agents, adding, editing, startAdd, startEdit, cancel, save, saving, remove, reload } =
-    useCrud<Agent, AgentFormData & { handoffs: string; tools: string; skills: string; model_settings: string }>(api.agents);
+  const { items: agents, loading, adding, editing, startAdd, startEdit, cancel, save, saving, remove, reload } =
+    useCrud<Agent, AgentFormData & { handoffs: string; tools: string; skills: string; model_settings: string }>(api.agents, 'agents');
   // Fork seeds the CREATE form from a row — nothing is written until Save.
   // Cleared on a plain "+ Add" so a stale seed never leaks into a blank form.
   const [forkOf, setForkOf] = useState<Agent | null>(null);
@@ -568,10 +571,10 @@ export function AgentConfigPanel() {
     setForkOf(a); startAdd();
   };
   const startBlankAdd = () => { setForkOf(null); startAdd(); };
-  const { data: mcpServers } = useApi<McpServer[]>(() => api.mcpServers.list() as Promise<McpServer[]>);
-  const { data: skills } = useApi<Skill[]>(() => api.skills.list() as Promise<Skill[]>);
-  const { data: providerTypes } = useApi<ProviderTypeInfo[]>(() => api.providerTypes.list() as Promise<ProviderTypeInfo[]>);
-  const { data: providers } = useApi<ProviderRef[]>(() => api.providers.list() as Promise<ProviderRef[]>);
+  const { data: mcpServers } = useApi<McpServer[]>(() => api.mcpServers.list() as Promise<McpServer[]>, [], 'mcp-servers');
+  const { data: skills } = useApi<Skill[]>(() => api.skills.list() as Promise<Skill[]>, [], 'skills');
+  const { data: providerTypes } = useApi<ProviderTypeInfo[]>(() => api.providerTypes.list() as Promise<ProviderTypeInfo[]>, [], 'provider-types');
+  const { data: providers } = useApi<ProviderRef[]>(() => api.providers.list() as Promise<ProviderRef[]>, [], 'providers');
 
   // The key remounts the form when the seed changes; the fork seed drops the
   // id (so nothing treats it as the source row), sheds the source's
@@ -602,10 +605,10 @@ export function AgentConfigPanel() {
     // Scoped rows: the form is a disabled view exactly when the opened row is
     // not the caller's to edit (canEditRow), not for every member.
     <ReadOnlyContext value={!!editing && !rowEditable(editing)}>
-      <CrudPanel title="Agents" onAdd={startBlankAdd} onCancel={cancel} form={form} isEmpty={agents.length === 0}
+      <CrudPanel title="Agents" onAdd={startBlankAdd} onCancel={cancel} form={form} loading={loading} isEmpty={agents.length === 0}
         onDelete={editing && canDeleteRow(isAdmin, me?.id, editing)
           ? async () => { if (await remove(editing.id, editing.name)) cancel(); } : null}
-        empty="No agents configured. Add one to customize model, provider, and behavior.">
+        empty="No agents yet." emptyHint="An agent is a model on an endpoint with its instructions and tools.">
         {agents.map(a => {
           const rowProvider = (providers || []).find(p => p.id === a.provider_id);
           return (

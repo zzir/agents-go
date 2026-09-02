@@ -273,8 +273,7 @@
   flex-shrink: 0;
   min-width: 0;
 }
-.trace-replay-hint,
-.trace-replay-invalid {
+.trace-replay-hint {
   font-size: var(--base-text-size-xs);
   font-weight: var(--base-text-weight-normal);
   text-transform: none;
@@ -285,6 +284,7 @@
   white-space: nowrap;
   min-width: 0;
 }
+/* A hint that reports a parse error — the modifier on .trace-replay-hint. */
 .trace-replay-invalid {
   color: var(--fgColor-danger);
 }
@@ -604,11 +604,4 @@
   padding: 0 var(--base-size-6);
   line-height: 16px;
   white-space: nowrap;
-}
-
-/* A span the Context panel sent the reader to — same 1.8s outline the chat
-   uses for a jumped-to message, so both directions of the jump read alike. */
-.trace-span.trace-span-revealed {
-  animation: msg-jump-flash 1.8s ease-out;
-  border-radius: var(--borderRadius-small);
 }

@@ -348,8 +348,8 @@ function copyOf(s: SandboxRow): SandboxRow {
 
 export function SandboxPanel() {
   const readOnly = useReadOnly();
-  const { items, adding, editing, startAdd, startEdit, cancel, save, saving, remove } =
-    useCrud<SandboxRow, PackedForm>(api.sandboxes);
+  const { items, loading, adding, editing, startAdd, startEdit, cancel, save, saving, remove } =
+    useCrud<SandboxRow, PackedForm>(api.sandboxes, 'sandboxes');
   const [seed, setSeed] = useState<SandboxRow | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
 
@@ -375,7 +375,8 @@ export function SandboxPanel() {
     : null;
 
   return (
-    <CrudPanel title="Sandboxes" onAdd={() => { setSeed(null); startAdd(); }} onCancel={close} form={form} isEmpty={items.length === 0} empty="No sandboxes configured.">
+    <CrudPanel title="Sandboxes" onAdd={() => { setSeed(null); startAdd(); }} onCancel={close} form={form} loading={loading} isEmpty={items.length === 0}
+      empty="No sandboxes yet." emptyHint="A sandbox is where a project's files live and its commands run.">
       {items.map(s => (
         <ResourceRow key={s.id}
           title={s.name}
@@ -384,7 +385,7 @@ export function SandboxPanel() {
           actions={<>
             {!readOnly && (
               <Button onClick={() => handleTest(s)} size="small" variant="invisible" disabled={testingId === s.id}>
-                {testingId === s.id ? 'Testing...' : 'Test'}
+                {testingId === s.id ? 'Testing…' : 'Test'}
               </Button>
             )}
             <RowActionsMenu

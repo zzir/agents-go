@@ -1,20 +1,21 @@
 import './chat.css';
 import { useState, useEffect, useCallback, useMemo, useRef, type MouseEvent, type ReactNode } from 'react';
-import { Button, Dialog, IconButton, ActionMenu, ActionList, Select, Stack, TextInput, useConfirm } from '@primer/react';
+import { Button, IconButton, ActionMenu, ActionList, useConfirm } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { api } from '@/lib/api';
 import { CHECK_ICON } from '@/lib/markdownShared';
 import { type TurnPart, type TimelineEntry, type Branches, type WorkflowStartedNote } from '@/lib/timeline';
-import { useScrollToBottom, useApi } from '@/lib/hooks';
+import { useScrollToBottom, useApi, useCopy } from '@/lib/hooks';
 import { loadSessionAgent, saveSessionAgent, loadLastAgent, saveLastAgent, loadSessionProject, saveSessionProject } from '@/lib/drafts';
-import { composerSandboxView, groupProjects, projectLabel, type EnvVar, type Project, type SandboxSupports, type SessionBinding } from '@/lib/binding';
+import { composerSandboxView, groupProjects, projectLabel, type Project, type SandboxSupports, type SessionBinding } from '@/lib/binding';
 import { useProjects } from '@/lib/useProjects';
-import { fc } from '@/lib/form';
 import { parseTaskNotification, TASK_KIND_WORKFLOW, type TaskStatus } from '@/lib/protocol';
 import type { SessionState, TaskState } from '@/lib/useAgentSocket';
 import { ChatSessionProvider, useDerivedChatTasks, type ChatSessionState, type ChatActions } from '@/features/chat/ChatSessionContext';
 import { BackgroundListPanel, BackgroundDetailPanel, BackgroundMissingPanel } from '@/features/chat/BackgroundPanel';
 import { AgentAvatar } from '@/components/AgentAvatar';
+import { ScopeHint, collidingNames } from '@/components/AgentPicker';
+import { Loading } from '@/components/Loading';
 import { MessageBubble } from '@/features/chat/MessageBubble';
 import { TurnBlock } from '@/features/chat/TurnBlock';
 import { UserMessage } from '@/features/chat/UserMessage';
@@ -25,11 +26,10 @@ import { ChatToc } from '@/features/chat/ChatToc';
 import { MessageInput } from '@/features/chat/MessageInput';
 import type { AttachmentMeta } from '@/lib/attachments';
 import { WorkflowStrip } from '@/features/chat/WorkflowStrip';
-import { TraceDrawer, type TraceReveal } from '@/features/chat/TracePanel';
+import { TraceDrawer } from '@/features/chat/TracePanel';
 import { ContextPanel } from '@/features/chat/ContextPanel';
 import { ChatTopBar } from '@/features/chat/ChatTopBar';
-import { ProjectEnvDialog } from '@/features/chat/ProjectEnvDialog';
-import { EnvEditor, cleanEnv, envError } from '@/components/EnvEditor';
+import { NewProjectDialog, useProjectMenu } from '@/features/chat/ProjectControls';
 import { ArrowDownIcon, CommentDiscussionIcon, FileDirectoryIcon, PlusIcon } from '@primer/octicons-react';
 import { toast } from '@/lib/toast';
 
@@ -82,6 +82,7 @@ interface AgentConfig {
   id: string;
   name: string;
   avatar?: string;
+  scope?: string;
   // The behavior group, read for the Vision flag (image input gate).
   behavior?: { vision?: boolean };
 }
@@ -132,10 +133,9 @@ export interface ChatViewActions {
   onLoadSpan?: (spanSessionId: string, runId: string, spanId: string) => Promise<void>;
   onPanelChange: (panel: InspectorPanel) => void;
   // Opens the global terminal panel (app-level, independent of the session).
-  // Open-only by design: closing/collapsing happens on the panel itself. When
-  // the session is bound its project is passed along, and a freshly opened
-  // panel starts a terminal for it — in the same container the session's runs
-  // use.
+  // Open-only by design: closing/collapsing happens on the panel itself. The
+  // bound session's project is passed along, and a freshly opened panel
+  // starts a terminal for it — in the same container the session's runs use.
   onTerminalOpen?: (project?: { projectId: string; projectName?: string; targetName?: string }) => void;
 }
 
@@ -182,20 +182,8 @@ export function ChatView({
   } = actions;
   const [agentConfigId, setAgentConfigIdState] = useState(() => loadSessionAgent(sessionId || ''));
   const [projectId, setProjectIdState] = useState(() => loadSessionProject(sessionId || ''));
-  // The "New project…" dialog: pick a machine and a template, name the project.
-  const [projDialogOpen, setProjDialogOpen] = useState(false);
-  const [projSandboxId, setProjSandboxId] = useState('');
-  const [projName, setProjName] = useState('');
-  const [projEnv, setProjEnv] = useState<EnvVar[]>([]);
-  const [projSaving, setProjSaving] = useState(false);
-  // The bound project whose environment is open for editing, and whether a
-  // container call is in flight (both disable the menu).
-  const [envProject, setEnvProject] = useState<Project | null>(null);
-  const [containerBusy, setContainerBusy] = useState(false);
-  // The bound project's compute state, refreshed when the menu's owner
-  // changes and after every act on it. '' means "not asked yet".
-  const [sandboxState, setSandboxState] = useState('');
-  const [stateLoading, setStateLoading] = useState(false);
+  // The "New project…" dialog, seeded with the machine to offer first.
+  const [newProject, setNewProject] = useState<{ sandboxId: string } | null>(null);
 
   useEffect(() => {
     setAgentConfigIdState(loadSessionAgent(sessionId || ''));
@@ -219,20 +207,8 @@ export function ChatView({
   }, [sessionId]);
 
   const [traceActiveRun, setTraceActiveRun] = useState<string | null>(null);
-  // The span a Context panel jump asked the trace to open, and the counter that
-  // makes repeating the same jump a fresh instruction.
-  const [traceReveal, setTraceReveal] = useState<TraceReveal | null>(null);
-  // A reveal is one instruction, not a standing state: once the trace panel
-  // closes (or the session changes), a later manual open must not replay the
-  // old jump's scroll.
-  useEffect(() => {
-    if (panel?.kind !== 'trace') setTraceReveal(null);
-  }, [panel?.kind]);
-  useEffect(() => {
-    setTraceReveal(null);
-  }, [sessionId]);
-  const { data: agentConfigs, reload: reloadAgents } = useApi<AgentConfig[]>(() => api.agents.list() as Promise<AgentConfig[]>);
-  const { data: sandboxDefs, reload: reloadSandboxes } = useApi<SandboxDef[]>(() => api.sandboxes.list() as Promise<SandboxDef[]>);
+  const { data: agentConfigs, reload: reloadAgents } = useApi<AgentConfig[]>(() => api.agents.list() as Promise<AgentConfig[]>, [], 'agents');
+  const { data: sandboxDefs, reload: reloadSandboxes } = useApi<SandboxDef[]>(() => api.sandboxes.list() as Promise<SandboxDef[]>, [], 'sandboxes');
   // The caller's project rows for the picker — the same hook the terminal
   // panel's + menu uses.
   const { projects, error: projectsError, reload: reloadProjects, mutate: mutateProjects } = useProjects(bindingsVersion);
@@ -311,6 +287,9 @@ export function ChatView({
     scrollRef(node);
   }, [scrollRef]);
 
+  // The code-block copy buttons live in rendered markdown, outside React, so
+  // the click is caught here and the button's icon flipped by hand.
+  const { copy } = useCopy();
   const handleCopyClick = useCallback((e: MouseEvent<HTMLDivElement>) => {
     const expand = (e.target as HTMLElement).closest('.btn-code-expand') as HTMLElement | null;
     if (expand) {
@@ -319,19 +298,17 @@ export function ChatView({
     }
     const btn = (e.target as HTMLElement).closest('.btn-copy') as HTMLElement | null;
     if (!btn) return;
-    // getAttribute already returns the decoded value (the HTML parser resolved
-    // the entities the renderer escaped into the attribute). A second manual
-    // decode here corrupted any code that literally contained an entity like
-    // "&amp;", so read the attribute as-is.
+    // getAttribute returns the decoded value; the renderer escaped it.
     const code = btn.getAttribute('data-code');
     if (!code) return;
-    navigator.clipboard.writeText(code).then(() => {
+    void copy(code).then(ok => {
+      if (!ok) return;
       btn.classList.add('copied');
       const svgContent = btn.innerHTML;
       btn.innerHTML = CHECK_ICON;
       setTimeout(() => { btn.classList.remove('copied'); btn.innerHTML = svgContent; }, 1500);
     });
-  }, []);
+  }, [copy]);
 
   const selectedProject = projects?.find(p => p.id === projectId);
   const sandboxName = (id?: string) => sandboxDefs?.find(sb => sb.id === id)?.name || '';
@@ -339,120 +316,15 @@ export function ChatView({
   // its binding's, never the composer's current pick.
   const boundProject = sessionBinding?.projectId ? projects?.find(p => p.id === sessionBinding.projectId) || null : null;
   const boundSandbox = sandboxDefs?.find(sb => sb.id === boundProject?.sandbox_id);
-  // Whether the bound project's sandbox row is known: false while sandboxDefs
-  // load, and for an orphan project whose row was deleted. The menu leans on
-  // this so a danger action (Rebuild) is never offered on a guess.
-  const boundSandboxKnown = !!boundProject && !!boundSandbox;
-
-  // The state is read when the bound project changes, again as the menu opens,
-  // and whenever a run starts or ends: a run's first command starts the
-  // sandbox without telling this component, so a state read once at bind time
-  // goes stale in the most ordinary way there is. A failure leaves the last
-  // known value in place (or, on a first read, offers Start — the harmless
-  // choice). A stale response never wins: only the newest read for the current
-  // project lands.
-  const stateReqSeq = useRef(0);
-  const refreshSandboxState = useCallback(async (projectID: string) => {
-    const seq = ++stateReqSeq.current;
-    setStateLoading(true);
-    try {
-      const state = (await api.projects.sandboxStatus(projectID)).state;
-      if (seq === stateReqSeq.current) setSandboxState(state);
-    } catch {
-      // Keep the last known value; '' stays '' and renders Start, not a
-      // permanent "Checking…".
-    } finally {
-      if (seq === stateReqSeq.current) setStateLoading(false);
-    }
-  }, []);
-  useEffect(() => {
-    if (!boundProject) { stateReqSeq.current++; setSandboxState(''); return; }
-    void refreshSandboxState(boundProject.id);
-  }, [boundProject, refreshSandboxState]);
-  // A run's first command starts the container and its end lets the idle timer
-  // stop it; either edge can move the state without a message to this
-  // component, so re-read on both.
-  useEffect(() => {
-    if (boundProject) void refreshSandboxState(boundProject.id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [running]);
-
-  // Start and stop are synchronous and can take an image pull's worth of
-  // time, so the menu stays disabled until they answer.
-  const startSandbox = async () => {
-    if (!boundProject || containerBusy) return;
-    setContainerBusy(true);
-    toast.info('Starting the sandbox…');
-    try {
-      await api.projects.sandboxStart(boundProject.id);
-      setSandboxState('running');
-      toast.success('Sandbox running');
-    } catch (e) {
-      toast.error((e as Error).message || 'Could not start the sandbox');
-    } finally {
-      setContainerBusy(false);
-    }
-  };
-
-  const stopSandbox = async () => {
-    if (!boundProject || containerBusy) return;
-    setContainerBusy(true);
-    try {
-      const res = await api.projects.sandboxStop(boundProject.id);
-      if (res.stopped) {
-        setSandboxState('stopped');
-        toast.success('Sandbox stopped — the files are kept');
-      } else {
-        // A run or an open terminal is still using it; it stops when that ends.
-        toast.info('Will stop when the work using it finishes');
-      }
-    } catch (e) {
-      toast.error((e as Error).message || 'Could not stop the sandbox');
-    } finally {
-      setContainerBusy(false);
-    }
-  };
-
-  // Export reads the container; it does not change its lifecycle, so it never
-  // takes the containerBusy lock that Start/Stop/Rebuild hold — a slow export
-  // must not lock the menu shut on the state itself. Its own ref only stops a
-  // double-click.
-  const exportBusy = useRef(false);
-
-  const exportProject = async () => {
-    if (!boundProject || exportBusy.current) return;
-    exportBusy.current = true;
-    toast.info('Preparing the archive…');
-    try {
-      await api.projects.exportTar(boundProject.id, boundProject.name);
-    } catch (e) {
-      toast.error((e as Error).message || 'Could not export the project');
-    } finally {
-      exportBusy.current = false;
-    }
-  };
-
-  // A rebuild is synchronous and can take an image pull's worth of time, so
-  // the menu stays disabled until it answers.
-  const rebuildContainer = async () => {
-    if (!boundProject || containerBusy) return;
-    if (!await confirmDialog({
-      title: `Rebuild the container for “${boundProject.name}”?`,
-      content: 'The container is discarded and created again from the image. Files under /workspace survive; anything installed into the container does not, and commands running in it right now will fail.',
-      confirmButtonType: 'danger',
-    })) return;
-    setContainerBusy(true);
-    toast.info('Rebuilding the container…');
-    try {
-      await api.projects.rebuildContainer(boundProject.id);
-      setSandboxState('running');
-      toast.success('Container rebuilt');
-    } catch (e) {
-      toast.error((e as Error).message || 'The rebuild failed');
-    } finally {
-      setContainerBusy(false);
-    }
-  };
+  // Capabilities come from the sandbox row the project names. Until that row
+  // declares `rebuild`, Rebuild is withheld rather than offered on a guess: a
+  // backend whose store IS the compute cannot be rebuilt.
+  const { menu: projectMenu, dialog: envDialog } = useProjectMenu({
+    project: boundProject,
+    rebuildable: !!boundProject && !!boundSandbox?.supports?.rebuild,
+    running,
+    onProjectsChanged: reloadProjects,
+  });
   const sandboxView = composerSandboxView(sessionBinding || null, projects, sandboxDefs);
 
   const handleSend = useCallback((text: string, attachments?: AttachmentMeta[]) => {
@@ -532,12 +404,10 @@ export function ChatView({
           for (let j = i - 1; j >= 0; j--) {
             if (messages[j].role === 'user') {
               userContent = messages[j].content ?? null;
-              // The turn's run OVERWRITES the one the user message carries.
-              // A message's own run_id is whichever run first produced it —
-              // after a regenerate that is an attempt the session has since
-              // branched away from, and it would claim the jump target for a
-              // run no longer in the timeline while the current attempt got
-              // none. On the active branch a message is followed by exactly
+              // The turn's run OVERWRITES the one the user message carries:
+              // a message's own run_id is whichever run first produced it —
+              // after a regenerate, an attempt the session has branched away
+              // from. On the active branch a message is followed by exactly
               // one turn, so there is nothing to contend over.
               if (!parseTaskNotification(messages[j].content)) uMap[j] = rid;
               break;
@@ -582,10 +452,8 @@ export function ChatView({
 
   // Wake-up run → the run whose spawn_task started the chain, read straight
   // off the trace: a wake run's spans carry parent_run_id, recorded at launch.
-  // The lineage lives on the run's own durable output — deriving it here from
-  // task rows and notification text broke on every surface that does not carry
-  // them (a fork copies traces but not task rows; a fold moves the
-  // notification out of the rendered timeline).
+  // The lineage lives on the run's own durable output — task rows and
+  // notification text do not survive a fork or a fold.
   const traceRunParents = useMemo(() => {
     const parents: Record<string, string> = {};
     for (const [rid, evs] of Object.entries(traceRuns)) {
@@ -668,8 +536,6 @@ export function ChatView({
     return () => onUnwatchTask(sessionId);
   }, [sessionId, inspectedId, inspectedChild, onWatchTask, onUnwatchTask]);
 
-  // Runs that have a user message in this conversation — gates the trace
-  // panel's jump-to-message control.
   // Runs the trace panel can offer a "jump to message" for: those with
   // something in the RENDERED timeline to jump to. A run whose attempt was
   // regenerated away has no anchor — the jump would scroll to nothing — so it
@@ -737,38 +603,15 @@ export function ChatView({
       panel={panel}
       onPanelChange={onPanelChange}
       terminalEnabled={!!onTerminalOpen && !!sandboxDefs && sandboxDefs.length > 0}
-      onTerminalOpen={onTerminalOpen
-        ? () => {
-          // A bound session's terminal follows its binding — the same
-          // container the runs use. Unbound sessions fall back to the
-          // picker's current selection; a terminal cannot open without a
-          // project.
-          const pid = sessionBinding?.projectId || projectId;
-          const project = pid ? projects?.find(p => p.id === pid) : undefined;
-          onTerminalOpen(pid
-            ? { projectId: pid, projectName: project?.name || '', targetName: sandboxName(project?.sandbox_id) }
-            : undefined);
-        }
+      // The bound project's terminal — the same container the runs use. The
+      // menu that offers it renders only once the session is bound.
+      onTerminalOpen={onTerminalOpen && boundProject
+        ? () => onTerminalOpen({ projectId: boundProject.id, projectName: boundProject.name, targetName: sandboxName(boundProject.sandbox_id) })
         : undefined}
       binding={sandboxView.bound && sessionBinding
         ? { title: sandboxView.title, projectName: projects?.find(p => p.id === sessionBinding.projectId)?.name || '…' }
         : null}
-      projectMenu={boundProject ? {
-        busy: containerBusy,
-        state: sandboxState,
-        stateLoading,
-        // Capabilities come from the sandbox row the project names. Until that
-        // row declares `rebuild`, Rebuild is withheld rather than offered on a
-        // guess: a backend whose store IS the compute cannot be rebuilt, and a
-        // mislabelled Rebuild there would read as "safe" when it is refused.
-        rebuildable: boundSandboxKnown && !!boundSandbox?.supports?.rebuild,
-        onEnv: () => setEnvProject(boundProject),
-        onStart: () => { void startSandbox(); },
-        onStop: () => { void stopSandbox(); },
-        onExport: () => { void exportProject(); },
-        onRebuild: () => { void rebuildContainer(); },
-        onOpen: () => { void refreshSandboxState(boundProject.id); },
-      } : null}
+      projectMenu={projectMenu}
     />
   );
 
@@ -798,6 +641,7 @@ export function ChatView({
 
   const selectedAgent = agentConfigs?.find(a => a.id === agentConfigId);
   const selectedAgentLabel = selectedAgent?.name || 'Agent';
+  const agentCollisions = collidingNames(agentConfigs || []);
 
   const inputToolbar: ReactNode = (
     <>
@@ -849,14 +693,7 @@ export function ChatView({
                   </ActionList.Group>
                 ))}
                 <ActionList.Divider />
-                <ActionList.Item
-                  onSelect={() => {
-                    setProjSandboxId(selectedProject?.sandbox_id || sandboxDefs[0].id);
-                    setProjName('');
-                    setProjEnv([]);
-                    setProjDialogOpen(true);
-                  }}
-                >
+                <ActionList.Item onSelect={() => setNewProject({ sandboxId: selectedProject?.sandbox_id || sandboxDefs[0].id })}>
                   New project…
                 </ActionList.Item>
                 {/* A plain menu item, not a per-row trailing action: Primer
@@ -872,79 +709,24 @@ export function ChatView({
             </ActionMenu.Overlay>
           </ActionMenu>
         )}
-        {projDialogOpen && (() => {
-          const projSandbox = sandboxDefs?.find(sb => sb.id === projSandboxId);
-          const create = async () => {
-            if (!projSandbox || !projName.trim() || projSaving) return;
-            setProjSaving(true);
-            try {
-              const created = await api.projects.create({
-                name: projName.trim(),
-                sandbox_id: projSandbox.id,
-                env: cleanEnv(projEnv),
-              }) as Project;
+        {newProject && sandboxDefs && (
+          <NewProjectDialog
+            sandboxes={sandboxDefs}
+            initialSandboxId={newProject.sandboxId}
+            onClose={() => setNewProject(null)}
+            onCreated={created => {
               // Seed the cached list before selecting: the stale-id guard
-              // below runs against `projects` on the very next commit, and a
+              // above runs against `projects` on the very next commit, and a
               // fire-and-forget reload would hand it a list without the new
               // row — wiping the selection it should protect.
               mutateProjects(prev => prev ? [...prev.filter(p => p.id !== created.id), created] : [created]);
               if (created.id) setProjectId(created.id);
               reloadProjects();
-              setProjDialogOpen(false);
-            } catch (e) {
-              // 409: a project of that name already exists on this machine.
-              toast.error((e as Error).message || 'Could not create the project');
-            } finally {
-              setProjSaving(false);
-            }
-          };
-          return (
-            <Dialog
-              title="New project"
-              onClose={() => setProjDialogOpen(false)}
-              width="large"
-              footerButtons={[
-                { content: 'Cancel', onClick: () => setProjDialogOpen(false) },
-                {
-                  content: projSaving ? 'Creating…' : 'Create',
-                  buttonType: 'primary',
-                  disabled: !projSandbox || !projName.trim() || projSaving || !!envError(projEnv),
-                  onClick: () => { void create(); },
-                },
-              ]}
-            >
-              <Stack gap="normal">
-                {fc('Sandbox', (
-                  <Select block value={projSandboxId} onChange={e => setProjSandboxId(e.target.value)}>
-                    {sandboxDefs?.map(sb => (
-                      <Select.Option key={sb.id} value={sb.id}>{sb.name}</Select.Option>
-                    ))}
-                  </Select>
-                ), 'The machine the files live on and the image they run in. The machine is fixed once the project exists; the image can change.')}
-                {fc('Name', (
-                  <TextInput
-                    block
-                    value={projName}
-                    placeholder="e.g. goagents"
-                    onChange={e => setProjName(e.target.value)}
-                  />
-                ), 'Names the working tree the container mounts; unique per sandbox.')}
-                {/* The editor carries its own explanation; a caption here
-                    would be a third line of small print saying the same. */}
-                {fc('Environment', (
-                  <EnvEditor vars={projEnv} onChange={setProjEnv} disabled={projSaving} />
-                ), envError(projEnv))}
-              </Stack>
-            </Dialog>
-          );
-        })()}
-        {envProject && (
-          <ProjectEnvDialog
-            project={envProject}
-            sessionCount={envProject.session_count}
-            onClose={() => { setEnvProject(null); reloadProjects(); }}
+              setNewProject(null);
+            }}
           />
         )}
+        {envDialog}
       </div>
       <div className="chat-input-toolbar-right">
         {agentConfigs && agentConfigs.length > 0 ? (
@@ -962,6 +744,9 @@ export function ChatView({
                       <AgentAvatar name={a.name} avatar={a.avatar} size={20} />
                     </ActionList.LeadingVisual>
                     {a.name}
+                    {agentCollisions.has(a.name) && (
+                      <ActionList.TrailingVisual><ScopeHint agent={a} colliding={agentCollisions} /></ActionList.TrailingVisual>
+                    )}
                   </ActionList.Item>
                 ))}
               </ActionList>
@@ -1012,15 +797,14 @@ export function ChatView({
             attachments={(m as { attachments?: AttachmentMeta[] }).attachments}
             traceRunId={rid || null}
             msgIdx={i}
-            entryId={m.entryId}
           />
         );
       }
       if (m.role === 'compaction') {
-        return <CompactionCard key={entryKey(m, i, 'compaction')} {...m} />;
+        return <CompactionCard key={entryKey(m, i, 'compaction')} content={m.content} tokensBefore={m.tokensBefore} tokensAfter={m.tokensAfter} />;
       }
       if (m.role === 'system' && m.note) {
-        return <WorkflowStartedChip key={entryKey(m, i, 'msg')} note={m.note} content={m.content || ''} traceRunId={userRunMap[i] || null} msgIdx={i} entryId={m.entryId} />;
+        return <WorkflowStartedChip key={entryKey(m, i, 'msg')} note={m.note} content={m.content || ''} traceRunId={userRunMap[i] || null} msgIdx={i} />;
       }
       return <MessageBubble key={entryKey(m, i, 'msg')} role={m.role} content={m.content || ''} />;
   };
@@ -1043,7 +827,6 @@ export function ChatView({
           onClose={() => onPanelChange(null)}
           onJumpToRun={jumpToRun}
           messageRunIds={messageRunIds}
-          reveal={traceReveal || undefined}
         />
       )}
       {panel?.kind === 'context' && sessionId && (
@@ -1085,6 +868,7 @@ export function ChatView({
       <div className="chat-main">
         <div className="chat-content">
           {topBar}
+          <Loading kind="panel" />
         </div>
       </div>
     );

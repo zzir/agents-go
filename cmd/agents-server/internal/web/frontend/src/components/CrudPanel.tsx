@@ -2,22 +2,26 @@ import { type ReactNode } from 'react';
 import { ActionList, Button, Label, PageHeader, Stack } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { RowMenu } from '@/components/ListTable';
+import { Loading } from '@/components/Loading';
 import { useReadOnly, type ScopedRow } from '@/lib/access';
 import { BADGE } from '@/lib/badges';
 import { toast } from '@/lib/toast';
 
 /** The list-or-form scaffold every settings panel shares: a PageHeader whose
- * "+ Add" hides while a form shows, the form in the list's place, and a
- * Blankslate when the list is empty. The form and each row stay the panel's
- * own. as="section" nests it inside a page (the Settings routes block).
+ * "+ Add" hides while a form shows, the form in the list's place, a skeleton
+ * while the first fetch is out, and a Blankslate when the list is empty. The
+ * form and each row stay the panel's own. as="section" nests it inside a page
+ * (the Settings routes block).
  * Read-only (a member's dialog, or a scoped row not the caller's to edit):
  * no Add, and the form opens disabled — a view of the record — with Back
  * where Cancel would be, plus Delete when onDelete allows it (the admin's
  * one write on a foreign private row). */
-export function CrudPanel({ title, as, description, onAdd, onCancel, onDelete, form, isEmpty, empty, children }: {
+export function CrudPanel({ title, as, description, actions, onAdd, onCancel, onDelete, form, loading, isEmpty, empty, emptyHint, children }: {
   title: string;
   as?: 'page' | 'section';
   description?: ReactNode;
+  // Extra header buttons beside "+ Add" (an Import), shown when it is.
+  actions?: ReactNode;
   onAdd: () => void;
   // Closes the form; read-only mode's Back button, since the form's own
   // actions are disabled with the rest of it.
@@ -26,8 +30,13 @@ export function CrudPanel({ title, as, description, onAdd, onCancel, onDelete, f
   // row it shows (delete is allowed where edit is not).
   onDelete?: (() => void) | null;
   form: ReactNode | null;
+  // useCrud's flag: an empty list is a skeleton, not "No X yet", until the
+  // first fetch answers.
+  loading?: boolean;
   isEmpty: boolean;
+  // "No <things> yet." — and, under it, what to do about that.
   empty: ReactNode;
+  emptyHint?: ReactNode;
   children: ReactNode;
 }) {
   const readOnly = useReadOnly();
@@ -37,7 +46,10 @@ export function CrudPanel({ title, as, description, onAdd, onCancel, onDelete, f
         <PageHeader.TitleArea>
           <PageHeader.Title as={as === 'section' ? 'h3' : undefined}>{title}</PageHeader.Title>
         </PageHeader.TitleArea>
-        {!form && !readOnly && <PageHeader.Actions><Button onClick={onAdd} variant="primary" size="small">+ Add</Button></PageHeader.Actions>}
+        {!form && !readOnly && <PageHeader.Actions>
+          {actions}
+          <Button onClick={onAdd} variant="primary" size="small">+ Add</Button>
+        </PageHeader.Actions>}
         {form && readOnly && onCancel && <PageHeader.Actions>
           {onDelete && <Button onClick={onDelete} variant="danger" size="small">Delete</Button>}
           <Button onClick={onCancel} size="small">Back</Button>
@@ -50,7 +62,14 @@ export function CrudPanel({ title, as, description, onAdd, onCancel, onDelete, f
       {!form && (
         <div className="Box">
           {children}
-          {isEmpty && <Blankslate><Blankslate.Description>{empty}</Blankslate.Description></Blankslate>}
+          {isEmpty && (loading
+            ? <Loading kind="list" />
+            : <Blankslate>
+                <Blankslate.Description>
+                  {empty}
+                  {emptyHint && <><br />{emptyHint}</>}
+                </Blankslate.Description>
+              </Blankslate>)}
         </div>
       )}
     </>
@@ -120,4 +139,3 @@ export function ScopeBadge({ row, meId }: { row: ScopedRow; meId?: string }) {
   if (meId && row.owner_id && row.owner_id !== meId) return <Label variant={BADGE.scope}>Private</Label>;
   return null;
 }
-

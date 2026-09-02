@@ -120,9 +120,10 @@ export interface StepRow {
   stepId: string;
   name: string;
   runId: string;
-  // The log's verdict for a run the sequence moved on from; the current run
-  // takes the task's own status (a live one reads as running).
+  // How the run ended (completed | failed | cancelled …), or 'running' for the
+  // current one; a gate's pass/fail is the verdict, and its run completed.
   outcome: string;
+  verdict?: 'pass' | 'fail';
   // A run a person's retry launched — the same step again, by hand.
   retry?: boolean;
   tokens?: { input: number; output: number };
@@ -166,15 +167,18 @@ export function stepRows(state: WorkflowState | undefined, status: TaskStatus, t
     const last = i === runs.length - 1;
     // The log's own stamps stand in for a run whose spans are not loaded.
     const logged = sr.started_at && sr.ended_at ? new Date(sr.ended_at).getTime() - new Date(sr.started_at).getTime() : NaN;
+    // A run still open shows the task's live status; an ending is recorded
+    // in the log itself (the task's status stands in only for rows written
+    // before that was so).
+    const loggedOutcome = sr.outcome || (last ? (status === 'working' || status === 'input_required' ? 'running' : status) : '');
+    const verdict = loggedOutcome === 'pass' || loggedOutcome === 'fail' ? loggedOutcome : undefined;
     return {
       index: idx >= 0 ? idx + 1 : i + 1,
       stepId: sr.step_id,
       name: (idx >= 0 && steps[idx].name) || sr.step_id,
       runId: sr.run_id,
-      // A run still open shows the task's live status; an ending is recorded
-      // in the log itself (the task's status stands in only for rows written
-      // before that was so).
-      outcome: sr.outcome || (last ? (status === 'working' || status === 'input_required' ? 'running' : status) : ''),
+      outcome: verdict ? 'completed' : loggedOutcome,
+      verdict,
       retry: sr.retry || undefined,
       tokens: inp > 0 || out > 0 ? { input: inp, output: out } : undefined,
       durationMs: isFinite(t0) ? Math.max(t1 - t0, 0) : (isFinite(logged) ? Math.max(logged, 0) : undefined),

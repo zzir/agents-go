@@ -22,8 +22,8 @@ export function originText(origin: WorkflowStartedNote['origin']): string {
 // agent turn leaves the same row before the message it sends — the reader
 // sees the next question was an automation's; that message IS the brief,
 // so the row is the label alone.
-export const WorkflowStartedChip = memo(function WorkflowStartedChip({ note, content, traceRunId, msgIdx, entryId }:
-  { note: WorkflowStartedNote; content: string; traceRunId?: string | null; msgIdx: number; entryId?: string }) {
+export const WorkflowStartedChip = memo(function WorkflowStartedChip({ note, content, traceRunId, msgIdx }:
+  { note: WorkflowStartedNote; content: string; traceRunId?: string | null; msgIdx: number }) {
   const { inspectTask } = useChatActions();
   const { agentAvatars } = useChatSession();
   // The note's data names the workflow or the agent; a row without either
@@ -40,12 +40,12 @@ export const WorkflowStartedChip = memo(function WorkflowStartedChip({ note, con
     // renders as nothing.
     <Label variant="secondary" className="wf-started-label">
       <Icon size={12} />
-      {agentTurn && <AgentAvatar name={note.agentName} avatar={note.agentConfigId ? agentAvatars[note.agentConfigId] : undefined} size={14} />}
+      {agentTurn && <AgentAvatar name={note.agentName} avatar={note.agentConfigId ? agentAvatars[note.agentConfigId] : undefined} size={16} />}
       <span>{label}</span>
     </Label>
   );
   return (
-    <div className="message message-system wf-started" data-run-id={traceRunId || undefined} data-msg-idx={msgIdx} data-anchor-id={entryId || undefined}>
+    <div className="message message-system wf-started" data-run-id={traceRunId || undefined} data-msg-idx={msgIdx}>
       {note.taskId && !agentTurn ? (
         <button type="button" className="wf-started-open" title="Open the execution" onClick={() => inspectTask(note.taskId)}>
           {chip}

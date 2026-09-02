@@ -8,6 +8,7 @@ import { isLive, StatusLabel } from '@/lib/status';
 import { TASK_KIND_WORKFLOW, type TaskRow } from '@/lib/protocol';
 import { taskStateFromRow } from '@/lib/useAgentSocket';
 import { itemDuration, taskItem, type BackgroundItem } from '@/lib/background';
+import { formatTime } from '@/lib/time';
 
 // A run row: the execution as the Tasks panel would show it, plus the
 // conversation it belongs to — the one fact a per-session list never needs.
@@ -18,13 +19,6 @@ interface RunRow extends BackgroundItem {
 
 interface TaskWithSession extends TaskRow { session_name?: string }
 interface TaskPage { items: TaskWithSession[]; total: number }
-
-function fmtStarted(ms?: number): string {
-  if (!ms) return '';
-  const d = new Date(ms);
-  const sameDay = d.toDateString() === new Date().toDateString();
-  return sameDay ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-}
 
 // RunsView lists workflow executions across every conversation, newest first,
 // a page at a time. version moves when any execution does (the socket hears
@@ -63,7 +57,8 @@ export function RunsView({ version, onOpenRun, active = true }: { version: strin
   const anyLive = rows.some(r => isLive(r.status));
   const now = useNowTicker(anyLive && active);
 
-  const columns: Column<RunRow>[] = [
+  // Rebuilt only when what the cells read moves — not on every ticker frame.
+  const columns = useMemo<Column<RunRow>[]>(() => [
     {
       header: 'Workflow', field: 'label', rowHeader: true, width: 'auto',
       renderCell: r => (
@@ -87,7 +82,7 @@ export function RunsView({ version, onOpenRun, active = true }: { version: strin
       header: 'Conversation', field: 'sessionName', width: 'auto',
       renderCell: r => <span className="hub-clip hub-clip-session" title={r.sessionName}>{r.sessionName}</span>,
     },
-    { header: 'Started', id: 'started', width: 'auto', renderCell: r => <span className="hub-nowrap">{fmtStarted(r.createdAt)}</span> },
+    { header: 'Started', id: 'started', width: 'auto', renderCell: r => <span className="hub-nowrap">{r.createdAt ? formatTime(new Date(r.createdAt).toISOString()) : ''}</span> },
     { header: 'Duration', id: 'duration', width: 'auto', align: 'end', renderCell: r => itemDuration(r, now) },
     {
       header: '', id: 'open', width: 'auto', align: 'end',
@@ -96,7 +91,7 @@ export function RunsView({ version, onOpenRun, active = true }: { version: strin
           disabled={!r.sessionId} onClick={() => onOpenRun(r.sessionId, r.id)}>Open</Button>
       ),
     },
-  ];
+  ], [now, onOpenRun]);
 
   // The first load: the table's own skeleton, not a bare header over nothing.
   if (loading && !data) {

@@ -9,24 +9,32 @@ export interface UserLabel {
 }
 
 // The directory is one small, slow-moving list that every scoped panel needs,
-// so it is fetched ONCE per page load and shared: a panel that refetched it on
-// mount would blank its rows again the moment the answer arrived.
+// so it is fetched once and shared: a mount serves the copy it has, and only
+// refetches once that copy is older than STALE_MS (or reloadDirectory asked).
+const STALE_MS = 60_000;
 let directory: UserLabel[] | null = null;
+let loadedAt = 0;
 let inflight: Promise<UserLabel[]> | null = null;
-const waiting = new Set<(u: UserLabel[]) => void>();
+const listeners = new Set<(u: UserLabel[]) => void>();
 
 function loadDirectory(): Promise<UserLabel[]> {
   inflight ??= (api.auth.userLabels() as Promise<UserLabel[]>)
     .then(list => {
       directory = list ?? [];
-      for (const notify of waiting) notify(directory);
+      loadedAt = Date.now();
+      for (const notify of listeners) notify(directory);
       return directory;
     })
-    .catch(() => {
-      inflight = null; // a failed load must not poison the next panel's try
-      return [];
-    });
+    .catch(() => directory ?? []) // a failed load must not poison the next try
+    .finally(() => { inflight = null; });
   return inflight;
+}
+
+/** Refetches the directory now (a member was added or renamed) and updates
+ * every mounted useOwnerLabels. */
+export function reloadDirectory(): Promise<void> {
+  loadedAt = 0;
+  return loadDirectory().then(() => undefined);
 }
 
 // useOwnerLabels serves the id→person directory the scoped panels render row
@@ -35,12 +43,10 @@ function loadDirectory(): Promise<UserLabel[]> {
 export function useOwnerLabels() {
   const [users, setUsers] = useState<UserLabel[]>(directory ?? []);
   useEffect(() => {
-    if (directory) return;
-    let live = true;
-    const notify = (list: UserLabel[]) => { if (live) setUsers(list); };
-    waiting.add(notify);
-    void loadDirectory();
-    return () => { live = false; waiting.delete(notify); };
+    listeners.add(setUsers);
+    if (directory) setUsers(directory);
+    if (!directory || Date.now() - loadedAt > STALE_MS) void loadDirectory();
+    return () => { listeners.delete(setUsers); };
   }, []);
   const ownerOf = (ownerId?: string): UserLabel | undefined =>
     ownerId ? users.find(x => x.id === ownerId) : undefined;

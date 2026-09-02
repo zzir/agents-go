@@ -1,15 +1,15 @@
 import type { AttachmentMeta } from '@/lib/attachments';
 import React, { useState, useCallback, useEffect, useRef, useMemo, memo } from 'react';
-import { Dialog, NavList as PrimerNavList, Flash, Button, IconButton } from '@primer/react';
-import { SecretInput } from '@/components/SecretInput';
+import { Flash, Button } from '@primer/react';
 import {
-  DependabotIcon, McpIcon, ShieldCheckIcon, SparkleIcon, CpuIcon, PlugIcon,
-  ContainerIcon, DatabaseIcon, FileDirectoryIcon, GearIcon, PersonIcon, PeopleIcon, CommentDiscussionIcon, LogIcon, LockIcon,
-  XCircleFillIcon, AlertFillIcon, CheckCircleFillIcon, InfoIcon, XIcon, WorkflowIcon,
+  DependabotIcon, McpIcon, ShieldCheckIcon, SparkleIcon, CpuIcon,
+  ContainerIcon, DatabaseIcon, FileDirectoryIcon, GearIcon, PersonIcon, PeopleIcon, CommentDiscussionIcon, LogIcon, WorkflowIcon,
 } from '@primer/octicons-react';
-import type { Icon } from '@primer/octicons-react';
 import { ThemeProvider } from '@/theme/ThemeProvider';
 import { AppShell } from '@/layout/AppShell';
+import { GlobalToast } from '@/layout/GlobalToast';
+import { LoginPage, exchangeErrorTag } from '@/layout/LoginPage';
+import { PanelDialog, type DialogTab } from '@/layout/PanelDialog';
 import { SessionList as SessionListImpl } from '@/features/sessions/SessionList';
 import { ChatView, type ChatViewActions, type InspectorPanel } from '@/features/chat/ChatView';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
@@ -20,7 +20,7 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 const TerminalPanel = React.lazy(() =>
   import('@/features/terminal/TerminalPanel').then(m => ({ default: m.TerminalPanel })),
 );
-import { login, checkAuth, getToken, api, authConfig, exchangeCode, TOKEN_KEY, type AuthConfig } from '@/lib/api';
+import { checkAuth, getToken, api, exchangeCode, TOKEN_KEY } from '@/lib/api';
 import { EV, TASK_KIND_WORKFLOW } from '@/lib/protocol';
 import { hasTaskInStatus } from '@/lib/background';
 import { WorkflowsHub, type HubTab } from '@/features/workflows/WorkflowsHub';
@@ -30,345 +30,42 @@ import { useAgentSocket, defaultSS, type SessionState } from '@/lib/useAgentSock
 import { patchToolCall, type ToolCallPatch } from '@/lib/timeline';
 import { syncTaskCard } from '@/lib/streamReducer';
 import { clearSessionPrefs } from '@/lib/drafts';
-import { onToast, toast } from '@/lib/toast';
-import { ReadOnlyContext } from '@/lib/access';
+import { toast } from '@/lib/toast';
 import { MeContext, useMeLoader } from '@/lib/me';
 import { useNarrow } from '@/lib/hooks';
-import { readHash, writeHash, consumeAuthFragment, stashReturnHash, restoreReturnHash } from '@/lib/route';
+import { readHash, writeHash, consumeAuthFragment, restoreReturnHash } from '@/lib/route';
 import { isTooLarge } from '@/lib/messageSize';
 
-const FLASH_VARIANT: Record<string, FlashProps['variant']> = { error: 'danger', warning: 'warning', success: 'success', info: 'default' };
-const FLASH_ICON: Record<string, React.ReactNode> = {
-  error: <XCircleFillIcon size={16} />,
-  warning: <AlertFillIcon size={16} />,
-  success: <CheckCircleFillIcon size={16} />,
-  info: <InfoIcon size={16} />,
-};
-type FlashProps = React.ComponentProps<typeof Flash>;
+// The one settings hub (invariant 61). Ordered so each section builds on the
+// ones above it: a provider is what an agent talks to, an agent is what runs,
+// then what an agent attaches (tools, execution, state, the checks around
+// it); the person's own below the line. A scoped entity's tab carries the
+// admin's "All members" view inside it. Workflows are authored and watched
+// in the sidebar's hub, so only their management view is here, under
+// Administration.
+const scopedTab = (name: 'ProvidersTab' | 'AgentsTab' | 'McpServersTab' | 'SkillsTab') =>
+  () => import('@/features/settings/ScopedEntityPanel').then(m => ({ default: m[name] }));
 
-// A queue, not one slot: three errors during a long run stack up instead of
-// each overwriting the last. Errors linger (10s) so they can be read, then
-// auto-dismiss; a click, their close button, or Escape (the newest first) takes
-// one sooner. The stack div always exists so the live region is established
-// before the first announcement.
-function GlobalToast() {
-  const [items, setItems] = useState<Array<{ id: number; msg: string; type: string; exiting?: boolean }>>([]);
-  const seqRef = useRef(0);
-  const timersRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
-  const itemsRef = useRef(items);
-  itemsRef.current = items;
-
-  const dismiss = useCallback((id: number) => {
-    const t = timersRef.current.get(id);
-    if (t) { clearTimeout(t); timersRef.current.delete(id); }
-    setItems(prev => prev.map(it => (it.id === id ? { ...it, exiting: true } : it)));
-    setTimeout(() => setItems(prev => prev.filter(it => it.id !== id)), 150);
-  }, []);
-
-  useEffect(() => {
-    onToast(({ msg, type }) => {
-      // Collapse a repeat of a toast that's still on screen: a double-click on
-      // Save shouldn't stack two identical errors — the visible one just gets
-      // its dismiss timer refreshed.
-      const ttl = type === 'error' ? 10000 : 4000;
-      const dup = itemsRef.current.find(it => !it.exiting && it.msg === msg && it.type === type);
-      if (dup) {
-        const prev = timersRef.current.get(dup.id);
-        if (prev) clearTimeout(prev);
-        timersRef.current.set(dup.id, setTimeout(() => dismiss(dup.id), ttl));
-        return;
-      }
-      const id = ++seqRef.current;
-      setItems(prev => [...prev.slice(-4), { id, msg, type }]);
-      timersRef.current.set(id, setTimeout(() => dismiss(id), ttl));
-    });
-    const timers = timersRef.current;
-    return () => {
-      onToast(null);
-      for (const t of timers.values()) clearTimeout(t);
-    };
-  }, [dismiss]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || e.defaultPrevented) return;
-      const last = [...itemsRef.current].reverse().find(it => !it.exiting);
-      if (last) dismiss(last.id);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [dismiss]);
-
-  return (
-    <div className="global-toast-stack" role="status" aria-live="polite">
-      {items.map(it => (
-        <Flash
-          key={it.id}
-          variant={FLASH_VARIANT[it.type] || 'default'}
-          role={it.type === 'error' ? 'alert' : undefined}
-          className={'global-toast' + (it.exiting ? ' global-toast-exit' : '')}
-          onClick={() => dismiss(it.id)}
-        >
-          <span className="global-toast-body" title={it.msg}>
-            {FLASH_ICON[it.type]}<span className="global-toast-msg">{it.msg}</span>
-          </span>
-          {it.type === 'error' && (
-            <IconButton icon={XIcon} size="small" variant="invisible" aria-label="Dismiss" className="global-toast-close"
-              onClick={e => { e.stopPropagation(); dismiss(it.id); }} />
-          )}
-        </Flash>
-      ))}
-    </div>
-  );
-}
-
-type DialogTab = { key: string; label: string; icon: Icon; load: () => Promise<{ default: React.ComponentType }>; dividerBefore?: boolean };
-
-// Ordered so each section builds on the ones above it: a provider is what an
-// agent talks to, an agent is what runs, then what an agent attaches (tools,
-// execution, state, the checks around it). General last. Workflows are not
-// here: they are authored once and then WATCHED, which is the sidebar's
-// Workflows hub, not a settings tab.
 const SETTINGS_TABS: DialogTab[] = [
-  { key: 'providers',  label: 'Providers',  icon: CpuIcon,        load: () => import('@/features/providers/ProviderPanel') },
-  { key: 'agents',     label: 'Agents',     icon: DependabotIcon, load: () => import('@/features/agents/AgentConfigPanel') },
-  { key: 'mcp',        label: 'MCP',        icon: McpIcon,        load: () => import('@/features/mcp/McpServerPanel') },
-  { key: 'skills',     label: 'Skills',     icon: SparkleIcon,    load: () => import('@/features/skills/SkillsPanel') },
-  { key: 'sandbox',    label: 'Sandboxes',  icon: ContainerIcon,  load: () => import('@/features/sandbox/SandboxPanel') },
-  { key: 'memory',     label: 'Memory',     icon: DatabaseIcon,   load: () => import('@/features/memory/MemoryPanel') },
-  { key: 'guardrails', label: 'Guardrails', icon: ShieldCheckIcon, load: () => import('@/features/guardrails/GuardrailPanel') },
-  { key: 'plugins',    label: 'Plugins',    icon: PlugIcon,       load: () => import('@/features/plugins/PluginsPanel') },
-  // Shared configuration above the line, the person's own below it.
-  { key: 'account',    label: 'Account',    icon: PersonIcon,     load: () => import('@/features/account/AccountPanel'), dividerBefore: true },
-  { key: 'general',    label: 'General',    icon: GearIcon,       load: () => import('@/features/settings/SettingsPanel') },
+  { key: 'providers',  label: 'Providers',   icon: CpuIcon,         load: scopedTab('ProvidersTab'), scoped: true },
+  { key: 'agents',     label: 'Agents',      icon: DependabotIcon,  load: scopedTab('AgentsTab'), scoped: true },
+  { key: 'mcp',        label: 'MCP servers', icon: McpIcon,         load: scopedTab('McpServersTab'), scoped: true },
+  { key: 'skills',     label: 'Skills',      icon: SparkleIcon,     load: scopedTab('SkillsTab'), scoped: true },
+  { key: 'sandbox',    label: 'Sandboxes',   icon: ContainerIcon,   load: () => import('@/features/sandbox/SandboxPanel') },
+  { key: 'memory',     label: 'Memory',      icon: DatabaseIcon,    load: () => import('@/features/memory/MemoryPanel') },
+  { key: 'guardrails', label: 'Guardrails',  icon: ShieldCheckIcon, load: () => import('@/features/guardrails/GuardrailPanel') },
+  { key: 'account',    label: 'Account',     icon: PersonIcon,      load: () => import('@/features/account/AccountPanel'), dividerBefore: true },
+  { key: 'general',    label: 'General',     icon: GearIcon,        load: () => import('@/features/settings/SettingsPanel') },
 ];
 
-
-// The Admin dialog: people, then each configuration plane on its own tab (the
-// same order Settings lists them in, so one mental map serves both), then what
-// members own, then the record of it all.
-const scoped = (name: 'AdminAgents' | 'AdminProviders' | 'AdminMcpServers' | 'AdminSkills' | 'AdminWorkflows') =>
-  () => import('@/features/admin/ScopedRowsPanel').then(m => ({ default: m[name] }));
-
+// Administration: people, then what members own, then the record of it all.
 const ADMIN_TABS: DialogTab[] = [
-  { key: 'members',   label: 'Members',     icon: PeopleIcon,            load: () => import('@/features/admin/MembersPanel') },
-  { key: 'providers', label: 'Providers',   icon: CpuIcon,               load: scoped('AdminProviders'), dividerBefore: true },
-  { key: 'agents',    label: 'Agents',      icon: DependabotIcon,        load: scoped('AdminAgents') },
-  { key: 'mcp',       label: 'MCP',         icon: McpIcon,               load: scoped('AdminMcpServers') },
-  { key: 'skills',    label: 'Skills',      icon: SparkleIcon,           load: scoped('AdminSkills') },
-  { key: 'workflows', label: 'Workflows',   icon: WorkflowIcon,          load: scoped('AdminWorkflows') },
-  { key: 'sessions',  label: 'Sessions',    icon: CommentDiscussionIcon, load: () => import('@/features/admin/SessionsPanel'), dividerBefore: true },
-  { key: 'projects',  label: 'Projects',    icon: FileDirectoryIcon,     load: () => import('@/features/admin/ProjectsPanel') },
-  { key: 'audit',     label: 'Audit logs',  icon: LogIcon,               load: () => import('@/features/admin/AuditPanel') },
+  { key: 'members',   label: 'Members',    icon: PeopleIcon,            load: () => import('@/features/admin/MembersPanel') },
+  { key: 'sessions',  label: 'Sessions',   icon: CommentDiscussionIcon, load: () => import('@/features/admin/SessionsPanel') },
+  { key: 'projects',  label: 'Projects',   icon: FileDirectoryIcon,     load: () => import('@/features/admin/ProjectsPanel') },
+  { key: 'workflows', label: 'Workflows',  icon: WorkflowIcon,          load: () => import('@/features/admin/ScopedRowsPanel').then(m => ({ default: m.AdminWorkflows })) },
+  { key: 'audit',     label: 'Audit logs', icon: LogIcon,               load: () => import('@/features/admin/AuditPanel') },
 ];
-
-function TabLoadError() {
-  return <Flash variant="danger">Failed to load this panel — reload the page.</Flash>;
-}
-
-// The scoped panels: rows carry their own scope/owner, so a member writes
-// there too — the dialog's blanket read-only applies only to the other tabs.
-const SCOPED_TABS = new Set(['providers', 'agents', 'mcp', 'skills']);
-
-// PanelDialog is the tabbed dialog behind both Settings and Admin: a nav of
-// lazily loaded panels, one open at a time. readOnly is a member's Settings:
-// shared configuration is theirs to read (the API allows it) and not to
-// write (the server refuses with 403), so the panels show and offer nothing.
-// readOnly null is "not known yet" (/auth/me still loading): the nav shows,
-// the panel waits, so an admin never sees the read-only note flash.
-function PanelDialog({ title, tabs, readOnly, onClose }: { title: string; tabs: DialogTab[]; readOnly?: boolean | null; onClose: () => void }) {
-  const [tab, setTab] = useState(tabs[0].key);
-  // Keep-alive: a tab's panel is loaded on first visit and then STAYS mounted
-  // (hidden), so switching back shows it instantly — data, form and scroll
-  // intact — instead of re-mounting from an empty state and re-fetching (the
-  // skeleton/blankslate flash the switch used to show, worst in dark mode).
-  // The value is the loaded component, or TabLoadError if its chunk 404'd.
-  const [loaded, setLoaded] = useState<Record<string, React.ComponentType>>({});
-
-  const narrow = useNarrow();
-
-  useEffect(() => {
-    if (loaded[tab]) return; // already mounted — keep-alive, never reload
-    let stale = false;
-    const entry = tabs.find(t => t.key === tab);
-    if (!entry) return;
-    // Never overwrite a key already loaded: a slow first-load chunk resolving
-    // after a faster later click must not clobber the panel that click mounted.
-    entry.load().then(mod => {
-      if (!stale) setLoaded(prev => (prev[tab] ? prev : { ...prev, [tab]: mod.default }));
-    }).catch(() => {
-      // A stale chunk 404 would otherwise leave the panel blank forever.
-      if (!stale) setLoaded(prev => (prev[tab] ? prev : { ...prev, [tab]: TabLoadError }));
-    });
-    return () => { stale = true; };
-  }, [tab, tabs, loaded]);
-
-  return (
-    <Dialog
-      title={title}
-      onClose={() => onClose()}
-      height="auto"
-      position={{ narrow: 'fullscreen', regular: 'center' }}
-      // Both sides scale with the viewport and cap, so the dialog stays a
-      // landscape box on a large screen instead of a column (a capped width
-      // under an uncapped height); Primer's own max-* still clamp small ones.
-      // The width cap is the nav plus the 1100px content column plus margins
-      // — wider only adds blank space. A narrow screen takes Primer's
-      // fullscreen instead.
-      style={narrow ? undefined : { width: 'clamp(960px, 80dvw, 1360px)', height: 'clamp(560px, 85dvh, 1000px)' }}
-      renderBody={({ children }) => (
-        <Dialog.Body className="settings-body" style={{ padding: 0 }}>
-          {children}
-        </Dialog.Body>
-      )}
-    >
-      <div className="settings-layout">
-        <nav className="settings-nav">
-          <PrimerNavList aria-label={`${title} sections`}>
-            {tabs.map(t => (
-              <React.Fragment key={t.key}>
-                {t.dividerBefore && tabs[0] !== t && <PrimerNavList.Divider />}
-                <PrimerNavList.Item
-                  aria-current={tab === t.key ? 'page' : undefined}
-                  onClick={() => setTab(t.key)}
-                >
-                  <PrimerNavList.LeadingVisual><t.icon size={16} /></PrimerNavList.LeadingVisual>
-                  {t.label}
-                </PrimerNavList.Item>
-              </React.Fragment>
-            ))}
-          </PrimerNavList>
-        </nav>
-        <div className="settings-content">
-          {/* readOnly null (/auth/me still loading) holds every panel, so an
-              admin never sees the read-only note flash. Once known, each
-              visited tab's panel is mounted and kept — the active one shown,
-              the rest hidden. */}
-          {readOnly !== null && tabs.map(t => {
-            const Comp = loaded[t.key];
-            if (!Comp) return null; // never visited → never mounted
-            // Scoped panels are excluded from the read-only blanket: they gate
-            // per row (canEditRow) and set the context themselves around their
-            // form. The note above them is keyed to the same exclusion.
-            const scoped = SCOPED_TABS.has(t.key);
-            const showNote = !!readOnly && t.key !== 'account' && !scoped;
-            return (
-              <div key={t.key} className="settings-panel" hidden={t.key !== tab}>
-                {showNote && (
-                  <Flash variant="default" className="settings-readonly-note">
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                      <LockIcon size={16} />
-                      Read-only. Shared configuration is managed by admins; you can use all of it in your own sessions.
-                    </span>
-                  </Flash>
-                )}
-                <ReadOnlyContext value={!!readOnly && !scoped}>
-                  <ErrorBoundary resetKey={t.key}><Comp /></ErrorBoundary>
-                </ReadOnlyContext>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    </Dialog>
-  );
-}
-
-// AUTH_ERROR_TEXT maps the callback's coarse #auth_error tags to a sentence.
-const AUTH_ERROR_TEXT: Record<string, string> = {
-  state_mismatch: 'The sign-in expired or was already used — try again.',
-  exchange_failed: 'The provider rejected the sign-in — try again.',
-  not_allowed: 'This account is not on the allowlist for this server.',
-  cancelled: 'The sign-in was cancelled at the provider.',
-  disabled: 'This account has been disabled by an admin.',
-  rate_limited: 'Too many sign-in attempts from your address — wait a minute and try again.',
-  login_failed: 'Sign-in failed on the server — try again.',
-};
-
-// exchangeErrorTag maps a failed code exchange to the login page's message:
-// the server refuses a used or expired code with 401; anything else is not
-// the code's fault.
-function exchangeErrorTag(e: unknown): string {
-  const status = (e as { status?: number } | null)?.status;
-  if (status === 401) return 'state_mismatch';
-  if (status === 429) return 'rate_limited';
-  return 'login_failed';
-}
-
-function LoginPage({ onLogin, authError }: { onLogin: () => void; authError?: string }) {
-  const [token, setTokenVal] = useState('');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
-  // null while /auth/config is in flight. A failure shows as such, with a
-  // retry — guessing token mode would offer a password box that an OAuth
-  // server answers with 400.
-  const [cfg, setCfg] = useState<AuthConfig | null>(null);
-  const [cfgError, setCfgError] = useState(false);
-  const [cfgAttempt, setCfgAttempt] = useState(0);
-
-  useEffect(() => {
-    let stale = false;
-    setCfgError(false);
-    authConfig()
-      .then(c => { if (!stale) setCfg(c); })
-      .catch(() => { if (!stale) setCfgError(true); });
-    return () => { stale = true; };
-  }, [cfgAttempt]);
-
-  const handleSubmit = useCallback(async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    setLoading(true);
-    try {
-      await login(token);
-      onLogin();
-    } catch {
-      setError('Invalid token');
-    } finally {
-      setLoading(false);
-    }
-  }, [token, onLogin]);
-
-  const oauthMsg = authError ? (AUTH_ERROR_TEXT[authError] || AUTH_ERROR_TEXT.login_failed) : '';
-
-  return (
-    <div className="login-page">
-      <form className="login-card" onSubmit={handleSubmit}>
-        {oauthMsg ? <Flash variant="danger">{oauthMsg}</Flash> : null}
-        {cfgError ? (
-          <>
-            <Flash variant="danger">Couldn&apos;t load the sign-in options from the server.</Flash>
-            <Button block onClick={() => setCfgAttempt(n => n + 1)}>Retry</Button>
-          </>
-        ) : cfg?.mode === 'oauth' ? (
-          (cfg.providers || []).map(p => (
-            // A full-page navigation: the flow returns via the server's
-            // redirect with a one-time code in the fragment.
-            <Button
-              key={p} block variant="primary"
-              onClick={() => { stashReturnHash(); window.location.href = `/api/v1/auth/oauth/${p}/start`; }}
-            >
-              Sign in with {p.charAt(0).toUpperCase() + p.slice(1)}
-            </Button>
-          ))
-        ) : cfg ? (
-          <>
-            <SecretInput
-              aria-label="API token"
-              placeholder="Token"
-              value={token}
-              autoFocus
-              loading={loading || undefined}
-              onChange={(e) => setTokenVal(e.target.value)}
-              validationStatus={error ? 'error' : undefined}
-            />
-            <Button type="submit" variant="primary" block disabled={loading || !token.trim()}>Sign in</Button>
-          </>
-        ) : null}
-      </form>
-    </div>
-  );
-}
 
 const DEFAULT_SS = defaultSS();
 
@@ -440,12 +137,12 @@ function App() {
   // The Workflows hub, when it is the open view (null = a conversation).
   const [hubTab, setHubTab] = useState<HubTab | null>(() => readHash().hub);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [adminOpen, setAdminOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sessionReloadKey, setSessionReloadKey] = useState(0);
-  // Bumped by workflow.updated: the chat's workflow strip and Tasks panel
-  // refetch when a background sequence moves.
+  // Bumped when the settings dialog closes: the composer's pickers and the
+  // terminal panel refetch the configuration it may have changed.
   const [settingsReloadKey, setSettingsReloadKey] = useState(0);
+  const narrow = useNarrow();
   // The active session's display name and project binding. Captured from the
   // existence-check fetch below and kept fresh by the title_updated /
   // project_bound events; the id guards against a stale response landing after
@@ -485,6 +182,10 @@ function App() {
   }, []);
 
   const [ss, setSS] = useState<Record<string, SessionState>>({});
+  // The latest state for callbacks that read it without depending on it —
+  // a callback rebuilt per streaming frame would re-render the memoized view.
+  const ssRef = useRef(ss);
+  ssRef.current = ss;
 
   const runCheck = useCallback(() => {
     setChecking(true);
@@ -862,8 +563,8 @@ function App() {
     setBindingsVersion(v => v + 1);
   }, [deleteSession]);
 
-  // The Admin dialog deleting or reassigning a conversation away: the same
-  // cleanup as the sidebar's delete.
+  // The Sessions admin panel deleting or reassigning a conversation away: the
+  // same cleanup as the sidebar's delete.
   useEffect(() => {
     const handler = (e: Event) => handleDeleteSession((e as CustomEvent<string>).detail);
     window.addEventListener(SESSION_REMOVED, handler);
@@ -872,11 +573,17 @@ function App() {
 
   const handleLoadEarlier = useCallback(() => {
     if (!activeSession) return;
-    const s = ss[activeSession];
+    const s = ssRef.current[activeSession];
     if (!s?.hasMore || s.loadingMore || s.entries.length === 0) return;
     const oldest = s.entries[0]?.id;
     if (oldest) loadEarlier(activeSession, oldest);
-  }, [activeSession, ss, loadEarlier]);
+  }, [activeSession, loadEarlier]);
+
+  // A rename from the sidebar: the open conversation's title follows at once
+  // (the server announces no rename over the socket).
+  const handleRenamed = useCallback((id: string, name: string) => {
+    setSessionMeta(prev => (prev && prev.id === id ? { ...prev, name } : prev));
+  }, []);
 
   const handleFork = useCallback(async (messageId: string | number) => {
     if (!activeSession) return;
@@ -920,10 +627,8 @@ function App() {
     }
   }, [activeSession, reloadTimeline]);
 
-  // Regenerating branches back to the user's message and runs again IN PLACE.
-  // It used to fork a whole new session per attempt, which is why a chat list
-  // filled up with "(regen 2)", "(regen 3)" and no way to compare them — the
-  // attempts now live in one session, switchable.
+  // Regenerating branches back to the user's message and runs again IN PLACE:
+  // the attempts live in one session, switchable.
   const handleRegenerate = useCallback(async (userEntryId: string, userContent: string, agentConfigId: string, projectId?: string) => {
     if (!activeSession || !wsRef.current) return;
     try {
@@ -931,8 +636,7 @@ function App() {
       await reloadTimeline(activeSession);
       // The Inspector stays open: regen is in-place (same session), so an open
       // trace/task panel remains valid — the replaced attempt gets its "replaced"
-      // chip and the drawer follows the new live run. (The close that used to sit
-      // here was a leftover from the fork-a-new-session implementation.)
+      // chip and the drawer follows the new live run.
       // Empty input: the run answers the branch we just switched to rather
       // than adding a new user message. The server maps it to an empty item list.
       const payload: Record<string, unknown> = { session_id: activeSession, input: '', agent_config_id: agentConfigId };
@@ -954,7 +658,8 @@ function App() {
     return loadSpanPayload(activeSession, spanSessionId, runId, spanId);
   }, [activeSession, loadSpanPayload]);
 
-  // One object of stable callbacks: the memo'd view compares it by reference.
+  // One object of callbacks that change only on a session switch: the memo'd
+  // view compares it by reference, so a streaming frame never rebuilds it.
   const chatActions = useMemo<ChatViewActions>(() => ({
     onSend: handleSend, onCancel: handleCancel, onApprove: handleApprove, onReject: handleReject, onFork: handleFork,
     onLoadEarlier: handleLoadEarlier, onSwitchBranch: handleSwitchBranch, onCompact: handleCompact, onRegenerate: handleRegenerate,
@@ -1037,13 +742,18 @@ function App() {
     setActiveSession(id);
     setActivePanel(null);
     setHubTab(null);
-    if (window.innerWidth < 768) setSidebarOpen(false);
-  }, []);
+    if (narrow) setSidebarOpen(false);
+  }, [narrow]);
 
   const handleOpenHub = useCallback(() => {
     setHubTab(tab => tab || 'definitions');
-    if (window.innerWidth < 768) setSidebarOpen(false);
-  }, []);
+    if (narrow) setSidebarOpen(false);
+  }, [narrow]);
+
+  const handleOpenSettings = useCallback(() => {
+    setSettingsOpen(true);
+    if (narrow) setSidebarOpen(false);
+  }, [narrow]);
 
   // A run in the hub opens its conversation with the execution's detail in
   // the Inspector — the run belongs to that conversation, and the panel there
@@ -1053,10 +763,6 @@ function App() {
     setActivePanel({ kind: 'task', taskId });
     setHubTab(null);
   }, []);
-
-  // The Plugins placeholder is an admin's preview of the settings' shape.
-  // Memoized: the dialog reloads its panel whenever the tab list changes.
-  const settingsTabs = useMemo(() => (isAdmin ? SETTINGS_TABS : SETTINGS_TABS.filter(t => t.key !== 'plugins')), [isAdmin]);
 
   if (!authed && checkError) return (
     <ThemeProvider>
@@ -1078,6 +784,7 @@ function App() {
       activeId={hubTab ? null : activeSession}
       onSelect={handleSelectSession}
       onDelete={handleDeleteSession}
+      onRenamed={handleRenamed}
       onCreated={handleSessionCreated}
       reloadKey={sessionReloadKey}
       runningSessions={runningSessions}
@@ -1106,7 +813,7 @@ function App() {
   return (
     <ThemeProvider>
       <MeContext value={meState}>
-        <AppShell onSettingsOpen={() => setSettingsOpen(true)} onAdminOpen={() => setAdminOpen(true)} sidebarPane={sidebarPane} sidebarOpen={sidebarOpen} onSidebarToggle={setSidebarOpen}>
+        <AppShell onSettingsOpen={handleOpenSettings} sidebarPane={sidebarPane} sidebarOpen={sidebarOpen} onSidebarToggle={setSidebarOpen}>
           {/* A bad turn payload must not take the sidebar, composer and socket
               down with it; switching session or hub tab retries. */}
           <ErrorBoundary resetKey={hubTab ?? activeSession}>{main}</ErrorBoundary>
@@ -1122,12 +829,12 @@ function App() {
             </React.Suspense>
           )}
         </AppShell>
+        {/* The sidebar relists on close: the admin panels delete and reassign
+            conversations. */}
         {settingsOpen && (
-          <PanelDialog title="Settings" tabs={settingsTabs} readOnly={isAdmin === null ? null : !isAdmin}
-            onClose={() => { setSettingsOpen(false); setSettingsReloadKey(k => k + 1); }} />
+          <PanelDialog title="Settings" tabs={SETTINGS_TABS} adminTabs={isAdmin ? ADMIN_TABS : undefined} readOnly={isAdmin === null ? null : !isAdmin}
+            onClose={() => { setSettingsOpen(false); setSettingsReloadKey(k => k + 1); setSessionReloadKey(k => k + 1); }} />
         )}
-        {/* Admin deletes sessions; the sidebar relists on close. */}
-        {adminOpen && <PanelDialog title="Admin" tabs={ADMIN_TABS} onClose={() => { setAdminOpen(false); setSessionReloadKey(k => k + 1); }} />}
         {/* Lost-connection pill: the socket announces a drop here, not only at
             the moment a send fails. */}
         {!connected && <div className="conn-indicator" role="status">Reconnecting…</div>}

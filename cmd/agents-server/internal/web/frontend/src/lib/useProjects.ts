@@ -17,7 +17,7 @@ export function useProjects(
   reload: () => void;
   mutate: (fn: (prev: Project[] | null) => Project[] | null) => void;
 } {
-  const { data, error, reload, mutateData } = useApi<Project[]>(() => api.projects.list() as Promise<Project[]>);
+  const { data, error, reload, mutateData } = useApi<Project[]>(() => api.projects.list() as Promise<Project[]>, [], 'projects');
   useEffect(() => {
     if (version) reload();
   }, [version, reload]);

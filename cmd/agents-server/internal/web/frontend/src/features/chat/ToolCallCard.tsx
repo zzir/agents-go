@@ -264,6 +264,7 @@ export function ToolCallCard({ toolCall, live, onInspectTask, onRetryTask }: Too
         <button
           className="ToolCallCard-inspect"
           title="Retry task"
+          aria-label="Retry task"
           onClick={e => { e.stopPropagation(); onRetryTask(inspectTaskId); }}
         >
           <SyncIcon size={14} />
@@ -273,6 +274,7 @@ export function ToolCallCard({ toolCall, live, onInspectTask, onRetryTask }: Too
         <button
           className="ToolCallCard-inspect"
           title="Inspect task"
+          aria-label="Inspect task"
           onClick={e => { e.stopPropagation(); onInspectTask(inspectTaskId); }}
         >
           <StackIcon size={14} />
@@ -295,7 +297,6 @@ export function ToolCallCard({ toolCall, live, onInspectTask, onRetryTask }: Too
       // items the user tracks progress by.
       defaultOpen={body.kind === 'todos'}
       className="ToolCallCard"
-      anchorId={tool_call_id}
     >
       {body.kind === 'patch' ? (
         <div className="ToolCallCard-diff markdown-body" dangerouslySetInnerHTML={{ __html: diffHtml }} />

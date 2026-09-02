@@ -465,11 +465,9 @@ function assemble(
         continue;
       }
       case DISPLAY.message: {
-        // Assistant prose. Matching the display kind (not the role) keeps it
-        // rendering as markdown text even when provenance maps the role
-        // elsewhere: a failed run's partial text (an annotation) and an
-        // error-handler fallback answer both used to arrive as role "system"
-        // and got squeezed into a single-line system chip.
+        // Assistant prose. Matched by display kind, not role: a failed run's
+        // partial text (an annotation) and an error-handler fallback answer
+        // arrive as role "system" and must still render as markdown text.
         if (!e.content) continue;
         ensureTurn();
         anchor(e);

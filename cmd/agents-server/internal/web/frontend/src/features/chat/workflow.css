@@ -108,10 +108,16 @@
   border-collapse: collapse;
   font-size: var(--base-text-size-xs);
 }
-.wf-steps td {
+.wf-steps td,
+.wf-steps th {
   padding: var(--base-size-4) var(--base-size-8);
   border-bottom: 1px solid var(--borderColor-muted);
   vertical-align: middle;
+  text-align: left;
+}
+.wf-steps th {
+  font-weight: var(--base-text-weight-medium);
+  color: var(--fgColor-muted);
 }
 .wf-steps-index { width: 2em; color: var(--fgColor-muted); text-align: right; }
 .wf-steps-name { font-weight: var(--base-text-weight-medium); }

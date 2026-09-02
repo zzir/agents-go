@@ -25,7 +25,8 @@ export interface ProviderMeta {
   defaultModel: string;
   modelPlaceholder: string;
   keyPlaceholder: string;
-  baseURLPlaceholder: string;
+  /** Where an empty base_url sends requests. */
+  defaultBaseURL: string;
   /** Extra hint under the reasoning-effort select, when the mapping needs explaining. */
   effortHint?: string;
   /** Reasoning-effort choices this backend accepts (wire value + label). */
@@ -45,8 +46,8 @@ export const PROVIDERS: ProviderMeta[] = [
     badgeVariant: 'accent',
     defaultModel: 'gpt-5.5',
     modelPlaceholder: 'gpt-5.5',
-    keyPlaceholder: 'sk-...',
-    baseURLPlaceholder: 'https://api.openai.com/v1 (leave empty for default)',
+    keyPlaceholder: 'sk-…',
+    defaultBaseURL: 'https://api.openai.com/v1',
     effortOptions: [...EFFORT_BASE, ['xhigh', 'Extra High']],
   },
   {
@@ -57,8 +58,8 @@ export const PROVIDERS: ProviderMeta[] = [
     badgeVariant: 'severe',
     defaultModel: 'claude-opus-5',
     modelPlaceholder: 'claude-opus-5',
-    keyPlaceholder: 'sk-ant-...',
-    baseURLPlaceholder: 'https://api.anthropic.com (leave empty for default)',
+    keyPlaceholder: 'sk-ant-…',
+    defaultBaseURL: 'https://api.anthropic.com',
     effortHint: 'Maps to an Anthropic thinking budget (minimal 1k / low 4k / medium 16k / high 32k tokens)',
     effortOptions: EFFORT_BASE,
   },

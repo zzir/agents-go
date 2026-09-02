@@ -122,6 +122,14 @@ describe('stepRows', () => {
     expect(stepRows(state, 'failed')[1].outcome).toBe('failed');
     expect(stepRows(undefined, 'completed')).toEqual([]);
   });
+
+  // A gate judges a run that completed: the verdict is a second column, so
+  // the status column never mixes "completed" with "pass".
+  it('splits a gate verdict off the run status', () => {
+    const state = { steps, step_id: 's2', step_runs: [{ step_id: 's1', run_id: 'r1', outcome: 'pass' }, { step_id: 's1', run_id: 'r2', outcome: 'fail' }, { step_id: 's2', run_id: 'r3' }] };
+    const rows = stepRows(state, 'working');
+    expect(rows.map(r => [r.outcome, r.verdict])).toEqual([['completed', 'pass'], ['completed', 'fail'], ['running', undefined]]);
+  });
   it('falls back to the log\'s own stamps for a run without loaded spans', () => {
     const stamped = {
       ...state,

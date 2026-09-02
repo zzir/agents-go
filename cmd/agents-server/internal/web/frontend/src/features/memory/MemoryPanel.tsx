@@ -26,6 +26,7 @@ interface AgentConfig {
   id: string;
   name: string;
   avatar?: string;
+  scope?: string;
 }
 
 interface MemoryFormData {
@@ -90,11 +91,9 @@ function MemoryForm({ initial, onSave, onCancel, onDelete, saving, agents }: Mem
 }
 
 export function MemoryPanel() {
-  const { items: memories, adding, editing, startAdd, startEdit, cancel, save, saving, remove } =
-    useCrud<Memory, MemoryFormData>(api.memories);
-  const { data: agents } = useApi<AgentConfig[]>(
-    () => api.agents.list() as Promise<AgentConfig[]>,
-  );
+  const { items: memories, loading, adding, editing, startAdd, startEdit, cancel, save, saving, remove } =
+    useCrud<Memory, MemoryFormData>(api.memories, 'memories');
+  const { data: agents } = useApi<AgentConfig[]>(() => api.agents.list() as Promise<AgentConfig[]>, [], 'agents');
 
   const agentName = (id: string) => (!id || !agents ? 'Global' : nameOf(agents, id));
 
@@ -103,19 +102,20 @@ export function MemoryPanel() {
     : null;
 
   return (
-    <CrudPanel title="Memory" onAdd={startAdd} onCancel={cancel} form={form} isEmpty={memories.length === 0} empty="No memories stored.">
+    <CrudPanel title="Memory" onAdd={startAdd} onCancel={cancel} form={form} loading={loading} isEmpty={memories.length === 0}
+      empty="No memories yet." emptyHint="A memory is text an agent reads with every request.">
       {/* Global is the default and says nothing — only a SCOPED memory
           carries a badge: the agent it belongs to. */}
       {memories.map(m => (
         <ResourceRow key={m.id}
           title={m.key}
           badges={m.agent_config_id && <Label variant={BADGE.ref}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-              <AgentAvatar name={agentName(m.agent_config_id)} avatar={(agents || []).find(a => a.id === m.agent_config_id)?.avatar} size={14} />
+            <span className="agent-inline">
+              <AgentAvatar name={agentName(m.agent_config_id)} avatar={(agents || []).find(a => a.id === m.agent_config_id)?.avatar} size={16} />
               {agentName(m.agent_config_id)}
             </span>
           </Label>}
-          sub={m.content.substring(0, 120) + (m.content.length > 120 ? '...' : '')}
+          sub={m.content.substring(0, 120) + (m.content.length > 120 ? '…' : '')}
           actions={<RowActionsMenu name={m.key} onEdit={() => startEdit(m)} />}
         />
       ))}

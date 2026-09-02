@@ -3,7 +3,8 @@ import { Button, TextInput, Textarea, Label, CounterLabel, Select, IconButton, S
 import { FormActions } from '@/components/FormActions';
 import { Paged } from '@/components/Paged';
 import { Blankslate } from '@primer/react/experimental';
-import { ChevronUpIcon, ChevronDownIcon, TrashIcon, PlayIcon, ZapIcon } from '@primer/octicons-react';
+import { Loading } from '@/components/Loading';
+import { ChevronUpIcon, ChevronDownIcon, TrashIcon, PlayIcon, WorkflowIcon, ZapIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
 import { PAGE_SIZE, useApi, useCrud, usePage } from '@/lib/hooks';
 import { ReadOnlyContext, canDeleteRow, canDemoteRow, canEditRow } from '@/lib/access';
@@ -251,8 +252,8 @@ function RunDialog({ workflow, sessionId, onClose }: { workflow: Workflow; sessi
   const [busy, setBusy] = useState(false);
   const { data: targetSession } = useApi<{ project_id?: string } | null>(
     () => (target ? api.sessions.get(target) as Promise<{ project_id?: string }> : Promise.resolve(null)), [target]);
-  const { data: sandboxDefs } = useApi<SandboxLite[]>(() => api.sandboxes.list() as Promise<SandboxLite[]>);
-  const { data: projects } = useApi<Project[]>(() => api.projects.list() as Promise<Project[]>);
+  const { data: sandboxDefs } = useApi<SandboxLite[]>(() => api.sandboxes.list() as Promise<SandboxLite[]>, [], 'sandboxes');
+  const { data: projects } = useApi<Project[]>(() => api.projects.list() as Promise<Project[]>, [], 'projects');
   const [projectId, setProjectId] = useState('');
   const unbound = !!target && !!targetSession && !targetSession.project_id;
   const project = (projects || []).find(p => p.id === projectId);
@@ -304,8 +305,8 @@ export function WorkflowPanel({ sessionId }: { sessionId: string | null }) {
   const isAdmin = me?.role === 'admin';
   const canCreate = !meLoading;
   const rowEditable = (w: Workflow) => canEditRow(isAdmin, me?.id, w);
-  const { items: workflows, adding, editing, startAdd, startEdit, cancel, save, saving, remove, reload } =
-    useCrud<Workflow, WorkflowFormData>(api.workflows);
+  const { items: workflows, loading, adding, editing, startAdd, startEdit, cancel, save, saving, remove, reload } =
+    useCrud<Workflow, WorkflowFormData>(api.workflows, 'workflows');
   const { data: agents } = useApi<AgentRef[]>(() => api.agents.list() as Promise<AgentRef[]>);
   // A template pre-fills the add form; cleared when the form closes.
   const [template, setTemplate] = useState<WorkflowFormData | null>(null);
@@ -319,6 +320,34 @@ export function WorkflowPanel({ sessionId }: { sessionId: string | null }) {
   const closeForm = () => { setTemplate(null); cancel(); };
   const page = usePage(workflows, PAGE_SIZE);
 
+  // A row the caller may not edit still opens — as a read-only view of the
+  // full definition (steps, prompts, gates), the disabled fieldset CrudPanel
+  // gives the other scoped panels; FormActions hides itself and Back closes
+  // the view.
+  let editForm = null;
+  if (editing) {
+    const form = (
+      <WorkflowForm saving={saving}
+        initial={{
+          name: editing.name,
+          description: editing.description || '',
+          steps: editing.steps || [],
+          budget: editing.budget || {},
+        }}
+        onSave={save}
+        onCancel={cancel}
+        onDelete={async () => { if (await remove(editing.id, editing.name)) cancel(); }}
+        agents={agents}
+      />
+    );
+    editForm = rowEditable(editing) ? form : (
+      <ReadOnlyContext value>
+        <fieldset disabled className="readonly-form">{form}</fieldset>
+        <div><Button size="small" onClick={cancel}>Back</Button></div>
+      </ReadOnlyContext>
+    );
+  }
+
   return (
     <Stack gap="normal">
       <div className="hub-toolbar">
@@ -329,31 +358,7 @@ export function WorkflowPanel({ sessionId }: { sessionId: string | null }) {
       </div>
 
       {adding && <WorkflowForm saving={saving} initial={template} onSave={f => { setTemplate(null); save(f); }} onCancel={closeForm} agents={agents} />}
-      {editing && (
-        // A row the caller may not edit still opens — as a read-only view of
-        // the full definition (steps, prompts, gates), like every other
-        // scoped panel. FormActions hides itself; Back closes the view.
-        <ReadOnlyContext value={!rowEditable(editing)}>
-          {/* The disabled fieldset is what actually inertizes the controls —
-              the same mechanism CrudPanel gives the other scoped panels. */}
-          <fieldset disabled={!rowEditable(editing)} className={rowEditable(editing) ? undefined : 'readonly-form'}
-            style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
-            <WorkflowForm saving={saving}
-              initial={{
-                name: editing.name,
-                description: editing.description || '',
-                steps: editing.steps || [],
-                budget: editing.budget || {},
-              }}
-              onSave={save}
-              onCancel={cancel}
-              onDelete={async () => { if (await remove(editing.id, editing.name)) cancel(); }}
-              agents={agents}
-            />
-          </fieldset>
-          {!rowEditable(editing) && <div><Button size="small" onClick={cancel}>Back</Button></div>}
-        </ReadOnlyContext>
-      )}
+      {editing && editForm}
 
       {!adding && !editing && <Paged page={page} total={workflows.length} label="Workflow pages">
         <div className="Box">
@@ -395,8 +400,16 @@ export function WorkflowPanel({ sessionId }: { sessionId: string | null }) {
               </div>
             </Disclosure>
           ))}
-          {workflows.length === 0 && (
+          {loading && workflows.length === 0 && <Loading kind="list" />}
+          {!loading && workflows.length === 0 && (
             <Blankslate>
+              <Blankslate.Visual><WorkflowIcon size={24} /></Blankslate.Visual>
+              <Blankslate.Heading>No workflows yet</Blankslate.Heading>
+              <Blankslate.Description>
+                {canCreate
+                  ? 'Start from a template below, or add one from scratch: a fixed sequence of agent turns that runs in the background.'
+                  : 'Workflows list here as they are defined.'}
+              </Blankslate.Description>
               {canCreate && <div className="wf-templates">
                 {TEMPLATES.map(t => (
                   <Button key={t.key} size="small" onClick={() => { setTemplate(t.form()); startAdd(); }}>{t.label}</Button>

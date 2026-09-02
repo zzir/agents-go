@@ -1,7 +1,7 @@
 import type { AttachmentMeta } from '@/lib/attachments';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { WSClient } from '@/lib/ws';
-import { EV, ERR, TASK_KIND_WORKFLOW, type RunDiagnostic, type TaskRow, type TaskStatus, type WorkflowState } from '@/lib/protocol';
+import { EV, ERR, type RunDiagnostic, type TaskRow } from '@/lib/protocol';
 import { buildTimeline, type DisplayExtra, type EntryView } from '@/lib/timeline';
 import {
   ensureLiveTurn, mergeLiveTail, appendMessageItem, appendReasoningItem, finalizeTurn,
@@ -12,117 +12,15 @@ import { api, clearToken } from '@/lib/api';
 import { resyncAfterGap, type GapResync } from '@/lib/gapResync';
 import { toast } from '@/lib/toast';
 import { ME_RELOAD } from '@/lib/me';
+import {
+  createTaskRouter, mergeTaskRows, seedTaskRows, withPendingTaskApprovals,
+  type TaskState, type TaskViewState, type TaskRouter,
+} from '@/lib/taskEvents';
 
 import type { TraceEventData as TraceEvent } from '@/features/chat/TracePanel';
 
-// TaskState tracks one background task of a chat session — live status from
-// run events while the hub run exists, seeded from the durable tasks rows on
-// session load.
-export interface TaskState {
-  taskId: string;
-  label: string;
-  // The task's kind: undefined/'' a sub-agent task, 'workflow' an execution
-  // whose `state` carries the step sequence. A workflow's status is the
-  // TASK's, told by task.updated — its step runs end without ending it.
-  kind?: string;
-  state?: WorkflowState;
-  status: TaskStatus;
-  // Which run of the task this is: 1 for the original, more after a retry.
-  attempt?: number;
-  // The ceiling `attempt` is measured against — the server's policy, sent as a
-  // PARAMETER so the offer can be derived here (taskRetryable) whenever the
-  // status changes. Being told the answer instead left it fixed at whatever it
-  // was when the last REST call returned: a retry that failed again offered
-  // nothing, and a task that had just started still offered a Retry.
-  maxAttempts?: number;
-  childSessionId?: string;
-  toolCallId?: string;
-  // The run that spawned this task — lets the trace panel nest the wake-up
-  // run's card under the run whose spawn_task started the chain.
-  parentRunId?: string;
-  // Millisecond timestamps for the list's duration label: createdAt from the
-  // durable row (or spawn time when seen live), updatedAt refreshed on every
-  // task event — for a terminal task it is the finish time.
-  createdAt?: number;
-  updatedAt?: number;
-  lastTool?: string;
-  summary?: string;
-  // The child run's pending approval, surfaced on the parent's task chip.
-  pendingCallId?: string;
-  pendingToolName?: string;
-  // Hidden from the chat strip (the panel still lists it); a retry clears it.
-  dismissed?: boolean;
-}
-
-// taskStateFromRow is a durable task row as the socket state holds it — the
-// seed before any live event has spoken.
-export function taskStateFromRow(row: TaskRow): TaskState {
-  return {
-    taskId: row.task_id, label: row.label || '', kind: row.kind, state: row.state, toolCallId: row.tool_call_id,
-    childSessionId: row.child_session_id, parentRunId: row.parent_run_id,
-    status: (row.status || 'working') as TaskStatus, attempt: row.attempt,
-    maxAttempts: row.max_attempts, summary: row.summary, dismissed: row.dismissed,
-    createdAt: row.created_at ? Date.parse(row.created_at) : undefined,
-    updatedAt: row.updated_at ? Date.parse(row.updated_at) : undefined,
-  };
-}
-
-// mergeTaskRows folds durable task rows into a session's state. Rows are
-// what a REST fetch says; the fetch routinely resolves AFTER live events that
-// overtook it, so a snapshot older than what the socket has already delivered
-// loses (or a reconnect walks a task back to a finished attempt). The spawn
-// card follows too, not just the chip: a retry during an outage left the card
-// on the previous attempt's outcome, and the run.started that would have
-// re-armed it is long gone from the hub.
-function mergeTaskRows(s: SessionState, rows: TaskRow[]): SessionState {
-  const tasks = { ...s.tasks };
-  let messages = s.messages;
-  for (const row of rows) {
-    const cur = tasks[row.task_id];
-    const status = (row.status || 'working') as TaskStatus;
-    if (cur && staleTaskRow(cur, status, row.attempt)) continue;
-    tasks[row.task_id] = {
-      ...(cur || { taskId: row.task_id, label: row.label || '', toolCallId: row.tool_call_id }),
-      kind: cur?.kind || row.kind,
-      state: row.state ?? cur?.state,
-      dismissed: row.dismissed,
-      childSessionId: cur?.childSessionId || row.child_session_id,
-      parentRunId: cur?.parentRunId || row.parent_run_id,
-      status, attempt: row.attempt ?? cur?.attempt,
-      maxAttempts: row.max_attempts ?? cur?.maxAttempts,
-      summary: row.summary ?? cur?.summary,
-      createdAt: (row.created_at ? Date.parse(row.created_at) : undefined) || cur?.createdAt,
-      updatedAt: (row.updated_at ? Date.parse(row.updated_at) : undefined) || cur?.updatedAt,
-    };
-    const callId = cur?.toolCallId || row.tool_call_id;
-    if (callId) {
-      messages = syncTaskCard(messages, callId, {
-        id: row.task_id, label: row.label || cur?.label,
-        status, summary: row.summary, attempt: row.attempt,
-      }) ?? messages;
-    }
-  }
-  return { ...s, tasks, messages };
-}
-
-// TaskViewState is the Inspector's live view of ONE task being inspected:
-// the child session's transcript (persisted snapshot + live tail assembled
-// with the same streamReducer functions as the chat) and its trace events.
-// Populated only while the panel is open (watchTask/unwatchTask).
-export interface TaskViewState {
-  taskId: string;
-  childSessionId: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  messages: any[];
-  streaming: string;
-  reasoning: string;
-  // Trace events grouped by run — one group per ATTEMPT (a retry starts a new
-  // run on the same child session), insertion-ordered oldest first, the same
-  // shape the chat's trace drawer keeps. Flattened they were unreadable after
-  // a retry: two attempts' root spans interleaved on one timeline.
-  traceRuns: Record<string, TraceEvent[]>;
-  loaded: boolean;
-}
+export { taskStateFromRow, taskRetryable } from '@/lib/taskEvents';
+export type { TaskState, TaskViewState } from '@/lib/taskEvents';
 
 export interface SessionState {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -174,31 +72,7 @@ interface TimelinePage {
   hasMore: boolean;
 }
 
-type UpdateSSFn = (sid: string, updater: (s: SessionState) => SessionState) => void;
-
-// taskRetryable answers "would a retry be accepted" from the task state a
-// client already tracks: it failed, and it has attempts left against the
-// ceiling the server sent. Capacity is NOT part of it — the parent's live-task
-// limit is transient and can change between rendering an offer and taking it,
-// so that refusal arrives as a 409 carrying its own explanation.
-export function taskRetryable(t: TaskState): boolean {
-  if (t.status !== 'failed' || !t.maxAttempts || (t.attempt || 1) >= t.maxAttempts) return false;
-  // An execution its budget or the step ceiling stopped is refused a retry
-  // before a run; the state says so.
-  return !(t.kind === TASK_KIND_WORKFLOW && t.state?.stopped);
-}
-
-// staleTaskRow reports whether a durable row describes an OLDER state than the
-// one already on screen: an earlier attempt, or the same attempt walked back
-// from a finished status. Two rules, and between them they also settle two
-// reconnect fetches racing each other — the older one carries the older
-// snapshot and loses on the same comparison.
-function staleTaskRow(cur: TaskState, status: TaskStatus, attempt?: number): boolean {
-  const curAttempt = cur.attempt ?? 0;
-  const rowAttempt = attempt ?? 0;
-  if (rowAttempt !== curAttempt) return rowAttempt < curAttempt;
-  return TERMINAL_TASK_STATUSES.has(cur.status) && !TERMINAL_TASK_STATUSES.has(status);
-}
+export type UpdateSSFn = (sid: string, updater: (s: SessionState) => SessionState) => void;
 
 export function defaultSS(): SessionState {
   return {
@@ -214,6 +88,12 @@ export interface TraceRow {
   error?: string; span_id?: string; parent_id?: string; started_at?: string; ended_at?: string; payload_omitted?: boolean;
 }
 
+function spanDuration(startedAt?: string, endedAt?: string): string {
+  if (!startedAt || !endedAt) return '';
+  const ms = new Date(endedAt).getTime() - new Date(startedAt).getTime();
+  return ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(1) + 's';
+}
+
 // traceEventFromRow is a stored span in the panel's shape: data parsed
 // (pre-JSON rows read as none), the duration computed once.
 export function traceEventFromRow(ev: TraceRow): TraceEvent {
@@ -221,17 +101,27 @@ export function traceEventFromRow(ev: TraceRow): TraceEvent {
   if (ev.data) {
     try { parsed = JSON.parse(ev.data); } catch (_e) { /* pre-JSON rows */ }
   }
-  let duration = '';
-  if (ev.started_at && ev.ended_at) {
-    const ms = new Date(ev.ended_at).getTime() - new Date(ev.started_at).getTime();
-    duration = ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(1) + 's';
-  }
   return {
     kind: 'span', name: ev.name || '', type: ev.detail || '',
     span_id: ev.span_id, parent_id: ev.parent_id, parent_run_id: ev.parent_run_id,
     error: ev.error, started_at: ev.started_at, ended_at: ev.ended_at,
     data: Object.keys(parsed).length > 0 ? parsed : null,
-    duration, payloadOmitted: !!ev.payload_omitted,
+    duration: spanDuration(ev.started_at, ev.ended_at), payloadOmitted: !!ev.payload_omitted,
+  };
+}
+
+// A live trace.span event in the panel's shape.
+interface TraceSpanEvent {
+  run_id: string; parent_run_id?: string; name: string; type?: string; span_id?: string; parent_id?: string;
+  error?: string; started_at?: string; ended_at?: string; data?: Record<string, unknown>; payload_omitted?: boolean;
+}
+
+function traceEventFromLive(p: TraceSpanEvent): TraceEvent {
+  return {
+    kind: 'span', name: p.name, type: p.type || '',
+    span_id: p.span_id, parent_id: p.parent_id, parent_run_id: p.parent_run_id,
+    error: p.error, started_at: p.started_at, ended_at: p.ended_at,
+    data: p.data || null, duration: spanDuration(p.started_at, p.ended_at), payloadOmitted: !!p.payload_omitted,
   };
 }
 
@@ -261,14 +151,6 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
   }, [updateSSRaw]);
   const runMapRef = useRef<Record<string, string>>({});
   const sessionRunRef = useRef<Record<string, string>>({});
-  // Background task runs, keyed by child run id (== task id). Task events are
-  // routed into the PARENT session's task list — never a chat timeline — so
-  // they must be intercepted before the runMap lookup the chat handlers use.
-  const taskRunsRef = useRef<Record<string, { parentSid: string; label: string; taskId: string; toolCallId?: string; kind?: string }>>({});
-  // The task the Inspector is watching: its child-run events additionally
-  // feed SessionState.taskView (accumulated only while open).
-  const taskWatchRef = useRef<{ sid: string; taskId: string; childSessionId: string } | null>(null);
-  const taskViewBufRef = useRef({ text: '', reasoning: '' });
   const streamBufsRef = useRef<Record<string, string>>({});
   const reasoningBufsRef = useRef<Record<string, string>>({});
   // Per-run set of completed message/reasoning item ids already folded into the
@@ -282,11 +164,9 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
   const loadedRef = useRef<Set<string>>(new Set());
   // Sessions whose persisted traces have been pulled (see loadTraces).
   const tracesLoadedRef = useRef<Set<string>>(new Set());
-  // Per-session timeline generation, bumped by forgetLoaded (a branch move).
-  // A fetch launched before the bump describes a path the session is no longer
-  // on; its late resolution must be dropped, not applied — a pre-branch
-  // reloadMessages resolving after the regenerate's reload used to put the
-  // replaced answer back on screen.
+  // Per-session timeline generation, bumped by forgetLoaded (a branch move):
+  // a fetch launched before the bump describes a path the session is no
+  // longer on, and its late resolution is dropped.
   const timelineGenRef = useRef<Record<string, number>>({});
   // Sessions with a "load earlier" fetch in flight. A ref rather than the
   // loadingMore flag because the guard must hold across the render the flag
@@ -311,38 +191,19 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
   }, []);
 
   // fetchTimeline is the single authority for a session's persisted timeline:
-  // messages from the DB merged with the pending tool calls from any durable
-  // pending approval. The streaming SDK persists the user prompt (and completed
-  // safe-prefix items) up front, so during a pause those already live in
-  // `messages`; only the unpaired pending function_call is held back, so the
-  // approval row is merged IN (its tool calls attached to the persisted turn),
-  // not appended as a fresh user+turn — otherwise the prompt would render twice.
-  // Fetching both together and applying the result as one state update removes
-  // the messages/approvals race that made the approval card flicker.
+  // the stored entries, with a durable pending approval's tool calls merged
+  // INTO the persisted turn they belong to (the prompt and the safe prefix
+  // are stored before the pause), fetched together and applied as one update.
   const fetchTimeline = useCallback(async (sid: string, limit = HISTORY_PAGE): Promise<TimelinePage> => {
     type PendingApproval = { run_id: string; user_input?: string; task_id?: string; tool_calls?: Array<{ tool_call_id: string; tool_name: string; arguments: string }> };
     const [msgs, pendingAll] = await Promise.all([
       api.sessions.messages(sid, { limit }) as Promise<EntryView[]>,
       (api.sessions.approvals(sid) as Promise<PendingApproval[]>).catch(() => [] as PendingApproval[]),
     ]);
-    // Approvals belonging to background tasks surface on the task chips (and
-    // must NOT gate the composer or be merged into the chat timeline — their
-    // call ids belong to the task's hidden transcript). Seeding them here is
-    // what keeps a paused task's Approve button reachable after a reload,
-    // when no live run.tool_call event will ever arrive.
+    // A background task's approval surfaces on its chip, never in the chat
+    // timeline (its call ids belong to the task's hidden transcript).
     const taskPending = (pendingAll || []).filter(p => p.task_id);
-    if (taskPending.length > 0) {
-      updateSS(sid, s => {
-        const tasks = { ...s.tasks };
-        for (const p of taskPending) {
-          const tc = (p.tool_calls || [])[0];
-          if (!p.task_id || !tc) continue;
-          const cur = tasks[p.task_id] || { taskId: p.task_id, label: '', status: 'input_required' as const };
-          tasks[p.task_id] = { ...cur, status: 'input_required', pendingCallId: tc.tool_call_id, pendingToolName: tc.tool_name };
-        }
-        return { ...s, tasks };
-      });
-    }
+    if (taskPending.length > 0) updateSS(sid, s => withPendingTaskApprovals(s, taskPending));
     const entries = msgs || [];
     // A pending approval whose run has off-path entries belongs to an attempt
     // that was branched away (regenerated while paused). Its card must not be
@@ -374,11 +235,10 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
     // persisted, so there is nothing to fork from or anchor to.
     const out = [...timeline];
 
-    // The streaming SDK persists the user prompt (and any completed safe-prefix
-    // items) up front, BEFORE the pause — so the timeline may already hold this
-    // run's user bubble and turn. Merge the pending tool calls into that turn and
-    // skip re-adding the prompt, rather than appending duplicates. Only when
-    // nothing for this run is persisted do we reconstruct the paused turn whole.
+    // The timeline may already hold this run's user bubble and turn: merge
+    // the pending tool calls into that turn rather than appending duplicates.
+    // Only when nothing for this run is persisted is the paused turn
+    // reconstructed whole.
     let lastTurnIdx = -1;
     for (let i = out.length - 1; i >= 0; i--) {
       if (out[i].role === 'turn') { if (out[i].runId === runId) lastTurnIdx = i; break; }
@@ -398,6 +258,20 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
     out.push({ role: 'turn', parts: [{ type: 'tools', toolCalls }], runId, messageId: undefined });
     return { ...page, timeline: out };
   }, [updateSS]);
+
+  // The task router lives for the hook's lifetime; it reads the latest
+  // callbacks through the ref on every call.
+  const routerDepsRef = useRef({ updateSS, fetchTimeline, scheduleFrame });
+  routerDepsRef.current = { updateSS, fetchTimeline, scheduleFrame };
+  const tasksRef = useRef<TaskRouter | null>(null);
+  if (!tasksRef.current) {
+    tasksRef.current = createTaskRouter(() => ({
+      ...routerDepsRef.current,
+      sessionOfRun: runId => runMapRef.current[runId],
+      isDeleted: sid => deletedRef.current.has(sid),
+    }));
+  }
+  const tasks = tasksRef.current;
 
   const reloadMessages = useCallback((sid: string) => {
     const gen = timelineGenRef.current[sid] || 0;
@@ -446,40 +320,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
           updateSS(sid, s => s.tasksLoaded ? s : { ...s, tasksLoaded: true });
           return;
         }
-        updateSS(sid, s => {
-          const tasks = { ...s.tasks };
-          for (const row of rows) {
-            const created = row.created_at ? Date.parse(row.created_at) : undefined;
-            const updated = row.updated_at ? Date.parse(row.updated_at) : undefined;
-            const cur = tasks[row.task_id];
-            if (cur) {
-              // Live events may have registered the task first; the row still
-              // owns the durable identity fields (child session, tool call).
-              tasks[row.task_id] = {
-                ...cur,
-                label: cur.label || row.label || '',
-                kind: cur.kind || row.kind,
-                state: cur.state ?? row.state,
-                dismissed: cur.dismissed ?? row.dismissed,
-                toolCallId: cur.toolCallId || row.tool_call_id,
-                childSessionId: cur.childSessionId || row.child_session_id,
-                parentRunId: cur.parentRunId || row.parent_run_id,
-                attempt: cur.attempt || row.attempt,
-                maxAttempts: row.max_attempts ?? cur.maxAttempts,
-                summary: cur.summary ?? row.summary,
-                createdAt: created || cur.createdAt,
-                // For a terminal task the row's updated_at IS the finish time
-                // (authoritative); live tasks keep their event-driven value.
-                updatedAt: cur.status === 'working' || cur.status === 'input_required'
-                  ? (cur.updatedAt || updated)
-                  : (updated || cur.updatedAt),
-              };
-              continue;
-            }
-            tasks[row.task_id] = taskStateFromRow(row);
-          }
-          return { ...s, tasks, tasksLoaded: true };
-        });
+        updateSS(sid, s => seedTaskRows(s, rows));
       }).catch(() => { updateSS(sid, s => s.tasksLoaded ? s : { ...s, tasksLoaded: true }); });
     return msgP;
   }, [fetchTimeline, updateSS]);
@@ -504,25 +345,21 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       .catch(() => undefined); // labels degrade to run ids; the spans still load
     // The SUMMARY listing: every span's row without its payload — the model
     // request and reply, a tool's arguments and result are nearly all of a
-    // session's trace bytes (a generation span carries the whole conversation
-    // as its input; a long session's traces run to tens of MB), and parsing
-    // them on open is what made the page stall. A row opens its payload on
-    // demand (loadSpanPayload).
+    // session's trace bytes, and parsing them on open is what stalls the
+    // page. A row opens its payload on demand (loadSpanPayload).
     (api.sessions.traces(sid, { summary: true }) as Promise<TraceRow[] | null>).then(events => {
       if (!events || events.length === 0) return;
       const runs: Record<string, TraceEvent[]> = {};
       for (const ev of events) {
-        // Spans are the sole trace source; kind=hook rows from older builds
-        // are ignored.
+        // Spans are the sole trace source; kind=hook rows are ignored.
         if (ev.kind !== 'span') continue;
         const rid = ev.run_id || 'unknown';
         if (!runs[rid]) runs[rid] = [];
         runs[rid].push(traceEventFromRow(ev));
       }
       // Merge per run id with live data winning: a run.started that landed
-      // during this fetch has already seeded (and keeps updating) its own run's
-      // entry — the old all-or-nothing guard dropped every persisted run's
-      // trace whenever any live run existed.
+      // during this fetch has already seeded (and keeps updating) its own
+      // run's entry.
       updateSS(sid, s => ({ ...s, traceRuns: { ...runs, ...s.traceRuns } }));
     }).catch(() => {
       // Roll back the mark so the next lens open retries instead of leaving
@@ -565,11 +402,8 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       delete gapResyncRef.current[runId];
     }
     delete sessionRunRef.current[deletedId];
-    for (const [runId, meta] of Object.entries(taskRunsRef.current)) {
-      if (meta.parentSid === deletedId) delete taskRunsRef.current[runId];
-    }
-    if (taskWatchRef.current?.sid === deletedId) taskWatchRef.current = null;
-  }, []);
+    tasks.forgetSession(deletedId);
+  }, [tasks]);
 
   useEffect(() => {
     const ws = new WSClient();
@@ -586,36 +420,23 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
 
     ws.onStatus = setConnected;
 
+    // dropRunRefs clears a terminal run's routing bookkeeping — any chat-path
+    // refs a run acquired before its background identity was known (safe
+    // no-ops otherwise).
+    const dropRunRefs = (runId: string) => {
+      const sid = runMapRef.current[runId];
+      delete streamBufsRef.current[runId];
+      delete reasoningBufsRef.current[runId];
+      delete appendedItemsRef.current[runId];
+      delete gapResyncRef.current[runId];
+      delete runMapRef.current[runId];
+      if (sid && sessionRunRef.current[sid] === runId) delete sessionRunRef.current[sid];
+    };
+
     ws.on(EV.runStarted, (p: { session_id?: string; run_id: string; input?: string; attachments?: AttachmentMeta[]; parent_session_id?: string; parent_run_id?: string; task_id?: string; kind?: string; tool_call_id?: string; label?: string; attempt?: number; max_attempts?: number }) => {
-      // A background task run — a sub-agent's or a workflow step's: track it
-      // under its parent session's task list and keep it out of every
-      // chat-timeline path. Task identity (task_id) and run (run_id) are
-      // separate: events route by run id through this registry, task state is
-      // keyed by task id.
-      if (p.parent_session_id) {
-        if (deletedRef.current.has(p.parent_session_id)) return;
-        const taskId = p.task_id || p.run_id;
-        taskRunsRef.current[p.run_id] = { parentSid: p.parent_session_id, label: p.label || '', taskId, toolCallId: p.tool_call_id, kind: p.kind };
-        updateSS(p.parent_session_id, s => {
-          // A retry: the spawn card is showing an outcome that belongs to the
-          // attempt before this one. Re-arm it, or the card keeps a stale
-          // "failed" badge with a live Retry button, and the new outcome is
-          // dropped by applyTaskTerminal's no-move-backwards guard.
-          const rearmed = p.tool_call_id && p.attempt
-            ? syncTaskCard(s.messages, p.tool_call_id, { id: taskId, label: p.label, attempt: p.attempt })
-            : null;
-          return {
-            ...s,
-            messages: rearmed || s.messages,
-            // Live again, so back on the strip whatever the person hid.
-            tasks: { ...s.tasks, [taskId]: { ...s.tasks[taskId], taskId, label: p.label || '', kind: p.kind || s.tasks[taskId]?.kind, status: 'working' as TaskStatus, attempt: p.attempt || s.tasks[taskId]?.attempt, maxAttempts: p.max_attempts || s.tasks[taskId]?.maxAttempts, toolCallId: p.tool_call_id, childSessionId: p.session_id, parentRunId: p.parent_run_id || s.tasks[taskId]?.parentRunId, createdAt: s.tasks[taskId]?.createdAt || Date.now(), updatedAt: Date.now(), summary: undefined, dismissed: false } },
-          };
-        });
-        // A resume segment of the watched task re-announces itself; make sure
-        // the view has a live turn to stream into.
-        updateTaskView(p.run_id, view => ({ ...view, messages: ensureLiveTurn(view.messages, p.run_id) || view.messages }));
-        return;
-      }
+      // A background task run — a sub-agent's or a workflow step's — is the
+      // router's, and stays out of every chat-timeline path.
+      if (tasks.runStarted(p)) return;
       const sid = p.session_id;
       if (!sid || deletedRef.current.has(sid)) return;
       runMapRef.current[p.run_id] = sid;
@@ -642,163 +463,10 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       });
     });
 
-    // The Inspector watch is keyed by item id; run events carry a run id. Both
-    // registries map a run to its durable item id; the child-session fallback
-    // covers a run neither registered (its run.started predates this page).
-    const isWatchedRun = (runId: string) => {
-      const w = taskWatchRef.current;
-      if (!w) return false;
-      return (taskRunsRef.current[runId]?.taskId || runId) === w.taskId
-        || runMapRef.current[runId] === w.childSessionId;
-    };
-
-    // isBackgroundRun: this run's events belong in a task list or the Inspector,
-    // never in a chat timeline. Task runs always — a workflow step's included
-    // (their child session is not a conversation anyone is reading).
-    const isBackgroundRun = (runId: string) => !!taskRunsRef.current[runId] || isWatchedRun(runId);
-
-    // updateTaskView applies fn to the inspected item's view iff runId is one of
-    // its runs. Returns true when it was. taskView is keyed by the DURABLE item
-    // id, never a run id, so the guard goes through isWatchedRun rather than
-    // comparing raw ids (comparing taskView.taskId against a run id is always
-    // false, which silently dropped every live Inspector update).
-    const updateTaskView = (runId: string, fn: (v: TaskViewState) => TaskViewState) => {
-      const w = taskWatchRef.current;
-      if (!w || !isWatchedRun(runId)) return false;
-      updateSS(w.sid, s => (s.taskView && s.taskView.taskId === w.taskId ? { ...s, taskView: fn(s.taskView) } : s));
-      return true;
-    };
-
-    // refetchTaskView re-pulls the child transcript after a terminal event —
-    // the snapshot is the durable truth and closes any in-flight merge gap
-    // (the chat path's "terminal events reconcile against the store", scoped
-    // to the inspected task).
-    const refetchTaskView = (runId: string) => {
-      const w = taskWatchRef.current;
-      if (!w || !isWatchedRun(runId)) return;
-      // Applied against the watch captured HERE, not re-derived when the fetch
-      // resolves: the terminal handlers drop the run's registry entries as they
-      // return, and a guard that re-derives from them would drop this update.
-      fetchTimeline(w.childSessionId).then(({ timeline }) => {
-        updateSS(w.sid, s => (s.taskView && s.taskView.taskId === w.taskId
-          ? { ...s, taskView: { ...s.taskView, messages: timeline, streaming: '', reasoning: '', loaded: true } }
-          : s));
-      }).catch(() => undefined).finally(() => {
-        // This is the terminal refetch (the terminal handler kept the run→task
-        // entry alive only for it). Drop it now so a watched task that ended
-        // doesn't leak its routing entry for the life of the page.
-        delete taskRunsRef.current[runId];
-      });
-    };
-
-    // dropRunRefs clears a terminal run's routing bookkeeping — any chat-path
-    // refs a run acquired before its background identity was known (safe
-    // no-ops otherwise).
-    const dropRunRefs = (runId: string) => {
-      const sid = runMapRef.current[runId];
-      delete streamBufsRef.current[runId];
-      delete reasoningBufsRef.current[runId];
-      delete appendedItemsRef.current[runId];
-      delete gapResyncRef.current[runId];
-      delete runMapRef.current[runId];
-      if (sid && sessionRunRef.current[sid] === runId) delete sessionRunRef.current[sid];
-    };
-
-    const updateTask = (runId: string, patch: Partial<TaskState>) => {
-      const meta = taskRunsRef.current[runId];
-      if (!meta) return false;
-      updateSS(meta.parentSid, s => {
-        const cur = s.tasks[meta.taskId] || { taskId: meta.taskId, label: meta.label, status: 'working' as TaskStatus, toolCallId: meta.toolCallId, kind: meta.kind };
-        // A workflow's step run ending is NOT the workflow ending: the task
-        // moves to its next step, or ends, and task.updated says which. Keep
-        // the run-level facts (the approval it dropped), not the verdict.
-        if ((meta.kind || cur.kind) === TASK_KIND_WORKFLOW && patch.status && TERMINAL_TASK_STATUSES.has(patch.status)) {
-          const { status: _status, summary: _summary, ...runFacts } = patch;
-          patch = runFacts;
-        }
-        let next = { ...s, tasks: { ...s.tasks, [meta.taskId]: { ...cur, updatedAt: Date.now(), ...patch } } };
-        // A terminal outcome also folds into the spawn card, so the timeline
-        // shows "task completed" and the result summary without a reload —
-        // the live counterpart of the call-display UPDATE the server appends
-        // for replay (applyTaskTerminal ignores non-terminal statuses).
-        if (meta.toolCallId && patch.status) {
-          const merged = next.tasks[meta.taskId];
-          const msgs = syncTaskCard(next.messages, meta.toolCallId, {
-            id: meta.taskId,
-            label: merged.label || meta.label,
-            status: patch.status,
-            summary: patch.summary ?? cur.summary,
-            // The attempt travels WITH the outcome. Without it the card reads
-            // as attempt 1 whatever it is, and a replayed run.started for the
-            // attempt it is already showing looks like a new one — wiping the
-            // result the guard exists to protect.
-            attempt: merged.attempt,
-          });
-          if (msgs) next = { ...next, messages: msgs };
-        }
-        return next;
-      });
-      return true;
-    };
-
-    // The task's own state, from the server that owns it. For a sub-agent task
-    // it confirms what the run events already said; for a workflow it is the
-    // ONLY source of the task-level status and of the step it is on — a step
-    // run's ending says nothing about the workflow (see updateTask). Merged,
-    // not applied blindly: the same no-move-backwards rule the durable rows
-    // get, since a late event can be older than what the socket has shown.
-    ws.on(EV.taskUpdated, (p: TaskRow) => {
-      if (!p.parent_session_id || !p.task_id) return;
-      const status = (p.status || 'working') as TaskStatus;
-      const updated = (p.updated_at ? Date.parse(p.updated_at) : undefined) || Date.now();
-      updateSS(p.parent_session_id, s => {
-        const cur = s.tasks[p.task_id];
-        if (cur && staleTaskRow(cur, status, p.attempt)) return s;
-        const paused = status === 'input_required';
-        const next: TaskState = {
-          ...(cur || { taskId: p.task_id, label: '' }),
-          taskId: p.task_id,
-          label: p.label || cur?.label || '',
-          kind: p.kind || cur?.kind,
-          state: p.state ?? cur?.state,
-          status,
-          attempt: p.attempt ?? cur?.attempt,
-          maxAttempts: p.max_attempts ?? cur?.maxAttempts,
-          summary: p.summary ?? cur?.summary,
-          toolCallId: cur?.toolCallId || p.tool_call_id,
-          childSessionId: cur?.childSessionId || p.child_session_id,
-          parentRunId: cur?.parentRunId || p.parent_run_id,
-          createdAt: cur?.createdAt || updated,
-          updatedAt: updated,
-          // A task that moved on (a new step, a retry) has no decision pending;
-          // only a pause keeps the approval the run events attached.
-          pendingCallId: paused ? (p.pending_call_id || cur?.pendingCallId) : undefined,
-          pendingToolName: paused ? (p.pending_tool_name || cur?.pendingToolName) : undefined,
-          // Live again clears a dismissal — a retry brings the row back; a
-          // terminal row carries the flag as the server has it (a dismissal
-          // made in another window arrives here), else what this one knows.
-          dismissed: TERMINAL_TASK_STATUSES.has(status) ? (p.dismissed ?? cur?.dismissed) : false,
-        };
-        // The card that spawned it follows the task's state, not its runs'.
-        const callId = next.toolCallId;
-        const messages = callId
-          ? syncTaskCard(s.messages, callId, { id: p.task_id, label: next.label, status, summary: p.summary, attempt: p.attempt }) ?? s.messages
-          : s.messages;
-        return { ...s, tasks: { ...s.tasks, [p.task_id]: next }, messages };
-      });
-    });
+    ws.on(EV.taskUpdated, (p: TaskRow) => tasks.taskUpdated(p));
 
     ws.on(EV.runStep, (p: { run_id: string; delta: string }) => {
-      if (isBackgroundRun(p.run_id)) {
-        if (isWatchedRun(p.run_id)) {
-          taskViewBufRef.current.text += p.delta;
-          scheduleFrame('taskview:step', () => {
-            const buf = taskViewBufRef.current.text;
-            updateTaskView(p.run_id, v => ({ ...v, streaming: buf }));
-          });
-        }
-        return;
-      }
+      if (tasks.step(p)) return;
       const sid = runMapRef.current[p.run_id];
       if (!sid) return;
       streamBufsRef.current[p.run_id] = (streamBufsRef.current[p.run_id] || '') + p.delta;
@@ -809,16 +477,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
     });
 
     ws.on(EV.runReasoning, (p: { run_id: string; delta: string }) => {
-      if (isBackgroundRun(p.run_id)) {
-        if (isWatchedRun(p.run_id)) {
-          taskViewBufRef.current.reasoning += p.delta;
-          scheduleFrame('taskview:reasoning', () => {
-            const buf = taskViewBufRef.current.reasoning;
-            updateTaskView(p.run_id, v => ({ ...v, reasoning: buf }));
-          });
-        }
-        return;
-      }
+      if (tasks.reasoning(p)) return;
       const sid = runMapRef.current[p.run_id];
       if (!sid) return;
       reasoningBufsRef.current[p.run_id] = (reasoningBufsRef.current[p.run_id] || '') + p.delta;
@@ -833,16 +492,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
     // previewed it: the delta buffer is dropped so the tool_call flush (and
     // run.output) cannot append the same text again.
     ws.on(EV.runMessage, (p: { run_id: string; text: string; item_id?: string }) => {
-      if (isBackgroundRun(p.run_id)) {
-        if (p.text && isWatchedRun(p.run_id)) {
-          taskViewBufRef.current.text = '';
-          updateTaskView(p.run_id, v => {
-            const msgs = appendMessageItem(ensureLiveTurn(v.messages, p.run_id) || v.messages, p.text, !p.item_id);
-            return msgs ? { ...v, messages: msgs, streaming: '' } : { ...v, streaming: '' };
-          });
-        }
-        return;
-      }
+      if (tasks.message(p)) return;
       const sid = runMapRef.current[p.run_id];
       if (!sid || !p.text) return;
       streamBufsRef.current[p.run_id] = '';
@@ -864,16 +514,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
     // "Thinking…" preview to the current turn and is the only thinking signal
     // on backends that stream no reasoning deltas.
     ws.on(EV.runReasoningItem, (p: { run_id: string; text: string; item_id?: string }) => {
-      if (isBackgroundRun(p.run_id)) {
-        if (p.text && isWatchedRun(p.run_id)) {
-          taskViewBufRef.current.reasoning = '';
-          updateTaskView(p.run_id, v => {
-            const msgs = appendReasoningItem(ensureLiveTurn(v.messages, p.run_id) || v.messages, p.text, !p.item_id);
-            return msgs ? { ...v, messages: msgs, reasoning: '' } : { ...v, reasoning: '' };
-          });
-        }
-        return;
-      }
+      if (tasks.reasoningItem(p)) return;
       const sid = runMapRef.current[p.run_id];
       if (!sid || !p.text) return;
       reasoningBufsRef.current[p.run_id] = '';
@@ -889,24 +530,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
     });
 
     ws.on(EV.runOutput, (p: { run_id: string; final_output?: string }) => {
-      if (isBackgroundRun(p.run_id)) {
-        updateTask(p.run_id, { status: 'completed', summary: (p.final_output || '').slice(0, 300), pendingCallId: undefined });
-        if (isWatchedRun(p.run_id)) {
-          const remaining = taskViewBufRef.current;
-          taskViewBufRef.current = { text: '', reasoning: '' };
-          updateTaskView(p.run_id, v => {
-            const msgs = finalizeTurn(v.messages, p.final_output || remaining.text, remaining.reasoning);
-            return { ...v, messages: msgs || v.messages, streaming: '', reasoning: '' };
-          });
-          refetchTaskView(p.run_id);
-        }
-        // Terminal: drop the run→task routing entry so it doesn't accumulate.
-        // Keep the watched run's entry — its async refetchTaskView still maps
-        // runId → taskId when the fetch resolves.
-        if (!isWatchedRun(p.run_id)) delete taskRunsRef.current[p.run_id];
-        dropRunRefs(p.run_id);
-        return;
-      }
+      if (tasks.output(p)) { dropRunRefs(p.run_id); return; }
       const sid = runMapRef.current[p.run_id];
       if (!sid) return;
       const text = p.final_output || streamBufsRef.current[p.run_id] || '';
@@ -925,23 +549,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
     });
 
     ws.on(EV.runError, (p: { run_id?: string; session_id?: string; code?: string; message: string; guardrail?: string; stage?: string }) => {
-      if (p.run_id && isBackgroundRun(p.run_id)) {
-        updateTask(p.run_id, { status: 'failed', summary: p.message?.slice(0, 300), pendingCallId: undefined });
-        if (isWatchedRun(p.run_id)) {
-          const remaining = taskViewBufRef.current;
-          taskViewBufRef.current = { text: '', reasoning: '' };
-          const rid = p.run_id;
-          updateTaskView(rid, v => ({
-            ...v,
-            messages: appendErrorPart(ensureLiveTurn(v.messages, rid) || v.messages, { type: 'error', content: p.message || 'run failed' }, remaining.reasoning, remaining.text),
-            streaming: '', reasoning: '',
-          }));
-          refetchTaskView(rid);
-        }
-        if (!isWatchedRun(p.run_id)) delete taskRunsRef.current[p.run_id];
-        dropRunRefs(p.run_id);
-        return;
-      }
+      if (p.run_id && tasks.error({ run_id: p.run_id, message: p.message })) { dropRunRefs(p.run_id); return; }
       // The session already has a live run (e.g. double-send from another
       // tab): the run this error names is still executing — a toast, not a
       // terminal error on the live turn. The rejected send left an optimistic
@@ -1028,21 +636,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
     });
 
     ws.on(EV.runCancelled, (p: { run_id?: string; code?: string }) => {
-      if (p?.run_id && isBackgroundRun(p.run_id)) {
-        updateTask(p.run_id, { status: 'cancelled', pendingCallId: undefined });
-        if (isWatchedRun(p.run_id)) {
-          const remaining = taskViewBufRef.current;
-          taskViewBufRef.current = { text: '', reasoning: '' };
-          updateTaskView(p.run_id, v => {
-            const msgs = appendCancelledPart(v.messages, remaining.reasoning, remaining.text);
-            return { ...v, messages: msgs || v.messages, streaming: '', reasoning: '' };
-          });
-          refetchTaskView(p.run_id);
-        }
-        if (!isWatchedRun(p.run_id)) delete taskRunsRef.current[p.run_id];
-        dropRunRefs(p.run_id);
-        return;
-      }
+      if (p?.run_id && tasks.cancelled({ run_id: p.run_id })) { dropRunRefs(p.run_id); return; }
       const rid = p?.run_id;
       const sid = rid ? runMapRef.current[rid] : null;
       if (!sid || !rid) return;
@@ -1065,21 +659,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
     });
 
     ws.on(EV.runToolCall, (p: { run_id: string; tool_call_id: string; tool_name: string; arguments: string; needs_approval?: boolean }) => {
-      if (isBackgroundRun(p.run_id)) {
-        updateTask(p.run_id, p.needs_approval
-          ? { lastTool: p.tool_name, pendingCallId: p.tool_call_id, pendingToolName: p.tool_name }
-          : { lastTool: p.tool_name });
-        if (isWatchedRun(p.run_id)) {
-          const flushed = taskViewBufRef.current.text;
-          taskViewBufRef.current.text = '';
-          updateTaskView(p.run_id, v => {
-            const tc = { tool_call_id: p.tool_call_id, tool_name: p.tool_name, arguments: p.arguments, needs_approval: p.needs_approval || undefined, status: null as string | null, output: null as string | null };
-            const msgs = appendToolCall(ensureLiveTurn(v.messages, p.run_id) || v.messages, tc, flushed);
-            return msgs ? { ...v, messages: msgs, streaming: '' } : v;
-          });
-        }
-        return;
-      }
+      if (tasks.toolCall(p)) return;
       const sid = runMapRef.current[p.run_id];
       if (!sid) return;
       // A hub replay (reconnect, a gap's resync) delivers the call again: it
@@ -1098,10 +678,9 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       updateSS(sid, s => {
         let msgs = appendToolCall(s.messages, tc, flushed);
         // The spawned task may already be terminal: parent and task runs are
-        // delivered on independent subscriptions with no cross-run ordering
-        // (a reconnect replays both buffers), so updateTask's terminal fold
-        // can run before this card exists and find nothing to patch. The
-        // outcome is still in s.tasks — fold it onto the card it was for.
+        // delivered on independent subscriptions with no cross-run ordering,
+        // so the task's terminal fold can run before this card exists. The
+        // outcome is still in s.tasks — fold it onto the card (invariant 21).
         if (msgs) {
           for (const t of Object.values(s.tasks)) {
             if (t.toolCallId === p.tool_call_id && TERMINAL_TASK_STATUSES.has(t.status)) {
@@ -1118,15 +697,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
     // run.tool_result is — so it accumulates on the card and is replaced when
     // the result lands.
     ws.on(EV.runToolProgress, (p: { run_id: string; call_id: string; delta: string; renderer?: string }) => {
-      if (isBackgroundRun(p.run_id)) {
-        if (isWatchedRun(p.run_id)) {
-          updateTaskView(p.run_id, v => {
-            const msgs = appendToolProgress(v.messages, p.call_id, p.delta, p.renderer);
-            return msgs ? { ...v, messages: msgs } : v;
-          });
-        }
-        return;
-      }
+      if (tasks.toolProgress(p)) return;
       const sid = runMapRef.current[p.run_id];
       if (!sid) return;
       updateSS(sid, s => {
@@ -1135,17 +706,8 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       });
     });
 
-    // Single registration: WSClient.on is overwrite-semantics (one handler per
-    // event type), so the task branch must live INSIDE the chat handler.
     ws.on(EV.runToolResult, (p: { run_id: string; tool_call_id: string; output: string; title?: string; summary?: string; renderer?: string; is_error?: boolean; extra?: DisplayExtra }) => {
-      if (isBackgroundRun(p.run_id)) {
-        updateTask(p.run_id, { pendingCallId: undefined, pendingToolName: undefined });
-        updateTaskView(p.run_id, v => {
-          const msgs = applyToolResult(v.messages, p.tool_call_id, p.output, p);
-          return msgs ? { ...v, messages: msgs } : v;
-        });
-        return;
-      }
+      if (tasks.toolResult(p)) return;
       const sid = runMapRef.current[p.run_id];
       if (!sid) return;
       updateSS(sid, s => {
@@ -1160,15 +722,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
     // The mappings stay: the approval decision RESUMES THE SAME run id, so a
     // later run.started on this id flips the session back to live seamlessly.
     ws.on(EV.runInterrupted, (p: { run_id: string }) => {
-      if (isBackgroundRun(p.run_id)) {
-        updateTask(p.run_id, { status: 'input_required' });
-        // High-signal, once per pause: background approvals are otherwise
-        // easy to miss (the conversation itself stays quiet). A workflow step
-        // has no entry here — its name lives on the execution row.
-        const meta = taskRunsRef.current[p.run_id];
-        toast.info(meta ? 'Task "' + (meta.label || p.run_id.slice(0, 8)) + '" needs approval' : 'A workflow step needs approval');
-        return;
-      }
+      if (tasks.interrupted(p)) return;
       const sid = runMapRef.current[p.run_id];
       if (!sid) return;
       delete streamBufsRef.current[p.run_id];
@@ -1182,16 +736,10 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
     // This connection fell behind and the server dropped events for it — for
     // this connection only; the run is unaffected. The repair is the hub's own
     // replay ring: re-subscribing from the last good sequence number delivers
-    // the dropped events again (items dedup by id; a delta already received
-    // after the gap may double in the streaming text until the finished
-    // message item replaces it). Not a refetch of the persisted history: mid-run
-    // it stops at the last saved turn, and the dropped events are the newest.
-    // Chat runs only — the inspector's live view of a task run keeps no item
-    // ids to dedup a replay by. A range the ring has already evicted — the gap
-    // an attach from 0 opens on a run past its first 512 events, or a cursor
-    // that gapped once before — is not asked for (resyncAfterGap): the ring
-    // cannot deliver it, and asking would replay the whole ring every few
-    // seconds for the run's life.
+    // the dropped events again (items dedup by id). Chat runs only — the
+    // inspector's live view of a task run keeps no item ids to dedup a replay
+    // by. A range the ring has already evicted is not asked for
+    // (resyncAfterGap) — see invariant 14.
     ws.on(EV.runGap, (p: { run_id: string; dropped: number; last_good: number }) => {
       if (!runMapRef.current[p.run_id]) return;
       const now = Date.now();
@@ -1226,15 +774,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
     // `to` yet) are preview noise and are skipped.
     ws.on(EV.runHandoff, (p: { run_id: string; from: string; to?: string; from_id?: string; to_id?: string }) => {
       const handoff = { from: p.from, to: p.to || '', fromId: p.from_id, toId: p.to_id };
-      if (isBackgroundRun(p.run_id)) {
-        if (p.to) {
-          updateTaskView(p.run_id, v => {
-            const msgs = appendHandoffPart(ensureLiveTurn(v.messages, p.run_id) || v.messages, handoff);
-            return msgs ? { ...v, messages: msgs } : v;
-          });
-        }
-        return;
-      }
+      if (tasks.handoff(p, handoff)) return;
       const sid = runMapRef.current[p.run_id];
       if (!sid || !p.to) return;
       // Hub replays (reconnect) re-deliver run.handoff; the reducer dedups like
@@ -1245,44 +785,13 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       });
     });
 
-    ws.on(EV.traceSpan, (p: { run_id: string; parent_run_id?: string; name: string; type?: string; span_id?: string; parent_id?: string; error?: string; started_at?: string; ended_at?: string; data?: Record<string, unknown>; payload_omitted?: boolean }) => {
-      if (isBackgroundRun(p.run_id)) {
-        updateTaskView(p.run_id, v => {
-          let duration = '';
-          if (p.started_at && p.ended_at) {
-            const ms = new Date(p.ended_at).getTime() - new Date(p.started_at).getTime();
-            duration = ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(1) + 's';
-          }
-          const ev: TraceEvent = {
-            kind: 'span', name: p.name, type: p.type || '',
-            span_id: p.span_id, parent_id: p.parent_id, parent_run_id: p.parent_run_id,
-            error: p.error, started_at: p.started_at, ended_at: p.ended_at,
-            data: p.data || null, duration, payloadOmitted: !!p.payload_omitted,
-          };
-          // Into the span's own run group (a retry's spans open a new group),
-          // upserting by span id within it.
-          const events = v.traceRuns[p.run_id] || [];
-          const idx = p.span_id ? events.findIndex(e => e.span_id === p.span_id) : -1;
-          const next = idx >= 0 ? [...events.slice(0, idx), ev, ...events.slice(idx + 1)] : [...events, ev];
-          return { ...v, traceRuns: { ...v.traceRuns, [p.run_id]: next } };
-        });
-        return;
-      }
+    ws.on(EV.traceSpan, (p: TraceSpanEvent) => {
+      const ev = traceEventFromLive(p);
+      if (tasks.traceSpan(p.run_id, ev)) return;
       const sid = runMapRef.current[p.run_id];
       if (!sid) return;
       updateSS(sid, s => {
         const events = s.traceRuns[p.run_id] || [];
-        let duration = '';
-        if (p.started_at && p.ended_at) {
-          const ms = new Date(p.ended_at).getTime() - new Date(p.started_at).getTime();
-          duration = ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(1) + 's';
-        }
-        const ev: TraceEvent = {
-          kind: 'span', name: p.name, type: p.type || '',
-          span_id: p.span_id, parent_id: p.parent_id, parent_run_id: p.parent_run_id,
-          error: p.error, started_at: p.started_at, ended_at: p.ended_at,
-          data: p.data || null, duration, payloadOmitted: !!p.payload_omitted,
-        };
         // A span arrives twice: pending on start, full on end — upsert by id.
         const idx = p.span_id ? events.findIndex(e => e.span_id === p.span_id) : -1;
         const next = idx >= 0 ? [...events.slice(0, idx), ev, ...events.slice(idx + 1)] : [...events, ev];
@@ -1324,14 +833,13 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       }
       rafPending.clear();
     };
-  }, [updateSS, reloadMessages, scheduleFrame, fetchTimeline]);
+  }, [updateSS, reloadMessages, scheduleFrame, tasks]);
 
   // watchTask opens the Inspector's live view of a task: snapshot the child
-  // session's persisted transcript + traces, then let the child-run event
-  // interceptors stream the live tail into it. unwatchTask drops everything.
+  // session's persisted transcript + traces, then let the router stream the
+  // live tail into it. unwatchTask drops everything.
   const watchTask = useCallback((sid: string, taskId: string, childSessionId: string) => {
-    taskWatchRef.current = { sid, taskId, childSessionId };
-    taskViewBufRef.current = { text: '', reasoning: '' };
+    tasks.watch(sid, taskId, childSessionId);
     updateSS(sid, s => ({ ...s, taskView: { taskId, childSessionId, messages: [], streaming: '', reasoning: '', traceRuns: {}, loaded: false } }));
     Promise.all([
       // fetchTimeline (not raw messages): a task paused on an approval keeps
@@ -1340,7 +848,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       fetchTimeline(childSessionId),
       (api.sessions.traces(childSessionId, { summary: true }) as Promise<TraceRow[] | null>).catch(() => [] as TraceRow[]),
     ]).then(([{ timeline }, traceRows]) => {
-      if (taskWatchRef.current?.taskId !== taskId) return; // switched away meanwhile
+      if (tasks.watching()?.taskId !== taskId) return; // switched away meanwhile
       // Grouped by run — one group per attempt, row order (= time order)
       // deciding group order, exactly like the chat drawer's load.
       const traceRuns: Record<string, TraceEvent[]> = {};
@@ -1364,32 +872,23 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
         }
         // Snapshot wins: the child rows share the live turn's runId, so a
         // mergeLiveTail would drop the in-flight turn wholesale. Terminal
-        // events refetch (refetchTaskView), which closes the gap for good.
+        // events refetch (the router's refetchTaskView), which closes the gap
+        // for good.
         return { ...s, taskView: { ...s.taskView, messages: timeline, traceRuns, loaded: true } };
       });
     }).catch(() => {
       updateSS(sid, s => (s.taskView && s.taskView.taskId === taskId ? { ...s, taskView: { ...s.taskView, loaded: true } } : s));
     });
-  }, [updateSS, fetchTimeline]);
+  }, [updateSS, fetchTimeline, tasks]);
 
-  const unwatchTask = useCallback((sid: string) => {
-    taskWatchRef.current = null;
-    taskViewBufRef.current = { text: '', reasoning: '' };
-    updateSS(sid, s => (s.taskView ? { ...s, taskView: null } : s));
-  }, [updateSS]);
+  const unwatchTask = useCallback((sid: string) => tasks.unwatch(sid), [tasks]);
 
-  // loadEarlier prepends the previous page of history.
-  //
-  // It rebuilds the timeline from ALL fetched entries rather than prepending
-  // the new page's timeline to the old one: buildTimeline folds turns across
-  // entries, so assembling the two halves separately splits whichever turn
-  // straddles the page boundary into two turns that then render as two.
-  //
-  // beforeId is passed IN rather than read from state here. A state updater
-  // runs when React processes the update, not at the call — reading the cursor
-  // inside one left it undefined every time, so the fetch never started and the
-  // button stayed on "Loading…" forever. The caller holds the state and knows
-  // the cursor already.
+  // loadEarlier prepends the previous page of history. It rebuilds the
+  // timeline from ALL fetched entries rather than prepending the new page's
+  // timeline to the old one: buildTimeline folds turns across entries, and
+  // assembling the halves separately splits whichever turn straddles the
+  // page boundary. beforeId is passed IN, not read from state: a state
+  // updater runs when React processes the update, not at the call.
   const loadEarlier = useCallback((sid: string, beforeId: string): void => {
     if (!sid || !beforeId || loadingMoreRef.current.has(sid)) return;
     const oldest = beforeId;
@@ -1403,9 +902,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
           const entries = [...page, ...s.entries];
           // The live tail is re-merged because the rebuild only knows what is
           // persisted; an in-flight turn has nothing in the store yet. The
-          // merge is scoped to the CURRENT live run — omitting liveRunId here
-          // dropped the streaming turn when the user loaded earlier messages
-          // mid-generation.
+          // merge is scoped to the CURRENT live run.
           const rebuilt = buildTimeline(entries) as SessionState['messages'];
           return {
             ...s,

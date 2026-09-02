@@ -1,0 +1,11 @@
+/* A row with no author (a legacy global row): said as such, quietly. */
+.owner-none {
+  color: var(--fgColor-muted);
+  font-style: italic;
+}
+
+/* The loaded-count line under a cursor-paged table. */
+.list-table-count {
+  font-size: var(--base-text-size-xs);
+  color: var(--fgColor-muted);
+}

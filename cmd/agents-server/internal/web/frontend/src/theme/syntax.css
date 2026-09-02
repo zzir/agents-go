@@ -13,8 +13,7 @@
 .hljs-keyword,
 .hljs-selector-tag { color: #cf222e; }
 .hljs-string,
-.hljs-doctag,
-.hljs-addition { color: #0a3069; }
+.hljs-doctag { color: #0a3069; }
 .hljs-number,
 .hljs-literal { color: #0550ae; }
 .hljs-title,
@@ -35,7 +34,7 @@
 .hljs-bullet { color: #0550ae; }
 .hljs-regexp { color: #116329; }
 .hljs-deletion { color: #82071e; background: #ffebe9; }
-.hljs-addition { background: #dafbe1; }
+.hljs-addition { color: #0a3069; background: #dafbe1; }
 /* GitHub-style full-row diff background. hljs emits one span per +/- line with
    the newline OUTSIDE the span, so `display: block` would double the breaks
    (block wrap + the pre newline) and leave a blank line between rows.
@@ -57,8 +56,7 @@
 [data-color-mode="dark"] .hljs-keyword,
 [data-color-mode="dark"] .hljs-selector-tag { color: #ff7b72; }
 [data-color-mode="dark"] .hljs-string,
-[data-color-mode="dark"] .hljs-doctag,
-[data-color-mode="dark"] .hljs-addition { color: #a5d6ff; }
+[data-color-mode="dark"] .hljs-doctag { color: #a5d6ff; }
 [data-color-mode="dark"] .hljs-number,
 [data-color-mode="dark"] .hljs-literal { color: #79c0ff; }
 [data-color-mode="dark"] .hljs-title,
@@ -79,7 +77,7 @@
 [data-color-mode="dark"] .hljs-bullet { color: #79c0ff; }
 [data-color-mode="dark"] .hljs-regexp { color: #7ee787; }
 [data-color-mode="dark"] .hljs-deletion { color: #ffa198; background: rgba(248, 81, 73, 0.15); }
-[data-color-mode="dark"] .hljs-addition { background: rgba(46, 160, 67, 0.15); }
+[data-color-mode="dark"] .hljs-addition { color: #a5d6ff; background: rgba(46, 160, 67, 0.15); }
 [data-color-mode="dark"] .hljs-subst { color: #e6edf3; }
 [data-color-mode="dark"] .hljs-params { color: #e6edf3; }
 [data-color-mode="dark"] .hljs-property { color: #79c0ff; }

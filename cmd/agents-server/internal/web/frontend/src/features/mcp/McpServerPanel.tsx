@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Button, TextInput, Label, Select, Checkbox, FormControl, Stack, ToggleSwitch } from '@primer/react';
+import { Button, TextInput, Label, Select, Checkbox, FormControl, Stack, ToggleSwitch, useConfirm } from '@primer/react';
 import { SecretInput } from '@/components/SecretInput';
 import { TokenListInput } from '@/components/TokenListInput';
 import { FormActions } from '@/components/FormActions';
@@ -205,8 +205,8 @@ const STATUS_DOT: Record<McpStatus, string> = {
 const STATUS_ACTION: Partial<Record<McpStatus, { label: string; inProgress?: boolean }>> = {
   disconnected: { label: 'Connect' },
   needs_auth: { label: 'Authorize' },
-  connecting: { label: 'Connecting...', inProgress: true },
-  authorizing: { label: 'Authorizing... (retry)' },
+  connecting: { label: 'Connecting…', inProgress: true },
+  authorizing: { label: 'Authorizing… (retry)' },
 };
 
 function EnabledToggle({ server, onToggle }: { server: McpServer; onToggle: (s: McpServer) => void }) {
@@ -242,7 +242,8 @@ export function McpServerPanel() {
   const { me } = useMe();
   const isAdmin = me?.role === 'admin';
   const rowEditable = (s: McpServer) => canEditRow(isAdmin, me?.id, s);
-  const { items: servers, reload, adding, editing, startAdd, startEdit, cancel, save, saving, remove } = useCrud<McpServer, Partial<McpServer>>(api.mcpServers);
+  const { items: servers, loading, reload, adding, editing, startAdd, startEdit, cancel, save, saving, remove } = useCrud<McpServer, Partial<McpServer>>(api.mcpServers, 'mcp-servers');
+  const confirmDialog = useConfirm();
   // busy covers only the POST /connect round-trip; every longer-lived state
   // (connecting, authorizing) is reported by the backend via status.
   const [busy, setBusy] = useState<Record<string | number, boolean>>({});
@@ -289,6 +290,13 @@ export function McpServerPanel() {
     reload();
   };
   const handleClearAuth = async (id: string | number): Promise<boolean> => {
+    const ok = await confirmDialog({
+      title: 'Clear the saved authorization?',
+      content: 'The server disconnects and its OAuth token is deleted; the next connect asks for authorization again.',
+      confirmButtonContent: 'Clear auth',
+      confirmButtonType: 'danger',
+    });
+    if (!ok) return false;
     try {
       await api.mcpServers.clearOAuth(id);
       toast.success('Authorization cleared');
@@ -323,7 +331,8 @@ export function McpServerPanel() {
     // Scoped rows: the form is a disabled view exactly when the opened row is
     // not the caller's to edit (canEditRow), not for every member.
     <ReadOnlyContext value={!!editing && !rowEditable(editing)}>
-      <CrudPanel title="MCP Servers" onAdd={startAdd} onCancel={cancel} form={form} isEmpty={servers.length === 0} empty="No MCP servers configured."
+      <CrudPanel title="MCP servers" onAdd={startAdd} onCancel={cancel} form={form} loading={loading} isEmpty={servers.length === 0}
+        empty="No MCP servers yet." emptyHint="An MCP server lends its tools to the agents that select it."
         onDelete={editing && canDeleteRow(isAdmin, me?.id, editing)
           ? async () => { if (await remove(editing.id, editing.name)) cancel(); } : null}>
         {servers.map(s => {
@@ -344,8 +353,8 @@ export function McpServerPanel() {
                     onClick={() => handleConnect(s.id)}
                     disabled={action.inProgress || busy[s.id]}
                     size="small"
-                    style={{ color: 'var(--fgColor-success)', minWidth: 90, textAlign: 'center' }}
-                  >{busy[s.id] ? '...' : action.label}</Button>
+                    className="mcp-connect-btn"
+                  >{busy[s.id] ? '…' : action.label}</Button>
                 )}
                 {/* Connecting arms a shared credential, so on a global row it
                     stays the admin's act — tell the member whose move it is

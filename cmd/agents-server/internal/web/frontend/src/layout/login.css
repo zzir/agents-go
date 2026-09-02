@@ -1,0 +1,73 @@
+/* The login page: copy on the left, the sign-in control on the right. Below
+   the app's mobile breakpoint the copy hides and the control stands alone. */
+.login-page {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  height: 100vh;
+  height: 100dvh;
+  background: var(--bgColor-default);
+}
+
+.login-hero {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--base-size-32);
+}
+
+.login-hero-inner {
+  max-width: 400px;
+}
+
+.login-title {
+  margin: 0 0 var(--base-size-8);
+  font-size: var(--text-title-size-medium, 1.25rem);
+  font-weight: var(--base-text-weight-semibold);
+  color: var(--fgColor-muted);
+}
+
+.login-tagline {
+  margin: 0 0 var(--base-size-24);
+  font-size: var(--text-body-size-medium, 0.875rem);
+  color: var(--fgColor-muted);
+}
+
+.login-points {
+  margin: 0;
+  padding-left: var(--base-size-20);
+  display: flex;
+  flex-direction: column;
+  gap: var(--base-size-8);
+  font-size: var(--base-text-size-sm);
+  color: var(--fgColor-muted);
+}
+
+.login-panel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--base-size-32);
+}
+
+.login-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--base-size-16);
+  width: 100%;
+  max-width: 320px;
+}
+
+.login-heading {
+  margin: 0 0 var(--base-size-4);
+  font-size: var(--base-text-size-xl);
+  font-weight: var(--base-text-weight-semibold);
+}
+
+@media (max-width: 767px) {
+  .login-page {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .login-hero {
+    display: none;
+  }
+}

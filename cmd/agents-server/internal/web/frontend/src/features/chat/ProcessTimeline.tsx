@@ -60,12 +60,6 @@ function DiagnosticBadge({ diagnostics }: { diagnostics?: RunDiagnostic[] }) {
   );
 }
 
-// Space-separated tool call ids across a turn's parts, for the group's
-// data-anchor-ids attribute.
-function toolCallIds(parts: TurnPart[]): string {
-  return parts.flatMap(p => (p.type === 'tools' ? p.toolCalls.map(tc => tc.tool_call_id) : [])).join(' ');
-}
-
 interface ProcessTimelineProps {
   parts: TurnPart[];
   live: boolean;
@@ -128,14 +122,16 @@ export function ProcessTimeline({ parts, live, reasoning, textStreaming }: Proce
         : reasoning ? 'Thinking…' : 'Working…')
       : stepCount + ' step' + (stepCount > 1 ? 's' : '');
 
+  const toggle = () => setExpanded(!shouldShow);
   return (
-    // The call ids this group holds, so a jump aimed at a tool card inside a
-    // COLLAPSED group can find the group (the cards themselves are not in the
-    // DOM until it opens) and expand it.
-    <div className="process-group" data-anchor-ids={toolCallIds(parts) || undefined}>
+    <div className="process-group">
       <div
         className={'process-group-toggle' + (shouldShow ? ' expanded' : '')}
-        onClick={() => setExpanded(!shouldShow)}
+        role="button"
+        tabIndex={0}
+        aria-expanded={shouldShow}
+        onClick={toggle}
+        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } }}
       >
         <ChevronRightIcon size={16} className="process-icon" />
         <span>{label}</span>

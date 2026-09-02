@@ -40,8 +40,8 @@ interface AgentRef { id: string; name: string }
 // while the approval is pending, since afterwards the store holds the result.
 function WorkflowSaveReview({ spec }: { spec: WorkflowSpec }) {
   // An empty list arrives as null, so "loaded" is the loading flag, not the data.
-  const { data: workflows, loading, error } = useApi<Workflow[] | null>(() => api.workflows.list() as Promise<Workflow[] | null>);
-  const { data: agents, loading: agentsLoading } = useApi<AgentRef[] | null>(() => api.agents.list() as Promise<AgentRef[] | null>);
+  const { data: workflows, loading, error } = useApi<Workflow[] | null>(() => api.workflows.list() as Promise<Workflow[] | null>, [], 'workflows');
+  const { data: agents, loading: agentsLoading } = useApi<AgentRef[] | null>(() => api.agents.list() as Promise<AgentRef[] | null>, [], 'agents');
   // Both, before a line is drawn: a diff over agent ids would flash every
   // step's agent line as a change until the names arrive.
   if (loading || agentsLoading) return null;
