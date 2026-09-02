@@ -1,14 +1,14 @@
 # Wire protocol — target shape
 
-> This is the shape the WebSocket protocol is being moved *to*. Most of it
-> ships today; the exceptions are marked 🚧 below.
+> What the WebSocket protocol is still being moved *toward*, and the decisions
+> the code cites by number. Agreed up front rather than discovered along the
+> way: the frontend and the backend change together, and without a stated
+> target they renegotiate the payload shape three or four times. Changing a
+> decision here is allowed — but it is a decision, made once, not a drift.
 >
-> It was agreed up front rather than discovered along the way: the frontend and
-> the backend change together, and without a stated target they renegotiate the
-> payload shape three or four times. Changing a decision here is allowed — but
-> it is a decision, made once, not a drift.
->
-> The live protocol is defined by
+> The protocol that ships today is documented in
+> [the wire surface](../../docs/reference/protocol.md#websocket-protocol); the
+> live definition is
 > [`internal/protocol/messages.go`](internal/protocol/messages.go), mirrored in
 > [`internal/web/frontend/src/lib/protocol.ts`](internal/web/frontend/src/lib/protocol.ts).
 > Neither may diverge from the other at any point.
@@ -20,24 +20,23 @@
 - The envelope stays `{"type": "...", "payload": {...}}`.
 - Application-level auth stays: `{"type":"auth","token":"..."}` first, server
   replies `auth.ok`. No token in the query string.
-- Run events stay a **broadcast bus**: every authenticated connection is
-  attached to every run. A dropped socket does not cancel a run, and
-  `run.subscribe` with `from_seq` resumes from a cursor.
+- Run events stay a **broadcast bus, per owner**: every connection of a
+  session owner's is attached to that owner's runs, and nobody else's hears
+  them. A dropped socket does not cancel a run, and `run.subscribe` with
+  `from_seq` resumes from a cursor.
 - Event-type constants stay single-sourced in Go and mirrored in TypeScript.
   A typo must remain a compile error, never a silently-undelivered event.
 
 ---
 
-## F1 · Every streaming delta carries an entry id
+## F1 · Every streaming delta carries an entry id — 🚧 open
 
 **The single most important change.** Today `run.step` is `{run_id, delta}` —
 there is no way to tell which item a delta belongs to. `run.message` carries an
 `item_id`, but the deltas that preceded it do not. The frontend therefore
 attributes deltas by *position*, and `streamReducer.mergeLiveTail` exists to
-reconcile the guess against what actually got persisted.
-
-That reconciliation is the root cause of the streaming state-machine bugs
-fixed one by one in earlier work. It goes away when deltas are attributable.
+reconcile the guess against what actually got persisted. It goes away when
+deltas are attributable.
 
 **Frozen:**
 
@@ -62,14 +61,14 @@ and the persisted view can disagree.
 
 ---
 
-## F2 · One `run.entry` event replaces six item events
+## F2 · One `run.entry` event replaces six item events — 🚧 open
 
 Today six events carry items, each with its own payload shape:
 `run.message`, `run.reasoning_item`, `run.tool_call`, `run.tool_result`,
 `run.handoff`, `run.compaction`. Each addition means a new event type, a new
 reducer branch, and a new persisted-vs-live shape to reconcile.
 
-The SDK's `SessionEntry` makes them one thing.
+The SDK's `session.Entry` makes them one thing.
 
 **Frozen:**
 
@@ -106,13 +105,18 @@ fallback rather than being dropped. Clients must not switch exhaustively on it.
 while the compaction checkpoint itself arrives as a `run.entry` with
 `kind: "compaction"`. Progress is transient; the checkpoint is history.
 
+F1 and F2 travel together: they replace per-delta text with per-entry
+snapshots, which is a protocol change whose payoff is on the client — roughly
+half of the streaming reducer's transforms become a replace-by-id. The half
+that would NOT go away is the reconciliation between a REST history fetch and
+the live events that arrived while it was in flight, which is a client-side
+ordering problem the payload shape does not touch. Weigh that before starting.
+
 ---
 
-## F3 · `run.error.code` mirrors the SDK `ErrorCode`
+## F3 · `run.error.code` mirrors the SDK `ErrorCode` — shipped
 
-Today six codes are hand-written in `protocol` and hand-mapped in
-`bridge/stream_bridge.go`. The SDK now owns the vocabulary and the
-bridge calls `agents.CodeOf(err)`.
+The SDK owns the error vocabulary and the bridge calls `agents.CodeOf(err)`.
 
 **Frozen split:**
 
@@ -123,157 +127,44 @@ bridge calls `agents.CodeOf(err)`.
 
 **Frozen:** the two sets share one flat namespace on the wire and must not
 collide. A client that does not recognize a code falls back to generic error
-rendering — the set grows without a client release.
-
-The guardrail extras (`guardrail`, `stage`) generalize: `stage` now takes the
-four `GuardrailStage` values (`input` / `output` / `tool_input` /
-`tool_output`), not just two.
+rendering — the set grows without a client release. The guardrail extras
+(`guardrail`, `stage`) take the four `GuardrailStage` values.
 
 ---
 
-## F4 · `display` is a structured projection, not a string
+## F4 · `display` is a structured projection, not a string — shipped
 
-Before this, `run.tool_result` was `{output: string}` and the frontend parsed
-text to decide how to render. `display` replaced that with a projection the
-producer chooses.
-
-**What `display` is:** the SDK's `agents.ItemDisplay`, serialized as-is — the
-field list follows the SDK, not this document. Today that is:
-
-```jsonc
-"display": {
-  "kind":      "tool_output",  // message | tool_call | tool_output | reasoning | handoff | error | cancelled | unknown
-  "renderer":  "diff",         // ToolResult.Display; unknown renderer → "text" fallback
-  "title":     "Apply patch",  // card heading override; empty → fall back to tool_name
-  "summary":   "3 files changed", // one-line account; empty → render the other fields
-  "text":      "…",            // a message's text, a reasoning summary
-  "call_id":   "call_1",       // ties a tool call to its output
-  "tool_name": "edit_file",
-  "arguments": "{…}",          // raw JSON the model passed
-  "output":    "…",            // a tool result rendered as text
-  "is_error":  false,
-  "extra":     { }             // ToolResult.Details; renderer-specific, opaque to the generic path
-}
-```
-
-(An earlier draft of this section froze a `title`/`summary`/`detail` shape
-that never shipped; what shipped — deliberately — is the SDK type itself, so
-the two sides cannot drift. `title`/`summary` later became real SDK fields —
-by growing `ItemDisplay`, not a second vocabulary. The task card reads them
-in place of its old `extra.task_label`/`extra.task_summary` convention keys.)
+`display` is the SDK's `agents.ItemDisplay`, serialized as-is — the field list
+follows the SDK, not this document (`kind`, `renderer`, `title`, `summary`,
+`text`, `call_id`, `tool_name`, `arguments`, `output`, `is_error`, `extra`).
+The producer chooses the projection; the frontend never parses text to decide
+how to render.
 
 **Frozen invariant:** `display` is a *rendering hint*. A client that ignores it
 entirely must still produce a correct, readable timeline from `payload` alone.
 This keeps `display` free to evolve without a lockstep frontend release.
 
-Streaming partial tool results (`ToolContext.Emit`) reuse F1: a
-`run.delta` with `field: "display.detail"` and the tool call's `entry_id`.
+Streaming partial tool results (`ToolContext.Emit`) ship today as their own
+event, `run.tool_progress` (`{run_id, call_id, tool_name, delta, renderer?}`);
+under F1 they become a `run.delta` with `field: "display.detail"` and the tool
+call's `entry_id`.
 
 ---
 
-## F4a · `run.gap` — a connection that fell behind is told
+## Shipped elsewhere
 
-**Landed.** A connection whose buffer overflows receives, on that connection
-only, `{run_id, dropped, last_good, next}`. The run is unaffected; its other
-subscribers are unaffected.
+Documented where they live now, in [the wire surface](../../docs/reference/protocol.md):
 
-The client refetches (or resubscribes with `from_seq = last_good`). Before this,
-the SSE handler dropped silently on a full buffer and the client had no way to
-know — the timeline was quietly incomplete.
-
----
-
-## F5 · Uplink gains the three queue semantics
-
-`RunControl` has three ways to inject into a live run. They are distinct
-semantics; one uplink message names which the client means.
-
-**Frozen:** `run.inject` `{run_id, queue, input}`, where `queue` is one of:
-
-| queue | Meaning |
-|---|---|
-| `steer` | Inject into the **current** turn — the model sees it before its next step |
-| `follow_up` | Queue for **after** the current run ends; starts a new run automatically |
-| `next_turn` | Inject at the **next turn boundary** of the current run |
-
-`run.cancel` keeps its existing `mode: ""|"abort"|"graceful"`.
-
-**Implemented** (step 24; revised 2026-08-04). The SDK side is
-`RunControl.Steer` / `NextTurn` / `FollowUp`. This originally shipped as three
-envelope types (`run.steer` / `run.next_turn` / `run.follow_up`); with zero UI
-producers they were collapsed to one message with a queue field — three wire
-types bought nothing over one discriminated payload.
-
-Delivery is confirmed by silence: a run that is no longer accepting input
-answers `run.error` with `run_not_found`. Input the run never consumed is
-reported by `RunControl.Pending()` rather than dropped — the user typed
-something and it must not vanish.
-
----
-
-## F6 · Runs report a phase — **dropped** (2026-08-04)
-
-Was: a `run.phase` event fed by `RunControl.Phase()`. Never implemented, and
-the SDK-side introspection trio it depended on was removed with zero
-consumers: the UI already derives what a run is doing from the stream's own
-events (`run.agent_start`, `run.tool_call`, deltas), which carry strictly more
-information than a phase enum. A future need re-proposes it against a concrete
-renderer.
-
----
-
-## F7 · History reads are cursor-paginated
-
-**Frozen:** history is fetched by cursor, not offset —
-`GET /api/v1/sessions/{id}/messages?limit=N&before_id=<id>`: without `limit`
-all entries oldest-first; with it, the newest `limit` entries (still
-oldest-first), paging **backwards** by passing the smallest received row id as
-`before_id`.
-
-The cursor is the storage-assigned, per-session-monotonic row id, so it stays
-valid across concurrent appends — offset pagination cannot promise that.
-(Revised 2026-08-04: the shape shipped as a backwards `before_id` cursor on
-`/messages` with no `next_cursor` — a chat UI pages history backwards from the
-tail — replacing the forward `?after=<seq>` draft recorded here earlier.)
-
----
-
-## F8 · Sessions are trees
-
-**Frozen:** an entry carries `parent_id`; a session carries a leaf. Switching
-branches is `POST /api/v1/sessions/{id}/branch {entry_id}` — a **persistent**
-operation, not a client-side view state. (Revised 2026-08-04: shipped as its
-own POST taking the branch-point `entry_id` rather than a `PATCH {leaf_id}` —
-`PATCH /sessions/{id}` stays the rename/pin surface.)
-
-`GET .../messages` returns the path from the current leaf to the root, in
-order. Forking returns a new session id whose entries share ancestry.
-
----
-
-## Status
-
-| | Shipped |
-|---|---|
-| F3 error codes | ✅ |
-| F4 structured display | ✅ |
-| F4a `run.gap` | ✅ |
-| F5 uplink queues | ✅ |
-| F7 cursor pagination | ✅ |
-| F8 session trees | ✅ |
-| F1 delta entry ids | 🚧 |
-| F2 `run.entry` | 🚧 |
-| F6 phase | ✖ dropped |
-
-F1 and F2 travel together: they replace per-delta text with per-entry
-snapshots, which is a protocol change whose payoff is on the client — roughly
-half of the streaming reducer's transforms become a replace-by-id. The half
-that would NOT go away is the reconciliation between a REST history fetch and
-the live events that arrived while it was in flight, which is a client-side
-ordering problem the payload shape does not touch. Weigh that before starting.
-
-No row may land in the Go protocol without the matching `protocol.ts` change in
-the same commit.
+- **F4a `run.gap`** — a connection that fell behind is told, on that
+  connection only (`{run_id, dropped, last_good, next}`).
+- **F5 uplink queues** — `run.inject` `{run_id, queue: steer|next_turn|follow_up, input}`;
+  `run.cancel` keeps `mode`.
+- **F6 run phase** — dropped 2026-08-04: the stream's own events carry more
+  than a phase enum would.
+- **F7 cursor pagination** — `GET /sessions/{id}/messages?limit=N&before_id=<id>`,
+  paging backwards.
+- **F8 session trees** — entries carry `parent_id`; `POST /sessions/{id}/branch`
+  moves the leaf persistently.
 
 ---
 

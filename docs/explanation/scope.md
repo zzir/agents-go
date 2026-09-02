@@ -42,7 +42,7 @@ Beyond the non-goals in [§1.2](#12-non-goals):
 | A built-in default model | The SDK does not guess which model you want. With none configured, `Model` returns a `*UserError`. |
 | Implicit model-parameter injection (e.g. reasoning defaults for a model family) | Explicit beats implicit. Set `ModelSettings` yourself. |
 | A free-form request passthrough dict | `ExtraBody` / `ExtraHeaders` / `ExtraQuery` cover it, and they are typed. |
-| Redis / encrypted session backends | Implement the session storage interface. The SDK ships in-memory, JSONL and SQL. |
+| Redis / encrypted session backends | Implement `session.Storage`. The SDK ships in-memory and SQL (SQLite/PostgreSQL). |
 | A pop/undo storage primitive | Removed after shipping with zero callers: a run never pops (entries are append-only, §2.5b), and every host that wanted "undo" had its own deletion primitive against its own store. Seven implementations of `EntryPopper`/`ItemPopper` existed for no consumer. |
 | A REPL and graph visualization | Not an SDK concern. |
 | A graph / fan-out orchestrator on top of tasks (map over N inputs, join, branch on model choice) | A task's work may span several runs (`Config.Continue`, §2.13): a fixed sequence, a loop until a check passes — one job, one session, one transcript, which is what keeps it cheap and legible. Fanning out into N parallel children with a join is a different thing: N sessions, N transcripts, a merge nobody has designed the semantics of yet, and a step toward the general workflow engine handoffs and tasks were chosen over (§5.1). Parallel work is what `spawn_task` is for; a host that needs a join writes it against the task API. |
@@ -79,8 +79,8 @@ against graduates into §1.2 above.
   because a rolling upgrade is two binaries on one schema.
 - **Guardrail ordering at the approval gate.** The tool stages are configurable
   now (a guardrail's `stages` cover `tool_input` / `tool_output` for every tool
-  call), but `RunOptions.PreApprovalToolInputGuardrails` is not exposed as an
-  agent config field. With it on, a guardrail rejection resolves an
+  call), but `RunOptions.Exec.PreApprovalToolInputGuardrails` is not exposed
+  as an agent config field. With it on, a guardrail rejection resolves an
   approval-gated call without a human round-trip. Per-TOOL binding — "only this
   tool's arguments go through this guardrail" — is a separate thing the SDK
   does not model; it would need a `Stages`-like selector keyed by tool name.

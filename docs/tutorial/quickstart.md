@@ -9,18 +9,10 @@ go get github.com/zzir/agents-go
 export OPENAI_API_KEY=sk-...
 ```
 
-Anything with a heavy dependency lives in its own module, so the core stays
-dependency-light
-([why, module by module](../explanation/architecture.md#module-boundaries)).
-Add only what you use:
-
-```bash
-go get github.com/zzir/agents-go/mcp              # optional: MCP client
-go get github.com/zzir/agents-go/models/anthropic # optional: Anthropic backend
-go get github.com/zzir/agents-go/sandbox/docker   # optional: Docker sandbox
-go get github.com/zzir/agents-go/sessions         # optional: SQLite/Postgres
-go get github.com/zzir/agents-go/skills           # optional: Agent Skills
-```
+That is the whole core. The capabilities with a heavy dependency are their
+own modules, each a further `go get` when you reach for it — the list, and
+why it is split that way, is in
+[Architecture](../explanation/architecture.md#module-boundaries).
 
 ## Create your first agent
 
@@ -90,7 +82,6 @@ Guardrails run alongside the first model call and can stop a run before it
 wastes tokens. One guardrail declares the stages it inspects, so a single value
 can cover the input, the tool arguments and the final output.
 
-{% raw %}
 ```go
 triage.Guardrails = []agents.Guardrail{{
 	Name:   "homework_only",
@@ -105,7 +96,6 @@ triage.Guardrails = []agents.Guardrail{{
 	},
 }}
 ```
-{% endraw %}
 
 When a guardrail trips, `Run` returns an `*agents.GuardrailTripwireError`;
 `tw.Stage()` says which stage fired. See [Guardrails](../howto/guardrails.md) for the

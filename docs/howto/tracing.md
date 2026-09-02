@@ -36,7 +36,7 @@ attempt is known to have failed it has already happened, and the point is that
 it happened at all. A generation span that took eight seconds because it was
 tried three times is otherwise indistinguishable from one that was simply slow.
 
-Each span carries a `Type` field (one of the `tracing.SpanType*` constants) so a processor can dispatch on `span.Type` instead of parsing `span.Name`, plus structured `Data` keys (`"name"`, `"stage"`, `"response_id"`). The runner creates these via the typed constructors (`StartAgentSpan`, `StartGenerationSpan`, `StartFunctionSpan`, `StartHandoffSpan`, `StartGuardrailSpan`); the untyped `StartSpan` remains for custom spans and leaves `Type` empty.
+Each span carries a `Type` field (one of the `tracing.SpanType*` constants) so a processor can dispatch on `span.Type` instead of parsing `span.Name`, plus structured `Data` keys (`"name"`, `"stage"`, `"response_id"`). The runner sets `Type` on the spans it opens; a span you open yourself through `StartSpanFrom` (below) names its own type, and `TraceHandle.StartSpan` / `SpanHandle.StartSpan` leave it empty.
 
 Streamed runs, resumed (HITL) runs and nested agent-as-tool runs are traced too; nested runs join the parent's trace rather than starting their own, and their agent spans are parented under the `function:` span of the tool call that triggered them, so the tree shows which call owns each nested run.
 
@@ -126,7 +126,7 @@ Span callbacks can fire from concurrent goroutines (parallel tools, input guardr
 
 ## Sensitive data
 
-Spans record names, timing, error messages and small attributes such as `response_id` and `call_id` — not prompts, completions or tool payloads. Those two ids stay on the span with sensitive data off, so a consumer can still join a span to the session entry it produced. If you add attributes from your own hooks, apply your data policies accordingly.
+With `IncludeSensitiveData` off (above), spans keep names, timing, error messages and small attributes such as `response_id` and `call_id` — no prompts, completions or tool payloads. Those two ids stay on the span either way, so a consumer can still join a span to the session entry it produced. If you add attributes from your own hooks, apply your data policies accordingly.
 
 Two shapes an exporter can rely on ([decisions §5.6b](../explanation/decisions.md)):
 

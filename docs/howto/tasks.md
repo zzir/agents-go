@@ -62,15 +62,15 @@ run's trace. Display-only; skip it if you have no run ids.
 Then call the Manager at three moments:
 
 ```go
-mgr.Recover(ctx)                          // at startup, BEFORE serving requests
+mgr.FailOrphans(ctx)                      // at startup, BEFORE serving requests
 mgr.OnRunFinished(ctx, sessionID, out)    // when a task's run ends
 mgr.StopTree(ctx, sessionID)              // before deleting a session — then delete the tree, see below
 ```
 
-`Recover` fails every task recorded as working — a task run does not survive
-the process — and reports each through `OnFinished`. It must complete **before**
-anything can accept a retry: the sweep has no notion of a live run, so a retry
-that got in first would have its fresh run declared dead.
+`FailOrphans` fails every task recorded as working — a task run does not
+survive the process — and reports each through `OnFinished`. It must complete
+**before** anything can accept a retry: the sweep has no notion of a live run,
+so a retry that got in first would have its fresh run declared dead.
 
 Set `RunOutcome.RunID` if your host identifies its runs. It names the attempt
 that finished, so a task retried while that run was in flight keeps the new
@@ -235,13 +235,12 @@ same failure for the same reason.
 
 ## Delivering results — the host's half
 
-Waking the parent is yours: only the host knows when a session may be
-interrupted (not mid-run, not paused on an approval, not mid-delete), and the
-SDK owning that policy put it in the wrong place. What the SDK gives you is the
-report (`OnFinished`), the addressing (`Task.Inherit`, the configuration
-snapshotted at spawn, and `Task.ParentRunID`, the spawning run) and the
-formatter (`tasks.DefaultNotifyFormatter`), which renders the message a woken
-parent reads:
+Waking the parent is yours — the Manager reports endings, it does not deliver
+them ([spec §2.13](../reference/spec.md#213-background-tasks)). What the SDK
+gives you is the report (`OnFinished`), the addressing (`Task.Inherit`, the
+configuration snapshotted at spawn, and `Task.ParentRunID`, the spawning run)
+and the formatter (`tasks.DefaultNotifyFormatter`), which renders the message
+a woken parent reads:
 
 ```
 [task-notification] Task "index the docs" (a1b2) completed. Result: indexed 412 files… [truncated — call task_status(a1b2) for the full result]
@@ -251,17 +250,15 @@ Task "check links" (c3d4) failed. Result: 3 dead links
 ```
 
 The retry hint appears when the batch contains a failed task, and the closing
-guidance always, each on a **line of its own**: a task line is a record
-consumers parse, and text appended inside one would be read as part of that
-task's result. The guidance is there because a diligent model otherwise
-re-runs the finished work before reporting it. Inject it as a **user-role
-entry**: the model reads it verbatim, which is the point — it is news the model
-has to act on. A UI should detect the `tasks.NotificationPrefix` and render the
-message as a notification card rather than a user bubble. Carry the
-**summary**, not the result, and batch every pending result into ONE turn.
+guidance always, each on a line of its own (a task line is a record consumers
+parse). Inject it as a **user-role entry** — it is news the model has to act
+on — and have the UI detect `tasks.NotificationPrefix` to render it as a
+notification card rather than a user bubble. Carry the **summary**, not the
+result, and batch every pending result into ONE turn.
 
-A host whose delivery must survive crashes owes itself four rules (spec
-"What a durable host owes on top of the reports"):
+A host whose delivery must survive crashes owes itself four rules
+([spec §2.13](../reference/spec.md#213-background-tasks), "What a durable host
+owes on top of the reports"):
 
 - Record the debt **atomically with the terminal write** — in your
   `Store.Finalize`/`ReleaseRetryClaim` transaction, not from the hook: a crash
@@ -279,65 +276,15 @@ nothing — never drop the debt on that path.
 
 ## What it guarantees
 
-These are the boundaries the design exists for. Each is a test in
+The invariants the design exists for — identity separate from execution,
+finalization and retry as compare-and-set transitions that name the attempt
+they observed, a retry taking a concurrency slot, a cancellation reported as
+delivered, a restart failing what it interrupted (`FailOrphans`) while
+leaving a task paused on an approval alone, a half-finished spawn cleaning up
+on a detached context, `input_required` not terminal, a continuation as a
+run-bound CAS with state — are
+[spec §2.13](../reference/spec.md#213-background-tasks). Each is a test in
 `agents/tasks`.
-
-**Identity.** `Task.ID` and `Task.RunID` are separate: the task is the durable
-entity, a run is one attempt at it. That separation is what makes `task_retry`
-expressible without inventing a second task.
-
-**Finalization is a compare-and-set.** Status and result land in one atomic
-transition, and only while the task is still non-terminal. Two finalizers race
-routinely — a run completing while a stop is in flight — and without this a
-terminal state gets overwritten, or `task_status` sees a finished task whose
-result has not arrived. This is why tasks require a **transactional store**;
-there is no file-backed implementation.
-
-**A retry is one transition too**, `failed → working`: the new run id, the
-attempt count and the cleared summary/result land with the status, only while
-the task is failed and under the ceiling. The ceiling is enforced by the store
-rather than only by the Manager that checked it, so two processes asking at
-once cannot both get an attempt.
-
-**Every finalizer names the attempt it observed.** Since a task can leave a
-terminal state (retry), "the row is non-terminal" no longer identifies WHICH
-run a writer was looking at — so `Finalize` takes a run id and loses when it is
-not the current one. Without that, a stop that read the row just before a retry
-would cancel the new attempt while its run kept executing, unkillable, its own
-result discarded.
-
-**A retry takes a concurrency slot**, like a spawn: it is a task coming back to
-life, and exempting it would make retry the way around
-`MaxConcurrentPerParent` — one cap over every kind of task, which is why a
-host's other background work is a task kind rather than a count of its own. If its run fails to start, the task goes back to failed
-and the ending follows the model-path rule: the `task_retry` tool reports the
-failure in its result (delivered in hand), while a retry over a host API told
-only a person — the model still has to hear it, so `OnFinished` fires.
-
-**A cancellation is reported as delivered, never finished.** The user initiated
-it, the UI already shows it, and a turn restating it would only repeat them —
-so both the stop path and a run reporting a cancelled outcome call
-`OnResultDelivered`, not `OnFinished`.
-
-**A restart fails what it interrupted.** A task run does not survive the
-process, so `Recover` marks still-working tasks failed and reports each through
-`OnFinished` — the parents still have to be told. A task paused on an approval
-is left alone: its approval persists and resumes the run.
-
-**A half-finished spawn cleans up after itself**, on a context detached from the
-caller's. `Spawn` runs inside the parent run, so a parent cancellation racing it
-would otherwise kill the rollback halfway and leave a child session nothing owns.
-
-**`input_required` is not terminal.** A task waiting on a human is still in
-flight; delivering a notification for it would announce something that has not
-happened.
-
-**A continuation is a run-bound CAS with state.** `Store.Advance` moves a task
-to its next run only while it is working on the run the hook was asked about,
-and the new State lands in the same write — so a stop, a sweep or a retry that
-got there first wins, and a crash can never leave a task pointing at a run
-whose state it does not have. Only completed and failed runs are asked about;
-a cancellation ends the task.
 
 ## Deleting a session
 

@@ -7,20 +7,15 @@ genuinely does not fit, this list is updated in the same PR.
 
 These are the workbench's. The SDK underneath has its own, in
 [the spec](../reference/spec.md), and the reasoning behind them in
-[design decisions](decisions.md).
+[design decisions](decisions.md). From 29 on the entries are recorded
+per-feature decisions rather than cross-cutting rules.
 
 ---
-
-Cross-cutting rules — and, from 29 on, recorded per-feature decisions — every
-panel/handler/store change must respect. Each exists because its violation
-shipped a real bug; the fix for a new feature is to fit these shapes, not to
-add a one-off patch beside them.
-When a change genuinely doesn't fit, update this list in the same PR.
 
 **API shape**
 
 1. **`config` blobs travel as JSON objects, never strings.** Every
-   backend-specific settings blob (`mcp_servers.config`, `sandbox_configs.config`,
+   backend-specific settings blob (`mcp_servers.config`, `sandboxes.config`,
    `guardrails.config`) is a `json.RawMessage` exchanged as an inline JSON
    object. The frontend reads and writes it as an object — no
    `JSON.stringify`/`JSON.parse` of the field itself. (The guardrail panel once
@@ -276,7 +271,7 @@ When a change genuinely doesn't fit, update this list in the same PR.
     depth, walking LIVE edges only (a stale row's child id may since belong to
     an unrelated session).
 24. **One entry in, the same entry out.** The `entries` table stores whole
-    `agents.SessionEntry` JSON, with only the columns the queries need lifted
+    `session.Entry` JSON, with only the columns the queries need lifted
     out. The server does not re-derive a display, a role, or provenance at read
     time — the runner already decided all three, and a reader that recomputes
     them can only produce a worse version that drifts. The messages table this
@@ -849,12 +844,12 @@ When a change genuinely doesn't fit, update this list in the same PR.
     `--trusted-proxies`, `--audit-retention-days` — the audit log must not be
     shortened through the API it records). (2) An **environment variable**
     exists *only* to keep a secret off argv/`ps`; it is always the env fallback
-    of an explicit flag, never a standalone knob — `AGENTS_SECRET_KEY`
-    (↔ `--secret-key-file`), `AGENTS_OAUTH_GOOGLE_CLIENT_SECRET`
-    (↔ `--oauth-google-client-secret`), `AGENTS_TOKEN` (↔ `--token`), each
-    resolved flag-wins-then-env. The server adds no viper-style "every flag is
-    also an env var"; that ambient magic is what the SDK's own no-env rule
-    (spec §2.14) exists to avoid. (3) Everything an operator tunes live without
+    of an explicit flag, never a standalone knob, resolved flag-wins-then-env
+    (the three that exist are tabled in the
+    [configuration reference](../reference/configuration.md#environment-variables)).
+    The server adds no viper-style "every flag is also an env var"; that
+    ambient magic is what the SDK's own no-env rule (spec §2.14) exists to
+    avoid. (3) Everything an operator tunes live without
     a restart is a **DB setting** in the `settings` registry (invariant 40):
     `proxy_url`, the trace/log toggles, and the caps — `approval_ttl_minutes`,
     `max_tasks_per_session`, `max_terminals_per_sandbox`, `sandbox_idle_minutes`.

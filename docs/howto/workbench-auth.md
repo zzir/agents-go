@@ -95,9 +95,9 @@ and database-backed credentials:
 - **`--token` is refused in OAuth mode** — programmatic access uses personal
   access tokens instead (see below). The Google redirect URI to register is
   `<base-url>/api/v1/auth/oauth/google/callback`.
-- The client secret can come from `AGENTS_OAUTH_GOOGLE_CLIENT_SECRET` instead
-  of the flag. Secrets configure the process only; they are never stored in
-  the database.
+- The client secret can come from the environment instead of the flag
+  ([configuration reference](../reference/configuration.md#environment-variables)).
+  Secrets configure the process only; they are never stored in the database.
 
 **Personal access tokens** are OAuth mode's programmatic credential (curl,
 scripts, CI) — the `/auth/tokens` routes in the table above. A PAT
@@ -113,26 +113,19 @@ decisions §5.29), shape who may do what:
 - **Scoped configuration carries two facts: who sees it, and who wrote it.**
   Agents, providers, MCP servers, skills and workflows carry
   `scope: private | global` (visibility) and `owner_id` (the author —
-  permanent, kept across scope changes). Any member creates (the row lands
-  private, theirs; claiming `global` on create is admin-only, `403`) and a
-  foreign private row answers `404` like a missing one. Who may write:
-  | Act | Who |
-  |---|---|
-  | Edit | the author (private *or* published) — plus an admin on any global row; never an admin on a member's private row (`403`) |
-  | Delete | the author, or an admin (any row) |
-  | Publish (`POST /<entity>/:id/scope` `{"scope":"global"}`) | an admin |
-  | Unpublish (`{"scope":"private"}`) | an admin, or the author — the row returns to its author |
-  | Transfer (`PUT /<entity>/:id/owner` `{"user_id"}`) | an admin — references are re-validated as the NEW owner (400 when they cannot see one); a provider's is also refused while agents would be stranded; a skill's moves its whole repo group |
-
-  A flip naming the row's current scope answers `409`, as does one colliding
-  with a name in the target namespace or a demote stranding a provider's
-  referencing agents. The reference and name-resolution rules
-  (own-over-global, global-references-global, runtime filtering) are spec
-  §5.29's; **skills additionally namespace by repository** — see
-  [skills](../reference/protocol.md#skills--apiv1skills). The model's tools follow suit —
-  `save_workflow` rides every owner's run, a new name saving a private
-  workflow while an existing global name stays an admin's to change — and
-  signing a provider into ChatGPT is its owner's act.
+  permanent, kept across scope changes). In practice: create anything you
+  like — it lands private and yours; edit and delete what you wrote; publish
+  (`POST /<entity>/:id/scope {"scope":"global"}`) is an admin's act,
+  unpublish is the admin's or yours, and handing a row to someone else
+  (`PUT /<entity>/:id/owner`) is the admin's. A foreign private row answers
+  `404` like a missing one. The full write matrix, the reference rules
+  (own-over-global, global-references-global) and the reasons are
+  [decisions §5.29](../explanation/decisions.md#529-configuration-is-scoped-per-row-private-to-its-owner-or-global);
+  **skills additionally namespace by repository** — see
+  [skills](../reference/protocol.md#skills--apiv1skills). The model's tools
+  follow suit — `save_workflow` rides every owner's run, a new name saving a
+  private workflow while an existing global name stays an admin's to change —
+  and signing a provider into ChatGPT is its owner's act.
 - **Host configuration stays read-everyone, write-admin.** Sandboxes (the
   test and container endpoints included), settings, guardrails and memories
   change what runs on the host or whose host credentials are spent, so
@@ -159,17 +152,18 @@ decisions §5.29), shape who may do what:
   owner's sessions (existence and recency), and `DELETE /sessions/:id` works on
   any of them; opening, reading or running one is the owner's alone. Roles are
   `admin` and `member`: the first OAuth account and `--bootstrap-admin` sign
-  in as admin. In the UI the account menu (sidebar footer: avatar and name)
-  holds Settings, Sign out and — for admins — Admin, a dialog with a tab per
-  plane: Members (roles, disabling, signing out everywhere); then Providers,
-  Agents, MCP, Skills and Workflows, each listing every member's rows with
-  their author, for publish/unpublish and transfer — never edit, which stays
-  with the author under Settings; then Sessions (every owner's: reassign or
-  delete, never read), Projects (newest first) and Audit logs. Settings for a member shows the scoped
-  panels writable — their own rows editable, others' marked with their
-  author and read-only — and the host panels (sandboxes, settings,
-  guardrails, memories) read-only, plus their Account (profile and PATs).
-  Nothing in the UI hides what the server would allow.
+  in as admin. In the UI there is one Settings hub (the sidebar's Settings
+  entry, and the account menu in the sidebar footer). A member's Settings
+  shows the scoped panels writable — their own rows editable, others' marked
+  with their author and read-only — the host panels (sandboxes, settings,
+  guardrails, memories) read-only, and their Account (profile and PATs). An
+  admin's adds an **All members** toggle on each scoped panel — Providers,
+  Agents, MCP, Skills, Workflows — listing every member's rows with their
+  author, for publish/unpublish and transfer, never edit, which stays with
+  the author; and an **Administration** group: Members (roles, disabling,
+  signing out everywhere), Sessions (every owner's: reassign or delete,
+  never read), Projects (newest first) and Audit logs. Nothing in the UI
+  hides what the server would allow.
 
 In token mode the one local account is an admin and owns everything, so every
 check passes.
@@ -179,7 +173,7 @@ session made in token mode belongs to the local account, which OAuth mode
 leaves dormant; every session made in OAuth mode belongs to the person who
 made it, whom token mode cannot sign in as. After a switch the old sessions
 are therefore visible only in the admin's `GET /sessions?all=true` listing
-(and the Admin dialog's Sessions panel), where an admin can reassign one to
+(and the Settings hub's Sessions panel, under Administration), where an admin can reassign one to
 an account with `PUT /sessions/:id/owner` — or delete it.
 
 ### Audit log
@@ -221,7 +215,7 @@ email and client IP — personal data; the flag is its retention control, and
 deleting the database file deletes the log with it. Admins read it at
 `GET /auth/audit` (`?limit=` up to 500, `&before=<event id>` pages older —
 the id is a UUIDv7, so it orders like the time and never ties) and in the
-Admin dialog's Audit logs.
+Settings hub's Audit logs, under Administration.
 
 Exempt from auth: the MCP OAuth redirect callback
 (`GET /api/v1/mcp-servers/oauth/callback` — the browser follows it without an

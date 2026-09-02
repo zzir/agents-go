@@ -119,14 +119,11 @@ meant to be replaced.
 | Observability | `Tracer`, `Processor` | Send spans somewhere |
 | Execution | `Sandbox` | Run model-generated commands under isolation |
 
-**The tool seam is a struct on purpose.** Tools used to be a sealed interface
-with eight optional side interfaces, reached through a `ToolAs[T]` walker,
-because behavior was added by wrapping. Every one of those wrappers only set
-what was already a field on the single concrete type, and the walker existed
-because a plain type assertion through a wrapper silently returned false — a
-timeout wrapper around an approval wrapper reported that the tool needed no
-approval. Fields have no such failure mode, and a variant of someone else's tool
-is `cp := *tool`. See [spec.md §2.7c](../reference/spec.md#27c-tool-capabilities-are-fields).
+**The tool seam is a struct on purpose.** A capability is a field, so a
+variant of someone else's tool is `cp := *tool` and nothing can hide a
+capability behind a wrapper — [spec.md §2.7c](../reference/spec.md#27c-tool-capabilities-are-fields)
+states the rule, [decisions §5.4](decisions.md#54-a-tool-is-a-struct-not-an-interface)
+the reasoning.
 
 ---
 
@@ -143,7 +140,7 @@ Signatures live on
 | `models/openai` | OpenAI Responses API model provider (built on `openai-go` v3) |
 | `models/modelkit` | Dependency-free toolkit for model adapters + `conformancetest` golden matrix |
 | `tracing` | Traces, spans, processors and exporters |
-| `sandbox` | `Sandbox` interface + `CodeTool` + `apply_patch` + local backend |
+| `sandbox` | `Sandbox` interface + `CodeTool` + `apply_patch` + the local backend (three backends in all: local, `sandbox/docker`, `sandbox/e2b`; each hosts persistent shells and terminals) |
 | `sandbox/e2b` | E2B-compatible cloud backend (HTTP only, so it stays in the root module) |
 | `sandbox/sandboxtest` | conformance suite every `Sandbox` backend runs against |
 | `mcp` | **separate module** — Model Context Protocol client (modelcontextprotocol/go-sdk) |
@@ -249,7 +246,7 @@ cmd/agents-server/
 │   ├── settings/               the settings registry and the typed reader (incl. the proxy client)
 │   ├── logging/                structured logging + context propagation
 │   ├── docs/                   generated OpenAPI 3.1 document, swagger.yaml (make openapi)
-│   ├── store/                  data layer (bun ORM; SQLite or PostgreSQL, 23 tables — see Database)
+│   ├── store/                  data layer (bun ORM; SQLite or PostgreSQL, 24 tables — see Database)
 │   ├── protocol/               wire types — WS messages, REST error envelope, the audit record
 │   └── web/                    embedded SPA static files
 ```

@@ -102,6 +102,7 @@ time looks identical to one that answered first time.
 | `tool_timeout` | A tool hit its deadline |
 | `compaction_failed` | A compaction pass failed; the run continued uncompacted. `details.point` names the moment — a `CompactionPoint`, or `overflow_recovery` for a session write that abandoned an overflow recovery |
 | `response_truncated` | A response was cut off and its tool calls refused |
+| `context_overflow` | A model call did not fit the context window; the run compacted and retried ([overflow recovery](sessions.md)) |
 
 With a [Session](sessions.md), each diagnostic is stored on the entry for the
 turn it happened in, so the session explains itself long after any log has

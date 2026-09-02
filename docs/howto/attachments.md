@@ -67,7 +67,34 @@ curl -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
 ```
 
 `GET /api/v1/attachments/config` reports whether storage is configured and
-the limits the client should apply.
+the limits the client should apply (`{enabled, max_bytes, max_count,
+downscale_px}`). An upload you change your mind about goes with
+`DELETE /api/v1/attachments/<id>` — yours only, and only until a run has
+accepted it (`409` after: it is part of session history).
+
+The storage section is written the same way the form writes it — as one
+value, admin-only:
+
+```bash
+# Test the values without storing them (204 = the bucket works; 400 names the failing stage)
+curl -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"endpoint":"https://<account>.r2.cloudflarestorage.com","region":"auto","bucket":"agents",
+       "access_key_id":"…","secret_access_key":"…","public_base_url":"https://pub-….r2.dev","path_style":false}' \
+  -X POST http://localhost:9527/api/v1/attachments/storage/test
+
+# Save: the same probe first, then all seven keys in one transaction; answers the config
+curl … -X PUT http://localhost:9527/api/v1/attachments/storage -d '{…the same body…}'
+
+# Clear: an all-empty body removes the section and turns image input off
+curl … -X PUT http://localhost:9527/api/v1/attachments/storage -d '{}'
+```
+
+A masked `secret_access_key` (`********`) keeps the stored secret, so the
+other fields can change without retyping it; an empty `region` is `auto`.
+The keys are `settings` rows, but `PUT /settings/:key` refuses them one at a
+time — the section is only valid as a whole
+([invariant 58](../explanation/workbench-invariants.md), and the key list in
+the [configuration reference](../reference/configuration.md#runtime-settings)).
 
 ## What to know
 

@@ -52,7 +52,7 @@ fmt.Println(res.FinalOutputString())
 - `Reject`'s message (default: `"Tool execution was not approved."`) is sent to the model as the tool output so it can adapt.
 - Pass `always=true` to `Approve`/`Reject` to apply the decision to **every future call of that tool** in the run.
 - A resumed run can pause again (new approval-gated calls), hence the loop. The turn budget continues counting from where the run paused.
-- Streams pause the same way: range to the end, read `Interruptions`/`State` off the `*RunCompletedEvent`'s result, and resume with `ResumeRun` (a stream) or `ResumeRunSync` (the result alone). The resumed stream does not re-emit the paused turn's own items — it picks up with the approved tools' outputs and every later turn.
+- Streams pause the same way: range to the end, read `Interruptions`/`State` off the `*RunCompletedEvent`'s result, and resume with `ResumeRun` (a stream) or `ResumeRunSync` (the result alone). `ResumeRunWith(ctx, state, opts, ctrl)` resumes on a `RunControl` you already hold instead of minting a new one, so a stop requested through it and input queued on it carry into the resumed run — what a middleware resuming in-chain does with the `Control` it received in `RunInput`. The resumed stream does not re-emit the paused turn's own items — it picks up with the approved tools' outputs and every later turn.
 - Once a call has an explicit approve/reject decision, resuming does **not** re-invoke `NeedsApprovalFunc` for it — the checker's side effects and errors cannot re-fire for an already-resolved call.
 
 ## Pre-approval guardrails

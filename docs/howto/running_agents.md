@@ -4,7 +4,7 @@ Run agents with one of three entry points:
 
 - `agents.RunSync(ctx, agent, input, opts)` — runs the loop to completion, returns a `*RunResult`
 - `agents.Run(ctx, agent, input, opts)` — the same loop as a stream you range, plus a control handle ([Streaming](streaming.md))
-- `agents.ResumeRun(ctx, state, opts)` — continues a run paused for tool approval ([Human-in-the-loop](human_in_the_loop.md))
+- `agents.ResumeRun(ctx, state, opts)` — continues a run paused for tool approval ([Human-in-the-loop](human_in_the_loop.md)); `agents.ResumeRunWith(ctx, state, opts, ctrl)` does the same on a `RunControl` you already hold
 
 `input` is either a `string` (treated as a user message) or a `[]agents.InputItem` — the OpenAI Responses API item list.
 
@@ -104,18 +104,13 @@ opts.Exec.ToolLoop = agents.ToolLoopPolicy{
 ```
 
 `MaxConsecutiveErrorTurns` aborts with a `*ToolLoopError` after N turns in which
-*every* tool call failed. Any success clears the counter, and a turn with no
-tool calls is neither counted nor cleared. Without it, a model calling a broken
-tool spends the whole turn budget rediscovering that it is broken.
-
-`FinalTurnWithoutTools` gives an exhausted turn budget one more model call **with
-no tools and no handoffs**, so the model closes out in prose rather than the run
-failing with `*MaxTurnsError`. Tool-free is the point — offered a tool it would
-call one. It is opt-in because a turn budget is sometimes a cost ceiling, and
-this spends a call it said not to spend.
-
-A tool with `Sequential: true` makes its **whole batch** run one call
-at a time; see [Tools](tools.md#adapting-a-tool-you-did-not-build).
+*every* tool call failed; `FinalTurnWithoutTools` gives an exhausted turn budget
+one more model call with no tools and no handoffs, so the model closes out in
+prose instead of the run failing with `*MaxTurnsError`. What counts as a failed
+turn, and why the last turn is tool-free and opt-in, is
+[spec §2.7d](../reference/spec.md#27d-tool-loop-safety-valves). A tool with
+`Sequential: true` makes its **whole batch** run one call at a time; see
+[Tools](tools.md#adapting-a-tool-you-did-not-build).
 
 ### Truncated responses
 
@@ -246,62 +241,41 @@ opts.Middlewares = []agents.RunMiddleware{
 }
 ```
 
-**Order is behavior, not style.** `Approval` must sit *inside* `Loop`: outside
-it, the loop's first attempt comes back paused with no answer, and the
-evaluator judges an empty string. The rule of thumb is that a middleware which
+**Order is behavior.** `Approval` sits *inside* `Loop` — a middleware that
 resolves something about one attempt goes inside one that decides whether to
-make another attempt.
-
-`Loop` is the shape middleware exists for: the run loop knows when a model has
-*finished talking* and nothing more, while "good enough" is the caller's
-question — a critic agent, a schema check, a compiler.
+make another; the reason, the three-clause stream contract a middleware owes,
+and what is deliberately NOT middleware (handoffs, guardrails, persistence,
+tracing, error handlers) are [spec §2.12](../reference/spec.md#212-middleware).
 
 **Plan mode** (`middleware.Plan`) splits a run into two phases with one pause
 between them. While planning, a tool that is not read-only stays in the
-toolset but REFUSES when called, answering with a refusal that names
-`submit_plan` — hiding it instead produced "tool not found", which a model
-cannot tell from a tool the session never had, so it kept guessing. Handoffs
-are the exception and stay hidden (a target's full toolset would be a side
-door out of plan mode, and the model has no priors about your handoff names).
-A DIRECT tool counts as read-only when it says so (`Tool.ReadOnly`, which
-`sandbox.ReadFileTool`/`ListFilesTool` set) or when `ReadOnlyTools`
-(`DefaultReadOnlyTools` when nil) names it. An MCP tool is admitted ONLY by
-name: its `ReadOnly` came from the server's own `readOnlyHint`, an outside
-claim plan mode's guarantee cannot rest on. A gated call also raises no
-approval while planning — not the tool's own `NeedsApproval` and not the
-agent's `ApproveTools` listing (which `Apply` translates into per-tool
-predicates so the phase can suppress it); pausing a human over a call the
-phase refuses anyway would waste the interruption. `submit_plan` is always
-approval-gated, and that pause IS the plan review: an interruption whose tool
-is `middleware.PlanToolName` carries the plan in its arguments; `Approve`
-unlocks the full toolset and the same run continues into execution, `Reject`'s
-message sends the model back to planning with the write tools still refusing.
+toolset but refuses when called, naming `submit_plan`; handoffs are hidden. A
+direct tool counts as read-only when it says so (`Tool.ReadOnly`, which
+`sandbox.ReadFileTool` / `ListFilesTool` set) or when `ReadOnlyTools`
+(`DefaultReadOnlyTools` when nil) names it; an MCP tool only by name. No
+approval is raised while planning — not the tool's `NeedsApproval`, not the
+agent's `ApproveTools` listing. `submit_plan` is always approval-gated, and
+that pause IS the plan review: an interruption whose tool is
+`middleware.PlanToolName` carries the plan in its arguments; `Approve` unlocks
+the full toolset and the same run continues into execution, `Reject`'s message
+sends the model back to planning. Why gating denies rather than hides is
+[spec §2.12](../reference/spec.md#212-middleware).
 
 **Todo mode** (`middleware.Todo`) adds a `todo_write` tool and a preamble
-telling the model to keep a working list. Every call replaces the whole list —
-the model always sends every item, which is simpler to prompt for and
-impossible to desynchronize. The host renders it from `OnUpdate` (or reads the
-calls off the stream); a malformed list is refused whole, so an observer never
-sees a half-applied update. Both middlewares rewrite the entry agent only;
-handoff targets keep their own toolset. See
+telling the model to keep a working list. Every call replaces the whole list;
+the host renders it from `OnUpdate` (or reads the calls off the stream), and a
+malformed list is refused whole. Both middlewares rewrite the entry agent
+only; handoff targets keep their own toolset. See
 [examples/planmode](../../examples/planmode/main.go) for both together.
 
 `middleware.Retry` and `agents.NewRetryModel` are different and usually both
-right. The model decorator retries one call (a 429, a dropped connection) and
-the run never notices; the middleware retries the whole run, which is what a
-failure the loop could not absorb needs. A failed run is retried from the
-start, not resumed — resuming means guessing which side effects already
-happened, and the SDK cannot know.
-
-**What is deliberately not middleware**: handoffs, guardrails, session
-persistence, tracing, and `ExecOptions.ErrorHandlers`. Those are not policy
-layered over the loop, they *are* the loop — a handoff changes which agent the
-state machine is in, guardrails race the model call and cancel it, persistence
-has a boundary only the loop knows, and an error handler needs the run's
-in-flight items to build `RunErrorData` and the loop's completion path to
-persist what it recovers. A middleware sees a terminal error and can
-reconstruct neither. Expressing them as middleware would turn invariants into
-implicit protocols between wrappers.
+right: the model decorator retries one call (a 429, a dropped connection) and
+the run never notices; the middleware retries the whole run, from the start —
+not resumed, since the SDK cannot know which side effects already happened.
+With a session attached, neither `Loop` nor `Retry` re-sends what the session
+already holds: `Loop` carries only the evaluator's feedback into the next
+attempt, and `Retry` re-runs with no input once an attempt has stored it (the
+completed turns survive either way).
 
 For callbacks tied to a specific agent rather than the whole run, see
 [`Agent.OnStart` / `Agent.OnEnd`](agents.md#per-agent-callbacks).
@@ -348,8 +322,10 @@ case agents.CodeUnknown:           // not an SDK error, or unclassified
 | `guardrail_tripwire` | `*GuardrailTripwireError` |
 | `sandbox_exec` | A sandbox command that failed to run |
 | `mcp` | An MCP server connection or tool call |
-| `context_overflow` | Reported as a diagnostic when a run compacted and retried after the context did not fit |
 | `unknown` | Anything else, including a plain error from your own code |
+
+A context overflow the run survived — compacted and retried — is not an error
+code but a diagnostic, `context_overflow` ([Logging and diagnostics](logging.md#diagnostics-trouble-a-run-survived)).
 
 **The set is open.** Handle an unrecognized code generically — the SDK adds
 codes without a breaking change, and a consumer that treats an unknown code as
@@ -392,7 +368,7 @@ res, err := agents.RunSync(ctx, agent, "Analyze this long transcript", agents.Ru
 })
 ```
 
-The run then completes normally: output guardrails and `OnAgentEnd` hooks run on the fallback, and `res.FinalOutput` carries it. Unless `ExcludeFromHistory` is set, an assistant message with the fallback is appended to `res.NewItems` and the session. For an agent with an output type, `FinalOutput` must marshal to JSON that validates against the output schema — anything else fails the run with a `*UserError`.
+The run then completes normally: output guardrails and the agent's `OnEnd` callback run on the fallback, and `res.FinalOutput` carries it. Unless `ExcludeFromHistory` is set, an assistant message with the fallback is appended to `res.NewItems` and the session. For an agent with an output type, `FinalOutput` must marshal to JSON that validates against the output schema — anything else fails the run with a `*UserError`.
 
 Return `(nil, nil)` to decline recovery and keep the original error. A declined (or missing) `InvalidFinalOutput` handler keeps the empty-output default: when the model returns no final text for a structured output type, the runner runs the model again rather than failing.
 

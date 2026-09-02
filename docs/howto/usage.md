@@ -43,12 +43,12 @@ explains a bill the turn count cannot.
 ## Usage on stored history
 
 With a [Session](sessions.md), **exactly one entry per response carries that
-response's usage** — the last one it produced. Summing `SessionEntry.Usage` over
+response's usage** — the last one it produced. Summing `session.Entry.Usage` over
 a session therefore reproduces its true cost, and a reader estimating how large
 the conversation has grown can take the most recent one as measured fact and
 estimate only what follows.
 
-`SessionEntry.NestedUsage` is kept separate from `Usage` for the same reason as
+`session.Entry.NestedUsage` is kept separate from `Usage` for the same reason as
 above: a nested run's tokens were spent on a different conversation, and
 counting them as context would make this one look larger than anything ever
 sent.

@@ -58,7 +58,7 @@ renumbered — which is why the letters run out of alphabetical order in places.
 | [§2.5b](#25b-session-entries) | Session entries | A session stores entries, not bare Responses items |
 | [§2.5c](#25c-session-layering) | Session layering | Storage / Session / Projector — three layers, split by what varies |
 | [§2.5d](#25d-sessions-are-trees) | Sessions are trees | `ParentID` makes a session a tree; reads are walks |
-| [§2.5e](#25e-session-lifecycles) | Session lifecycles | `SessionRepo` owns which sessions exist, apart from their contents |
+| [§2.5e](#25e-session-lifecycles) | Session lifecycles | `session.Repo` owns which sessions exist, apart from their contents |
 | [§2.5e2](#25e2-the-entry-lifecycle-contract) | The entry lifecycle contract | What may happen to an entry after it is written — the append-only contract |
 | [§2.5f](#25f-compaction) | Compaction | Compaction is run-level; a checkpoint is appended, never a rewrite |
 | [§2.5g](#25g-context-overflow) | Context overflow | Overflow reacts where compaction predicted wrong |
@@ -501,7 +501,7 @@ A session is three layers, split along what varies:
 - **`Session`** is a concrete type, not an interface, that turns entries into
   the model's view. Storage varies; "how history becomes model input" does not,
   and as an interface every backend re-answered it and they drifted.
-- **`SessionRepo`** owns lifecycles — create, open, list, delete.
+- **`session.Repo`** owns lifecycles — create, open, list, delete.
 
 **Reads page on sequence numbers, not offsets.** Entries keep arriving, so an
 offset shifts under a concurrent append and a second page silently skips or
@@ -584,7 +584,7 @@ cleared-but-unfilled fork target when a failure lands mid-write.
 
 ### 2.5e Session lifecycles
 
-A `SessionRepo` owns which sessions exist, separately from their contents.
+A `session.Repo` owns which sessions exist, separately from their contents.
 
 - **Existence is recorded, not inferred.** A session created with no entries is
   still listable; inferring existence from contents makes "empty" and "never

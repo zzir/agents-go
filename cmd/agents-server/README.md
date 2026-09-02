@@ -21,7 +21,8 @@ rest of the project, sorted by what you came for:
 | **Deploy it** | [Deploying the workbench](../../docs/howto/workbench-deploy.md) — deployment, logging, the database |
 | **Let people in** | [Authentication](../../docs/howto/workbench-auth.md) — OAuth mode, ownership and roles, the audit log |
 | **Call it** | [The wire surface](../../docs/reference/protocol.md) — what each REST call *means*, and the WebSocket protocol |
-| **Endpoint schemas** | Generated, never hand-written: `/openapi.yaml`, browsable at `/docs` on a running server |
+| **Endpoint schemas** | Generated, never hand-written: `GET /api/v1/openapi.yaml` on a running server |
+| **Automate it** | [Workflows](../../docs/howto/workflows.md) — step sequences, cron and webhook triggers, the hub |
 | **Change it** | [Design invariants](../../docs/explanation/workbench-invariants.md) — the rules every panel/handler pair follows |
 | **Understand it** | [Architecture](../../docs/explanation/architecture.md#the-workbenchs-architecture) · [Scope and roadmap](../../docs/explanation/scope.md) |
 
@@ -31,9 +32,10 @@ why each is what it is.
 
 ## In this directory
 
-- [`PROTOCOL.md`](PROTOCOL.md) — the shape the WebSocket protocol is moving
-  *toward*, agreed up front. Forward-looking, and cited from the code that
-  implements it; the protocol that ships today is in
+- [`PROTOCOL.md`](PROTOCOL.md) — the two WebSocket changes still open (entry
+  ids on deltas, one `run.entry` event) and the decisions the code cites by
+  number (F3, F4). It stays beside the code because those comments name it
+  by path; the protocol that ships today is in
   [the wire surface](../../docs/reference/protocol.md).
 - `make openapi` regenerates `internal/docs/swagger.yaml` after any handler
   change. CI diffs it.

@@ -62,7 +62,7 @@ agent.Prompt = agents.StaticPrompt(agents.Prompt{
 })
 ```
 
-`Agent.Prompt` is a func type too — assign `func(ctx, rc, agent) (*agents.Prompt, error)` to compute the prompt per run from the [context](context.md). `StaticPrompt` hands every run its own copy of the `Prompt`, `Variables` map included, so rewriting a variable for one run neither leaks into later runs nor races with concurrent ones. Only the OpenAI Responses backend honors `Prompt`; other backends ignore it. This is distinct from MCP server prompts (`server.GetPrompt`), which fetch prompt *text* to use as instructions.
+`Agent.Prompt` is a func type too — assign `func(ctx, rc, agent) (*agents.Prompt, error)` to compute the prompt per run from the [context](context.md). `StaticPrompt` hands every run its own copy of the `Prompt`, `Variables` map included, so rewriting a variable for one run neither leaks into later runs nor races with concurrent ones. Only the OpenAI Responses backend honors `Prompt`; other backends ignore it. This is distinct from MCP server prompts (`server.Session().GetPrompt(...)`, see [MCP](mcp.md)), which fetch prompt *text* to use as instructions.
 
 ## Structured output types
 
@@ -120,10 +120,9 @@ a producer: the final output is the turn's last message, or its last tool
 output when the turn produced no message. Anything more specific is on
 `RunResult.NewItems`.
 
-This replaces the agent-level `ToolUseBehavior`. Deciding from what a turn
-actually produced covers everything naming tools up front could, and the policy
-belongs to the run rather than the agent — the same agent gets reused across
-runs that want to stop at different points.
+The policy belongs to the run rather than the agent — the same agent gets
+reused across runs that want to stop at different points
+([spec §2.3c](../reference/spec.md#23c-stopping-early)).
 
 To prevent infinite tool loops, once an agent has called a tool the runner leaves `tool_choice` unset on its later turns (so a `"required"` or specific-tool setting cannot loop forever). Set `Agent.DisableToolChoiceReset = true` to keep `tool_choice` as configured on every turn.
 
@@ -145,17 +144,15 @@ folded into middleware: a handoff swaps the agent, and with it these callbacks,
 in a way run-level middleware cannot express. `OnEnd` fires on the agent that
 produced the final output — after a handoff, that is the agent handed *to*.
 
-Everything else the SDK used to expose as lifecycle hooks now has a better home:
+There are no other lifecycle hooks; each moment has a home that can do more
+than observe:
 
-| Was | Now | Difference |
-|---|---|---|
-| `OnAgentStart` / `OnHandoff` | `*AgentUpdatedStreamEvent` on the stream | — |
-| `OnToolStart` / `OnToolEnd` | `Guardrail{Stages: StageToolInput/StageToolOutput}` | Can **rewrite**, not only refuse |
-| `OnLLMStart` / `OnLLMEnd` | `RunOptions.Model.InputFilter`, `*RawResponsesStreamEvent` | Filter can **rewrite** |
-| `OnAgentEnd` (run-scoped) | `*RunCompletedEvent` | — |
-
-The eight-method interfaces, their empty base structs and the composite wrapper
-are gone. What replaced them can do strictly more.
+| To see | Use |
+|---|---|
+| an agent taking over (a handoff) | `*AgentUpdatedStreamEvent` on the stream |
+| a tool about to run / its result | `Guardrail{Stages: StageToolInput/StageToolOutput}` — can **rewrite**, not only refuse |
+| what a model call sends / receives | `RunOptions.Model.InputFilter` (can rewrite), `*RawResponsesStreamEvent` |
+| the run finishing | `*RunCompletedEvent` |
 
 ## Cloning
 

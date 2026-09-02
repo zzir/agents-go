@@ -278,9 +278,8 @@ asks. One tool wanting to stop while another is still working is not a decision
 the SDK can make for them, and stopping anyway would throw away the other's
 result.
 
-This replaces `CustomDataExtractor`, which ran a second pass over the finished
-call to produce UI data, and the consumer-side patching that attached it
-afterwards. The tool already knew all of it at the moment it returned.
+The tool declares its UI data at the moment it returns, when it knows all of
+it; nothing runs a second pass over the finished call.
 
 ### Hand-built tools
 
@@ -301,7 +300,7 @@ t := &agents.Tool{
 
 ## Sandbox code tools
 
-`sandbox.CodeTool` wraps an isolated execution backend (local, Docker) as a "run this code" tool — see [Sandbox agents](sandbox.md).
+`sandbox.CodeTool` wraps an isolated execution backend — local, Docker (`sandbox/docker`) or an E2B-compatible service (`sandbox/e2b`) — as a "run this code" tool; see [Sandbox agents](sandbox.md).
 
 ## Web search
 

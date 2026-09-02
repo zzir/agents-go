@@ -18,7 +18,7 @@ your data, embeddable SDK. Solo or as a team.
 [What you get](#what-you-get) ·
 [Workbench manual](cmd/agents-server/README.md) ·
 [SDK docs](docs/) ·
-[Examples](docs/examples.md)
+[Examples](docs/tutorial/examples.md)
 
 </div>
 
@@ -58,7 +58,7 @@ your data, embeddable SDK. Solo or as a team.
    in `data.db` in the directory you ran it from (`--db`; a `postgres://` DSN
    uses PostgreSQL instead); a project's tree lives in a Docker volume on its
    sandbox's daemon, or in the E2B sandbox itself. All flags:
-   [Running the workbench](docs/tutorial/workbench.md#flags).
+   [Configuration reference](docs/reference/configuration.md).
 
 3. **Add a provider, create an agent, chat.** Settings → Providers: an OpenAI
    or Anthropic API key, a ChatGPT sign-in, or any Responses-compatible
@@ -158,7 +158,7 @@ worth knowing it does:
   ([Human-in-the-loop](docs/howto/human_in_the_loop.md))
 - A run is a range-able iterator you can steer mid-flight
   ([Streaming](docs/howto/streaming.md))
-- Session history persists to memory, JSONL, SQLite/Postgres, or the model
+- Session history persists to memory, SQLite/Postgres, or the model
   provider's own store ([Sessions](docs/howto/sessions.md))
 - A scripted `Model` tests your agents with no API key
   ([Testing](docs/howto/testing.md))

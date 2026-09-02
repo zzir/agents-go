@@ -489,8 +489,8 @@ diagnostics persist codes; the *derivation* (`CodeOf`, `Classify`) stays in
 agents with the error types it reads.
 
 Session-only names are deliberately NOT aliased: code that works with stored
-history imports the package that owns it. This was the §6.4 split, taken
-after the structural collapses so the code moved once.
+history imports the package that owns it. The split was taken after the
+structural collapses so the code moved once.
 
 ---
 
@@ -748,8 +748,8 @@ discovery. Consequences, all intended:
   follow instructions by writing its own code in the sandbox.
 - **Local edits win over re-imports**: an edited imported row detaches from
   its source and is never overwritten by a re-import; imports pin one commit
-  and the server never runs git. The API mechanics live in the server
-  README's Skills section.
+  and the server never runs git. The API mechanics are in
+  [the wire surface's Skills section](../reference/protocol.md#skills--apiv1skills).
 - **Import URLs are member-supplied outbound requests** (GitHub API, raw
   fetches), like provider base URLs and MCP endpoints — the absence of an
   SSRF defense is §5.29's recorded accepted risk. Each fetch is bounded by
@@ -851,9 +851,8 @@ takes) — and re-evaluates its guard in a fresh statement under the lock.
 (Revised 2026-08-28: the old cascade is gone — a project delete now reclaims
 storage, so cascading one would destroy working trees as a side effect of
 removing a machine.) The
-project create locks both the target and the template row for the insert's
-duration, so a racing delete of either arrives first and refuses the create —
-never an orphan. **A project delete DESTROYS its storage** (revised
+project create locks the sandbox row for the insert's duration, so a racing
+delete of it arrives first and refuses the create — never an orphan. **A project delete DESTROYS its storage** (revised
 2026-08-28, §5.33). A run naming no project gets no sandbox tools at all.
 Projects are the first PERSONAL configuration entity: every member manages
 their own; ownership is scoped in the handlers, not the admin gate. An admin
@@ -1005,7 +1004,8 @@ workflow owned by the run's owner; an existing **global** name is still an
 admin's to change, and a member's save answers with guidance text (pick
 another name), not an error. Signing a provider into ChatGPT (or out) is the
 row's editability — a member connects their own provider; status follows
-visibility. Triggers stay session-scoped (the README's trigger section) with
+visibility. Triggers stay session-scoped ([the wire surface's Workflows
+section](../reference/protocol.md#workflows--apiv1workflows)) with
 a cap of 50 per owner (409 above it) so the shared clock is not one member's
 to exhaust.
 

@@ -5,9 +5,10 @@ Taking `agents-server` beyond `go run`. Start at
 
 ### Requirements
 
-A Docker daemon — this machine's, or a remote one over SSH or TCP — is the
-server's one external dependency, and only sandboxes need it; the server
-shells out to no binary. Which daemon a sandbox uses is its `config.host`, in
+Only sandboxes need anything beyond the binary: a Docker daemon — this
+machine's, or a remote one over SSH or TCP — or any service speaking the E2B
+API. The server shells out to no binary. Which daemon or service a sandbox
+uses is its config, in
 [Sandboxes](../reference/protocol.md#sandboxes--apiv1sandboxes).
 
 ### Deployment
@@ -120,8 +121,9 @@ Tables are created automatically on startup:
 | `mcp_servers`       | MCP server configurations                                                           |
 | `skills`            | Stored `SKILL.md` documents (name/description denormalized from frontmatter)        |
 | `memories`          | Agent memories                                                                      |
+| `attachments`       | Image attachments: the bucket key and owner of each upload, and whether a message bound it |
 | `settings`          | Global key-value settings                                                           |
-| `sandbox_configs`   | Sandbox configurations                                                              |
+| `sandboxes`         | Sandbox rows: where it runs (`docker` / `e2b`) and what runs on it                  |
 | `projects`          | Per-user working trees on a sandbox (decisions §5.28); storage derived from the ids       |
 | `guardrails`        | Custom guardrail definitions                                                        |
 | `trace_events`      | Trace spans (agent, generation, function, handoff, compaction) + run lineage; pruned in batches by `trace_retention_days` |

@@ -37,7 +37,8 @@ The pages are sorted by what you came for.
 | Page | |
 |---|---|
 | [Quickstart](tutorial/quickstart.md) | Build and run your first agent |
-| [Examples](examples.md) | Runnable programs, one per capability |
+| [Examples](tutorial/examples.md) | Runnable programs, one per capability |
+| [Running the workbench](tutorial/workbench.md) | The workbench from a binary to a first conversation |
 
 ### How-to — solve one problem
 
@@ -52,6 +53,7 @@ The pages are sorted by what you came for.
 | Models | [Models](howto/models.md) |
 | Observability | [Tracing](howto/tracing.md) · [Logging and diagnostics](howto/logging.md) |
 | Testing | [Testing your agents](howto/testing.md) — scripted models, no API key |
+| Workbench | [Deploying](howto/workbench-deploy.md) · [Authentication](howto/workbench-auth.md) · [Workflows](howto/workflows.md) · [Image input](howto/attachments.md) · [MCP OAuth troubleshooting](howto/mcp-oauth-troubleshooting.md) |
 
 ### Reference — look something up
 
@@ -59,6 +61,8 @@ The pages are sorted by what you came for.
 |---|---|
 | [Design spec](reference/spec.md) | The behavioral invariants — what is always true |
 | [pkg.go.dev](https://pkg.go.dev/github.com/zzir/agents-go) | Every exported symbol, always in sync with the code |
+| [The wire surface](reference/protocol.md) | What each workbench REST call means, and the WebSocket protocol |
+| [Configuration](reference/configuration.md) | The workbench's flags, environment variables and runtime settings |
 
 ### Explanation — understand why
 
@@ -69,6 +73,7 @@ The pages are sorted by what you came for.
 | [Scope](explanation/scope.md) | What this is, what it deliberately is not |
 | [Differences from the Python SDK](explanation/migration_from_python.md) | For readers arriving from `openai-agents-python` |
 | [Upstream watch](explanation/upstream_watch.md) | What was reviewed from the Python SDK, ported or declined |
+| [Workbench design invariants](explanation/workbench-invariants.md) | The rules every workbench panel/handler pair follows |
 
 ### The workbench
 

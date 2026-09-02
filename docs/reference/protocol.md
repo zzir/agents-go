@@ -4,15 +4,15 @@ What `agents-server` exposes over HTTP and WebSocket, and what each call
 *means* — the semantics a schema cannot state.
 
 **Endpoint and payload schemas are not repeated here.** They are generated from
-the handlers into the OpenAPI spec, which CI diffs on every change: fetch
-`/openapi.yaml`, or browse it at `/docs` on a running server. This page carries
-what that spec cannot: which calls are refused and why, what a write does to
-rows it does not name, and how two endpoints compose.
+the handlers into the OpenAPI document, which CI diffs on every change; a
+running server serves it at `GET /api/v1/openapi.yaml` (unauthenticated — see
+[OpenAPI](#openapi)). This page carries what that document cannot: which calls
+are refused and why, what a write does to rows it does not name, and how two
+endpoints compose.
 
-The shape the WebSocket protocol is moving *toward* — one `run.entry` event,
-entry ids on streaming deltas, SDK-owned error codes — is a separate,
-forward-looking document that lives next to the code it governs:
-[`cmd/agents-server/PROTOCOL.md`](../../cmd/agents-server/PROTOCOL.md).
+The two WebSocket changes still open — entry ids on streaming deltas, one
+`run.entry` event — are frozen in a document that lives next to the code it
+governs: [`cmd/agents-server/PROTOCOL.md`](../../cmd/agents-server/PROTOCOL.md).
 
 ---
 
@@ -21,9 +21,11 @@ forward-looking document that lives next to the code it governs:
 Base path `/api/v1` — the only mount; there is no unversioned alias. All
 request and response bodies are JSON. Request bodies are capped at 1 MiB
 (matching the WebSocket frame limit): a declared length past it answers
-`413`, an undeclared body is cut there and fails its decode. One route
-carries more — `POST /playground/generate` replays a stored span payload,
-so its cap is the `trace_span_data_kb` setting plus 256 KB.
+`413`, an undeclared body is cut there and fails its decode. Two routes
+carry more: `POST /playground/generate` replays a stored span payload, so
+its cap is the `trace_span_data_kb` setting plus 256 KB, and
+`POST /attachments` takes an image, so its cap is the 10 MiB image limit
+plus multipart slack.
 
 ### Errors
 
@@ -64,8 +66,6 @@ detail.
 
 ### Sessions — `/api/v1/sessions`
 
-*(Endpoints and payload schemas: see the OpenAPI spec — `/openapi.yaml`, browsable at `/docs`.)*
-
 `POST /sessions` accepts an optional `agent_config_id` to bind the session to an
 agent at creation. It must reference an agent VISIBLE to the caller — a foreign
 private id reads as absent and answers `400`. Rename and pin are a single
@@ -99,7 +99,7 @@ Regenerating is `branch` back to the user's message followed by a run with an
 EMPTY input: nothing to add, history to answer.
 
 `/sessions/:id/messages` returns **session entries** — the SDK's
-`agents.SessionEntry` as the runner wrote it, plus the row id the cursor pages
+`session.Entry` as the runner wrote it, plus the row id the cursor pages
 on. Each carries its `kind` (`item` / `annotation` / `compaction` / …), its
 recorded `display`, and its `usage` / `diagnostics`. Update entries are folded
 into their targets server-side, so a client never applies them itself. The path
@@ -168,8 +168,6 @@ reload does NOT cancel the run. Reconnect and resubscribe (via
 `GET /runs/:id/events` or the WebSocket `run.subscribe`) to pick the stream back
 up without loss.
 
-*(Endpoints and payload schemas: see the OpenAPI spec — `/openapi.yaml`, browsable at `/docs`.)*
-
 `POST /sessions/:id/runs` returns `201` with `{run_id, session_id, status}`. With
 the header `Prefer: wait=N` ([RFC 7240](https://www.rfc-editor.org/rfc/rfc7240))
 it holds the request up to N seconds and returns `200` with
@@ -207,7 +205,9 @@ for API consumers — unrelated to MCP's deprecated SSE transport, which this
 server does not expose.) Each event's `id:` is the hub sequence number;
 reconnect with the `Last-Event-ID` header (or `?from_seq=`) to resume without
 losing events. The stream closes after a FINAL event — `run.output`,
-`run.error` or `run.cancelled`. `run.interrupted` (paused for approval) does
+`run.error` or `run.cancelled` — and when the hub tears the run's subscription
+down (its retention window passing, a shutdown), so a stream never outlives
+the run it follows. `run.interrupted` (paused for approval) does
 NOT close a live stream: the approval decision resumes the SAME run id, and
 the resumed events continue on the connection you are already holding. A
 client that did disconnect reconnects with its `Last-Event-ID` and picks the
@@ -233,8 +233,6 @@ curl -s -H "$H" -H "Prefer: wait=60" -X POST $BASE/sessions/$SID/runs \
 Human-in-the-loop tool approvals. When a tool requires approval the run pauses;
 the pending decision is **persisted to the database, so it survives a server
 restart** and is addressable over REST.
-
-*(Endpoints and payload schemas: see the OpenAPI spec — `/openapi.yaml`, browsable at `/docs`.)*
 
 Approve/reject resume the run through the shared hub, so the resulting events
 stream over `GET /runs/:id/events` or the WebSocket. A decision on a session that
@@ -265,8 +263,6 @@ Each runs on its own hidden session and reports back by injecting a
 notification into the parent session (see the SDK's
 [background tasks](../howto/tasks.md)).
 
-*(Endpoints and payload schemas: see the OpenAPI spec — `/openapi.yaml`, browsable at `/docs`.)*
-
 A task row carries `task_id` (the durable identity clients key state by),
 `run_id` (the current run's execution id — events route by it; a retry
 replaces it, and so does each workflow step), plus `parent_session_id`,
@@ -279,11 +275,17 @@ read live from the hub for a running task and from the store after it ends.
 `retry` returns `200` with the reopened task, `409` when the task is not
 failed, has used every attempt (3 by default), or its session is at the
 live-task cap — the `max_tasks_per_session` setting, which a retry queues
-behind like a spawn.
+behind like a spawn. `dismiss` hides a finished row from the chat strip (the
+panel still lists it): `409` while it is still running, and a retry brings it
+back.
+
+`GET /sessions/:id/tasks` lists one session's tasks, newest first. `GET /tasks`
+pages every live session's, each row with its conversation's name, plus a
+`total` for the pager: `?kind=workflow` narrows to executions, `?live=true` to
+`working` / `input_required` rows, `?limit=` (500 at most) and `?offset=` page
+it.
 
 ### Agents — `/api/v1/agents`
-
-*(Endpoints and payload schemas: see the OpenAPI spec — `/openapi.yaml`, browsable at `/docs`.)*
 
 Agent config shape — the top-level scalars, then the knobs as **grouped
 nested objects** (each group is one JSON column in the table, so a new knob
@@ -349,14 +351,19 @@ needs no schema change), then a few top-level JSON blobs:
 }
 ```
 
+`GET /agents/:id/tools` reports the agent's CURRENT tool surface as schema-only
+definitions (`name`, `description`, `parameters`): the built-in tools its runs
+carry, connected MCP servers' tools (a server whose listing fails is skipped,
+not fatal) and the skills reader — everything but sandbox tools, since no
+sandbox is selected. It backs the Replay dialog's tool picker; nothing is
+executed from it, and a member sees the surface their own runs would get.
+
 An agent body carries no model-API credential at all — it names a provider,
 which is where the key lives (the ChatGPT OAuth flow included — see
 [providers](#providers--apiv1providers)); its remaining credential fields come
 back masked — see [Secret handling](#secret-handling).
 
 ### MCP Servers — `/api/v1/mcp-servers`
-
-*(Endpoints and payload schemas: see the OpenAPI spec — `/openapi.yaml`, browsable at `/docs`.)*
 
 The one transport is streamable HTTP (decisions §5.25) — `config` is `{endpoint,
 headers, auth_mode, oauth_*}` with `auth_mode` `header` or `oauth`; a local
@@ -377,40 +384,9 @@ connect again is safe and intended: it supersedes the stale attempt (e.g. the
 user closed the popup, which sends no signal) and returns a fresh authorize
 URL; an abandoned attempt otherwise expires on its own after 5 minutes.
 
-The interactive flow logs its progress, so a stuck `authorizing` is diagnosable
-from the server log. `authorization URL issued` records the exact `redirect_uri`
-the authorization server must send the browser back to; a completing login then
-logs `callback: authorization code delivered` followed by `interactive connect
-established`. Two distinct failures both surface as a stuck button, told apart by
-which line is missing:
-
-- **No callback line at all** (only the panel's `GET /mcp-servers` poll repeats):
-  the browser never reached the callback. The authorization server rejected the
-  `redirect_uri` — a pre-registered `oauth_client_id` whose allowed callback does
-  not list this exact path — or the browser cannot reach the origin the
-  `redirect_uri` names: `externalOrigin` builds it from `--base-url` when set,
-  otherwise from the direct request's scheme and host — forwarding headers
-  (`Forwarded`, `X-Forwarded-*`) are deliberately never consulted, so behind a
-  reverse proxy without `--base-url` the URI names the backend, not what the
-  browser loaded. A callback that arrives but cannot be matched
-  logs `callback: could not deliver authorization code` with the reason.
-- **`code delivered`, then `ended without connecting` with `authorization
-  completed but was not accepted`**: the browser round-trip worked, but the
-  authorization did not yield a working session, so the SDK re-authorized
-  mid-connect; the interactive park is single-shot — the frontend opened one
-  popup, and there is no second one to service — so the attempt fails fast
-  rather than hanging until the 5-minute timeout. `has_oauth_token` splits the
-  cause: still false means the SDK rejected the authorization response before
-  any token exchange — typically AS metadata inconsistent with the authorize
-  redirect (RFC 9207: `iss` arrives but the metadata does not advertise
-  `authorization_response_iss_parameter_supported`, or the advertised `issuer`
-  differs from the `iss` received — common when a gateway proxies a real IdP's
-  endpoints under its own issuer). True means a token was issued and persisted
-  but the resource server rejected it — set the server's `oauth_scopes` to what
-  it requires, or confirm the token's audience is this MCP endpoint. The first
-  case is a server-side metadata bug: its metadata must present the issuer
-  exactly as the IdP responds, or its PRM should point `authorization_servers`
-  at the IdP directly.
+The interactive flow logs each step, so a stuck `authorizing` is diagnosable
+from the server log — [MCP OAuth troubleshooting](../howto/mcp-oauth-troubleshooting.md)
+reads those lines.
 
 OAuth grants obtained during authorization are persisted — the token together
 with the token endpoint and (possibly dynamically registered) client
@@ -430,13 +406,9 @@ The secret-bearing config fields come back masked — see
 
 ### Memories — `/api/v1/memories`
 
-*(Endpoints and payload schemas: see the OpenAPI spec — `/openapi.yaml`, browsable at `/docs`.)*
-
 Memories can be scoped to a specific agent via `agent_config_id`.
 
 ### Settings — `/api/v1/settings`
-
-*(Endpoints and payload schemas: see the OpenAPI spec — `/openapi.yaml`, browsable at `/docs`.)*
 
 The keys, their types, defaults and how the panel presents them all come from
 ONE table — `internal/settings`'s registry, served at `/setting-defs`. Nothing
@@ -454,26 +426,24 @@ registry no longer defines with `"unknown": true` and its value masked
 takes it, so a value left behind by an older build can be seen and cleared
 rather than being hidden with no way to remove it.
 
-Known keys, by panel group (what each does, its default and its bounds are the
-registry's — read them at `GET /setting-defs`):
-
-- **network**: `proxy_url` · **prompt**: `system_prompt`
-- **tracing**: `trace_retention_days` (also checked at startup),
-  `trace_include_sensitive_data`, `trace_span_data_kb` — span size is a disk
-  budget: a 74k-token request is roughly 300KB–1MB per generation span, and
-  `trace_retention_days` is the other half of that budget
-- **logging**: `log_sensitive_data`
-- **limits**: `approval_ttl_minutes` · `max_terminals_per_sandbox` ·
-  `sandbox_idle_minutes`
+The keys, grouped as the panel shows them, with their defaults, are tabled
+once in the [configuration reference](configuration.md#runtime-settings);
+`GET /setting-defs` is the live copy. One group is not written key by key: the
+`storage` keys (the attachment bucket) save as one section through
+`PUT /attachments/storage` — see [Attachments](#attachments--apiv1attachments).
+Span size is a disk budget: a 74k-token request is roughly 300KB–1MB per
+generation span, and `trace_retention_days` is the other half of that budget.
 
 ### Server info — `/api/v1/server` (read-only)
 
-*(Endpoints and payload schemas: see the OpenAPI spec — `/openapi.yaml`, browsable at `/docs`.)*
-
-`{version}` — the process facts a client is subject to but cannot change. The
-live-task cap moved to the `max_tasks_per_session` setting (readable and
-editable via `/settings` like the other caps), so it is no longer reported
-here.
+`{version, timezone, credentials_sealed}` — the process facts a client is
+subject to but cannot change: the build version; the server's local time zone
+(an IANA name — cron triggers tick in it, so a client showing a schedule or a
+`next_fire_at` can say which zone it means); and whether a credential-sealing
+key is in force (`AGENTS_SECRET_KEY` / `--secret-key-file`, see
+[Secret handling](#secret-handling)), so a panel can say that stored secrets
+are plaintext instead of leaving it to be discovered. Caps are settings, not
+reported here (`max_tasks_per_session` and the rest read through `/settings`).
 
 ### Skills — `/api/v1/skills`
 
@@ -495,9 +465,11 @@ skipped with a reason.
 
 **A repository's skills publish as one group.** Scope moves per
 `(source_repo, owner)` group, all or nothing; `POST /skills/:id/scope`
-serves workbench-authored rows only.
-
-*(Endpoints and payload schemas: see the OpenAPI spec — `/openapi.yaml`, browsable at `/docs`.)*
+serves workbench-authored rows only, and an imported group flips through
+`POST /skill-repos/scope` with `{repo, scope, owner_id?}` — the group is named
+`(repo, owner)`, defaulting to the caller's own, and `owner_id` is how an admin
+promotes a member's import. `404` for a group nobody has, `409` when it is
+already in that scope or a name collides in the target scope.
 
 `POST /skill-imports` with `{url}` upserts skills from elsewhere:
 `https://github.com/owner/repo` walks the repository via the GitHub API,
@@ -528,9 +500,8 @@ only to the destination it was stored for — see
 
 The ChatGPT OAuth flow lives here too, for the same reason: the token is this
 endpoint's credential, so every agent pointed at the provider shares one login.
-`POST /providers/:id/chatgpt/login` · `/logout` · `GET /status`.
-
-*(Endpoints and payload schemas: see the OpenAPI spec — `/openapi.yaml`, browsable at `/docs`.)*
+`POST /providers/:id/chatgpt/login` · `/complete` · `/logout` — see
+[ChatGPT OAuth](#chatgpt-oauth).
 
 `GET /provider-types` (read-only) lists the registered backends as machine
 facts — `type`, `auth_modes`, `unsupported` request features — straight from
@@ -713,21 +684,24 @@ fire started, empty when it started nothing). Deleting the session or the workfl
 deleted agent leaves its triggers standing, failing with the reason, to be
 re-pointed.
 
-*(Endpoints and payload schemas: see the OpenAPI spec — `/openapi.yaml`, browsable at `/docs`.)*
+A trigger row carries `enabled`, `last_error`, `last_started_id` and — for an
+enabled cron trigger — `next_fire_at` (RFC 3339), the next tick as the
+scheduler holds it, absent when disabled or for a webhook. Schedules tick in
+the server's local zone, which `GET /server` reports as `timezone`. A webhook
+row also carries `hook_path` (`/hooks/:id`, outside `/api/v1`) and
+`secret_hint` (the secret's last four characters); the `secret` itself rides
+only the create response and `POST /triggers/:id/rotate-secret` (the old
+secret stops working the moment a rotation answers; `400` on a cron trigger).
+`POST /triggers/:id/fire` is a person's fire — as a tick or a webhook call
+would, with an optional `{payload}` appended to the brief — answering `201`
+with the task (a workflow) or `{run_id}` (an agent turn), `400` when the
+trigger is disabled or its target cannot start, `409` when the session is busy
+or at its cap. Triggers are capped at 50 per owner (`409` above it).
 
-In the UI, workflows are a place of their own — the sidebar's **Workflows**
-button, beside New, opens the hub in the middle column: its Definitions (one
-line per workflow, which opens on a click to its description and the sequence
-drawn as a flowchart; the editor, `Run…` into a conversation of your choice,
-each workflow's triggers), every Trigger — of either target — one line each,
-opening to where it fires, its brief and how it last went, and the form to add
-one, and every Run across conversations, live (a row
-opens its conversation with the execution's detail in the Inspector). All
-three lists page past 25 rows. They are not a settings tab: a workflow is
-authored once and then WATCHED, and a trigger runs when nobody is looking.
-From a conversation, `/workflow <name> <brief>` in the composer (typing `/`
-offers the commands, walked with the arrow keys) starts one into it, the same
-start `Run…` makes.
+In the UI the sidebar's **Workflows** button opens the hub — Definitions,
+Triggers, Runs — and `/workflow <name> <brief>` in a conversation's composer
+starts one into it, the same start `Run…` makes;
+[Workflows](../howto/workflows.md) walks both.
 
 Executions are tasks, acted on through the [Tasks API](#tasks--apiv1tasks).
 Only a FAILED execution retries — re-running a completed or cancelled one
@@ -737,8 +711,6 @@ first — executions included — so no step keeps causing side effects after th
 row is gone.
 
 ### Guardrails — `/api/v1/guardrails`
-
-*(Endpoints and payload schemas: see the OpenAPI spec — `/openapi.yaml`, browsable at `/docs`.)*
 
 A guardrail carries `stages` — where it runs — and one definition can cover
 several: `input` (the run input, pre-model), `output` (the final output),
@@ -762,8 +734,6 @@ Built-in: `content_filter` (input + tool_input, regex — jailbreak keywords),
 `max_input_length` (input, 50k chars), `max_output_length` (output, 50k chars).
 
 ### Sandboxes — `/api/v1/sandboxes`
-
-*(Endpoints and payload schemas: see the OpenAPI spec — `/openapi.yaml`, browsable at `/docs`.)*
 
 A **sandbox** is one row: WHERE it runs and WHAT runs on it. A project names
 one (decisions §5.36). Two types: `docker` and `e2b`.
@@ -898,7 +868,7 @@ every delete is an unbounded leak nobody has a listing for
 Projects are **personal**: every member manages their own; the routes scope
 by owner rather than the admin gate. An admin additionally manages the
 plane (decisions §5.29's manage-not-author line): `?all=true` lists every
-owner's rows — the Admin dialog's Projects tab — and delete, stop and rebuild
+owner's rows — the Settings hub's Projects panel, under Administration — and delete, stop and rebuild
 work on any project (each is less than the delete already allowed there);
 reading a tree — export — stays the owner's. Listings carry each
 row's `session_count`; `storage_hint` (where the files live) is reported to
@@ -952,11 +922,52 @@ edit was made against to make the write a compare-and-set (a concurrent write
 then answers `409`); omitting it is last-writer-wins, anchored on the row's
 current revision.
 
-*(Endpoints and payload schemas: see the OpenAPI spec — `/openapi.yaml`, browsable at `/docs`.)*
+### Attachments — `/api/v1/attachments`
+
+Image input for the chat ([attachments](../howto/attachments.md); workbench
+invariants 56–58). `POST /attachments` takes one multipart `file` (png or jpeg,
+10 MiB at most, longest side 8000px — validated by decoding, never by the
+declared content type), stores the bytes in the configured bucket under
+`attachments/<owner id>/<uuid>.<ext>`, and answers `201 {id, url, mime, size}`;
+the `id` is what `attachment_ids` names when a run starts. `503` while the
+storage section is unset. An upload never sent with a message is
+garbage-collected after 24 hours. `DELETE /attachments/:id` is the composer's
+✕: owner-only (a foreign id reads as absent, `404`), and one already accepted
+by a run is part of session history — `409`. Object first, row second, the
+order the reaper uses.
+
+`GET /attachments/config` answers `{enabled, max_bytes, max_count,
+downscale_px}` — whether the section is complete and the limits a client
+applies before uploading. The storage section itself is written as ONE value,
+admin-only: `PUT /attachments/storage` with `{endpoint, region, bucket,
+access_key_id, secret_access_key, public_base_url, path_style}` probes the
+bucket end to end first (signed upload, anonymous public read through the
+public base, delete) and refuses with `400` naming the failing stage, else
+stores the seven keys in one transaction and answers the config; an all-empty
+body clears the section and turns image input off; a masked
+`secret_access_key` keeps the stored secret; an empty `region` is `auto`.
+`POST /attachments/storage/test` runs the same probe on the submitted values
+without storing them — `204` or `400`.
 
 ### Playground — `/api/v1/playground`
 
-*(Endpoints and payload schemas: see the OpenAPI spec — `/openapi.yaml`, browsable at `/docs`.)*
+`POST /playground/generate` is one model call, made from a stored generation
+span with edits — the trace panel's Replay. It touches no session and records
+no run. The body is `{agent_config_id, model?, system_instructions?,
+input_items, model_settings?, tools?, output_schema?, stream?}`:
+`agent_config_id` (required) selects whose provider and default model answer;
+`input_items` are Responses input items as edited; `model_settings` replaces
+the agent's own when set; `tools` are schema-only definitions echoed from the
+traced request (or picked from `GET /agents/:id/tools`) so the model can emit
+calls — a single call runs no tool loop and nothing is executed;
+`output_schema` (`{name?, schema, strict?}`) replays a structured call as one.
+Without `stream` the answer is `{output, usage?, duration_ms, ttft_ms}`, the
+`output` being the Responses output items as JSON; with `stream: true` the
+response is SSE — `delta` / `reasoning` text events as they arrive, then one
+`done` carrying that same object, or `error`. `400` for an agent that cannot be
+built or a model that cannot be resolved, `502` when the model call fails. A
+replay posts a span payload back, so its body cap is the `trace_span_data_kb`
+setting plus 256 KB, not the 1 MiB default.
 
 ### ChatGPT OAuth
 
@@ -1032,7 +1043,8 @@ or a fresh database.
 
 ### Health
 
-*(Endpoints and payload schemas: see the OpenAPI spec — `/openapi.yaml`, browsable at `/docs`.)*
+`GET /health` (outside `/api/v1`, unauthenticated) answers `{status: "ok",
+version}` — the liveness probe for containers and load balancers.
 
 ### OpenAPI
 
@@ -1053,9 +1065,9 @@ tool.
 
 Endpoint: `GET /ws`
 
-> The target shape this protocol is moving toward — one `run.entry` event,
-> entry ids on streaming deltas, SDK-owned error codes — is frozen in
-> [PROTOCOL.md](../../cmd/agents-server/PROTOCOL.md). What follows is what ships today.
+> The two changes still open — entry ids on streaming deltas, one `run.entry`
+> event — are frozen in [PROTOCOL.md](../../cmd/agents-server/PROTOCOL.md).
+> What follows is what ships today.
 
 The WebSocket does not accept a token in the query string. After connecting, the
 client must authenticate at the application level by sending
@@ -1078,11 +1090,13 @@ lifts the deadline for that stretch and re-arms it after.
 All messages use the envelope format `{"type":"...", "payload":{...}}`.
 
 Runs live in the runner's hub, independent of the connection, and their events
-are a **broadcast bus**: every authenticated connection is attached to every
-run's stream — on connect (all in-flight runs, with a replay of their buffered
-events) and automatically when any run starts or resumes, no matter which
-connection (or REST call) started it. Two browsers on the same session both
-watch the conversation live. A dropped socket does not cancel a run; after
+are a **broadcast bus, per owner**: every connection of a session owner's is
+attached to each of that owner's runs — on connect (their in-flight runs, with
+a replay of the buffered events) and automatically when one of their runs
+starts or resumes, no matter which connection (or REST call) started it —
+and nobody else's connection hears a thing
+([ownership and roles](../howto/workbench-auth.md#ownership-and-roles)). Two
+browsers of the owner's on the same session both watch the conversation live. A dropped socket does not cancel a run; after
 reconnecting the server re-attaches the connection, and `run.subscribe` remains
 available to resume from a specific cursor (`from_seq`) without a full replay.
 The replay ring holds a run's last 512 events; its `run.started` is pinned
@@ -1098,7 +1112,7 @@ a run streams live again instead of showing the session idle until it ends).
 | `run.subscribe` | (Re)attach to a run's event stream — `{run_id, from_seq?}` (omit `from_seq` or `0` replays everything retained) |
 | `run.cancel`    | Cancel an in-flight run — `{run_id, mode?}`; `mode: "graceful"` finishes the current turn, default aborts       |
 | `run.inject`    | Inject input into the live run — `{run_id, queue, input}`; `queue: "steer"` changes course inside the current exchange, `"next_turn"` is consumed at the next turn boundary, `"follow_up"` starts a new exchange once this one finishes |
-| `tool.approve`  | Approve a pending tool call — `{tool_call_id}`                                                                  |
+| `tool.approve`  | Approve a pending tool call — `{tool_call_id, scope?}`; `scope` widens an `exec_command` approval's trust: `"once"` (default), `"same"` (this exact command, for the session) or `"all"` (every command) |
 | `tool.reject`   | Reject a tool call — `{tool_call_id, reason?}`                                                                  |
 
 ### Server → Client
