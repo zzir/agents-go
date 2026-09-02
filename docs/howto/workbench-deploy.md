@@ -33,7 +33,11 @@ reverse proxy, two things change:
   in the header and dodge the budgets. (This overrides gin's trust-everyone
   default.)
 
-The server itself speaks plain HTTP; TLS is the proxy's job. Three per-IP
+The server itself speaks plain HTTP; TLS is the proxy's job. Compression is
+not: API responses go out gzip-compressed from 1 KiB when the client accepts
+it, the UI's assets are pre-compressed at build, and the WebSocket stays
+uncompressed by design — a proxy that compresses on its own gains nothing
+there. Three per-IP
 budgets exist, each answering `429` with code `rate_limited` when exceeded:
 
 - **Credential guesses, 10/min.** A failed bearer on any authenticated route

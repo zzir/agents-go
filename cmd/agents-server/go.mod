@@ -8,6 +8,7 @@ ignore ./internal/web/frontend/node_modules
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.61.0
+	github.com/gin-contrib/gzip v1.2.6
 	github.com/gin-gonic/gin v1.12.0
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/modelcontextprotocol/go-sdk v1.7.0

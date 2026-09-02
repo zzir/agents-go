@@ -26,6 +26,10 @@ carry more: `POST /playground/generate` replays a stored span payload, so
 its cap is 64 MiB, and
 `POST /attachments` takes an image, so its cap is the 10 MiB image limit
 plus multipart slack.
+API responses of 1 KiB and more go out gzip-compressed to a client that
+sends `Accept-Encoding: gzip`; the replay stream, the UI's assets
+(pre-compressed at build) and WebSocket frames are never compressed by the
+server.
 
 ### Errors
 

@@ -19,6 +19,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	gingzip "github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
@@ -95,6 +96,19 @@ func (s *Server) SetTrustedProxies(proxies []string) error {
 	return s.Engine.SetTrustedProxies(proxies)
 }
 
+// gzipMinLength is the response size from which gzip pays for its framing.
+const gzipMinLength = 1024
+
+// shouldGzip compresses an API response for a client that accepts gzip, except
+// the replay stream: its events are under the floor, which would hold them
+// back until the stream ended.
+func shouldGzip(c *gin.Context) bool {
+	p := c.Request.URL.Path
+	return strings.Contains(c.GetHeader("Accept-Encoding"), "gzip") &&
+		strings.HasPrefix(p, APIPrefix+"/") &&
+		p != APIPrefix+"/playground/generate"
+}
+
 // New creates a Server with a gin engine configured for release mode, recovery, and request logging.
 // auth answers every /api/* request's credential; the auth ROUTES (login,
 // OAuth flows) are handlers and mount through RegisterAPI like the rest.
@@ -104,6 +118,14 @@ func New(log *slog.Logger, auth AuthFunc, audit protocol.AuditFunc) *Server {
 	engine := gin.New()
 	_ = engine.SetTrustedProxies(nil)
 	engine.Use(gin.Recovery())
+	// API responses of gzipMinLength and more go out gzip-compressed to a
+	// client that accepts it — API only (shouldGzip): the static assets are
+	// pre-compressed at build and the middleware would strip their
+	// Content-Encoding, and the WebSocket is not compressed by design.
+	engine.Use(gingzip.Gzip(gingzip.DefaultCompression,
+		gingzip.WithMinLength(gzipMinLength),
+		gingzip.WithCustomShouldCompressFn(shouldGzip),
+	))
 	s := &Server{Engine: engine, auth: auth, guard: NewAuthGuard(), Conns: NewConnTracker(), bodyLimits: map[string]func() int64{}}
 	s.cspPolicy.Store(buildCSP(nil, nil))
 	engine.Use(s.limitBody)
