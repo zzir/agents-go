@@ -70,9 +70,10 @@ An empty value returns a key to its default. Keys by panel group:
 |---|---|---|---|
 | `proxy_url` | network | — | Route all outbound API/MCP HTTP through this proxy |
 | `system_prompt` | prompt | — | Instructions prepended to every agent |
-| `trace_retention_days` | tracing | `30` | Prune trace events older than N days (`0` keeps everything; also checked at startup) |
+| `trace_retention_days` | tracing | `30` | Prune trace events older than N days (`0` keeps everything; also checked at startup); a session left with no events loses its stored payloads with them |
+| `trace_payload_retention_days` | tracing | — | Strip the stored payloads (model requests, replies, tool arguments and results) of sessions whose newest trace event is older than N days; the events stay, with timing, usage and errors. Unset or `0` keeps payloads as long as their events |
 | `trace_include_sensitive_data` | tracing | `true` | Record prompts/outputs/tool args in stored traces |
-| `trace_span_data_kb` | tracing | `8192` | How much of a span's request/response is stored; past it the payload is replaced with a marker |
+| `trace_span_data_kb` | tracing | `1024` | How much of one stored payload element (an input item, a reply item, a tool's arguments or result, the system prompt) is kept; past it that element alone is replaced with a marker |
 | `log_sensitive_data` | logging | `false` | Include conversation content in the SDK's own log records |
 | `approval_ttl_minutes` | limits | `1440` | How long a run waits for tool approval before expiring (`0` disables) |
 | `max_tasks_per_session` | limits | `6` | Concurrent live background tasks per session; read at each spawn (backs the SDK's `tasks.Config.MaxConcurrentPerParent` resolver) |

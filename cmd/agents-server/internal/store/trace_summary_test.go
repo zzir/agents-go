@@ -11,7 +11,8 @@ import (
 // The summary listing keeps what a row shows (tokens, model, error) and leaves
 // the payload out — the model request and reply, a tool's arguments and result
 // — marking the rows that had any, and GetBySpan serves the whole row for one
-// of them. A row that is not JSON passes through untouched.
+// of them, its payload rebuilt from trace_blobs. A row that is not JSON passes
+// through untouched.
 func TestTraceSummaryListingLeavesThePayloadOut(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
@@ -27,6 +28,7 @@ func TestTraceSummaryListingLeavesThePayloadOut(t *testing.T) {
 		Data: `{"before_items":3,"after_items":1}`}
 	legacy := &TraceEvent{SessionID: id("s1"), RunID: id("r1"), Kind: "span", SpanID: "sp-legacy", Name: "old", Data: "not json"}
 	other := &TraceEvent{SessionID: id("s2"), RunID: id("r9"), Kind: "span", SpanID: "sp-gen", Name: "generation", Data: `{"input":"x"}`}
+	genDoc := gen.Data // Insert leaves the row's metadata in Data
 	for _, ev := range []*TraceEvent{gen, fn, agent, compaction, legacy, other} {
 		if err := ts.Insert(ctx, ev); err != nil {
 			t.Fatal(err)
@@ -75,16 +77,20 @@ func TestTraceSummaryListingLeavesThePayloadOut(t *testing.T) {
 		t.Fatalf("legacy row = %+v, want it untouched", legacyRow)
 	}
 
-	// The full listing is as ever.
+	// The full listing is whole again — as a JSON value: the rebuilt document
+	// orders its keys.
 	full, err := ts.ListBySession(ctx, id("s1"), "", 0)
-	if err != nil || len(full) != 5 || full[0].Data != gen.Data || full[0].PayloadOmitted {
+	if err != nil || len(full) != 5 || !sameJSON(full[0].Data, genDoc) || full[0].PayloadOmitted {
 		t.Fatalf("full listing = %+v (%v)", full, err)
+	}
+	if full[1].Data == "{}" || full[4].Data != "not json" {
+		t.Fatalf("full listing payloads = %q / %q", full[1].Data, full[4].Data)
 	}
 
 	// One span, whole — scoped to the session, so another session's span of
 	// the same id is not it.
 	got, err := ts.GetBySpan(ctx, id("s1"), "sp-gen")
-	if err != nil || got.Data != gen.Data || got.PayloadOmitted {
+	if err != nil || !sameJSON(got.Data, genDoc) || got.PayloadOmitted {
 		t.Fatalf("GetBySpan = %+v (%v)", got, err)
 	}
 	if _, err := ts.GetBySpan(ctx, id("s1"), "nope"); !errors.Is(err, ErrNotFound) {

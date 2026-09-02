@@ -232,9 +232,10 @@ per-feature decisions rather than cross-cutting rules.
     Task detail accumulates live child-run events only while open
     (watchTask/unwatchTask). The persisted span SUMMARY loads on session open —
     the chat labels each turn with its run span's duration, so the data can't
-    wait for a lens — but a span's PAYLOAD stays lazy: a stored generation span
-    can carry a whole model request (nearly all of a session's trace bytes),
-    fetched whole only when its row is expanded (loadSpanPayload). Live runs
+    wait for a lens — but a span's PAYLOAD stays lazy: a stored generation
+    span's payload is a whole model request (nearly all of a session's trace
+    bytes), rebuilt from `trace_blobs` (invariant 62) and fetched only when
+    its row is expanded (loadSpanPayload). Live runs
     stream their spans over the WS regardless. Run LINEAGE — which
     run's spawn a wake-up belongs to, what nests the "task result" card under
     its originating card — is recorded on the trace itself
@@ -949,3 +950,24 @@ per-feature decisions rather than cross-cutting rules.
     because a separate Admin dialog listed the five scoped entities a second
     time with a different meaning, and a person managing a provider had to
     know which of two identically named tabs to open.
+
+62. **A span's payload is content-addressed per session, and lives and dies
+    with the session's trace.** `trace_events` keeps a span's metadata; its
+    payload fields (`input`, `output`, `system_instructions`, `tools`,
+    `handoffs`, `output_schema`) are split into elements — one per array
+    item, one per scalar — each stored once per session in `trace_blobs`
+    under its sha256, gzip-compressed when that is smaller, and referenced
+    from the row's packed `refs` in `layout` order (decisions §5.50). Blobs
+    are keyed `(session_id, hash)` and never shared across sessions: a
+    session delete, a fork (which copies exactly the elements the copied
+    runs reference) and retention are whole-session operations, and there
+    is no per-blob reference count or sweep. Row retention drops the blobs
+    of a session left with no rows; `trace_payload_retention_days` strips an
+    idle session's blobs and nulls its rows' `layout`/`refs`. A reader
+    tolerates a missing blob — it reads as a pruned marker in its place —
+    and that is the whole contract between a prune and a run starting in
+    the same session at the same moment. `trace_span_data_kb` caps one
+    ELEMENT, never the span: an oversized item is replaced in place and its
+    siblings stay. The API shape is unchanged: `data` is one document, the
+    payload inlined by `GET /sessions/:id/traces/:span_id`, and a summary
+    row's `payload_omitted` is `layout IS NOT NULL`.

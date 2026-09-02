@@ -108,25 +108,31 @@ func RunApprovalReaper(ctx context.Context, cfg *settings.Reader, approvals *sto
 	runEvery(ctx, time.Hour, reap)
 }
 
-// RunTraceRetention prunes old trace events at startup and then once a day,
-// controlled by the trace_retention_days setting (a positive integer number
-// of days; unset, zero, or invalid disables pruning). It blocks until ctx
-// ends — run it in a goroutine.
+// RunTraceRetention prunes traces at startup and then once a day: span rows
+// older than trace_retention_days (with the blobs of sessions left without
+// rows), then the payload of sessions whose newest span is older than
+// trace_payload_retention_days — those rows stay, without payload. Either
+// setting unset or zero disables its half. It blocks until ctx ends — run it
+// in a goroutine.
 func RunTraceRetention(ctx context.Context, cfg *settings.Reader, traces *store.TraceStore) {
 	log := logging.Ctx(ctx)
 	prune := func() {
-		days := cfg.Int(ctx, settings.KeyTraceRetentionDays)
-		if days <= 0 {
-			return // unset or zero — retention disabled
+		now := time.Now().UTC()
+		if days := cfg.Int(ctx, settings.KeyTraceRetentionDays); days > 0 {
+			n, err := traces.DeleteOlderThan(ctx, now.AddDate(0, 0, -days))
+			if err != nil {
+				log.Error("trace retention prune failed", "error", err)
+			} else if n > 0 {
+				log.Info("pruned old trace events", "removed", n, "retention_days", days)
+			}
 		}
-		cutoff := time.Now().UTC().AddDate(0, 0, -days)
-		n, err := traces.DeleteOlderThan(ctx, cutoff)
-		if err != nil {
-			log.Error("trace retention prune failed", "error", err)
-			return
-		}
-		if n > 0 {
-			log.Info("pruned old trace events", "removed", n, "retention_days", days)
+		if days := cfg.Int(ctx, settings.KeyTracePayloadRetentionDays); days > 0 {
+			n, err := traces.PrunePayloadBefore(ctx, now.AddDate(0, 0, -days))
+			if err != nil {
+				log.Error("trace payload prune failed", "error", err)
+			} else if n > 0 {
+				log.Info("pruned trace payload of idle sessions", "sessions", n, "payload_retention_days", days)
+			}
 		}
 	}
 

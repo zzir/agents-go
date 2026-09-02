@@ -410,20 +410,38 @@ type TraceEvent struct {
 	// spawn started the chain. Recorded on the trace itself so the panel's run
 	// grouping reads it directly — deriving it from task rows or notification
 	// text broke on every surface that does not carry them (forks above all).
-	ParentRunID string    `bun:"parent_run_id,nullzero,type:uuid" json:"parent_run_id,omitempty"`
-	Kind        string    `bun:"kind,notnull"         json:"kind"`
-	SpanID      string    `bun:"span_id"              json:"span_id,omitempty"`
-	ParentID    string    `bun:"parent_id"            json:"parent_id,omitempty"`
-	Name        string    `bun:"name,notnull"         json:"name"`
-	Detail      string    `bun:"detail"               json:"detail,omitempty"`
-	Error       string    `bun:"error"                json:"error,omitempty"`
-	Data        string    `bun:"data"                 json:"data,omitempty"`
-	StartedAt   string    `bun:"started_at"           json:"started_at,omitempty"`
-	EndedAt     string    `bun:"ended_at"             json:"ended_at,omitempty"`
-	CreatedAt   time.Time `bun:"created_at,notnull"   json:"created_at"`
+	ParentRunID string `bun:"parent_run_id,nullzero,type:uuid" json:"parent_run_id,omitempty"`
+	Kind        string `bun:"kind,notnull"         json:"kind"`
+	SpanID      string `bun:"span_id"              json:"span_id,omitempty"`
+	ParentID    string `bun:"parent_id"            json:"parent_id,omitempty"`
+	Name        string `bun:"name,notnull"         json:"name"`
+	Detail      string `bun:"detail"               json:"detail,omitempty"`
+	Error       string `bun:"error"                json:"error,omitempty"`
+	// Data is the span's metadata JSON. Its payload fields live in trace_blobs
+	// (decisions §5.50): Layout names each one and its element count, Refs is
+	// the sha256 of every element in that order, 32 bytes each. Both NULL
+	// when the span has no payload.
+	Data      string    `bun:"data"                 json:"data,omitempty"`
+	Layout    string    `bun:"layout,nullzero"      json:"-"`
+	Refs      []byte    `bun:"refs,nullzero"        json:"-"`
+	StartedAt string    `bun:"started_at"           json:"started_at,omitempty"`
+	EndedAt   string    `bun:"ended_at"             json:"ended_at,omitempty"`
+	CreatedAt time.Time `bun:"created_at,notnull"   json:"created_at"`
 	// PayloadOmitted marks a summary row (TraceStore.ListSummaryBySession)
-	// whose Data had its payload fields left out; GetBySpan has them.
+	// whose payload was left out; GetBySpan serves it inlined into Data.
 	PayloadOmitted bool `bun:"payload_omitted,scanonly" json:"payload_omitted,omitempty"`
+}
+
+// TraceBlob is one payload element of a session's spans — an input item, a
+// tool's result, the system prompt — stored once per session and referenced
+// by hash from TraceEvent.Refs. It lives and dies with the session's trace.
+type TraceBlob struct {
+	bun.BaseModel `bun:"table:trace_blobs,alias:tb"`
+
+	SessionID string `bun:"session_id,pk,type:uuid"`
+	Hash      []byte `bun:"hash,pk"`
+	// Body is the element's JSON, gzip-compressed when that made it smaller.
+	Body []byte `bun:"body,notnull"`
 }
 
 // Sandbox is a complete sandbox definition: WHERE it runs and WHAT runs on

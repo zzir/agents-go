@@ -8698,6 +8698,12 @@ export interface components {
         };
         "store.TraceEvent": {
             created_at?: string;
+            /**
+             * @description Data is the span's metadata JSON. Its payload fields live in trace_blobs
+             *     (decisions §5.50): Layout names each one and its element count, Refs is
+             *     the sha256 of every element in that order, 32 bytes each. Both NULL
+             *     when the span has no payload.
+             */
             data?: string;
             detail?: string;
             ended_at?: string;
@@ -8715,7 +8721,7 @@ export interface components {
             parent_run_id?: string;
             /**
              * @description PayloadOmitted marks a summary row (TraceStore.ListSummaryBySession)
-             *     whose Data had its payload fields left out; GetBySpan has them.
+             *     whose payload was left out; GetBySpan serves it inlined into Data.
              */
             payload_omitted?: boolean;
             run_id?: string;

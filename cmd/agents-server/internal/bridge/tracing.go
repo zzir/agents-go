@@ -12,26 +12,13 @@ import (
 	"github.com/zzir/agents-go/tracing"
 )
 
-// The two caps on span data, which are separate because their consumers are.
-// A generation span carries the full model request and response, so on a large
-// turn it is the biggest thing either path handles.
-const (
-	// liveSpanDataJSON bounds what goes over the WEBSOCKET. The browser parses
-	// every span and keeps the whole session's worth in memory, so this stays
-	// small; what it drops is still in the row below, one reopen away.
-	liveSpanDataJSON = 256 << 10
-	// storedSpanDataJSON is the default bound on what goes into trace_events —
-	// read one span at a time, on demand, and the only copy Replay can seed a
-	// re-run from. Overridable through the trace_span_data_kb setting.
-	storedSpanDataJSON = 8 << 20
-)
+// liveSpanDataJSON bounds what goes over the WEBSOCKET: the browser parses
+// every span and keeps a session's worth in memory, so this stays small.
+// What it drops is still in the row, one reopen away — the row's own bound
+// is per payload element (trace_span_data_kb), applied by the store.
+const liveSpanDataJSON = 256 << 10
 
-// Markers for what a cap removed. They differ because the remedies do: the
-// live one is recoverable by reopening the trace, the stored one is gone.
-const (
-	liveOmitted   = "[omitted from the live update — reopen this trace to load it]"
-	storedOmitted = "[omitted: over the stored span limit (trace_span_data_kb)]"
-)
+const liveOmitted = "[omitted from the live update — reopen this trace to load it]"
 
 // wsProcessor streams spans to the client in real time: a pending version on
 // span start (no ended_at — the UI renders it as in-progress) and the full
@@ -42,71 +29,83 @@ type wsProcessor struct {
 	// no context, so it is captured here — detached from the run's
 	// cancellation (a cancelled run still ends its spans, and they must land)
 	// and carrying the configured logger.
-	ctx       context.Context
-	send      func(string, any)
-	traces    *store.TraceStore
-	sessionID string
-	runID     string
+	ctx    context.Context
+	send   func(string, any)
+	writer *store.SpanWriter
+	runID  string
 	// parentRunID is the run's lineage (a wake-up run's spawning run), stamped
 	// on every span so the trace itself carries the relationship — the panel's
 	// run grouping reads it here, never re-derived from task rows or
 	// notification text (which a fork does not carry).
 	parentRunID string
-	// storedCap is the run's resolved trace_span_data_kb, read once when the
-	// run starts rather than per span.
-	storedCap int
 }
 
-func newWSProcessor(ctx context.Context, send func(string, any), traces *store.TraceStore, sessionID, runID, parentRunID string, storedCap int) *wsProcessor {
+// newWSProcessor returns the processor of one run; elemCap is the run's
+// resolved trace_span_data_kb in bytes, read once rather than per span.
+func newWSProcessor(ctx context.Context, send func(string, any), traces *store.TraceStore, sessionID, runID, parentRunID string, elemCap int) *wsProcessor {
 	return &wsProcessor{
 		ctx:         context.WithoutCancel(ctx),
 		send:        send,
-		traces:      traces,
-		sessionID:   sessionID,
+		writer:      traces.NewSpanWriter(sessionID, elemCap),
 		runID:       runID,
 		parentRunID: parentRunID,
-		storedCap:   storedCap,
 	}
 }
 
-// boundSpanData prepares span data for one consumer: the redundant "name" key
-// is dropped (span.Name already travels on the envelope; the data copy exists
-// for HTTP export), and past limit the bulky payload fields are replaced with
-// marker. Returns the cleaned data map, its JSON, and whether any field was
-// replaced.
-func boundSpanData(data map[string]any, limit int, marker string) (cleaned map[string]any, raw string, omitted bool) {
+// cleanSpanData copies data without the redundant "name" key (span.Name
+// already travels on the envelope; the data copy exists for HTTP export);
+// nil when nothing is left.
+func cleanSpanData(data map[string]any) map[string]any {
 	if len(data) == 0 {
-		return nil, "", false
+		return nil
 	}
-	cleaned = make(map[string]any, len(data))
+	cleaned := make(map[string]any, len(data))
 	maps.Copy(cleaned, data)
 	delete(cleaned, "name")
 	if len(cleaned) == 0 {
-		return nil, "", false
+		return nil
+	}
+	return cleaned
+}
+
+// liveSpanData bounds the data for the wire: past liveSpanDataJSON the bulky
+// payload fields are replaced with liveOmitted. Reports whether any was.
+func liveSpanData(data map[string]any) (map[string]any, bool) {
+	cleaned := cleanSpanData(data)
+	if cleaned == nil {
+		return nil, false
 	}
 	b, err := json.Marshal(cleaned)
-	if err != nil {
-		return cleaned, "", false
+	if err != nil || len(b) <= liveSpanDataJSON {
+		return cleaned, false
 	}
-	if len(b) <= limit {
-		return cleaned, string(b), false
-	}
+	omitted := false
 	for _, k := range []string{"input", "output", "system_instructions", "tools"} {
 		if _, ok := cleaned[k]; ok {
-			cleaned[k] = marker
+			cleaned[k] = liveOmitted
 			omitted = true
 		}
 	}
-	b, err = json.Marshal(cleaned)
-	if err != nil {
-		return cleaned, "", omitted
+	return cleaned, omitted
+}
+
+// spanDataJSON is the row's data document: cleaned and whole — the store
+// splits its payload out and caps the elements.
+func spanDataJSON(data map[string]any) string {
+	cleaned := cleanSpanData(data)
+	if cleaned == nil {
+		return ""
 	}
-	return cleaned, string(b), omitted
+	b, err := json.Marshal(cleaned)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 // spanMessage is what the CLIENT gets: bounded for the wire.
 func (p *wsProcessor) spanMessage(span *tracing.Span) protocol.TraceSpan {
-	data, _, omitted := boundSpanData(span.Data, liveSpanDataJSON, liveOmitted)
+	data, omitted := liveSpanData(span.Data)
 	ts := protocol.TraceSpan{
 		RunID:          p.runID,
 		ParentRunID:    p.parentRunID,
@@ -144,9 +143,7 @@ func (p *wsProcessor) OnSpanStart(span *tracing.Span) {
 func (p *wsProcessor) OnSpanEnd(span *tracing.Span) {
 	ts := p.spanMessage(span)
 	p.send(protocol.EventTraceSpan, ts)
-	_, dataJSON, _ := boundSpanData(span.Data, p.storedCap, storedOmitted)
 	te := &store.TraceEvent{
-		SessionID:   p.sessionID,
 		RunID:       p.runID,
 		ParentRunID: p.parentRunID,
 		Kind:        "span",
@@ -155,11 +152,11 @@ func (p *wsProcessor) OnSpanEnd(span *tracing.Span) {
 		Name:        span.Name,
 		Detail:      span.Type,
 		Error:       ts.Error,
-		Data:        dataJSON,
+		Data:        spanDataJSON(span.Data),
 		StartedAt:   ts.StartedAt,
 		EndedAt:     ts.EndedAt,
 	}
-	if err := p.traces.Insert(p.ctx, te); err != nil {
+	if err := p.writer.Insert(p.ctx, te); err != nil {
 		logging.Ctx(p.ctx).Warn("failed to persist trace span", "error", err)
 	}
 }
@@ -169,6 +166,6 @@ func (p *wsProcessor) Shutdown(context.Context) {}
 
 var _ tracing.Processor = (*wsProcessor)(nil)
 
-func newTracer(ctx context.Context, send func(string, any), traces *store.TraceStore, sessionID, runID, parentRunID string, storedCap int) *tracing.Tracer {
-	return tracing.NewTracer(newWSProcessor(ctx, send, traces, sessionID, runID, parentRunID, storedCap))
+func newTracer(ctx context.Context, send func(string, any), traces *store.TraceStore, sessionID, runID, parentRunID string, elemCap int) *tracing.Tracer {
+	return tracing.NewTracer(newWSProcessor(ctx, send, traces, sessionID, runID, parentRunID, elemCap))
 }

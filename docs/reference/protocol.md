@@ -23,7 +23,7 @@ request and response bodies are JSON. Request bodies are capped at 1 MiB
 (matching the WebSocket frame limit): a declared length past it answers
 `413`, an undeclared body is cut there and fails its decode. Two routes
 carry more: `POST /playground/generate` replays a stored span payload, so
-its cap is the `trace_span_data_kb` setting plus 256 KB, and
+its cap is 64 MiB, and
 `POST /attachments` takes an image, so its cap is the 10 MiB image limit
 plus multipart slack.
 
@@ -431,8 +431,10 @@ once in the [configuration reference](configuration.md#runtime-settings);
 `GET /setting-defs` is the live copy. One group is not written key by key: the
 `storage` keys (the attachment bucket) save as one section through
 `PUT /attachments/storage` — see [Attachments](#attachments--apiv1attachments).
-Span size is a disk budget: a 74k-token request is roughly 300KB–1MB per
-generation span, and `trace_retention_days` is the other half of that budget.
+Trace size is a disk budget: a session's payload elements are stored once
+(`trace_blobs`), so what every model call adds is a span row and a reference
+list as long as the conversation; `trace_retention_days` and
+`trace_payload_retention_days` are the other half of that budget.
 
 ### Server info — `/api/v1/server` (read-only)
 
@@ -966,8 +968,8 @@ Without `stream` the answer is `{output, usage?, duration_ms, ttft_ms}`, the
 response is SSE — `delta` / `reasoning` text events as they arrive, then one
 `done` carrying that same object, or `error`. `400` for an agent that cannot be
 built or a model that cannot be resolved, `502` when the model call fails. A
-replay posts a span payload back, so its body cap is the `trace_span_data_kb`
-setting plus 256 KB, not the 1 MiB default.
+replay posts a whole span payload back, so its body cap is 64 MiB, not the
+1 MiB default.
 
 ### ChatGPT OAuth
 
@@ -1147,13 +1149,18 @@ Generation spans carry the full model request/response in their `data`
 you expand a generation span, so you can see exactly what each call sent
 after compaction/filters, including MCP/skill tool definitions. Those payload
 fields are nearly all of a session's trace bytes (every generation span
-carries the whole conversation as its input — a hundred spans of a long
-session run to tens of MB), so the panel opens with the SUMMARY listing
-(`?summary=true`: rows without them, marked `payload_omitted`) and fetches
-one span whole (`GET /sessions/:id/traces/:span_id`) when it is opened —
-what a session's history costs to open no longer grows with what its model
-calls carried. Payloads past `trace_span_data_kb` are replaced with a
-truncation marker in the row itself. The `trace_include_sensitive_data`
+carries the whole conversation as its input), so they are not on the span
+row: each element — an input item, a reply item, a tool definition, the
+system prompt — is stored once per session in `trace_blobs`, gzip-compressed
+when that is smaller, and the row references it by hash (decisions §5.50).
+The panel opens with the SUMMARY listing (`?summary=true`: rows without the
+payload, marked `payload_omitted`) and fetches one span whole
+(`GET /sessions/:id/traces/:span_id`), its payload rebuilt into `data`, when
+it is opened — what a session's history costs to open does not grow with
+what its model calls carried. An element past `trace_span_data_kb` is
+replaced with a marker string in its place (an oversized input item becomes
+a string in the `input` array; its siblings stay); an element whose blob was
+pruned reads as `[omitted: the stored payload was pruned]`. The `trace_include_sensitive_data`
 setting (default on) keeps conversation content out of traces entirely when
 off; the server always passes its resolved value explicitly as
 `Observe.IncludeSensitiveData`, which is the SDK's one authority for it — the

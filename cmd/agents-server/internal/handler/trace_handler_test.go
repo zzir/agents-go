@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"reflect"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -21,6 +22,7 @@ func TestTraceListingSummaryAndSpan(t *testing.T) {
 	traces := store.NewTraceStore(db)
 	gen := &store.TraceEvent{SessionID: "s1", RunID: "r1", Kind: "span", SpanID: "sp1", Name: "generation", Detail: "generation",
 		Data: `{"model":"m","input_tokens":5,"input":[{"role":"user","content":"long"}]}`}
+	genData := gen.Data // Insert leaves the row's metadata in Data
 	if err := traces.Insert(ctx, gen); err != nil {
 		t.Fatal(err)
 	}
@@ -34,20 +36,30 @@ func TestTraceListingSummaryAndSpan(t *testing.T) {
 	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &rows) != nil || len(rows) != 1 {
 		t.Fatalf("summary: %d %s", w.Code, w.Body.String())
 	}
-	if !rows[0].PayloadOmitted || rows[0].Data != `{"model":"m","input_tokens":5}` {
+	if !rows[0].PayloadOmitted || !traceJSONEqual(rows[0].Data, `{"model":"m","input_tokens":5}`) {
 		t.Fatalf("summary row = %+v", rows[0])
 	}
 	rows = nil // a fresh decode: Unmarshal keeps fields the JSON omits
 	w = doJSON(t, engine, http.MethodGet, "/sessions/s1/traces", "")
-	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &rows) != nil || len(rows) != 1 || rows[0].Data != gen.Data || rows[0].PayloadOmitted {
+	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &rows) != nil || len(rows) != 1 || !traceJSONEqual(rows[0].Data, genData) || rows[0].PayloadOmitted {
 		t.Fatalf("full listing: %d %s", w.Code, w.Body.String())
 	}
 	var one store.TraceEvent
 	w = doJSON(t, engine, http.MethodGet, "/sessions/s1/traces/sp1", "")
-	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &one) != nil || one.Data != gen.Data {
+	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &one) != nil || !traceJSONEqual(one.Data, genData) {
 		t.Fatalf("span: %d %s", w.Code, w.Body.String())
 	}
 	if w := doJSON(t, engine, http.MethodGet, "/sessions/s1/traces/nope", ""); w.Code != http.StatusNotFound {
 		t.Fatalf("missing span: %d", w.Code)
 	}
+}
+
+// traceJSONEqual compares two documents as values: a rebuilt payload orders
+// its keys.
+func traceJSONEqual(a, b string) bool {
+	var va, vb any
+	if json.Unmarshal([]byte(a), &va) != nil || json.Unmarshal([]byte(b), &vb) != nil {
+		return a == b
+	}
+	return reflect.DeepEqual(va, vb)
 }

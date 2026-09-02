@@ -325,10 +325,9 @@ func newServer(ctx context.Context, log *slog.Logger, authSvc *authn.Service, au
 	}
 	srv.SetImageHosts(imgHosts())
 	hs.API.Files.OnStorageChange = func() { srv.SetImageHosts(imgHosts()) }
-	// A replay posts a stored span payload back: the body cap follows the
-	// size the settings let a span keep, plus room for the rest of the request.
+	// A replay posts a stored span payload back, well past the 1 MiB default.
 	srv.SetBodyLimit(server.APIPrefix+"/playground/generate", func() int64 {
-		return int64(st.SettingReader.SpanDataCap(ctx)) + 256*1024
+		return handler.MaxReplayBodyBytes
 	})
 	// An image upload legitimately exceeds the 1 MiB default body cap: the
 	// image plus the multipart framing around it.

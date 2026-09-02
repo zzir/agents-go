@@ -126,7 +126,8 @@ Tables are created automatically on startup:
 | `sandboxes`         | Sandbox rows: where it runs (`docker` / `e2b`) and what runs on it                  |
 | `projects`          | Per-user working trees on a sandbox (decisions §5.28); storage derived from the ids       |
 | `guardrails`        | Custom guardrail definitions                                                        |
-| `trace_events`      | Trace spans (agent, generation, function, handoff, compaction) + run lineage; pruned in batches by `trace_retention_days` |
+| `trace_events`      | Trace spans (agent, generation, function, handoff, compaction) + run lineage; payload referenced from `trace_blobs`; pruned in batches by `trace_retention_days` |
+| `trace_blobs`       | Payload elements of a session's spans (input items, replies, tool definitions, instructions): one row per distinct element per session, gzip-compressed when smaller; dropped with the session's last event or by `trace_payload_retention_days` |
 | `pending_approvals` | Runs paused for human-in-the-loop tool approval (persisted so they survive restart) |
 | `tasks`             | Background tasks — sub-agents spawned via `spawn_task` and workflow executions (`kind`, `state`) — durable identity and status |
 | `providers`         | Model-API endpoints and their credentials; agents reference one |

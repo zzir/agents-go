@@ -93,8 +93,8 @@ func TestNilReaderYieldsDefaults(t *testing.T) {
 	if got := r.Int(ctx, settings.KeyApprovalTTLMinutes); got != 1440 {
 		t.Errorf("approval TTL = %d, want the 1440 default", got)
 	}
-	if got := r.Int(ctx, settings.KeyTraceSpanDataKB); got != 8192 {
-		t.Errorf("span cap = %d, want the 8192 default", got)
+	if got := r.Int(ctx, settings.KeyTraceSpanDataKB); got != 1024 {
+		t.Errorf("span cap = %d, want the 1024 default", got)
 	}
 	if got := r.String(ctx, settings.KeyProxyURL); got != "" {
 		t.Errorf("proxy = %q, want empty", got)
@@ -121,8 +121,8 @@ func TestReaderReadsStoredValues(t *testing.T) {
 	if err := w.Set(ctx, settings.KeyTraceSpanDataKB, "garbage"); err != nil {
 		t.Fatal(err)
 	}
-	if got := r.Int(ctx, settings.KeyTraceSpanDataKB); got != 8192 {
-		t.Errorf("unparsable stored value = %d, want the default 8192", got)
+	if got := r.Int(ctx, settings.KeyTraceSpanDataKB); got != 1024 {
+		t.Errorf("unparsable stored value = %d, want the default 1024", got)
 	}
 }
 

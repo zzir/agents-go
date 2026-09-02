@@ -1658,3 +1658,54 @@ LAST (`stop_reason` arrives after every content block).
   translations (image `detail`, text `annotations`, unsigned reasoning,
   response citations) are listed in the models how-to; they lose nothing the
   backend could use.
+
+### 5.50 Trace payloads are content-addressed per session, not stored per span
+
+Decided 2026-09-02. A generation span used to store the whole model request
+it was given — the entire conversation, the tool schemas, the instructions —
+as JSON on its own row. Every model call re-stored everything the previous
+one had, so a session's trace grew with the square of its length: a 200-turn
+session with 1 KB items ran to some 60 MB of `input` alone, its tool schemas
+to another 10 MB, and a fork doubled both. The row cap (`trace_span_data_kb`,
+8 MB) bounded one span, never the sum.
+
+The payload now lives in `trace_blobs`: each element (an input item, a reply
+item, a tool definition, the system prompt) once per session under its
+sha256, gzip-compressed when that is smaller, while the span row keeps its
+metadata and a packed list of hashes. Three choices in that design were
+deliberate:
+
+- **Session scope, no sharing.** Blobs are keyed `(session_id, hash)`. Global
+  content addressing would dedupe tool schemas across sessions too, but it
+  needs a reference count or a mark-and-sweep with a concurrency story, and
+  it muddies per-user erasure (a shared blob outlives the user whose span
+  wrote it). Per session, every lifecycle operation — delete, fork,
+  retention — is a whole-session one, and none of that machinery exists. The
+  cost is a copy of the tool schemas per session: kilobytes, against the
+  quadratic term the design removes. This is the shape of LangGraph's
+  checkpointer (`checkpoint_blobs`, values per thread referenced from the
+  checkpoint), with a content hash where it uses a version.
+- **Packed references, not a reference table.** A row per reference costs
+  around 150 bytes with its index — five times the 32-byte hash it points
+  at, enough to eat most of the saving on a long conversation. The hashes are
+  one BLOB column in `layout` order; the sweep that would need to read them
+  per blob does not exist (above).
+- **Element granularity by shape, not by type.** A payload field's JSON is
+  split by one rule: an array is one element per item, anything else is one
+  element. The store knows nothing of the SDK's item types, and the rule
+  reaches every field — `input`, `output`, `tools`, `handoffs` per item,
+  `system_instructions` and `output_schema` whole, a function span's
+  argument string whole.
+
+Two consequences follow. The element cap replaces one element in place — an
+oversized item becomes a marker string among its siblings — rather than the
+field, because the field is now the conversation and the old all-or-nothing
+would have dropped it from every later span too. And the replay body cap can
+no longer derive from the span cap; it is a constant (`MaxReplayBodyBytes`,
+64 MiB), the one bound on what a traced generation can be posted back as.
+
+`trace_payload_retention_days` is a second retention tier because the panel
+never needs the payload: a metadata row stays useful — durations, usage,
+errors, lineage — long after Replay would have lost its seed, so the two can
+age at different rates without a sweep: an idle session's blobs go as a
+whole and its rows are nulled in the same transaction.

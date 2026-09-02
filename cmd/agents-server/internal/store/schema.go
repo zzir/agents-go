@@ -25,6 +25,7 @@ var schemaModels = []any{
 	(*Sandbox)(nil),
 	(*Project)(nil),
 	(*TraceEvent)(nil),
+	(*TraceBlob)(nil),
 	(*Guardrail)(nil),
 	(*PendingApproval)(nil),
 	(*Task)(nil),

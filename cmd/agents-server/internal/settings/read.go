@@ -97,8 +97,8 @@ func (r *Reader) ProxyClient(ctx context.Context) *http.Client {
 	return &http.Client{Transport: t.(*http.Transport)}
 }
 
-// SpanDataCap is the trace_span_data_kb setting in bytes: how much of a span's
-// payload the store keeps.
+// SpanDataCap is the trace_span_data_kb setting in bytes: how much of one
+// payload element the store keeps.
 func (r *Reader) SpanDataCap(ctx context.Context) int {
 	return r.Int(ctx, KeyTraceSpanDataKB) << 10
 }

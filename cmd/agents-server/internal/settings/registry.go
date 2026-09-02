@@ -32,6 +32,7 @@ const (
 	KeyProxyURL                  = "proxy_url"
 	KeySystemPrompt              = "system_prompt"
 	KeyTraceRetentionDays        = "trace_retention_days"
+	KeyTracePayloadRetentionDays = "trace_payload_retention_days"
 	KeyTraceIncludeSensitiveData = "trace_include_sensitive_data"
 	KeyTraceSpanDataKB           = "trace_span_data_kb"
 	KeyLogSensitiveData          = "log_sensitive_data"
@@ -97,16 +98,24 @@ var defs = []Def{{
 	Placeholder: "Optional instructions prepended to all agents",
 	Description: "Prepended to every agent, whether or not it binds a sandbox. Keep it tool-agnostic: file and shell tools mount only when a session binds a sandbox, so put machine- and tool-specific instructions in that sandbox's own Prompt, not here.",
 }, {
-	// Defaulted: a generation span stores the whole conversation it was
-	// given, so trace_events grows with the square of a session's length —
-	// "keep everything" is a choice, not the absence of one.
+	// Defaulted: every model call adds a span row and a reference list as
+	// long as the conversation it was given — "keep everything" is a choice,
+	// not the absence of one.
 	Key:         KeyTraceRetentionDays,
 	Kind:        KindInt,
 	Group:       GroupTracing,
 	Label:       "Trace retention (days)",
 	Placeholder: "e.g. 30 — 0 keeps everything",
-	Description: "Trace events older than this many days are pruned daily. 0 keeps everything; each generation span stores the full conversation it saw, so that grows fast.",
+	Description: "Trace events older than this many days are pruned daily, and a session left with none loses its stored payloads too. 0 keeps everything.",
 	Default:     "30",
+	Min:         0,
+}, {
+	Key:         KeyTracePayloadRetentionDays,
+	Kind:        KindInt,
+	Group:       GroupTracing,
+	Label:       "Trace payload retention (days)",
+	Placeholder: "e.g. 7 — unset keeps payloads as long as their spans",
+	Description: "A session whose newest trace span is older than this many days loses its stored model requests, replies and tool payloads daily. The spans stay with their timing, usage and errors, so the trace panel reads as before; only Replay has nothing to seed from. Unset or 0 keeps payloads as long as their spans.",
 	Min:         0,
 }, {
 	// The server always passes this resolved value explicitly as
@@ -122,10 +131,10 @@ var defs = []Def{{
 	Key:         KeyTraceSpanDataKB,
 	Kind:        KindInt,
 	Group:       GroupTracing,
-	Label:       "Stored span payload (KB)",
-	Placeholder: "e.g. 8192",
-	Description: "How much of a span's model request and response is stored. Past it the payload is replaced with a marker and a Replay of that call has nothing to seed from — raise it if you replay large turns. Live updates to the browser are capped separately at 256KB; what they drop is still in the trace. Applies to new runs.",
-	Default:     "8192",
+	Label:       "Stored payload element (KB)",
+	Placeholder: "e.g. 1024",
+	Description: "How much of one stored payload element is kept — an input item, a reply item, a tool's arguments or result, the system prompt. Past it that element alone is replaced with a marker (the rest of the span stays) and a Replay of that call goes without it — raise it if you replay turns with very large items. Live updates to the browser are capped separately at 256KB per span; what they drop is still in the trace. Applies to new runs.",
+	Default:     "1024",
 	Min:         1,
 }, {
 	Key:         KeyLogSensitiveData,

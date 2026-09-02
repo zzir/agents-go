@@ -19,6 +19,11 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
+// MaxReplayBodyBytes caps a replay request: a whole traced generation posted
+// back — the conversation, the tool schemas, the instructions — which the
+// per-element trace_span_data_kb does not bound as a total.
+const MaxReplayBodyBytes = 64 << 20
+
 // PlaygroundHandler serves one-off model calls for replaying a generation
 // from the trace panel with edited inputs. Calls go straight to the model —
 // no session history is read or written and no run is recorded.

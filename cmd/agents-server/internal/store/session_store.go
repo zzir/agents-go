@@ -340,7 +340,7 @@ func deleteSessionRows(ctx context.Context, tx bun.Tx, id string, mustExist bool
 			return fmt.Errorf("deleting session %s: %w", id, err)
 		}
 	}
-	for _, model := range []any{(*entryRow)(nil), (*appendPointRow)(nil), (*TraceEvent)(nil), (*PendingApproval)(nil), (*ContextProfile)(nil), (*Wakeup)(nil), (*Trigger)(nil)} {
+	for _, model := range []any{(*entryRow)(nil), (*appendPointRow)(nil), (*TraceEvent)(nil), (*TraceBlob)(nil), (*PendingApproval)(nil), (*ContextProfile)(nil), (*Wakeup)(nil), (*Trigger)(nil)} {
 		if _, err := tx.NewDelete().Model(model).
 			Where("session_id = ?", id).
 			Exec(ctx); err != nil {
