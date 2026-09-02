@@ -41,7 +41,7 @@ const (
 const chatgptLoginTTL = 5 * time.Minute
 
 // chatgptHTTPTimeout bounds every ChatGPT token endpoint call (exchange and
-// refresh). Without it the default client waits forever, so a stalled OpenAX
+// refresh). Without it the default client waits forever, so a stalled OpenAI
 // auth host would hang the session that triggered a token refresh.
 const chatgptHTTPTimeout = 30 * time.Second
 
@@ -84,11 +84,12 @@ func NewChatGPTOAuth(providers *store.ProviderStore, cfg *settings.Reader) *Chat
 // httpClient returns a timed HTTP client for the token endpoint, routed through
 // the configured proxy when one is set.
 func (o *ChatGPTOAuth) httpClient(ctx context.Context) *http.Client {
-	if pc := o.settings.ProxyClient(ctx); pc != nil {
-		pc.Timeout = chatgptHTTPTimeout
-		return pc
+	c := o.settings.ProxyClient(ctx)
+	if c == nil {
+		c = &http.Client{}
 	}
-	return &http.Client{Timeout: chatgptHTTPTimeout}
+	c.Timeout = chatgptHTTPTimeout
+	return c
 }
 
 // ChatGPTLoginResult is returned by StartLogin with the authorize URL. The
@@ -154,9 +155,9 @@ func (o *ChatGPTOAuth) StartLogin(ctx context.Context, providerID string) (*Chat
 // CompleteLogin finishes a login begun by StartLogin. It reads the
 // authorization code and state from the callback URL the user pastes after
 // authorizing, redeems the code for tokens server-side against the stored PKCE
-// verifier, and saves them on the provider. This replaces the loopback listener
-// the CLI-style flow used, so a remotely deployed server — where the browser's
-// localhost is not the server's — can still be signed in (decisions §5.41).
+// verifier, and saves them on the provider. Nothing listens on the redirect
+// URI, so a remotely deployed server — where the browser's localhost is not the
+// server's — can be signed in (decisions §5.41).
 func (o *ChatGPTOAuth) CompleteLogin(ctx context.Context, providerID, callback string) error {
 	if providerID == "" {
 		return fmt.Errorf("provider_id is required")

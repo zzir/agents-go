@@ -19,7 +19,7 @@ func NewErrorResponse(code, message string) ErrorResponse {
 	return ErrorResponse{Error: APIError{Code: code, Message: message}}
 }
 
-// APIError.Code values, the vocabulary documented in README "Errors". Stable
+// APIError.Code values, the vocabulary documented in protocol.md "Errors". Stable
 // machine-readable identifiers; the message carries the human-readable detail.
 //
 // This is a namespace of its own, disjoint from the RunError codes in

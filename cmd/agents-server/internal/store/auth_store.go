@@ -16,11 +16,15 @@ import (
 	"github.com/uptrace/bun/dialect"
 )
 
-// User roles (README "Ownership and roles").
+// User roles (docs/howto/workbench-auth.md).
 const (
 	RoleAdmin  = "admin"
 	RoleMember = "member"
 )
+
+// NormalizeEmail is the one form an address is compared in: lower-cased,
+// surrounding space removed.
+func NormalizeEmail(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
 
 // AuthToken kinds: a browser session (sliding expiry) or a personal access
 // token (optional fixed expiry).
@@ -68,10 +72,10 @@ func newTokenSecret(kind string) string {
 	return sessionTokenPrefix + s
 }
 
-// HashToken is the stored form of a token: SHA-256 hex. The plaintext is never
+// hashToken is the stored form of a token: SHA-256 hex. The plaintext is never
 // written anywhere; possession of the database does not grant possession of a
 // credential.
-func HashToken(plaintext string) string {
+func hashToken(plaintext string) string {
 	sum := sha256.Sum256([]byte(plaintext))
 	return hex.EncodeToString(sum[:])
 }
@@ -182,7 +186,7 @@ type OAuthIdentity struct {
 // Merge order: the (provider, subject) identity wins; else a user with the
 // same verified email gains a new identity (one person, several providers);
 // else a new account. A login matching bootstrapAdmin is an admin; with no
-// bootstrapAdmin the first OAuth account is (README "OAuth mode"). Concurrent
+// bootstrapAdmin the first OAuth account is (docs/howto/workbench-auth.md). Concurrent
 // logins of one person are arbitrated by the unique indexes — the loser's
 // transaction fails and its one retry sees the winner's rows; concurrent
 // first logins of two people are serialized by firstAccountLock.
@@ -195,8 +199,8 @@ func (s *UserStore) ResolveOAuthLogin(ctx context.Context, id OAuthIdentity, boo
 }
 
 func (s *UserStore) resolveOAuthLogin(ctx context.Context, id OAuthIdentity, bootstrapAdmin string) (*User, error) {
-	email := strings.ToLower(strings.TrimSpace(id.Email))
-	bootstrapAdmin = strings.ToLower(strings.TrimSpace(bootstrapAdmin))
+	email := NormalizeEmail(id.Email)
+	bootstrapAdmin = NormalizeEmail(bootstrapAdmin)
 	if email == "" {
 		return nil, errors.New("the provider reported no verified email")
 	}
@@ -296,7 +300,7 @@ func NewAuthTokenStore(db *bun.DB) *AuthTokenStore { return &AuthTokenStore{db: 
 // A session gets the sliding TTL; a PAT keeps expiresAt as given (zero = never).
 func (s *AuthTokenStore) Mint(ctx context.Context, userID, kind, name string, expiresAt time.Time) (string, *AuthToken, error) {
 	secret := newTokenSecret(kind)
-	t := &AuthToken{UserID: userID, Kind: kind, TokenHash: HashToken(secret), Name: name, ExpiresAt: expiresAt}
+	t := &AuthToken{UserID: userID, Kind: kind, TokenHash: hashToken(secret), Name: name, ExpiresAt: expiresAt}
 	if kind == TokenKindSession {
 		t.ExpiresAt = time.Now().UTC().Truncate(time.Microsecond).Add(sessionTokenTTL)
 	}
@@ -314,7 +318,7 @@ func (s *AuthTokenStore) Authenticate(ctx context.Context, plaintext string) (*U
 	// Microseconds is the column precision; the returned token must equal the row.
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	t := new(AuthToken)
-	if err := s.db.NewSelect().Model(t).Where("token_hash = ?", HashToken(plaintext)).Scan(ctx); err != nil {
+	if err := s.db.NewSelect().Model(t).Where("token_hash = ?", hashToken(plaintext)).Scan(ctx); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil, ErrNotFound
 		}
@@ -382,7 +386,7 @@ func (s *AuthTokenStore) Revoke(ctx context.Context, id, userID string) error {
 // RevokeByPlaintext deletes the presented token — logout.
 func (s *AuthTokenStore) RevokeByPlaintext(ctx context.Context, plaintext string) error {
 	res, err := s.db.NewDelete().Model((*AuthToken)(nil)).
-		Where("token_hash = ?", HashToken(plaintext)).Exec(ctx)
+		Where("token_hash = ?", hashToken(plaintext)).Exec(ctx)
 	if err != nil {
 		return err
 	}

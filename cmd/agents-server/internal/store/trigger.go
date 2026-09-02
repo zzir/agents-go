@@ -29,7 +29,7 @@ const (
 
 // Trigger starts work without a conversation asking: a cron schedule or a
 // webhook, each firing into the session the trigger names, with the brief its
-// author wrote in advance — the trigger IS the knowing party (README
+// author wrote in advance — the trigger IS the knowing party (workbench
 // invariant 30). What it starts is its Target: a workflow (the same start a
 // person's "Run…" makes, RunWorkflow) or an agent turn (the same run a
 // message makes).
@@ -251,15 +251,6 @@ func (s *TriggerStore) SetSecret(ctx context.Context, id, secret string) error {
 		return fmt.Errorf("rotating the secret of trigger %s: %w", id, err)
 	}
 	return nil
-}
-
-// ListByWorkflow returns a workflow's triggers, newest first.
-func (s *TriggerStore) ListByWorkflow(ctx context.Context, workflowID string) ([]Trigger, error) {
-	var out []Trigger
-	if err := s.db.NewSelect().Model(&out).Where("workflow_id = ?", workflowID).OrderExpr("created_at DESC").Scan(ctx); err != nil {
-		return nil, fmt.Errorf("listing triggers of workflow %s: %w", workflowID, err)
-	}
-	return out, s.openAll(out)
 }
 
 // openAll opens every row's secret after a custom select.

@@ -156,7 +156,7 @@ func (s *Server) ServeStatic(staticFS fs.FS) {
 	s.Engine.NoRoute(func(c *gin.Context) {
 		// Unmatched API paths are client errors, not SPA routes: answer with a
 		// JSON 404 so a removed/mistyped endpoint doesn't return index.html.
-		if strings.HasPrefix(c.Request.URL.Path, "/api/") {
+		if strings.HasPrefix(c.Request.URL.Path, APIPrefix+"/") {
 			c.JSON(http.StatusNotFound, protocol.NewErrorResponse(protocol.CodeNotFound, "not found"))
 			return
 		}

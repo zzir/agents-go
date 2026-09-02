@@ -176,10 +176,10 @@ type handlers struct {
 	Terminal *handler.TerminalHandler
 }
 
-// newHandlers builds the handlers on the stores and the bridge. Handlers.Auth
-// is left for newServer: it needs the auth service and the server's
-// connection registry.
-func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL string) *handlers {
+// newHandlers builds the handlers on the stores and the bridge; info is the
+// process facts /server reports. Handlers.Auth is left for newServer: it needs
+// the auth service and the server's connection registry.
+func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL string, info handler.ServerInfo) *handlers {
 	terminal := handler.NewTerminalHandler(st.SandboxDefs, st.Projects, svc.Sandboxes, st.SettingReader)
 	terminal.Audit = audit
 	ws := handler.NewWSHandler(svc.Runner, st.Sessions, st.PendingApprovals)
@@ -218,9 +218,7 @@ func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL st
 			Playground: handler.NewPlaygroundHandler(svc.Deps),
 			ChatGPT:    handler.NewChatGPTOAuthHandler(svc.ChatGPT, st.Providers),
 			Files:      handler.NewAttachmentHandler(st.Attachments, st.SettingReader, st.Settings),
-			Server: handler.ServerInfo{
-				Version: buildVersion,
-			},
+			Server:     info,
 		},
 	}
 }
@@ -269,8 +267,8 @@ func newAuth(ctx context.Context, st *stores, baseURL string, log *slog.Logger) 
 		if len(oauthProviders) == 0 {
 			return nil, fmt.Errorf("--auth oauth needs at least one provider (--oauth-google-client-id)")
 		}
-		domains, emails := splitList(flagAllowedDomains), splitList(flagAllowedEmails)
-		bootstrapAdmin := strings.ToLower(strings.TrimSpace(flagBootstrapAdmin))
+		domains, emails := settings.SplitList(flagAllowedDomains), settings.SplitList(flagAllowedEmails)
+		bootstrapAdmin := store.NormalizeEmail(flagBootstrapAdmin)
 		for _, d := range domains {
 			if strings.Contains(d, "@") {
 				return nil, fmt.Errorf("--allowed-domains takes domains, not addresses: %q", d)
@@ -330,14 +328,15 @@ func newServer(ctx context.Context, log *slog.Logger, authSvc *authn.Service, au
 	// A replay posts a stored span payload back: the body cap follows the
 	// size the settings let a span keep, plus room for the rest of the request.
 	srv.SetBodyLimit(server.APIPrefix+"/playground/generate", func() int64 {
-		return int64(st.SettingReader.Int(ctx, settings.KeyTraceSpanDataKB))*1024 + 256*1024
+		return int64(st.SettingReader.SpanDataCap(ctx)) + 256*1024
 	})
-	// An image upload legitimately exceeds the 1 MiB default body cap.
+	// An image upload legitimately exceeds the 1 MiB default body cap: the
+	// image plus the multipart framing around it.
 	srv.SetBodyLimit(server.APIPrefix+"/attachments", func() int64 {
 		return handler.MaxAttachmentBytes + 64<<10
 	})
 	if flagTrustedProxies != "" {
-		if err := srv.SetTrustedProxies(splitList(flagTrustedProxies)); err != nil {
+		if err := srv.SetTrustedProxies(settings.SplitList(flagTrustedProxies)); err != nil {
 			return nil, fmt.Errorf("invalid --trusted-proxies: %w", err)
 		}
 	} else if baseURL != "" {

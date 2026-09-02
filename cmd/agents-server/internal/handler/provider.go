@@ -73,13 +73,8 @@ func (h *ProviderHandler) bind(c *gin.Context) (*store.Provider, bool) {
 //	@Security	BearerAuth
 //	@Router		/providers [get]
 func (h *ProviderHandler) List(c *gin.Context) {
-	ownerID, admin, ok := callerScope(c)
+	list, ok := listVisible(c, h.store.CrudStore)
 	if !ok {
-		return
-	}
-	list, err := store.ListVisibleOf(c.Request.Context(), h.store.CrudStore, ownerID, admin)
-	if err != nil {
-		internalError(c, err)
 		return
 	}
 	for i := range list {
@@ -99,17 +94,16 @@ func (h *ProviderHandler) List(c *gin.Context) {
 //	@Security	BearerAuth
 //	@Router		/providers/{id} [get]
 func (h *ProviderHandler) Get(c *gin.Context) {
-	pv, err := h.store.Get(c.Request.Context(), c.Param("id"))
-	if err != nil {
-		storeError(c, err)
-		return
-	}
-	if !visibleRow(c, pv.Scope, pv.OwnerID) {
+	pv, ok := gatedRow(c, h.store.CrudStore, providerScope, visibleRow)
+	if !ok {
 		return
 	}
 	sanitizeProvider(pv)
 	c.JSON(http.StatusOK, pv)
 }
+
+// providerScope reads a provider's (scope, owner) pair for the scoped-CRUD gates.
+func providerScope(p *store.Provider) (string, string) { return p.Scope, p.OwnerID }
 
 // scopeReq is the body of every POST /:id/scope — the promotion/demotion act
 // (decisions §5.29): promote is admin-only, demote is the admin's or the owner's.
@@ -203,9 +197,6 @@ func (h *ProviderHandler) SetScope(c *gin.Context) {
 //	@Security	BearerAuth
 //	@Router		/providers/{id}/owner [put]
 func (h *ProviderHandler) SetOwner(c *gin.Context) {
-	if !requireAdmin(c) {
-		return
-	}
 	var req SetOwnerRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.UserID == "" {
 		badRequest(c, "user_id is required")
@@ -279,19 +270,14 @@ func (h *ProviderHandler) Update(c *gin.Context) {
 		return
 	}
 	ctx, id := c.Request.Context(), c.Param("id")
-	cur, err := h.store.Get(ctx, id)
-	if err != nil {
-		storeError(c, err)
-		return
-	}
-	if !editableRow(c, cur.Scope, cur.OwnerID) {
+	cur, ok := gatedRow(c, h.store.CrudStore, providerScope, editableRow)
+	if !ok {
 		return
 	}
 	// The mask resolves against the stored row inside the store's transaction,
 	// and only for the destination the key was stored for — workbench invariant 9.
 	// Scope and owner never move on an update (POST /:id/scope does).
-	err = h.store.Update(ctx, id, pv, ownershipGuard(cur.Scope, cur.OwnerID,
-		func(p *store.Provider) (string, string) { return p.Scope, p.OwnerID },
+	err := h.store.Update(ctx, id, pv, ownershipGuard(cur.Scope, cur.OwnerID, providerScope,
 		func(prev *store.Provider) error {
 			pv.Scope, pv.OwnerID = prev.Scope, prev.OwnerID
 			if pv.APIKey == SecretMask && prev.APIKey != "" &&
@@ -326,12 +312,8 @@ func (h *ProviderHandler) Update(c *gin.Context) {
 //	@Security		BearerAuth
 //	@Router			/providers/{id} [delete]
 func (h *ProviderHandler) Delete(c *gin.Context) {
-	cur, err := h.store.Get(c.Request.Context(), c.Param("id"))
-	if err != nil {
-		storeError(c, err)
-		return
-	}
-	if !deletableRow(c, cur.Scope, cur.OwnerID) {
+	cur, ok := gatedRow(c, h.store.CrudStore, providerScope, deletableRow)
+	if !ok {
 		return
 	}
 	refs, err := h.store.DeleteIfUnreferenced(c.Request.Context(), c.Param("id"), cur.OwnerID)

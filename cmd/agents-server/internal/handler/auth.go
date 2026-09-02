@@ -208,7 +208,7 @@ func (h *AuthHandler) RevokeUserTokens(c *gin.Context) {
 }
 
 // requirePATMode gates the PAT endpoints: in token mode a PAT could be minted
-// but never authenticate (README "Personal access tokens").
+// but never authenticate (docs/howto/workbench-auth.md).
 func (h *AuthHandler) requirePATMode(c *gin.Context) (protocol.UserInfo, bool) {
 	if h.svc.Mode() != authn.ModeOAuth {
 		c.JSON(http.StatusBadRequest, protocol.NewErrorResponse(protocol.CodeValidation,

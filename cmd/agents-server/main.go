@@ -6,7 +6,7 @@
 //
 //	@title						agents-server API
 //	@version					1.0
-//	@description				REST API of agents-server, the web server over the agents-go SDK: sessions, agents, MCP servers, memories, settings, skills, provider routes, guardrails, and sandboxes. Runs are started over the WebSocket protocol (see the README); this spec covers the HTTP surface.
+//	@description				REST API of agents-server, the web server over the agents-go SDK: sessions, runs, agents, MCP servers, memories, settings, skills, providers, workflows, triggers, guardrails, sandboxes and projects. A run starts over REST (POST /sessions/{id}/runs) or the WebSocket protocol (docs/reference/protocol.md) and streams over either; this spec covers the HTTP surface.
 //	@BasePath					/api/v1
 //
 //	@securityDefinitions.apikey	BearerAuth

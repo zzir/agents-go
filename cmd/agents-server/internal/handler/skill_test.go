@@ -411,9 +411,18 @@ func TestSkillSyncTargetsTheNamedGroup(t *testing.T) {
 	if err != nil || !strings.Contains(got.Content, "Step 2.") {
 		t.Fatalf("the named group was not refreshed: %+v (%v)", got, err)
 	}
-	mine, err := st.FindBySource(t.Context(), "https://github.com/o/r", "pdf/SKILL.md", store.LocalUserID)
-	if err != nil || mine == nil {
-		t.Fatalf("the caller's own row vanished: %+v (%v)", mine, err)
+	var mine *store.Skill
+	for _, sk := range listOwnSkills(t, st, store.LocalUserID) {
+		if sk.SourcePath == "pdf/SKILL.md" {
+			full, err := st.Get(t.Context(), sk.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mine = full
+		}
+	}
+	if mine == nil {
+		t.Fatal("the caller's own row vanished")
 	}
 	if strings.Contains(mine.Content, "Step 2.") {
 		t.Fatal("syncing another group refreshed the caller's own rows")
@@ -444,4 +453,20 @@ func TestSkillSyncTargetsTheNamedGroup(t *testing.T) {
 	if got, _ := st.Get(t.Context(), private.ID); got.Content != "PRIVATE" {
 		t.Fatalf("the member's private row was written: %q", got.Content)
 	}
+}
+
+// listOwnSkills is the rows ownerID authored, from the visible listing.
+func listOwnSkills(t *testing.T, st *store.SkillStore, ownerID string) []store.Skill {
+	t.Helper()
+	rows, err := st.ListMeta(t.Context(), ownerID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var own []store.Skill
+	for _, r := range rows {
+		if r.OwnerID == ownerID {
+			own = append(own, r)
+		}
+	}
+	return own
 }

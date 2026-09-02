@@ -50,7 +50,7 @@ func TestSecretsSealedAtRest(t *testing.T) {
 	if pv.APIKey != "sk-live" {
 		t.Fatalf("caller's key after Create = %q, want plaintext", pv.APIKey)
 	}
-	if raw := rawColumn(t, db, "SELECT api_key FROM providers WHERE id = ?", pv.ID); !secrets.IsSealed(raw) {
+	if raw := rawColumn(t, db, "SELECT api_key FROM providers WHERE id = ?", pv.ID); !strings.HasPrefix(raw, "enc:") {
 		t.Fatalf("api_key at rest = %q, want sealed", raw)
 	}
 	got, err := providers.Get(ctx, pv.ID)
@@ -64,7 +64,7 @@ func TestSecretsSealedAtRest(t *testing.T) {
 	if err := providers.SaveChatGPTToken(ctx, pv.ID, `{"access":"tok"}`); err != nil {
 		t.Fatal(err)
 	}
-	if raw := rawColumn(t, db, "SELECT chatgpt_token FROM providers WHERE id = ?", pv.ID); !secrets.IsSealed(raw) {
+	if raw := rawColumn(t, db, "SELECT chatgpt_token FROM providers WHERE id = ?", pv.ID); !strings.HasPrefix(raw, "enc:") {
 		t.Fatalf("chatgpt_token at rest = %q", raw)
 	}
 	if got, _ := providers.Get(ctx, pv.ID); got.ChatGPTToken != `{"access":"tok"}` {
@@ -103,7 +103,7 @@ func TestSecretsSealedAtRest(t *testing.T) {
 	settingsStore.SealIf(func(k string) bool { return k == "openai_api_key" })
 	_ = settingsStore.Set(ctx, "openai_api_key", "sk-1")
 	_ = settingsStore.Set(ctx, "theme", "dark")
-	if raw := rawColumn(t, db, "SELECT value FROM settings WHERE key = ?", "openai_api_key"); !secrets.IsSealed(raw) {
+	if raw := rawColumn(t, db, "SELECT value FROM settings WHERE key = ?", "openai_api_key"); !strings.HasPrefix(raw, "enc:") {
 		t.Fatalf("secret setting at rest = %q", raw)
 	}
 	if raw := rawColumn(t, db, "SELECT value FROM settings WHERE key = ?", "theme"); raw != "dark" {
@@ -193,7 +193,7 @@ func TestVerifySecretKeyFailsFastOnAMissingOrChangedKey(t *testing.T) {
 	if err := VerifySecretKey(ctx, db); err != nil {
 		t.Fatalf("first start with a key: %v", err)
 	}
-	if raw := rawColumn(t, db, "SELECT value FROM settings WHERE key = ?", secretKeyCheck); !secrets.IsSealed(raw) {
+	if raw := rawColumn(t, db, "SELECT value FROM settings WHERE key = ?", secretKeyCheck); !strings.HasPrefix(raw, "enc:") {
 		t.Fatalf("canary at rest = %q, want sealed", raw)
 	}
 	if err := VerifySecretKey(ctx, db); err != nil {

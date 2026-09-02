@@ -8,7 +8,6 @@ import (
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/tracing"
 )
@@ -172,10 +171,4 @@ var _ tracing.Processor = (*wsProcessor)(nil)
 
 func newTracer(ctx context.Context, send func(string, any), traces *store.TraceStore, sessionID, runID, parentRunID string, storedCap int) *tracing.Tracer {
 	return tracing.NewTracer(newWSProcessor(ctx, send, traces, sessionID, runID, parentRunID, storedCap))
-}
-
-// spanDataCap resolves the trace_span_data_kb setting into bytes. Read once
-// per run.
-func spanDataCap(ctx context.Context, cfg *settings.Reader) int {
-	return cfg.Int(ctx, settings.KeyTraceSpanDataKB) << 10
 }

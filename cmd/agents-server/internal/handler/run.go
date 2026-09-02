@@ -274,20 +274,11 @@ func (h *RunHandler) Events(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
-	// This buffer hands events from the subscriber goroutine to the HTTP
-	// writer. It does NOT drop: the sink blocks, which pushes back into the
-	// hub's per-subscriber buffer, and THAT is where a slow client is dropped —
-	// with a run.gap telling it what it missed. A second silent drop here would
-	// lose events the hub believes it delivered.
-	//
-	// Blocking is only safe because the sink runs on its own goroutine; it used
-	// to run on the publishing goroutine, where it had to be non-blocking.
-	//
-	// Only a FINAL event (output/error/cancelled) closes the stream, via its
-	// own guaranteed channel. run.interrupted is NOT final under same-id
-	// resume — a replayed historical interrupt must flow as an ordinary event,
-	// or a late subscriber to a resumed+completed run would be cut off at the
-	// old pause and miss the real output.
+	// The sink BLOCKS on this buffer rather than dropping: a slow client is
+	// dropped in the hub's per-subscriber buffer, with a run.gap saying what it
+	// missed (workbench invariant 14). Only a FINAL event closes the stream,
+	// via its own channel — a replayed run.interrupted flows as an ordinary
+	// event, since the same run id resumes past it.
 	events := make(chan bridge.SeqEnvelope, bridge.EventBufferCap)
 	terminal := make(chan bridge.SeqEnvelope, 1)
 	sink := func(item bridge.SeqEnvelope) {
@@ -304,7 +295,7 @@ func (h *RunHandler) Events(c *gin.Context) {
 		}
 	}
 
-	cancel, ok := h.runner.Hub().SubscribeSeq(runID, fromSeq, sink)
+	cancel, done, ok := h.runner.Hub().SubscribeSeq(runID, fromSeq, sink)
 	if !ok {
 		notFound(c)
 		return
@@ -328,6 +319,20 @@ func (h *RunHandler) Events(c *gin.Context) {
 		return err == nil
 	}
 
+	// drain writes what is queued ahead of an ending (their seqs precede it).
+	drain := func(w io.Writer) bool {
+		for {
+			select {
+			case queued := <-events:
+				if !write(w, queued) {
+					return false
+				}
+			default:
+				return true
+			}
+		}
+	}
+
 	c.Stream(func(w io.Writer) bool {
 		select {
 		case <-ctx.Done():
@@ -338,19 +343,22 @@ func (h *RunHandler) Events(c *gin.Context) {
 		case item := <-events:
 			return write(w, item)
 		case item := <-terminal:
-			// Flush any queued non-terminal events first (their seqs precede
-			// the terminal's), then deliver the ending and close the stream.
-			for {
+			if drain(w) {
+				_ = write(w, item)
+			}
+			return false
+		case <-done:
+			// The broadcaster ended with no final event — shutdown, or the
+			// run aged out of the hub — so the stream returns (workbench
+			// invariant 43), after whatever it was still owed.
+			if drain(w) {
 				select {
-				case queued := <-events:
-					if !write(w, queued) {
-						return false
-					}
-				default:
+				case item := <-terminal:
 					_ = write(w, item)
-					return false
+				default:
 				}
 			}
+			return false
 		}
 	})
 }

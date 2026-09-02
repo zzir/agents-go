@@ -146,7 +146,7 @@ func TestPublishSeqOrderingUnderConcurrency(t *testing.T) {
 	}
 
 	sink := newAsyncSink()
-	if _, ok := h.SubscribeSeq("run1", 0, sink.seq); !ok {
+	if _, _, ok := h.SubscribeSeq("run1", 0, sink.seq); !ok {
 		t.Fatal("subscribe failed")
 	}
 

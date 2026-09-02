@@ -172,7 +172,7 @@ func trustSessionID(sessionID string, task *TaskMeta) string {
 // StopTask cancels a background task on behalf of the REST stop endpoint,
 // with the same status-aware semantics as the model-facing task_stop tool.
 // (The model-facing spawn/status/stop path itself is the SDK's task manager
-// tools, wired in buildAgent — not methods here.)
+// tools, wired in buildFullAgent — not methods here.)
 func (r *Runner) StopTask(taskID string, graceful bool) (*TaskInfo, error) {
 	if r.tasks == nil {
 		return nil, fmt.Errorf("task_stop: tasks are not configured")
@@ -263,11 +263,8 @@ func (r *Runner) postRun(runID, sessionID string, result *RunOutcome) {
 }
 
 // FailOrphanedTasks is the first half of the restart reconciliation: tasks the
-// restart interrupted are failed, which owes their parents a wake-up.
-//
-// It runs synchronously at startup, before the server can accept a request:
-// the sweep fails every row recorded as working, so a retry that arrived first
-// would have its fresh run declared dead and its result discarded.
+// restart interrupted are failed, which owes their parents a wake-up. It runs
+// synchronously, before any request — workbench invariant 32.
 func (r *Runner) FailOrphanedTasks(ctx context.Context) {
 	if r.tasks == nil {
 		return
@@ -277,9 +274,8 @@ func (r *Runner) FailOrphanedTasks(ctx context.Context) {
 	}
 }
 
-// DrainPendingWakeups is the second half: every session owed a turn is woken,
-// so a result that landed while the process was down still arrives. It starts
-// runs, which is why it is separate from the sweeps above.
+// DrainPendingWakeups is the second half: every session owed a turn is woken.
+// It starts runs, so it runs after the handlers are wired — invariant 32.
 func (r *Runner) DrainPendingWakeups(ctx context.Context) { (Waker{r}).DrainAll(ctx) }
 
 // Shutdown drains the hub: every live run is cancelled and waited for so its

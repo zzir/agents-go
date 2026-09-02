@@ -83,7 +83,12 @@ When a change genuinely doesn't fit, update this list in the same PR.
    before writing; a handler must never `Get` first and resolve outside, or
    two concurrent edits let a client echoing the mask restore the key the
    other just replaced. A rule the callback refuses returns
-   `badRequestError`, which `saveError` maps.
+   `badRequestError`, which `saveError` maps. The second accepted form is
+   the revision CAS (sandboxes, projects): the handler reads the row,
+   resolves the mask outside the transaction, and writes under the row's
+   `expected_revision` — a concurrent edit moved the revision, so the write
+   is refused (409) rather than landing an echoed mask over a key it never
+   saw.
 10. **OAuth-class tokens never leave the server.** Store them in their own
     column with `json:"-"`, exclude the column from CRUD updates
     (`ExcludeColumn`), and expose only a derived boolean
@@ -112,10 +117,11 @@ When a change genuinely doesn't fit, update this list in the same PR.
 
 **Chat / run streaming**
 
-14. **Run events are a broadcast bus, not a reply channel.** Every
-    authenticated WS connection is attached to every run's stream — on
-    connect (all live runs, with replay) and through `Runner.OnRunAttach`
-    when a run starts or resumes, whether it was created over WS or REST.
+14. **Run events are a broadcast bus PER OWNER, not a reply channel.** Every
+    authenticated WS connection of the session's owner is attached to the
+    run's stream — on connect (all of that user's live runs, with replay) and
+    through `Runner.OnRunAttach` when a run starts or resumes, whether it was
+    created over WS or REST — and nobody else's connection hears a thing.
     Two browsers on the same session both watch the conversation live;
     `run.started` carries the prompt (`input`) so a browser that didn't send
     it can render the user bubble. Never wire an event to "the connection
@@ -486,7 +492,12 @@ When a change genuinely doesn't fit, update this list in the same PR.
     unlike task rows — spec §2.13): the session delete cascade removes them in
     the same transaction, and both writers CAS on rows that cascade too, so a
     dead incarnation's debt cannot exist to be inherited. Single insurance,
-    recorded deliberately.
+    recorded deliberately. At startup the two halves run in a fixed order:
+    `FailOrphans` first and synchronously, before any request can arrive —
+    the sweep fails every row still recorded as working, so a retry that
+    slipped in ahead would have its fresh run declared dead — and the drain
+    after the handlers are wired, on its own goroutine, because it starts
+    runs and the WS handler is what installs `OnRunAttach`.
 
 33. **Plan mode is a restraint, so only a PERSON turns it on, and it belongs to
     the SESSION.** A session executes until somebody asks for a plan — a
@@ -695,11 +706,15 @@ When a change genuinely doesn't fit, update this list in the same PR.
     could expire the approval being persisted); every running run is
     cancelled and waited for, so its partial turn persists; every run's
     broadcaster is closed — an interrupted run's too, which the drain neither
-    cancels nor waits for — so an SSE stream returns; the WebSocket
+    cancels nor waits for — so an SSE stream returns (`SubscribeSeq` hands
+    every subscriber a `done` channel that closes with the broadcaster,
+    retention GC included, and the SSE handler returns on it); the WebSocket
     connections are closed with `1001 Going Away`, since a hijacked
     connection is outside `http.Server.Shutdown`'s reach; then the listener
     drains, for at most five seconds, and whatever it was still waiting on
-    is a warning, not an exit status.
+    is a warning, not an exit status. Only then does the root context end —
+    explicitly, ahead of the deferred service and database closes — so
+    nothing is torn down under a goroutine still descending from it.
 
 44. **Every per-sandbox operation goes through the backend.** A sandbox's type
     picks the implementation once, in `sandboxes.BackendFor`, and nothing
@@ -886,3 +901,43 @@ When a change genuinely doesn't fit, update this list in the same PR.
     host at runtime (`SetImageHosts` is re-applied on storage-key writes) —
     burned in at startup, a changed bucket shows blank thumbnails until a
     restart.
+
+**Store concurrency**
+
+59. **A write that moves a session's append point takes the session row's
+    lock first.** On PostgreSQL every transaction that reads or rewrites a
+    session's tip — an append, a clear, a compaction's fold-and-checkpoint —
+    opens with `SELECT … FOR UPDATE` on the `sessions` row
+    (`EntryStore.lockSessionIn`), and the delete cascade takes the same lock
+    before it touches a child table, so the two orders cannot form a cycle.
+    Without it READ COMMITTED lets two concurrent appends (a run's persist
+    and a task's display update on the parent) read one tip and each link
+    to it, and nothing downstream catches the fork: the sequence number comes
+    from the clock, not the tip, so the unique index never fires. SQLite's
+    single writer serializes by itself, and a direct-scope store has no
+    session row and nothing to lock.
+
+60. **An import lands each document in its own savepoint.** A multi-row
+    write that reports per-row outcomes (`SkillStore.ApplyImport`) wraps
+    every row in `tx.RunInTx` — a `SAVEPOINT` — so a refused row (a name
+    collision) is that row's skip and the rows after it still land. On
+    PostgreSQL a failed statement otherwise aborts the whole transaction
+    (`25P02`), and "one bad file skipped" would silently become "nothing
+    imported".
+
+61. **Settings is ONE hub; an admin's views are a toggle inside the same
+    panel, never a second dialog.** The gear opens one `PanelDialog`: the
+    personal sections (Providers, Agents, MCP servers, Skills, Sandboxes,
+    Memory, Guardrails, Account, General) and, for an admin only, an
+    "Administration" group in the same nav (Members, Sessions, Projects,
+    Workflows, Audit logs). A scoped entity's tab (invariant 42's
+    scope/owner rows) carries a "Mine | All members" segmented toggle at the
+    top of its body, switching between the personal panel and the
+    cross-member management view (`ScopedRowsPanel`: publish/unpublish,
+    transfer) — the same rows in one place, not the same entity listed under
+    two menu entries. Workflows have no personal settings panel (the sidebar's
+    hub is where they are authored and watched), so only their management view
+    appears, under Administration. The hub opens from the account menu. The rule exists
+    because a separate Admin dialog listed the five scoped entities a second
+    time with a different meaning, and a person managing a provider had to
+    know which of two identically named tabs to open.

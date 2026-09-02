@@ -16,7 +16,7 @@ import (
 // still-unpersisted reasoning/text so an abort can persist them as
 // display-only annotations (a cancel during the thinking phase still shows what
 // the model was doing). A terminal error on the event channel stops
-// consumption; the caller reads the run's outcome from FinalResult.
+// consumption; what it collected is the run's outcome, returned to the caller.
 //
 // The buffer resets on ItemsPersistedEvent — the SDK's own statement that
 // everything the stream showed so far is in the store — so what remains is

@@ -17,12 +17,12 @@ import (
 //
 // Reads are not cached: every consumer reads per run, per connect or per tick,
 // never per token, and a cache would owe an invalidation contract nobody asked
-// for. ProxyClient pools the client it BUILDS from a read, which is a
+// for. ProxyClient pools the transport it BUILDS from a read, which is a
 // different thing — the key is the value, so there is nothing to invalidate.
 type Reader struct {
 	store *store.SettingStore
-	// clients pools one *http.Client per proxy URL; see ProxyClient.
-	clients sync.Map
+	// transports pools one *http.Transport per proxy URL; see ProxyClient.
+	transports sync.Map
 }
 
 // NewReader returns a Reader over s. A nil store is valid and reads defaults.
@@ -78,30 +78,42 @@ func (r *Reader) Bool(ctx context.Context, key string) bool {
 	return v
 }
 
-// ProxyClient returns an *http.Client routed through the proxy_url setting,
-// or nil when none is set.
-//
-// The setting is read every call, as everything here is; what is pooled is the
-// client, keyed by the URL it was built for. A fresh http.Transport per call
-// is a fresh connection pool per call, and the callers are every agent build,
-// every compaction, every MCP transport and every token refresh — so with a
-// proxy configured, nothing was ever reused. Keying on the URL is also the
-// whole invalidation story: an edited setting lands on a different key.
-//
-// A nil Reader reads no store, and proxy_url has no default, so it proxies
-// nothing — and has no pool to key a client on either.
+// ProxyClient returns a fresh *http.Client routed through the proxy_url
+// setting, or nil when none is set. The client is the caller's to configure
+// (its Timeout, say); what is shared is the transport behind it — one
+// connection pool per proxy URL, keyed by the URL, so an edited setting lands
+// on a new pool. A nil Reader reads no store, and proxy_url has no default,
+// so it proxies nothing.
 func (r *Reader) ProxyClient(ctx context.Context) *http.Client {
 	u, err := url.Parse(r.String(ctx, KeyProxyURL))
 	if r == nil || err != nil || u.String() == "" {
 		return nil
 	}
 	key := u.String()
-	if c, ok := r.clients.Load(key); ok {
-		return c.(*http.Client)
+	t, ok := r.transports.Load(key)
+	if !ok {
+		t, _ = r.transports.LoadOrStore(key, &http.Transport{Proxy: http.ProxyURL(u)})
 	}
-	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(u)}}
-	actual, _ := r.clients.LoadOrStore(key, client)
-	return actual.(*http.Client)
+	return &http.Client{Transport: t.(*http.Transport)}
+}
+
+// SpanDataCap is the trace_span_data_kb setting in bytes: how much of a span's
+// payload the store keeps.
+func (r *Reader) SpanDataCap(ctx context.Context) int {
+	return r.Int(ctx, KeyTraceSpanDataKB) << 10
+}
+
+// SplitList parses a comma-separated flag or setting into trimmed, non-empty
+// entries: operators type these by hand, so stray spaces and trailing commas
+// are dropped rather than becoming names that match nothing.
+func SplitList(raw string) []string {
+	var out []string
+	for v := range strings.SplitSeq(raw, ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // S3Config is the attachment-storage section read as one value. Complete()
@@ -131,34 +143,6 @@ func IsS3Key(key string) bool {
 		return true
 	}
 	return false
-}
-
-// With returns the config with one key's field replaced — how the settings
-// handler previews the configuration a pending write would produce, so the
-// probe tests what WOULD be stored.
-func (c S3Config) With(key, value string) S3Config {
-	switch key {
-	case KeyS3Endpoint:
-		c.Endpoint = value
-	case KeyS3Region:
-		// An empty write returns the key to its default, so preview that.
-		if value == "" {
-			d, _ := Lookup(KeyS3Region)
-			value = d.Default
-		}
-		c.Region = value
-	case KeyS3Bucket:
-		c.Bucket = value
-	case KeyS3AccessKeyID:
-		c.AccessKeyID = value
-	case KeyS3SecretAccessKey:
-		c.SecretKey = value
-	case KeyS3PublicBaseURL:
-		c.PublicBaseURL = value
-	case KeyS3PathStyle:
-		c.PathStyle, _ = strconv.ParseBool(value)
-	}
-	return c
 }
 
 // S3Config reads the attachment-storage settings.

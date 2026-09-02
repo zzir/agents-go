@@ -20,8 +20,8 @@ import (
 // number, so the threshold it draws is the one that will actually trip.
 const DefaultCompactionThresholdTokens = 50000
 
-// DefaultCompactionWindow is the entry count the kept tail defaults to.
-const DefaultCompactionWindow = 10
+// defaultCompactionWindow is the entry count the kept tail defaults to.
+const defaultCompactionWindow = 10
 
 // CompactionNotifier receives compaction lifecycle notifications. OnStart
 // fires right before the (potentially slow) summarization request, so the UI
@@ -68,7 +68,7 @@ func NewCompactionAdapter(
 		threshold = DefaultCompactionThresholdTokens
 	}
 	if windowSize <= 0 {
-		windowSize = DefaultCompactionWindow
+		windowSize = defaultCompactionWindow
 	}
 	summaryPrompt = cmp.Or(summaryPrompt, session.DefaultSummaryPrompt)
 	return &CompactionAdapter{
@@ -306,25 +306,11 @@ type ContextSize struct {
 	Checkpoint bool
 }
 
-// ActiveContextTokens sizes a non-compacted history in tokens. The most recent
-// entry carrying real usage prices everything up to and including itself —
-// exactly one entry per response carries usage, and its call's input covered
-// the history before it (session_entry.go: "a reader estimating how large it
-// has grown reads the most recent one"). Entries after it, which no call has
-// priced yet, are estimated. With no usage anywhere (a fresh or
-// never-successful session) everything is estimated.
-//
-// It is therefore MOSTLY a provider number: the last call's total, which
-// covered the system prompt and tool schemas too, plus an estimated tail. Not a
-// character sum over the history, which would omit everything the conversation
-// does not contain and drift from the threshold it is compared against.
-//
-// A fold NEWER than the last pricing invalidates it: that call's total covered
-// history the fold has since removed from the projection, and carrying it
-// forward would hold the figure at its pre-fold height until the next call.
-// The history is then fully estimated — the active rows are the kept tail, the
-// checkpoint (≈ its summary) and the turns since — until the next
-// usage-bearing entry re-anchors the figure on the provider.
+// ActiveContextTokens sizes a non-compacted history in tokens: the most
+// recent usage-bearing entry prices everything up to itself and the tail
+// after it is estimated; a fold newer than that pricing discards it, so the
+// whole history is estimated until the next call re-anchors the figure —
+// workbench invariant 28.
 func ActiveContextTokens(sizes []ContextSize) int {
 	lastUsage, lastFold := -1, -1
 	for i := range sizes {
@@ -476,6 +462,9 @@ func jsonAsText(raw json.RawMessage) string {
 func (ca *CompactionAdapter) persistCompaction(ctx context.Context, compactIDs []string, summary session.Entry) (bool, error) {
 	applied := false
 	err := ca.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := ca.lockSessionIn(ctx, tx); err != nil {
+			return err
+		}
 		res, err := tx.NewUpdate().Model((*entryRow)(nil)).
 			Set("compacted = ?", true).
 			Where("id IN (?)", bun.List(compactIDs)).

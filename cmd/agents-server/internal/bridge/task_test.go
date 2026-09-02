@@ -133,8 +133,12 @@ func TestSpawnTaskCreatesHiddenSessionAndRow(t *testing.T) {
 	if runInfo.Task == nil || runInfo.Task.ParentSessionID != parent.ID || runInfo.Task.TaskID != task.ID {
 		t.Fatalf("hub run task meta = %+v", runInfo.Task)
 	}
-	if runner.Hub().LiveTaskCount(parent.ID) != 1 {
-		t.Fatalf("LiveTaskCount = %d, want 1", runner.Hub().LiveTaskCount(parent.ID))
+	hub := runner.Hub()
+	hub.mu.Lock()
+	live := hub.liveTaskCountLocked(parent.ID)
+	hub.mu.Unlock()
+	if live != 1 {
+		t.Fatalf("live task count = %d, want 1", live)
 	}
 
 	if _, err := runner.StopTask(task.ID, false); err != nil {

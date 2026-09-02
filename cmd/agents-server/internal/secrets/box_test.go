@@ -15,7 +15,7 @@ func TestSealOpenRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	sealed := box.Seal("providers.api_key", "sk-secret")
-	if !strings.HasPrefix(sealed, "enc:v2:"+box.KeyID()+":") || sealed == "sk-secret" {
+	if !strings.HasPrefix(sealed, "enc:v2:"+box.kid+":") || sealed == "sk-secret" {
 		t.Fatalf("sealed = %q", sealed)
 	}
 	got, err := box.Open("providers.api_key", sealed)
@@ -47,7 +47,7 @@ func TestSealOpenRoundTrip(t *testing.T) {
 	otherKey[0] = 1
 	other, _ := New(otherKey)
 	_, err = other.Open("providers.api_key", sealed)
-	if err == nil || !strings.Contains(err.Error(), box.KeyID()) || !strings.Contains(err.Error(), other.KeyID()) {
+	if err == nil || !strings.Contains(err.Error(), box.kid) || !strings.Contains(err.Error(), other.kid) {
 		t.Fatalf("the wrong key must fail naming both key ids, got %v", err)
 	}
 	var none *Box
@@ -56,9 +56,6 @@ func TestSealOpenRoundTrip(t *testing.T) {
 	}
 	if _, err := none.Open("providers.api_key", sealed); err == nil {
 		t.Fatal("no key: a sealed value must be an error, not ciphertext read as a credential")
-	}
-	if none.KeyID() != "" {
-		t.Fatal("no key: no key id")
 	}
 }
 

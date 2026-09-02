@@ -81,7 +81,7 @@ func authExempt(path string) bool {
 func TokenAuth(auth AuthFunc, guard *AuthGuard) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
-		if authExempt(path) || !strings.HasPrefix(path, "/api/") {
+		if authExempt(path) || !strings.HasPrefix(path, APIPrefix+"/") {
 			c.Next()
 			return
 		}

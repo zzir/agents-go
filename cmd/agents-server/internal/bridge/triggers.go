@@ -21,11 +21,25 @@ var ErrTriggerDisabled = errors.New("trigger is disabled")
 // 10m); no seconds field — a workflow is not a per-second job.
 var cronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
 
-// MinEveryInterval is the shortest @every a trigger may ask for: the field
+// minEveryInterval is the shortest @every a trigger may ask for: the field
 // form cannot go below a minute, and neither may the descriptor — a workflow
 // starting every few seconds is a mistake, and each tick past the session's
 // cap would only log a refusal.
-const MinEveryInterval = time.Minute
+const minEveryInterval = time.Minute
+
+// NextCronFire is when expr next fires after now, in the zone the scheduler
+// runs in (the process's local zone); nil when expr does not parse.
+func NextCronFire(expr string, now time.Time) *time.Time {
+	sched, err := cronParser.Parse(strings.TrimSpace(expr))
+	if err != nil {
+		return nil
+	}
+	next := sched.Next(now)
+	if next.IsZero() {
+		return nil
+	}
+	return &next
+}
 
 // ValidateCronSchedule reports whether expr is a schedule the scheduler runs.
 func ValidateCronSchedule(expr string) error {
@@ -34,8 +48,8 @@ func ValidateCronSchedule(expr string) error {
 		return fmt.Errorf("schedule %q: %w", expr, err)
 	}
 	if rest, ok := strings.CutPrefix(expr, "@every "); ok {
-		if d, err := time.ParseDuration(strings.TrimSpace(rest)); err == nil && d < MinEveryInterval {
-			return fmt.Errorf("schedule %q: @every may not be shorter than %s", expr, MinEveryInterval)
+		if d, err := time.ParseDuration(strings.TrimSpace(rest)); err == nil && d < minEveryInterval {
+			return fmt.Errorf("schedule %q: @every may not be shorter than %s", expr, minEveryInterval)
 		}
 	}
 	return nil

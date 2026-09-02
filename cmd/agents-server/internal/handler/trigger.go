@@ -107,10 +107,16 @@ type TriggerView struct {
 	SecretHint string `json:"secret_hint,omitempty"`
 	// HookPath is where a webhook trigger is called (POST, signed).
 	HookPath string `json:"hook_path,omitempty"`
+	// NextFireAt is when an enabled cron trigger next fires, in the server's
+	// zone (ServerInfo.Timezone); absent for webhooks and disabled triggers.
+	NextFireAt *time.Time `json:"next_fire_at,omitempty"`
 }
 
 func viewOf(t *store.Trigger, mintedSecret string) TriggerView {
 	v := TriggerView{Trigger: t, Secret: mintedSecret}
+	if t.Kind == store.TriggerKindCron && t.Enabled {
+		v.NextFireAt = bridge.NextCronFire(t.Schedule, time.Now())
+	}
 	if t.Kind == store.TriggerKindWebhook {
 		v.HookPath = HookPath(t.ID)
 		if n := len(t.Secret); n >= 4 {
@@ -474,7 +480,7 @@ func (h *TriggerHandler) Hook(c *gin.Context) {
 	}
 	now := time.Now()
 	sig := c.GetHeader(HookSignatureHeader)
-	if t.Kind != store.TriggerKindWebhook || !VerifyHookSignature(t.Secret, c.GetHeader(HookTimestampHeader), sig, body, now) {
+	if t.Kind != store.TriggerKindWebhook || !verifyHookSignature(t.Secret, c.GetHeader(HookTimestampHeader), sig, body, now) {
 		abortError(c, http.StatusUnauthorized, protocol.CodeUnauthorized, "bad or stale signature")
 		return
 	}
@@ -503,11 +509,11 @@ func SignHook(secret, timestamp string, body []byte) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-// VerifyHookSignature checks a call against the trigger's secret: the
+// verifyHookSignature checks a call against the trigger's secret: the
 // timestamp within HookTimestampSkew of now, the signature equal (in constant
 // time) to SignHook's over the same timestamp and body. A "sha256=" prefix on
 // the signature is accepted.
-func VerifyHookSignature(secret, timestamp, signature string, body []byte, now time.Time) bool {
+func verifyHookSignature(secret, timestamp, signature string, body []byte, now time.Time) bool {
 	if secret == "" || timestamp == "" || signature == "" {
 		return false
 	}

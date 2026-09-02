@@ -149,10 +149,6 @@ func TestTriggerStoreRoundTripAndFireRecord(t *testing.T) {
 	if got.LastStartedID != "" || got.LastError != "session at its cap" {
 		t.Fatalf("second fire record = %+v, want the failure and no task", got)
 	}
-	byWf, err := s.ListByWorkflow(ctx, wf.ID)
-	if err != nil || len(byWf) != 1 {
-		t.Fatalf("ListByWorkflow = %v, %v", byWf, err)
-	}
 }
 
 // A trigger goes with the workflow it fires and with the session it fires

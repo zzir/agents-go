@@ -55,7 +55,7 @@ func TestRunHubBufferAndReplay(t *testing.T) {
 
 	// from_seq replays only events after the cursor.
 	cursor := newAsyncSink()
-	if _, ok := h.SubscribeSeq("run1", 2, cursor.seq); !ok {
+	if _, _, ok := h.SubscribeSeq("run1", 2, cursor.seq); !ok {
 		t.Fatal("cursor subscribe failed")
 	}
 	if !cursor.wait(t, 1) {
@@ -79,7 +79,7 @@ func TestRunHubBufferAndReplay(t *testing.T) {
 	// the reset rides on (this sink dereferences Env.Type, as the SSE handler
 	// does — a nil there would panic the hub's goroutine, past any recovery).
 	ahead := newAsyncSink()
-	if _, ok := h.SubscribeSeq("run1", 999, ahead.seq); !ok {
+	if _, _, ok := h.SubscribeSeq("run1", 999, ahead.seq); !ok {
 		t.Fatal("ahead subscribe failed")
 	}
 	if !ahead.wait(t, 1) {
@@ -156,11 +156,11 @@ func TestRunHubInterruptedEventIsTerminal(t *testing.T) {
 	}
 
 	for _, typ := range []string{"run.output", "run.error", "run.cancelled", "run.interrupted"} {
-		if !IsTerminalRunEvent(typ) {
+		if _, ok := terminalStatusForEvent(typ); !ok {
 			t.Errorf("%s should be terminal", typ)
 		}
 	}
-	if IsTerminalRunEvent("run.step") {
+	if _, ok := terminalStatusForEvent("run.step"); ok {
 		t.Error("run.step must not be terminal")
 	}
 }
@@ -241,15 +241,15 @@ func TestRunHubResumeBusy(t *testing.T) {
 	}
 }
 
-// The SSE close decision must key off IsFinalRunEvent, not IsTerminalRunEvent:
-// a same-id resume leaves a historical run.interrupted in the buffer, and a
-// late subscriber replaying from 0 must flow past it to the real run.output —
-// treating the old interrupt as final would cut the stream short.
+// The SSE close decision must key off IsFinalRunEvent, not the segment-ending
+// status: a same-id resume leaves a historical run.interrupted in the buffer,
+// and a late subscriber replaying from 0 must flow past it to the real
+// run.output — treating the old interrupt as final would cut the stream short.
 func TestFinalVsTerminalRunEvent(t *testing.T) {
-	// run.interrupted is "terminal" (ends a segment) but NOT "final" (the run
-	// resumes under the same id).
-	if !IsTerminalRunEvent("run.interrupted") {
-		t.Error("run.interrupted should be terminal (segment end)")
+	// run.interrupted ends a segment but is NOT final (the run resumes under
+	// the same id).
+	if _, ok := terminalStatusForEvent("run.interrupted"); !ok {
+		t.Error("run.interrupted should end the segment")
 	}
 	if IsFinalRunEvent("run.interrupted") {
 		t.Error("run.interrupted must NOT be final — same-id resume continues the stream")
@@ -278,7 +278,7 @@ func TestFinalVsTerminalRunEvent(t *testing.T) {
 	h.publish("r", env("run.output"))
 
 	sink := newAsyncSink()
-	if _, ok := h.SubscribeSeq("r", 0, sink.seq); !ok {
+	if _, _, ok := h.SubscribeSeq("r", 0, sink.seq); !ok {
 		t.Fatal("subscribe failed")
 	}
 	if !sink.wait(t, 4) {

@@ -14,8 +14,8 @@ import (
 )
 
 // Authorization gates: session content is owner-only, scoped configuration
-// gates per row, host configuration is read-everyone/write-admin — spec
-// §5.29, README "Ownership and roles".
+// gates per row, host configuration is read-everyone/write-admin —
+// decisions §5.29.
 
 // requireAdmin answers 403 unless the caller is an admin; false means the
 // response is written and the handler must return.
@@ -199,7 +199,54 @@ func (d AuthzDeps) triggerGate() gin.HandlerFunc {
 	}
 }
 
-// The scoped-configuration gates (decisions §5.29).
+// The scoped-configuration gates (decisions §5.29). scopeOf reads a row's
+// (scope, owner) pair; rowGate is one of visibleRow, editableRow and
+// deletableRow.
+
+// listVisible answers the rows the caller may see; false means the response
+// is written.
+func listVisible[T any](c *gin.Context, s *store.CrudStore[T]) ([]T, bool) {
+	ownerID, admin, ok := callerScope(c)
+	if !ok {
+		return nil, false
+	}
+	rows, err := store.ListVisibleOf(c.Request.Context(), s, ownerID, admin)
+	if err != nil {
+		internalError(c, err)
+		return nil, false
+	}
+	return rows, true
+}
+
+// gatedRow loads the row the id path parameter names and runs gate on its
+// scope pair; false means the response is written.
+func gatedRow[T any](c *gin.Context, s *store.CrudStore[T], scopeOf func(*T) (string, string), gate func(*gin.Context, string, string) bool) (*T, bool) {
+	row, err := s.Get(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		storeError(c, err)
+		return nil, false
+	}
+	if scope, owner := scopeOf(row); !gate(c, scope, owner) {
+		return nil, false
+	}
+	return row, true
+}
+
+// deleteOwned deletes the row the id path parameter names, with the owner
+// deletableRow authorized against as the delete's predicate (409 when it
+// moved since). False means the response is written.
+func deleteOwned[T any](c *gin.Context, s *store.CrudStore[T], scopeOf func(*T) (string, string)) bool {
+	row, ok := gatedRow(c, s, scopeOf, deletableRow)
+	if !ok {
+		return false
+	}
+	_, owner := scopeOf(row)
+	if err := store.DeleteOwnedBy(c.Request.Context(), s, c.Param("id"), owner); err != nil {
+		saveError(c, err) // moved since the check -> 409
+		return false
+	}
+	return true
+}
 
 // stampCreateScope applies the caller to a new scoped row: an explicit
 // global claim needs the admin role, anything else lands private and owned.
@@ -273,13 +320,11 @@ func setScopePlain[T any](c *gin.Context, s *store.CrudStore[T], kind string, sc
 	c.Status(http.StatusNoContent)
 }
 
-// setOwnerPlain is the /owner PUT body shared by the scoped entities: an
-// admin transfers a row to another account; scope stays put. A name already
-// taken in the target owner's private namespace answers 409.
+// setOwnerPlain is the /owner PUT body shared by the scoped entities (the
+// route carries the admin gate): the row moves to another account; scope
+// stays put. A name already taken in the target owner's private namespace
+// answers 409.
 func setOwnerPlain[T any](c *gin.Context, s *store.CrudStore[T]) {
-	if !requireAdmin(c) {
-		return
-	}
 	var req SetOwnerRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.UserID == "" {
 		badRequest(c, "user_id is required")

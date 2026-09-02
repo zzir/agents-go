@@ -119,9 +119,8 @@ func (h *AttachmentHandler) Upload(c *gin.Context) {
 			"image attachments are not configured — an admin must fill the Attachment storage settings")
 		return
 	}
-	// Bound the whole request body before multipart parsing touches it; the
-	// slack covers the multipart framing around a max-size file.
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, attachments.MaxBytes+64<<10)
+	// The request body is capped by the route's limit (SetBodyLimit in the
+	// composition root: MaxAttachmentBytes plus multipart slack).
 	file, _, err := c.Request.FormFile("file")
 	if err != nil {
 		badRequest(c, "multipart field \"file\" is required (max 10 MiB)")
@@ -254,7 +253,8 @@ func (h *AttachmentHandler) resolve(ctx context.Context, req storageReq) setting
 	}
 	region := strings.TrimSpace(req.Region)
 	if region == "" {
-		region = "auto"
+		d, _ := settings.Lookup(settings.KeyS3Region)
+		region = d.Default
 	}
 	return settings.S3Config{
 		Endpoint:      strings.TrimSpace(req.Endpoint),

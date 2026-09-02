@@ -78,16 +78,13 @@ func (h *SkillHandler) List(c *gin.Context) {
 //	@Security	BearerAuth
 //	@Router		/skills/{id} [get]
 func (h *SkillHandler) Get(c *gin.Context) {
-	sk, err := h.store.Get(c.Request.Context(), c.Param("id"))
-	if err != nil {
-		storeError(c, err)
-		return
+	if sk, ok := gatedRow(c, h.store.CrudStore, skillScope, visibleRow); ok {
+		c.JSON(http.StatusOK, sk)
 	}
-	if !visibleRow(c, sk.Scope, sk.OwnerID) {
-		return
-	}
-	c.JSON(http.StatusOK, sk)
 }
+
+// skillScope reads a skill's (scope, owner) pair for the scoped-CRUD gates.
+func skillScope(s *store.Skill) (string, string) { return s.Scope, s.OwnerID }
 
 // parseSkillContent validates a document for storage: size cap plus the
 // SKILL.md frontmatter rules. Reports to c and returns ok=false on failure.
@@ -165,19 +162,14 @@ func (h *SkillHandler) Update(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
-	prev, err := h.store.Get(ctx, c.Param("id"))
-	if err != nil {
-		storeError(c, err)
-		return
-	}
-	if !editableRow(c, prev.Scope, prev.OwnerID) {
+	prev, ok := gatedRow(c, h.store.CrudStore, skillScope, editableRow)
+	if !ok {
 		return
 	}
 	sk := &store.Skill{Name: meta.Name, Description: meta.Description, Content: req.Content}
 	// Scope, owner and source lineage come from the row INSIDE the store's
 	// transaction, so a concurrent scope flip is not silently reverted.
-	err = h.store.Update(ctx, prev.ID, sk, ownershipGuard(prev.Scope, prev.OwnerID,
-		func(s *store.Skill) (string, string) { return s.Scope, s.OwnerID },
+	err := h.store.Update(ctx, prev.ID, sk, ownershipGuard(prev.Scope, prev.OwnerID, skillScope,
 		func(p *store.Skill) error {
 			sk.Scope, sk.OwnerID = p.Scope, p.OwnerID
 			sk.SourceRepo, sk.SourcePath, sk.SourceSHA = p.SourceRepo, p.SourcePath, p.SourceSHA
@@ -203,19 +195,9 @@ func (h *SkillHandler) Update(c *gin.Context) {
 //	@Security	BearerAuth
 //	@Router		/skills/{id} [delete]
 func (h *SkillHandler) Delete(c *gin.Context) {
-	cur, err := h.store.Get(c.Request.Context(), c.Param("id"))
-	if err != nil {
-		storeError(c, err)
-		return
+	if deleteOwned(c, h.store.CrudStore, skillScope) {
+		c.Status(http.StatusNoContent)
 	}
-	if !deletableRow(c, cur.Scope, cur.OwnerID) {
-		return
-	}
-	if err := store.DeleteOwnedBy(c.Request.Context(), h.store.CrudStore, c.Param("id"), cur.OwnerID); err != nil {
-		saveError(c, err) // moved since the check -> 409
-		return
-	}
-	c.Status(http.StatusNoContent)
 }
 
 // SetScope promotes a workbench-authored skill to global or demotes it back
@@ -234,21 +216,17 @@ func (h *SkillHandler) Delete(c *gin.Context) {
 //	@Security	BearerAuth
 //	@Router		/skills/{id}/scope [post]
 func (h *SkillHandler) SetScope(c *gin.Context) {
-	sk, err := h.store.Get(c.Request.Context(), c.Param("id"))
-	if err != nil {
-		storeError(c, err)
-		return
-	}
 	// Visibility decides FIRST: a foreign private row reads as absent, so the
 	// imported/authored refusal below is never an existence oracle.
-	if !visibleRow(c, sk.Scope, sk.OwnerID) {
+	sk, ok := gatedRow(c, h.store.CrudStore, skillScope, visibleRow)
+	if !ok {
 		return
 	}
 	if sk.SourceRepo != "" {
 		badRequest(c, "an imported skill changes scope with its repository — use the repository scope action")
 		return
 	}
-	setScopePlain(c, h.store.CrudStore, "skill", func(sk *store.Skill) (string, string) { return sk.Scope, sk.OwnerID })
+	setScopePlain(c, h.store.CrudStore, "skill", skillScope)
 }
 
 // repoScopeReq is the body of POST /skill-repos/scope: the repo group to
@@ -333,9 +311,6 @@ func (h *SkillHandler) SetRepoScope(c *gin.Context) {
 //	@Security	BearerAuth
 //	@Router		/skills/{id}/owner [put]
 func (h *SkillHandler) SetOwner(c *gin.Context) {
-	if !requireAdmin(c) {
-		return
-	}
 	ctx := c.Request.Context()
 	sk, err := h.store.Get(ctx, c.Param("id"))
 	if err != nil {

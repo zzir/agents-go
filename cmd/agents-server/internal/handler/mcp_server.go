@@ -100,13 +100,8 @@ func (h *McpServerHandler) status(cfg *store.McpServerConfig) string {
 //	@Security	BearerAuth
 //	@Router		/mcp-servers [get]
 func (h *McpServerHandler) List(c *gin.Context) {
-	ownerID, admin, ok := callerScope(c)
+	configs, ok := listVisible(c, h.store.CrudStore)
 	if !ok {
-		return
-	}
-	configs, err := store.ListVisibleOf(c.Request.Context(), h.store.CrudStore, ownerID, admin)
-	if err != nil {
-		internalError(c, err)
 		return
 	}
 	items := make([]mcpServerListItem, len(configs))
@@ -218,30 +213,15 @@ func (h *McpServerHandler) Create(c *gin.Context) {
 //	@Security	BearerAuth
 //	@Router		/mcp-servers/{id} [get]
 func (h *McpServerHandler) Get(c *gin.Context) {
-	cfg, err := h.store.Get(c.Request.Context(), c.Param("id"))
-	if err != nil {
-		storeError(c, err)
-		return
-	}
-	if !visibleRow(c, cfg.Scope, cfg.OwnerID) {
+	cfg, ok := gatedRow(c, h.store.CrudStore, mcpScope, visibleRow)
+	if !ok {
 		return
 	}
 	c.JSON(http.StatusOK, h.listItem(cfg))
 }
 
-// editable loads the row and gates a write on it, answering the refusal
-// itself.
-func (h *McpServerHandler) editable(c *gin.Context, id string) (*store.McpServerConfig, bool) {
-	cfg, err := h.store.Get(c.Request.Context(), id)
-	if err != nil {
-		storeError(c, err)
-		return nil, false
-	}
-	if !editableRow(c, cfg.Scope, cfg.OwnerID) {
-		return nil, false
-	}
-	return cfg, true
-}
+// mcpScope reads a server's (scope, owner) pair for the scoped-CRUD gates.
+func mcpScope(m *store.McpServerConfig) (string, string) { return m.Scope, m.OwnerID }
 
 // Update overwrites the MCP server configuration identified by the id path
 // parameter and responds with the updated item. When enabled flips to false,
@@ -273,7 +253,7 @@ func (h *McpServerHandler) Update(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 	id := c.Param("id")
-	cur, ok := h.editable(c, id)
+	cur, ok := gatedRow(c, h.store.CrudStore, mcpScope, editableRow)
 	if !ok {
 		return
 	}
@@ -281,8 +261,7 @@ func (h *McpServerHandler) Update(c *gin.Context) {
 	// Masked header values / oauth_client_secret round-trip to their stored
 	// values inside the store's transaction; scope and owner never move on an
 	// update (POST /:id/scope does).
-	err := h.store.Update(ctx, id, cfg, ownershipGuard(cur.Scope, cur.OwnerID,
-		func(m *store.McpServerConfig) (string, string) { return m.Scope, m.OwnerID },
+	err := h.store.Update(ctx, id, cfg, ownershipGuard(cur.Scope, cur.OwnerID, mcpScope,
 		func(prev *store.McpServerConfig) error {
 			cfg.Scope, cfg.OwnerID = prev.Scope, prev.OwnerID
 			if maskAcrossDestination(cfg.Config, prev.Config, "endpoint") {
@@ -316,8 +295,8 @@ func (h *McpServerHandler) Update(c *gin.Context) {
 // oauthIdentityChanged reports whether an update moved a field the persisted
 // OAuth grant is bound to — the endpoint (the grant's audience), the auth mode,
 // or the client id the grant was minted for. Unparseable configs report false:
-// validation upstream makes that unreachable for the new config, and a legacy
-// stored one is better left with its grant than stripped blind.
+// validation upstream makes that unreachable for the new config, and a stored
+// one that does not decode keeps its grant rather than losing it blind.
 func oauthIdentityChanged(next, prev json.RawMessage) bool {
 	var n, p store.HTTPMcpConfig
 	if json.Unmarshal(next, &n) != nil || json.Unmarshal(prev, &p) != nil {
@@ -337,22 +316,12 @@ func oauthIdentityChanged(next, prev json.RawMessage) bool {
 //	@Security	BearerAuth
 //	@Router		/mcp-servers/{id} [delete]
 func (h *McpServerHandler) Delete(c *gin.Context) {
-	id := c.Param("id")
-	cur, err := h.store.Get(c.Request.Context(), id)
-	if err != nil {
-		storeError(c, err)
-		return
-	}
-	if !deletableRow(c, cur.Scope, cur.OwnerID) {
-		return
-	}
 	// Delete the row first, then disconnect: a failed delete must not leave a
 	// persisted server whose live connection has already been torn down.
-	if err := store.DeleteOwnedBy(c.Request.Context(), h.store.CrudStore, id, cur.OwnerID); err != nil {
-		saveError(c, err) // moved since the check -> 409
+	if !deleteOwned(c, h.store.CrudStore, mcpScope) {
 		return
 	}
-	_ = h.manager.Disconnect(id)
+	_ = h.manager.Disconnect(c.Param("id"))
 	c.Status(http.StatusNoContent)
 }
 
@@ -371,7 +340,7 @@ func (h *McpServerHandler) Delete(c *gin.Context) {
 //	@Security	BearerAuth
 //	@Router		/mcp-servers/{id}/scope [post]
 func (h *McpServerHandler) SetScope(c *gin.Context) {
-	setScopePlain(c, h.store.CrudStore, "MCP server", func(m *store.McpServerConfig) (string, string) { return m.Scope, m.OwnerID })
+	setScopePlain(c, h.store.CrudStore, "MCP server", mcpScope)
 }
 
 // SetOwner transfers the MCP server to another account (admin).
@@ -413,7 +382,7 @@ type mcpConnectResp struct {
 //	@Security		BearerAuth
 //	@Router			/mcp-servers/{id}/connect [post]
 func (h *McpServerHandler) Connect(c *gin.Context) {
-	cfg, ok := h.editable(c, c.Param("id"))
+	cfg, ok := gatedRow(c, h.store.CrudStore, mcpScope, editableRow)
 	if !ok {
 		return
 	}
@@ -481,7 +450,7 @@ func (h *McpServerHandler) externalOrigin(r *http.Request) string {
 //	@Router		/mcp-servers/{id}/oauth-token [delete]
 func (h *McpServerHandler) ClearOAuth(c *gin.Context) {
 	id := c.Param("id")
-	if _, ok := h.editable(c, id); !ok {
+	if _, ok := gatedRow(c, h.store.CrudStore, mcpScope, editableRow); !ok {
 		return
 	}
 	if err := h.manager.Disconnect(id); err != nil {
@@ -589,12 +558,7 @@ func (h *McpServerHandler) Tools(c *gin.Context) {
 	id := c.Param("id")
 	// Distinguish "no such server" (404) from "exists but not connected" (409):
 	// querying the manager alone can't tell them apart.
-	cfg, err := h.store.Get(c.Request.Context(), id)
-	if err != nil {
-		storeError(c, err)
-		return
-	}
-	if !visibleRow(c, cfg.Scope, cfg.OwnerID) {
+	if _, ok := gatedRow(c, h.store.CrudStore, mcpScope, visibleRow); !ok {
 		return
 	}
 	srv := h.manager.Get(id)

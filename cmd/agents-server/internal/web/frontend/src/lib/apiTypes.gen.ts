@@ -4511,7 +4511,7 @@ export interface paths {
         };
         /**
          * Server info
-         * @description The start-up configuration in force: version and the flags a client cannot change. Read-only — these come from the command line, not the settings table.
+         * @description The process facts a client is subject to but cannot change: version, the zone cron schedules run in, and whether stored credentials are sealed. Read-only — these come from the command line and environment, not the settings table.
          */
         get: {
             parameters: {
@@ -7589,6 +7589,16 @@ export interface components {
             error?: components["schemas"]["protocol.APIError"];
         };
         "handler.ServerInfo": {
+            /**
+             * @description CredentialsSealed reports whether stored credentials are encrypted at
+             *     rest (a secret key is configured).
+             */
+            credentials_sealed?: boolean;
+            /**
+             * @description Timezone is the zone cron schedules run in: the IANA name the process
+             *     started with, or "Local (abbr UTC±hh:mm)" when none was named.
+             */
+            timezone?: string;
             version?: string;
         };
         "handler.SessionApproval": {
@@ -7625,9 +7635,8 @@ export interface components {
         "handler.SettingView": {
             key?: string;
             /**
-             * @description Unknown marks a row the registry does not define — stored before
-             *     validation existed, or left behind by a removed feature. Reads list it
-             *     so it can be seen and deleted; writes refuse it.
+             * @description Unknown marks a row the registry does not define (a removed feature's).
+             *     Reads list it so it can be seen and deleted; writes refuse it.
              */
             unknown?: boolean;
             value?: string;
@@ -7658,6 +7667,11 @@ export interface components {
              */
             last_fired_at?: string;
             last_started_id?: string;
+            /**
+             * @description NextFireAt is when an enabled cron trigger next fires, in the server's
+             *     zone (ServerInfo.Timezone); absent for webhooks and disabled triggers.
+             */
+            next_fire_at?: string;
             /**
              * @description Schedule is the cron expression (five fields, or a descriptor such as
              *     @hourly or @every 10m). Cron kind only.
@@ -8159,10 +8173,8 @@ export interface components {
             owner_id?: string;
             /**
              * @description ProviderID names the Provider row this agent reaches its model through —
-             *     a COLUMN rather than a field in a JSON group, because it is a reference
-             *     and referential integrity has to be expressible in SQL (the same reason
-             *     sessions.sandbox_id is one). Empty reaches no credential: the run fails
-             *     its pre-flight until the agent names a provider (decisions §5.30).
+             *     a column, so referential integrity is expressible in SQL. Empty reaches
+             *     no credential: the run fails its pre-flight (decisions §5.30).
              */
             provider_id?: string;
             resilience?: components["schemas"]["store.ResilienceGroup"];
@@ -8246,10 +8258,8 @@ export interface components {
             compaction_model?: string;
             compaction_prompt?: string;
             /**
-             * @description Threshold is in TOKENS. The key is compaction_threshold_tokens — a NEW
-             *     name because the earlier compaction_threshold counted ENTRIES, and
-             *     reinterpreting a stored 20 as tokens would compact on every turn. Legacy
-             *     rows decode past the old key and fall back to the default.
+             * @description Threshold is in TOKENS; a stored compaction_threshold (an entry count)
+             *     is not read, since 20 entries read as 20 tokens would compact every turn.
              */
             compaction_threshold_tokens?: number;
             compaction_window?: number;
@@ -8517,14 +8527,10 @@ export interface components {
              */
             prompt?: string;
             /**
-             * @description Revision counts this row's WRITES: 1 at creation, +1 on every update,
-             *     name-only included. It is the row's concurrency control — the
-             *     expected-revision CAS every update path carries. Nothing keeps old
-             *     revisions runnable: updates apply to everyone at the next run.
-             *
-             *     There is no runtime generation here: the ONE runtime axis is the
-             *     project's (decisions §5.33), and a content change to this row bumps it
-             *     on every project that names this sandbox.
+             * @description Revision counts this row's WRITES, name-only included — the
+             *     expected-revision CAS every update carries. No runtime generation here:
+             *     the ONE runtime axis is the project's (decisions §5.33), bumped on every
+             *     project naming this sandbox when its content changes.
              */
             revision?: number;
             supports?: components["schemas"]["store.SandboxSupports"];
@@ -8546,11 +8552,6 @@ export interface components {
             /**
              * @description Hidden marks a session that exists to serve another one — a background
              *     task's transcript. Listings leave it out by default.
-             *
-             *     It is a column rather than a subquery over the tasks table because
-             *     "hidden" belongs to the session: the list query had to know what a task
-             *     was in order to exclude one, and anything else worth hiding would have
-             *     had to teach it a second special case.
              */
             hidden?: boolean;
             id?: string;
@@ -8559,18 +8560,14 @@ export interface components {
              * @description OwnerID is the user the conversation belongs to — the only ownership
              *     column: a task's hidden session inherits it from its parent, a trigger
              *     fires into a session, an approval is filed on one. Content is the
-             *     owner's alone; an admin may list, stop and delete (README "Ownership").
+             *     owner's alone; an admin may list, stop and delete (workbench invariant 42).
              */
             owner_id?: string;
             pinned?: boolean;
             /**
              * @description Planning is the session's plan phase: true means its next run starts
-             *     read-only until a plan is approved. It is materialized here — not derived
-             *     from the entry log — because it is read on every run and every session GET,
-             *     and a scan of the whole history for the last marker was O(n) per read.
-             *     The person sets it (the composer's plan toggle / a `/plan` message); the
-             *     approved submit_plan clears it. A fork copies it, so a branched session
-             *     inherits the phase it forked in.
+             *     read-only until a plan is approved. Set by the person, cleared by the
+             *     approved submit_plan, copied by a fork — workbench invariant 33.
              */
             planning?: boolean;
             /**
@@ -8606,12 +8603,9 @@ export interface components {
             name?: string;
             owner_id?: string;
             /**
-             * @description RepoLabel is SourceRepo reduced to the prefix of the model-facing name
-             *     ("owner/repo", or the host). Materialized at write time (BeforeAppendModel)
-             *     because it is what the unique name indexes key on: two source URLs can
-             *     reduce to one label, and the index must refuse that collision — a
-             *     duplicate qualified name would make read_skill's answer a coin flip
-             *     (decisions §5.31).
+             * @description RepoLabel is SourceRepo reduced to the model-facing prefix ("owner/repo",
+             *     or the host), materialized in BeforeAppendModel because the unique name
+             *     indexes key on it (decisions §5.31).
              */
             repo_label?: string;
             /** @description Scope/OwnerID: row visibility and its permanent creator — decisions §5.29. */
@@ -8640,11 +8634,7 @@ export interface components {
             agent_config_id?: string;
             /**
              * @description Attempt counts this task's runs: 1 for the original, one more per retry.
-             *     Zero reads as the first attempt — mirroring the SDK's AttemptNo()
-             *     contract, so a row whose column was never set (an insert that omitted
-             *     it) means what it already meant. (Not a migration concern: this server
-             *     recreates its schema rather than altering it, so no pre-attempt rows
-             *     survive an upgrade.)
+             *     Zero reads as the first attempt (the SDK's AttemptNo contract).
              */
             attempt?: number;
             child_session_id?: string;
@@ -8668,12 +8658,9 @@ export interface components {
             kind?: string;
             label?: string;
             /**
-             * @description MaxAttempts is the ceiling this row's attempt is measured against —
-             *     filled for the wire, not stored, because it is the task manager's
-             *     configuration rather than a fact about the task. Clients take the
-             *     PARAMETER rather than a precomputed "retryable", so their answer moves
-             *     with the status they are already tracking instead of lagging a round trip
-             *     behind it.
+             * @description MaxAttempts is the ceiling Attempt is measured against — filled for the
+             *     wire, not stored: the task manager's configuration, not a fact about the
+             *     task. Clients derive "retryable" from it and the status they track.
              */
             max_attempts?: number;
             parent_run_id?: string;

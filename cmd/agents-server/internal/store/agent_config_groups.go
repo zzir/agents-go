@@ -75,13 +75,10 @@ type GuardrailGroup struct {
 	OutputSchema string `json:"output_schema,omitempty"`
 }
 
-// SessionGroup holds session/prompt settings.
-//
-// use_previous_response_id is deliberately ABSENT: agents-server always
-// persists history in a server-side session, which the SDK refuses to combine
-// with previous-response chaining. The field spent its life as a dead switch
-// (stored, surfaced, then rejected at build); a legacy row whose session JSON
-// still carries the key simply decodes past it.
+// SessionGroup holds session/prompt settings. There is no
+// use_previous_response_id: history lives in a server-side session, which the
+// SDK refuses to combine with previous-response chaining; a stored row carrying
+// the key decodes past it.
 type SessionGroup struct {
 	PromptID      string `json:"prompt_id,omitempty"`
 	PromptVersion string `json:"prompt_version,omitempty"`
@@ -97,10 +94,8 @@ type ApprovalGroup struct {
 // CompactionGroup holds server-side session-compaction settings.
 type CompactionGroup struct {
 	Enabled bool `json:"compaction_enabled,omitempty"`
-	// Threshold is in TOKENS. The key is compaction_threshold_tokens — a NEW
-	// name because the earlier compaction_threshold counted ENTRIES, and
-	// reinterpreting a stored 20 as tokens would compact on every turn. Legacy
-	// rows decode past the old key and fall back to the default.
+	// Threshold is in TOKENS; a stored compaction_threshold (an entry count)
+	// is not read, since 20 entries read as 20 tokens would compact every turn.
 	Threshold int    `json:"compaction_threshold_tokens,omitempty"`
 	Window    int    `json:"compaction_window,omitempty"`
 	Model     string `json:"compaction_model,omitempty"`

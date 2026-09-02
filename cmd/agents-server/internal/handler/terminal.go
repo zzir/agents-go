@@ -28,7 +28,7 @@ const (
 // WebSocket connection. The client opens with a terminal.open envelope, then
 // binary frames carry the raw byte stream both ways while text envelopes
 // carry control (resize, exit). Only a persistent container can host one
-// (sandboxes.TerminalCapable).
+// (sandbox.TerminalOpener).
 //
 // It also tracks live terminals per project so a configuration change can
 // tear them down (a rebuilt container would otherwise leave orphaned sessions

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
@@ -149,11 +150,11 @@ func TestTraceSensitiveResolvesDefault(t *testing.T) {
 	}
 }
 
-// A fresh http.Transport is a fresh connection pool, and ProxyClient is called
-// per agent build, per compaction, per MCP transport and per token refresh —
-// so with a proxy configured nothing was reused. The client is pooled, keyed
-// by the URL, which is also the whole invalidation story.
-func TestProxyClientIsPooledPerURL(t *testing.T) {
+// ProxyClient is called per agent build, per compaction, per MCP transport and
+// per token refresh, and a fresh http.Transport is a fresh connection pool —
+// so the TRANSPORT is pooled, keyed by the URL, while every caller gets a
+// client of its own: a timeout one sets must not reach its peers.
+func TestProxyClientPoolsTheTransportPerURL(t *testing.T) {
 	r, s := newReader(t)
 	ctx := context.Background()
 
@@ -168,16 +169,24 @@ func TestProxyClientIsPooledPerURL(t *testing.T) {
 	if first == nil {
 		t.Fatal("proxy set: want a client")
 	}
-	if again := r.ProxyClient(ctx); again != first {
-		t.Error("the same proxy URL built a second client")
+	first.Timeout = time.Second
+	again := r.ProxyClient(ctx)
+	if again == first {
+		t.Error("two callers were handed the same client")
+	}
+	if again.Transport != first.Transport {
+		t.Error("the same proxy URL built a second transport")
+	}
+	if again.Timeout != 0 {
+		t.Errorf("one caller's Timeout reached another's client: %v", again.Timeout)
 	}
 
 	if err := s.Set(ctx, settings.KeyProxyURL, "socks5://127.0.0.1:1080"); err != nil {
 		t.Fatal(err)
 	}
 	changed := r.ProxyClient(ctx)
-	if changed == nil || changed == first {
-		t.Error("an edited proxy URL must produce a different client")
+	if changed == nil || changed.Transport == first.Transport {
+		t.Error("an edited proxy URL must produce a different transport")
 	}
 
 	var nilReader *settings.Reader

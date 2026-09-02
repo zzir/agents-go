@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -18,9 +19,19 @@ func NewID() string {
 	return uuid.NewV4().String()
 }
 
+// DecodeConfig decodes a stored Config payload into v; an empty payload is
+// the zero config, so a per-type required-field check produces the error.
+// Unknown keys are ignored (see SandboxContentEqual for why).
+func DecodeConfig(raw json.RawMessage, v any) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	return json.Unmarshal(raw, v)
+}
+
 // NewTimeID returns a UUIDv7 — for the append-heavy tables only
 // (trace_events, entries, audit_events), whose ids double as pagination
-// cursors (README "Database").
+// cursors (docs/howto/workbench-deploy.md "Database").
 func NewTimeID() string {
 	return uuid.NewV7().String()
 }

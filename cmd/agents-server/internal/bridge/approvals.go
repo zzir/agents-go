@@ -173,15 +173,9 @@ func armPlanUnlock(phase *middleware.PlanPhase, sa *store.EntryStore, ref sessio
 	})
 }
 
-// ApplyPlanIntent records what a run request asked of the session's plan phase,
-// before the run starts. It is the ONLY way in: plan mode is a restraint, so a
-// person turns it on with the message it applies to, which also makes the two
-// atomic — setting the phase and starting the run cannot interleave with
-// another run any more.
-//
-// A nil intent leaves the phase alone (a client that knows nothing about plan
-// mode cannot knock a session out of it), and an intent that already matches
-// writes nothing — the markers are entries, and one per turn would be noise.
+// ApplyPlanIntent records what a run request asked of the session's plan
+// phase, before the run starts — the only way in (workbench invariant 33). A
+// nil intent leaves the phase alone; one that already matches writes nothing.
 func (r *Runner) ApplyPlanIntent(ctx context.Context, sessionID string, plan *bool) error {
 	if plan == nil {
 		return nil
@@ -202,17 +196,10 @@ func (r *Runner) ApplyPlanIntent(ctx context.Context, sessionID string, plan *bo
 }
 
 // restorePlanPhase puts a plan-mode run into the phase the SESSION's column
-// says it is in, and arms the unlock this run may perform. Every run consults
-// it, fresh or resumed: a plan approved in one turn is not re-asked in the next.
-//
-// A READ failure is an error, not a warning: nothing has been claimed yet, so
-// failing here leaves a pending approval intact for a retry — silently resuming
-// in the planning phase would strip a mid-execution run of its write tools.
-//
-// The column stays the truth even though agents.RunState.Extra could carry the
-// same bit: it is written the moment the unlock EXECUTES (OnUnlock persists as a
-// precondition), so it survives a crash with no pause — a window Extra, written
-// only when a pause serializes state, cannot cover.
+// says it is in (workbench invariant 33) and arms the unlock this run may
+// perform. A READ failure is an error, not a warning: nothing is claimed yet,
+// and silently resuming in the planning phase would strip a mid-execution run
+// of its write tools.
 func (r *Runner) restorePlanPhase(ctx context.Context, phase *middleware.PlanPhase, sa *store.EntryStore, ref session.Ref) error {
 	if phase == nil {
 		return nil
@@ -249,10 +236,10 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 	// The claim and the resume that follows form a multi-step migration across
 	// two tables plus the hub. Once the pending row is deleted, bailing out
 	// half-done would strand the paused run — so every MUTATION below runs on a
-	// context detached from the request's cancellation: a client that
-	// disconnects mid-approve no longer aborts the migration in the middle.
-	// Reads still use the request ctx; a disconnect there aborts before any
-	// state changed, which is safe to retry.
+	// context detached from the request's cancellation, and a client that
+	// disconnects mid-approve cannot abort the migration halfway. Reads still
+	// use the request ctx; a disconnect there aborts before any state changed,
+	// which is safe to retry.
 	mctx := context.WithoutCancel(ctx)
 
 	// A workflow step waiting to START: there is no run to resume, so none of
@@ -263,13 +250,10 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 		return runID, pending.SessionID, err
 	}
 
-	// A RunState outside the SDK's decode window can never be resumed. Detect
-	// that up front so it surfaces as a clear, actionable error instead of a
-	// masked 500, and discard the stale row so it stops wedging the session (a
-	// masked 500 on every approve/reject retry, row never deleted). The check
-	// is the SDK's own window — same major, minor within what it still
-	// decodes — NOT string equality: an equality check here would destroy
-	// states a purely additive SDK bump (1.5 → 1.6) resumes fine.
+	// A RunState outside the SDK's decode window can never be resumed: say so
+	// and discard the row, or it wedges the session behind a 500 on every
+	// retry. The check is the SDK's own window, not string equality — an
+	// additive bump (1.5 → 1.6) resumes fine.
 	if v := pendingStateSchemaVersion(pending.State); !agents.RunStateVersionSupported(v) {
 		if delErr := r.Deps.PendingApprovals.Delete(mctx, pending.RunID); delErr != nil {
 			logging.Ctx(ctx).Error("discarding stale pending approval", "error", delErr, "run_id", pending.RunID)
@@ -309,13 +293,11 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 	if err != nil {
 		return "", pending.SessionID, fmt.Errorf("restoring run state: %w", err)
 	}
-	// A plan-mode rebuild starts in the planning phase, but this run may have
-	// moved past it: without the unlock, a pause AFTER the plan phase ended
-	// (an exec_command approval, say) would resume into a run whose write
-	// tools had vanished again. The durable truth is the session's planning
-	// column, cleared the moment the approved submit_plan EXECUTED. A failed
-	// read aborts the resolve — the pending approval is still unclaimed at this
-	// point, so the decision simply retries.
+	// The rebuild starts in the planning phase, but this run may have moved
+	// past it: restore the phase from the session's column (workbench
+	// invariant 33) or a pause after the plan ended would resume without its
+	// write tools. A failed read aborts — the approval is still unclaimed, so
+	// the decision retries.
 	resumeRef, refErr := store.RefFor(ctx, r.db, pending.SessionID)
 	if refErr != nil {
 		return "", pending.SessionID, fmt.Errorf("resolving session for plan phase: %w", refErr)
@@ -345,15 +327,12 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 	// approval forever.
 	r.hub.waitDone(pending.RunID, time.Now().Add(approvalSettleTimeout))
 
-	// Deleting the record is the exclusive claim on this approval vs. a
-	// concurrent approve: of two racing decisions exactly one proceeds. It
-	// must precede the resume — the continuation may itself interrupt and
-	// persist a fresh record. For a task's approval the claim and the row's
-	// CAS (input_required -> working, bound to THIS attempt: an approval that
-	// outlived its attempt must not reclaim the run that replaced its own)
-	// are ONE write — the task never ends up working with an approval left,
-	// nor answered while it stays paused, and a claim that does not hold
-	// writes nothing, so nothing needs putting back.
+	// Deleting the record is the exclusive claim on this approval: of two
+	// racing decisions exactly one proceeds, and it must precede the resume —
+	// the continuation may itself interrupt and persist a fresh record. For a
+	// task's approval the claim and the row's CAS (input_required -> working,
+	// bound to THIS attempt) are ONE write (workbench invariant 23), and a
+	// claim that does not hold writes nothing.
 	if taskMeta != nil && taskMeta.TaskID != "" {
 		outcome, cerr := r.Deps.Tasks.ClaimApprovalWorking(mctx, taskMeta.TaskID, pending.RunID)
 		if cerr != nil {

@@ -7,19 +7,23 @@ import (
 )
 
 // ServerInfo is the process-level configuration a client is subject to but
-// cannot change: the flags this server was started with, resolved to what is
-// actually in force. It exists because a UI that cannot see them can only
-// report their effects as unexplained refusals — a "local sandboxes are not
-// allowed" with nowhere to learn why.
+// cannot change — facts of the running process, not settings — so the UI can
+// explain what it sees rather than guess.
 type ServerInfo struct {
 	Version string `json:"version"`
+	// Timezone is the zone cron schedules run in: the IANA name the process
+	// started with, or "Local (abbr UTC±hh:mm)" when none was named.
+	Timezone string `json:"timezone"`
+	// CredentialsSealed reports whether stored credentials are encrypted at
+	// rest (a secret key is configured).
+	CredentialsSealed bool `json:"credentials_sealed"`
 }
 
 // ServerInfoHandler answers with info. Bound at registration rather than read
 // from a store: these are process facts, fixed for its lifetime.
 //
 //	@Summary		Server info
-//	@Description	The start-up configuration in force: version and the flags a client cannot change. Read-only — these come from the command line, not the settings table.
+//	@Description	The process facts a client is subject to but cannot change: version, the zone cron schedules run in, and whether stored credentials are sealed. Read-only — these come from the command line and environment, not the settings table.
 //	@Tags			server
 //	@Produce		json
 //	@Success		200	{object}	ServerInfo

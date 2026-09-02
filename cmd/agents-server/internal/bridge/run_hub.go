@@ -55,18 +55,10 @@ func terminalStatusForEvent(typ string) (RunStatus, bool) {
 	return "", false
 }
 
-// IsTerminalRunEvent reports whether typ ends a run's event stream for now:
-// the run finished (output/error/cancelled) or paused for approval
-// (interrupted — the approval decision resumes the SAME run id, continuing
-// its sequence, so subscribers can reattach with their existing cursor).
-func IsTerminalRunEvent(typ string) bool {
-	_, ok := terminalStatusForEvent(typ)
-	return ok
-}
-
 // IsFinalRunEvent reports whether typ ends a run for good — as opposed to
-// run.interrupted, which only PAUSES it (same-id resume continues the stream).
-// Only a final event should terminate a live stream.
+// run.interrupted, which only PAUSES it (the approval decision resumes the
+// SAME run id, continuing its sequence). Only a final event should terminate
+// a live stream.
 func IsFinalRunEvent(typ string) bool {
 	st, ok := terminalStatusForEvent(typ)
 	return ok && st != RunInterrupted
@@ -188,7 +180,7 @@ type runRecord struct {
 	done chan struct{}
 	// ctrl is the live run's RunControl, set once the run exists: how an uplink
 	// message (graceful stop, or injected input) reaches a run already going.
-	// Distinct from cancel, a hard context abort.
+	// Distinct from cancel, a hard context abort. Under mu, like info.
 	ctrl agents.RunControl
 
 	// fanout owns delivery: sequence assignment, the replay ring, per-subscriber
@@ -417,14 +409,8 @@ func (h *RunHub) unregister(runID string, seg *runSegment) {
 	seg.finalize()
 }
 
-// LiveTaskCount reports how many live (running or input-required) task runs
-// belong to the given parent session.
-func (h *RunHub) LiveTaskCount(parentSessionID string) int {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.liveTaskCountLocked(parentSessionID)
-}
-
+// liveTaskCountLocked counts the live (running or input-required) task runs
+// of the given parent session. Callers hold h.mu.
 func (h *RunHub) liveTaskCountLocked(parentSessionID string) int {
 	n := 0
 	for _, rec := range h.runs {
@@ -579,29 +565,28 @@ func (h *RunHub) publish(runID string, env *protocol.Envelope) bool {
 // Subscribe attaches a plain sink (seq discarded) to the run's live event
 // stream. See SubscribeSeq.
 func (h *RunHub) Subscribe(runID string, fromSeq int, sink EventSink) (func(), bool) {
-	return h.SubscribeSeq(runID, fromSeq, func(item SeqEnvelope) { sink(item.Env) })
+	cancel, _, ok := h.SubscribeSeq(runID, fromSeq, func(item SeqEnvelope) { sink(item.Env) })
+	return cancel, ok
 }
 
 // SubscribeSeq attaches sink to the run's live event stream after replaying any
 // buffered events with seq > fromSeq (pass 0 to replay everything retained). It
-// returns the detach function (idempotent) and whether the run exists.
+// returns the detach function (idempotent), a channel closed once the stream
+// has ended — the broadcaster closed on shutdown or retention, every event
+// already handed to the sink — and whether the run exists.
 //
 // The sink runs on its own goroutine, fed by the subscriber's buffer, so a slow
-// sink cannot affect its peers. If its buffer overflows it gets a gap event
-// naming the range it missed, and resubscribes from LastSeq rather than
-// rendering a quietly incomplete timeline.
-//
-// A cursor before the run's latest run.started gets that event first whenever
-// the ring no longer holds it — the run's identity is never lost to the ring
-// (workbench invariant 14). Whether the ring holds it is read off the stream's
-// opening item, which the fanout fixed at subscribe time, so no publish can
-// slip between the check and the replay.
-func (h *RunHub) SubscribeSeq(runID string, fromSeq int, sink SeqSink) (func(), bool) {
+// sink cannot affect its peers; an overflow reaches it as a run.gap naming the
+// range it missed. A cursor before the run's latest run.started gets that
+// event first whenever the ring no longer holds it, read off the stream's
+// opening item so no publish slips between the check and the replay —
+// workbench invariant 14.
+func (h *RunHub) SubscribeSeq(runID string, fromSeq int, sink SeqSink) (func(), <-chan struct{}, bool) {
 	h.mu.Lock()
 	rec := h.runs[runID]
 	h.mu.Unlock()
 	if rec == nil {
-		return nil, false
+		return nil, nil, false
 	}
 
 	var pinned *SeqEnvelope
@@ -612,8 +597,10 @@ func (h *RunHub) SubscribeSeq(runID string, fromSeq int, sink SeqSink) (func(), 
 	rec.mu.Unlock()
 
 	stream, cancel := rec.fanout.Subscribe(fromSeq)
+	done := make(chan struct{})
 
 	go func() {
+		defer close(done)
 		for item, err := range stream {
 			if pinned != nil {
 				if item.Value == nil || item.Seq > pinned.Seq {
@@ -645,7 +632,7 @@ func (h *RunHub) SubscribeSeq(runID string, fromSeq int, sink SeqSink) (func(), 
 		}
 	}()
 
-	return cancel, true
+	return cancel, done, true
 }
 
 // finish marks a run terminal: interrupted when it paused for approval,
@@ -717,20 +704,27 @@ func (h *RunHub) Cancel(runID string) bool {
 // once its run exists).
 func (h *RunHub) setControl(runID string, ctrl agents.RunControl) {
 	h.mu.Lock()
-	if rec := h.runs[runID]; rec != nil {
-		rec.ctrl = ctrl
-	}
+	rec := h.runs[runID]
 	h.mu.Unlock()
+	if rec == nil {
+		return
+	}
+	rec.mu.Lock()
+	rec.ctrl = ctrl
+	rec.mu.Unlock()
 }
 
 // control returns a live run's control handle, or nil.
 func (h *RunHub) control(runID string) agents.RunControl {
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	if rec := h.runs[runID]; rec != nil {
-		return rec.ctrl
+	rec := h.runs[runID]
+	h.mu.Unlock()
+	if rec == nil {
+		return nil
 	}
-	return nil
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	return rec.ctrl
 }
 
 // Inject delivers input to a live run through one of RunControl's three queues

@@ -17,6 +17,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -26,9 +27,9 @@ const (
 	ModeOAuth = "oauth"
 )
 
-// ErrUnauthorized is every authentication failure: wrong, expired, and revoked
+// errUnauthorized is every authentication failure: wrong, expired, and revoked
 // are indistinguishable to the caller on purpose.
-var ErrUnauthorized = errors.New("unauthorized")
+var errUnauthorized = errors.New("unauthorized")
 
 // Service resolves bearer credentials and (in OAuth mode) runs login flows.
 type Service struct {
@@ -89,7 +90,7 @@ func NewOAuth(cfg OAuthConfig) *Service {
 		providers:      make(map[string]OAuthProvider, len(cfg.Providers)),
 		allowedDomains: lowerAll(cfg.AllowedDomains),
 		allowedEmails:  lowerAll(cfg.AllowedEmails),
-		bootstrapAdmin: strings.ToLower(strings.TrimSpace(cfg.BootstrapAdmin)),
+		bootstrapAdmin: store.NormalizeEmail(cfg.BootstrapAdmin),
 		log:            cfg.Log,
 		logins:         make(map[string]pendingLogin),
 		sessions:       make(map[string]pendingExchange),
@@ -107,7 +108,7 @@ func NewOAuth(cfg OAuthConfig) *Service {
 func lowerAll(in []string) []string {
 	out := make([]string, 0, len(in))
 	for _, v := range in {
-		if v = strings.ToLower(strings.TrimSpace(v)); v != "" {
+		if v = store.NormalizeEmail(v); v != "" {
 			out = append(out, v)
 		}
 	}
@@ -135,21 +136,21 @@ func (s *Service) ConfigView() protocol.AuthConfig {
 	return protocol.AuthConfig{Mode: s.mode, Providers: s.providerNames}
 }
 
-// Authenticate resolves a presented bearer to its user, or ErrUnauthorized.
+// Authenticate resolves a presented bearer to its user, or errUnauthorized.
 func (s *Service) Authenticate(ctx context.Context, bearer string) (protocol.UserInfo, error) {
 	if bearer == "" {
-		return protocol.UserInfo{}, ErrUnauthorized
+		return protocol.UserInfo{}, errUnauthorized
 	}
 	if s.mode == ModeToken {
 		if s.staticToken == "" || subtle.ConstantTimeCompare([]byte(bearer), []byte(s.staticToken)) != 1 {
-			return protocol.UserInfo{}, ErrUnauthorized
+			return protocol.UserInfo{}, errUnauthorized
 		}
 		return s.localUser, nil
 	}
 	u, _, err := s.tokens.Authenticate(ctx, bearer)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return protocol.UserInfo{}, ErrUnauthorized
+			return protocol.UserInfo{}, errUnauthorized
 		}
 		return protocol.UserInfo{}, err
 	}
@@ -178,7 +179,7 @@ func (s *Service) Logout(ctx context.Context, bearer string) error {
 // redirectURI is where the provider sends the browser back — derived from the
 // base URL, never from request headers.
 func (s *Service) redirectURI(provider string) string {
-	return s.baseURL + "/api/v1/auth/oauth/" + provider + "/callback"
+	return s.baseURL + server.APIPrefix + "/auth/oauth/" + provider + "/callback"
 }
 
 // LoginCookie names the cookie that carries Begin's nonce and whether it is
@@ -295,7 +296,7 @@ func (s *Service) pruneLocked(now time.Time) {
 // allowed applies the admission lists to a verified email. The bootstrap
 // admin is implicitly admitted, so the address is not configured twice.
 func (s *Service) allowed(email string) bool {
-	email = strings.ToLower(strings.TrimSpace(email))
+	email = store.NormalizeEmail(email)
 	if email == "" {
 		return false
 	}

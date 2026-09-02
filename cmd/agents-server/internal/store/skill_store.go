@@ -116,32 +116,9 @@ func (s *SkillStore) GetByNameFor(ctx context.Context, qualified, ownerID string
 	return nil, fmt.Errorf("getting skill %q: %w", qualified, ErrNotFound)
 }
 
-// FindBySource returns the row of (repo, path) IN ownerID's group — the one
-// this import refreshes. Nil when none: the import creates instead. The owner
-// is exact, never "the caller's or a global one": a sync names the group it
-// targets (decisions §5.31), so an admin syncing somebody's published repo cannot
-// silently refresh their own copy of it instead.
-func (s *SkillStore) FindBySource(ctx context.Context, repo, path, ownerID string) (*Skill, error) {
-	m := new(Skill)
-	// COALESCE: a raw-URL import stores no path, and the nullzero column
-	// holds NULL where a plain = '' would never match.
-	err := s.db.NewSelect().Model(m).
-		Where("source_repo = ?", repo).
-		Where("COALESCE(source_path, '') = ?", path).
-		Where("owner_id = ?", ownerID).
-		Limit(1).Scan(ctx)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("finding skill by source %s %s: %w", repo, path, err)
-	}
-	return m, nil
-}
-
 // RepoGroup returns the scope of ownerID's group for repo — one row's scope
-// answers for all of them, the group being one scope by construction (spec
-// §5.31). ok=false means they hold no such group.
+// answers for all of them, the group being one scope by construction
+// (decisions §5.31). ok=false means they hold no such group.
 func (s *SkillStore) RepoGroup(ctx context.Context, repo, ownerID string) (scope string, ok bool, err error) {
 	m := new(Skill)
 	err = s.db.NewSelect().Model(m).Column("scope").
@@ -167,9 +144,10 @@ var ErrGroupExists = errors.New("the new owner already has this repository")
 // Refused when newOwner ALREADY holds a group for the repo: merging two
 // groups would produce exactly the mixed-scope pile the group rule exists to
 // prevent, and the unique indexes cannot see it (they partition by scope).
-// The check and the move share one transaction. ErrNoSuchUser when the
-// account is gone; a name taken in the target namespace fails the whole
-// transfer (UNIQUE -> 409).
+// The check and the move share one transaction, both groups locked
+// (lockedRepoGroup) so an import or a flip landing on either waits for it.
+// ErrNoSuchUser when the account is gone; a name taken in the target
+// namespace fails the whole transfer (UNIQUE -> 409).
 func (s *SkillStore) SetRepoOwner(ctx context.Context, repo, ownerID, newOwner string) error {
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		exists, err := tx.NewSelect().Model((*User)(nil)).Where("id = ?", newOwner).Exists(ctx)
@@ -179,14 +157,14 @@ func (s *SkillStore) SetRepoOwner(ctx context.Context, repo, ownerID, newOwner s
 		if !exists {
 			return ErrNoSuchUser
 		}
-		taken, err := tx.NewSelect().Model((*Skill)(nil)).
-			Where("source_repo = ?", repo).
-			Where("owner_id = ?", newOwner).
-			Exists(ctx)
-		if err != nil {
+		if _, held, err := lockedRepoGroup(ctx, tx, repo, ownerID); err != nil {
 			return err
+		} else if !held {
+			return ErrNotFound
 		}
-		if taken {
+		if _, taken, err := lockedRepoGroup(ctx, tx, repo, newOwner); err != nil {
+			return err
+		} else if taken {
 			return ErrGroupExists
 		}
 		res, err := tx.NewUpdate().Model((*Skill)(nil)).
@@ -296,17 +274,32 @@ func lockedRepoGroup(ctx context.Context, tx bun.Tx, repo, owner string) (scope 
 	return m.Scope, true, nil
 }
 
-// applyImportDoc lands one document inside the import's transaction. A store
-// fault is reported as that document's skip: one bad file must not undo the
-// rest of an import that has already been fetched.
+// applyImportDoc lands one document in a savepoint of the import's
+// transaction. A store fault is that document's skip, rolled back to the
+// savepoint so the rest of the import still lands — on PostgreSQL a failed
+// statement otherwise aborts the whole transaction.
 func applyImportDoc(ctx context.Context, tx bun.Tx, repo, owner, scope string, d ImportDoc) ImportOutcome {
 	label := d.Path
 	if label == "" {
 		label = repo
 	}
 	res := ImportOutcome{Label: label, Name: d.Name}
+	err := tx.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		var err error
+		res.Action, res.Reason, err = importDoc(ctx, tx, repo, owner, scope, d)
+		return err
+	})
+	if err != nil {
+		res.Action, res.Reason = "skipped", importWriteReason(err, d.Name)
+	}
+	return res
+}
+
+// importDoc creates, refreshes or leaves the row for d, answering the action
+// and a skip's reason; a store fault comes back as the error instead.
+func importDoc(ctx context.Context, tx bun.Tx, repo, owner, scope string, d ImportDoc) (action, reason string, err error) {
 	prev := new(Skill)
-	err := tx.NewSelect().Model(prev).
+	err = tx.NewSelect().Model(prev).
 		Where("source_repo = ?", repo).
 		Where("COALESCE(source_path, '') = ?", d.Path).
 		Where("owner_id = ?", owner).
@@ -318,30 +311,26 @@ func applyImportDoc(ctx context.Context, tx bun.Tx, repo, owner, scope string, d
 			Scope: scope, OwnerID: owner,
 			SourceRepo: repo, SourcePath: d.Path, SourceSHA: d.SHA,
 		}
-		if _, ierr := tx.NewInsert().Model(sk).Exec(ctx); ierr != nil {
-			res.Action, res.Reason = "skipped", importWriteReason(ierr, d.Name)
-			return res
+		if _, err := tx.NewInsert().Model(sk).Exec(ctx); err != nil {
+			return "", "", err
 		}
-		res.Action = "created"
+		return "created", "", nil
 	case err != nil:
-		res.Action, res.Reason = "skipped", err.Error()
+		return "", "", err
 	case prev.Detached:
-		res.Action, res.Reason = "skipped", "edited locally (detached)"
+		return "skipped", "edited locally (detached)", nil
 	case prev.Content == d.Content:
-		res.Action = "unchanged"
-	default:
-		upd := *prev
-		upd.Name, upd.Description, upd.Content, upd.SourceSHA = d.Name, d.Description, d.Content, d.SHA
-		if _, uerr := tx.NewUpdate().Model(&upd).
-			ExcludeColumn("id", "created_at").
-			Where("id = ?", prev.ID).
-			Exec(ctx); uerr != nil {
-			res.Action, res.Reason = "skipped", importWriteReason(uerr, d.Name)
-			return res
-		}
-		res.Action = "updated"
+		return "unchanged", "", nil
 	}
-	return res
+	upd := *prev
+	upd.Name, upd.Description, upd.Content, upd.SourceSHA = d.Name, d.Description, d.Content, d.SHA
+	if _, err := tx.NewUpdate().Model(&upd).
+		ExcludeColumn("id", "created_at").
+		Where("id = ?", prev.ID).
+		Exec(ctx); err != nil {
+		return "", "", err
+	}
+	return "updated", "", nil
 }
 
 // importWriteReason words a failed document write — a name collision reads as

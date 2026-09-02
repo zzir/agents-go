@@ -106,7 +106,7 @@ func NormalizeSandboxConfig(typ string, raw json.RawMessage) (json.RawMessage, e
 	switch typ {
 	case "docker":
 		var dc DockerConfig
-		if err := unmarshalConfigJSON(raw, &dc); err != nil {
+		if err := DecodeConfig(raw, &dc); err != nil {
 			return nil, fmt.Errorf("docker sandbox config: %w", err)
 		}
 		switch {
@@ -130,7 +130,7 @@ func NormalizeSandboxConfig(typ string, raw json.RawMessage) (json.RawMessage, e
 		return json.Marshal(dc)
 	case "e2b":
 		var ec E2BConfig
-		if err := unmarshalConfigJSON(raw, &ec); err != nil {
+		if err := DecodeConfig(raw, &ec); err != nil {
 			return nil, fmt.Errorf("e2b sandbox config: %w", err)
 		}
 		if ec.APIURL != "" && !strings.HasPrefix(ec.APIURL, "http://") && !strings.HasPrefix(ec.APIURL, "https://") {
@@ -224,7 +224,7 @@ func identityOf(typ string, raw json.RawMessage) (string, error) {
 
 func dockerDestination(raw json.RawMessage) (string, error) {
 	var dc DockerConfig
-	if err := unmarshalConfigJSON(raw, &dc); err != nil {
+	if err := DecodeConfig(raw, &dc); err != nil {
 		return "", err
 	}
 	return jsonKey(dc.Host), nil
@@ -232,7 +232,7 @@ func dockerDestination(raw json.RawMessage) (string, error) {
 
 func e2bDestination(raw json.RawMessage) (string, error) {
 	var ec E2BConfig
-	if err := unmarshalConfigJSON(raw, &ec); err != nil {
+	if err := DecodeConfig(raw, &ec); err != nil {
 		return "", err
 	}
 	return jsonKey(ec.APIURL, ec.Domain), nil
@@ -240,7 +240,7 @@ func e2bDestination(raw json.RawMessage) (string, error) {
 
 func e2bIdentity(raw json.RawMessage) (string, error) {
 	var ec E2BConfig
-	if err := unmarshalConfigJSON(raw, &ec); err != nil {
+	if err := DecodeConfig(raw, &ec); err != nil {
 		return "", err
 	}
 	return jsonKey(ec.APIURL, ec.Domain, ec.TemplateID, ec.AutoPause, ec.AllowInternet), nil
@@ -496,7 +496,7 @@ func (s *SandboxStore) countBlockers(ctx context.Context, id string) (int, error
 // changing semantics.
 func canonicalEqual[T comparable](a, b json.RawMessage, canon func(*T)) bool {
 	var va, vb T
-	if unmarshalConfigJSON(a, &va) != nil || unmarshalConfigJSON(b, &vb) != nil {
+	if DecodeConfig(a, &va) != nil || DecodeConfig(b, &vb) != nil {
 		return false
 	}
 	canon(&va)
@@ -516,14 +516,4 @@ func jsonHasKey(raw json.RawMessage, key string) bool {
 	}
 	_, ok := m[key]
 	return ok
-}
-
-// unmarshalConfigJSON fills dst from raw; an absent payload is the zero
-// config. Unknown keys are ignored (see SandboxContentEqual for why), a type
-// mismatch on a known key is an error.
-func unmarshalConfigJSON[T any](raw json.RawMessage, dst *T) error {
-	if len(raw) == 0 {
-		return nil
-	}
-	return json.Unmarshal(raw, dst)
 }

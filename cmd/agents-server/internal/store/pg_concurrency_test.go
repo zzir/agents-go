@@ -2,10 +2,13 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
 	"testing"
+
+	"github.com/zzir/agents-go/agents/session"
 )
 
 // Every agent write takes the PROVIDER lock before the agent's — an update
@@ -142,6 +145,115 @@ func TestPGProjectCreateVsSandboxDeleteNeverOrphans(t *testing.T) {
 		}
 		if perr == nil && !sbExists {
 			t.Fatalf("round %d: project survived on a deleted sandbox", i)
+		}
+	}
+}
+
+// Two appends racing on one session — the run's persist and a task's display
+// update land on the parent from different goroutines — must extend ONE
+// branch: the append point is read under the session row's lock. Without it,
+// READ COMMITTED lets both read the same tip and the sequence numbers come
+// from the clock, so no index catches the fork.
+func TestPGConcurrentAppendsKeepOneBranch(t *testing.T) {
+	ctx := context.Background()
+	db := pgTestDB(t)
+	sessions := NewSessionStore(db)
+	for round := range 5 {
+		sess := &Session{ID: NewID(), OwnerID: LocalUserID, Name: "s"}
+		if err := sessions.Create(ctx, sess); err != nil {
+			t.Fatal(err)
+		}
+		ref, err := RefFor(ctx, db, sess.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		const writers, each = 4, 5
+		var wg sync.WaitGroup
+		errs := make(chan error, writers*each)
+		for w := range writers {
+			wg.Go(func() {
+				s := NewEntryStoreFor(db, ref)
+				for i := range each {
+					e := session.Entry{Kind: session.EntryKindItem, Item: json.RawMessage(fmt.Sprintf(`{"type":"message","role":"user","content":"w%d-%d"}`, w, i))}
+					errs <- s.Append(ctx, e)
+				}
+			})
+		}
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			if err != nil {
+				t.Fatalf("round %d: append: %v", round, err)
+			}
+		}
+		var parents []string
+		if err := db.NewSelect().Model((*entryRow)(nil)).Column("parent_id").
+			Where("session_id = ?", ref.ID).Where("gen = ?", ref.Gen).
+			Scan(ctx, &parents); err != nil {
+			t.Fatal(err)
+		}
+		if len(parents) != writers*each {
+			t.Fatalf("round %d: %d rows, want %d", round, len(parents), writers*each)
+		}
+		seen := map[string]bool{}
+		roots := 0
+		for _, p := range parents {
+			if p == "" {
+				roots++
+				continue
+			}
+			if seen[p] {
+				t.Fatalf("round %d: two entries share parent %s — the branch forked", round, p)
+			}
+			seen[p] = true
+		}
+		if roots != 1 {
+			t.Fatalf("round %d: %d roots, want 1", round, roots)
+		}
+	}
+}
+
+// A repo-group transfer and an import into the same group lock the group's
+// rows in one order: whichever lands first, every row of the repo ends with
+// ONE owner. Without the transfer taking the lock before its check, an
+// UPDATE that blocked on the import's locked row would move only the rows of
+// its own snapshot and leave the freshly imported one behind.
+func TestPGRepoTransferVsImportKeepsOneOwner(t *testing.T) {
+	ctx := context.Background()
+	db := pgTestDB(t)
+	id := ids(t)
+	seedUsers(t, db, id("alice"), id("bob"))
+	skills := NewSkillStore(db)
+	for round := range 10 {
+		repo := fmt.Sprintf("https://github.com/o/r%d", round)
+		for _, name := range []string{"a", "b"} {
+			sk := &Skill{Name: name, Description: "d", Content: name, Scope: ScopePrivate, OwnerID: id("alice"),
+				SourceRepo: repo, SourcePath: name + "/SKILL.md"}
+			if err := skills.Create(ctx, sk); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var wg sync.WaitGroup
+		var importErr, transferErr error
+		wg.Go(func() {
+			_, importErr = skills.ApplyImport(ctx, repo, id("alice"), ScopePrivate, true,
+				[]ImportDoc{{Path: "c/SKILL.md", SHA: "1", Name: "c", Description: "d", Content: "c"}})
+		})
+		wg.Go(func() { transferErr = skills.SetRepoOwner(ctx, repo, id("alice"), id("bob")) })
+		wg.Wait()
+		if importErr != nil && !errors.Is(importErr, ErrOwnershipChanged) {
+			t.Fatalf("round %d: import: %v", round, importErr)
+		}
+		if transferErr != nil {
+			t.Fatalf("round %d: transfer: %v", round, transferErr)
+		}
+		var owners []string
+		if err := db.NewSelect().Model((*Skill)(nil)).ColumnExpr("DISTINCT owner_id").
+			Where("source_repo = ?", repo).Scan(ctx, &owners); err != nil {
+			t.Fatal(err)
+		}
+		if len(owners) != 1 || owners[0] != id("bob") {
+			t.Fatalf("round %d: owners of the group after the race = %v, want only bob", round, owners)
 		}
 	}
 }

@@ -5,7 +5,6 @@ package sandboxes
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -202,15 +201,11 @@ func (m *Manager) Acquire(spec Spec) (sandbox.Sandbox, func(), error) {
 	return inst.sb, release, nil
 }
 
-// acquire backs Acquire, returning the instance itself.
-//
-// The build runs OUTSIDE the manager lock. An ssh dial can take seconds (the
-// connect timeout defaults to 15s), and holding the lock through it would
-// stall every other key — unrelated acquires, evictions, terminal opens —
-// behind one unreachable host. The lock covers only the map: a first
-// acquirer installs a placeholder and dials after unlocking; concurrent
-// acquirers of the SAME key find the placeholder, take their reference, and
-// wait on its ready gate — one dial, keyed contention only.
+// acquire backs Acquire, returning the instance itself. The build runs
+// OUTSIDE the manager lock — an ssh dial can take seconds, and every other key
+// would stall behind it. The lock covers only the map: the first acquirer
+// installs a placeholder and dials after unlocking; concurrent acquirers of
+// the same key wait on its ready gate.
 func (m *Manager) acquire(spec Spec) (*sandboxInstance, func(), error) {
 	if spec.Project == nil || spec.Sandbox == nil {
 		return nil, nil, fmt.Errorf("sandbox acquire needs a sandbox and a project")
@@ -466,11 +461,9 @@ func (m *Manager) RemoveProject(projectID string) {
 const maxGen = int64(1) << 62
 
 // ReclaimProject destroys the project's compute AND its storage, after
-// evicting the cached instance. Deleting a project deletes its files: the
-// storage is what the row was for, and leaving it behind on every delete is
-// an unbounded leak nobody has a listing for (decisions §5.33). The caller
-// deletes the row first, so a failure here leaves reclaimable storage rather
-// than a row pointing at nothing.
+// evicting the cached instance — deleting a project deletes its files
+// (decisions §5.33). The caller deletes the row first, so a failure here
+// leaves reclaimable storage rather than a row pointing at nothing.
 func (m *Manager) ReclaimProject(ctx context.Context, spec Spec) error {
 	m.RemoveProject(spec.Project.ID)
 	b, err := backendFor(spec)
@@ -481,12 +474,9 @@ func (m *Manager) ReclaimProject(ctx context.Context, spec Spec) error {
 }
 
 // RebuildContainer discards the project's compute and provisions it again
-// from the current template and environment — the way back from a container
-// someone broke. What "discard" means is the backend's: docker removes the
-// container and keeps the volume, and a backend where the compute IS the
-// storage refuses rather than destroying a working tree. In-flight commands
-// in the old container fail; that is the deal a rebuild makes, and the caller
-// warns before taking it.
+// from the current template and environment. What "discard" means is the
+// backend's (workbench invariant 44); in-flight commands in the old container
+// fail, and the caller warns before taking that deal.
 func (m *Manager) RebuildContainer(ctx context.Context, spec Spec) error {
 	b, err := backendFor(spec)
 	if err != nil {
@@ -598,17 +588,12 @@ const (
 )
 
 // SandboxTools returns exec_command plus read_file, write_file, list_files and
-// apply_patch tools for the given project, holding a reference on the backing
-// instance that the returned release drops (see Acquire — the caller releases
-// when the run using the tools is over). apply_patch (Codex-style multi-file
-// edits) and the file tools all edit through the same Sandbox, so they target
-// the same filesystem exec_command runs in. exec_command offers named shells
-// (session_id) when the built sandbox can hold a PTY open (both current
-// backends can); they are scoped to
-// this toolset, so the release also closes any the run opened. When
+// apply_patch for the given project, all over the one Sandbox, holding a
+// reference the returned release drops (see Acquire). exec_command offers
+// named shells (session_id) when the sandbox can hold a PTY open; they are
+// scoped to this toolset, so the release closes any the run opened. When
 // commandApproval is set, exec_command is gated per call through the session
-// command-trust store: a command is approved on first use, then trusted per
-// the user's choice.
+// command-trust store.
 func (m *Manager) SandboxTools(spec Spec, commandApproval bool) ([]*agents.Tool, func(), error) {
 	sb, release, err := m.Acquire(spec)
 	if err != nil {
@@ -844,7 +829,7 @@ func DaemonOptions(sb *store.Sandbox) (dockersb.Options, error) {
 		return dockersb.Options{}, fmt.Errorf("sandbox %q is a %s sandbox; this is a Docker-only operation", sb.Name, sb.Type)
 	}
 	var dc store.DockerConfig
-	if err := unmarshalConfig(sb.Config, &dc); err != nil {
+	if err := store.DecodeConfig(sb.Config, &dc); err != nil {
 		return dockersb.Options{}, fmt.Errorf("docker sandbox: invalid config: %w", err)
 	}
 	opts := dockersb.Options{Host: dc.Host}
@@ -869,7 +854,7 @@ const DefaultContainerUser = "root"
 // applyImage layers the image and container shape onto the daemon options.
 func applyImage(opts *dockersb.Options, sb *store.Sandbox) error {
 	var dc store.DockerConfig
-	if err := unmarshalConfig(sb.Config, &dc); err != nil {
+	if err := store.DecodeConfig(sb.Config, &dc); err != nil {
 		return fmt.Errorf("docker sandbox: invalid config: %w", err)
 	}
 	if dc.Image == "" {
@@ -927,13 +912,4 @@ func ContainerName(projectID string) string {
 // target's daemon (decisions §5.33).
 func ProjectVolumeName(projectID string) string {
 	return "agents-proj-" + shortID(projectID)
-}
-
-// unmarshalConfig decodes a stored Config payload, treating empty as a
-// zero-value config so the per-type required-field checks produce the error.
-func unmarshalConfig(raw json.RawMessage, v any) error {
-	if len(raw) == 0 {
-		return nil
-	}
-	return json.Unmarshal(raw, v)
 }

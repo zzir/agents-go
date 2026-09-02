@@ -104,8 +104,8 @@ func EnvMap(raw string) (map[string]string, error) {
 
 // EnvContentEqual reports whether two canonical payloads produce the same
 // CONTAINER — the predicate behind the runtime-generation bump. An
-// undecodable payload compares unequal, the safe side (as ContentEqual does
-// for sandbox configs).
+// undecodable payload compares unequal, the safe side (as SandboxContentEqual
+// does for sandbox configs).
 func EnvContentEqual(a, b string) bool {
 	va, aerr := DecodeProjectEnv(a)
 	vb, berr := DecodeProjectEnv(b)

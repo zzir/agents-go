@@ -204,8 +204,6 @@ func (h *ApprovalHandler) resolveError(c *gin.Context, err error) {
 	internalError(c, err)
 }
 
-// auditDecision is the audit line's detail for an approval: the verdict and,
-// for an approval, how far the trust reaches ("all" is the one to notice).
 // auditDecision is the audit detail of an approval decision: the verdict,
 // the scope, and the tool it was about — approving an exec_command and
 // approving a save_workflow are not the same act.

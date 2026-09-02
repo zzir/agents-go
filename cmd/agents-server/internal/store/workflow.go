@@ -50,7 +50,7 @@ type WorkflowStep struct {
 // StepGate makes a step a check: its final output reports one of two
 // sentinels (Verdict) — Pass takes the on_success edge, Fail on_failure, and no
 // verdict fails the execution. The driver appends the instruction to the
-// step's prompt. README "gate" has the rules.
+// step's prompt. docs/reference/protocol.md "Workflows" has the rules.
 type StepGate struct {
 	Pass string `json:"pass,omitempty"`
 	Fail string `json:"fail,omitempty"`
@@ -169,12 +169,12 @@ const WorkflowStepEnd = "end"
 // lap bound (WorkflowBudget.MaxLaps) stops it long before.
 const MaxStepRuns = 50
 
-// DefaultMaxLaps is how many times one execution may take the same BACKWARD
+// defaultMaxLaps is how many times one execution may take the same BACKWARD
 // edge (a step to an earlier one, or to itself) when its definition sets no
 // bound: three laps of the same loop without getting past it is a loop that
 // is not converging, and every further lap costs a step run for the same
 // answer.
-const DefaultMaxLaps = 3
+const defaultMaxLaps = 3
 
 // WorkflowSteps is the ordered sequence, stored as one JSON column.
 type WorkflowSteps []WorkflowStep
@@ -247,7 +247,7 @@ type Workflow struct {
 // minutes of step run time (the sum of the runs' durations — a pause on a
 // person's approval costs nothing). Each is checked when the driver is about
 // to launch a step; a step already running is not interrupted. Zero = no
-// bound — except MaxLaps, whose zero is DefaultMaxLaps: a loop needs a bound
+// bound — except MaxLaps, whose zero is defaultMaxLaps: a loop needs a bound
 // whether or not its author thought of one.
 type WorkflowBudget struct {
 	MaxSteps   int `json:"max_steps,omitempty"`
@@ -264,7 +264,7 @@ func (b WorkflowBudget) LapBound() int {
 	if b.MaxLaps > 0 {
 		return b.MaxLaps
 	}
-	return DefaultMaxLaps
+	return defaultMaxLaps
 }
 
 // IsZero reports a budget that bounds nothing.
@@ -593,7 +593,7 @@ func (w *WorkflowState) NextStep(failed bool) (*WorkflowStep, bool) {
 // DisplayWorkflowStarted is the display kind of the note a person's or a
 // trigger's start of a workflow leaves on the conversation it reports to: with
 // no run asking, the note is the exchange's question — what the result's
-// wake-up run is labeled by and jumps to (README "Workflows").
+// wake-up run is labeled by and jumps to (protocol.md "Workflows").
 const DisplayWorkflowStarted = "workflow_started"
 
 // WorkflowOrigin says who started an execution when no run did.

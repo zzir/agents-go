@@ -85,21 +85,11 @@ type BuildResult struct {
 	AgentIDs map[string]string
 
 	// Behavior, Compaction and Session are the agent config's own groups,
-	// carried whole rather than copied knob by knob: a new knob is one field
-	// on one group struct, with no mirror field here and no copy line in the
-	// builder.
-	//
-	// They hold the values AS STORED. A knob that needed converting was
-	// converted during the build and has a "Derived:" field below — read that
-	// one. Two of them keep their name and change type, so reading the group
-	// copy quietly yields the unconverted value: StopAtTools (comma-separated
-	// string here, []string below) and ReasoningItemIDPolicy (string here,
-	// enum below). Other group fields are already spent when the build
-	// returns — HandoffDescription, the tool-choice reset flag and
-	// Session.PromptID/PromptVersion live on Agent from then on.
-	//
-	// Compaction.Threshold is in tokens, Compaction.Window in entries — see
-	// store.NewCompactionAdapter for the defaults and the sizing rule.
+	// carried whole and AS STORED: a knob the build converted has a "Derived:"
+	// field below — read that one, since StopAtTools and
+	// ReasoningItemIDPolicy keep their name here and change type there.
+	// Compaction.Threshold is in tokens, Compaction.Window in entries
+	// (store.NewCompactionAdapter).
 	Behavior   store.BehaviorGroup
 	Compaction store.CompactionGroup
 	Session    store.SessionGroup
@@ -170,12 +160,10 @@ func (b *BuildResult) Release() {
 	}
 }
 
-// BuildFullAgent constructs an *agents.Agent from a config ID, loading all
-// associated resources: provider, MCP tools, sandbox CodeTool, memory, and
-// global settings (system_prompt). agentConfigID is required. sandboxID is
-// optional — when set, only that sandbox is attached; when empty, all are.
-// forUserID is who the build is for, as a run's owner would be: it decides
-// which tools they would get.
+// BuildFullAgent constructs an *agents.Agent from a config id with everything
+// it names: provider, MCP tools, the project's sandbox tools, memories, skills
+// and the global system prompt. forUserID is who the build is for, as a run's
+// owner would be: it decides which tools they get.
 func BuildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, projectID, forUserID string) (*BuildResult, error) {
 	return buildFullAgent(ctx, deps, agentConfigID, projectID, false, forUserID)
 }
@@ -189,15 +177,9 @@ was. Your final message is the only account of this turn that leaves here — en
 with the outcome, not with a question.`
 
 // buildFullAgent is BuildFullAgent with the run-scoped extras: the session's
-// bound project for the sandbox tools, BACKGROUND awareness, and the owner
-// whose role gates save_workflow ("" = ungated, the full surface).
-//
-// A background run is one nobody is sitting in front of — a task's, a workflow
-// step's. Three things follow from that single fact, which is why they share
-// one flag: it gets no task tools (capping spawn depth at one — a sequence
-// cannot start a sequence either, since a workflow is what spawn_task starts
-// when told a name), and no plan or todo mode, because a plan review is an
-// approval nobody would ever answer.
+// bound project for the sandbox tools, whether the run is BACKGROUND (no task
+// tools, no plan or todo mode, told nobody is reading — workbench invariant
+// 34), and the owner whose role gates save_workflow ("" = ungated).
 func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, projectID string, background bool, ownerID string) (*BuildResult, error) {
 	if agentConfigID == "" {
 		return nil, fmt.Errorf("agent_config_id is required")
@@ -218,13 +200,10 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, project
 		}
 	}
 	if err == nil && !background && deps.TaskManager != nil && result.Behavior.SubagentsOn() {
-		// The model's background surface: four verbs — spawn (the server's,
-		// which starts a workflow when told a name), status, retry, stop. A
-		// background run never gets them: an execution is a task, and a task
-		// cannot start one — that is what bounds recursion. An agent may also opt
-		// out (behavior.subagents=false) to shed the schema. The session id
-		// reaches the tools through the run context, not the model: otherwise
-		// one conversation could spawn tasks onto another.
+		// The model's background surface — spawn, status, retry, stop — never
+		// for a background run (workbench invariant 34); an agent may opt out
+		// (behavior.subagents=false). The session id reaches the tools through
+		// the run context, never the model.
 		mark := len(result.Agent.Tools)
 		if deps.SpawnTool != nil {
 			result.Agent.Tools = append(result.Agent.Tools, deps.SpawnTool(ctx, ownerID))
@@ -277,26 +256,14 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, project
 		result.RunGuardrails = result.Agent.Guardrails
 		result.Agent.Guardrails = nil
 	}
-	// Plan/todo rewrite the ENTRY agent, at BUILD time rather than via
-	// RunOptions.Middlewares: the server resumes runs by deserializing state
-	// against a registry rebuilt from this function, and a rewrite that only
-	// happened inside Run would leave the rebuilt agent without
-	// submit_plan/todo_write — the approved call would fail with "tool not
-	// found on agent" (the same hazard buildAgentRegistry documents for
-	// sandbox tools). Last, so the gates also cover the task tools appended
-	// above. BACKGROUND runs are excluded: submit_plan pauses for an approval,
-	// and a background run's approval lands in a session nobody is watching —
-	// the sequence would wait forever on a decision nobody can see.
+	// Plan/todo rewrite the ENTRY agent at BUILD time, not via
+	// RunOptions.Middlewares: a resume rebuilds the agent from this function
+	// and must find submit_plan/todo_write on it (spec §2.12). Last, so the
+	// gates cover the task tools appended above; unconditional, since the
+	// SESSION's phase decides whether the plan gate bites (workbench invariant
+	// 33); never for a background run (invariant 34).
 	if !background && result.Agent != nil {
 		mark := len(result.Agent.Tools)
-		// Unconditional, both of them. A todo list is a tool the model reaches
-		// for when the work is worth tracking — its own judgement, like every
-		// other tool. Plan mode is a RESTRAINT, so the decision is the
-		// person's: Apply installs the gates and the SESSION's phase (restored
-		// on every run) decides whether they bite. Building it only for a
-		// planning session would also break the approval resume — the rebuild
-		// happens after the unlock, and the agent would come back without the
-		// submit_plan the paused state names.
 		result.Agent = middleware.Todo{}.Apply(result.Agent)
 		mark = bucketToolsSince(result.Agent, mark, store.ToolSourceTodo, &result.Profile)
 		result.Agent, result.PlanPhase = middleware.Plan{}.Apply(result.Agent)
@@ -385,7 +352,7 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID string,
 	agent.ModelSettings = spec.ModelSettings
 	result.ErrorHandlers = spec.ErrorHandlers.BuildErrorHandlers()
 
-	result.StopAtTools = splitList(ac.Behavior.StopAtTools)
+	result.StopAtTools = settings.SplitList(ac.Behavior.StopAtTools)
 
 	// Guardrails — a configured guardrail that can't be resolved fails the
 	// build rather than running unprotected (security config must not silently
@@ -542,12 +509,10 @@ func attachMCPServers(ctx context.Context, deps *AgentDeps, agent *agents.Agent,
 	return attached
 }
 
-// attachSandboxTools builds and attaches the bound project's sandbox tools
-// when one is selected. NO PROJECT MEANS NO SANDBOX TOOLS: an agent without a
-// working tree is a chat, not a workbench (decisions §5.33). A build failure
-// fails the run rather than silently downgrading — a bound session must not
-// run coding prompts with no file system. The instance reference is recorded
-// on bc for the build's Release.
+// attachSandboxTools builds and attaches the bound project's sandbox tools.
+// NO PROJECT MEANS NO SANDBOX TOOLS (decisions §5.33), and a build failure
+// fails the run rather than downgrading silently. The instance reference is
+// recorded on bc for the build's Release.
 func attachSandboxTools(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx, agent *agents.Agent, approveCommands bool, prof *store.PromptProfile) error {
 	if bc.projectID == "" {
 		return nil
@@ -559,7 +524,7 @@ func attachSandboxTools(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx,
 	if err != nil {
 		return fmt.Errorf("project %s: %w", bc.projectID, err)
 	}
-	spec, err := ProjectSpec(ctx, deps, proj)
+	spec, err := projectSpec(ctx, deps, proj)
 	if err != nil {
 		return err
 	}
@@ -730,21 +695,8 @@ func buildMemoryBlock(memories []store.Memory) string {
 }
 
 // Provider selection — validation, construction, auth modes, setting keys —
-// lives in the registry (provider_registry.go); nothing here should switch on
-// a provider type.
-
-// splitList parses a comma-separated config value into trimmed, non-empty
-// entries. Operators type these by hand, so stray spaces and trailing commas
-// are normalized rather than turned into tool names that match nothing.
-func splitList(s string) []string {
-	var out []string
-	for p := range strings.SplitSeq(s, ",") {
-		if p = strings.TrimSpace(p); p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
-}
+// lives in the registry (internal/providers/registry.go); nothing here should
+// switch on a provider type.
 
 // ownerIsAdmin reports whether the run's owner may write shared
 // configuration. Anything that cannot say yes — no owner, no user store, a
@@ -762,9 +714,9 @@ func ownerIsAdmin(ctx context.Context, deps *AgentDeps, ownerID string) bool {
 	return u.Role == store.RoleAdmin
 }
 
-// ProjectSpec loads the sandbox a project names — everything the sandbox
+// projectSpec loads the sandbox a project names — everything the sandbox
 // manager needs to build or acquire its instance.
-func ProjectSpec(ctx context.Context, deps *AgentDeps, proj *store.Project) (sandboxes.Spec, error) {
+func projectSpec(ctx context.Context, deps *AgentDeps, proj *store.Project) (sandboxes.Spec, error) {
 	sb, err := deps.Sandboxes.Get(ctx, proj.SandboxID)
 	if err != nil {
 		return sandboxes.Spec{}, fmt.Errorf("project %q: sandbox %s: %w", proj.Name, proj.SandboxID, err)

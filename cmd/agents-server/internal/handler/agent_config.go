@@ -54,9 +54,8 @@ func (h *AgentConfigHandler) validateAgentConfig(c *gin.Context, ac *store.Agent
 		badRequest(c, "name is required")
 		return false
 	}
-	// The OpenAI provider ships no built-in default model, so an empty model no
-	// longer silently falls back — it becomes a *UserError at run time. Reject it
-	// at save time with a clear message instead.
+	// No provider ships a default model: an empty one is a *UserError at run
+	// time, so refuse it at save.
 	if ac.Model == "" {
 		badRequest(c, "model is required")
 		return false
@@ -156,13 +155,8 @@ func (h *AgentConfigHandler) validateAgentConfig(c *gin.Context, ac *store.Agent
 //	@Security	BearerAuth
 //	@Router		/agents [get]
 func (h *AgentConfigHandler) List(c *gin.Context) {
-	ownerID, admin, ok := callerScope(c)
+	configs, ok := listVisible(c, h.store.CrudStore)
 	if !ok {
-		return
-	}
-	configs, err := store.ListVisibleOf(c.Request.Context(), h.store.CrudStore, ownerID, admin)
-	if err != nil {
-		internalError(c, err)
 		return
 	}
 	for i := range configs {
@@ -221,12 +215,8 @@ func (h *AgentConfigHandler) Create(c *gin.Context) {
 //	@Security	BearerAuth
 //	@Router		/agents/{id} [get]
 func (h *AgentConfigHandler) Get(c *gin.Context) {
-	ac, err := h.store.Get(c.Request.Context(), c.Param("id"))
-	if err != nil {
-		storeError(c, err)
-		return
-	}
-	if !visibleRow(c, ac.Scope, ac.OwnerID) {
+	ac, ok := gatedRow(c, h.store.CrudStore, agentScope, visibleRow)
+	if !ok {
 		return
 	}
 	sanitizeAgentConfig(ac)
@@ -258,12 +248,8 @@ func (h *AgentConfigHandler) Update(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 	id := c.Param("id")
-	cur, err := h.store.Get(ctx, id)
-	if err != nil {
-		storeError(c, err)
-		return
-	}
-	if !editableRow(c, cur.Scope, cur.OwnerID) {
+	cur, ok := gatedRow(c, h.store.CrudStore, agentScope, editableRow)
+	if !ok {
 		return
 	}
 	// Scope and owner never move on an update (POST /:id/scope does); the
@@ -273,11 +259,9 @@ func (h *AgentConfigHandler) Update(c *gin.Context) {
 		return
 	}
 	// The masked fallback-model keys round-trip to their stored values inside
-	// the store's transaction.
-	// ownershipGuard re-checks the pair editableRow authorized against, now
-	// inside the transaction: a transfer that landed since answers 409.
-	err = h.store.Update(ctx, id, &ac, ownershipGuard(cur.Scope, cur.OwnerID,
-		func(a *store.AgentConfig) (string, string) { return a.Scope, a.OwnerID },
+	// the store's transaction; ownershipGuard re-checks the pair editableRow
+	// authorized against there, so a transfer that landed since answers 409.
+	err := h.store.Update(ctx, id, &ac, ownershipGuard(cur.Scope, cur.OwnerID, agentScope,
 		func(prev *store.AgentConfig) error {
 			ac.Scope, ac.OwnerID = prev.Scope, prev.OwnerID
 			ac.Resilience.FallbackModels = restoreFallbackModels(ac.Resilience.FallbackModels, prev.Resilience.FallbackModels)
@@ -307,19 +291,9 @@ func (h *AgentConfigHandler) Update(c *gin.Context) {
 //	@Security	BearerAuth
 //	@Router		/agents/{id} [delete]
 func (h *AgentConfigHandler) Delete(c *gin.Context) {
-	cur, err := h.store.Get(c.Request.Context(), c.Param("id"))
-	if err != nil {
-		storeError(c, err)
-		return
+	if deleteOwned(c, h.store.CrudStore, agentScope) {
+		c.Status(http.StatusNoContent)
 	}
-	if !deletableRow(c, cur.Scope, cur.OwnerID) {
-		return
-	}
-	if err := store.DeleteOwnedBy(c.Request.Context(), h.store.CrudStore, c.Param("id"), cur.OwnerID); err != nil {
-		saveError(c, err) // moved since the check -> 409
-		return
-	}
-	c.Status(http.StatusNoContent)
 }
 
 // SetScope promotes an agent to global — after checking every reference it
@@ -383,9 +357,6 @@ func (h *AgentConfigHandler) SetScope(c *gin.Context) {
 //	@Security	BearerAuth
 //	@Router		/agents/{id}/owner [put]
 func (h *AgentConfigHandler) SetOwner(c *gin.Context) {
-	if !requireAdmin(c) {
-		return
-	}
 	var req SetOwnerRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.UserID == "" {
 		badRequest(c, "user_id is required")
@@ -419,6 +390,9 @@ func (h *AgentConfigHandler) SetOwner(c *gin.Context) {
 	server.SetAuditDetail(c, "owner="+req.UserID)
 	c.Status(http.StatusNoContent)
 }
+
+// agentScope reads an agent's (scope, owner) pair for the scoped-CRUD gates.
+func agentScope(a *store.AgentConfig) (string, string) { return a.Scope, a.OwnerID }
 
 // refScopeError words a refused cross-scope reference.
 func refScopeError(kind, name, holderScope string) string {

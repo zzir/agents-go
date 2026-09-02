@@ -165,16 +165,9 @@ func (h *WorkflowHandler) validateStepAgents(c *gin.Context, wf *store.Workflow)
 //	@Security	BearerAuth
 //	@Router		/workflows [get]
 func (h *WorkflowHandler) List(c *gin.Context) {
-	ownerID, admin, ok := callerScope(c)
-	if !ok {
-		return
+	if list, ok := listVisible(c, h.store.CrudStore); ok {
+		c.JSON(http.StatusOK, list)
 	}
-	list, err := store.ListVisibleOf(c.Request.Context(), h.store.CrudStore, ownerID, admin)
-	if err != nil {
-		internalError(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, list)
 }
 
 // Get responds with one workflow definition.
@@ -188,16 +181,13 @@ func (h *WorkflowHandler) List(c *gin.Context) {
 //	@Security	BearerAuth
 //	@Router		/workflows/{id} [get]
 func (h *WorkflowHandler) Get(c *gin.Context) {
-	wf, err := h.store.Get(c.Request.Context(), c.Param("id"))
-	if err != nil {
-		storeError(c, err)
-		return
+	if wf, ok := gatedRow(c, h.store.CrudStore, workflowScope, visibleRow); ok {
+		c.JSON(http.StatusOK, wf)
 	}
-	if !visibleRow(c, wf.Scope, wf.OwnerID) {
-		return
-	}
-	c.JSON(http.StatusOK, wf)
 }
+
+// workflowScope reads a workflow's (scope, owner) pair for the scoped-CRUD gates.
+func workflowScope(w *store.Workflow) (string, string) { return w.Scope, w.OwnerID }
 
 // Create stores a new workflow definition.
 //
@@ -252,12 +242,8 @@ func (h *WorkflowHandler) Update(c *gin.Context) {
 		return
 	}
 	ctx, id := c.Request.Context(), c.Param("id")
-	cur, err := h.store.Get(ctx, id)
-	if err != nil {
-		storeError(c, err)
-		return
-	}
-	if !editableRow(c, cur.Scope, cur.OwnerID) {
+	cur, ok := gatedRow(c, h.store.CrudStore, workflowScope, editableRow)
+	if !ok {
 		return
 	}
 	wf.Scope, wf.OwnerID = cur.Scope, cur.OwnerID
@@ -267,8 +253,7 @@ func (h *WorkflowHandler) Update(c *gin.Context) {
 	// Scope and owner come from the row inside the transaction, and the pair
 	// editableRow authorized against is re-checked there: a transfer that
 	// landed since must not be written back by this edit (409).
-	err = h.store.Update(ctx, id, &wf, ownershipGuard(cur.Scope, cur.OwnerID,
-		func(w *store.Workflow) (string, string) { return w.Scope, w.OwnerID },
+	err := h.store.Update(ctx, id, &wf, ownershipGuard(cur.Scope, cur.OwnerID, workflowScope,
 		func(prev *store.Workflow) error {
 			wf.Scope, wf.OwnerID = prev.Scope, prev.OwnerID
 			return nil
@@ -296,14 +281,11 @@ func (h *WorkflowHandler) Update(c *gin.Context) {
 //	@Security		BearerAuth
 //	@Router			/workflows/{id} [delete]
 func (h *WorkflowHandler) Delete(c *gin.Context) {
-	cur, err := h.store.Get(c.Request.Context(), c.Param("id"))
-	if err != nil {
-		storeError(c, err)
+	cur, ok := gatedRow(c, h.store.CrudStore, workflowScope, deletableRow)
+	if !ok {
 		return
 	}
-	if !deletableRow(c, cur.Scope, cur.OwnerID) {
-		return
-	}
+	// The workflow store's own delete: its triggers go with it.
 	if err := h.store.DeleteOwnedBy(c.Request.Context(), c.Param("id"), cur.OwnerID); err != nil {
 		saveError(c, err) // moved since the check -> 409
 		return
@@ -365,9 +347,6 @@ func (h *WorkflowHandler) SetScope(c *gin.Context) {
 //	@Security	BearerAuth
 //	@Router		/workflows/{id}/owner [put]
 func (h *WorkflowHandler) SetOwner(c *gin.Context) {
-	if !requireAdmin(c) {
-		return
-	}
 	var req SetOwnerRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.UserID == "" {
 		badRequest(c, "user_id is required")

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect"
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/compaction"
@@ -212,12 +213,9 @@ func (s *EntryStore) SetModel(model string) { s.model = model }
 
 // Append implements session.Storage.
 //
-// The append point is read inside the same transaction as the insert: reading
-// the tip and writing against it are one step (spec §2.5e2), or two concurrent
-// appends both read the old tip and silently fork the branch. On SQLite the
-// single-connection pool serializes the two outright; on Postgres two appends
-// can interleave, and the (session, gen, seq) unique index turns the loser
-// into a failed write — either way a forked branch cannot land.
+// The append point is read and written under the session row's lock
+// (lockSessionIn), so two concurrent appends cannot both read the same tip
+// and fork the branch — spec §2.5e2.
 func (s *EntryStore) Append(ctx context.Context, entries ...session.Entry) error {
 	if len(entries) == 0 {
 		return nil
@@ -234,6 +232,9 @@ func (s *EntryStore) Append(ctx context.Context, entries ...session.Entry) error
 func (s *EntryStore) appendTo(ctx context.Context, db bun.IDB, entries ...session.Entry) error {
 	if len(entries) == 0 {
 		return nil
+	}
+	if err := s.lockSessionIn(ctx, db); err != nil {
+		return err
 	}
 	at, err := s.appendPointIn(ctx, db)
 	if err != nil {
@@ -307,6 +308,28 @@ func appendPointAfter(at session.AppendPoint, prepared []session.Entry) session.
 		at.Leaf = e.ID
 	}
 	return at
+}
+
+// lockSessionIn takes the session row's lock for a write that moves the
+// append point, FIRST — the one order every such transaction and the delete
+// cascade (deleteSessionRows) share, so none can wait on another. PostgreSQL
+// only: SQLite's single writer serializes by itself. A direct-scope store has
+// no session row and nothing to lock; a repo session whose row is gone was
+// deleted under this handle, which the write must fail on (spec §2.5e2).
+func (s *EntryStore) lockSessionIn(ctx context.Context, db bun.IDB) error {
+	if s.ref.Gen == "" || db.Dialect().Name() != dialect.PG {
+		return nil
+	}
+	err := db.NewSelect().Model((*Session)(nil)).Column("id").
+		Where("id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).
+		For("UPDATE").Scan(ctx, new(string))
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return fmt.Errorf("session %s: %w", s.ref.ID, session.ErrNotFound)
+	case err != nil:
+		return fmt.Errorf("locking session %s: %w", s.ref.ID, err)
+	}
+	return nil
 }
 
 // touchSessionIn records that the session changed, on the same handle as the
@@ -547,6 +570,9 @@ func (s *EntryStore) Metadata(ctx context.Context) (session.Metadata, error) {
 // so it moves the session in a listing.
 func (s *EntryStore) Clear(ctx context.Context) error {
 	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := s.lockSessionIn(ctx, tx); err != nil {
+			return err
+		}
 		if _, err := tx.NewDelete().Model((*entryRow)(nil)).
 			Where("session_id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).Exec(ctx); err != nil {
 			return err

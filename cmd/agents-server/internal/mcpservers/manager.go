@@ -41,10 +41,9 @@ type Manager struct {
 	// the same server without holding the lock across the handshake.
 	connecting map[string]*connectState
 	// connectGen is bumped on every Disconnect so a handshake that completes
-	// AFTER its config was reconciled away is discarded rather than installed —
-	// the fix for the reconcile-vs-handshake race. A handshake captures
-	// the generation at beginConnect and finishConnect stores its result only if
-	// the generation still matches.
+	// AFTER its config was reconciled away is discarded rather than installed:
+	// beginConnect captures the generation and finishConnect stores its result
+	// only if it still matches.
 	connectGen map[string]uint64
 }
 
@@ -136,7 +135,7 @@ func (m *Manager) Connect(ctx context.Context, cfg *store.McpServerConfig) error
 	// Validate config before claiming the connect slot so a bad config fails
 	// fast and can't strand the in-progress flag.
 	var hc store.HTTPMcpConfig
-	if cerr := unmarshalConfig(cfg.Config, &hc); cerr != nil {
+	if cerr := store.DecodeConfig(cfg.Config, &hc); cerr != nil {
 		return fmt.Errorf("mcp server %s: invalid config: %w", cfg.Name, cerr)
 	}
 	transport := m.httpTransport(ctx, &hc, nil)
@@ -187,7 +186,7 @@ func (m *Manager) Reconcile(desired *store.McpServerConfig, oauth *OAuthCoordina
 			return
 		}
 		var hc store.HTTPMcpConfig
-		if unmarshalConfig(cfg.Config, &hc) != nil {
+		if store.DecodeConfig(cfg.Config, &hc) != nil {
 			return
 		}
 		go func() {
@@ -240,9 +239,11 @@ func (m *Manager) httpTransport(ctx context.Context, hc *store.HTTPMcpConfig, oa
 	return t
 }
 
-// httpClientFor builds the HTTP client an HTTP-based MCP transport should use,
-// combining the optional proxy client with optional static request headers.
-// Every client logs error-response bodies (see errorBodyRoundTripper).
+// httpClientFor builds the HTTP client an HTTP-based MCP transport should use:
+// the proxy client's transport when one is set, plus optional static request
+// headers. No client timeout — a streamable session holds its connection
+// open, so each call's bound is its context's. Every client logs
+// error-response bodies (see errorBodyRoundTripper).
 func httpClientFor(proxy *http.Client, headers map[string]string) *http.Client {
 	base := http.DefaultTransport
 	if proxy != nil && proxy.Transport != nil {
@@ -252,11 +253,7 @@ func httpClientFor(proxy *http.Client, headers map[string]string) *http.Client {
 	if len(headers) > 0 {
 		rt = &headerRoundTripper{base: rt, headers: headers}
 	}
-	client := &http.Client{Transport: rt}
-	if proxy != nil {
-		client.Timeout = proxy.Timeout
-	}
-	return client
+	return &http.Client{Transport: rt}
 }
 
 // headerRoundTripper adds a fixed set of headers to every request before
@@ -353,8 +350,7 @@ func buildMcpOptions(name string, retry store.McpRetryConfig, useStructuredConte
 // It also invalidates any in-flight handshake for the same id: the generation
 // is bumped (so a handshake completing after this returns is discarded, not
 // installed) and the handshake's context is cancelled (so it releases the
-// connect slot promptly instead of after its own timeout) — the fix for a
-// reconcile racing a slow connect.
+// connect slot promptly instead of after its own timeout).
 func (m *Manager) Disconnect(id string) error {
 	m.mu.Lock()
 	m.connectGen[id]++
@@ -446,7 +442,7 @@ func ConnectEnabled(ctx context.Context, mgr *Manager, servers *store.McpServerS
 			defer cancel()
 			if cfg.OAuthToken != "" {
 				var hc store.HTTPMcpConfig
-				if unmarshalConfig(cfg.Config, &hc) == nil && hc.AuthMode == "oauth" {
+				if store.DecodeConfig(cfg.Config, &hc) == nil && hc.AuthMode == "oauth" {
 					result, err := oauth.ConnectWithOAuth(cctx, mgr, cfg, &hc, "")
 					switch {
 					case err != nil:
@@ -465,11 +461,4 @@ func ConnectEnabled(ctx context.Context, mgr *Manager, servers *store.McpServerS
 		})
 	}
 	wg.Wait()
-}
-
-func unmarshalConfig(raw json.RawMessage, v any) error {
-	if len(raw) == 0 {
-		return nil
-	}
-	return json.Unmarshal(raw, v)
 }

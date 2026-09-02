@@ -277,9 +277,8 @@ func restoreSandboxConfig(incoming, prev json.RawMessage) json.RawMessage {
 var sandboxSecretFields = []string{"ssh_password", "api_key"}
 
 // sanitizeAgentConfig masks the secret-bearing fields of an agent config for
-// API responses. Only the per-entry fallback-model keys remain: the provider
-// credential moved to the Provider entity, so an agent body no longer carries
-// one at all.
+// API responses: the per-entry fallback-model keys (the provider credential
+// lives on the Provider entity, never on an agent body).
 func sanitizeAgentConfig(ac *store.AgentConfig) {
 	ac.Resilience.FallbackModels = maskFallbackModels(ac.Resilience.FallbackModels)
 }

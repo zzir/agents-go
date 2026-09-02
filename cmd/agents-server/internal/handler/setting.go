@@ -24,9 +24,8 @@ func NewSettingHandler(s *store.SettingStore) *SettingHandler {
 type SettingView struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
-	// Unknown marks a row the registry does not define — stored before
-	// validation existed, or left behind by a removed feature. Reads list it
-	// so it can be seen and deleted; writes refuse it.
+	// Unknown marks a row the registry does not define (a removed feature's).
+	// Reads list it so it can be seen and deleted; writes refuse it.
 	Unknown bool `json:"unknown,omitempty"`
 }
 
@@ -117,10 +116,7 @@ func (h *SettingHandler) Set(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 	key := c.Param("key")
-	// The attachment-storage section saves as ONE group (PUT
-	// /attachments/storage): its keys are only valid together, and a per-key
-	// write would validate a new value against the OLD siblings — the exact
-	// failure the form replaced.
+	// The attachment-storage section saves as ONE group — workbench invariant 58.
 	if settings.IsS3Key(key) {
 		badRequest(c, "attachment-storage keys are saved together — use the Attachment storage form (PUT /attachments/storage)")
 		return

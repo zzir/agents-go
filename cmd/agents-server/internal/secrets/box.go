@@ -18,15 +18,12 @@ import (
 
 // A sealed value is "enc:v2:<kid>:<base64 nonce+ciphertext>"; a stored value
 // without the prefix is plaintext from before a key and passes through
-// (README "Secret handling").
+// (docs/howto/workbench-deploy.md "Secret handling").
 const (
 	prefix   = "enc:"
 	version  = "v2"
 	kidBytes = 4
 )
-
-// IsSealed reports whether a stored value carries the sealed prefix.
-func IsSealed(stored string) bool { return strings.HasPrefix(stored, prefix) }
 
 // Box seals and opens with AES-256-GCM. A nil *Box is the no-key mode:
 // Seal and Open pass every value through.
@@ -50,15 +47,6 @@ func New(key []byte) (*Box, error) {
 	}
 	sum := sha256.Sum256(key)
 	return &Box{aead: aead, kid: hex.EncodeToString(sum[:kidBytes])}, nil
-}
-
-// KeyID names the key: the first bytes of its SHA-256, as stamped into
-// every value it seals. "" for the no-key mode.
-func (b *Box) KeyID() string {
-	if b == nil {
-		return ""
-	}
-	return b.kid
 }
 
 // ParseKey accepts a key as base64 (standard or URL, padded or not) or hex.

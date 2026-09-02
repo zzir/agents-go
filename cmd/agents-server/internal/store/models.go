@@ -20,17 +20,12 @@ type Session struct {
 	// OwnerID is the user the conversation belongs to — the only ownership
 	// column: a task's hidden session inherits it from its parent, a trigger
 	// fires into a session, an approval is filed on one. Content is the
-	// owner's alone; an admin may list, stop and delete (README "Ownership").
+	// owner's alone; an admin may list, stop and delete (workbench invariant 42).
 	OwnerID string `bun:"owner_id,notnull,type:uuid" json:"owner_id"`
 	Name    string `bun:"name,notnull"         json:"name"`
 	Pinned  bool   `bun:"pinned"               json:"pinned"`
 	// Hidden marks a session that exists to serve another one — a background
 	// task's transcript. Listings leave it out by default.
-	//
-	// It is a column rather than a subquery over the tasks table because
-	// "hidden" belongs to the session: the list query had to know what a task
-	// was in order to exclude one, and anything else worth hiding would have
-	// had to teach it a second special case.
 	Hidden        bool   `bun:"hidden"               json:"hidden,omitempty"`
 	AgentConfigID string `bun:"agent_config_id,nullzero,type:uuid" json:"agent_config_id,omitempty"`
 	// ProjectID is the session's PERMANENT binding: the first project-carrying
@@ -39,12 +34,8 @@ type Session struct {
 	// binds the machine too.
 	ProjectID string `bun:"project_id,nullzero,type:uuid" json:"project_id,omitempty"`
 	// Planning is the session's plan phase: true means its next run starts
-	// read-only until a plan is approved. It is materialized here — not derived
-	// from the entry log — because it is read on every run and every session GET,
-	// and a scan of the whole history for the last marker was O(n) per read.
-	// The person sets it (the composer's plan toggle / a `/plan` message); the
-	// approved submit_plan clears it. A fork copies it, so a branched session
-	// inherits the phase it forked in.
+	// read-only until a plan is approved. Set by the person, cleared by the
+	// approved submit_plan, copied by a fork — workbench invariant 33.
 	Planning  bool      `bun:"planning"             json:"planning"`
 	CreatedAt time.Time `bun:"created_at,notnull"   json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,notnull"   json:"updated_at"`
@@ -72,12 +63,9 @@ type Task struct {
 	State           json.RawMessage `bun:"state,type:text,nullzero" json:"state,omitempty"`
 	ParentSessionID string          `bun:"parent_session_id,notnull,type:uuid" json:"parent_session_id"`
 	// ParentSessionGen and ChildSessionGen are the GENERATIONS of the sessions
-	// this row names (session.Ref). A session id names a session, not a
-	// place, so a row matched on the id alone attaches itself to a replacement
-	// created under the same name — listing a dead incarnation's tasks under
-	// the new one and owing it wake-ups it never asked for. The store binds
-	// them at insert and every by-session read compares them against the
-	// generation answering to that id now (see liveParent / liveChild).
+	// this row names (session.Ref): a row matched on the id alone would attach
+	// itself to a replacement created under the same name (spec §2.13). Bound
+	// at insert, compared on every by-session read (liveParent / liveChild).
 	ParentSessionGen string `bun:"parent_session_gen" json:"-"`
 	ParentRunID      string `bun:"parent_run_id,nullzero,type:uuid" json:"parent_run_id,omitempty"`
 	ToolCallID       string `bun:"tool_call_id"         json:"tool_call_id,omitempty"`
@@ -91,11 +79,7 @@ type Task struct {
 	// spawning tasks forever — could never trip on this host.
 	Depth int `bun:"depth" json:"depth,omitempty"`
 	// Attempt counts this task's runs: 1 for the original, one more per retry.
-	// Zero reads as the first attempt — mirroring the SDK's AttemptNo()
-	// contract, so a row whose column was never set (an insert that omitted
-	// it) means what it already meant. (Not a migration concern: this server
-	// recreates its schema rather than altering it, so no pre-attempt rows
-	// survive an upgrade.)
+	// Zero reads as the first attempt (the SDK's AttemptNo contract).
 	Attempt int `bun:"attempt" json:"attempt,omitempty"`
 	// ParentAgentConfigID / ParentProjectID snapshot the spawning run's
 	// configuration so the completion notification (and a retry) can start a
@@ -111,12 +95,9 @@ type Task struct {
 	// Dismissed hides a terminal task from the conversation's live strip; the
 	// panel still lists it. A retry clears it — the work is live again.
 	Dismissed bool `bun:"dismissed" json:"dismissed,omitempty"`
-	// MaxAttempts is the ceiling this row's attempt is measured against —
-	// filled for the wire, not stored, because it is the task manager's
-	// configuration rather than a fact about the task. Clients take the
-	// PARAMETER rather than a precomputed "retryable", so their answer moves
-	// with the status they are already tracking instead of lagging a round trip
-	// behind it.
+	// MaxAttempts is the ceiling Attempt is measured against — filled for the
+	// wire, not stored: the task manager's configuration, not a fact about the
+	// task. Clients derive "retryable" from it and the status they track.
 	MaxAttempts int       `bun:"-" json:"max_attempts,omitempty"`
 	CreatedAt   time.Time `bun:"created_at,notnull" json:"created_at"`
 	UpdatedAt   time.Time `bun:"updated_at,notnull" json:"updated_at"`
@@ -143,10 +124,8 @@ type AgentConfig struct {
 	Instructions string `bun:"instructions"   json:"instructions"`
 	Model        string `bun:"model"          json:"model"`
 	// ProviderID names the Provider row this agent reaches its model through —
-	// a COLUMN rather than a field in a JSON group, because it is a reference
-	// and referential integrity has to be expressible in SQL (the same reason
-	// sessions.sandbox_id is one). Empty reaches no credential: the run fails
-	// its pre-flight until the agent names a provider (decisions §5.30).
+	// a column, so referential integrity is expressible in SQL. Empty reaches
+	// no credential: the run fails its pre-flight (decisions §5.30).
 	ProviderID string `bun:"provider_id,nullzero,type:uuid" json:"provider_id,omitempty"`
 	// ContextWindow is the model's window in tokens, declared rather than
 	// discovered — no provider reports it on a response. It sits beside Model
@@ -185,11 +164,8 @@ type AgentConfig struct {
 }
 
 // Provider is one configured backend endpoint and the credential that reaches
-// it. It is the single place a model-API key lives: agents and provider routes
-// REFERENCE it by id rather than each carrying a copy, because the credential
-// belongs to the external system and has its own lifecycle (rotation, OAuth
-// refresh, an endpoint that moves) — none of which is a property of the agent
-// that happens to talk through it.
+// it — the single place a model-API key lives; agents reference it by id
+// (decisions §5.30).
 type Provider struct {
 	bun.BaseModel `bun:"table:providers,alias:pv"`
 
@@ -311,12 +287,9 @@ type Skill struct {
 	SourceRepo string `bun:"source_repo,nullzero" json:"source_repo,omitempty"`
 	SourcePath string `bun:"source_path,nullzero" json:"source_path,omitempty"`
 	SourceSHA  string `bun:"source_sha,nullzero"  json:"source_sha,omitempty"`
-	// RepoLabel is SourceRepo reduced to the prefix of the model-facing name
-	// ("owner/repo", or the host). Materialized at write time (BeforeAppendModel)
-	// because it is what the unique name indexes key on: two source URLs can
-	// reduce to one label, and the index must refuse that collision — a
-	// duplicate qualified name would make read_skill's answer a coin flip
-	// (decisions §5.31).
+	// RepoLabel is SourceRepo reduced to the model-facing prefix ("owner/repo",
+	// or the host), materialized in BeforeAppendModel because the unique name
+	// indexes key on it (decisions §5.31).
 	RepoLabel string `bun:"repo_label,nullzero" json:"repo_label,omitempty"`
 	// Detached marks an imported skill edited in the workbench: a re-import
 	// skips it instead of overwriting the local edit.
@@ -365,11 +338,8 @@ type Attachment struct {
 }
 
 // ContextProfile is what a session's last build put in front of the model
-// before the conversation itself. It is a SNAPSHOT, written per run rather
-// than derived on demand: the sizes depend on the sandbox that was attached,
-// the skills that were on disk and the plan/todo wrappers that were applied,
-// and reconstructing that in a read path would be a second copy of
-// buildAgentFromConfig.
+// before the conversation itself — a SNAPSHOT written per run, since the
+// sizes depend on what that build attached (workbench invariant 28).
 type ContextProfile struct {
 	bun.BaseModel `bun:"table:context_profiles,alias:cxp"`
 
@@ -456,16 +426,11 @@ type TraceEvent struct {
 	PayloadOmitted bool `bun:"payload_omitted,scanonly" json:"payload_omitted,omitempty"`
 }
 
-// Sandbox is a complete sandbox definition: WHERE it runs — the machine or
-// service, with the credentials to reach it — and WHAT runs on it, the image
-// and the limits. One row, because a project picks one thing
-// (decisions §5.36).
-//
-// Its fields split by MUTABILITY, not by table: the type and the destination
-// are a project's identity and freeze while projects live on the sandbox
-// (SandboxIdentityChanged); everything else is content, editable while
-// sessions are bound and reaching them at their next run through the
-// project's runtime generation, exactly as an environment does.
+// Sandbox is a complete sandbox definition: WHERE it runs and WHAT runs on
+// it, one row (decisions §5.36). Its fields split by MUTABILITY: the type and
+// the destination are a project's identity and freeze while projects live on
+// the sandbox (SandboxIdentityChanged); everything else is content, reaching
+// bound sessions at their next run (workbench invariant 45).
 type Sandbox struct {
 	bun.BaseModel `bun:"table:sandboxes,alias:sb"`
 
@@ -485,14 +450,10 @@ type Sandbox struct {
 	// instances.
 	Prompt string `bun:"prompt" json:"prompt,omitempty"`
 
-	// Revision counts this row's WRITES: 1 at creation, +1 on every update,
-	// name-only included. It is the row's concurrency control — the
-	// expected-revision CAS every update path carries. Nothing keeps old
-	// revisions runnable: updates apply to everyone at the next run.
-	//
-	// There is no runtime generation here: the ONE runtime axis is the
-	// project's (decisions §5.33), and a content change to this row bumps it
-	// on every project that names this sandbox.
+	// Revision counts this row's WRITES, name-only included — the
+	// expected-revision CAS every update carries. No runtime generation here:
+	// the ONE runtime axis is the project's (decisions §5.33), bumped on every
+	// project naming this sandbox when its content changes.
 	Revision int64 `bun:"revision,notnull,default:1" json:"revision,omitempty"`
 
 	CreatedAt time.Time `bun:"created_at,notnull" json:"created_at"`

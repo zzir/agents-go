@@ -29,9 +29,10 @@ func SetAuditResource(c *gin.Context, id string) { c.Set(auditResourceKey, id) }
 func SetAuditActor(c *gin.Context, u protocol.UserInfo) { c.Set(auditActorKey, u) }
 
 // Audit records every successful mutating API request after it completes:
-// "METHOD /route/pattern" with the first path parameter as the resource. A
-// request nobody authenticated (an auth-exempt route that did not name its
-// actor) leaves no line — there is no one to attribute it to.
+// "METHOD /route/pattern" with the first path parameter as the resource,
+// written before the handler chain returns (one INSERT, so a shutdown cannot
+// lose it). A request nobody authenticated (an auth-exempt route that did not
+// name its actor) leaves no line — there is no one to attribute it to.
 func Audit(record protocol.AuditFunc) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Next()
@@ -64,6 +65,6 @@ func Audit(record protocol.AuditFunc) gin.HandlerFunc {
 		if v, found := c.Get(auditDetailKey); found {
 			r.Detail, _ = v.(string)
 		}
-		go record(context.WithoutCancel(c.Request.Context()), r)
+		record(context.WithoutCancel(c.Request.Context()), r)
 	}
 }

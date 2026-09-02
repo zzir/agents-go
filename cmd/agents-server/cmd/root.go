@@ -8,13 +8,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/handler"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/secrets"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
@@ -68,17 +68,6 @@ func init() {
 // buildVersion is the plain version string (without commit/date), surfaced by
 // the /health endpoint.
 var buildVersion = "dev"
-
-// splitList parses a comma-separated flag into trimmed, non-empty entries.
-func splitList(raw string) []string {
-	var out []string
-	for v := range strings.SplitSeq(raw, ",") {
-		if v = strings.TrimSpace(v); v != "" {
-			out = append(out, v)
-		}
-	}
-	return out
-}
 
 // SetVersionInfo sets the version string shown by --version.
 func SetVersionInfo(version, commit, date string) {
@@ -149,23 +138,15 @@ func run(_ *cobra.Command, _ []string) error {
 	}
 	svc := newBridge(ctx, bgCtx, db, st, recordAudit)
 	defer svc.Close()
-	hs := newHandlers(st, svc, recordAudit, baseURL)
+	hs := newHandlers(st, svc, recordAudit, baseURL, handler.ServerInfo{
+		Version:           buildVersion,
+		Timezone:          serverTimezone(),
+		CredentialsSealed: box != nil,
+	})
 
-	// The restart reconciliation, in two halves that have opposite ordering
-	// needs.
-	//
-	// Failing what the process interrupted — tasks and workflow executions,
-	// which are tasks — is a pure UPDATE and runs FIRST, synchronously, before
-	// anything can serve a request: the sweep has no notion of a live run, so it
-	// fails every row still recorded as working — and a retry that slipped in
-	// ahead of it would have its fresh run declared dead, its parent woken with
-	// a failure that did not happen, and the real result discarded when the run
-	// finally lands.
-	//
-	// Draining the wake-ups it owes starts runs, so it stays on its own
-	// goroutine and AFTER the handlers: NewWSHandler installs
-	// runner.OnRunAttach, an ordinary field with no synchronization, and a run
-	// starting here would read it while the main goroutine was still writing.
+	// The restart reconciliation: fail what the restart interrupted FIRST and
+	// synchronously, drain the wake-ups it owes AFTER the handlers, on its own
+	// goroutine — workbench invariant 32.
 	svc.Runner.FailOrphanedTasks(ctx)
 	go svc.Runner.DrainPendingWakeups(bgCtx)
 	// The reaper and the clock start after the sweep AND after the handlers,
@@ -245,5 +226,24 @@ func run(_ *cobra.Command, _ []string) error {
 		// waiting is not worth an exit status.
 		log.Warn("http shutdown did not complete cleanly", "error", err)
 	}
+	// The root context ends here, before the deferred closes: nothing that
+	// descends from it may still be using the services or the database they
+	// tear down.
+	stopRoot()
 	return nil
+}
+
+// serverTimezone names the zone cron schedules run in: the IANA name when TZ
+// is set, else the abbreviation and offset so "Local" still says which clock.
+func serverTimezone() string {
+	name := time.Local.String()
+	if name != "Local" {
+		return name
+	}
+	abbr, off := time.Now().Zone()
+	sign := "+"
+	if off < 0 {
+		sign, off = "-", -off
+	}
+	return fmt.Sprintf("Local (%s UTC%s%02d:%02d)", abbr, sign, off/3600, off%3600/60)
 }

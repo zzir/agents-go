@@ -6,7 +6,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/providers"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
@@ -67,7 +66,7 @@ func (h *ChatGPTOAuthHandler) Login(c *gin.Context) {
 			badRequest(c, err.Error())
 			return
 		}
-		abortError(c, http.StatusInternalServerError, protocol.CodeInternal, err.Error())
+		internalError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, result)
@@ -79,8 +78,7 @@ type chatgptCompleteReq struct {
 }
 
 // Complete finishes the ChatGPT OAuth flow by redeeming the callback URL the
-// user pasted. It replaces the loopback listener the CLI-style flow used, so a
-// remotely deployed server can be signed in.
+// user pasted (decisions §5.41).
 //
 //	@Summary		Complete ChatGPT login
 //	@Description	Redeems the callback URL the user pastes after authorizing (accepts the full URL or its query string).
@@ -114,7 +112,7 @@ func (h *ChatGPTOAuthHandler) Complete(c *gin.Context) {
 		errors.Is(err, providers.ErrChatGPTCallbackInvalid):
 		badRequest(c, err.Error())
 	default:
-		abortError(c, http.StatusInternalServerError, protocol.CodeInternal, err.Error())
+		internalError(c, err)
 	}
 }
 

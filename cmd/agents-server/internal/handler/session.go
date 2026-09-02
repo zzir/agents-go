@@ -453,8 +453,7 @@ func (h *SessionHandler) Fork(c *gin.Context) {
 		// same conversation over the same file system context.
 		ProjectID: src.ProjectID,
 		// The plan phase carries over: a fork of a session mid-planning inherits
-		// the planning it forked in (what the entry-marker approach gave for
-		// free before the phase was materialized).
+		// the planning it forked in (workbench invariant 33).
 		Planning: src.Planning,
 	}
 	// One transaction creates the session and copies its entries, so a failure
@@ -471,13 +470,11 @@ func (h *SessionHandler) Fork(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
-	if h.traces != nil {
-		// Traces are a best-effort copy: the fork's entries already landed, so a
-		// trace-copy failure must not fail the request or orphan the new session.
-		// It is logged, not swallowed, so the missing traces are diagnosable.
-		if err := h.traces.ForkBySession(ctx, srcID, dst.ID, runIDs); err != nil {
-			logging.Ctx(ctx).Warn("fork: copying traces to the new session failed; session forked without traces", "error", err, "src_session", srcID, "dst_session", dst.ID)
-		}
+	// Traces are a best-effort copy: the fork's entries already landed, so a
+	// trace-copy failure must not fail the request or orphan the new session.
+	// It is logged, not swallowed, so the missing traces are diagnosable.
+	if err := h.traces.ForkBySession(ctx, srcID, dst.ID, runIDs); err != nil {
+		logging.Ctx(ctx).Warn("fork: copying traces to the new session failed; session forked without traces", "error", err, "src_session", srcID, "dst_session", dst.ID)
 	}
 	created(c, dst.ID, dst)
 }

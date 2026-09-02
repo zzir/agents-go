@@ -32,7 +32,7 @@ func TestSubscribeFromZeroDeliversRunStartedAfterRingMovedOn(t *testing.T) {
 
 	var mu sync.Mutex
 	var got []SeqEnvelope
-	if _, ok := h.SubscribeSeq("run1", 0, func(item SeqEnvelope) {
+	if _, _, ok := h.SubscribeSeq("run1", 0, func(item SeqEnvelope) {
 		mu.Lock()
 		got = append(got, item)
 		mu.Unlock()
@@ -96,7 +96,7 @@ func TestSubscribeDoesNotRepeatRunStartedTheRingStillHolds(t *testing.T) {
 	collect := func(fromSeq int) []SeqEnvelope {
 		var mu sync.Mutex
 		var got []SeqEnvelope
-		if _, ok := h.SubscribeSeq("run1", fromSeq, func(item SeqEnvelope) {
+		if _, _, ok := h.SubscribeSeq("run1", fromSeq, func(item SeqEnvelope) {
 			mu.Lock()
 			got = append(got, item)
 			mu.Unlock()

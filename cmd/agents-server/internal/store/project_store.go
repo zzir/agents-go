@@ -61,22 +61,16 @@ func (s *ProjectStore) Create(ctx context.Context, p *Project) error {
 	return nil
 }
 
-// Update overwrites the project's editable fields — name, sandbox,
-// environment and published ports — under the same compare-and-set the sandbox uses: the write
-// lands only while the row is still at expectedRevision (see
-// ErrRevisionConflict). contentChanged bumps the runtime generation alongside
-// the revision; a rename moves the revision alone so nothing downstream
-// replaces a container or severs a terminal. The owner is not writable here.
-//
-// A project may MOVE between sandboxes that address the same machine — how a
-// project changes its image — and no further: its files live at that address
-// and do not move with it (ErrSandboxMoveDestination). Both sandboxes are
-// read inside the write's transaction, with the destination row locked, so a
-// sandbox cannot be re-addressed between the check and the write.
-// It returns the runtime generation the write landed on, so the caller's
-// retire fence uses the generation the store actually wrote — not prev+1,
-// which a concurrent sandbox-content bump (moving runtime_gen without the
-// revision this CAS anchors on) would leave one short.
+// Update overwrites the project's editable fields — name, sandbox and
+// environment — under the same compare-and-set the sandbox uses: the write
+// lands only while the row is still at expectedRevision (ErrRevisionConflict).
+// contentChanged bumps the runtime generation alongside the revision; a rename
+// moves the revision alone. The owner is not writable here. A move between
+// sandboxes is allowed only to one addressing the same machine
+// (ErrSandboxMoveDestination), both read inside the transaction with the
+// destination locked — decisions §5.36. It returns the runtime generation the
+// write landed on: the caller's retire fence must use what was written, not
+// prev+1, which a concurrent content bump would leave one short.
 func (s *ProjectStore) Update(ctx context.Context, id string, p *Project, expectedRevision int64, contentChanged bool) (int64, error) {
 	p.ID = id
 	genBump := 0

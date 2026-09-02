@@ -169,26 +169,16 @@ func (s *SessionStore) BindAgentIfEmpty(ctx context.Context, id, agentConfigID s
 	return nil
 }
 
-// BindProjectIfEmpty permanently binds project_id to the session, unless it is
-// already bound: the first project-carrying run wins and the binding is never
-// rewritten — the session's file system context must not change under a
-// conversation that already touched it. It reports whether THIS call performed
-// the bind, so the winner (and only the winner) can announce it; a caller that
-// lost re-reads the session to adopt the standing value.
+// BindProjectIfEmpty permanently binds project_id to the session unless it is
+// already bound (decisions §5.28), reporting whether THIS call performed the
+// bind so only the winner announces it. The project's existence is pinned
+// inside the write: SQLite's single writer makes the EXISTS predicate atomic
+// with the update; PostgreSQL locks the project row FOR KEY SHARE, against
+// ProjectStore.DeleteIfUnreferenced's FOR UPDATE.
 //
-// "The project is still there" is checked inside the write, so a concurrent
-// delete cannot bind the session to a vanished row: SQLite's single writer
-// makes the EXISTS predicate atomic with the update; PostgreSQL locks the
-// project row FOR KEY SHARE first, pinning its existence until commit
-// (ProjectStore.DeleteIfUnreferenced takes FOR UPDATE on the same row).
-// Nothing else needs pinning: a project's owner and target are immutable
-// (decisions §5.33), and its template and environment are content that
-// reaches the session at its next run.
-//
-// An empty projectID binds nothing (a run without a project leaves the session
-// bindable later). A missing session is (false, nil) — the caller's own
-// existence check owns that error. Like BindAgentIfEmpty, it leaves updated_at
-// alone: the conversation did not change.
+// An empty projectID binds nothing. A missing session is (false, nil) — the
+// caller's own existence check owns that error. Like BindAgentIfEmpty, it
+// leaves updated_at alone: the conversation did not change.
 func (s *SessionStore) BindProjectIfEmpty(ctx context.Context, id, projectID string) (bool, error) {
 	if projectID == "" {
 		return false, nil
@@ -340,6 +330,16 @@ func sessionTree(ctx context.Context, tx bun.Tx, id string) ([]string, error) {
 // fire into it. mustExist makes a missing row ErrNotFound (the root); a child
 // already gone is left as such.
 func deleteSessionRows(ctx context.Context, tx bun.Tx, id string, mustExist bool) error {
+	// The session row's lock first — the order every entry write takes
+	// (EntryStore.lockSessionIn) — so an append and this cascade cannot each
+	// wait on the other. A row already gone is what mustExist decides below.
+	if tx.Dialect().Name() == dialect.PG {
+		err := tx.NewSelect().Model((*Session)(nil)).Column("id").
+			Where("id = ?", id).For("UPDATE").Scan(ctx, new(string))
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("deleting session %s: %w", id, err)
+		}
+	}
 	for _, model := range []any{(*entryRow)(nil), (*appendPointRow)(nil), (*TraceEvent)(nil), (*PendingApproval)(nil), (*ContextProfile)(nil), (*Wakeup)(nil), (*Trigger)(nil)} {
 		if _, err := tx.NewDelete().Model(model).
 			Where("session_id = ?", id).

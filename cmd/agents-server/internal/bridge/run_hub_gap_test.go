@@ -42,7 +42,7 @@ func TestSubscribeSeqNeverDeliversNilEnvelope(t *testing.T) {
 		mu.Unlock()
 	}
 
-	if _, ok := h.SubscribeSeq("run1", 0, sink); !ok {
+	if _, _, ok := h.SubscribeSeq("run1", 0, sink); !ok {
 		t.Fatal("subscribe failed")
 	}
 

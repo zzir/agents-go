@@ -55,10 +55,6 @@ func TestFindBySourceAndRepoGroupAreOwnerExact(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	got, err := skills.FindBySource(ctx, repo, "pdf/SKILL.md", id("alice"))
-	if err != nil || got == nil || got.ID != published.ID {
-		t.Fatalf("FindBySource(alice) = %+v (%v), want the published row", got, err)
-	}
 	scope, ok, err := skills.RepoGroup(ctx, repo, id("alice"))
 	if err != nil || !ok || scope != ScopeGlobal {
 		t.Fatalf("RepoGroup(alice) = (%s, %v, %v), want the published group", scope, ok, err)
@@ -67,8 +63,8 @@ func TestFindBySourceAndRepoGroupAreOwnerExact(t *testing.T) {
 	if !ok || scope != ScopePrivate {
 		t.Fatalf("RepoGroup(admin) = (%s, %v), want their own private group", scope, ok)
 	}
-	if got, _ := skills.FindBySource(ctx, repo, "pdf/SKILL.md", id("bob")); got != nil {
-		t.Fatalf("FindBySource for an owner with no group = %+v, want nil", got)
+	if _, ok, _ := skills.RepoGroup(ctx, repo, id("bob")); ok {
+		t.Fatal("RepoGroup for an owner with no group must report none")
 	}
 }
 

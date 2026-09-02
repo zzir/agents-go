@@ -124,12 +124,12 @@ func (c *WSConn) Recheck() bool {
 	if err == nil && u.ID == c.User.ID && u.Role == c.User.Role {
 		return true
 	}
-	c.CloseWith(websocket.ClosePolicyViolation, "credential no longer valid")
+	c.closeWith(websocket.ClosePolicyViolation, "credential no longer valid")
 	return false
 }
 
-// CloseWith sends a close frame carrying code and reason, then closes.
-func (c *WSConn) CloseWith(code int, reason string) {
+// closeWith sends a close frame carrying code and reason, then closes.
+func (c *WSConn) closeWith(code int, reason string) {
 	c.mu.Lock()
 	_ = c.conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, reason), time.Now().Add(wsWriteTimeout))
 	c.mu.Unlock()
@@ -192,7 +192,7 @@ func (t *ConnTracker) CloseAll(reason string) {
 	}
 	t.mu.Unlock()
 	for _, c := range conns {
-		c.CloseWith(websocket.CloseGoingAway, reason)
+		c.closeWith(websocket.CloseGoingAway, reason)
 	}
 }
 
@@ -210,7 +210,7 @@ func (t *ConnTracker) CloseForUser(userID, reason string) {
 	}
 	t.mu.Unlock()
 	for _, c := range conns {
-		c.CloseWith(websocket.ClosePolicyViolation, reason)
+		c.closeWith(websocket.ClosePolicyViolation, reason)
 	}
 }
 

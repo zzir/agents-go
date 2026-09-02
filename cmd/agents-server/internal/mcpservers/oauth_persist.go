@@ -25,9 +25,8 @@ type tokenPayload struct {
 	RefreshToken string    `json:"refresh_token,omitempty"`
 	Expiry       time.Time `json:"expiry"`
 
-	// Refresh context, absent in payloads written before the go-sdk v1.7.0
-	// upgrade; such legacy grants degrade to a static token (usable until
-	// expiry, then interactive re-authorization).
+	// Refresh context. A grant without it degrades to a static token (usable
+	// until expiry, then interactive re-authorization).
 	TokenURL     string   `json:"token_url,omitempty"`
 	AuthStyle    int      `json:"auth_style,omitempty"`
 	ClientID     string   `json:"client_id,omitempty"`
@@ -125,17 +124,11 @@ func (p *persistingTokenSource) Token() (*oauth2.Token, error) {
 	return tok, nil
 }
 
-// restoredTokenSource rebuilds a token source from a persisted grant:
-//
-//   - full grant: a refreshing source that re-persists on change — the SAME
-//     machinery a live authorization uses (NewTokenSource in
-//     ConnectWithOAuth), so restored and fresh connections refresh alike and
-//     an expired access token with a live refresh token reconnects silently.
-//   - legacy or refresh-less grant with a still-valid access token: a static
-//     source — usable until expiry, then interactive re-authorization.
-//   - anything else: nil; the caller runs the interactive flow.
-//
-// hc is the HTTP client refreshes must use (proxy-aware, bounded timeout).
+// restoredTokenSource rebuilds a token source from a persisted grant: a full
+// grant gets the same refreshing, re-persisting source a live authorization
+// uses (workbench invariant 11); a refresh-less grant with a still-valid access
+// token a static one; anything else nil, for the interactive flow. hc is the
+// HTTP client refreshes must use (proxy-aware, bounded timeout).
 func restoredTokenSource(ctx context.Context, configID, saved string, s *store.McpServerStore, hc *http.Client) oauth2.TokenSource {
 	if saved == "" {
 		return nil

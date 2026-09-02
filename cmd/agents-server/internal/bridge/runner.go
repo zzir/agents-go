@@ -35,11 +35,10 @@ type Runner struct {
 
 	// OnRunAttach, when set, is invoked with the run id right after a run
 	// registers in the hub (fresh start and approval resume alike), before any
-	// event publishes. The WS layer uses it to attach every live connection to
-	// the stream — run events are a broadcast bus, not a reply channel.
-	//
-	// Written once during bootstrap, read from run goroutines, unsynchronized:
-	// nothing that can start a run may launch before it is wired (see cmd.run).
+	// event publishes. The WS layer uses it to attach the owner's connections
+	// to the stream (workbench invariant 14). Written once during bootstrap,
+	// read from run goroutines, unsynchronized: nothing that can start a run
+	// may launch before it is wired (invariant 32).
 	OnRunAttach func(runID string)
 	// OnBroadcast, when set, delivers an event about sessionID to every
 	// connection of its owner NOT attached to exceptRunID's stream — for a fact
@@ -141,8 +140,9 @@ func (r *Runner) StartWakeRun(sessionID, agentConfigID, projectID, input, parent
 	return r.startRunWithID(store.NewID(), sessionID, agentConfigID, projectID, TextInput(input), parentRunID, nil, onDone)
 }
 
-// startRunWithID is StartRun with a caller-chosen run id — SpawnTask mints the
-// task's run id up front so the row can carry it before the run launches.
+// startRunWithID is StartRun with a caller-chosen run id — taskLauncher.Launch
+// mints the task's run id up front so the row can carry it before the run
+// launches.
 func (r *Runner) startRunWithID(runID, sessionID, agentConfigID, projectID string, input RunInput, wakeParentRunID string, planIntent *bool, onDone func(*RunOutcome)) (string, error) {
 	return r.startRunReserved(runID, sessionID, agentConfigID, projectID, input, wakeParentRunID, planIntent, onDone, nil)
 }
@@ -451,7 +451,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 			return failTurn("", protocol.CodeConfigError, err, "", "")
 		}
 	}
-	tracer := newTracer(ctx, sendEvent, r.Deps.Traces, sessionID, runID, spec.wakeParentRunID, spanDataCap(ctx, r.Deps.Settings))
+	tracer := newTracer(ctx, sendEvent, r.Deps.Traces, sessionID, runID, spec.wakeParentRunID, r.Deps.Settings.SpanDataCap(ctx))
 
 	runSession := wrapCompaction(sa, built, provider, sendEvent, runID)
 

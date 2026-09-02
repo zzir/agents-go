@@ -33,14 +33,12 @@ const silentRedirectURL = "http://127.0.0.1/mcp-oauth-silent-reconnect"
 // endpoint.
 const oauthHTTPTimeout = 30 * time.Second
 
-// oauthHTTPClient wraps the optional proxy client with the OAuth timeout.
+// oauthHTTPClient is the OAuth client: the proxy client's transport when one
+// is set, bounded by oauthHTTPTimeout.
 func oauthHTTPClient(proxy *http.Client) *http.Client {
 	client := &http.Client{Timeout: oauthHTTPTimeout}
 	if proxy != nil {
 		client.Transport = proxy.Transport
-		if proxy.Timeout > 0 {
-			client.Timeout = proxy.Timeout
-		}
 	}
 	return client
 }

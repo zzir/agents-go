@@ -45,7 +45,7 @@ func (e2bBackend) Reclaim(ctx context.Context, spec Spec) error {
 // e2bOptions assembles the SDK options from the sandbox and the project.
 func e2bOptions(spec Spec) (e2bsb.Options, error) {
 	var c store.E2BConfig
-	if err := unmarshalConfig(spec.Sandbox.Config, &c); err != nil {
+	if err := store.DecodeConfig(spec.Sandbox.Config, &c); err != nil {
 		return e2bsb.Options{}, fmt.Errorf("e2b sandbox: invalid config: %w", err)
 	}
 	if c.APIKey == "" {
