@@ -3,8 +3,9 @@ import { api } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import type { Project } from '@/lib/binding';
 
-/* useProjects fetches the caller's project rows — the composer picker and the
-   terminal panel's + menu both group them by sandbox. One hook, two consumers.
+/* useProjects fetches the caller's project rows — the composer's Project
+   submenu and the terminal panel's + menu both read them. One hook, two
+   consumers.
 
    version is the app's counter of project-set changes (a first run bound a
    session and may have auto-created its scratch project, a session was

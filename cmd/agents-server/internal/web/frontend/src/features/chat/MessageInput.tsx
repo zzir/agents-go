@@ -1,11 +1,11 @@
 import { useState, useCallback, useRef, useEffect, useMemo, type FormEvent, type KeyboardEvent, type ClipboardEvent, type ReactNode } from 'react';
-import { IconButton, Spinner } from '@primer/react';
-import { PaperAirplaneIcon, SquareCircleIcon, XIcon, SyncIcon } from '@primer/octicons-react';
+import { ActionList, ActionMenu, IconButton, Spinner } from '@primer/react';
+import { ImageIcon, PaperAirplaneIcon, PlusIcon, SquareCircleIcon, XIcon, SyncIcon } from '@primer/octicons-react';
 import { loadDraft, saveDraft, clearDraft, loadAttachmentDraft, saveAttachmentDraft } from '@/lib/drafts';
 import { onComposerInsert } from '@/lib/composer';
 import { api } from '@/lib/api';
 import { toast } from '@/lib/toast';
-import { fetchAttachmentConfig, uploadAttachment, isImageFile, type AttachmentMeta, type AttachmentConfig } from '@/lib/attachments';
+import { fetchAttachmentConfig, imageAffordance, uploadAttachment, isImageFile, type AttachmentMeta, type AttachmentConfig } from '@/lib/attachments';
 import { SlashCommandPopup, matchCommands, slashOptionID, slashQuery, useSlashCommands, type SlashCommand } from '@/features/chat/SlashMenu';
 
 interface MessageInputProps {
@@ -18,6 +18,10 @@ interface MessageInputProps {
   // configured AND the picked agent has Vision on.
   allowAttachments?: boolean;
   toolbar?: ReactNode;
+  // plusItems is what the "+" menu offers after Image — the Project submenu
+  // while the session is unbound; null once bound. The button renders only
+  // when something in the menu can be taken.
+  plusItems?: ReactNode;
 }
 
 // One image in the composer strip: uploading (localUrl preview), ready
@@ -32,11 +36,12 @@ interface AttachmentDraft {
 
 let draftKey = 0;
 
-export function MessageInput({ sessionId, onSend, onCancel, disabled, running, allowAttachments, toolbar }: MessageInputProps) {
+export function MessageInput({ sessionId, onSend, onCancel, disabled, running, allowAttachments, toolbar, plusItems }: MessageInputProps) {
   const [text, setText] = useState(() => loadDraft(sessionId));
   const [atts, setAtts] = useState<AttachmentDraft[]>([]);
   const [attCfg, setAttCfg] = useState<AttachmentConfig | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let alive = true;
@@ -151,6 +156,8 @@ export function MessageInput({ sessionId, onSend, onCancel, disabled, running, a
 
   const uploading = atts.some(a => a.status === 'uploading');
   const readyAtts = atts.filter(a => a.status === 'ready' && a.meta).map(a => a.meta!);
+  const image = imageAffordance(attCfg, Boolean(allowAttachments));
+  const showPlus = image.enabled || plusItems != null;
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -230,7 +237,32 @@ export function MessageInput({ sessionId, onSend, onCancel, disabled, running, a
           aria-controls={popupOpen ? 'slash-commands' : undefined}
           aria-activedescendant={popupOpen ? slashOptionID(Math.min(activeIndex, offered.length - 1)) : undefined}
         />
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/png,image/jpeg"
+          multiple
+          hidden
+          onChange={(e) => { addFiles(Array.from(e.target.files ?? [])); e.target.value = ''; }}
+        />
         <div className="chat-input-toolbar">
+          {showPlus && (
+            <ActionMenu>
+              <ActionMenu.Anchor>
+                <IconButton icon={PlusIcon} size="small" variant="invisible" aria-label="Add" />
+              </ActionMenu.Anchor>
+              <ActionMenu.Overlay>
+                <ActionList>
+                  <ActionList.Item disabled={!image.enabled} onSelect={() => fileInputRef.current?.click()}>
+                    <ActionList.LeadingVisual><ImageIcon /></ActionList.LeadingVisual>
+                    Image…
+                    {image.hint && <ActionList.Description variant="block">{image.hint}</ActionList.Description>}
+                  </ActionList.Item>
+                  {plusItems}
+                </ActionList>
+              </ActionMenu.Overlay>
+            </ActionMenu>
+          )}
           {toolbar}
           <div className="chat-input-toolbar-send">
             <span className="chat-input-divider" />

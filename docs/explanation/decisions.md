@@ -1201,8 +1201,8 @@ volume; the confirm says so. Sessions still block the delete, as before.
 without one used to land in is gone. It existed to make an unbound run
 useful, and instead made "which tree did that command touch?" a question with
 a surprising answer. An agent with no project is a chat: `attachSandboxTools`
-returns early, and the composer's picker offers projects with an explicit
-None.
+returns early, and the composer binds no project unless one is picked in its
+"+" menu (picking the checked project again clears it).
 
 **The session binding collapses to `project_id`.** A project pins its machine,
 so the second column was derivable and could only ever disagree.

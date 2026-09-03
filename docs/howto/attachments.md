@@ -1,7 +1,7 @@
 # Image input (attachments)
 
-Paste images into the chat composer and the model sees them as native
-vision input. This is a **workbench** feature: the SDK itself is unchanged (a user message with
+Paste images into the chat composer, or pick them from its **+** menu, and
+the model sees them as native vision input. This is a **workbench** feature: the SDK itself is unchanged (a user message with
 `input_image` parts was always valid input); what the server adds is storage,
 upload, and the resolution of stored references at the model boundary
 ([workbench invariants 56–58](../explanation/workbench-invariants.md)).
@@ -47,10 +47,11 @@ server's rows, not the bucket, are the source of truth for what is alive.
 
 ## Using it
 
-With both switches on, pasting png or jpeg images into the composer queues
-them on a thumbnail strip (up to 8 per message, 10 MiB each; GIFs are
-refused — providers read one frame at best). Pasting is the one entry
-point — there is no picker button or drag-and-drop.
+With both switches on, png or jpeg images pasted into the composer or picked
+through **+ → Image…** queue on a thumbnail strip (up to 8 per message,
+10 MiB each; GIFs are refused — providers read one frame at best). With a
+switch off the menu item is disabled and names the missing switch. There is
+no drag-and-drop.
 Images are downscaled in the browser to 1568px on the longest side before
 uploading; the original file is discarded — the workbench stores what the
 model sees.

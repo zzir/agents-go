@@ -1,33 +1,38 @@
 import { describe, expect, it } from 'vitest';
-import { composerSandboxView, groupProjects, projectLabel } from './binding';
+import { composerProjectRows, composerSandboxView, projectLabel } from './binding';
 
 const sandboxes = [
   { id: 'sb-a', name: 'host' },
   { id: 'sb-b', name: 'remote' },
 ];
 
+// Server order is name ASC; the picker re-sorts by creation time.
 const projects = [
-  { id: 'p1', name: 'api', sandbox_id: 'sb-b' },
-  { id: 'p2', name: 'goagents', sandbox_id: 'sb-a' },
-  { id: 'p3', name: 'scratch', sandbox_id: 'sb-a' },
-  { id: 'p4', name: 'orphan', sandbox_id: 'gone' },
+  { id: 'p1', name: 'api', sandbox_id: 'sb-b', created_at: '2026-09-01T10:00:00Z' },
+  { id: 'p2', name: 'goagents', sandbox_id: 'sb-a', created_at: '2026-09-03T10:00:00Z' },
+  { id: 'p3', name: 'scratch', sandbox_id: 'sb-a', created_at: '2026-09-02T10:00:00+02:00' },
+  { id: 'p4', name: 'orphan', sandbox_id: 'gone', created_at: '2026-09-04T10:00:00Z' },
 ];
 
-describe('groupProjects', () => {
-  it('groups by sandbox in sandbox order, keeping server order inside', () => {
-    const groups = groupProjects(projects, sandboxes);
-    expect(groups.map(g => g.sandboxName)).toEqual(['host', 'remote']);
-    expect(groups[0].items.map(p => p.name)).toEqual(['goagents', 'scratch']);
-    expect(groups[1].items.map(p => p.name)).toEqual(['api']);
+describe('composerProjectRows', () => {
+  it('lists newest first, each row with its sandbox name', () => {
+    const rows = composerProjectRows(projects, sandboxes);
+    expect(rows.map(r => r.project.name)).toEqual(['goagents', 'scratch', 'api']);
+    expect(rows.map(r => r.sandboxName)).toEqual(['host', 'host', 'remote']);
   });
   it('drops projects whose sandbox no longer exists', () => {
-    const groups = groupProjects(projects, sandboxes);
-    expect(groups.flatMap(g => g.items.map(p => p.id))).not.toContain('p4');
+    expect(composerProjectRows(projects, sandboxes).map(r => r.project.id)).not.toContain('p4');
   });
-  it('omits empty groups and tolerates missing inputs', () => {
-    expect(groupProjects([projects[0]], sandboxes).map(g => g.sandboxId)).toEqual(['sb-b']);
-    expect(groupProjects(null, sandboxes)).toEqual([]);
-    expect(groupProjects(projects, null)).toEqual([]);
+  it('breaks a missing or equal timestamp on the id, later id first', () => {
+    const rows = composerProjectRows([
+      { id: 'a', name: 'x', sandbox_id: 'sb-a' },
+      { id: 'b', name: 'y', sandbox_id: 'sb-a' },
+    ], sandboxes);
+    expect(rows.map(r => r.project.id)).toEqual(['b', 'a']);
+  });
+  it('tolerates missing inputs', () => {
+    expect(composerProjectRows(null, sandboxes)).toEqual([]);
+    expect(composerProjectRows(projects, null)).toEqual([]);
   });
 });
 

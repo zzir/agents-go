@@ -551,26 +551,6 @@
   padding: var(--base-size-4) var(--base-size-6) var(--base-size-6);
   gap: var(--base-size-4);
 }
-.chat-input-toolbar-left {
-  display: flex;
-  align-items: center;
-  gap: var(--base-size-2);
-  min-width: 0;
-}
-
-/* The project picker button: clamp long labels so the composer row never
-   overflows. Primer Button lays its content out as a grid whose children
-   default to min-width:auto — without these the text refuses to shrink. */
-.chat-input-toolbar-left [data-component='buttonContent'] {
-  min-width: 0;
-}
-.chat-input-toolbar-left [data-component='text'] {
-  min-width: 0;
-  max-width: 240px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .chat-input-toolbar-right {
   display: flex;
   align-items: center;

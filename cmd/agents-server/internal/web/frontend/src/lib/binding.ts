@@ -24,6 +24,9 @@ export interface Project {
   id: string;
   name: string;
   sandbox_id: string;
+  /* When the row was created (RFC 3339) — the composer picker lists newest
+     first. */
+  created_at?: string;
   /* The volume the files live in, and the daemon it is on — shown by the
      delete dialog, which destroys it. */
   storage_hint?: string;
@@ -70,20 +73,20 @@ export function projectLabel(projectName: string, sandboxName: string): string {
   return `${projectName} @ ${sandboxName}`;
 }
 
-/* The picker's grouped view: one group per sandbox, groups in sandbox order,
-   items in server order (name ASC). Projects whose sandbox no longer exists
-   are dropped — they cannot be started again. */
-export function groupProjects(
+/* The composer picker's rows: newest project first, each with the name of the
+   sandbox it runs on. Projects whose sandbox no longer exists are dropped —
+   they cannot be started again. */
+export function composerProjectRows(
   projects: Project[] | null,
   sandboxes: SandboxLite[] | null,
-): Array<{ sandboxId: string; sandboxName: string; items: Project[] }> {
+): Array<{ project: Project; sandboxName: string }> {
   if (!projects || !sandboxes) return [];
-  const groups: Array<{ sandboxId: string; sandboxName: string; items: Project[] }> = [];
-  for (const sb of sandboxes) {
-    const items = projects.filter(p => p.sandbox_id === sb.id);
-    if (items.length > 0) groups.push({ sandboxId: sb.id, sandboxName: sb.name, items });
-  }
-  return groups;
+  const names = new Map(sandboxes.map(sb => [sb.id, sb.name]));
+  const created = (p: Project) => (p.created_at ? Date.parse(p.created_at) || 0 : 0);
+  return projects
+    .filter(p => names.has(p.sandbox_id))
+    .sort((a, b) => created(b) - created(a) || b.id.localeCompare(a.id))
+    .map(p => ({ project: p, sandboxName: names.get(p.sandbox_id)! }));
 }
 
 export function composerSandboxView(

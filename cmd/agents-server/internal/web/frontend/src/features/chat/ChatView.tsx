@@ -1,13 +1,13 @@
 import './chat.css';
 import { useState, useEffect, useCallback, useMemo, useRef, type MouseEvent, type ReactNode } from 'react';
-import { Button, IconButton, ActionMenu, ActionList, useConfirm } from '@primer/react';
+import { Button, ActionMenu, ActionList } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { api } from '@/lib/api';
 import { CHECK_ICON } from '@/lib/markdownShared';
 import { type TurnPart, type TimelineEntry, type Branches, type WorkflowStartedNote } from '@/lib/timeline';
 import { useScrollToBottom, useApi, useCopy } from '@/lib/hooks';
 import { loadSessionAgent, saveSessionAgent, loadLastAgent, saveLastAgent, loadSessionProject, saveSessionProject } from '@/lib/drafts';
-import { composerSandboxView, groupProjects, projectLabel, type Project, type SandboxSupports, type SessionBinding } from '@/lib/binding';
+import { composerProjectRows, composerSandboxView, projectLabel, type SandboxSupports, type SessionBinding } from '@/lib/binding';
 import { useProjects } from '@/lib/useProjects';
 import { parseTaskNotification, TASK_KIND_WORKFLOW, type TaskStatus } from '@/lib/protocol';
 import type { SessionState, TaskState } from '@/lib/useAgentSocket';
@@ -30,7 +30,7 @@ import { TraceDrawer } from '@/features/chat/TracePanel';
 import { ContextPanel } from '@/features/chat/ContextPanel';
 import { ChatTopBar } from '@/features/chat/ChatTopBar';
 import { NewProjectDialog, useProjectMenu } from '@/features/chat/ProjectControls';
-import { ArrowDownIcon, CommentDiscussionIcon, FileDirectoryIcon, PlusIcon } from '@primer/octicons-react';
+import { ArrowDownIcon, CommentDiscussionIcon, FileDirectoryIcon } from '@primer/octicons-react';
 import { toast } from '@/lib/toast';
 
 /* ---------- types ---------- */
@@ -230,36 +230,6 @@ export function ChatView({
     const last = loadLastAgent();
     setAgentConfigId(agentConfigs.some(a => a.id === last) ? last : agentConfigs[0].id);
   }, [agentConfigs, agentConfigId, sessionAgentId, setAgentConfigId]);
-
-  const confirmDialog = useConfirm();
-  const deleteProject = async (p: Project) => {
-    const ok = await confirmDialog({
-      title: `Delete “${p.name}”?`,
-      content: p.storage_hint
-        ? `This DESTROYS its working tree — ${p.storage_hint} — and a Docker volume is not in anyone's backup. Export it first if it matters. Refused while sessions are still bound to it.`
-        : 'This DESTROYS its working tree, and a Docker volume is not in anyone\'s backup. Export it first if it matters. Refused while sessions are still bound to it.',
-      confirmButtonContent: 'Delete',
-      confirmButtonType: 'danger',
-    });
-    if (!ok) return;
-    try {
-      const res = await api.projects.delete(p.id);
-      if (res?.storage_error) {
-        // The row IS gone; only the storage was left behind.
-        toast.error(`“${p.name}” was deleted, but its storage could not be reclaimed: ${res.storage_error}`);
-      }
-      // Only a delete that actually happened drops the row and the selection:
-      // a refused delete (still bound) must not flash the project out of the
-      // list or clear the composer's pick.
-      mutateProjects(prev => (prev ? prev.filter(x => x.id !== p.id) : prev));
-      if (projectId === p.id) setProjectId('');
-    } catch (e) {
-      toast.error((e as Error).message || 'Could not delete the project');
-    } finally {
-      // Reconcile with the server whatever happened.
-      reloadProjects();
-    }
-  };
 
   // A persisted project may have since been deleted — a send carrying it
   // would be refused, so a now-unknown id drops back to None.
@@ -643,91 +613,63 @@ export function ChatView({
   const selectedAgentLabel = selectedAgent?.name || 'Agent';
   const agentCollisions = collidingNames(agentConfigs || []);
 
+  // The composer's "+" carries the Project submenu until the session binds:
+  // the caller's projects newest first, then New project. The pick shows only
+  // here — checked in the list, named on the Project row — and picking the
+  // checked project again clears it. Once bound, the top bar's badge is the
+  // binding and the submenu is gone.
+  const projectRows = composerProjectRows(projects, sandboxDefs);
+  const plusItems: ReactNode = !sandboxView.bound && sandboxDefs && sandboxDefs.length > 0 ? (
+    <ActionMenu>
+      <ActionMenu.Anchor>
+        <ActionList.Item>
+          <ActionList.LeadingVisual><FileDirectoryIcon /></ActionList.LeadingVisual>
+          Project
+          {selectedProject && <ActionList.Description variant="inline">{selectedProject.name}</ActionList.Description>}
+        </ActionList.Item>
+      </ActionMenu.Anchor>
+      <ActionMenu.Overlay>
+        <ActionList selectionVariant="single">
+          {/* A failed fetch must not read as an empty account. */}
+          {projectsError ? (
+            <ActionList.Item disabled>projects failed to load</ActionList.Item>
+          ) : projectRows.length === 0 ? (
+            <ActionList.Item disabled>no projects yet</ActionList.Item>
+          ) : projectRows.map(({ project: p, sandboxName: sb }) => (
+            <ActionList.Item key={p.id} selected={projectId === p.id} onSelect={() => setProjectId(projectId === p.id ? '' : p.id)} title={projectLabel(p.name, sb)}>
+              {p.name}
+              <ActionList.Description variant="inline">{sb}</ActionList.Description>
+            </ActionList.Item>
+          ))}
+          <ActionList.Divider />
+          <ActionList.Item onSelect={() => setNewProject({ sandboxId: selectedProject?.sandbox_id || sandboxDefs[0].id })}>
+            New project…
+          </ActionList.Item>
+        </ActionList>
+      </ActionMenu.Overlay>
+    </ActionMenu>
+  ) : null;
+
   const inputToolbar: ReactNode = (
     <>
-      <div className="chat-input-toolbar-left">
-        {/* Bound sessions show nothing here — the binding lives in the top
-            bar's badge. Before binding the picker offers PROJECTS — the
-            caller's rows, grouped by sandbox — because the project is what a
-            person recognizes; the backend is its attribute, not the other
-            way around. */}
-        {!sandboxView.bound && sandboxDefs && sandboxDefs.length > 0 && (
-          <ActionMenu>
-            {/* Nothing picked yet reads as an offer, "+", not as a folder
-                that is not there; a picked project shows as itself. */}
-            {selectedProject ? (
-              <ActionMenu.Button size="small" variant="invisible" leadingVisual={FileDirectoryIcon}>
-                {projectLabel(selectedProject.name, sandboxName(selectedProject.sandbox_id))}
-              </ActionMenu.Button>
-            ) : (
-              <ActionMenu.Anchor>
-                <IconButton icon={PlusIcon} size="small" variant="invisible" aria-label="Project" />
-              </ActionMenu.Anchor>
-            )}
-            <ActionMenu.Overlay>
-              <ActionList selectionVariant="single">
-                <ActionList.Item selected={projectId === ''} onSelect={() => setProjectId('')}>
-                  None
-                  <ActionList.Description variant="inline">chat only</ActionList.Description>
-                </ActionList.Item>
-                {/* A failed fetch must not read as an empty account. */}
-                {projectsError && <ActionList.Item disabled>projects failed to load</ActionList.Item>}
-                {/* One group per machine: the group heading carries the
-                    target, rows carry just the project name. */}
-                {groupProjects(projects, sandboxDefs).map(g => (
-                  <ActionList.Group key={g.sandboxId}>
-                    {/* Inside a menu-role ActionList the heading is
-                        presentational: a heading level (`as`) is invalid in a
-                        menu and throws, unmounting the app. */}
-                    <ActionList.GroupHeading>{g.sandboxName}</ActionList.GroupHeading>
-                    {g.items.map(p => (
-                      <ActionList.Item
-                        key={p.id}
-                        selected={projectId === p.id}
-                        onSelect={() => setProjectId(p.id)}
-                        title={projectLabel(p.name, g.sandboxName)}
-                      >
-                        {p.name}
-                      </ActionList.Item>
-                    ))}
-                  </ActionList.Group>
-                ))}
-                <ActionList.Divider />
-                <ActionList.Item onSelect={() => setNewProject({ sandboxId: selectedProject?.sandbox_id || sandboxDefs[0].id })}>
-                  New project…
-                </ActionList.Item>
-                {/* A plain menu item, not a per-row trailing action: Primer
-                    forbids ActionList.TrailingAction inside a menu-role list
-                    (it would not render). Deleting acts on the SELECTED
-                    project, behind its own confirm. */}
-                {selectedProject && (
-                  <ActionList.Item variant="danger" onSelect={() => void deleteProject(selectedProject)}>
-                    Delete “{selectedProject.name}”…
-                  </ActionList.Item>
-                )}
-              </ActionList>
-            </ActionMenu.Overlay>
-          </ActionMenu>
-        )}
-        {newProject && sandboxDefs && (
-          <NewProjectDialog
-            sandboxes={sandboxDefs}
-            initialSandboxId={newProject.sandboxId}
-            onClose={() => setNewProject(null)}
-            onCreated={created => {
-              // Seed the cached list before selecting: the stale-id guard
-              // above runs against `projects` on the very next commit, and a
-              // fire-and-forget reload would hand it a list without the new
-              // row — wiping the selection it should protect.
-              mutateProjects(prev => prev ? [...prev.filter(p => p.id !== created.id), created] : [created]);
-              if (created.id) setProjectId(created.id);
-              reloadProjects();
-              setNewProject(null);
-            }}
-          />
-        )}
-        {envDialog}
-      </div>
+      {newProject && sandboxDefs && (
+        <NewProjectDialog
+          sandboxes={sandboxDefs}
+          initialSandboxId={newProject.sandboxId}
+          onClose={() => setNewProject(null)}
+          onCreated={created => {
+            // Seed the cached list before selecting: the stale-id guard
+            // above runs against `projects` on the very next commit, and a
+            // fire-and-forget reload would hand it a list without the new
+            // row — wiping the selection it should protect.
+            mutateProjects(prev => prev ? [...prev.filter(p => p.id !== created.id), created] : [created]);
+            if (created.id) setProjectId(created.id);
+            reloadProjects();
+            setNewProject(null);
+          }}
+        />
+      )}
+      {envDialog}
       <div className="chat-input-toolbar-right">
         {agentConfigs && agentConfigs.length > 0 ? (
           <ActionMenu>
@@ -891,6 +833,7 @@ export function ChatView({
               running={running}
               allowAttachments={allowAttachments}
               toolbar={inputToolbar}
+      plusItems={plusItems}
             />
           </div>
         </div>
@@ -932,6 +875,7 @@ export function ChatView({
           running={running}
           allowAttachments={allowAttachments}
           toolbar={inputToolbar}
+      plusItems={plusItems}
         />
       </div>
 

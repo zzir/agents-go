@@ -29,6 +29,17 @@ export function fetchAttachmentConfig(): Promise<AttachmentConfig> {
   return configPromise;
 }
 
+// imageAffordance is the composer's "Image…" menu item: taken when the server
+// stores attachments AND the picked agent has Vision on, otherwise disabled
+// with the missing switch as its hint. A config still loading disables it
+// without a hint.
+export function imageAffordance(cfg: AttachmentConfig | null, vision: boolean): { enabled: boolean; hint: string } {
+  if (!cfg) return { enabled: false, hint: '' };
+  if (!cfg.enabled) return { enabled: false, hint: 'not configured on this server' };
+  if (!vision) return { enabled: false, hint: 'enable Vision on the agent' };
+  return { enabled: true, hint: '' };
+}
+
 // attachmentIdsEqual compares two bubbles' attachment sets — the second half
 // of the user-message dedup key (content alone collapses two image-only
 // messages).
