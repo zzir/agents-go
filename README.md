@@ -2,11 +2,9 @@
 
 # agents-go workbench
 
-**Go agents. Local first.**
+The Go-native agent workbench you run yourself: see what the model saw, replay it, fork it.
 
-The Go-native agent workbench you run yourself. One binary, your data: see
-exactly what the model saw, then replay or fork any turn. Sandboxes behind
-approvals, workflows, MCP. Solo or as a team.
+**Go agents. Local first.**
 
 [![Release](https://img.shields.io/github/v/release/zzir/agents-go)](https://github.com/zzir/agents-go/releases)
 [![CI](https://github.com/zzir/agents-go/actions/workflows/ci.yml/badge.svg)](https://github.com/zzir/agents-go/actions/workflows/ci.yml)
@@ -16,8 +14,7 @@ approvals, workflows, MCP. Solo or as a team.
 
 [Get started](#get-started) ·
 [What you get](#what-you-get) ·
-[Docs](docs/) ·
-[Embed the SDK](#embed-it-the-agents-go-sdk)
+[Docs](docs/)
 
 </div>
 

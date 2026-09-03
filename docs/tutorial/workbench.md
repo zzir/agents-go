@@ -13,9 +13,7 @@ environment variable and runtime setting is in the
 
 Download the archive for your OS and CPU from the
 [Releases](https://github.com/zzir/agents-go/releases) page and extract it;
-the `agents-server` binary is at the top level. On macOS, Gatekeeper refuses
-the unsigned binary until `xattr -d com.apple.quarantine ./agents-server`
-clears it.
+the `agents-server` binary is at the top level.
 
 ```bash
 ./agents-server
@@ -26,6 +24,9 @@ to move) and keeps its state in `data.db` in the directory you ran it from
 (`--db`; a `postgres://` DSN uses PostgreSQL instead). On startup it prints an
 auto-generated auth token — open the address in a browser and paste the token
 into the login screen. `agents-server --help` lists every flag.
+
+> **macOS.** Gatekeeper refuses the unsigned binary;
+> `xattr -d com.apple.quarantine ./agents-server` clears it.
 
 To build from source instead: the web UI is compiled into the binary via
 `go:embed`, and the built `internal/web/frontend/dist` is not checked in, so a

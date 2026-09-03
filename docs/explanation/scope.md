@@ -10,11 +10,11 @@ that results is in [the spec](../reference/spec.md).
 
 ### 1.1 What this is
 
-A local agent workbench: `agents-server`, one binary you run yourself, your
-data in SQLite (or PostgreSQL), an embedded UI — **"Go agents. Local first."**
-It runs agents and workflows behind tool approvals and closes the debug loop
-on them: the transcript is the truth, a context lens and traces show what the
-model saw, and any turn can be replayed or forked.
+The agent workbench you run yourself: see what the model saw, replay it,
+fork it — **"Go agents. Local first."** Concretely, `agents-server`: one
+binary, your data in SQLite (or PostgreSQL), an embedded UI, and a debug loop
+in which the transcript is the truth, a context lens and traces show what the
+model was sent, and any turn can be replayed or forked.
 
 The SDK underneath it — the root module of this repository — is the same core
 consumed a second way: embedded in your own Go program, with no dependency on
