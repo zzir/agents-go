@@ -49,18 +49,11 @@ Run(ctx, agent, input, opts)
        └─ decide ──────────────────── continue · final output · interrupt
 ```
 
-Two properties of this loop are worth knowing before you build on it:
-
-**A run executes on the consumer's goroutine.** `Run` returns an
-`iter.Seq2`; ranging it advances the loop. Abandoning the range stops the run
-where it stands — there is no producer goroutine to leak, and no context you
-must remember to cancel. The trace still closes, because the loop unwinds
-through its own defers.
-
-**Streaming and blocking are one loop.** `Run` streams the model call so raw
-events reach you; `RunSync` makes one blocking call. Everything else —
-guardrail timing, persistence points, ordering, tracing — is identical code.
-A change to run semantics is written once.
+Two properties to know before building on it: a run executes on the
+consumer's goroutine (ranging the stream advances the loop; abandoning it
+stops the run), and streaming and blocking are one loop, so a change to run
+semantics is written once — [spec §2.0](../reference/spec.md#20-entry-points)
+holds both.
 
 See [Running agents](../howto/running_agents.md) and [Streaming](../howto/streaming.md).
 
@@ -77,27 +70,19 @@ most from a naive "list of messages".
 | Semantics | `session.Session` (a struct, not an interface) | Turning entries into what the model reads. |
 | Projection | `session.Projector` | Which entry kinds reach the model at all. |
 
-A session stores **entries**, not bare items. An entry carries the item plus
-everything about it worth keeping: who produced it (`Source`), what it looks
-like to a person (`Display`), what it cost (`Usage`), what went wrong along the
-way (`Diagnostics`), and its place in the tree (`ParentID`).
+A session stores **entries**, not bare items: the item plus who produced it
+(`Source`), what it looks like to a person (`Display`), what it cost
+(`Usage`), what went wrong (`Diagnostics`), and its place in the tree
+(`ParentID`). Three consequences, each an invariant of its own: entries are
+append-only, a late-settling display being a new update entry folded in at
+read time ([spec §2.5b](../reference/spec.md#25b-session-entries)); a branch is
+a fold, walked from parent links, so an abandoned attempt stays recorded
+([§2.5d](../reference/spec.md#25d-sessions-are-trees)); and compaction appends a
+checkpoint the projection renders up front while the folded entries stay
+([§2.5f](../reference/spec.md#25f-compaction)).
 
-Three consequences fall out of that:
-
-- **Append-only.** Nothing is rewritten. A display that settles after its turn
-  ended — a background task finishing, a late diagnostic — is a *new update
-  entry* naming its target, folded in at read time. That is what removes the
-  "the task finished before the turn was saved" race rather than handling it.
-- **Branching is a fold, not a pointer.** Switching to another attempt appends
-  a leaf entry; the active branch is derived by walking parent links. The
-  abandoned attempt stays recorded, which is what makes "show me the other
-  answer" possible at all.
-- **Compaction appends a checkpoint.** The folded entries stay; the checkpoint
-  names them and carries the summary; the projection drops what was folded and
-  renders the summary up front, so the model sees `[summary, kept…]` and a
-  reader can still expand what was folded.
-
-See [Sessions](../howto/sessions.md) and [Context management](../howto/context.md).
+See [Sessions](../howto/sessions.md) and
+[Running agents](../howto/running_agents.md) for context management.
 
 ---
 
@@ -129,60 +114,47 @@ the reasoning.
 
 ## Packages
 
-Core module path: `github.com/zzir/agents-go`. This table names the import
-paths; which of them are separate **modules**, and why, is the next section.
-Signatures live on
+Core module path: `github.com/zzir/agents-go`. The repository is a Go
+workspace of eight modules; the table names each import path and, where it is
+its own module, the heavy dependency that makes it one. Signatures live on
 [pkg.go.dev](https://pkg.go.dev/github.com/zzir/agents-go).
 
-| Package | What it is |
-|---|---|
-| `agents` | Core: agents, runner, tools, guardrails, sessions, HITL, tracing hooks |
-| `models/openai` | OpenAI Responses API model provider (built on `openai-go` v3) |
-| `models/modelkit` | Dependency-free toolkit for model adapters + `conformancetest` golden matrix |
-| `tracing` | Traces, spans, processors and exporters |
-| `sandbox` | `Sandbox` interface + `CodeTool` + `apply_patch` + the local backend (three backends in all: local, `sandbox/docker`, `sandbox/e2b`; each hosts persistent shells and terminals) |
-| `sandbox/e2b` | E2B-compatible cloud backend (HTTP only, so it stays in the root module) |
-| `sandbox/sandboxtest` | conformance suite every `Sandbox` backend runs against |
-| `mcp` | **separate module** — Model Context Protocol client (modelcontextprotocol/go-sdk) |
-| `models/anthropic` | **separate module** — Anthropic Messages API backend (translated to Responses) |
-| `sandbox/docker` | **separate module** — Docker sandbox backend |
-| `sessions` | **separate module** — SQLite/PostgreSQL session store (uptrace/bun) |
-| `skills` | **separate module** — Agent Skills (`SKILL.md`) parser |
-| `cmd/agents-server` | **separate module** — the workbench: web app (REST + WS + embedded UI) over the SDK |
+| Package | Module | What it is |
+|---|---|---|
+| `agents` | root | Core: agents, runner, tools, guardrails, sessions, HITL, tracing hooks |
+| `models/openai` | root | OpenAI Responses API model provider (built on `openai-go` v3) |
+| `models/modelkit` | root | Dependency-free toolkit for model adapters + `conformancetest` golden matrix |
+| `tracing` | root | Traces, spans, processors and exporters |
+| `sandbox` | root | `Sandbox` interface + `CodeTool` + `apply_patch` + the local backend (three backends in all: local, `sandbox/docker`, `sandbox/e2b`; each hosts persistent shells and terminals) |
+| `sandbox/e2b` | root | E2B-compatible cloud backend (HTTP only, so it needs no module) |
+| `sandbox/sandboxtest` | root | conformance suite every `Sandbox` backend runs against |
+| `mcp` | own — modelcontextprotocol/go-sdk and the seven indirect requirements it brought | Model Context Protocol client |
+| `models/anthropic` | own — anthropic-sdk-go | Anthropic Messages API backend (translated to Responses) |
+| `sandbox/docker` | own — the Docker client, x/crypto/ssh for remote daemons | Docker sandbox backend |
+| `sessions` | own — the SQL drivers | SQLite/PostgreSQL session store (uptrace/bun) |
+| `skills` | own — the YAML parser | Agent Skills (`SKILL.md`) parser |
+| `cmd/agents-server` | own — a web application, not a library | the workbench: web app (REST + WS + embedded UI) over the SDK |
+| `examples/anthropic` | own — the same anthropic-sdk-go dep | an example program |
 
-The core lives in a single `agents/` package. The original plan split it further
-into `tools/`, `outputs/` and `models/`, but in Go those would form an import
-cycle with the core (tool callbacks reference `RunContext`; the `Model` interface
-references `Tool`), so they are kept together in `agents/`. Provider, storage and
-tracing implementations live in subpackages that import `agents`; MCP does the
-same from a nested module, so its go-sdk dependency stays out of the core. Items
-use the `openai-go` Responses types as the wire format directly, so nothing is
-lost converting in and out of a parallel item model.
+The core is one `agents/` package: tool callbacks reference `RunContext` and
+the `Model` interface references `Tool`, so a split into `tools/`, `outputs/`
+and `models/` would form an import cycle. Provider, storage and tracing
+implementations live in subpackages that import `agents`; MCP does the same
+from a nested module, so its go-sdk dependency stays out of the core.
 
-The Responses **WebSocket transport** and a `Model` connection-lifecycle hook
-(`Close`/`aclose`) are not implemented — only the HTTP Responses transport is
-supported today.
+The Responses WebSocket transport is not implemented
+([scope §3](scope.md#3-capabilities-deliberately-not-provided)).
 
 ---
 
 ## Module boundaries
 
-The repository is a Go workspace of eight modules (one of them an example
-module with its own heavy dep). **A submodule exists only to keep a heavy
-dependency out of the core.** Anything dependency-free stays in the root
-module, no matter how peripheral it feels — `models/modelkit` is the standing
-example: shared adapter plumbing, stdlib-only, so it lives in root.
-
-| Module | Exists because of |
-|---|---|
-| root | — the SDK (including `models/openai` and `models/modelkit`) |
-| `mcp` | the modelcontextprotocol/go-sdk client and the seven indirect requirements it brought with it |
-| `models/anthropic` | the anthropic-sdk-go client |
-| `sandbox/docker` | the Docker client (and x/crypto/ssh for remote daemons) |
-| `sessions` | the SQL drivers |
-| `skills` | the YAML parser |
-| `cmd/agents-server` | a web application, not a library |
-| `examples/anthropic` | an example program needing that same heavy dep |
+**A submodule exists only to keep a heavy dependency out of the core**
+([decisions §5.7](decisions.md#57-a-submodule-exists-only-to-keep-a-heavy-dependency-out-of-the-core)).
+Anything dependency-free stays in the root module, no matter how peripheral
+it feels — `models/modelkit` is the standing example: shared adapter
+plumbing, stdlib-only, so it lives in root. The table above says which
+dependency earned each module.
 
 CI builds each module standalone with `GOWORK=off`, so a workspace-only fix
 cannot hide a missing `go.mod` require.
@@ -246,7 +218,7 @@ cmd/agents-server/
 │   ├── settings/               the settings registry and the typed reader (incl. the proxy client)
 │   ├── logging/                structured logging + context propagation
 │   ├── docs/                   generated OpenAPI 3.1 document, swagger.yaml (make openapi)
-│   ├── store/                  data layer (bun ORM; SQLite or PostgreSQL, 24 tables — see Database)
+│   ├── store/                  data layer (bun ORM; SQLite or PostgreSQL; the tables are listed under Database in docs/howto/workbench-deploy.md)
 │   ├── protocol/               wire types — WS messages, REST error envelope, the audit record
 │   └── web/                    embedded SPA static files
 ```
