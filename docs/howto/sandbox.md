@@ -27,27 +27,12 @@ sandbox.CodeTool(sb, sandbox.CodeToolConfig{
 })
 ```
 
-Before approval, deliberately: a person asked to judge forty commands an hour
-stops reading them, so what was never going to be allowed should not reach the
-prompt. `Deny` is checked after `Allow`, so a deny always wins — "allow `git .*`,
-deny `git push`" means what it looks like.
-
-A refusal reaches the model as a **result**, naming the rule, not as an error.
-Told only "not allowed" a model tries variations; told which rule stopped it, it
-can ask for something else or explain why it cannot proceed.
-
-The zero value allows everything, and a policy whose patterns do not compile
-refuses everything — falling open would turn a configuration typo into no
-protection at all, silently.
-
-A policy filters approval noise; it is **not a security boundary**. A pattern
-matches the text of a command, and a shell spells one command in unbounded
-ways: denying `rm -rf` stops `rm -rf /` and steps aside for `rm -fr /`, for
-`rm  -rf /` with a second space, and for `eval $(echo cm0gLXJm | base64 -d)`,
-which is not the command until bash expands it. Naming a path fares no better —
-a rule denying `rm -rf /home/alice` never sees `rm -rf $HOME`. Containment comes
-from the sandbox the command executes in: choose a backend whose isolation you
-trust.
+`Deny` is checked after `Allow`, so a deny always wins; a refusal reaches the
+model as a result naming the rule; the zero value allows everything and a
+policy whose patterns do not compile refuses everything. A policy filters
+approval noise and is **not a security boundary** — it matches command text,
+not shell semantics; containment comes from the backend
+([spec §2.7j](../reference/spec.md#27j-sandbox-command-policy)).
 
 ## Persistent shells
 
@@ -64,28 +49,11 @@ sandbox.CodeTool(sb, sandbox.CodeToolConfig{Sessions: true})
 The model then passes a `session_id`, and that named shell is held open between
 calls, so `cd`, exported variables, an activated virtualenv and a started
 background process all survive. The `session_id` argument exists only when
-`Sessions` is on — a tool built without it does not advertise a field it would
-ignore.
-
-Completion is detected with a **sentinel**: after each command the session
-prints a random per-session token and the exit status, and output is read until
-the token appears. There is no other reliable signal on a PTY — a prompt is
-configurable, silence means nothing, and a command that prints nothing looks
-exactly like one still running.
-
-The token is random (a fixed one is one a command could print — `echo __DONE__`
-would end the read early and hand back a truncated result) and is written to the
-shell **in two halves**, as separate `printf` arguments. A PTY echoes its input,
-so a command line carrying the whole token would come back in the output and be
-indistinguishable from the real thing; the read would then stop one command
-early, forever after. Only the output ever contains the halves joined.
-
-A session that times out is **closed**, not reused: the command may still be
-running, and its output arriving in the middle of the next one is worse than a
-shell startup.
+`Sessions` is on. Completion is detected with a random per-session sentinel, a
+timed-out session is closed rather than reused, and the named shells belong to
+the tool, not the run ([spec §2.7k](../reference/spec.md#27k-persistent-shells)).
 
 Requires a backend with interactive terminal support (persistent Docker, e2b).
-
 Off by default, because a held-open shell is a resource with a lifetime and a
 caller that never closes one leaks it.
 
@@ -102,9 +70,10 @@ if err != nil { … }
 defer sb.Close()
 
 // CodeTool runs shell commands; FileTools gives the model native read_file,
-// write_file and list_files — no shell needed.
+// write_file and list_files — no shell needed; ApplyPatchTool adds apply_patch.
 tools := []*agents.Tool{sandbox.CodeTool(sb, sandbox.CodeToolConfig{})}
 tools = append(tools, sandbox.FileTools(sb, sandbox.FileToolConfig{})...)
+tools = append(tools, sandbox.ApplyPatchTool(sb, sandbox.FileToolConfig{}))
 
 agent := &agents.Agent{
 	Name:         "data analyst",
@@ -115,7 +84,7 @@ agent := &agents.Agent{
 
 The model writes code, `CodeTool` executes it in the sandbox, and the combined `exit_code` / `stdout` / `stderr` go back to the model so it can fix its own mistakes. `FileTools` adds `read_file`, `write_file` and `list_files` — native file operations backed by the sandbox's `ReadFile`/`WriteFile`/`ListDir` methods, so the model can manipulate files without piping through shell commands. Execution failures (non-zero exit, timeouts) and malformed arguments are normal tool output the model can correct; *infrastructure* failures (daemon down, missing image) abort the run.
 
-String arguments (`workdir`, and `session_id` where Sessions is enabled) accept the zero-value sentinels `null`, `0` and `false`, each decoding to `""`: a model running on a backend that does not enforce strict schemas sometimes fills an unused field with a zero value instead of `""`, and each of those reads unambiguously as "not used". Any other non-string scalar (`true`, `42`, `3.14`) is rejected and fed back as correctable text — keeping its literal spelling would run `cd '42'`; a session genuinely named "0" is still expressible as the string `"0"`.
+The optional string arguments (`workdir`, `session_id`) accept the zero-value sentinels `null`, `0` and `false` as "unused"; any other non-string scalar is refused as correctable text ([spec §2.7l](../reference/spec.md#27l-sandbox-tool-argument-decoding)).
 
 ## CodeTool configuration
 
@@ -158,17 +127,11 @@ sb, err := docker.New(docker.Options{
 })
 ```
 
-Each `Exec` creates a locked-down container and removes it afterwards: no network, read-only root filesystem, all capabilities dropped, `no-new-privileges`, runs as the image's own user (empty `User`; set it to narrow), writable `work` dir and `/tmp` (tmpfs), a hard per-command timeout (container killed), and whatever memory/CPU/PID limits the caller set in `Options.Limits` — those are enforced only when configured, not capped by default (the `agents-server` workbench sets a safe default cap of its own — [decisions §5.38](../explanation/decisions.md)). The command runs as the container entrypoint verbatim — image `ENTRYPOINT`/`CMD` never interfere. Container stdout/stderr is additionally capped on the daemon side (`json-file` log driver, `max-size=10m`), so output floods cannot fill the host disk.
+Each `Exec` creates a locked-down container and removes it afterwards: read-only root filesystem, all capabilities dropped, `no-new-privileges`, writable `work` dir and `/tmp` (tmpfs), the command run as the entrypoint verbatim, a hard per-command timeout, and the daemon-side `json-file` log capped at 10m so output floods cannot fill the host disk. `Options.Limits` are enforced only when set — the workbench caps them by default ([decisions §5.38](../explanation/decisions.md)). An empty `User` is the image's own user and an empty `Network` is no network at all ([spec §2.7o](../reference/spec.md#27o-a-docker-sandbox-runs-as-the-images-user-and-joins-no-network)).
 
-With `Persistent: true` a single container is reused across `Exec` calls (state and installed files survive between calls) and the root filesystem is writable. `VolumeName` mounts a named Docker volume at `/workspace` instead of a host directory or an anonymous volume (durable storage on any daemon); `TmpfsSize` resizes the RAM-backed `/tmp` tmpfs (default 64m); `KeepOnClose` makes `Close` stop the container instead of removing it, so a later Sandbox with the same `ContainerName` and configuration adopts it — and a name held by our container from an *older* configuration is replaced, while a foreign holder stays a hard error. An empty `User` keeps the image's own user (usually root, so the container can install packages into itself); set `User` to narrow it. `Network` names the docker network to join; empty means no network at all. Timeouts are enforced per exec: when the deadline passes the attached connection is closed and the exec's process tree is killed best-effort (exec processes are tagged with an `AGENTS_SANDBOX_EXEC` environment marker and matched via `/proc`; a process that re-execs itself with a scrubbed environment can evade the sweep — the container's PID/memory limits are the backstop).
+With `Persistent: true` a single container is reused across `Exec` calls with a writable root filesystem; `VolumeName` mounts a named volume at `/workspace` (durable on any daemon), `TmpfsSize` resizes `/tmp` (default 64m), and `KeepOnClose` stops the container instead of removing it so a later Sandbox with the same `ContainerName` and configuration adopts it (an older configuration of ours is replaced; a foreign holder is a hard error). A timed-out exec has its process tree killed best-effort via an `AGENTS_SANDBOX_EXEC` environment marker — the container's PID/memory limits are the backstop for a process that scrubs its environment.
 
-Optional capabilities are discovered by type assertion, the way `ExecStreamer`
-and `TerminalOpener` already are ([spec §2.7p](../reference/spec.md#27p-stop-keeps-the-filesystem-and-promises-nothing-else)):
-`Lifecycle` (`Start`/`Stop`/`Status` — Stop keeps the filesystem and promises
-nothing else) and `Exporter` (the working tree as a tar stream). A backend
-that cannot offer one simply does not implement it.
-`sandbox/sandboxtest` is the conformance suite every backend runs; it detects
-the capabilities, so a backend implementing none still passes the core.
+Optional capabilities are discovered by type assertion — `ExecStreamer`, `TerminalOpener`, `Lifecycle` (`Start`/`Stop`/`Status`, [spec §2.7p](../reference/spec.md#27p-stop-keeps-the-filesystem-and-promises-nothing-else)) and `Exporter` (the working tree as a tar stream); `sandbox/sandboxtest` is the conformance suite every backend runs and detects them.
 
 `sandbox/e2b` is the second backend: any service speaking the E2B API — E2B's
 own cloud, a self-hosted one, or a compatible service such as Alibaba Cloud's
@@ -208,101 +171,22 @@ sandbox.FileToolConfig{
 
 File operations require a **persistent working directory** (`WorkDir`). Backends without one (bare `sandbox.NewLocal()`, ephemeral Docker without `WorkDir`) return `sandbox.ErrNoWorkDir`.
 
-**Path resolution follows shell semantics, the same view `exec_command` has** ([decisions §5.14](../explanation/decisions.md)): a relative path resolves under the working directory, an absolute path is used as-is — the model learns real paths from `pwd`/`ls` output and both spellings reach the same file. The sandbox, not the working directory, is the isolation boundary; the file tools do not pretend to a narrower view than exec already has. The one exception is **docker bind-mount mode**, whose file operations run on the *host* side of the mount: they are confined to `WorkDir` via `os.Root`, absolute paths must lie under the in-container mount point `/workspace` (translated to the host directory), and anything else fails with `sandbox.ErrOutsideWorkDir` (rendered to the model as "outside the working directory").
+**Path resolution follows shell semantics, the same view `exec_command` has** ([spec §2.7t](../reference/spec.md#27t-sandbox-file-tools-share-execs-path-view)): a relative path resolves under the working directory, an absolute path is used as-is — the model learns real paths from `pwd`/`ls` output and both spellings reach the same file. The one exception is **docker bind-mount mode**, whose file operations run on the *host* side of the mount: they are confined to `WorkDir` via `os.Root`, absolute paths must lie under the in-container mount point `/workspace` (translated to the host directory), and anything else fails with `sandbox.ErrOutsideWorkDir` (rendered to the model as "outside the working directory").
 
 Every backend answers the file tools the same way: a missing path is `fs.ErrNotExist` ("not found" to the model), a directory read is "is a directory", and `list_files` sorts entries by name whatever order the backend returned them in.
 
 `ReadFile` is size-capped on every backend: files larger than the backend's `MaxReadFileBytes` option (0 = `sandbox.DefaultMaxReadFileBytes`, 8 MiB) fail with `sandbox.ErrReadLimitExceeded` instead of being read into memory — model code cannot OOM the host by creating a huge file and reading it back. `apply_patch` still deletes such a file: it parks it under a temp name beside itself for the commit instead of snapshotting it in memory ([spec §2.7s](../reference/spec.md#27s-apply_patch-locates-hunks-by-whole-lines)). Errors returned to the model contain only the requested relative path and the error kind, never host or remote absolute paths.
 
-## The Sandbox interface
+## Writing a backend
 
-Implement it to add your own backend (Firecracker, Kubernetes, remote runners, …):
+Implement [`sandbox.Sandbox`](https://pkg.go.dev/github.com/zzir/agents-go/sandbox#Sandbox) — `Exec`, `ReadFile`, `WriteFile`, `CreateExclusive`, `ListDir`, `RemoveFile`, `Rename`, `Close` — to add your own backend (Firecracker, Kubernetes, remote runners, …). Optional interfaces the tools and the workbench discover by type assertion: `ExecStreamer` (output written to the writers as it arrives; the result's `Stdout`/`Stderr` are then empty), `TerminalOpener` (an interactive PTY shell — what powers the web terminal; the context bounds establishment only, the `Terminal` lives until `Close`), `Lifecycle` and `Exporter`. All three built-in backends stream; the docker backend hosts terminals only in `Persistent` mode and force-kills the shell's process tree on `Close`, e2b always does, and the local backend never does — handing out a host shell is a deliberately bigger grant than running commands. `OpenTerminal` returns an error wrapping `ErrTerminalUnsupported` when the current configuration cannot host one.
 
-```go
-type Sandbox interface {
-	Exec(ctx context.Context, req ExecRequest) (*ExecResult, error)
-	ReadFile(ctx context.Context, path string) ([]byte, error)
-	WriteFile(ctx context.Context, path string, content []byte) error
-	// CreateExclusive atomically creates path, failing with fs.ErrExist if it
-	// already exists and leaving no partial file on failure; apply_patch's
-	// Add/Move rely on it to reject a clobber race-free.
-	CreateExclusive(ctx context.Context, path string, content []byte) error
-	ListDir(ctx context.Context, path string) ([]DirEntry, error) // any order
-	RemoveFile(ctx context.Context, path string) error
-	// Rename moves a file, creating the destination's parents; apply_patch
-	// parks a file too large to snapshot with it.
-	Rename(ctx context.Context, oldPath, newPath string) error
-	Close() error
-}
+Three things a backend must get right:
 
-type ExecRequest struct {
-	Cmd            []string          // argv, run exactly as given
-	Files          map[string]string // path (relative to the workdir) -> content
-	Env            map[string]string
-	Timeout        time.Duration     // 0 = DefaultTimeout (30s)
-	MaxOutputBytes int64             // per stream; 0 = DefaultMaxOutputBytes (1 MiB)
-}
+- `CreateExclusive` is **atomic**: it creates parents, fails with `fs.ErrExist` if the path exists, and leaves no partial file on failure — `apply_patch`'s Add/Move rely on it to reject a clobber race-free.
+- `Rename` creates the destination's parents; `apply_patch` parks a file too large to snapshot with it.
+- A backend that assembles `sh -c` command lines passes every interpolated value — path, argument, environment entry — through `sandbox.ShellQuote`, the helper the Docker backend uses, so the escaping has one definition.
 
-type ExecResult struct {
-	ExitCode int
-	Stdout   string
-	Stderr   string
-	TimedOut bool
-}
-
-type DirEntry struct {
-	Name  string `json:"name"`
-	IsDir bool   `json:"is_dir"`
-	Size  int64  `json:"size"`
-}
-```
-
-A backend that assembles `sh -c` command lines should pass every interpolated value — path, argument, environment entry — through `sandbox.ShellQuote`, the same helper the Docker backend uses, so the escaping has one definition rather than one copy per backend.
-
-## ExecStreamer (optional)
-
-Backends can optionally implement `ExecStreamer` to stream command output as it arrives:
-
-```go
-type ExecStreamer interface {
-	ExecStream(ctx context.Context, req ExecRequest, stdout, stderr io.Writer) (*ExecResult, error)
-}
-```
-
-Output is written to the provided `io.Writer`s in real time; the returned `ExecResult` contains `ExitCode` and `TimedOut` but its `Stdout`/`Stderr` fields are empty (output went to the writers). All three built-in backends implement this interface.
-
-## TerminalOpener (optional)
-
-Backends can optionally implement `TerminalOpener` to host an interactive
-shell with a PTY (this is what powers the web terminal in `agents-server`):
-
-```go
-type TerminalOpener interface {
-	OpenTerminal(ctx context.Context, opts TerminalOptions) (Terminal, error)
-}
-
-type TerminalOptions struct {
-	Cols, Rows int               // initial PTY size; 0 = 80x24
-	Term       string            // TERM value; "" = "xterm-256color"
-	Shell      []string          // nil = backend default (bash if present, else sh)
-	Env        map[string]string
-}
-
-type Terminal interface {
-	io.ReadWriteCloser              // Read: PTY output (ANSI included, EOF on shell exit); Write: user input
-	Resize(cols, rows int) error
-	Wait() (int, error)             // exit code after EOF; -1 when unknown
-}
-```
-
-The **docker** backend supports it only
-in `Persistent` mode — an interactive shell needs a long-lived container to
-attach to — and force-kills the shell's process tree on `Close`; the **e2b**
-backend always does, over the sandbox daemon's PTY stream. The **local**
-backend does not implement it: handing out a host shell is a deliberately
-bigger grant than running individual commands, so it is excluded by design.
-`OpenTerminal` returns an error wrapping `ErrTerminalUnsupported` when the
-backend's current configuration cannot host a terminal. The context bounds
-session establishment only; the returned `Terminal` lives until `Close`.
+Run `sandbox/sandboxtest` against it; the suite detects the optional capabilities, so a backend implementing none still passes the core.
 
 See [examples/sandbox](../../examples/sandbox/main.go) and [sandbox/docker/example](../../sandbox/docker/example/main.go) for runnable programs.

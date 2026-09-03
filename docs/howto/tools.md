@@ -6,17 +6,12 @@ Tools let agents take actions. They come from three places:
 - **Agents as tools**: a whole agent exposed as a callable tool ([Agent orchestration](multi_agent.md))
 - **MCP tools**: tools served by a Model Context Protocol server ([MCP](mcp.md))
 
-All three end up as the same thing — a locally executed `*Tool`. It is a
-**struct, not an interface**, so there is exactly one execution path to reason
-about, and a tool cannot quietly mean "the provider runs this".
-
-That is also why hosted OpenAI tools (web search, file search, code
-interpreter, computer use) are **not modeled, and will not be** — a hosted tool
-binds the agent to one backend. Where the capability matters, the SDK gives you
-a local equivalent you own: `apply_patch` and shell access run through the
-[Sandbox](sandbox.md) abstraction rather than a provider's. See
-[scope §1.2](../explanation/scope.md#12-non-goals) for the decision and
-[Differences from Python](../explanation/migration_from_python.md) for the full list.
+All three end up as the same thing — a locally executed `*Tool` **struct**, so
+there is one execution path and nothing a provider-hosted tool could implement.
+Hosted OpenAI tools (web search, file search, code interpreter, computer use)
+are therefore not modeled ([scope §1.2](../explanation/scope.md#12-non-goals));
+the local equivalents you own — `apply_patch` and shell access — run through the
+[Sandbox](sandbox.md) abstraction.
 
 ## Function tools
 
@@ -38,7 +33,7 @@ agent.Tools = []*agents.Tool{runQuery}
 
 - The `jsonschema:"..."` struct tag is the parameter description shown to the model.
 - The `ctx` is the run's context (cancellation propagates into tools).
-- `tc *ToolContext` carries the [run context](context.md) plus call metadata: `ToolName`, `ToolCallID`, `ToolArguments`, the `Agent` whose tool is running, and `ToolCall` (the raw model-emitted function-call item). To observe or gate the call from outside the tool, use tool-stage [guardrails](guardrails.md) — they bracket execution with the same call identity in their payload.
+- `tc *ToolContext` carries the [run context](running_agents.md#local-context) plus call metadata: `ToolName`, `ToolCallID`, `ToolArguments`, the `Agent` whose tool is running, and `ToolCall` (the raw model-emitted function-call item). To observe or gate the call from outside the tool, use tool-stage [guardrails](guardrails.md) — they bracket execution with the same call identity in their payload.
 - Tools requested in the same model turn run **concurrently**; share state through the context value only if it is goroutine-safe.
 
 The schema comes from compile-time generics over the argument struct and its tags, so what the model is shown and what the function decodes cannot drift apart.
@@ -110,29 +105,9 @@ gated.Guardrails = append(gated.Guardrails, myGuardrail)  // append: never drop 
 agent.Tools = append(agent.Tools, &gated)
 ```
 
-Two rules follow from the fields rather than from a framework:
-
-- **Append to `Guardrails`, do not assign.** Replacing the slice disarms the
-  checks the tool declared for itself.
-- **Capture a hook before overwriting it** when your version should compose with
-  the tool's own answer rather than replace it:
-
-  ```go
-  inner := tool.IsEnabled
-  gated.IsEnabled = func(ctx context.Context, rc *agents.RunContext, a *agents.Agent) (bool, error) {
-      if !unlocked() {
-          return false, nil
-      }
-      if inner != nil {
-          return inner(ctx, rc, a)
-      }
-      return true, nil
-  }
-  ```
-
-The runner reads these fields directly. There is nothing to unwrap and no
-capability lookup to get wrong: a tool's timeout is `tool.Timeout`, and a
-copy that did not touch it still has it.
+Append to `Guardrails` rather than assign, and capture a hook
+(`inner := tool.IsEnabled`) before overwriting it when yours should compose
+with the tool's own answer ([spec §2.7c](../reference/spec.md#27c-tool-capabilities-are-fields)).
 
 ### Progressive disclosure
 
@@ -153,20 +128,7 @@ r.AddedTools = []string{"read_account"}
 return r, nil
 ```
 
-An agent offered forty tools chooses worse than one offered four, and most of
-those forty only matter after something else has happened. A tool announcing
-what it unlocks says that directly, where a static list cannot.
-
-Marking the *tool* is the opt-in rather than a run-level switch, because the
-interesting question is which tools wait — a run where everything is deferred
-has no way to disclose anything.
-
-Disclosure is **cumulative** for the rest of the run (withdrawing a tool after
-one use would surprise a model that had just been told it existed) and survives
-an [approval pause](human_in_the_loop.md), so a resumed run does not re-hide it.
-It does not override `IsEnabled`: disclosure opens a door, it does not force
-one. Naming a tool that does not exist is ignored — a tool should not be able to
-fail a run by mentioning something.
+Disclosure is cumulative for the run, survives an [approval pause](human_in_the_loop.md), does not override `IsEnabled`, and naming an unknown tool is ignored ([spec §2.7i](../reference/spec.md#27i-progressive-tool-disclosure)).
 
 ### Streaming partial results
 
@@ -194,10 +156,7 @@ for ev, err := range stream {
 }
 ```
 
-**Progress is not the answer.** It never reaches the model — the tool's return
-value does. `Emit` is a no-op on a blocking run and after the tool returns, so
-a tool never has to ask which kind of run it is in, and a goroutine it left
-behind cannot keep reporting on a finished call. It is safe from any goroutine.
+Progress never reaches the model — the return value does — and `Emit` is a safe no-op on a blocking run and after the tool returns ([spec §2.7g](../reference/spec.md#27g-tool-progress)).
 
 Two built-ins already use it: `sandbox.CodeTool` streams stdout as the command
 runs (on backends implementing `ExecStreamer`), and an
@@ -253,33 +212,9 @@ agents.NewTool("query_orders", "…",
 | `Content` | What the model sees — text, images, files |
 | `Details` | Structured data for the UI and logs. **Never reaches the model.** Lands on `Display().Extra` |
 | `Display` | The renderer you would like: `"diff"`, `"terminal"`, `"table"`, `"json"`, `"markdown"`. A hint — an unknown name falls back to text |
-| `Title` | The card heading, when the tool name is not it ("Apply patch" over `apply_patch`). Empty falls back to the tool name |
-| `Summary` | A one-line account of what happened ("3 files changed"), for where the full output would drown the timeline |
-| `Usage` | Tokens the tool spent on model calls **of its own** (an agent-as-tool's nested run, a summarization step) |
-| `Terminate` | Ask the run to stop after this batch |
-| `IsError` | Render as a failure. The content still goes to the model, so it can recover |
+| `Title` / `Summary` | A card heading when the tool name is not it, and a one-line account of what happened (`WithTitle`/`WithSummary`); overrides a consumer may ignore, never reaching the model |
 
-`Title` and `Summary` (with builders `WithTitle`/`WithSummary`) follow the
-display contract: overrides, never required — a consumer ignoring them still
-renders a correct card from the tool name and output. Neither reaches the
-model.
-
-Everything else keeps working: a tool returning a `string`, a struct, or a
-`[]ToolOutputContent` is wrapped automatically, so `return "sunny", nil` is
-still the shortest correct tool.
-
-**`Details` must survive a JSON round-trip.** A value that cannot (NaN/Inf
-floats, channels, cycles) fails the run *while the tool call is still
-identifiable*, rather than at persistence time long after. An empty map
-normalizes to nil.
-
-**`Terminate` needs unanimity.** The run stops only when every tool in the batch
-asks. One tool wanting to stop while another is still working is not a decision
-the SDK can make for them, and stopping anyway would throw away the other's
-result.
-
-The tool declares its UI data at the moment it returns, when it knows all of
-it; nothing runs a second pass over the finished call.
+A tool returning a `string`, a struct, or a `[]ToolOutputContent` is wrapped automatically, so `return "sunny", nil` is still the shortest correct tool. `Details` must survive a JSON round-trip or the call fails while it is still identifiable; `Terminate` stops the run only when every tool in the batch asks; `IsError` renders a failure whose content still reaches the model; `Usage` is the tool's own model spend ([spec §2.7b](../reference/spec.md#27b-tool-results)).
 
 ### Hand-built tools
 
@@ -316,13 +251,7 @@ File editing is a **sandbox** capability: `apply_patch` (Codex-style multi-file
 patches) edits through the `Sandbox` abstraction, so it targets the same
 filesystem `exec_command` and the file tools use — a local dir, a container's
 bind mount or volume. There is no separate local-path editor and no hosted
-OpenAI `apply_patch`.
-
-```go
-tools := []*agents.Tool{sandbox.CodeTool(sb, sandbox.CodeToolConfig{})}
-tools = append(tools, sandbox.FileTools(sb, sandbox.FileToolConfig{})...)   // read_file, write_file, list_files
-tools = append(tools, sandbox.ApplyPatchTool(sb, sandbox.FileToolConfig{})) // apply_patch
-```
+OpenAI `apply_patch`. Wiring it up is in [Sandbox agents](sandbox.md#quickstart).
 
 The patch format carries **no line numbers** — a change is located by its
 surrounding context lines and an optional `@@` anchor, so the model never

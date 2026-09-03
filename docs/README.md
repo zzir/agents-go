@@ -12,12 +12,11 @@ binary to a first conversation with the Inspector open; nothing on that path
 needs Docker. Embedding the SDK in your own program starts at the
 [Quickstart](tutorial/quickstart.md).
 
-The SDK's shape is idiomatic Go: generics instead of runtime reflection magic,
-`context.Context` for cancellation, errors instead of exceptions, and
-`iter.Seq2` for streaming — a run executes on the consumer's goroutine, so
-abandoning a stream stops the run rather than leaking one. Behavior is
-[specified](reference/spec.md), not inherited. Arriving from the OpenAI Agents
-SDK for Python? Start at
+The SDK's shape is idiomatic Go — generics instead of reflection magic,
+`context.Context`, errors, and `iter.Seq2` streams that run on the consumer's
+goroutine ([Streaming](howto/streaming.md#the-run-happens-on-your-goroutine)) —
+and its behavior is [specified](reference/spec.md), not inherited. Arriving
+from the OpenAI Agents SDK for Python? Start at
 [Differences from the Python SDK](explanation/migration_from_python.md).
 
 ---
@@ -38,16 +37,16 @@ The pages are sorted by what you came for.
 
 | Area | Pages |
 |---|---|
-| Core | [Agents](howto/agents.md) · [Running agents](howto/running_agents.md) · [Results](howto/results.md) · [Configuration](howto/config.md) |
+| Core | [Agents](howto/agents.md) · [Running agents](howto/running_agents.md) · [Results](howto/results.md) |
 | Tools | [Tools](howto/tools.md) · [MCP](howto/mcp.md) · [Sandbox agents](howto/sandbox.md) · [Skills](howto/skills.md) |
 | Orchestration | [Agent orchestration](howto/multi_agent.md) · [Handoffs](howto/handoffs.md) · [Background tasks](howto/tasks.md) |
 | Safety | [Guardrails](howto/guardrails.md) · [Human-in-the-loop](howto/human_in_the_loop.md) |
-| State | [Sessions](howto/sessions.md) · [Context management](howto/context.md) · [Usage](howto/usage.md) |
+| State | [Sessions](howto/sessions.md) |
 | Streaming | [Streaming](howto/streaming.md) |
-| Models | [Models](howto/models.md) |
+| Models | [Models](howto/models.md) — configuring the SDK, providers, settings, retry and fallback |
 | Observability | [Tracing](howto/tracing.md) · [Logging and diagnostics](howto/logging.md) |
 | Testing | [Testing your agents](howto/testing.md) — scripted models, no API key |
-| Workbench, power user | None of these are needed for the first conversation. [Deploying](howto/workbench-deploy.md) · [Authentication](howto/workbench-auth.md) · [Workflows](howto/workflows.md) · [Image input](howto/attachments.md) · [MCP OAuth troubleshooting](howto/mcp-oauth-troubleshooting.md) |
+| Workbench, power user | None of these are needed for the first conversation. [Deploying](howto/workbench-deploy.md) · [Authentication](howto/workbench-auth.md) · [Workflows](howto/workflows.md) · [Image input](howto/attachments.md) · [MCP OAuth in the workbench](howto/mcp-oauth-troubleshooting.md) |
 
 ### Reference — look something up
 
@@ -68,7 +67,3 @@ The pages are sorted by what you came for.
 | [Differences from the Python SDK](explanation/migration_from_python.md) | For readers arriving from `openai-agents-python` |
 | [Upstream watch](explanation/upstream_watch.md) | What was reviewed from the Python SDK, ported or declined |
 | [Workbench design invariants](explanation/workbench-invariants.md) | The rules every workbench panel/handler pair follows |
-
-### The workbench
-
-[Manual](../cmd/agents-server/README.md) — flags, deployment, the REST and WebSocket surfaces, and the design invariants the panels obey.

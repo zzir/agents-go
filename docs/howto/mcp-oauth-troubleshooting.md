@@ -1,12 +1,28 @@
-# MCP OAuth: a server stuck at "authorizing"
+# MCP OAuth in the workbench
 
-For the workbench: an MCP server's connect button opened the popup, and the
-row never leaves `authorizing`. The interactive flow logs each step, so the
-server log (`--log-level info`) tells the two failures apart by which line is
-missing. What each status means is in
+The `agents-server` web UI drives the [SDK's OAuth flow](mcp.md#oauth) for
+you: configure a server with **Authentication → OAuth**, and the Connect
+button opens an authorization popup when needed. An authorization server that
+doesn't support dynamic client registration rejects that default flow with
+`no configured client registration methods are supported by the authorization
+server` — register an OAuth client with the provider, set its redirect URI to
+`<base-url>/api/v1/mcp-servers/oauth/callback`, and fill in **Client ID /
+Client secret**. The **Scopes** field only feeds dynamic registration; with a
+pre-registered client the requested scopes come from the server's own
+metadata.
+
+Changing the endpoint, auth mode or Client ID drops the stored authorization —
+the grant was minted for the previous identity — so the next connect prompts
+again. What each status means is in
 [the wire surface](../reference/protocol.md#mcp-servers--apiv1mcp-servers).
 
-## Read the log
+## A server stuck at "authorizing"
+
+The connect button opened the popup, and the row never leaves `authorizing`.
+The interactive flow logs each step, so the server log (`--log-level info`)
+tells the two failures apart by which line is missing.
+
+### Read the log
 
 A completing login writes three lines in order:
 
@@ -17,7 +33,7 @@ A completing login writes three lines in order:
 
 Find which one is missing.
 
-## No callback line at all
+### No callback line at all
 
 Only the panel's `GET /mcp-servers` poll repeats: the browser never reached
 the callback. Two causes:
@@ -35,7 +51,7 @@ the callback. Two causes:
 A callback that arrives but cannot be matched logs
 `callback: could not deliver authorization code` with the reason.
 
-## `code delivered`, then `ended without connecting`
+### `code delivered`, then `ended without connecting`
 
 With `authorization completed but was not accepted`: the browser round-trip
 worked, but the authorization did not yield a working session, so the SDK
@@ -56,7 +72,7 @@ hanging until the five-minute timeout. Read the row's `has_oauth_token`:
   rejected it. Set the server's `oauth_scopes` to what it requires, or confirm
   the token's audience is this MCP endpoint.
 
-## Start over
+### Start over
 
 Calling connect again while `authorizing` is safe and intended: it supersedes
 the stale attempt and returns a fresh authorize URL. To re-authorize with a

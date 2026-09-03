@@ -22,24 +22,11 @@ agent := &agents.Agent{
 }
 ```
 
-The most common fields:
-
-| Field | Purpose |
-|---|---|
-| `Name` | Identifies the agent (required) |
-| `Instructions` | The system prompt (a.k.a. developer message) |
-| `Model` / `ModelImpl` | Model name resolved via the run's provider, or an explicit `Model` implementation |
-| `ModelSettings` | Temperature, tool_choice, max tokens, … ([Models](models.md)) |
-| `Tools` | Function tools the model may call ([Tools](tools.md)) |
-| `MCPServers` | MCP servers whose tools are exposed to the agent ([MCP](mcp.md)) |
-| `Handoffs` | Agents this agent can delegate to ([Handoffs](handoffs.md)) |
-| `Guardrails` | Validation that can stop the run, one list across all stages ([Guardrails](guardrails.md)) |
-| `OutputType` | Structured output schema (below) |
-| `OnStart` / `OnEnd` | Callbacks around this agent's turn |
+Every field is on [pkg.go.dev](https://pkg.go.dev/github.com/zzir/agents-go/agents#Agent). The ones with a page of their own: `Model` / `ModelImpl` and `ModelSettings` ([Models](models.md)), `Tools` ([Tools](tools.md)), `MCPServers` ([MCP](mcp.md)), `Handoffs` ([Handoffs](handoffs.md)), `Guardrails` — one list across all stages ([Guardrails](guardrails.md)); `OutputType` and `OnStart` / `OnEnd` are below.
 
 ## Dynamic instructions
 
-`Instructions` is a func type, so the system prompt can be computed per run from the [context](context.md) — assign a function directly:
+`Instructions` is a func type, so the system prompt can be computed per run from the [run context](running_agents.md#local-context) — assign a function directly:
 
 ```go
 agent.Instructions = func(ctx context.Context, rc *agents.RunContext, a *agents.Agent) (string, error) {
@@ -62,7 +49,7 @@ agent.Prompt = agents.StaticPrompt(agents.Prompt{
 })
 ```
 
-`Agent.Prompt` is a func type too — assign `func(ctx, rc, agent) (*agents.Prompt, error)` to compute the prompt per run from the [context](context.md). `StaticPrompt` hands every run its own copy of the `Prompt`, `Variables` map included, so rewriting a variable for one run neither leaks into later runs nor races with concurrent ones. Only the OpenAI Responses backend honors `Prompt`; other backends ignore it. This is distinct from MCP server prompts (`server.Session().GetPrompt(...)`, see [MCP](mcp.md)), which fetch prompt *text* to use as instructions.
+`Agent.Prompt` is a func type too — assign `func(ctx, rc, agent) (*agents.Prompt, error)` to compute the prompt per run from the [run context](running_agents.md#local-context). `StaticPrompt` hands every run its own copy of the `Prompt`, `Variables` map included, so rewriting a variable for one run neither leaks into later runs nor races with concurrent ones. Only the OpenAI Responses backend honors `Prompt`; other backends ignore it. This is distinct from MCP server prompts (`server.Session().GetPrompt(...)`, see [MCP](mcp.md)), which fetch prompt *text* to use as instructions.
 
 ## Structured output types
 
@@ -93,36 +80,12 @@ Notes:
 
 ## Stopping after tools run
 
-By default a turn's tool results go back to the model for another turn. Two
-things override that, at two different levels.
-
-A **tool** can end the run on its own result:
-
-```go
-func save(ctx context.Context, tc *agents.ToolContext, a Args) (agents.ToolResult, error) {
-	r := agents.TextResult("saved")
-	r.Terminate = true       // honored only if EVERY tool in the batch agrees
-	return r, nil
-}
-```
-
-A **run** can end at any turn boundary, deciding from what the turn produced:
-
-```go
-opts.Exec.ShouldStopAfterTurn = func(ctx context.Context, tr *agents.TurnResult) (bool, error) {
-	return slices.Contains(tr.ToolCallNames(), "save_report"), nil
-}
-```
-
-The hook fires after the turn's items are persisted and before the next model
-call, so a run stopped here has its full history saved. It is a predicate, not
-a producer: the final output is the turn's last message, or its last tool
-output when the turn produced no message. Anything more specific is on
-`RunResult.NewItems`.
-
-The policy belongs to the run rather than the agent — the same agent gets
-reused across runs that want to stop at different points
-([spec §2.3c](../reference/spec.md#23c-stopping-early)).
+By default a turn's tool results go back to the model for another turn. A
+**tool** can end the run on its own result (`ToolResult.Terminate`, honored only
+when every tool in the batch agrees — [Tools](tools.md#returning-more-than-a-value-toolresult)),
+and a **run** can end at any turn boundary through
+`ExecOptions.ShouldStopAfterTurn` ([Running agents](running_agents.md#turn-hooks));
+there is deliberately no agent-level setting ([spec §2.3c](../reference/spec.md#23c-stopping-early)).
 
 To prevent infinite tool loops, once an agent has called a tool the runner leaves `tool_choice` unset on its later turns (so a `"required"` or specific-tool setting cannot loop forever). Set `Agent.DisableToolChoiceReset = true` to keep `tool_choice` as configured on every turn.
 

@@ -145,9 +145,8 @@ See [Structured output types](../howto/agents.md#structured-output-types).
 
 ## Stream the run
 
-A run *is* an iterator. `Run` returns one plus a control handle; the run
-advances as you consume it, so abandoning the loop stops the run instead of
-leaking a goroutine.
+A run *is* an iterator: `Run` returns one plus a control handle, and abandoning
+the loop stops the run ([Streaming](../howto/streaming.md#the-run-happens-on-your-goroutine)).
 
 ```go
 stream, ctrl := agents.Run(ctx, triage, "tell me about the Roman Republic", opts)
@@ -155,22 +154,15 @@ for event, err := range stream {
 	if err != nil {
 		log.Fatal(err)
 	}
-	switch e := event.(type) {
-	case *agents.RunItemStreamEvent:
-		if e.Item.Kind == agents.ItemMessage {
-			fmt.Println(e.Item.Text())
-		}
-	case *agents.RunCompletedEvent:
+	if e, ok := event.(*agents.RunCompletedEvent); ok {
 		fmt.Println("done:", e.Result.FinalOutputString())
 	}
 }
-_ = ctrl // StopAfterTurn, and mid-run input: Steer redirects the current
-// exchange, NextTurn rides along with the next turn, FollowUp queues the next
-// exchange; Pending reports what was not consumed.
 ```
 
-See [Streaming](../howto/streaming.md) for the event types and
-[Controlling a live run](../howto/streaming.md#controlling-a-live-run).
+`ctrl` stops the run after the current turn or steers it mid-flight —
+[Controlling a live run](../howto/streaming.md#controlling-a-live-run); the
+event types are in [Streaming](../howto/streaming.md#event-types).
 
 ## Pause for approval
 
@@ -181,22 +173,16 @@ state survives a process restart.
 weather.NeedsApproval = true
 
 res, err := agents.RunSync(ctx, mathTutor, "What's the weather in Rome?", opts)
-if err != nil {
-	log.Fatal(err)
-}
-for len(res.Interruptions) > 0 {
+for err == nil && len(res.Interruptions) > 0 {
 	for _, item := range res.Interruptions {
 		res.State.Approve(item, false) // or res.State.Reject(item, false, "no")
 	}
-	if res, err = agents.ResumeRunSync(ctx, res.State, opts); err != nil {
-		log.Fatal(err)
-	}
+	res, err = agents.ResumeRunSync(ctx, res.State, opts)
 }
 ```
 
-The paused state serializes to JSON (`res.State.MarshalJSON()`) and rebuilds
-with `agents.RunStateFromJSON(data, registry)`, so the approval can happen in
-another process — see [Human-in-the-loop](../howto/human_in_the_loop.md).
+The paused state serializes to JSON and rebuilds in another process — see
+[Human-in-the-loop](../howto/human_in_the_loop.md).
 
 ## Put it all together
 

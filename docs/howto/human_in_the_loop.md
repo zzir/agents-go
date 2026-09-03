@@ -86,11 +86,7 @@ state.Approve(state.Interruptions[0], false)
 res, err := agents.ResumeRunSync(ctx, state, opts)
 ```
 
-Because Go functions don't serialize, `RunStateFromJSON` needs a **registry** mapping agent names back to your `*Agent` values. The format round-trips within this SDK only; it is not an interchange format with any other agents SDK.
-
-The state round-trips whole: input queued through `RunControl` before the pause, deferred tools already disclosed to the model, and the server-conversation cursor (`UsePreviousResponseID` / `ConversationID` deltas) all survive the JSON trip, so a cross-process resume behaves exactly like an in-process one.
-
-The state also carries the original run's `MaxTurns`, so a run started with a raised budget (say 20) that pauses on turn 12 resumes under the same budget even in a fresh process. The serialized budget always wins: `ResumeRun` ignores `RunOptions.Exec.MaxTurns` and falls back to the default only when the state carries a zero. Note that on a resumed result, `NewItems` items carry their replayed input form rather than the original model item: `Kind` and `Display()` survive, `Raw` is nil.
+Because Go functions don't serialize, `RunStateFromJSON` needs a **registry** mapping agent names back to your `*Agent` values; the format round-trips within this SDK only. The state round-trips whole — input queued through `RunControl`, deferred tools already disclosed, the server-conversation cursor — so a cross-process resume behaves exactly like an in-process one ([spec §2.11b](../reference/spec.md#211b-run-control)). It also carries the original run's `MaxTurns`, which always wins over `RunOptions.Exec.MaxTurns` on resume (the default applies only when the state carries a zero); on a resumed result, `NewItems` carry their replayed input form — `Kind` and `Display()` survive, `Raw` is nil.
 
 ### Rebuilding transformed agents
 
@@ -125,12 +121,8 @@ if string(state.Extra["plan:unlocked"]) == "true" {
 }
 ```
 
-`Extra` covers pause→resume, not crashes: a value lands there only when a
-pause serializes the state. A fact that must survive a crash mid-run — the
-moment the plan unlocked — needs your own durable write at that moment, which
-is exactly what `PlanPhase.OnUnlock` is for; the two records answer different
-questions.
+`Extra` covers pause→resume, not crashes: a fact that must survive a crash mid-run — the moment the plan unlocked — needs your own durable write at that moment, which is what `PlanPhase.OnUnlock` is for ([spec §2.12](../reference/spec.md#212-middleware)).
 
 ## Sessions and approvals
 
-When the run uses a [Session](sessions.md), the user input and every completed turn are already persisted by the time the run pauses; only the pending, output-less tool calls are held back (they would break replay) and saved together with their outputs once the resumed run continues. Pass the same `Session` in `ResumeRun`'s options.
+With a [Session](sessions.md), the completed part of the turn is already saved when the run pauses and only the pending, output-less tool calls are held back until resume — pass the same `Session` in `ResumeRun`'s options ([Session semantics](sessions.md#session-semantics)).

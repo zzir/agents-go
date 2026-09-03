@@ -37,17 +37,7 @@ For the result and nothing else, use `RunSync`:
 res, err := agents.RunSync(ctx, agent, "Tell me 5 jokes.", opts)
 ```
 
-`RunSync` is not merely `Run` with the events discarded — it also calls the
-model **without** streaming, since nobody is watching the deltas. That is the
-only behavioral difference between the two entry points. If you hold a stream
-you have not started ranging, `stream.Collect()` folds it to the result.
-
-**A stream is single-use.** Ranging it *is* the run, so ranging it a second
-time — including `Collect()` after you have already broken out of a range loop
-— would re-execute everything: another model call, tools re-running their side
-effects, duplicate items in the session. That second range yields a
-`*UserError` instead. To stop early and keep what you have, collect the events
-as you range them; to stop the run, just `break`.
+`RunSync` also calls the model **without** streaming — the only behavioral difference between the two entry points — and a stream is **single-use**: ranging it *is* the run, so a second range (including `Collect()` after a `break`) yields a `*UserError` rather than re-executing everything ([spec §2.0](../reference/spec.md#20-entry-points)). If you hold a stream you have not started ranging, `stream.Collect()` folds it to the result; to stop the run, just `break`.
 
 ## The run happens on your goroutine
 
@@ -100,21 +90,10 @@ handoff.
 ### Tool progress events
 
 `*ToolProgressEvent` is a partial result pushed by a running tool via
-[`ToolContext.Emit`](tools.md#streaming-partial-results). It carries the tool
-name, the call id and a partial `ToolResult`:
-
-```go
-if p, ok := event.(*agents.ToolProgressEvent); ok {
-	render(p.CallID, p.Result)   // key on CallID: several tools stream at once
-}
-```
-
-Progress **never reaches the model** — the tool's return value does — and it
-stops the moment the tool returns, so a card can switch from "running" to the
-final result without guessing.
-
-`sandbox.CodeTool` streams stdout this way, and an agent-as-tool forwards its
-nested agent's messages.
+[`ToolContext.Emit`](tools.md#streaming-partial-results) — tool name, call id
+and a partial `ToolResult`. Key on `CallID`, since several tools stream at once;
+progress never reaches the model and stops the moment the tool returns, so a
+card can switch from "running" to the final result without guessing.
 
 ### The persistence event
 
@@ -173,11 +152,8 @@ for event, err := range stream {
   fire, tracing records the same spans. Input guardrails race the first model
   call in both entry points; set `Blocking: true` to gate instead
   ([Guardrails](guardrails.md)).
-- A run can pause for [tool approval](human_in_the_loop.md): range to the end,
-  read `Interruptions` / `State` off the result, and resume with
-  `agents.ResumeRun` — which returns a stream of its own, so the continuation
-  streams like the original. The resumed stream does not re-emit the paused
-  turn's items; it picks up with the approved tools' outputs.
+- A run can pause for [tool approval](human_in_the_loop.md); `agents.ResumeRun`
+  returns a stream of its own that picks up with the approved tools' outputs.
 
 ## Fanning out to many consumers
 

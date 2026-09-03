@@ -31,10 +31,7 @@ res, err := agents.RunSync(ctx, agent, input, agents.RunOptions{
 | `mcp.list_tools` / `mcp.call_tool` | `SpanTypeMCP` | An MCP server round trip |
 | `sandbox.exec` / `sandbox.apply_patch` | `SpanTypeSandbox` | A sandbox operation (exit code, timeout) |
 
-A retry span is a zero-duration marker rather than a wrapper: by the time an
-attempt is known to have failed it has already happened, and the point is that
-it happened at all. A generation span that took eight seconds because it was
-tried three times is otherwise indistinguishable from one that was simply slow.
+A retry span is a zero-duration marker rather than a wrapper ([spec §2.11e](../reference/spec.md#211e-span-coverage)). The `compaction` span is opened lazily via `CompactionArgs.StartSpan`, only when a `session.CompactionAware` session actually compacts — annotated with `"before_items"`/`"after_items"` and any compaction error; a no-op pass emits no span.
 
 Each span carries a `Type` field (one of the `tracing.SpanType*` constants) so a processor can dispatch on `span.Type` instead of parsing `span.Name`, plus structured `Data` keys (`"name"`, `"stage"`, `"response_id"`). The runner sets `Type` on the spans it opens; a span you open yourself through `StartSpanFrom` (below) names its own type, and `TraceHandle.StartSpan` / `SpanHandle.StartSpan` leave it empty.
 
@@ -42,15 +39,11 @@ Streamed runs, resumed (HITL) runs and nested agent-as-tool runs are traced too;
 
 `RunOptions.Observe.TraceGroupID` and `RunOptions.Observe.TraceMetadata` stamp the trace at start — use them to link the traces of one chat thread or attach tenant info. Set them via options rather than mutating the `Trace` afterwards, which would race with background exporting.
 
-### Sensitive data on generation spans
+IDs are `trace_<32 hex>` / `span_<16 hex>`, the shape trace backends already parse, generated from `crypto/rand`.
 
-When a run's session compacts its history (a `session.CompactionAware`), the
-runner wraps the pass in a span of type `"compaction"` — opened lazily via
-`CompactionArgs.StartSpan` only when the session actually compacts, annotated
-by the session with `"before_items"`/`"after_items"`, and carrying any
-compaction error. No-op passes emit no span.
+## Sensitive data
 
-By default each generation span also records the full request body: `"model"`,
+By default each generation span records the full request body: `"model"`,
 `"system_instructions"`, `"input"` (the exact items sent, after session
 history, compaction, and input filters were applied), `"tools"` (name,
 description, and parameter schema per tool), `"model_settings"` (the resolved
@@ -74,11 +67,7 @@ agents.Run(ctx, agent, input, agents.RunOptions{
 })
 ```
 
-When the option is nil the span includes content — the default. The SDK reads
-no environment variable for this; the caller decides (spec §2.14). Opting out
-keeps ids and token usage, drops content.
-
-IDs are `trace_<32 hex>` / `span_<16 hex>`, the shape trace backends already parse, generated from `crypto/rand`.
+The caller decides; the SDK reads no environment variable for this ([spec §2.14](../reference/spec.md#214-the-sdk-reads-no-environment-variable)). Opting out keeps names, timing, error messages and the small ids — `response_id` and `call_id` stay on the span either way, so a consumer can still join a span to the session entry it produced — and drops prompts, completions and tool payloads. Attributes you add from your own hooks are yours to police. The logging switch, `Log.SensitiveData`, is a separate decision ([Logging](logging.md)).
 
 ## Pipeline
 
@@ -100,42 +89,11 @@ exporter := tracing.FuncExporter(func(items []tracing.Item) {
 })
 ```
 
-There is no built-in HTTP exporter. Sending spans over the wire means picking a
-format, and every collector wants a different one — so the SDK exports to a
-function and lets you write the six lines that match yours. That includes
-OpenTelemetry: the span record is OTel-shaped (8-byte span ids, 16-byte trace
-ids), and a `Processor` or `Exporter` that feeds an OTel SDK is yours to write
-against your collector ([decisions §5.6b](../explanation/decisions.md)).
+There is no built-in HTTP exporter: the span record is OTel-shaped — 8-byte span ids, 16-byte trace ids, one root span per agent (so an exporter grouping by trace carries workflow metadata across roots itself) — and a `Processor` or `Exporter` feeding your collector is the few lines you write against it ([decisions §5.6b](../explanation/decisions.md#56b-tracing-stays-vendor-neutral-otel-export-is-the-consumers-job)).
 
 ## Custom processors
 
-Implement `tracing.Processor` to integrate with an existing telemetry stack (e.g. bridge to OpenTelemetry) — the runner only ever talks to the interface:
-
-```go
-type Processor interface {
-	OnTraceStart(t *Trace)
-	OnTraceEnd(t *Trace)
-	OnSpanStart(s *Span)
-	OnSpanEnd(s *Span)
-	ForceFlush()
-	Shutdown(ctx context.Context)
-}
-```
-
-Span callbacks can fire from concurrent goroutines (parallel tools, input guardrails) — processors must be goroutine-safe.
-
-## Sensitive data
-
-With `IncludeSensitiveData` off (above), spans keep names, timing, error messages and small attributes such as `response_id` and `call_id` — no prompts, completions or tool payloads. Those two ids stay on the span either way, so a consumer can still join a span to the session entry it produced. If you add attributes from your own hooks, apply your data policies accordingly.
-
-Two shapes an exporter can rely on ([decisions §5.6b](../explanation/decisions.md)):
-
-- **Span ids are 8 bytes and trace ids 16** (`tracing.NewSpanID`,
-  `tracing.NewTraceID`) — the OTel widths ([decisions §5.6b](../explanation/decisions.md#56b-tracing-stays-vendor-neutral-otel-export-is-the-consumers-job)), so an OTel-shaped consumer never
-  truncates.
-- **A trace has a root span per agent**, not one per trace: a handoff ends the
-  current agent span and starts the next one at the top level, so an exporter
-  grouping by trace must carry workflow metadata across roots itself.
+Implement [`tracing.Processor`](https://pkg.go.dev/github.com/zzir/agents-go/tracing#Processor) to integrate with an existing telemetry stack — the runner only ever talks to the interface. Span callbacks can fire from concurrent goroutines (parallel tools, input guardrails), so a processor must be goroutine-safe.
 
 ## Instrumenting your own code
 
@@ -151,16 +109,4 @@ func (m *myModel) Respond(ctx context.Context, req agents.ModelRequest) (*agents
 }
 ```
 
-The context is the channel because those receive one and nothing else belonging
-to the run; threading a span handle through every signature would mean each
-implementation had to forward it, and the one that forgot would silently orphan
-its spans at the root.
-
-`StartSpanFrom` returns a usable no-op handle when there is no trace, so an
-instrumented call site never needs a branch — and the subsystem behaves exactly
-as it did before it was instrumented when used outside a run.
-
-The runner installs the right parent at each point: the **generation** span for
-the model call (so retries nest under it) and the **function** span for a tool
-invocation (so an MCP round trip or a sandbox exec shows up under the call that
-caused it).
+The context is the channel and `StartSpanFrom` returns a usable no-op handle when there is no trace; the runner installs the generation span as the parent during a model call and the function span during a tool invocation, so retries, MCP round trips and sandbox execs nest under the call that caused them ([spec §2.11e](../reference/spec.md#211e-span-coverage)).

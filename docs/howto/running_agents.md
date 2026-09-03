@@ -27,57 +27,49 @@ If the number of turns exceeds the budget, the run fails with `*agents.MaxTurnsE
 
 ## Run options
 
-`RunOptions` is grouped by what each field configures — the groups are not cosmetic; `Conversation` in particular collects options that constrain each other:
+`RunOptions` is grouped by what each field configures, and `Conversation` in particular collects options that constrain each other ([spec §2.0b](../reference/spec.md#20b-option-grouping)). Every field is on [pkg.go.dev](https://pkg.go.dev/github.com/zzir/agents-go/agents#RunOptions); where each group is explained:
+
+- **`Model`** — provider, override, run-level settings and the per-call `InputFilter`: [Models](models.md). `InputFilter` edits what one model call sends; it changes nothing a session saves and does not fire on a resumed turn.
+- **`Conversation`** — the session, its read window, projectors and the server-managed alternatives: [Sessions](sessions.md) and [below](#conversations--chat-threads).
+- **`Exec`** — `MaxTurns` (0 means the default, 10), `MaxToolConcurrency` (unbounded by default — cap it against downstream rate limits), `ToolNotFoundBehavior` (`ToolNotFoundReturnToModel` feeds a hallucinated tool name back as the tool output instead of failing the run), `HandoffInputFilter` (the default for every handoff without its own — [Handoffs](handoffs.md#nesting-handoff-history)), and the safety valves, turn hooks and error handlers below.
+- **`Compaction`** — [Sessions](sessions.md#run-level-compaction). **`Guardrails`** — [Guardrails](guardrails.md). **`Middlewares`** — [below](#middleware). **`Observe`** — [Tracing](tracing.md). **`Log`** — [Logging](logging.md).
+- **`ReasoningItemIDPolicy`** — whether reasoning-item ids survive into later turns' model input; `ReasoningItemIDOmit` is for `store=false` runs that rely on encrypted content. The choice is persisted in `RunState`.
+
+### Local context
+
+Two things called "context" stay separate: cancellation and deadlines ride the `context.Context` passed to `Run` (and through to every tool, guardrail and hook); your own data — the current user, a DB handle — rides `RunOptions.Context`, an `any` the SDK never inspects.
 
 ```go
-type RunOptions struct {
-	Model        ModelOptions        // Provider / Override / Settings / InputFilter
-	Conversation ConversationOptions // Session, server-managed state, projectors
-	Exec         ExecOptions         // MaxTurns, tool policies, error handlers, injection points
-	Compaction   CompactionOptions   // shrink context as the conversation grows (docs: Sessions)
-	Guardrails   []Guardrail         // run-level guardrails, before each agent's own
-	Middlewares  []RunMiddleware     // wrap the run, outermost first
-	Observe      ObserveOptions      // opt-in tracing (docs: Tracing)
-	Log          LogConfig           // the SDK's own structured logging (docs: Logging)
-	Context      any                 // your app data, threaded through tools/guardrails/hooks
+type AppContext struct {
+	UserID string
+	DB     *sql.DB
 }
+
+res, err := agents.RunSync(ctx, agent, input, agents.RunOptions{
+	Context: &AppContext{UserID: "u_123", DB: db},
+	Model:   agents.ModelOptions{Provider: provider},
+})
 ```
 
-The commonly reached-for knobs, by group:
+Every tool, guardrail, hook and dynamic-instructions function receives the same `*agents.RunContext`; type-assert your value back:
 
-- **`Model.Provider`** resolves agent model names (required unless every agent sets `ModelImpl`, or `Model.Override` is set); **`Model.Settings`** is a run-level `*ModelSettings` merged over each agent's own; **`Model.InputFilter`** (a `CallModelInputFilter`) runs just before each model call to edit the system instructions and input items actually sent (e.g. trim tokens, inject context). It does not change what a [session](sessions.md) saves, and does not fire on a HITL-resumed turn.
-- **`Conversation.Session`** supplies and persists history; **`Conversation.Settings`** (a `session.Settings` value, e.g. `Limit`) caps how much of it a run loads, and its zero value reads the whole history; **`Conversation.UsePreviousResponseID`** / **`Conversation.ConversationID`** are the server-managed alternatives ([below](#conversations--chat-threads)); **`Conversation.Projectors`** overrides what entry kinds the model reads ([Sessions](sessions.md#projection-what-the-model-reads)).
-- **`Exec.MaxTurns`** is the turn budget (0 means `DefaultMaxTurns`, 10); exceeding it fails the run unless an error handler recovers it.
-- **`Exec.MaxToolConcurrency`** bounds how many of a turn's function tools run at once (they otherwise all run in parallel) — useful against downstream rate limits.
-- **`Exec.ToolNotFoundBehavior`** defaults to `ToolNotFoundError` (a hallucinated tool name aborts the run). Set `ToolNotFoundReturnToModel` to instead feed an error back as the tool output so the model can correct itself.
-- **`Exec.HandoffInputFilter`** applies to any handoff that doesn't set its own `Handoff.InputFilter` — e.g. `agents.NestHandoffHistory(...)` to fold prior history across every handoff ([Handoffs](handoffs.md#nesting-handoff-history)).
-- **`Exec.ErrorHandlers`** recovers max-turns/refusal/invalid-output failures with a fallback final output ([below](#error-handlers)); **`Exec.PrepareNextTurn`** / **`Exec.ShouldStopAfterTurn`** reshape or stop the run at turn boundaries; **`Exec.Overflow`** turns a context-overflow failure into compact-and-retry ([Sessions](sessions.md)).
-- **`ReasoningItemIDPolicy`** controls whether reasoning-item ids survive when run items are converted back into model input on later turns. `ReasoningItemIDPreserve` (the default) keeps them; `ReasoningItemIDOmit` strips them — useful for `store=false` runs whose server-side ids are no longer valid and that rely on encrypted content. The choice is persisted across HITL interruptions in `RunState`.
+```go
+tool := agents.NewTool("whoami", "Return the current user.",
+	func(ctx context.Context, tc *agents.ToolContext, _ struct{}) (string, error) {
+		app := tc.RunContext.Context.(*AppContext)
+		return app.UserID, nil
+	})
+```
+
+`RunContext` also carries the run's live `Usage` ([Results](results.md#usage)) and its recorded `Approvals` ([Human-in-the-loop](human_in_the_loop.md)); `ToolContext` embeds it and adds the call's `ToolName`, `ToolCallID` and raw `ToolArguments`. Tools run concurrently within a turn, so a context value they mutate must be goroutine-safe.
 
 ## Conversations / chat threads
 
-Each `Run` is one logical turn of a conversation. To carry history across runs you can:
+Each `Run` is one logical turn of a conversation. To carry history across runs:
 
-1. **Use a [Session](sessions.md)** — history is loaded before the run and saved incrementally as it proceeds (each turn as it completes):
-
-   ```go
-   sess := session.NewInMemorySession()
-   agents.Run(ctx, agent, "What city is the Golden Gate Bridge in?", agents.RunOptions{Conversation: agents.ConversationOptions{Session: sess}, Model: agents.ModelOptions{Provider: p}})
-   agents.Run(ctx, agent, "What state is it in?", agents.RunOptions{Conversation: agents.ConversationOptions{Session: sess}, Model: agents.ModelOptions{Provider: p}})
-   ```
-
-2. **Thread items manually** — build the next input from the previous result:
-
-   ```go
-   res1, _ := agents.RunSync(ctx, agent, "What city is the Golden Gate Bridge in?", opts)
-   input := append(res1.Input, mustInputItems(res1.NewItems)...) // via item.ToInputItem()
-   input = append(input, agents.InputItemsFromText("What state is it in?")...)
-   res2, _ := agents.RunSync(ctx, agent, input, opts)
-   ```
-
-3. **Let the server keep state** — two server-managed options, each sending only new items each turn instead of resending history. Neither may be combined with a local `Session` (the run errors if you try):
-   - Set `UsePreviousResponseID: true` to chain calls through the Responses API's `previous_response_id`. Requires stored responses (the default; do not set `ModelSettings.Store` to false).
-   - Set `ConversationID: "conv_..."` to attach the run to a server-side [OpenAI conversation](https://platform.openai.com/docs/guides/conversation-state) (the Responses `conversation` parameter). Create one with `openai.NewConversationsSession().ConversationID(ctx)`, or use `openai.ConversationsSession` directly as the `Session` for the same effect with local item access.
+1. **Use a [Session](sessions.md)** — history is loaded before the run and saved as each turn completes.
+2. **Thread items manually** — build the next input from the previous result ([Results](results.md#inputs-for-the-next-turn)).
+3. **Let the server keep state** — `UsePreviousResponseID: true` chains calls through the Responses API's `previous_response_id` (requires stored responses, the default); `ConversationID: "conv_..."` attaches the run to an [OpenAI conversation](sessions.md#openai-conversations-server-side). Each sends only new items per turn, and neither combines with a local `Session` — the run errors if you try.
 
 ## Cancellation and deadlines
 
@@ -114,14 +106,10 @@ turn, and why the last turn is tool-free and opt-in, is
 
 ### Truncated responses
 
-A model response cut off at the output-token limit
-(`status="incomplete"`, reason `max_output_tokens`) has **none of its tool calls
-executed**. Each is answered with an explanation so the model resends.
-
-This is correctness, not policy: a truncated response looks ordinary — items
-present, no error — but its tail may be half-formed, and a tool call's arguments
-are exactly the kind of tail that gets cut. Truncation is fed back to the model
-rather than failing the run; every other incomplete reason still fails.
+A response cut off at the output-token limit (`status="incomplete"`, reason
+`max_output_tokens`) has none of its tool calls executed or paused for approval:
+each is answered with an explanation so the model resends, and the run
+continues ([spec §2.7e](../reference/spec.md#27e-truncated-responses)).
 
 ## Steering a run in flight
 
@@ -136,28 +124,14 @@ ctrl.NextTurn("mention the source when you cite it")  // ride along with the nex
 ctrl.FollowUp("now summarize it for a customer")      // and then do this
 ```
 
-| | When it lands | Extends a run that was finishing |
-|---|---|---|
-| `Steer` | the next model call, whatever the run is doing | **yes** |
-| `NextTurn` | the next turn boundary, if there is one | no |
-| `FollowUp` | after the final output, in the **same** run | **yes** |
-
-`FollowUp` continues the same run rather than starting a new one, so the trace,
-the usage total and the session stay one thing.
-
-Injections reach the model **in the order they were made**, across all three
-methods, and delivery is transactional: input consumed by an attempt that then
-fails (a middleware retry, a failed resume) is returned to the queue and
-delivered by the next attempt — nothing lost, nothing doubled.
-
-Injected input is recorded as the user's, so a reopened session shows what was
-actually said rather than an answer to a question nobody asked. Whatever a run
-did not consume — a `NextTurn` that arrived as the run was ending — is reported
-by `ctrl.Pending()` instead of vanishing.
-
-Input queued before a run pauses for [approval](human_in_the_loop.md) rides
-along in `RunState.PendingInput` — across `RunState` serialization too — and
-is delivered on resume.
+`Steer` lands on the next model call and `FollowUp` after the final output —
+both extend a run that was finishing, in the **same** run; `NextTurn` rides
+along with the next turn boundary if there is one, and whatever arrived too
+late is reported by `ctrl.Pending()`. Injections reach the model in arrival
+order, delivery is transactional across retries and resumes, and input queued
+before an [approval pause](human_in_the_loop.md) rides along in
+`RunState.PendingInput` ([spec §2.11b](../reference/spec.md#211b-run-control)).
+A runnable program is [examples/steering](../../examples/steering/main.go).
 
 ## Turn hooks
 
@@ -179,19 +153,18 @@ opts.Exec.PrepareNextTurn = func(ctx context.Context, tr *agents.TurnResult) (*a
 }
 ```
 
-`PrepareNextTurn` applies to **one** turn; the turn after resolves afresh. It
-changes the run without mutating the `Agent`, which a concurrent run may be
-reading.
+`ShouldStopAfterTurn` is a predicate, not a producer: a run stopped here has
+its full history saved, its final output is the turn's last message (else its
+last tool output), and `RunResult.StoppedEarly` is set. The other place a run
+can end early is a tool's own result, `ToolResult.Terminate`
+([Tools](tools.md#returning-more-than-a-value-toolresult)). The policy belongs
+to the run rather than the agent, so the same agent stops at different points
+in different runs ([spec §2.3c](../reference/spec.md#23c-stopping-early)).
 
-The `*TurnResult` a hook receives is a **read-only view of the finished turn**.
-Writing to its fields changes nothing — not the run's final output, not what
-the other hook sees. To shape the next turn, return a `TurnSnapshot`.
-
-**The runner owns `Snapshot.Input`** and replaces whatever a returned snapshot
-carries. A prepared snapshot is nearly always a copy of the previous turn's, so
-honoring its input would replay that turn with the tool call and its output
-missing. To edit what a call sends, use `ModelOptions.InputFilter`, which runs
-per turn on the input the loop built.
+`PrepareNextTurn` reshapes **one** turn without mutating the `Agent`; the
+`*TurnResult` it receives is read-only, and the runner owns `Snapshot.Input` —
+to edit what a call sends, use `ModelOptions.InputFilter`
+([spec §2.3b](../reference/spec.md#23b-turn-snapshots)).
 
 ## Middleware
 
@@ -247,53 +220,36 @@ make another; the reason, the three-clause stream contract a middleware owes,
 and what is deliberately NOT middleware (handoffs, guardrails, persistence,
 tracing, error handlers) are [spec §2.12](../reference/spec.md#212-middleware).
 
-**Plan mode** (`middleware.Plan`) splits a run into two phases with one pause
-between them. While planning, a tool that is not read-only stays in the
-toolset but refuses when called, naming `submit_plan`; handoffs are hidden. A
-direct tool counts as read-only when it says so (`Tool.ReadOnly`, which
-`sandbox.ReadFileTool` / `ListFilesTool` set) or when `ReadOnlyTools`
-(`DefaultReadOnlyTools` when nil) names it; an MCP tool only by name. No
-approval is raised while planning — not the tool's `NeedsApproval`, not the
-agent's `ApproveTools` listing. `submit_plan` is always approval-gated, and
-that pause IS the plan review: an interruption whose tool is
-`middleware.PlanToolName` carries the plan in its arguments; `Approve` unlocks
-the full toolset and the same run continues into execution, `Reject`'s message
-sends the model back to planning. Why gating denies rather than hides is
-[spec §2.12](../reference/spec.md#212-middleware).
+**Plan mode** (`middleware.Plan`) splits a run in two: while planning, a tool
+that is not read-only (`Tool.ReadOnly`, or named in `ReadOnlyTools`) stays in
+the toolset but refuses when called, handoffs are hidden, and no approval is
+raised. `submit_plan` is always approval-gated, and that pause IS the plan
+review — `Approve` unlocks the full toolset and the same run continues,
+`Reject`'s message sends the model back to planning. **Todo mode**
+(`middleware.Todo`) adds `todo_write`, which replaces the whole list on every
+call and reports it through `OnUpdate`. Both rewrite the entry agent only. Why
+gating denies rather than hides, and what a durable-resume host persists, are
+[spec §2.12](../reference/spec.md#212-middleware); a runnable program with both
+is [examples/planmode](../../examples/planmode/main.go).
 
-**Todo mode** (`middleware.Todo`) adds a `todo_write` tool and a preamble
-telling the model to keep a working list. Every call replaces the whole list;
-the host renders it from `OnUpdate` (or reads the calls off the stream), and a
-malformed list is refused whole. Both middlewares rewrite the entry agent
-only; handoff targets keep their own toolset. See
-[examples/planmode](../../examples/planmode/main.go) for both together.
-
-`middleware.Retry` and `agents.NewRetryModel` are different and usually both
-right: the model decorator retries one call (a 429, a dropped connection) and
-the run never notices; the middleware retries the whole run, from the start —
-not resumed, since the SDK cannot know which side effects already happened.
-With a session attached, neither `Loop` nor `Retry` re-sends what the session
-already holds: `Loop` carries only the evaluator's feedback into the next
-attempt, and `Retry` re-runs with no input once an attempt has stored it (the
-completed turns survive either way).
+`middleware.Retry` re-runs the whole run from the start; `agents.NewRetryModel`
+retries one model call and the run never notices ([Models](models.md)). With a
+session attached, neither `Loop` nor `Retry` re-sends what the session already
+holds ([spec §2.12](../reference/spec.md#212-middleware)).
 
 For callbacks tied to a specific agent rather than the whole run, see
 [`Agent.OnStart` / `Agent.OnEnd`](agents.md#per-agent-callbacks).
 
 ## Errors
 
-All failures come back as Go errors. The SDK's typed errors carry their data as plain fields and are matched with `errors.As`:
-
-| Error | Meaning |
-|---|---|
-| `*MaxTurnsError` | Turn budget exhausted |
-| `*ModelBehaviorError` | The model did something invalid (unknown tool, malformed structured output, truncated stream) |
-| `*ModelRefusalError` | The model refused to respond; carries the refusal text |
-| `*UserError` | You used the SDK incorrectly (e.g. no model provider, invalid output schema) |
-| `*ToolTimeoutError` | A tool exceeded its `Tool.Timeout` |
-| `*GuardrailTripwireError` | A guardrail tripped; `Stage()` says where |
-
-A run that fails after its loop started returns a `*RunError` wrapping the cause; its `Result` field is the partial progress (input, items generated so far, raw responses, last agent, usage) in the same `*RunResult` shape a finished run reports — see [Results](results.md#errors).
+All failures come back as Go errors. The SDK's typed errors —
+`*MaxTurnsError`, `*ModelBehaviorError`, `*ModelRefusalError`, `*UserError`,
+`*ToolTimeoutError`, `*ToolLoopError`, `*GuardrailTripwireError` — carry their
+data as plain fields and are matched with `errors.As`; each is documented on
+[pkg.go.dev](https://pkg.go.dev/github.com/zzir/agents-go/agents#MaxTurnsError).
+A run that fails after its loop started returns a `*RunError` wrapping the
+cause; its `Result` is the partial progress in the same `*RunResult` shape a
+finished run reports — see [Results](results.md#errors).
 
 ### Error codes
 
@@ -310,36 +266,17 @@ case agents.CodeUnknown:           // not an SDK error, or unclassified
 }
 ```
 
-| Code | Produced by |
-|---|---|
-| `max_turns_exceeded` | `*MaxTurnsError` |
-| `model_behavior` | `*ModelBehaviorError` |
-| `model_refusal` | `*ModelRefusalError` |
-| `user_error` | `*UserError` |
-| `tool_timeout` | `*ToolTimeoutError` |
-| `tool_panic` | A tool panic, whether it aborted the run or was recovered |
-| `tool_loop` | `*ToolLoopError` — every tool failed on N consecutive turns |
-| `guardrail_tripwire` | `*GuardrailTripwireError` |
-| `sandbox_exec` | A sandbox command that failed to run |
-| `mcp` | An MCP server connection or tool call |
-| `unknown` | Anything else, including a plain error from your own code |
-
-A context overflow the run survived — compacted and retried — is not an error
-code but a diagnostic, `context_overflow` ([Logging and diagnostics](logging.md#diagnostics-trouble-a-run-survived)).
-
 **The set is open.** Handle an unrecognized code generically — the SDK adds
 codes without a breaking change, and a consumer that treats an unknown code as
-impossible breaks on upgrade.
+impossible breaks on upgrade. The `Code*` constants are on
+[pkg.go.dev](https://pkg.go.dev/github.com/zzir/agents-go/agents#ErrorCode). A
+context overflow the run survived is not a code but a diagnostic,
+`context_overflow` ([Logging](logging.md#diagnostics-trouble-a-run-survived)).
 
-To contribute a code from your own tool, use `Classify`. It tags the error
-without hiding it, so `errors.Is` and `errors.As` still reach the original:
-
-```go
-return nil, agents.Classify(agents.CodeSandboxExec, fmt.Errorf("build: %w", err))
-```
-
-An error that already carries a code is returned unchanged — the innermost
-classification wins, because it knows the most about the failure.
+To contribute a code from your own tool, `agents.Classify(agents.CodeSandboxExec, err)`
+tags the error without hiding it from `errors.Is` / `errors.As`; an error that
+already carries a code is returned unchanged
+([spec §2.10](../reference/spec.md#210-errors-and-recovery)).
 
 ## Error handlers
 
@@ -383,3 +320,5 @@ ErrorHandlers: agents.RunErrorHandlers{
 	},
 },
 ```
+
+A runnable program is [examples/errorhandlers](../../examples/errorhandlers/main.go).

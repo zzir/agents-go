@@ -26,38 +26,15 @@ The first conversation is the binary, one API key and a browser. Nothing
 here needs Docker. (The repository is `agents-go`; the program you run is
 `agents-server`.)
 
-1. **Get the binary.** Download the archive for your OS and CPU from
-   [Releases](https://github.com/zzir/agents-go/releases) and extract it; the
-   `agents-server` binary is at the top level. To build from source instead,
-   see [Running the workbench](docs/tutorial/workbench.md#get-a-binary).
+1. **Get the binary** from [Releases](https://github.com/zzir/agents-go/releases) and extract it.
+2. **Run it.** `./agents-server` listens on `http://127.0.0.1:9527` and prints an auth token; open the address in a browser and paste the token.
+3. **Add a provider and an agent** in Settings: an OpenAI or Anthropic key, a ChatGPT sign-in or any Responses-compatible endpoint; then a name, that provider, a model and instructions.
+4. **Say something.** New chat, type, and the reply streams in; the Inspector in the top bar shows every model call with tokens and latency, and what the context window holds.
 
-2. **Run it.**
-
-   ```bash
-   ./agents-server
-   ```
-
-   It listens on `http://127.0.0.1:9527` and prints an auth token at startup.
-   Open the address in a browser and paste the token into the login screen.
-   State is one SQLite file, `data.db`, in the directory you ran it from.
-
-3. **Add a provider and an agent.** Settings → Providers → New: an OpenAI or
-   Anthropic API key, a ChatGPT sign-in, or any Responses-compatible endpoint
-   by base URL. Settings → Agents → New: a name, that provider, a model and
-   instructions; leave the rest at its defaults.
-
-4. **Say something.** New chat, type, and the reply streams in. Then open the
-   Inspector from the top bar: **Traces** is every model call, tool call and
-   handoff with tokens and latency; **Context** is what the context window
-   holds and what each part costs.
-
-> **macOS.** Gatekeeper refuses the unsigned binary;
-> `xattr -d com.apple.quarantine ./agents-server` clears it.
-
-Sandboxes, PostgreSQL, the container image, a reverse proxy and teams all
-come after that first conversation:
-[Running the workbench](docs/tutorial/workbench.md) continues from here, and
-[Deploying](docs/howto/workbench-deploy.md) takes it off localhost.
+[Running the workbench](docs/tutorial/workbench.md) has each step in full —
+building from source, the macOS Gatekeeper note, the flags — and continues to
+sandboxes, PostgreSQL and teams; [Deploying](docs/howto/workbench-deploy.md)
+takes it off localhost.
 
 ## What you get
 
@@ -113,35 +90,23 @@ go get github.com/zzir/agents-go
 > spelling beside the new.
 
 ```go
-package main
-
-import (
-	"context"
-	"fmt"
-
-	"github.com/zzir/agents-go/agents"
-	"github.com/zzir/agents-go/models/openai"
-)
-
-func main() {
-	agent := &agents.Agent{
-		Name:         "assistant",
-		Instructions: agents.StaticInstructions("You are a helpful assistant."),
-		Model:        "gpt-4o",
-	}
-
-	res, err := agents.RunSync(context.Background(), agent, "Hello!", agents.RunOptions{
-		// Provider reads OPENAI_API_KEY.
-		Model: agents.ModelOptions{Provider: openai.NewProvider()},
-	})
-	if err != nil {
-		panic(err)
-	}
-	fmt.Println(res.FinalOutputString())
+agent := &agents.Agent{
+	Name:         "assistant",
+	Instructions: agents.StaticInstructions("You are a helpful assistant."),
+	Model:        "gpt-4o",
 }
+
+res, err := agents.RunSync(ctx, agent, "Hello!", agents.RunOptions{
+	Model: agents.ModelOptions{Provider: openai.NewProvider()}, // reads OPENAI_API_KEY
+})
+if err != nil {
+	log.Fatal(err)
+}
+fmt.Println(res.FinalOutputString())
 ```
 
-The [Quickstart](docs/tutorial/quickstart.md) continues from here — handoffs,
+The complete program is [examples/hello](examples/hello/main.go). The
+[Quickstart](docs/tutorial/quickstart.md) continues from here — handoffs,
 guardrails, typed tools, structured output, streaming, approvals. A few things
 worth knowing it does:
 
@@ -167,17 +132,9 @@ OpenAI Agents SDK? Start at
 The SDK stands alone — it never depends on or reports to the workbench
 ([scope §1.2](docs/explanation/scope.md#12-non-goals)).
 
-Nearly every SDK capability has a runnable example under
-[examples/](examples/):
-
-```bash
-export OPENAI_API_KEY=sk-...
-go run ./examples/hello      # minimal agent
-go run ./examples/handoffs   # triage agent → specialists
-go run ./examples/hitl       # pause, approve, resume
-
-go test ./examples/testing   # scripted model — no API key needed
-```
+Nearly every SDK capability has a runnable example under [examples/](examples/)
+— `go run ./examples/hello` to start; the full list, and which ones need more
+than `OPENAI_API_KEY`, is in [Examples](docs/tutorial/examples.md).
 
 ## License
 
