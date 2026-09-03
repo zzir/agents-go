@@ -34,13 +34,10 @@ Standing alone on localhost, no flags are needed. Behind a TLS-terminating
 reverse proxy, two things change:
 
 - **`--base-url` is required for OAuth flows** — MCP server OAuth, and
-  `--auth oauth` refuses to start without it. Every
-  externally visible URL — an OAuth `redirect_uri` must match what the browser
-  loaded — is derived from it. Forwarding headers (`Forwarded`,
-  `X-Forwarded-*`) are deliberately never consulted for URL construction: a
-  direct client can forge them, and an explicit origin cannot be spoofed. Only
-  a bare `scheme://host[:port]` is accepted; the app assumes it is mounted at
-  the proxy's root.
+  `--auth oauth` refuses to start without it. Every externally visible URL is
+  derived from it, never from `Forwarded` / `X-Forwarded-*`, which a direct
+  client could forge. Only a bare `scheme://host[:port]` is accepted; the app
+  assumes it is mounted at the proxy's root.
 - **`--trusted-proxies` is required behind a proxy.** It names who may set
   `X-Forwarded-For`, and that header is where the client IP for the rate
   budgets and the access log comes from. Without it every request arrives
@@ -75,19 +72,12 @@ Structured records over [`log/slog`](https://pkg.go.dev/log/slog), to stderr.
 the terminal default. A bad `--log-level` or `--log-format` is a start-up
 error, not a silent fallback — a typo must not quietly turn logging down.
 
-`slog.Handler` is the swap point, so there is no logger interface here to
-replace: pointing records somewhere else is a different handler in
-`internal/logging`, and nothing else moves. Subsystems reach the logger through
-`logging.Ctx(ctx)`; a context nobody wired yields one that discards, so no call
-site checks and nothing writes anywhere unasked.
-
-The SDK's own run-loop records join the same stream — the run's logger is
-handed to `agents.LogConfig`, so turns, tool calls, handoffs and compaction
-show up beside the server's. Most of what the run loop says is `Debug`, so it
-takes `--log-level debug` to see. Whether those records carry conversation
-content is the `log_sensitive_data` setting, which is NOT
-`trace_include_sensitive_data`: one puts content in the database, the other in
-stderr, and each has to be decided on purpose.
+The SDK's own run-loop records join the same stream, so turns, tool calls,
+handoffs and compaction show up beside the server's; most of them are `Debug`,
+so it takes `--log-level debug` to see them. Whether they carry conversation
+content is `log_sensitive_data` — stderr — which is a different switch from
+`trace_include_sensitive_data`, the database one
+([runtime settings](../reference/configuration.md#runtime-settings)).
 
 ---
 
@@ -104,32 +94,18 @@ is capped at 16 connections:
 ./agents-server --db 'postgres://user:pass@localhost:5432/agents?sslmode=disable'
 ```
 
-Every id column — primary keys and the foreign keys that reference them — is
-typed `uuid`; 16 bytes a key on PostgreSQL. Ordinary entities hold a UUIDv4
-(`store.NewID`) — their row counts never make index locality matter. The
-APPEND-HEAVY tables — `entries`, `trace_events`, `audit_events` — hold a
-UUIDv7 (`store.NewTimeID`): time-ordered, so inserts land at the right edge
-of an index and rows created together sit together as those tables grow into
-the millions; their ids are also the pagination cursors (`before_id` /
-`before`), which read order off the id. Elsewhere order
-is never read off the id where it matters: a session's entries are read,
-paged, forked and compacted in `seq` order — the append position the SDK
-assigns, which a clock stepping backwards or a second process cannot
-reorder — and an entry cursor names a row, whose position is then its
-`seq`. Trace events have no `seq` and list by id, which is append order
-within one process (Go's `uuid.NewV7` is monotonic there) and nothing more.
-One rule: an id that names one of OUR entities is a uuid; an identifier of
-foreign shape stays text — entry ids (`e<seq>`, by sequence), span ids
-(`span_<hex>`, the OTel width), a model's `tool_call_id`, an audit line's
-`resource`. "Unset" is NULL, never `""` (`nullzero`). The
-token-mode local account has the fixed id
-`00000000-0000-0000-0000-000000000001`. On PostgreSQL a malformed id in a path
-answers 400; SQLite stores any text — which is why CI runs the store suite on
-PostgreSQL as well (`AGENTS_PG_TEST_DSN`; see `scripts/ci.sh`): a raw-SQL
-write that binds `""` where a uuid column expects NULL passes SQLite and fails
-only there. Secrets — session tokens, PATs, OAuth state, the webhook secret —
-are not ids and stay 256-bit `crypto/rand`; a UUID's 122 random bits would be
-a downgrade.
+Every id that names one of our entities is a `uuid` column: UUIDv4 for
+ordinary entities, UUIDv7 for the append-heavy `entries`, `trace_events` and
+`audit_events`, whose ids double as the pagination cursors (`before_id` /
+`before`). Order is read off an id only where nothing better exists: a
+session's entries are read, paged, forked and compacted in `seq` order, while
+trace events have no `seq` and list by id, which is append order within one
+process and nothing more. An identifier of foreign shape stays text — entry
+ids (`e<seq>`), span ids (`span_<hex>`), a model's `tool_call_id`. "Unset" is
+NULL, never `""`. The token-mode local account has the fixed id
+`00000000-0000-0000-0000-000000000001`. On PostgreSQL a malformed id in a
+path answers 400 where SQLite stores any text, which is why CI runs the store
+suite on PostgreSQL too (`AGENTS_PG_TEST_DSN`; see `scripts/ci.sh`).
 
 Tables are created automatically on startup:
 

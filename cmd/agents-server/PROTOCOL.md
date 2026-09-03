@@ -116,55 +116,32 @@ ordering problem the payload shape does not touch. Weigh that before starting.
 
 ## F3 · `run.error.code` mirrors the SDK `ErrorCode` — shipped
 
-The SDK owns the error vocabulary and the bridge calls `agents.CodeOf(err)`.
-
-**Frozen split:**
-
-| Origin | Examples | Owner |
-|---|---|---|
-| SDK error codes | `guardrail_tripwire`, `max_turns_exceeded`, `model_behavior`, `tool_timeout`, `user_error` | `agents.ErrorCode`, mirrored into `protocol.ts` |
-| Transport-only codes | `session_busy`, `session_not_found`, `run_not_found`, `approval_failed`, `config_error` | agents-server; no SDK equivalent exists or should |
-
-**Frozen:** the two sets share one flat namespace on the wire and must not
-collide. A client that does not recognize a code falls back to generic error
-rendering — the set grows without a client release. The guardrail extras
-(`guardrail`, `stage`) take the four `GuardrailStage` values.
+The SDK owns the error vocabulary; the bridge calls `agents.CodeOf(err)`, and
+agents-server adds transport-only codes with no SDK equivalent. **Frozen: the
+two sets share ONE flat namespace on the wire and must not collide**, so the
+set grows without a client release — an unrecognized code falls back to
+generic error rendering. The codes themselves are in
+[the wire surface](../../docs/reference/protocol.md).
 
 ---
 
 ## F4 · `display` is a structured projection, not a string — shipped
 
-`display` is the SDK's `agents.ItemDisplay`, serialized as-is — the field list
-follows the SDK, not this document (`kind`, `renderer`, `title`, `summary`,
-`text`, `call_id`, `tool_name`, `arguments`, `output`, `is_error`, `extra`).
-The producer chooses the projection; the frontend never parses text to decide
-how to render.
-
-**Frozen invariant:** `display` is a *rendering hint*. A client that ignores it
-entirely must still produce a correct, readable timeline from `payload` alone.
-This keeps `display` free to evolve without a lockstep frontend release.
-
-Streaming partial tool results (`ToolContext.Emit`) ship today as their own
-event, `run.tool_progress` (`{run_id, call_id, tool_name, delta, renderer?}`);
-under F1 they become a `run.delta` with `field: "display.detail"` and the tool
-call's `entry_id`.
+`display` is `agents.ItemDisplay` serialized as-is; the field list follows the
+SDK. **Frozen: `display` is a rendering HINT** — a client that ignores it
+entirely must still produce a correct timeline from `payload` alone, which is
+what lets `display` evolve without a lockstep frontend release. Streaming
+partial tool results ship as `run.tool_progress` today; under F1 they become a
+`run.delta` on the tool call's `entry_id`.
 
 ---
 
 ## Shipped elsewhere
 
-Documented where they live now, in [the wire surface](../../docs/reference/protocol.md):
-
-- **F4a `run.gap`** — a connection that fell behind is told, on that
-  connection only (`{run_id, dropped, last_good, next}`).
-- **F5 uplink queues** — `run.inject` `{run_id, queue: steer|next_turn|follow_up, input}`;
-  `run.cancel` keeps `mode`.
-- **F6 run phase** — dropped 2026-08-04: the stream's own events carry more
-  than a phase enum would.
-- **F7 cursor pagination** — `GET /sessions/{id}/messages?limit=N&before_id=<id>`,
-  paging backwards.
-- **F8 session trees** — entries carry `parent_id`; `POST /sessions/{id}/branch`
-  moves the leaf persistently.
+In [the wire surface](../../docs/reference/protocol.md): **F4a** `run.gap`,
+**F5** uplink queues (`run.inject`, `run.cancel`), **F7** cursor pagination,
+**F8** session trees. **F6** run phase was dropped 2026-08-04 — the stream's
+own events carry more than a phase enum would.
 
 ---
 
