@@ -4,9 +4,9 @@
 
 **Go agents. Local first.**
 
-The Go-native agent workbench you run yourself. Run agents and workflows in a
-sandbox, behind tool approvals; debug with traces, replay & fork. One binary,
-your data, embeddable SDK. Solo or as a team.
+The Go-native agent workbench you run yourself. One binary, your data: see
+exactly what the model saw, then replay or fork any turn. Sandboxes behind
+approvals, workflows, MCP. Solo or as a team.
 
 [![Release](https://img.shields.io/github/v/release/zzir/agents-go)](https://github.com/zzir/agents-go/releases)
 [![CI](https://github.com/zzir/agents-go/actions/workflows/ci.yml/badge.svg)](https://github.com/zzir/agents-go/actions/workflows/ci.yml)
@@ -16,34 +16,23 @@ your data, embeddable SDK. Solo or as a team.
 
 [Get started](#get-started) ·
 [What you get](#what-you-get) ·
-[Workbench manual](cmd/agents-server/README.md) ·
-[SDK docs](docs/) ·
-[Examples](docs/tutorial/examples.md)
+[Docs](docs/) ·
+[Embed the SDK](#embed-it-the-agents-go-sdk)
 
 </div>
 
-![agents-go workbench — a conversation with the trace panel open and a sandbox terminal tab](cmd/agents-server/screenshot.png)
+![agents-go workbench — a conversation with the trace panel open beside it](cmd/agents-server/screenshot.png)
 
 ## Get started
 
+The first conversation is the binary, one API key and a browser. Nothing
+here needs Docker. (The repository is `agents-go`; the program you run is
+`agents-server`.)
+
 1. **Get the binary.** Download the archive for your OS and CPU from
-   [Releases](https://github.com/zzir/agents-go/releases) and extract it — the
-   `agents-server` binary is at the top level. (On macOS, Gatekeeper refuses
-   the unsigned binary; `xattr -d com.apple.quarantine ./agents-server`
-   clears it.) Or build from source:
-   [Running the workbench](docs/tutorial/workbench.md).
-
-   Or run the container image (published to GHCR and Docker Hub on each release):
-
-   ```bash
-   docker run -p 9527:9527 -v agents-data:/data ghcr.io/zzir/agents-server:latest --host 0.0.0.0
-   ```
-
-   Pass `--host 0.0.0.0` — the default `127.0.0.1` is unreachable from outside the
-   container. State persists in the `/data` volume (the default `data.db` lands
-   there) and the startup token is printed to the container logs. Any other flags
-   go on the same line; swap the image for `zzir/agents-server:latest` to pull from
-   Docker Hub.
+   [Releases](https://github.com/zzir/agents-go/releases) and extract it; the
+   `agents-server` binary is at the top level. To build from source instead,
+   see [Running the workbench](docs/tutorial/workbench.md#get-a-binary).
 
 2. **Run it.**
 
@@ -51,39 +40,49 @@ your data, embeddable SDK. Solo or as a team.
    ./agents-server
    ```
 
-   It listens on `http://127.0.0.1:9527` and prints an auth token at startup;
-   paste the token into the login screen. Sandboxes need a Docker daemon — on
-   this machine, or a remote one over SSH or TCP — or an E2B-compatible
-   service. State lives
-   in `data.db` in the directory you ran it from (`--db`; a `postgres://` DSN
-   uses PostgreSQL instead); a project's tree lives in a Docker volume on its
-   sandbox's daemon, or in the E2B sandbox itself. All flags:
-   [Configuration reference](docs/reference/configuration.md).
+   It listens on `http://127.0.0.1:9527` and prints an auth token at startup.
+   Open the address in a browser and paste the token into the login screen.
+   State is one SQLite file, `data.db`, in the directory you ran it from.
 
-3. **Add a provider, create an agent, chat.** Settings → Providers: an OpenAI
-   or Anthropic API key, a ChatGPT sign-in, or any Responses-compatible
-   endpoint by base URL. Settings → Agents: name, model, instructions, tools.
-   New Chat.
+3. **Add a provider and an agent.** Settings → Providers → New: an OpenAI or
+   Anthropic API key, a ChatGPT sign-in, or any Responses-compatible endpoint
+   by base URL. Settings → Agents → New: a name, that provider, a model and
+   instructions; leave the rest at its defaults.
+
+4. **Say something.** New chat, type, and the reply streams in. Then open the
+   Inspector from the top bar: **Traces** is every model call, tool call and
+   handoff with tokens and latency; **Context** is what the context window
+   holds and what each part costs.
+
+> **macOS.** Gatekeeper refuses the unsigned binary;
+> `xattr -d com.apple.quarantine ./agents-server` clears it.
+
+Sandboxes, PostgreSQL, the container image, a reverse proxy and teams all
+come after that first conversation:
+[Running the workbench](docs/tutorial/workbench.md) continues from here, and
+[Deploying](docs/howto/workbench-deploy.md) takes it off localhost.
 
 ## What you get
 
-Built for one person or a small team running their own agents, and for Go
-developers who want the same machinery in their own programs.
+Built for one person or a small team running their own agents. One process,
+one database — SQLite by default, your own PostgreSQL if you prefer — and the
+server itself shells out to nothing.
 
-- **Zero infrastructure.** One process, one database — SQLite by default, your
-  own PostgreSQL if you prefer. Sandboxes need a Docker daemon, or any service
-  speaking the E2B API; the server itself shells out to nothing.
 - **The transcript is the truth.** A session is an append-only tree: every turn
   is persisted as it completes, so a cancelled run keeps what finished and a
   paused one survives a restart. Regenerate or fork any turn; the abandoned
   branch stays switchable.
-- **Traces and a context lens, no backend.** What actually goes into the
+- **A context lens and traces, no backend.** What actually goes into the
   context window and what each part costs, plus agent, tool, sandbox and
   guardrail spans with tokens and latency, in a panel beside the conversation.
   Nothing to collect, nothing to run.
 - **Replay any generation.** Re-run a traced model call with a different
   prompt, model, settings or tools, streamed, diffed against the original.
   No session is touched.
+
+Together these close the debug loop: see what the model saw, change it,
+re-run — one call, one turn, or a fork — and diff the results. Around it:
+
 - **Real sandboxes behind an approval gate.** A Docker container on this
   machine or a remote daemon, or a sandbox on any E2B-compatible service. The
   model reads files, edits them with `apply_patch`, runs commands. Approve a
@@ -92,18 +91,15 @@ developers who want the same machinery in their own programs.
 - **Work that outlives the turn.** `spawn_task` sub-agents that wake the parent
   when they finish and resume in place when they fail; workflows as fixed step
   sequences, started by the model, by hand, by cron or by a signed webhook.
+- **MCP, skills and the rest.** MCP servers over streamable HTTP with OAuth,
+  Agent Skills, projects, memories, guardrails.
 - **Image input.** Paste or drop screenshots into the chat; bytes go to your
   S3-compatible bucket, the model gets a URL, history keeps a reference
   ([details](docs/howto/attachments.md)).
-- **The rest of the surface.** MCP servers over streamable HTTP with OAuth,
-  Agent Skills, projects, memories, guardrails.
 - **Solo, or a team.** `--auth oauth` swaps the single token for Google sign-in
   and an allowlist: sessions and configuration are per person, an admin
   publishes what everyone shares, and credentials are sealed at rest
   ([details](docs/howto/workbench-auth.md)).
-
-Together these close the debug loop: see what the model saw, change it,
-re-run — one call, one turn, or a fork — and diff the results.
 
 ## Embed it: the agents-go SDK
 

@@ -2,29 +2,23 @@
 
 **Go agents. Local first.**
 
-These pages document the **SDK** — the Go library the workbench is built on,
-and embeddable on its own
-([scope §1.2](explanation/scope.md#12-non-goals)). What the workbench *is* and
-how to run it starts at the [project README](../README.md); its manual is
-[here](../cmd/agents-server/README.md).
+The documentation for both halves of the project: the **workbench** —
+`agents-server`, the local agent workbench you run yourself — and the **SDK**
+it is built on, the `agents` package, embeddable on its own. One core, two
+consumers ([scope §1.1](explanation/scope.md#11-what-this-is)).
 
-`agents-go` builds agentic AI apps on the OpenAI **Responses API** from a small
-set of primitives and very few abstractions. It started as a port of the
-[OpenAI Agents SDK for Python](https://openai.github.io/openai-agents-python/)
-and shares its core concepts, but it now evolves on its own: behavior is
-[specified](reference/spec.md), not inherited.
+**New here?** [Running the workbench](tutorial/workbench.md) goes from a
+binary to a first conversation with the Inspector open; nothing on that path
+needs Docker. Embedding the SDK in your own program starts at the
+[Quickstart](tutorial/quickstart.md).
 
-The shape is idiomatic Go: generics instead of runtime reflection magic,
+The SDK's shape is idiomatic Go: generics instead of runtime reflection magic,
 `context.Context` for cancellation, errors instead of exceptions, and
 `iter.Seq2` for streaming — a run executes on the consumer's goroutine, so
-abandoning a stream stops the run rather than leaking one. Where behavior
-diverges from the Python SDK it is a decision with a reason; see
-[Differences from the Python SDK](explanation/migration_from_python.md) for the
-comparison and [upstream watch](explanation/upstream_watch.md) for what has
-been reviewed and declined.
-
-**New here?** [Quickstart](tutorial/quickstart.md) installs it and builds an
-agent, step by step.
+abandoning a stream stops the run rather than leaking one. Behavior is
+[specified](reference/spec.md), not inherited. Arriving from the OpenAI Agents
+SDK for Python? Start at
+[Differences from the Python SDK](explanation/migration_from_python.md).
 
 ---
 
@@ -36,9 +30,9 @@ The pages are sorted by what you came for.
 
 | Page | |
 |---|---|
-| [Quickstart](tutorial/quickstart.md) | Build and run your first agent |
-| [Examples](tutorial/examples.md) | Runnable programs, one per capability |
-| [Running the workbench](tutorial/workbench.md) | The workbench from a binary to a first conversation |
+| [Running the workbench](tutorial/workbench.md) | **Start here.** From a binary to a first conversation with the Inspector open; a sandbox is the optional second chapter |
+| [Quickstart](tutorial/quickstart.md) | The SDK: build and run your first agent in Go |
+| [Examples](tutorial/examples.md) | Runnable SDK programs, one per capability |
 
 ### How-to — solve one problem
 
@@ -53,7 +47,7 @@ The pages are sorted by what you came for.
 | Models | [Models](howto/models.md) |
 | Observability | [Tracing](howto/tracing.md) · [Logging and diagnostics](howto/logging.md) |
 | Testing | [Testing your agents](howto/testing.md) — scripted models, no API key |
-| Workbench | [Deploying](howto/workbench-deploy.md) · [Authentication](howto/workbench-auth.md) · [Workflows](howto/workflows.md) · [Image input](howto/attachments.md) · [MCP OAuth troubleshooting](howto/mcp-oauth-troubleshooting.md) |
+| Workbench, power user | None of these are needed for the first conversation. [Deploying](howto/workbench-deploy.md) · [Authentication](howto/workbench-auth.md) · [Workflows](howto/workflows.md) · [Image input](howto/attachments.md) · [MCP OAuth troubleshooting](howto/mcp-oauth-troubleshooting.md) |
 
 ### Reference — look something up
 
@@ -70,7 +64,7 @@ The pages are sorted by what you came for.
 |---|---|
 | [Architecture](explanation/architecture.md) | How the pieces compose, and where the extension points are |
 | [Design decisions](explanation/decisions.md) | Settled decisions, each with the reason — read before reopening one |
-| [Scope](explanation/scope.md) | What this is, what it deliberately is not |
+| [Scope](explanation/scope.md) | What this is, what it deliberately is not, and the roadmap |
 | [Differences from the Python SDK](explanation/migration_from_python.md) | For readers arriving from `openai-agents-python` |
 | [Upstream watch](explanation/upstream_watch.md) | What was reviewed from the Python SDK, ported or declined |
 | [Workbench design invariants](explanation/workbench-invariants.md) | The rules every workbench panel/handler pair follows |

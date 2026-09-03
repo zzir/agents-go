@@ -11,6 +11,23 @@ API. The server shells out to no binary. Which daemon or service a sandbox
 uses is its config, in
 [Sandboxes](../reference/protocol.md#sandboxes--apiv1sandboxes).
 
+### The container image
+
+Published to GHCR and Docker Hub on each release:
+
+```bash
+docker run -p 9527:9527 -v agents-data:/data ghcr.io/zzir/agents-server:latest --host 0.0.0.0
+```
+
+Pass `--host 0.0.0.0` — the default `127.0.0.1` is unreachable from outside the
+container. State persists in the `/data` volume (the default `data.db` lands
+there) and the startup token is printed to the container logs. Any other flags
+go on the same line; swap the image for `zzir/agents-server:latest` to pull from
+Docker Hub. A sandbox of type `docker` inside the container still needs a
+daemon to talk to — the host's socket mounted in, as
+[`scripts/docker-compose.yml`](../../scripts/docker-compose.yml) does, or a
+remote one over SSH or TCP.
+
 ### Deployment
 
 Standing alone on localhost, no flags are needed. Behind a TLS-terminating

@@ -10,12 +10,25 @@ that results is in [the spec](../reference/spec.md).
 
 ### 1.1 What this is
 
-A Go SDK for building agents on the **OpenAI Responses API**. It began as a port
-of openai-agents-python and shares its core concepts — agents, handoffs,
-guardrails, sessions — but evolves independently. See
-[migration_from_python.md](../explanation/migration_from_python.md) if you are arriving from the
-Python SDK, and [upstream_watch.md](../explanation/upstream_watch.md) for what we have reviewed
-from upstream.
+A local agent workbench: `agents-server`, one binary you run yourself, your
+data in SQLite (or PostgreSQL), an embedded UI — **"Go agents. Local first."**
+It runs agents and workflows behind tool approvals and closes the debug loop
+on them: the transcript is the truth, a context lens and traces show what the
+model saw, and any turn can be replayed or forked.
+
+The SDK underneath it — the root module of this repository — is the same core
+consumed a second way: embedded in your own Go program, with no dependency on
+or reporting to the workbench ([§1.2](#12-non-goals), last row). Two consumers,
+one core, one dependency edge.
+
+**The first conversation is frozen.** It is one process, SQLite by default,
+and no Docker: a downloaded binary, one API key and a browser reach a
+streamed reply with the Inspector open. Sandboxes, PostgreSQL, deployment,
+team sign-in and anything else that needs a second thing installed are
+power-user steps that come *after* it. The getting-started pages — the
+[README](../../README.md) and
+[Running the workbench](../tutorial/workbench.md) — keep them out of that
+path, and a change that puts them back is a scope change, not an edit.
 
 ---
 

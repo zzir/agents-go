@@ -1,24 +1,23 @@
 # Running the workbench
 
 `agents-server` is the Go-native agent workbench: one binary, your data, run by
-you. This page takes it from nothing to a first conversation with a sandbox
-and a trace. [Deployment](../howto/workbench-deploy.md) and
-[authentication](../howto/workbench-auth.md) take it further; the
+you. This page takes it from nothing to a first conversation with the
+Inspector open beside it, and nothing on that path needs Docker. A sandbox is
+the second chapter, and optional. [Deployment](../howto/workbench-deploy.md)
+and [authentication](../howto/workbench-auth.md) take it further; the
 [wire surface](../reference/protocol.md) documents its API; every flag,
 environment variable and runtime setting is in the
 [configuration reference](../reference/configuration.md).
 
 ## Get a binary
 
-Grab a prebuilt binary for your platform from the
-[Releases](https://github.com/zzir/agents-go/releases) page, or build from
-source. The web UI is compiled into the binary via `go:embed`, and the built
-`internal/web/frontend/dist` is not checked in — so a source build must build
-the frontend first; `make build` does both (npm required):
+Download the archive for your OS and CPU from the
+[Releases](https://github.com/zzir/agents-go/releases) page and extract it;
+the `agents-server` binary is at the top level. On macOS, Gatekeeper refuses
+the unsigned binary until `xattr -d com.apple.quarantine ./agents-server`
+clears it.
 
 ```bash
-cd cmd/agents-server
-make build          # npm install + build the SPA, then go build with it embedded
 ./agents-server
 ```
 
@@ -27,6 +26,17 @@ to move) and keeps its state in `data.db` in the directory you ran it from
 (`--db`; a `postgres://` DSN uses PostgreSQL instead). On startup it prints an
 auto-generated auth token — open the address in a browser and paste the token
 into the login screen. `agents-server --help` lists every flag.
+
+To build from source instead: the web UI is compiled into the binary via
+`go:embed`, and the built `internal/web/frontend/dist` is not checked in, so a
+source build must build the frontend first. `make build` does both (npm
+required):
+
+```bash
+cd cmd/agents-server
+make build          # npm install + build the SPA, then go build with it embedded
+./agents-server
+```
 
 ## Add a provider and an agent
 
@@ -51,8 +61,10 @@ what each part costs) and **Tasks** (background work).
 
 ## Give it a sandbox
 
-An agent that should read files and run commands needs a working tree, and a
-working tree lives on a sandbox:
+Everything so far ran without Docker, and an agent without a sandbox already
+talks, calls MCP servers and hands off. What it cannot do is touch files or
+run commands: that needs a working tree, and a working tree lives on a
+sandbox. This chapter and the ones after it are optional.
 
 1. **Settings → Sandboxes** → New: type `docker` with this machine's daemon
    (leave the host empty) or a remote one over SSH, an image, and — if you
