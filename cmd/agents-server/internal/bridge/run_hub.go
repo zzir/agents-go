@@ -38,9 +38,8 @@ const (
 	runRetention = 15 * time.Minute
 )
 
-// terminalStatusForEvent maps a run's terminal event type to the RunStatus it
-// drives, reporting false for any non-terminal event. Single authority for the
-// run lifecycle: publish and the IsTerminal/IsFinal predicates derive from it.
+// terminalStatusForEvent maps a terminal event type to the RunStatus it drives,
+// false for a non-terminal one; publish and IsFinalRunEvent derive from it.
 func terminalStatusForEvent(typ string) (RunStatus, bool) {
 	switch typ {
 	case protocol.EventRunOutput:
@@ -81,9 +80,8 @@ type TaskMeta struct {
 	ParentRunID     string `json:"parent_run_id,omitempty"`
 	ToolCallID      string `json:"tool_call_id,omitempty"`
 	Label           string `json:"label,omitempty"`
-	// Attempt is which run of the task this is: 1 for the original, more after a
-	// retry. It rides on run.started so a client can tell a NEW attempt from a
-	// replay of the old one.
+	// Attempt is which run of the task this is (1 for the original); on
+	// run.started it tells a NEW attempt from a replay of the old one.
 	Attempt int `json:"attempt,omitempty"`
 	// MaxAttempts is the ceiling Attempt is measured against.
 	MaxAttempts int `json:"max_attempts,omitempty"`
@@ -100,9 +98,8 @@ type RunInfo struct {
 	ProjectID     string    `json:"project_id,omitempty"`
 	Status        RunStatus `json:"status"`
 	LastSeq       int       `json:"last_seq"`
-	// GracefulStop records that StopAfterTurn was requested: a clean finish
-	// after it is a cancellation, not a completion (postRun writes the task row
-	// accordingly).
+	// GracefulStop records a StopAfterTurn request: a clean finish after it is
+	// a cancellation, not a completion (postRun writes the task row so).
 	GracefulStop bool `json:"-"`
 	// Task is set for background task runs (SessionID is then the task's own
 	// hidden session; Task carries the parent linkage).
@@ -150,10 +147,8 @@ func newRunFanout() *agents.Fanout[*protocol.Envelope] {
 // Last-Event-ID id line).
 type SeqSink func(SeqEnvelope)
 
-// runSegment is one execution of a run. The goroutine that started it (a fresh
-// StartRun or an approval resume) is the sole caller of its cancel and sole
-// closer of its done gate, capturing both by value — so a resume swapping in a
-// fresh segment cannot race the double-close or leak the old cancel context.
+// runSegment is one execution of a run. The goroutine that started it is the
+// sole caller of cancel and sole closer of done, so a resume cannot race either.
 type runSegment struct {
 	done   chan struct{}
 	cancel context.CancelFunc
@@ -174,25 +169,21 @@ func (s *runSegment) finalize() {
 type runRecord struct {
 	info   RunInfo
 	cancel context.CancelFunc
-	// done mirrors the CURRENT segment's done gate (see runSegment), so the
-	// session-delete path can wait on the live segment. A resume swaps in the
-	// new segment's gate.
+	// done mirrors the CURRENT segment's gate (a resume swaps it), so the
+	// session-delete path waits on the live segment.
 	done chan struct{}
-	// ctrl is the live run's RunControl, set once the run exists: how an uplink
-	// message (graceful stop, or injected input) reaches a run already going.
-	// Distinct from cancel, a hard context abort. Under mu, like info.
+	// ctrl is the live run's RunControl (graceful stop, injected input); distinct
+	// from cancel, the hard abort. Under mu, like info.
 	ctrl agents.RunControl
 
-	// fanout owns delivery: sequence assignment, the replay ring, per-subscriber
-	// buffering, and the slow-subscriber policy — a subscriber that falls behind
-	// is TOLD (a *agents.GapError on its own stream) instead of losing events.
+	// fanout owns delivery: seq assignment, the replay ring, per-subscriber
+	// buffers; a slow subscriber gets a *agents.GapError, never silent loss.
 	fanout *agents.Fanout[*protocol.Envelope]
 
 	mu      sync.Mutex
 	endedAt time.Time
-	// started is the run's latest run.started, pinned OUTSIDE the ring with its
-	// seq: the one event a subscriber from 0 must get even after the ring has
-	// moved past it (workbench invariant 14).
+	// started is the latest run.started pinned OUTSIDE the ring with its seq,
+	// for a subscriber whose cursor lies before it — invariant 14.
 	started    *protocol.Envelope
 	startedSeq int
 }
@@ -204,9 +195,8 @@ type runRecord struct {
 type RunHub struct {
 	rootCtx context.Context
 
-	// maxTasks resolves the per-parent live-task cap, called at each register so
-	// the setting can change without a restart. Read OUTSIDE mu (it hits the DB)
-	// and compared under mu.
+	// maxTasks resolves the per-parent live-task cap at each register (a live
+	// setting). Read OUTSIDE mu (it hits the DB), compared under mu.
 	maxTasks func() int
 
 	mu        sync.Mutex
@@ -215,9 +205,8 @@ type RunHub struct {
 	// draining latches when Shutdown begins: no new run may register or
 	// resume from then on, so the drain's snapshot is the complete set.
 	draining bool
-	// deleting marks sessions whose delete cascade is in progress. register and
-	// resume refuse them so a task's postRun drain (or any late resume) cannot
-	// start a fresh run on a session about to be removed.
+	// deleting marks sessions mid delete-cascade: register and resume refuse
+	// them, so no late resume or postRun drain starts a run on one.
 	deleting map[string]bool
 }
 
@@ -243,9 +232,8 @@ func NewRunHub(rootCtx context.Context) *RunHub {
 // one's goroutine to finish, final persistence included.
 func (h *RunHub) Shutdown(ctx context.Context) {
 	h.mu.Lock()
-	// Latch FIRST, before snapshotting: from here register and resume refuse, so
-	// a wake-up run spawned by a cancelled run's postRun drain cannot slip in
-	// after the snapshot and exit un-waited-on.
+	// Latch FIRST, before snapshotting: a wake-up run spawned by a drained
+	// run's postRun must not slip in after the snapshot, un-waited-on.
 	h.draining = true
 	recs := make([]*runRecord, 0, len(h.runs))
 	for _, rec := range h.runs {
@@ -253,9 +241,8 @@ func (h *RunHub) Shutdown(ctx context.Context) {
 	}
 	h.mu.Unlock()
 
-	// Status decides only whether to CANCEL; the wait covers every segment gate
-	// regardless, because status flips to terminal when the terminal event
-	// publishes — before the goroutine finishes persisting. Reads under rec.mu.
+	// Status decides only whether to CANCEL; every gate is waited on, since
+	// status flips terminal before the goroutine finishes persisting.
 	var gates []chan struct{}
 	for _, rec := range recs {
 		rec.mu.Lock()
@@ -275,9 +262,8 @@ wait:
 			break wait
 		}
 	}
-	// Every broadcaster ends now — those of interrupted runs included, which
-	// the drain neither cancels nor waits for — so a subscriber (an SSE
-	// stream) returns instead of holding the HTTP shutdown to its deadline.
+	// End every broadcaster, interrupted runs' included, so a subscriber (an
+	// SSE stream) returns instead of holding the HTTP shutdown to its deadline.
 	h.mu.Lock()
 	for _, rec := range h.runs {
 		rec.fanout.Close()
@@ -293,9 +279,8 @@ func (h *RunHub) markSessionDeleting(sessionID string) {
 	h.mu.Unlock()
 }
 
-// unmarkSessionDeleting clears the mark after a delete cascade FAILED and the
-// session still exists. A successful delete never clears it — the id is never
-// reused.
+// unmarkSessionDeleting clears the mark after a delete cascade FAILED; a
+// successful delete never clears it — the id is never reused.
 func (h *RunHub) unmarkSessionDeleting(sessionID string) {
 	h.mu.Lock()
 	delete(h.deleting, sessionID)
@@ -309,10 +294,8 @@ func (h *RunHub) SessionDeleting(sessionID string) bool {
 	return h.deleting[sessionID]
 }
 
-// deletingLocked refuses a run whose session — or, for a task run, whose PARENT
-// session — is being torn down. Callers hold h.mu. The parent check catches a
-// FAILED task's retry (invisible to the teardown's task-stop) from writing into
-// rows the cascade is removing.
+// deletingLocked refuses a run whose session — or, for a task run, PARENT
+// session — is being torn down (a failed task's retry). Callers hold h.mu.
 func (h *RunHub) deletingLocked(sessionID string, task *TaskMeta) error {
 	if h.deleting[sessionID] {
 		return ErrSessionDeleting{SessionID: sessionID}
@@ -352,11 +335,8 @@ func (e ErrTaskLimit) Error() string {
 	return fmt.Sprintf("session already has %d live tasks; wait for one to finish or stop one", e.Limit)
 }
 
-// register creates a run record for a fresh run on sessionID and returns the
-// segment the caller's goroutine owns plus a context descending from the hub
-// root (not any connection). The goroutine MUST call seg.finalize() exactly
-// once when it ends. It fails with ErrSessionBusy if the session already has a
-// live run, or ErrSessionDeleting if the session is being torn down.
+// register creates a fresh run on sessionID, returning the caller's segment (finalize
+// it exactly once) and a hub-root context; ErrSessionBusy when a run is already live.
 func (h *RunHub) register(runID, sessionID, ownerID, agentConfigID, projectID string, task *TaskMeta) (*runSegment, context.Context, error) {
 	// Resolve the cap before the lock: the resolver reads the DB, and h.mu gates
 	// every register/deregister.
@@ -391,11 +371,8 @@ func (h *RunHub) register(runID, sessionID, ownerID, agentConfigID, projectID st
 	return seg, ctx, nil
 }
 
-// unregister withdraws a run that never launched: register succeeded but a
-// pre-launch step failed, so nothing was published, no subscriber attached
-// (OnRunAttach has not run), and no goroutine owns the segment. It releases
-// the session slot and the segment's context so the failed start leaves no
-// trace — the run id was never observable.
+// unregister withdraws a run that never launched (a pre-launch step failed
+// after register): frees the session slot and the segment; nothing was published.
 func (h *RunHub) unregister(runID string, seg *runSegment) {
 	h.mu.Lock()
 	if rec := h.runs[runID]; rec != nil {
@@ -424,15 +401,8 @@ func (h *RunHub) liveTaskCountLocked(parentSessionID string) int {
 	return n
 }
 
-// resume reopens an interrupted run so its continuation streams under the same
-// run id, keeping the record's sequence counter, replay buffer, and subscribers
-// so attached clients and SSE Last-Event-ID cursors stay valid. If the record
-// is gone (server restart, retention GC), a fresh one is created under the same
-// id with the sequence restarting at zero — reopened reports which of the two
-// happened, so a withdrawal (abortResume) knows what to put back. The caller's
-// goroutine owns the returned segment and MUST call seg.finalize() when it
-// ends. Fails with ErrSessionBusy, ErrSessionDeleting, or ErrRunNotResumable
-// (record not paused).
+// resume reopens an interrupted run under the same id; a record lost to restart or GC
+// is recreated with seq from zero (reopened says which). Finalize seg exactly once.
 func (h *RunHub) resume(runID, sessionID, ownerID, agentConfigID, projectID string, task *TaskMeta) (seg *runSegment, ctx context.Context, reopened bool, err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -485,12 +455,8 @@ func (h *RunHub) resume(runID, sessionID, ownerID, agentConfigID, projectID stri
 	return seg, ctx, true, nil
 }
 
-// abortResume withdraws a resume whose pre-launch verify refused: the segment
-// never ran and published nothing, so the record goes back to what resume
-// found. A REOPENED record returns to interrupted with its history, fanout and
-// subscribers intact — the pause they observe is still the truth — while a
-// record resume CREATED (a post-restart resume) is withdrawn entirely, like
-// any failed fresh start.
+// abortResume withdraws a resume whose verify refused: a REOPENED record goes
+// back to interrupted, subscribers intact; a record resume created is dropped.
 func (h *RunHub) abortResume(runID string, seg *runSegment, reopened bool) {
 	if !reopened {
 		h.unregister(runID, seg)
@@ -528,18 +494,8 @@ func (e ErrRunNotResumable) Error() string {
 	return fmt.Sprintf("run %s is %s and cannot be resumed", e.RunID, e.Status)
 }
 
-// publish assigns the next sequence number to env, appends it to the run's
-// replay buffer, advances the terminal status for terminal event types, and
-// fans the event out to all current subscribers. It reports whether the hub
-// holds the run — false means nobody heard, and the caller decides.
-//
-// Locking: agents.Fanout.Publish serializes sequence assignment through
-// delivery, so subscribers never see events out of order; the record lock is
-// taken only for the status/LastSeq mutation after, never during fan-out. The
-// status advance assumes at most one publisher emits a terminal event per run at
-// a time — held by the run's own goroutine while its segment is live, and by
-// publishTaskCancelled once the segment has ended. A stop racing an approval
-// resume is caught by the post-resume re-check in ResolveApproval, not here.
+// publish rings env, fans it out, then advances the status under rec.mu (never held
+// during fan-out); false means the hub has no such run. See invariant 23.
 func (h *RunHub) publish(runID string, env *protocol.Envelope) bool {
 	h.mu.Lock()
 	rec := h.runs[runID]
@@ -569,18 +525,12 @@ func (h *RunHub) Subscribe(runID string, fromSeq int, sink EventSink) (func(), b
 	return cancel, ok
 }
 
-// SubscribeSeq attaches sink to the run's live event stream after replaying any
-// buffered events with seq > fromSeq (pass 0 to replay everything retained). It
-// returns the detach function (idempotent), a channel closed once the stream
-// has ended — the broadcaster closed on shutdown or retention, every event
-// already handed to the sink — and whether the run exists.
-//
-// The sink runs on its own goroutine, fed by the subscriber's buffer, so a slow
-// sink cannot affect its peers; an overflow reaches it as a run.gap naming the
-// range it missed. A cursor before the run's latest run.started gets that
-// event first whenever the ring no longer holds it, read off the stream's
-// opening item so no publish slips between the check and the replay —
-// workbench invariant 14.
+// SubscribeSeq attaches sink to the run's live event stream after replaying the
+// buffered events with seq > fromSeq (0 replays everything retained). It returns
+// the detach function (idempotent), a channel closed once the stream has ended
+// (every event already handed to the sink), and whether the run exists. The
+// sink runs on its own goroutine; an overflow reaches it as a run.gap, and a
+// cursor before the latest run.started gets that event first — invariant 14.
 func (h *RunHub) SubscribeSeq(runID string, fromSeq int, sink SeqSink) (func(), <-chan struct{}, bool) {
 	h.mu.Lock()
 	rec := h.runs[runID]
@@ -619,12 +569,8 @@ func (h *RunHub) SubscribeSeq(runID string, fromSeq int, sink SeqSink) (func(), 
 					sink(SeqEnvelope{Seq: gap.LastGood, Env: env})
 				}
 			}
-			// A gap can arrive on an item that carries nothing — at the end of
-			// the stream, or the timeline reset a cursor ahead of the head gets
-			// (from_seq is the CLIENT's number). The gap itself was delivered
-			// above; forwarding the empty item would hand the sink a nil
-			// envelope to dereference, and the sink runs on a goroutine of its
-			// own, past any recovery.
+			// An item can carry only a gap (end of stream, or a cursor past the
+			// head); the sink runs on its own goroutine, so never hand it nil.
 			if item.Value == nil {
 				continue
 			}
@@ -635,10 +581,8 @@ func (h *RunHub) SubscribeSeq(runID string, fromSeq int, sink SeqSink) (func(), 
 	return cancel, done, true
 }
 
-// finish marks a run terminal: interrupted when it paused for approval,
-// otherwise keeping the status publish already derived (falling back to
-// completed). It frees the session's live-run slot and starts the retention
-// clock.
+// finish marks the run terminal — interrupted when paused, else what publish
+// derived (default completed) — frees the session slot and starts retention.
 func (h *RunHub) finish(runID string, interrupted bool) {
 	h.mu.Lock()
 	rec := h.runs[runID]
@@ -829,9 +773,8 @@ func (h *RunHub) gcLoop() {
 				rec.mu.Unlock()
 				if expired {
 					delete(h.runs, id)
-					// Close the broadcaster too, or the goroutine feeding each
-					// still-attached sink blocks forever on a record nothing
-					// can reach any more.
+					// Close the broadcaster too, or each attached sink's feeder
+					// goroutine blocks forever on an unreachable record.
 					rec.fanout.Close()
 				}
 			}

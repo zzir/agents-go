@@ -11,18 +11,15 @@ import (
 	"github.com/uptrace/bun"
 )
 
-// The visibility vocabulary of scoped configuration (decisions §5.29): providers,
-// agent configs, MCP servers, skills and workflows carry a Scope deciding who
-// sees the row, and an OwnerID naming its creator — permanent, kept across
-// scope flips.
+// The visibility vocabulary of scoped configuration (decisions §5.29): a
+// Scope deciding who sees the row, and a permanent OwnerID naming its creator.
 const (
 	ScopePrivate = "private"
 	ScopeGlobal  = "global"
 )
 
 // visibleTo narrows a scoped-entity SELECT to what ownerID may see: global
-// rows plus their own. An admin sees everything (management needs the whole
-// table; secrets stay masked regardless).
+// rows plus their own; an admin sees everything.
 func visibleTo(q *bun.SelectQuery, ownerID string, admin bool) *bun.SelectQuery {
 	if admin {
 		return q
@@ -31,8 +28,7 @@ func visibleTo(q *bun.SelectQuery, ownerID string, admin bool) *bun.SelectQuery 
 }
 
 // Visible reports whether one row is readable by the caller — the point
-// lookup mirror of visibleTo, so a foreign private row answers 404 exactly
-// where the list omits it.
+// lookup mirror of visibleTo.
 func Visible(scope, rowOwner, callerID string, admin bool) bool {
 	return admin || scope == ScopeGlobal || rowOwner == callerID
 }
@@ -46,9 +42,8 @@ func NormalizeScope(scope string) string {
 	return ScopePrivate
 }
 
-// ListVisibleOf returns the scoped-entity rows ownerID may see, in the listing
-// order decisions §5.29 promises — see orderScoped. ONLY for the owner-grouped
-// scoped tables; a table without the scope/owner columns fails the query loudly.
+// ListVisibleOf returns the scoped-entity rows ownerID may see, in orderScoped
+// order. ONLY for the owner-grouped scoped tables.
 func ListVisibleOf[T any](ctx context.Context, s *CrudStore[T], ownerID string, admin bool) ([]T, error) {
 	var out []T
 	q := orderScoped(visibleTo(s.db.NewSelect().Model(&out), ownerID, admin), ownerID, admin)
@@ -63,12 +58,8 @@ func ListVisibleOf[T any](ctx context.Context, s *CrudStore[T], ownerID string, 
 	return out, nil
 }
 
-// orderScoped applies the listing order for the four owner-grouped scoped
-// entities — agent configs, providers, MCP servers, workflows (decisions
-// §5.29). A member sees OTHERS' shared rows first, then their own, each group
-// newest first; an admin sees the whole table newest first, ungrouped. The
-// group key is owner_id, which is permanent, so neither a rename nor a scope
-// flip ever reorders a row — only a transfer does. id is the final tiebreak.
+// orderScoped applies the listing order of the four owner-grouped scoped
+// entities — decisions §5.29. id is the final tiebreak.
 func orderScoped(q *bun.SelectQuery, ownerID string, admin bool) *bun.SelectQuery {
 	if admin {
 		return q.OrderExpr("created_at DESC, id DESC")
@@ -76,25 +67,17 @@ func orderScoped(q *bun.SelectQuery, ownerID string, admin bool) *bun.SelectQuer
 	return q.OrderExpr("CASE WHEN owner_id = ? THEN 1 ELSE 0 END, created_at DESC, id DESC", ownerID)
 }
 
-// scopedListOrder is the SKILLS listing order: the shared rows first, then each
-// group newest first (decisions §5.29). Skills keep this global-first shape —
-// their panel groups by repository and a repo flips as a whole — while the four
-// owner-grouped entities above use orderScoped. The id tiebreak keeps
-// same-instant rows in one order across reloads.
+// scopedListOrder is the SKILLS listing order: shared rows first, then newest
+// first (decisions §5.29); id keeps same-instant rows in one order.
 const scopedListOrder = `CASE WHEN scope = 'global' THEN 0 ELSE 1 END, created_at DESC, id DESC`
 
 // ErrSameScope marks a scope flip refused because the row already holds the
-// target scope — a second demote would silently re-home the row (spec
-// §5.29). Handlers map it to 409.
+// target scope (decisions §5.29). Handlers map it to 409.
 var ErrSameScope = errors.New("the row is already in that scope")
 
-// SetScopeOf moves one scoped row between global and private (decisions §5.29).
-// The owner never changes: a demoted row returns to its author. expectOwner
-// is the owner the CALLER was authorized against — carried into the WHERE, so
-// a transfer landing between that check and this write refuses the flip
-// (ErrOwnershipChanged) instead of moving somebody else's row. The scope
-// predicate settles the same-scope check in SQL, and the unique name indexes
-// decide collisions (UNIQUE violation -> 409).
+// SetScopeOf moves one scoped row between global and private (decisions
+// §5.29); the owner never changes. expectOwner is carried into the WHERE, so
+// a transfer landing since the caller's check refuses the flip (ErrOwnershipChanged).
 func SetScopeOf[T any](ctx context.Context, s *CrudStore[T], id, scope, expectOwner string) error {
 	res, err := s.db.NewUpdate().Model((*T)(nil)).
 		Set("scope = ?", scope).
@@ -113,8 +96,7 @@ func SetScopeOf[T any](ctx context.Context, s *CrudStore[T], id, scope, expectOw
 }
 
 // scopeRefusal tells apart the three reasons a conditional scope write
-// matched nothing: the row is gone, it already holds the scope, or it moved
-// to another owner since the caller was authorized.
+// matched nothing: gone, already in that scope, or moved to another owner.
 func scopeRefusal[T any](ctx context.Context, s *CrudStore[T], id, scope, expectOwner string) error {
 	m := new(T)
 	if err := s.db.NewSelect().Model(m).Where("id = ?", id).Scan(ctx); err != nil {
@@ -133,9 +115,8 @@ func scopeRefusal[T any](ctx context.Context, s *CrudStore[T], id, scope, expect
 	return ErrOwnershipChanged
 }
 
-// scopeOwnerOf reads the scope/owner pair off any scoped model. The five
-// carry the same two columns but share no interface — a method set for two
-// fields would be five implementations of nothing — so this reflects them.
+// scopeOwnerOf reads the scope/owner pair off any scoped model by reflection
+// (the five share the columns but no interface).
 func scopeOwnerOf(m any) (scope, owner string) {
 	v := reflect.Indirect(reflect.ValueOf(m))
 	if !v.IsValid() || v.Kind() != reflect.Struct {
@@ -155,16 +136,11 @@ func scopeOwnerOf(m any) (scope, owner string) {
 var ErrNoSuchUser = errors.New("no such user")
 
 // ErrOwnershipChanged marks a write refused because the row's scope or owner
-// moved between the caller's authorization and the write itself — a transfer
-// or a scope flip landing in between. Handlers map it to 409: the caller
-// re-reads and decides again, rather than editing under a permission they no
-// longer hold (decisions §5.29).
+// moved since the caller's authorization (decisions §5.29). Handlers map it to 409.
 var ErrOwnershipChanged = errors.New("the configuration's owner or scope changed; reload and try again")
 
-// DeleteOwnedBy removes a row only while it still belongs to the owner the
-// caller was authorized against — the delete's half of the same rule
-// SetScopeOf carries. An admin passes any owner (management reaches every
-// row) by naming the one they saw. ErrOwnershipChanged when it moved.
+// DeleteOwnedBy removes a row only while it still belongs to expectOwner (an
+// admin names the owner they saw). ErrOwnershipChanged when it moved.
 func DeleteOwnedBy[T any](ctx context.Context, s *CrudStore[T], id, expectOwner string) error {
 	res, err := s.db.NewDelete().Model((*T)(nil)).
 		Where("id = ?", id).
@@ -186,9 +162,8 @@ func DeleteOwnedBy[T any](ctx context.Context, s *CrudStore[T], id, expectOwner 
 	return nil
 }
 
-// SetOwnerOf transfers one scoped row to another user — management, for an
-// admin. Scope is untouched; the private unique name indexes arbitrate a
-// collision in the target owner's namespace (UNIQUE violation -> 409).
+// SetOwnerOf transfers one scoped row to another user (admin). Scope is
+// untouched; a name collision in the target namespace is a UNIQUE violation.
 func SetOwnerOf[T any](ctx context.Context, s *CrudStore[T], id, ownerID string) error {
 	// The scoped tables carry no FK, so the target account is checked here.
 	exists, err := s.db.NewSelect().Model((*User)(nil)).Where("id = ?", ownerID).Exists(ctx)
@@ -213,16 +188,13 @@ func SetOwnerOf[T any](ctx context.Context, s *CrudStore[T], id, ownerID string)
 }
 
 // Shadows reports whether a row is the caller's PRIVATE shadow of a shared
-// name — the own-over-global tiebreak (decisions §5.29). Owning a global row is
-// not shadowing: the owner authored it, but every member reads it, so a
-// private row of the same name still wins for its owner.
+// name — the own-over-global tiebreak (decisions §5.29).
 func Shadows(scope, rowOwner, callerID string) bool {
 	return callerID != "" && scope == ScopePrivate && rowOwner == callerID
 }
 
-// RefVisible reports whether a holder row may REFERENCE the given row: a
-// global holder only global rows, a private holder global rows plus its
-// owner's own — decisions §5.29.
+// RefVisible reports whether a holder row may REFERENCE the given row —
+// decisions §5.29.
 func RefVisible(refScope, refOwner, holderScope, holderOwner string) bool {
 	if holderScope == ScopeGlobal {
 		return refScope == ScopeGlobal

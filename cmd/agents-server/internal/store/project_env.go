@@ -10,13 +10,10 @@ import (
 
 // This file is the single home of project ENVIRONMENT semantics: what is
 // storable (NormalizeProjectEnv), what reaches the container (EnvMap), and
-// when two payloads mean the same container (EnvContentEqual) — so a question
-// answered one way at save time cannot be answered another way at compare
-// time.
+// when two payloads mean the same container (EnvContentEqual).
 
-// EnvVar is one entry of a project's environment. Values are write-only:
-// sealed at rest and masked in every response, like every other credential
-// this server stores (decisions §5.32).
+// EnvVar is one entry of a project's environment. Values are write-only,
+// sealed at rest and masked in every response (decisions §5.32).
 type EnvVar struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
@@ -34,10 +31,8 @@ const (
 var envKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // NormalizeProjectEnv validates vars and returns the canonical payload to
-// store: sorted by key, so storage, the container fingerprint (spec §2.7n)
-// and EnvContentEqual all answer in one order. An empty environment stores as
-// "" — no environment at all, which is what keeps a project without one off
-// the fingerprint.
+// store, sorted by key (storage, the fingerprint — spec §2.7n — and
+// EnvContentEqual share one order). An empty environment stores as "".
 func NormalizeProjectEnv(vars []EnvVar) (string, error) {
 	if len(vars) == 0 {
 		return "", nil
@@ -87,9 +82,8 @@ func DecodeProjectEnv(raw string) ([]EnvVar, error) {
 	return out, nil
 }
 
-// EnvMap is the stored payload as the sandbox takes it. An undecodable
-// payload is an error: starting a container WITHOUT the variables it was
-// configured with is worse than refusing to start it.
+// EnvMap is the stored payload as the sandbox takes it; an undecodable
+// payload is an error rather than a container started without its variables.
 func EnvMap(raw string) (map[string]string, error) {
 	vars, err := DecodeProjectEnv(raw)
 	if err != nil || len(vars) == 0 {
@@ -103,9 +97,7 @@ func EnvMap(raw string) (map[string]string, error) {
 }
 
 // EnvContentEqual reports whether two canonical payloads produce the same
-// CONTAINER — the predicate behind the runtime-generation bump. An
-// undecodable payload compares unequal, the safe side (as SandboxContentEqual
-// does for sandbox configs).
+// CONTAINER — the predicate behind the runtime-generation bump. Undecodable compares unequal.
 func EnvContentEqual(a, b string) bool {
 	va, aerr := DecodeProjectEnv(a)
 	vb, berr := DecodeProjectEnv(b)

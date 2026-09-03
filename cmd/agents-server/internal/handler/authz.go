@@ -14,8 +14,7 @@ import (
 )
 
 // Authorization gates: session content is owner-only, scoped configuration
-// gates per row, host configuration is read-everyone/write-admin —
-// decisions §5.29.
+// gates per row, host configuration is read-everyone/write-admin — decisions §5.29.
 
 // requireAdmin answers 403 unless the caller is an admin; false means the
 // response is written and the handler must return.
@@ -47,9 +46,8 @@ func ownsSession(c *gin.Context, sess *store.Session) bool {
 	return ok && u.ID == sess.OwnerID
 }
 
-// requireOwnedSession loads the session and checks the caller owns it. A
-// session someone else owns answers 404, the same as one that does not
-// exist: ownership is not an oracle for existence.
+// requireOwnedSession loads the session and checks the caller owns it; a
+// foreign session answers 404, the same as an absent one.
 func requireOwnedSession(c *gin.Context, sessions *store.SessionStore, id string) (*store.Session, bool) {
 	sess, err := sessions.Get(c.Request.Context(), id)
 	if err != nil {
@@ -90,8 +88,7 @@ func requireRunOwner(c *gin.Context, info bridge.RunInfo, ok bool) bool {
 }
 
 // ownsApproval returns the pending tool call toolCallID when userID owns the
-// session its approval is filed on (a task's hidden session inherits its
-// parent's owner, so a task's approvals are the parent's owner's to decide).
+// session its approval is filed on (a task's hidden session inherits the parent's owner).
 func ownsApproval(ctx context.Context, approvals *store.PendingApprovalStore, sessions *store.SessionStore, userID, toolCallID string) (*store.PendingToolCall, bool) {
 	pending, call, err := approvals.FindByToolCall(ctx, toolCallID)
 	if err != nil {
@@ -200,8 +197,7 @@ func (d AuthzDeps) triggerGate() gin.HandlerFunc {
 }
 
 // The scoped-configuration gates (decisions §5.29). scopeOf reads a row's
-// (scope, owner) pair; rowGate is one of visibleRow, editableRow and
-// deletableRow.
+// (scope, owner) pair; rowGate is one of visibleRow, editableRow and deletableRow.
 
 // listVisible answers the rows the caller may see; false means the response
 // is written.
@@ -233,8 +229,7 @@ func gatedRow[T any](c *gin.Context, s *store.CrudStore[T], scopeOf func(*T) (st
 }
 
 // deleteOwned deletes the row the id path parameter names, with the owner
-// deletableRow authorized against as the delete's predicate (409 when it
-// moved since). False means the response is written.
+// deletableRow saw as the predicate (409 when it moved). False: response written.
 func deleteOwned[T any](c *gin.Context, s *store.CrudStore[T], scopeOf func(*T) (string, string)) bool {
 	row, ok := gatedRow(c, s, scopeOf, deletableRow)
 	if !ok {
@@ -248,9 +243,8 @@ func deleteOwned[T any](c *gin.Context, s *store.CrudStore[T], scopeOf func(*T) 
 	return true
 }
 
-// stampCreateScope applies the caller to a new scoped row: an explicit
-// global claim needs the admin role, anything else lands private and owned.
-// False means the response is written.
+// stampCreateScope applies the caller to a new scoped row: a global claim
+// needs the admin role, anything else lands private. False means the response is written.
 func stampCreateScope(c *gin.Context, scope, ownerID *string) bool {
 	u, ok := server.CurrentUser(c)
 	if !ok {
@@ -269,10 +263,8 @@ func stampCreateScope(c *gin.Context, scope, ownerID *string) bool {
 	return true
 }
 
-// scopeChangeAllowed authorizes a scope flip on a row the caller must first
-// be able to see (404 otherwise): promoting — publishing to every member —
-// is an admin's act; demoting is the admin's or the author's (the row
-// returns to its owner). False means the response is written.
+// scopeChangeAllowed authorizes a scope flip on a row the caller can see (404
+// otherwise): promote is the admin's, demote the admin's or the author's.
 func scopeChangeAllowed(c *gin.Context, target, rowScope, rowOwner string) bool {
 	if !visibleRow(c, rowScope, rowOwner) {
 		return false
@@ -290,11 +282,8 @@ func scopeChangeAllowed(c *gin.Context, target, rowScope, rowOwner string) bool 
 	return true
 }
 
-// setScopePlain is the /scope POST body shared by entities with no extra
-// validation (MCP servers): bind, authorize, refuse the same scope, flip.
-// Entities with more to check (providers' demote guard, agents' and
-// workflows' reference validation, skills' repo grouping) keep their own
-// handlers.
+// setScopePlain is the /scope POST body for entities with no extra validation
+// (MCP servers): bind, authorize, refuse the same scope, flip.
 func setScopePlain[T any](c *gin.Context, s *store.CrudStore[T], kind string, scopeOf func(*T) (scope, owner string)) {
 	scope, ok := bindScope(c)
 	if !ok {
@@ -321,9 +310,7 @@ func setScopePlain[T any](c *gin.Context, s *store.CrudStore[T], kind string, sc
 }
 
 // setOwnerPlain is the /owner PUT body shared by the scoped entities (the
-// route carries the admin gate): the row moves to another account; scope
-// stays put. A name already taken in the target owner's private namespace
-// answers 409.
+// route carries the admin gate): the row moves, scope stays; a taken name is 409.
 func setOwnerPlain[T any](c *gin.Context, s *store.CrudStore[T]) {
 	var req SetOwnerRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.UserID == "" {
@@ -342,11 +329,8 @@ func setOwnerPlain[T any](c *gin.Context, s *store.CrudStore[T]) {
 	c.Status(http.StatusNoContent)
 }
 
-// ownershipGuard folds the authorization check INTO the write transaction:
-// the returned hook runs against the LOCKED row, so a transfer or scope flip
-// that landed since editableRow ran turns the write into a 409 instead of an
-// edit by somebody who may no longer make it (decisions §5.29). next is the
-// entity's own prepare hook, run after the check.
+// ownershipGuard re-checks (scope, owner) against the LOCKED row inside the
+// write transaction (409 when it moved — decisions §5.29); next runs after it.
 func ownershipGuard[T any](scope, owner string, scopeOf func(*T) (string, string), next func(*T) error) func(*T) error {
 	return func(prev *T) error {
 		if s, o := scopeOf(prev); s != scope || o != owner {
@@ -377,11 +361,8 @@ func visibleRow(c *gin.Context, scope, rowOwner string) bool {
 	return true
 }
 
-// editableRow gates an UPDATE: the owner edits what they created — private
-// or published — and an admin additionally edits any global row. An admin
-// does NOT edit a member's private row — management is delete, scope change
-// and transfer, not authorship. Invisibility answers 404 first, a
-// visible-but-not-yours row 403.
+// editableRow gates an UPDATE: the owner, or an admin on a global row — never
+// an admin on a member's private row (decisions §5.29). 404 if invisible, else 403.
 func editableRow(c *gin.Context, scope, rowOwner string) bool {
 	if !visibleRow(c, scope, rowOwner) {
 		return false

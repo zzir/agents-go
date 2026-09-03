@@ -19,8 +19,7 @@ import (
 const blobBatch = 500
 
 // TraceStore persists and queries trace events. A span's payload is held in
-// trace_blobs, one element per row per session, referenced by hash from the
-// span row (decisions §5.50); the row itself keeps what a listing shows.
+// trace_blobs, referenced by hash from the span row (decisions §5.50).
 type TraceStore struct {
 	db *bun.DB
 }
@@ -30,9 +29,8 @@ func NewTraceStore(db *bun.DB) *TraceStore {
 	return &TraceStore{db: db}
 }
 
-// SpanWriter inserts one run's spans. It remembers which elements the
-// session already holds, so a generation span writes the items new since the
-// last call rather than the whole conversation again.
+// SpanWriter inserts one run's spans, remembering which elements the session
+// already holds so a generation span writes only the items new since the last call.
 type SpanWriter struct {
 	s         *TraceStore
 	sessionID string
@@ -98,9 +96,8 @@ func (s *TraceStore) Insert(ctx context.Context, ev *TraceEvent) error {
 	return s.insert(ctx, ev, 0, nil)
 }
 
-// insert splits ev's payload, writes the elements the writer has not seen
-// (all of them without a writer) and the row in one transaction, and only
-// then tells the writer what landed.
+// insert splits ev's payload, writes the unseen elements and the row in one
+// transaction, and only then tells the writer what landed.
 func (s *TraceStore) insert(ctx context.Context, ev *TraceEvent, elemCap int, w *SpanWriter) error {
 	ev.CreatedAt = time.Now().UTC()
 	meta, layout, elems := splitPayload(ev.Data, elemCap)
@@ -145,16 +142,14 @@ func (s *TraceStore) insert(ctx context.Context, ev *TraceEvent, elemCap int, w 
 	return nil
 }
 
-// ListBySession returns trace events for sessionID ordered oldest first,
-// payload inlined. limit > 0 selects the newest `limit` rows (optionally
-// only those with id < beforeID); limit <= 0 returns everything.
+// ListBySession returns trace events for sessionID oldest first, payload
+// inlined. limit > 0 selects the newest `limit` rows (id < beforeID when set).
 func (s *TraceStore) ListBySession(ctx context.Context, sessionID string, beforeID string, limit int) ([]TraceEvent, error) {
 	return s.list(ctx, sessionID, beforeID, limit, false)
 }
 
 // ListSummaryBySession is ListBySession without the payload: rows that have
-// one are marked PayloadOmitted, and GetBySpan serves it. Nothing bulky is
-// read, sent or parsed until one span is asked for.
+// one are marked PayloadOmitted, and GetBySpan serves it.
 func (s *TraceStore) ListSummaryBySession(ctx context.Context, sessionID string, beforeID string, limit int) ([]TraceEvent, error) {
 	return s.list(ctx, sessionID, beforeID, limit, true)
 }
@@ -242,9 +237,8 @@ func inlinePayload(ev *TraceEvent, bodies map[[hashSize]byte][]byte) error {
 	return nil
 }
 
-// GetBySpan returns one span's row, payload inlined, or an ErrNotFound-
-// wrapping error — what a summary listing's PayloadOmitted row is opened
-// with.
+// GetBySpan returns one span's row, payload inlined, or an
+// ErrNotFound-wrapping error.
 func (s *TraceStore) GetBySpan(ctx context.Context, sessionID, spanID string) (*TraceEvent, error) {
 	ev := new(TraceEvent)
 	err := s.db.NewSelect().Model(ev).
@@ -283,9 +277,8 @@ func (s *TraceStore) GetBySpan(ctx context.Context, sessionID, spanID string) (*
 	return ev, nil
 }
 
-// DeleteOlderThan removes trace events created before cutoff, then the
-// blobs of every session left with no trace events. Returns the number of
-// event rows removed.
+// DeleteOlderThan removes trace events created before cutoff, then the blobs
+// of every session left with none. Returns the number of event rows removed.
 func (s *TraceStore) DeleteOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
 	n, err := deleteInBatches(ctx, s.db, (*TraceEvent)(nil), func(q *bun.SelectQuery) *bun.SelectQuery {
 		return q.Where("created_at < ?", cutoff)
@@ -310,9 +303,8 @@ func (s *TraceStore) DeleteOlderThan(ctx context.Context, cutoff time.Time) (int
 	return n, nil
 }
 
-// PrunePayloadBefore drops the payload of every session whose newest trace
-// event is older than cutoff: its blobs go and its rows stay, unmarked, with
-// their timing, usage and errors. Returns the number of sessions pruned.
+// PrunePayloadBefore drops the blobs of every session whose newest trace
+// event is older than cutoff; the rows stay. Returns the number of sessions pruned.
 func (s *TraceStore) PrunePayloadBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	var sessions []string
 	if err := s.db.NewSelect().Model((*TraceEvent)(nil)).Column("session_id").

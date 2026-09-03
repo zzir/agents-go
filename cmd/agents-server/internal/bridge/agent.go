@@ -55,21 +55,14 @@ type AgentDeps struct {
 	// Users answers the run owner's role; nil withholds the tools only an
 	// admin gets.
 	Users *store.UserStore
-	// TaskManager is set by NewRunner; when non-nil, chat agents get the
-	// spawn_task / task_status / task_stop tools. A BACKGROUND run never gets
-	// them — that is what bounds recursion.
+	// TaskManager is set by NewRunner; when non-nil, chat agents get the task
+	// tools. A BACKGROUND run never gets them — invariant 34.
 	TaskManager *tasks.Manager
-	// SpawnTool is set by NewRunner and builds the run's spawn_task — the
-	// server's own, which starts a workflow when told a name — per run,
-	// because the workflows on offer change as they are edited, with no
-	// restart. Attached beside the manager's TaskTools; never on a background
-	// run.
+	// SpawnTool is set by NewRunner and builds the run's spawn_task per run (the
+	// workflows on offer change without a restart); never on a background run.
 	SpawnTool func(ctx context.Context, ownerID string) *agents.Tool
-	// WorkflowTools is set by NewRunner and builds the run's get_workflow /
-	// save_workflow — per run, like SpawnTool, because the save tool's
-	// description names the agents on offer. Attached only when the config
-	// opts in (behavior.workflow_authoring); never on a background run.
-	// save_workflow gates per call (decisions §5.29).
+	// WorkflowTools is set by NewRunner and builds get_workflow / save_workflow
+	// per run, when the config opts in (behavior.workflow_authoring) — invariant 39.
 	WorkflowTools func(ctx context.Context, ownerID string) []*agents.Tool
 }
 
@@ -78,18 +71,13 @@ type BuildResult struct {
 	Agent    *agents.Agent
 	Provider agents.ModelProvider
 
-	// AgentIDs maps each built agent's name — the entry and every handoff
-	// target — to its config id, carried on the events that announce an agent
-	// by name (run.agent_start, run.handoff); run.handoff resolves it to the
-	// agent's avatar. Set only on the entry build.
+	// AgentIDs maps each built agent's name to its config id, carried on the
+	// events that announce an agent by name. Set only on the entry build.
 	AgentIDs map[string]string
 
-	// Behavior, Compaction and Session are the agent config's own groups,
-	// carried whole and AS STORED: a knob the build converted has a "Derived:"
-	// field below — read that one, since StopAtTools and
-	// ReasoningItemIDPolicy keep their name here and change type there.
-	// Compaction.Threshold is in tokens, Compaction.Window in entries
-	// (store.NewCompactionAdapter).
+	// Behavior, Compaction and Session are the config's groups AS STORED; a knob
+	// the build converted has a "Derived:" field below (StopAtTools and
+	// ReasoningItemIDPolicy keep their name here and change type there).
 	Behavior   store.BehaviorGroup
 	Compaction store.CompactionGroup
 	Session    store.SessionGroup
@@ -103,20 +91,15 @@ type BuildResult struct {
 	ErrorHandlers agents.RunErrorHandlers
 
 	// TraceIncludeSensitive gates whether generation spans record request and
-	// response content (the global trace_include_sensitive_data setting).
-	// With it off, traces keep only timing/usage metadata — and the trace
-	// panel's Replay has nothing to seed from, by design.
+	// response content (trace_include_sensitive_data); off, Replay has no seed.
 	TraceIncludeSensitive bool
 
-	// LogSensitive gates whether the SDK's own log records carry conversation
-	// content (the log_sensitive_data setting). Separate from the trace
-	// switch: they go to different places, so they are different decisions.
+	// LogSensitive gates conversation content in the SDK's own log records
+	// (log_sensitive_data) — a separate switch from the trace one.
 	LogSensitive bool
 
-	// PlanPhase is set when the agent was built in plan mode: the run starts
-	// read-only and the approved submit_plan unlocks it. A resume that
-	// already executed submit_plan in this run calls Unlock() so the rebuilt
-	// run continues executing instead of demanding a second plan.
+	// PlanPhase is set when built in plan mode: the run starts read-only and the
+	// approved submit_plan unlocks it (spec §2.12).
 	PlanPhase *middleware.PlanPhase
 
 	// ReasoningItemIDPolicy controls whether reasoning-item ids survive across
@@ -128,24 +111,16 @@ type BuildResult struct {
 	// Derived: Behavior stores it as one comma-separated string.
 	StopAtTools []string
 
-	// RunGuardrails are the entry (root) agent's guardrails, lifted to the RUN
-	// level so they cover the whole run — crucially, the final output regardless
-	// of which agent produced it after a handoff. Handoff-target agents keep
-	// their own agent-level guardrails; the root's are moved here (and cleared
-	// off the root agent) to avoid double-running.
+	// RunGuardrails are the entry agent's guardrails lifted to the RUN level (so
+	// the final output is covered after a handoff); cleared off the root agent.
 	RunGuardrails []agents.Guardrail
 
-	// Profile is what this build put in front of the model before the
-	// conversation: the instruction layers and the tool surface, sized in
-	// characters. The runner persists it per session for the Context panel;
-	// it describes the ENTRY agent only, since a handoff target's surface
-	// applies only after a handoff has happened.
+	// Profile is what this build put in front of the model (instruction layers
+	// and tool surface, in characters), for the Context panel; ENTRY agent only.
 	Profile store.PromptProfile
 
-	// releaseSandbox drops every sandbox-instance reference this build
-	// acquired — the entry agent's and each handoff target's, folded into one
-	// (see agentBuildCtx.releases). Nil when the build attached no sandbox.
-	// Callers go through Release.
+	// releaseSandbox drops every sandbox-instance reference this build acquired
+	// (entry and handoff targets, folded into one); nil without a sandbox.
 	releaseSandbox func()
 }
 
@@ -176,10 +151,8 @@ permission, and when something genuinely blocks you, finish by saying what it
 was. Your final message is the only account of this turn that leaves here — end
 with the outcome, not with a question.`
 
-// buildFullAgent is BuildFullAgent with the run-scoped extras: the session's
-// bound project for the sandbox tools, whether the run is BACKGROUND (no task
-// tools, no plan or todo mode, told nobody is reading — workbench invariant
-// 34), and the owner whose role gates save_workflow ("" = ungated).
+// buildFullAgent is BuildFullAgent with the run-scoped extras: the bound
+// project, BACKGROUND (invariant 34), and the owner whose role gates saves.
 func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, projectID string, background bool, ownerID string) (*BuildResult, error) {
 	if agentConfigID == "" {
 		return nil, fmt.Errorf("agent_config_id is required")
@@ -200,10 +173,8 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, project
 		}
 	}
 	if err == nil && !background && deps.TaskManager != nil && result.Behavior.SubagentsOn() {
-		// The model's background surface — spawn, status, retry, stop — never
-		// for a background run (workbench invariant 34); an agent may opt out
-		// (behavior.subagents=false). The session id reaches the tools through
-		// the run context, never the model.
+		// The model's background surface, never for a background run (invariant
+		// 34); an agent may opt out (behavior.subagents=false).
 		mark := len(result.Agent.Tools)
 		if deps.SpawnTool != nil {
 			result.Agent.Tools = append(result.Agent.Tools, deps.SpawnTool(ctx, ownerID))
@@ -213,14 +184,11 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, project
 		result.Agent.Tools = append(result.Agent.Tools, deps.TaskManager.TaskTools(nil)...)
 		bucketToolsSince(result.Agent, mark, store.ToolSourceTasks, &result.Profile)
 	}
-	// Workflow authoring is opt-in per agent and, like the task tools, a
-	// chat-only surface: a background run has nobody to approve a save
-	// (workbench invariant 39).
+	// Workflow authoring is opt-in per agent and chat-only — invariant 39.
 	if err == nil && !background && result.Behavior.WorkflowAuthoring && deps.WorkflowTools != nil {
 		mark := len(result.Agent.Tools)
-		// Every owner may save now — a member's save lands in their private
-		// set; only a global workflow's edit stays the admin's (saveWorkflow
-		// decides per call, mirroring the REST gate).
+		// Every owner may save; only a global workflow's edit stays the admin's
+		// (saveWorkflow decides per call, mirroring the REST gate).
 		result.Agent.Tools = append(result.Agent.Tools, deps.WorkflowTools(ctx, ownerID)...)
 		bucketToolsSince(result.Agent, mark, store.ToolSourceWorkflows, &result.Profile)
 	}
@@ -240,28 +208,19 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, project
 			}
 		}
 	}
-	// Told, not merely arranged for: an agent whose toolset was quietly reduced
-	// still behaves like one in a conversation — it asks for confirmation and
-	// stops, and a background run has nobody to answer. A SUFFIX so it lands
-	// after the agent's own instructions, which may well say to ask.
+	// Told, not merely arranged for — invariant 34. A SUFFIX, so it lands after
+	// the agent's own instructions, which may well say to ask.
 	if background && result.Agent != nil {
 		result.Agent.Instructions = agents.WrapInstructions(result.Agent.Instructions, "", BackgroundInstructions)
 	}
-	// Lift the entry agent's guardrails to the run level so they protect the
-	// whole conversation — the final output is checked even after a handoff to an
-	// agent that carries no guardrails of its own. Cleared off the root agent so
-	// they run once (the SDK merges run-level + producing-agent guardrails).
-	// Handoff targets, built recursively, keep their own agent-level guardrails.
+	// The entry agent's guardrails move to the run level (cleared off the root
+	// so they run once); handoff targets keep their own.
 	if result.Agent != nil {
 		result.RunGuardrails = result.Agent.Guardrails
 		result.Agent.Guardrails = nil
 	}
-	// Plan/todo rewrite the ENTRY agent at BUILD time, not via
-	// RunOptions.Middlewares: a resume rebuilds the agent from this function
-	// and must find submit_plan/todo_write on it (spec §2.12). Last, so the
-	// gates cover the task tools appended above; unconditional, since the
-	// SESSION's phase decides whether the plan gate bites (workbench invariant
-	// 33); never for a background run (invariant 34).
+	// Plan/todo rewrite the ENTRY agent at BUILD time (spec §2.12), last so the
+	// gates cover the task tools; unconditional (invariant 33); never background.
 	if !background && result.Agent != nil {
 		mark := len(result.Agent.Tools)
 		result.Agent = middleware.Todo{}.Apply(result.Agent)
@@ -272,34 +231,24 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, project
 	return result, nil
 }
 
-// agentBuildCtx threads two maps through a recursive handoff build:
-//   - stack is the current recursion PATH, used purely for cycle detection; a
-//     config is removed on the way out, so a legitimately shared descendant
-//     (a diamond: A→B→D and A→C→D) is not mistaken for a back-edge.
-//   - cache holds already-built agents so a shared descendant is built once and
-//     reused across paths (also avoids the redundant rebuild).
+// agentBuildCtx threads a recursive handoff build: stack is the recursion PATH
+// (cycle detection — a diamond's shared node is no back-edge), cache reuses builds.
 type agentBuildCtx struct {
 	stack map[string]bool
 	cache map[string]*BuildResult
-	// projectID is the session's bound project, applied to every
-	// sandbox toolset built for this run — handoff-target agents included, so
-	// one run sees one file system context throughout.
+	// projectID is the session's bound project, applied to every sandbox
+	// toolset of this run — handoff targets included.
 	projectID string
 	// ownerID is the session owner every built config must be visible to
 	// (decisions §5.29); empty skips the check (internal callers with no user).
 	ownerID string
-	// releases collects the sandbox-instance references every build in this
-	// recursion acquired (the entry agent's and each handoff target's).
-	// Collected on the CONTEXT, not the per-agent results: only the top-level
-	// BuildResult reaches the caller, so a release stored on a nested result
-	// would be unreachable — the whole set is folded into the top result's
-	// Release, and a failed build releases it before returning.
+	// releases collects every sandbox reference the recursion acquired, on the
+	// CONTEXT: only the top-level BuildResult reaches the caller.
 	releases []func()
 }
 
-// errHandoffCycle marks a back-edge in the handoff graph. It is recoverable —
-// the offending edge is dropped and the rest of the graph builds — unlike a
-// genuine build failure (bad config), which must propagate.
+// errHandoffCycle marks a back-edge in the handoff graph — recoverable: the
+// edge is dropped and the rest builds.
 var errHandoffCycle = fmt.Errorf("cycle detected in handoff chain")
 
 func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID string, bc *agentBuildCtx) (*BuildResult, error) {
@@ -318,9 +267,8 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID string,
 	if err != nil {
 		return nil, fmt.Errorf("agent config %q not found — create one in Settings > Agents", configID)
 	}
-	// A foreign private config reads as absent (decisions §5.29): a run must never
-	// execute — and spend the credentials of — another user's agent. Handoff
-	// targets pass through here too, so the whole registry is covered.
+	// A foreign private config reads as absent (decisions §5.29); handoff
+	// targets pass through here too.
 	if bc.ownerID != "" && !store.Visible(ac.Scope, ac.OwnerID, bc.ownerID, false) {
 		return nil, fmt.Errorf("agent config %q not found — create one in Settings > Agents", configID)
 	}
@@ -338,9 +286,8 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID string,
 		result.ReasoningItemIDPolicy = agents.ReasoningItemIDOmit
 	}
 
-	// Decode every JSON-encoded config field once, up front, so a structural
-	// error fails the build loudly. DecodeAgentSpec also backs save-time
-	// validation, keeping the contract in one place.
+	// Every JSON field is decoded once, up front; DecodeAgentSpec also backs
+	// save-time validation.
 	spec, err := DecodeAgentSpec(ac)
 	if err != nil {
 		return nil, fmt.Errorf("agent %q: %w", ac.Name, err)
@@ -354,9 +301,8 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID string,
 
 	result.StopAtTools = settings.SplitList(ac.Behavior.StopAtTools)
 
-	// Guardrails — a configured guardrail that can't be resolved fails the
-	// build rather than running unprotected (security config must not silently
-	// no-op).
+	// A guardrail that can't be resolved fails the build rather than running
+	// unprotected — invariant 13.
 	if ac.Guardrails.Guardrails != "" && deps.Guardrails != nil {
 		gs, gerr := deps.Guardrails.Build(ctx, ac.Guardrails.Guardrails)
 		if gerr != nil {
@@ -384,21 +330,18 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID string,
 		return nil, err
 	}
 
-	// Every layer below is also MEASURED into result.Profile as it is added —
-	// what each contributes to the request is knowable here and nowhere else
+	// Every layer below is also MEASURED into result.Profile as it is added
 	// (see store.ContextProfile).
 	layerInstructions(ctx, deps, agent, ac, &result.Profile)
 
-	// MCP servers — an id whose server is not currently connected is skipped.
-	// Their tools are not measured here: they live on the server, and asking it
-	// is a network call the build must not make (see the Context handler).
+	// MCP servers — a server not connected is skipped. Their tools are not
+	// measured here: asking is a network call (see the Context handler).
 	result.Profile.MCPServerIDs = attachMCPServers(ctx, deps, agent, spec, bc.ownerID)
 
 	mark := len(agent.Tools)
 
-	// Sandbox tools — "" means none; a build failure fails the run. Also
-	// appends the sandbox's own prompt to the instructions (measured into the
-	// profile), so it lands after memories and before the skills index below.
+	// Sandbox tools — "" means none; a build failure fails the run. Also appends
+	// the sandbox's own prompt (after memories, before the skills index).
 	if err := attachSandboxTools(ctx, deps, bc, agent, approveCommands, &result.Profile); err != nil {
 		return nil, err
 	}
@@ -419,9 +362,8 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID string,
 	return result, nil
 }
 
-// splitApproveTools reads the approve list: "exec_command" in it opts into
-// per-command session approval (the sandbox command gate) and is kept OUT of
-// the SDK's ApproveTools, which would force approval on every call.
+// splitApproveTools reads the approve list: "exec_command" opts into the
+// per-command session gate and is kept OUT of the SDK's ApproveTools.
 func splitApproveTools(names []string) (approveTools []string, approveCommands bool) {
 	for _, name := range names {
 		if name == "exec_command" {
@@ -449,11 +391,8 @@ func layerInstructions(ctx context.Context, deps *AgentDeps, agent *agents.Agent
 	}
 }
 
-// buildHandoffs recursively builds each handoff target and wires it onto the
-// agent. A cycle is recoverable (the edge is dropped); any other target failure
-// propagates. A keyless target on a different backend is refused rather than
-// letting it silently inherit this agent's provider; a target with its own
-// provider gets its model pre-resolved so the run uses the target's backend.
+// buildHandoffs builds each handoff target recursively (a cycle drops the edge;
+// other failures propagate); a keyless target on another backend is refused.
 func buildHandoffs(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx, agent *agents.Agent, result *BuildResult, ac *store.AgentConfig, spec *AgentSpec) error {
 	for _, hID := range spec.Handoffs {
 		hResult, err := buildAgentFromConfig(ctx, deps, hID, bc)
@@ -483,12 +422,8 @@ func buildHandoffs(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx, agen
 	return nil
 }
 
-// attachMCPServers wires the config's selected MCP servers onto the agent,
-// skipping any whose server is not currently connected — or no longer
-// visible to the session owner (decisions §5.29: a demoted server drops out like
-// a deleted one, never serving another user's credentialed connection). It
-// returns the ids it attached — the profile records the decision actually
-// made, not a re-derivation that could race a reconnect.
+// attachMCPServers wires the selected MCP servers, skipping any not connected
+// or not visible to the owner (decisions §5.29); returns the ids attached.
 func attachMCPServers(ctx context.Context, deps *AgentDeps, agent *agents.Agent, spec *AgentSpec, ownerID string) []string {
 	var attached []string
 	for _, id := range spec.Tools {
@@ -509,10 +444,8 @@ func attachMCPServers(ctx context.Context, deps *AgentDeps, agent *agents.Agent,
 	return attached
 }
 
-// attachSandboxTools builds and attaches the bound project's sandbox tools.
-// NO PROJECT MEANS NO SANDBOX TOOLS (decisions §5.33), and a build failure
-// fails the run rather than downgrading silently. The instance reference is
-// recorded on bc for the build's Release.
+// attachSandboxTools attaches the bound project's sandbox tools. NO PROJECT,
+// NO SANDBOX TOOLS (decisions §5.33); a build failure fails the run.
 func attachSandboxTools(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx, agent *agents.Agent, approveCommands bool, prof *store.PromptProfile) error {
 	if bc.projectID == "" {
 		return nil
@@ -534,9 +467,8 @@ func attachSandboxTools(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx,
 	}
 	bc.releases = append(bc.releases, release)
 	agent.Tools = append(agent.Tools, tools...)
-	// The sandbox's own prompt — what this machine is and how to use it — as a
-	// SUFFIX, so it lands after the agent's instructions and memories and
-	// before the skills index the caller adds next.
+	// The sandbox's own prompt as a SUFFIX: after the agent's instructions and
+	// memories, before the skills index the caller adds next.
 	if p := spec.Sandbox.Prompt; p != "" {
 		agent.Instructions = agents.WrapInstructions(agent.Instructions, "", p)
 		prof.SandboxPromptChars = len(p)
@@ -544,21 +476,16 @@ func attachSandboxTools(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx,
 	return nil
 }
 
-// attachSkills loads the stored skills and, when spec restricts the selection
-// (by skill id), filters to the advertised ones; the rendered index pairs
-// with a read_skill tool. read_skill gates on the advertised NAMES but
-// resolves them own-over-global (decisions §5.29), so a same-named row of the
-// owner's outside the selection can serve the content. Best-effort: a load
-// error is skipped, not fatal. Returns the size of the index it added.
+// attachSkills renders the visible skills' index (filtered by spec's selection)
+// with a read_skill tool that resolves own-over-global (decisions §5.29).
 func attachSkills(ctx context.Context, deps *AgentDeps, agent *agents.Agent, spec *AgentSpec, ownerID string) int {
 	// No owner, no view (mirror of attachMCPServers) — and an empty owner in
 	// the scoped WHERE is a type error on PostgreSQL's uuid column.
 	if deps.Skills == nil || ownerID == "" {
 		return 0
 	}
-	// The visible set is the session owner's view: global skills plus their
-	// own (decisions §5.29) — a selection id pointing outside it simply drops out,
-	// the same as a deleted skill.
+	// The owner's view: global plus their own (decisions §5.29); a selection id
+	// outside it drops out like a deleted skill.
 	stored, err := deps.Skills.ListMeta(ctx, ownerID, false)
 	if err != nil {
 		return 0
@@ -579,12 +506,8 @@ func attachSkills(ctx context.Context, deps *AgentDeps, agent *agents.Agent, spe
 	if len(stored) == 0 {
 		return 0
 	}
-	// The index advertises MODEL-FACING names: "owner/repo:name" for imported
-	// skills, the bare name for workbench-authored ones. Two visible skills can
-	// still share one (the caller's private import shadowing the same repo's
-	// global group); the owner's wins: read_skill resolves own-over-global, so
-	// the index entry's description must be the owned row's too, whichever
-	// order ListMeta returned them in.
+	// The index advertises MODEL-FACING names (QualifiedName); when two visible
+	// skills share one, the owner's description wins, as read_skill resolves.
 	index := make([]skills.Skill, 0, len(stored))
 	pos := make(map[string]int, len(stored))
 	for _, sk := range stored {
@@ -612,10 +535,8 @@ type readSkillArgs struct {
 	Name string `json:"name" jsonschema:"the skill's name exactly as the skills index lists it, e.g. pdf-processing or anthropics/skills:pdf-processing"`
 }
 
-// readSkillTool serves a skill's full SKILL.md from the store by name —
-// content is fetched at call time, never captured at build. Only skills whose
-// index entry this agent carries are readable: the advertised set is the
-// agent's skill selection, not the whole table.
+// readSkillTool serves a skill's SKILL.md from the store at call time; only
+// skills whose index entry this agent carries are readable.
 func readSkillTool(store *store.SkillStore, advertised map[string]bool, ownerID string) *agents.Tool {
 	t := agents.NewTool("read_skill",
 		"Read a skill's full SKILL.md instructions by name.",
@@ -633,10 +554,8 @@ func readSkillTool(store *store.SkillStore, advertised map[string]bool, ownerID 
 	return t
 }
 
-// bucketToolsSince records the tools appended since mark under source, and
-// returns the new mark. Positional rather than name-matched: the build knows
-// which step added what, and a name list would have to be kept in step with
-// every tool the bridge ever attaches.
+// bucketToolsSince records the tools appended since mark under source and
+// returns the new mark. Positional: the build knows which step added what.
 func bucketToolsSince(agent *agents.Agent, mark int, source string, prof *store.PromptProfile) int {
 	if len(agent.Tools) == mark {
 		return mark
@@ -694,13 +613,11 @@ func buildMemoryBlock(memories []store.Memory) string {
 	return b.String()
 }
 
-// Provider selection — validation, construction, auth modes, setting keys —
-// lives in the registry (internal/providers/registry.go); nothing here should
-// switch on a provider type.
+// Provider selection — validation, construction, auth modes — lives in
+// internal/providers/registry.go; nothing here switches on a provider type.
 
-// ownerIsAdmin reports whether the run's owner may write shared
-// configuration. Anything that cannot say yes — no owner, no user store, a
-// failed lookup — says no.
+// ownerIsAdmin reports whether the run's owner may write shared configuration;
+// anything that cannot say yes says no.
 func ownerIsAdmin(ctx context.Context, deps *AgentDeps, ownerID string) bool {
 	if ownerID == "" || deps.Users == nil {
 		logging.Ctx(ctx).Warn("cannot resolve the run owner's role; shared-configuration tools withheld", "owner_id", ownerID)

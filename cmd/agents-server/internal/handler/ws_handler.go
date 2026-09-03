@@ -14,13 +14,9 @@ import (
 )
 
 // WSHandler dispatches WebSocket messages to start runs and handle tool
-// approvals and rejections. Runs live in the runner's hub, independent of the
-// connection, and their events are a broadcast bus: the registry attaches
-// every connection to every run (on connect, and via Runner.OnRunAttach when
-// a run starts or resumes), so a second browser on the same session streams
-// the conversation live instead of waiting for a reload. Approvals are
-// persisted by the runner, so approve/reject work across reconnects and
-// restarts.
+// approvals. Runs live in the runner's hub, independent of the connection,
+// and their events are a broadcast bus (invariant 14); approvals are
+// persisted by the runner, so they work across reconnects and restarts.
 type WSHandler struct {
 	runner    *bridge.Runner
 	registry  *ConnRegistry
@@ -41,13 +37,9 @@ func (h *WSHandler) audit(conn *server.WSConn, action, resource, detail string) 
 	})
 }
 
-// NewWSHandler returns a WebSocket handler backed by the given runner and
-// wires the runner's attach hook to the connection registry. sessions and
-// approvals back the ownership checks every message is subject to.
-//
-// The hook is a plain field the run goroutines read, so this must run before
-// anything that can start a run — the caller orders the startup sweeps around
-// it (see cmd.run).
+// NewWSHandler returns a WebSocket handler backed by the runner and wires the
+// runner's attach hook to the connection registry. The hook is a plain field
+// the run goroutines read, so this must run before anything can start a run.
 func NewWSHandler(runner *bridge.Runner, sessions *store.SessionStore, approvals *store.PendingApprovalStore) *WSHandler {
 	h := &WSHandler{runner: runner, registry: NewConnRegistry(runner.Hub(), sessions), sessions: sessions, approvals: approvals}
 	runner.OnRunAttach = h.registry.AttachAll
@@ -69,11 +61,8 @@ func refuseRun(conn *server.WSConn, runID string) {
 	})})
 }
 
-// wsSink returns an event sink that enqueues envelopes onto the connection's
-// bounded outbound queue. It never blocks the producer (the hub / run
-// goroutine): if the queue is full, the client is genuinely stuck, so the
-// connection is closed — the run keeps executing in the hub and the client
-// resubscribes and replays after reconnecting.
+// wsSink returns an event sink onto the connection's bounded outbound queue.
+// It never blocks the producer: a full queue closes the connection instead.
 func wsSink(conn *server.WSConn) bridge.EventSink {
 	return func(env *protocol.Envelope) {
 		if !conn.WriteAsync(env) {
@@ -82,25 +71,16 @@ func wsSink(conn *server.WSConn) bridge.EventSink {
 	}
 }
 
-// connSubs tracks a connection's live hub subscriptions — each held as the
-// cancel closure SubscribeSeq returned — so they can all be detached when the
-// socket closes.
+// connSubs tracks a connection's live hub subscriptions (the cancel closures
+// SubscribeSeq returned) so they can all be detached when the socket closes.
 type connSubs struct {
 	mu     sync.Mutex
 	subs   map[string]func() // runID -> detach
 	closed bool
 }
 
-// add records the connection's subscription for runID, detaching any previous
-// subscription to the same run first so re-subscribing (reconnect with a new
-// from_seq, approval resume) never leaves a duplicate hub sink delivering
-// every event twice.
-//
-// After closeAll it detaches on the spot instead of recording: AttachAll
-// subscribes from a snapshot of the registry, so a socket can close between
-// the snapshot and the subscribe, and a subscription recorded then has nobody
-// left to detach it — it would feed a dead connection until the run's fanout
-// closed, which is minutes after the browser went away.
+// add records the subscription for runID, detaching a previous one to the
+// same run first; after closeAll it detaches on the spot (AttachAll snapshots the registry).
 func (cs *connSubs) add(runID string, cancel func()) {
 	cs.mu.Lock()
 	if cs.closed {
@@ -164,9 +144,8 @@ func (h *WSHandler) Handle(conn *server.WSConn) {
 			return
 		}
 
-		// Every frame acts as the credential that opened the connection, so
-		// the credential is checked again before each: a revoked token or a
-		// changed role ends the connection here, not at the next reconnect.
+		// The credential is re-checked before each frame: a revoked token or
+		// a changed role ends the connection here, not at the next reconnect.
 		if !conn.Recheck() {
 			return
 		}
@@ -260,21 +239,15 @@ func (h *WSHandler) handleRunCreate(conn *server.WSConn, msg protocol.RunCreate)
 		})})
 		return
 	}
-	// No explicit subscribe here: the runner's OnRunAttach hook attached every
-	// connection of the owner (this one included) before the first event
-	// published. The plan intent rides the request: StartRun applies it inside
-	// the reservation, so a busy refusal never mutates the session's phase.
+	// No explicit subscribe: OnRunAttach attached every connection of the
+	// owner before the first event. StartRun applies the plan intent inside its reservation.
 	_, err := h.runner.StartRun(msg.SessionID, msg.AgentConfigID, msg.ProjectID, bridge.RunInput{Text: msg.Input, AttachmentIDs: msg.AttachmentIDs}, msg.Plan, nil)
 	if err == nil {
 		h.audit(conn, "ws.run.create", msg.SessionID, "")
 	}
 	if err != nil {
-		// These fire before any run.started, so no run→session mapping exists
-		// client-side yet: carry the session id so the error is attributable.
-		// Classify like the REST path instead of labeling everything
-		// session_not_found: a DB failure or a delete-in-progress is not a missing
-		// session, and busy/limit/deleting are conflicts the client should treat
-		// like session-busy (drop the optimistic bubble; the run never started).
+		// These fire before any run.started, so carry the session id; classify
+		// like the REST path (busy/limit/deleting are session-busy conflicts).
 		busy, isBusy := errors.AsType[bridge.ErrSessionBusy](err)
 		_, atTaskLimit := errors.AsType[bridge.ErrTaskLimit](err)
 		_, deleting := errors.AsType[bridge.ErrSessionDeleting](err)
@@ -297,9 +270,7 @@ func (h *WSHandler) handleRunCreate(conn *server.WSConn, msg protocol.RunCreate)
 }
 
 // resolve applies an approve/reject decision (persisted by the runner). The
-// decision resumes the SAME run id; the runner's OnRunAttach hook re-attaches
-// any connection not already watching it (a connection that watched the
-// interrupted run is still attached and just keeps receiving events).
+// decision resumes the SAME run id; OnRunAttach re-attaches connections not yet watching.
 func (h *WSHandler) resolve(conn *server.WSConn, toolCallID string, approve bool, scope bridge.ApprovalScope, reason string) {
 	log := logging.Ctx(conn.Context())
 	pending, ok := ownsApproval(conn.Context(), h.approvals, h.sessions, conn.User.ID, toolCallID)
@@ -315,9 +286,8 @@ func (h *WSHandler) resolve(conn *server.WSConn, toolCallID string, approve bool
 	}
 	if err != nil {
 		log.Error("resolve approval failed", "error", err, "tool_call_id", toolCallID)
-		// Carry the session id (when known) so the client can rebuild the paused
-		// turn's approval card — the optimistic approve/reject status was applied
-		// but the resume never happened.
+		// Carry the session id (when known) so the client can rebuild the
+		// paused turn's approval card: the resume never happened.
 		_ = conn.WriteJSON(&protocol.Envelope{Type: protocol.EventRunError, Payload: mustJSON(protocol.RunError{
 			SessionID: sessionID, Code: protocol.CodeApprovalFailed, Message: err.Error(),
 		})})
@@ -331,11 +301,7 @@ func mustJSON(v any) json.RawMessage {
 }
 
 // inject delivers client input to a live run through the queue the message
-// names.
-//
-// A run that has already finished is reported rather than ignored: the user
-// typed something and it went nowhere, which they need to know — the client
-// turns it into a new run or shows it as undelivered.
+// names. A run that has already finished is reported, not ignored.
 func (h *WSHandler) inject(conn *server.WSConn, msg protocol.RunInject) {
 	if !h.ownsRun(conn, msg.RunID) {
 		refuseRun(conn, msg.RunID)

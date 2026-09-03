@@ -11,9 +11,8 @@ import (
 	"github.com/uptrace/bun"
 )
 
-// TaskStore persists background task rows. The row is the durable truth for a
-// task's identity and terminal outcome — the hub's RunInfo is memory-only and
-// GC'd minutes after the run ends, so reloads rebuild task state from here.
+// TaskStore persists background task rows — the durable truth for a task's
+// identity and terminal outcome (the hub's RunInfo is memory-only).
 type TaskStore struct {
 	db *bun.DB
 }
@@ -22,11 +21,7 @@ type TaskStore struct {
 func NewTaskStore(db *bun.DB) *TaskStore { return &TaskStore{db: db} }
 
 // liveParent and liveChild scope a task row to the session GENERATION that
-// answers to its session id right now. A row whose session was deleted — and
-// whose id may since belong to a different session — matches neither, so it
-// lists nowhere, owes no wake-up and resolves no run. COALESCE covers a
-// session row that is gone entirely, which reads as the empty generation and
-// therefore matches nothing a live session bound.
+// answers to its session id right now (invariant 23); COALESCE makes a gone session match nothing.
 const (
 	liveParent = `t.parent_session_gen = COALESCE(` +
 		`(SELECT s.gen FROM sessions AS s WHERE s.id = t.parent_session_id), '')`
@@ -42,10 +37,8 @@ func (s *TaskStore) Create(ctx context.Context, t *Task) error {
 	now := time.Now().UTC()
 	t.CreatedAt = now
 	t.UpdatedAt = now
-	// The generations are read and the row written in ONE statement: resolving
-	// them first and inserting after leaves a window where the session is
-	// deleted in between, and the row would bind to a generation that is
-	// already gone while claiming to be current.
+	// The generations are read and the row written in ONE statement, so the
+	// row cannot bind to a generation deleted in between.
 	if _, err := s.db.NewInsert().Model(t).
 		Value("parent_session_gen", genOf, t.ParentSessionID).
 		Value("child_session_gen", genOf, t.ChildSessionID).
@@ -88,11 +81,8 @@ type TaskWithSession struct {
 }
 
 // ListRecent returns one page of tasks across every live session, newest
-// first — of one kind when kind is set, only still-live ones when liveOnly —
-// and the total the page is cut from. limit is capped at 500 (0 = the cap).
-// liveParent keeps a dead incarnation's rows out, as every by-session read
-// does; the join supplies the session's name.
-// ownerID, when set, keeps to tasks whose parent session that user owns.
+// first (of one kind when kind is set, still-live only when liveOnly, one
+// owner's when ownerID is set), and the total. limit is capped at 500 (0 = the cap).
 func (s *TaskStore) ListRecent(ctx context.Context, ownerID, kind string, liveOnly bool, limit, offset int) (rows []TaskWithSession, total int, err error) {
 	if ownerID == "" {
 		return nil, 0, errListNoOwner
@@ -133,11 +123,8 @@ func (s *TaskStore) ListRecent(ctx context.Context, ownerID, kind string, liveOn
 	return rows, total, nil
 }
 
-// ListNonTerminalByParent returns the given chat session's still-live tasks.
-// liveParent like every other by-session read (spec §2.13): without it a dead
-// incarnation's rows still counted against the live session's concurrency cap
-// — an ErrTaskLimit nothing could clear, since the list the user sees is
-// guarded — and StopTree cancelled a previous incarnation's tasks.
+// ListNonTerminalByParent returns the given chat session's still-live tasks,
+// liveParent like every other by-session read (invariant 23).
 func (s *TaskStore) ListNonTerminalByParent(ctx context.Context, parentSessionID string) ([]Task, error) {
 	var tasks []Task
 	if err := s.db.NewSelect().Model(&tasks).
@@ -159,13 +146,10 @@ const (
 // taskTerminalSet is the SQL fragment matching terminal statuses.
 const taskTerminalSet = "('completed', 'failed', 'cancelled')"
 
-// Finalize is the CAS to a terminal status (on non-terminality AND the attempt
-// named by runID), plus the wake-up the finished task owes its parent — BOTH in
-// one transaction, so a crash can never leave a completed task whose parent is
-// never told. buildWakeup turns the row — read in the SAME tx, so a failed
-// read aborts rather than silently dropping the debt — into what is owed; nil
-// (the function, or its answer) owes nothing. The debt is written only when
-// the CAS actually won: a superseded attempt owes nothing.
+// Finalize is the CAS to a terminal status (on non-terminality AND the
+// attempt named by runID) plus the wake-up debt, in one transaction —
+// invariant 32. buildWakeup reads the row in the SAME tx; nil owes nothing,
+// and the debt is written only when the CAS won.
 func (s *TaskStore) Finalize(ctx context.Context, id, runID, status, summary, result string, state json.RawMessage, buildWakeup func(*Task) *Wakeup) (bool, error) {
 	var won bool
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
@@ -212,9 +196,7 @@ func (s *TaskStore) Finalize(ctx context.Context, id, runID, status, summary, re
 }
 
 // taskRowForWakeup reads the row a debt will be addressed from, inside the
-// caller's tx. A missing row is nil (the CAS will report the miss); any other
-// read failure is an error — proceeding without it would finalize a task and
-// silently lose what its parent is owed.
+// caller's tx. A missing row is nil (the CAS reports the miss); any other failure is an error.
 func taskRowForWakeup(ctx context.Context, tx bun.Tx, id string, buildWakeup func(*Task) *Wakeup) (*Task, error) {
 	if buildWakeup == nil {
 		return nil, nil
@@ -230,11 +212,7 @@ func taskRowForWakeup(ctx context.Context, tx bun.Tx, id string, buildWakeup fun
 }
 
 // RetryClaim implements the tasks.Store contract as one conditional UPDATE,
-// so the attempt ceiling holds when two processes ask at once rather than
-// only inside the caller that checked it first. The generation predicates
-// are the ones every by-session read carries: a row whose sessions are gone
-// must not come back to life and start a run on an id that now answers to
-// someone else.
+// so the attempt ceiling holds across processes; generation-fenced (invariant 23).
 func (s *TaskStore) RetryClaim(ctx context.Context, id, newRunID string, maxAttempts int) (bool, error) {
 	var won bool
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
@@ -262,8 +240,7 @@ func (s *TaskStore) RetryClaim(ctx context.Context, id, newRunID string, maxAtte
 		won = n > 0
 		if won {
 			// The prior attempt's failure debt is stale the instant a retry is
-			// claimed — otherwise a busy parent would still be told the old
-			// failure while the new attempt runs. Cancel it in the SAME tx.
+			// claimed; cancel it in the SAME tx.
 			if _, err := tx.NewUpdate().Model((*Wakeup)(nil)).
 				Set("state = ?", WakeCancelled).
 				Where("kind = ?", WakeKindTask).
@@ -281,9 +258,8 @@ func (s *TaskStore) RetryClaim(ctx context.Context, id, newRunID string, maxAtte
 	if won {
 		return true, nil
 	}
-	// Zero rows is "could not claim" or "no such task", and a caller acts
-	// differently on each — the SDK's in-memory store distinguishes them, so
-	// this one must too.
+	// Zero rows is "could not claim" or "no such task"; the SDK's in-memory
+	// store distinguishes them, so this one must too.
 	exists, eerr := s.db.NewSelect().Model((*Task)(nil)).Where("id = ?", id).Exists(ctx)
 	if eerr != nil {
 		return false, fmt.Errorf("claiming a retry of task %s: %w", id, eerr)
@@ -295,9 +271,7 @@ func (s *TaskStore) RetryClaim(ctx context.Context, id, newRunID string, maxAtte
 }
 
 // Advance implements the tasks.Store contract as one conditional UPDATE: the
-// run moves and the state lands together, only while runID is the current one
-// and the row is working. The generation predicates are RetryClaim's, for the
-// same reason — a row whose sessions are gone must not start a run.
+// run moves and the state lands together, only while runID is current and the row is working.
 func (s *TaskStore) Advance(ctx context.Context, id, runID, nextRunID string, state json.RawMessage) (bool, error) {
 	q := s.db.NewUpdate().Model((*Task)(nil)).
 		Set("run_id = ?", nextRunID).
@@ -345,14 +319,10 @@ func (s *TaskStore) Dismiss(ctx context.Context, id string) (bool, error) {
 	return n > 0, nil
 }
 
-// ReleaseRetryClaim undoes a RetryClaim whose run never launched: status back
-// to failed, the attempt count back down (the claimed run started nothing, and
-// attempt counts runs the task has HAD), the launch failure recorded, and — in
-// the SAME tx — a FRESH failure debt owed (buildWakeup, as in Finalize).
-// RetryClaim cancelled the prior debt, so without this a launch that failed
-// after an already-delivered failure would leave the parent with no notice at
-// all. Bound to the claimed run id like Finalize: only the claim's owner can
-// release it.
+// ReleaseRetryClaim undoes a RetryClaim whose run never launched: status
+// back to failed, the attempt count back down, the launch failure recorded,
+// and in the SAME tx a FRESH failure debt (buildWakeup, as in Finalize).
+// Bound to the claimed run id: only the claim's owner can release it.
 func (s *TaskStore) ReleaseRetryClaim(ctx context.Context, id, runID, summary, result string, buildWakeup func(*Task) *Wakeup) (bool, error) {
 	var won bool
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
@@ -391,11 +361,9 @@ func (s *TaskStore) ReleaseRetryClaim(ctx context.Context, id, runID, summary, r
 	return won, nil
 }
 
-// MarkInputRequired flips a working task to input_required (the run paused on
-// an approval), only while runID is the current attempt — an approval can
-// outlive its attempt (crash before this mark, FailOrphans, retry), and it
-// must not pause the attempt that replaced its own. Best-effort CAS: a
-// concurrent terminal transition (or newer attempt) wins.
+// MarkInputRequired flips a working task to input_required, only while runID
+// is the current attempt (an approval can outlive its attempt). Best-effort
+// CAS: a concurrent terminal transition or newer attempt wins.
 func (s *TaskStore) MarkInputRequired(ctx context.Context, id, runID string) error {
 	if _, err := s.db.NewUpdate().Model((*Task)(nil)).
 		Set("status = ?", taskInputRequired).
@@ -409,15 +377,10 @@ func (s *TaskStore) MarkInputRequired(ctx context.Context, id, runID string) err
 	return nil
 }
 
-// Pause holds a working task on a decision, in one transaction: the status
-// flipped to input_required, the approval filed, and the state written when
-// one is given (nil leaves it), all under runID — a partial write could leave
-// a task paused with nothing to answer, or an approval answerable for a task
-// still working. It is the one write for every pause of a task: a workflow
-// step waiting to start, a task's run interrupted on a tool approval, and the
-// undoing of a claim whose resume never happened. Reports whether the row was
-// claimed; false means it was no longer working on runID (a stop, a sweep) and
-// nothing was written.
+// Pause holds a working task on a decision, in one transaction: status to
+// input_required, the approval filed, the state written when given, all
+// under runID — the one write for every pause (invariant 37). Reports
+// whether the row was claimed; false means nothing was written.
 func (s *TaskStore) Pause(ctx context.Context, id, runID string, state json.RawMessage, approval *PendingApproval) (bool, error) {
 	var won bool
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
@@ -454,9 +417,8 @@ func (s *TaskStore) Pause(ctx context.Context, id, runID string, state json.RawM
 	return won, nil
 }
 
-// ClaimOutcome is what a decision on a task's approval found, when it did not
-// simply win: the row was already claimed by another decision, or the task
-// was not paused on that run any more (or yet).
+// ClaimOutcome is what a decision on a task's approval found: won, already
+// claimed by another decision, or the task not paused on that run.
 type ClaimOutcome int
 
 // The three answers of a claim.
@@ -464,25 +426,20 @@ const (
 	ClaimWon ClaimOutcome = iota
 	// ClaimTaken: the approval row was already gone — a racing decision won.
 	ClaimTaken
-	// ClaimTaskNotPaused: the row was there, but the task is not input_required
-	// on runID (terminal, moved to another attempt, or not paused yet). Nothing
-	// was written; the row is still there for a later decision.
+	// ClaimTaskNotPaused: the row was there, but the task is not
+	// input_required on runID. Nothing was written; the row stays.
 	ClaimTaskNotPaused
 )
 
 // ClaimApprovalWorking is a decision on a paused task's approval, in one
-// transaction: the approval row deleted — the exclusive claim against a
-// racing decision — and the task flipped input_required → working under
-// runID. Either both land or neither: a task never ends up working with an
-// approval left to answer, nor answered with the task still paused. What the
-// caller does next (resume the run, start the step) is its own launch, and a
-// launch that fails ends the task the way any failed launch does.
+// transaction: the approval row deleted (the exclusive claim) and the task
+// flipped input_required → working under runID — invariant 37. What the
+// caller does next is its own launch.
 func (s *TaskStore) ClaimApprovalWorking(ctx context.Context, taskID, runID string) (ClaimOutcome, error) {
 	outcome := ClaimTaken
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		// The row first — its absence is the answer "another decision took
-		// it" — then the task; a task not paused on this run rolls the
-		// delete back, so the row is still there for a later decision.
+		// The row first (its absence means another decision took it), then
+		// the task; a task not paused on this run rolls the delete back.
 		del, err := tx.NewDelete().Model((*PendingApproval)(nil)).Where("run_id = ?", runID).Exec(ctx)
 		if err != nil {
 			return err
@@ -521,10 +478,8 @@ func (s *TaskStore) ClaimApprovalWorking(ctx context.Context, taskID, runID stri
 
 // ClaimApprovalCancelled ends a paused task on its approval, in one
 // transaction: the approval row deleted (the claim) and the task finalized
-// cancelled — a rejected step, an expired decision. claimed reports whether
-// this call took the row; ended whether it moved the task (false when the task
-// was already terminal or on another attempt — the stale row is still removed).
-// A cancellation owes no wake-up; a debt of this attempt is dropped here too.
+// cancelled (invariant 37). claimed reports whether this call took the row;
+// ended whether it moved the task. A cancellation owes no wake-up.
 func (s *TaskStore) ClaimApprovalCancelled(ctx context.Context, taskID, runID, summary string) (claimed, ended bool, err error) {
 	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		del, err := tx.NewDelete().Model((*PendingApproval)(nil)).Where("run_id = ?", runID).Exec(ctx)
@@ -573,11 +528,8 @@ var errRollback = errors.New("nothing to write")
 
 // ReclaimWorking flips an input_required task back to working — the approve
 // path's exclusive claim against a concurrent stop — only while runID is the
-// current attempt. Reports whether this call won; false means the task went
-// terminal, was retried past this attempt (the approval is stale and must be
-// discarded, not retried), or is not paused. A task that does not exist is
-// ErrNotFound — a different answer, and the shipped stores must agree on it
-// (the conformance suite holds all three to that).
+// current attempt. Reports whether this call won; an absent task is
+// ErrNotFound (the conformance suite holds every store to that).
 func (s *TaskStore) ReclaimWorking(ctx context.Context, id, runID string) (bool, error) {
 	res, err := s.db.NewUpdate().Model((*Task)(nil)).
 		Set("status = ?", taskWorking).
@@ -611,13 +563,10 @@ func (s *TaskStore) DeleteByID(ctx context.Context, id string) error {
 	return nil
 }
 
-// FailOrphans fails every task left at "working" by a restart (a task run does
-// not survive the process, so such a row can never progress) and, in the SAME
-// transaction, records the wake-up each owes its parent — buildWakeup turns a
-// failed row into the debt (nil owes nothing). Atomic for the same reason
-// Finalize is: an orphan failed but never notified is a parent that waits
-// forever. input_required rows are kept: their pending approval persists and
-// resumes the run.
+// FailOrphans fails every task left at "working" by a restart and, in the
+// SAME transaction, records the wake-up each owes its parent (buildWakeup;
+// nil owes nothing) — invariant 32. input_required rows are kept: their
+// pending approval persists and resumes the run.
 func (s *TaskStore) FailOrphans(ctx context.Context, buildWakeup func(*Task) *Wakeup) ([]Task, error) {
 	var orphans []Task
 	const summary = "server restarted while the task was running"

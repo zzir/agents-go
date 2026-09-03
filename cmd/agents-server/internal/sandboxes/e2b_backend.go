@@ -10,10 +10,8 @@ import (
 	e2bsb "github.com/zzir/agents-go/sandbox/e2b"
 )
 
-// e2bBackend runs a project on any service that speaks the E2B API — E2B's own
-// cloud, a self-hosted one, or a compatible service (decisions §5.34). One
-// remote sandbox per project, remembered by `projects.instance_ref` so a
-// restart resumes it instead of provisioning a second.
+// e2bBackend runs a project on any service that speaks the E2B API (decisions
+// §5.34): one remote sandbox per project, remembered by projects.instance_ref.
 type e2bBackend struct{}
 
 func (e2bBackend) Open(spec Spec) (sandbox.Sandbox, error) {
@@ -78,9 +76,7 @@ func e2bOptions(spec Spec) (e2bsb.Options, error) {
 }
 
 // Rebuild is refused: on these services the sandbox IS the storage, so
-// throwing the compute away throws the working tree away with it. That is
-// what Reclaim means, and it is not what a person clicking "rebuild" is
-// asking for — they want their files back on a fresh container.
+// replacing the compute would destroy the working tree (that is Reclaim).
 func (e2bBackend) Rebuild(context.Context, Spec) error {
 	return fmt.Errorf("this sandbox runs on an E2B-compatible service, where the sandbox IS the storage: " +
 		"replacing it would destroy the working tree. Export the project first, then create a new one")

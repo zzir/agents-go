@@ -7,8 +7,7 @@ import (
 )
 
 // ServerInfo is the process-level configuration a client is subject to but
-// cannot change — facts of the running process, not settings — so the UI can
-// explain what it sees rather than guess.
+// cannot change — facts of the running process, not settings.
 type ServerInfo struct {
 	Version string `json:"version"`
 	// Timezone is the zone cron schedules run in: the IANA name the process
@@ -19,8 +18,7 @@ type ServerInfo struct {
 	CredentialsSealed bool `json:"credentials_sealed"`
 }
 
-// ServerInfoHandler answers with info. Bound at registration rather than read
-// from a store: these are process facts, fixed for its lifetime.
+// ServerInfoHandler answers with info, fixed for the process's lifetime.
 //
 //	@Summary		Server info
 //	@Description	The process facts a client is subject to but cannot change: version, the zone cron schedules run in, and whether stored credentials are sealed. Read-only — these come from the command line and environment, not the settings table.

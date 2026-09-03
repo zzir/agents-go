@@ -27,14 +27,11 @@ import (
 // by the bridge runner. Deletion must stop execution before removing data.
 type RunStopper interface {
 	StopSessionTree(sessionID string)
-	// AbortSessionDelete clears the deleting mark when the store delete fails:
-	// the cascade rolled back, so the session still exists and must not be
-	// left refusing every run until restart.
+	// AbortSessionDelete clears the deleting mark when the store delete fails,
+	// so the surviving session is not left refusing every run until restart.
 	AbortSessionDelete(sessionID string)
 	// ReleaseSessionBinding releases the cached sandbox instance behind a
-	// deleted session's (sandbox, workdir) binding when no other session
-	// references the pair — the instance (an ssh connection, a docker
-	// container) would otherwise live until process exit.
+	// deleted session's project binding when no other session references it.
 	ReleaseSessionBinding(projectID string)
 	// ForgetSessionTrust drops a deleted session's exec_command trust grants —
 	// in-memory state that would otherwise outlive the row until restart.
@@ -43,36 +40,27 @@ type RunStopper interface {
 	SessionBusy(sessionID string) bool
 }
 
-// MCPToolLister answers what a connected MCP server currently exposes;
-// implemented by the bridge's McpManager. The Context report sizes an MCP tool
-// surface by asking, because those tools live on the server rather than on the
-// agent — the build never sees them.
+// MCPToolLister answers what a connected MCP server currently exposes
+// (the bridge's McpManager); the Context report sizes MCP tool surfaces by asking.
 type MCPToolLister interface {
 	ListToolsFor(ctx context.Context, serverID string) (name string, tools []*agents.Tool, err error)
 }
 
 // SessionCompactor runs one forced compaction pass on a session outside any
-// run; implemented by the bridge's Runner. compacted=false with a nil error
-// means the guards found nothing to fold.
+// run (the bridge's Runner). compacted=false with a nil error means nothing to fold.
 type SessionCompactor interface {
 	CompactSession(ctx context.Context, sessionID string) (compacted bool, beforeItems, afterItems int, err error)
 }
 
-// SessionDeps is what a SessionHandler runs on. Every field is required —
-// a handler missing one would serve half its routes (a delete that stops no
-// runs, a Context report with no profile), and only the wiring in cmd could
-// tell — so NewSessionHandler refuses a nil.
+// SessionDeps is what a SessionHandler runs on. Every field is required;
+// NewSessionHandler refuses a nil.
 type SessionDeps struct {
 	Sessions *store.SessionStore
 	Entries  *store.EntryStore
 	Traces   *store.TraceStore
 	Agents   *store.AgentConfigStore
-	// Profiles, MCP and MCPServers are what the Context report needs beyond
-	// the session's own entries: the per-session build snapshot, a way to ask
-	// a connected MCP server what it currently exposes, and the server store —
-	// which is what resolves a NAME for a disconnected or disabled server (the
-	// manager never holds those, and their bucket would otherwise be labelled
-	// by raw id).
+	// Profiles, MCP and MCPServers serve the Context report: the build
+	// snapshot, live tool listings, and the NAME of a disconnected server.
 	Profiles   *store.ContextProfileStore
 	MCP        MCPToolLister
 	MCPServers *store.McpServerStore
@@ -122,8 +110,8 @@ func NewSessionHandler(d SessionDeps) *SessionHandler {
 }
 
 // List responds with the caller's sessions. `?all=true` is the admin's
-// management view — every owner's sessions, existence and recency only (the
-// same rows; content stays behind the owner checks of the per-session routes).
+// management view — every owner's sessions; content stays behind the
+// per-session owner checks.
 //
 //	@Summary	List sessions
 //	@Tags		sessions
@@ -183,10 +171,8 @@ func (h *SessionHandler) Create(c *gin.Context) {
 	ctx := c.Request.Context()
 	u, _ := server.CurrentUser(c)
 	if req.AgentConfigID != "" {
-		// A foreign private agent reads as absent — the same rule the run-time
-		// build applies (decisions §5.29), admin included: a binding the owner's
-		// runs would refuse must not be created, and the answer must not act
-		// as an existence oracle.
+		// A foreign private agent reads as absent, admin included — the rule
+		// the run-time build applies (decisions §5.29).
 		ac, err := h.agents.Get(ctx, req.AgentConfigID)
 		if err != nil || !store.Visible(ac.Scope, ac.OwnerID, u.ID, false) {
 			badRequest(c, "agent_config_id does not reference an existing agent")
@@ -229,9 +215,7 @@ func (h *SessionHandler) Get(c *gin.Context) {
 }
 
 // sessionPatchReq is the request body for Patch; absent fields are unchanged.
-// The project binding is deliberately NOT patchable: project_id is
-// fixed by the first sandbox-carrying run and never rewritten — switching
-// projects means starting (or forking into) another session.
+// The project binding is NOT patchable (decisions §5.28).
 type sessionPatchReq struct {
 	Name   *string `json:"name"`
 	Pinned *bool   `json:"pinned"`
@@ -280,12 +264,8 @@ func (h *SessionHandler) Patch(c *gin.Context) {
 }
 
 // SetOwner reassigns the session (and the hidden sessions serving it) to
-// another account — management, for an admin: the way a session made under
-// one auth mode reaches someone after a switch. Refused while a run is live
-// on it, so the run's stream keeps one owner from start to end. A session
-// bound to a project transfers only to that project's owner (409 otherwise):
-// its runs execute in the project's container, files and write-only env
-// included, and the binding is immutable.
+// another account (admin). Refused while a run is live on it, and a session
+// bound to a project transfers only to that project's owner (409 otherwise).
 //
 //	@Summary	Reassign session owner (admin)
 //	@Tags		sessions
@@ -381,9 +361,8 @@ func (h *SessionHandler) Delete(c *gin.Context) {
 		return
 	}
 	boundProject = sess.ProjectID
-	// Stop the session's live run and all its background tasks (bounded wait)
-	// BEFORE the cascade: a task still executing would keep writing entries
-	// and traces into rows this delete is about to remove.
+	// Stop the live run and every background task (bounded wait) BEFORE the
+	// cascade, or a task still executing keeps writing into the deleted rows.
 	h.stopper.StopSessionTree(id)
 	if err := h.sessions.Delete(c.Request.Context(), id); err != nil {
 		h.stopper.AbortSessionDelete(id)
@@ -471,8 +450,7 @@ func (h *SessionHandler) Fork(c *gin.Context) {
 		return
 	}
 	// Traces are a best-effort copy: the fork's entries already landed, so a
-	// trace-copy failure must not fail the request or orphan the new session.
-	// It is logged, not swallowed, so the missing traces are diagnosable.
+	// failure here is logged rather than failing the request.
 	if err := h.traces.ForkBySession(ctx, srcID, dst.ID, runIDs); err != nil {
 		logging.Ctx(ctx).Warn("fork: copying traces to the new session failed; session forked without traces", "error", err, "src_session", srcID, "dst_session", dst.ID)
 	}
@@ -576,9 +554,8 @@ func (h *SessionHandler) Context(c *gin.Context) {
 		internalError(c, err)
 		return
 	}
-	// The window and the compaction threshold are the agent's, not the
-	// session's. A session with no agent bound yet (or one whose config was
-	// deleted) still reports its own usage — just without a denominator.
+	// The window and the compaction threshold are the agent's; a session with
+	// no agent bound still reports its usage, without a denominator.
 	if sess.AgentConfigID != "" {
 		if ac, err := h.agents.Get(ctx, sess.AgentConfigID); err == nil {
 			rep.Model = ac.Model
@@ -606,8 +583,7 @@ func (h *SessionHandler) Context(c *gin.Context) {
 }
 
 // CompactResponse reports what a manual compaction pass did. Compacted false
-// means the guards found nothing to fold — the kept window already covers the
-// history.
+// means the guards found nothing to fold.
 type CompactResponse struct {
 	Compacted   bool `json:"compacted"`
 	BeforeItems int  `json:"before_items,omitempty"`
@@ -645,17 +621,12 @@ func (h *SessionHandler) Compact(c *gin.Context) {
 	c.JSON(http.StatusOK, CompactResponse{Compacted: compacted, BeforeItems: before, AfterItems: after})
 }
 
-// contextMCPTimeout bounds the tools/list calls one context report makes. The
-// panel is a diagnostic: a slow server costs it that server's row, not the
-// report.
+// contextMCPTimeout bounds the tools/list calls one context report makes; a
+// slow server costs the report that server's row, not the report.
 const contextMCPTimeout = 2 * time.Second
 
-// mcpBuckets sizes each connected MCP server's tool surface. A server that is
-// gone or slow is reported UNAVAILABLE rather than zero — "0 tokens of MCP" and
-// "we could not ask" are opposite answers for someone hunting a full window.
-//
-// The servers are asked CONCURRENTLY: sequentially, three slow ones would spend
-// the whole budget one after another and the panel would wait for the sum.
+// mcpBuckets sizes each connected MCP server's tool surface, asking the
+// servers concurrently; a server that is gone or slow reports UNAVAILABLE, not zero.
 func (h *SessionHandler) mcpBuckets(ctx context.Context, ids []string) []store.ToolBucket {
 	if len(ids) == 0 {
 		return nil
@@ -668,9 +639,8 @@ func (h *SessionHandler) mcpBuckets(ctx context.Context, ids []string) []store.T
 		wg.Go(func() {
 			name, tools, err := h.mcp.ListToolsFor(ctx, id)
 			if name == "" {
-				// The manager only knows CONNECTED servers; a disconnected or
-				// disabled one still has its configured name in the store, and
-				// a bucket labelled by raw id names nothing a person set.
+				// The manager only knows CONNECTED servers; a disconnected one
+				// still has its configured name in the store.
 				name = h.mcpServerName(ctx, id)
 			}
 			b := store.ToolBucket{Source: store.ToolSourceMCP + cmp.Or(name, id)}

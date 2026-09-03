@@ -23,17 +23,15 @@ type AgentConfigHandler struct {
 	// guardrails, when set, lets save-time validation reject unresolvable
 	// guardrail names before they silently no-op at run time.
 	guardrails *guardrails.Resolver
-	// providers, when set, lets save-time validation reject a provider_id that
-	// names no row — the write side of referential integrity, whose read side
-	// is ProviderStore.DeleteIfUnreferenced.
+	// providers lets save-time validation reject a provider_id that names no
+	// row (the read side is ProviderStore.DeleteIfUnreferenced).
 	providers *store.ProviderStore
 	// skills backs the reference-scope validation of the skills selection.
 	skills *store.SkillStore
 }
 
-// NewAgentConfigHandler returns a handler over the agent store and the three
-// stores its validation reads (the MCP servers, providers and guardrails a
-// config may name). Every one is required; a nil is a wiring error.
+// NewAgentConfigHandler returns a handler over the agent store and the stores
+// its validation reads. Every argument is required; a nil is a wiring error.
 func NewAgentConfigHandler(s *store.AgentConfigStore, mcpServers *store.McpServerStore, providers *store.ProviderStore, skills *store.SkillStore, guardrails *guardrails.Resolver) *AgentConfigHandler {
 	if s == nil || mcpServers == nil || providers == nil || skills == nil || guardrails == nil {
 		panic("handler: NewAgentConfigHandler needs every store")
@@ -45,10 +43,8 @@ func NewAgentConfigHandler(s *store.AgentConfigStore, mcpServers *store.McpServe
 // into the catalog shipped with the UI, never an arbitrary URL.
 var avatarPath = regexp.MustCompile(`^/avatars/[A-Za-z0-9_-]+\.svg$`)
 
-// validateAgentConfig checks an incoming Create/Update body against the
-// constraints the run would otherwise only hit at run time. It reports the
-// failure to c and returns false when the request is rejected. Name uniqueness
-// is enforced by the DB (mapped to 409 by saveError), not checked here.
+// validateAgentConfig checks a Create/Update body against what a run would
+// otherwise hit at run time; false means the response is written.
 func (h *AgentConfigHandler) validateAgentConfig(c *gin.Context, ac *store.AgentConfig) bool {
 	if ac.Name == "" {
 		badRequest(c, "name is required")
@@ -66,9 +62,8 @@ func (h *AgentConfigHandler) validateAgentConfig(c *gin.Context, ac *store.Agent
 		badRequest(c, "avatar must be a built-in path (/avatars/<name>.svg) or empty")
 		return false
 	}
-	// An agent naming a provider that does not exist — or one its scope may
-	// not reference (decisions §5.29) — would fail at run time with a confusing
-	// error mid-stream; refuse at save.
+	// A provider that does not exist, or that this scope may not reference,
+	// is refused at save — decisions §5.29.
 	if ac.ProviderID != "" {
 		pv, err := h.providers.Get(c.Request.Context(), ac.ProviderID)
 		if err != nil {
@@ -92,19 +87,15 @@ func (h *AgentConfigHandler) validateAgentConfig(c *gin.Context, ac *store.Agent
 		badRequest(c, err.Error())
 		return false
 	}
-	// Reject config whose JSON-encoded fields don't parse/resolve, rather than
-	// silently no-op'ing at run time (a guardrail or output schema that "looks
-	// enabled" but never runs is the dangerous case). The same decode backs the
-	// build, so the structural contract lives in exactly one place.
+	// The same decode backs the build, so a JSON field that does not parse or
+	// resolve is refused here rather than silently no-op'ing at run time.
 	spec, err := bridge.DecodeAgentSpec(ac)
 	if err != nil {
 		badRequest(c, err.Error())
 		return false
 	}
-	// The referenced MCP servers, skills and handoff targets must be ones
-	// this agent's scope may name. Missing ids stay TOLERATED here (deletes
-	// are, and the run filters them loudly); only a visible-but-forbidden
-	// reference is refused.
+	// MCP servers, skills and handoff targets must be ones this scope may
+	// name; missing ids are tolerated (the run filters them loudly).
 	for _, id := range spec.Tools {
 		if ms, err := h.mcpServers.Get(c.Request.Context(), id); err == nil {
 			if !store.RefVisible(ms.Scope, ms.OwnerID, ac.Scope, ac.OwnerID) {
@@ -258,9 +249,8 @@ func (h *AgentConfigHandler) Update(c *gin.Context) {
 	if !h.validateAgentConfig(c, &ac) {
 		return
 	}
-	// The masked fallback-model keys round-trip to their stored values inside
-	// the store's transaction; ownershipGuard re-checks the pair editableRow
-	// authorized against there, so a transfer that landed since answers 409.
+	// Masked fallback-model keys resolve against the stored row inside the
+	// transaction; ownershipGuard turns a transfer that landed since into 409.
 	err := h.store.Update(ctx, id, &ac, ownershipGuard(cur.Scope, cur.OwnerID, agentScope,
 		func(prev *store.AgentConfig) error {
 			ac.Scope, ac.OwnerID = prev.Scope, prev.OwnerID
@@ -328,15 +318,13 @@ func (h *AgentConfigHandler) SetScope(c *gin.Context) {
 		return
 	}
 	// A promote re-runs the reference validation AS the target scope: a
-	// global agent may only name global providers, servers, skills and
-	// handoff targets.
+	// global agent may only name global rows.
 	ac.Scope = scope
 	if !h.validateAgentConfig(c, ac) {
 		return
 	}
 	// The store re-checks the provider leg as the target scope inside its
-	// transaction, so a demote landing between the validation above and this
-	// write cannot leave a global agent on a private key.
+	// transaction, so a racing demote cannot leave a global agent on a private key.
 	if err := h.store.SetScope(ctx, id, scope); err != nil {
 		saveError(c, err)
 		return
@@ -368,10 +356,8 @@ func (h *AgentConfigHandler) SetOwner(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
-	// The references are re-validated AS THE NEW OWNER: handing over an agent
-	// that names the old owner's private provider or MCP server would answer
-	// 204 and then fail every run — the state a save refuses (decisions §5.29).
-	// The provider leg re-checks again inside the store's transaction.
+	// References are re-validated AS THE NEW OWNER (decisions §5.29); the
+	// provider leg is re-checked again inside the store's transaction.
 	ac.OwnerID = req.UserID
 	if !h.validateAgentConfig(c, ac) {
 		return

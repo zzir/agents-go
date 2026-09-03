@@ -11,9 +11,8 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// A turn that ended before the SDK's own per-turn save — cancelled, or failed
-// before its first item — is persisted here, so a reload still shows what was
-// asked and why it stopped.
+// A turn that ended before the SDK's per-turn save — cancelled, or failed
+// before its first item — is persisted here so a reload still shows it.
 
 // partialTurn is what savePartialTurn writes. Its fields are all strings; build
 // it with keyed fields so a misordered pair cannot slip past the compiler.
@@ -21,9 +20,8 @@ type partialTurn struct {
 	sessionID string
 	runID     string
 	model     string
-	// userInput is the run's prompt, saved only as a fallback — see
-	// savePartialTurn; userAttachments are its image attachment ids, so the
-	// fallback write carries the same message the run would have persisted.
+	// userInput is the prompt, saved only as a fallback (see savePartialTurn);
+	// userAttachments are its image attachment ids.
 	userInput       string
 	userAttachments []string
 	// annRole is the trailing marker's kind, "cancelled" or "error", and annMsg
@@ -39,14 +37,8 @@ type partialTurn struct {
 	stage     string
 }
 
-// savePartialTurn records what the SDK cannot save itself when a run is
-// cancelled or fails mid-stream. The SDK persists user input and completed turns
-// incrementally, so this adds only display-only annotations, never replayed:
-// - the in-flight turn's streamed reasoning and text, so a cancel mid-thought
-// still shows what the model was doing;
-// - a trailing marker for why the run stopped;
-// and, only when the run died before the SDK persisted anything under this run
-// id, the prompt as a replayable fallback.
+// savePartialTurn records what the SDK cannot for a cancelled or failed run: streamed
+// reasoning/text and a stop marker as annotations, plus the prompt if unpersisted.
 func (r *Runner) savePartialTurn(t partialTurn) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -72,9 +64,8 @@ func (r *Runner) savePartialTurn(t partialTurn) {
 		}
 	}
 
-	// The in-flight turn's thinking and narration — annotations, because a
-	// fabricated reasoning item would be rejected on replay and an abandoned
-	// turn should not enter the model's history.
+	// Annotations: a fabricated reasoning item would be rejected on replay,
+	// and an abandoned turn must not enter the model's history.
 	if t.partialReasoning != "" {
 		entries = append(entries, session.NewAnnotationEntry(
 			agents.ItemDisplay{Kind: agents.DisplayReasoning, Text: t.partialReasoning},
@@ -113,16 +104,14 @@ func (r *Runner) savePartialTurn(t partialTurn) {
 	}
 }
 
-// isCancellation reports whether a run stopped because it was cancelled (or its
-// deadline elapsed) rather than failing — whether the signal is the run's own
-// context or a context error bubbled up (and wrapped) by the model provider.
+// isCancellation reports whether a run stopped by cancel or deadline rather
+// than failing — the run's own ctx, or a context error the provider wrapped.
 func isCancellation(ctx context.Context, err error) bool {
 	return ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
-// runHasPersistedItems reports whether the SDK already wrote any replayable item
-// row (user input or a completed turn's items) for this run id, to avoid
-// duplicating the prompt the SDK's per-turn persistence normally saves.
+// runHasPersistedItems reports whether the SDK already wrote a replayable item
+// row for this run id, so the fallback prompt is not written twice.
 func runHasPersistedItems(ctx context.Context, es *store.EntryStore, runID string) bool {
 	exists, err := es.RunHasItems(ctx, runID)
 	if err != nil {

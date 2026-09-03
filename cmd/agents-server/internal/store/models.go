@@ -20,7 +20,7 @@ type Session struct {
 	// OwnerID is the user the conversation belongs to — the only ownership
 	// column: a task's hidden session inherits it from its parent, a trigger
 	// fires into a session, an approval is filed on one. Content is the
-	// owner's alone; an admin may list, stop and delete (workbench invariant 42).
+	// owner's alone; an admin may list, stop and delete.
 	OwnerID string `bun:"owner_id,notnull,type:uuid" json:"owner_id"`
 	Name    string `bun:"name,notnull"         json:"name"`
 	Pinned  bool   `bun:"pinned"               json:"pinned"`
@@ -29,13 +29,12 @@ type Session struct {
 	Hidden        bool   `bun:"hidden"               json:"hidden,omitempty"`
 	AgentConfigID string `bun:"agent_config_id,nullzero,type:uuid" json:"agent_config_id,omitempty"`
 	// ProjectID is the session's PERMANENT binding: the first project-carrying
-	// run CAS-writes it (BindProjectIfEmpty) and it is never rewritten —
-	// decisions §5.28. The project pins the target, so binding the project
-	// binds the machine too.
+	// run CAS-writes it (BindProjectIfEmpty) and it is never rewritten. The
+	// project pins the target, so binding the project binds the machine too.
 	ProjectID string `bun:"project_id,nullzero,type:uuid" json:"project_id,omitempty"`
 	// Planning is the session's plan phase: true means its next run starts
 	// read-only until a plan is approved. Set by the person, cleared by the
-	// approved submit_plan, copied by a fork — workbench invariant 33.
+	// approved submit_plan, copied by a fork.
 	Planning  bool      `bun:"planning"             json:"planning"`
 	CreatedAt time.Time `bun:"created_at,notnull"   json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,notnull"   json:"updated_at"`
@@ -64,7 +63,7 @@ type Task struct {
 	ParentSessionID string          `bun:"parent_session_id,notnull,type:uuid" json:"parent_session_id"`
 	// ParentSessionGen and ChildSessionGen are the GENERATIONS of the sessions
 	// this row names (session.Ref): a row matched on the id alone would attach
-	// itself to a replacement created under the same name (spec §2.13). Bound
+	// itself to a replacement created under the same name. Bound
 	// at insert, compared on every by-session read (liveParent / liveChild).
 	ParentSessionGen string `bun:"parent_session_gen" json:"-"`
 	ParentRunID      string `bun:"parent_run_id,nullzero,type:uuid" json:"parent_run_id,omitempty"`
@@ -125,7 +124,7 @@ type AgentConfig struct {
 	Model        string `bun:"model"          json:"model"`
 	// ProviderID names the Provider row this agent reaches its model through —
 	// a column, so referential integrity is expressible in SQL. Empty reaches
-	// no credential: the run fails its pre-flight (decisions §5.30).
+	// no credential: the run fails its pre-flight.
 	ProviderID string `bun:"provider_id,nullzero,type:uuid" json:"provider_id,omitempty"`
 	// ContextWindow is the model's window in tokens, declared rather than
 	// discovered — no provider reports it on a response. It sits beside Model
@@ -155,7 +154,7 @@ type AgentConfig struct {
 	// Empty means every run error stays fatal.
 	ErrorHandlers string `bun:"error_handlers" json:"error_handlers,omitempty"`
 
-	// Scope/OwnerID: row visibility and its permanent creator — decisions §5.29.
+	// Scope/OwnerID: row visibility and its permanent creator.
 	Scope   string `bun:"scope,notnull"                 json:"scope"`
 	OwnerID string `bun:"owner_id,nullzero,type:uuid"   json:"owner_id,omitempty"`
 
@@ -190,7 +189,7 @@ type Provider struct {
 	// sanitizing); the token itself never leaves the server.
 	ChatGPTLoggedIn bool `bun:"-" json:"chatgpt_logged_in,omitempty"`
 
-	// Scope/OwnerID: row visibility and its permanent creator — decisions §5.29.
+	// Scope/OwnerID: row visibility and its permanent creator.
 	Scope   string `bun:"scope,notnull"                 json:"scope"`
 	OwnerID string `bun:"owner_id,nullzero,type:uuid"   json:"owner_id,omitempty"`
 
@@ -211,7 +210,7 @@ type McpServerConfig struct {
 	Enabled bool `bun:"enabled,notnull"        json:"enabled"`
 
 	// Config holds the connection settings as JSON (HTTPMcpConfig — the
-	// streamable_http transport is the only one the server speaks, decisions §5.25).
+	// streamable_http transport is the only one the server speaks).
 	// Stored as TEXT and exchanged with the API as a raw JSON object.
 	Config json.RawMessage `bun:"config,type:text,nullzero" json:"config,omitempty"`
 
@@ -222,7 +221,7 @@ type McpServerConfig struct {
 	// Config) don't erase it, and hidden from the API (json:"-").
 	OAuthToken string `bun:"oauth_token,type:text,nullzero" json:"-"`
 
-	// Scope/OwnerID: row visibility and its permanent creator — decisions §5.29.
+	// Scope/OwnerID: row visibility and its permanent creator.
 	Scope   string `bun:"scope,notnull"                 json:"scope"`
 	OwnerID string `bun:"owner_id,nullzero,type:uuid"   json:"owner_id,omitempty"`
 
@@ -274,7 +273,7 @@ type Skill struct {
 	bun.BaseModel `bun:"table:skills,alias:sk"`
 
 	ID          string `bun:"id,pk,type:uuid" json:"id"`
-	Name        string `bun:"name,notnull"    json:"name"` // unique per scope (decisions §5.29)
+	Name        string `bun:"name,notnull"    json:"name"` // unique per scope
 	Description string `bun:"description,notnull" json:"description"`
 	// Content is the full SKILL.md; capped at write time (maxSkillBytes) and
 	// omitted from list responses (ListMeta).
@@ -289,13 +288,13 @@ type Skill struct {
 	SourceSHA  string `bun:"source_sha,nullzero"  json:"source_sha,omitempty"`
 	// RepoLabel is SourceRepo reduced to the model-facing prefix ("owner/repo",
 	// or the host), materialized in BeforeAppendModel because the unique name
-	// indexes key on it (decisions §5.31).
+	// indexes key on it.
 	RepoLabel string `bun:"repo_label,nullzero" json:"repo_label,omitempty"`
 	// Detached marks an imported skill edited in the workbench: a re-import
 	// skips it instead of overwriting the local edit.
 	Detached bool `bun:"detached,notnull" json:"detached,omitempty"`
 
-	// Scope/OwnerID: row visibility and its permanent creator — decisions §5.29.
+	// Scope/OwnerID: row visibility and its permanent creator.
 	Scope   string `bun:"scope,notnull"                 json:"scope"`
 	OwnerID string `bun:"owner_id,nullzero,type:uuid"   json:"owner_id,omitempty"`
 
@@ -307,7 +306,9 @@ type Skill struct {
 type Memory struct {
 	bun.BaseModel `bun:"table:memories,alias:mem"`
 
-	ID            string    `bun:"id,pk,type:uuid"     json:"id"`
+	ID string `bun:"id,pk,type:uuid"     json:"id"`
+	// AgentConfigID scopes the memory to one agent config; empty applies it to
+	// every agent.
 	AgentConfigID string    `bun:"agent_config_id,nullzero,type:uuid" json:"agent_config_id,omitempty"`
 	Key           string    `bun:"key,notnull"          json:"key"`
 	Content       string    `bun:"content,notnull"      json:"content"`
@@ -417,8 +418,8 @@ type TraceEvent struct {
 	Name        string `bun:"name,notnull"         json:"name"`
 	Detail      string `bun:"detail"               json:"detail,omitempty"`
 	Error       string `bun:"error"                json:"error,omitempty"`
-	// Data is the span's metadata JSON. Its payload fields live in trace_blobs
-	// (decisions §5.50): Layout names each one and its element count, Refs is
+	// Data is the span's metadata JSON. Its payload fields live in trace_blobs:
+	// Layout names each one and its element count, Refs is
 	// the sha256 of every element in that order, 32 bytes each. Both NULL
 	// when the span has no payload.
 	Data      string    `bun:"data"                 json:"data,omitempty"`
@@ -470,7 +471,7 @@ type Sandbox struct {
 
 	// Revision counts this row's WRITES, name-only included — the
 	// expected-revision CAS every update carries. No runtime generation here:
-	// the ONE runtime axis is the project's (decisions §5.33), bumped on every
+	// the ONE runtime axis is the project's, bumped on every
 	// project naming this sandbox when its content changes.
 	Revision int64 `bun:"revision,notnull,default:1" json:"revision,omitempty"`
 
@@ -559,10 +560,9 @@ type Project struct {
 
 	ID      string `bun:"id,pk,type:uuid"               json:"id"`
 	OwnerID string `bun:"owner_id,notnull,type:uuid"    json:"owner_id"`
-	// SandboxID is what the project runs on — the machine and the image, set
-	// at creation and never writable afterwards. The image half IS editable,
-	// on the sandbox row: the freeze is on which row, not on its content
-	// (decisions §5.36).
+	// SandboxID is what the project runs on. It may move only to a sandbox at
+	// the SAME type and destination (checkMove, else 409): the freeze is on
+	// which machine, not on the image, which edits freely on the sandbox row.
 	SandboxID string `bun:"sandbox_id,notnull,type:uuid" json:"sandbox_id"`
 	// Name is display only — the storage is keyed by ID, so a rename moves
 	// nothing. Unique per (owner, sandbox) via idx_projects_owner_sandbox_name.
@@ -580,17 +580,17 @@ type Project struct {
 	// Revision is the expected-revision CAS every update lands against.
 	// RuntimeGen is the workbench's ONE runtime axis: it moves when this
 	// project's own content changes AND when the sandbox it names changes
-	// underneath it, so the instance cache and the terminal registry
-	// need a single fence rather than one per entity (decisions §5.33). A
-	// rename moves neither container nor terminal.
+	// underneath it, so the instance cache and the terminal registry need a
+	// single fence rather than one per entity. A rename moves neither
+	// container nor terminal.
 	Revision   int64     `bun:"revision,notnull,default:1"    json:"revision,omitempty"`
 	RuntimeGen int64     `bun:"runtime_gen,notnull,default:1" json:"-"`
 	CreatedAt  time.Time `bun:"created_at,notnull"            json:"created_at"`
 	UpdatedAt  time.Time `bun:"updated_at,notnull"            json:"updated_at"`
 	// StorageHint names where the files live — the named volume on the
 	// sandbox's daemon. Derived per response by the handler for admins only,
-	// never stored: a delete DESTROYS that storage (decisions §5.33), so the UI
-	// can say what will be lost.
+	// never stored: a delete DESTROYS that storage, so the UI can say what
+	// will be lost.
 	StorageHint string `bun:"-" json:"storage_hint,omitempty"`
 	// SessionCount is how many sessions bind this project — filled by List
 	// (scanonly), so a delete knows whether it will be refused.
@@ -703,9 +703,8 @@ func (m *McpServerConfig) BeforeAppendModel(_ context.Context, q bun.Query) erro
 	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
 }
 
-// stampScope pins the scope/owner invariant on INSERT: an unstamped direct
-// write lands private, and every row records its creator — see NormalizeScope
-// and decisions §5.29.
+// stampScope pins the scope/owner invariant on INSERT: an unstamped write lands
+// private, and every row records its creator — see decisions §5.29.
 func stampScope(q bun.Query, scope *string, ownerID string) error {
 	if _, ok := q.(*bun.InsertQuery); !ok {
 		return nil

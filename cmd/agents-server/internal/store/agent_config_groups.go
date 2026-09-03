@@ -6,28 +6,19 @@ import (
 	"fmt"
 )
 
-// The AgentConfig scalar settings are grouped into a handful of JSON category
-// columns rather than one column per knob, so adding a setting needs no schema
-// change (the table only holds category columns). Each group is stored as a JSON
-// text column via the Value/Scan pair below and serializes to a nested object in
-// the REST API.
+// The AgentConfig scalar settings are grouped into JSON category columns, so
+// adding a setting needs no schema change; each group is a nested object in the API.
 
-// BehaviorGroup holds the run-behavior knobs.
-//
-// Booleans are stated POSITIVELY (decisions §5.43): the field names the
-// capability, true turns it on. A knob whose default is ON uses *bool — nil
-// (the key absent, every row from before the knob existed) means the
-// default, so shipping the knob never flips existing agents.
+// BehaviorGroup holds the run-behavior knobs. Booleans are stated POSITIVELY
+// (decisions §5.43); a knob whose default is ON uses *bool, nil meaning the default.
 type BehaviorGroup struct {
 	MaxTurns           int    `json:"max_turns,omitempty"`
 	HandoffDescription string `json:"handoff_description,omitempty"`
 	// ToolChoiceReset resets a pinned tool_choice after a tool runs (the
-	// SDK's default loop-guard). nil/true = on; false keeps tool_choice
-	// as-is across turns.
+	// SDK's default loop-guard). nil/true = on.
 	ToolChoiceReset *bool `json:"tool_choice_reset,omitempty"`
-	// StopAtTools is a comma-separated list of tool names; the run ends after a
-	// turn that called any of them, instead of feeding the results back to the
-	// model. Empty means the run continues until the model stops on its own.
+	// StopAtTools is a comma-separated list of tool names; the run ends after
+	// a turn that called any of them. Empty means the model decides.
 	StopAtTools          string `json:"stop_at_tools,omitempty"`
 	HandoffInputFilter   string `json:"handoff_input_filter,omitempty"`
 	MaxToolConcurrency   int    `json:"max_tool_concurrency,omitempty"`
@@ -36,16 +27,13 @@ type BehaviorGroup struct {
 	// turns) or "omit" (strip them).
 	ReasoningItemIDPolicy string `json:"reasoning_item_id_policy,omitempty"`
 	// WorkflowAuthoring gives the agent's chat runs get_workflow / save_workflow
-	// (workbench invariant 39). Off by default: the save schema costs every request.
+	// Off by default: the save schema costs every request.
 	WorkflowAuthoring bool `json:"workflow_authoring,omitempty"`
 	// Subagents grants the agent's chat runs spawn_task / task_status /
-	// task_stop / task_retry. nil/true = on; a chat-only agent that never
-	// delegates sets false to reclaim the task schema from every request.
+	// task_stop / task_retry. nil/true = on.
 	Subagents *bool `json:"subagents,omitempty"`
 	// Vision admits image attachments on this agent's runs. Off by default:
-	// the gate is what turns "model returned 400" into a config error a
-	// person can act on, so it must be an explicit claim that the model
-	// accepts image input.
+	// an explicit claim that the model accepts image input.
 	Vision bool `json:"vision,omitempty"`
 }
 
@@ -68,17 +56,14 @@ type ResilienceGroup struct {
 
 // GuardrailGroup holds guardrail names and the output schema.
 type GuardrailGroup struct {
-	// Guardrails is a JSON array of guardrail names. One list, not one per
-	// stage: a guardrail carries the stages it inspects, so naming it twice
-	// would be naming the same value twice.
+	// Guardrails is a JSON array of guardrail names — one list, since a
+	// guardrail carries the stages it inspects.
 	Guardrails   string `json:"guardrails,omitempty"`
 	OutputSchema string `json:"output_schema,omitempty"`
 }
 
 // SessionGroup holds session/prompt settings. There is no
-// use_previous_response_id: history lives in a server-side session, which the
-// SDK refuses to combine with previous-response chaining; a stored row carrying
-// the key decodes past it.
+// use_previous_response_id: the SDK refuses to combine it with a session.
 type SessionGroup struct {
 	PromptID      string `json:"prompt_id,omitempty"`
 	PromptVersion string `json:"prompt_version,omitempty"`

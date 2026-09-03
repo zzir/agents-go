@@ -16,10 +16,8 @@ type TaskInfo struct {
 	Status string `json:"status"`
 	// Attempt counts the task's runs: 1 for the original, one more per retry.
 	Attempt int `json:"attempt,omitempty"`
-	// MaxAttempts is the ceiling Attempt is measured against: a client offering
-	// a retry compares the two rather than being told the answer, so its offer
-	// follows the status it already tracks. Capacity is not part of it — a
-	// retry can still be refused when the parent session is full.
+	// MaxAttempts is the ceiling Attempt is measured against; a client offering
+	// a retry compares the two (capacity is not part of it).
 	MaxAttempts int    `json:"max_attempts,omitempty"`
 	Summary     string `json:"summary,omitempty"`
 	// Result carries the task's full final output (task_status only — the

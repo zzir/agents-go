@@ -16,10 +16,8 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// approvalSettleTimeout bounds how long ResolveApproval waits for the paused
-// run segment's teardown (postRun) to finish before claiming the approval. In
-// the common case the segment settled long ago and the wait returns at once;
-// the bound only caps a pathological stall so an approve never hangs.
+// approvalSettleTimeout bounds ResolveApproval's wait for the paused segment's
+// postRun; usually already settled, it only caps a pathological stall.
 const approvalSettleTimeout = 5 * time.Second
 
 // ApprovalVoidError reports that an approval could not be applied because its
@@ -56,11 +54,8 @@ func (e *StaleApprovalAttemptError) Error() string {
 		" (now on " + e.CurrentRunID + "); the approval is stale and was discarded"
 }
 
-// persistInterruption serializes an interrupted run's SDK state and its
-// pending tool calls to the store, so the approval survives a restart and can
-// be resumed from any connection. It runs BEFORE the pause is announced: a
-// failure fails the segment instead (finishResult) — a pause with no row is a
-// decision nobody can make.
+// persistInterruption writes an interrupted run's SDK state and pending calls
+// BEFORE the pause is announced; a failure fails the segment instead.
 func (r *Runner) persistInterruption(result *RunOutcome) error {
 	if r.Deps.PendingApprovals == nil || result == nil || !result.Interrupted || result.SDKState == nil {
 		return nil
@@ -85,16 +80,12 @@ func (r *Runner) persistInterruption(result *RunOutcome) error {
 		ProjectID:     result.ProjectID,
 		State:         string(stateJSON),
 		ToolCalls:     callsJSON,
-		// The user-authored text of the paused turn's new input, so the UI can
-		// rebuild the user bubble on reload — the SDK only writes the turn to
-		// the session once it completes.
+		// The paused turn's user text, so the UI rebuilds the bubble on reload —
+		// the SDK writes the turn only once it completes.
 		UserInput: session.UserText(result.SDKState.UserInput),
 	}
-	// A task's run pauses its TASK too, in the same write: the approval filed
-	// and the row input_required together (store.TaskStore.Pause), so no
-	// failure between them can leave an approval nobody can act on because
-	// the task still says working. The manager's own mark, when the run's
-	// ending is reported to it, then finds the row already paused.
+	// A task's run pauses its TASK in the same write (TaskStore.Pause) —
+	// invariant 37; the manager's later mark finds the row already paused.
 	if info, ok := r.hub.Info(result.RunID); ok && info.Task != nil && info.Task.TaskID != "" && r.Deps.Tasks != nil {
 		won, err := r.Deps.Tasks.Pause(context.Background(), info.Task.TaskID, result.RunID, nil, approval)
 		if err != nil {
@@ -108,13 +99,8 @@ func (r *Runner) persistInterruption(result *RunOutcome) error {
 	return r.Deps.PendingApprovals.Save(context.Background(), approval)
 }
 
-// buildAgentRegistry builds the agent from its config and returns a name→agent
-// registry covering it and all reachable handoff targets, as required by
-// agents.RunStateFromJSON. It must build with the run's project: the
-// restored state's CurrentAgent is resolved FROM this registry and is the very
-// agent the SDK re-runs, so omitting the sandbox here strips its
-// sandbox-backed tools (exec_command, read_file, …) and the approved call
-// fails with "tool not found on agent".
+// buildAgentRegistry builds the agent and its reachable handoff targets by name for
+// agents.RunStateFromJSON; pass the run's project, or the re-run agent loses its tools.
 func (r *Runner) buildAgentRegistry(ctx context.Context, agentConfigID, projectID string, background bool, ownerID string) (map[string]*agents.Agent, *BuildResult, error) {
 	built, err := buildFullAgent(ctx, r.Deps, agentConfigID, projectID, background, ownerID)
 	if err != nil {
@@ -128,10 +114,8 @@ func (r *Runner) buildAgentRegistry(ctx context.Context, agentConfigID, projectI
 		}
 		registry[a.Name] = a
 		for _, ho := range a.Handoffs {
-			// Target is the static declaration HandoffTo fills; the bridge
-			// builds every handoff that way. A dynamic handoff (Target nil)
-			// cannot be enumerated without invoking user code, so it is
-			// skipped — nil is how it declares that.
+			// Target is the static declaration HandoffTo fills; a dynamic
+			// handoff (nil) cannot be enumerated without user code, so it is skipped.
 			walk(ho.Target)
 		}
 	}
@@ -139,23 +123,16 @@ func (r *Runner) buildAgentRegistry(ctx context.Context, agentConfigID, projectI
 	return registry, built, nil
 }
 
-// planUnlockPersistTimeout bounds the marker write. The hook must be
-// detached from the run's cancellation (a client disconnect must not decide
-// whether the mark lands) but NOT unbounded: the SQLite pool is a single
-// connection, and an unbounded wait on it would wedge submit_plan — and the
-// run's own cancel — behind whatever holds the connection.
+// planUnlockPersistTimeout bounds the marker write: detached from the run's
+// cancellation but not unbounded — the SQLite pool is one connection.
 const planUnlockPersistTimeout = 10 * time.Second
 
-// errResumeStopped is the verify hook's refusal: the task or workflow this
-// approval belonged to was stopped between the claim and the launch, so the
-// resumed run must not start. It is not a failure to restore from — the work is
-// terminal and the approval is void.
+// errResumeStopped is the verify hook's refusal: the work was stopped between
+// the claim and the launch, so the resumed run must not start.
 var errResumeStopped = errors.New("the work was stopped before the approval could resume it")
 
 // armPlanUnlock makes clearing the session's planning column the PRECONDITION
-// of the phase's first unlock: the hook's error fails the unlock, so the run is
-// never executing ahead of its durable record — a failed write surfaces as a
-// submit_plan tool error and the review repeats.
+// of the first unlock: a failed write fails submit_plan and the review repeats.
 func armPlanUnlock(phase *middleware.PlanPhase, sa *store.EntryStore, ref session.Ref) {
 	if phase == nil {
 		return
@@ -163,9 +140,8 @@ func armPlanUnlock(phase *middleware.PlanPhase, sa *store.EntryStore, ref sessio
 	phase.OnUnlock(func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), planUnlockPersistTimeout)
 		defer cancel()
-		// Clearing the session's plan phase IS the durable record that the plan
-		// was approved; persisting it is the precondition for the run leaving
-		// the planning phase. Idempotent, so a replayed unlock is a no-op.
+		// Clearing the column IS the durable record of the approval —
+		// invariant 33. Idempotent, so a replayed unlock is a no-op.
 		if err := sa.SetSessionPlanning(ctx, ref, false); err != nil {
 			return fmt.Errorf("persisting the plan-unlock record: %w", err)
 		}
@@ -195,11 +171,8 @@ func (r *Runner) ApplyPlanIntent(ctx context.Context, sessionID string, plan *bo
 	return sa.SetSessionPlanning(ctx, ref, *plan)
 }
 
-// restorePlanPhase puts a plan-mode run into the phase the SESSION's column
-// says it is in (workbench invariant 33) and arms the unlock this run may
-// perform. A READ failure is an error, not a warning: nothing is claimed yet,
-// and silently resuming in the planning phase would strip a mid-execution run
-// of its write tools.
+// restorePlanPhase puts a plan-mode run into the SESSION's phase (invariant 33)
+// and arms the unlock. A read failure is an error: nothing is claimed yet.
 func (r *Runner) restorePlanPhase(ctx context.Context, phase *middleware.PlanPhase, sa *store.EntryStore, ref session.Ref) error {
 	if phase == nil {
 		return nil
@@ -233,27 +206,19 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 		return "", "", err
 	}
 
-	// The claim and the resume that follows form a multi-step migration across
-	// two tables plus the hub. Once the pending row is deleted, bailing out
-	// half-done would strand the paused run — so every MUTATION below runs on a
-	// context detached from the request's cancellation, and a client that
-	// disconnects mid-approve cannot abort the migration halfway. Reads still
-	// use the request ctx; a disconnect there aborts before any state changed,
-	// which is safe to retry.
+	// Once the pending row is deleted, bailing out half-done strands the run:
+	// every MUTATION below runs detached from the request's cancellation; reads do not.
 	mctx := context.WithoutCancel(ctx)
 
-	// A workflow step waiting to START: there is no run to resume, so none of
-	// the run-state machinery below applies — the decision starts the step's
-	// run or ends the execution.
+	// A workflow step waiting to START has no run to resume: the decision
+	// starts the step's run or ends the execution.
 	if pending.Kind == store.ApprovalKindStep {
 		runID, err = r.resolveStepApproval(ctx, pending, approve)
 		return runID, pending.SessionID, err
 	}
 
-	// A RunState outside the SDK's decode window can never be resumed: say so
-	// and discard the row, or it wedges the session behind a 500 on every
-	// retry. The check is the SDK's own window, not string equality — an
-	// additive bump (1.5 → 1.6) resumes fine.
+	// A RunState outside the SDK's decode window is discarded (else every retry
+	// 500s); the check is the SDK's window, so an additive bump still resumes.
 	if v := pendingStateSchemaVersion(pending.State); !agents.RunStateVersionSupported(v) {
 		if delErr := r.Deps.PendingApprovals.Delete(mctx, pending.RunID); delErr != nil {
 			logging.Ctx(ctx).Error("discarding stale pending approval", "error", delErr, "run_id", pending.RunID)
@@ -278,11 +243,8 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 	if err != nil {
 		return "", pending.SessionID, fmt.Errorf("rebuilding agent: %w", err)
 	}
-	// The rebuilt agent IS the resumed run's executor (the state resolves its
-	// CurrentAgent from this registry), so the build's sandbox reference must
-	// live exactly as long as that run. Handed off to the resume's onDone
-	// below; every earlier exit releases it here — Release is idempotent, so
-	// the belt covers a path that both hands off and fails.
+	// The rebuilt agent IS the resumed run's executor, so its sandbox reference
+	// lives as long as that run: handed to onDone below, else released here.
 	handedOff := false
 	defer func() {
 		if !handedOff {
@@ -293,11 +255,8 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 	if err != nil {
 		return "", pending.SessionID, fmt.Errorf("restoring run state: %w", err)
 	}
-	// The rebuild starts in the planning phase, but this run may have moved
-	// past it: restore the phase from the session's column (workbench
-	// invariant 33) or a pause after the plan ended would resume without its
-	// write tools. A failed read aborts — the approval is still unclaimed, so
-	// the decision retries.
+	// Restore the phase from the session's column (invariant 33), or a pause
+	// after the plan ended resumes without write tools; a failed read retries.
 	resumeRef, refErr := store.RefFor(ctx, r.db, pending.SessionID)
 	if refErr != nil {
 		return "", pending.SessionID, fmt.Errorf("resolving session for plan phase: %w", refErr)
@@ -318,21 +277,12 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 		state.Reject(item, false, reason)
 	}
 
-	// Wait for the paused segment's teardown to complete before claiming. The
-	// run goroutine's postRun marks a task input_required (working ->
-	// input_required) and only THEN closes the segment's done gate, so waiting
-	// on it guarantees the task row is already in the state ReclaimWorking
-	// expects — otherwise a fast approve races ahead of postRun, fails
-	// ReclaimWorking (task still "working"), and with the row gone strands the
-	// approval forever.
+	// Wait for the paused segment's postRun (it marks the task input_required,
+	// THEN closes the gate) so ReclaimWorking finds the row it expects.
 	r.hub.waitDone(pending.RunID, time.Now().Add(approvalSettleTimeout))
 
-	// Deleting the record is the exclusive claim on this approval: of two
-	// racing decisions exactly one proceeds, and it must precede the resume —
-	// the continuation may itself interrupt and persist a fresh record. For a
-	// task's approval the claim and the row's CAS (input_required -> working,
-	// bound to THIS attempt) are ONE write (workbench invariant 23), and a
-	// claim that does not hold writes nothing.
+	// Deleting the record is the exclusive claim, and must precede the resume.
+	// For a task the claim and the row's CAS are ONE write — invariant 23.
 	if taskMeta != nil && taskMeta.TaskID != "" {
 		outcome, cerr := r.Deps.Tasks.ClaimApprovalWorking(mctx, taskMeta.TaskID, pending.RunID)
 		if cerr != nil {
@@ -342,12 +292,8 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 		case store.ClaimTaken:
 			return "", pending.SessionID, fmt.Errorf("claiming pending approval: %w", store.ErrNotFound)
 		case store.ClaimTaskNotPaused:
-			// Terminal (a stop/reap won — the decision is void; nothing may
-			// revive a cancelled task); a DIFFERENT attempt (a retry moved
-			// the task past this approval's run — stale, and it stays as a
-			// row that will refuse); or still this attempt and not paused yet
-			// (the settle wait should have prevented this) — not ready, the
-			// row untouched for the retry of the decision.
+			// Terminal: void. A different attempt: stale (the row stays and
+			// refuses). Still this attempt, not paused yet: not ready, retry.
 			cur, gerr := r.Deps.Tasks.Get(mctx, taskMeta.TaskID)
 			if gerr == nil && !isTerminalTaskStatus(cur.Status) {
 				if cur.RunID != pending.RunID {
@@ -361,33 +307,24 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 		return "", pending.SessionID, fmt.Errorf("claiming pending approval: %w", err)
 	}
 
-	// The continuation reopens the SAME run id, so the whole turn — both the
-	// interrupted and resumed halves — shares one event stream and trace group.
-	// The wrapped onDone releases the rebuild's sandbox reference when the
-	// resumed segment ends (completion, error, cancel or a further interrupt —
-	// the next resume performs its own rebuild and acquire).
+	// The continuation reopens the SAME run id. The wrapped onDone releases the
+	// rebuild's sandbox reference when the resumed segment ends.
 	resumeDone := func(res *RunOutcome) {
 		rebuilt.Release()
 		if onDone != nil {
 			onDone(res)
 		}
 	}
-	// verify runs after the run registers but BEFORE its goroutine launches: a
-	// stop that finalized the task between our claim and here means the
-	// approved tool must not run at all. Checking after the launch (as before)
-	// let the tool fire and cause a side effect before the cancel could land.
+	// verify runs after the run registers but BEFORE its goroutine launches:
+	// a stop that finalized the task meanwhile means the tool must not run.
 	verify := func() error {
 		if taskMeta != nil && taskMeta.TaskID != "" {
 			if cur, gerr := r.Deps.Tasks.Get(mctx, taskMeta.TaskID); gerr == nil && isTerminalTaskStatus(cur.Status) {
 				return errResumeStopped
 			}
 		}
-		// The standing trust a scope grants (same_command, all) is written
-		// HERE: after the exclusive claim and the task's CAS held, and before
-		// the continuation launches — so the run's very next exec_command
-		// already reads it, and the loser of two racing decisions never
-		// widened anything. The approved call itself needs no trust: its
-		// decision is in the run state.
+		// Standing trust (same_command, all) is written HERE: after the claim
+		// held, before the launch, so the loser of two decisions widens nothing.
 		if approve {
 			r.applyCommandTrust(scope, item, trustSessionID(pending.SessionID, taskMeta))
 		}
@@ -395,18 +332,13 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 	}
 	runID, err = r.ResumeRun(pending.RunID, state, pending.SessionID, pending.AgentConfigID, pending.ProjectID, verify, resumeDone)
 	if errors.Is(err, errResumeStopped) {
-		// The work was stopped in the window between the claim and the launch.
-		// The approval is void and the run never started — nothing to restore,
-		// nothing executed. Surfaced as the same 409 a terminal run gives, not a
-		// 500: it is a state conflict, not a fault.
+		// Stopped between the claim and the launch: nothing ran, nothing to
+		// restore. A 409 like a terminal run's, not a 500.
 		return "", pending.SessionID, ErrRunNotResumable{RunID: pending.RunID, Status: RunCancelled}
 	}
 	if err != nil {
-		// Give the approval back (e.g. the session has a live run right now) so
-		// the decision can be retried once the session frees up — losing the row
-		// here would strand the paused run forever. For a task's run the row
-		// and the task's input_required go back in ONE write (Pause), never
-		// one without the other.
+		// Give the approval back so the decision can be retried; for a task the
+		// row and its input_required go back in ONE write (Pause).
 		if taskMeta != nil && taskMeta.TaskID != "" {
 			if _, perr := r.Deps.Tasks.Pause(mctx, taskMeta.TaskID, pending.RunID, nil, pending); perr != nil {
 				logging.Ctx(ctx).Error("restoring the paused task after a failed resume", "error", perr, "task_id", taskMeta.TaskID)
@@ -420,11 +352,8 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 	return runID, pending.SessionID, nil
 }
 
-// restorePendingApproval writes a claimed pending-approval row back after a
-// failed claim/resume, so a paused run is never stranded by a lost row. The
-// row's serialized state is the original (pre-decision) one, so a retry
-// re-applies the decision cleanly. Detached context — the restore must land
-// even if the request that triggered it is gone.
+// restorePendingApproval writes a claimed row back after a failed claim/resume
+// (pre-decision state, so a retry re-applies cleanly). Detached context.
 func (r *Runner) restorePendingApproval(ctx context.Context, pending *store.PendingApproval) {
 	if saveErr := r.Deps.PendingApprovals.Save(context.WithoutCancel(ctx), pending); saveErr != nil {
 		logging.Ctx(ctx).Error("restoring pending approval after failed claim/resume", "error", saveErr, "run_id", pending.RunID)
@@ -497,9 +426,8 @@ func ParseApprovalScope(s string) ApprovalScope {
 // executions carry per-session command-trust grants.
 const execCommandToolName = "exec_command"
 
-// applyCommandTrust records a session-level exec_command grant per the approval
-// scope. It is a no-op for non-exec_command tools, an empty session, or the
-// once scope.
+// applyCommandTrust records a session-level exec_command grant per scope; a
+// no-op for other tools, an empty session, or the once scope.
 func (r *Runner) applyCommandTrust(scope ApprovalScope, item *agents.ToolApprovalItem, sessionID string) {
 	if item.ToolName != execCommandToolName || sessionID == "" || r.Deps.SandboxManager == nil {
 		return

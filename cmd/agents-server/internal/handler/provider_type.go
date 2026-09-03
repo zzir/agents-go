@@ -9,10 +9,8 @@ import (
 )
 
 // ProviderTypeList responds with the registered provider backends — machine
-// facts only (auth modes, unsupported request features).
-// Display copy lives in the frontend; this endpoint exists so capability
-// hints in the UI derive from the same declaration the build enforces,
-// instead of drifting alongside it.
+// facts only (auth modes, unsupported request features), so UI capability
+// hints derive from the declaration the build enforces.
 //
 //	@Summary		List provider types
 //	@Description	The backends agents and fallback entries can select via provider_type. "unsupported" lists request features that fail loudly on that backend.

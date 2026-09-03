@@ -16,7 +16,7 @@ export interface SkillGroup {
   ownerId: string;
   label: string;
   // The group's visibility. An imported repo is one scope by invariant (the
-  // whole group flips at once — spec §5.29); a Local group is a per-owner
+  // whole group flips at once — decisions §5.29); a Local group is a per-owner
   // bucket whose rows flip one at a time, so this is set only when uniform.
   scope?: string;
   skills: Skill[];

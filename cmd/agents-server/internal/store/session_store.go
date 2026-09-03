@@ -30,9 +30,8 @@ func (s *SessionStore) Create(ctx context.Context, sess *Session) error {
 		return errors.New("creating session: no owner")
 	}
 	if sess.Gen == "" {
-		// Assigned here rather than by each caller, so no path that creates a
-		// session can forget it and leave one sharing its entries with whatever
-		// held the name before.
+		// Assigned here, so no path that creates a session can forget it and
+		// share entries with whatever held the name before.
 		gen, err := session.NewGeneration()
 		if err != nil {
 			return err
@@ -49,18 +48,14 @@ func (s *SessionStore) Create(ctx context.Context, sess *Session) error {
 }
 
 // EveryOwner is the owner argument that lists every owner's rows — the
-// admin's explicit ask. An empty owner is refused, so a handler that forgot
-// to resolve its caller lists nothing rather than everything.
+// admin's explicit ask; an empty owner lists nothing.
 const EveryOwner = "*"
 
 var errListNoOwner = errors.New("listing without an owner")
 
-// List returns one owner's chat sessions, most recently CHANGED first — an
-// append, a pop or a clear moves a session up exactly as a rename does (the
-// entry store stamps updated_at on every write). Hidden task-transcript
-// sessions (owned by a tasks row) are excluded — they surface through the
-// parent session's task list, not the sidebar. An empty ownerID lists every
-// owner's: the admin's management view, never a member's sidebar.
+// List returns one owner's chat sessions, most recently CHANGED first (spec
+// §2.5e2). Hidden task-transcript sessions are excluded; EveryOwner lists
+// every owner's.
 func (s *SessionStore) List(ctx context.Context, ownerID string) ([]Session, error) {
 	if ownerID == "" {
 		return nil, errListNoOwner
@@ -98,14 +93,11 @@ func (s *SessionStore) Update(ctx context.Context, id string, name string) error
 }
 
 // DefaultSessionName is the name a session is created with until it is named
-// — by the person, or by the title generator, which only ever names a session
-// still carrying it.
+// by the person or the title generator.
 const DefaultSessionName = "New Session"
 
 // NameIfDefault sets the name only while the session still carries the
-// default one — the CAS the title generator writes through, so a rename made
-// while it was thinking stands, and of two generators only one lands. Reports
-// whether the write took.
+// default one — the title generator's CAS. Reports whether the write took.
 func (s *SessionStore) NameIfDefault(ctx context.Context, id, name string) (bool, error) {
 	res, err := s.db.NewUpdate().Model((*Session)(nil)).
 		Set("name = ?", name).
@@ -123,9 +115,8 @@ func (s *SessionStore) NameIfDefault(ctx context.Context, id, name string) (bool
 	return n > 0, nil
 }
 
-// UpdateFields applies a partial update to the session: only non-nil fields
-// are written; updated_at is always refreshed. Returns an ErrNotFound-wrapping
-// error when the session doesn't exist.
+// UpdateFields applies a partial update to the session (non-nil fields only;
+// updated_at always refreshed). ErrNotFound-wrapping error when absent.
 func (s *SessionStore) UpdateFields(ctx context.Context, id string, name *string, pinned *bool) error {
 	q := s.db.NewUpdate().Model((*Session)(nil)).
 		Set("updated_at = ?", time.Now().UTC()).
@@ -146,15 +137,9 @@ func (s *SessionStore) UpdateFields(ctx context.Context, id string, name *string
 	return nil
 }
 
-// BindAgentIfEmpty records which agent config a session ran with, unless it is
-// already bound to one: the first binding stands, so a later run with a
-// different agent does not silently rewrite what a reload reopens the session
-// with.
-//
-// A session that is already bound, or is not there at all, changes nothing and
-// is not an error — this is a back-fill, and the caller has a run to finish
-// either way. It leaves updated_at alone: the conversation did not change, and
-// a listing sorts by that.
+// BindAgentIfEmpty records which agent config a session ran with, unless it
+// is already bound: the first binding stands. A bound or absent session is
+// not an error, and updated_at is left alone.
 func (s *SessionStore) BindAgentIfEmpty(ctx context.Context, id, agentConfigID string) error {
 	if agentConfigID == "" {
 		return nil
@@ -169,16 +154,11 @@ func (s *SessionStore) BindAgentIfEmpty(ctx context.Context, id, agentConfigID s
 	return nil
 }
 
-// BindProjectIfEmpty permanently binds project_id to the session unless it is
-// already bound (decisions §5.28), reporting whether THIS call performed the
-// bind so only the winner announces it. The project's existence is pinned
-// inside the write: SQLite's single writer makes the EXISTS predicate atomic
-// with the update; PostgreSQL locks the project row FOR KEY SHARE, against
-// ProjectStore.DeleteIfUnreferenced's FOR UPDATE.
-//
-// An empty projectID binds nothing. A missing session is (false, nil) — the
-// caller's own existence check owns that error. Like BindAgentIfEmpty, it
-// leaves updated_at alone: the conversation did not change.
+// BindProjectIfEmpty permanently binds project_id to the session unless it
+// is already bound (decisions §5.28), reporting whether THIS call bound it.
+// The project's existence is pinned inside the write (an EXISTS predicate on
+// SQLite; FOR KEY SHARE on PostgreSQL, against DeleteIfUnreferenced's FOR
+// UPDATE). An empty projectID binds nothing; a missing session is (false, nil).
 func (s *SessionStore) BindProjectIfEmpty(ctx context.Context, id, projectID string) (bool, error) {
 	if projectID == "" {
 		return false, nil
@@ -225,10 +205,7 @@ func (s *SessionStore) BindProjectIfEmpty(ctx context.Context, id, projectID str
 }
 
 // CountProjectRefs reports how many sessions bind projectID — the unit the
-// SandboxManager caches an instance per. Zero after a session delete means the
-// project's cached instance has no caller left. An empty id counts the
-// sessions that carry no binding, which the column stores as NULL (see
-// boundTo).
+// SandboxManager caches an instance per. An empty id counts the unbound (NULL, see boundTo).
 func (s *SessionStore) CountProjectRefs(ctx context.Context, projectID string) (int, error) {
 	n, err := boundTo(s.db.NewSelect().Model((*Session)(nil)), "project_id", projectID).Count(ctx)
 	if err != nil {
@@ -237,11 +214,8 @@ func (s *SessionStore) CountProjectRefs(ctx context.Context, projectID string) (
 	return n, nil
 }
 
-// boundTo narrows a nullable uuid column to one id — or, for the empty id, to
-// the rows that carry none. An unset binding is stored as NULL (the nullzero
-// tag), never as "", and PostgreSQL refuses "" as a uuid outright; SQLite
-// merely matches nothing, which reads as a passing test until it runs on the
-// other backend.
+// boundTo narrows a nullable uuid column to one id, or for the empty id to
+// the rows that carry none (NULL): PostgreSQL refuses "" as a uuid, SQLite merely matches nothing.
 func boundTo(q *bun.SelectQuery, column, id string) *bun.SelectQuery {
 	if id == "" {
 		return q.Where("? IS NULL", bun.Ident(column))
@@ -249,16 +223,11 @@ func boundTo(q *bun.SelectQuery, column, id string) *bun.SelectQuery {
 	return q.Where("? = ?", bun.Ident(column), id)
 }
 
-// Delete removes the session with the given id together with all of its
-// messages, trace events, pending approvals, wake-ups and triggers in one
-// transaction. Background tasks spawned from the session cascade: their rows
-// and hidden child sessions (with all their data) go too, the whole tree — a
-// hidden session has no UI path of its own, so anything left behind would be
-// unreachable forever. Only LIVE edges are followed (liveParent / liveChild,
-// the fence every read applies): a stale task row from an earlier incarnation
-// names a child id that may since have been given to an unrelated session,
-// and following it would delete that session's history. The root's absence
-// is ErrNotFound; a child that is already gone is not.
+// Delete removes the session with everything keyed by it — entries, trace
+// events, pending approvals, wake-ups, triggers — and cascades through its
+// tasks' hidden child sessions, following only LIVE edges (liveParent /
+// liveChild), in one transaction. The root's absence is ErrNotFound; a
+// child already gone is not.
 func (s *SessionStore) Delete(ctx context.Context, id string) error {
 	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		tree, err := sessionTree(ctx, tx, id)
@@ -274,9 +243,8 @@ func (s *SessionStore) Delete(ctx context.Context, id string) error {
 	})
 }
 
-// SetOwner reassigns the session and every hidden session serving it (its
-// tasks' transcripts, recursively) to ownerID — the one ownership column
-// stays consistent across the tree. ErrNotFound when the root is absent.
+// SetOwner reassigns the session and every hidden session serving it
+// (recursively) to ownerID. ErrNotFound when the root is absent.
 func (s *SessionStore) SetOwner(ctx context.Context, id, ownerID string) error {
 	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		tree, err := sessionTree(ctx, tx, id)
@@ -299,8 +267,7 @@ func (s *SessionStore) SetOwner(ctx context.Context, id, ownerID string) error {
 }
 
 // sessionTree lists id and every hidden session serving it, parents before
-// children, following the live task edges (a task row whose session was
-// deleted and re-created is not an edge).
+// children, following the live task edges only.
 func sessionTree(ctx context.Context, tx bun.Tx, id string) ([]string, error) {
 	tree := []string{id}
 	visited := map[string]bool{id: true}
@@ -323,16 +290,11 @@ func sessionTree(ctx context.Context, tx bun.Tx, id string) ([]string, error) {
 	return tree, nil
 }
 
-// deleteSessionRows removes one session of the tree: its row and everything
-// keyed by its id, plus the task rows naming it in either role — as a PARENT
-// (its own tasks) and as a CHILD (the task whose hidden session it is; a row
-// pointing at a deleted session would dangle forever) — and the triggers that
-// fire into it. mustExist makes a missing row ErrNotFound (the root); a child
-// already gone is left as such.
+// deleteSessionRows removes one session of the tree: its row, everything
+// keyed by its id, the task rows naming it as PARENT or CHILD, and its triggers. mustExist makes a missing row ErrNotFound.
 func deleteSessionRows(ctx context.Context, tx bun.Tx, id string, mustExist bool) error {
 	// The session row's lock first — the order every entry write takes
-	// (EntryStore.lockSessionIn) — so an append and this cascade cannot each
-	// wait on the other. A row already gone is what mustExist decides below.
+	// (EntryStore.lockSessionIn), so an append and this cascade cannot deadlock.
 	if tx.Dialect().Name() == dialect.PG {
 		err := tx.NewSelect().Model((*Session)(nil)).Column("id").
 			Where("id = ?", id).For("UPDATE").Scan(ctx, new(string))

@@ -13,9 +13,7 @@ import (
 )
 
 // ToolChars sizes what one tool definition costs in a request: its name,
-// description and argument schema. The build measures the agent's own tools
-// with it and the read path measures an MCP server's with the same rule, so
-// the two halves of a profile are comparable.
+// description and argument schema — the one rule both halves of a profile use.
 func ToolChars(t *agents.Tool) int {
 	n := len(t.Name) + len(t.Description)
 	if t.ParamsJSONSchema != nil {
@@ -36,9 +34,8 @@ func NewContextProfileStore(db *bun.DB) *ContextProfileStore {
 	return &ContextProfileStore{db: db}
 }
 
-// Save records the profile for sessionID, replacing whatever the previous run
-// left: the panel reports what the session sends NOW, and a build that changed
-// (a sandbox bound, an MCP server connected) must not be read as still current.
+// Save records the profile for sessionID, replacing whatever the previous
+// run left: the panel reports what the session sends NOW.
 func (s *ContextProfileStore) Save(ctx context.Context, sessionID string, p PromptProfile) error {
 	payload, err := json.Marshal(p)
 	if err != nil {

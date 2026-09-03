@@ -8,12 +8,8 @@ import (
 	"github.com/uptrace/bun"
 )
 
-// AuditEvent is one line of "who did what, to what, when": every successful
-// mutating API request, plus the acts that bypass REST (WS run starts and
-// approval decisions, terminal opens). Detail never carries a request body or
-// a secret — a scope, a role, a sandbox id. Retention is the process's
-// --audit-retention-days, never an API setting: the log of configuration
-// changes must not be shortened through the API it records.
+// AuditEvent is one line of "who did what, to what, when" — invariant 54.
+// Detail never carries a request body or a secret.
 type AuditEvent struct {
 	bun.BaseModel `bun:"table:audit_events,alias:ae"`
 
@@ -53,8 +49,7 @@ func (s *AuditStore) Record(ctx context.Context, e *AuditEvent) error {
 }
 
 // ListRecent returns up to limit events newest first, those before the row
-// beforeID when it is set — a cursor for paging backwards. The id is a
-// UUIDv7, so it orders like created_at and, unlike it, never ties.
+// beforeID when set. The id is a UUIDv7, so it orders like created_at without ties.
 func (s *AuditStore) ListRecent(ctx context.Context, limit int, beforeID string) ([]AuditEvent, error) {
 	if limit <= 0 {
 		limit = 100

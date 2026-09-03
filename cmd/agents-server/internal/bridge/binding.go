@@ -24,21 +24,15 @@ type ErrInvalidBinding struct{ Reason string }
 
 func (e ErrInvalidBinding) Error() string { return "invalid project binding: " + e.Reason }
 
-// bindingPlan is one run request's resolved sandbox context: the project the
-// run executes under, and whether this run still owes the session its
-// permanent binding (first project-carrying run on an unbound session).
+// bindingPlan is one run request's resolved sandbox context: the project, and
+// whether this run still owes the session its permanent binding.
 type bindingPlan struct {
 	projectID string
 	needBind  bool
 }
 
-// planProjectBinding decides a run's sandbox context WITHOUT writing anything.
-// A bound session overrides the request; the client's values are ignored. An
-// unbound session carrying a project has it validated (it must exist and
-// belong to the session's owner) and a bind planned. A run naming no project
-// resolves to none — and an agent with no project gets no sandbox tools at
-// all (decisions §5.33); the session stays bindable. The write happens in
-// reserveRun only after hub registration succeeds.
+// planProjectBinding decides a run's sandbox context WITHOUT writing: a bound
+// session overrides the request; an unbound one is validated — invariant 27.
 func (r *Runner) planProjectBinding(ctx context.Context, sess *store.Session, projectID string) (bindingPlan, error) {
 	if sess.ProjectID != "" {
 		return bindingPlan{projectID: sess.ProjectID}, nil
@@ -111,9 +105,8 @@ func (r *Runner) BindSessionProject(ctx context.Context, sessionID, projectID st
 // three passes distinguish an unlucky race from a config under active edit.
 const maxBindAttempts = 3
 
-// bindSessionAgent back-fills the session's bound agent config once the run has
-// produced an answer. Detached from the run's context: the run is over, and a
-// client that hung up must not decide whether the binding lands.
+// bindSessionAgent back-fills the session's bound agent once the run answered.
+// Detached from the run's context: a client that hung up must not decide it.
 func (r *Runner) bindSessionAgent(sessionID, agentConfigID string) {
 	if err := r.Deps.Sessions.BindAgentIfEmpty(context.Background(), sessionID, agentConfigID); err != nil {
 		// Best-effort back-fill of the session's bound agent; log rather than
@@ -122,16 +115,12 @@ func (r *Runner) bindSessionAgent(sessionID, agentConfigID string) {
 	}
 }
 
-// reserveRun takes the session for a run: plan → register → bind, as ONE
-// reservation. Registration (the gate that can refuse) comes before the bind,
-// so a run that never starts binds nothing; a first-run bind that loses its
-// CAS withdraws the registration and goes around, up to maxBindAttempts. On
-// return the slot is held; boundNow reports that THIS run bound the session.
+// reserveRun takes the session for a run: plan → register → bind as ONE
+// reservation (invariant 27). boundNow reports THIS run bound the session.
 func (r *Runner) reserveRun(runID, sessionID, agentConfigID, projectID string) (seg *runSegment, ctx context.Context, plan bindingPlan, boundNow bool, err error) {
 	for attempt := 1; ; attempt++ {
-		// Reject unknown sessions up front so we never register a run (or
-		// write orphaned messages) against a non-existent session. The same
-		// lookup feeds the sandbox binding below.
+		// Reject unknown sessions up front; the same lookup feeds the sandbox
+		// binding below.
 		sess, err := r.Deps.Sessions.Get(r.hub.rootCtx, sessionID)
 		if err != nil {
 			return nil, nil, bindingPlan{}, false, err
@@ -159,11 +148,8 @@ func (r *Runner) reserveRun(runID, sessionID, agentConfigID, projectID string) (
 		if won {
 			return seg, ctx, plan, true, nil
 		}
-		// The CAS refused: another run bound the session first, the project was
-		// deleted, or the session row was removed. Withdraw the registration and
-		// go around; the next pass re-validates, refusing a vanished project
-		// (400) or session (404), or adopting the standing binding. After
-		// maxBindAttempts the retry belongs to the client.
+		// The CAS refused (another run bound it, or the project/session vanished):
+		// withdraw and go around; the next pass re-validates. Then it is the client's.
 		r.hub.unregister(runID, seg)
 		if attempt == maxBindAttempts {
 			return nil, nil, bindingPlan{}, false, ErrBindingContention

@@ -10,9 +10,7 @@ import (
 )
 
 // payloadFields are the span data keys held in trace_blobs rather than on
-// the row: the model's request and reply, a tool's arguments and result.
-// They are nearly all of a session's trace bytes — a generation span's input
-// is the whole conversation — and a listing never needs them.
+// the row — nearly all of a session's trace bytes, which a listing never needs.
 var payloadFields = []string{"input", "output", "system_instructions", "tools", "handoffs", "output_schema"}
 
 // The strings a payload element is replaced with: over the per-element cap
@@ -20,6 +18,8 @@ var payloadFields = []string{"input", "output", "system_instructions", "tools", 
 const (
 	PayloadCapMarker    = "[omitted: over the stored span limit (trace_span_data_kb)]"
 	payloadPrunedMarker = "[omitted: the stored payload was pruned]"
+	// A reader tolerating a missing blob is the whole contract between a prune
+	// and a run starting in the same session at the same moment.
 )
 
 const hashSize = sha256.Size
@@ -43,11 +43,8 @@ func layoutTotal(layout []layoutField) int {
 	return n
 }
 
-// splitPayload takes the payload fields out of a span's data document: the
-// metadata that stays on the row, the layout, and each element's compact
-// JSON with any past elemCap bytes (0: no cap) replaced by PayloadCapMarker.
-// A document that is not a JSON object, or has no payload field, comes back
-// as it is with a nil layout.
+// splitPayload splits a span's data document into row metadata, layout and element JSON
+// (past elemCap an element becomes PayloadCapMarker, 0 = no cap); no payload, nil layout.
 func splitPayload(data string, elemCap int) (meta string, layout []layoutField, elems [][]byte) {
 	var m map[string]json.RawMessage
 	if json.Unmarshal([]byte(data), &m) != nil || m == nil {
@@ -96,8 +93,7 @@ func capElement(raw json.RawMessage, elemCap int) []byte {
 }
 
 // joinPayload puts the elements back into the metadata document in the
-// layout's order; a nil element (its blob is gone) reads as
-// payloadPrunedMarker. elems must hold layoutTotal(layout) entries.
+// layout's order; a nil element (blob gone) reads as payloadPrunedMarker.
 func joinPayload(meta string, layout []layoutField, elems [][]byte) (string, error) {
 	m := map[string]json.RawMessage{}
 	if meta != "" {
@@ -165,9 +161,8 @@ const gzipFloor = 256
 
 var gzipWriters = sync.Pool{New: func() any { return gzip.NewWriter(io.Discard) }}
 
-// encodeBody is how an element is stored: gzip-compressed when that is
-// smaller, else as it is. JSON never starts with the gzip magic, so
-// decodeBody tells the two apart without a flag.
+// encodeBody is how an element is stored: gzip-compressed when smaller, else
+// as it is (JSON never starts with the gzip magic, so no flag is needed).
 func encodeBody(e []byte) []byte {
 	if len(e) < gzipFloor {
 		return e

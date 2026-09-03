@@ -122,8 +122,7 @@ func (h *SettingHandler) Set(c *gin.Context) {
 		return
 	}
 	// A client echoing the mask keeps the stored secret, resolved inside the
-	// store's transaction (nothing stored resolves to ""). Validated AFTER the
-	// mask resolves, so what is checked is what is stored.
+	// transaction; validated AFTER the mask resolves.
 	err := h.store.Modify(ctx, key, func(prev string, found bool) (string, error) {
 		if settings.IsSecret(key) && req.Value == SecretMask {
 			req.Value = ""

@@ -22,8 +22,7 @@ type TaskHandler struct {
 }
 
 // NewTaskHandler returns a handler backed by the task store and the runner
-// (whose hub overlays live status and whose StopTask carries the
-// status-aware cancel semantics).
+// (live status overlay, status-aware StopTask).
 func NewTaskHandler(tasks *store.TaskStore, runner *bridge.Runner) *TaskHandler {
 	return &TaskHandler{tasks: tasks, hub: runner.Hub(), runner: runner}
 }
@@ -60,9 +59,8 @@ func (h *TaskHandler) Stop(c *gin.Context) {
 	c.JSON(http.StatusOK, info)
 }
 
-// stopError maps a stop failure. The not-found sentinel is the SDK's, not the
-// store's: every lookup goes through the task adapter, which maps its own to
-// that one, so match the SDK's sentinel here rather than store.ErrNotFound.
+// stopError maps a stop failure. The not-found sentinel is the SDK's, not
+// store.ErrNotFound: every lookup goes through the task adapter.
 func (h *TaskHandler) stopError(c *gin.Context, err error) {
 	switch final, isFinal := errors.AsType[*bridge.TaskFinalError](err); {
 	case isFinal:
@@ -98,11 +96,8 @@ func (h *TaskHandler) Retry(c *gin.Context) {
 	c.JSON(http.StatusOK, info)
 }
 
-// retryError maps a retry failure. A refusal by the task's own state — it is
-// not failed, it is out of attempts, its session is at the live-task ceiling,
-// or its execution's budget or step ceiling is spent — is a conflict rather
-// than a fault, and its reason goes on the wire because the caller can act on
-// it.
+// retryError maps a retry failure. A refusal by the task's own state (not
+// failed, out of attempts, at a ceiling) is a 409 whose reason goes on the wire.
 func (h *TaskHandler) retryError(c *gin.Context, err error) {
 	_, notRetryable := errors.AsType[tasks.ErrNotRetryable](err)
 	_, retryLimit := errors.AsType[tasks.ErrRetryLimit](err)
@@ -220,13 +215,8 @@ func (h *TaskHandler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, TaskPage{Items: rows, Total: total})
 }
 
-// overlay stamps a row with what the durable columns cannot say: the live
-// status of a run still in the hub, and the retry ceiling. The hub tracks
-// RUNS, so it is keyed by the task's run id. Terminal states stay the row's:
-// the hub finishes a run before the row lands, and "completed" in that window
-// would show a task whose result is not readable yet. The ceiling travels with
-// every row, so a client can answer "could this be retried" from the status it
-// already tracks live.
+// overlay stamps a row with the hub's live status (keyed by run id) and the
+// retry ceiling. Terminal states stay the row's: the hub finishes before the row lands.
 func (h *TaskHandler) overlay(t *store.Task) {
 	t.MaxAttempts = h.runner.MaxTaskAttempts()
 	if bridge.IsTerminalTaskStatus(t.Status) {

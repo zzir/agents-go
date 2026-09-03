@@ -5,9 +5,8 @@ import (
 	"fmt"
 )
 
-// The credential fields of each entity, sealed at rest. Each store installs
-// its pair with withSecrets, and its custom write paths wrap with sealedWrite
-// — the caller's value is plaintext before and after every store call.
+// The credential fields of each entity, sealed at rest: each store installs
+// its pair with withSecrets, and custom write paths wrap with sealedWrite.
 
 // sealedWrite runs exec with m's credentials sealed, then opens them again
 // whatever exec returned, so the caller keeps a plaintext struct.
@@ -51,8 +50,7 @@ func openProvider(p *Provider) (err error) {
 }
 
 // mcpSecretKeys are the credential fields inside an MCP server's transport
-// config: a pre-registered OAuth client secret and the headers, which carry
-// bearer tokens.
+// config: the OAuth client secret and the headers (bearer tokens).
 var mcpSecretKeys = []string{"oauth_client_secret", "headers"}
 
 func sealMcpServer(m *McpServerConfig) (err error) {
@@ -70,8 +68,7 @@ func openMcpServer(m *McpServerConfig) (err error) {
 }
 
 // sandboxSecretKeys are the credential fields inside a sandbox's config,
-// across every type: one list, so a new backend's key cannot be forgotten by a
-// per-type branch.
+// across every type — one list.
 var sandboxSecretKeys = []string{"ssh_password", "api_key"}
 
 func sealSandbox(sb *Sandbox) (err error) {
@@ -95,9 +92,7 @@ func openProject(p *Project) error {
 }
 
 // mapProjectEnv applies fn to every value, re-marshaling through []EnvVar so
-// the payload comes back in its canonical field order — a generic
-// map-of-raw-JSON round trip reorders keys, and the stored form is compared
-// as text nowhere but is read by people everywhere.
+// the payload keeps its canonical field order.
 func mapProjectEnv(p *Project, fn func(label, s string) (string, error)) error {
 	if p.Env == "" || secretBox == nil && !hasSealed(json.RawMessage(p.Env)) {
 		return nil
@@ -106,9 +101,8 @@ func mapProjectEnv(p *Project, fn func(label, s string) (string, error)) error {
 	if err != nil {
 		return err
 	}
-	// AAD is bound to the project id: a sealed value carries no meaning under
-	// another project, so an attacker with DB write access cannot paste a
-	// victim project's ciphertext into their own env as a decryption oracle.
+	// AAD is bound to the project id, so a victim project's ciphertext pasted
+	// into another env is not a decryption oracle.
 	label := labelProjectEnv + "." + p.ID
 	for i, v := range vars {
 		out, ferr := fn(label, v.Value)

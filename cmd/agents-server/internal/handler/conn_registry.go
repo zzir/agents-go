@@ -12,11 +12,7 @@ import (
 )
 
 // ConnRegistry tracks every authenticated WebSocket connection so run events
-// behave as a broadcast bus PER OWNER: a run started from any client (this
-// connection, another browser, REST) reaches every connection of the
-// session's owner, a connection joining mid-run is attached to each of its
-// user's in-flight streams with a full replay, and nobody else's connection
-// hears a thing (workbench invariant 14).
+// behave as a broadcast bus per owner — invariant 14.
 type ConnRegistry struct {
 	hub      *bridge.RunHub
 	sessions *store.SessionStore
@@ -31,9 +27,8 @@ func NewConnRegistry(hub *bridge.RunHub, sessions *store.SessionStore) *ConnRegi
 	return &ConnRegistry{hub: hub, sessions: sessions, conns: make(map[*server.WSConn]*connSubs)}
 }
 
-// register adds a connection and immediately attaches it to every live run of
-// its user (replaying each run's buffer from the start), so a browser opened
-// mid-run rebuilds the in-flight turn it never saw begin.
+// register adds a connection and attaches it to every live run of its user
+// with a full replay.
 func (r *ConnRegistry) register(conn *server.WSConn, subs *connSubs) {
 	r.mu.Lock()
 	r.conns[conn] = subs
@@ -54,11 +49,8 @@ func (r *ConnRegistry) unregister(conn *server.WSConn) {
 }
 
 // AttachAll subscribes every connection of the run's owner to runID with a
-// full replay, skipping connections already attached (an approval resume
-// keeps the run id — re-subscribing an attached watcher would double-deliver
-// every event). Wired to Runner.OnRunAttach, so WS- and REST-created runs and
-// approval resumes all broadcast the same way. A record without an owner
-// attaches nobody.
+// full replay, skipping connections already attached (an approval resume keeps
+// the run id). Wired to Runner.OnRunAttach. A record without an owner attaches nobody.
 func (r *ConnRegistry) AttachAll(runID string) {
 	info, ok := r.hub.Info(runID)
 	if !ok || info.OwnerID == "" {
@@ -75,11 +67,9 @@ func (r *ConnRegistry) AttachAll(runID string) {
 	}
 }
 
-// Broadcast writes env — a fact about sessionID — to every connection of the
-// session's owner not attached to exceptRunID's stream (which already carried
-// it): the bus for a fact a run stream cannot reach everyone with
-// (Runner.OnBroadcast). No replay: a connection that joins later reads the
-// durable rows instead. A session that cannot be resolved reaches nobody.
+// Broadcast writes env to every connection of sessionID's owner not attached
+// to exceptRunID's stream (Runner.OnBroadcast). No replay: a later joiner
+// reads the durable rows. A session that cannot be resolved reaches nobody.
 func (r *ConnRegistry) Broadcast(env *protocol.Envelope, exceptRunID, sessionID string) {
 	sess, err := r.sessions.Get(context.Background(), sessionID)
 	if err != nil {

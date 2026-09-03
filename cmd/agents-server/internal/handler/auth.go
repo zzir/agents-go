@@ -86,9 +86,8 @@ type UserLabel struct {
 	Email string `json:"email"`
 }
 
-// ListUserLabels serves the minimal id→label directory any authenticated
-// member reads to render row owners (one team, one trust boundary — spec
-// §5.29). Roles, timestamps and account state stay admin-only (ListUsers).
+// ListUserLabels serves the id→label directory any authenticated member reads
+// to render row owners. Roles, timestamps and state stay admin-only (ListUsers).
 //
 //	@Summary	List user labels (id, name, email) for owner display
 //	@Tags		auth
@@ -109,10 +108,9 @@ func (h *AuthHandler) ListUserLabels(c *gin.Context) {
 	c.JSON(http.StatusOK, labels)
 }
 
-// PatchUser changes an account's role or switches it off. The store refuses
-// the change that would leave no enabled admin (409); the local account is
-// not a person to manage; an admin acting on themself is refused outright,
-// since a locked-out admin's only recovery is --bootstrap-admin.
+// PatchUser changes an account's role or switches it off. Refused: the change
+// that would leave no enabled admin (409), the local account, and an admin
+// acting on themself (a locked-out admin's only recovery is --bootstrap-admin).
 //
 //	@Summary	Change a user's role or disable them (admin)
 //	@Tags		auth
@@ -413,9 +411,8 @@ func (h *AuthHandler) OAuthStart(c *gin.Context) {
 		notFound(c)
 		return
 	}
-	// The browser's half of the login: HttpOnly so no script reads it, Lax
-	// so the provider's top-level redirect back still carries it, and as
-	// short-lived as the pending login itself.
+	// HttpOnly so no script reads it; Lax so the provider's top-level redirect
+	// back still carries it; as short-lived as the pending login itself.
 	name, secure := h.svc.LoginCookie()
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name: name, Value: nonce, Path: "/", MaxAge: int(authn.LoginTTL / time.Second),

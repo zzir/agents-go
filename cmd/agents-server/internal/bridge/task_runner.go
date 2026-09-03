@@ -21,10 +21,8 @@ type TaskFinalError struct{ Status string }
 
 func (e *TaskFinalError) Error() string { return "task already " + e.Status }
 
-// publishTaskCancelled advances the hub record of the task's run (when it
-// still exists) and broadcasts run.cancelled, so every connected client flips
-// the task's state and the record stops holding a concurrency-cap slot. A
-// no-op after GC or a restart (callers fall back to the stop API response).
+// publishTaskCancelled advances the hub record of the task's run and broadcasts
+// run.cancelled; a no-op after GC or a restart.
 func (r *Runner) publishTaskCancelled(runID string) {
 	env, err := protocol.NewEnvelope(protocol.EventRunCancelled, protocol.RunCancelled{RunID: runID})
 	if err != nil {
@@ -45,14 +43,11 @@ func isTerminalTaskStatus(s string) bool {
 // terminal rows alone.
 func IsTerminalTaskStatus(s string) bool { return isTerminalTaskStatus(s) }
 
-// resolveSpawnAgent resolves a spawn target: an explicit config name/id wins;
-// an empty name or the "default" / "self" / "current" aliases (models reach
-// for these unprompted) fall back to the spawning run's own agent — a config
-// actually named that way still takes precedence.
+// resolveSpawnAgent: an explicit config name/id wins; an empty name or the
+// "default"/"self"/"current" aliases fall back to the spawning run's agent.
 func (r *Runner) resolveSpawnAgent(ctx context.Context, parentSessionID, name string) (*store.AgentConfig, error) {
-	// The spawn resolves within the parent session owner's view (decisions §5.29);
-	// a lookup that cannot be made refuses — an empty owner would resolve as
-	// the all-seeing internal caller (spec §2.13).
+	// Resolved within the parent session owner's view (decisions §5.29); a
+	// lookup that cannot be made refuses (spec §2.13).
 	sess, err := r.Deps.Sessions.Get(ctx, parentSessionID)
 	if err != nil {
 		return nil, fmt.Errorf("spawn_task: resolving the parent session: %w", err)
@@ -94,8 +89,7 @@ func (r *Runner) visibleAgentConfigs(ctx context.Context, ownerID string) ([]sto
 }
 
 // agentConfigByName resolves an agent by config name (or id) within ownerID's
-// view — their own over a global one sharing the name; the not-found error
-// lists what exists, for the model to pick from.
+// view, own over global; the not-found error lists what exists.
 func (r *Runner) agentConfigByName(ctx context.Context, ownerID, name string) (*store.AgentConfig, error) {
 	if cfg, err := r.Deps.AgentConfigs.Get(ctx, name); err == nil {
 		if ownerID == "" || store.Visible(cfg.Scope, cfg.OwnerID, ownerID, false) {
@@ -126,10 +120,8 @@ func (r *Runner) agentConfigByName(ctx context.Context, ownerID, name string) (*
 	return nil, fmt.Errorf("%w named %q (available: %s)", errNoSuchAgent, name, strings.Join(names, ", "))
 }
 
-// taskMeta reports whether sessionID is a task's hidden child session,
-// returning its parent linkage for the run pipeline (nil, nil for chat
-// sessions). The tasks row is created before the run starts, so the lookup is
-// reliable on both fresh runs and approval resumes.
+// taskMeta reports whether sessionID is a task's hidden child session, with its
+// parent linkage (nil, nil for chat sessions). The row exists before the run starts.
 func (r *Runner) taskMeta(ctx context.Context, sessionID string) (*TaskMeta, error) {
 	if r.Deps.Tasks == nil {
 		return nil, nil
@@ -139,11 +131,8 @@ func (r *Runner) taskMeta(ctx context.Context, sessionID string) (*TaskMeta, err
 	case errors.Is(err, store.ErrNotFound):
 		return nil, nil
 	case err != nil:
-		// A check that cannot be made refuses (spec §2.13). Reading a store
-		// failure as "not a task session" demotes a TASK run to a chat run:
-		// it is handed the task tools it must not have — so it spawns
-		// grandchildren past MaxDepth — and its row is never reclaimed from
-		// input_required while the run executes.
+		// A check that cannot be made refuses (spec §2.13): reading a store
+		// failure as "chat session" hands a TASK run the task tools — invariant 34.
 		return nil, fmt.Errorf("resolving task for session %s: %w", sessionID, err)
 	}
 	attempt := max(task.Attempt, 1)
@@ -159,9 +148,8 @@ func (r *Runner) taskMeta(ctx context.Context, sessionID string) (*TaskMeta, err
 	}, nil
 }
 
-// trustSessionID picks the session id the exec_command trust gate scopes to:
-// a task run inherits its parent chat session's command trust (decision: a
-// spawned task shares the parent's sandbox and its approvals).
+// trustSessionID picks the session the exec_command trust gate scopes to: a
+// task run inherits its parent chat session's command trust.
 func trustSessionID(sessionID string, task *TaskMeta) string {
 	if task != nil && task.ParentSessionID != "" {
 		return task.ParentSessionID
@@ -197,11 +185,8 @@ func (r *Runner) RetryTask(taskID string) (*TaskInfo, error) {
 	if r.tasks == nil {
 		return nil, fmt.Errorf("task_retry: tasks are not configured")
 	}
-	// A workflow at a bound is refused HERE, before the claim: the launcher
-	// would refuse it too, but only after RetryClaim — and its release then
-	// owes the parent a wake-up (a run) to say so. Measured as the launcher
-	// measures it: every bound, tokens included, whether or not the last
-	// ending recorded one.
+	// A workflow at a bound is refused HERE, before the claim: after RetryClaim
+	// the launcher's refusal would owe the parent a wake-up run to say so.
 	if row, err := r.Deps.Tasks.Get(r.hub.rootCtx, taskID); err == nil && row.Kind == store.TaskKindWorkflow {
 		if st, derr := store.DecodeWorkflowState(row.State); derr == nil {
 			tokens, terr := r.executionTokens(r.hub.rootCtx, st, row.ChildSessionID)
@@ -231,13 +216,8 @@ func (r *Runner) MaxTaskAttempts() int {
 	return r.tasks.MaxAttempts()
 }
 
-// postRun runs after every run segment terminates. It hands the outcome to the
-// task manager, which advances a task's state — a workflow's next step
-// included: it is driven from HERE rather than from the callback of the run
-// that started it, because an approval resume passes no callback and the
-// sequence would be lost at the first paused step (workbench invariant 29) — or,
-// for an ordinary chat session, drains the wake-ups that queued while it was
-// busy.
+// postRun runs after every run segment terminates: drains the session's
+// wake-ups, then hands the outcome to the task manager — invariant 29.
 func (r *Runner) postRun(runID, sessionID string, result *RunOutcome) {
 	ctx := r.hub.rootCtx
 	// Any run ending is a session becoming free, which is when a debt owed to
@@ -312,9 +292,8 @@ func (r *Runner) StopSessionTree(sessionID string) {
 		waits = append(waits, rid)
 	}
 	if r.tasks != nil {
-		// Collect the run ids BEFORE stopping: once a task is finalized its
-		// row still names its run, but the loop below needs the list as it was
-		// when they were live.
+		// Collect the run ids BEFORE stopping: the loop below needs the list as
+		// it was when they were live.
 		live, err := r.Deps.Tasks.ListByParent(ctx, sessionID)
 		if err != nil {
 			logging.Ctx(ctx).Warn("listing tasks for session stop", "error", err, "session_id", sessionID)
@@ -327,12 +306,8 @@ func (r *Runner) StopSessionTree(sessionID string) {
 				waits = append(waits, live[i].RunID)
 			}
 		}
-		// The manager cancels each one and finalizes the rows that no goroutine
-		// will ever advance. Under the teardown deadline, because it stops
-		// tasks one at a time and a stop can WAIT — for a finished run's
-		// outcome to reach its row — so a session's worth of them would
-		// otherwise add up past any bound this delete thought it had. The
-		// cascade removes these rows next in any case.
+		// The manager cancels each and finalizes the rows nothing will advance.
+		// Under the teardown deadline: it stops one at a time, and a stop can WAIT.
 		stopCtx, cancelStop := context.WithDeadline(ctx, deadline)
 		err = r.tasks.StopTree(stopCtx, sessionID)
 		cancelStop()
@@ -345,19 +320,14 @@ func (r *Runner) StopSessionTree(sessionID string) {
 	}
 }
 
-// sessionTeardownWait bounds how long a delete waits for run goroutines to
-// finish. Unbounded would let one stuck run block a delete forever; too short
-// and the cascade races a write.
+// sessionTeardownWait bounds how long a delete waits for run goroutines:
+// unbounded lets one stuck run block forever; too short races the cascade.
 const sessionTeardownWait = 5 * time.Second
 
-// ReleaseSessionBinding releases the cached sandbox instance behind a deleted
-// session's project binding, but only when no remaining session references
-// the project — the instance may be a live ssh connection or a docker
-// container, and sessions sharing a project must not lose it under a
-// sibling's delete. Called AFTER the delete cascade, so the count excludes
-// the deleted session and its task children. Best-effort: on any doubt (the
-// count failed), the instance stays — an idle instance is a smaller cost than
-// tearing one out from under a session still using it.
+// ReleaseSessionBinding evicts the cached sandbox instance behind a deleted
+// session's project binding when no remaining session references the project
+// (invariant 27). Called AFTER the delete cascade; best-effort — on any doubt
+// the instance stays.
 func (r *Runner) ReleaseSessionBinding(projectID string) {
 	if projectID == "" {
 		return

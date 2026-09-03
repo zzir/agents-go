@@ -14,8 +14,7 @@ import (
 )
 
 // secretBox seals credential columns at rest. Set once at startup by
-// UseSecretBox, before any store is used; nil is plaintext mode (the
-// single-user workbench, or a server whose operator has not set a key).
+// UseSecretBox, before any store is used; nil is plaintext mode.
 var secretBox *secrets.Box
 
 // UseSecretBox installs the process's key for every store.
@@ -27,10 +26,8 @@ func sealSecret(label, plain string) string { return secretBox.Seal(label, plain
 
 func openSecret(label, stored string) (string, error) { return secretBox.Open(label, stored) }
 
-// sealJSONKeys seals the named top-level string fields of a JSON object
-// stored in the column named by label; a key whose value is an object (a
-// headers map) has each string value sealed. Absent keys and non-string
-// values are left alone.
+// sealJSONKeys seals the named top-level string fields of a JSON object (an
+// object value, like a headers map, has each string sealed); others are left alone.
 func sealJSONKeys(label string, raw json.RawMessage, keys ...string) (json.RawMessage, error) {
 	return mapJSONKeys(label, raw, func(l, s string) (string, error) { return sealSecret(l, s), nil }, keys...)
 }
@@ -83,24 +80,18 @@ func mapJSONKeys(label string, raw json.RawMessage, fn func(label, s string) (st
 	return json.Marshal(obj)
 }
 
-// hasSealed reports whether raw contains a sealed value — so plaintext mode
-// still opens (and fails loudly on) rows sealed under a key that is gone. It
-// matches the versioned envelope ("enc:v…), not a bare "enc:" prefix, so a
-// plaintext value a user typed that starts with "enc:" is not misread as
-// ciphertext (which would brick the row in keyless mode).
+// hasSealed reports whether raw contains a sealed value, matching the
+// versioned envelope ("enc:v…) so a typed value starting with "enc:" is not misread.
 func hasSealed(raw json.RawMessage) bool {
 	return strings.Contains(string(raw), `"enc:v`)
 }
 
-// secretKeyCheck is the settings row that proves the configured key is the
-// one the database's secrets were sealed under: a canary sealed at the
-// first start with a key, opened at every start after.
+// secretKeyCheck is the settings row holding a canary sealed at the first
+// start with a key and opened at every start after.
 const secretKeyCheck = "secret_key_check"
 
-// VerifySecretKey fails fast, at startup, on a key the database's sealed
-// rows would not open: a sealed canary with no key configured, or with
-// another key — either would otherwise surface as the first settings
-// panel failing to load. With a key and no canary yet, it seals one.
+// VerifySecretKey fails fast at startup on a key the database's sealed rows
+// would not open (a sealed canary with no key, or another key). With a key and no canary yet, it seals one.
 func VerifySecretKey(ctx context.Context, db *bun.DB) error {
 	var stored string
 	err := db.NewSelect().Model((*Setting)(nil)).Column("value").Where("key = ?", secretKeyCheck).Scan(ctx, &stored)

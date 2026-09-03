@@ -204,7 +204,7 @@ const STATUS_DOT: Record<McpStatus, string> = {
 // user finishing a popup they may have closed, and re-clicking supersedes the
 // stale attempt server-side (OAuthCoordinator.supersedeInflight) and opens a
 // fresh popup — otherwise a closed popup pins the row for the full 5-minute
-// pending timeout (design invariant).
+// pending timeout.
 const STATUS_ACTION: Partial<Record<McpStatus, { label: string; inProgress?: boolean }>> = {
   disconnected: { label: 'Connect' },
   needs_auth: { label: 'Authorize' },

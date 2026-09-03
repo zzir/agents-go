@@ -13,9 +13,8 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// The error envelope is declared in internal/protocol, the layer this package
-// and the server package share. The names are kept here because they are what
-// the swagger annotations throughout this package refer to.
+// The error envelope is declared in internal/protocol (shared with the server
+// package); these aliases are what the swagger annotations refer to.
 type (
 	// APIError is the machine-readable error payload of every non-2xx response.
 	APIError = protocol.APIError
@@ -50,8 +49,7 @@ func unavailable(c *gin.Context, message string) {
 }
 
 // upstreamError reports a 502 for a failing upstream dependency (model
-// provider, MCP server, sandbox host). The upstream message is forwarded —
-// it's what the caller needs to fix the connection.
+// provider, MCP server, sandbox host), forwarding the upstream message.
 func upstreamError(c *gin.Context, err error) {
 	abortError(c, http.StatusBadGateway, protocol.CodeUpstream, err.Error())
 }
@@ -62,9 +60,8 @@ func internalError(c *gin.Context, err error) {
 	abortError(c, http.StatusInternalServerError, protocol.CodeInternal, "internal error")
 }
 
-// storeError maps a store failure to a response: ErrNotFound → 404, a lost
-// optimistic-concurrency write (ErrRevisionConflict) → 409 so the client
-// re-reads and retries, anything else → 500.
+// storeError maps a store failure: ErrNotFound → 404, ErrRevisionConflict →
+// 409 (the client re-reads and retries), anything else → 500.
 func storeError(c *gin.Context, err error) {
 	if errors.Is(err, store.ErrNotFound) {
 		notFound(c)
@@ -81,19 +78,14 @@ func storeError(c *gin.Context, err error) {
 	internalError(c, err)
 }
 
-// badRequestError carries a 400's message out of a store callback — a
-// handler's rule that runs inside the store's transaction, on the row as
-// stored. saveError maps it.
+// badRequestError carries a 400's message out of a store callback (a
+// handler's rule run inside the store's transaction). saveError maps it.
 type badRequestError string
 
 func (e badRequestError) Error() string { return string(e) }
 
-// saveError maps a create/update store failure: a UNIQUE constraint violation
-// → 409 (so uniqueness is enforced by the DB, not a racy handler pre-check),
-// a refused provider reference or a rule that failed inside the store's tx →
-// 400 (the caller's input is what is wrong), ErrNotFound → 404, anything else
-// → 500. This centralizes the duplicate-key response so every table's
-// uniqueness costs only its index.
+// saveError maps a create/update store failure: UNIQUE violation → 409, a
+// refused provider reference or badRequestError → 400, ErrNotFound → 404, else 500.
 func saveError(c *gin.Context, err error) {
 	if cols, ok := store.UniqueViolation(err); ok {
 		conflict(c, "already in use: "+cols)
@@ -112,9 +104,8 @@ func saveError(c *gin.Context, err error) {
 	storeError(c, err)
 }
 
-// pageParams reads the backwards-pagination query parameters shared by the
-// messages and traces listings: before_id (exclusive upper id bound) and
-// limit (0 = unbounded). Invalid values read as 0.
+// pageParams reads the backwards-pagination query parameters before_id
+// (exclusive upper bound) and limit (0 = unbounded); invalid values read as 0.
 func pageParams(c *gin.Context) (beforeID string, limit int) {
 	beforeID = c.Query("before_id")
 	limit, _ = strconv.Atoi(c.Query("limit"))

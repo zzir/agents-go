@@ -57,9 +57,8 @@ func (w Waker) Drain(ctx context.Context, sessionID string) {
 		log.Warn("listing wake-up debts", "error", err, "session_id", sessionID)
 		return
 	}
-	// A debt with no agent config was born undeliverable: Inherit is frozen at
-	// write, so no later boundary will ever do better. Cancel it now instead of
-	// letting it sit pending and re-warn at every boundary forever.
+	// A debt with no agent config is undeliverable for good (Inherit is frozen):
+	// cancel it now instead of re-warning at every boundary — invariant 32.
 	deliverable := make([]store.Wakeup, 0, len(pending))
 	for i := range pending {
 		if store.DecodeInherit([]byte(pending[i].Inherit)).AgentConfigID == "" {
@@ -88,10 +87,8 @@ func (w Waker) Drain(ctx context.Context, sessionID string) {
 		log.Debug("wake-up run did not start", "error", err, "session_id", sessionID)
 		return
 	}
-	// Settled only AFTER the launch, and bound to the attempt this batch read:
-	// the launch is long enough for a retry to reopen one of these, and marking
-	// THAT delivered would bury a result nobody has heard. Only THIS group is
-	// settled; a different-inherit debt stays pending for its own turn.
+	// Settled only AFTER the launch and bound to the attempt read; only THIS
+	// group — a different-inherit debt stays pending for its own turn.
 	for i := range batch {
 		if _, err := w.r.Deps.Wakeups.Settle(ctx, batch[i].ID, batch[i].Attempt, store.WakeDelivered); err != nil {
 			log.Warn("marking a wake-up delivered", "error", err, "wakeup_id", batch[i].ID)
@@ -99,11 +96,8 @@ func (w Waker) Drain(ctx context.Context, sessionID string) {
 	}
 }
 
-// oldestInheritGroup selects the debts one wake turn may deliver together: the
-// oldest, plus every later debt with the SAME inherit. Debts with a different
-// inherit stay out — a turn runs as one agent, and the next boundary delivers
-// them as their own turn. pending must be non-empty and every entry
-// deliverable (Drain filters the config-less ones out first).
+// oldestInheritGroup selects the debts one turn may deliver: the oldest plus
+// every later one with the SAME inherit. pending is non-empty and deliverable.
 func oldestInheritGroup(pending []store.Wakeup) (batch []store.Wakeup, inherit store.Inherit, parentRunID string) {
 	anchor := pending[0]
 	for i := range pending {
@@ -114,11 +108,8 @@ func oldestInheritGroup(pending []store.Wakeup) (batch []store.Wakeup, inherit s
 	return batch, store.DecodeInherit([]byte(anchor.Inherit)), anchor.ParentRunID
 }
 
-// canWake answers "may this session be woken now". It refuses three cases: a
-// session mid-delete (a wake would outlive the cascade), a session with a live
-// run (let that run's own boundary drain), and a session paused on a human
-// decision (it belongs to the human). A failed query counts as a refusal —
-// "cannot prove it is safe" is not permission.
+// canWake refuses a session mid-delete, with a live run, or paused on a human
+// decision; a failed query is a refusal too.
 func (w Waker) canWake(ctx context.Context, sessionID string) bool {
 	if w.r.hub.SessionDeleting(sessionID) {
 		return false
@@ -154,11 +145,8 @@ func (w Waker) DrainAll(ctx context.Context) {
 	}
 }
 
-// taskFinished is the tasks manager's OnFinished: a task reached a terminal
-// state and its parent has not heard. The DEBT was already written — atomically
-// with the task's terminal state, inside the store's Finalize/FailOrphans — so
-// this only tries to PAY it now; a crash before this line still leaves the row
-// behind, and the next drain (a run boundary, or startup) settles it.
+// taskFinished is the manager's OnFinished: the debt is already written with
+// the terminal state (invariant 32), so this only tries to PAY it now.
 func (r *Runner) taskFinished(ctx context.Context, t *tasks.Task) {
 	if t == nil || t.ParentSessionID == "" {
 		return

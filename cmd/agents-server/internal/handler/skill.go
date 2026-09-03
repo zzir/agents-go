@@ -230,8 +230,7 @@ func (h *SkillHandler) SetScope(c *gin.Context) {
 }
 
 // repoScopeReq is the body of POST /skill-repos/scope: the repo group to
-// flip, and where to. OwnerID names whose group a promote publishes — for an
-// admin promoting a member's import; empty means the caller's own.
+// flip, and where to. OwnerID names whose group; empty means the caller's own.
 type repoScopeReq struct {
 	Repo    string `json:"repo" binding:"required"`
 	Scope   string `json:"scope" binding:"required"`
@@ -265,9 +264,7 @@ func (h *SkillHandler) SetRepoScope(c *gin.Context) {
 		return
 	}
 	// The group is named, never guessed: (repo, owner), defaulting to the
-	// caller's own. A group nobody named is a group nobody flips — which is
-	// what keeps an admin who holds their own copy of a repo from moving
-	// somebody else's by accident (decisions §5.31).
+	// caller's own — decisions §5.31.
 	groupOwner := req.OwnerID
 	if groupOwner == "" {
 		groupOwner = ownerID

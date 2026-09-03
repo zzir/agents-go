@@ -17,8 +17,7 @@ import (
 )
 
 // SandboxHandler serves CRUD endpoints, the health check and the docker
-// operator surface for sandboxes — the machines projects run on and the images
-// they run (decisions §5.36).
+// operator surface for sandboxes (decisions §5.36).
 type SandboxHandler struct {
 	store   *store.SandboxStore
 	manager *sandboxes.Manager
@@ -26,8 +25,7 @@ type SandboxHandler struct {
 }
 
 // NewSandboxHandler returns a handler over the sandbox store; the manager runs
-// the health check, and the retirer is what carries a content change to the
-// projects on this sandbox.
+// the health check, and the retirer carries a content change to the projects.
 func NewSandboxHandler(s *store.SandboxStore, m *sandboxes.Manager, r *Retirer) *SandboxHandler {
 	if s == nil || m == nil || r == nil {
 		panic("handler: NewSandboxHandler needs the sandbox store, the manager and a retirer")
@@ -36,8 +34,7 @@ func NewSandboxHandler(s *store.SandboxStore, m *sandboxes.Manager, r *Retirer) 
 }
 
 // Retirer turns a content change on a sandbox into the project generations it
-// invalidates, then retires each project's live instance and terminals. It is
-// the one place the "one runtime axis" rule is applied (decisions §5.33).
+// invalidates, then retires each project's live instance and terminals (decisions §5.33).
 type Retirer struct {
 	projects  *store.ProjectStore
 	manager   *sandboxes.Manager
@@ -53,9 +50,7 @@ func NewRetirer(projects *store.ProjectStore, m *sandboxes.Manager, terminals *T
 }
 
 // bump moves the runtime generation of every project on the sandbox and
-// retires what each was serving. A failure is returned to the caller, which
-// answers 500: the row is already written, and silently leaving live
-// containers on the old configuration is the worse outcome to hide.
+// retires what each was serving. A failure answers 500: the row is already written.
 func (r *Retirer) bump(ctx context.Context, sandboxID string) error {
 	gens, err := r.projects.BumpRuntimeGen(ctx, sandboxID)
 	if err != nil {
@@ -96,13 +91,10 @@ type sandboxReq struct {
 	Type   string          `json:"type"`
 	Config json.RawMessage `json:"config"`
 	// Prompt is appended to the instructions of every agent in a session bound
-	// to a project on this sandbox — type-agnostic, and content rather than
-	// identity (an edit reaches the next run without retiring live instances).
+	// to a project on this sandbox; an edit reaches the next run, retiring nothing.
 	Prompt string `json:"prompt,omitempty"`
-	// Revision, on update only, is the revision the client's edit was based
-	// on (from GET/List): editing from a stale form is then 409 instead of
-	// silently overwriting a concurrent update. Absent (0) keeps
-	// last-writer-wins. Ignored on create.
+	// Revision, on update only, is the revision the edit was based on: a
+	// stale form is 409. Absent (0) keeps last-writer-wins. Ignored on create.
 	Revision int64 `json:"revision,omitempty"`
 }
 
@@ -111,9 +103,7 @@ func (r sandboxReq) toSandbox() *store.Sandbox {
 }
 
 // validate enforces the POLICY layer of a sandbox write: a name, and a type
-// this build carries. Field-level validation and canonicalization live in
-// store.NormalizeSandboxConfig, which both write handlers run right after
-// this.
+// this build carries. Field-level validation is store.NormalizeSandboxConfig's.
 func (h *SandboxHandler) validate(c *gin.Context, req *sandboxReq) bool {
 	if req.Name == "" {
 		badRequest(c, "name is required")
@@ -190,11 +180,9 @@ func (h *SandboxHandler) Get(c *gin.Context) {
 
 // Update overwrites the sandbox and responds with the updated row. A masked
 // credential keeps the stored value. An update that would change the
-// sandbox's identity (type, daemon host or service URL — see
-// SandboxIdentityChanged) is refused with 409 while any project lives on it:
-// a project's files are at that address, and rewriting what the id points at
-// would move every one of them. The image and the limits update freely, and
-// reach bound sessions at their next run.
+// sandbox's identity (SandboxIdentityChanged) is refused with 409 while any
+// project lives on it (decisions §5.36); the image and the limits update
+// freely and reach bound sessions at their next run.
 //
 //	@Summary		Update sandbox
 //	@Description	Include the revision the edit was based on (from GET/List) to make the write conditional: 409 if the row changed meanwhile. Omitting it falls back to last-writer-wins. Editing the top-level "prompt" is NOT a content change: it retires no container and severs no terminal, reaching bound sessions at their next run (unlike an image change).
@@ -221,21 +209,16 @@ func (h *SandboxHandler) Update(c *gin.Context) {
 	}
 	id := c.Param("id")
 	ctx := c.Request.Context()
-	// Load the current row so masked secrets can round-trip to their stored
-	// values, and so its revision anchors the CAS below. A transient
-	// (non-not-found) Get failure must abort: continuing with an empty prev
-	// would resolve the ******** mask to "" and silently WIPE the stored
-	// credential — the same guard every sibling handler carries.
+	// A transient (non-not-found) Get failure must abort: an empty prev would
+	// resolve the mask to "" and silently WIPE the stored credential.
 	prev, err := h.store.Get(ctx, id)
 	if err != nil {
 		storeError(c, err)
 		return
 	}
 	sb := req.toSandbox()
-	// A masked credential means "keep the stored one", which only holds while
-	// the destination is unchanged: moving the machine or the service must not
-	// carry the old key along. Only refuse when one is actually stored — a
-	// mask with nothing behind it resolves to "" and needs no guard.
+	// A mask must not ride to a new destination (invariant 9); only refuse
+	// when a credential is actually stored — a mask over nothing resolves to "".
 	if strings.Contains(string(sb.Config), SecretMask) && storedSandboxSecret(prev.Config) &&
 		store.SandboxDestinationChanged(prev.Type, prev.Config, sb.Config) {
 		badRequest(c, "the destination changed: the stored credential belongs to the previous one — replace it or clear it")
@@ -250,12 +233,8 @@ func (h *SandboxHandler) Update(c *gin.Context) {
 		return
 	}
 	sb.Config = canonical
-	// Everything decided from prev — the identity comparison, contentChanged
-	// — holds only while the row IS prev, which the expected-revision CAS on
-	// both write paths guarantees: a concurrent update moves the revision,
-	// this write refuses (409), the client re-reads. The anchor is the
-	// client's own revision when the request names one, extending the
-	// guarantee back to the form the edit was made on.
+	// Everything decided from prev holds only while the row IS prev: the
+	// revision CAS (anchored on the client's revision when given) refuses a race with 409.
 	expected := prev.Revision
 	if req.Revision != 0 {
 		expected = req.Revision
@@ -276,15 +255,11 @@ func (h *SandboxHandler) Update(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
-	// The write landed; invalidate NOW, from what the CAS guarantees — not
-	// from a re-read that a cancelled request could fail, leaving a new image
-	// in the store while old instances and terminals keep serving. Only a
-	// CONTENT change retires: a rename must not sever terminals or close idle
-	// containers.
+	// Invalidate NOW, from what the CAS guarantees, not from a re-read a
+	// cancelled request could fail. Only a CONTENT change retires.
 	if contentChanged {
-		// WithoutCancel: the row is written; a disconnect here must not skip
-		// the generation bump, or live instances and terminals keep serving
-		// the replaced image/credential with no path retiring them.
+		// WithoutCancel: the row is written; a disconnect must not skip the
+		// generation bump.
 		if err := h.retire.bump(context.WithoutCancel(ctx), id); err != nil {
 			internalError(c, err)
 			return
@@ -299,10 +274,8 @@ func (h *SandboxHandler) Update(c *gin.Context) {
 }
 
 // Delete removes the sandbox. One still carrying projects is refused with
-// 409: their working trees live on that machine, and the operator deletes them
-// (which reclaims their storage) first. The refusal is decided by the delete
-// statement itself, not a prior count — a project create racing this delete
-// therefore either lands before it (and blocks it) or loses its own lock.
+// 409; the operator deletes them first. The refusal is decided by the delete
+// statement itself, so a racing project create either blocks it or loses.
 //
 //	@Summary	Delete sandbox
 //	@Tags		sandboxes
@@ -345,10 +318,8 @@ func (h *SandboxHandler) Test(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
-	// The check is the backend's: docker runs a throw-away container, a
-	// remote service provisions and destroys a sandbox. 200 with ok=false means
-	// the service answered and the command did not; an unreachable daemon or
-	// bad credential is 502 — a different thing a caller must tell apart.
+	// 200 with ok=false means the service answered and the command did not;
+	// an unreachable daemon or bad credential is 502.
 	if err := h.manager.Check(ctx, sb); err != nil {
 		if errors.Is(err, sandboxes.ErrHealthCommandFailed) {
 			c.JSON(http.StatusOK, sandboxTestResp{OK: false, Detail: err.Error()})
@@ -389,9 +360,7 @@ func (h *SandboxHandler) Containers(c *gin.Context) {
 }
 
 // daemon resolves the sandbox named by the id path parameter into its DOCKER
-// connection options. The container listing and the stop/remove calls are a
-// docker daemon's operator surface and exist nowhere else, so a sandbox of
-// another type is refused by name rather than by a type error.
+// connection options; a sandbox of another type is refused by name.
 func (h *SandboxHandler) daemon(c *gin.Context) (dockersb.Options, bool) {
 	sb, err := h.store.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {

@@ -12,7 +12,7 @@
 // of shipping a UI that renders differently after refresh.
 //
 // Documented intentional differences (asserted below, keep this list in sync
-// with the README's design invariants):
+// with docs/explanation/workbench-invariants.md):
 //   1. handoff parts are live-only — a reload conveys the transfer via the
 //      transfer_to_* tool-call card instead.
 //   2. a user-rejected tool call keeps status 'rejected' live, but replays as

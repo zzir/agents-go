@@ -12,7 +12,6 @@ type AuditRecord struct {
 	ClientIP string
 }
 
-// AuditFunc persists one record. The server's Audit middleware calls it on its
-// own goroutine, after the response, on a context detached from the request's
-// cancellation — a slow write never delays a reply.
+// AuditFunc persists one record. The Audit middleware calls it on its own
+// goroutine after the response, on a context detached from the request's.
 type AuditFunc func(ctx context.Context, r AuditRecord)

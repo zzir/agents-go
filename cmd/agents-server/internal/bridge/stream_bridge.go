@@ -8,22 +8,11 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 )
 
-// The stream bridge translates in one direction only: SDK run events into
-// protocol envelopes. Nothing here decides anything about the run, which is
-// why it sits apart from the execution pipeline in runner.go.
+// The stream bridge translates one way only: SDK run events into protocol
+// envelopes. It decides nothing about the run (that is runner.go's).
 
-// drainStream forwards a streamed run's events to the hub and accumulates the
-// still-unpersisted reasoning/text so an abort can persist them as
-// display-only annotations (a cancel during the thinking phase still shows what
-// the model was doing). A terminal error on the event channel stops
-// consumption; what it collected is the run's outcome, returned to the caller.
-//
-// The buffer resets on ItemsPersistedEvent — the SDK's own statement that
-// everything the stream showed so far is in the store — so what remains is
-// exactly what a reload could not recover. Persist timing is the SDK's to
-// announce, not this bridge's to reverse-engineer from raw response events;
-// deltas cannot race the reset because the SDK persists between model calls,
-// where no delta is in flight.
+// drainStream forwards a run's events to the hub, buffering unpersisted reasoning and
+// text for an abort; the buffer resets on ItemsPersistedEvent, which no delta races.
 func (r *Runner) drainStream(stream agents.RunStream, runID string, send func(string, any), partial *streamedPartial, agentIDs map[string]string) (res *agents.RunResult, runErr error) {
 	text, reasoning := &partial.text, &partial.reasoning
 	for event, err := range stream {
@@ -40,9 +29,8 @@ func (r *Runner) drainStream(stream agents.RunStream, runID string, send func(st
 			// The stream's terminal event carries the finished run; it is the
 			// loop's own bookkeeping and not something the client renders.
 			res = done.Result
-			// Except the diagnostics: a run that answered after three retries
-			// or on a fallback model looks identical to one that answered
-			// first time, and the difference is what explains the latency.
+			// Except the diagnostics: a retried or fallback answer looks like a
+			// first-time one, and the difference explains the latency.
 			for _, d := range res.Diagnostics {
 				send(protocol.EventRunDiagnostic, protocol.RunDiagnostic{
 					RunID:   runID,
@@ -74,15 +62,8 @@ type streamedPartial struct{ text, reasoning strings.Builder }
 func (p *streamedPartial) Text() string      { return p.text.String() }
 func (p *streamedPartial) Reasoning() string { return p.reasoning.String() }
 
-// runErrorFor builds the run.error for a terminal run failure. The code comes
-// from the SDK (agents.CodeOf) so this stays correct as the SDK's vocabulary
-// grows — there is deliberately no mapping table here. An error the SDK did not
-// classify keeps the caller's transport-level fallback code.
-//
-// A guardrail tripwire additionally carries the guardrail name and the stage it
-// fired at, which no code can express: the UI renders "blocked by guardrail X"
-// instead of a generic red error and, on an output trip, marks the answer that
-// already streamed as retracted.
+// runErrorFor builds the run.error: the SDK's code when it classified err, else the
+// caller's transport fallback; a guardrail tripwire adds its name and stage.
 func runErrorFor(runID string, err error, fallback string) protocol.RunError {
 	e := protocol.RunError{RunID: runID, Code: fallback, Message: err.Error()}
 	if code := agents.CodeOf(err); code != agents.CodeUnknown {
@@ -117,19 +98,16 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, send 
 	case *agents.RunItemStreamEvent:
 		switch e.Name {
 		case "message_output_created":
-			// The completed turn text, authoritative over the run.step deltas
-			// that previewed it. Interim messages between tool calls only exist
-			// as deltas plus this event — resumed segments and backends that
-			// stream no deltas rely on it entirely.
+			// The completed turn text, authoritative over the run.step deltas;
+			// resumed segments and delta-less backends rely on it entirely.
 			if e.Item.Kind == agents.ItemMessage {
 				if text := e.Item.Text(); text != "" {
 					send(protocol.EventRunMessage, protocol.RunMessage{RunID: runID, Text: text, ItemID: rawItemID(e.Item)})
 				}
 			}
 		case "reasoning_item_created":
-			// The completed thinking block, authoritative over the run.reasoning
-			// deltas that previewed it — and the only thinking signal when the
-			// backend streams no reasoning deltas or the segment was resumed.
+			// The completed thinking block, authoritative over run.reasoning
+			// deltas — and the only signal when a backend streams none.
 			if e.Item.Kind == agents.ItemReasoning {
 				if text := e.Item.Text(); text != "" {
 					send(protocol.EventRunReasoningItem, protocol.RunReasoningItem{RunID: runID, Text: text, ItemID: rawItemID(e.Item)})
@@ -137,10 +115,8 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, send 
 			}
 		case "tool_called":
 			if e.Item.Kind == agents.ItemToolCall {
-				// The SDK emits tool_called for a handoff too (wrapping the
-				// transfer_to_X call, marked IsHandoff); it has no tool_output,
-				// so a run.tool_call here would leave a tool card spinning
-				// forever. run.handoff already conveys the transfer, so drop it.
+				// A handoff's tool_called (IsHandoff) never gets a tool_output,
+				// so its card would spin forever; run.handoff already conveys it.
 				if e.Item.IsHandoff {
 					return
 				}
@@ -154,12 +130,8 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, send 
 			}
 		case "tool_output":
 			if e.Item.Kind == agents.ItemToolCallOutput {
-				// The display rendering, not %v: a multimodal output is a
-				// content list, and Go syntax for it would not match what
-				// the same item reads back as from the stored session. The
-				// rest of the display travels too, so the live card carries
-				// the same Title/Summary/Renderer/IsError a reload rebuilds
-				// from the stored entry.
+				// The display rendering, not %v: a multimodal output is a content
+				// list, and the live card must match what a reload rebuilds.
 				d := e.Item.Display()
 				send(protocol.EventRunToolResult, protocol.RunToolResult{
 					RunID:      runID,
@@ -181,14 +153,8 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, send 
 				})
 			}
 		case "injected_input_created":
-			// Input injected into a live run (run.inject) is a USER entry, and
-			// no live event carries one: run.started.Input covers only the
-			// prompt a run begins with, and PROTOCOL.md F2's run.entry — the
-			// event that will — has not shipped. The client that injected it
-			// already has the text, and the SDK persists the item, so every
-			// other connection picks it up on its next history load. Named
-			// here rather than left out of the switch: the drop is a decision,
-			// and this is where run.entry lands once it ships.
+			// An injected input is a USER entry no live event carries; the SDK
+			// persists it and every other connection reads it on its next load.
 		case "handoff_occured":
 			if e.Item.Kind == agents.ItemHandoffOutput && e.Item.HandoffFrom != nil && e.Item.HandoffTo != nil {
 				send(protocol.EventRunHandoff, protocol.RunHandoff{
@@ -202,9 +168,8 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, send 
 		}
 
 	case *agents.ToolProgressEvent:
-		// A tool that runs for two minutes leaves the UI with nothing but a
-		// spinner otherwise. This is not the tool's answer — that arrives as
-		// run.tool_result — so the client renders it as live output.
+		// Live output of a long-running tool; the answer arrives separately
+		// as run.tool_result.
 		send(protocol.EventRunToolProgress, protocol.RunToolProgress{
 			RunID:    runID,
 			CallID:   e.CallID,

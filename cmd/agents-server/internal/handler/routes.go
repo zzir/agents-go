@@ -7,9 +7,7 @@ import (
 )
 
 // Handlers is the full set of REST handlers the server mounts; Register wires
-// them to paths. Registration lives here, next to the handlers, so adding an
-// endpoint means a handler method plus one line below — not a field in a
-// per-endpoint forwarding struct kept in sync across packages.
+// them to paths, so adding an endpoint is a handler method plus one line below.
 type Handlers struct {
 	// Authz resolves ownership for the route gates (see authz.go).
 	Authz      AuthzDeps
@@ -42,9 +40,7 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 	{
 		auth := api.Group("/auth")
 		// The guess budget sits on the two routes where every request IS a
-		// credential guess; the flow steps get the looser budget; config is a
-		// static fact. Authenticated routes (check included) draw on the
-		// failure budget in server.TokenAuth, which a valid bearer never spends.
+		// credential guess; the flow steps get the looser budget.
 		guess, flow := server.AuthRateLimit(), server.FlowRateLimit()
 		auth.POST("/login", guess, h.Auth.Login)
 		auth.POST("/exchange", guess, h.Auth.Exchange)
@@ -63,9 +59,7 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		auth.DELETE("/users/:id/tokens", adminOnly(), h.Auth.RevokeUserTokens)
 		auth.GET("/audit", adminOnly(), h.Auth.ListAudit)
 	}
-	// Route-level authz: session content is owner-only, scoped config gates
-	// per row in the handlers, host config is read-everyone/write-admin —
-	// authz.go, decisions §5.29.
+	// Route-level authz — authz.go, decisions §5.29.
 	admin := adminOnly()
 	{
 		sessions := api.Group("/sessions")
@@ -161,15 +155,13 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		skills.DELETE("/:id", h.Skills.Delete)
 		skills.POST("/:id/scope", h.Skills.SetScope)
 		skills.PUT("/:id/owner", admin, h.Skills.SetOwner)
-		// Import and the repo-group scope flip are their own resources, not
-		// /skills subpaths: gin cannot mix a literal segment with the :id
-		// parameter above.
+		// Import and the repo-group scope flip are their own resources: gin
+		// cannot mix a literal segment with the :id parameter above.
 		api.POST("/skill-imports", h.Skills.Import)
 		api.POST("/skill-repos/scope", h.Skills.SetRepoScope)
 	}
-	// The two registries a config UI renders from, so a panel never keeps its
-	// own copy of what the server accepts: provider machine facts (types, auth
-	// modes, unsupported features) and the global settings table.
+	// The two registries a config UI renders from: provider machine facts
+	// and the global settings table.
 	api.GET("/provider-types", ProviderTypeList)
 	api.GET("/setting-defs", SettingDefList)
 	// What the command line decided, so the UI can show the rules it is
@@ -205,9 +197,8 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		h.registerTriggers(api)
 	}
 	{
-		// Projects are personal working trees: every member manages their own;
-		// the admin surface (?all=true listing, foreign delete) is checked in
-		// the handlers, so no route-level gate here.
+		// Projects are personal: the admin surface (?all=true listing, foreign
+		// delete) is checked in the handlers, so no route-level gate here.
 		projects := api.Group("/projects")
 		projects.GET("", h.Projects.List)
 		projects.POST("", h.Projects.Create)
@@ -246,9 +237,8 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		atts := api.Group("/attachments")
 		atts.GET("/config", h.Files.Config)
 		atts.POST("", h.Files.Upload)
-		// The storage form: the section saves, tests and clears as one group
-		// (workbench invariant 58). Static routes registered before the :id
-		// param so gin matches them first.
+		// The storage section saves, tests and clears as one group (invariant
+		// 58). Static routes registered before the :id param so gin matches them first.
 		atts.PUT("/storage", adminOnly(), h.Files.SaveStorage)
 		atts.POST("/storage/test", adminOnly(), h.Files.TestStorage)
 		atts.DELETE("/:id", h.Files.Delete)
@@ -258,9 +248,8 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 // registerTriggers mounts the trigger endpoints (the webhook itself is mounted
 // by the server, outside the API prefix).
 func (h Handlers) registerTriggers(api *gin.RouterGroup) {
-	// A trigger is as private as the session it fires into: the list is the
-	// caller's, Create checks the session (in bind), and the :id subtree is
-	// gated on owning that session.
+	// A trigger is as private as the session it fires into: the :id subtree
+	// is gated on owning that session.
 	triggers := api.Group("/triggers")
 	triggers.GET("", h.Triggers.List)
 	triggers.POST("", h.Triggers.Create)

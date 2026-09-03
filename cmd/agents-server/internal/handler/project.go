@@ -18,9 +18,8 @@ import (
 )
 
 // ProjectHandler manages projects — per-user working trees on a sandbox
-// (decisions §5.28). Projects are PERSONAL: routes act on the caller's own rows;
-// an admin additionally lists every owner's (?all=true) and may delete any —
-// management, not authoring (decisions §5.29).
+// (decisions §5.28). Routes act on the caller's own rows; an admin also lists
+// every owner's (?all=true) and may delete any (decisions §5.29).
 type ProjectHandler struct {
 	// Audit, when set, records every working-tree export: the one call that
 	// takes a whole project off the machine. Wired at bootstrap.
@@ -32,26 +31,21 @@ type ProjectHandler struct {
 	settings  *settings.Reader
 }
 
-// NewProjectHandler returns a handler over the project store; sandboxes
-// validate what a project names, m reclaims a deleted project's
-// storage and runs the container calls, and terminals is the registry a
-// content change severs.
+// NewProjectHandler returns a handler over the project store; m reclaims a
+// deleted project's storage, and terminals is the registry a content change severs.
 func NewProjectHandler(s *store.ProjectStore, sbs *store.SandboxStore, m *sandboxes.Manager, terminals *TerminalHandler, cfg *settings.Reader) *ProjectHandler {
 	return &ProjectHandler{store: s, sandboxes: sbs, manager: m, terminals: terminals, settings: cfg}
 }
 
-// projectDetail is the single-project response: the row plus the NAMES of
-// its environment, every value masked. Env shadows the row's own (json:"-")
-// field on purpose — a listing must never carry one.
+// projectDetail is the single-project response: the row plus its environment
+// NAMES, every value masked. Env shadows the row's json:"-" field on purpose.
 type projectDetail struct {
 	store.Project
 	Env []store.EnvVar `json:"env"`
 }
 
-// maskProjectEnv replaces every value with the sentinel a later update
-// resolves back (restoreProjectEnv). Values are write-only, like every other
-// credential here; names stay readable, so the environment can still be
-// edited a variable at a time (decisions §5.32).
+// maskProjectEnv replaces every value with the sentinel restoreProjectEnv
+// resolves back; names stay readable — decisions §5.32.
 func maskProjectEnv(vars []store.EnvVar) []store.EnvVar {
 	out := make([]store.EnvVar, 0, len(vars))
 	for _, v := range vars {
@@ -61,10 +55,8 @@ func maskProjectEnv(vars []store.EnvVar) []store.EnvVar {
 	return out
 }
 
-// restoreProjectEnv resolves masked values against the stored ones BY NAME —
-// so an edit rewrites the one variable it touches and leaves the rest
-// standing, and a mask can never ride to a name it was not stored under
-// (workbench invariant 9).
+// restoreProjectEnv resolves masked values against the stored ones BY NAME,
+// so a mask never rides to a name it was not stored under — invariant 9.
 func restoreProjectEnv(incoming, prev []store.EnvVar) ([]store.EnvVar, error) {
 	stored := make(map[string]string, len(prev))
 	for _, v := range prev {
@@ -85,8 +77,7 @@ func restoreProjectEnv(incoming, prev []store.EnvVar) ([]store.EnvVar, error) {
 }
 
 // detail builds the single-project response, masking the environment. An
-// undecodable stored payload is reported rather than silently shown empty:
-// the owner has to be able to see that something is wrong with it.
+// undecodable stored payload is reported rather than silently shown empty.
 func (h *ProjectHandler) detail(p *store.Project) (*projectDetail, error) {
 	vars, err := store.DecodeProjectEnv(p.Env)
 	if err != nil {
@@ -103,9 +94,8 @@ type projectDeleteResp struct {
 	StorageError string `json:"storage_error,omitempty"`
 }
 
-// own resolves the caller's project by id; an admin's management reach does
-// NOT extend here — an environment is the owner's, and a foreign project
-// reads as absent.
+// own resolves the caller's project by id; an admin's reach does NOT extend
+// here (the environment is the owner's), and a foreign project reads as absent.
 func (h *ProjectHandler) own(c *gin.Context) (*store.Project, bool) {
 	ownerID, _, ok := callerScope(c)
 	if !ok {
@@ -123,11 +113,8 @@ func (h *ProjectHandler) own(c *gin.Context) (*store.Project, bool) {
 	return p, true
 }
 
-// manage resolves the project for an operation on its COMPUTE — status,
-// start, stop, rebuild. An admin passes on any project: they can already
-// delete one outright (decisions §5.29), and every one of these is strictly
-// less than that. It is deliberately NOT what export uses: that discloses the
-// owner's files, which managing the plane does not include.
+// manage resolves the project for an operation on its COMPUTE (status, start,
+// stop, rebuild); an admin passes on any. Export, which discloses files, uses own.
 func (h *ProjectHandler) manage(c *gin.Context) (*store.Project, bool) {
 	ownerID, admin, ok := callerScope(c)
 	if !ok {
@@ -186,11 +173,8 @@ func (h *ProjectHandler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
-// storageHint names WHERE p's files live, so the UI can say what a delete
-// destroys (decisions §5.33) — a docker volume on its daemon, or the sandbox
-// itself on a service where the sandbox IS the storage. Admin-only: a daemon
-// address is a server-side fact a member's container never sees. hints caches
-// the per-sandbox half across one response; empty when it cannot be derived.
+// storageHint names WHERE p's files live (decisions §5.33); admin-only, as a
+// daemon address is a server-side fact. hints caches the per-sandbox half.
 func (h *ProjectHandler) storageHint(c *gin.Context, hints map[string]string, p *store.Project) string {
 	where, ok := hints[p.SandboxID]
 	if !ok {
@@ -221,8 +205,7 @@ type projectReq struct {
 }
 
 // projectUpdateReq is the update body: the name, the sandbox, the whole
-// environment, and the revision the edit was made against (optional — see
-// Update).
+// environment, and the revision the edit was made against (optional).
 type projectUpdateReq struct {
 	Name      string         `json:"name" binding:"required"`
 	SandboxID string         `json:"sandbox_id" binding:"required"`
@@ -342,11 +325,8 @@ func (h *ProjectHandler) Update(c *gin.Context) {
 		badRequest(c, err.Error())
 		return
 	}
-	// Everything decided from prev holds only while the row IS prev, which
-	// the expected-revision CAS guarantees: a concurrent update moves the
-	// revision, this write refuses (409), the client re-reads. The anchor is
-	// the client's own revision when it names one, extending the guarantee
-	// back to the form the edit was made on.
+	// Everything decided from prev holds only while the row IS prev: the
+	// revision CAS (anchored on the client's revision when given) refuses a race with 409.
 	expected := prev.Revision
 	if req.Revision != 0 {
 		expected = req.Revision
@@ -360,18 +340,14 @@ func (h *ProjectHandler) Update(c *gin.Context) {
 		saveError(c, err)
 		return
 	}
-	// Invalidate from the generation the store actually wrote — not prev+1,
-	// which a concurrent sandbox-content bump can leave short — and not from a
-	// re-read a cancelled request could fail, which would leave the new
-	// environment stored while live containers and terminals keep serving the
-	// old one.
+	// Invalidate from the generation the store wrote — not prev+1 (a racing
+	// sandbox bump leaves it short), not a re-read a cancelled request could fail.
 	if contentChanged {
 		h.manager.RetireProject(prev.ID, newGen)
 		h.terminals.CloseProjectTerminals(prev.ID, newGen)
 	}
-	// Re-read for the response: the counters the write moved live in the
-	// row, and a client that answered with a stale revision would have its
-	// next update refused as a conflict.
+	// Re-read for the response: a client answering with a stale revision
+	// would have its next update refused as a conflict.
 	updated, err := h.store.Get(c.Request.Context(), prev.ID)
 	if err != nil {
 		storeError(c, err)
@@ -520,9 +496,8 @@ func (h *ProjectHandler) Export(c *gin.Context) {
 			Detail: "project " + spec.Project.Name,
 		})
 	}
-	// The headers go out before the first byte: a failure mid-stream cannot
-	// be turned back into a JSON error, so the client sees a truncated
-	// archive — which tar itself reports.
+	// The headers go out before the first byte: a failure mid-stream shows as
+	// a truncated archive, which tar itself reports.
 	c.Header("Content-Disposition", `attachment; filename="`+tarFilename(spec.Project.Name)+`"`)
 	c.Header("Content-Type", "application/x-tar")
 	c.Status(http.StatusOK)
@@ -582,7 +557,7 @@ func (h *ProjectHandler) containerAct(c *gin.Context, act func(context.Context, 
 // holding the working tree (decisions §5.33).
 //
 //	@Summary		Delete project
-//	@Description	Deletes the working tree too — the container and its volume are removed. The owner deletes their own; an admin deletes any (management, decisions §5.29). The row is gone whenever this answers 200: a storage_error means the STORAGE could not be reclaimed and is left for the operator, not that the project survived.
+//	@Description	Deletes the working tree too — the container and its volume are removed. The owner deletes their own; an admin deletes any. The row is gone whenever this answers 200: a storage_error means the STORAGE could not be reclaimed and is left for the operator, not that the project survived.
 //	@Tags			projects
 //	@Param			id	path		string	true	"Project id"
 //	@Success		200	{object}	projectDeleteResp
@@ -616,14 +591,11 @@ func (h *ProjectHandler) Delete(c *gin.Context) {
 	// The project is gone: its shells must die with it — nothing may keep
 	// serving a tree that is about to be destroyed.
 	h.terminals.CloseProjectTerminals(p.ID, maxTerminalGen)
-	// The row is gone; reclaim the storage. A failure here leaves reclaimable
-	// storage rather than a row pointing at nothing, so it is REPORTED — but
-	// as part of a successful delete, not as a failed one: an error status
-	// would tell the client the project is still there, and it is not.
+	// The row is gone; reclaim the storage. A failure here is REPORTED inside
+	// a successful delete: an error status would claim the project still exists.
 	if h.manager != nil {
 		// WithoutCancel: the row is already gone, so a client disconnect must
-		// not abort the reclaim and strand the container/volume with nothing
-		// pointing at it.
+		// not abort the reclaim and strand the container/volume.
 		reclaimCtx := context.WithoutCancel(c.Request.Context())
 		spec, serr := resolveSpec(reclaimCtx, h.sandboxes, p)
 		if serr == nil {

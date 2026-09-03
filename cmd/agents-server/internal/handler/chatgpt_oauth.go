@@ -10,10 +10,9 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// ChatGPTOAuthHandler exposes HTTP endpoints for a provider ChatGPT OAuth
-// flow. All routes nest under the provider resource:
-// /providers/:id/chatgpt/*, because the token is the ENDPOINT credential —
-// every agent pointed at the provider shares the one login.
+// ChatGPTOAuthHandler serves a provider's ChatGPT OAuth flow under
+// /providers/:id/chatgpt/*: the token is the ENDPOINT credential, shared by
+// every agent pointed at the provider.
 type ChatGPTOAuthHandler struct {
 	oauth     *providers.ChatGPTOAuth
 	providers *store.ProviderStore

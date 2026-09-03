@@ -12,31 +12,23 @@ import (
 	"github.com/zzir/agents-go/tracing"
 )
 
-// liveSpanDataJSON bounds what goes over the WEBSOCKET: the browser parses
-// every span and keeps a session's worth in memory, so this stays small.
-// What it drops is still in the row, one reopen away — the row's own bound
-// is per payload element (trace_span_data_kb), applied by the store.
+// liveSpanDataJSON bounds what goes over the WEBSOCKET (the browser keeps a
+// session's worth); the row's own bound is per element, applied by the store.
 const liveSpanDataJSON = 256 << 10
 
 const liveOmitted = "[omitted from the live update — reopen this trace to load it]"
 
-// wsProcessor streams spans to the client in real time: a pending version on
-// span start (no ended_at — the UI renders it as in-progress) and the full
-// version on span end, which is also the only one persisted. No batching: the
-// consumer is a local WebSocket, and liveness is the point.
+// wsProcessor streams spans to the client: a pending version on start, the
+// full version on end (the only one persisted). No batching — liveness is the point.
 type wsProcessor struct {
-	// ctx is what span persistence runs under. tracing.Processor's hooks take
-	// no context, so it is captured here — detached from the run's
-	// cancellation (a cancelled run still ends its spans, and they must land)
-	// and carrying the configured logger.
+	// ctx is what span persistence runs under: tracing.Processor's hooks take
+	// no context, so it is captured — detached from the run's cancellation.
 	ctx    context.Context
 	send   func(string, any)
 	writer *store.SpanWriter
 	runID  string
 	// parentRunID is the run's lineage (a wake-up run's spawning run), stamped
-	// on every span so the trace itself carries the relationship — the panel's
-	// run grouping reads it here, never re-derived from task rows or
-	// notification text (which a fork does not carry).
+	// on every span so the trace itself carries it (a fork does not).
 	parentRunID string
 }
 
@@ -52,9 +44,8 @@ func newWSProcessor(ctx context.Context, send func(string, any), traces *store.T
 	}
 }
 
-// cleanSpanData copies data without the redundant "name" key (span.Name
-// already travels on the envelope; the data copy exists for HTTP export);
-// nil when nothing is left.
+// cleanSpanData copies data without the redundant "name" key (span.Name is on
+// the envelope); nil when nothing is left.
 func cleanSpanData(data map[string]any) map[string]any {
 	if len(data) == 0 {
 		return nil
@@ -130,16 +121,14 @@ func (p *wsProcessor) spanMessage(span *tracing.Span) protocol.TraceSpan {
 func (p *wsProcessor) OnTraceStart(*tracing.Trace) {}
 func (p *wsProcessor) OnTraceEnd(*tracing.Trace)   {}
 
-// OnSpanStart pushes the pending span so the trace panel shows work as it
-// happens. Safe to read span.Data here: the runner only annotates the span
-// after the typed constructor (which fires this hook) returns.
+// OnSpanStart pushes the pending span. span.Data is safe to read: the runner
+// annotates the span only after the typed constructor returns.
 func (p *wsProcessor) OnSpanStart(span *tracing.Span) {
 	p.send(protocol.EventTraceSpan, p.spanMessage(span))
 }
 
-// OnSpanEnd pushes the finished span (same span_id — the client replaces the
-// pending version) and persists it. The two are bounded SEPARATELY: the push
-// is what a browser has to hold, the row is what a Replay has to read.
+// OnSpanEnd pushes the finished span (same span_id; the client replaces the
+// pending one) and persists it, each bounded on its own.
 func (p *wsProcessor) OnSpanEnd(span *tracing.Span) {
 	ts := p.spanMessage(span)
 	p.send(protocol.EventTraceSpan, ts)

@@ -31,9 +31,8 @@ type AttachmentHandler struct {
 	store        *store.AttachmentStore
 	settings     *settings.Reader
 	settingStore *store.SettingStore
-	// OnStorageChange, when set, fires after the storage section changes —
-	// the server refreshes the CSP img-src with the new public host, so a
-	// changed bucket shows images without a restart.
+	// OnStorageChange fires after the storage section changes, so the server
+	// can refresh the CSP img-src with the new public host without a restart.
 	OnStorageChange func()
 }
 
@@ -230,10 +229,8 @@ func (h *AttachmentHandler) Delete(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// storageReq is the attachment-storage section as ONE value — the form's
-// shape. The section's keys are only valid together (changing the bucket
-// re-validates against the same public base), which is why they save as a
-// group instead of key by key.
+// storageReq is the attachment-storage section as ONE value: its keys are
+// only valid together, so they save as a group — invariant 58.
 type storageReq struct {
 	Endpoint        string `json:"endpoint"`
 	Region          string `json:"region"`
@@ -267,10 +264,8 @@ func (h *AttachmentHandler) resolve(ctx context.Context, req storageReq) setting
 	}
 }
 
-// checkStorage validates a non-empty section: every required field present,
-// the URLs well-formed, and the bucket probed end to end (signed upload,
-// anonymous public read, delete). Returns the message for a 400, "" when the
-// section is usable.
+// checkStorage validates a non-empty section and probes the bucket end to end
+// (signed upload, anonymous read, delete). Returns the 400 message, "" when usable.
 func (h *AttachmentHandler) checkStorage(ctx context.Context, cfg settings.S3Config) string {
 	if !cfg.Complete() {
 		return "all fields are required (region is optional and defaults to auto)"

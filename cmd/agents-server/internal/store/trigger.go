@@ -18,21 +18,16 @@ const (
 	TriggerKindWebhook = "webhook"
 )
 
-// The two things a trigger starts: a workflow execution — a background task
-// that reports back to the session — or an agent turn: the brief run as an
-// ordinary message in the session itself, its reply the conversation's next
-// turn.
+// The two things a trigger starts: a workflow execution (a background task
+// reporting to the session) or an agent turn (the brief as an ordinary message).
 const (
 	TriggerTargetWorkflow = "workflow"
 	TriggerTargetAgent    = "agent"
 )
 
 // Trigger starts work without a conversation asking: a cron schedule or a
-// webhook, each firing into the session the trigger names, with the brief its
-// author wrote in advance — the trigger IS the knowing party (workbench
-// invariant 30). What it starts is its Target: a workflow (the same start a
-// person's "Run…" makes, RunWorkflow) or an agent turn (the same run a
-// message makes).
+// webhook, firing into the session it names with the brief its author wrote
+// (invariant 30). Target is a workflow (RunWorkflow) or an agent turn.
 type Trigger struct {
 	bun.BaseModel `bun:"table:triggers,alias:trg"`
 
@@ -57,9 +52,8 @@ type Trigger struct {
 	Secret  string `bun:"secret,nullzero" json:"-"`
 	Enabled bool   `bun:"enabled,notnull" json:"enabled"`
 
-	// What the last fire did, for the panel and for a cron that keeps failing:
-	// the id it started — a task for a workflow, a run for an agent turn — or
-	// why it started nothing.
+	// What the last fire did: the id it started (a task or a run), or why it
+	// started nothing.
 	LastFiredAt   time.Time `bun:"last_fired_at,nullzero"   json:"last_fired_at,omitzero"`
 	LastStartedID string    `bun:"last_started_id,nullzero,type:uuid" json:"last_started_id,omitempty"`
 	LastError     string    `bun:"last_error,nullzero"      json:"last_error,omitempty"`
@@ -81,9 +75,7 @@ func NewTriggerSecret() string {
 }
 
 // NormalizeTrigger trims and checks the shape of a trigger; the schedule's
-// syntax is the scheduler's to judge, and the target and session named are
-// the handler's to look up. An empty target is read off the id given, so a
-// client from before targets (workflow_id alone) still means what it did.
+// syntax and the references are checked elsewhere. An empty target is read off the id given.
 func NormalizeTrigger(t *Trigger) error {
 	t.Kind = strings.TrimSpace(t.Kind)
 	t.Brief = strings.TrimSpace(t.Brief)
@@ -141,9 +133,7 @@ func NewTriggerStore(db *bun.DB) *TriggerStore {
 }
 
 // referencesExist reports whether the target and the session a trigger names
-// are there, read on the same handle as the write that follows — inside a
-// write transaction, so a concurrent delete cannot land between check and
-// insert (the writer holds the database until it commits).
+// are there, read inside the write transaction that follows.
 func referencesExist(ctx context.Context, tx bun.IDB, t *Trigger) error {
 	target := struct {
 		model any
@@ -191,10 +181,9 @@ func (s *TriggerStore) Create(ctx context.Context, t *Trigger) error {
 	})
 }
 
-// UpdateSettings writes what a client may set — the target, the brief, the
-// schedule, the switch — and nothing else: not the secret, not the fire
-// record, which have their own writers and would be clobbered by a whole-row
-// update racing them. The references are checked in the same transaction.
+// UpdateSettings writes what a client may set (target, brief, schedule,
+// switch) and nothing else — the secret and the fire record have their own
+// writers. The references are checked in the same transaction.
 func (s *TriggerStore) UpdateSettings(ctx context.Context, id string, t *Trigger) error {
 	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if err := referencesExist(ctx, tx, t); err != nil {
@@ -222,9 +211,7 @@ func (s *TriggerStore) UpdateSettings(ctx context.Context, id string, t *Trigger
 }
 
 // DeleteIfWorkflow removes the trigger only while it still names workflowID
-// — the self-heal of a fire that found the workflow gone must not take a
-// trigger re-pointed in the meantime. A row that no longer matches is
-// ErrNotFound.
+// (the self-heal of a fire that found the workflow gone); else ErrNotFound.
 func (s *TriggerStore) DeleteIfWorkflow(ctx context.Context, id, workflowID string) error {
 	res, err := s.db.NewDelete().Model((*Trigger)(nil)).
 		Where("id = ?", id).Where("workflow_id = ?", workflowID).Exec(ctx)
@@ -264,8 +251,7 @@ func (s *TriggerStore) openAll(rows []Trigger) error {
 }
 
 // ListByOwner returns the triggers whose session ownerID owns, newest first;
-// workflowID, when set, narrows to one workflow's. A trigger is as private as
-// the conversation it fires into.
+// workflowID, when set, narrows to one workflow's.
 func (s *TriggerStore) ListByOwner(ctx context.Context, ownerID, workflowID string) ([]Trigger, error) {
 	var out []Trigger
 	q := s.db.NewSelect().Model(&out).

@@ -20,8 +20,7 @@ func NewID() string {
 }
 
 // DecodeConfig decodes a stored Config payload into v; an empty payload is
-// the zero config, so a per-type required-field check produces the error.
-// Unknown keys are ignored (see SandboxContentEqual for why).
+// the zero config. Unknown keys are ignored.
 func DecodeConfig(raw json.RawMessage, v any) error {
 	if len(raw) == 0 {
 		return nil
@@ -29,16 +28,14 @@ func DecodeConfig(raw json.RawMessage, v any) error {
 	return json.Unmarshal(raw, v)
 }
 
-// NewTimeID returns a UUIDv7 — for the append-heavy tables only
-// (trace_events, entries, audit_events), whose ids double as pagination
-// cursors (docs/howto/workbench-deploy.md "Database").
+// NewTimeID returns a UUIDv7 — for the append-heavy tables whose ids double
+// as pagination cursors (docs/howto/workbench-deploy.md "Database").
 func NewTimeID() string {
 	return uuid.NewV7().String()
 }
 
 // uuidOrNull is an empty id as a raw-SQL bind value: NULL, which a uuid
-// column accepts where "" is a syntax error. Model writes get this from the
-// nullzero tag; a Set("col = ?") does not.
+// column accepts where "" is a syntax error (a Set("col = ?") gets no nullzero).
 func uuidOrNull(id string) any {
 	if id == "" {
 		return nil
@@ -46,10 +43,8 @@ func uuidOrNull(id string) any {
 	return id
 }
 
-// stampOnAppend is the shared BeforeAppendModel logic for entities with a
-// string "id" primary key and created_at/updated_at columns: it assigns an ID
-// and timestamps on insert and refreshes updated_at on update. Each such model
-// implements BeforeAppendModel by delegating here.
+// stampOnAppend is the shared BeforeAppendModel logic: an ID and timestamps
+// on insert, a refreshed updated_at on update.
 func stampOnAppend(query bun.Query, id *string, createdAt, updatedAt *time.Time) error {
 	switch query.(type) {
 	case *bun.InsertQuery:
@@ -68,23 +63,17 @@ func stampOnAppend(query bun.Query, id *string, createdAt, updatedAt *time.Time)
 }
 
 // ErrRevisionConflict reports an update whose expected revision no longer
-// matches the row: another update landed between the caller's read and its
-// write. Proceeding would silently overwrite that update (a credential
-// rotation above all) or bypass an identity freeze through a stale identity
-// comparison — the caller re-reads and retries instead. Handlers map it to
-// 409.
+// matches the row: another update landed in between. Handlers map it to 409.
 var ErrRevisionConflict = errors.New("the record changed concurrently; re-read and retry")
 
-// CrudStore is a generic store for entities keyed by a string "id" primary key
-// with created_at/updated_at columns. Embed it (e.g. AgentConfigStore) to get
-// Create/List/Get/Update/Delete and add entity-specific queries alongside.
+// CrudStore is a generic store for entities keyed by a string "id" primary
+// key with created_at/updated_at columns; entity stores embed it.
 type CrudStore[T any] struct {
 	db    *bun.DB
 	label string // human-readable name for error messages, e.g. "agent config"
 	order string // ORDER BY expression for List, e.g. "updated_at DESC"
 	// seal/open transform the entity's credential fields around the database
-	// (withSecrets). The caller's value is plaintext before and after every
-	// call; only the row is sealed.
+	// (withSecrets); the caller's value is plaintext before and after every call.
 	seal func(*T) error
 	open func(*T) error
 }
@@ -164,8 +153,7 @@ func (s *CrudStore[T]) Get(ctx context.Context, id string) (*T, error) {
 	return m, nil
 }
 
-// Update overwrites every column of the row except the immutable id and
-// created_at; updated_at is refreshed by the model's BeforeAppendModel hook.
+// Update overwrites every column of the row except id and created_at.
 // Returns an ErrNotFound-wrapping error when the row doesn't exist.
 func (s *CrudStore[T]) Update(ctx context.Context, id string, m *T) error {
 	if err := s.sealed(m); err != nil {
@@ -187,11 +175,8 @@ func (s *CrudStore[T]) Update(ctx context.Context, id string, m *T) error {
 	return nil
 }
 
-// lockRow reads the row matching where into model inside tx, for a
-// read-modify-write. On PostgreSQL it is SELECT ... FOR UPDATE, so a
-// concurrent write of the same row waits instead of landing over a stale
-// read; SQLite's one connection serializes by itself. ErrNotFound when no
-// row matches.
+// lockRow reads the row matching where into model inside tx — SELECT ... FOR
+// UPDATE on PostgreSQL; SQLite's one connection serializes by itself. ErrNotFound when none.
 func lockRow(ctx context.Context, tx bun.Tx, model any, where string, arg any) error {
 	q := tx.NewSelect().Model(model).Where(where, arg)
 	if tx.Dialect().Name() == dialect.PG {
@@ -206,10 +191,8 @@ func lockRow(ctx context.Context, tx bun.Tx, model any, where string, arg any) e
 	return nil
 }
 
-// updateFrom is the read-modify-write behind the Update of every store that
-// keeps a credential across edits: inside tx, read the row (locked), hand it
-// to prepare — which folds into m what m keeps from it — then overwrite every
-// column but id, created_at and keep. A nil prepare just writes m.
+// updateFrom is the read-modify-write behind every credential-keeping Update:
+// read the row locked, hand it to prepare, overwrite every column but id, created_at and keep.
 func (s *CrudStore[T]) updateFrom(ctx context.Context, tx bun.Tx, id string, m *T, prepare func(prev *T) error, keep ...string) error {
 	prev := new(T)
 	if err := lockRow(ctx, tx, prev, "id = ?", id); err != nil {
@@ -252,14 +235,12 @@ func (s *CrudStore[T]) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-// pruneBatchSize bounds one DELETE of a maintenance sweep: on SQLite the
-// pool is one connection, so a sweep that deleted a month of rows in one
-// statement would hold every append and read for its whole duration.
+// pruneBatchSize bounds one DELETE of a maintenance sweep: on SQLite's one
+// connection, one huge statement would hold every append and read.
 var pruneBatchSize = 5000
 
 // deleteInBatches deletes the rows of model that match where, batch by
-// batch until none match, and returns the count. where scopes a SELECT of
-// ids; the DELETE targets those ids.
+// batch until none match, and returns the count.
 func deleteInBatches(ctx context.Context, db *bun.DB, model any, where func(*bun.SelectQuery) *bun.SelectQuery) (int64, error) {
 	var total int64
 	for {

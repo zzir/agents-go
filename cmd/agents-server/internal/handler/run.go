@@ -16,8 +16,7 @@ import (
 )
 
 // RunHandler exposes the REST surface for starting and observing agent runs.
-// It shares the runner (and its hub) with the WebSocket handler, so a run
-// started over either transport is observable over both.
+// It shares the runner with the WebSocket handler, so a run is observable over both.
 type RunHandler struct {
 	runner *bridge.Runner
 }
@@ -34,8 +33,7 @@ type createRunReq struct {
 	AttachmentIDs []string `json:"attachment_ids,omitempty"`
 	AgentConfigID string   `json:"agent_config_id"`
 	// ProjectID only matters until the session's first project-carrying run
-	// permanently binds it; after that the server uses the bound value and
-	// ignores this field.
+	// permanently binds it; after that it is ignored.
 	ProjectID string `json:"project_id"`
 	// Plan asks the session to start this run in the planning phase (true) or
 	// out of it (false); absent leaves the phase as it stands.
@@ -52,8 +50,7 @@ type createRunResp struct {
 // By default it returns 201 at once with the run id (stream events via GET
 // /runs/{id}/events). With `Prefer: wait=N` (RFC 7240) it holds the request up
 // to N seconds for the run to end and answers with the final output — or 202
-// with the run id when N passes first. The wait is always bounded: a request
-// that could hold a connection forever is what an unbounded wait was.
+// with the run id when N passes first.
 //
 //	@Summary		Start run
 //	@Description	Starts an agent run on the session. Default returns 201 with a run id. With the header `Prefer: wait=N` (RFC 7240) the request is held up to N seconds (capped at 10 minutes): 200 with the final output when the run ends in time — or status "interrupted" when it pauses for tool approval (act via /sessions/{id}/approvals) — else 202 with the run id, still running (`Preference-Applied: wait=N` marks the honored wait). Fails 409 if the session already has an active run.
@@ -97,10 +94,8 @@ func (h *RunHandler) Create(c *gin.Context) {
 // can take longer, and a client wanting more waits again on the run's events.
 const MaxPreferWait = 10 * time.Minute
 
-// preferWait reads the client's `Prefer: wait=N` (RFC 7240): how many seconds
-// it will hold the connection for the run to end, capped at MaxPreferWait.
-// ok=false when the header asks for no wait; other preferences
-// (respond-async, …) are ignored.
+// preferWait reads the client's `Prefer: wait=N` (RFC 7240), capped at
+// MaxPreferWait; ok=false when the header asks for no wait.
 func preferWait(r *http.Request) (time.Duration, bool) {
 	for _, h := range r.Header.Values("Prefer") {
 		for pref := range strings.SplitSeq(h, ",") {
@@ -121,15 +116,11 @@ func preferWait(r *http.Request) (time.Duration, bool) {
 	return 0, false
 }
 
-// createAndWait starts a run and holds the request up to wait for it to
-// terminate, collecting the final output (or error / interruption) to return
-// synchronously. When the wait passes first the answer is 202 with the run
-// id, and the run keeps executing in the hub.
+// createAndWait starts a run and holds the request up to wait for its
+// outcome; when the wait passes first the answer is 202 and the run keeps executing.
 func (h *RunHandler) createAndWait(c *gin.Context, sessionID string, req createRunReq, wait time.Duration) {
-	// StartRun's onDone delivers the typed outcome directly — no need to
-	// subscribe to our own broadcast and decode the envelopes this process
-	// just marshaled. Buffered so the callback never blocks if the client
-	// hangs up first.
+	// StartRun's onDone delivers the typed outcome directly. Buffered so the
+	// callback never blocks if the client hangs up first.
 	done := make(chan *bridge.RunOutcome, 1)
 	runID, err := h.runner.StartRun(sessionID, req.AgentConfigID, req.ProjectID, bridge.RunInput{Text: req.Input, AttachmentIDs: req.AttachmentIDs}, req.Plan, func(res *bridge.RunOutcome) {
 		done <- res
@@ -150,10 +141,8 @@ func (h *RunHandler) createAndWait(c *gin.Context, sessionID string, req createR
 	case res := <-done:
 		switch {
 		case res.Interrupted:
-			// The run paused for tool approval: waiting any longer would
-			// hang until a human acts. Report the state; the caller lists
-			// GET /sessions/{id}/approvals and decides, which resumes the
-			// run under the same run id.
+			// The run paused for tool approval: report the state; the caller
+			// decides via GET /sessions/{id}/approvals, which resumes the same run id.
 			c.JSON(http.StatusOK, gin.H{"run_id": runID, "session_id": sessionID, "status": string(bridge.RunInterrupted)})
 		case res.Cancelled:
 			abortError(c, http.StatusBadGateway, protocol.CodeUpstream, "run cancelled")
@@ -200,9 +189,8 @@ func (h *RunHandler) startError(c *gin.Context, err error) {
 		unavailable(c, down.Error())
 		return
 	}
-	// The remaining failures come from the session lookup StartRun does first:
-	// an unknown session -> 404, any other DB error -> 500. Folding the latter
-	// into 404 would mislabel a transient failure as "session not found".
+	// The remaining failures come from StartRun's session lookup: an unknown
+	// session -> 404, any other DB error -> 500.
 	storeError(c, err)
 }
 
@@ -274,11 +262,8 @@ func (h *RunHandler) Events(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
-	// The sink BLOCKS on this buffer rather than dropping: a slow client is
-	// dropped in the hub's per-subscriber buffer, with a run.gap saying what it
-	// missed (workbench invariant 14). Only a FINAL event closes the stream,
-	// via its own channel — a replayed run.interrupted flows as an ordinary
-	// event, since the same run id resumes past it.
+	// The sink BLOCKS on this buffer; a slow client is dropped in the hub with
+	// a run.gap (invariant 14). Only a FINAL event closes the stream, via its own channel.
 	events := make(chan bridge.SeqEnvelope, bridge.EventBufferCap)
 	terminal := make(chan bridge.SeqEnvelope, 1)
 	sink := func(item bridge.SeqEnvelope) {
@@ -348,9 +333,8 @@ func (h *RunHandler) Events(c *gin.Context) {
 			}
 			return false
 		case <-done:
-			// The broadcaster ended with no final event — shutdown, or the
-			// run aged out of the hub — so the stream returns (workbench
-			// invariant 43), after whatever it was still owed.
+			// The broadcaster ended with no final event (shutdown, or the run
+			// aged out of the hub), so the stream returns — invariant 43.
 			if drain(w) {
 				select {
 				case item := <-terminal:

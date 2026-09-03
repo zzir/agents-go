@@ -13,8 +13,7 @@ import (
 )
 
 // ProviderHandler serves CRUD endpoints for provider endpoints and their
-// credentials. It is the ONLY surface a model-API key crosses: agents and
-// routes reference a provider by id, so no other body carries one.
+// credentials — the ONLY surface a model-API key crosses.
 type ProviderHandler struct {
 	store *store.ProviderStore
 }
@@ -24,9 +23,8 @@ func NewProviderHandler(s *store.ProviderStore) *ProviderHandler {
 	return &ProviderHandler{store: s}
 }
 
-// providerReq is the request body for Create and Update: what a client may
-// set. The id, the timestamps and the ChatGPT token (the OAuth flow's) are
-// the server's.
+// providerReq is the request body for Create and Update; the id, the
+// timestamps and the ChatGPT token are the server's.
 type providerReq struct {
 	Name     string `json:"name"`
 	Type     string `json:"type,omitempty"`
@@ -122,8 +120,7 @@ func bindScope(c *gin.Context) (string, bool) {
 }
 
 // sameScope refuses a /scope request naming the scope the row already holds
-// — decisions §5.29 defines a flip FROM the other scope only. Writes the 409 and
-// returns true when refused.
+// (decisions §5.29). Writes the 409 and returns true when refused.
 func sameScope(c *gin.Context, kind, current, requested string) bool {
 	if current == requested {
 		conflict(c, kind+" is already "+requested)
@@ -274,9 +271,8 @@ func (h *ProviderHandler) Update(c *gin.Context) {
 	if !ok {
 		return
 	}
-	// The mask resolves against the stored row inside the store's transaction,
-	// and only for the destination the key was stored for — workbench invariant 9.
-	// Scope and owner never move on an update (POST /:id/scope does).
+	// The mask resolves against the stored row inside the transaction, only
+	// for the destination the key was stored for — invariant 9.
 	err := h.store.Update(ctx, id, pv, ownershipGuard(cur.Scope, cur.OwnerID, providerScope,
 		func(prev *store.Provider) error {
 			pv.Scope, pv.OwnerID = prev.Scope, prev.OwnerID

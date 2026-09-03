@@ -24,8 +24,7 @@ type WorkflowStarter interface {
 }
 
 // WorkflowHandler serves the workflow DEFINITIONS and starts executions.
-// Executions are tasks (kind "workflow"): once started they are listed,
-// stopped, retried and dismissed through the task endpoints.
+// Executions are tasks (kind "workflow"), managed through the task endpoints.
 type WorkflowHandler struct {
 	store    *store.WorkflowStore
 	agents   *store.AgentConfigStore
@@ -43,9 +42,8 @@ func NewWorkflowHandler(s *store.WorkflowStore, agents *store.AgentConfigStore, 
 type runWorkflowReq struct {
 	SessionID string `json:"session_id" binding:"required"`
 	Input     string `json:"input"`
-	// ProjectID binds a still-unbound session first — the project the composer
-	// had picked, or the dialog's — so the execution has its file and command
-	// tools; a bound session ignores it, as a run request's does.
+	// ProjectID binds a still-unbound session first, so the execution has its
+	// file and command tools; a bound session ignores it.
 	ProjectID string `json:"project_id"`
 }
 
@@ -114,9 +112,8 @@ func (h *WorkflowHandler) Run(c *gin.Context) {
 	c.JSON(http.StatusCreated, info)
 }
 
-// bind decodes and validates an incoming definition, reporting the failure
-// itself. Every step's agent is checked here so a broken sequence is refused at
-// save rather than halfway through a run.
+// bind decodes and validates an incoming definition, every step's agent
+// included, reporting the failure itself.
 func (h *WorkflowHandler) bind(c *gin.Context, wf *store.Workflow) bool {
 	if err := c.ShouldBindJSON(wf); err != nil {
 		badRequest(c, err.Error())
@@ -130,8 +127,7 @@ func (h *WorkflowHandler) bind(c *gin.Context, wf *store.Workflow) bool {
 }
 
 // validateStepAgents checks each step's agent exists AND is one this
-// workflow's scope may reference (decisions §5.29). Runs after the scope is
-// stamped, so a promote re-uses it too.
+// workflow's scope may reference (decisions §5.29); runs after the scope is stamped.
 func (h *WorkflowHandler) validateStepAgents(c *gin.Context, wf *store.Workflow) bool {
 	for i := range wf.Steps {
 		ac, err := h.agents.Get(c.Request.Context(), wf.Steps[i].AgentConfigID)
@@ -250,9 +246,8 @@ func (h *WorkflowHandler) Update(c *gin.Context) {
 	if !h.validateStepAgents(c, &wf) {
 		return
 	}
-	// Scope and owner come from the row inside the transaction, and the pair
-	// editableRow authorized against is re-checked there: a transfer that
-	// landed since must not be written back by this edit (409).
+	// Scope and owner come from the row inside the transaction;
+	// ownershipGuard turns a transfer that landed since into 409.
 	err := h.store.Update(ctx, id, &wf, ownershipGuard(cur.Scope, cur.OwnerID, workflowScope,
 		func(prev *store.Workflow) error {
 			wf.Scope, wf.OwnerID = prev.Scope, prev.OwnerID
@@ -358,9 +353,7 @@ func (h *WorkflowHandler) SetOwner(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
-	// Step agents are re-validated AS THE NEW OWNER: a workflow whose steps
-	// name the old owner's private agents would answer 204 and then fail at
-	// its next start — the state a save refuses (decisions §5.29).
+	// Step agents are re-validated AS THE NEW OWNER — decisions §5.29.
 	wf.OwnerID = req.UserID
 	if !h.validateStepAgents(c, wf) {
 		return

@@ -39,9 +39,7 @@ var schemaModels = []any{
 }
 
 // CreateSchema creates every table and supporting index if they do not
-// already exist, then verifies the result is the schema this build expects
-// (see verifySchema — IF NOT EXISTS skips a table that exists in an older
-// shape).
+// already exist, then verifies the result is the schema this build expects (verifySchema).
 func CreateSchema(ctx context.Context, db *bun.DB) error {
 	for _, model := range schemaModels {
 		if _, err := db.NewCreateTable().Model(model).IfNotExists().Exec(ctx); err != nil {
@@ -51,12 +49,8 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 	if err := verifySchema(ctx, db); err != nil {
 		return err
 	}
-	// Entry reads and writes are addressed by (session, generation) — the gen
-	// belongs in every key. Both indexes are UNIQUE, and that is load-bearing:
-	// sequence numbers and entry ids are never handed out twice (spec §2.5e2),
-	// and a backend that can constrain them does, so a race or a bug that
-	// would mint a duplicate becomes a failed write instead of two rows
-	// answering to one name. No migration — rebuild the database.
+	// Entry rows are addressed by (session, generation). Both indexes are
+	// UNIQUE and load-bearing: seqs and entry ids are never issued twice (spec §2.5e2).
 	if _, err := db.NewCreateIndex().
 		Model((*entryRow)(nil)).
 		Index("idx_entries_session_seq").
@@ -77,10 +71,8 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 		Exec(ctx); err != nil {
 		return fmt.Errorf("creating entries entry_id index: %w", err)
 	}
-	// Trace events are read as "all spans of a session, ordered by id" (the trace
-	// panel groups by run_id client-side) — so index (session_id, id), not
-	// (session_id, run_id): that serves the ORDER BY id directly, and the rare
-	// fork query's `run_id IN (...)` is a cheap residual filter on top.
+	// Trace events are read as "all spans of a session, ordered by id", so
+	// index (session_id, id), not (session_id, run_id).
 	if _, err := db.NewCreateIndex().
 		Model((*TraceEvent)(nil)).
 		Index("idx_trace_events_session_id").
@@ -89,10 +81,8 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 		Exec(ctx); err != nil {
 		return fmt.Errorf("creating trace_events session index: %w", err)
 	}
-	// Task lookups run per chat turn (list by parent) and on every run start
-	// (taskMeta by child session) — index both edges. The generation is part
-	// of each key because it is part of every one of those lookups: a task row
-	// belongs to one generation of a session id, not to the id.
+	// Task lookups run by parent (per chat turn) and by child session (per
+	// run start) — index both edges, generation included.
 	if _, err := db.NewCreateIndex().
 		Model((*Task)(nil)).
 		Index("idx_tasks_parent_session_id").
@@ -128,9 +118,8 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 		Exec(ctx); err != nil {
 		return fmt.Errorf("creating memories agent index: %w", err)
 	}
-	// The session list orders by recency OF CHANGE: every append, pop and
-	// clear moves a session (spec §2.5e2, "the change record"), so the list
-	// sorts and indexes on updated_at, not created_at.
+	// The session list orders by recency OF CHANGE (spec §2.5e2, "the change
+	// record"), so it sorts and indexes on updated_at, not created_at.
 	if _, err := db.NewCreateIndex().
 		Model((*Session)(nil)).
 		Index("idx_sessions_updated_at").
@@ -140,9 +129,7 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 		return fmt.Errorf("creating sessions updated_at index: %w", err)
 	}
 	// Scoped-entity names: unique per visibility context via two partial
-	// indexes per table — one global namespace, one per owner (decisions §5.29).
-	// Load-bearing for agent configs: HITL run state serializes the current
-	// agent by name.
+	// indexes per table (decisions §5.29). HITL run state names agents by name.
 	for _, t := range []struct {
 		model any
 		table string
@@ -172,13 +159,8 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 			return fmt.Errorf("creating %s private name index: %w", t.table, err)
 		}
 	}
-	// Skills carry the import source in their identity — "owner/repo:name" is
-	// the model-facing name — so uniqueness is per (visibility context, repo
-	// LABEL): two repos may both ship a "review", and two source URLs that
-	// reduce to one label may not. Keying on the materialized label rather than
-	// source_repo is what makes the index refuse the second case. COALESCE
-	// because the nullzero column holds NULL for workbench-authored rows, and
-	// NULLs never collide in a unique index.
+	// Skill uniqueness is per (visibility context, repo LABEL) — decisions
+	// §5.31. COALESCE because NULLs never collide in a unique index.
 	if _, err := db.NewCreateIndex().
 		Model((*Skill)(nil)).
 		Index("idx_skills_name_global").
@@ -210,9 +192,8 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 		Exec(ctx); err != nil {
 		return fmt.Errorf("creating guardrails unique name index: %w", err)
 	}
-	// Workflow names follow the same per-scope rule, case-insensitively —
-	// the tool matches names with EqualFold, so "Build" and "build" must not
-	// both exist in one visibility context.
+	// Workflow names follow the same per-scope rule, case-insensitively (the
+	// tool matches names with EqualFold).
 	workflowName := "name COLLATE NOCASE"
 	if db.Dialect().Name() == dialect.PG {
 		workflowName = "lower(name)"
@@ -275,9 +256,8 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 		Exec(ctx); err != nil {
 		return fmt.Errorf("creating sessions owner index: %w", err)
 	}
-	// Accounts merge by verified email, so email is an identity — two rows
-	// sharing one would make every merge a coin flip. UNIQUE also arbitrates
-	// two first logins racing to create the same account.
+	// Accounts merge by verified email, so email is an identity; UNIQUE also
+	// arbitrates two first logins racing to create the same account.
 	if _, err := db.NewCreateIndex().
 		Model((*User)(nil)).
 		Index("idx_users_email").
@@ -320,17 +300,12 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 	return nil
 }
 
-// verifySchema probes every model with a zero-row SELECT. bun names every
-// mapped column in the SELECT list, so the model definitions themselves are the
-// probe — a database created by an older build fails here at startup, with one
-// clear message, instead of per-request. There is deliberately no schema-version
-// constant: the models are the version, and schema changes ship without
-// migrations (the remedy is recreating the file).
+// verifySchema probes every model with a zero-row SELECT, so a database of
+// another shape fails at startup — invariant 25.
 func verifySchema(ctx context.Context, db *bun.DB) error {
 	for _, model := range schemaModels {
-		// The slice destination makes zero rows a valid result; scanning into
-		// the nil model itself would demand exactly one row and report the
-		// empty table as sql.ErrNoRows.
+		// The slice destination makes zero rows a valid result (the nil model
+		// itself would demand exactly one row).
 		var probe []map[string]any
 		if err := db.NewSelect().Model(model).Limit(0).Scan(ctx, &probe); err != nil {
 			return fmt.Errorf(

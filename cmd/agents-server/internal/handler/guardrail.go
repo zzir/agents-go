@@ -38,9 +38,8 @@ func validateGuardrail(g *store.Guardrail) string {
 	if g.Name == "" || len(g.Stages) == 0 || g.Mode == "" {
 		return "name, stages, and mode are required"
 	}
-	// Enforce the stage/mode enums and the mode's config (regex compiles, etc.)
-	// at save time so a definition can't be stored in a state that only fails
-	// when an agent references it.
+	// Enforce the stage/mode enums and the mode's config (regex compiles,
+	// etc.) at save time, not when an agent first references it.
 	if err := guardrails.ValidateDef(g); err != nil {
 		return err.Error()
 	}

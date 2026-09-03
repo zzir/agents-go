@@ -51,16 +51,8 @@ func CurrentUser(c *gin.Context) (protocol.UserInfo, bool) {
 	return u, ok
 }
 
-// authExempt reports whether path is reachable without a credential: the
-// endpoints a not-yet-authenticated login page needs (config, login, the
-// OAuth flow, exchange), the browser-facing OAuth redirect callback (which
-// cannot carry an Authorization header), and the OpenAPI document.
-//
-// Every entry must name a route that exists — an exemption for a path nothing
-// serves silently unauthenticates whatever gets mounted there later. The
-// ChatGPT OAuth flow needs no exemption: its browser redirect lands on
-// localhost (never on this server), and the code returns through the
-// authenticated /providers/:id/chatgpt/complete route.
+// authExempt reports whether path is reachable without a credential: the login
+// page's needs, the OAuth callback, the OpenAPI document. Entries must be real routes.
 func authExempt(path string) bool {
 	switch {
 	case path == APIPrefix+"/auth/login",

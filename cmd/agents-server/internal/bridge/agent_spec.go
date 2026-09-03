@@ -12,15 +12,11 @@ import (
 )
 
 // AgentSpec is an agent config's JSON-encoded fields decoded once into typed
-// values. Both save-time validation (handler.validateAgentConfig) and the build
-// (buildAgentFromConfig) go through DecodeAgentSpec, so a field's structural
-// contract — is model_settings a valid ModelSettings, is approve_tools a JSON
-// string array — is defined in exactly one place. A decode error is a bad
-// config: the handler maps it to 400, the build fails loudly rather than
-// silently running on defaults the operator never chose.
-//
-// External resolution (guardrail names, MCP server ids, sandbox) is deliberately
-// NOT here — it needs live stores and stays at its call site.
+// values. Save-time validation (handler.validateAgentConfig) and the build
+// (buildAgentFromConfig) both go through DecodeAgentSpec, so each field's
+// structural contract is defined in one place; a decode error is a bad config
+// (400 at save, a loud build failure at run). External resolution (guardrail
+// names, MCP server ids, sandbox) is NOT here — it needs live stores.
 type AgentSpec struct {
 	// ModelSettings is nil when unset. extra_body (which ModelSettings does not
 	// itself model) is merged in from the same JSON object.
@@ -31,16 +27,14 @@ type AgentSpec struct {
 	ApproveTools []string
 	// Tools is the selected MCP server id list (nil when unset).
 	Tools []string
-	// Skills is the per-agent skill selection: stored skill ids. SkillsSet
-	// distinguishes an unset selection (get every stored skill) from an
-	// explicit empty one.
+	// Skills is the per-agent skill selection (stored ids); SkillsSet tells an
+	// unset selection (every stored skill) from an explicit empty one.
 	Skills    []string
 	SkillsSet bool
 	// Handoffs is the handoff target agent-id list (nil when unset).
 	Handoffs []string
-	// RetryPolicy is decoded to validate it and to feed NewRetryProvider; the
-	// zero value is a valid (default) policy, so decode is unconditional and the
-	// build applies it only when RetryEnabled.
+	// RetryPolicy is decoded unconditionally (the zero value is a valid policy)
+	// and applied only when RetryEnabled.
 	RetryPolicy agents.RetryPolicy
 	// FallbackModels is the decoded fallback provider chain (nil when unset).
 	FallbackModels []fallbackEntry
@@ -68,12 +62,8 @@ type ErrorHandlerEntry struct {
 	ExcludeFromHistory bool            `json:"exclude_from_history,omitempty"`
 }
 
-// decodeErrorHandlers parses and validates the error_handlers JSON. Unknown
-// keys are rejected (a typo like "max_turn" must not silently leave the error
-// fatal), every configured entry needs a final_output, and a plain-text agent's
-// final_output must be a JSON string — the SDK would accept any value, but the
-// chat UI renders the final text, so a structured fallback on a plain-text
-// agent is a config mistake worth failing at save time.
+// decodeErrorHandlers parses error_handlers: unknown keys rejected, every entry
+// needs a final_output, and a plain-text agent's must be a JSON string.
 func decodeErrorHandlers(raw string, outputType agents.OutputSchema) (*ErrorHandlersSpec, error) {
 	dec := json.NewDecoder(strings.NewReader(raw))
 	dec.DisallowUnknownFields()
@@ -129,8 +119,7 @@ func (e *ErrorHandlerEntry) staticHandler() agents.RunErrorHandler {
 	if e == nil {
 		return nil
 	}
-	// Decode once: json.RawMessage would round-trip fine for structured
-	// outputs, but a plain-text agent's final output must be the string value
+	// Decode once: a plain-text agent's final output must be the string value
 	// itself, and RunErrorData consumers expect plain Go values.
 	var v any
 	if err := json.Unmarshal(e.FinalOutput, &v); err != nil {
@@ -149,9 +138,8 @@ func (e *ErrorHandlerEntry) staticHandler() agents.RunErrorHandler {
 func DecodeAgentSpec(ac *store.AgentConfig) (*AgentSpec, error) {
 	spec := &AgentSpec{}
 
-	// Enum fields are refused at save rather than silently coerced at run
-	// time: an unknown tool_not_found_behavior parses as "error" — the abort
-	// behavior — while the config UI would keep showing something else.
+	// Enum fields are refused at save, not coerced at run: an unknown value
+	// would parse as "error" while the UI showed something else.
 	switch ac.Behavior.ToolNotFoundBehavior {
 	case "", "return_to_model", "return_error_to_model", "error":
 	default:
@@ -165,9 +153,8 @@ func DecodeAgentSpec(ac *store.AgentConfig) (*AgentSpec, error) {
 
 	if ac.ModelSettings != "" {
 		var ms agents.ModelSettings
-		// A malformed or wrong-typed model_settings (e.g. temperature: "hot")
-		// is rejected rather than silently running on defaults the operator
-		// would think took effect.
+		// Malformed or wrong-typed model_settings is rejected rather than
+		// silently running on defaults.
 		if err := json.Unmarshal([]byte(ac.ModelSettings), &ms); err != nil {
 			return nil, fmt.Errorf("model_settings is invalid: %w", err)
 		}
@@ -218,10 +205,8 @@ func DecodeAgentSpec(ac *store.AgentConfig) (*AgentSpec, error) {
 		}
 	}
 	if ac.Resilience.FallbackModels != "" {
-		// Unknown keys are rejected, not ignored: a misspelled selector
-		// ("provider" for "provider_type") would otherwise silently run the
-		// entry on the default backend — the exact failure provider_type
-		// validation exists to prevent.
+		// Unknown keys are rejected: a misspelled selector would silently run
+		// the entry on the default backend.
 		dec := json.NewDecoder(strings.NewReader(ac.Resilience.FallbackModels))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&spec.FallbackModels); err != nil {

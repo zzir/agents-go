@@ -16,32 +16,27 @@ import (
 )
 
 // DefaultCompactionThresholdTokens is the estimated history size a pass fires
-// at when the agent config names none. The Context panel reports the same
-// number, so the threshold it draws is the one that will actually trip.
+// at when the agent config names none; the Context panel reports the same number.
 const DefaultCompactionThresholdTokens = 50000
 
 // defaultCompactionWindow is the entry count the kept tail defaults to.
 const defaultCompactionWindow = 10
 
-// CompactionNotifier receives compaction lifecycle notifications. OnStart
-// fires right before the (potentially slow) summarization request, so the UI
-// can tell the user why the run is still busy; OnDone fires after a
-// successful compaction with the item counts before and after.
+// CompactionNotifier receives compaction lifecycle notifications: OnStart
+// right before the summarization request, OnDone after a successful pass
+// with the item counts before and after.
 type CompactionNotifier struct {
 	OnStart func()
 	OnDone  func(before, after int)
 }
 
-// CompactionAdapter wraps an EntryStore with provider-agnostic compaction that
-// soft-deletes folded entries (marks them compacted=true) rather than removing
-// them, so the agents-server UI can still show what was folded away.
+// CompactionAdapter wraps an EntryStore with compaction that soft-deletes
+// folded entries (compacted=true) so the UI can still show what was folded away.
 type CompactionAdapter struct {
 	*EntryStore
 	summaryModel agents.Model
-	// threshold is in TOKENS: a pass fires when the active history sizes past
-	// it. Entry counts said nothing about context pressure — twenty short
-	// turns are a few thousand tokens, twenty tool dumps can be a hundred
-	// times that.
+	// threshold is in TOKENS: a pass fires when the active history sizes
+	// past it.
 	threshold int
 	// windowSize stays in ENTRIES: the kept tail needs pairing-safe cutting,
 	// which is an entry-boundary concern, not a token one.
@@ -83,18 +78,11 @@ func NewCompactionAdapter(
 
 // RunCompaction implements session.CompactionAware. It marks older entries
 // compacted and appends a compaction checkpoint, keeping the most recent
-// windowSize non-compacted entries intact.
-//
-// Only the ACTIVE branch is sized and folded: the pass exists to fit what the
-// projector sends, and an abandoned attempt neither fills the window nor
-// belongs in the summary. Off-path rows are left as they are — already
-// invisible to the model, still visible to the UI.
+// windowSize non-compacted entries intact. Only the ACTIVE branch is sized
+// and folded — invariant 24.
 func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args session.CompactionArgs) error {
-	// The generation's rows WITHOUT bodies: the check runs on every append and
-	// says no far more often than yes, and the lifted columns answer it.
-	// Through scoped, like every other read: the generation is part of the
-	// address, and a select that names only the session id folds another
-	// generation's history into this one's compaction pass.
+	// The generation's rows WITHOUT bodies (the lifted columns answer the
+	// check), through scoped like every other read.
 	var rows []entryRow
 	if err := ca.scoped(ca.db.NewSelect().Model(&rows)).
 		ExcludeColumn("entry").
@@ -127,11 +115,8 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args session.Com
 		return fmt.Errorf("compaction adapter: loading active entries: %w", err)
 	}
 
-	// Convert every active entry to its replayable item, remembering which row
-	// each item came from. Rows that don't convert (annotations, reasoning items
-	// dropped for foreign replay, undecodable bodies) carry no pairing
-	// constraints; the row-split mapping below leaves them on the same side as
-	// their preceding convertible neighbor.
+	// Convert every active entry to its replayable item, remembering its row.
+	// Rows that don't convert follow their preceding convertible neighbor.
 	entries := make([]session.Entry, 0, len(active))
 	itemMsgIdx := make([]int, 0, len(active))
 	for i := range active {
@@ -166,11 +151,8 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args session.Com
 		return nil // nothing summarizable below the window
 	}
 
-	// A pure count-based split can cut through a function_call / output pair,
-	// leaving the kept history starting with an orphaned output. Snap the split
-	// to a group boundary so it stays self-consistent; 0 means no valid
-	// non-empty prefix exists, so skip this pass rather than risk corrupting
-	// the history.
+	// Snap the split to a group boundary so it cannot cut a function_call /
+	// output pair; 0 means no valid prefix exists, so skip this pass.
 	itemSplit = compaction.SafeSplit(entries, itemSplit)
 	if itemSplit <= 0 {
 		return nil
@@ -181,20 +163,15 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args session.Com
 		return nil
 	}
 
-	// The folded prefix goes to the summary model as ONE plain-text transcript
-	// under a single user message. The conversation is the summary's DATA, not
-	// the summary model's history — replaying it as items lets every provider's
-	// history validation reject the pass (DeepSeek requires reasoning round-trip
-	// on assistant turns, others require strict call/output pairing).
+	// The folded prefix goes to the summary model as ONE plain-text
+	// transcript under a single user message — invariant 26.
 	transcript := renderTranscript(entries[:itemSplit])
 	if transcript == "" {
 		return nil
 	}
 
-	// Map the safe item split back to row space: when the split moved,
-	// everything before the first kept item's row — including interleaved
-	// unconvertible rows, which follow their preceding item — is compacted.
-	// An unmoved split keeps the original count-based row boundary.
+	// Map the safe item split back to row space: when it moved, everything
+	// before the first kept item's row is compacted.
 	if itemSplit < len(itemMsgIdx) && itemMsgIdx[itemSplit] < msgSplit {
 		msgSplit = itemMsgIdx[itemSplit]
 	}
@@ -223,11 +200,8 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args session.Com
 		return nil
 	}
 
-	// A checkpoint, not a system message appended at the end: it names what it
-	// folded (ExcludedIDs) and carries the summary that stands in for it. The
-	// kept tail is NOT inside it — those entries stay in the session and the
-	// projection reads them from there, so a tail entry later popped is simply
-	// gone rather than living on in a copy (session.CompactionPayload).
+	// A checkpoint names what it folded (ExcludedIDs) and carries the
+	// summary; the kept tail stays in the session — invariant 24.
 	excluded := make([]string, 0, len(toCompact))
 	compactIDs := make([]string, len(toCompact))
 	for i, row := range toCompact {
@@ -253,9 +227,8 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args session.Com
 		return fmt.Errorf("compaction adapter: persisting: %w", err)
 	}
 	if !applied {
-		// The rows we planned to compact vanished before the write — the session
-		// was deleted concurrently. Nothing changed, so don't fire OnDone with
-		// counts for a compaction that never happened.
+		// The rows vanished before the write (a concurrent session delete);
+		// nothing changed, so no OnDone.
 		return nil
 	}
 
@@ -266,13 +239,8 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args session.Com
 	return nil
 }
 
-// activeTokens sizes the non-compacted history the way the threshold compares
-// it (ActiveContextTokens is the definition, and is what the Context panel
-// reports, so the number a reader watches is the number that fires the pass).
-//
-// It reads the lifted columns rather than the entries: the decision runs on
-// every append, and decoding a whole session to make it costs more than the
-// pass saves.
+// activeTokens sizes the non-compacted history the way the threshold
+// compares it (ActiveContextTokens), from the lifted columns only.
 func activeTokens(active []entryRow) int {
 	sizes := make([]ContextSize, 0, len(active))
 	for i := range active {
@@ -297,9 +265,7 @@ func sizeOfRow(row entryRow) ContextSize {
 }
 
 // ContextSize is one entry reduced to what sizing needs: what a call priced,
-// what it estimates to, and whether it is a compaction checkpoint. All are
-// columns on the row, so neither the compaction check nor the Context panel
-// has to hold a session's contents to size it.
+// what it estimates to, and whether it is a compaction checkpoint — all row columns.
 type ContextSize struct {
 	Usage      *session.RequestUsage
 	Est        int
@@ -307,10 +273,8 @@ type ContextSize struct {
 }
 
 // ActiveContextTokens sizes a non-compacted history in tokens: the most
-// recent usage-bearing entry prices everything up to itself and the tail
-// after it is estimated; a fold newer than that pricing discards it, so the
-// whole history is estimated until the next call re-anchors the figure —
-// workbench invariant 28.
+// recent usage-bearing entry prices everything up to itself, the tail after
+// it is estimated, and a fold newer than that pricing discards it — invariant 28.
 func ActiveContextTokens(sizes []ContextSize) int {
 	lastUsage, lastFold := -1, -1
 	for i := range sizes {
@@ -337,12 +301,8 @@ func ActiveContextTokens(sizes []ContextSize) int {
 	return total
 }
 
-// estimateFold sizes the context on either side of the pass, so the checkpoint
-// can report what compaction bought without the reader recomputing it.
-//
-// Estimates by construction — the lifted est_tokens column is CharEstimator's
-// character ratio, not a tokenizer. The point is to say "12k became 3k", not to
-// predict a bill.
+// estimateFold sizes the context on either side of the pass for the
+// checkpoint to report. Estimates by construction (CharEstimator), not a bill.
 func estimateFold(active, folded []entryRow, summaryText string) (before, after int) {
 	for i := range active {
 		before += active[i].EstTokens
@@ -366,9 +326,7 @@ func rowIDs(rows []entryRow) []string {
 }
 
 // renderTranscript flattens the folded items into the plain-text record the
-// summarization request carries. Lossy on purpose (reasoning is already
-// dropped, tool payloads render as text): a summary needs the content, and
-// text is the one shape no provider can reject.
+// summarization request carries; lossy on purpose (invariant 26).
 func renderTranscript(entries []session.Entry) string {
 	var b strings.Builder
 	for _, e := range entries {
@@ -453,12 +411,8 @@ func jsonAsText(raw json.RawMessage) string {
 	return string(raw)
 }
 
-// persistCompaction marks the folded entries compacted and appends the
-// checkpoint in one transaction, reporting whether it applied. It guards
-// against a concurrent session delete: if the UPDATE touches no rows the target
-// entries are gone (the session was deleted between loading the history and
-// this write), so it skips the checkpoint rather than orphan one in a session
-// that no longer exists.
+// persistCompaction marks the folded entries compacted and appends the checkpoint in
+// one transaction; an UPDATE touching no rows (session deleted) writes no checkpoint.
 func (ca *CompactionAdapter) persistCompaction(ctx context.Context, compactIDs []string, summary session.Entry) (bool, error) {
 	applied := false
 	err := ca.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
@@ -477,17 +431,8 @@ func (ca *CompactionAdapter) persistCompaction(ctx context.Context, compactIDs [
 		if n, err := res.RowsAffected(); err == nil && n == 0 {
 			return nil
 		}
-		// The checkpoint's parent is the branch tip AFTER the fold, which is why
-		// this runs inside the same transaction: appending against the pre-fold
-		// tip would parent it at an entry it just folded away, and the branch
-		// would then walk into rows the fold removed from the view. Folding is a
-		// change of view rather than of the log, so nothing has told the stored
-		// append point about it — refold before the append reads it.
-		//
-		// RunCompaction folds a strict PREFIX of the active rows, so today the
-		// tip survives every pass and the refold is a no-op. It is here because
-		// that is a property of the strategy, not of this write: persistCompaction
-		// folds whichever rows it is handed.
+		// The checkpoint's parent is the branch tip AFTER the fold, so refold
+		// the append point before the append reads it (a strict-prefix fold makes this a no-op).
 		if err := ca.refreshAppendPointIn(ctx, tx); err != nil {
 			return err
 		}

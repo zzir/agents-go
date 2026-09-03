@@ -13,9 +13,7 @@ import (
 )
 
 // The model's whole background surface is the SDK's four verbs — spawn, status,
-// retry, stop — and a workflow is not a fifth: it is what spawn_task starts
-// when told a workflow's name. One vocabulary, one card, one way to ask after
-// it, whatever kind of work it was.
+// retry, stop; a workflow is what spawn_task starts when told a name (invariant 30).
 
 // SpawnToolName is the model's one way to start background work.
 const SpawnToolName = "spawn_task"
@@ -28,10 +26,8 @@ type spawnArgs struct {
 	Label     string `json:"label" jsonschema:"Short human-readable task label shown in the UI (a workflow is labeled by its name)"`
 }
 
-// spawnTool is the server's spawn_task: the SDK's, with a workflow field. It
-// is built per run because the workflows on offer change without a restart;
-// the description lists them only when there are any, so a server without
-// workflows offers the plain tool.
+// spawnTool is the server's spawn_task: the SDK's plus a workflow field, built
+// per run so the description lists the workflows on offer.
 func (r *Runner) spawnTool(ctx context.Context, ownerID string) *agents.Tool {
 	var offered []store.Workflow
 	if r.Deps.Workflows != nil {
@@ -75,19 +71,15 @@ func (r *Runner) spawnTool(ctx context.Context, ownerID string) *agents.Tool {
 			if err != nil {
 				return agents.ToolResult{}, err
 			}
-			// A task that finished before this call returned carries its result
-			// in the output, so the model has it — waking later to repeat it
-			// would burn a turn.
+			// A task finished before this call returned carries its result in
+			// the output; waking later to repeat it would burn a turn.
 			r.tasks.ModelHasResult(ctx, info)
 			return tasks.ToolResult(info, r.tasks.Progress(info)), nil
 		})
 }
 
-// spawnWorkflow is the workflow branch of spawn_task: start the named
-// sequence as an execution of this conversation, briefed by the model. The
-// workflows are read NOW, not from the description's listing: a listing that
-// failed at the turn's start must not read as "this server has none", and one
-// defined since is on offer.
+// spawnWorkflow is spawn_task's workflow branch. The workflows are read NOW,
+// not from the description: a listing that failed must not read as "none".
 func (r *Runner) spawnWorkflow(ctx context.Context, tc *agents.ToolContext, parent, ownerID, name, input string) (agents.ToolResult, error) {
 	if r.Deps.Workflows == nil {
 		return agents.TextResult("Workflows are not available on this server. Leave workflow empty for a free-form task."), nil
@@ -99,9 +91,8 @@ func (r *Runner) spawnWorkflow(ctx context.Context, tc *agents.ToolContext, pare
 	if wf := matchWorkflow(offered, ownerID, name); wf != nil {
 		info, err := r.StartWorkflow(ctx, wf.ID, parent, input, tc.ToolCallID)
 		if err != nil {
-			// The refusal is the model's to read and relay — a budget that is
-			// full or an agent that was deleted is something the person can
-			// act on.
+			// The refusal is the model's to read and relay — a full budget or a
+			// deleted agent is something the person can act on.
 			return agents.TextResult(fmt.Sprintf("Could not start %q: %s", name, err.Error())), nil
 		}
 		r.tasks.ModelHasResult(ctx, info)
@@ -119,9 +110,8 @@ func (r *Runner) spawnWorkflow(ctx context.Context, tc *agents.ToolContext, pare
 	return agents.TextResult(fmt.Sprintf("No workflow named %q. Available: %s", name, workflowNames(offered))), nil
 }
 
-// startedMessage tells the model what it just set going — including the one
-// thing it cannot see and would otherwise find out about only from a failed
-// step: whether this session has a working directory at all.
+// startedMessage tells the model what it set going — including whether this
+// session has a working directory, which it cannot otherwise see.
 func startedMessage(ctx context.Context, r *Runner, sessionID string, info *tasks.Info, steps int) string {
 	msg := fmt.Sprintf("Started workflow %q (%d steps) as background task %s. You will be told the result; "+
 		"do not repeat its work here.", info.Label, steps, info.TaskID)
@@ -155,9 +145,8 @@ func describeTaskState(kind string, state json.RawMessage) string {
 		if name := st.Steps[idx].Name; name != "" {
 			line += " (" + name + ")"
 		}
-		// More runs than steps means the sequence came back to a step: said,
-		// so a loop reads as one. A person's retry runs a step again too, but
-		// is not the sequence looping.
+		// More runs than steps means the sequence looped back; a person's retry
+		// runs a step again too, but is not a loop.
 		if runs := st.StepRuns.SequenceRuns(); runs > len(st.Steps) {
 			line += fmt.Sprintf(", run %d", runs)
 		}

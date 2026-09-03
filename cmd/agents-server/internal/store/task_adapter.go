@@ -9,10 +9,7 @@ import (
 )
 
 // TaskAdapter presents this server's task rows as an agents/tasks Store: the
-// SDK owns the lifecycle state machine, this server owns delivery — each
-// terminal transition writes the wake-up debt the parent is owed in the same
-// transaction (the host obligation tasks.Store.Finalize documents) — and the
-// row keeps the columns this server's API and UI already expose.
+// SDK owns the lifecycle, this server owns delivery — invariant 32.
 type TaskAdapter struct {
 	store *TaskStore
 }
@@ -23,9 +20,8 @@ func NewTaskAdapter(s *TaskStore) *TaskAdapter { return &TaskAdapter{store: s} }
 // Inherit is the configuration snapshot the SDK carries opaquely and hands back
 // when it launches a run — this server's agent config and sandbox.
 type Inherit struct {
-	// AgentConfigID and ProjectID are the SPAWNING run's setup,
-	// replayed when the parent is woken so the notification reaches the agent
-	// that asked for the task.
+	// AgentConfigID and ProjectID are the SPAWNING run's setup, replayed when
+	// the parent is woken.
 	AgentConfigID string `json:"agent_config_id,omitempty"`
 	ProjectID     string `json:"project_id,omitempty"`
 	// TaskAgentID is the agent the task itself runs as, which is usually a
@@ -33,9 +29,8 @@ type Inherit struct {
 	TaskAgentID string `json:"task_agent_id,omitempty"`
 }
 
-// DecodeInherit reads an Inherit payload, returning the zero value for an empty
-// or unreadable one: a task whose snapshot cannot be read still has to be
-// reportable, and the caller falls back to the session's own configuration.
+// DecodeInherit reads an Inherit payload, returning the zero value for an
+// empty or unreadable one (the caller falls back to the session's own configuration).
 func DecodeInherit(raw json.RawMessage) Inherit {
 	var i Inherit
 	if len(raw) > 0 {
@@ -67,10 +62,8 @@ func toSDK(t *Task) *tasks.Task {
 		ChildSessionID:  t.ChildSessionID,
 		Depth:           t.Depth,
 		Attempt:         t.Attempt,
-		// All three, including the task's own agent: a retry launches from the
-		// snapshot read back off the row, not from a fresh resolve, so an
-		// Inherit that lost TaskAgentID here would start the new attempt with
-		// no agent config at all.
+		// All three, including the task's own agent: a retry launches from
+		// the snapshot read back off the row, not from a fresh resolve.
 		Inherit: EncodeInherit(Inherit{
 			AgentConfigID: t.ParentAgentConfigID,
 			ProjectID:     t.ParentProjectID,
@@ -107,8 +100,7 @@ func (a *TaskAdapter) Create(ctx context.Context, t *tasks.Task) error {
 		ChildSessionID:  t.ChildSessionID,
 		Depth:           t.Depth,
 		// AgentConfigID is the task's own agent; ParentAgentConfigID is the
-		// snapshot the wake-up run uses. They differ whenever a task runs as a
-		// different agent than the one that spawned it, which is the usual case.
+		// snapshot the wake-up run uses.
 		AgentConfigID:       inherit.TaskAgentID,
 		ParentAgentConfigID: inherit.AgentConfigID,
 		ParentProjectID:     inherit.ProjectID,
@@ -151,21 +143,16 @@ func (a *TaskAdapter) ListByParent(ctx context.Context, parentSessionID string) 
 	return toSDKSlice(rows), nil
 }
 
-// Finalize implements tasks.Store. The closure builds the wake-up the finished
-// task owes its parent from the row the store reads inside the SAME
-// transaction as the terminal write — the delivery cannot be lost to a crash
-// between them, nor to a failed pre-read.
+// Finalize implements tasks.Store. The closure builds the wake-up the
+// finished task owes its parent inside the SAME transaction — invariant 32.
 func (a *TaskAdapter) Finalize(ctx context.Context, id, runID string, st tasks.Status, summary, result string, state json.RawMessage) (bool, error) {
 	return a.store.Finalize(ctx, id, runID, string(st), summary, result, state, func(row *Task) *Wakeup {
 		return taskWakeup(row, st, summary, result, runID)
 	})
 }
 
-// taskWakeup is the debt a finished task owes its parent, or nil when none is:
-// only a completed or failed task wakes the conversation — a cancellation was
-// the person's own doing and restating it would just repeat them. The payload
-// is formatted through the SDK's own formatter so the wire text cannot drift
-// from what task_status parses.
+// taskWakeup is the debt a finished task owes its parent, or nil: only a
+// completed or failed task wakes the conversation. Formatted by the SDK so task_status can parse it.
 func taskWakeup(row *Task, st tasks.Status, summary, result, attempt string) *Wakeup {
 	if st != tasks.StatusCompleted && st != tasks.StatusFailed {
 		return nil
@@ -176,9 +163,8 @@ func taskWakeup(row *Task, st tasks.Status, summary, result, attempt string) *Wa
 		SessionID: row.ParentSessionID,
 		Kind:      WakeKindTask,
 		SourceID:  row.ID,
-		// The DELIVERY configuration only — no TaskAgentID: the wake run never
-		// uses it, and the drain groups debts by this string, so a stray field
-		// would split one wake turn into one per task agent.
+		// The DELIVERY configuration only — no TaskAgentID: the drain groups
+		// debts by this string.
 		Inherit: string(EncodeInherit(Inherit{
 			AgentConfigID: row.ParentAgentConfigID,
 			ProjectID:     row.ParentProjectID,
@@ -201,9 +187,8 @@ func (a *TaskAdapter) RetryClaim(ctx context.Context, id, newRunID string, maxAt
 	return won, mapNotFound(err)
 }
 
-// ReleaseRetryClaim implements tasks.Store. A retry that never launched leaves
-// the task failed again — so it owes its parent a fresh failure notification,
-// written in the same tx as the status (the prior debt was cancelled at claim).
+// ReleaseRetryClaim implements tasks.Store. A retry that never launched
+// leaves the task failed again, owing a fresh failure notification in the same tx.
 func (a *TaskAdapter) ReleaseRetryClaim(ctx context.Context, id, runID, summary, result string) (bool, error) {
 	won, err := a.store.ReleaseRetryClaim(ctx, id, runID, summary, result, func(row *Task) *Wakeup {
 		return taskWakeup(row, tasks.StatusFailed, summary, result, runID)

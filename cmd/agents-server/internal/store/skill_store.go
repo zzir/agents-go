@@ -13,9 +13,8 @@ import (
 	"github.com/uptrace/bun/dialect"
 )
 
-// repoLabelOf reduces an import source to the prefix its skills' model-facing
-// names carry: "owner/repo" for a github.com source, the URL's host
-// otherwise, "" for a workbench-authored skill.
+// repoLabelOf reduces an import source to the prefix its skills' names carry:
+// "owner/repo" for github.com, the URL's host otherwise, "" for workbench-authored.
 func repoLabelOf(sourceRepo string) string {
 	if sourceRepo == "" {
 		return ""
@@ -34,9 +33,7 @@ func repoLabelOf(sourceRepo string) string {
 }
 
 // QualifiedName is the model-facing skill name: "<repo label>:<name>" for an
-// imported skill, the bare frontmatter name for a workbench-authored one —
-// the source is part of the identity, keeping two repos' same-named skills
-// apart (decisions §5.31).
+// imported skill, the bare frontmatter name for a workbench-authored one (decisions §5.31).
 func (m *Skill) QualifiedName() string {
 	if m.RepoLabel != "" {
 		return m.RepoLabel + ":" + m.Name
@@ -50,16 +47,14 @@ type SkillStore struct {
 	db *bun.DB
 }
 
-// NewSkillStore returns a SkillStore backed by db. Names are unique per
-// scope (partial indexes, decisions §5.29); a duplicate surfaces as a
-// UNIQUE-constraint error that handlers map to 409.
+// NewSkillStore returns a SkillStore backed by db. Names are unique per scope
+// (partial indexes, decisions §5.29); a duplicate is a UNIQUE error.
 func NewSkillStore(db *bun.DB) *SkillStore {
 	return &SkillStore{CrudStore: NewCrudStore[Skill](db, "skill", "name ASC"), db: db}
 }
 
 // Update overwrites the skill in one transaction that reads the stored row
-// (locked) and hands it to prepare — how scope and owner survive a
-// concurrent scope flip, the same shape every other scoped entity uses.
+// (locked) and hands it to prepare, the shape every scoped entity uses.
 func (s *SkillStore) Update(ctx context.Context, id string, m *Skill, prepare func(prev *Skill) error) error {
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		return s.updateFrom(ctx, tx, id, m, prepare)
@@ -70,10 +65,8 @@ func (s *SkillStore) Update(ctx context.Context, id string, m *Skill, prepare fu
 	return nil
 }
 
-// ListMeta returns the skills ownerID may see in the scoped-listing order
-// (global first, each group newest first — scopedListOrder), without their
-// content — the index the agent build and the
-// panel list read; a document body rides only on Get/GetByNameFor.
+// ListMeta returns the skills ownerID may see in scopedListOrder, without
+// their content; a document body rides only on Get/GetByNameFor.
 func (s *SkillStore) ListMeta(ctx context.Context, ownerID string, admin bool) ([]Skill, error) {
 	var out []Skill
 	q := s.db.NewSelect().Model(&out).
@@ -86,10 +79,8 @@ func (s *SkillStore) ListMeta(ctx context.Context, ownerID string, admin bool) (
 	return out, nil
 }
 
-// GetByNameFor returns the skill the given MODEL-FACING name resolves to FOR
-// ownerID — their own over a global one sharing it (decisions §5.29), the
-// read_skill tool's lookup. Imported skills answer to their qualified name
-// ("owner/repo:name"), workbench-authored ones to the bare name.
+// GetByNameFor returns the skill the given MODEL-FACING name (QualifiedName)
+// resolves to FOR ownerID — their own over a global one (decisions §5.29).
 // ErrNotFound-wrapping error when none matches.
 func (s *SkillStore) GetByNameFor(ctx context.Context, qualified, ownerID string) (*Skill, error) {
 	short := qualified
@@ -116,9 +107,8 @@ func (s *SkillStore) GetByNameFor(ctx context.Context, qualified, ownerID string
 	return nil, fmt.Errorf("getting skill %q: %w", qualified, ErrNotFound)
 }
 
-// RepoGroup returns the scope of ownerID's group for repo — one row's scope
-// answers for all of them, the group being one scope by construction
-// (decisions §5.31). ok=false means they hold no such group.
+// RepoGroup returns the scope of ownerID's group for repo (one scope by
+// construction — decisions §5.31). ok=false means they hold no such group.
 func (s *SkillStore) RepoGroup(ctx context.Context, repo, ownerID string) (scope string, ok bool, err error) {
 	m := new(Skill)
 	err = s.db.NewSelect().Model(m).Column("scope").
@@ -138,16 +128,10 @@ func (s *SkillStore) RepoGroup(ctx context.Context, repo, ownerID string) (scope
 // already holds a group for that repository. Handlers map it to 409.
 var ErrGroupExists = errors.New("the new owner already has this repository")
 
-// SetRepoOwner transfers a whole repo group to newOwner — the group is the
-// unit of ownership as it is of scope (decisions §5.31), so moving one row out
-// would leave a group with two authors and, after a later flip, two scopes.
-// Refused when newOwner ALREADY holds a group for the repo: merging two
-// groups would produce exactly the mixed-scope pile the group rule exists to
-// prevent, and the unique indexes cannot see it (they partition by scope).
-// The check and the move share one transaction, both groups locked
-// (lockedRepoGroup) so an import or a flip landing on either waits for it.
-// ErrNoSuchUser when the account is gone; a name taken in the target
-// namespace fails the whole transfer (UNIQUE -> 409).
+// SetRepoOwner transfers a whole repo group to newOwner (decisions §5.31),
+// refused when newOwner ALREADY holds a group for the repo. Both groups are
+// locked (lockedRepoGroup) in one transaction. ErrNoSuchUser when the
+// account is gone; a taken name fails the whole transfer (UNIQUE -> 409).
 func (s *SkillStore) SetRepoOwner(ctx context.Context, repo, ownerID, newOwner string) error {
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		exists, err := tx.NewSelect().Model((*User)(nil)).Where("id = ?", newOwner).Exists(ctx)
@@ -184,11 +168,8 @@ func (s *SkillStore) SetRepoOwner(ctx context.Context, repo, ownerID, newOwner s
 	return nil
 }
 
-// SetRepoScope flips a repo group — every skill imported from repo and owned
-// by ownerID, detached rows included — in one statement, all or nothing: a
-// name taken in the target scope fails the whole flip (UNIQUE -> 409, spec
-// §5.31). Returns how many rows flipped; 0 means no row was in the source
-// scope.
+// SetRepoScope flips a repo group (detached rows included) in one statement,
+// all or nothing (decisions §5.31). Returns how many rows flipped.
 func (s *SkillStore) SetRepoScope(ctx context.Context, repo, ownerID, scope string) (int, error) {
 	res, err := s.db.NewUpdate().Model((*Skill)(nil)).
 		Set("scope = ?", scope).
@@ -219,15 +200,9 @@ type ImportOutcome struct {
 	Label, Name, Action, Reason string
 }
 
-// ApplyImport lands a whole fetched import in ONE transaction (decisions §5.31).
-// Fetching happens first and can take minutes; every write happens here, in
-// an instant, against a group re-read under lock — so a transfer, a delete or
-// a scope flip that landed during the download turns the whole import into
-// ErrOwnershipChanged with nothing written, instead of scattering rows across
-// two owners or leaving the group half-flipped.
-//
-// wantScope/wantExisted are what the caller resolved the group to before
-// fetching: a group that has since changed shape refuses the apply.
+// ApplyImport lands a whole fetched import in ONE transaction against the
+// group re-read under lock (decisions §5.31). wantScope/wantExisted are what
+// the caller resolved before fetching; a group that changed shape since is ErrOwnershipChanged.
 func (s *SkillStore) ApplyImport(ctx context.Context, repo, owner, wantScope string, wantExisted bool, docs []ImportDoc) ([]ImportOutcome, error) {
 	var out []ImportOutcome
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
@@ -253,9 +228,8 @@ func (s *SkillStore) ApplyImport(ctx context.Context, repo, owner, wantScope str
 	return out, nil
 }
 
-// lockedRepoGroup reads the group's scope with its rows locked, so a
-// concurrent transfer or flip waits for the import to finish rather than
-// interleaving with it (PostgreSQL; SQLite's single writer serializes).
+// lockedRepoGroup reads the group's scope with its rows locked (PostgreSQL;
+// SQLite's single writer serializes).
 func lockedRepoGroup(ctx context.Context, tx bun.Tx, repo, owner string) (scope string, existed bool, err error) {
 	m := new(Skill)
 	q := tx.NewSelect().Model(m).Column("scope").
@@ -274,10 +248,8 @@ func lockedRepoGroup(ctx context.Context, tx bun.Tx, repo, owner string) (scope 
 	return m.Scope, true, nil
 }
 
-// applyImportDoc lands one document in a savepoint of the import's
-// transaction. A store fault is that document's skip, rolled back to the
-// savepoint so the rest of the import still lands — on PostgreSQL a failed
-// statement otherwise aborts the whole transaction.
+// applyImportDoc lands one document in a savepoint, so a store fault skips
+// that document without aborting the transaction (as PostgreSQL otherwise would).
 func applyImportDoc(ctx context.Context, tx bun.Tx, repo, owner, scope string, d ImportDoc) ImportOutcome {
 	label := d.Path
 	if label == "" {

@@ -84,9 +84,8 @@ func (s *PendingApprovalStore) ListByParentTasks(ctx context.Context, parentSess
 	return out, nil
 }
 
-// List returns every pending approval, oldest first (FindByToolCall scans it;
-// recovery after a restart is lazy — approvals resume from these rows on the
-// next approve/reject, nothing is preloaded).
+// List returns every pending approval, oldest first. Recovery after a
+// restart is lazy: approvals resume from these rows on the next decision.
 func (s *PendingApprovalStore) List(ctx context.Context) ([]PendingApproval, error) {
 	var out []PendingApproval
 	if err := s.db.NewSelect().Model(&out).
@@ -98,8 +97,7 @@ func (s *PendingApprovalStore) List(ctx context.Context) ([]PendingApproval, err
 }
 
 // FindByToolCall returns the pending approval whose tool_calls contains the
-// given tool call id. Matching is done in Go so it doesn't depend on the JSON
-// storage shape.
+// given tool call id; matching is done in Go.
 func (s *PendingApprovalStore) FindByToolCall(ctx context.Context, toolCallID string) (*PendingApproval, *PendingToolCall, error) {
 	all, err := s.List(ctx)
 	if err != nil {
@@ -116,10 +114,8 @@ func (s *PendingApprovalStore) FindByToolCall(ctx context.Context, toolCallID st
 	return nil, nil, ErrNotFound
 }
 
-// Delete removes the pending approval for runID. It returns an
-// ErrNotFound-wrapping error when no row was deleted — deleting doubles as
-// the exclusive claim on the approval, so concurrent decisions race here and
-// exactly one wins.
+// Delete removes the pending approval for runID, ErrNotFound when no row was
+// deleted: deleting doubles as the exclusive claim on the approval.
 func (s *PendingApprovalStore) Delete(ctx context.Context, runID string) error {
 	res, err := s.db.NewDelete().Model((*PendingApproval)(nil)).
 		Where("run_id = ?", runID).
@@ -134,11 +130,8 @@ func (s *PendingApprovalStore) Delete(ctx context.Context, runID string) error {
 }
 
 // ListOlderThan returns the approvals filed before cutoff — the reaper's
-// candidates. This read claims nothing: each row is then claimed on its own
-// (deleted, in the same transaction as the task it ends when it belongs to
-// one — TaskStore.ClaimApprovalCancelled), so a decision racing the reaper
-// either takes the row first or finds it gone; the reaper never acts on an
-// approval it did not itself remove.
+// candidates. This read claims nothing; each row is claimed on its own
+// (TaskStore.ClaimApprovalCancelled), so the reaper never acts on one it did not remove.
 func (s *PendingApprovalStore) ListOlderThan(ctx context.Context, cutoff time.Time) ([]PendingApproval, error) {
 	var out []PendingApproval
 	if err := s.db.NewSelect().Model(&out).Where("created_at < ?", cutoff).OrderExpr("created_at ASC").Scan(ctx); err != nil {

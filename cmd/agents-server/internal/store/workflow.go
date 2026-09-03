@@ -14,8 +14,7 @@ import (
 )
 
 // WorkflowStep is one step of a fixed sequence: an agent and the prompt that
-// starts its turn. A step is a full RUN on the execution's session — tools and
-// handoffs included, task/workflow tools withheld (it is a background run).
+// starts its turn — a full RUN on the execution's session, task/workflow tools withheld.
 type WorkflowStep struct {
 	// ID is stable across edits of the definition, so an execution in flight
 	// and a "retry from here" keep naming the same step; a position would shift.
@@ -24,33 +23,26 @@ type WorkflowStep struct {
 	// AgentConfigID is which agent runs this step — the point of a workflow:
 	// plan, exec and verify are usually different agents on different models.
 	AgentConfigID string `json:"agent_config_id"`
-	// Prompt is the step's input, sent as the user turn that starts it. The
-	// previous steps are already in the session, so this instructs rather than
-	// re-passes their output.
+	// Prompt is the step's input, sent as the user turn that starts it; the
+	// previous steps are already in the session.
 	Prompt string `json:"prompt"`
 	// CompactBefore folds the conversation into a summary before this step runs.
 	CompactBefore bool `json:"compact_before,omitempty"`
 	// PauseBefore holds the sequence before this step until a person approves
-	// it from the conversation that asked — a step-level gate, for the deploy
-	// or the send that must not happen unseen. Rejecting cancels the execution.
+	// it from the conversation that asked; rejecting cancels the execution.
 	PauseBefore bool `json:"pause_before,omitempty"`
-	// Gate makes the step a CHECK: its final output decides which edge is taken
-	// (see StepGate). Nil means the run's own outcome decides — a failure is
-	// then structural, the step's run errored.
+	// Gate makes the step a CHECK: its final output decides which edge is
+	// taken (StepGate). Nil means the run's own outcome decides.
 	Gate *StepGate `json:"gate,omitempty"`
-	// OnSuccess and OnFailure name the step to run next — a step id, or
-	// WorkflowStepEnd to stop there. Their empty defaults differ: OnSuccess
-	// falls through to the NEXT step in the list (the last one ends the
-	// execution), an empty OnFailure fails the execution. A back-edge is how a
-	// sequence loops, bounded only by MaxStepRuns.
+	// OnSuccess and OnFailure name the step to run next (a step id, or
+	// WorkflowStepEnd). Empty OnSuccess falls through to the NEXT step; empty OnFailure fails the execution.
 	OnSuccess string `json:"on_success,omitempty"`
 	OnFailure string `json:"on_failure,omitempty"`
 }
 
 // StepGate makes a step a check: its final output reports one of two
-// sentinels (Verdict) — Pass takes the on_success edge, Fail on_failure, and no
-// verdict fails the execution. The driver appends the instruction to the
-// step's prompt. docs/reference/protocol.md "Workflows" has the rules.
+// sentinels (Verdict) — Pass takes on_success, Fail on_failure, no verdict
+// fails the execution. docs/reference/protocol.md "Workflows" has the rules.
 type StepGate struct {
 	Pass string `json:"pass,omitempty"`
 	Fail string `json:"fail,omitempty"`
@@ -62,9 +54,8 @@ const (
 	DefaultGateFail = "FAIL"
 )
 
-// gateTrim is what Verdict strips off a candidate line before comparing —
-// markdown emphasis and sentence punctuation — so a configured word is held
-// to the same shape (normalizeGateWord), or it could never match.
+// gateTrim is what Verdict strips off a candidate line before comparing
+// (markdown emphasis, sentence punctuation); normalizeGateWord holds a configured word to the same shape.
 const gateTrim = "*_`.!:"
 
 // normalizeGateWord is a configured word as Verdict compares it.
@@ -88,20 +79,17 @@ func (g *StepGate) FailWord() string {
 	return DefaultGateFail
 }
 
-// Instruction is the line appended to a gated step's prompt. It asks for the
-// sentinel line; an agent that answers in structured output instead may carry
-// the verdict as a field (Verdict reads both).
+// Instruction is the line appended to a gated step's prompt, asking for the
+// sentinel line; structured output may carry the verdict as a field instead.
 func (g *StepGate) Instruction() string {
 	return fmt.Sprintf("End your reply with exactly one final line that is either %s or %s: %s when the check succeeds, %s when it does not "+
 		"(if you answer as a JSON object, put the verdict in a boolean \"passed\" field instead).",
 		g.PassWord(), g.FailWord(), g.PassWord(), g.FailWord())
 }
 
-// Verdict reads the step's final output. Two shapes are read, so a step's
-// agent may answer in prose or in structured output: a JSON object (the whole
-// output, fenced or not) with a boolean `passed`/`pass`, or a
-// `verdict`/`result`/`status` string equal to a sentinel; otherwise the LAST
-// non-empty line, which must be a sentinel. passed reports the verdict;
+// Verdict reads the step's final output: a JSON object (fenced or not) with
+// a boolean `passed`/`pass` or a `verdict`/`result`/`status` string equal to
+// a sentinel; otherwise the LAST non-empty line, which must be a sentinel.
 // ok=false means there was none.
 func (g *StepGate) Verdict(output string) (passed, ok bool) {
 	if passed, ok := g.jsonVerdict(output); ok {
@@ -164,16 +152,12 @@ func (g *StepGate) jsonVerdict(output string) (passed, ok bool) {
 // names to end the execution there instead of moving to another step.
 const WorkflowStepEnd = "end"
 
-// MaxStepRuns bounds the step runs ONE execution may launch, retries included
-// — the last thing stopping an OnFailure back-edge from looping forever; the
-// lap bound (WorkflowBudget.MaxLaps) stops it long before.
+// MaxStepRuns bounds the step runs ONE execution may launch, retries
+// included; the lap bound (WorkflowBudget.MaxLaps) stops a loop long before.
 const MaxStepRuns = 50
 
 // defaultMaxLaps is how many times one execution may take the same BACKWARD
-// edge (a step to an earlier one, or to itself) when its definition sets no
-// bound: three laps of the same loop without getting past it is a loop that
-// is not converging, and every further lap costs a step run for the same
-// answer.
+// edge when its definition sets no bound.
 const defaultMaxLaps = 3
 
 // WorkflowSteps is the ordered sequence, stored as one JSON column.
@@ -218,9 +202,8 @@ func scanJSONColumn(src, dst any, what string) error {
 	return json.Unmarshal(b, dst)
 }
 
-// Workflow is a fixed, ordered sequence of steps run on ONE session.
-// Deterministic by design — which step runs next is the definition's answer,
-// not the model's (that is what handoffs are for).
+// Workflow is a fixed, ordered sequence of steps run on ONE session; which
+// step runs next is the definition's answer, not the model's.
 type Workflow struct {
 	bun.BaseModel `bun:"table:workflows,alias:wfl"`
 
@@ -233,7 +216,7 @@ type Workflow struct {
 	// Budget bounds every execution of this workflow (zero fields = no bound).
 	Budget WorkflowBudget `bun:"budget,type:text,nullzero" json:"budget"`
 
-	// Scope/OwnerID: row visibility and its permanent creator — decisions §5.29.
+	// Scope/OwnerID: row visibility and its permanent creator.
 	Scope   string `bun:"scope,notnull"               json:"scope"`
 	OwnerID string `bun:"owner_id,nullzero,type:uuid" json:"owner_id,omitempty"`
 
@@ -241,14 +224,11 @@ type Workflow struct {
 	UpdatedAt time.Time `bun:"updated_at,notnull" json:"updated_at"`
 }
 
-// WorkflowBudget is what one execution may spend before it is stopped, failed
-// with the reason: step launches (retries included, at most MaxStepRuns),
-// tokens (input + output of every model call on the execution's session) and
-// minutes of step run time (the sum of the runs' durations — a pause on a
-// person's approval costs nothing). Each is checked when the driver is about
-// to launch a step; a step already running is not interrupted. Zero = no
-// bound — except MaxLaps, whose zero is defaultMaxLaps: a loop needs a bound
-// whether or not its author thought of one.
+// WorkflowBudget is what one execution may spend before it is failed with
+// the reason: step launches (at most MaxStepRuns), tokens (input + output on
+// the execution's session) and minutes of step run time. Each is checked
+// before a launch; a running step is not interrupted. Zero = no bound,
+// except MaxLaps, whose zero is defaultMaxLaps.
 type WorkflowBudget struct {
 	MaxSteps   int `json:"max_steps,omitempty"`
 	MaxTokens  int `json:"max_tokens,omitempty"`
@@ -312,8 +292,7 @@ func (b WorkflowBudget) Exceeded(spent BudgetSpent) error {
 }
 
 // StepRun records which run executed which step, so a reader can group the
-// flat transcript's turns back under the step that produced them (a retry
-// appends another entry for the same step).
+// transcript's turns under the step that produced them.
 type StepRun struct {
 	StepID string `json:"step_id"`
 	RunID  string `json:"run_id"`
@@ -376,12 +355,9 @@ func (s StepRuns) Minutes() float64 {
 }
 
 // WorkflowState is what a workflow execution keeps in its task's State: a
-// SNAPSHOT of the definition — editing a workflow must not steer an execution
-// in flight — and where the sequence stands. The task row holds the rest
-// (status, current run, parent, child session, result). It is written by the
-// driver at four points, each atomically with the run it belongs to
-// (tasks.Store.Advance): the start, every launch, every step transition, and
-// the end (the last step's outcome, in the Finalize itself).
+// SNAPSHOT of the definition and where the sequence stands. The driver
+// writes it atomically with the run it belongs to (tasks.Store.Advance) at
+// the start, every launch, every step transition, and the end.
 type WorkflowState struct {
 	// WorkflowID names the definition this came from; it may since have been
 	// edited or deleted, which is why Steps is the snapshot that executes.
@@ -399,8 +375,7 @@ type WorkflowState struct {
 	// appended by the launcher, so a run that never started is not in it.
 	StepRuns StepRuns `json:"step_runs,omitempty"`
 	// PendingInput is the turn a PauseBefore step will start with once a
-	// person approves it — kept here because the launch happens long after the
-	// driver composed it. Cleared at launch.
+	// person approves it. Cleared at launch.
 	PendingInput string `json:"pending_input,omitempty"`
 	// Stopped names the bound that ended the execution for good — StoppedBy*
 	// — so a client knows a retry would be refused before it asks.
@@ -414,12 +389,9 @@ const (
 	StoppedByLaps    = "laps"
 )
 
-// StopIfBounded checks the execution against its budget and the step ceiling,
-// recording which bound stopped it on the state; nil while it may launch
-// another step. A lap bound already recorded stands, like the others: the
-// laps are counted over the whole log, so a retry that ran the step again
-// and failed again would meet the same count at the same transition — and a
-// definition wanting more laps says so in its budget, for the next run.
+// StopIfBounded checks the execution against its budget and the step
+// ceiling, recording which bound stopped it on the state; nil while it may
+// launch another step. A bound already recorded stands.
 func (w *WorkflowState) StopIfBounded(tokens int) error {
 	if w.Stopped == StoppedByLaps {
 		return fmt.Errorf("%w: the sequence keeps returning to the same step", ErrLoopBound)
@@ -435,12 +407,9 @@ func (w *WorkflowState) StopIfBounded(tokens int) error {
 	return nil
 }
 
-// StopIfLooping checks the transition the sequence is about to make against
-// the lap bound: taking a BACKWARD edge — from the current step to an earlier
-// one, or to itself — one more time than the bound allows ends the execution,
-// recorded on the state. A forward edge is never a lap. Laps are read off the
-// launch log: how many times a run of the current step was followed by a run
-// of the target.
+// StopIfLooping checks the transition against the lap bound: a BACKWARD edge
+// (to an earlier step, or itself) taken one more time than allowed ends the
+// execution. Laps are read off the launch log.
 func (w *WorkflowState) StopIfLooping(next *WorkflowStep) error {
 	if next == nil {
 		return nil
@@ -497,11 +466,9 @@ func (w *WorkflowState) Encode() json.RawMessage {
 	return b
 }
 
-// StepPrompt is the turn that starts the given step: the step's own
-// instruction, led by the execution's input when the step is the FIRST one
-// (only the first — from step two on the input is already in the transcript
-// the step reads), and trailed by the verdict instruction when the step is a
-// gate.
+// StepPrompt is the turn that starts the given step: the step's instruction,
+// led by the execution's input for the FIRST step only, trailed by the
+// verdict instruction for a gate.
 func (w *WorkflowState) StepPrompt(step WorkflowStep) string {
 	prompt := step.Prompt
 	if w.Input != "" && len(w.Steps) > 0 && w.Steps[0].ID == step.ID {
@@ -537,9 +504,8 @@ func (w *WorkflowState) UnderStepCeiling() error {
 	return nil
 }
 
-// StepIndex reports where stepID sits in the snapshot, or -1. It is a display
-// concern ("step 2 of 3") and the retry's anchor — NOT how the sequence
-// advances, which follows the edges below.
+// StepIndex reports where stepID sits in the snapshot, or -1 — a display
+// concern and the retry's anchor, NOT how the sequence advances.
 func (w *WorkflowState) StepIndex(stepID string) int {
 	for i := range w.Steps {
 		if w.Steps[i].ID == stepID {
@@ -590,10 +556,8 @@ func (w *WorkflowState) NextStep(failed bool) (*WorkflowStep, bool) {
 	return next, next != nil
 }
 
-// DisplayWorkflowStarted is the display kind of the note a person's or a
-// trigger's start of a workflow leaves on the conversation it reports to: with
-// no run asking, the note is the exchange's question — what the result's
-// wake-up run is labeled by and jumps to (protocol.md "Workflows").
+// DisplayWorkflowStarted is the display kind of the note a workflow start
+// leaves on the conversation — the exchange's question (protocol.md "Workflows").
 const DisplayWorkflowStarted = "workflow_started"
 
 // WorkflowOrigin says who started an execution when no run did.
@@ -639,8 +603,7 @@ func (w WorkflowStarted) Text() string {
 }
 
 // DisplayTriggerFired is the display kind of the note a trigger's AGENT turn
-// leaves on the conversation, right before the message it sends: the person
-// reading sees the next question was an automation's, not typed.
+// leaves on the conversation, right before the message it sends.
 const DisplayTriggerFired = "trigger_fired"
 
 // TriggerFired is that note's data: which trigger, which agent it prompted,
@@ -674,9 +637,7 @@ func NewWorkflowStore(db *bun.DB) *WorkflowStore {
 }
 
 // Update overwrites the definition in one transaction that reads the stored
-// row (locked) and hands it to prepare (nil to skip) — how scope and owner
-// come from the row rather than from a read that may be stale, the shape
-// every scoped entity uses.
+// row (locked) and hands it to prepare (nil to skip), the shape every scoped entity uses.
 func (s *WorkflowStore) Update(ctx context.Context, id string, m *Workflow, prepare func(prev *Workflow) error) error {
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		return s.updateFrom(ctx, tx, id, m, prepare)
@@ -693,11 +654,9 @@ func (s *WorkflowStore) Delete(ctx context.Context, id string) error {
 	return s.DeleteOwnedBy(ctx, id, "")
 }
 
-// DeleteOwnedBy removes the definition and its triggers only while it still
-// belongs to expectOwner — the pair the caller was authorized against (spec
-// §5.29); an empty expectOwner skips the check, for internal callers with no
-// authorization to carry. The triggers go in the same transaction: one that
-// outlived its workflow could only fail.
+// DeleteOwnedBy removes the definition and its triggers, in one transaction,
+// only while it still belongs to expectOwner (decisions §5.29); an empty
+// expectOwner skips the check.
 func (s *WorkflowStore) DeleteOwnedBy(ctx context.Context, id, expectOwner string) error {
 	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if expectOwner != "" {
@@ -723,9 +682,8 @@ func (s *WorkflowStore) DeleteOwnedBy(ctx context.Context, id, expectOwner strin
 	})
 }
 
-// NormalizeWorkflow trims the spelling noise and fills each step's stable id,
-// so a definition saved twice means the same thing and a step added through
-// the API gets an id without the client having to invent one.
+// NormalizeWorkflow trims the spelling noise and fills each step's stable
+// id.
 func NormalizeWorkflow(w *Workflow) error {
 	w.Name = strings.TrimSpace(w.Name)
 	w.Description = strings.TrimSpace(w.Description)
@@ -750,10 +708,8 @@ func NormalizeWorkflow(w *Workflow) error {
 		return fmt.Errorf("budget: max_laps cannot exceed %d, the ceiling every execution has", MaxStepRuns)
 	}
 	seen := make(map[string]bool, len(w.Steps))
-	// Names are how the model reads and writes a definition (get_workflow /
-	// save_workflow name steps and edges, never ids), so a name must denote
-	// one step — case-insensitively, as the tool matches — and cannot be the
-	// edge target that means "stop".
+	// Names are how the model reads and writes a definition, so a name must
+	// denote one step (case-insensitively) and cannot be the "stop" target.
 	names := make(map[string]bool, len(w.Steps))
 	for i := range w.Steps {
 		s := &w.Steps[i]
@@ -779,10 +735,8 @@ func NormalizeWorkflow(w *Workflow) error {
 		if s.ID == "" {
 			s.ID = NewID()
 		}
-		// A gate's two words must be one line each and tell apart: equal
-		// words (case-insensitively — Verdict compares so) would make the fail
-		// edge unreachable, and a word with a newline could never be a last
-		// line.
+		// A gate's two words must be one line each and tell apart
+		// (case-insensitively, as Verdict compares).
 		if g := s.Gate; g != nil {
 			if strings.ContainsAny(g.Pass, "\r\n") || strings.ContainsAny(g.Fail, "\r\n") {
 				return fmt.Errorf("step %d: a gate word must be one line", i+1)
