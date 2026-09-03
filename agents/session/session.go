@@ -32,22 +32,16 @@ func (s *Session) Entries(ctx context.Context, cur Cursor) ([]Entry, error) {
 	return s.storage.Entries(ctx, cur)
 }
 
-// ContextEntries returns the entries that make up the model's view: the active
-// branch with everything compaction folded away left out. The checkpoints
-// themselves stay in — each carries the summary and stand-ins ProjectEntries
-// renders in the folded content's place.
-//
-// Folding here, not only at projection, is what makes a cursor limit count
-// entries the model will actually see. cur.Limit bounds the projection, not the
-// storage read: the whole active branch is loaded so folding stays correct.
+// ContextEntries returns the model's view: the active branch minus what
+// compaction folded, the checkpoints themselves kept. cur.Limit bounds the
+// projection, not the storage read — the whole branch is loaded so folding
+// stays correct (spec §2.5c).
 func (s *Session) ContextEntries(ctx context.Context, cur Cursor) ([]Entry, error) {
 	all, err := s.storage.Entries(ctx, Cursor{})
 	if err != nil {
 		return nil, err
 	}
-	// Walk the active branch, not append order: an abandoned attempt is still
-	// recorded, and sending it would contradict the conversation. See
-	// ActiveBranchOf.
+	// The active branch, not append order — see ActiveBranchOf.
 	path := ActiveBranchOf(all)
 	if folded := FoldedEntryIDs(path); len(folded) > 0 {
 		kept := make([]Entry, 0, len(path))
@@ -96,10 +90,8 @@ func (s *Session) Entry(ctx context.Context, id string) (*Entry, error) {
 }
 
 // State folds the session's entries into the state they imply — the last agent,
-// the last response id, tool calls still awaiting outputs.
-//
-// It folds the active branch, not append order: a dangling call on an abandoned
-// attempt is not pending, since no resume can ever clear it.
+// the last response id, tool calls awaiting outputs. It folds the active
+// branch, not append order (spec §2.5c).
 func (s *Session) State(ctx context.Context) (DerivedState, error) {
 	entries, err := s.ContextEntries(ctx, Cursor{})
 	if err != nil {
@@ -125,9 +117,8 @@ func (s *Session) Metadata(ctx context.Context) (Metadata, error) {
 // Clear removes every entry.
 func (s *Session) Clear(ctx context.Context) error { return s.storage.Clear(ctx) }
 
-// ErrNotFound is what a repo reports for an id it does not hold. Opening
-// a session that does not exist must not look like opening an empty one: a run
-// would start over instead of continuing, which is worse than an error.
+// ErrNotFound is what a repo reports for an id it does not hold; opening an
+// unknown session must not look like opening an empty one (spec §2.5e).
 var ErrNotFound = errors.New("agents: session not found")
 
 // Repo owns session lifecycles: creating, opening, listing and deleting
@@ -136,11 +127,8 @@ var ErrNotFound = errors.New("agents: session not found")
 type Repo interface {
 	Create(ctx context.Context, opts CreateOptions) (*Session, error)
 	Open(ctx context.Context, id string) (*Session, error)
-	// List returns session metadata ordered by UpdatedAt, newest first, cut to
-	// ListOptions.Limit. Sessions sharing an UpdatedAt may come back in any order.
-	// Every implementation owes the same answer here — a caller that paginated
-	// correctly against one backend must not silently read the oldest sessions
-	// from another (agentstest.RepoConformance checks it).
+	// List returns session metadata newest first, cut to ListOptions.Limit; every
+	// implementation owes the same answer (spec §2.5e2, agentstest.RepoConformance).
 	List(ctx context.Context, opts ListOptions) ([]Metadata, error)
 	Delete(ctx context.Context, id string) error
 }
@@ -196,26 +184,18 @@ type CompactionArgs struct {
 	// Force requests compaction regardless of the session's own decision hook.
 	Force bool
 	// OffChainItems reports that the stored history holds items the server-side
-	// chain rooted at ResponseID cannot know about: what the run produced AFTER
-	// that response, what a read window (Settings.Limit) left out, and what a
-	// handoff input filter dropped. A storage that REPLACES the log from that
-	// chain must not do so while this is set — the replacement would delete items
-	// nothing ever read; compacting from the stored history is always safe. False
-	// says the chain covers the whole log.
+	// chain rooted at ResponseID never saw. A storage that REPLACES the log from
+	// that chain must not do so while it is set — spec §2.5f.
 	OffChainItems bool
-	// StartSpan, when non-nil, opens a compaction tracing span. Implementations
-	// call it right before actually compacting (not on the no-op path, so
-	// traces only show passes that did work) and may annotate the returned
-	// span (e.g. before/after item counts). The runner finishes the span —
-	// and records any RunCompaction error on it — after RunCompaction returns.
+	// StartSpan, when non-nil, opens a compaction tracing span. Call it right
+	// before actually compacting (not on the no-op path); the runner finishes
+	// the span and records any RunCompaction error on it.
 	StartSpan func() *tracing.SpanHandle
 }
 
 // CompactionAware is a Storage that can compact its own history — by
-// summarizing older entries, or by handing them to a server-side compaction
-// API. After a run is persisted, the runner calls RunCompaction so the store can
-// shrink history that has grown large. It is a storage capability, not a session
-// one: compaction rewrites what is stored.
+// summarizing, or through a server-side compaction API. The runner calls
+// RunCompaction after a run is persisted (spec §2.5f).
 type CompactionAware interface {
 	RunCompaction(ctx context.Context, args CompactionArgs) error
 }

@@ -8,10 +8,8 @@ import (
 	"github.com/zzir/agents-go/agents/session"
 )
 
-// Usage aggregates token usage across all model requests in a run.
-//
-// RequestUsageEntries preserves a per-request breakdown so callers can compute
-// accurate costs even though the top-level counters are summed.
+// Usage aggregates token usage across all model requests in a run;
+// RequestUsageEntries keeps the per-request breakdown for accurate costs.
 type Usage struct {
 	// Requests is the total number of LLM API calls made.
 	Requests int64 `json:"requests"`
@@ -28,10 +26,8 @@ type Usage struct {
 	// RequestUsageEntries preserves the per-request usage breakdown.
 	RequestUsageEntries []RequestUsage `json:"request_usage_entries,omitempty"`
 
-	// mu guards Add so concurrent accumulation is safe — e.g. several
-	// agent-as-tool nested runs completing in parallel and folding their usage
-	// into the shared parent Usage. The zero value is an unlocked mutex, so a
-	// Usage literal (or NewUsage) needs no initialization.
+	// mu guards Add: parallel agent-as-tool runs fold usage into a shared
+	// parent. The zero value is unlocked, so a literal needs no init.
 	mu sync.Mutex
 }
 
@@ -39,15 +35,9 @@ type Usage struct {
 func NewUsage() *Usage { return &Usage{} }
 
 // UsageFromResponseUsage translates a Responses usage block into a Usage
-// counted as ONE request.
-//
-// It is the single place field-by-field translation lives, so a detail field
-// the Responses API adds later is picked up everywhere at once.
-//
-// Whether the response carries a usage block at all stays the caller's
-// question: this mapping is total, and an all-zero block is a real request that
-// spent no tokens, which only the caller can tell from a response that reported
-// nothing.
+// counted as ONE request; it is the single place the field mapping lives.
+// Whether the response carried a usage block at all is the caller's question:
+// an all-zero block is a real request that spent no tokens.
 func UsageFromResponseUsage(u responses.ResponseUsage) *Usage {
 	return &Usage{
 		Requests:     1,
@@ -62,14 +52,11 @@ func UsageFromResponseUsage(u responses.ResponseUsage) *Usage {
 	}
 }
 
-// Snapshot returns a point-in-time copy of u's counters taken under the same
-// lock Add uses, so it is safe to call while other goroutines accumulate into u
-// concurrently.
-//
-// Read the exported counter fields directly only when no goroutine can be
-// calling Add (e.g. after a run completes); doing so concurrently is a data
-// race. The returned value is standalone — RequestUsageEntries is a fresh slice
-// — so copy it only by field, not wholesale (its zero-value mutex is unused).
+// Snapshot returns a point-in-time copy of u's counters under the same lock
+// Add uses, so it is safe while other goroutines accumulate into u. Read the
+// exported fields directly only when no goroutine can be calling Add. The copy
+// is standalone (RequestUsageEntries is a fresh slice); copy it by field, not
+// wholesale, as its zero-value mutex is unused.
 func (u *Usage) Snapshot() Usage {
 	u.mu.Lock()
 	defer u.mu.Unlock()
@@ -89,11 +76,9 @@ func (u *Usage) Snapshot() Usage {
 	}
 }
 
-// Add aggregates another Usage into the receiver.
-//
-// Per-request entries are preserved: if other already carries entries they are
-// appended; otherwise, if other represents a single request with tokens, a
-// synthetic entry is recorded.
+// Add aggregates another Usage into the receiver. Per-request entries are
+// preserved: other's entries are appended, or a synthetic entry is recorded
+// when other is a single request with tokens.
 func (u *Usage) Add(other *Usage) {
 	if other == nil {
 		return
@@ -138,16 +123,8 @@ func (u *Usage) Request() RequestUsage {
 	}
 }
 
-// attributeUsage puts each response's usage on exactly ONE of the entries it
-// produced, so summing entry usage counts every request once.
-//
-// The last entry of the batch gets it, so a reader estimating conversation size
-// can take the most recent usage-bearing entry as measured fact and estimate
-// only what follows.
-//
-// A turn split across two batches (an approval pause) attributes on the first
-// batch and clears the flag: a request counted twice is worse than one
-// attributed a few entries early.
+// attributeUsage puts each response's usage on exactly one entry — the last of
+// the batch, once even across a split turn — see spec §2.7f.
 func (r *runner) attributeUsage(entries []session.Entry) {
 	if !r.usagePending || len(entries) == 0 {
 		return
@@ -158,10 +135,8 @@ func (r *runner) attributeUsage(entries []session.Entry) {
 		return
 	}
 	for i := len(entries) - 1; i >= 0; i-- {
-		// Match the response when the provider named one; a backend that
-		// returns no id still gets its usage recorded, on the batch's last
-		// entry, rather than silently losing it. Caller input in the batch
-		// (an injection) is not the response's.
+		// A backend returning no id still records usage on the batch's last
+		// entry; caller input in the batch (an injection) is not the response's.
 		if entries[i].Source.Type == SourceUser ||
 			r.lastResponseID != "" && entries[i].ResponseID != r.lastResponseID {
 			continue

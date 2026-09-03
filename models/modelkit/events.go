@@ -8,15 +8,10 @@ import (
 	"github.com/zzir/agents-go/agents"
 )
 
-// TruncatedStreamError builds the error an adapter must surface when the
-// event stream ends cleanly — no transport error — but no terminal event ever
-// arrived: a gateway or proxy closed the connection at an event boundary, so
-// the transport looks like a normal EOF while the response is in fact cut
-// off. Sinking it into "the stream just ended" would make the runner report a
-// vague "ended without a completed response" that nothing classifies as
-// retryable; this error wraps io.ErrUnexpectedEOF, which RetryableError
-// treats as a transport failure, so a retry decorator gets to run the
-// request again. prefix names the adapter ("openai responses stream", ...).
+// TruncatedStreamError is the error an adapter must surface when the stream
+// ends cleanly with no terminal event. It wraps io.ErrUnexpectedEOF so
+// RetryableError classifies it as a transport failure (decisions §5.16).
+// prefix names the adapter ("openai responses stream", ...).
 func TruncatedStreamError(prefix string) error {
 	return fmt.Errorf("%s: ended without a terminal event: %w", prefix, io.ErrUnexpectedEOF)
 }
@@ -40,10 +35,8 @@ func marshalEvent(payload any) (agents.ResponseStreamEvent, error) {
 	return eventFromJSON(raw)
 }
 
-// Sequence numbers are not part of the adapter contract: the runner and the
-// server bridge key on event types and item ids, never on sequence_number, and
-// a translated stream has no upstream numbering to preserve. Every synthesized
-// event carries 0, matching the agentstest fake.
+// Every synthesized event carries sequence_number 0: the runner and the server
+// bridge key on event types and item ids, never on sequence numbers.
 
 // ResponseCreatedEvent synthesizes the response.created event that opens a
 // stream. Consumers use it as the "a response is now in flight" signal, so an
@@ -145,11 +138,9 @@ func OutputItemDoneEvent(outputIndex int, item agents.OutputItem) (agents.Respon
 	})
 }
 
-// ResponseUsage is the canonical token accounting for a synthesized terminal
-// event. InputTokens is the TOTAL input count — cached reads and cache writes
-// included — matching Responses semantics; CachedTokens and CacheWriteTokens
-// are informational subsets of it. An adapter whose backend reports uncached
-// input separately (as Anthropic does) must add the parts together.
+// ResponseUsage is the canonical token accounting for a terminal event.
+// InputTokens is the TOTAL input count, cached reads and cache writes included;
+// CachedTokens and CacheWriteTokens are subsets of it (decisions §5.10).
 type ResponseUsage struct {
 	InputTokens      int64
 	OutputTokens     int64

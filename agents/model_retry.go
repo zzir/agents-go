@@ -118,9 +118,8 @@ func (p RetryPolicy) maxDelay() time.Duration {
 	return p.MaxDelay
 }
 
-// backoff returns the delay before the given attempt number (1-based; attempt 1
-// is the first try and never waits, so callers pass attempt>=1 for the wait
-// preceding attempt+1). Equal jitter keeps the delay in [d/2, d].
+// backoff returns the delay after attempt (1-based, the try that just finished).
+// Equal jitter keeps the delay in [d/2, d].
 func (p RetryPolicy) backoff(attempt int) time.Duration {
 	base := p.BaseDelay
 	if base <= 0 {
@@ -139,12 +138,8 @@ func (p RetryPolicy) backoff(attempt int) time.Duration {
 	return time.Duration(half + rand.Float64()*half)
 }
 
-// wait sleeps for the backoff (or server-suggested) delay before the next
-// attempt. attempt is the number of the attempt that just failed.
-//
-// A server-suggested delay longer than maxDelay ends the retries and returns
-// that attempt's error (wrapped, so errors.As and CodeOf still reach the
-// original) rather than clamping to the cap.
+// wait sleeps the backoff (or server-suggested) delay after attempt, the try that
+// just failed; a suggestion past maxDelay ends the retries, returning err wrapped.
 func (p RetryPolicy) wait(ctx context.Context, attempt int, err error) error {
 	delay := p.backoff(attempt)
 	if p.RetryAfter != nil {
@@ -287,8 +282,7 @@ func (p *retryProvider) Model(name string) (Model, error) {
 }
 
 // retrySpan records one failed attempt as a zero-duration span under the
-// generation span it belongs to, so a slow generation and a retried one are
-// tellable apart.
+// generation span it belongs to.
 func retrySpan(ctx context.Context, attempt, maxAttempts int, streaming bool, err error) {
 	sp, _ := tracing.StartSpanFrom(ctx, "model_retry", tracing.SpanTypeModelRetry, map[string]any{
 		"attempt": attempt, "max_attempts": maxAttempts, "streaming": streaming,

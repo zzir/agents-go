@@ -36,11 +36,8 @@ func (c FileToolConfig) effectiveTimeout() time.Duration {
 	return c.Timeout
 }
 
-// fileToolError renders a backend error for the model without leaking
-// host/remote absolute paths: only the operation, the path the model asked
-// for and the error kind survive. Raw backend errors routinely embed the
-// host-side working directory (a *fs.PathError, a daemon's message), which
-// the model has no business seeing.
+// fileToolError renders a backend error for the model without leaking host or
+// remote absolute paths: only the operation, the requested path and the kind survive.
 func fileToolError(op, reqPath string, err error) string {
 	var kind string
 	pathErr, isPathErr := errors.AsType[*fs.PathError](err)

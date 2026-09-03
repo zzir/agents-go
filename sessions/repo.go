@@ -51,9 +51,8 @@ func (r *Repo) Open(ctx context.Context, id string) (*session.Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Built from the row this call already read: looking the session up a
-	// second time is a second chance for the id to be deleted and recreated in
-	// between, which would pair this row with the replacement's storage.
+	// Built from the row this call already read: a second lookup could pair this
+	// row with a deleted-and-recreated session's storage.
 	return session.NewSession(forRef(r.db, session.Ref{ID: id, Gen: row.Gen})), nil
 }
 
@@ -88,10 +87,8 @@ func (r *Repo) List(ctx context.Context, opts session.ListOptions) ([]session.Me
 // leave orphans pointing at a session that is gone (spec §2.13).
 func (r *Repo) Delete(ctx context.Context, id string) error {
 	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		// Breadth-first over the task tree, following only LIVE edges
-		// (liveParent / liveChild, the fence every read applies): a stale row
-		// names a child id that may since belong to an unrelated session. The
-		// visited set makes a corrupt cycle terminate.
+		// Breadth-first over the task tree following only LIVE edges (liveParent /
+		// liveChild): a stale row may name a child now owned elsewhere. visited ends a cycle.
 		queue := []string{id}
 		visited := map[string]bool{id: true}
 		for len(queue) > 0 {
@@ -122,8 +119,7 @@ func (r *Repo) Delete(ctx context.Context, id string) error {
 // deleteSessionRows removes one session's row, entries and task rows.
 func deleteSessionRows(ctx context.Context, tx bun.Tx, id string) error {
 	// The session ROW goes first: an append proves its destination exists by
-	// updating it (Session.touchIn), so once it is gone every concurrent
-	// append fails instead of leaving orphaned entries (spec §2.5e2).
+	// updating it (touchIn), so concurrent appends fail rather than orphan (spec §2.5e2).
 	if _, err := tx.NewDelete().Model((*sessionRow)(nil)).
 		Where("id = ?", id).Exec(ctx); err != nil {
 		return err

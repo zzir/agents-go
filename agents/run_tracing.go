@@ -6,9 +6,8 @@ import (
 	"github.com/zzir/agents-go/tracing"
 )
 
-// setGenerationUsage records a single model call's token counts on its
-// generation span, so trace consumers see per-call input/output/total tokens
-// (rc.Usage holds the run-wide accumulation separately).
+// setGenerationUsage records one model call's token counts on its generation span;
+// rc.Usage holds the run-wide accumulation separately.
 func setGenerationUsage(span *tracing.SpanHandle, u *Usage) {
 	if u == nil {
 		return
@@ -18,9 +17,8 @@ func setGenerationUsage(span *tracing.SpanHandle, u *Usage) {
 	span.Set("total_tokens", u.TotalTokens)
 }
 
-// traceIncludeSensitiveData resolves RunOptions.Observe.IncludeSensitiveData;
-// nil means include (the default). The SDK reads no environment variable — the
-// caller decides. See spec §2.14.
+// traceIncludeSensitiveData resolves RunOptions.Observe.IncludeSensitiveData; nil
+// means include, and no environment variable overrides it — see spec §2.14.
 func (r *runner) traceIncludeSensitiveData() bool {
 	if r.opts.Observe.IncludeSensitiveData != nil {
 		return *r.opts.Observe.IncludeSensitiveData
@@ -45,9 +43,8 @@ func traceTools(tools []*Tool) []map[string]any {
 	return out
 }
 
-// traceHandoffs projects the request's handoffs into a serializable form.
-// Description and input schema are recorded alongside the names: they are part
-// of the tool surface the model saw.
+// traceHandoffs projects the request's handoffs into a serializable form: the names
+// plus the description and input schema the model saw.
 func traceHandoffs(handoffs []Handoff) []map[string]any {
 	out := make([]map[string]any, 0, len(handoffs))
 	for _, h := range handoffs {
@@ -66,12 +63,8 @@ func traceHandoffs(handoffs []Handoff) []map[string]any {
 	return out
 }
 
-// startGenerationSpan opens the span for one model call and, unless
-// sensitive-data tracing is off, records the full request body: model name,
-// system instructions, input items, tool definitions, model settings (the
-// Extra* passthrough fields are excluded by their json tags), handoffs, and
-// output schema. Slices are cloned or projected because exporters serialize
-// asynchronously, after the runner may have modified the originals.
+// startGenerationSpan opens one model call's span, recording the request body unless
+// sensitive-data tracing is off; slices are cloned, as exporters serialize later.
 func (r *runner) startGenerationSpan(agent *Agent, req ModelRequest) *tracing.SpanHandle {
 	span := r.trace.StartGenerationSpan(agent.Name, r.agentParentID())
 	if span.Span == nil || !r.traceIncludeSensitiveData() {
@@ -112,9 +105,8 @@ func (r *runner) startGenerationSpan(agent *Agent, req ModelRequest) *tracing.Sp
 	return span
 }
 
-// finishGenerationSpan records the model call's outcome — response id, usage,
-// and (unless sensitive-data tracing is off) the output items — and ends the
-// span.
+// finishGenerationSpan records the call's response id, usage and (unless
+// sensitive-data tracing is off) output items, then ends the span.
 func (r *runner) finishGenerationSpan(span *tracing.SpanHandle, resp *ModelResponse) {
 	span.Set("response_id", resp.ResponseID)
 	setGenerationUsage(span, resp.Usage)

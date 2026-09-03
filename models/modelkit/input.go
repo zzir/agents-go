@@ -16,9 +16,8 @@ import (
 //   - "function_call_output": CallID and Output (a string result is normalized
 //     to a single input_text part, so adapters handle one shape).
 //   - "reasoning": ID, SummaryTexts, ContentTexts, EncryptedContent.
-//   - anything else: only Raw. The walker does not judge unknown types — the
-//     adapter decides whether to reject, skip or pass them through, because
-//     what is "unknown" differs per backend.
+//   - anything else: only Raw; the adapter decides whether to reject, skip or
+//     pass it through.
 //
 // Raw always holds the item's wire JSON.
 type Item struct {
@@ -91,14 +90,9 @@ type partProbe struct {
 	Filename string `json:"filename"`
 }
 
-// ParseInput walks canonical input items into their neutral form.
-//
-// It works on the wire JSON rather than the typed union: the union's variants
-// (easy message vs input message vs output message, string content vs part
-// lists, raw pass-through items) are Responses encoding details every adapter
-// would otherwise re-learn, and JSON is the one representation all of them —
-// including items restored from a session by an older or newer build — are
-// guaranteed to have.
+// ParseInput walks canonical input items into their neutral form. It works on
+// the wire JSON rather than the typed union — the one representation every
+// item, including one restored from a session by another build, is sure to have.
 func ParseInput(items []agents.InputItem) ([]Item, error) {
 	out := make([]Item, 0, len(items))
 	for i := range items {
@@ -166,9 +160,8 @@ func parseItem(raw json.RawMessage) (Item, error) {
 	return item, nil
 }
 
-// parseParts decodes message/tool-result content, which the Responses format
-// allows as either a bare string or an array of typed parts. A string is
-// normalized to a single input_text part.
+// parseParts decodes content the Responses format allows as a bare string or a
+// part list; a string is normalized to a single input_text part.
 func parseParts(raw json.RawMessage) ([]Part, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil, nil

@@ -11,14 +11,8 @@ import (
 	"net/http"
 )
 
-// The Connect protocol, by hand. Connect's JSON codec is what makes this
-// possible without protobuf: a unary call is an ordinary JSON POST, and a
-// server stream is the same JSON in a five-byte envelope. Generated stubs
-// would buy type safety over a schema this package pins to six messages
-// anyway, at the cost of a protobuf toolchain in the build — see
-// decisions §5.34.
-//
-// Wire shape (connectrpc.com/connect, protocol v1):
+// The Connect protocol by hand (decisions §5.34): a unary call is a JSON POST,
+// a server stream the same JSON in five-byte envelopes. Wire shape (protocol v1):
 //
 //	unary   POST /<package>.<Service>/<Method>   Content-Type: application/json
 //	stream  POST /<package>.<Service>/<Method>   Content-Type: application/connect+json
@@ -29,9 +23,8 @@ const (
 	connectVersion       = "1"
 	// endStreamFlag marks the trailer frame that closes a server stream.
 	endStreamFlag = 0x02
-	// maxFrameBytes bounds one envelope. envd's frames are single events;
-	// anything larger is a malformed or hostile response, and reading it
-	// would be an unbounded allocation driven by five header bytes.
+	// maxFrameBytes bounds one envelope: envd's frames are single events, and a
+	// larger one would be an unbounded allocation driven by five header bytes.
 	maxFrameBytes = 16 << 20
 )
 
@@ -98,9 +91,8 @@ func (s *Sandbox) unaryAt(ctx context.Context, base, procedure string, in, out a
 	return nil
 }
 
-// stream opens a server-streaming call and hands each message payload to fn.
-// It returns when the stream ends; a trailer carrying an error returns it, so
-// a caller cannot mistake a failed stream for an empty one.
+// stream opens a server-streaming call and hands each payload to fn, returning
+// when the stream ends; a trailer carrying an error returns it.
 func (s *Sandbox) stream(ctx context.Context, procedure string, in any, fn func(raw json.RawMessage) error) error {
 	body, err := json.Marshal(in)
 	if err != nil {
@@ -130,9 +122,8 @@ func (s *Sandbox) stream(ctx context.Context, procedure string, in any, fn func(
 		flag, payload, err := readFrame(resp.Body)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				// A stream that ends without its trailer is a truncated
-				// response, not a clean end: say so rather than reporting
-				// whatever was collected as complete.
+				// A stream that ends without its trailer is a truncated response, not a
+				// clean end.
 				return fmt.Errorf("e2b: %s: stream ended without a trailer", procedure)
 			}
 			return fmt.Errorf("e2b: %s: %w", procedure, err)

@@ -1,12 +1,9 @@
 // Package sandboxtest is the conformance suite every sandbox.Sandbox
 // implementation must pass — the shared definition of what a backend means,
-// exercised against the real thing rather than restated per backend.
-//
-// It is exported (not internal) because the backends live in their own
-// packages and modules; the same reasoning as models/modelkit/conformancetest.
-// A backend's own test calls Run with a factory and lets the suite decide what
-// to exercise: the optional capabilities are detected by type assertion, so a
-// backend that implements none still passes the core.
+// exercised against the real thing. It is exported because the backends live
+// in their own packages and modules (as models/modelkit/conformancetest). A
+// backend's test calls Run with a factory; optional capabilities are detected
+// by type assertion, so a backend implementing none still passes the core.
 package sandboxtest
 
 import (
@@ -292,9 +289,8 @@ func testExport(t *testing.T, open Backend) {
 	}
 }
 
-// readUntil reads from term until want appears or the reads stop producing it.
-// It is bounded by the test's own deadline: a terminal that never answers ends
-// as a test timeout, which names the hang better than an invented error would.
+// readUntil reads from term until want appears or the reads stop producing it,
+// bounded by the test's own deadline: a hang ends as a test timeout, which names it.
 func readUntil(t *testing.T, r io.Reader, want string) bool {
 	t.Helper()
 	var acc []byte

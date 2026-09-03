@@ -15,9 +15,7 @@ import (
 )
 
 // functionToolResult bundles a tool's output item with the tool and raw value.
-// When an agent-as-tool's nested run paused for approval, outputItem is nil and
-// the nested fields carry the surfaced interruptions and the paused nested
-// state (keyed by this call's id) so the parent run can pause and later resume.
+// A paused nested run has a nil outputItem and the nested fields set.
 type functionToolResult struct {
 	tool                *Tool
 	outputItem          *RunItem
@@ -35,21 +33,16 @@ type functionToolResult struct {
 	addedTools []string
 }
 
-// toolPanicError is what a panic recovered from user tool code is converted
-// into. Error() is deliberately a single line — a FailureErrorFunction feeds it
-// back to the model like any other tool error — while the captured stack is
-// appended only on the fatal path (see fatalError). invokeTool builds it for
-// the tool body, toolHandleFailure for the failure handler, and the errgroup
-// goroutine as a last resort for anything else on it.
+// toolPanicError is a panic recovered from user tool code. Error() is one line
+// (fed back to the model); the stack is appended only on the fatal path.
 type toolPanicError struct {
 	toolName string
 	value    any
 	stack    []byte
 }
 
-// newToolPanicError captures the recovered panic value and the stack at the
-// recover point. Call it directly inside the recovering defer so the stack
-// still shows the panic's origin frames.
+// newToolPanicError captures the panic value and stack; call it inside the
+// recovering defer so the stack still shows the origin frames.
 func newToolPanicError(toolName string, p any) *toolPanicError {
 	return &toolPanicError{toolName: toolName, value: p, stack: debug.Stack()}
 }
@@ -59,8 +52,7 @@ func (e *toolPanicError) Error() string {
 }
 
 // fatalError formats the panic for the run-aborting path, appending the stack
-// captured at recover time and classifying it as CodeToolPanic. The panic
-// itself stays in the chain, so errors.As still reaches *toolPanicError.
+// and classifying it as CodeToolPanic; errors.As still reaches *toolPanicError.
 func (e *toolPanicError) fatalError() error {
 	return &codedError{
 		code:  CodeToolPanic,
@@ -76,10 +68,8 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 		return nil, nil
 	}
 	results := make([]functionToolResult, len(runs))
-	// fatalErrs records each call's aborting error by call index. errgroup still
-	// cancels the siblings on the first failure, but the error surfaced to the
-	// run is chosen deterministically — the lowest call index — rather than
-	// whichever goroutine happened to finish first.
+	// fatalErrs records each call's aborting error by index, so the error
+	// surfaced is the lowest index, not whichever goroutine finished first.
 	fatalErrs := make([]error, len(runs))
 	g, gctx := errgroup.WithContext(ctx)
 	if limit := r.toolConcurrency(runs); limit > 0 {
@@ -88,9 +78,8 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 	for i, run := range runs {
 		g.Go(func() (err error) {
 			defer func() {
-				// errgroup does not recover panics. The tool body's own panic
-				// is already an error by now (invokeTool); anything else that
-				// panics on this goroutine aborts the run.
+				// errgroup does not recover panics: the tool body's own is already
+				// an error (invokeTool); anything else here aborts the run.
 				if p := recover(); p != nil {
 					err = newToolPanicError(run.Call.Name, p).fatalError()
 				}
@@ -103,10 +92,8 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 		})
 	}
 	if werr := g.Wait(); werr != nil {
-		// Surface the first cause, not the first casualty: pick the lowest-index
-		// error, but skip a context.Canceled that is only errgroup cancelling a
-		// sibling after another tool's failure. Cancellation wins only when it is
-		// all there is (the consumer abandoned the run mid-batch).
+		// The first cause, not the first casualty: skip a context.Canceled that
+		// is only errgroup cancelling a sibling, unless it is all there is.
 		var cancelled error
 		for _, fe := range fatalErrs {
 			if fe == nil {
@@ -125,10 +112,8 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 	return results, nil
 }
 
-// runOneTool executes one function tool call end to end: the input guardrails,
-// the invocation under its span, and the one tail every outcome shares — a
-// handled failure (a returned error, a panic, a timeout) is an IsError output
-// that passes the output guardrails and counts toward spec §2.7d like any other.
+// runOneTool executes one call end to end: input guardrails, the invocation
+// under its span, and the shared tail — a handled failure is an IsError output.
 func (r *runner) runOneTool(ctx context.Context, agent *Agent, run toolRunFunction) (res functionToolResult, err error) {
 	tc := &ToolContext{
 		RunContext:    r.rc,
@@ -166,9 +151,8 @@ func (r *runner) runOneTool(ctx context.Context, agent *Agent, run toolRunFuncti
 		tlog.Debug(ctx, "tool finished", slog.Duration("elapsed", time.Since(started)))
 	}()
 
-	// Tool input guardrails run BEFORE the tool executes: a reject_content
-	// guardrail resolves the call with a substituted output and the tool
-	// itself never runs.
+	// Tool input guardrails run BEFORE the tool: a Replace resolves the call
+	// with a substituted output and the tool never runs.
 	if rejected, msg, err := r.runToolStage(ctx, agent, StageToolInput, run, nil); err != nil {
 		return functionToolResult{}, err
 	} else if rejected {
@@ -197,9 +181,8 @@ func (r *runner) runOneTool(ctx context.Context, agent *Agent, run toolRunFuncti
 	result, err := invokeTool(tracing.WithSpan(ctx, span), run.Tool, tc, run.Call.Arguments)
 	out := result.ModelOutput()
 	if err != nil {
-		// An agent-as-tool whose nested run paused for approval is not a
-		// failure: record the surfaced interruptions and the paused nested
-		// state (no output item) so the parent run pauses too.
+		// A nested run paused for approval is not a failure: record the
+		// interruptions and paused state (no output item) so the parent pauses.
 		if ni, ok := errors.AsType[*nestedRunInterrupt](err); ok {
 			return functionToolResult{
 				tool:                run.Tool,
@@ -288,15 +271,11 @@ func (r *runner) runOneTool(ctx context.Context, agent *Agent, run toolRunFuncti
 const DefaultRejectionMessage = "Tool execution was not approved."
 
 // redactedToolErrorMessage replaces a tool error's text on its function span
-// when sensitive-data tracing is off — error strings routinely embed the call
-// arguments.
+// when sensitive-data tracing is off (error strings embed the arguments).
 const redactedToolErrorMessage = "Tool execution failed. Error details are redacted."
 
-// partitionByApproval splits function tool calls into those ready to run, those
-// awaiting human approval (interruptions), and rejected calls. It consults the
-// run context's ApprovalStore. Rejected calls come back as functionToolResults
-// (output = rejection message) so they keep their place in call order and take
-// part in the turn's tool results.
+// partitionByApproval splits calls into ready, awaiting approval, and rejected
+// (already resolved to results so they keep their call order) — spec §2.7.
 func (r *runner) partitionByApproval(ctx context.Context, agent *Agent, runs []toolRunFunction) (toRun []toolRunFunction, interruptions []*ToolApprovalItem, rejected []functionToolResult, err error) {
 	rejectResult := func(run toolRunFunction, msg string) functionToolResult {
 		return functionToolResult{
@@ -308,9 +287,8 @@ func (r *runner) partitionByApproval(ctx context.Context, agent *Agent, runs []t
 	}
 	store := r.rc.Approvals
 	for _, run := range runs {
-		// An explicit approve/reject decision (typically on resume) wins before
-		// anything else: honoring it here skips re-invoking NeedsApprovalFunc, whose
-		// side effects or errors must not re-fire for a resolved call.
+		// A recorded decision wins before anything else, so NeedsApprovalFunc's
+		// side effects or errors never re-fire for a resolved call.
 		if store != nil {
 			if decision, decided := store.decisionFor(run.Call.Name, run.Call.CallID); decided {
 				if !decision.approved {
@@ -334,9 +312,8 @@ func (r *runner) partitionByApproval(ctx context.Context, agent *Agent, runs []t
 			toRun = append(toRun, run)
 			continue
 		}
-		// Pre-approval tool input guardrails (opt-in): run them before surfacing
-		// the interruption, so a rejection resolves the call without a human
-		// round-trip. Passing calls re-run them after approval too.
+		// Pre-approval input guardrails (opt-in): a rejection resolves the call
+		// without a human round-trip; passing calls re-run them after approval.
 		if r.opts.Exec.PreApprovalToolInputGuardrails {
 			preRejected, msg, gerr := r.runToolStage(ctx, agent, StageToolInput, run, nil)
 			if gerr != nil {
@@ -367,9 +344,8 @@ func agentApprovesToolName(agent *Agent, toolName string) bool {
 	return false
 }
 
-// toolGuardrails is the guardrail set consulted for one tool call: run-level
-// and agent-level guardrails first (their tool stages cover every tool), then
-// the tool's own.
+// toolGuardrails is the set consulted for one tool call: run-level and
+// agent-level guardrails first, then the tool's own.
 func (r *runner) toolGuardrails(agent *Agent, tool *Tool) []Guardrail {
 	runLevel := r.runGuardrails(agent)
 	if len(runLevel) == 0 {
@@ -382,14 +358,8 @@ func (r *runner) toolGuardrails(agent *Agent, tool *Tool) []Guardrail {
 	return out
 }
 
-// runToolStage runs the guardrails covering stage for one tool call. It returns
-// (replaced, replacementMessage, error): replaced means the call's result is
-// the message — at StageToolInput the tool is skipped, at StageToolOutput its
-// result is substituted. An error halts the run.
-//
-// Guardrails run in order and stop at the first Replace. Every consulted
-// guardrail's result is recorded, allowing decisions included, so callers can
-// read each one's OutputInfo.
+// runToolStage runs the guardrails covering stage for one call; replaced means
+// the call's result is the message (input: tool skipped; output: substituted).
 func (r *runner) runToolStage(ctx context.Context, agent *Agent, stage GuardrailStage, run toolRunFunction, output any) (bool, string, error) {
 	results, msg, replaced, err := runStageSequential(ctx, r.rc, r.toolGuardrails(agent, run.Tool), GuardrailPayload{
 		Stage:      stage,
@@ -406,16 +376,8 @@ func (r *runner) runToolStage(ctx context.Context, agent *Agent, stage Guardrail
 	return replaced, msg, nil
 }
 
-// invokeTool runs a tool's OnInvoke, enforcing Tool.Timeout when set. A panic
-// in OnInvoke is returned as a *toolPanicError either way.
-//
-// With a timeout, OnInvoke runs in its own goroutine so the deadline holds
-// even for tools that never check their context: when the deadline fires,
-// invokeTool returns a *ToolTimeoutError immediately, while the tool goroutine
-// keeps running in the background until OnInvoke returns on its own. Its late
-// result (or panic) is delivered to a buffered channel private to this call
-// and discarded — it never touches shared state. Cancellation of the caller's
-// ctx is reported as ctx.Err(), never as a timeout.
+// invokeTool runs OnInvoke, enforcing Tool.Timeout in a goroutine so the
+// deadline holds for tools that ignore ctx; a panic becomes *toolPanicError.
 func invokeTool(ctx context.Context, tool *Tool, tc *ToolContext, argsJSON string) (out ToolResult, err error) {
 	if tool.OnInvoke == nil {
 		return ToolResult{}, NewUserError("tool %q has no OnInvoke", tool.Name)
@@ -457,9 +419,8 @@ func invokeTool(ctx context.Context, tool *Tool, tc *ToolContext, argsJSON strin
 	}
 	select {
 	case res := <-ch:
-		// A cooperative tool that returned because our deadline canceled tctx
-		// reports the same timeout as the deadline branch below. An unrelated
-		// error that merely lands near the deadline passes through unchanged.
+		// A cooperative tool that returned on our deadline reports the same
+		// timeout as the deadline branch; an unrelated error passes through.
 		if res.err != nil && errors.Is(res.err, context.DeadlineExceeded) &&
 			tctx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
 			return ToolResult{}, timeoutErr()
@@ -474,10 +435,8 @@ func invokeTool(ctx context.Context, tool *Tool, tc *ToolContext, argsJSON strin
 	}
 }
 
-// toolHandleFailure invokes the tool's failure handler. The handler is user code
-// and gets the same panic protection the tool body has — one call site is the
-// recovery defer itself — so a panicking handler is reported as the fatal error
-// it is, never re-thrown.
+// toolHandleFailure invokes the failure handler with the tool body's panic
+// protection, so a panicking handler is the fatal error it is (decisions §5.46).
 func toolHandleFailure(ctx context.Context, tool *Tool, tc *ToolContext, cause error) (msg string, fatal error) {
 	defer func() {
 		if p := recover(); p != nil {

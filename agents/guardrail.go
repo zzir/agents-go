@@ -98,11 +98,7 @@ type GuardrailPayload struct {
 }
 
 // Guardrail inspects a run at one or more stages and decides whether to allow,
-// substitute, or halt.
-//
-// A single guardrail can cover several stages — a content scanner that should
-// see the input, the tool arguments and the final output is one value with
-// three stages, not three separate guardrails:
+// substitute, or halt (spec §2.6). One value can cover several stages:
 //
 //	scanner := agents.Guardrail{
 //	    Name:   "pii",
@@ -112,23 +108,19 @@ type GuardrailPayload struct {
 //	    },
 //	}
 //
-// For single-stage guardrails the typed constructors ([NewInputGuardrail] and
-// friends) are shorter and keep the payload access type-safe.
-//
-// Placement decides scope: guardrails on an [Agent] or in [RunOptions] apply to
-// that run — including the tool stages, which then cover every tool the agent
-// exposes. Guardrails on a [Tool] apply to that tool only, and only
-// their tool stages are consulted.
+// For a single stage the typed constructors ([NewInputGuardrail] and friends)
+// are shorter. Placement decides scope: guardrails on an [Agent] or in
+// [RunOptions] apply to the run, tool stages included; those on a [Tool] to
+// that tool only.
 type Guardrail struct {
 	// Name identifies the guardrail in results and errors.
 	Name string
 	// Stages lists where this guardrail is consulted. A guardrail with no
 	// stages is never run.
 	Stages []GuardrailStage
-	// Blocking, when true, makes a StageInput guardrail run to completion
-	// before the first model call — a gate, so a tripwire prevents any token
-	// spend. The zero value runs it concurrently with the model call, which
-	// cancels that call on a tripwire. It has no effect at other stages.
+	// Blocking makes a StageInput guardrail run to completion before the first
+	// model call — a gate. The zero value races the call and cancels it on a
+	// tripwire. No effect at other stages.
 	Blocking bool
 	// Run inspects the payload and returns a decision.
 	Run func(ctx context.Context, rc *RunContext, p GuardrailPayload) (GuardrailDecision, error)
@@ -139,9 +131,8 @@ func (g Guardrail) Covers(stage GuardrailStage) bool {
 	return slices.Contains(g.Stages, stage)
 }
 
-// resolvedName returns the guardrail's Name, falling back to a stable label
-// when it is unset. Go has no function-name reflection, so the fallback cannot
-// name the callback.
+// resolvedName returns Name, or a stable label when unset (Go has no
+// function-name reflection to name the callback).
 func (g Guardrail) resolvedName() string {
 	if g.Name != "" {
 		return g.Name
@@ -250,8 +241,7 @@ func selectStage(guardrails []Guardrail, stage GuardrailStage) []Guardrail {
 }
 
 // guardrailPanicError converts a panic recovered from a user callback into an
-// error carrying a truncated stack trace, so a buggy guardrail fails the run
-// instead of crashing the process.
+// error carrying a truncated stack, so a buggy guardrail fails the run only.
 func guardrailPanicError(stage GuardrailStage, name string, recovered any) error {
 	stack := debug.Stack()
 	const maxStack = 4096
@@ -271,15 +261,8 @@ func runOne(ctx context.Context, rc *RunContext, g Guardrail, p GuardrailPayload
 	return g.Run(ctx, rc, p)
 }
 
-// runStageConcurrent runs every guardrail covering stage concurrently against
-// the same payload, failing fast on the first tripwire or error; the context
-// passed to still-running guardrails is canceled on any early return so they
-// can stop promptly. A guardrail panic is reported as that guardrail's error.
-// When all pass it returns every result in completion order.
-//
-// Replace decisions are returned to the caller in the results; it is the
-// caller's job to apply the substitution, because what "replace" means differs
-// per stage.
+// runStageConcurrent runs every guardrail covering stage concurrently, failing
+// fast on the first tripwire or error (spec §2.6); Replace is the caller's to apply.
 func runStageConcurrent(ctx context.Context, rc *RunContext, guardrails []Guardrail, p GuardrailPayload) ([]GuardrailResult, error) {
 	sel := selectStage(guardrails, p.Stage)
 	if len(sel) == 0 {
@@ -316,9 +299,7 @@ func runStageConcurrent(ctx context.Context, rc *RunContext, guardrails []Guardr
 }
 
 // inputReplacement reports the substituted run input when a StageInput
-// guardrail returned Replace. The message becomes a single user message, which
-// is the whole input for the turn — finer rewriting belongs in a model-input
-// filter, not a guardrail.
+// guardrail returned Replace: the message becomes the whole input (spec §2.6).
 func inputReplacement(results []GuardrailResult) ([]InputItem, bool) {
 	for _, r := range results {
 		if r.Decision.Action == GuardrailReplace {
@@ -328,9 +309,8 @@ func inputReplacement(results []GuardrailResult) ([]InputItem, bool) {
 	return nil, false
 }
 
-// checkedValue is the inspected value recorded on a result: the input at
-// StageInput, the output value at the output stages, nil at StageToolInput
-// (where Arguments carries it).
+// checkedValue is the inspected value recorded on a result; nil at
+// StageToolInput, where Arguments carries it.
 func checkedValue(p GuardrailPayload) any {
 	switch p.Stage {
 	case StageInput:
@@ -357,12 +337,7 @@ func newGuardrailResult(g Guardrail, p GuardrailPayload, d GuardrailDecision) Gu
 }
 
 // runStageSequential runs every guardrail covering stage in order, stopping at
-// the first Replace or Trip. Tool stages run sequentially because a Replace
-// short-circuits the rest: once one guardrail has substituted the content,
-// running the others against the original would be meaningless.
-//
-// It returns the results produced so far, the replacement message when one
-// guardrail replaced, and whether a replacement happened.
+// the first Replace or Trip (spec §2.6); it returns the results so far.
 func runStageSequential(ctx context.Context, rc *RunContext, guardrails []Guardrail, p GuardrailPayload) (results []GuardrailResult, replacement string, replaced bool, err error) {
 	for _, g := range selectStage(guardrails, p.Stage) {
 		d, rerr := runOne(ctx, rc, g, p)

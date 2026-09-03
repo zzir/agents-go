@@ -12,13 +12,11 @@ import (
 	"time"
 )
 
-// The control plane: the six calls a sandbox's life needs. Everything else
-// the API offers — templates, metrics, logs, forks, volumes — is deliberately
-// absent (decisions §5.34).
+// The control plane: the six calls a sandbox's life needs; everything else the
+// API offers is deliberately absent (decisions §5.34).
 
-// sandboxInfo is the service's view of one sandbox. Only the fields this
-// package acts on are decoded; the rest of the response is ignored, so a
-// service that returns more (or fewer) optional fields still works.
+// sandboxInfo is the service's view of one sandbox; only the fields this
+// package acts on are decoded, so extra or missing optional fields still work.
 type sandboxInfo struct {
 	SandboxID string `json:"sandboxID"`
 	// Alternate spelling: not every compatible service emits E2B's exact
@@ -37,9 +35,8 @@ func (i sandboxInfo) id() string {
 	return i.SandboxIDAlt
 }
 
-// paused reports the one state that needs a resume before use. An unknown or
-// absent state reads as NOT paused: a needless resume is cheap, and treating
-// "running" as paused would restart working sandboxes.
+// paused reports the one state that needs a resume; unknown or absent reads
+// as NOT paused, since a needless resume is cheap and a false one restarts.
 func (i sandboxInfo) paused() bool {
 	return strings.EqualFold(i.State, "paused")
 }
@@ -50,17 +47,11 @@ func (s *Sandbox) ensure(ctx context.Context) (string, error) {
 	return s.ensureFor(ctx, 0)
 }
 
-// ensureFor is ensure with a minimum lease runway: an operation bounded by
-// runway (a tar export, a long exec) gets a lease that outlasts it. There is
-// no keepalive, so an open-ended session can at best start from a full lease.
-//
-// Provisioning is serialized on provMu, so two concurrent commands cannot
-// create two sandboxes for one client; s.mu is never held across a round trip
-// or the OnSandboxID callback, so the callback may look at the sandbox.
+// ensureFor is ensure with a minimum lease runway (there is no keepalive).
+// Provisioning serializes on provMu; s.mu is never held across a round trip.
 func (s *Sandbox) ensureFor(ctx context.Context, runway time.Duration) (string, error) {
-	// Fast path: a bound sandbox with a lease that is not near expiry needs no
-	// control-plane call. If the sandbox died under us the data-plane call
-	// fails once and the next ensure rebuilds.
+	// Fast path: a bound sandbox with lease runway needs no control-plane call;
+	// if it died under us the data-plane call fails once and the next ensure rebuilds.
 	if id, ok := s.leased(runway); ok {
 		return id, nil
 	}
@@ -109,17 +100,15 @@ func (s *Sandbox) ensureFor(ctx context.Context, runway time.Duration) (string, 
 	if id == "" {
 		return "", fmt.Errorf("e2b: the create returned no sandbox id")
 	}
-	// Bound before recorded, with the lease still unset: a concurrent command
-	// waits on provMu rather than running on a sandbox the record may yet
-	// reject, while the callback itself can inspect it (Status).
+	// Bound before recorded, lease still unset: a concurrent command waits on
+	// provMu rather than run on a sandbox the record may reject; Status can inspect it.
 	s.mu.Lock()
 	s.id = id
 	s.freshWorkDir = true
 	s.mu.Unlock()
 	s.adopt(info)
-	// A sandbox this client cannot hand back to its owner is billed compute
-	// nobody will ever stop: a failed record kills it rather than leaking it.
-	// The kill is bounded — a hung control plane must not wedge provMu forever.
+	// A sandbox nobody can hand back is billed compute nobody will stop: a failed
+	// record kills it, bounded so a hung control plane cannot wedge provMu.
 	if s.opts.OnSandboxID != nil {
 		if rerr := s.opts.OnSandboxID(ctx, id); rerr != nil {
 			kctx, kcancel := context.WithTimeout(context.WithoutCancel(ctx), controlCallTimeout)
@@ -168,19 +157,15 @@ func (s *Sandbox) create(ctx context.Context, runway time.Duration) (sandboxInfo
 	body := map[string]any{
 		"templateID": s.opts.TemplateID,
 		"timeout":    s.leaseSeconds(runway),
-		// ALWAYS secure. Without it E2B's daemon takes no credential at all:
-		// anyone who learns the sandbox id — which is in the public hostname
-		// of every port a sandbox serves — can read its files and run
-		// commands in it. Verified: a non-secure sandbox answers an
-		// unauthenticated request 200, a secure one 401 (decisions §5.34).
+		// ALWAYS secure: without it envd takes no credential at all, and the sandbox
+		// id is in every public hostname (decisions §5.34).
 		"secure": true,
 	}
 	if s.opts.AutoPause {
 		body["autoPause"] = true
 	}
-	// Internet is OFF by default, matching the docker backend and the sandbox
-	// package's isolation contract — so the field is sent either way, never
-	// left to the service's own default (which is internet ON) — decisions §5.37.
+	// Internet is OFF by default, sent explicitly either way — the service's own
+	// default is ON (decisions §5.37).
 	body["allow_internet_access"] = s.opts.AllowInternet
 	if len(s.opts.Metadata) > 0 {
 		body["metadata"] = s.opts.Metadata
@@ -200,9 +185,8 @@ func (s *Sandbox) get(ctx context.Context, id string) (sandboxInfo, error) {
 	return out, err
 }
 
-// resume wakes a paused sandbox and extends its lease. `connect` rather than
-// the deprecated `resume`: it is the endpoint both E2B and the compatible
-// services document, and it does the resume when one is needed.
+// resume wakes a paused sandbox and extends its lease via `connect`, the
+// endpoint both E2B and the compatible services document (not deprecated `resume`).
 func (s *Sandbox) resume(ctx context.Context, id string, runway time.Duration) (sandboxInfo, error) {
 	var out sandboxInfo
 	err := s.control(ctx, http.MethodPost, "/sandboxes/"+id+"/connect", map[string]any{"timeout": s.leaseSeconds(runway)}, &out)
@@ -269,9 +253,8 @@ func (s *Sandbox) control(ctx context.Context, method, path string, in, out any)
 	return nil
 }
 
-// httpError is a non-2xx control-plane response, carrying the status so a
-// caller can branch on it (a pause of an already-paused sandbox is a 409)
-// rather than sniffing the message text.
+// httpError is a non-2xx control-plane response carrying the status, so a
+// caller branches on it (an already-paused pause is a 409) rather than the text.
 type httpError struct {
 	Status  int
 	Message string

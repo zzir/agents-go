@@ -17,11 +17,8 @@ var _ sandbox.TerminalOpener = (*Sandbox)(nil)
 // after output EOF; Docker has no exec-wait API.
 const terminalWaitPoll = 2 * time.Second
 
-// terminalOpTimeout bounds one daemon call made by a Terminal method (and by
-// Sandbox.Close, which shares the constraint). The interface takes no context
-// — these are keystroke-scale operations — so the bound is self-imposed: a
-// daemon that stops answering must not turn a resize or a close into a
-// goroutine parked forever.
+// terminalOpTimeout bounds one daemon call by a Terminal method (and Close):
+// the interface takes no context, so a dead daemon must not park a goroutine.
 const terminalOpTimeout = 10 * time.Second
 
 // OpenTerminal implements sandbox.TerminalOpener. Persistent mode only: an
@@ -38,15 +35,13 @@ func (s *Sandbox) OpenTerminal(ctx context.Context, opts sandbox.TerminalOptions
 	if err != nil {
 		return nil, err
 	}
-	// Tag the shell with a marker (as execPersistent does) so Close can kill
-	// the whole process tree inside the container: dropping the attach
-	// connection alone leaves e.g. a running `top` alive.
+	// Tag the shell with a marker (as execPersistent does) so Close can kill the
+	// whole process tree; dropping the attach alone leaves e.g. `top` alive.
 	marker := newExecMarker()
 	shell := opts.Shell
 	if len(shell) == 0 {
-		// Prefer bash when the image ships it — tab completion, history and
-		// line editing out of the box — and fall back to POSIX sh. `command -v`
-		// works in dash and busybox ash alike.
+		// Prefer bash when the image ships it, else POSIX sh; `command -v` works in
+		// dash and busybox ash alike.
 		shell = []string{"sh", "-c", "command -v bash >/dev/null 2>&1 && exec bash -l || exec sh -l"}
 	}
 	size := client.ConsoleSize{Height: uint(opts.EffectiveRows()), Width: uint(opts.EffectiveCols())}
@@ -78,9 +73,8 @@ func (s *Sandbox) OpenTerminal(ctx context.Context, opts sandbox.TerminalOptions
 	}, nil
 }
 
-// terminal is an interactive TTY exec in the persistent container. With
-// TTY=true the hijacked stream is raw — no stdcopy multiplexing — so Reader
-// carries the merged output and Conn accepts stdin bytes directly.
+// terminal is an interactive TTY exec in the persistent container: with
+// TTY=true the hijacked stream is raw, so Reader is merged output and Conn is stdin.
 type terminal struct {
 	sb          *Sandbox
 	containerID string

@@ -7,12 +7,8 @@ import (
 )
 
 // Index is a session's entries organized into groups, plus the accounting a
-// strategy needs to decide what to drop.
-//
-// It is rebuilt incrementally: Update finds where it left off and groups only
-// what arrived since. A long conversation regroups its whole history on every
-// turn otherwise, which is wasted work that grows with the thing it is trying
-// to shrink.
+// strategy needs. It is rebuilt incrementally: Update groups only what arrived
+// since, so a long conversation does not regroup its history every turn.
 type Index struct {
 	Groups    []*Group
 	Estimator TokenEstimator
@@ -30,10 +26,9 @@ func NewIndex(entries []session.Entry, est TokenEstimator) *Index {
 	return idx
 }
 
-// Update folds newly-arrived entries into the index. When the entries it
-// already grouped are no longer a prefix of what it is given — a branch
-// switch, a compaction, a fork, another session — it rebuilds from scratch
-// rather than reconcile.
+// Update folds newly-arrived entries into the index. When the grouped entries
+// are no longer a prefix of what it is given (a branch switch, a fork, another
+// session) it rebuilds from scratch.
 func (idx *Index) Update(entries []session.Entry) {
 	start, ok := idx.prefixMatches(entries)
 	if !ok {
@@ -44,10 +39,8 @@ func (idx *Index) Update(entries []session.Entry) {
 	if start >= len(entries) {
 		return
 	}
-	// New entries mean a model call happened since the last pass, and its
-	// usage measured the context as it then stood — without the groups already
-	// excluded. Mark those exclusions settled so ContextTokens stops
-	// subtracting what the newest measurement never counted.
+	// New entries mean a model call happened since the last pass, measuring the
+	// context without the groups already excluded: mark those settled.
 	for _, g := range idx.Groups {
 		if g.Excluded {
 			g.settled = true
@@ -57,8 +50,7 @@ func (idx *Index) Update(entries []session.Entry) {
 }
 
 // prefixMatches reports whether entries still begins with exactly the entries
-// already grouped — whole entries, never ids alone (spec §2.5f) — and how many
-// of them that is.
+// already grouped — whole entries, never ids alone (spec §2.5f) — and how many.
 func (idx *Index) prefixMatches(entries []session.Entry) (n int, ok bool) {
 	for _, g := range idx.Groups {
 		for _, have := range g.Entries {
@@ -79,8 +71,7 @@ func (idx *Index) group(entries []session.Entry) {
 		kind, isCall, _, isReasoning := classify(e)
 
 		// Reasoning looks ahead: a reasoning block followed by a tool call led
-		// to that call, and separating them makes the replayed history
-		// incoherent.
+		// to that call, and separating them makes the replayed history incoherent.
 		if isReasoning {
 			if j := nextConversational(entries, i+1); j >= 0 {
 				if _, nextIsCall, _, _ := classify(entries[j]); nextIsCall {
@@ -106,8 +97,7 @@ func (idx *Index) group(entries []session.Entry) {
 }
 
 // appendToolCallGroup consumes a tool call and everything that belongs with it
-// — its outputs, sibling calls issued in the same turn, and any leading
-// reasoning — adds them as one group, and reports how many entries it took.
+// — outputs, sibling calls, leading reasoning — as one group, and reports how many entries it took.
 func (idx *Index) appendToolCallGroup(entries []session.Entry, start int) int {
 	end := idx.toolCallGroupEnd(entries, start)
 	idx.add(GroupToolCall, entries[start:start+end])
@@ -138,9 +128,8 @@ func (idx *Index) toolCallGroupEnd(entries []session.Entry, start int) int {
 			// A non-conversation entry between a call and its output does not
 			// break the pairing; keep going.
 		default:
-			// Anything else ends the group — but only once every call it
-			// opened has its output, or the group would straddle the pairing
-			// it exists to protect.
+			// Anything else ends the group — once every call it opened has its
+			// output, or the group would straddle the pairing it protects.
 			if sawCall && len(open) == 0 {
 				return i - start
 			}

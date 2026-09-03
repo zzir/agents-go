@@ -72,9 +72,8 @@ func (m *MessagesModel) buildParams(req agents.ModelRequest) (ant.MessageNewPara
 	return params, nil
 }
 
-// applySettings overlays the model settings, including the max_tokens /
-// thinking-budget coupling: max_tokens is mandatory on this API, and an
-// enabled thinking budget must stay strictly below it.
+// applySettings overlays the model settings; max_tokens is mandatory here and
+// an enabled thinking budget must stay strictly below it.
 func applySettings(params *ant.MessageNewParams, s *agents.ModelSettings) error {
 	maxTokens := DefaultMaxTokens
 	explicitMax := false
@@ -98,8 +97,7 @@ func applySettings(params *ant.MessageNewParams, s *agents.ModelSettings) error 
 			if !ok {
 				return agents.NewUserError("anthropic: unknown reasoning effort %q", s.Reasoning.Effort)
 			}
-			// The API's thinking incompatibilities, rejected here for the same
-			// reason max_tokens/budget is: a preflightable 400 should be a
+			// The API's thinking incompatibilities: a preflightable 400 should be a
 			// UserError naming the conflict, not a remote error naming a field.
 			if s.Temperature != nil || s.TopP != nil {
 				return agents.NewUserError(
@@ -131,8 +129,7 @@ func applySettings(params *ant.MessageNewParams, s *agents.ModelSettings) error 
 }
 
 // applyMetadata maps canonical metadata onto the Messages metadata object,
-// which has exactly one field. Any other key would be silently discarded by
-// the API even if sent, so it is rejected here instead.
+// which has one field; any other key is rejected rather than silently dropped.
 func applyMetadata(params *ant.MessageNewParams, metadata map[string]string) error {
 	for k, v := range metadata {
 		if k != "user_id" {

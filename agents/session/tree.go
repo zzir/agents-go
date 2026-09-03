@@ -23,12 +23,8 @@ func LeafOf(entries []Entry) string {
 }
 
 // PathToLeaf returns the entries from the root to the given leaf, oldest-first
-// — the single branch that leaf belongs to, with every abandoned sibling left
-// out.
-//
-// A compaction checkpoint does NOT end the walk: a folded entry is still on its
-// branch. What the model sees is a separate question, answered by ProjectEntries
-// applying the checkpoint's exclusions.
+// — the single branch that leaf belongs to, abandoned siblings left out. A
+// compaction checkpoint does not end the walk (spec §2.5d).
 func PathToLeaf(entries []Entry, leafID string) []Entry {
 	byID := make(map[string]Entry, len(entries))
 	for _, e := range entries {
@@ -43,10 +39,8 @@ func PathToLeaf(entries []Entry, leafID string) []Entry {
 	for id := leafID; id != ""; {
 		e, ok := byID[id]
 		if !ok || seen[id] {
-			// A missing parent ends the walk rather than failing: an ancestor
-			// may have been folded away by compaction. A repeat means the
-			// stored parent links form a cycle, which nothing should produce —
-			// stopping keeps a corrupt session readable instead of hanging.
+			// A missing parent (folded away) ends the walk; a repeat is a cycle
+			// nothing should produce — stop so a corrupt session reads short.
 			break
 		}
 		seen[id] = true
@@ -61,16 +55,9 @@ func PathToLeaf(entries []Entry, leafID string) []Entry {
 	return out
 }
 
-// ActiveBranchOf returns the entries a branch-scoped view should read: the walk
-// to the active leaf, extended over the LINKLESS PREFIX ahead of it.
-//
-// Entries written before branching existed carry no parent links, so each is
-// its own root and the walk reaches only the last one. Reading that linkless run
-// back in is what keeps the upgrade path from losing history. A linked entry
-// ahead of the walk's root belongs to another branch and stays out; and when
-// links exist but the walk comes back empty (a leaf move whose target is gone),
-// empty is the honest answer — falling back to append order would leak abandoned
-// attempts into the model's view.
+// ActiveBranchOf returns the entries a branch-scoped view reads: the walk to
+// the active leaf, extended over the linkless prefix ahead of its root. When
+// links exist and the walk is empty, empty is the answer — spec §2.5d.
 func ActiveBranchOf(entries []Entry) []Entry {
 	path := PathToLeaf(entries, LeafOf(entries))
 	if len(path) == 0 || path[0].ParentID != "" {
@@ -121,9 +108,8 @@ func (s *Session) Branch(ctx context.Context, entryID string) error {
 		return fmt.Errorf("session: branch: no entry %q in this session", entryID)
 	}
 	if target.Kind == EntryKindLeaf {
-		// A leaf move is a pointer, not a place: the walk excludes it from the
-		// tree, so a branch "to" one resolves the tip to an id that is not a
-		// node and the session reads as having no active branch.
+		// A leaf move is a pointer, not a node: the walk excludes it, so branching
+		// to one would leave the session with no active branch.
 		return fmt.Errorf("session: branch: entry %q is a branch move, not an entry to branch to", entryID)
 	}
 	leaf, err := NewLeafEntry(entryID)

@@ -7,10 +7,8 @@ import (
 	"time"
 )
 
-// Storage is the physical layer: it reads and writes entries and understands
-// nothing about what they mean. The semantics — projection, compaction,
-// settings — live in Session, so a store answers only "what is recorded, in
-// what order".
+// Storage reads and writes entries and understands nothing about what they
+// mean; the semantics live in Session (spec §2.5c).
 type Storage interface {
 	// Metadata describes the session.
 	Metadata(ctx context.Context) (Metadata, error)
@@ -35,10 +33,8 @@ type Cursor struct {
 	// AfterSeq returns entries with a higher sequence number. Zero starts at
 	// the beginning.
 	AfterSeq int64
-	// Limit caps how many entries come back. Zero means no limit.
-	//
-	// A negative limit takes the most recent -Limit entries instead of the
-	// oldest, which is how a run bounds the history it loads.
+	// Limit caps how many entries come back. Zero means no limit; a negative
+	// limit takes the most recent -Limit entries instead of the oldest.
 	Limit int
 }
 
@@ -258,20 +254,11 @@ type AtomicReplacer interface {
 }
 
 // GuardedReplacer is an optional Storage capability: replace the entire
-// history, but only if the log has not moved since the caller read it.
-//
-// It exists for the one rewrite that cannot decide and write in the same step —
-// a replacement from a server-side compaction API, with a network round trip in
-// the middle — where an unconditional swap would silently delete an entry
-// appended inside that window.
-//
-// expect is the highest sequence number the store held when the caller read it,
-// and zero for a log it read empty. When it still matches, the history is
-// replaced and replaced is true; when it does not, nothing is written and
-// replaced is false — losing the race is not an error but the caller's decision.
-//
-// It catches appends, not every change: a removal that leaves the highest
-// sequence number in place reads as unmoved.
+// history only while the log has not moved since the caller read it. expect
+// is the highest sequence number the store HELD at that read, zero for a log
+// read empty. On a match the history is replaced and replaced is true; else
+// nothing is written and replaced is false — a lost race, not an error. It
+// catches appends only: a removal that keeps the highest seq reads as unmoved.
 type GuardedReplacer interface {
 	ReplaceEntriesIf(ctx context.Context, expect int64, entries ...Entry) (replaced bool, err error)
 }

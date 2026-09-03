@@ -9,10 +9,8 @@ import (
 	"github.com/zzir/agents-go/agents/session"
 )
 
-// Strategy shrinks an index. It reports whether it changed anything.
-//
-// A strategy never deletes: it marks groups excluded, optionally leaving a
-// replacement behind. The stored history is the audit trail and stays whole.
+// Strategy shrinks an index and reports whether it changed anything. It never
+// deletes: it marks groups excluded, optionally leaving a replacement (spec §2.5f).
 type Strategy interface {
 	Compact(ctx context.Context, idx *Index) (bool, error)
 }
@@ -41,19 +39,15 @@ func (p *PipelineStrategy) Compact(ctx context.Context, idx *Index) (bool, error
 }
 
 // ToolResultStrategy folds old tool-call groups into a compact summary of what
-// was called, leaving user messages and assistant prose untouched.
-//
-// In a coding conversation this is where nearly all the context goes — old file
-// reads and command output that mattered for one turn. Folding needs no model
-// call and is the only answer to a single enormous tool result.
+// was called, leaving user messages and assistant prose untouched. Folding
+// needs no model call and is the only answer to one enormous tool result.
 type ToolResultStrategy struct {
 	// Trigger decides when to start; nil never runs.
 	Trigger Trigger
 	// Target decides when to stop. Nil means "once Trigger stops firing".
 	Target Trigger
-	// MinimumPreservedGroups keeps this many groups at the end untouched, so
-	// the most recent tool results — the ones the model is still working with —
-	// survive. Defaults to 2.
+	// MinimumPreservedGroups keeps this many groups at the end untouched, so the
+	// most recent tool results survive. Defaults to 2.
 	MinimumPreservedGroups int
 	// Formatter renders a folded group. Nil uses DefaultToolCallFormatter.
 	Formatter func(*Group) string
@@ -115,9 +109,8 @@ func DefaultToolCallFormatter(g *Group) string {
 				order = append(order, p.Name)
 			}
 		case "function_call_output":
-			// Outputs are keyed by call id, so attribute them to the call's
-			// tool name where possible; otherwise group them under the last
-			// tool seen, which is right for the common single-tool group.
+			// Outputs are keyed by call id: attribute them to the call's tool where
+			// possible, else to the last tool seen (right for a single-tool group).
 			name := toolNameForCall(g, p.CallID)
 			if name == "" && len(order) > 0 {
 				name = order[len(order)-1]
@@ -190,9 +183,8 @@ func dedupe(in []string) []string {
 	return out
 }
 
-// foldedEntry wraps folded text as a system message: the runtime is saying what
-// happened, and attributing it to the user or the assistant would put words in
-// someone's mouth.
+// foldedEntry wraps folded text as a system message: the runtime is saying
+// what happened (spec §2.5b).
 func foldedEntry(text string) (session.Entry, error) {
 	items := agents.InputItemsFromSystemText(text)
 	if len(items) == 0 {
@@ -201,18 +193,15 @@ func foldedEntry(text string) (session.Entry, error) {
 	return session.NewItemEntry(items[0], agents.Source{Type: agents.SourceCompaction})
 }
 
-// TruncationStrategy drops whole groups from the oldest end.
-//
-// It is the blunt instrument: it loses content outright, so it belongs after
-// tool folding in a pipeline, not before.
+// TruncationStrategy drops whole groups from the oldest end. It loses content
+// outright, so it belongs after tool folding in a pipeline.
 type TruncationStrategy struct {
 	Trigger Trigger
 	Target  Trigger
 	// MinimumPreservedGroups keeps this many groups at the end. Defaults to 2.
 	MinimumPreservedGroups int
-	// DropSystem lets truncation drop system groups too. The zero value keeps
-	// them regardless of age — instructions apply to the whole conversation, not
-	// the turn that carried them.
+	// DropSystem lets truncation drop system groups too; the zero value keeps
+	// them regardless of age, since instructions apply to the whole conversation.
 	DropSystem bool
 }
 
@@ -246,11 +235,9 @@ func (s *TruncationStrategy) Compact(_ context.Context, idx *Index) (bool, error
 	return changed, nil
 }
 
-// ContextWindowStrategy derives its thresholds from the model's own limits, so
-// a caller does not have to guess numbers that depend on the model anyway.
-//
-// It runs two stages: fold tool results at half the input budget, drop whole
-// groups at four fifths. Cheap first, lossy last.
+// ContextWindowStrategy derives its thresholds from the model's own limits.
+// Two stages: fold tool results at half the input budget, drop whole groups at
+// four fifths — cheap first, lossy last.
 type ContextWindowStrategy struct {
 	// MaxContextWindowTokens is the model's context window.
 	MaxContextWindowTokens int

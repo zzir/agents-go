@@ -35,11 +35,7 @@ type CodeToolConfig struct {
 	// Defaults to 8192. The cut never splits a multi-byte UTF-8 sequence.
 	MaxOutputBytes int
 	// Sessions enables the session_id argument: a named shell held open between
-	// calls, so `cd`, exported variables and an activated virtualenv survive.
-	// Off by default (a held-open shell must be closed — see RegisterCloser)
-	// and needs a backend with interactive terminals. The pool is the TOOL's,
-	// shared by every run using it; build the tool per run to isolate them
-	// (spec §2.7k).
+	// calls, pooled per TOOL (spec §2.7k). Needs a terminal backend and RegisterCloser.
 	Sessions bool
 	// Policy filters commands before the approval gate (spec §2.7j).
 	Policy Policy
@@ -48,9 +44,8 @@ type CodeToolConfig struct {
 	// it decides whether this execution must be approved first. nil = never gate.
 	NeedsApprovalFunc func(ctx context.Context, rc *agents.RunContext, argsJSON string, callID string) (bool, error)
 
-	// RegisterCloser, when set, receives the closer that releases every named
-	// shell the Sessions pool holds open; *agents.Tool has no close of its own.
-	// Wire it to whatever owns the sandbox's lifetime and call Close there.
+	// RegisterCloser, when set, receives the closer that releases every shell the
+	// Sessions pool holds open; wire it to whatever owns the sandbox's lifetime.
 	RegisterCloser func(io.Closer)
 }
 
@@ -79,9 +74,8 @@ func (c CodeToolConfig) withDefaults() CodeToolConfig {
 	return c
 }
 
-// lenientString is a string that also accepts the JSON zero-value sentinels
-// null, 0 and false, decoding each to ""; any other non-string scalar is
-// rejected, which OnInvoke feeds back as correctable text (spec §2.7l).
+// lenientString decodes the JSON zero-value sentinels null, 0 and false to "";
+// any other non-string scalar is rejected and fed back as text (spec §2.7l).
 type lenientString string
 
 func (s *lenientString) UnmarshalJSON(data []byte) error {
@@ -107,9 +101,8 @@ type codeToolArgsNoSession struct {
 	Workdir        lenientString `json:"workdir"         jsonschema:"working directory for the command; empty uses the sandbox default"`
 }
 
-// codeToolArgs is the full argument set and always the decode target: a
-// session_id sent anyway (non-strict backend) decodes and is gated on
-// cfg.Sessions in OnInvoke.
+// codeToolArgs is always the decode target: a session_id sent anyway
+// (non-strict backend) decodes and is gated on cfg.Sessions in OnInvoke.
 type codeToolArgs struct {
 	codeToolArgsNoSession
 	SessionID lenientString `json:"session_id" jsonschema:"reuse a persistent shell by name, so cd, exported variables and an activated environment survive between calls; empty runs in a fresh shell"`
@@ -152,8 +145,7 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.Tool {
 		return compiled.check(cmd)
 	}
 	// A call OnInvoke will refuse as text — a policy veto or malformed
-	// arguments — reports "no approval needed", so it never reaches a human
-	// (spec §2.7j, §2.7l).
+	// arguments — reports "no approval needed" (spec §2.7j, §2.7l).
 	needsApproval := cfg.NeedsApprovalFunc
 	if needsApproval != nil {
 		inner := needsApproval
@@ -282,8 +274,7 @@ func formatResult(res *ExecResult, limit int) string {
 }
 
 // truncateWithInfo cuts s to at most limit bytes, keeping the head (60%) and
-// the tail (40%) and eliding the middle — a build prints its progress first
-// and its failure summary last. Rune boundaries are respected on both sides.
+// the tail (40%) — progress first, failure summary last — on rune boundaries.
 func truncateWithInfo(s string, limit int) string {
 	if limit <= 0 || len(s) <= limit {
 		return s
@@ -328,9 +319,8 @@ func forwardToRuneStart(s string, i int) int {
 	return i
 }
 
-// progressWriter turns a sandbox's output stream into tool-progress events,
-// coalesced per completed line. One writer serves BOTH stdout and stderr,
-// which most backends pump from separate goroutines, so the buffer is guarded.
+// progressWriter turns sandbox output into tool-progress events per completed
+// line. One writer serves stdout AND stderr (separate goroutines), hence mu.
 type progressWriter struct {
 	tc  *agents.ToolContext
 	cmd string

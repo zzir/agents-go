@@ -89,9 +89,8 @@ func (r *runner) enabledTools(ctx context.Context, agent *Agent) ([]*Tool, error
 	return out, nil
 }
 
-// enabledHandoffs returns the agent's handoffs, filtered by any IsEnabled
-// predicate (nil means enabled; a predicate error aborts the run). A disabled
-// handoff is not offered to the model and cannot be invoked.
+// enabledHandoffs returns the agent's handoffs minus those an IsEnabled predicate
+// rejects; nil means enabled, and a predicate error aborts the run.
 func (r *runner) enabledHandoffs(ctx context.Context, agent *Agent) ([]Handoff, error) {
 	out := make([]Handoff, 0, len(agent.Handoffs))
 	for _, h := range agent.Handoffs {
@@ -116,8 +115,7 @@ func agentOutputSchema(agent *Agent) OutputSchema {
 	return PlainTextOutput()
 }
 
-// sortedKeys returns a set's members in a stable order, so serialized state
-// (the tool-use tracker and the disclosed-tool set both ride along in RunState)
+// sortedKeys returns a set's members in a stable order, so serialized RunState
 // does not churn between otherwise identical runs.
 func sortedKeys(m map[string]bool) []string {
 	if len(m) == 0 {

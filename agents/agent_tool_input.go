@@ -53,10 +53,8 @@ func buildStructuredSchemaInfo(schema map[string]any) agentToolSchemaInfo {
 	}
 }
 
-// resolveAgentToolInput turns the model's JSON arguments into the nested run's
-// input text: structured rendering when a builder or schema info is present,
-// otherwise the lifted string for the default {"input": string} shape (already
-// validated against the tool's schema).
+// resolveAgentToolInput renders the model's JSON arguments as the nested run's
+// input: structured when a builder or schema info exists, else {"input"} lifted.
 func resolveAgentToolInput(argsJSON string, info agentToolSchemaInfo, builder AgentToolInputBuilder) (string, error) {
 	if builder != nil || info.structured || info.summary != "" || info.jsonSchema != nil {
 		b := builder
@@ -97,9 +95,8 @@ func AgentToolInputWithSchema(opts AgentToolInputBuilderOptions) (string, error)
 	return renderAgentToolInput(opts, true)
 }
 
-// renderAgentToolInput is the shared rendering behind the two builders:
-// preamble, fenced JSON arguments, then the full schema (fullSchema, when one
-// is available) or the summary.
+// renderAgentToolInput is the shared rendering behind the two builders: preamble,
+// fenced JSON arguments, then the full schema (when fullSchema) or the summary.
 func renderAgentToolInput(opts AgentToolInputBuilderOptions, fullSchema bool) (string, error) {
 	sections := []string{agentToolStructuredInputPreamble, "## Structured Input Data:", ""}
 
@@ -123,11 +120,8 @@ func renderAgentToolInput(opts AgentToolInputBuilderOptions, fullSchema bool) (s
 	return strings.Join(sections, "\n"), nil
 }
 
-// summarizeJSONSchema renders a compact field list for a flat object schema.
-// It returns "" when the schema is
-// not a plain object of simple-typed fields, or when neither the schema nor
-// any field carries a description (a summary with no descriptions adds
-// nothing over the JSON itself).
+// summarizeJSONSchema renders a compact field list for a flat object schema, or ""
+// when it is not one, or when neither the schema nor any field has a description.
 func summarizeJSONSchema(schema map[string]any) string {
 	if schema == nil || schema["type"] != "object" {
 		return ""
@@ -184,9 +178,8 @@ var simpleJSONSchemaTypes = map[string]bool{
 	"string": true, "number": true, "integer": true, "boolean": true,
 }
 
-// describeSchemaField labels a field's type for the schema summary. ok is
-// false when the field is too complex (nested objects, arrays, unions), which
-// suppresses the whole summary.
+// describeSchemaField labels a field's type for the schema summary; ok is false for
+// a too-complex field (nested object, array, union), which suppresses the summary.
 func describeSchemaField(fieldSchema any) (typeLabel, description string, ok bool) {
 	fs, isMap := fieldSchema.(map[string]any)
 	if !isMap {

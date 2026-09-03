@@ -6,10 +6,8 @@ import (
 )
 
 // RunInput is what a middleware sees and may change before the run proceeds.
-//
-// Opts is a pointer so a middleware can adjust the run's configuration —
-// tighten a budget, swap a model, add a guardrail — without rebuilding it. It
-// is the run's own copy, so an edit affects this run and nothing else.
+// Opts is the run's own copy, by pointer, so a middleware can tighten a
+// budget, swap a model or add a guardrail for this run and nothing else.
 type RunInput struct {
 	Agent *Agent
 	Input []InputItem
@@ -24,30 +22,18 @@ type RunInput struct {
 // `next` and decides whether, when and with what to call it.
 type RunFunc func(ctx context.Context, in RunInput) RunStream
 
-// RunMiddleware wraps a run.
-//
-// It is the extension point for **optional policy** — retrying, logging,
-// recovering from an error, rewriting input — so those stop being fields on
-// RunOptions that the loop has to check for. A middleware that only observes
-// calls next and passes the stream through; one that intervenes can inspect
-// events, replace them, run the loop twice, or not at all.
-//
-// What is deliberately NOT middleware: handoffs, guardrails, session
-// persistence and tracing. Those are not policies layered over the loop, they
-// are the loop — a handoff changes which agent the state machine is in,
-// guardrails race the model call and cancel it, persistence has a boundary that
-// only the loop knows. Expressing them as middleware would turn three
-// invariants into implicit protocols between wrappers.
+// RunMiddleware wraps a run. It is the extension point for optional policy —
+// retrying, logging, recovering, rewriting input — so those are not loop
+// fields; what is deliberately NOT middleware is listed in spec §2.12.
 //
 // The stream contract (spec §2.12) — an implementation owes all three clauses:
 //
 //  1. Every event other than *RunCompletedEvent flows through as it happens.
 //     Buffering until satisfied turns a live retry into an apparent hang.
 //  2. *RunCompletedEvent appears exactly once, LAST, on a run that ends
-//     without error — and zero times on one that errors. It is the one event
-//     whose meaning a middleware owns ("this attempt finished" versus "the
-//     run finished"): one that re-enters the run holds back each attempt's
-//     completion event and emits a single one for the attempt it accepts.
+//     without error — and zero times on one that errors. A middleware that
+//     re-enters the run holds back each attempt's completion event and emits
+//     a single one for the attempt it accepts.
 //  3. Once the consumer stops ranging — yield returned false — nothing more
 //     is yielded, not even an error. There is nobody to receive it.
 type RunMiddleware interface {

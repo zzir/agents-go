@@ -6,23 +6,17 @@ import (
 	"sync"
 )
 
-// Seq pairs a broadcast value with its position in the stream. The number is
-// assigned at publish time and is monotonic per Fanout, which is what makes
-// both replay (resume after N) and gap detection (the next number is not N+1)
-// possible.
+// Seq pairs a broadcast value with its position in the stream: monotonic per
+// Fanout, assigned at publish, so replay and gap detection are both possible.
 type Seq[T any] struct {
 	Seq   int
 	Value T
 }
 
-// GapError reports that a subscriber fell behind and items were dropped for it.
-// It is delivered in-band, on that subscriber's stream only, immediately before
-// the next item that did get through.
-//
-// A consumer that receives one has an incomplete view and must recover — by
-// re-subscribing from LastGood, or by re-reading whatever durable record the
-// producer keeps. Rendering onward without recovering shows a timeline that is
-// silently missing content.
+// GapError reports that a subscriber fell behind and items were dropped for
+// it, delivered in-band on that subscriber's stream before the next item that
+// got through (spec §2.11). A consumer that receives one must recover: re-
+// subscribe from LastGood, or re-read the producer's durable record.
 type GapError struct {
 	// Dropped is how many items were discarded.
 	Dropped int
@@ -30,9 +24,8 @@ type GapError struct {
 	// before the gap; Resume from it.
 	LastGood int
 	// Next is the sequence number of the item delivered right after the gap,
-	// or 0 when the gap runs to the end of the stream — the producer finished
-	// while this subscriber was still behind, so there is no "after". The item
-	// yielded alongside such a gap is the zero value and carries nothing.
+	// or 0 when the gap runs to the end of the stream — the item yielded
+	// alongside such a gap is the zero value and carries nothing.
 	Next int
 }
 
@@ -72,16 +65,13 @@ const (
 
 // Fanout broadcasts one producer's items to many independent subscribers:
 // Publish never blocks, and a subscriber whose buffer is full loses items
-// LOUDLY — the next delivery on its stream is preceded by a *GapError naming
-// the range it lost (spec §2.11).
-//
-// A Fanout is safe for concurrent use. Subscribers may come and go at any time.
+// LOUDLY — a *GapError names the range it lost (spec §2.11). Safe for
+// concurrent use; subscribers may come and go at any time.
 type Fanout[T any] struct {
 	opts FanoutOptions
 
-	// pubMu serializes a publish end to end — sequence assignment through
-	// delivery — so no subscriber observes seq 2 before seq 1. Lock order is
-	// pubMu before mu, and mu is never held during delivery.
+	// pubMu serializes a publish end to end, so no subscriber sees seq 2
+	// before seq 1. Lock order: pubMu before mu; mu is never held in delivery.
 	pubMu sync.Mutex
 
 	mu     sync.Mutex
@@ -124,9 +114,7 @@ func NewFanout[T any](opts FanoutOptions) *Fanout[T] {
 }
 
 // Publish assigns the next sequence number and delivers to every subscriber.
-// It never blocks: a subscriber that cannot keep up loses items rather than
-// holding up the producer or its peers.
-//
+// It never blocks: a subscriber that cannot keep up loses items instead.
 // Publishing after Close is a no-op.
 func (f *Fanout[T]) Publish(v T) {
 	f.pubMu.Lock()
@@ -188,24 +176,14 @@ func (s *subscriber[T]) deliver(item Seq[T]) {
 	}
 }
 
-// Subscribe attaches a new subscriber and returns its stream plus a function
-// that detaches it. The stream yields each item in sequence order; a non-nil
-// error is always a *GapError.
-//
-// The item alongside a gap is the first one after it and is still valid —
-// EXCEPT for a gap that runs to the end of the stream (GapError.AtEnd), which
-// has no "after". There the item is the zero value: the producer finished
-// while this subscriber was behind, so the loss is reported as the stream
-// closes rather than never.
-//
-// fromSeq replays retained items with a higher sequence number before live
-// delivery begins, so a reconnecting consumer resumes without a hole. Pass 0
-// for everything retained. Replay respects the subscriber buffer: a consumer
-// that asks for more history than it will read gets a gap like any other.
-//
-// The returned cancel function is idempotent and must be called, or the
-// subscriber's buffer is retained until the Fanout is garbage-collected.
-// Ranging to completion does not detach — a consumer may stop early.
+// Subscribe attaches a subscriber and returns its stream plus a function that
+// detaches it. Items arrive in sequence order; a non-nil error is always a
+// *GapError, beside the first item after the gap — except a gap running to
+// the end of the stream (GapError.AtEnd), whose item is the zero value.
+// fromSeq replays retained items with a higher sequence number first (0 for
+// everything retained); replay respects the subscriber buffer. The cancel
+// function is idempotent and must be called, or the subscriber's buffer is
+// retained until the Fanout is collected; ranging to completion does not detach.
 func (f *Fanout[T]) Subscribe(fromSeq int) (iter.Seq2[Seq[T], error], func()) {
 	s := &subscriber[T]{
 		ch:       make(chan delivery[T], f.opts.Subscriber),
@@ -232,9 +210,8 @@ func (f *Fanout[T]) Subscribe(fromSeq int) (iter.Seq2[Seq[T], error], func()) {
 			backlog = append(backlog, item)
 		}
 	}
-	// A cursor outside the reachable range is a gap like any drop. Behind the
-	// replay window (or behind the head with no replay at all), what it missed
-	// can never be delivered, so the gap runs forward from the cursor.
+	// A cursor behind the reachable range is a gap like any drop: what it
+	// missed can never be delivered, so the gap runs forward (spec §2.11).
 	if fromSeq >= 0 && fromSeq < f.seq {
 		first := f.seq + 1
 		if len(f.replay) > 0 {
@@ -244,9 +221,8 @@ func (f *Fanout[T]) Subscribe(fromSeq int) (iter.Seq2[Seq[T], error], func()) {
 	}
 	reset, resumeAt := false, 0
 	if fromSeq > f.seq {
-		// Ahead of the head: a cursor this fanout never issued (a restart
-		// recreated the stream) is a timeline reset — LastGood drops to 0 and
-		// the consumer replays the new timeline from resumeAt.
+		// Ahead of the head: a cursor from a previous life of the stream is a
+		// timeline reset (spec §2.11) — LastGood 0, replay from resumeAt.
 		s.lastGood = 0
 		s.dropped = fromSeq
 		resumeAt = f.seq + 1

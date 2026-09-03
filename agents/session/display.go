@@ -1,13 +1,8 @@
 package session
 
-// ItemDisplay is an item projected into what a renderer actually needs. It is
-// produced by the layer that knows the wire format — the runner for live
-// items, the projection for stored entries — rather than by each consumer
-// parsing the wire again.
-//
-// It is a hint, not a replacement: a consumer that ignores ItemDisplay
-// entirely must still be able to render from the underlying item, which is
-// what keeps ItemDisplay free to gain fields without breaking anyone.
+// ItemDisplay is an item projected into what a renderer needs, produced by
+// the layer that knows the wire format. It is a hint: a consumer that ignores
+// it must still be able to render from the underlying item.
 type ItemDisplay struct {
 	// Kind is the item kind: message, tool_call, tool_output, reasoning,
 	// handoff, unknown. An unrecognized kind must fall back, not fail.
@@ -49,9 +44,8 @@ const (
 	DisplayReasoning  = "reasoning"
 	DisplayHandoff    = "handoff"
 	DisplayUnknown    = "unknown"
-	// DisplayError and DisplayCancelled are what an annotation entry renders
-	// as. They are display kinds rather than item kinds because nothing was
-	// said: they report on the run, and the model never reads them.
+	// DisplayError and DisplayCancelled are what an annotation renders as: they
+	// report on the run, and the model never reads them.
 	DisplayError     = "error"
 	DisplayCancelled = "cancelled"
 )

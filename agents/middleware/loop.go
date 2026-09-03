@@ -12,9 +12,8 @@ import (
 type Evaluation struct {
 	// Done ends the loop and reports the run as it stands.
 	Done bool
-	// Feedback is appended as a user message before the next attempt. It is
-	// what makes re-running useful rather than merely repeated: the agent is
-	// told what was wrong with the answer it just gave.
+	// Feedback is appended as a user message before the next attempt: the agent
+	// is told what was wrong with the answer it just gave.
 	Feedback string
 }
 
@@ -27,15 +26,9 @@ func Stop() Evaluation { return Evaluation{Done: true} }
 // Evaluator judges a finished run and says whether to accept it.
 type Evaluator func(ctx context.Context, res *agents.RunResult) (Evaluation, error)
 
-// Loop re-runs an agent until an evaluator accepts its answer.
-//
-// It is the shape middleware exists for: the run loop knows when a model has
-// finished talking, and nothing more. "Finished" and "good enough" are
-// different questions, and the second one belongs to the caller — a critic
-// agent, a schema check, a compiler.
-//
-// Each attempt streams through, so a caller watching the run sees the rejected
-// answers and the feedback, not a long silence followed by the accepted one.
+// Loop re-runs an agent until an evaluator accepts its answer: "finished" and
+// "good enough" are different questions, and the second belongs to the caller.
+// Each attempt streams through, so a watcher sees the rejected answers.
 type Loop struct {
 	// Evaluate judges each attempt. A nil evaluator accepts the first
 	// attempt, which makes the middleware a pass-through.
@@ -71,10 +64,8 @@ func (l Loop) Run(ctx context.Context, next agents.RunFunc, in agents.RunInput) 
 			}
 			last = res
 
-			// A stop the caller asked for ends the LOOP, not just the attempt.
-			// The stop flag lives on the run control for the whole run and is
-			// never cleared, so without this every remaining attempt started,
-			// spent one model call and stopped again.
+			// A stop the caller asked for ends the LOOP, not just the attempt: the
+			// flag on the control is never cleared, so every attempt would restart (spec §2.12).
 			if res.StoppedEarly {
 				break
 			}
@@ -89,10 +80,8 @@ func (l Loop) Run(ctx context.Context, next agents.RunFunc, in agents.RunInput) 
 			if ev.Done || attempt >= attempts {
 				break
 			}
-			// Carry the attempt forward: the next run sees what it said and
-			// what was wrong with it, or it will simply say it again. With a
-			// session the attempt is already in the history, so only the
-			// feedback goes (spec §2.12).
+			// Carry the attempt forward, or the next run simply says it again. With
+			// a session the attempt is already history, so only the feedback goes (spec §2.12).
 			feedback := agents.InputItemsFromText(ev.Feedback)
 			if in.Opts.Conversation.Session != nil {
 				input = feedback

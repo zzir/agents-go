@@ -4,9 +4,8 @@ package session
 // tokens. Only the fields the runner cares about are modeled.
 type InputTokensDetails struct {
 	CachedTokens int64 `json:"cached_tokens"`
-	// CacheWriteTokens counts input tokens written to the prompt cache (surfaced
-	// by providers that bill cache writes separately). Older serialized RunState
-	// snapshots without the field decode to zero.
+	// CacheWriteTokens counts input tokens written to the prompt cache, for
+	// providers that bill cache writes separately.
 	CacheWriteTokens int64 `json:"cache_write_tokens"`
 }
 

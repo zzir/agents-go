@@ -13,15 +13,8 @@ import (
 // sees. It is the single place that answers "what does the model get to read".
 type Projector func(Entry) ([]InputItem, error)
 
-// defaultProjectors is the projection every run starts from.
-//
-// Only items reach the model this way; annotations, terminal output and custom
-// entries are recorded for people, and a caller who wants them in context adds
-// a projector through RunOptions.Conversation.Projectors.
-//
-// Compaction checkpoints are absent deliberately: a checkpoint is a rule about
-// the whole view, not one entry's items, and ProjectEntries applies it
-// structurally. An override for EntryKindCompaction takes that over.
+// defaultProjectors is the projection every run starts from: items only.
+// Checkpoints are absent on purpose — ProjectEntries applies them structurally.
 var defaultProjectors = map[EntryKind]Projector{
 	EntryKindItem: projectItem,
 }
@@ -72,13 +65,8 @@ type CompactionFold struct {
 }
 
 // CompactionPayload is the body of a compaction checkpoint: what a pass folded
-// away (by name) and what stands in for it (summary text, per-group folds).
-//
-// A checkpoint carries no copy of any entry still in the session — the tree is
-// the truth, and ProjectEntries applies the exclusions when the model's view is
-// built. It is appended, never a rewrite: the folded entries stay (ExcludedIDs
-// names them), so a fork from before it still finds the full history and popping
-// the checkpoint undoes the fold.
+// away (by name) and what stands in for it. It copies no entry still in the
+// session and is appended, never a rewrite — spec §2.5f.
 type CompactionPayload struct {
 	// Summary is the text that stands in for the folded history. It renders at
 	// the front of the projection, before everything the pass kept.
@@ -146,24 +134,16 @@ func projectorFor(overrides map[EntryKind]Projector, kind EntryKind) (Projector,
 }
 
 // ProjectEntries turns a session's entries into the model input for a run.
-//
-// Update entries are folded into their targets, not projected. Compaction is
-// applied here and only here: a checkpoint contributes no items of its own but
-// reshapes the view — its ExcludedIDs are dropped, its Summary renders up front,
-// and each fold's stand-in renders where the folded group was. An override for
-// EntryKindCompaction takes over the rendering; the exclusions still apply.
-//
-// Every checkpoint in the list is taken at its word, so callers pass a single
-// branch's view (ContextEntries does) — append order across branches would let
-// an abandoned attempt's checkpoint fold entries the active branch still reads.
+// Update entries fold into their targets; each live checkpoint drops its
+// ExcludedIDs, renders its Summary up front and its folds where the groups
+// were (an EntryKindCompaction override takes over the rendering, not the
+// exclusions). Callers pass one branch's view — spec §2.5c.
 func ProjectEntries(entries []Entry, overrides map[EntryKind]Projector) ([]InputItem, error) {
 	folded := FoldedEntryIDs(entries)
 	_, checkpointOverridden := overrides[EntryKindCompaction]
 
 	// The render plan: summaries and anchorless stand-ins up front, anchored
-	// stand-ins keyed by the entry they render before. Only live checkpoints
-	// render — one itself folded is out of the view, its exclusions already
-	// counted by FoldedEntryIDs.
+	// ones keyed by the entry they precede. Only live checkpoints render.
 	var front []InputItem
 	var inserts map[string][]InputItem
 	if !checkpointOverridden {
@@ -199,9 +179,8 @@ func ProjectEntries(entries []Entry, overrides map[EntryKind]Projector) ([]Input
 					}
 					inserts[f.Before] = append(inserts[f.Before], items...)
 				} else {
-					// The anchor is not in this view — a filtered read, or the
-					// anchor entry was itself removed. Fronting the stand-in
-					// keeps its content over losing its position.
+					// The anchor is not in this view (a filtered read, or removed):
+					// front the stand-in — its content over its position.
 					front = append(front, items...)
 				}
 			}
@@ -235,13 +214,9 @@ func ProjectEntries(entries []Entry, overrides map[EntryKind]Projector) ([]Input
 	return out, nil
 }
 
-// FoldUpdates applies every update entry to its target and drops the updates,
-// returning the entries a consumer should render.
-//
-// Updates apply in store order, so the last write wins per field. An update
-// whose target is missing is ignored, not an error: the target may have been
-// folded away, or may not have been written yet — an update is allowed to
-// arrive first.
+// FoldUpdates applies every update entry to its target and drops the updates.
+// Updates apply in store order, last write wins per field; an update whose
+// target is missing is ignored (spec §2.5b).
 func FoldUpdates(entries []Entry) []Entry {
 	// Index targets first so an update that precedes its target still applies.
 	index := make(map[string]int, len(entries))

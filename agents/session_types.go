@@ -2,20 +2,8 @@ package agents
 
 import "github.com/zzir/agents-go/agents/session"
 
-// The value types shared between a live run and its stored history live in
-// the session package — entries persist them, so they sit with the stored
-// form — and are aliased here because they are equally part of the runner's
-// own surface: every RunItem carries a Source and projects an ItemDisplay,
-// every result reports RequestUsage, every survived failure is a Diagnostic.
-// An alias is transparent: agents.Source IS session.Source, one type under two
-// import paths — so every name here matches the one it aliases. A renamed
-// alias stops being transparent the moment anything spells the type out: the
-// compile error, the godoc and the reflected name all say the session name
-// while the code says this one.
-//
-// Session-only names (session.Entry, session.Storage, session.Session, …) are
-// deliberately NOT aliased: code that works with stored history should import
-// the package that owns it.
+// The value types a live run shares with its stored history live in the session
+// package and are aliased here, same names, transparently — decisions §5.17.
 type (
 	// Source records who produced an item or entry. The zero value is the model.
 	Source = session.Source

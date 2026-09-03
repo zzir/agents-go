@@ -83,9 +83,8 @@ func (s *Sandbox) ExecStream(ctx context.Context, req sandbox.ExecRequest, stdou
 		},
 	}
 
-	// The timeout is the CALLER's deadline, enforced here: envd's Start
-	// carries none. A deadline that fires cancels the stream, and the process
-	// is signalled so it does not outlive the request inside the sandbox.
+	// The timeout is the CALLER's deadline, enforced here: envd's Start carries
+	// none. When it fires the stream is cancelled and the process signalled.
 	runCtx, cancel := withTimeout(ctx, req.EffectiveTimeout())
 	defer cancel()
 
@@ -128,10 +127,8 @@ func (s *Sandbox) ExecStream(ctx context.Context, req sandbox.ExecRequest, stdou
 		return nil, err
 	}
 	if !sawEnd {
-		// The stream closed cleanly but the process never reported an exit
-		// (reaped without an end frame, a paused or killed sandbox). Returning
-		// ExitCode 0 here would tell the caller a command that never finished
-		// succeeded.
+		// The stream closed cleanly but the process never reported an exit (reaped
+		// without an end frame, a paused or killed sandbox): ExitCode 0 would lie.
 		if pid != 0 {
 			s.signal(context.WithoutCancel(ctx), pid, "SIGNAL_SIGKILL")
 		}
@@ -140,10 +137,8 @@ func (s *Sandbox) ExecStream(ctx context.Context, req sandbox.ExecRequest, stdou
 	return result, nil
 }
 
-// writeChunk decodes one base64 output chunk into w. A chunk that will not
-// decode is dropped rather than failing the command: partial output is worth
-// more to the model than none. A WRITE failure is returned — the caller
-// stopped taking output (a closed export pipe), so streaming on is waste.
+// writeChunk decodes one base64 chunk into w: an undecodable chunk is dropped
+// (partial output beats none), a write failure is returned (the caller left).
 func writeChunk(w io.Writer, encoded string) error {
 	if encoded == "" || w == nil {
 		return nil
@@ -166,9 +161,8 @@ func (s *Sandbox) writeRequestFiles(ctx context.Context, files map[string]string
 	return nil
 }
 
-// signal best-effort kills a process the caller stopped waiting for. It bounds
-// its own call: a hung envd must not hang the signal that is meant to clean up
-// after one.
+// signal best-effort kills a process the caller stopped waiting for, bounding
+// its own call so a hung envd cannot hang the cleanup.
 func (s *Sandbox) signal(ctx context.Context, pid uint32, sig string) {
 	if pid == 0 {
 		return

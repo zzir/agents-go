@@ -1,10 +1,6 @@
 // Package tasks runs background sub-agents: a tool call spawns a child run with
 // its own session, the parent run does not wait, and the parent is woken with
-// the result when the child finishes.
-//
-// The hard parts are the state machine, the wake-up debt that survives a
-// restart, the guards that decide when NOT to wake a parent, and the
-// compare-and-set that keeps two finalizers from overwriting each other.
+// the result when the child finishes. The invariants: spec §2.13.
 package tasks
 
 import (
@@ -39,10 +35,9 @@ func (s Status) Terminal() bool {
 	return false
 }
 
-// Task is one background job. ID and RunID are separate on purpose: the task is
-// the durable entity, the run is one attempt at it — which is what makes retry
-// expressible. A job may also span SEVERAL runs in sequence (Config.Continue):
-// RunID is always the current one.
+// Task is one background job. ID and RunID are separate: the task is the
+// durable entity, the run one attempt at it (spec §2.13). A job may span
+// several runs (Config.Continue); RunID is always the current one.
 type Task struct {
 	ID    string `json:"id"`
 	RunID string `json:"run_id"`
@@ -66,21 +61,17 @@ type Task struct {
 	Attempt int `json:"attempt,omitzero"`
 
 	// Inherit is configuration snapshotted from the spawning run and handed back
-	// to the Launcher verbatim — agent config, sandbox, tenant. The SDK does not
-	// interpret it. It is a snapshot, not a lookup, because the wake-up run
-	// happens much later and the parent's configuration may have changed or gone.
+	// to the Launcher verbatim, opaque to the SDK — a snapshot, since the
+	// wake-up run comes much later (spec §2.13).
 	Inherit json.RawMessage `json:"inherit,omitzero"`
 	// State is the host's own record of where a multi-run job stands, opaque to
-	// the SDK. Set at spawn, replaced atomically with each run transition
-	// (Store.Advance), handed to the Launcher with every run.
+	// the SDK; replaced atomically with each run transition (Store.Advance).
 	State json.RawMessage `json:"state,omitzero"`
 
 	Status Status `json:"status"`
 
-	// Summary is the truncated result: it goes in the notification and on the
-	// UI card. Result is the whole thing, fetched on demand by task_status —
-	// separate so a task returning ten thousand words does not paste them into
-	// the parent's context to say "done".
+	// Summary is the truncated result, for the notification and the card;
+	// Result is the whole thing, fetched on demand by task_status.
 	Summary string `json:"summary,omitzero"`
 	Result  string `json:"result,omitzero"`
 

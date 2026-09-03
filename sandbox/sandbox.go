@@ -1,12 +1,10 @@
 // Package sandbox runs untrusted, agent-generated code in an isolated
 // environment and exposes it to an agent as a tool. The Sandbox interface is
 // backend-agnostic: LocalSandbox lives here, the Docker backend in the
-// sandbox/docker module and the E2B backend in sandbox/e2b.
-//
-// A sandbox executes a command in a working directory after writing the request
-// files into it. Backends enforce isolation (no network, read-only root,
-// dropped capabilities) and a per-command time limit by default; memory and CPU
-// limits apply when the caller sets Options.Limits.
+// sandbox/docker module and the E2B backend in sandbox/e2b. A sandbox executes
+// a command in a working directory after writing the request files into it;
+// backends enforce isolation and a per-command time limit by default, and
+// memory and CPU limits when the caller sets Options.Limits.
 package sandbox
 
 import (

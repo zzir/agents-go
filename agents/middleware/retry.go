@@ -8,19 +8,11 @@ import (
 	"github.com/zzir/agents-go/agents"
 )
 
-// Retry re-runs a run that failed.
-//
-// It is not the same as agents.NewRetryModel, and both are usually right at
-// once. That one retries a single model call — a 429, a dropped connection —
-// and the run never notices. This one retries the whole run, which is what a
-// failure the loop could not absorb needs: a guardrail tripwire, a tool that
-// exhausted its own retries, a max-turns overrun.
-//
-// A run that already produced items is retried from the start, not resumed.
-// Resuming a failure means guessing which of its side effects happened, and
-// the SDK cannot know: a tool may have written a file. With a Session the
-// completed turns survive the retry, and the input is not sent again once an
-// attempt has stored it (spec §2.12).
+// Retry re-runs a run that failed — the whole run, which is what a failure the
+// loop could not absorb needs (a guardrail tripwire, a max-turns overrun);
+// agents.NewRetryModel retries one model call, and both are usually right at
+// once. An attempt is retried from the start, never resumed: the SDK cannot
+// know which side effects happened. With a Session, see spec §2.12.
 type Retry struct {
 	// MaxAttempts includes the first. Zero means 2 — one retry.
 	MaxAttempts int

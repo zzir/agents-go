@@ -11,9 +11,8 @@ import (
 	"github.com/zzir/agents-go/sandbox"
 )
 
-// The docker backend's optional capabilities. Both need the long-lived
-// container of Persistent mode: an ephemeral sandbox has nothing between
-// commands to start, stop or copy out of.
+// The docker backend's optional capabilities; both need Persistent mode's
+// long-lived container — an ephemeral sandbox has nothing between commands.
 
 var (
 	_ sandbox.Lifecycle = (*Sandbox)(nil)
@@ -41,9 +40,8 @@ func (s *Sandbox) Stop(ctx context.Context) error {
 	if err := s.requirePersistent(); err != nil {
 		return err
 	}
-	// Ownership first, like every other by-name entry point (withManaged): a
-	// foreign container that happens to hold the name must not be stopped, and
-	// the stop then acts on the id, not the name — an id is not reused.
+	// Ownership first, like every by-name entry point (withManaged), and the stop
+	// then acts on the id, not the name — an id is not reused.
 	id, _, ok, err := s.inspectOwned(ctx)
 	if err != nil {
 		return err
@@ -88,9 +86,7 @@ func (s *Sandbox) Status(ctx context.Context) (sandbox.State, error) {
 }
 
 // inspectOwned inspects the named container and confirms this package created
-// it (the fingerprint label is present). ok is false when nothing holds the
-// name; a FOREIGN holder is an error, so the by-name lifecycle calls never act
-// on or report a container that merely shares the name.
+// it; ok is false when nothing holds the name, a FOREIGN holder is an error.
 func (s *Sandbox) inspectOwned(ctx context.Context) (id string, running, ok bool, err error) {
 	info, err := s.cli.ContainerInspect(ctx, s.opts.ContainerName, client.ContainerInspectOptions{})
 	if err != nil {

@@ -12,9 +12,7 @@ import (
 const NotificationPrefix = "[task-notification] "
 
 // NotifyGuidance is the last line of every notification: what the woken
-// parent is to DO with it. Without it a diligent model redoes or re-verifies
-// the finished work before reporting — a second run of the same tests, at
-// the same cost — when the person wanted to be told.
+// parent is to DO with it. Without it a diligent model redoes the finished work.
 const NotifyGuidance = "(Tell the person what happened. The work above is done — do not repeat or re-check it unless they ask.)"
 
 // DefaultNotifyFormatter renders one line per finished task. One wake-up carries
@@ -34,9 +32,8 @@ func DefaultNotifyFormatter(ts []Task) string {
 		}
 		lines = append(lines, line)
 	}
-	// The retry hint is its OWN line: a task line is a machine-readable record
-	// consumers parse, and text appended inside one would read as part of the
-	// result.
+	// The retry hint is its OWN line: a task line is a machine-readable record,
+	// and text inside one would read as part of the result.
 	if slices.ContainsFunc(ts, func(t Task) bool { return t.Status == StatusFailed }) {
 		lines = append(lines, "(task_retry can resume a failed task from where it stopped)")
 	}
@@ -44,14 +41,11 @@ func DefaultNotifyFormatter(ts []Task) string {
 	return NotificationPrefix + strings.Join(lines, "\n")
 }
 
-// notifyEscape flattens text onto the one line the wire format is. A label and
-// summary are untrusted model output: an embedded newline would let them mint
-// lines of their own and forge a notification for a task the sender does not own.
+// notifyEscape flattens untrusted text onto the one line the wire format is;
+// a newline or a quote would let a label forge another task's line (spec §2.13).
 func notifyEscape(s string) string {
 	s = strings.ReplaceAll(s, "\r", " ")
 	s = strings.ReplaceAll(s, "\n", " ")
-	// Quotes too: the label is delimited by them, so a summary containing a
-	// quote could re-aim the parsed id and status on the same line without a
-	// newline. Stripping the delimiter closes the forgery.
+	// Quotes too: the label is delimited by them.
 	return strings.ReplaceAll(s, `"`, "'")
 }

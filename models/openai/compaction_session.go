@@ -133,15 +133,11 @@ func (s *CompactionSession) Clear(ctx context.Context) error {
 	return s.underlying.Clear(ctx)
 }
 
-// RunCompaction implements session.CompactionAware. It compacts the stored
-// history via responses.compact when the decision hook (or args.Force) says so,
-// replacing the underlying session's items with the compacted output.
-//
-// A nil error does not promise the history was replaced: the pass is abandoned
-// when something was appended while the compact call was in flight, or when
-// the caller pinned previous_response_id for a log holding items that chain
-// never saw (both recorded on the compaction span as "abandoned"). A caller
-// that needs to know compares the entries before and after.
+// RunCompaction implements session.CompactionAware: when the decision hook (or
+// args.Force) says so, it replaces the stored history with responses.compact's
+// output. A nil error does not promise a replacement — the pass is abandoned
+// (recorded on the span) when something was appended mid-call or the pinned
+// previous_response_id never saw part of the log; compare entries to know.
 func (s *CompactionSession) RunCompaction(ctx context.Context, args session.CompactionArgs) error {
 	all, err := s.underlying.Entries(ctx, session.Cursor{})
 	if err != nil {
@@ -150,8 +146,7 @@ func (s *CompactionSession) RunCompaction(ctx context.Context, args session.Comp
 	// Where the log stands now; the guarded swap at the end compares it back.
 	expect := session.AppendPointOf(all).LastSeq
 	// The replacement is a FLAT item list, which cannot express a tree: a
-	// branched session skips rather than flattens its abandoned attempts
-	// into the active context. Skipping costs nothing but size.
+	// branched session skips the pass rather than flatten abandoned attempts.
 	if isBranched(all) {
 		return nil
 	}
@@ -211,10 +206,8 @@ func (s *CompactionSession) RunCompaction(ctx context.Context, args session.Comp
 	if err != nil {
 		return fmt.Errorf("compaction: encoding compacted history: %w", err)
 	}
-	// Display records survive the rewrite (an annotation is not context, so
-	// history's rewrite may not delete it) and carry over first, in stored
-	// order. A previous compaction CHECKPOINT does not: its summary already
-	// entered the compact input, so the output supersedes it.
+	// Display records survive the rewrite (an annotation is not context) and go
+	// first; a previous compaction CHECKPOINT does not, its summary being in the input.
 	var replacement []session.Entry
 	for _, e := range all {
 		switch e.Kind {
@@ -251,9 +244,8 @@ func (s *CompactionSession) RunCompaction(ctx context.Context, args session.Comp
 	return nil
 }
 
-// isBranched reports whether the session's history is a tree rather than a
-// line, by the one shared definition of a branch view (ActiveBranchOf): a
-// linkless flat history reads WHOLE there, and leaf moves are excluded.
+// isBranched reports whether the history is a tree rather than a line, by the
+// one shared branch definition (ActiveBranchOf); leaf moves are excluded.
 func isBranched(entries []session.Entry) bool {
 	return len(session.ActiveBranchOf(entries)) != len(entries)
 }
@@ -279,12 +271,8 @@ func (s *CompactionSession) ReplaceEntriesIf(ctx context.Context, expect int64, 
 	return g.ReplaceEntriesIf(ctx, expect, entries...)
 }
 
-// resolveCompactionMode decides how to feed the compaction call: under "auto",
-// the full input when the last response is unstored or has no id, otherwise
-// previous_response_id. Items the chain never saw (OffChainItems) rule the
-// chain out — the rewrite would delete them unread — so "auto" falls back to
-// the input mode, while a caller who pinned previous_response_id gets
-// ok=false: the pass is theirs to skip.
+// resolveCompactionMode picks how to feed the call: "auto" chains on the last
+// stored response unless OffChainItems rule it out; a pinned chain then gets ok=false.
 func resolveCompactionMode(configured CompactionMode, args session.CompactionArgs) (mode CompactionMode, ok bool) {
 	mode = configured
 	if mode == CompactionModeAuto {
@@ -321,9 +309,8 @@ func compactionCandidateCount(items []agents.InputItem) int {
 	return n
 }
 
-// stripOrphanedAssistantIDs removes the id from assistant messages when the
-// compacted output carries no reasoning items, since replaying an assistant id
-// without its paired reasoning item is rejected by the API.
+// stripOrphanedAssistantIDs removes assistant message ids when the compacted
+// output has no reasoning items: the API rejects an id without its reasoning.
 func stripOrphanedAssistantIDs(items []agents.InputItem) []agents.InputItem {
 	if len(items) == 0 {
 		return items
@@ -363,9 +350,8 @@ func itemShape(it agents.InputItem) (typ, role string, hasContent bool) {
 	return probe.Type, probe.Role, len(probe.Content) > 0
 }
 
-// withoutID returns the item with its top-level "id" removed, or ok=false if it
-// has none. It is only ever called on assistant items (OfOutputMessage); it
-// makes a shallow copy so the shared session-history pointee is never mutated.
+// withoutID returns the item with its top-level "id" removed (ok=false if none),
+// as a shallow copy so the shared session-history pointee is never mutated.
 func withoutID(it agents.InputItem) (agents.InputItem, bool) {
 	if it.OfOutputMessage != nil {
 		msg := *it.OfOutputMessage

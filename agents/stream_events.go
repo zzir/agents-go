@@ -79,12 +79,8 @@ func streamLifecycleEvent(t string) bool {
 	return false
 }
 
-// streamFailureEvent reports whether a stream event type announces a terminal
-// failure. Like the lifecycle preamble it carries nothing the model generated,
-// so it must not commit an attempt: the whole point of retry/fallback is to
-// replace an attempt that ends in one of these. (response.incomplete is NOT
-// here: a length-truncated response is output that arrived — committing on it
-// is what stops a retry from throwing that output away.)
+// streamFailureEvent reports whether an event type announces terminal failure and so
+// cannot commit an attempt; response.incomplete is excluded — it is real output.
 func streamFailureEvent(t string) bool {
 	switch t {
 	case EventError, EventResponseError, EventResponseFailed:

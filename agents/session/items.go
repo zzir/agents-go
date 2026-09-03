@@ -9,9 +9,8 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 )
 
-// The session layer speaks the same wire aliases as the runner. An alias is
-// transparent — these ARE the agents-package types, redeclared so this package
-// needs nothing from the runner.
+// The session layer speaks the runner's wire aliases: these ARE the
+// agents-package types, redeclared so this package needs nothing from the runner.
 type (
 	// InputItem is a single item in the model input list, in OpenAI Responses
 	// format.
@@ -55,21 +54,14 @@ func UnmarshalInputItem(data []byte) (InputItem, error) {
 	if err := json.Unmarshal(data, &item); err == nil {
 		return item, nil
 	}
-	// Fallback: an easy input message ({"role":..., "content":...}) lacks a
-	// "type" discriminator, so decode it directly. Require a role so arbitrary
-	// JSON objects are rejected instead of becoming empty messages.
+	// An easy input message ({"role","content"}) has no "type" discriminator:
+	// decode it directly, requiring a role so arbitrary JSON is rejected.
 	var easy responses.EasyInputMessageParam
 	if err := json.Unmarshal(data, &easy); err == nil && easy.Role != "" {
 		return InputItem{OfMessage: &easy}, nil
 	}
-	// A typed item the union does not know: keep the bytes rather than reject
-	// them. Stored history can outlive this SDK's type coverage — a session
-	// written by a newer build, or one holding an item type added after it was
-	// written — and refusing to read it back would make the whole conversation
-	// unloadable over one item.
-	//
-	// A "type" is required, so genuinely malformed JSON still errors instead of
-	// being smuggled through as an opaque blob.
+	// A typed item the union does not know keeps its bytes: stored history can
+	// outlive this SDK's type coverage. "type" is required so malformed JSON errors.
 	if typ := probe.Type; typ != "" {
 		return rawInputOverride(string(data)), nil
 	}
@@ -77,11 +69,8 @@ func UnmarshalInputItem(data []byte) (InputItem, error) {
 }
 
 // ItemText returns an input item's readable text, or "" for an item that has
-// none (a tool call, a reasoning block).
-//
-// It exists because the Responses API accepts content as either a bare string
-// or an array of parts, and a consumer rendering history would otherwise have
-// to know that — and handle only the shape it happened to meet first.
+// none (a tool call, a reasoning block). Content may be a bare string or an
+// array of parts; both shapes are read.
 func ItemText(item InputItem) string {
 	raw, err := MarshalInputItem(item)
 	if err != nil {
@@ -90,15 +79,8 @@ func ItemText(item InputItem) string {
 	return textFromRaw(raw)
 }
 
-// UserText returns the user-authored text in items: the text of every
-// role=="user" message, trimmed, with the non-empty ones joined by newlines.
-// "" when items carry no user text at all.
-//
-// It answers "what did the user say in this input slice" — the string a user
-// bubble shows — for a consumer holding input items rather than rendered
-// history: a paused run's pending input, a run's original input. Item by item
-// it reads the same text ItemText does, so the joined result matches what the
-// same items produce once stored and rendered individually.
+// UserText returns the text of every role=="user" message in items, trimmed
+// and joined by newlines — the string a user bubble shows; "" when there is none.
 func UserText(items []InputItem) string {
 	var parts []string
 	for _, item := range items {
@@ -119,9 +101,8 @@ func UserText(items []InputItem) string {
 	return strings.Join(parts, "\n")
 }
 
-// textFromRaw extracts the readable text of a serialized item: its "content"
-// as either a bare string or an array of text parts, the two shapes the
-// Responses API accepts.
+// textFromRaw extracts a serialized item's "content" as either a bare string
+// or an array of text parts, the two shapes the Responses API accepts.
 func textFromRaw(raw []byte) string {
 	var probe struct {
 		Content json.RawMessage `json:"content"`

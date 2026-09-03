@@ -1,11 +1,7 @@
 // Package conformancetest holds the behavioral contract every tasks.Store
-// implementation must satisfy, as one reusable test suite — the same shape as
-// modelkit/conformancetest for Model implementations. A store passes this
-// suite or it does not implement the interface, whatever its comments claim.
-//
-// Store-SPECIFIC behavior stays in each store's own tests — above all the SQL
-// stores' session-generation predicates, which the in-memory store does not
-// have.
+// implementation must satisfy, as one reusable test suite. Store-SPECIFIC
+// behavior (the SQL stores' session-generation predicates) stays in each
+// store's own tests.
 package conformancetest
 
 import (
@@ -26,9 +22,8 @@ func Run(t *testing.T, newStore func(t *testing.T) tasks.Store) {
 	t.Helper()
 	ctx := context.Background()
 
-	// mk returns a working task with stable ids per n — UUIDs, memoized by
-	// name, since a backend may type its id columns (the server's PostgreSQL
-	// does) and a literal "t1" is then a syntax error, not an id.
+	// mk returns a working task with stable ids per n — UUIDs memoized by
+	// name, since a backend may type its id columns (the server's PostgreSQL does).
 	ids := map[string]string{}
 	name := func(s string) string {
 		if ids[s] == "" {

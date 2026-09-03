@@ -9,17 +9,8 @@ import (
 	"github.com/zzir/agents-go/tracing"
 )
 
-// prepareRun builds the runner shared by Run and RunSync: it validates
-// server-state options, wires the run context, starts (or joins) the trace and
-// prepends session history to the model input. The returned finish func ends
-// the trace — a no-op when the trace was joined (nested run) or tracing is off
-// — and must be deferred by the caller. ResumeRun seeds its runner from a
-// RunState instead, so it has its own entry construction and shares the loop
-// plus observeRun.
-//
-// userInput is the run's new input, already normalized by runViaMiddleware —
-// the one place a string or an []InputItem becomes an item list, so a
-// middleware edits the very list the loop then uses.
+// prepareRun builds the runner shared by Run and RunSync: validated options, run
+// context, trace, session history prepended. The returned func must be deferred.
 func prepareRun(ctx context.Context, agent *Agent, userInput []InputItem, opts RunOptions) (*runner, []InputItem, func(), error) {
 	maxTurns := opts.Exec.MaxTurns
 	if maxTurns == 0 {
@@ -85,14 +76,8 @@ func prepareRun(ctx context.Context, agent *Agent, userInput []InputItem, opts R
 	return r, modelInput, finishTrace, nil
 }
 
-// observeRun wires everything a run is watched through before its first turn:
-// the run logger, the diagnostics sink and the trace. The returned func ends
-// the trace — a no-op when the trace was joined or tracing is off — and must be
-// deferred by the caller.
-//
-// ResumeRun goes through here too, so a resumed run is observed exactly like the
-// run it continues: resumed only marks the log and the trace name, and every
-// other difference between the two would be a bug.
+// observeRun wires the run logger, diagnostics sink and trace before the first turn.
+// The returned func must be deferred; it is a no-op for a joined or untraced run.
 func (r *runner) observeRun(agent *Agent, resumed bool) func() {
 	attrs := []slog.Attr{slog.String("agent", agent.Name)}
 	if resumed {
@@ -145,10 +130,8 @@ type loopSeed struct {
 	startTurn int
 }
 
-// seedLoop builds the loop's starting state. When resuming from an interruption
-// it seeds prior state from the RunState and restores the persistence cursor and
-// turn counter, so the resume continues from the pause instead of re-saving or
-// resetting the turn budget.
+// seedLoop builds the loop's starting state, restoring prior items, the persistence
+// cursor and the turn counter from the RunState when this is a resume.
 func (r *runner) seedLoop(startAgent *Agent, originalInput []InputItem) loopSeed {
 	seed := loopSeed{
 		agent:         startAgent,
@@ -180,9 +163,8 @@ func (r *runner) seedLoop(startAgent *Agent, originalInput []InputItem) loopSeed
 	return seed
 }
 
-// validateServerState rejects incompatible server-managed conversation options.
-// conversation_id and previous_response_id both put history on the server, so
-// they cannot be combined with each other or with a local Session.
+// validateServerState rejects incompatible server-managed conversation options:
+// ConversationID and UsePreviousResponseID exclude each other and a local Session.
 func validateServerState(opts RunOptions) error {
 	if opts.Conversation.ConversationID != "" {
 		if opts.Conversation.UsePreviousResponseID {

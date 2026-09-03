@@ -1,12 +1,9 @@
 // Package sessions provides SQL-backed session.Storage implementations (SQLite
-// and PostgreSQL) built on uptrace/bun. It is a separate Go module so the
-// database driver dependencies never reach the core SDK's dependency graph —
-// callers who use only InMemorySession pay nothing for it.
-//
-// Session entries are stored one row per entry, the whole entry serialized as
-// JSON in a single column. Entry kinds and their payloads are an open set, so a
-// column per field would make every new kind a schema migration — and a build
-// that meets a kind it does not know must still read the row back intact.
+// and PostgreSQL) on uptrace/bun, as a separate module so the drivers never
+// reach the core SDK's dependency graph. Entries are stored one row per entry,
+// the whole entry serialized as JSON in one column: entry kinds and payloads
+// are an open set, so a column per field would make every new kind a schema
+// migration, and a build meeting an unknown kind must still read the row back.
 package sessions
 
 import (
@@ -27,9 +24,8 @@ import (
 	"github.com/zzir/agents-go/agents/session"
 )
 
-// entry is the row model: one stored session entry. EntryID, ParentID and
-// Kind are lifted out of the JSON for indexed lookups; everything else stays
-// in the blob, since entry kinds and payloads are an open set.
+// entry is the row model: EntryID, ParentID and Kind are lifted out of the
+// JSON for indexed lookups; everything else stays in the blob (open set).
 type entry struct {
 	bun.BaseModel `bun:"table:agent_entries,alias:e"`
 
@@ -50,8 +46,7 @@ type entry struct {
 }
 
 // sessionRow records a session's existence and metadata, so a repo can list
-// sessions that hold no entries yet and so "hidden" is a property of the
-// session rather than something inferred from its contents.
+// sessions with no entries yet and "hidden" is a session property.
 type sessionRow struct {
 	bun.BaseModel `bun:"table:agent_sessions,alias:s"`
 
@@ -84,9 +79,8 @@ func forRef(db *bun.DB, ref session.Ref) *Session {
 	return &Session{db: db, ref: ref}
 }
 
-// scoped narrows a query to this session. Reads and writes both go through it,
-// which is what makes the generation part of the address rather than a field a
-// code path can forget.
+// scoped narrows a query to this session; reads and writes both go through it,
+// making the generation part of the address rather than a forgettable field.
 func (s *Session) scoped(q *bun.SelectQuery) *bun.SelectQuery {
 	return q.Where("session_id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen)
 }
@@ -105,11 +99,8 @@ func NewSQLite(dsn, sessionID string) (*Session, *bun.DB, error) {
 	return New(db, sessionID), db, nil
 }
 
-// tuneSQLite makes concurrent writers work at all: SQLite allows one writer
-// and fails a second IMMEDIATELY with SQLITE_BUSY, which a compare-and-set
-// UPDATE cannot tell from "somebody else won". Capping the pool at one
-// connection is the portable fix (a busy_timeout pragma is per connection).
-// The pragmas are best-effort: an in-memory or read-only database rejects them.
+// tuneSQLite caps the pool at one connection: a second writer fails at once
+// with SQLITE_BUSY, which a CAS UPDATE cannot tell from "lost"; pragmas are best-effort.
 func tuneSQLite(sqldb *sql.DB) {
 	sqldb.SetMaxOpenConns(1)
 	for _, pragma := range []string{
@@ -133,9 +124,8 @@ func NewPostgres(sqldb *sql.DB, sessionID string) (*Session, *bun.DB) {
 // handed out twice (spec §2.5e2), so a duplicate becomes a failed write. This
 // project ships no migrations — rebuild the database on a schema change.
 func CreateSchema(ctx context.Context, db *bun.DB) error {
-	// The task table comes with it: Repo.Delete cascades task rows, and
-	// CreateTaskSchema creates the session table too, so either entry point
-	// leaves a consistent schema.
+	// The task table comes with it (and CreateTaskSchema creates the session
+	// table), so either entry point leaves a consistent schema.
 	if err := CreateTaskSchema(ctx, db); err != nil {
 		return err
 	}
@@ -184,9 +174,8 @@ func (s *Session) entriesIn(ctx context.Context, db bun.IDB, cur session.Cursor)
 	if cur.AfterSeq > 0 {
 		q = q.Where("seq > ?", cur.AfterSeq)
 	}
-	// A negative limit means "the most recent N", which the database answers by
-	// reading in reverse and flipping below — far cheaper than reading the
-	// whole session to slice its tail.
+	// A negative limit means "the most recent N": read in reverse and flip below,
+	// far cheaper than reading the whole session to slice its tail.
 	limit := cur.Limit
 	if limit < 0 {
 		q = q.Order("seq DESC").Limit(-limit)
@@ -213,12 +202,8 @@ func (s *Session) entriesIn(ctx context.Context, db bun.IDB, cur session.Cursor)
 	return out, nil
 }
 
-// lockForWrite serializes this session's read-plan-write sequences: reading
-// the append point and writing the entries must be one step (spec §2.5e2),
-// and read committed alone does not give that. PostgreSQL takes a
-// transaction-scoped advisory lock on (id, gen); SQLite needs nothing, since
-// NewSQLite caps the pool at one connection (a caller's own multi-connection
-// pool through New gives that up — cap it).
+// lockForWrite makes read-plan-write one step (spec §2.5e2): PostgreSQL takes
+// a transaction advisory lock on (id, gen); SQLite relies on the one-connection pool.
 func (s *Session) lockForWrite(ctx context.Context, tx bun.Tx) error {
 	if s.db.Dialect().Name() != dialect.PG {
 		return nil
@@ -231,11 +216,8 @@ func (s *Session) lockForWrite(ctx context.Context, tx bun.Tx) error {
 	return nil
 }
 
-// touchIn records that the session changed, on the transaction that changed
-// it. For a repo-created session (non-empty generation) it doubles as the
-// proof the session still EXISTS: zero rows updated means it was deleted under
-// a live handle, and the write rolls back rather than orphan its entries
-// (spec §2.5e2). A session used directly never had a row.
+// touchIn records that the session changed and, for a repo-created session,
+// proves it still EXISTS: zero rows means deleted, and the write rolls back (spec §2.5e2).
 func (s *Session) touchIn(ctx context.Context, tx bun.Tx) error {
 	res, err := tx.NewUpdate().Model((*sessionRow)(nil)).
 		Set("updated_at = ?", time.Now().UTC()).
@@ -323,17 +305,14 @@ func (s *Session) ReplaceEntriesIf(ctx context.Context, expect int64, entries ..
 	return replaced, nil
 }
 
-// replaceIn deletes this session's rows and inserts entries in their place on
-// the caller's transaction, reporting whether it wrote. A non-nil expect makes
-// the rewrite conditional on the session's highest sequence number still being
-// that one.
+// replaceIn swaps this session's rows for entries on the caller's transaction
+// and reports whether it wrote; a non-nil expect guards on the highest seq.
 func (s *Session) replaceIn(ctx context.Context, tx bun.Tx, entries []session.Entry, expect *int64) (bool, error) {
 	if err := s.lockForWrite(ctx, tx); err != nil {
 		return false, err
 	}
-	// A replace does not restart the numbering — a cursor outlives the
-	// entries it pointed at — so the high-water mark is carried over while
-	// the branch starts fresh.
+	// A replace does not restart the numbering — a cursor outlives the entries it
+	// pointed at — so the high-water mark carries over while the branch starts fresh.
 	at, err := s.appendPointIn(ctx, tx)
 	if err != nil {
 		return false, err
@@ -360,9 +339,8 @@ func (s *Session) replaceIn(ctx context.Context, tx bun.Tx, entries []session.En
 	return true, nil
 }
 
-// encodeEntries prepares entries for insertion, filling in the fields the store
-// owns. A caller-supplied id is kept, so an entry re-added by a fork or a
-// replace keeps the identity an update entry points at.
+// encodeEntries prepares entries for insertion, filling in the store-owned
+// fields; a caller-supplied id is kept so a fork or replace preserves identity.
 func (s *Session) encodeEntries(entries []session.Entry, at session.AppendPoint) ([]entry, error) {
 	prepared := session.PrepareAppend(entries, at)
 	rows := make([]entry, 0, len(prepared))
@@ -384,10 +362,8 @@ func (s *Session) encodeEntries(entries []session.Entry, at session.AppendPoint)
 	return rows, nil
 }
 
-// appendPointIn reports the session's current branch tip through the caller's
-// transaction, so tip and write are one step. Only the newest row is read: it
-// carries the highest sequence number, and the tip is either it or — for a
-// leaf move — the entry it points at.
+// appendPointIn reads the branch tip on the caller's transaction, so tip and
+// write are one step: the newest row, or for a leaf move the entry it points at.
 func (s *Session) appendPointIn(ctx context.Context, db bun.IDB) (session.AppendPoint, error) {
 	var row entry
 	err := s.scoped(db.NewSelect().Model(&row)).

@@ -26,9 +26,8 @@ type singleStepResult struct {
 	NewAgent      *Agent
 	Handoff       *Handoff // the handoff taken, when NextStep is stepHandoff
 	Interruptions []*ToolApprovalItem
-	// NestedStates carries the paused RunState of any agent-as-tool nested run
-	// that interrupted this turn, keyed by the parent tool call id, so the
-	// runner can stash it on the parent RunState for ResumeRun.
+	// NestedStates carries the paused RunState of each agent-as-tool nested run
+	// that interrupted this turn, keyed by parent tool call id.
 	NestedStates map[string]*RunState
 }
 
@@ -64,9 +63,8 @@ const (
 	ToolNotFoundReturnToModel
 )
 
-// ParseToolNotFoundBehavior converts a string to a ToolNotFoundBehavior.
-// Recognized values: "error" (or ""), "return_to_model" and its upstream alias
-// "return_error_to_model". Unknown values return ToolNotFoundError.
+// ParseToolNotFoundBehavior converts a string to a ToolNotFoundBehavior:
+// "error" (or ""), "return_to_model" or "return_error_to_model"; else error.
 func ParseToolNotFoundBehavior(s string) ToolNotFoundBehavior {
 	switch s {
 	case "return_to_model", "return_error_to_model":
@@ -112,9 +110,8 @@ func processModelResponse(
 	for _, h := range handoffs {
 		handoffMap[h.ToolName] = h
 	}
-	// Every tool is dispatchable — one with no OnInvoke fails AT INVOCATION as a
-	// UserError naming the tool. Filtering it out here would route the call to the
-	// not-found path, blaming the model for a configuration bug.
+	// A tool with no OnInvoke fails AT INVOCATION as a UserError; filtering it
+	// here would route the call to not-found and blame the model.
 	functionMap := make(map[string]*Tool)
 	for _, t := range tools {
 		functionMap[t.Name] = t
@@ -150,31 +147,24 @@ func processModelResponse(
 			pr.NewItems = append(pr.NewItems, NewModelItem(ItemToolCall, agent, output))
 			pr.Functions = append(pr.Functions, toolRunFunction{Tool: ft, Call: call})
 		default:
-			// An item type this SDK does not model. Keeping it is not optional:
-			// dropping one corrupts the conversation, because the next turn resends
-			// a history the model does not recognize. ItemUnknown carries the bytes
-			// through untouched.
+			// An item type this SDK does not model: dropping it would corrupt the
+			// next turn's history, so ItemUnknown carries the bytes through.
 			pr.NewItems = append(pr.NewItems, NewModelItem(ItemUnknown, agent, output))
 		}
 	}
 	return pr, nil
 }
 
-// stepProgress is the run as this turn found it: the input it started from, the
-// items generated before this turn, and the response being executed. The three
-// travel together because they are only ever read together.
+// stepProgress is the run as this turn found it: the input it started from,
+// the items generated before it, and the response being executed.
 type stepProgress struct {
 	originalInput []InputItem
 	preStepItems  []*RunItem
 	resp          *ModelResponse
 }
 
-// executeToolsAndSideEffects runs the tools and handoffs requested by a model
-// response and determines the next step.
-//
-// resumed marks the first turn after a HITL resume: the interrupted response's
-// own items were already recorded before the run paused, so they must not be
-// appended a second time.
+// executeToolsAndSideEffects runs the tools and handoffs a model response
+// requested and decides the next step; resumed skips re-appending its items.
 func (r *runner) executeToolsAndSideEffects(
 	ctx context.Context,
 	agent *Agent,
@@ -189,22 +179,15 @@ func (r *runner) executeToolsAndSideEffects(
 		newStepItems = append(newStepItems, pr.NewItems...)
 	}
 
-	// On the first turn after a HITL resume the interrupted response is
-	// re-processed, so sibling calls that completed before the pause reappear.
-	// Drop them (see dropCompletedResumedCalls) so they are neither re-run nor
-	// re-output.
+	// A resume re-processes the interrupted response; sibling calls that
+	// completed before the pause are dropped (dropCompletedResumedCalls).
 	functions := pr.Functions
 	if resumed {
 		functions = dropCompletedResumedCalls(functions, prog.preStepItems)
 	}
 
-	// Human-in-the-loop: partition function calls into those ready to run, those
-	// awaiting approval, and rejected calls (already resolved to results).
-	//
-	// A truncated response bypasses the partition: a call whose arguments may stop
-	// mid-JSON must neither run nor ASK, since a resumed approval in another
-	// process would execute what this one refuses. All fall through to
-	// truncatedCallResults.
+	// Partition calls by approval — except on a truncated response, whose
+	// calls must neither run nor ASK: all go to truncatedCallResults (§2.7e).
 	var toRun []toolRunFunction
 	var interruptions []*ToolApprovalItem
 	var rejected []functionToolResult
@@ -230,9 +213,8 @@ func (r *runner) executeToolsAndSideEffects(
 		}, nil
 	}
 
-	// Run the approved function tools in parallel, then merge with the rejected
-	// results in original call order so item order and the turn-boundary hooks
-	// see every call.
+	// Run the approved tools in parallel, then merge with the rejected results
+	// in original call order so items and hooks see every call.
 	var executed, refusedHandoffs []functionToolResult
 	handoffs := pr.Handoffs
 	if resp.Truncated() {
@@ -273,9 +255,8 @@ func (r *runner) executeToolsAndSideEffects(
 	var nestedStates map[string]*RunState
 	for _, fr := range functionResults {
 		if len(fr.nestedInterruptions) > 0 {
-			// An agent-as-tool's nested run paused for approval: gather its
-			// interruptions and cache its state by call id. Its output is
-			// withheld (fr.outputItem is nil) until the parent run resumes.
+			// A nested run paused for approval: gather its interruptions and
+			// cache its state by call id; its output is withheld until resume.
 			nestedInterruptions = append(nestedInterruptions, fr.nestedInterruptions...)
 			if fr.nestedState != nil {
 				if nestedStates == nil {
@@ -290,10 +271,8 @@ func (r *runner) executeToolsAndSideEffects(
 		}
 	}
 
-	// If any nested agent-as-tool run paused, pause the parent run too: surface
-	// the nested interruptions as the parent's own and carry the paused nested
-	// states so ResumeRun continues them. Sibling tools that completed keep their
-	// outputs in newStepItems.
+	// A paused nested run pauses the parent too, surfacing its interruptions
+	// as the parent's own; completed siblings keep their outputs.
 	if len(nestedInterruptions) > 0 {
 		return &singleStepResult{
 			NewStepItems:  newStepItems,
@@ -311,11 +290,8 @@ func (r *runner) executeToolsAndSideEffects(
 			names[i] = call.Name
 			newStepItems = append(newStepItems, newFunctionCallOutputItem(agent, call.CallID, fmt.Sprintf("Tool '%s' not found.", call.Name)))
 		}
-		// Record on the span as data, not SetError: the model is handed the
-		// failure and recovers next turn, so the run is not failed — a red agent
-		// span would misreport a run that completed. The name is model-chosen
-		// metadata, not user data, so it is recorded regardless of the
-		// sensitive-data setting.
+		// Data, not SetError: the model recovers next turn, so the run is not
+		// failed. The name is model-chosen metadata, recorded regardless.
 		r.agentSpan.Set("tool_not_found", names)
 	}
 
@@ -324,9 +300,8 @@ func (r *runner) executeToolsAndSideEffects(
 		return r.executeHandoff(ctx, agent, handoffs, newStepItems)
 	}
 
-	// Every tool in the batch asked to stop: honor it, using the last output as
-	// the final result. Unanimity is the rule, not "any" — stopping while another
-	// tool is still working would throw away a result the model asked for.
+	// Every tool in the batch asked to stop: honor it with the last output.
+	// Unanimity, not "any" — spec §2.3c.
 	if allTerminate(functionResults) {
 		return &singleStepResult{
 			NewStepItems: newStepItems,
@@ -348,19 +323,8 @@ func (r *runner) executeToolsAndSideEffects(
 	return &singleStepResult{NewStepItems: newStepItems, NextStep: stepRunAgain}, nil
 }
 
-// decideFinalOutput reads a tool-free turn's last message as the run's final
-// output. newStepItems is the turn's items so far; a recovery handler's
-// synthesized message joins them, which is why the whole step result is built
-// here rather than just the output value.
-//
-// Three ways the message is not simply the answer, each recoverable through
-// ExecOptions.ErrorHandlers instead of failing the run outright:
-//
-//   - a refusal, which outranks any text or structured content in the same
-//     message;
-//   - text that does not validate against a structured output type;
-//   - no text at all for a structured output type — where a handler that
-//     declines means running the model again, never a hard failure.
+// decideFinalOutput reads a tool-free turn's last message as the final output;
+// a refusal or a bad structured output goes through ErrorHandlers — spec §2.3.
 func (r *runner) decideFinalOutput(
 	ctx context.Context,
 	agent *Agent,
@@ -435,10 +399,8 @@ func (r *runner) decideFinalOutput(
 	return &singleStepResult{NewStepItems: newStepItems, NextStep: stepFinalOutput, FinalOutput: final}, nil
 }
 
-// orderToolResults merges the executed and rejected tool results back into the
-// original call order given by calls, so run items and the turn hooks observe
-// every call in the sequence the model emitted. Results are matched by call
-// id; every result came from one of calls.
+// orderToolResults merges executed and rejected results back into the model's
+// call order, matched by call id.
 func orderToolResults(calls []toolRunFunction, executed, rejected []functionToolResult) []functionToolResult {
 	byCallID := make(map[string]functionToolResult, len(executed)+len(rejected))
 	for _, r := range executed {
@@ -457,12 +419,8 @@ func orderToolResults(calls []toolRunFunction, executed, rejected []functionTool
 	return out
 }
 
-// dropCompletedResumedCalls removes function calls whose function_call_output
-// already exists among priorItems. On the first turn after a HITL resume the
-// interrupted response is re-processed, so a call that finished before the pause
-// must be neither re-run (duplicate side effects) nor re-output (a duplicate call
-// id the Responses API rejects). Dropping it is safe: its output is already in
-// the log.
+// dropCompletedResumedCalls removes calls whose output already exists among
+// priorItems: on a resume they must be neither re-run nor re-output.
 func dropCompletedResumedCalls(functions []toolRunFunction, priorItems []*RunItem) []toolRunFunction {
 	if len(functions) == 0 {
 		return functions
@@ -500,14 +458,8 @@ func allTerminate(results []functionToolResult) bool {
 	return true
 }
 
-// coerceToolFinalOutput renders a tool's output as the run's final output when
-// a tool asks to terminate, or a turn hook stops the run. For a plain-text
-// agent (no output type) the value is coerced to a string so the final output
-// is a string rather than a raw Go value. Agents with an output type keep the
-// raw value for the caller to decode.
-//
-// It renders through stringifyToolOutput so a multimodal output reads as the JSON
-// the model was sent, not as Go syntax.
+// coerceToolFinalOutput renders a tool's output as the run's final output: the raw
+// value for an agent with an output type, else a string via stringifyToolOutput.
 func coerceToolFinalOutput(agent *Agent, output any) any {
 	if agent.OutputType != nil {
 		return output

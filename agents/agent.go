@@ -132,9 +132,8 @@ func (a *Agent) systemPrompt(ctx context.Context, rc *RunContext) (string, error
 	return a.Instructions(ctx, rc, a)
 }
 
-// resolvePrompt resolves the agent's stored-prompt configuration for the run,
-// or nil when the agent has none. A prompt without an ID is a configuration
-// error, caught here so it fails the run before the request is built.
+// resolvePrompt resolves the agent's stored-prompt configuration for the run, or
+// nil when the agent has none. A prompt without an ID is an error.
 func (a *Agent) resolvePrompt(ctx context.Context, rc *RunContext) (*Prompt, error) {
 	if a.Prompt == nil {
 		return nil, nil

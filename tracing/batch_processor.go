@@ -16,15 +16,9 @@ type BatchProcessorOptions struct {
 	// MaxQueueSize bounds the buffer; items beyond it are dropped and counted.
 	// Default 8192.
 	MaxQueueSize int
-	// OnDrop, when set, is called every time an item is dropped, with the
-	// running total. Losing telemetry is otherwise silent: Dropped is a counter
-	// nobody is obliged to read, and the SDK never writes to slog.Default() of
-	// its own accord (spec §2.11c), so this is the host's one chance to hear
-	// about it.
-	//
-	// It runs on the goroutine that finished the span, outside the processor's
-	// lock, so under concurrent drops the totals can arrive out of order. What
-	// it must not be is slow: whatever drops one item usually drops thousands.
+	// OnDrop, when set, is called on every dropped item with the running total —
+	// the host's one channel for lost telemetry (spec §2.11e). It runs outside the
+	// lock on the dropping goroutine, so totals may arrive out of order; keep it fast.
 	OnDrop func(dropped int)
 }
 
@@ -131,9 +125,8 @@ func (p *BatchProcessor) flush() {
 		n := min(len(p.queue), p.opts.MaxBatchSize)
 		batch := make([]Item, n)
 		copy(batch, p.queue[:n])
-		// Release the exported items: reslicing alone leaves them reachable
-		// through the backing array, so a queue that once held a burst of
-		// content-carrying spans keeps them alive long after they shipped.
+		// clear releases the exported items: reslicing alone keeps them reachable
+		// through the backing array.
 		clear(p.queue[:n])
 		p.queue = p.queue[n:]
 		p.mu.Unlock()
@@ -146,12 +139,9 @@ func (p *BatchProcessor) flush() {
 // ForceFlush exports all currently-queued items synchronously.
 func (p *BatchProcessor) ForceFlush() { p.flush() }
 
-// Shutdown stops the background goroutine after a final flush. It honors ctx: if
-// the context is cancelled first, it returns without waiting for the goroutine.
-// Items arriving after Shutdown are dropped, and counted: telemetry that
-// arrives once the exporter is gone has nowhere to go, and blocking a caller
-// on a shut-down processor would be worse than losing a span. Those drops
-// reach OnDrop like any other.
+// Shutdown stops the background goroutine after a final flush, returning early
+// if ctx ends first. Items arriving afterwards are dropped and counted,
+// reaching OnDrop like any other.
 func (p *BatchProcessor) Shutdown(ctx context.Context) {
 	p.mu.Lock()
 	p.shutdown = true

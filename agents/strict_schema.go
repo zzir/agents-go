@@ -39,9 +39,8 @@ func EnsureStrictJSONSchema(schema map[string]any) (map[string]any, error) {
 	return schema, nil
 }
 
-// ensureStrictSchemaCopy deep-copies schema (via a JSON round-trip) and runs
-// EnsureStrictJSONSchema on the copy, so callers holding a user-supplied map
-// get a normalized schema without mutating the caller's value.
+// ensureStrictSchemaCopy runs EnsureStrictJSONSchema on a JSON round-trip copy of
+// schema, leaving the caller's map unmutated.
 func ensureStrictSchemaCopy(schema map[string]any) (map[string]any, error) {
 	if len(schema) == 0 {
 		return emptyStrictSchema(), nil
@@ -57,12 +56,8 @@ func ensureStrictSchemaCopy(schema map[string]any) (map[string]any, error) {
 	return EnsureStrictJSONSchema(copied)
 }
 
-// errUnconstrainedSchema builds the error for a JSON Schema node that constrains
-// no value. This has two forms, both produced by a Go any/interface{} field: a
-// boolean "true"/"false" schema (an untagged field), and a bare typeless object
-// such as {"description":...} (a field carrying a jsonschema description tag).
-// Strict mode has no way to express an unconstrained value, so surface the
-// problem at construction time instead of a 400 from the API at request time.
+// errUnconstrainedSchema builds the construction-time error for a node that
+// constrains no value: a boolean schema or a typeless object from an any field.
 func errUnconstrainedSchema(what string, path []string) error {
 	return fmt.Errorf(
 		"%s (path=%s) is an unconstrained schema: a Go any/interface{} field has no concrete "+
@@ -74,12 +69,8 @@ func errUnconstrainedSchema(what string, path []string) error {
 		what, strings.Join(path, "/"))
 }
 
-// isUnconstrainedSchema reports whether a normalized schema node constrains no
-// value: it declares neither a concrete "type" nor any construct that stands in
-// for one (a $ref, a combinator, an enum/const, or object/array structure).
-// Such a node is the map form of an any/interface{} field — e.g.
-// {"description":...} — and, like a boolean "true" schema, is rejected by
-// strict mode.
+// isUnconstrainedSchema reports whether a node declares no "type" and no stand-in
+// for one ($ref, combinator, enum/const, object/array structure) — an any field.
 func isUnconstrainedSchema(node map[string]any) bool {
 	for _, k := range []string{"type", "$ref", "anyOf", "oneOf", "allOf", "enum", "const", "properties", "items"} {
 		if _, ok := node[k]; ok {
@@ -236,9 +227,8 @@ func ensureStrict(node map[string]any, path []string, root map[string]any) error
 	return nil
 }
 
-// sortAnyStrings sorts a slice of any whose elements are strings, in place.
-// It keeps generated "required" lists deterministic (Go's json.Marshal already
-// sorts map keys, so this keeps required aligned with properties).
+// sortAnyStrings sorts a slice of any whose elements are strings, in place, keeping
+// a generated "required" list aligned with json.Marshal's sorted property keys.
 func sortAnyStrings(s []any) {
 	slices.SortFunc(s, func(a, b any) int {
 		as, _ := a.(string)

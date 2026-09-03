@@ -6,19 +6,9 @@ import (
 	"github.com/zzir/agents-go/sandbox"
 )
 
-// The file operations have two backends, and every public method below is the
-// same three-way dispatch:
-//
-//   - Options.WorkDir set — the working directory is a bind-mounted HOST
-//     directory, so the operation runs on the host under an os.Root guard
-//     (files_host.go).
-//   - Options.Persistent — the working directory lives inside the long-lived
-//     container, reached with exec and tar (files_container.go).
-//   - neither — there is no directory that outlives a call: sandbox.ErrNoWorkDir.
-//
-// The dispatch stays written out in each method on purpose: an interface over
-// two backends that are never chosen dynamically would hide which one runs
-// without removing a single branch.
+// Every file operation below dispatches the same way: a bind-mounted WorkDir
+// runs on the host under an os.Root (files_host.go), Persistent goes through
+// exec in the container (files_container.go), neither is sandbox.ErrNoWorkDir.
 
 // ReadFile implements sandbox.Sandbox. Files larger than
 // Options.MaxReadFileBytes (default sandbox.DefaultMaxReadFileBytes) fail

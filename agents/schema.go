@@ -8,14 +8,8 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
-// schemaForType generates a JSON Schema (as a map) for the given Go type using
-// reflection. Struct fields are named by their json tag and described by a
-// "jsonschema" struct tag (the whole tag value is the field description). The
-// schema is inlined (no $ref/$defs) and the root is the type's own object
-// schema, which is the shape OpenAI tool/output schemas require.
-//
-// When strict is true the schema is additionally rewritten to satisfy OpenAI
-// strict mode via EnsureStrictJSONSchema.
+// schemaForType reflects a Go type into an inlined JSON Schema (no $ref/$defs),
+// describing fields by their "jsonschema" tag; strict adds EnsureStrictJSONSchema.
 func schemaForType(t reflect.Type, strict bool) (map[string]any, error) {
 	reflected, err := jsonschema.ForType(t, nil)
 	if err != nil {

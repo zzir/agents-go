@@ -20,24 +20,17 @@ type TurnSnapshot struct {
 	Tools        []*Tool
 	Handoffs     []Handoff
 	OutputSchema OutputSchema
-	// Input is what the model is sent this turn. Under server-managed
-	// conversation state that is the new items only, not the whole history.
-	//
-	// The RUNNER owns this field. A snapshot returned from PrepareNextTurn has it
-	// replaced with the next turn's real input, since a prepared snapshot is
-	// usually a copy of the previous turn's. To edit what a call sends, use
-	// ModelOptions.InputFilter.
+	// Input is what the model is sent this turn — under server-managed state
+	// the new items only. The RUNNER owns it: a snapshot from PrepareNextTurn
+	// has it replaced with the next turn's real input. To edit what a call
+	// sends, use ModelOptions.InputFilter.
 	Input []InputItem
 }
 
 // TurnResult describes one completed turn: the model call and everything that
-// followed from it.
-//
-// It is what the turn-boundary hooks are handed, so a caller can decide what
-// happens next from what actually happened rather than from agent-level
-// configuration set before the run began. Every hook sees the turn as it
-// happened: assigning to a field of the value one was handed reaches neither
-// the run nor the next hook.
+// followed. It is what the turn-boundary hooks are handed; each hook sees the
+// turn as it happened, and assigning to a field of its value reaches neither
+// the run nor the next hook (spec §2.3c).
 type TurnResult struct {
 	// Turn is the 1-based turn number within the run.
 	Turn int
@@ -64,17 +57,8 @@ func (tr *TurnResult) ToolCallNames() []string {
 	return names
 }
 
-// stopAfterTurn asks ExecOptions.ShouldStopAfterTurn whether the run ends here,
-// and derives the final output when it does.
-//
-// It is called at the turn boundary — after the turn's items are persisted,
-// before the next model call — so a run that stops here has its full history
-// saved and needs no unwinding.
-//
-// The hook gets its OWN (shallow) copy of the TurnResult: it is passed by
-// pointer, so a hook that cleared NewItems on the caller's own pointer would
-// blank the run's final output and hand PrepareNextTurn a turn that never
-// happened.
+// stopAfterTurn asks ExecOptions.ShouldStopAfterTurn whether the run ends here
+// and derives the final output; the hook gets its own copy — spec §2.3c.
 func (r *runner) stopAfterTurn(ctx context.Context, agent *Agent, tr *TurnResult) (bool, any, error) {
 	hook := r.opts.Exec.ShouldStopAfterTurn
 	if hook == nil {
@@ -88,13 +72,8 @@ func (r *runner) stopAfterTurn(ctx context.Context, agent *Agent, tr *TurnResult
 	return true, turnFinalOutput(agent, tr.NewItems), nil
 }
 
-// turnFinalOutput is what a run stopped at a turn boundary reports as its final
-// output: the turn's last message if it produced one, otherwise its last tool
-// output.
-//
-// A turn that ran tools and stopped has no closing message, so it falls through
-// to the tool result. The full turn is on RunResult.NewItems for anything more
-// specific.
+// turnFinalOutput is what a run stopped at a turn boundary reports: the
+// turn's last message if it produced one, else its last tool output.
 func turnFinalOutput(agent *Agent, items []*RunItem) any {
 	if m := lastMessageItem(items); m != nil {
 		if text := m.Text(); text != "" {
@@ -109,11 +88,8 @@ func turnFinalOutput(agent *Agent, items []*RunItem) any {
 	return ""
 }
 
-// buildSnapshot resolves everything a turn needs before the model is called.
-//
-// Each of these can fail — dynamic instructions, a prompt callback, a tool's
-// enable predicate — and each failure is the run's, so they are resolved
-// together rather than scattered through the turn body.
+// buildSnapshot resolves everything a turn needs before the model is called;
+// each resolution can fail, and each failure is the run's.
 func (r *runner) buildSnapshot(ctx context.Context, agent *Agent, input []InputItem) (*TurnSnapshot, error) {
 	model, err := r.resolveModel(agent)
 	if err != nil {
@@ -176,23 +152,8 @@ type savePointResult struct {
 	Injected []*RunItem
 }
 
-// savePoint is the turn boundary: the point at which the turn's assistant
-// message and every tool result are persisted, and the next model call has not
-// happened yet.
-//
-// It is one function because the order of these steps is the contract, and
-// scattering them through the loop is how that order gets quietly broken:
-//
-//  1. flush the turn to the session
-//  2. ask whether the run should stop
-//  3. compact, rebuilding the context from the log
-//  4. drain the steer and next-turn queues
-//  5. let a hook prepare the next turn
-//
-// Persisting first is what makes the rest safe: a run that stops at step 2, or
-// whose context is rewritten at step 3, has its history already written.
-// Deciding to stop before compacting means the decision is made against the
-// turn that actually happened, not a shortened view of it.
+// savePoint is the turn boundary: persist, ask to stop, compact, drain the
+// injection queues, prepare the next turn — in that order; spec §2.3a.
 func (r *runner) savePoint(ctx context.Context, in savePointInput) (savePointResult, error) {
 	var out savePointResult
 
@@ -233,9 +194,8 @@ func (r *runner) savePoint(ctx context.Context, in savePointInput) (savePointRes
 	return out, nil
 }
 
-// injectedInput turns caller-supplied input into run items, so everything
-// downstream — the next turn's model input, the server-side delta cursor, the
-// session write — treats it exactly like the input the run started with.
+// injectedInput turns caller-supplied input into run items, so every
+// downstream path treats it like the input the run started with (spec §2.11b).
 func injectedInput(agent *Agent, items []InputItem) []*RunItem {
 	out := make([]*RunItem, 0, len(items))
 	for _, item := range items {

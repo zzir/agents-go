@@ -10,11 +10,8 @@ import (
 	"github.com/zzir/agents-go/tracing"
 )
 
-// usageFromStreamResponse extracts token usage from a streamed final Response.
-// When the response carries no usage block it counts as zero requests (matching
-// the blocking path's usageFromResponse), so a backend that omits usage does
-// not inflate the request count. The mapping itself is
-// UsageFromResponseUsage, shared with the blocking path.
+// usageFromStreamResponse extracts token usage from a streamed final Response;
+// a response carrying no usage block counts as zero requests, not one.
 func usageFromStreamResponse(resp *responses.Response) *Usage {
 	if !resp.JSON.Usage.Valid() {
 		return NewUsage()
@@ -22,11 +19,8 @@ func usageFromStreamResponse(resp *responses.Response) *Usage {
 	return UsageFromResponseUsage(resp.Usage)
 }
 
-// streamOneModelCall streams a single model call, forwarding each raw event to
-// the consumer and assembling the final ModelResponse from the completed event.
-// Only Run takes this path; RunSync makes one blocking Respond call.
-// The first event's arrival is stamped on the generation span as
-// time_to_first_token_ms.
+// streamOneModelCall streams one model call, forwarding raw events and assembling
+// the final ModelResponse; only Run takes this path, RunSync calls Respond once.
 func (r *runner) streamOneModelCall(ctx context.Context, span *tracing.SpanHandle, model Model, req ModelRequest) (*ModelResponse, error) {
 	asm := &responseAssembler{}
 	start := time.Now()

@@ -2,11 +2,8 @@ package session
 
 import "time"
 
-// DiagnosticType names a kind of trouble a run survived.
-//
-// It is an open vocabulary: a consumer that meets a type it does not know shows
-// it generically rather than failing, which is what lets the SDK report a new
-// kind of trouble without a coordinated release downstream.
+// DiagnosticType names a kind of trouble a run survived. An open vocabulary:
+// an unknown type is shown generically, never a failure.
 type DiagnosticType string
 
 const (
@@ -31,13 +28,8 @@ const (
 	DiagContextOverflow DiagnosticType = "context_overflow"
 )
 
-// Diagnostic records trouble a run went through and survived.
-//
-// It exists because the interesting failures are the ones that do NOT fail the
-// run: three retries, a fallback to a slower model, a compaction pass that
-// silently gave up. Those never reach an error return, so without this they
-// live only in whatever log nobody kept — and "why was that answer bad" becomes
-// unanswerable after the fact.
+// Diagnostic records trouble a run went through and survived — retries, a
+// fallback model, a compaction that gave up: what never reaches an error return.
 type Diagnostic struct {
 	Type      DiagnosticType `json:"type"`
 	Timestamp time.Time      `json:"timestamp"`

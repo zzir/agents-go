@@ -67,10 +67,8 @@ func (s *Sandbox) OpenTerminal(ctx context.Context, opts sandbox.TerminalOptions
 	case <-t.ready:
 		return t, nil
 	case <-t.done:
-		// The stream ended before a pid arrived — an error, or an immediate
-		// exit. ready is closed ONLY on a real pid, so a done that beats it
-		// means there is no live session to hand back; surface why instead of a
-		// dead terminal whose failure hides in Wait().
+		// The stream ended before a pid arrived (an error or an immediate exit); ready
+		// closes only on a real pid, so surface why rather than a dead terminal.
 		select {
 		case <-t.ready:
 			return t, nil // a pid did arrive, racing done — the session is valid
@@ -141,9 +139,8 @@ func (t *terminal) pump(ctx context.Context, start map[string]any) {
 	if err != nil && !errors.Is(err, context.Canceled) {
 		t.err = err
 	}
-	// ready is deliberately NOT closed here: it closes only when a pid arrives,
-	// so OpenTerminal can tell "shell started" from "stream ended first" (a
-	// close here would hand back a terminal that is already dead).
+	// ready is deliberately NOT closed here: it closes only when a pid arrives, so
+	// OpenTerminal can tell "shell started" from "stream ended first".
 	close(t.out)
 }
 

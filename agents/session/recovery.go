@@ -14,41 +14,27 @@ type RecoveryAction int
 
 const (
 	// RecoverSynthesizeError appends an error output for the call, so the
-	// stored history is self-consistent again. It is the default because a
-	// dangling call is not merely untidy: the Responses API rejects a history
-	// containing a function_call with no matching function_call_output, so the
-	// session cannot be loaded at all until one exists.
+	// stored history loads again. The default — spec §2.5h.
 	RecoverSynthesizeError RecoveryAction = iota
 
-	// RecoverRetry leaves the call dangling for the next run to execute again.
-	// It is only ever right for a tool that says it is safe to repeat — the
-	// SDK cannot know whether the crashed call already sent the email.
+	// RecoverRetry leaves the call dangling for the next run to execute again;
+	// only right for a tool that is safe to repeat.
 	RecoverRetry
 
 	// RecoverLeave does nothing, for a caller repairing the session itself.
 	RecoverLeave
 )
 
-// RecoveryPolicy decides how a session damaged by a crash is repaired.
-//
-// It is the counterpart of RunState, not a replacement: RunState handles a run
-// that paused on purpose and knows exactly where it was, while this handles a
-// process that died mid-turn and left only what had been written. Different
-// entry points, and a session can need both.
-//
-// safePersistBoundary already keeps a dangling call out of a session on every
-// ordinary exit. It cannot help when the process is killed.
+// RecoveryPolicy decides how a session damaged by a crash is repaired. It is
+// the counterpart of RunState (a paused run), not a replacement: this handles
+// a process that died mid-turn and left only what was written — spec §2.5h.
 type RecoveryPolicy struct {
 	// UnfinishedToolCall is the default action for a call with no output.
 	UnfinishedToolCall RecoveryAction
 
 	// RetrySafe reports whether a tool is safe to run again, overriding the
-	// default action with RecoverRetry when it returns true.
-	//
-	// The caller supplies it because only the caller knows the agent: the SDK
-	// sees a tool NAME in the stored history, not the tool. Nil treats every
-	// tool as unsafe, which is the assumption to make when nobody has said
-	// otherwise.
+	// default with RecoverRetry when true. Nil treats every tool as unsafe. The
+	// caller supplies it: the stored history holds a tool NAME, not the tool.
 	RetrySafe func(toolName string) bool
 
 	// Message renders the synthesized error output. Nil uses a default that
@@ -70,16 +56,9 @@ type RecoveryReport struct {
 // NeedsRecovery reports whether anything was found.
 func (r RecoveryReport) NeedsRecovery() bool { return len(r.UnfinishedCalls) > 0 }
 
-// Recover repairs a session left inconsistent by a crash.
-//
-// A run killed between issuing a tool call and recording its output leaves a
-// function_call with no function_call_output. The Responses API rejects that
-// history outright, so the session is not merely damaged — it is unloadable,
-// and every later attempt to continue the conversation fails the same way.
-//
-// The repair is an APPEND, like everything else: the synthesized outputs are
-// added, nothing is rewritten, and the record of what actually happened stays
-// intact.
+// Recover repairs a session left inconsistent by a crash: a function_call
+// with no output, which makes the history unloadable. The repair is an
+// append of synthesized outputs; nothing is rewritten — spec §2.5h.
 func Recover(ctx context.Context, sess *Session, policy RecoveryPolicy) (RecoveryReport, error) {
 	var report RecoveryReport
 	if sess == nil {

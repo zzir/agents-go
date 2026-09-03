@@ -7,12 +7,8 @@ import (
 	"strings"
 )
 
-// Policy filters commands before they reach a human or a sandbox. It runs
-// BEFORE the approval gate and is a filter on approval noise, not a security
-// boundary — see spec §2.7j. The zero value allows everything.
-//
-// A Policy is plain configuration and is copied freely; the compiled patterns
-// live outside it, so no two copies share mutable state.
+// Policy filters commands before the approval gate — a filter on approval
+// noise, not a security boundary (spec §2.7j). The zero value allows everything.
 type Policy struct {
 	// Allow, when non-empty, restricts execution to commands matching at least
 	// one pattern. Anything else is refused.
@@ -23,8 +19,7 @@ type Policy struct {
 }
 
 // Compile reports a malformed pattern without keeping the compiled form, so a
-// policy fails when it is configured rather than on the first command it
-// would have stopped.
+// policy fails when configured rather than on the first command it would stop.
 func (p *Policy) Compile() error {
 	_, err := p.compile()
 	return err

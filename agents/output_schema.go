@@ -80,9 +80,8 @@ func newOutputType[T any](strict bool) OutputSchema {
 // schemaError exposes a deferred schema-generation failure to the runner.
 func (s *typedOutputSchema[T]) schemaError() error { return s.schemaErr }
 
-// wrappedSchema reports the {"response": ...} envelope to the runner, so a
-// run-error handler's fallback output can be wrapped the same way the model's
-// own output would be (see wrappedOutputSchema).
+// wrappedSchema reports whether output sits inside the {"response": ...} envelope
+// (see wrappedOutputSchema).
 func (s *typedOutputSchema[T]) wrappedSchema() bool { return s.wrapped }
 
 // outputSchemaError returns the deferred schema-generation failure of an
@@ -94,9 +93,8 @@ func outputSchemaError(s OutputSchema) error {
 	return nil
 }
 
-// isObjectLike reports whether a type serializes to a JSON object at the root
-// (a struct or map). Pointers are deliberately not unwrapped: a *T root would
-// produce a nullable schema root, which OpenAI rejects.
+// isObjectLike reports whether a type serializes to a JSON object at the root (a
+// struct or map); pointers are not unwrapped, as a nullable root is rejected.
 func isObjectLike(t reflect.Type) bool {
 	return t.Kind() == reflect.Struct || t.Kind() == reflect.Map
 }

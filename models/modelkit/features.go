@@ -36,9 +36,8 @@ const (
 	FeatureOutputSchema         Feature = "output_schema"
 )
 
-// featureSet reports whether a request actually exercises a feature. Only set
-// (non-nil / non-empty) fields count: declaring a feature unsupported must not
-// reject requests that never asked for it.
+// featureSet reports whether a request actually exercises a feature: only set
+// fields count, so an unsupported feature never rejects a request that skipped it.
 var featureSet = map[Feature]func(agents.ModelRequest) bool{
 	FeatureTemperature:       func(r agents.ModelRequest) bool { return r.Settings != nil && r.Settings.Temperature != nil },
 	FeatureTopP:              func(r agents.ModelRequest) bool { return r.Settings != nil && r.Settings.TopP != nil },

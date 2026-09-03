@@ -7,13 +7,9 @@ import (
 	"github.com/zzir/agents-go/agents"
 )
 
-// OutputItemFromJSON decodes canonical wire JSON into an output item.
-//
-// It is the only correct way to construct an OutputItem outside
-// openai-go: building the union struct field-by-field leaves RawJSON empty,
-// and an item without raw bytes cannot be converted back into model input
-// (agents.OutputToInput requires them) or persisted into a session. Decoding
-// through JSON stamps the raw bytes the way a real API response would.
+// OutputItemFromJSON decodes canonical wire JSON into an output item — the only
+// way to build one outside openai-go: a union built field-by-field has no
+// RawJSON, and such an item cannot become model input or a session entry.
 func OutputItemFromJSON(raw []byte) (agents.OutputItem, error) {
 	var item agents.OutputItem
 	if err := json.Unmarshal(raw, &item); err != nil {
@@ -61,11 +57,9 @@ func MessageItem(id string, texts ...string) (agents.OutputItem, error) {
 	return OutputItemFromJSON(raw)
 }
 
-// RefusalItem synthesizes a canonical assistant message whose single content
-// part is a REFUSAL. The part type is what makes a refusal a refusal to the
-// runner (ModelRefusalError, error_handlers.model_refusal): a backend that
-// reports refusal out-of-band (Anthropic's stop_reason) and hands the text
-// over as output_text has silently converted a refusal into an answer.
+// RefusalItem synthesizes a canonical assistant message whose single part is a
+// REFUSAL — the part type is what the runner recognizes as one; a backend that
+// reports refusal out-of-band must not hand the text over as output_text.
 func RefusalItem(id, refusal string) (agents.OutputItem, error) {
 	raw, err := json.Marshal(struct {
 		ID      string `json:"id"`
@@ -127,16 +121,10 @@ type reasoningTextJSON struct {
 	Text string `json:"text"`
 }
 
-// ReasoningItem synthesizes a canonical reasoning item.
-//
-// text goes into the content parts (reasoning_text), not the summary:
-// a reasoning RunItem's Text reads summary first and falls back to content, and
-// content is where Responses-compatible backends put RAW reasoning text —
-// which is what a translated backend has. encryptedContent is the adapter's
-// opaque continuity blob (a thinking signature, redacted reasoning, …); it
-// survives the round-trip through session storage, which is the only reason
-// multi-turn reasoning replay works. text may be empty for an encrypted-only
-// item.
+// ReasoningItem synthesizes a canonical reasoning item. text goes into the
+// content parts (reasoning_text), not the summary, where raw reasoning text
+// belongs; encryptedContent is the adapter's opaque continuity blob (thinking
+// signature, redacted reasoning, …), kept across session storage. text may be "".
 func ReasoningItem(id, text, encryptedContent string) (agents.OutputItem, error) {
 	var content []reasoningTextJSON
 	if text != "" {

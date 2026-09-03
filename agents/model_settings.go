@@ -1,10 +1,8 @@
 package agents
 
-// ToolChoice constrains which tool (if any) the model must call.
-//
-// Use the predefined constants ("auto", "required", "none") or a specific tool
-// name. The zero value (empty string) means "leave unset" and defers to the
-// provider default. It is an open set: any tool name is a valid value.
+// ToolChoice constrains which tool (if any) the model must call: "auto",
+// "required", "none" or a specific tool name; the zero value leaves it unset.
+// It is an open set.
 type ToolChoice string
 
 // The predefined tool-choice modes.
@@ -129,10 +127,9 @@ type Reasoning struct {
 	Summary ReasoningSummary `json:"summary,omitempty"`
 }
 
-// ModelSettings holds optional model configuration parameters (temperature,
-// top_p, truncation, etc). Not every model or provider supports every field.
-// All fields are optional; a nil pointer means "leave unset" so the provider
-// default applies.
+// ModelSettings holds optional model configuration (temperature, top_p,
+// truncation, …). Not every provider supports every field; a nil pointer or
+// empty value means "leave unset" so the provider default applies.
 type ModelSettings struct {
 	Temperature *float64 `json:"temperature,omitempty"`
 	TopP        *float64 `json:"top_p,omitempty"`

@@ -8,13 +8,11 @@ import (
 	"sync/atomic"
 )
 
-// runNestedAgent executes (or resumes) the nested run. Without an OnStream
-// handler it collects; with one, it forwards each event to the handler as it
-// arrives.
+// runNestedAgent executes (or resumes) the nested run, collecting without an
+// OnStream handler and forwarding each event with one.
 func runNestedAgent(ctx context.Context, a *Agent, input string, paused *RunState, opts RunOptions, cfg AgentToolConfig, tc *ToolContext, argsJSON string) (*RunResult, error) {
-	// Stream the nested run when anyone is watching: a configured OnStream
-	// handler, or a streamed parent whose consumer should see the sub-agent
-	// working rather than a tool call that hangs for a minute.
+	// Stream when anyone is watching: an OnStream handler, or a streamed parent
+	// whose consumer should see the sub-agent working (spec §2.7g).
 	if cfg.OnStream == nil && !tc.streaming() {
 		if paused != nil {
 			return ResumeRunSync(ctx, paused, opts)
@@ -29,12 +27,8 @@ func runNestedAgent(ctx context.Context, a *Agent, input string, paused *RunStat
 		stream, _ = Run(ctx, a, input, opts)
 	}
 
-	// Dispatch callbacks from a background goroutine so a slow handler does not
-	// stall the run, which now executes on THIS goroutine.
-	//
-	// canceled mirrors the parent's cancellation: once it fires, backlogged
-	// events drain without invoking the callback, so OnStream never fires after
-	// the tool call has returned.
+	// Callbacks dispatch from a background goroutine so a slow handler does not
+	// stall the run; canceled drains the backlog without invoking it.
 	var canceled atomic.Bool
 	events := make(chan AgentToolStreamEvent, 64)
 	done := make(chan struct{})
@@ -67,10 +61,8 @@ func runNestedAgent(ctx context.Context, a *Agent, input string, paused *RunStat
 			// handler watching the nested agent should see.
 			continue
 		case *RunItemStreamEvent:
-			// Forward the nested agent's messages to the PARENT run's stream as
-			// tool progress, so a UI watching the parent sees the sub-agent
-			// working. Messages only: relaying raw deltas would bury the
-			// parent's own stream.
+			// Forward the nested agent's messages to the PARENT's stream as tool
+			// progress; messages only, or raw deltas bury the parent's stream.
 			if e.Item.Kind == ItemMessage {
 				tc.Emit(TextResult(e.Item.Text()).WithDetails(map[string]any{
 					"nested_agent": current.Name, "partial": true,
@@ -105,8 +97,7 @@ func runNestedAgent(ctx context.Context, a *Agent, input string, paused *RunStat
 	close(events)
 	if ctx.Err() == nil {
 		// Normal completion waits for the handler backlog to drain;
-		// cancellation does not (the canceled flag makes the leftover drain a
-		// no-op).
+		// cancellation does not (the canceled flag makes the drain a no-op).
 		<-done
 	}
 	if res == nil && runErr == nil {
@@ -116,10 +107,8 @@ func runNestedAgent(ctx context.Context, a *Agent, input string, paused *RunStat
 	return res, runErr
 }
 
-// dispatchAgentToolStreamEvent invokes the OnStream callback, recovering any
-// panic: a handler bug must not fail the tool call. The panic is recorded as a
-// diagnostic on the parent run — the handler is the parent's configuration
-// — so it is observable instead of silently dropped.
+// dispatchAgentToolStreamEvent invokes OnStream, recovering a panic into a
+// diagnostic on the parent run so a handler bug never fails the tool call.
 func dispatchAgentToolStreamEvent(ctx context.Context, fn func(AgentToolStreamEvent), ev AgentToolStreamEvent) {
 	defer func() {
 		if p := recover(); p != nil {
@@ -131,11 +120,8 @@ func dispatchAgentToolStreamEvent(ctx context.Context, fn func(AgentToolStreamEv
 	fn(ev)
 }
 
-// nestedRunInterrupt is returned by an agent-as-tool's OnInvoke when its nested
-// run paused for human approval. The parent runner recognizes it (rather than
-// treating it as a tool failure), surfaces the nested interruptions as the
-// parent run's own, and caches state under callID so a ResumeRun continues the
-// nested run.
+// nestedRunInterrupt is returned by an agent-as-tool's OnInvoke when its
+// nested run paused for approval; the parent pauses and caches state by callID.
 type nestedRunInterrupt struct {
 	callID        string
 	state         *RunState
@@ -146,9 +132,8 @@ func (e *nestedRunInterrupt) Error() string {
 	return fmt.Sprintf("agent tool call %q paused for nested approval", e.callID)
 }
 
-// agentToolOutput derives the string result of a completed nested run,
-// preferring the most specific thing it said: the final output when non-empty, else the last non-empty assistant message text, else the last
-// non-empty string tool output, else the (stringified) final output.
+// agentToolOutput derives a completed nested run's string result: the final
+// output, else the last message text, else the last string tool output.
 func agentToolOutput(res *RunResult) string {
 	if s, ok := res.FinalOutput.(string); ok {
 		if s != "" {
@@ -177,13 +162,8 @@ func agentToolOutput(res *RunResult) string {
 	return res.FinalOutputString()
 }
 
-// nestedRunOptions builds the RunOptions for a nested run, inheriting the
-// parent's model provider/model/tracer/logger, run-level guardrails and
-// side-effect-free execution options (tool concurrency limit, tool-not-found
-// behavior, input filters). The nested run gets a fresh
-// approval store so nested approvals don't leak into the parent. The parent's
-// Session never carries over; cfg.ModifyRunOptions is the only way to give the
-// nested run conversation state of its own.
+// nestedRunOptions builds a nested run's options: the parent's model, tracer,
+// logger, guardrails and side-effect-free exec options; no Session, fresh approvals.
 func nestedRunOptions(parent *RunContext) RunOptions {
 	var opts RunOptions
 	if parent != nil && parent.inheritedOpts != nil {
@@ -197,10 +177,8 @@ func nestedRunOptions(parent *RunContext) RunOptions {
 		// Inherit the sensitive-data gate so a parent that disabled span
 		// content cannot have it re-enabled by a nested agent-as-tool run.
 		opts.Observe.IncludeSensitiveData = parent.inheritedOpts.Observe.IncludeSensitiveData
-		// Inherit the log configuration for the same reason as the tracer: the
-		// nested run is the hardest part of the workflow to see into.
-		// LogConfig.SensitiveData travels with it, keeping the two
-		// sensitive-data gates consistent.
+		// The log config travels too, keeping the two sensitive-data gates
+		// consistent for the hardest part of the workflow to see into.
 		opts.Log = parent.inheritedOpts.Log
 		// Inherit input filters so a nested run's own handoffs and model calls
 		// see the same rewriting the parent configured.
