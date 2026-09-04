@@ -15,8 +15,7 @@ import (
 )
 
 // The model's authoring surface for workflow DEFINITIONS: read one, save one.
-// Running one stays spawn_task's (workbench invariant 30). The pair is opt-in per
-// agent, chat-only, and every save is approved by a person — invariant 39.
+// Opt-in per agent, chat-only, every save approved — invariant 39.
 
 // The pair's tool names.
 const (
@@ -25,8 +24,7 @@ const (
 )
 
 // workflowSpec is a definition as the model reads and writes it: steps, edges
-// and agents by NAME, since the model has no ids. save_workflow takes it and
-// get_workflow returns it, so a read can be edited and saved back.
+// and agents by NAME (invariant 39); a read can be edited and saved back.
 type workflowSpec struct {
 	Name        string         `json:"name" jsonschema:"The workflow's name. Saving under a name that exists replaces that definition (executions in flight keep their snapshot)"`
 	Description string         `json:"description" jsonschema:"One line saying WHEN to run it: what spawn_task matches a request against"`
@@ -93,9 +91,8 @@ func invalidWorkflowf(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", errInvalidWorkflowSpec, fmt.Sprintf(format, args...))
 }
 
-// workflowTools builds the run's authoring pair. Per run, like spawnTool: the
-// save tool's description names the agents on offer, which change without a
-// restart.
+// workflowTools builds the run's authoring pair — per run, like spawnTool: the
+// save description names the agents on offer.
 func (r *Runner) workflowTools(ctx context.Context, ownerID string) []*agents.Tool {
 	get := agents.NewTool(WorkflowGetToolName,
 		"Read a workflow definition by name, in the shape save_workflow takes. Read one before changing it.",
@@ -108,11 +105,8 @@ func (r *Runner) workflowTools(ctx context.Context, ownerID string) []*agents.To
 		func(ctx context.Context, _ *agents.ToolContext, spec workflowSpec) (agents.ToolResult, error) {
 			return r.saveWorkflow(ctx, ownerID, spec)
 		})
-	// Approval-gated always: the card IS the review, and the tool decides
-	// that itself rather than an agent's approve list, which a config could
-	// leave out. A proposal that would NOT save skips the person: the call
-	// runs at once and the model reads why. Anything else — a store fault
-	// included — asks, so no write ever lands unapproved.
+	// Approval-gated by the tool itself, not the agent's approve list; a
+	// proposal that would NOT save skips the person — invariant 39.
 	save.NeedsApproval = true
 	save.NeedsApprovalFunc = func(ctx context.Context, _ *agents.RunContext, argsJSON, _ string) (bool, error) {
 		var spec workflowSpec
@@ -182,9 +176,8 @@ func (r *Runner) getWorkflow(ctx context.Context, ownerID, name string) (agents.
 	return agents.TextResult(fmt.Sprintf("No workflow named %q. Available: %s", name, workflowNames(list))), nil
 }
 
-// saveWorkflow answers save_workflow, after the approval: the same resolve
-// the gate ran, then the write. A same-named definition created while the
-// approval waited turns the create into an update of it.
+// saveWorkflow answers save_workflow after the approval: the gate's resolve
+// again, then the write; a same-named definition created meanwhile is updated.
 func (r *Runner) saveWorkflow(ctx context.Context, ownerID string, spec workflowSpec) (agents.ToolResult, error) {
 	wf, existing, err := r.resolveWorkflowSpec(ctx, ownerID, spec)
 	if errors.Is(err, errInvalidWorkflowSpec) {
@@ -210,9 +203,8 @@ func (r *Runner) saveWorkflow(ctx context.Context, ownerID string, spec workflow
 		if existing.OwnerID != ownerID && !ownerIsAdmin(ctx, r.Deps, ownerID) {
 			return agents.TextResult(fmt.Sprintf("Nothing was saved: %q is somebody else's workflow. Pick another name to save your own.", existing.Name)), nil
 		}
-		// Scope and owner come from the row inside the transaction, and the
-		// pair this save was authorized against is re-checked there: a
-		// transfer landing mid-save must not be written back (decisions §5.29).
+		// Scope and owner come from the row inside the transaction; the pair this
+		// save was authorized against is re-checked there (decisions §5.29).
 		want := *existing
 		err = r.Deps.Workflows.Update(ctx, existing.ID, wf, func(prev *store.Workflow) error {
 			if prev.Scope != want.Scope || prev.OwnerID != want.OwnerID {
@@ -240,9 +232,8 @@ func (r *Runner) saveWorkflow(ctx context.Context, ownerID string, spec workflow
 		WithDetails(details), nil
 }
 
-// auditWorkflowSave writes the audit line for a save_workflow: the one
-// write to shared configuration that happens through a tool rather than a
-// request, attributed to the session's owner, who approved it.
+// auditWorkflowSave writes the audit line for a save_workflow — a write to
+// shared configuration through a tool, attributed to the owner who approved it.
 func (r *Runner) auditWorkflowSave(ctx context.Context, ownerID string, wf *store.Workflow, isCreate bool) {
 	detail := "tool=save_workflow updated"
 	if isCreate {
@@ -251,9 +242,8 @@ func (r *Runner) auditWorkflowSave(ctx context.Context, ownerID string, wf *stor
 	r.auditAs(ctx, ownerID, "workflow.save", wf.ID, detail)
 }
 
-// auditAs records an act the server performed on a session owner's behalf —
-// a tool's write, a trigger's fire — attributed to that owner. Nothing is
-// recorded without an audit sink.
+// auditAs records an act the server performed on a session owner's behalf,
+// attributed to that owner; nothing without an audit sink.
 func (r *Runner) auditAs(ctx context.Context, ownerID, action, resource, detail string) {
 	if r.Deps.Audit == nil {
 		return
@@ -291,11 +281,8 @@ func (r *Runner) globalAgentByName(ctx context.Context, ownerID, name string) (*
 	return nil, nil
 }
 
-// resolveWorkflowSpec turns the model's spec into a stored definition: agents
-// and edges named become ids, and on an update every step that keeps its name
-// keeps its id (what a retry and an execution in flight name). existing is the
-// definition the name already denotes, nil for a new one. A fixable problem
-// is an errInvalidWorkflowSpec; anything else is a store fault.
+// resolveWorkflowSpec turns the model's spec into a stored definition: names
+// become ids, a kept step name keeps its id (invariant 39); existing is the row named.
 func (r *Runner) resolveWorkflowSpec(ctx context.Context, ownerID string, spec workflowSpec) (wf, existing *store.Workflow, err error) {
 	if r.Deps.Workflows == nil {
 		return nil, nil, errors.New("workflows are not available on this server")
@@ -354,8 +341,7 @@ func (r *Runner) resolveWorkflowSpec(ctx context.Context, ownerID string, spec w
 			return nil, nil, aerr
 		}
 		// Updating a GLOBAL definition resolves steps AS a global holder
-		// (decisions §5.29): the saver's private shadow must not become a step
-		// most members cannot see — mirror of the REST validateStepAgents.
+		// (decisions §5.29) — mirror of the REST validateStepAgents.
 		if existing != nil && existing.Scope == store.ScopeGlobal && ac.Scope != store.ScopeGlobal {
 			g, gerr := r.globalAgentByName(ctx, ownerID, agentName)
 			if gerr != nil {
@@ -420,11 +406,8 @@ func (r *Runner) resolveWorkflowSpec(ctx context.Context, ownerID string, spec w
 	return wf, existing, nil
 }
 
-// specOfWorkflow is a stored definition in the model's shape: ids become
-// names. A step with no name is called by its position ("Step 2"), which is
-// what the hub shows and what a save round-trip then stores; an agent that no
-// longer exists keeps its id, so saving it back fails loudly rather than
-// silently re-pointing the step.
+// specOfWorkflow is a stored definition in the model's shape: ids become names,
+// a nameless step "Step N"; a vanished agent keeps its id so a save-back fails loudly.
 func (r *Runner) specOfWorkflow(ctx context.Context, wf *store.Workflow) workflowSpec {
 	names := stepNames(wf.Steps)
 	byID := make(map[string]string, len(wf.Steps))

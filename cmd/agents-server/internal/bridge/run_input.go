@@ -22,14 +22,8 @@ type RunInput struct {
 // TextInput is the text-only RunInput every internal caller passes.
 func TextInput(text string) RunInput { return RunInput{Text: text} }
 
-// items builds the run's input items. Text-only keeps the plain-string shape
-// the SDK normalizes itself; a message with attachments becomes one user
-// message whose content list holds the text and an input_image part per
-// attachment — carrying the SENTINEL url, which is what gets persisted; the
-// model boundary resolves it (attachment_hydrate.go). The JSON below is
-// static and well-formed by construction, so a failure is unreachable; it
-// degrades to the text alone rather than growing an error path every caller
-// would have to invent a policy for.
+// items builds the run's input items: plain text keeps the SDK's string shape, else
+// one message of input_image parts holding sentinel urls (attachment_hydrate.go).
 func (in RunInput) items() []agents.InputItem {
 	if len(in.AttachmentIDs) == 0 {
 		return agents.InputItemsFromText(in.Text)
@@ -58,11 +52,8 @@ func (in RunInput) items() []agents.InputItem {
 	return []agents.InputItem{item}
 }
 
-// validateAttachments checks a run's attachment_ids the way the pre-flight
-// needs them checked: bounded in count, every id present, and owned by the
-// session's owner (a foreign id reads the same as a missing one — ownership
-// is not an oracle for existence). It returns the metadata for the announce
-// and bind steps.
+// validateAttachments checks a run's attachment_ids: bounded in count, present,
+// and owned by the session's owner (a foreign id reads as missing).
 func (r *Runner) validateAttachments(ctx context.Context, ownerID string, ids []string) (map[string]store.Attachment, error) {
 	if len(ids) == 0 {
 		return nil, nil

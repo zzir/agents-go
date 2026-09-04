@@ -76,9 +76,8 @@ type RunErrorHandlers struct {
 	InvalidFinalOutput RunErrorHandler
 }
 
-// buildRunErrorData snapshots the run for a handler invocation. Items that
-// cannot convert to input form are skipped from History/Output, never raised as
-// an error — this runs on a path that is already failing.
+// buildRunErrorData snapshots the run for a handler; items that cannot convert
+// are skipped, never raised — this path is already failing.
 func buildRunErrorData(input []InputItem, newItems []*RunItem, raw []*ModelResponse, lastAgent *Agent) RunErrorData {
 	output := make([]InputItem, 0, len(newItems))
 	for _, it := range newItems {
@@ -101,19 +100,15 @@ func buildRunErrorData(input []InputItem, newItems []*RunItem, raw []*ModelRespo
 	}
 }
 
-// errorRecovery is a successful handler outcome: the validated fallback final
-// output and, unless the handler opted out of history, the synthesized
-// assistant message carrying it.
+// errorRecovery is a successful handler outcome: the validated fallback output
+// and, unless the handler opted out, the synthesized assistant message.
 type errorRecovery struct {
 	finalOutput any
 	message     *RunItem // nil when ExcludeFromHistory was set
 }
 
-// resolveErrorRecovery invokes handler for cause and converts its result into
-// an errorRecovery: the fallback output is validated against the agent's
-// output schema and the optional history message is synthesized. A nil
-// handler, or one that returns (nil, nil), yields (nil, nil) — the caller
-// surfaces the original error (or keeps its default behavior).
+// resolveErrorRecovery invokes handler for cause, validates its fallback
+// against the output schema and synthesizes the message; (nil, nil) declines.
 func (r *runner) resolveErrorRecovery(
 	ctx context.Context,
 	kind string,
@@ -162,10 +157,8 @@ func wrappedOutputSchema(s OutputSchema) bool {
 	return false
 }
 
-// marshalFinalOutputPayload renders a final output value as the JSON payload
-// in the shape the model itself would produce for the schema — wrapping it in
-// the {"response": ...} envelope when the schema uses one, unless the value
-// already carries the envelope key.
+// marshalFinalOutputPayload renders a final output as the JSON the model would
+// produce for the schema, adding the {"response": ...} envelope when used.
 func marshalFinalOutputPayload(schema OutputSchema, v any) (string, error) {
 	payload := v
 	if wrappedOutputSchema(schema) {
@@ -186,10 +179,8 @@ func marshalFinalOutputPayload(schema OutputSchema, v any) (string, error) {
 	return string(b), nil
 }
 
-// validateHandlerFinalOutput validates a handler's fallback output against the
-// agent's output schema, returning the validated value exactly as ValidateJSON
-// would produce it for model output. A fallback that does not marshal or
-// validate is a *UserError — the handler, not the model, produced it.
+// validateHandlerFinalOutput validates a handler's fallback against the output
+// schema; a bad fallback is a *UserError — the handler produced it.
 func validateHandlerFinalOutput(agent *Agent, v any) (any, error) {
 	schema := agentOutputSchema(agent)
 	if schema.IsPlainText() {
@@ -206,9 +197,8 @@ func validateHandlerFinalOutput(agent *Agent, v any) (any, error) {
 	return validated, nil
 }
 
-// formatFinalOutputText renders a final output as the text of the synthesized
-// assistant message: the value itself for plain text, its JSON payload for
-// structured outputs.
+// formatFinalOutputText renders a final output as the synthesized message's
+// text: the value for plain text, its JSON payload for structured output.
 func formatFinalOutputText(agent *Agent, v any) string {
 	schema := agentOutputSchema(agent)
 	if !schema.IsPlainText() {
@@ -220,11 +210,7 @@ func formatFinalOutputText(agent *Agent, v any) string {
 }
 
 // synthesizeMessageOutputItem builds a completed assistant message carrying a
-// handler's fallback output text. It round-trips through JSON so the union item
-// is indistinguishable on the wire from a model-produced one.
-//
-// It carries no id: there is no server-side response to point at, and
-// provenance is Source's job.
+// handler's fallback text, via JSON so it matches a model-produced one; no id.
 func synthesizeMessageOutputItem(agent *Agent, text, handlerKind string) (*RunItem, error) {
 	payload := map[string]any{
 		"type":   "message",

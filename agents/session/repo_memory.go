@@ -9,12 +9,8 @@ import (
 	"time"
 )
 
-// InMemoryRepo is a Repo holding everything in memory.
-//
-// It exists for tests and short-lived processes, and it is in the core because
-// Repo is: an interface whose only implementations live in other modules
-// cannot be exercised without pulling one of them in, which is a heavy way to
-// test a lifecycle.
+// InMemoryRepo is a Repo holding everything in memory, for tests and
+// short-lived processes.
 type InMemoryRepo struct {
 	mu       sync.Mutex
 	sessions map[string]*InMemoryStorage
@@ -47,9 +43,8 @@ func (r *InMemoryRepo) Create(_ context.Context, opts CreateOptions) (*Session, 
 	return NewSession(st), nil
 }
 
-// Open implements Repo. An unknown id is an error, never an empty
-// session: a wrong id that reads as a fresh conversation makes a run start over
-// instead of continuing, which is worse than failing.
+// Open implements Repo. An unknown id is ErrNotFound, never an empty session
+// (spec §2.5e).
 func (r *InMemoryRepo) Open(_ context.Context, id string) (*Session, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -60,9 +55,8 @@ func (r *InMemoryRepo) Open(_ context.Context, id string) (*Session, error) {
 	return NewSession(st), nil
 }
 
-// List implements Repo, newest first and honouring ListOptions.Limit — the
-// same answer the file and SQL repos give, so a caller written against one
-// backend reads the same listing from another.
+// List implements Repo: newest first, cut to ListOptions.Limit — the same
+// answer every repo gives (spec §2.5e2).
 func (r *InMemoryRepo) List(ctx context.Context, opts ListOptions) ([]Metadata, error) {
 	r.mu.Lock()
 	stores := make([]*InMemoryStorage, 0, len(r.order))
@@ -93,13 +87,8 @@ func (r *InMemoryRepo) List(ctx context.Context, opts ListOptions) ([]Metadata, 
 	return out, nil
 }
 
-// Delete implements Repo. Deleting an unknown session is not an error:
-// the caller wanted it gone, and it is.
-//
-// A handle already handed out is retired with it: a write through one must
-// refuse rather than land in storage nothing references (spec §2.5e2). The
-// other three repos prove their destination on every write; this one has no
-// row or file to check, so the storage itself is marked.
+// Delete implements Repo. An unknown id is not an error, and a handle already
+// handed out is retired so a later write refuses — spec §2.5e2.
 func (r *InMemoryRepo) Delete(_ context.Context, id string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

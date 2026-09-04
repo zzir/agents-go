@@ -34,10 +34,8 @@ const (
 	SpanTypeHandoff    = "handoff"
 	SpanTypeGuardrail  = "guardrail"
 	SpanTypeCompaction = "compaction"
-	// SpanTypeModelRetry is one retried model call, nested under the
-	// generation span it belongs to. A generation span that took eight seconds
-	// because it was tried three times is otherwise indistinguishable from one
-	// that was simply slow.
+	// SpanTypeModelRetry is one retried model call, nested under its generation
+	// span (spec §2.11e).
 	SpanTypeModelRetry = "model_retry"
 	// SpanTypeMCP is an MCP server round trip: listing tools, or calling one.
 	SpanTypeMCP = "mcp"
@@ -78,16 +76,11 @@ type Processor interface {
 	Shutdown(ctx context.Context)
 }
 
-// Exporter ships finished traces and spans to a destination.
-//
-// Export may be called concurrently (a periodic flush and an explicit
-// ForceFlush/Shutdown can overlap), so implementations must be safe for
-// concurrent use. Batches are never delivered twice, but ordering across
-// concurrent Export calls is not guaranteed.
-//
-// Each element of the items slice is an Item — either a *Trace (the root of a
-// trace tree) or a *Span (a single unit of work within a trace). The Item union
-// is sealed, so implementations should type-switch to distinguish them:
+// Exporter ships finished traces and spans to a destination. Export may be
+// called concurrently (a periodic flush overlapping ForceFlush/Shutdown), so
+// implementations must be safe for concurrent use; batches are never
+// delivered twice, but ordering across calls is not guaranteed. Each Item is
+// a *Trace or a *Span — the union is sealed, so type-switch:
 //
 //	func (e *myExporter) Export(items []Item) {
 //	    for _, item := range items {
@@ -103,9 +96,8 @@ type Exporter interface {
 	Export(items []Item)
 }
 
-// randHex returns 2n random hex characters from n crypto/rand bytes. As of
-// Go 1.24 crypto/rand.Read never fails (it aborts the program if the OS source
-// is unavailable), and it is cheap and safe for concurrent use.
+// randHex returns 2n random hex characters. crypto/rand.Read never fails as of
+// Go 1.24 (it aborts the program if the OS source is unavailable).
 func randHex(n int) string {
 	buf := make([]byte, n)
 	_, _ = rand.Read(buf)
@@ -117,10 +109,6 @@ func randHex(n int) string {
 func NewTraceID() string { return "trace_" + randHex(16) }
 
 // NewSpanID returns a fresh span identifier: "span_" followed by 16 hex
-// characters.
-//
-// The width is 8 bytes because that is what an OpenTelemetry span id is, and
-// An OTel-shaped exporter can rebuild our tree by reusing these ids verbatim.
-// A wider id would have to be truncated there — silently, and differently for
-// each exporter that tried. Trace ids are 16 bytes, which already matches.
+// characters — 8 bytes, the OpenTelemetry width, so an OTel-shaped exporter
+// reuses it verbatim (decisions §5.6b).
 func NewSpanID() string { return "span_" + randHex(8) }

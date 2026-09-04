@@ -66,9 +66,8 @@ func (c CompactionOptions) active(point CompactionPoint) bool {
 	return c.Points == 0 || c.Points.Has(point)
 }
 
-// compactContext asks the Compactor what the model's context should be. It
-// returns entries unchanged whenever compaction is off, does not apply at this
-// point, or failed — a pass never fails a run (spec §2.5f).
+// compactContext asks the Compactor what the model's context should be, returning
+// entries unchanged when compaction is off, inapplicable, or failed (spec §2.5f).
 func (r *runner) compactContext(ctx context.Context, point CompactionPoint, entries []session.Entry) ([]session.Entry, bool) {
 	if !r.opts.Compaction.active(point) {
 		return entries, false
@@ -133,9 +132,8 @@ func (p CompactionPoint) String() string {
 	}
 }
 
-// recompactAtSavePoint is the CompactAtSavePoint point: the turn's items are
-// persisted, so the run rebuilds its context from the log (spec §2.5f). It
-// reports ok=false when nothing applies, leaving the caller's context alone.
+// recompactAtSavePoint rebuilds the run's context from the persisted log at
+// CompactAtSavePoint (spec §2.5f); ok=false leaves the caller's context alone.
 func (r *runner) recompactAtSavePoint(ctx context.Context) (input []InputItem, ok bool, err error) {
 	if !r.opts.Compaction.active(CompactAtSavePoint) {
 		return nil, false, nil
@@ -179,10 +177,8 @@ type CompactionCheckpointer interface {
 	Checkpoint(seen []session.Entry) (session.Entry, bool, error)
 }
 
-// checkpointAfterRun records the run's compaction as an append-only checkpoint,
-// so the next run starts from the shorter context instead of recomputing it.
-// Only a CompactionCheckpointer runs the after-run pass at all. It reports
-// whether it wrote one; failure costs the next run one more pass, nothing more.
+// checkpointAfterRun appends the run's compaction as a checkpoint entry and reports
+// whether it wrote one; only a CompactionCheckpointer runs the after-run pass.
 func (r *runner) checkpointAfterRun(ctx context.Context) bool {
 	if !r.opts.Compaction.active(CompactAfterRun) || r.opts.Conversation.Session == nil {
 		return false

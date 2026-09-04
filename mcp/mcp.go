@@ -1,13 +1,7 @@
-// Package mcp provides a Model Context Protocol (MCP) client that exposes a
-// server's tools to an agent. It implements agents.MCPServer over the official
-// modelcontextprotocol/go-sdk, supporting stdio and streamable HTTP transports.
-//
-// This is a separate Go module, so that the go-sdk and its transitive closure
-// (uritemplate, x/oauth2, x/time, x/tools, the segmentio pair) stay out of
-// every build that does not speak MCP — see docs/explanation/decisions.md §5.7. Using it costs
-// one extra require:
-//
-//	go get github.com/zzir/agents-go/mcp
+// Package mcp is a Model Context Protocol client that exposes a server's tools
+// to an agent: agents.MCPServer over the official modelcontextprotocol/go-sdk,
+// with stdio and streamable HTTP transports. It is its own module so the
+// go-sdk stays out of every build that does not speak MCP (decisions §5.7).
 package mcp
 
 import (
@@ -47,12 +41,9 @@ type Options struct {
 	ClientName    string
 	ClientVersion string
 
-	// CacheToolsList caches the server's tool list after the first fetch so a
-	// multi-turn run does not re-issue list_tools every turn. The cache is
-	// invalidated automatically when the server sends a tools/list_changed
-	// notification; call InvalidateToolsCache to force a refetch for servers
-	// that change tools without announcing it. Static and dynamic filters still
-	// run on every ListTools, against the cached list.
+	// CacheToolsList caches the server's tool list after the first fetch. The
+	// cache drops on a tools/list_changed notification; InvalidateToolsCache
+	// forces a refetch. Filters still run on every ListTools, against the cache.
 	CacheToolsList bool
 
 	// ToolFilter, when set, decides per call whether a tool is exposed, applied
@@ -82,12 +73,9 @@ type Options struct {
 	// retries are enabled and this is left zero.
 	RetryBackoffBase time.Duration
 
-	// UseStructuredContent controls how a tool result's structuredContent field
-	// is handled. It is false by default: most servers
-	// duplicate their structured data in the content blocks, so structuredContent
-	// is ignored and the content blocks are sent to the model. Set it true to use
-	// structuredContent exclusively (the content blocks are then ignored) for
-	// servers that only populate the structured field.
+	// UseStructuredContent sends a tool result's structuredContent exclusively,
+	// ignoring the content blocks. Off by default: most servers duplicate their
+	// structured data in the blocks.
 	UseStructuredContent bool
 
 	// OAuthHandler, when set, is passed to the streamable HTTP transport to
@@ -95,18 +83,10 @@ type Options struct {
 	// refresh, dynamic client registration). Ignored for stdio transports.
 	OAuthHandler auth.OAuthHandler
 
-	// Redial builds a fresh transport for a connection that has died, and is
-	// what makes a Server self-healing: without it a dead connection stays
-	// dead and every later call fails, which is a permanent outage for every
-	// agent configured with that server.
-	//
-	// It must return a transport that can be connected NOW — a new
-	// CommandTransport with an unstarted command, a streamable transport with
-	// the same endpoint, headers and OAuth handler. The context it receives is
-	// the connection's own, so anything bound to it (a subprocess) lives
-	// exactly as long as the connection does.
-	//
-	// Nil keeps the old behavior: a dead connection is reported, not repaired.
+	// Redial builds a fresh transport for a dead connection — one that can connect
+	// NOW (an unstarted command; the same endpoint, headers and OAuth handler).
+	// ctx is the connection's own, so a subprocess bound to it lives as long as
+	// the connection does. Nil: a dead connection is reported, not repaired.
 	Redial func(ctx context.Context) (mcpsdk.Transport, error)
 }
 
@@ -114,9 +94,8 @@ type Options struct {
 // implements agents.MCPServer.
 type Server struct {
 	name string
-	// session is swapped, not fixed: a connection that dies is replaced in
-	// place (see redial), so every holder of this *Server recovers rather than
-	// only the runs that start afterwards.
+	// session is swapped in place when a connection dies (see redial), so every
+	// holder of this *Server recovers.
 	session atomic.Pointer[mcpsdk.ClientSession]
 	dialMu  sync.Mutex
 	// lastDial throttles healing; see redialCooldown.
@@ -125,14 +104,12 @@ type Server struct {
 	allowed  map[string]bool
 	blocked  map[string]bool
 
-	// closed flips when Close runs so later ListTools/CallTool report a clear
-	// error instead of failing obscurely on the dead session — a long-lived
-	// run can hold a *Server pointer past a reconfiguration that closed it.
+	// closed flips in Close so later ListTools/CallTool report a clear error; a
+	// long-lived run can hold a *Server past a reconfiguration that closed it.
 	closed atomic.Bool
 
-	// rpcCtx is the context every request on this session rides. It belongs to
-	// the CONNECTION and ends only with Close — see callSession for why it can
-	// never be a caller's. requestCeiling bounds one request on it.
+	// rpcCtx is the CONNECTION's context, ending only with Close — never a
+	// caller's (spec §2.16); requestCeiling bounds one request on it.
 	rpcCtx         context.Context
 	rpcStop        context.CancelFunc
 	requestCeiling time.Duration
@@ -149,10 +126,7 @@ type cachedTool struct {
 	tool         *agents.Tool
 }
 
-// requestCeiling bounds a request whose caller has already left: a server
-// that never answers would otherwise pin the goroutine, and the request, for
-// the connection's whole lifetime. Generous, so it fires only on a request
-// that is already lost (decisions §5.20).
+// requestCeiling bounds a request whose caller has already left (decisions §5.20).
 const requestCeiling = 30 * time.Minute
 
 func newServer(name string, opts Options) *Server {
@@ -169,11 +143,8 @@ func newServer(name string, opts Options) *Server {
 	return s
 }
 
-// callSession runs one request against the shared session and returns as soon
-// as EITHER the request answers or the caller's context ends. The request
-// rides the connection's context, never the caller's — a request cancelled
-// mid-flight fails the whole shared connection — so a caller's cancellation
-// is honored by returning, and the late answer is dropped (decisions §5.20).
+// callSession runs fn on the connection's context and returns when EITHER it
+// answers or the caller's ctx ends; a late answer is dropped (spec §2.16).
 func callSession[T any](ctx context.Context, s *Server, fn func(context.Context) (T, error)) (T, error) {
 	type answer struct {
 		val T
@@ -196,16 +167,12 @@ func callSession[T any](ctx context.Context, s *Server, fn func(context.Context)
 	}
 }
 
-// redialCooldown throttles healing. A server that accepts a connection and
-// drops it again would otherwise turn the watcher below into a dial loop: one
-// death heals at once, a second inside this window waits for a caller to ask
-// again.
+// redialCooldown throttles healing so a server that accepts and drops
+// connections cannot become a dial loop (spec §2.16).
 const redialCooldown = 3 * time.Second
 
-// redialConnectTimeout bounds one healing attempt's handshake. It exists
-// because redial runs under dialMu: an endpoint that black-holes instead of
-// refusing would otherwise hold the lock for as long as TCP keeps trying, and
-// every caller waiting to report a connection error with it.
+// redialConnectTimeout bounds one healing handshake: redial holds dialMu, so a
+// black-holing endpoint would otherwise hold every failed caller with it.
 const redialConnectTimeout = 30 * time.Second
 
 func (s *Server) newClient() *mcpsdk.Client {
@@ -214,9 +181,8 @@ func (s *Server) newClient() *mcpsdk.Client {
 	version := s.opts.ClientVersion
 	version = cmp.Or(version, "0.1.0")
 	return mcpsdk.NewClient(&mcpsdk.Implementation{Name: name, Version: version}, &mcpsdk.ClientOptions{
-		// Drop the cached tool list when the server announces a change
-		// (notifications/tools/list_changed), so CacheToolsList can never serve
-		// a permanently stale list. No-op when caching is off.
+		// Drop the cached tool list on notifications/tools/list_changed, so
+		// CacheToolsList never serves a permanently stale list.
 		ToolListChangedHandler: func(context.Context, *mcpsdk.ToolListChangedRequest) {
 			s.InvalidateToolsCache()
 		},
@@ -233,9 +199,8 @@ func (s *Server) connect(ctx context.Context, transport mcpsdk.Transport) error 
 	return nil
 }
 
-// watch heals the connection the moment it dies, instead of leaving the next
-// caller to trip over it (decisions §5.21): one goroutine per live connection,
-// ending with the connection it watches.
+// watch heals the connection the moment it dies — one goroutine per live
+// connection, ending with it (decisions §5.21).
 func (s *Server) watch(session *mcpsdk.ClientSession) {
 	if s.opts.Redial == nil {
 		return
@@ -249,10 +214,8 @@ func (s *Server) watch(session *mcpsdk.ClientSession) {
 	}()
 }
 
-// redial replaces a dead session with a fresh one, and reports whether this
-// call is the one that did it (decisions §5.21). failed is the session the
-// caller was using: serialized and compared against what is current, so a
-// dozen callers discovering the same dead connection dial once between them.
+// redial replaces the dead session failed with a fresh one and reports whether
+// this call did it; concurrent discoverers dial once (decisions §5.21).
 func (s *Server) redial(failed *mcpsdk.ClientSession) bool {
 	if s.opts.Redial == nil || s.closed.Load() {
 		return false
@@ -266,13 +229,8 @@ func (s *Server) redial(failed *mcpsdk.ClientSession) bool {
 		return false
 	}
 	s.lastDial = time.Now()
-	// Redial gets the connection's own context, which is what its contract
-	// promises: a transport that binds a subprocess to it must outlive this
-	// call, or the shell reconnects and is killed in the same breath. The
-	// HANDSHAKE is bounded separately because it runs under dialMu — an
-	// unreachable endpoint holding TCP retries for minutes would hold the lock
-	// too, and with it every failed caller waiting in healed() to report an
-	// error.
+	// The transport gets the connection's context (a subprocess must outlive this
+	// call); only the HANDSHAKE is bounded, because it runs under dialMu.
 	transport, err := s.opts.Redial(s.rpcCtx)
 	if err != nil {
 		return false
@@ -287,13 +245,8 @@ func (s *Server) redial(failed *mcpsdk.ClientSession) bool {
 		_ = failed.Close()
 	}
 	s.session.Store(session)
-	// Re-checked AFTER the store, because Close does the mirror image — closed
-	// first, then close whatever the session slot holds — and the two only
-	// compose into "no session survives a Close" in this order: a Close that
-	// missed the swap is caught here, and a Close that saw it closes the new
-	// session itself. Without this, a Close landing between the connect above
-	// and the store would close the OLD session and leave the new one live
-	// forever — a disabled server still holding its connection.
+	// Re-checked AFTER the store: Close marks closed, then closes the slot, so a
+	// Close racing this swap is caught here rather than leaking the new session.
 	if s.closed.Load() {
 		_ = session.Close()
 		return false
@@ -305,9 +258,8 @@ func (s *Server) redial(failed *mcpsdk.ClientSession) bool {
 	return true
 }
 
-// healed reports whether err says the connection is gone and a fresh one was
-// put in its place. A server closed on purpose is not healed: it was meant to
-// end.
+// healed reports whether err means the connection is gone and a fresh one
+// replaced it. A server closed on purpose is never healed.
 func (s *Server) healed(err error, failed *mcpsdk.ClientSession) bool {
 	if err == nil || s.closed.Load() || !errors.Is(err, mcpsdk.ErrConnectionClosed) {
 		return false
@@ -355,18 +307,12 @@ func (s *Server) Name() string { return s.name }
 // Close implements agents.MCPServer, closing the session. Subsequent
 // ListTools/CallTool calls fail with a "closed" error.
 func (s *Server) Close() error {
-	// Nil-checked because the zero Server is reachable: this type is exported,
-	// and a caller (a test, a discarded handshake) can hold one that never went
-	// through a constructor.
-	// Marked closed FIRST: everything below ends the connection, and the
-	// watcher must read this before it wakes or it would heal a server that
-	// was deliberately shut down.
+	// closed is set FIRST so the watcher never heals a deliberate shutdown;
+	// rpcStop is nil-checked because the zero Server is reachable.
 	s.closed.Store(true)
 	if s.rpcStop != nil {
-		// Before the session close, not after: closing waits for the requests
-		// still in flight, and one of those may be riding a server that stopped
-		// answering — the case where a caller already gave up and left it here.
-		// Ending the connection's context is what lets them unwind.
+		// Before the session close: closing waits for in-flight requests, and ending
+		// the connection's context is what lets an abandoned one unwind.
 		s.rpcStop()
 	}
 	session := s.session.Load()
@@ -414,10 +360,8 @@ func (s *Server) ListTools(ctx context.Context, rc *agents.RunContext, agent *ag
 	return tools, nil
 }
 
-// bindApproval returns the tool to expose for this ListTools call, wiring
-// RequireApproval (if set) with the current agent captured per call, so the
-// closure names the agent whose turn it is rather than whichever agent first
-// listed the server. The cached base tool is left untouched.
+// bindApproval wires RequireApproval with the agent captured per ListTools
+// call, so the closure names whose turn it is; the cached base tool is untouched.
 func (s *Server) bindApproval(ct cachedTool, agent *agents.Agent) *agents.Tool {
 	if s.opts.RequireApproval == nil {
 		return ct.tool
@@ -470,22 +414,14 @@ func (s *Server) toolList(ctx context.Context) ([]cachedTool, error) {
 			return cached, nil
 		}
 	}
-	// Fetch outside s.mu so a slow ListTools RPC (plus retry backoff) never
-	// blocks InvalidateToolsCache (list_changed handling) or a concurrent
-	// same-session caller. Two callers racing a cold cache may each issue a
-	// ListTools request; that duplicate work is acceptable and preferable to
-	// holding the lock across a blocking network call.
-	// Every page, not just the first: tools/list paginates via nextCursor, and
-	// a server past page one would otherwise have those tools silently missing
-	// — no error, no log, just "no such tool" when the model calls one — and,
-	// with CacheToolsList, the truncated list cached as if it were complete.
+	// Fetched outside s.mu (a slow RPC must not block InvalidateToolsCache), and
+	// EVERY page: a truncated list would be cached as if it were complete.
 	var tools []*mcpsdk.Tool
 	fetch := func() error {
 		tools = tools[:0]
 		var params *mcpsdk.ListToolsParams
-		// A faulty (or hostile) server that repeats a cursor, or never runs
-		// out of pages, must produce a protocol error — not an unbounded loop
-		// appending the same tools until memory runs out.
+		// A server that repeats a cursor or never runs out of pages is a protocol
+		// error, not an unbounded loop.
 		seen := make(map[string]bool)
 		for page := 0; ; page++ {
 			if page >= maxToolListPages {
@@ -510,11 +446,8 @@ func (s *Server) toolList(ctx context.Context) ([]cachedTool, error) {
 	}
 	err := s.runWithRetries(ctx, fetch)
 	if err != nil && s.healed(err, session) {
-		// The connection this run found was somebody else's casualty, and the
-		// list is idempotent — so ask again on the fresh one rather than
-		// failing a turn over a connection that has already been replaced.
-		// Only listing gets this: repeating a tool CALL could repeat whatever
-		// it did (see the call site).
+		// The list is idempotent, so ask again on the healed connection; a tool
+		// CALL is never repeated (decisions §5.21).
 		err = s.runWithRetries(ctx, fetch)
 	}
 	if err != nil {
@@ -527,12 +460,8 @@ func (s *Server) toolList(ctx context.Context) ([]cachedTool, error) {
 	}
 	if s.opts.CacheToolsList {
 		s.mu.Lock()
-		// If another goroutine published a list while we were fetching, prefer it
-		// so every caller converges on the same slice. Otherwise cache ours only
-		// if no InvalidateToolsCache ran during the fetch (the generation is
-		// unchanged): a list_changed arriving mid-fetch means our result may
-		// already be stale, so return it to this caller but leave the cache empty
-		// for the next call to refetch.
+		// Prefer a list another goroutine published; cache ours only if no
+		// InvalidateToolsCache ran mid-fetch (gen unchanged), else leave it empty.
 		if s.cached != nil {
 			list = s.cached
 		} else if s.cacheGen == gen {
@@ -547,11 +476,8 @@ func (s *Server) toolList(ctx context.Context) ([]cachedTool, error) {
 // equal jitter as the model-side RetryPolicy, so the two feel like one system.
 const maxRetryBackoff = 30 * time.Second
 
-// JSON-RPC codes that mean the request was understood and refused, so sending
-// the same bytes again produces the same refusal. Written as numbers because
-// the go-sdk exports these as error values from an internal package, not as
-// constants: -32005 is its ErrRejected ("invalid in the current context", and
-// explicitly not a broken connection) and -32003 its ErrClientClosing.
+// JSON-RPC codes meaning the request was understood and refused (spec §2.16),
+// as numbers: the go-sdk exports them as error values from an internal package.
 const (
 	codeParseError     = -32700
 	codeInvalidRequest = -32600
@@ -564,12 +490,8 @@ const (
 // errServerClosed marks a call made after Close.
 var errServerClosed = errors.New("server is closed")
 
-// retryable reports whether err is worth another attempt.
-//
-// A transport failure is: each attempt reloads the session, so one the watcher
-// healed in the background carries the next try. An answer the server sent is
-// not — it already understood the request — and neither is a call made after
-// Close, which no amount of waiting turns into a live connection.
+// retryable reports whether err is worth another attempt: a transport failure
+// is; an answer the server sent, or a call after Close, is not (spec §2.16).
 func retryable(err error) bool {
 	if errors.Is(err, errServerClosed) {
 		return false
@@ -584,9 +506,8 @@ func retryable(err error) bool {
 	return true
 }
 
-// retryBackoff is the delay before the attempt after this one: the base
-// doubled per attempt, capped at maxRetryBackoff, then jittered into
-// [d/2, d] so servers shared by many runs are not retried in lockstep.
+// retryBackoff is the delay before the next attempt: base doubled per attempt,
+// capped at maxRetryBackoff, jittered into [d/2, d] (spec §2.16).
 func retryBackoff(base time.Duration, attempt int) time.Duration {
 	d := float64(base) * math.Pow(2, float64(attempt-1))
 	if d > float64(maxRetryBackoff) {
@@ -596,10 +517,8 @@ func retryBackoff(base time.Duration, attempt int) time.Duration {
 	return time.Duration(half + rand.Float64()*half)
 }
 
-// runWithRetries invokes fn, retrying RETRYABLE failures up to
-// MaxRetryAttempts times with capped, jittered exponential backoff.
-// MaxRetryAttempts == -1 retries indefinitely; 0 disables retries. An error
-// retryable rejects is returned on the spot, however many attempts remain.
+// runWithRetries retries RETRYABLE failures up to MaxRetryAttempts times (-1
+// indefinitely, 0 never) with retryBackoff between attempts.
 func (s *Server) runWithRetries(ctx context.Context, fn func() error) error {
 	base := s.opts.RetryBackoffBase
 	if base <= 0 {
@@ -643,8 +562,7 @@ func (s *Server) toolFor(mt *mcpsdk.Tool, exposedName string) *agents.Tool {
 	strict := false
 	if s.opts.Strict {
 		// EnsureStrictJSONSchema rewrites in place, so convert a deep copy: a
-		// failure must not leave a half-rewritten schema behind, and the tool
-		// must not claim strict mode with a non-strict schema.
+		// failure must leave neither a half-rewritten schema nor a false Strict.
 		if strictSchema, err := agents.EnsureStrictJSONSchema(deepCopySchema(schema)); err == nil {
 			schema = strictSchema
 			strict = true
@@ -659,14 +577,11 @@ func (s *Server) toolFor(mt *mcpsdk.Tool, exposedName string) *agents.Tool {
 		Description:      resolveToolDescription(mt),
 		ParamsJSONSchema: schema,
 		Strict:           strict,
-		// The server's own readOnlyHint, recorded for consumers that want it.
-		// It is an OUTSIDE server's claim about itself: the plan-mode gate
-		// deliberately ignores it and admits MCP tools by name only (spec
-		// "A FIRST-PARTY tool's ReadOnly is trusted; an MCP tool's is not").
+		// The server's own readOnlyHint, recorded for consumers; the plan-mode
+		// gate ignores it and admits MCP tools by name only (spec §2.12).
 		ReadOnly: mt.Annotations != nil && mt.Annotations.ReadOnlyHint,
-		// Tool failures (including isError results) are fed back to the model
-		// so it can recover, matching the SDK-wide default; without this every
-		// MCP error would abort the whole run.
+		// Failures (isError results included) feed back to the model, the SDK-wide
+		// default; otherwise every MCP error would abort the run.
 		FailureErrorFunction: agents.DefaultToolErrorFunction,
 		OnInvoke: func(ctx context.Context, _ *agents.ToolContext, argsJSON string) (agents.ToolResult, error) {
 			// Always send an "arguments" object — an empty {} rather than an
@@ -707,11 +622,8 @@ func (s *Server) toolFor(mt *mcpsdk.Tool, exposedName string) *agents.Tool {
 				})
 				return e
 			}); err != nil {
-				// Repair the connection, but do NOT repeat the call on it. A
-				// dead connection cannot say whether the server ran this tool
-				// before the line dropped, and repeating a write twice is worse
-				// than reporting it once. The model is told, it can ask again,
-				// and the connection it asks on is now a live one.
+				// Repair the connection but do NOT repeat the call: a dead line cannot
+				// say whether the server ran it (decisions §5.21).
 				s.healed(err, session)
 				span.SetError(err.Error(), nil)
 				// A transport/protocol failure is fed back to the model via the
@@ -719,10 +631,8 @@ func (s *Server) toolFor(mt *mcpsdk.Tool, exposedName string) *agents.Tool {
 				return agents.ToolResult{}, agents.Classify(agents.CodeMCP, fmt.Errorf("mcp tool %q call failed: %w", originalName, err))
 			}
 			span.Set("is_error", result.IsError)
-			// An isError result is NOT a Go error: its content (usually the
-			// error message) passes to the model verbatim so it can recover.
-			// It IS marked as an error on the result, so a UI can render it as
-			// one.
+			// An isError result is NOT a Go error: its content reaches the model
+			// verbatim, marked IsError so a UI can render it as one.
 			return agents.ToolResult{
 				IsError: result.IsError,
 				Content: resultOutput(result, s.opts.UseStructuredContent),
@@ -767,9 +677,8 @@ func requiredKeys(schema map[string]any) []string {
 	return out
 }
 
-// resolveToolDescription returns the best model-facing description for an MCP
-// tool: its description, falling back to the display title, then the annotations
-// title.
+// resolveToolDescription returns the model-facing description: description,
+// else display title, else annotations title.
 func resolveToolDescription(mt *mcpsdk.Tool) string {
 	if mt.Description != "" {
 		return mt.Description
@@ -793,10 +702,8 @@ func (s *Server) exposedNames(tools []*mcpsdk.Tool) []string {
 	return names
 }
 
-// schemaToMap normalizes the MCP input schema (an any) into a map[string]any.
-// The result is always a map this package owns: the schema travels on the
-// go-sdk's own tool object, and the "properties" fill-in below must not write
-// back into it.
+// schemaToMap normalizes the MCP input schema into a map this package owns:
+// the "properties" fill-in must not write back into the go-sdk's tool object.
 func schemaToMap(schema any) map[string]any {
 	m, ok := schema.(map[string]any)
 	if ok {
@@ -836,18 +743,8 @@ func deepCopySchema(m map[string]any) map[string]any {
 	return cp
 }
 
-// resultOutput renders a tool result into the content parts the model receives:
-// - When useStructured is set AND the result carries non-empty
-// structuredContent, that field is used exclusively (JSON-encoded into a
-// single text part) and the content blocks are ignored. A nil or empty
-// structuredContent falls through to the content blocks instead — most
-// servers duplicate their data in the content blocks, so an empty structured
-// field must never blank out the result. By default (useStructured false)
-// structuredContent is ignored entirely.
-// - Otherwise every content block becomes its own part, so the model receives
-// each one natively: text stays text, images become images, and everything
-// else is JSON-encoded into a text part. A result with no blocks at all
-// yields a single empty text part.
+// resultOutput renders a tool result as content parts: structuredContent alone
+// (JSON text) when useStructured and it is non-empty, else one part per block.
 func resultOutput(result *mcpsdk.CallToolResult, useStructured bool) []agents.ToolOutputContent {
 	if useStructured && hasStructuredContent(result.StructuredContent) {
 		if b, err := json.Marshal(result.StructuredContent); err == nil {
@@ -879,12 +776,8 @@ func resultOutput(result *mcpsdk.CallToolResult, useStructured bool) []agents.To
 	return parts
 }
 
-// hasStructuredContent reports whether a tool result's structuredContent field
-// holds a usable value. The MCP schema types the field as a
-// JSON object (Go: nil or map[string]any); a nil or empty object is treated as
-// absent so the caller falls back to the content blocks. Empty slices/strings
-// are covered defensively for non-conforming servers, while genuine scalar
-// values (numbers, booleans) count as present.
+// hasStructuredContent reports whether structuredContent holds a usable value:
+// nil and an empty object/slice/string are absent; other scalars are present.
 func hasStructuredContent(sc any) bool {
 	switch v := sc.(type) {
 	case nil:

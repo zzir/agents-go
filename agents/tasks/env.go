@@ -40,24 +40,18 @@ type LaunchRequest struct {
 	// A host may treat the two differently — different tools, no task tools on
 	// a task run — and cannot tell them apart otherwise.
 	Wake bool
-	// Retry marks a run started by Retry rather than by a spawn or a
-	// continuation: Input is then the retry prompt (why the last attempt
-	// failed, resume from the progress made), and a host whose job carries its
-	// own instruction for the current stage — a workflow's step — re-issues
-	// that instruction with it rather than leaving the model to infer it.
+	// Retry marks a run started by Retry: Input is then the retry prompt, and a
+	// host whose job carries its own instruction for the current stage (a
+	// workflow step) re-issues that instruction with it.
 	Retry bool
 	// ParentRunID, on a Wake launch, is the run that spawned the task(s) being
-	// delivered (the first one carrying it when several drained at once). It is
-	// the run's LINEAGE, handed to the host at launch so it can be recorded on
-	// the run's own durable output (traces) rather than re-derived later from
-	// task rows or notification text — which a fork or a fold does not carry.
+	// delivered (the first carrying it when several drained at once) — the
+	// run's lineage, for the host to record on its own traces (spec §2.13).
 	ParentRunID string
 }
 
-// StopOutcome is what a host did with a stop request. "No error" is not enough
-// to act on: a host asked to stop a run it never heard of can only report
-// success, which a Manager must not read as "the run will wind itself up". What
-// it does next depends on which outcome this is.
+// StopOutcome is what a host did with a stop request; "no error" is not
+// enough to act on, and the Manager's next step depends on it — spec §2.13.
 type StopOutcome int
 
 const (
@@ -67,15 +61,13 @@ const (
 	StopUnknownRun StopOutcome = iota
 	// StopCancelled means this call cancelled the run.
 	StopCancelled
-	// StopAlreadyFinished means the run had ended on its own before the stop
-	// arrived, its outcome on its way through OnRunFinished. Separate from
-	// StopCancelled because the ending is not this call's — recording a
-	// cancellation over it would bury a real outcome, and cost a failure its retry.
+	// StopAlreadyFinished means the run ended on its own before the stop
+	// arrived, its outcome on its way through OnRunFinished; recording a
+	// cancellation over it would bury a real outcome.
 	StopAlreadyFinished
-	// StopAfterTurn means the run is still going and will stop at the end of
-	// its current turn, reporting its own ending through OnRunFinished. Only a
-	// graceful stop can be answered this way, and it is the one answer that
-	// lets the Manager leave the terminal state to the run.
+	// StopAfterTurn means the run will stop at the end of its current turn and
+	// report its own ending through OnRunFinished. Only a graceful stop can be
+	// answered this way.
 	StopAfterTurn
 )
 

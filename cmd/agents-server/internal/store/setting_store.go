@@ -12,9 +12,8 @@ import (
 // SettingStore persists key/value server settings.
 type SettingStore struct {
 	db *bun.DB
-	// isSecret says which keys hold credentials, sealed at rest (SealIf). The
-	// registry that knows lives in the settings package, which imports this
-	// one — so it is handed in rather than imported.
+	// isSecret says which keys hold credentials, sealed at rest (SealIf);
+	// handed in because the settings registry imports this package.
 	isSecret func(key string) bool
 }
 
@@ -69,10 +68,7 @@ func (s *SettingStore) Set(ctx context.Context, key, value string) error {
 }
 
 // SetMany writes a group of settings in ONE transaction: a non-empty value
-// upserts, an empty one deletes the row (back to the default). It exists for
-// section-shaped configuration (attachment storage) whose keys are only
-// valid together — per-key writes would pass validation through states the
-// section never meant to be in.
+// upserts, an empty one deletes the row (back to the default) — invariant 58.
 func (s *SettingStore) SetMany(ctx context.Context, kv map[string]string) error {
 	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		for key, value := range kv {
@@ -94,11 +90,8 @@ func (s *SettingStore) SetMany(ctx context.Context, kv map[string]string) error 
 	})
 }
 
-// Modify sets key from its stored value: one transaction reads the current
-// value (locked; found is false when there is none), asks value for the new
-// one, and upserts it — how a masked secret keeps what is stored with no
-// window for a concurrent Set to slip between. value's error comes back
-// as given.
+// Modify sets key from its stored value in one transaction: read locked
+// (found is false when none), ask value for the new one, upsert. value's error comes back as given.
 func (s *SettingStore) Modify(ctx context.Context, key string, value func(prev string, found bool) (string, error)) error {
 	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		var prev string

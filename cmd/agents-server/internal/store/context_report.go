@@ -11,23 +11,17 @@ import (
 )
 
 // ContextReport is what a session's active branch occupies of the model's
-// context window.
-//
-// Its figures are not one ruler and are never mixed (workbench invariant 28):
-// InputTokens and the cache split are the provider's counts for the last model
-// call; CompactionTokens is what the compaction pass compares (mostly that same
-// provider number, plus an estimate for the turns since — ActiveContextTokens);
-// ConversationTokens and Prompt are character estimates, good for shares and
-// not for arithmetic against either of the others.
+// context window. Its figures are not one ruler and are never mixed —
+// invariant 28. Sub-agents appear in none of them: a task runs on its own
+// session, and only its result text lands here, as any tool output.
 type ContextReport struct {
 	Model string `json:"model,omitempty"`
 	// ContextWindow is the agent config's declared window in tokens; 0 means
 	// unconfigured and the client shows occupancy without a denominator.
 	ContextWindow int `json:"context_window,omitempty"`
 
-	// InputTokens is what the LAST model call on the branch sent — the history,
-	// prompt and tool schemas that are in the window right now. OutputTokens is
-	// that same call's completion.
+	// InputTokens is what the LAST model call on the branch sent — what is in
+	// the window right now. OutputTokens is that same call's completion.
 	InputTokens  int64 `json:"input_tokens"`
 	OutputTokens int64 `json:"output_tokens"`
 	// CachedTokens / CacheWriteTokens split that call's input by cache
@@ -36,8 +30,7 @@ type ContextReport struct {
 	CacheWriteTokens int64 `json:"cache_write_tokens"`
 
 	// SessionInputTokens / SessionOutputTokens total every model call on the
-	// branch. Input counts re-sent history once per call, so it runs far ahead
-	// of InputTokens by design — it is a spend figure, not a window figure.
+	// branch — a spend figure, not a window figure.
 	SessionInputTokens  int64 `json:"session_input_tokens"`
 	SessionOutputTokens int64 `json:"session_output_tokens"`
 
@@ -45,37 +38,25 @@ type ContextReport struct {
 	// draws, where a compaction pass shows up as the drop it caused.
 	Growth []int64 `json:"growth,omitempty"`
 
-	// CompactionEnabled reports whether the pass runs at all; Threshold is what
-	// it fires at (the default filled in when the config names none) and Tokens
-	// is what it compares — ActiveContextTokens over the same history, so the
-	// number the panel draws is the number that trips.
+	// CompactionEnabled reports whether the pass runs; Threshold is what it
+	// fires at and Tokens what it compares (ActiveContextTokens).
 	CompactionEnabled   bool `json:"compaction_enabled"`
 	CompactionThreshold int  `json:"compaction_threshold,omitempty"`
 	CompactionTokens    int  `json:"compaction_tokens"`
 
 	// ConversationTokens is the estimated size of the transcript still in
-	// context — every active, uncompacted entry's estimate summed. The
-	// conversation's share of the window, on the same ruler as Prompt.
+	// context — every active, uncompacted entry's estimate summed.
 	ConversationTokens int `json:"conversation_tokens"`
 
-	// Prompt is what the session's last build put in front of the conversation
-	// — the instruction layers and the tool surface, in the same estimated
-	// characters as CompactionTokens. Absent until a run has built once.
+	// Prompt is what the session's last build put in front of the
+	// conversation (instruction layers, tool surface); absent until a run has built once.
 	Prompt *PromptProfile `json:"prompt,omitempty"`
 }
 
 // ContextReport measures what the session named by ref currently puts in its
-// model's context window. Only the ACTIVE branch counts: an abandoned attempt
-// is still recorded but is no longer sent. Compacted entries keep their usage
-// (the call happened) but leave the estimate, since the model no longer sees
-// them.
-//
-// It reads lifted columns only (usage, estimate, links — no entry bodies
-// except the leaf markers the branch walk needs), so what it costs is the
-// session's ROW COUNT, not its size.
-//
-// The report describes the session alone; the caller fills in Model,
-// ContextWindow and the compaction settings, which live on the agent config.
+// model's context window: the ACTIVE branch only, from lifted columns (so
+// its cost is the row count, not the size) — invariant 28. The caller fills
+// in Model, ContextWindow and the compaction settings from the agent config.
 func (s *EntryStore) ContextReport(ctx context.Context, ref session.Ref) (*ContextReport, error) {
 	var rows []entryRow
 	if err := s.db.NewSelect().Model(&rows).
@@ -116,9 +97,8 @@ func (s *EntryStore) ContextReport(ctx context.Context, ref session.Ref) (*Conte
 	return rep, nil
 }
 
-// UsageTotals sums what every model call on the session cost — input plus
-// output tokens, every branch and every compacted entry included, since the
-// calls happened. It is what a workflow's token budget is measured against.
+// UsageTotals sums input plus output tokens of every model call on the
+// session, every branch and compacted entry included — a workflow's token budget ruler.
 func (s *EntryStore) UsageTotals(ctx context.Context, ref session.Ref) (int, error) {
 	var rows []entryRow
 	if err := s.db.NewSelect().Model(&rows).
@@ -137,12 +117,8 @@ func (s *EntryStore) UsageTotals(ctx context.Context, ref session.Ref) (int, err
 	return total, nil
 }
 
-// activeBranchOfRows marks the active branch over rows read without bodies.
-// Links and kinds are columns; the one thing that is not is a leaf marker's
-// target, which lives in its payload — so those few bodies are fetched, and the
-// walk itself is activeBranch over just enough of an Entry, not a second
-// definition of "active". Shared by the context report and the compaction
-// pass, so the number the panel draws is measured over the rows the pass folds.
+// activeBranchOfRows marks the active branch over rows read without bodies;
+// only the leaf markers' bodies are fetched. Shared by the report and the compaction pass.
 func (s *EntryStore) activeBranchOfRows(ctx context.Context, ref session.Ref, rows []entryRow) (map[string]bool, error) {
 	var leaves []string
 	for i := range rows {

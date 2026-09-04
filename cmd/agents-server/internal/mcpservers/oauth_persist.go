@@ -13,12 +13,8 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// tokenPayload is the JSON persisted for an OAuth grant: the oauth2.Token
-// fields plus the refresh context — token endpoint and client credentials —
-// needed to rebuild a REFRESHING token source after a restart. For a
-// dynamically-registered client the credentials exist nowhere else. The
-// client secret shares the column's sensitivity with the refresh token it
-// sits next to (encryption at rest is a separately-tracked decision).
+// tokenPayload is the JSON persisted for an OAuth grant: the oauth2.Token plus
+// the refresh context needed to rebuild a REFRESHING source — invariant 11.
 type tokenPayload struct {
 	AccessToken  string    `json:"access_token"`
 	TokenType    string    `json:"token_type,omitempty"`
@@ -34,13 +30,8 @@ type tokenPayload struct {
 	Scopes       []string `json:"scopes,omitempty"`
 }
 
-// persistGrant writes the grant through the store. Failures are logged, not
-// returned: the in-memory token still works for this session, but a lost
-// write means re-authorization after a restart — and store.ErrNotFound means
-// the server row is gone. Loud, not fatal.
-//
-// ctx supplies the logger; the write itself is detached from its cancellation,
-// because a refresh triggered by a request that then went away must still land.
+// persistGrant writes the grant through the store — invariant 11. Failures are
+// logged, not returned; the write is detached from ctx's cancellation.
 func persistGrant(ctx context.Context, s *store.McpServerStore, configID string, ocfg *oauth2.Config, tok *oauth2.Token) {
 	ctx = context.WithoutCancel(ctx)
 	log := logging.Ctx(ctx)
@@ -63,23 +54,18 @@ func persistGrant(ctx context.Context, s *store.McpServerStore, configID string,
 	if err := s.SaveOAuthToken(ctx, configID, string(b)); err != nil {
 		log.Error("persisting MCP OAuth grant failed; connection works now but won't survive a restart", "error", err, "mcp", configID)
 	}
-	// The token response's "scope" field is what the server ACTUALLY granted —
-	// the requested set is not binding, and a missing scope surfaces only as an
-	// opaque permission error at tool-call time.
+	// The response's "scope" is what the server ACTUALLY granted; a missing
+	// scope otherwise surfaces only as an opaque error at tool-call time.
 	if granted, _ := tok.Extra("scope").(string); granted != "" {
 		log.Info("mcp oauth grant persisted", "mcp", configID, "granted_scopes", granted)
 	}
 }
 
 // persistingTokenSource wraps a refreshing oauth2.TokenSource and re-persists
-// the grant whenever a refresh produced a new token. Without it a mid-session
-// refresh — and any ROTATED refresh token — never reaches the store, so the
-// next restart would resume from a stale, possibly revoked grant.
+// the grant whenever a refresh produced a new token — invariant 11.
 type persistingTokenSource struct {
-	// ctx is what a refresh persists under. oauth2.TokenSource takes no
-	// context, so it is captured here — detached from the caller's
-	// cancellation (the source outlives any single request) and carrying the
-	// configured logger.
+	// ctx is what a refresh persists under: oauth2.TokenSource takes no
+	// context, so it is captured here, detached from the caller's cancellation.
 	ctx      context.Context
 	inner    oauth2.TokenSource
 	cfg      *oauth2.Config
@@ -115,20 +101,16 @@ func (p *persistingTokenSource) Token() (*oauth2.Token, error) {
 		p.last = tok
 	}
 	p.mu.Unlock()
-	// Persist outside the lock; concurrent callers of the same refreshed token
-	// see changed=false while the first caller writes. (inner is a
-	// ReuseTokenSource, which already serializes the refresh itself.)
+	// Persist outside the lock; concurrent callers of the same token see
+	// changed=false. (inner is a ReuseTokenSource, which serializes the refresh.)
 	if changed {
 		persistGrant(p.ctx, p.store, p.configID, p.cfg, tok)
 	}
 	return tok, nil
 }
 
-// restoredTokenSource rebuilds a token source from a persisted grant: a full
-// grant gets the same refreshing, re-persisting source a live authorization
-// uses (workbench invariant 11); a refresh-less grant with a still-valid access
-// token a static one; anything else nil, for the interactive flow. hc is the
-// HTTP client refreshes must use (proxy-aware, bounded timeout).
+// restoredTokenSource rebuilds a token source from a persisted grant: refreshing
+// (invariant 11), static for a refresh-less valid token, nil for the interactive flow.
 func restoredTokenSource(ctx context.Context, configID, saved string, s *store.McpServerStore, hc *http.Client) oauth2.TokenSource {
 	if saved == "" {
 		return nil
@@ -158,9 +140,8 @@ func restoredTokenSource(ctx context.Context, configID, saved string, s *store.M
 		},
 		Scopes: p.Scopes,
 	}
-	// Mirror the SDK's refresh context: detached from the caller's cancellation
-	// — the source outlives any single request — carrying the HTTP client
-	// oauth2 should use.
+	// Mirror the SDK's refresh context: detached from the caller's
+	// cancellation, carrying the HTTP client oauth2 should use.
 	rctx := context.WithValue(context.WithoutCancel(ctx), oauth2.HTTPClient, hc)
 	return newPersistingSource(rctx, ocfg.TokenSource(rctx, tok), ocfg, configID, s, tok)
 }

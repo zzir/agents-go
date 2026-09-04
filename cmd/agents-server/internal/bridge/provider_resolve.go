@@ -31,19 +31,16 @@ func AgentProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig) 
 	if err != nil {
 		return store.Provider{}, fmt.Errorf("agent %q: provider %s: %w", ac.Name, ac.ProviderID, err)
 	}
-	// Re-check the reference rule at run time: a scope flip that slipped past
-	// the write-time guards must fail the run loudly, never spend a key that
-	// became somebody's private credential (decisions §5.29).
+	// Re-checked at run time: a scope flip past the write-time guards must fail
+	// loudly, never spend a now-private key (decisions §5.29).
 	if !store.RefVisible(pv.Scope, pv.OwnerID, ac.Scope, ac.OwnerID) {
 		return store.Provider{}, fmt.Errorf("agent %q: provider %s is out of the agent's scope — repoint the agent", ac.Name, ac.ProviderID)
 	}
 	return *pv, nil
 }
 
-// resolveProvider builds the agent's model provider: the endpoint its provider
-// row names, wrapped with retry and fallback decorators when enabled. It
-// returns a nil provider (no error) when no API key is available — the
-// run-without-a-provider path — and always returns the normalized providerType.
+// resolveProvider builds the agent's model provider with retry and fallback
+// decorators; nil (no error) when no API key is available.
 func resolveProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig, spec *AgentSpec, proxyClient *http.Client) (agents.ModelProvider, string, error) {
 	pv, err := AgentProvider(ctx, deps, ac)
 	if err != nil {
@@ -70,9 +67,8 @@ func resolveProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig
 		return nil, def.Type, nil
 	}
 	baseURL := pv.BaseURL
-	// Validation forbids a custom base_url with chatgpt_login, so this only
-	// fills the default; it stays here as the belt to the validation's braces —
-	// the OAuth token never rides to an operator-typed host.
+	// Validation forbids a custom base_url with chatgpt_login; this is the belt
+	// to that: the OAuth token never rides to an operator-typed host.
 	if chatgptCreds != nil {
 		baseURL = providers.ChatGPTBaseURL
 	}
@@ -96,15 +92,12 @@ type fallbackEntry struct {
 	APIKey  string `json:"api_key"`
 	BaseURL string `json:"base_url"`
 	// Provider selects the backend ("openai" / "anthropic"); empty is openai.
-	// The JSON key is provider_type, matching the agent config group's
-	// spelling of the same selector.
+	// The JSON key is provider_type, as the agent config group spells it.
 	Provider string `json:"provider_type"`
 }
 
-// fixedModelProvider pins a provider to one model name, ignoring the name the
-// run requests. The SDK's FallbackProvider asks every fallback for the SAME
-// (primary) model name, so without this a configured fallback model would never
-// be used — the fallback would just retry the primary's model name elsewhere.
+// fixedModelProvider pins a provider to one model name: FallbackProvider asks
+// every fallback for the PRIMARY's model name, so a configured one needs this.
 type fixedModelProvider struct {
 	inner agents.ModelProvider
 	model string
@@ -114,18 +107,15 @@ func (f fixedModelProvider) Model(string) (agents.Model, error) {
 	return f.inner.Model(f.model)
 }
 
-// wrapFallbackProvider chains one fixed-model provider per decoded fallback
-// entry behind primary. The entries are decoded up front (DecodeAgentSpec), so
-// this is pure construction — callers gate it on len(entries) > 0. An entry
-// carries its own credential (api_key) or runs keyless.
+// wrapFallbackProvider chains one fixed-model provider per fallback entry behind
+// primary; an entry carries its own api_key or runs keyless.
 func wrapFallbackProvider(primary agents.ModelProvider, entries []fallbackEntry, proxyClient *http.Client) agents.ModelProvider {
 	var fallbacks []agents.ModelProvider
 	for _, e := range entries {
 		fp, err := providers.BuildPlain(e.Provider, e.APIKey, e.BaseURL, proxyClient)
 		if err != nil {
-			// Unreachable through normal flow — DecodeAgentSpec validates every
-			// entry's provider — and an unbuildable entry must not become an
-			// OpenAI default, so it is left out of the chain.
+			// Unreachable (DecodeAgentSpec validates every entry); an unbuildable
+			// entry must not become an OpenAI default, so it is left out.
 			continue
 		}
 		if e.Model != "" {

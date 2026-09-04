@@ -1,23 +1,12 @@
 # Results
 
-`agents.RunSync` returns a `*agents.RunResult`; a stream delivers the same value as its terminal `*RunCompletedEvent`:
+`agents.RunSync` returns a `*agents.RunResult`; a stream delivers the same value as its terminal `*RunCompletedEvent`. The fields are on [pkg.go.dev](https://pkg.go.dev/github.com/zzir/agents-go/agents#RunResult); what they mean beyond their types:
 
-```go
-type RunResult struct {
-	Input               []InputItem            // first model call's input (history + new input; may be rewritten by handoff filters)
-	NewItems            []*RunItem             // everything generated during the run
-	RawResponses        []*ModelResponse       // raw model responses, in order
-	FinalOutput         any                    // string for plain-text agents, decoded value for OutputType agents
-	LastAgent           *Agent                 // the agent that produced the final output
-	Usage               *Usage                 // aggregated token usage (a detached copy)
-	GuardrailResults    []GuardrailResult      // every guardrail result, all stages, allowing decisions included
-	Interruptions       []*ToolApprovalItem    // pending tool approvals (HITL), empty for completed runs
-	State               *RunState              // resumable state when paused for approvals, else nil
-	Diagnostics         []Diagnostic           // trouble the run survived: retries, a fallback model, a compaction that gave up
-	AgentToolInvocation *AgentToolInvocation   // the parent tool call, when this result came from an agent-as-tool run
-	StoppedEarly        bool                   // ended at a turn boundary because StopAfterTurn was requested
-}
-```
+- `Input` is the first model call's input — history plus the new input, possibly rewritten by a handoff filter — and `NewItems` is everything the run generated after it, in order.
+- `FinalOutput` is typed `any`: a string for plain-text agents, the decoded value for `OutputType` agents ([below](#final-output)).
+- `Usage` is a detached copy, never the live accumulator ([below](#usage)).
+- `GuardrailResults` holds every result across all stages, allowing decisions included ([Guardrails](guardrails.md)).
+- `Interruptions` and `State` are set only on a run paused for approval ([below](#interruptions-and-state)); `Diagnostics` is trouble the run survived ([Logging](logging.md#diagnostics-trouble-a-run-survived)); `StoppedEarly` says the caller stopped it at a turn boundary ([Running agents](running_agents.md#turn-hooks)); `AgentToolInvocation` names the parent tool call when the result came from an agent-as-tool run.
 
 ## Final output
 
@@ -82,7 +71,39 @@ res2, err := agents.RunSync(ctx, res.LastAgent, next, opts)
 
 ## Usage
 
-`res.Usage` aggregates token usage across every model call in the run; see [Usage](usage.md).
+`res.Usage` is what the whole run cost: every model call, across handoffs, with a nested [agent-as-tool](multi_agent.md) run's usage folded in ([spec §2.8](../reference/spec.md#28-nested-agent-as-tool-attribution)).
+
+```go
+u := res.Usage
+fmt.Printf("requests=%d input=%d output=%d total=%d cached=%d reasoning=%d\n",
+	u.Requests, u.InputTokens, u.OutputTokens, u.TotalTokens,
+	u.InputTokensDetails.CachedTokens, u.OutputTokensDetails.ReasoningTokens)
+```
+
+Two views say where the tokens went rather than what they cost:
+
+```go
+for responseID, u := range res.UsageByResponse() {
+	fmt.Printf("%s: %d in / %d out\n", responseID, u.InputTokens, u.OutputTokens)
+}
+nested := res.NestedUsage() // spent by tools on model calls of their own; already inside res.Usage
+```
+
+With a [Session](sessions.md), exactly one entry per response carries that response's `Usage` — the last one — so summing `session.Entry.Usage` reproduces the cost, and `Entry.NestedUsage` stays separate ([spec §2.7f](../reference/spec.md#27f-usage-attribution)).
+
+**Mid-run**, the live accumulator is `RunContext.Usage` — parallel agent-as-tool calls fold into it concurrently, so read it through `Snapshot()`:
+
+```go
+budgetCheck := agents.NewTool("expensive_op", "…",
+	func(ctx context.Context, tc *agents.ToolContext, args opArgs) (string, error) {
+		if tc.RunContext.Usage.Snapshot().TotalTokens > 100_000 {
+			return "", errors.New("token budget exceeded")
+		}
+		return run(args)
+	})
+```
+
+Across runs, sum each result's `Usage` into an `agents.NewUsage()` with `Add` — every run owns a fresh accumulator. For raw per-call data, `RawResponses` carries each `ModelResponse` with its own `Usage`, `Status` and `IncompleteReason`.
 
 ## Errors
 

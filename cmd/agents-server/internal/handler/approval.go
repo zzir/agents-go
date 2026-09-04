@@ -59,9 +59,8 @@ func (h *ApprovalHandler) ListBySession(c *gin.Context) {
 	for _, it := range items {
 		out = append(out, SessionApproval{PendingApproval: it})
 	}
-	// Approvals paused inside this session's background tasks surface here too,
-	// tagged with their task, so the chat UI is the one approval surface.
-	// One join, not a query per task.
+	// Approvals paused inside this session's background tasks surface here
+	// too, tagged with their task — one join, not a query per task.
 	taskItems, err := h.store.ListByParentTasks(ctx, c.Param("id"))
 	if err != nil {
 		internalError(c, err)
@@ -126,9 +125,8 @@ func (h *ApprovalHandler) Reject(c *gin.Context) {
 	h.resolve(c, false, bridge.ApprovalOnce, req.Reason)
 }
 
-// approveReq is the optional body of an approve request. Scope controls how far
-// the decision extends for exec_command: "once" (default), "same" (trust this
-// exact command for the session), or "all" (trust every command).
+// approveReq is the optional body of an approve request. Scope extends an
+// exec_command decision: "once" (default), "same" (this exact command), "all".
 type approveReq struct {
 	Scope string `json:"scope"`
 }
@@ -205,8 +203,7 @@ func (h *ApprovalHandler) resolveError(c *gin.Context, err error) {
 }
 
 // auditDecision is the audit detail of an approval decision: the verdict,
-// the scope, and the tool it was about — approving an exec_command and
-// approving a save_workflow are not the same act.
+// the scope, and the tool it was about.
 func auditDecision(approve bool, scope bridge.ApprovalScope, call *store.PendingToolCall) string {
 	d := "reject"
 	if approve {

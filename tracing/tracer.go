@@ -35,11 +35,8 @@ type SpanHandle struct {
 	tracer *Tracer
 	// finished is atomic for the same reason as TraceHandle.finished.
 	finished atomic.Bool
-	// mu guards the span's mutable fields against Finish's handover. The
-	// finished flag alone cannot: it is read before the write, so a Set can
-	// pass the check and land while the processor already holds the span —
-	// and Data is a map, where that is a runtime fatal rather than a stale
-	// value.
+	// mu guards the span's mutable fields against Finish's handover: the finished
+	// flag alone is read before the write, and Data is a map (spec §2.11e).
 	mu sync.Mutex
 }
 
@@ -196,9 +193,8 @@ func (h *SpanHandle) Finish() {
 	if h == nil || h.tracer == nil || h.Span == nil || !h.finished.CompareAndSwap(false, true) {
 		return
 	}
-	// Under mu, so an annotation still in flight lands before the handover or
-	// is dropped by the finished check — never half-applied, and never written
-	// to a map the processor has already started reading.
+	// Under mu, so an annotation in flight lands before the handover or is
+	// dropped by the finished check — never written to a map the processor reads.
 	h.mu.Lock()
 	h.Span.EndedAt = Now()
 	h.mu.Unlock()

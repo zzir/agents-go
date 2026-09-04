@@ -16,10 +16,8 @@ import (
 const PlanToolName = "submit_plan"
 
 // DefaultReadOnlyTools are extra tool names Plan leaves usable while planning,
-// on top of every tool that declares `Tool.ReadOnly`. The list covers what a
-// caller does not own: a tool from another package, or an MCP server that
-// ships no readOnlyHint. todo_write is here so stacking Todo with Plan works
-// in either order — maintaining the list touches nothing outside the run.
+// on top of every tool that declares Tool.ReadOnly — for tools a caller does
+// not own. todo_write is here so Todo stacks with Plan in either order.
 var DefaultReadOnlyTools = []string{
 	"read_file", "list_files", "task_status",
 	TodoToolName,
@@ -39,22 +37,11 @@ disabled, and answer with a refusal until your plan is approved. If your plan
 is rejected, revise it using the feedback and submit again.`
 
 // Plan puts a run into plan mode: the agent explores with read-only tools,
-// submits a plan through submit_plan (which pauses for approval, like any
-// approval-gated tool), and only an approved plan unlocks the rest of the
-// toolset — in the SAME run, which then continues into execution. A rejection
-// feeds its message back and the model revises; the write tools stay locked.
-//
-// Gating DENIES rather than hides: a gated tool stays in the model's toolset
-// and answers a call while planning with a refusal, and raises no approval —
-// not the tool's own, not the agent's ApproveTools listing (Apply translates
-// it into per-tool predicates). A direct tool is read-only by Tool.ReadOnly;
-// an MCP tool only when ReadOnlyTools names it. The middleware rewrites the
-// ENTRY agent only; a handoff target keeps its own toolset. The invariants and
-// their reasons: spec §2.12.
-//
-// Apply is safe to call unconditionally: an already-unlocked phase gates
-// nothing, offers no submit_plan and adds no preamble, so whether THIS run
-// plans is the returned PlanPhase's answer, not a build-time one.
+// submits a plan through submit_plan (an approval pause, like any gated tool),
+// and only an approved plan unlocks the rest of the toolset — in the SAME run,
+// which continues into execution. A rejection feeds its message back and the
+// model revises. Apply is safe to call unconditionally: whether THIS run plans
+// is the returned PlanPhase's answer, not a build-time one — spec §2.12.
 type Plan struct {
 	// ReadOnlyTools are the tool names usable while planning.
 	// Nil means DefaultReadOnlyTools; an explicit empty slice means none.
@@ -68,23 +55,18 @@ type planArgs struct {
 	Plan string `json:"plan" jsonschema:"The full plan, in markdown: intended changes, affected files or systems, and how the result will be verified."`
 }
 
-// PlanPhase is one run's plan/execute switch, shared by every gate that
-// Apply installed on the agent. The approved submit_plan flips it; a host
-// that REBUILDS the agent to resume a run whose plan phase already ended
-// calls Unlock so the rebuilt run starts executing instead of demanding a
-// second plan. What such a host persists is the UNLOCK (OnUnlock), never the
-// approval — spec §2.12.
+// PlanPhase is one run's plan/execute switch, shared by every gate Apply
+// installed. The approved submit_plan flips it; a host rebuilding the agent to
+// resume past its plan phase calls Unlock — spec §2.12.
 type PlanPhase struct {
 	executing atomic.Bool
 	mu        sync.Mutex
 	onUnlock  func() error
 }
 
-// OnUnlock registers fn to run at the FIRST unlock — the moment the approved
-// submit_plan actually executes. Hosts persist their durable "plan phase
-// over" mark here. The hook is a PRECONDITION, not a notification: its error
-// fails the unlock and the phase stays planning, so the run is never
-// executing ahead of its durable record.
+// OnUnlock registers fn to run at the FIRST unlock, when the approved
+// submit_plan executes — where a host persists its durable mark. Its error
+// fails the unlock and the phase stays planning (spec §2.12).
 func (p *PlanPhase) OnUnlock(fn func() error) {
 	p.mu.Lock()
 	p.onUnlock = fn
@@ -92,9 +74,8 @@ func (p *PlanPhase) OnUnlock(fn func() error) {
 }
 
 // Unlock moves the run into the executing phase: gated tools run and
-// submit_plan disappears. The first transition runs the OnUnlock hook first
-// and keeps the phase locked if it fails; submit_plan reports that as a tool
-// error and the review repeats.
+// submit_plan disappears. The first transition runs OnUnlock first and stays
+// locked if it fails; submit_plan reports that as a tool error.
 func (p *PlanPhase) Unlock() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -123,10 +104,8 @@ func (p Plan) Run(ctx context.Context, next agents.RunFunc, in agents.RunInput) 
 }
 
 // Apply returns a clone of agent rewritten for plan mode, plus the phase
-// switch the gates share. Run uses it per run; it is exported for hosts that
-// must rewrite at agent-BUILD time instead — a host that resumes runs from a
-// serialized state rebuilds the agent from a registry, and a rebuild without
-// the plan tools would fail the approved submit_plan with "tool not found".
+// switch the gates share. Run uses it per run; a host that rebuilds an agent
+// for a durable resume calls it at build time (spec §2.12).
 func (p Plan) Apply(agent *agents.Agent) (*agents.Agent, *PlanPhase) {
 	names := p.ReadOnlyTools
 	if names == nil {
@@ -142,9 +121,8 @@ func (p Plan) Apply(agent *agents.Agent) (*agents.Agent, *PlanPhase) {
 	phase := &PlanPhase{}
 
 	out := agent.Clone()
-	// The runner consults ApproveTools ahead of the gate (spec §2.7), so the
-	// list is translated into each tool's own predicate — where the gate can
-	// suppress it while planning — and cleared.
+	// The runner consults ApproveTools ahead of the gate, so the list is
+	// translated into each tool's own predicate — suppressible while planning — and cleared.
 	listed := approvalListMatcher(out.ApproveTools)
 	out.ApproveTools = nil
 	tools := make([]*agents.Tool, 0, len(out.Tools)+1)
@@ -158,9 +136,8 @@ func (p Plan) Apply(agent *agents.Agent) (*agents.Agent, *PlanPhase) {
 	submit := agents.NewTool(PlanToolName,
 		"Submit your plan for approval. Execution tools unlock only after the plan is approved.",
 		func(context.Context, *agents.ToolContext, planArgs) (string, error) {
-			// A failed unlock (the host could not persist its durable mark)
-			// keeps the phase locked; the error goes back to the model, which
-			// resubmits, and the human re-approves.
+			// A failed unlock keeps the phase locked; the error goes back to the
+			// model, which resubmits, and the human re-approves.
 			if err := phase.Unlock(); err != nil {
 				return "", err
 			}
@@ -175,9 +152,8 @@ func (p Plan) Apply(agent *agents.Agent) (*agents.Agent, *PlanPhase) {
 	tools = append(tools, submit)
 	out.Tools = tools
 
-	// Handoffs are gated too: a handoff target keeps its own full toolset, so
-	// an ungated transfer would be a side door out of plan mode. IsEnabled is
-	// filtered per turn, so approval flips them on mid-run like every gate.
+	// Handoffs are gated too — a target's full toolset would be a side door out
+	// of plan mode. IsEnabled is filtered per turn, so approval flips them on mid-run.
 	if len(out.Handoffs) > 0 {
 		hs := make([]agents.Handoff, len(out.Handoffs))
 		copy(hs, out.Handoffs)
@@ -222,10 +198,8 @@ func (p Plan) Apply(agent *agents.Agent) (*agents.Agent, *PlanPhase) {
 	return out, phase
 }
 
-// gateTool returns a copy of t that refuses to run while the plan phase is
-// still planning — a normal tool OUTPUT, not an error — and needs no approval
-// while it refuses. Once executing, the tool's own predicate answers, then
-// the agent-level listing Apply translated out of ApproveTools (spec §2.12).
+// gateTool returns a copy of t that answers a call while planning with a
+// refusal and needs no approval until executing — spec §2.12.
 func gateTool(t *agents.Tool, phase *PlanPhase, listed bool) *agents.Tool {
 	gated := *t
 	inner := t.OnInvoke
@@ -259,9 +233,8 @@ func gateTool(t *agents.Tool, phase *PlanPhase, listed bool) *agents.Tool {
 	return &gated
 }
 
-// keepListedApproval returns t, or — when the agent's ApproveTools named it —
-// a copy whose own predicate now also enforces the listing, since Apply
-// cleared the list itself. Read-only tools keep their approval in BOTH phases.
+// keepListedApproval returns t, or when ApproveTools named it a copy whose own
+// predicate enforces the listing Apply cleared. Read-only tools keep approval in BOTH phases.
 func keepListedApproval(t *agents.Tool, listed bool) *agents.Tool {
 	if !listed {
 		return t
@@ -296,9 +269,8 @@ func approvalListMatcher(names []string) func(string) bool {
 	return func(name string) bool { return all || set[name] }
 }
 
-// planMCP gates an MCP server's per-turn tool listing while planning, and
-// carries the translated ApproveTools listing in both phases (the agent-level
-// list was cleared by Apply, so MCP tools it named enforce it themselves).
+// planMCP gates an MCP server's per-turn listing while planning and carries
+// the translated ApproveTools listing in both phases (Apply cleared the agent-level list).
 type planMCP struct {
 	inner    agents.MCPServer
 	phase    *PlanPhase
@@ -315,8 +287,7 @@ func (m planMCP) ListTools(ctx context.Context, rc *agents.RunContext, agent *ag
 		return tools, err
 	}
 	// A fresh slice, never tools[:0]: the inner server may hand out a cached
-	// slice. The gates check the phase per CALL, so one wrapping serves both
-	// phases.
+	// slice. Gates check the phase per CALL, so one wrapping serves both phases.
 	out := make([]*agents.Tool, 0, len(tools))
 	for _, t := range tools {
 		// By NAME only, never the tool's own ReadOnly: on an MCP tool that is

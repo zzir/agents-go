@@ -8,9 +8,8 @@ import (
 	"github.com/uptrace/bun"
 )
 
-// A wake-up's lifecycle. Delivered and cancelled are both terminal; they are
-// distinguished only so a reader can tell "the session was told" from "nobody
-// needed to be told".
+// A wake-up's lifecycle. Delivered and cancelled are both terminal,
+// distinguished only for the reader.
 const (
 	WakePending   = "pending"
 	WakeDelivered = "delivered"
@@ -18,35 +17,32 @@ const (
 )
 
 // WakeKindTask is the one source of a wake-up debt: a task, of any kind. Kind
-// and SourceID name what owes the turn, so a source can cancel its own debt
-// when the result was already seen.
+// and SourceID name what owes the turn, so a source can cancel its own debt.
 const WakeKindTask = "task"
 
-// Wakeup is one debt: a session is owed a turn carrying Payload. The debt is a
-// ROW, drained when the session can take it, rather than a call that has to
-// land at the wrong moment — see workbench invariant 32.
+// Wakeup is one debt: a session is owed a turn carrying Payload, drained
+// when the session can take it — invariant 32.
 type Wakeup struct {
 	bun.BaseModel `bun:"table:wakeups,alias:wku"`
 
 	ID string `bun:"id,pk,type:uuid" json:"id"`
-	// SessionID is who is owed the turn.
+	// SessionID is who is owed the turn, matched by id alone: the session
+	// delete cascade removes the row, so no incarnation inherits a dead debt.
 	SessionID string `bun:"session_id,notnull,type:uuid" json:"session_id"`
 	// Kind and SourceID name what owes it — the source's bookkeeping handle for
 	// cancelling its own debt; the waker never reads them.
 	Kind     string `bun:"kind,notnull" json:"kind"`
 	SourceID string `bun:"source_id,nullzero,type:uuid" json:"source_id,omitempty"`
-	// Inherit is the encoded run configuration the turn runs under, frozen at
-	// the moment the work was ASKED for. The drain also GROUPS debts by this
-	// string: one turn pays every debt with the same Inherit.
+	// Inherit is the encoded run configuration the turn runs under, frozen
+	// when the work was ASKED for; the drain GROUPS debts by this string.
 	Inherit string `bun:"inherit,nullzero" json:"-"`
 	// ParentRunID is the run whose tool call started the work, so the wake-up's
 	// trace nests under it instead of opening a second root.
 	ParentRunID string `bun:"parent_run_id,nullzero,type:uuid" json:"parent_run_id,omitempty"`
 	// Payload is the text the turn carries.
 	Payload string `bun:"payload" json:"payload"`
-	// Attempt binds the debt to the try that owes it: a source retried while a
-	// drain is in flight must not have the NEW attempt marked delivered by the
-	// old one's launch.
+	// Attempt binds the debt to the try that owes it, so an in-flight drain
+	// cannot mark a NEW attempt delivered.
 	Attempt string `bun:"attempt" json:"attempt,omitempty"`
 	State   string `bun:"state,notnull" json:"state"`
 
@@ -114,9 +110,8 @@ func (s *WakeupStore) PendingSessions(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
-// Settle moves a debt out of pending, bound to the attempt that owed it. It
-// reports whether this caller was the one that moved it, so a drain racing a
-// cancel cannot both claim to have handled it.
+// Settle moves a debt out of pending, bound to the attempt that owed it,
+// reporting whether this caller was the one that moved it.
 func (s *WakeupStore) Settle(ctx context.Context, id, attempt, state string) (bool, error) {
 	res, err := s.db.NewUpdate().Model((*Wakeup)(nil)).
 		Set("state = ?", state).
@@ -131,10 +126,8 @@ func (s *WakeupStore) Settle(ctx context.Context, id, attempt, state string) (bo
 	return err == nil && n > 0, nil
 }
 
-// CancelFor drops what a source still owes for ONE attempt — its result
-// reached the session another way, or the work was cancelled and restating it
-// would be noise. Bound to the attempt: consuming attempt A's result must not
-// cancel a retry B's fresh debt.
+// CancelFor drops what a source still owes for ONE attempt (its result
+// reached the session another way); a retry's fresh debt is untouched.
 func (s *WakeupStore) CancelFor(ctx context.Context, kind, sourceID, attempt string) error {
 	if _, err := s.db.NewUpdate().Model((*Wakeup)(nil)).
 		Set("state = ?", WakeCancelled).
@@ -149,8 +142,7 @@ func (s *WakeupStore) CancelFor(ctx context.Context, kind, sourceID, attempt str
 }
 
 // DeleteSettledBefore removes delivered and cancelled wake-ups created before
-// cutoff. A settled debt is history nothing reads; without this the table
-// grows with every task that ever finished.
+// cutoff.
 func (s *WakeupStore) DeleteSettledBefore(ctx context.Context, cutoff time.Time) (int64, error) {
 	n, err := deleteInBatches(ctx, s.db, (*Wakeup)(nil), func(q *bun.SelectQuery) *bun.SelectQuery {
 		return q.Where("state IN (?, ?) AND created_at < ?", WakeDelivered, WakeCancelled, cutoff)

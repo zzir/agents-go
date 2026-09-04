@@ -8,13 +8,8 @@ import (
 	"github.com/zzir/agents-go/agents/session"
 )
 
-// SessionRepoAdapter presents this server's session table as an
-// session.Repo, which is what agents/tasks needs to create and delete the
-// hidden session a task runs in.
-//
-// The adapter exists rather than the server adopting the SDK's own repo because
-// a session here carries fields the SDK has no notion of — the bound agent
-// config, pinning, the sandbox — and the SDK only needs four operations.
+// SessionRepoAdapter presents this server's session table as a session.Repo,
+// which is what agents/tasks needs for the hidden session a task runs in.
 type SessionRepoAdapter struct {
 	sessions *SessionStore
 	entries  func(ref session.Ref) session.Storage
@@ -32,10 +27,8 @@ func (a *SessionRepoAdapter) Create(ctx context.Context, opts session.CreateOpti
 	if id == "" {
 		id = NewID()
 	}
-	// A served session (a task's transcript) inherits its parent's owner. One
-	// without a parent is the SDK's own creation — the repo conformance suite,
-	// tooling — and belongs to the local account; a person's conversation is
-	// created by the handler, which knows who is asking.
+	// A served session (a task's transcript) inherits its parent's owner; one
+	// without a parent (the conformance suite, tooling) belongs to the local account.
 	owner := LocalUserID
 	if opts.ParentID != "" {
 		parent, err := a.sessions.Get(ctx, opts.ParentID)
@@ -64,8 +57,7 @@ func (a *SessionRepoAdapter) Create(ctx context.Context, opts session.CreateOpti
 }
 
 // Open implements session.Repo. An unknown id is an error, never an empty
-// session: a wrong id reading as a fresh conversation makes a run start over
-// instead of continuing.
+// session.
 func (a *SessionRepoAdapter) Open(ctx context.Context, id string) (*session.Session, error) {
 	row, err := a.sessions.Get(ctx, id)
 	if err != nil {
@@ -103,9 +95,8 @@ func (a *SessionRepoAdapter) List(ctx context.Context, opts session.ListOptions)
 	return out, nil
 }
 
-// Delete implements session.Repo, for which deleting a session that is
-// not there is not an error: the caller wanted it gone, and it is. The store's
-// own Delete keeps reporting ErrNotFound, which the REST endpoint's 404 needs.
+// Delete implements session.Repo, for which deleting an absent session is
+// not an error (the store's own Delete keeps reporting ErrNotFound).
 func (a *SessionRepoAdapter) Delete(ctx context.Context, id string) error {
 	if err := a.sessions.Delete(ctx, id); err != nil && !errors.Is(err, ErrNotFound) {
 		return err

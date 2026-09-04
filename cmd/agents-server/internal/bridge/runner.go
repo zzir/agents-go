@@ -28,25 +28,19 @@ type Runner struct {
 	db   *bun.DB
 	Deps *AgentDeps
 	hub  *RunHub
-	// tasks owns the background-task lifecycle. Nil when the server runs without
-	// a task store. It keeps no wake-up state of its own: a finished task is
-	// reported through OnFinished and the debt lives in wakeups (see Waker).
+	// tasks owns the background-task lifecycle; nil without a task store. It
+	// keeps no wake-up state: the debt lives in wakeups (see Waker).
 	tasks *tasks.Manager
 
-	// OnRunAttach, when set, is invoked with the run id right after a run
-	// registers in the hub (fresh start and approval resume alike), before any
-	// event publishes. The WS layer uses it to attach the owner's connections
-	// to the stream (workbench invariant 14). Written once during bootstrap,
-	// read from run goroutines, unsynchronized: nothing that can start a run
-	// may launch before it is wired (invariant 32).
+	// OnRunAttach, when set, runs with the run id right after a run registers in
+	// the hub (fresh start or resume), before any publish — invariant 14. Written
+	// once at bootstrap, read unsynchronized: wire it before anything can start
+	// a run (invariant 32).
 	OnRunAttach func(runID string)
 	// OnBroadcast, when set, delivers an event about sessionID to every
-	// connection of its owner NOT attached to exceptRunID's stream — for a fact
-	// a run stream cannot carry to everyone: a task paused before its step has
-	// a run id but no run (workbench invariant 37), and a run interrupted on an
-	// approval is not one a connection joining afterwards attaches to. Empty
-	// exceptRunID means every connection of the owner. Same wiring rule as
-	// OnRunAttach.
+	// connection of its owner NOT attached to exceptRunID's stream ("" = all of
+	// them) — for a fact no run stream reaches everyone with (invariant 37).
+	// Same wiring rule as OnRunAttach.
 	OnBroadcast func(env *protocol.Envelope, exceptRunID, sessionID string)
 }
 
@@ -59,9 +53,8 @@ func NewRunner(rootCtx context.Context, db *bun.DB, deps *AgentDeps) *Runner {
 		Deps: deps,
 		hub:  NewRunHub(rootCtx),
 	}
-	// The per-parent task cap is a live setting: resolve it at each check rather
-	// than freeze it here. Both gates — the hub's register and the SDK task
-	// manager's spawn/retry — read the same resolver.
+	// The per-parent task cap is a live setting, resolved at each check by both
+	// gates: the hub's register and the task manager's spawn/retry.
 	if deps.Settings != nil {
 		r.hub.maxTasks = func() int { return deps.Settings.Int(rootCtx, settings.KeyMaxTasksPerSession) }
 	}
@@ -86,9 +79,8 @@ func NewRunner(rootCtx context.Context, db *bun.DB, deps *AgentDeps) *Runner {
 			DescribeState: describeTaskState,
 		})
 	}
-	// Agent building reaches the task tools through the manager, not the
-	// runner; the spawn tool is the server's own (a workflow is what it starts
-	// when told a name), built per run for the workflows on offer.
+	// Agent building reaches the task tools through the manager; the spawn and
+	// workflow tools are the server's own, built per run.
 	deps.TaskManager = r.tasks
 	deps.SpawnTool = r.spawnTool
 	deps.WorkflowTools = r.workflowTools
@@ -112,9 +104,8 @@ type RunOutcome struct {
 	SessionID     string
 	AgentConfigID string
 	ProjectID     string
-	// ErrCode/ErrMessage describe a failed run (mirroring the run.error event)
-	// so terminal bookkeeping and the synchronous REST response need not have
-	// watched the event stream.
+	// ErrCode/ErrMessage mirror the run.error event, so terminal bookkeeping
+	// and the synchronous REST response need not watch the stream.
 	ErrCode    string
 	ErrMessage string
 	// Cancelled mirrors the run.cancelled event: the run ended by request, so
@@ -140,17 +131,14 @@ func (r *Runner) StartWakeRun(sessionID, agentConfigID, projectID, input, parent
 	return r.startRunWithID(store.NewID(), sessionID, agentConfigID, projectID, TextInput(input), parentRunID, nil, onDone)
 }
 
-// startRunWithID is StartRun with a caller-chosen run id — taskLauncher.Launch
-// mints the task's run id up front so the row can carry it before the run
-// launches.
+// startRunWithID is StartRun with a caller-chosen run id: a task's row carries
+// its run id before the run launches.
 func (r *Runner) startRunWithID(runID, sessionID, agentConfigID, projectID string, input RunInput, wakeParentRunID string, planIntent *bool, onDone func(*RunOutcome)) (string, error) {
 	return r.startRunReserved(runID, sessionID, agentConfigID, projectID, input, wakeParentRunID, planIntent, onDone, nil)
 }
 
-// startRunReserved is startRunWithID with a hook that runs once the session
-// is RESERVED for the run and before it launches — for a write that must
-// precede the run's own (a trigger's note before the message it sends) and
-// must not happen when the run is refused.
+// startRunReserved is startRunWithID with a hook run once the session is
+// RESERVED and before the launch — a write that must precede the run's own.
 func (r *Runner) startRunReserved(runID, sessionID, agentConfigID, projectID string, input RunInput, wakeParentRunID string, planIntent *bool, onDone func(*RunOutcome), reserved func()) (string, error) {
 	seg, ctx, plan, boundNow, err := r.reserveRun(runID, sessionID, agentConfigID, projectID)
 	if err != nil {
@@ -159,10 +147,8 @@ func (r *Runner) startRunReserved(runID, sessionID, agentConfigID, projectID str
 	if reserved != nil {
 		reserved()
 	}
-	// The reservation is held (register succeeded): no other run can start on
-	// this session now, so setting its plan phase here is atomic with the run
-	// that will use it, and a request refused above (busy/limit) never reached
-	// this line — its plan intent left the session untouched.
+	// The slot is held, so the plan phase is set atomically with the run using
+	// it; a request refused above left the session's phase untouched.
 	if err := r.ApplyPlanIntent(r.hub.rootCtx, sessionID, planIntent); err != nil {
 		r.hub.unregister(runID, seg)
 		return "", err
@@ -185,19 +171,13 @@ func (r *Runner) startRunReserved(runID, sessionID, agentConfigID, projectID str
 	return runID, nil
 }
 
-// launchSegment runs one segment's exec in the background with the shared
-// teardown ordering: seg.finalize runs last (via defer) so the session-delete
-// wait only unblocks after every write lands. A pause's approval row is
-// written inside exec (finishResult), so it exists BEFORE finish releases the
-// session slot — otherwise a task completing in between would auto-wake a
-// parent that is actually paused on a decision.
+// launchSegment runs one segment's exec in the background. Order matters: the
+// approval row lands inside exec, before finish frees the slot; finalize runs last.
 func (r *Runner) launchSegment(seg *runSegment, runID, sessionID string, onDone func(*RunOutcome), exec func() *RunOutcome) {
 	go func() {
 		defer seg.finalize()
-		// Last-resort recover: exec recovers its own panics (see execStreamed),
-		// so reaching here means the teardown below panicked. Free the session
-		// slot — a leaked slot bricks the session until restart — and keep the
-		// process, which is running every other session's work.
+		// Last-resort recover (exec recovers its own panics): free the session
+		// slot — a leaked slot bricks the session — and keep the process.
 		defer func() {
 			if p := recover(); p != nil {
 				logging.Ctx(r.hub.rootCtx).Error("run teardown panicked", "run_id", runID, "panic", p, "stack", string(debug.Stack()))
@@ -213,9 +193,8 @@ func (r *Runner) launchSegment(seg *runSegment, runID, sessionID string, onDone 
 	}()
 }
 
-// segmentSpec is what differs between a fresh run segment and a resume
-// continuation; execStreamed holds everything they share, so the two cannot
-// drift apart in the policies they carry.
+// segmentSpec is what differs between a fresh segment and a resume
+// continuation; execStreamed holds everything they share.
 type segmentSpec struct {
 	// input is the user text announced in run.started and persisted when the
 	// segment fails before the SDK's own per-turn save.
@@ -223,17 +202,13 @@ type segmentSpec struct {
 	// attachmentIDs are the message's image attachments (fresh runs only;
 	// resumes re-announce text alone — the entries already hold the images).
 	attachmentIDs []string
-	// wakeParentRunID is a wake-up run's lineage: the run whose spawn started
-	// the chain, stamped on every trace span (see wsProcessor.parentRunID).
-	// Empty for ordinary runs — and for resumes, which is fine: the fresh
-	// segment already wrote spans carrying it, and the panel takes the first
-	// one it finds.
+	// wakeParentRunID is a wake-up run's lineage, stamped on every trace span
+	// (see wsProcessor.parentRunID). Empty for ordinary runs and resumes.
 	wakeParentRunID string
 	// failCode is the fallback error code for a failed stream drain.
 	failCode string
-	// fresh gates the fresh-run extras: the session pre-check, the
-	// run.agent_start announcement, arming the plan-phase unlock, and title
-	// generation. A resume reopens a run that already did all four.
+	// fresh gates the fresh-run extras (session pre-check, run.agent_start,
+	// arming the plan unlock, title generation); a resume already did them.
 	fresh bool
 	// start launches the SDK run — agents.Run for a fresh segment,
 	// agents.ResumeRun for a continuation.
@@ -264,15 +239,12 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	if info, ok := r.hub.Info(runID); ok {
 		task, ownerID = info.Task, info.OwnerID
 	}
-	// The message's attachments, validated before anything is announced:
-	// counted, present, and owned by the session's owner. The metadata also
-	// feeds the announcement below, so clients render thumbnails without a
-	// second request.
+	// Attachments are validated before anything is announced; the metadata
+	// also feeds run.started so clients render thumbnails without a request.
 	attMeta, attErr := r.validateAttachments(ctx, ownerID, spec.attachmentIDs)
 
-	// A resumed segment re-announces the original prompt so a late-joining
-	// browser (attached at resume) can render the user bubble; earlier
-	// subscribers dedup it against the bubble they already show.
+	// A resume re-announces the prompt so a browser attached at resume can
+	// render the user bubble; earlier subscribers dedup it.
 	started := protocol.RunStarted{RunID: runID, SessionID: sessionID, Input: spec.input}
 	if attErr == nil && len(spec.attachmentIDs) > 0 {
 		base := r.Deps.Settings.S3Config(ctx).PublicBaseURL
@@ -304,9 +276,8 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 		return res
 	}
 
-	// failCancelled ends the segment as a cancellation: save the abandoned turn,
-	// then run.cancelled. savePartialTurn writes on its own context, so the
-	// cancellation does not also stop the record of it from landing.
+	// failCancelled ends the segment as a cancellation: save the abandoned
+	// turn (on its own context), then run.cancelled.
 	failCancelled := func(turn partialTurn) *RunOutcome {
 		turn.userAttachments = spec.attachmentIDs
 		turn.annRole = "cancelled"
@@ -317,11 +288,8 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 		return res
 	}
 
-	// failLookup ends the segment on a session lookup that did not answer. A
-	// cancelled lookup ends like any other cancel, not a red error. Otherwise,
-	// matching handler/run.go startError: only ErrNotFound is session_not_found;
-	// an unreachable database is a config error, so the client does not give up
-	// on a session that is still there.
+	// failLookup ends the segment on a failed session lookup: a cancel is a
+	// cancel; only ErrNotFound is session_not_found (as handler startError).
 	failLookup := func(err error, absentMsg string) *RunOutcome {
 		if isCancellation(ctx, err) {
 			return failCancelled(partialTurn{sessionID: sessionID, runID: runID, userInput: spec.input})
@@ -334,12 +302,8 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 		return mkErrResult(code, msg)
 	}
 
-	// failTurn persists the user's prompt and why the segment stopped, then
-	// reports it. A fresh run may fail before the SDK's per-turn save, and a
-	// failed resume has already consumed the pending-approval row — without this
-	// the turn's fate would vanish from durable state on reload. The guardrail
-	// name/stage ride along so a reload rebuilds the "Blocked by guardrail X"
-	// card, not a generic error.
+	// failTurn persists the prompt and why the segment stopped (the SDK may not
+	// have saved the turn; a failed resume consumed its row), then reports it.
 	failTurn := func(model, code string, err error, partialReasoning, partialText string) *RunOutcome {
 		turn := partialTurn{
 			sessionID:        sessionID,
@@ -361,10 +325,8 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 		return mkErrResult(gerr.Code, err.Error())
 	}
 
-	// A panic anywhere below — a tool, a model adapter, stream handling — fails
-	// THIS segment instead of taking the process, and every other session's run,
-	// down with it. Recovered here so failTurn can record it durably, with
-	// whatever the stream had shown by then.
+	// A panic below fails THIS segment, not the process; recovered here so
+	// failTurn records it durably with whatever the stream had shown.
 	var partial streamedPartial
 	defer func() {
 		if p := recover(); p != nil {
@@ -385,21 +347,18 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 		}
 	}
 
-	// Build fully configured agent from DB config. A BACKGROUND run — a task's,
-	// a workflow step's; both task sessions — is built without the tools and
-	// modes that only make sense with a person in front of them.
+	// A BACKGROUND run (a task's, a workflow step's) is built without the tools
+	// and modes that need a person in front of it — invariant 34.
 	built, err := buildFullAgent(ctx, r.Deps, agentConfigID, projectID, task != nil, ownerID)
 	if err != nil {
 		return failTurn("", protocol.CodeConfigError, err, "", "")
 	}
-	// This segment is the build's only holder, so release it whatever the
-	// outcome; a resume executes the approval path's own rebuild (see
-	// ResolveApproval), released by its own hand.
+	// This segment is the build's only holder; a resume releases the approval
+	// path's own rebuild (see ResolveApproval).
 	defer built.Release()
 
-	// What this build put in front of the model, for the Context panel. Only
-	// the build knows it, and only the run has a session to file it under; a
-	// failure here costs a panel section, never the run.
+	// The build's prompt profile, for the Context panel; a failure costs a
+	// panel section, never the run.
 	if r.Deps.ContextProfiles != nil {
 		if err := r.Deps.ContextProfiles.Save(ctx, sessionID, built.Profile); err != nil {
 			log.Warn("failed to record the session's context profile", "error", err)
@@ -418,9 +377,8 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 			return failTurn(agent.Model, protocol.CodeConfigError,
 				errors.New("image attachments are not configured — an admin must fill the Attachment storage settings"), "", "")
 		}
-		// Bound NOW, not when the entry lands: a run paused on an approval
-		// can outlive the orphan reaper's grace window, and a bound row is
-		// what the reaper leaves alone.
+		// Bound NOW: a run paused on an approval can outlive the orphan
+		// reaper's grace window, and a bound row is what the reaper leaves alone.
 		if err := r.Deps.Attachments.MarkBound(ctx, spec.attachmentIDs); err != nil {
 			return failTurn(agent.Model, "persist_error", err, "", "")
 		}
@@ -442,11 +400,8 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	sa.SetRunID(runID)
 	sa.SetModel(agent.Model)
 	if spec.fresh {
-		// The session's plan phase, not this run's: an approved plan is not
-		// re-asked next turn. Also arms the marker persistence for an unlock
-		// this run may perform. Fresh-only: a resume runs the ResolveApproval
-		// rebuild, whose phase restorePlanPhase already handled; THIS build's
-		// phase hangs off an agent the resume never runs.
+		// The SESSION's plan phase (invariant 33), and the unlock this run may
+		// perform. Fresh-only: a resume's rebuild already restored it.
 		if err := r.restorePlanPhase(ctx, built.PlanPhase, sa, sessionRef); err != nil {
 			return failTurn("", protocol.CodeConfigError, err, "", "")
 		}
@@ -457,9 +412,8 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 
 	opts := runOptionsFor(built, runSession, provider, tracer, trustSessionID(sessionID, task), logging.Ctx(ctx))
 
-	// Name the session in parallel with the run — the title needs only the
-	// user's first message, not the answer. Task sessions are pre-named and
-	// hidden; a resume's original run already fired it at its start.
+	// The title needs only the first message, so it runs beside the run. Task
+	// sessions are pre-named; a resume's original run already fired it.
 	if spec.fresh && task == nil {
 		go r.maybeGenerateTitle(r.hub.rootCtx, sessionID, agent.Model, spec.input, provider, sendEvent)
 	}
@@ -476,10 +430,8 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 
 	out, err = r.finishResult(res, runID, sessionID, agentConfigID, projectID, sendEvent)
 	if err != nil {
-		// The pause could not be made durable: a decision would have nothing
-		// to act on (workbench invariant 37 lists what an approval IS — a row).
-		// The segment ends as a failure instead, which a person can retry;
-		// nothing was announced as awaiting them.
+		// The pause could not be made durable (invariant 37: an approval IS a
+		// row): fail the segment instead, retryable; nothing was announced.
 		return failTurn(agent.Model, "persist_error", err, streamedReasoning, streamedText)
 	}
 	return out
@@ -495,11 +447,8 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 		failCode:        "stream_error",
 		fresh:           true,
 		start: func(ctx context.Context, agent *agents.Agent, opts agents.RunOptions) (agents.RunStream, agents.RunControl) {
-			// An empty input means "continue from where the session's branch
-			// now points" — what regenerating does after switching back to the
-			// user's message. Passing "" through would append an empty user
-			// turn, so the run gets an empty ITEM LIST instead: nothing to
-			// add, history to answer.
+			// Empty input means "continue from the branch point" (regenerate):
+			// an empty ITEM LIST, so no empty user turn is appended.
 			var runInput any = input.Text
 			if len(input.AttachmentIDs) > 0 {
 				runInput = input.items()
@@ -511,17 +460,14 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 	})
 }
 
-// ResumeRun registers a continuation of a paused run (after HITL
-// approval/rejection) and launches it in the background under the hub root
-// context, returning the run id. onDone, if non-nil, fires once when the
+// ResumeRun registers a continuation of a paused run and launches it in the
+// background under the hub root context, reopening the SAME hub run (one id,
+// one event sequence across interrupt/resume). onDone fires once when the
 // continuation terminates. Fails with ErrSessionBusy if the session has a live
-// run. The resume reopens the SAME hub run (same event stream and sequence), so
-// one logical run keeps one id across interrupt/resume.
-// verify, when non-nil, runs AFTER the run is registered (so it is live and a
-// concurrent stop's cancel can find it) but BEFORE the goroutine launches. If it
-// returns an error the run is withdrawn and nothing executes — this is what
-// closes the window where an approved tool could run and cause a side effect
-// before a post-launch recheck could cancel it.
+// run. verify, when non-nil, runs AFTER the run is registered (a concurrent
+// stop's cancel can find it) but BEFORE the goroutine launches: an error
+// withdraws the run and nothing executes, so an approved tool cannot cause a
+// side effect ahead of a recheck.
 func (r *Runner) ResumeRun(runID string, state *agents.RunState, sessionID, agentConfigID, projectID string, verify func() error, onDone func(*RunOutcome)) (string, error) {
 	meta, err := r.taskMeta(r.hub.rootCtx, sessionID)
 	if err != nil {
@@ -552,11 +498,8 @@ func (r *Runner) ResumeRun(runID string, state *agents.RunState, sessionID, agen
 	return runID, nil
 }
 
-// resumeStreamed continues an interrupted run to completion under its original
-// run id, publishing events to the (reopened) hub run, and returns its outcome.
-// It streams through the same execStreamed pipeline as a fresh run so the
-// resumed segment's events (the approved tool's output, later turns) go live
-// instead of surfacing only in the terminal run.output.
+// resumeStreamed continues an interrupted run under its original run id
+// through execStreamed, so the resumed segment's events go live too.
 func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents.RunState, sessionID, agentConfigID, projectID string) *RunOutcome {
 	return r.execStreamed(ctx, runID, sessionID, agentConfigID, projectID, segmentSpec{
 		input:    session.UserText(state.UserInput),
@@ -567,11 +510,8 @@ func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents
 	})
 }
 
-// finishResult turns a finished SDK result into the segment's outcome. A pause
-// on approval is made DURABLE first — the pending-approval row is what a
-// decision acts on, from any connection and across a restart — and only then
-// announced; a persistence failure is returned, and the segment fails instead
-// of pausing on nothing.
+// finishResult turns a finished SDK result into the outcome. A pause is made
+// DURABLE (the approval row) before it is announced; a failed write fails it.
 func (r *Runner) finishResult(res *agents.RunResult, runID, sessionID, agentConfigID, projectID string, sendEvent func(string, any)) (*RunOutcome, error) {
 	if len(res.Interruptions) > 0 {
 		out := &RunOutcome{
@@ -595,9 +535,8 @@ func (r *Runner) finishResult(res *agents.RunResult, runID, sessionID, agentConf
 				NeedsApproval: true,
 			})
 		}
-		// Terminal marker for this run segment: waiters and SSE streams end
-		// here; the approval decision reopens this same run id and continues
-		// its event sequence.
+		// Terminal for this segment: waiters and SSE streams end here; the
+		// decision reopens this run id and continues its sequence.
 		sendEvent(protocol.EventRunInterrupted, protocol.RunInterrupted{RunID: runID})
 		return out, nil
 	}

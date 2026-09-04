@@ -177,10 +177,8 @@ func (m *ResponsesModel) StreamResponse(ctx context.Context, req agents.ModelReq
 			if !yield(&event, nil) {
 				return
 			}
-			// The Responses API reports terminal failures as ordinary stream
-			// events that never trip the SSE layer's Err(); surface them as
-			// typed *ModelBehaviorError so a failed run cannot end as an empty
-			// success.
+			// The Responses API reports terminal failures as ordinary stream events that
+			// never trip Err(); surface them as *ModelBehaviorError, not an empty success.
 			switch event.Type {
 			case agents.EventError, agents.EventResponseError:
 				e := event.AsError()
@@ -265,9 +263,8 @@ func responseErrorEventFailure(eventType string, e responses.ResponseErrorEvent)
 	return agents.NewModelBehaviorError("%s", msg)
 }
 
-// usageFromResponse maps a usage block, which the Responses API omits for
-// some responses — nil counts as zero requests. The mapping is shared with
-// the streaming path (agents.UsageFromResponseUsage).
+// usageFromResponse maps a usage block, omitted for some responses — nil counts
+// as zero requests; the mapping is shared with streaming (UsageFromResponseUsage).
 func usageFromResponse(u *responses.ResponseUsage) *agents.Usage {
 	if u == nil {
 		return agents.NewUsage()

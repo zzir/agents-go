@@ -75,13 +75,8 @@ func RecordDiagnostic(ctx context.Context, t DiagnosticType, err error, details 
 	DiagnosticsFrom(ctx).Record(NewDiagnostic(t, err, details))
 }
 
-// attributeDiagnostics attaches the trouble seen since the last save to the
-// batch's final entry.
-//
-// The last entry, so the diagnostics sit with the turn they describe rather
-// than ahead of it — a retry that happened while producing this turn belongs to
-// this turn, and the reader looking at "why is this answer bad" is looking at
-// the answer, not at what preceded it.
+// attributeDiagnostics attaches the trouble seen since the last save to the batch's
+// final entry, so diagnostics sit with the turn they describe, not ahead of it.
 func (r *runner) attributeDiagnostics(entries []session.Entry) {
 	if len(entries) == 0 {
 		return

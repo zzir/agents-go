@@ -12,13 +12,9 @@ import (
 // ErrNotFound is returned by Store lookups for an unknown task.
 var ErrNotFound = errors.New("tasks: not found")
 
-// Store persists tasks. It requires TRANSACTIONAL semantics: Finalize is a
-// compare-and-set and correctness depends on it — two finalizers race routinely
-// (a run completing while a stop is in flight, a startup sweep meeting a live
-// run), and without the CAS both write and a terminal state is lost.
-//
-// The SDK ships InMemoryStore; the sessions module ships a SQL one. There is
-// deliberately no file-backed implementation: it could not offer the guarantee.
+// Store persists tasks. It requires TRANSACTIONAL semantics: every transition
+// below is a compare-and-set, and correctness depends on it — spec §2.13. The
+// SDK ships InMemoryStore; the sessions module ships a SQL one.
 type Store interface {
 	Create(ctx context.Context, t *Task) error
 	Get(ctx context.Context, id string) (*Task, error)
@@ -26,74 +22,44 @@ type Store interface {
 	ListByParent(ctx context.Context, parentSessionID string) ([]Task, error)
 
 	// Finalize records a terminal status and its result in ONE conditional
-	// transition, and only while the task is still non-terminal AND still on the
-	// attempt named by runID.
-	//
-	// won=false means another finalizer already owned the transition, or the
-	// attempt is no longer the current one; the caller must do nothing further.
-	// The runID predicate is what RetryClaim costs — without it, a stop that
-	// read the row before a retry would cancel the new attempt while its run
-	// keeps executing. state, when non-nil, is the job's final State,
-	// written in the same transition — a job of several runs records how its
-	// last run ended (Continuation.State on an ending); nil leaves State as
-	// it is.
-	//
-	// Delivery is the HOST's, not the Store's: a host owing a durable
-	// notification writes that debt atomically with this transition itself —
-	// see spec "What a durable host owes on top of the reports".
+	// transition, only while the task is non-terminal AND still on the attempt
+	// runID names. won=false means another finalizer owned the transition or the
+	// attempt is no longer current: do nothing further. state, when non-nil, is
+	// the job's final State, written in the same transition — spec §2.13.
 	Finalize(ctx context.Context, id, runID string, st Status, summary, result string, state json.RawMessage) (won bool, err error)
 
-	// RetryClaim reopens a failed task for another attempt, in one atomic
-	// transition and only while the task is failed and under maxAttempts
-	// (which counts the original run; <= 0 means no limit): status returns to
-	// working, run_id becomes newRunID, attempt increments, and the previous
-	// attempt's summary and result are cleared. A host holding an undelivered
-	// notification for the failed attempt must drop it in the same transition
-	// — the task is no longer finished, and the next ending owes a fresh one.
-	//
-	// won=false means the row exists but could not be claimed: not failed, out
-	// of attempts, or another retry won the race. A task that does not exist is
-	// ErrNotFound — a different answer, not to be collapsed into won=false.
+	// RetryClaim reopens a failed task for another attempt, in one transition
+	// and only while it is failed and under maxAttempts (counts the original
+	// run; <= 0 is no limit): working, run_id=newRunID, attempt+1, summary and
+	// result cleared. won=false means the row could not be claimed (not failed,
+	// out of attempts, a lost race); an unknown id is ErrNotFound — spec §2.13.
 	RetryClaim(ctx context.Context, id, newRunID string, maxAttempts int) (won bool, err error)
 
-	// Advance moves a working task on to its next run in one atomic transition,
-	// only while runID is the current one: run_id becomes nextRunID and State is
-	// replaced by state (nil leaves State as it is — the rule Finalize follows
-	// too). Attempt is untouched — a continuation is not a retry. nextRunID may
-	// equal runID, which rewrites State under the current run.
-	//
-	// won=false means another writer moved the task first (a stop, a sweep, a
-	// retry) and its state stands. An unknown id is ErrNotFound.
+	// Advance moves a working task on to its next run in one transition, only
+	// while runID is current: run_id=nextRunID, State replaced by state (nil
+	// keeps it). Attempt is untouched; nextRunID may equal runID, which
+	// rewrites State in place. won=false means another writer moved the task
+	// first; an unknown id is ErrNotFound — spec §2.13.
 	Advance(ctx context.Context, id, runID, nextRunID string, state json.RawMessage) (won bool, err error)
 
-	// ReleaseRetryClaim undoes a RetryClaim whose run never launched: status
-	// back to failed, the attempt count back down, and the launch failure
-	// recorded as the summary/result — an ending the Manager reports like any
-	// other (the parent has not heard it). The attempt rolls back because it
-	// counts the runs a task has HAD, and a launch that failed before
-	// registering started nothing.
-	//
-	// It applies only while runID is the current attempt and the row is still
-	// working; won=false means another writer moved the task first and its
-	// state stands.
+	// ReleaseRetryClaim undoes a RetryClaim whose run never launched: failed
+	// again, the attempt rolled back (it counts runs the task HAD), the launch
+	// failure recorded as summary/result — an ending reported like any other.
+	// Only while runID is current and the row is working; won=false means
+	// another writer moved the task first — spec §2.13.
 	ReleaseRetryClaim(ctx context.Context, id, runID, summary, result string) (won bool, err error)
 
 	// MarkInputRequired flips working → input_required, only while runID is the
-	// task's current attempt. Best-effort: a concurrent terminal transition (or
-	// a newer attempt) wins. The runID predicate matches Finalize's — an
-	// approval outlives the attempt that opened it, and must not pause the one
-	// that replaced it.
+	// current attempt. Best-effort: a concurrent terminal transition or a newer
+	// attempt wins (spec §2.13).
 	MarkInputRequired(ctx context.Context, id, runID string) error
 	// ReclaimWorking flips input_required → working when an approval resumes
-	// the run, only while runID is the current attempt. false means the task
-	// went terminal, was retried past this attempt, or is not paused — the
-	// resume must be abandoned (and a stale approval discarded, not retried).
+	// the run, only while runID is current. false means the resume must be
+	// abandoned and a stale approval discarded, not retried.
 	ReclaimWorking(ctx context.Context, id, runID string) (bool, error)
 
-	// FailOrphans marks every still-working task failed and returns them.
-	// Called at startup: a task run does not survive a restart, so a row left
-	// at working can never progress on its own — and its parent still has to
-	// be told, which is why the rows come back rather than a count.
+	// FailOrphans marks every still-working task failed and returns them, so
+	// each parent can be told (spec §2.13). Called at startup.
 	FailOrphans(ctx context.Context) ([]Task, error)
 	// ListNonTerminal returns a parent's unfinished tasks, for a teardown that
 	// must stop them.

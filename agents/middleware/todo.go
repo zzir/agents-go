@@ -16,9 +16,8 @@ const TodoToolName = "todo_write"
 // TodoStatus is one item's state.
 type TodoStatus string
 
-// The three todo states. There is deliberately no "cancelled": the list is
-// replaced whole on every write, so an abandoned item is simply not in the
-// next list.
+// The three todo states. There is no "cancelled": the list is replaced whole
+// on every write, so an abandoned item is simply not in the next list.
 const (
 	TodoPending    TodoStatus = "pending"
 	TodoInProgress TodoStatus = "in_progress"
@@ -41,13 +40,9 @@ const DefaultTodoInstructions = `Maintain a todo list for MULTI-STEP work with t
 Keep the list current; it is how your progress is tracked.`
 
 // Todo has the agent keep a working todo list through a todo_write tool. Each
-// call replaces the whole list — the model always sends every item, which is
-// simpler to prompt for and impossible to desynchronize. The host observes
-// the list through OnUpdate (for a UI checklist card) or reads the calls off
-// the stream; the middleware itself renders nothing.
-//
-// Like every instruction-injecting middleware it rewrites the ENTRY agent
-// only; handoff targets keep their own toolset.
+// call replaces the whole list (spec §2.12). The host observes it through
+// OnUpdate or reads the calls off the stream; the middleware renders nothing.
+// It rewrites the ENTRY agent only.
 type Todo struct {
 	// Instructions overrides the todo preamble (empty = DefaultTodoInstructions).
 	Instructions string
@@ -70,10 +65,9 @@ func (td Todo) Run(ctx context.Context, next agents.RunFunc, in agents.RunInput)
 	return next(ctx, in)
 }
 
-// Apply returns a clone of agent rewritten for todo mode. Run uses it per
-// run; it is exported for hosts that rewrite at agent-BUILD time (durable
-// resume rebuilds the agent from a registry, which must carry todo_write for
-// the paused state's calls to dispatch).
+// Apply returns a clone of agent rewritten for todo mode. Run uses it per run;
+// a host that rebuilds an agent for a durable resume calls it at build time so
+// todo_write dispatches (spec §2.12).
 func (td Todo) Apply(agent *agents.Agent) *agents.Agent {
 	out := agent.Clone()
 	tool := agents.NewTool(TodoToolName,

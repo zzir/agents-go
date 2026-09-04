@@ -12,10 +12,8 @@ import (
 	"github.com/zzir/agents-go/sandbox"
 )
 
-// The host side of the file operations, used when Options.WorkDir bind-mounts a
-// host directory into the container: these run on the HOST filesystem, outside
-// the container's isolation, so every path is resolved through an os.Root
-// opened on WorkDir (see rootRel; decisions §5.14).
+// The host side of the file operations (Options.WorkDir bind-mounted): these
+// run on the HOST, so every path goes through an os.Root on WorkDir (decisions §5.14).
 
 // hostRoot opens the os.Root guarding the bind-mounted working directory and
 // resolves p to a name relative to it. The caller closes the root.
@@ -149,12 +147,8 @@ func (s *Sandbox) listDirHost(p string) ([]sandbox.DirEntry, error) {
 	return out, nil
 }
 
-// rootRel maps a model-supplied path into a name relative to the os.Root
-// opened on the bind-mounted working directory. A relative path passes
-// through (os.Root itself rejects a ".." or symlink escape); an absolute path
-// must lie under the in-container mount point, /workspace, and is translated
-// to its host-side name; anything else is refused with
-// sandbox.ErrOutsideWorkDir rather than silently re-rooted (decisions §5.14).
+// rootRel maps a model-supplied path to a name under the os.Root: relative
+// passes through, absolute must lie under /workspace, else ErrOutsideWorkDir.
 func (s *Sandbox) rootRel(p string) (string, error) {
 	if !path.IsAbs(p) {
 		return filepath.FromSlash(path.Clean(p)), nil

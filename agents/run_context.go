@@ -10,20 +10,15 @@ import (
 )
 
 // RunContext carries user-supplied data and run-scoped state through a single
-// agent run. It is passed to tool invocations, guardrails and lifecycle hooks.
-//
-// User data lives in the Context field as an any value; tool authors type-assert
-// it back to their concrete type (see decisions §5.12). The standard library
-// context.Context stays separate, for cancellation and deadlines.
+// agent run, to tools, guardrails and hooks. User data is the Context field,
+// an any the tool author type-asserts back (decisions §5.12).
 type RunContext struct {
 	// Context is the arbitrary user value threaded through the run. It is never
 	// inspected by the SDK.
 	Context any
-	// Usage accumulates token usage across every model call in the run. It is
-	// LIVE while the run executes — parallel agent-as-tool runs fold their
-	// usage in concurrently — so mid-run readers (a budget check inside a
-	// tool, a streaming consumer) must go through Usage.Snapshot rather than
-	// the bare counter fields. Results hand out detached copies instead.
+	// Usage accumulates token usage across the run. It is LIVE while the run
+	// executes, so mid-run readers go through Usage.Snapshot rather than the
+	// bare fields; results hand out detached copies.
 	Usage *Usage
 	// Approvals tracks human-in-the-loop tool approval decisions.
 	Approvals *ApprovalStore
@@ -41,25 +36,17 @@ type RunContext struct {
 	// starting an orphan root trace. Set by the runner; not user-facing.
 	activeTrace *tracing.TraceHandle
 
-	// nestedToolStates caches the paused RunState of an agent-as-tool nested run,
-	// keyed by parent tool call id, so a resumed parent continues it instead of
-	// restarting. Guarded by nestedMu: a resume replays the turn's tool calls
-	// concurrently, so two paused agent-tools take their states in parallel.
+	// nestedToolStates caches paused agent-as-tool states by parent call id so
+	// a resume continues them. Guarded by nestedMu: a resume replays tools concurrently.
 	nestedMu         sync.Mutex
 	nestedToolStates map[string]*RunState
 }
 
 // TurnInput returns the model input for the turn currently executing: exactly
-// what was sent to the model, after session history, handoff filtering,
-// compaction and any CallModelInputFilter have been applied.
-//
-// Under UsePreviousResponseID or ConversationID the server holds the history
-// and only new items are sent, so TurnInput reports those new items — what went
-// on the wire, not a reconstruction of the full conversation.
-//
-// It is empty before the first turn's input is built. The returned slice is a
-// copy, but the items in it are shared with the live request: treat them as
-// read-only.
+// what was sent, after session history, handoff filtering, compaction and any
+// CallModelInputFilter. Under server-managed state that is the new items only
+// — what went on the wire. Empty before the first turn's input is built. The
+// slice is a copy, but its items are shared with the live request: read-only.
 func (rc *RunContext) TurnInput() []InputItem {
 	if rc == nil {
 		return nil
@@ -84,8 +71,7 @@ func (rc *RunContext) setTurnInput(items []InputItem) {
 }
 
 // takeNestedToolState returns and removes the cached nested run state for a
-// parent tool call id, if any. Used by an agent-as-tool on resume to continue
-// its paused nested run.
+// parent tool call id, so a resumed agent-as-tool continues its nested run.
 func (rc *RunContext) takeNestedToolState(callID string) *RunState {
 	rc.nestedMu.Lock()
 	defer rc.nestedMu.Unlock()
@@ -106,14 +92,11 @@ func NewRunContext(userData any) *RunContext {
 	return &RunContext{Context: userData, Usage: NewUsage(), Approvals: NewApprovalStore()}
 }
 
-// ApprovalStore records human-in-the-loop approval decisions for tool calls. A
-// decision can be scoped to a single call (by call ID) or made "always" for a
-// tool name. It is goroutine-safe.
-//
-// Each tool name has one entry holding a permanent allow/deny plus per-call
-// allow/deny sets. Precedence when resolving a call: a permanent approval wins over everything (including a
-// permanent or per-call rejection), then a permanent rejection, then a per-call
-// approval, then a per-call rejection.
+// ApprovalStore records human-in-the-loop approval decisions for tool calls,
+// scoped to a single call (by call ID) or "always" for a tool name. It is
+// goroutine-safe. Precedence when resolving a call: a permanent approval wins
+// over everything, then a permanent rejection, then a per-call approval, then
+// a per-call rejection.
 type ApprovalStore struct {
 	mu      sync.Mutex
 	entries map[string]*approvalEntry // keyed by tool name
@@ -192,9 +175,8 @@ func (s *ApprovalStore) Reject(item *ToolApprovalItem, always bool, message stri
 	}
 }
 
-// decisionFor returns the recorded decision for a call. ok is false when the
-// tool name has no entry or the call is undecided. Precedence: permanent
-// approval, permanent rejection, per-call approval, per-call rejection.
+// decisionFor returns the recorded decision for a call; ok is false when the
+// tool has no entry or the call is undecided. Precedence: see ApprovalStore.
 func (s *ApprovalStore) decisionFor(toolName, callID string) (approvalDecision, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -217,9 +199,8 @@ func (s *ApprovalStore) decisionFor(toolName, callID string) (approvalDecision, 
 	return approvalDecision{}, false
 }
 
-// snapshot lifts every recorded decision out of the store in its serialized
-// form, for RunState.MarshalJSON. The call-id lists come out sorted so two
-// otherwise identical runs serialize to identical bytes.
+// snapshot lifts every decision out in serialized form, call-id lists sorted
+// so identical runs serialize to identical bytes.
 func (s *ApprovalStore) snapshot() map[string]serialApprovalEntry {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -259,13 +240,8 @@ func (s *ApprovalStore) restore(entries map[string]serialApprovalEntry) {
 	}
 }
 
-// mirrorInto copies this store's decision for each of the given approval items
-// into dst, keyed by the item's call id. An agent-as-tool uses it to carry the
-// parent run's approve/reject decisions into the nested run it resumes, so the
-// human's choice on a surfaced nested interruption actually takes effect.
-// Permanent (always) decisions stay permanent in the nested store — so an
-// "always approve" on the parent covers the nested run's future calls to the
-// same tool without another pause/resume round-trip.
+// mirrorInto copies this store's decision for each item into dst, keyed by
+// call id; permanent decisions stay permanent (an agent-as-tool resume needs it).
 func (s *ApprovalStore) mirrorInto(dst *ApprovalStore, items []*ToolApprovalItem) {
 	if dst == nil {
 		return
@@ -313,9 +289,8 @@ type ToolContext struct {
 	// ToolCall is the raw model-emitted function-call output item that triggered
 	// this invocation.
 	ToolCall OutputItem
-	// functionSpanID is the tracing span ID of this tool call, letting a
-	// nested agent-as-tool run parent its agent spans under the function span
-	// instead of floating at the trace root.
+	// functionSpanID is this call's span id, so a nested agent-as-tool run
+	// parents its agent spans under it instead of at the trace root.
 	functionSpanID string
 
 	// emit pushes a partial result. Nil outside a streamed run.
@@ -324,19 +299,11 @@ type ToolContext struct {
 	done atomic.Bool
 }
 
-// Emit pushes a partial result to a streamed run's consumer.
+// Emit pushes a partial result to a streamed run's consumer — how a long tool
+// call stays watchable instead of showing a spinner (spec §2.7g).
 //
-// It is how a long tool call stays watchable — a command producing output for
-// two minutes, a patch applying file by file — instead of showing a spinner
-// until it is over.
-//
-// Scope is THIS call. After the tool returns, Emit is ignored: a goroutine the
-// tool left running would otherwise keep pushing progress for a call that is
-// already answered, and a consumer would have no way to tell that from a call
-// still working.
-//
-// It is a no-op on a non-streamed run and safe to call from any goroutine, so
-// a tool never needs to ask which kind of run it is in.
+// Scope is THIS call: after the tool returns, Emit is ignored. It is a no-op
+// on a non-streamed run and safe to call from any goroutine.
 func (tc *ToolContext) Emit(partial ToolResult) {
 	if tc == nil || tc.emit == nil || tc.done.Load() {
 		return

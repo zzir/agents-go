@@ -11,8 +11,7 @@ import (
 )
 
 // ErrNotFound reports that the requested row does not exist. Store methods
-// wrap it (errors.Is-compatible) so handlers can map it to a 404 instead of
-// treating every store error as internal.
+// wrap it (errors.Is-compatible) so handlers can map it to a 404.
 var ErrNotFound = errors.New("not found")
 
 // rowsAffected is the subset of sql.Result the not-found checks need.
@@ -30,10 +29,8 @@ func requireRows(res rowsAffected) error {
 }
 
 // UniqueViolation reports the offending column list (e.g. "name" or
-// "type, name", table prefixes stripped) and true when err is a UNIQUE
-// constraint failure, letting handlers map a duplicate to 409 without a
-// racy pre-check. SQLite is matched best-effort by message, so it works
-// across sqlite drivers; PostgreSQL by SQLSTATE.
+// "type, name") and true when err is a UNIQUE constraint failure. SQLite is
+// matched by message (across drivers), PostgreSQL by SQLSTATE.
 func UniqueViolation(err error) (string, bool) {
 	if err == nil {
 		return "", false
@@ -59,8 +56,7 @@ func UniqueViolation(err error) (string, bool) {
 		rest = rest[:end]
 	}
 	// rest is "table.col[, table.col...]", sometimes with a trailing driver
-	// suffix like " (2067)". Strip table prefixes and keep only the column
-	// identifiers.
+	// suffix like " (2067)": keep only the column identifiers.
 	cols := make([]string, 0, 2)
 	for part := range strings.SplitSeq(rest, ",") {
 		part = strings.TrimSpace(part)
@@ -86,9 +82,8 @@ func identifierPrefix(s string) string {
 	return s
 }
 
-// updateColumn sets a single column on the row identified by id, enforcing
-// that the row existed (ErrNotFound otherwise) so a silent no-op update can't
-// masquerade as success. label names the entity for error messages.
+// updateColumn sets a single column on the row identified by id, ErrNotFound
+// when the row did not exist. label names the entity for error messages.
 func updateColumn(ctx context.Context, db *bun.DB, model any, label, id, column string, value any) error {
 	res, err := db.NewUpdate().Model(model).Set(column+" = ?", value).Where("id = ?", id).Exec(ctx)
 	if err == nil {
@@ -100,11 +95,9 @@ func updateColumn(ctx context.Context, db *bun.DB, model any, label, id, column 
 	return nil
 }
 
-// IsMalformedID reports whether err is PostgreSQL refusing a value that is not
-// a UUID for a uuid column (SQLSTATE 22P02) — a path parameter like
-// /sessions/abc. SQLite stores anything, so only PostgreSQL raises it; handlers
-// answer 400 rather than 500. The message guard keeps other 22P02s (e.g. a
-// string written to a mis-typed integer column) from masquerading as a bad id.
+// IsMalformedID reports whether err is PostgreSQL refusing a non-UUID for a
+// uuid column (SQLSTATE 22P02, message-guarded against other 22P02s); SQLite
+// stores anything. Handlers answer 400.
 func IsMalformedID(err error) bool {
 	pgErr, ok := errors.AsType[pgdriver.Error](err)
 	return ok && pgErr.Field('C') == "22P02" && strings.Contains(pgErr.Field('M'), "uuid")

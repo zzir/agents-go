@@ -10,12 +10,25 @@ that results is in [the spec](../reference/spec.md).
 
 ### 1.1 What this is
 
-A Go SDK for building agents on the **OpenAI Responses API**. It began as a port
-of openai-agents-python and shares its core concepts — agents, handoffs,
-guardrails, sessions — but evolves independently. See
-[migration_from_python.md](../explanation/migration_from_python.md) if you are arriving from the
-Python SDK, and [upstream_watch.md](../explanation/upstream_watch.md) for what we have reviewed
-from upstream.
+The agent workbench you run yourself: see what the model saw, replay it,
+fork it — **"Go agents. Local first."** Concretely, `agents-server`: one
+binary, your data in SQLite (or PostgreSQL), an embedded UI, and a debug loop
+in which the transcript is the truth, a context lens and traces show what the
+model was sent, and any turn can be replayed or forked.
+
+The SDK underneath it — the root module of this repository — is the same core
+consumed a second way: embedded in your own Go program, with no dependency on
+or reporting to the workbench ([§1.2](#12-non-goals), last row). Two consumers,
+one core, one dependency edge.
+
+**The first conversation is frozen.** It is one process, SQLite by default,
+and no Docker: a downloaded binary, one API key and a browser reach a
+streamed reply with the Inspector open. Sandboxes, PostgreSQL, deployment,
+team sign-in and anything else that needs a second thing installed are
+power-user steps that come *after* it. The getting-started pages — the
+[README](../../README.md) and
+[Running the workbench](../tutorial/workbench.md) — keep them out of that
+path, and a change that puts them back is a scope change, not an edit.
 
 ---
 
@@ -43,7 +56,8 @@ Beyond the non-goals in [§1.2](#12-non-goals):
 | Implicit model-parameter injection (e.g. reasoning defaults for a model family) | Explicit beats implicit. Set `ModelSettings` yourself. |
 | A free-form request passthrough dict | `ExtraBody` / `ExtraHeaders` / `ExtraQuery` cover it, and they are typed. |
 | Redis / encrypted session backends | Implement `session.Storage`. The SDK ships in-memory and SQL (SQLite/PostgreSQL). |
-| A pop/undo storage primitive | Removed after shipping with zero callers: a run never pops (entries are append-only, §2.5b), and every host that wanted "undo" had its own deletion primitive against its own store. Seven implementations of `EntryPopper`/`ItemPopper` existed for no consumer. |
+| A pop/undo storage primitive | A run never pops (entries are append-only, spec §2.5b), and a host that wants "undo" has its own deletion primitive against its own store. |
+| The Responses WebSocket transport, and a `Model` connection-lifecycle hook (`Close`) | Only the HTTP Responses transport is implemented; a `Model` has no lifecycle the runner manages. |
 | A REPL and graph visualization | Not an SDK concern. |
 | A graph / fan-out orchestrator on top of tasks (map over N inputs, join, branch on model choice) | A task's work may span several runs (`Config.Continue`, §2.13): a fixed sequence, a loop until a check passes — one job, one session, one transcript, which is what keeps it cheap and legible. Fanning out into N parallel children with a join is a different thing: N sessions, N transcripts, a merge nobody has designed the semantics of yet, and a step toward the general workflow engine handoffs and tasks were chosen over (§5.1). Parallel work is what `spawn_task` is for; a host that needs a join writes it against the task API. |
 
@@ -84,15 +98,8 @@ against graduates into §1.2 above.
   approval-gated call without a human round-trip. Per-TOOL binding — "only this
   tool's arguments go through this guardrail" — is a separate thing the SDK
   does not model; it would need a `Stages`-like selector keyed by tool name.
-- **Renderer hints on tool-call cards.** PROTOCOL.md F4 reserves a
-  `display.renderer` hint ("terminal", "diff", "table") on the structured
-  display projection, and the hint is wired end to end: the SDK's
-  `ToolResult.Display` names the renderer, it lands in the session's stored
-  display JSON and reaches the frontend timeline on both the live and the
-  replay path, with tests pinning each. What remains is the card:
-  `ToolCallCard` does not branch on the value yet — live progress renders as
-  a `<pre>` regardless, and a finished result as plain text; a multimodal
-  result (an image, a file: the Responses content list, see
-  `run.tool_result`) is the one shape it renders by content. A terminal view
-  for shell output, a diff view for a patch — that branching is the
-  remaining work.
+- **Renderer hints on tool-call cards.** The `display.renderer` hint
+  ("terminal", "diff", "table") travels end to end — `ToolResult.Display` to
+  the stored display JSON to the timeline, live and replay — but
+  `ToolCallCard` does not branch on it yet: a terminal view for shell output
+  and a diff view for a patch are the remaining work.

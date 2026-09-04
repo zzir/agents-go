@@ -16,14 +16,11 @@ import (
 	"github.com/zzir/agents-go/sandbox"
 )
 
-// The container side of the file operations, used in persistent mode without a
-// bind mount: every operation goes through exec, so the file tools see exactly
-// what a command does — tmpfs and other mounts the daemon's archive API cannot
-// reach included (decisions §5.14).
+// The container side of the file operations (persistent mode, no bind mount):
+// everything goes through exec, so the tools see every mount (decisions §5.14).
 
-// Exit codes the in-container scripts use for the outcomes a caller branches
-// on. A code rather than a phrase in stderr: the wording is the image's shell
-// and locale to choose.
+// Exit codes the in-container scripts use for outcomes a caller branches on —
+// a code, not a phrase: stderr wording is the image's shell and locale to choose.
 const (
 	exitIsDir      = 21
 	exitOpenFailed = 22
@@ -52,9 +49,8 @@ func (s *Sandbox) readFileContainer(ctx context.Context, p string) ([]byte, erro
 	if limit <= 0 {
 		limit = sandbox.DefaultMaxReadFileBytes
 	}
-	// The exec cap sits above base64's 4/3 inflation so a file at the limit
-	// is never cut mid-stream, and the timeout grows with the limit: a big
-	// file over a remote daemon is not a 30-second read.
+	// The exec cap sits above base64's 4/3 inflation so a file at the limit is
+	// never cut mid-stream; the timeout grows with the limit for remote daemons.
 	timeout := sandbox.DefaultTimeout + time.Duration(limit>>20)*time.Second
 	res, err := s.Exec(ctx, sandbox.ExecRequest{
 		Cmd:            []string{"sh", "-c", readFileScript(s.containerPath(p), limit)},
@@ -109,9 +105,8 @@ func (s *Sandbox) writeFileContainer(ctx context.Context, p string, content []by
 	if full == "/" {
 		return fmt.Errorf("docker sandbox: invalid file path %q", p)
 	}
-	// Stage the bytes in the workspace volume — ExecRequest.Files uses tar, so
-	// it is binary-safe and size-unbounded — then move them into place with
-	// exec, which reaches every mount the archive API cannot (tmpfs included).
+	// Stage the bytes via ExecRequest.Files (tar: binary-safe, size-unbounded),
+	// then move them into place with exec, which reaches mounts the archive API cannot.
 	buf := make([]byte, 8)
 	_, _ = rand.Read(buf) // never fails as of Go 1.24
 	stageName := ".agents-write." + hex.EncodeToString(buf)
@@ -148,9 +143,7 @@ func (s *Sandbox) createExclusiveContainer(ctx context.Context, p string, conten
 	cleanupCtx, cancelCleanup := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancelCleanup()
 	// A hard error or a timeout is outcome-unknown: ln may have published the
-	// target before Exec stopped. The inode-checked cleanup makes a returned
-	// error mean "target not created" — unless the cleanup itself cannot be
-	// confirmed, in which case the target may still exist and we say so.
+	// target. The inode-checked cleanup makes a returned error mean "not created".
 	if err != nil || res.TimedOut {
 		cres, cerr := s.Exec(cleanupCtx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", cleanupScript}})
 		if cerr != nil || cres.TimedOut || cres.ExitCode != 0 {
@@ -218,15 +211,8 @@ func (s *Sandbox) renameContainer(ctx context.Context, oldPath, newPath string) 
 	return nil
 }
 
-// listDirScript lists dir one level deep, one NUL-terminated "type\tsize\tname"
-// record per entry; absence and a non-directory are exit codes.
-//
-// NUL rather than newline, because a filename may contain a newline or a tab:
-// the name is the final field, so a tab inside it survives the 3-way split.
-// The formatting is a batched `sh` rather than find's GNU-only -printf, so
-// busybox find (every alpine-based image) works. `wc -c` runs only on a
-// REGULAR file — on a fifo it would block until a writer appeared — and its
-// count goes through $(( )) so a wc that pads with spaces still parses.
+// listDirScript lists dir one level deep, NUL-terminated "type\tsize\tname" records;
+// absence/non-dir are exit codes. Portable sh; wc -c on regular files only (fifo blocks).
 func listDirScript(dir string) string {
 	return fmt.Sprintf(
 		"d=%s\n"+
@@ -257,10 +243,8 @@ func (s *Sandbox) listDirContainer(ctx context.Context, p string) ([]sandbox.Dir
 	}
 }
 
-// containerPath maps a model-supplied path onto the container filesystem with
-// shell semantics, mirroring exec: an absolute path is used as-is, a relative
-// one resolves under /workspace. The container is the isolation boundary, so
-// the file operations share exec's view (decisions §5.14).
+// containerPath maps a model-supplied path with shell semantics, mirroring
+// exec: absolute as-is, relative under /workspace (spec §2.7t).
 func (s *Sandbox) containerPath(p string) string {
 	if path.IsAbs(p) {
 		return path.Clean(p)
@@ -268,28 +252,18 @@ func (s *Sandbox) containerPath(p string) string {
 	return path.Join(workDir, p)
 }
 
-// exclusiveCreateScripts builds the in-container shell scripts for an atomic
-// exclusive-create of fullPath (absolute in-container) via a temp hard link.
-// Absolute paths start with "/", so mkdir/ln/rm can never mistake one for an
-// option — sandbox.ShellQuote stops shell expansion, not option parsing. The
-// temp file has a Go-generated unpredictable name. Returns:
-//   - create: write tmp from b64, then hard-link it onto the target. ln fails
-//     with EEXIST if the target exists — the atomic exclusive create.
-//   - cleanup: run when the outcome is unknown (Exec error or timeout). Undo a
-//     target that ln may have published (same inode as tmp), then drop tmp.
-//   - rmTmp: drop just the temp link after a completed Exec (non-fatal).
-//
 // exitTargetExists is the create script's exit code for "the target is already
 // there": EEXIST's number, picked only because it is recognizable.
 const exitTargetExists = 17
 
+// exclusiveCreateScripts builds the atomic exclusive-create of absolute fullPath via
+// a temp hard link: create (ln fails on an existing target), cleanup by inode, rmTmp.
 func exclusiveCreateScripts(fullPath, tmpPath, b64 string) (create, cleanup, rmTmp string) {
 	target := sandbox.ShellQuote(fullPath)
 	dirQ := sandbox.ShellQuote(path.Dir(fullPath))
 	tmpQ := sandbox.ShellQuote(tmpPath)
-	// "Already there" leaves as an exit CODE, not as a phrase in ln's stderr.
-	// -L as well as -e: a dangling symlink, which ln refuses and -e does not
-	// see, would otherwise read as "not there".
+	// "Already there" leaves as an exit CODE, not a phrase in ln's stderr. -L as
+	// well as -e: a dangling symlink, which ln refuses, would otherwise read as absent.
 	create = "mkdir -p " + dirQ + " || exit 1\n" +
 		"printf %s " + sandbox.ShellQuote(b64) + " | base64 -d > " + tmpQ + " || exit 1\n" +
 		"if ln " + tmpQ + " " + target + "; then exit 0; fi\n" +

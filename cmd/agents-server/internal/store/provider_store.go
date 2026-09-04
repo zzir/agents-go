@@ -15,20 +15,15 @@ import (
 const AuthModeChatGPTLogin = "chatgpt_login"
 
 // ErrProviderRef marks a write refused because the provider it references is
-// gone. The CALLER's input is what is wrong — handlers map it to 400, never
-// the 404 a missing target resource gets.
+// gone; handlers map it to 400 (the caller's input is what is wrong).
 var ErrProviderRef = errors.New("provider_id names no provider")
 
 // ErrProviderScope marks a write refused because the provider it references
 // sits outside the holder's reach (decisions §5.29). Handlers map it to 400.
 var ErrProviderScope = errors.New("provider_id names a provider outside the agent's scope")
 
-// writeReferencingProvider runs write in ONE transaction that first reads —
-// and on PostgreSQL locks — the provider row the write references, closing
-// the window where the provider is deleted or re-scoped between a handler's
-// validation and the row landing. write receives the locked row (nil when
-// providerID is empty, the no-provider default) and refuses what it cannot
-// accept.
+// writeReferencingProvider runs write in ONE transaction that first reads
+// (on PostgreSQL locks) the provider row the write references; write receives it, nil when providerID is empty.
 func writeReferencingProvider(ctx context.Context, db *bun.DB, providerID string, write func(ctx context.Context, tx bun.Tx, pv *Provider) error) error {
 	return db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		var pv *Provider
@@ -45,9 +40,8 @@ func writeReferencingProvider(ctx context.Context, db *bun.DB, providerID string
 	})
 }
 
-// refProviderScope is the in-transaction half of the reference rule (spec
-// §5.29): the holder must be able to SEE the provider it names. A nil pv (no
-// provider) always passes.
+// refProviderScope is the in-transaction half of the reference rule
+// (decisions §5.29): the holder must be able to SEE the provider it names.
 func refProviderScope(pv *Provider, holderScope, holderOwner string) error {
 	if pv != nil && !RefVisible(pv.Scope, pv.OwnerID, holderScope, holderOwner) {
 		return ErrProviderScope
@@ -61,18 +55,15 @@ type ProviderStore struct {
 	db *bun.DB
 }
 
-// NewProviderStore returns a ProviderStore backed by db. Names are unique
-// per scope (partial indexes, decisions §5.29); a duplicate surfaces as a
-// UNIQUE-constraint error that handlers map to 409.
+// NewProviderStore returns a ProviderStore backed by db. Names are unique per
+// scope (partial indexes, decisions §5.29); a duplicate is a UNIQUE error.
 func NewProviderStore(db *bun.DB) *ProviderStore {
 	return &ProviderStore{CrudStore: NewCrudStore[Provider](db, "provider", "created_at DESC").withSecrets(sealProvider, openProvider), db: db}
 }
 
 // Update overwrites the provider in one transaction that first reads the
-// stored row (locked) and hands it to prepare, nil to skip — how a masked
-// api_key keeps its stored value. A chatgpt_login provider keeps its
-// chatgpt_token, so a rename does not log the endpoint out; any other mode
-// clears it, since the UI can no longer revoke one.
+// stored row (locked) and hands it to prepare, nil to skip. A chatgpt_login
+// provider keeps its chatgpt_token; any other mode clears it.
 func (s *ProviderStore) Update(ctx context.Context, id string, p *Provider, prepare func(prev *Provider) error) error {
 	p.ID = id
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
@@ -91,8 +82,7 @@ func (s *ProviderStore) Update(ctx context.Context, id string, p *Provider, prep
 }
 
 // SaveChatGPTToken persists the serialized OAuth token, updating only that
-// column. The token belongs to the ENDPOINT, so every agent pointed at this
-// provider shares the one login.
+// column; the token belongs to the ENDPOINT.
 func (s *ProviderStore) SaveChatGPTToken(ctx context.Context, id, tokenJSON string) error {
 	return updateColumn(ctx, s.db, (*Provider)(nil), "provider chatgpt token", id, "chatgpt_token", sealSecret(labelProviderChatGPTToken, tokenJSON))
 }
@@ -106,12 +96,9 @@ func (s *ProviderStore) ClearChatGPTToken(ctx context.Context, id string) error 
 // reference: an agent pointing here blocks it.
 const providerUnreferenced = `NOT EXISTS (SELECT 1 FROM agent_configs WHERE provider_id = ?)`
 
-// DeleteIfUnreferenced deletes the provider only while nothing references it —
-// one atomic statement, closing the race where an agent is repointed here
-// between a count and the delete (which would leave that agent naming a
-// provider that no longer exists). It returns how many references blocked the
-// delete: 0 with a nil error means deleted. A missing provider is ErrNotFound,
-// a different answer from refused, and the handler maps them to 404 vs 409.
+// DeleteIfUnreferenced deletes the provider only while nothing references it,
+// in one atomic statement. It returns how many references blocked the
+// delete: 0 with a nil error means deleted; a missing provider is ErrNotFound.
 func (s *ProviderStore) DeleteIfUnreferenced(ctx context.Context, id, expectOwner string) (refs int, err error) {
 	res, err := s.db.NewDelete().Model((*Provider)(nil)).
 		Where("id = ?", id).
@@ -149,10 +136,8 @@ func (s *ProviderStore) explainRefusal(ctx context.Context, id string) (int, err
 }
 
 // NormalizeProvider trims the fields whose spelling is noise and fills the
-// defaults, so two rows that mean the same endpoint are stored the same way.
-// It does NOT validate the type or auth mode: those are the provider
-// registry's answer, and the registry lives in bridge (which imports this
-// package, not the other way round) — the handler checks them on save.
+// defaults. It does NOT validate the type or auth mode: the registry lives in
+// bridge, so the handler checks them on save.
 func NormalizeProvider(p *Provider) error {
 	p.Name = strings.TrimSpace(p.Name)
 	p.Type = strings.TrimSpace(p.Type)
@@ -168,12 +153,9 @@ func NormalizeProvider(p *Provider) error {
 }
 
 // DemoteToPrivate flips the provider back into its author's private set,
-// refusing while any agent a demote would strand — a global agent, or another
-// owner's private one — still references it. Count and flip share one
-// transaction with the row locked, so a racing agent write cannot pin a
-// global agent to a just-privatized key (decisions §5.29). Returns the foreign
-// count, non-zero meaning nothing was flipped; ErrNotFound when the row is
-// gone.
+// refusing while any agent a demote would strand still references it; count
+// and flip share one transaction (decisions §5.29). Returns the foreign
+// count, non-zero meaning nothing was flipped; ErrNotFound when gone.
 func (s *ProviderStore) DemoteToPrivate(ctx context.Context, id string) (int, error) {
 	var refs int
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
@@ -209,8 +191,7 @@ func (s *ProviderStore) DemoteToPrivate(ctx context.Context, id string) (int, er
 }
 
 // countStrandedRefs counts the agents that would lose this provider were it
-// private to owner: a global agent, or one another member owns (decisions §5.29's
-// RefVisible, as a query).
+// private to owner (RefVisible as a query — decisions §5.29).
 func countStrandedRefs(ctx context.Context, tx bun.Tx, providerID, owner string) (int, error) {
 	return tx.NewSelect().Model((*AgentConfig)(nil)).
 		Where("provider_id = ?", providerID).
@@ -218,10 +199,8 @@ func countStrandedRefs(ctx context.Context, tx bun.Tx, providerID, owner string)
 		Count(ctx)
 }
 
-// TransferOwner hands the provider — credential included — to newOwner. A
-// PRIVATE provider carries its references with it, so the transfer is refused
-// while any agent would be stranded (the same guard a demote carries: a key
-// must not silently vanish from under a run — decisions §5.29). Returns the
+// TransferOwner hands the provider — credential included — to newOwner,
+// refused while any agent would be stranded (decisions §5.29). Returns the
 // stranded count, non-zero meaning nothing moved.
 func (s *ProviderStore) TransferOwner(ctx context.Context, id, newOwner string) (int, error) {
 	var refs int

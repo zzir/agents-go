@@ -21,11 +21,9 @@ const (
 	Deny
 )
 
-// ApprovalPolicy decides a pending tool call without a human.
-//
-// Returning Ask for anything it does not recognize is the point: a policy is a
-// shortcut for the calls a human has already ruled on, not a replacement for
-// asking.
+// ApprovalPolicy decides a pending tool call without a human. Returning Ask
+// for anything it does not recognize is the point: a policy is a shortcut for
+// calls a human has already ruled on, not a replacement for asking.
 type ApprovalPolicy func(ctx context.Context, item *agents.ToolApprovalItem) (Decision, string)
 
 // AllowTools approves any call to the named tools and defers the rest.
@@ -43,16 +41,10 @@ func AllowTools(names ...string) ApprovalPolicy {
 }
 
 // Approval answers approval interruptions from a policy and resumes the run,
-// so a caller only sees the pauses the policy declined to decide.
-//
-// Standing rules — "always allow read_file", "never allow rm" — are exactly the
-// kind of thing that should not be re-litigated by every caller that drives a
-// run. The policy runs on the SDK side of the pause, so the caller's loop stays
-// "handle the interruptions I was actually asked about".
-//
-// A run pauses again, unresumed, as soon as the policy returns Ask for any
-// call in the batch: an interruption is per-turn, and approving half of one
-// while a human decides the rest would run tools the human has not seen yet.
+// so a caller only sees the pauses the policy declined to decide. A run pauses
+// again, unresumed, as soon as the policy returns Ask for any call in the
+// batch: an interruption is per-turn, and approving half of one would run
+// tools the human has not seen yet.
 type Approval struct {
 	// Policy decides. A nil policy settles nothing, so every interruption
 	// reaches the caller as if the middleware were not there.
@@ -123,12 +115,7 @@ func (a Approval) decide(ctx context.Context, res *agents.RunResult) bool {
 }
 
 // resume continues a paused run from inside the chain, under the caller's own
-// control handle so a stop or queued input still reaches the run.
-//
-// Middlewares are stripped: the chain is already unwound at this point, so
-// resuming with the run's own options would re-enter this middleware and every
-// one outside it. This is a continuation of the run the chain already started,
-// not a new one.
+// control handle and with Middlewares stripped — spec §2.12, decisions §5.45.
 func resume(ctx context.Context, state *agents.RunState, in agents.RunInput) agents.RunStream {
 	o := *in.Opts
 	o.Middlewares = nil

@@ -13,10 +13,8 @@ const (
 	defaultHistoryStartMarker = "<CONVERSATION HISTORY>"
 	defaultHistoryEndMarker   = "</CONVERSATION HISTORY>"
 
-	// historySummaryLeadIn is the fixed first line of every summary message
-	// produced by summaryMessage. flattenNestedHistory only expands assistant
-	// messages that begin with it, so an ordinary message that merely quotes
-	// the markers is never mistaken for a summary.
+	// historySummaryLeadIn is the fixed first line of every summaryMessage;
+	// flattenNestedHistory expands only messages that begin with it.
 	historySummaryLeadIn = "For context, here is the conversation so far between the user and the previous agent:"
 	// historyEmptyPlaceholder is the summary body emitted for an empty
 	// transcript; flattening recognizes it and yields an empty transcript.
@@ -24,32 +22,23 @@ const (
 )
 
 // HandoffHistoryMapper folds a flattened transcript into the input items the
-// target agent receives after a handoff. The default emits one assistant message
-// summarizing the transcript; supply your own to, for example, call an LLM for a
-// real summary.
+// target agent receives after a handoff. The default emits one assistant
+// message summarizing the transcript; supply your own to call an LLM instead.
 type HandoffHistoryMapper func(transcript []InputItem) []InputItem
 
 // NestHistoryOptions configures NestHandoffHistory.
 type NestHistoryOptions struct {
-	// Mapper folds the transcript into the target agent's input. Defaults to a
-	// mapper that emits one assistant message wrapping the transcript in the
-	// fixed "<CONVERSATION HISTORY>" markers. Flattening only recognizes that
-	// default summary shape; a custom Mapper still works, but its summaries are
-	// treated as opaque messages by later handoffs (no flattening).
+	// Mapper folds the transcript into the target agent's input; the default
+	// emits one assistant message in the fixed markers. Only that shape is
+	// flattened by later handoffs; a custom Mapper's summaries stay opaque.
 	Mapper HandoffHistoryMapper
 }
 
 // NestHandoffHistory returns a Handoff InputFilter that summarizes the prior
-// conversation into a compact form for the next agent.
-//
-// Before summarizing, it flattens any summary produced by an earlier handoff
-// back into its underlying transcript, so a chain of handoffs yields one flat
-// summary rather than a summary-of-summaries. The transcript is serialized as
-// one JSON item per line (via session.MarshalInputItem), which round-trips through
-// session.UnmarshalInputItem when later flattened.
-//
-// Like every InputFilter it only changes what the target agent sees; it does not
-// alter what is saved to the session.
+// conversation for the next agent. A summary from an earlier handoff is
+// flattened back into its transcript first, so a chain yields one flat
+// summary; items are serialized one JSON line each via session.MarshalInputItem.
+// Like every InputFilter it changes only what the target sees, not the session.
 func NestHandoffHistory(opts NestHistoryOptions) func(HandoffInputData) HandoffInputData {
 	mapper := opts.Mapper
 	if mapper == nil {
@@ -100,12 +89,8 @@ func flattenNestedHistory(items []InputItem) []InputItem {
 	return out
 }
 
-// extractNestedTranscript parses an item that is a marker-wrapped summary back
-// into its transcript items. ok reports whether the item was such a summary.
-//
-// Only the SDK's own summary shape is expandable (an assistant message starting
-// with the fixed lead-in line): expanding arbitrary marker-bearing text would
-// let conversation content inject or silently delete history.
+// extractNestedTranscript parses a marker-wrapped summary back into its items.
+// Only the SDK's own summary shape expands; arbitrary marker text could inject history.
 func extractNestedTranscript(item InputItem) ([]InputItem, bool) {
 	m := item.OfMessage
 	if m == nil || m.Role != responses.EasyInputMessageRoleAssistant {

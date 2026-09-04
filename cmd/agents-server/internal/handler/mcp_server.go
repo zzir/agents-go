@@ -27,8 +27,7 @@ type McpServerHandler struct {
 }
 
 // mcpOAuthCallbackPath is the MCP OAuth redirect route, relative to the API
-// group. It must stay a path server.TokenAuth exempts — a browser redirect
-// carries no bearer, so anywhere else under the API answers 401.
+// group. It must stay a path server.TokenAuth exempts (a redirect carries no bearer).
 const mcpOAuthCallbackPath = "/mcp-servers/oauth/callback"
 
 // NewMcpServerHandler returns a handler backed by the given store and connection manager.
@@ -37,8 +36,7 @@ func NewMcpServerHandler(s *store.McpServerStore, m *mcpservers.Manager, oc *mcp
 }
 
 // MCP server lifecycle states reported to the UI. Exactly one is derived per
-// server (see status) — the frontend renders it verbatim and keeps no state
-// model of its own.
+// server (see status); the frontend renders it verbatim.
 const (
 	mcpStatusDisabled     = "disabled"     // enabled=false; only the toggle applies
 	mcpStatusConnected    = "connected"    // live connection established
@@ -68,11 +66,8 @@ func (h *McpServerHandler) listItem(cfg *store.McpServerConfig) mcpServerListIte
 	}
 }
 
-// status derives the single lifecycle state the UI renders, from stored config
-// and live connection state. Order matters: disabled wins over everything;
-// authorizing is checked before connecting because an interactive OAuth flow
-// holds the manager's connect slot for its whole popup wait, so IsConnecting
-// stays true throughout and the more specific state must win.
+// status derives the one lifecycle state the UI renders. Order matters:
+// disabled wins; authorizing before connecting (an OAuth flow holds the connect slot).
 func (h *McpServerHandler) status(cfg *store.McpServerConfig) string {
 	switch {
 	case !cfg.Enabled:
@@ -258,9 +253,8 @@ func (h *McpServerHandler) Update(c *gin.Context) {
 		return
 	}
 	cfg := req.toModel()
-	// Masked header values / oauth_client_secret round-trip to their stored
-	// values inside the store's transaction; scope and owner never move on an
-	// update (POST /:id/scope does).
+	// Masked header values / oauth_client_secret resolve against the stored
+	// row inside the transaction; scope and owner never move on an update.
 	err := h.store.Update(ctx, id, cfg, ownershipGuard(cur.Scope, cur.OwnerID, mcpScope,
 		func(prev *store.McpServerConfig) error {
 			cfg.Scope, cfg.OwnerID = prev.Scope, prev.OwnerID
@@ -269,8 +263,7 @@ func (h *McpServerHandler) Update(c *gin.Context) {
 			}
 			cfg.Config = restoreMcpConfig(cfg.Config, prev.Config)
 			// A grant is bound to endpoint + auth mode + client id; when any
-			// moved, drop it in the same transaction — the old identity's
-			// token must not silently authenticate the new one (invariant 55).
+			// moved, drop it in the same transaction — invariant 55.
 			if oauthIdentityChanged(cfg.Config, prev.Config) {
 				cfg.OAuthToken = ""
 			}
@@ -285,18 +278,14 @@ func (h *McpServerHandler) Update(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
-	// Make the live connection match the newly persisted config (drop stale,
-	// reconnect an enabled server in the background). The manager owns the
-	// ordering; the response status typically reads "connecting".
+	// Make the live connection match the persisted config (drop stale,
+	// reconnect in the background); the response status typically reads "connecting".
 	h.manager.Reconcile(updated, h.oauth)
 	c.JSON(http.StatusOK, h.listItem(updated))
 }
 
 // oauthIdentityChanged reports whether an update moved a field the persisted
-// OAuth grant is bound to — the endpoint (the grant's audience), the auth mode,
-// or the client id the grant was minted for. Unparseable configs report false:
-// validation upstream makes that unreachable for the new config, and a stored
-// one that does not decode keeps its grant rather than losing it blind.
+// OAuth grant is bound to (endpoint, auth mode, client id); unparseable is false.
 func oauthIdentityChanged(next, prev json.RawMessage) bool {
 	var n, p store.HTTPMcpConfig
 	if json.Unmarshal(next, &n) != nil || json.Unmarshal(prev, &p) != nil {
@@ -386,9 +375,8 @@ func (h *McpServerHandler) Connect(c *gin.Context) {
 	if !ok {
 		return
 	}
-	// A disabled server must never gain a live connection: agents pick tools by
-	// connection state, so connecting one would put its tools back in play and
-	// silently void the disable switch.
+	// A disabled server must never gain a live connection: agents pick tools
+	// by connection state, so connecting one would void the disable switch.
 	if !cfg.Enabled {
 		conflict(c, "server is disabled; enable it before connecting")
 		return
@@ -420,11 +408,8 @@ func (h *McpServerHandler) Connect(c *gin.Context) {
 	c.JSON(http.StatusOK, mcpConnectResp{Status: "connected"})
 }
 
-// externalOrigin is the browser-facing origin (scheme://host) used to build
-// the OAuth redirect_uri: --base-url when configured, otherwise the direct
-// connection. Forwarded/X-Forwarded-* headers are deliberately NOT consulted —
-// a direct client can forge them — so behind a TLS-terminating reverse proxy
-// --base-url is required for OAuth flows to build a matching redirect_uri.
+// externalOrigin is the browser-facing origin for the OAuth redirect_uri: --base-url,
+// else the direct connection — Forwarded headers are never read, so a proxy needs it.
 func (h *McpServerHandler) externalOrigin(r *http.Request) string {
 	if h.baseURL != "" {
 		return h.baseURL
@@ -506,9 +491,8 @@ func (h *McpServerHandler) OAuthCallback(c *gin.Context) {
 	writeOAuthCallbackPage(c, "success", "")
 }
 
-// oauthCallbackScript is the static popup script: it reads the flow status
-// from the body's data attribute, notifies the opener, and closes the window.
-// It must stay constant so its CSP hash below stays valid.
+// oauthCallbackScript is the static popup script (read status, notify the
+// opener, close). It must stay constant so its CSP hash below stays valid.
 const oauthCallbackScript = `var s=document.body.getAttribute("data-status")||"error";
 if(window.opener){window.opener.postMessage({type:"mcp-oauth-done",status:s},location.origin);}
 setTimeout(function(){window.close();},1500);`
@@ -518,11 +502,8 @@ var oauthCallbackScriptHash = func() string {
 	return base64.StdEncoding.EncodeToString(sum[:])
 }()
 
-// writeOAuthCallbackPage renders the OAuth popup result page. The global CSP
-// blocks inline scripts, so the response carries its own policy allowing
-// exactly the static script above by hash. status is an internal constant
-// ("success"/"error"); errMsg may echo attacker-influenced query input and is
-// HTML-escaped.
+// writeOAuthCallbackPage renders the OAuth popup result page with its own CSP
+// allowing the static script above by hash; errMsg is HTML-escaped.
 func writeOAuthCallbackPage(c *gin.Context, status, errMsg string) {
 	msg := "Authorization successful. You can close this window."
 	if status != "success" {

@@ -50,9 +50,8 @@ func ApplyPatchTool(sb Sandbox, cfg FileToolConfig) *agents.Tool {
 		func(ctx context.Context, _ *agents.ToolContext, args applyPatchArgs) (string, error) {
 			ctx, cancel := context.WithTimeout(ctx, cfg.effectiveTimeout())
 			defer cancel()
-			// Serialize all apply_patch commits process-wide (see applyPatchSem).
-			// Acquire via select so the timeout covers queueing time and a
-			// cancelled run doesn't block behind a slow patch on another sandbox.
+			// Serialize all apply_patch commits process-wide (see applyPatchSem), via
+			// select so the timeout covers queueing and a cancelled run does not wait.
 			select {
 			case applyPatchSem <- struct{}{}:
 				defer func() { <-applyPatchSem }()
@@ -75,9 +74,7 @@ func ApplyPatchTool(sb Sandbox, cfg FileToolConfig) *agents.Tool {
 }
 
 // applyPatchSem serializes ALL apply_patch commits process-wide: a rollback's
-// RemoveFile could otherwise delete a file a concurrent patch just wrote. A
-// channel rather than a mutex so acquisition honors ctx.Done(); one global
-// gate rather than one per Sandbox so nothing is keyed on a closed sandbox.
+// RemoveFile could delete a file a concurrent patch just wrote. A channel honors ctx.
 var applyPatchSem = make(chan struct{}, 1)
 
 // fsOp is a single filesystem mutation paired with its inverse, so a failed
@@ -86,26 +83,21 @@ type fsOp struct {
 	do   func() error
 	undo func(context.Context) error
 	desc string
-	// undoOnError marks an op whose undo is safe to run when its OWN do()
-	// failed: WriteFile is not atomic (a truncate-then-write can leave the
-	// file half-written), so the failing op is restored from the snapshot too.
-	// Never set on CreateExclusive or Rename ops — their failure leaves the
-	// target untouched, and for a create it is usually someone ELSE's file.
+	// undoOnError marks an op restored from its snapshot when its OWN do() fails
+	// (WriteFile is not atomic); never set on CreateExclusive or Rename.
 	undoOnError bool
 }
 
-// parkedName is where apply_patch parks a file it cannot snapshot while the
-// patch commits: a dotfile beside it with a random suffix, on the same
-// filesystem and impossible for a model-chosen path to collide with.
+// parkedName is where apply_patch parks a file it cannot snapshot: a dotfile
+// beside it with a random suffix, same filesystem, uncollidable by a model path.
 func parkedName(p string) string {
 	var b [6]byte
 	_, _ = rand.Read(b[:]) // never fails as of Go 1.24
 	return path.Join(path.Dir(p), ".apply-patch."+path.Base(p)+"."+hex.EncodeToString(b[:]))
 }
 
-// rbLabel names an op in a rollback-failure report. The second half of a move
-// carries no summary desc (the move is summarized by its first op), so fall back
-// to a generic label rather than reporting a bare ": error".
+// rbLabel names an op in a rollback-failure report; the second half of a move
+// has no desc, so it gets a generic label rather than a bare ": error".
 func rbLabel(op fsOp) string {
 	if op.desc == "" {
 		return "(move: remove source)"
@@ -114,8 +106,7 @@ func rbLabel(op fsOp) string {
 }
 
 // applyPatch runs the two-phase apply: plan (pure, in-memory) then commit
-// (write, with rollback). Split out from the tool wrapper so it is unit-testable
-// against any Sandbox.
+// (write, with rollback); split from the tool wrapper to test against any Sandbox.
 func applyPatch(ctx context.Context, sb Sandbox, patch string) (string, error) {
 	edits, err := parsePatch(patch)
 	if err != nil {
@@ -123,8 +114,7 @@ func applyPatch(ctx context.Context, sb Sandbox, patch string) (string, error) {
 	}
 
 	// Plan phase: read originals, compute new content, build reversible ops.
-	// Nothing is written yet, so a hunk that can't be located fails here, before
-	// any file is touched (validation atomicity).
+	// Nothing is written yet, so an unlocatable hunk fails before any file is touched.
 	var ops []fsOp
 	// parked are the temp names of deleted files too large to snapshot; they
 	// are removed once every op has landed (spec §2.7s).
@@ -133,9 +123,8 @@ func applyPatch(ctx context.Context, sb Sandbox, patch string) (string, error) {
 		switch e.op {
 		case opAdd:
 			p, body := e.path, []byte(e.addBody)
-			// Adding over an existing file is an error, not an overwrite;
-			// CreateExclusive makes that race-free, and its undo can never
-			// delete a file another patch already had.
+			// Adding over an existing file is an error, not an overwrite; CreateExclusive
+			// makes that race-free, and its undo can never delete another patch's file.
 			ops = append(ops, fsOp{
 				do: func() error {
 					if err := sb.CreateExclusive(ctx, p, body); err != nil {

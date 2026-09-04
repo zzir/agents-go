@@ -12,10 +12,7 @@ import (
 )
 
 // AttachmentScheme prefixes an attachment id in the image_url a session
-// entry stores: "agents-attachment:<id>". Entries never hold the bucket URL
-// — the model boundary resolves the id against the CURRENT configuration.
-// It lives here, beside the row it names, because the packages that read and
-// write it (bridge, handler) all sit above store.
+// entry stores: "agents-attachment:<id>", resolved at the model boundary — invariant 56.
 const AttachmentScheme = "agents-attachment:"
 
 // AttachmentSentinelURL returns the image_url an entry stores for id.
@@ -30,9 +27,8 @@ func AttachmentSentinelID(u string) string {
 	return ""
 }
 
-// AttachmentStore persists uploaded-image metadata. The bytes are in the
-// bucket; these rows are what session entries reference and what the model
-// boundary resolves to public URLs.
+// AttachmentStore persists uploaded-image metadata; the bytes are in the
+// bucket, and the model boundary resolves these rows to public URLs.
 type AttachmentStore struct {
 	db *bun.DB
 }
@@ -110,9 +106,8 @@ func (s *AttachmentStore) ListUnboundBefore(ctx context.Context, cutoff time.Tim
 	return rows, nil
 }
 
-// Delete removes the row. Deleting an absent id is not an error: the reaper
-// retries rows whose object delete failed, and a second pass may find the row
-// already gone.
+// Delete removes the row. Deleting an absent id is not an error: a reaper
+// retry may find the row already gone.
 func (s *AttachmentStore) Delete(ctx context.Context, id string) error {
 	if _, err := s.db.NewDelete().Model((*Attachment)(nil)).Where("id = ?", id).Exec(ctx); err != nil {
 		return fmt.Errorf("deleting attachment %s: %w", id, err)

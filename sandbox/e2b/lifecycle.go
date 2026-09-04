@@ -37,9 +37,8 @@ func (s *Sandbox) Stop(ctx context.Context) error {
 	err := s.pause(ctx, id)
 	switch {
 	case err == nil, isConflict(err):
-		// Paused (or already paused — a 409, matched by status not message
-		// text). Drop the lease so the next ensure takes the slow path and
-		// resumes it, instead of the fast path handing back a paused sandbox.
+		// Paused (or already paused: a 409, matched by status). Drop the lease so the
+		// next ensure takes the slow path and resumes it.
 		s.mu.Lock()
 		s.leaseUntil = time.Time{}
 		s.mu.Unlock()

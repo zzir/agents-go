@@ -27,9 +27,8 @@ const maxImportSkills = 200
 
 type skillImportReq struct {
 	URL string `json:"url" binding:"required"`
-	// OwnerID names WHICH group this import refreshes — a sync of somebody
-	// else's published repository, for an admin. Empty means the caller's own
-	// group, the only one a first import may create (decisions §5.31).
+	// OwnerID names WHICH group this import refreshes (an admin syncing a
+	// member's published repo); empty means the caller's own.
 	OwnerID string `json:"owner_id,omitempty"`
 }
 
@@ -42,8 +41,7 @@ type skillImportResp struct {
 	Unchanged []string `json:"unchanged,omitempty"`
 	Skipped   []string `json:"skipped,omitempty"`
 	// Truncated reports that GitHub's tree listing was cut off (a very large
-	// repo): everything listed was imported, but files past the cut were not
-	// seen at all.
+	// repo): files past the cut were not seen at all.
 	Truncated bool `json:"truncated,omitempty"`
 }
 
@@ -59,13 +57,8 @@ type importGroup struct {
 	existed bool
 }
 
-// resolveImportTarget decides WHOSE group this import refreshes and whether
-// the caller may write it. Empty owner_id is the caller's own group — the
-// only one a first import may create. Naming another owner targets their
-// PUBLISHED group: an admin manages shared configuration but never edits a
-// member's private rows (decisions §5.29), so a foreign private group answers 404
-// exactly as it reads elsewhere, and so does one that does not exist. False
-// means the response is written.
+// resolveImportTarget decides WHOSE group this import refreshes: the caller's
+// own, or another owner's PUBLISHED group (decisions §5.29). False: response written.
 func (h *SkillHandler) resolveImportTarget(c *gin.Context, repo, wantOwner string) bool {
 	ownerID, admin, ok := callerScope(c)
 	if !ok {
@@ -139,8 +132,7 @@ func (h *SkillHandler) Import(c *gin.Context) {
 		return
 	}
 	// One deadline over the whole import: a GitHub walk is up to ~202 serial
-	// fetches, and per-fetch timeouts alone would let a stalling target
-	// stretch that into hours (decisions §5.26).
+	// fetches — decisions §5.26.
 	ctx, cancel := context.WithTimeout(c.Request.Context(), skillImportBudget)
 	defer cancel()
 	c.Request = c.Request.WithContext(ctx)
@@ -161,10 +153,8 @@ func (h *SkillHandler) Import(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
-// parseGitHubRepoURL recognizes a repository home URL —
-// https://github.com/{owner}/{repo}, optional .git or trailing slash. Deeper
-// paths (a file, a tree) are not repo imports and fall through to the raw
-// fetch.
+// parseGitHubRepoURL recognizes https://github.com/{owner}/{repo} (optional
+// .git or trailing slash); deeper paths fall through to the raw fetch.
 func parseGitHubRepoURL(raw string) (owner, repo string, ok bool) {
 	u, err := url.Parse(raw)
 	if err != nil || !strings.EqualFold(u.Host, "github.com") {
@@ -177,23 +167,19 @@ func parseGitHubRepoURL(raw string) (owner, repo string, ok bool) {
 	return parts[0], strings.TrimSuffix(parts[1], ".git"), true
 }
 
-// skillFetchTimeout bounds one import fetch, connect through body read: a
-// target that accepts and stalls must not hold the handler's goroutine and
-// connection open for as long as the client cares to wait.
+// skillFetchTimeout bounds one import fetch, connect through body read.
 const skillFetchTimeout = 30 * time.Second
 
 // skillImportBudget bounds one whole import, fetches and writes together.
 // Files past an expired budget land in skipped with the deadline error.
 const skillImportBudget = 5 * time.Minute
 
-// maxImportBytes bounds what one import holds in memory: the documents are
-// all fetched before any is written, so the cap is on their sum, not just on
-// each (maxSkillBytes).
+// maxImportBytes bounds what one import holds in memory — the sum of the
+// documents, which are all fetched before any is written.
 const maxImportBytes = 16 << 20
 
-// httpClient is the import fetcher: the proxy_url client when one is set,
-// a plain client otherwise (ProxyClient returns nil for "no proxy") — either
-// way bounded by skillFetchTimeout.
+// httpClient is the import fetcher: the proxy_url client when one is set, a
+// plain client otherwise, bounded by skillFetchTimeout.
 func (h *SkillHandler) httpClient(ctx context.Context) *http.Client {
 	c := h.settings.ProxyClient(ctx)
 	if c == nil {
@@ -229,9 +215,8 @@ func readBody(resp *http.Response) ([]byte, error) {
 	return data, nil
 }
 
-// importGitHubRepo walks a repository pinned at its HEAD commit: one call for
-// the commit sha, one for the full tree, then a raw fetch per SKILL.md — all
-// at the same commit, so a push mid-import cannot mix versions.
+// importGitHubRepo walks a repository pinned at its HEAD commit (sha, tree,
+// then a raw fetch per SKILL.md), so a push mid-import cannot mix versions.
 func (h *SkillHandler) importGitHubRepo(c *gin.Context, owner, repo string) (*skillImportResp, error) {
 	api := h.githubAPI + "/repos/" + owner + "/" + repo
 	head, err := h.githubGet(c, api+"/commits/HEAD")
@@ -284,8 +269,7 @@ func (h *SkillHandler) importGitHubRepo(c *gin.Context, owner, repo string) (*sk
 	repoURL := "https://github.com/" + owner + "/" + repo
 	resp := &skillImportResp{Repo: repoURL, Truncated: listing.Truncated}
 	// Everything is fetched first and written in one transaction at the end
-	// (apply), so the group is checked once, at an instant, rather than once
-	// per file across minutes of downloading.
+	// (apply), so the group is checked once, at an instant.
 	var docs []store.ImportDoc
 	seen, fetched := 0, 0
 	for _, e := range listing.Tree {
@@ -358,9 +342,8 @@ func (h *SkillHandler) importRawURL(c *gin.Context, rawURL string) (*skillImport
 	return resp, nil
 }
 
-// collect parses one fetched document and adds it to the batch the apply
-// lands. A document that is not a valid SKILL.md is skipped here, before any
-// transaction — a parse failure is the file's, not the group's.
+// collect parses one fetched document into the batch apply lands; an invalid
+// SKILL.md is skipped here, before any transaction.
 func collect(docs *[]store.ImportDoc, resp *skillImportResp, path, sha string, content []byte) {
 	label := path
 	if label == "" {
@@ -378,9 +361,7 @@ func collect(docs *[]store.ImportDoc, resp *skillImportResp, path, sha string, c
 }
 
 // apply lands the fetched batch in ONE transaction against the group resolved
-// before the fetch (decisions §5.31). Everything up to here was network I/O, up to
-// the whole import budget; a transfer or scope flip that landed meanwhile
-// refuses the apply outright (409) rather than writing part of it.
+// before the fetch; a transfer or flip that landed meanwhile is 409 — decisions §5.31.
 func (h *SkillHandler) apply(c *gin.Context, repo string, docs []store.ImportDoc, resp *skillImportResp) bool {
 	g := importTarget(c)
 	outcomes, err := h.store.ApplyImport(c.Request.Context(), repo, g.owner, g.scope, g.existed, docs)

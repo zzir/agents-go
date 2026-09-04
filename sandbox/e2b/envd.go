@@ -52,9 +52,8 @@ func (s *Sandbox) envdRequestAt(ctx context.Context, base, method, path string, 
 	return req, nil
 }
 
-// authenticate applies the data-plane credential. E2B mints a per-sandbox
-// token; a compatible service may take the API key instead, which is why this
-// is configuration rather than a constant.
+// authenticate applies the data-plane credential: E2B mints a per-sandbox
+// token, a compatible service may take the API key — hence configuration.
 func (s *Sandbox) authenticate(req *http.Request) {
 	s.mu.Lock()
 	token := s.accessToken
@@ -165,9 +164,8 @@ func (s *Sandbox) CreateExclusive(ctx context.Context, p string, content []byte)
 		return err
 	}
 	if res.ExitCode != 0 {
-		// set -C failed. Ask whether the path exists rather than sniffing a
-		// locale-dependent stderr: a stat that finds it is the ErrExist the
-		// exclusive create promises; anything else is the real failure.
+		// set -C failed: stat the path rather than sniff a locale-dependent stderr —
+		// found is the promised ErrExist, anything else is the real failure.
 		if serr := s.unary(ctx, procStat, map[string]any{"path": full}, nil); serr == nil {
 			return fmt.Errorf("e2b: create %q: %w", p, fs.ErrExist)
 		}
@@ -187,9 +185,8 @@ func (s *Sandbox) CreateExclusive(ctx context.Context, p string, content []byte)
 
 /* ---------- directory operations ---------- */
 
-// entryInfo mirrors filesystem.EntryInfo, in the camelCase protojson emits.
-// Both scalar fields are deliberately loose: the compatible services render
-// the SAME protobuf differently, and a strict type would break on one of them.
+// entryInfo mirrors filesystem.EntryInfo in protojson camelCase; both scalars
+// are loose because the compatible services render the SAME protobuf differently.
 type entryInfo struct {
 	Name string   `json:"name"`
 	Type fileType `json:"type"`
@@ -199,10 +196,8 @@ type entryInfo struct {
 	Size json.Number `json:"size"`
 }
 
-// fileType decodes filesystem.FileType however the service spells it. Verified
-// against both: E2B's envd 0.7 sends "FILE_TYPE_DIRECTORY", Alibaba Cloud's
-// 0.5 sends the enum's NUMBER, 2. A plain string field fails outright on the
-// second, taking the whole directory listing with it.
+// fileType decodes filesystem.FileType however the service spells it: E2B's
+// envd 0.7 sends "FILE_TYPE_DIRECTORY", Alibaba Cloud's 0.5 the enum's NUMBER, 2.
 type fileType struct{ dir bool }
 
 func (f *fileType) UnmarshalJSON(b []byte) error {
@@ -282,10 +277,8 @@ func (s *Sandbox) Rename(ctx context.Context, oldPath, newPath string) error {
 	return err
 }
 
-// makeDir creates a directory and its parents. An already-existing directory
-// is success: every caller here wants it to exist, not to have made it. Only
-// the CODE is matched — both verified services send "already_exists", and a
-// real failure whose message merely mentions "exists" must propagate.
+// makeDir creates a directory and its parents; already existing is success,
+// matched on the CODE "already_exists" only, never on the message text.
 func (s *Sandbox) makeDir(ctx context.Context, dir string) error {
 	base, err := s.envdBase(ctx)
 	if err != nil {

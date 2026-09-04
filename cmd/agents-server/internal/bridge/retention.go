@@ -46,13 +46,8 @@ func RunApprovalReaper(ctx context.Context, cfg *settings.Reader, approvals *sto
 			return
 		}
 		for _, p := range expired {
-			// Each row is claimed on its own — deleted in the SAME transaction
-			// as the task it ends, when it belongs to one: an approval that
-			// expires ends its task, and neither half can land without the
-			// other, whatever fails or crashes in between. A decision racing
-			// the reaper takes the row first or not at all; a stale row (its
-			// task moved to another attempt, or ended) is removed and moves
-			// nothing.
+			// Each row is claimed in the SAME transaction as the task it ends —
+			// invariant 37; a stale row is removed and moves nothing.
 			var task *store.Task
 			claimed := false
 			if tasks != nil {
@@ -64,11 +59,8 @@ func RunApprovalReaper(ctx context.Context, cfg *settings.Reader, approvals *sto
 				}
 			}
 			if task != nil {
-				// Against p.RunID — the attempt this expired approval belongs
-				// to — NEVER the row's current run id: after a crash +
-				// FailOrphans + retry, the row names the retry's run, and
-				// ending against it would cancel a healthy new attempt because
-				// an approval from a previous life expired.
+				// Against p.RunID, the attempt this approval belongs to — never the
+				// row's current run, which after a crash + retry is a healthy new attempt.
 				var ended bool
 				claimed, ended, err = tasks.ClaimApprovalCancelled(ctx, task.ID, p.RunID, "approval expired after "+strconv.Itoa(ttl)+" minutes")
 				if err != nil {
@@ -90,8 +82,7 @@ func RunApprovalReaper(ctx context.Context, cfg *settings.Reader, approvals *sto
 				continue // a decision took it first
 			}
 			// The banner goes to the session the approval was filed on — a
-			// task's or a step's hidden child session, whose transcript is
-			// where the pause happened.
+			// task's or step's hidden child session.
 			if ref, rerr := entries.RefFor(ctx, p.SessionID); rerr != nil {
 				log.Warn("cannot record an approval-timeout banner", "error", rerr, "session_id", p.SessionID)
 			} else {
@@ -180,17 +171,14 @@ func RunWakeupCleanup(ctx context.Context, wakeups *store.WakeupStore) {
 	runEvery(ctx, time.Hour, sweep)
 }
 
-// attachmentGrace is how long an uploaded image may wait unsent. Uploads are
-// bound the moment a run accepts them, so past this an unbound row is a
-// composer draft nobody sent.
+// attachmentGrace is how long an uploaded image may wait unsent; uploads are
+// bound when a run accepts them, so past this an unbound row is a dead draft.
 const attachmentGrace = 24 * time.Hour
 
-// RunAttachmentReaper collects orphan attachments — uploaded, never accepted
-// by a run — hourly: the bucket object first, then the row. That order is
-// load-bearing: a row whose object delete failed is retried next sweep,
-// while the reverse would leave an unreferenced object forever. The bucket's
-// own lifecycle rule is the backstop for objects this best-effort pass
-// misses. It blocks until ctx ends — run it in a goroutine.
+// RunAttachmentReaper collects orphan attachments (uploaded, never accepted by
+// a run) hourly: the bucket object first, then the row — a row whose object
+// delete failed is retried next sweep, while the reverse would leak the
+// object. It blocks until ctx ends — run it in a goroutine.
 func RunAttachmentReaper(ctx context.Context, cfg *settings.Reader, atts *store.AttachmentStore) {
 	log := logging.Ctx(ctx)
 	sweep := func() {

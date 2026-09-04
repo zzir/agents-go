@@ -16,9 +16,8 @@ import (
 // How a run is configured: the SDK RunOptions a build turns into, the session
 // wrapped for compaction, and the small policies read off the config.
 
-// compactionNotifier drives the chat UI's live indicator with transient
-// run.compaction status events. Trace recording is the compaction span's job
-// (opened by the SDK runner via CompactionArgs.StartSpan), not the notifier's.
+// compactionNotifier drives the chat UI's live indicator with run.compaction
+// events; the trace span is the SDK runner's (CompactionArgs.StartSpan).
 func compactionNotifier(send func(string, any), runID string) store.CompactionNotifier {
 	return store.CompactionNotifier{
 		OnStart: func() {
@@ -34,10 +33,8 @@ func compactionNotifier(send func(string, any), runID string) store.CompactionNo
 	}
 }
 
-// runOptionsFor assembles the RunOptions shared by the fresh-run and resume
-// paths. One constructor so a resume carries the same policies as the run it
-// continues. runContext is the Context value (the exec_command approval gate
-// reads a trusted session id from it).
+// runOptionsFor assembles the RunOptions shared by fresh and resume paths;
+// runContext is the Context value the exec_command gate reads a session id from.
 func runOptionsFor(built *BuildResult, sess *session.Session, provider agents.ModelProvider, tracer *tracing.Tracer, runContext any, log *slog.Logger) agents.RunOptions {
 	opts := agents.RunOptions{
 		Context: runContext,
@@ -54,9 +51,8 @@ func runOptionsFor(built *BuildResult, sess *session.Session, provider agents.Mo
 			ReasoningItemIDPolicy: built.ReasoningItemIDPolicy,
 			ToolNotFoundBehavior:  toolNotFoundBehavior(built.Behavior.ToolNotFoundBehavior),
 			ShouldStopAfterTurn:   stopAtTools(built.StopAtTools),
-			// Context overflow → forced compaction pass → retry the turn. Only
-			// bites when the session is compaction-aware; otherwise the overflow
-			// reports as before (spec §2.5g).
+			// Context overflow → forced compaction → retry, only on a
+			// compaction-aware session (spec §2.5g).
 			Overflow: agents.OverflowPolicy{MaxRetries: 2},
 		},
 		Guardrails: built.RunGuardrails,
@@ -72,12 +68,8 @@ func runOptionsFor(built *BuildResult, sess *session.Session, provider agents.Mo
 	return opts
 }
 
-// toolNotFoundBehavior resolves the agent's setting. Unset means RETURN TO
-// MODEL here, not the SDK's stricter default: a model inventing a tool name —
-// or reaching for one plan mode is hiding, or one a session without a sandbox
-// never had — is a routine slip, and ending the run over it takes down the
-// turn, and any workflow driving it, for something the model corrects on being
-// told. Set "error" to get the abort back.
+// toolNotFoundBehavior: unset means RETURN TO MODEL, not the SDK's stricter
+// default — a model inventing a tool name is a routine slip; "error" aborts.
 func toolNotFoundBehavior(s string) agents.ToolNotFoundBehavior {
 	if s == "" {
 		return agents.ToolNotFoundReturnToModel
@@ -85,9 +77,8 @@ func toolNotFoundBehavior(s string) agents.ToolNotFoundBehavior {
 	return agents.ParseToolNotFoundBehavior(s)
 }
 
-// wrapCompaction wraps sa with the compaction adapter when the agent config
-// enables it. An empty summary model falls back to the agent's own model, so
-// leaving the field blank does not silently disable compaction.
+// wrapCompaction wraps sa with the compaction adapter when the config enables
+// it; an empty summary model falls back to the agent's own.
 func wrapCompaction(sa *store.EntryStore, built *BuildResult, provider agents.ModelProvider, send func(string, any), runID string) *session.Session {
 	if !built.Compaction.Enabled || provider == nil {
 		return session.NewSession(sa)
@@ -102,16 +93,13 @@ func wrapCompaction(sa *store.EntryStore, built *BuildResult, provider agents.Mo
 	))
 }
 
-// summaryModelFor resolves the model a compaction pass summarizes with — the
-// config's compaction_model, else the agent's own. One definition, shared by
-// the run path and the manual CompactSession.
+// summaryModelFor resolves the compaction summary model — compaction_model,
+// else the agent's own; shared by the run path and CompactSession.
 func summaryModelFor(provider agents.ModelProvider, compaction store.CompactionGroup, agentModel string) (agents.Model, error) {
 	return provider.Model(cmp.Or(compaction.Model, agentModel))
 }
 
-// stopAtTools builds the turn hook for the agent config's stop_at_tools list:
-// the run ends after a turn that called any of the named tools. It returns nil
-// for an empty list so an unconfigured agent pays nothing.
+// stopAtTools builds the turn hook for stop_at_tools; nil for an empty list.
 func stopAtTools(names []string) func(context.Context, *agents.TurnResult) (bool, error) {
 	if len(names) == 0 {
 		return nil

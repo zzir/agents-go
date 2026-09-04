@@ -19,9 +19,8 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// MaxReplayBodyBytes caps a replay request: a whole traced generation posted
-// back — the conversation, the tool schemas, the instructions — which the
-// per-element trace_span_data_kb does not bound as a total.
+// MaxReplayBodyBytes caps a replay request (a whole traced generation posted
+// back), which the per-element trace_span_data_kb does not bound as a total.
 const MaxReplayBodyBytes = 64 << 20
 
 // PlaygroundHandler serves one-off model calls for replaying a generation
@@ -48,13 +47,11 @@ type playgroundReq struct {
 	// ModelSettings, when set, replaces the agent's configured settings — the
 	// replay dialog seeds it from the traced request so edits take effect.
 	ModelSettings *agents.ModelSettings `json:"model_settings,omitempty"`
-	// Tools are schema-only tool definitions echoed back from the traced
-	// request, so the model sees the same tool surface and can emit function
-	// calls. They are never executed: a single Respond runs no tool loop.
+	// Tools are schema-only definitions echoed from the traced request. They
+	// are never executed: a single Respond runs no tool loop.
 	Tools []playgroundTool `json:"tools,omitempty"`
-	// OutputSchema, when set, requests structured output — echoed from the
-	// traced generation so a structured call replays as one. Without it a
-	// replay of such a call is a different request (free text).
+	// OutputSchema requests structured output, echoed from the traced
+	// generation so a structured call replays as one.
 	OutputSchema *playgroundSchema `json:"output_schema,omitempty"`
 	// Stream selects the SSE response: `delta`/`reasoning` text events as they
 	// arrive, then one `done` (output, usage, duration_ms, ttft_ms) or `error`.
@@ -196,10 +193,8 @@ func (h *PlaygroundHandler) Generate(c *gin.Context) {
 	})
 }
 
-// generateStream is the SSE variant: text/reasoning deltas as they arrive,
-// then one `done` event (output, usage, duration_ms, ttft_ms) or `error`. The
-// client cancels by aborting the request — the context tears the model call
-// down.
+// generateStream is the SSE variant: text/reasoning deltas, then one `done`
+// event (output, usage, duration_ms, ttft_ms) or `error`. Aborting the request cancels.
 func (h *PlaygroundHandler) generateStream(c *gin.Context, model agents.Model, mreq agents.ModelRequest) {
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
@@ -227,10 +222,8 @@ func (h *PlaygroundHandler) generateStream(c *gin.Context, model agents.Model, m
 	// Fallback assembly from item.done events: some backends (e.g. ChatGPT
 	// with store=false) return an empty Output in the completed event.
 	var acc []agents.OutputItem
-	// TTFT stamps on the first DELTA — the first actual token. Earlier events
-	// carry none (response.created arrives immediately; output_item events
-	// only frame content). A terminal event stamps as a fallback so a stream
-	// with no deltas still reports something.
+	// TTFT stamps on the first DELTA (response.created arrives immediately);
+	// a terminal event stamps as a fallback for a stream with no deltas.
 	stampTTFT := func() {
 		if ttft < 0 {
 			ttft = time.Since(start).Milliseconds()
@@ -279,8 +272,7 @@ func (h *PlaygroundHandler) generateStream(c *gin.Context, model agents.Model, m
 		}
 	}
 	// The item.done fallback covers a TERMINAL response with an empty Output
-	// array — never a stream that broke off before its terminal event, which
-	// must report as the failure it is (mirrors the SDK's streaming path).
+	// array — never a stream that broke off before its terminal event.
 	if !terminal {
 		writeEvent("error", gin.H{"message": "model stream ended without a completed response"})
 		return
@@ -302,11 +294,9 @@ func (h *PlaygroundHandler) generateStream(c *gin.Context, model agents.Model, m
 }
 
 // AgentTools returns the agent's CURRENT tool surface as schema-only
-// definitions — what BuildFullAgent hands the model right now: bridge
-// built-ins, connected MCP servers' tools, the skills reader. No sandbox is
-// selected here, so sandbox tools reach a replay only via the traced request.
-// Backs the Replay dialog's tool picker, which offers these beyond the traced
-// set for what-if replays.
+// definitions (bridge built-ins, connected MCP servers' tools, the skills
+// reader) for the Replay dialog's tool picker. No sandbox is selected, so
+// sandbox tools reach a replay only via the traced request.
 //
 //	@Summary		Agent tool surface
 //	@Description	Schema-only definitions (name, description, parameters) of every tool the agent would carry right now, excluding sandbox tools (no sandbox is selected). Tools are never executed from here.
@@ -338,10 +328,8 @@ func (h *PlaygroundHandler) AgentTools(c *gin.Context) {
 		return
 	}
 	defer built.Release()
-	// This endpoint reports the FULL surface. A plan-mode build starts in the
-	// planning phase, which filters MCP listings; unlock first — this build
-	// serves no run, so the phase flag guards nothing here. Per-tool enabled
-	// hooks are per-run dynamic and deliberately not evaluated.
+	// The FULL surface: unlock the planning phase (it filters MCP listings,
+	// and this build serves no run). Per-run enabled hooks are not evaluated.
 	if built.PlanPhase != nil {
 		_ = built.PlanPhase.Unlock() // a fresh build has no hook armed; cannot fail
 	}
@@ -352,9 +340,8 @@ func (h *PlaygroundHandler) AgentTools(c *gin.Context) {
 	for _, t := range built.Agent.Tools {
 		out = append(out, describe(t))
 	}
-	// Connected MCP servers are part of the surface too. A server whose
-	// listing fails is skipped rather than failing the endpoint: this feeds a
-	// picker, and one broken server should not blank the whole list.
+	// A server whose listing fails is skipped rather than failing the
+	// endpoint: one broken server should not blank a picker.
 	for _, srv := range built.Agent.MCPServers {
 		tools, lerr := srv.ListTools(c.Request.Context(), nil, built.Agent)
 		if lerr != nil {

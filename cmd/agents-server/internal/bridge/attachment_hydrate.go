@@ -13,16 +13,11 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// Session entries store an image attachment as "agents-attachment:<id>", and
-// only the model boundary resolves that to the bucket's public URL. The
-// decorator below IS that boundary: wrapping the run's ModelProvider covers
-// every path items reach a model through — the current turn's fresh input,
-// history replayed from the session, a resumed RunState's original input, and
-// the compaction summarization request — with the stored form never rewritten.
+// The decorator below IS the model boundary that resolves attachment sentinels
+// — invariant 56; the stored form is never rewritten.
 
 // hydrateAttachments wraps provider so every model it yields resolves
-// attachment sentinels before the request leaves. A nil store returns the
-// provider untouched.
+// attachment sentinels before the request leaves; a nil store is a no-op.
 func hydrateAttachments(provider agents.ModelProvider, atts *store.AttachmentStore, base func(ctx context.Context) string) agents.ModelProvider {
 	if provider == nil || atts == nil {
 		return provider
@@ -63,11 +58,8 @@ func (m hydratingModel) StreamResponse(ctx context.Context, req agents.ModelRequ
 // sentinelMarker fast-rejects items with no sentinel before any JSON work.
 var sentinelMarker = []byte(store.AttachmentScheme)
 
-// hydrate returns items with every attachment sentinel replaced by its public
-// URL. Items are COPIED on rewrite, never mutated: the caller's slice is also
-// what run state and persistence hold. A sentinel whose row is gone (or with
-// storage unconfigured) degrades to a text placeholder — one lost image must
-// not take the conversation with it.
+// hydrate returns items with every sentinel replaced by its public URL. Items
+// are COPIED, never mutated (run state holds the same slice) — invariant 56.
 func (m hydratingModel) hydrate(ctx context.Context, items []agents.InputItem) []agents.InputItem {
 	// Pass 1: find the ids, touching only items that mention the scheme.
 	raws := make([][]byte, len(items))
@@ -138,10 +130,8 @@ func sentinelIDsIn(raw []byte) []string {
 	return ids
 }
 
-// rewriteSentinels rewrites each sentinel image_url via resolve; an
-// unresolvable one becomes an input_text placeholder so the message stays
-// well-formed for providers that reject dangling image parts. ok=false means
-// nothing changed.
+// rewriteSentinels rewrites each sentinel image_url via resolve; an unresolvable
+// one becomes an input_text placeholder. ok=false means nothing changed.
 func rewriteSentinels(raw []byte, resolve func(id string) (string, bool)) ([]byte, bool) {
 	var item map[string]any
 	if json.Unmarshal(raw, &item) != nil {

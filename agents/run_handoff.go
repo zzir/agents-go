@@ -14,18 +14,14 @@ const multipleHandoffsMessage = "Multiple handoffs detected, ignoring this one."
 // synthetic handoff output item.
 func (r *runner) executeHandoff(ctx context.Context, from *Agent, handoffs []toolRunHandoff, newStepItems []*RunItem) (*singleStepResult, error) {
 	run := handoffs[0]
-	// Every handoff call the model emitted is in the conversation as a
-	// function_call; the ones we ignore still need an output item, or the next
+	// Every handoff call the model emitted needs an output item, or the next
 	// model call is rejected for a dangling call.
 	for _, ignored := range handoffs[1:] {
 		newStepItems = append(newStepItems, newFunctionCallOutputItem(from, ignored.Call.CallID, multipleHandoffsMessage))
 	}
 	span := r.trace.StartHandoffSpan(run.Handoff.ToolName, r.agentParentID())
 	defer span.Finish()
-	// Validate the handoff arguments against the handoff's input schema before it
-	// fires, so a handoff that expects input but receives none (or invalid input)
-	// is rejected as a *ModelBehaviorError instead of silently transferring with
-	// zero-valued input.
+	// Invalid input is a *ModelBehaviorError, not a zero-valued transfer (spec §2.7h).
 	if verr := validateHandoffInput(&run.Handoff, run.Call.Arguments); verr != nil {
 		span.SetError(verr.Error(), map[string]any{"details": "invalid handoff input"})
 		return nil, verr
@@ -74,9 +70,8 @@ func applyHandoffInputFilter(filter func(HandoffInputData) HandoffInputData, ori
 	return out.InputHistory, nil
 }
 
-// handoffInputFilter resolves the filter for a handoff: the handoff's own
-// InputFilter takes precedence over the run-level RunOptions.HandoffInputFilter.
-// Returns nil when neither is set.
+// handoffInputFilter resolves a handoff's filter: its own InputFilter over the
+// run-level HandoffInputFilter; nil when neither is set.
 func (r *runner) handoffInputFilter(h *Handoff) func(HandoffInputData) HandoffInputData {
 	if h.InputFilter != nil {
 		return h.InputFilter

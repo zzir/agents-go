@@ -1,29 +1,17 @@
 package agents
 
 // serverCursor tracks what a server-managed conversation already holds, so
-// each turn sends only the delta. The zero value means locally-managed
-// history: every turn resends the full input.
-//
-// Two server modes share it. In previous_response_id mode responseID chains
-// the calls; in conversation-id mode conversationActive marks that the server
-// holds prior items (from the second turn on). itemCount marks how many
-// generated items the server already has; items past it — tool outputs
-// synthesized locally after the model call — are the next turn's delta.
+// each turn sends only the delta; the zero value resends the full input.
+// responseID chains previous_response_id calls; conversationActive marks a
+// conversation the server already holds; itemCount is the delta's start.
 type serverCursor struct {
 	responseID         string
 	itemCount          int
 	conversationActive bool
 }
 
-// buildTurnInput assembles one turn's model input. In previous_response_id
-// mode, only the items the server does not yet have are sent and prevID
-// chains the rest; likewise in conversation-id mode once the server holds
-// history. Otherwise the full history is rebuilt — original input plus every
-// generated item — and usedOriginal reports it, because only input that is
-// sent in full can be rewritten by an input guardrail's Replace verdict.
-//
-// It runs again within the first turn when a Blocking input guardrail
-// REPLACES the input: the guarded call itself must see the rewritten input.
+// buildTurnInput assembles one turn's model input: the delta past the cursor
+// under server-managed state, else the full history (usedOriginal reports it).
 func (r *runner) buildTurnInput(cur serverCursor, originalInput []InputItem, generated []*RunItem) (in []InputItem, prevID string, usedOriginal bool, err error) {
 	switch {
 	case r.opts.Conversation.UsePreviousResponseID && cur.responseID != "":
@@ -43,15 +31,8 @@ func (r *runner) buildTurnInput(cur serverCursor, originalInput []InputItem, gen
 	return applyReasoningItemIDPolicy(in, r.opts.Exec.ReasoningItemIDPolicy), prevID, usedOriginal, nil
 }
 
-// advance moves the cursor past a completed turn: the server now has
-// everything sent this turn plus the model's own output items, while
-// synthesized items (tool outputs) stay past the cursor, pending for the next
-// call. A no-op for locally-managed history.
-//
-// It is NOT called for a resumed turn: that turn re-processes the interrupted
-// response, which the pause-time cursor (restored from the RunState) already
-// accounts for. Advancing there would mark the tool outputs completed before
-// the pause as already-served, and the server would never receive them.
+// advance moves the cursor past a completed turn; synthesized items stay past
+// it. Not called for a resumed turn, whose pause-time cursor already accounts for it.
 func (cur *serverCursor) advance(opts ConversationOptions, resp *ModelResponse, lenBeforeStep, modelItems int) {
 	served := lenBeforeStep + modelItems
 	if opts.UsePreviousResponseID && resp.ResponseID != "" {

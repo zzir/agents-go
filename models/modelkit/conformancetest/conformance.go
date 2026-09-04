@@ -1,16 +1,10 @@
-// Package conformancetest is the golden test matrix every agents.Model
-// adapter in this repository must pass.
-//
-// It checks the adapter against the runner's consumption contract (decisions
-// §5.10): which output item types come back, which stream events appear and
-// in what order, how usage is accounted, that every synthesized item
-// round-trips into next-turn input, and that the canonical histories a run
-// replays are accepted. The suite drives the Model interface only — each
-// adapter supplies a NewModel hook that returns a Model backed by a fake
-// backend speaking that adapter's own wire protocol, primed to answer the
-// scenario. The suite cannot know wire formats; translating a TurnSpec into
-// wire bytes is the adapter test's half of the bargain, and is itself the
-// translation being verified.
+// Package conformancetest is the golden test matrix every agents.Model adapter
+// in this repository must pass: it checks the adapter against the runner's
+// consumption contract (decisions §5.10) — output item types, stream event
+// vocabulary and order, usage accounting, round-tripping of every synthesized
+// item, and acceptance of the histories a run replays. Each adapter supplies a
+// NewModel hook backed by a fake speaking its own wire protocol, primed to
+// answer the scenario; translating a TurnSpec into wire bytes is the adapter's half.
 package conformancetest
 
 import (
@@ -207,9 +201,8 @@ func Scenarios() []Scenario {
 				Usage:      UsageSpec{Input: 15, Output: 9},
 			},
 		},
-		// Input-side scenarios: the canonical histories a multi-turn run
-		// replays. Each must be accepted and answered; what the wire looks
-		// like is the adapter's own unit tests' business.
+		// Input-side scenarios: the canonical histories a multi-turn run replays.
+		// Each must be accepted and answered; the wire shape is the adapter's business.
 		{
 			Name:  "history_tool_result",
 			Input: toolLoopHistory(),
@@ -403,9 +396,8 @@ func assertRoundTrip(t *testing.T, spec TurnSpec, output []agents.OutputItem) {
 		}
 	}
 	if spec.Reasoning != nil && spec.Reasoning.Encrypted != "" {
-		// Survival is the contract: whatever canonical form the adapter chose
-		// for the blob must come back byte-identical from next-turn input —
-		// that is what lets the backend resume its reasoning.
+		// Survival is the contract: whatever canonical form the adapter chose must
+		// come back byte-identical from next-turn input.
 		var respEnc string
 		for _, item := range output {
 			if item.Type == "reasoning" {
@@ -454,30 +446,9 @@ func assertUsage(t *testing.T, spec UsageSpec, u *agents.Usage) {
 	}
 }
 
-// allowedEventTypes is the closed set a synthesized stream may emit. The
-// runner switches on a few of these and forwards the rest to consumers; an
-// event name outside the Responses vocabulary would leak the backend's own
-// protocol into every downstream consumer.
-//
-// It is built from the agents.Event* constants — the one place the vocabulary
-// is spelled — so a name here cannot drift from the name the runner switches
-// on. So this set does not independently pin the wire strings: it and the
-// modelkit constructors read the same constant, and a wrong value would satisfy
-// both. Pinning the constants to their wire strings is
-// agents/stream_events_test.go's job; what this set checks is that an adapter
-// emits nothing outside them.
-//
-// response.queued and the three failure events are deliberately absent:
-//
-//   - agents.EventResponseQueued: real lifecycle preamble that a pass-through
-//     backend emits and the runner tolerates wherever created/in_progress
-//     appear, but a synthesized stream has no queue to report, so modelkit
-//     offers no constructor for it and no scenario here produces one.
-//   - the failure events (agents.EventError / EventResponseError /
-//     EventResponseFailed): every scenario in Scenarios() drives a response
-//     that arrives, whole or length-truncated. Terminal failures are not part
-//     of this matrix, so an adapter emitting one here is answering a scenario
-//     it was not asked.
+// allowedEventTypes is the closed set a synthesized stream may emit, built from
+// the agents.Event* constants (decisions §5.10). response.queued and the failure
+// events are absent: no scenario here is queued or fails.
 var allowedEventTypes = map[string]bool{
 	agents.EventResponseCreated:                    true,
 	agents.EventResponseInProgress:                 true,
@@ -599,9 +570,8 @@ func consumeStream(t *testing.T, model agents.Model, s Scenario) *agents.ModelRe
 	if s.Turn.Reasoning != nil && s.Turn.Reasoning.Text != "" && reasonDeltas.String() != s.Turn.Reasoning.Text {
 		t.Errorf("reasoning deltas concatenate to %q, want %q", reasonDeltas.String(), s.Turn.Reasoning.Text)
 	}
-	// Argument deltas are optional in the contract, but when a stream emits
-	// them they must reassemble to the finished call's arguments — incremental
-	// JSON assembly is exactly where a translating adapter goes wrong.
+	// Argument deltas are optional, but when emitted they must reassemble to the
+	// finished call's arguments — incremental JSON is where an adapter goes wrong.
 	for _, item := range doneItems {
 		if item.Type != "function_call" {
 			continue
@@ -615,10 +585,8 @@ func consumeStream(t *testing.T, model agents.Model, s Scenario) *agents.ModelRe
 	return final
 }
 
-// assertDoneItemsMatchFinal checks that the per-item done events and the
-// terminal event's output agree: the runner uses the terminal output but falls
-// back to accumulated done items when a backend omits it, so the two must be
-// interchangeable.
+// assertDoneItemsMatchFinal checks the per-item done events and the terminal
+// output agree: the runner falls back to done items when a backend omits output.
 func assertDoneItemsMatchFinal(t *testing.T, done, final []agents.OutputItem) {
 	t.Helper()
 	if len(done) != len(final) {
@@ -640,15 +608,7 @@ func assertDoneItemsMatchFinal(t *testing.T, done, final []agents.OutputItem) {
 }
 
 // usageFromFinal performs the runner's own extraction from a streamed terminal
-// response (stream_run.go) — same "no usage block means zero requests" guard,
-// same shared mapping — so the suite asserts what the run would record.
-//
-// Sharing that mapping rather than restating it here is deliberate. What is
-// under test is the ADAPTER — does its terminal event report the tokens its
-// backend reported, in Responses semantics (decisions §5.10)? — and
-// assertUsage checks that against the scenario's expected numbers. A
-// hand-written copy of the field list here would assert only that two copies
-// agree, and would go stale the day a detail field is added.
+// response (stream_run.go), so the suite asserts what the run would record.
 func usageFromFinal(resp *responses.Response) *agents.Usage {
 	if !resp.JSON.Usage.Valid() {
 		return agents.NewUsage()

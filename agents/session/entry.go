@@ -34,11 +34,9 @@ const (
 	EntryKindCustom EntryKind = "custom"
 )
 
-// Entry is one record in a session's history.
-//
-// Entries are append-only: nothing is rewritten in place. An entry whose display
-// must change later gets an EntryKindUpdate naming it, folded in at projection
-// time, which is what lets a session be shared, forked, and read concurrently.
+// Entry is one record in a session's history. Entries are append-only: a
+// display that must change later gets an EntryKindUpdate naming it, folded in
+// at read time — spec §2.5b.
 type Entry struct {
 	// ID identifies the entry within its session. Storage assigns it when
 	// empty.
@@ -46,9 +44,7 @@ type Entry struct {
 	// Seq is the entry's position in append order, assigned by storage. A Cursor
 	// pages on it.
 	Seq int64 `json:"seq,omitzero"`
-	// ParentID is the entry this one follows; empty means a root. A session is a
-	// tree, so branches share their common prefix and an abandoned attempt stays
-	// recorded rather than deleted.
+	// ParentID is the entry this one follows; empty means a root (spec §2.5d).
 	ParentID string `json:"parent_id,omitzero"`
 	// Kind says what this entry holds.
 	Kind EntryKind `json:"kind"`
@@ -91,18 +87,13 @@ type Entry struct {
 }
 
 // UpdatePayload is the body of an EntryKindUpdate entry: it amends the display
-// of an entry recorded earlier — a display that settles after its turn ended,
-// such as a background task card whose task outlives the turn.
-//
-// An update may be stored BEFORE its target; projection still associates them
-// by id, so the ordering never has to be a race.
+// of an entry recorded earlier. An update may be stored BEFORE its target;
+// projection associates them by id (spec §2.5b).
 type UpdatePayload struct {
 	// TargetID is the entry being amended.
 	TargetID string `json:"target_id,omitzero"`
 	// TargetCallID amends the entry whose display carries this tool call id, for
-	// an amender that knows the call but not the entry — the ordinary case for
-	// anything reporting on a tool call afterwards, since the entry id is
-	// storage's to assign.
+	// an amender that knows the call but not the storage-assigned entry id.
 	TargetCallID string `json:"target_call_id,omitzero"`
 	// Display is merged over the target's display. Only non-zero fields apply.
 	Display ItemDisplay `json:"display"`
@@ -137,9 +128,7 @@ func NewAnnotationEntry(display ItemDisplay, src Source) Entry {
 }
 
 // LeafPayload is the body of an EntryKindLeaf entry: it moves the session's
-// active branch to another entry. The move is an append, not a mutable pointer,
-// so the switch stays in history and the current leaf is derived by folding the
-// log rather than stored beside it.
+// active branch to another entry — an append, not a mutable pointer (spec §2.5d).
 type LeafPayload struct {
 	// TargetID is the entry that becomes the new leaf.
 	TargetID string `json:"target_id"`

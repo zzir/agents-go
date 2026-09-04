@@ -17,12 +17,8 @@ type streamAttempt struct {
 	pending []*ResponseStreamEvent
 }
 
-// deliverStreamAttempt consumes one inner stream on behalf of a retrying or
-// falling-back decorator. Events that carry nothing the model generated —
-// lifecycle preamble and terminal-failure events — are buffered rather than
-// delivered until the first output event commits the attempt, so a retried or
-// swapped attempt stays one coherent response to the consumer (decisions §5.16). A
-// nil event neither commits nor buffers; it is dropped.
+// deliverStreamAttempt consumes one inner stream for a retry/fallback decorator,
+// holding back lifecycle and failure events until output commits it (decisions §5.16).
 func deliverStreamAttempt(
 	seq iter.Seq2[*ResponseStreamEvent, error],
 	yield func(*ResponseStreamEvent, error) bool,

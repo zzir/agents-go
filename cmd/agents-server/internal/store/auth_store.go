@@ -33,9 +33,8 @@ const (
 	TokenKindPAT     = "pat"
 )
 
-// LocalUserID is the implicit account behind --auth token mode: one machine,
-// one person, full access. Ownership columns reference it so both auth modes
-// share one data model. A fixed UUID, as every id column is uuid-typed.
+// LocalUserID is the implicit account behind --auth token mode, so both auth
+// modes share one data model. A fixed UUID, as every id column is uuid-typed.
 const LocalUserID = "00000000-0000-0000-0000-000000000001"
 
 const (
@@ -72,9 +71,8 @@ func newTokenSecret(kind string) string {
 	return sessionTokenPrefix + s
 }
 
-// hashToken is the stored form of a token: SHA-256 hex. The plaintext is never
-// written anywhere; possession of the database does not grant possession of a
-// credential.
+// hashToken is the stored form of a token: SHA-256 hex. The plaintext is
+// never written anywhere.
 func hashToken(plaintext string) string {
 	sum := sha256.Sum256([]byte(plaintext))
 	return hex.EncodeToString(sum[:])
@@ -133,9 +131,8 @@ type UserPatch struct {
 	Disabled *bool
 }
 
-// Patch applies p to one account, in a transaction that refuses to leave no
-// enabled admin (ErrLastAdmin) — the local account, which cannot sign in,
-// does not count as one. ErrNotFound when absent.
+// Patch applies p to one account, refusing to leave no enabled admin
+// (ErrLastAdmin; the local account does not count). ErrNotFound when absent.
 func (s *UserStore) Patch(ctx context.Context, id string, p UserPatch) error {
 	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		u := new(User)
@@ -182,14 +179,12 @@ type OAuthIdentity struct {
 	AvatarURL string
 }
 
-// ResolveOAuthLogin finds or creates the account for one completed OAuth login.
-// Merge order: the (provider, subject) identity wins; else a user with the
-// same verified email gains a new identity (one person, several providers);
-// else a new account. A login matching bootstrapAdmin is an admin; with no
-// bootstrapAdmin the first OAuth account is (docs/howto/workbench-auth.md). Concurrent
-// logins of one person are arbitrated by the unique indexes — the loser's
-// transaction fails and its one retry sees the winner's rows; concurrent
-// first logins of two people are serialized by firstAccountLock.
+// ResolveOAuthLogin finds or creates the account for one completed OAuth
+// login. Merge order: the (provider, subject) identity; else the same
+// verified email; else a new account. A login matching bootstrapAdmin is an
+// admin; with none, the first OAuth account is (docs/howto/workbench-auth.md).
+// Concurrent logins are arbitrated by the unique indexes (one retry) and,
+// for two first logins, by firstAccountLock.
 func (s *UserStore) ResolveOAuthLogin(ctx context.Context, id OAuthIdentity, bootstrapAdmin string) (*User, error) {
 	u, err := s.resolveOAuthLogin(ctx, id, bootstrapAdmin)
 	if _, dup := UniqueViolation(err); dup {
@@ -233,8 +228,7 @@ func (s *UserStore) resolveOAuthLogin(ctx context.Context, id OAuthIdentity, boo
 }
 
 // userForIdentity resolves the account inside the login transaction, creating
-// rows as the merge order requires. firstIsAdmin makes a brand-new account the
-// admin when it is the first real one.
+// rows as the merge order requires; firstIsAdmin makes the first real account the admin.
 func userForIdentity(ctx context.Context, tx bun.Tx, id OAuthIdentity, email string, firstIsAdmin bool) (*User, error) {
 	idn := new(Identity)
 	err := tx.NewSelect().Model(idn).
@@ -256,10 +250,8 @@ func userForIdentity(ctx context.Context, tx bun.Tx, id OAuthIdentity, email str
 	case errors.Is(err, sql.ErrNoRows):
 		u = &User{Email: email, Role: RoleMember}
 		if firstIsAdmin {
-			// Two different people's first logins must not both count zero:
-			// PostgreSQL runs READ COMMITTED, so the count is serialized by a
-			// transaction-scoped advisory lock (SQLite's one connection
-			// serializes by itself).
+			// Two first logins must not both count zero: under PostgreSQL's
+			// READ COMMITTED the count is serialized by an advisory lock.
 			if tx.Dialect().Name() == dialect.PG {
 				if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(?)", firstAccountLock); err != nil {
 					return nil, err
@@ -311,9 +303,8 @@ func (s *AuthTokenStore) Mint(ctx context.Context, userID, kind, name string, ex
 }
 
 // Authenticate resolves a presented plaintext to its user and token row, or
-// ErrNotFound — expired counts as absent (and is deleted in passing). A hit
-// slides a session's expiry and stamps last_used_at, at most once per
-// tokenSlideEvery.
+// ErrNotFound (expired counts as absent and is deleted in passing). A hit
+// slides a session's expiry at most once per tokenSlideEvery.
 func (s *AuthTokenStore) Authenticate(ctx context.Context, plaintext string) (*User, *AuthToken, error) {
 	// Microseconds is the column precision; the returned token must equal the row.
 	now := time.Now().UTC().Truncate(time.Microsecond)

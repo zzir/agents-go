@@ -1,15 +1,9 @@
 // Package anthropic implements the agents Model interface against the
-// Anthropic Messages API, using the official anthropic-sdk-go.
-//
-// The adapter translates in both directions at the model boundary: canonical
-// Responses input items become Messages turns, and Messages content blocks /
-// stream events come back as canonical items and response.* events (via
-// modelkit). Everything outside the adapter — the runner, sessions, run
-// state, the server — keeps speaking the canonical format and does not know
-// this backend exists.
-//
-// Request features the Messages API has no equivalent for fail with a
-// *agents.UserError rather than being dropped; see Capabilities for the list.
+// Anthropic Messages API, using the official anthropic-sdk-go. The adapter
+// translates in both directions at the model boundary — canonical Responses
+// items in, canonical items and response.* events out (via modelkit) — so
+// nothing outside it knows this backend exists (decisions §5.10). Features the
+// API lacks fail with a *agents.UserError; see Capabilities.
 package anthropic
 
 import (

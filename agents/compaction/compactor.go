@@ -9,12 +9,9 @@ import (
 )
 
 // Compactor adapts a Strategy to agents.Compactor, so a run can be given one
-// without the core package knowing anything about groups, triggers or indexes.
-//
-// It keeps its Index between passes. That is the whole reason it is a struct
-// rather than a function: a conversation that regroups its entire history on
-// every turn does work proportional to the thing it is trying to shrink, and
-// does it again on the next turn.
+// without the core knowing about groups, triggers or indexes. It keeps its
+// Index between passes, which is why it is a struct: regrouping the whole
+// history every turn is work that grows with the thing it shrinks.
 type Compactor struct {
 	strategy  Strategy
 	estimator TokenEstimator
@@ -36,10 +33,8 @@ func (c *Compactor) Compact(ctx context.Context, entries []session.Entry) ([]ses
 	if c.strategy == nil || len(entries) == 0 {
 		return entries, nil
 	}
-	// One run's passes are sequential, but a Compactor may be shared across
-	// concurrent runs — an application that configures one and reuses it. The
-	// Index is not safe for that, and a torn index is a corrupted context
-	// rather than a slow one.
+	// A Compactor may be shared across concurrent runs, and the Index is not
+	// safe for that: a torn index is a corrupted context, not a slow one.
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -65,36 +60,18 @@ func (c *Compactor) Index() *Index {
 var _ agents.Compactor = (*Compactor)(nil)
 
 // Checkpoint builds an append-only compaction checkpoint from the compactor's
-// current index: what the pass folded away, and the stand-ins that render in
-// its place.
-//
-// It reports ok=false when there is nothing to record — no pass has excluded
-// anything, so a checkpoint would claim a compaction that did not happen.
-//
-// The checkpoint is a new entry, never a rewrite, and it copies nothing. The
-// entries it names in ExcludedIDs stay in the session exactly as they were —
-// a reader can offer to expand them, a fork from before the checkpoint still
-// finds its full history — and the entries the pass KEPT are not in it at all:
-// the projection reads them from the session, so there is no second copy to
-// fall out of step when one of them is later removed. Only a group's
-// Replacement travels in the checkpoint (as a CompactionFold), because that
-// stand-in exists nowhere else.
-//
-// seen is the preceding Compact call's INPUT — the entries the pass ran over,
-// not what it produced. It is what the index is checked against below.
+// current index: what the pass folded away and the stand-ins that render in
+// its place. ok=false when nothing was excluded, or when the index no longer
+// describes seen. seen is the preceding Compact call's INPUT — the entries the
+// pass ran over, not what it produced. What a checkpoint holds: spec §2.5f.
 func (c *Compactor) Checkpoint(seen []session.Entry) (session.Entry, bool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.idx == nil {
 		return session.Entry{}, false, nil
 	}
-	// The index must still describe exactly the entries the caller's Compact
-	// saw. A Compactor may be shared across concurrent runs, and between one
-	// run's pass and its checkpoint another run's pass can have rebuilt the
-	// index over a different session — recording THAT state here would write
-	// the other conversation's exclusions and fold content into this one's
-	// log. Losing a checkpoint costs one recomputed pass; leaking one is
-	// unrecoverable.
+	// The index must still describe exactly what the caller's Compact saw; a
+	// shared Compactor re-aimed at another session reports nothing (spec §2.5f).
 	if n, ok := c.idx.prefixMatches(seen); !ok || n != len(seen) {
 		return session.Entry{}, false, nil
 	}
@@ -144,8 +121,7 @@ func (c *Compactor) Checkpoint(seen []session.Entry) (session.Entry, bool, error
 }
 
 // foldFor turns group i's Replacement into the checkpoint fold that renders in
-// its place, anchored before the first surviving entry after it so the
-// projection puts the stand-in where the folded group was.
+// its place, anchored before the first surviving entry after it.
 func foldFor(groups []*Group, i int, replaces []string) (session.CompactionFold, bool) {
 	g := groups[i]
 	f := session.CompactionFold{Replaces: replaces}

@@ -1,16 +1,8 @@
 # Guardrails
 
 A guardrail inspects a run at one or more **stages** and decides whether to let
-it proceed, substitute the content, or halt.
-
-```go
-type Guardrail struct {
-    Name     string
-    Stages   []GuardrailStage
-    Blocking bool
-    Run      func(ctx context.Context, rc *RunContext, p GuardrailPayload) (GuardrailDecision, error)
-}
-```
+it proceed, substitute the content, or halt. [`agents.Guardrail`](https://pkg.go.dev/github.com/zzir/agents-go/agents#Guardrail)
+is a name, the stages it inspects, an optional `Blocking` flag and a `Run` func.
 
 There is one guardrail type for every stage. A content scanner that should see
 the input, the tool arguments and the final output is **one value**, not three:
@@ -45,17 +37,11 @@ scanner := agents.Guardrail{
 | `Replace(msg, info)` | Substitute `msg` for the inspected content and continue. |
 | `Trip(info)` | Halt the run with a `*GuardrailTripwireError`. |
 
-What `Replace` substitutes depends on the stage:
-
-- `StageInput` — the run input becomes a single user message carrying the text.
-  A **`Blocking`** guardrail's replacement reaches the model on the guarded
-  call itself (the turn's input is rebuilt from it before the call); a racing
-  one necessarily misses the call it raced and applies from the next turn on —
-  a guardrail that must rewrite what the model sees sets `Blocking`. For finer
-  rewriting use a model-input filter instead.
-- `StageOutput` — it becomes the run's final output.
-- `StageToolInput` — the tool does **not** execute; the text becomes its result.
-- `StageToolOutput` — it replaces the result sent back to the model.
+What `Replace` substitutes per stage — a user message for the input, the final
+output, the tool's result in place of running it, the content fed back — and
+when a `Blocking` input replacement reaches the model are in
+[spec §2.6](../reference/spec.md#26-guardrails); for finer input rewriting use
+a model-input filter instead.
 
 `OutputInfo` rides along on every decision, including `Allow`, so callers can
 read a guardrail's diagnostics whether or not it fired.
@@ -109,13 +95,7 @@ they guard.
 
 ## Ordering
 
-Guardrails at the input and output stages run **concurrently** and fail fast:
-the first tripwire or error ends the wait and cancels the context handed to the
-rest.
-
-Tool-stage guardrails run **in order** and stop at the first `Replace` or
-`Trip` — once one has substituted the content, running the others against the
-original would be meaningless.
+Input and output stages run their guardrails concurrently and fail fast; tool stages run in order and stop at the first `Replace` or `Trip` ([spec §2.6](../reference/spec.md#26-guardrails)).
 
 ## Inspecting results
 

@@ -14,10 +14,8 @@ import (
 	"time"
 )
 
-// ShellSession is a shell that stays alive between commands, so `cd`, exported
-// variables, an activated virtualenv and a started background process all
-// survive into the next call. Completion is detected with a SENTINEL printed
-// after each command — the only reliable signal on a PTY (spec §2.7k).
+// ShellSession is a shell that stays alive between commands; completion is
+// detected with a sentinel printed after each command (spec §2.7k).
 type ShellSession struct {
 	term Terminal
 	// sentinel is what appears in the OUTPUT; head and tail are the two halves
@@ -46,10 +44,8 @@ type ShellSession struct {
 	closed   bool
 }
 
-// OpenShellSession starts a persistent shell in the sandbox.
-//
-// The backend must support interactive terminals: a session is a shell held
-// open, which Exec cannot express.
+// OpenShellSession starts a persistent shell in the sandbox, which must
+// implement TerminalOpener.
 func OpenShellSession(ctx context.Context, sb Sandbox, opts TerminalOptions) (*ShellSession, error) {
 	opener, ok := sb.(TerminalOpener)
 	if !ok {
@@ -109,9 +105,8 @@ func (s *ShellSession) readLoop() {
 	}
 }
 
-// newSentinel mints a random per-session token in two halves: the command
-// line carries them as separate printf arguments, so the PTY's echo never
-// contains the joined token (spec §2.7k).
+// newSentinel mints a random per-session token in two halves, so the PTY's
+// echo never contains the joined token (spec §2.7k).
 func newSentinel() (head, tail string) {
 	var b [12]byte
 	// As of Go 1.24 crypto/rand.Read never fails; it aborts the program if the
@@ -161,9 +156,8 @@ func (s *ShellSession) Run(ctx context.Context, cmd string, timeout time.Duratio
 // flooding command drops its middle, keeping the head and the live tail.
 const sessionBufCap = int(DefaultMaxOutputBytes)
 
-// readUntilSentinel reads until the token appears, returning what came before
-// it and the exit status that follows it. Every failure return carries the
-// partial output read so far, echo-stripped like a completed command's.
+// readUntilSentinel reads until the token appears, returning the output before
+// it and the exit status after it; every failure carries the partial output.
 func (s *ShellSession) readUntilSentinel(ctx context.Context, timeout time.Duration) (string, int, error) {
 	partial := func() string { return trimEcho(string(s.buf), s.lastLine) }
 	timer := time.NewTimer(timeout)
@@ -201,10 +195,8 @@ func (s *ShellSession) readUntilSentinel(ctx context.Context, timeout time.Durat
 	}
 }
 
-// capBuf drops the middle of s.buf once it doubles sessionBufCap, keeping the
-// head and the tail the sentinel arrives in, and returns scanFrom remapped.
-// scanFrom trails the buffer's end, so the cut (and the seam it creates) stays
-// below the scan window and can never be misread as a sentinel.
+// capBuf drops the middle of s.buf once it doubles sessionBufCap and returns
+// scanFrom remapped; the cut stays below the scan window (spec §2.7k).
 func (s *ShellSession) capBuf(scanFrom int) int {
 	headKeep := sessionBufCap * 3 / 5 // truncateWithInfo's head/tail split
 	cut := len(s.buf) - (sessionBufCap - headKeep)
@@ -215,9 +207,8 @@ func (s *ShellSession) capBuf(scanFrom int) int {
 	return scanFrom - (cut - headKeep)
 }
 
-// trimEcho removes the PTY's echo of what was written, as an exact line-by-line
-// prefix rather than by pattern (spec §2.7k). With echo disabled the loop
-// simply finds no match.
+// trimEcho removes the PTY's echo of what was written as an exact line-by-line
+// prefix (spec §2.7k); with echo disabled the loop finds no match.
 func trimEcho(out, written string) string {
 	outLines := strings.Split(out, "\n")
 	for echoed := range strings.SplitSeq(strings.TrimRight(written, "\n"), "\n") {
@@ -233,8 +224,7 @@ func trimEcho(out, written string) string {
 }
 
 // Close ends the session. The terminal closes BEFORE s.mu is taken, so a
-// command in flight is preempted — its reader sees the close and Run returns an
-// error — rather than Close waiting out the rest of the command's timeout.
+// command in flight is preempted rather than waited out (spec §2.7k).
 func (s *ShellSession) Close() error {
 	err := s.closeTerm()
 	s.mu.Lock()
@@ -272,8 +262,7 @@ type sessionPool struct {
 }
 
 // errSessionPoolClosed is what a named command gets once the pool's owner has
-// released its shells: the sandbox is being torn down, so opening a fresh shell
-// on it would only leak one.
+// released its shells (spec §2.7k).
 var errSessionPoolClosed = errors.New("sandbox: session pool is closed")
 
 func newSessionPool() *sessionPool {
@@ -300,10 +289,8 @@ func (p *sessionPool) run(ctx context.Context, sb Sandbox, name, cmd string, tim
 	return out, code, err
 }
 
-// session returns the named session, opening one on first use. The open runs
-// OUTSIDE p.mu (on a remote backend it is a network round-trip): two callers
-// racing the same new name both open one and the loser takes the winner's,
-// and the second critical section re-checks closed (spec §2.7k).
+// session returns the named session, opening one on first use OUTSIDE p.mu;
+// the loser of a race takes the winner's (spec §2.7k).
 func (p *sessionPool) session(ctx context.Context, sb Sandbox, name string) (*ShellSession, error) {
 	p.mu.Lock()
 	s, ok := p.sessions[name]
@@ -337,9 +324,8 @@ func (p *sessionPool) session(ctx context.Context, sb Sandbox, name string) (*Sh
 	return opened, nil
 }
 
-// Close ends every session in the pool, and is final: a command that arrives
-// afterwards fails rather than opening a shell on a sandbox whose owner has
-// already let go of it.
+// Close ends every session and is final: a later command fails rather than
+// opening a shell on a released sandbox (spec §2.7k).
 func (p *sessionPool) Close() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -354,9 +340,8 @@ func (p *sessionPool) Close() error {
 	return errors.Join(errs...)
 }
 
-// formatSessionResult renders a session command's outcome the way formatResult
-// renders a one-shot one: a session has a single interleaved stream rather than
-// separate stdout and stderr, because that is what a PTY gives.
+// formatSessionResult renders a session command's outcome like formatResult;
+// a PTY gives one interleaved stream, not separate stdout and stderr.
 func formatSessionResult(out string, code, limit int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "exit_code: %d\n", code)

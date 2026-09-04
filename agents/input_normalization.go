@@ -16,12 +16,8 @@ var toolCallToOutputType = map[string]string{
 	"tool_search_call": "tool_search_output",
 }
 
-// normalizeStoredInput scrubs items that entered the run from outside it —
-// session history in prepareRun, a resumed state's original input — so replay
-// cannot 400 at the Responses API: orphan tool calls (calls without a matching
-// output, e.g. persisted by any client at an interruption) are dropped
-// together with the reasoning items tied to them, then duplicate identified
-// items collapse keeping the latest occurrence.
+// normalizeStoredInput scrubs items from outside the run (session history, a resumed
+// state's input): orphan tool calls and their reasoning go, duplicates keep the latest.
 func normalizeStoredInput(items []InputItem) []InputItem {
 	if len(items) == 0 {
 		return items
@@ -50,13 +46,8 @@ func inputItemAsMap(item InputItem) map[string]any {
 	return m
 }
 
-// dropOrphanToolCalls removes tool-call items with no matching output item, so
-// resumes and replays do not send dangling calls the API rejects ("No tool
-// output found..."). A reasoning item tied to a dropped call — reasoning binds
-// to the next non-reasoning item — is dropped with it, since the API likewise
-// rejects reasoning "without its required following item". Calls without a
-// call_id are kept (only hosted anonymous tool_search calls lack one; better
-// to let the server decide than to over-prune).
+// dropOrphanToolCalls removes tool calls with no matching output — the API rejects
+// them — plus the reasoning bound to each; a call without a call_id is kept.
 func dropOrphanToolCalls(items []InputItem, itemMaps []map[string]any) ([]InputItem, []map[string]any) {
 	completed := map[string]bool{} // outputType + call id
 	for _, m := range itemMaps {
@@ -133,11 +124,8 @@ func dropOrphanToolCalls(items []InputItem, itemMaps []map[string]any) ([]InputI
 	return outItems, outMaps
 }
 
-// inputItemDedupeKey derives a stable identity for deduplication: messages
-// (role-bearing or type=="message") are never
-// deduped, placeholder fake ids are ignored so call_id-based dedupe still
-// applies, and identity comes from id, then call_id, then approval_request_id.
-// "" means "no identity — always keep".
+// inputItemDedupeKey derives a dedupe identity from id, then call_id, then
+// approval_request_id; "" (a message, or no identity) means always keep.
 func inputItemDedupeKey(m map[string]any) string {
 	if m == nil {
 		return ""

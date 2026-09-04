@@ -28,24 +28,12 @@ func UnwrapAs[E error](status func(E) (int, http.Header)) UnwrapAPIError {
 	}
 }
 
-// RetryableError reports whether a model-call error is transient and worth
-// retrying. It is the shared half of each adapter's RetryableError.
-//
-// context.Canceled is never retried. context.DeadlineExceeded is — a deadline
-// is usually the ATTEMPT's own budget (a per-call request timeout), the
-// hung-request case retrying exists for; when it is the caller's own context
-// that expired, the retry loop's next wait sees ctx.Err() and stops anyway,
-// so treating timeouts as non-retryable only ever threw away attempts that
-// had budget left. For API errors an explicit X-Should-Retry header outranks
-// the status code — the server knows whether THIS failure is transient, and a
-// 500 it will never recover from is as real as a 400 it would; only the two
-// exact values carry meaning, so a malformed header falls back to status
-// classification. Then 408 (request timeout), 409 (conflict), 429 (rate
-// limit) and any 5xx are transient; other 4xx client errors will not succeed
-// on retry. Errors the unwrap does not recognize are retryable only when they
-// are network-level transport failures: net.Error, or io.ErrUnexpectedEOF —
-// an SSE stream whose connection a gateway or proxy severed mid-flight, which
-// reaches here as a plain io error rather than a net.Error.
+// RetryableError reports whether a model-call error is transient — the shared
+// half of each adapter's RetryableError. context.Canceled never retries;
+// context.DeadlineExceeded does. For an API error an exact X-Should-Retry
+// "true"/"false" header outranks the status; otherwise 408, 409, 429 and any
+// 5xx retry and other 4xx do not. An error the unwrap does not recognize
+// retries only as a transport failure: a net.Error or io.ErrUnexpectedEOF.
 func RetryableError(err error, unwrap UnwrapAPIError) bool {
 	if err == nil {
 		return false
@@ -76,12 +64,10 @@ func RetryableError(err error, unwrap UnwrapAPIError) bool {
 	return isNet
 }
 
-// RetryAfter extracts a server-suggested delay from an API error's response
-// headers, for use as agents.RetryPolicy.RetryAfter. Headers are consulted in
-// order of preference: Retry-After-Ms (milliseconds, integer or float — sent
-// by OpenAI, absent elsewhere) first, then Retry-After (seconds as an integer
-// or float, or an HTTP-date). It reports ok=false when no usable header is
-// present, leaving the caller's computed backoff in effect.
+// RetryAfter extracts a server-suggested delay from an API error's headers, for
+// agents.RetryPolicy.RetryAfter: Retry-After-Ms (integer or float ms) first,
+// then Retry-After (seconds, or an HTTP-date). ok=false when no usable header
+// is present, leaving the caller's computed backoff in effect.
 func RetryAfter(err error, unwrap UnwrapAPIError) (time.Duration, bool) {
 	_, header, ok := unwrap(err)
 	if !ok || header == nil {

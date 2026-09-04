@@ -132,7 +132,7 @@ export function SkillsPanel() {
 
   // An imported repo flips as ONE group, server-side and all-or-nothing —
   // a repo's skills publish together, so the group is never half-published
-  // (spec §5.29). A workbench-authored skill flips on its own row.
+  // (decisions §5.29). A workbench-authored skill flips on its own row.
   const setGroupScope = async (group: SkillGroup, scope: 'global' | 'private') => {
     if (group.repo !== '') {
       try {

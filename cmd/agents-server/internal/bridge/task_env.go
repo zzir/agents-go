@@ -13,24 +13,21 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// This file holds the three answers only this server can give the task manager.
-// The state machine, the wake-up debt, the guards and the compare-and-set live
-// in agents/tasks.
+// The three answers only this server can give the task manager; the state
+// machine, the wake-up debt and the compare-and-set live in agents/tasks.
 
 // taskResolver answers "what is this agent called" from the agent-config table.
 type taskResolver struct{ r *Runner }
 
-// Resolve implements tasks.AgentResolver. The "default"/"self" aliases resolve
-// to the parent's own config (a model delegating to "another one of me"); an
-// explicit name that does not exist fails, with the available names listed.
+// Resolve implements tasks.AgentResolver: "default"/"self" resolve to the
+// parent's own config; an unknown explicit name fails, listing what exists.
 func (t taskResolver) Resolve(ctx context.Context, parentSessionID, name string) (tasks.Spec, error) {
 	cfg, err := t.r.resolveSpawnAgent(ctx, parentSessionID, name)
 	if err != nil {
 		return tasks.Spec{}, err
 	}
-	// Snapshot the SPAWNING run's setup, not the task's: this payload comes
-	// back when the parent is woken, and the wake-up must use the agent the
-	// parent was talking to.
+	// Snapshot the SPAWNING run's setup: the wake-up must use the agent the
+	// parent was talking to (invariant 32).
 	var parentAgentConfigID, parentProjectID string
 	if rid, ok := t.r.hub.ActiveRunForSession(parentSessionID); ok {
 		if info, ok := t.r.hub.Info(rid); ok {
@@ -45,10 +42,8 @@ func (t taskResolver) Resolve(ctx context.Context, parentSessionID, name string)
 			}
 		}
 	}
-	// A parent that has never run and is bound to nothing (a workflow started
-	// over REST on a fresh session) has no agent to be woken as; the task's
-	// own agent delivers then — a result nobody could deliver is worse than one
-	// read by the agent that produced it.
+	// A parent that never ran and is bound to nothing has no agent to be woken
+	// as; the task's own agent delivers then.
 	if parentAgentConfigID == "" {
 		parentAgentConfigID = cfg.ID
 	}
@@ -74,19 +69,16 @@ func (t taskLauncher) Launch(ctx context.Context, req tasks.LaunchRequest) error
 	}
 	in := store.DecodeInherit(req.Inherit)
 	if req.Wake {
-		// The parent's wake-up run: same agent and project the spawning run
-		// had, so the notification is read by the agent that asked for it. The
-		// lineage rides along so the run's trace records which run spawned the
-		// delivered task(s).
+		// The parent's wake-up run: the spawning run's agent and project, with
+		// the lineage for the trace (invariant 32).
 		if in.AgentConfigID == "" {
 			return fmt.Errorf("task notification undeliverable: no agent config for session %s", req.SessionID)
 		}
 		_, err := t.r.StartWakeRun(req.SessionID, in.AgentConfigID, in.ProjectID, req.Input, req.ParentRunID, nil)
 		return err
 	}
-	// The task's own run. It shares the parent's project, and thereby its
-	// command-trust scope; the child's first run CAS-binds its hidden session
-	// with the same project.
+	// The task's own run shares the parent's project, and thereby its command-
+	// trust scope; the child's first run CAS-binds its hidden session with it.
 	_, err := t.r.startRunWithID(req.RunID, req.SessionID, in.TaskAgentID, in.ProjectID, TextInput(req.Input), "", nil, nil)
 	return err
 }
@@ -95,16 +87,11 @@ func (t taskLauncher) Launch(ctx context.Context, req tasks.LaunchRequest) error
 type taskStopper struct{ r *Runner }
 
 // taskStopSettleTimeout bounds the wait for a finished task run's segment to
-// drain, so a stop landing in the ordinary window between "the run ended" and
-// "the row says so" reports the real ending. It matches the approval settle
-// wait: both wait on the same gate, for the same reason.
+// drain, so a stop in the "ended but not yet on the row" window reports truly.
 const taskStopSettleTimeout = approvalSettleTimeout
 
-// Stop implements tasks.Stopper.
-//
-// A task paused on an approval has no run to cancel, so the work here is
-// discarding the approval and telling every client — otherwise the chip stays
-// "input required" with dead buttons and holds a task-cap slot.
+// Stop implements tasks.Stopper. A task paused on an approval has no run to
+// cancel: the approval is discarded and every client told.
 func (t taskStopper) Stop(ctx context.Context, runID string, graceful bool) (tasks.StopOutcome, error) {
 	info, live := t.r.hub.Info(runID)
 	if live && info.Status == RunRunning {
@@ -121,19 +108,13 @@ func (t taskStopper) Stop(ctx context.Context, runID string, graceful bool) (tas
 		}
 	}
 	if !live {
-		// The hub has no record: the run was never registered or was collected
-		// long ago. Saying so lets the SDK record the ending itself instead of
-		// waiting for a run that will never report.
+		// No hub record (never registered, or collected): say so, and the SDK
+		// records the ending itself instead of waiting on a run that never reports.
 		return tasks.StopUnknownRun, nil
 	}
 	if isTerminalRunStatus(info.Status) {
-		// The run ended on its own before this stop arrived (the hub marks a run
-		// finished before its outcome reaches the row). Nothing was cancelled, so
-		// wait the window out first: the segment records its outcome (postRun)
-		// then closes its done gate, so a closed gate means the row is settled.
-		// The SDK treats a finished run with nothing on the row as a lost
-		// outcome; answering before the gate closes would look like that. An
-		// already-drained segment returns at once.
+		// Ended on its own before the stop: wait the settle window out, since a
+		// closed gate means postRun wrote the row (else the SDK sees a lost outcome).
 		deadline := time.Now().Add(taskStopSettleTimeout)
 		if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
 			// A caller stopping many tasks under one bound (a session
@@ -147,29 +128,22 @@ func (t taskStopper) Stop(ctx context.Context, runID string, graceful bool) (tas
 	return tasks.StopCancelled, nil
 }
 
-// onTaskUpdate is the task manager's OnTaskUpdate: it tells every connected
-// client (task.updated) and records the change against the spawn call's card,
-// which happens long after the turn that spawned it ended. The card update is
-// appended rather than rewritten: a fast task can finish before the parent turn
-// is persisted, so the update may be stored first and projection associates it
-// by call id.
+// onTaskUpdate is the manager's OnTaskUpdate: tell every client (task.updated)
+// and append the change to the spawn call's card — invariant 21.
 func (r *Runner) onTaskUpdate(ctx context.Context, t *tasks.Task) {
 	r.publishTaskUpdated(ctx, t)
 	if t.ToolCallID == "" {
 		return
 	}
-	// Updates fold in append order, so a non-terminal one landing after a
-	// terminal one would roll the card back to "waiting for input" on a finished
-	// task. Check the store (the CAS in Finalize makes it the arbiter) before
-	// recording a status that would move the card backwards.
+	// Updates fold in append order: never record a non-terminal status over a
+	// task the store already says is terminal (the CAS makes it the arbiter).
 	if !isTerminalTaskStatus(string(t.Status)) && r.Deps.Tasks != nil {
 		if cur, err := r.Deps.Tasks.Get(ctx, t.ID); err == nil && isTerminalTaskStatus(cur.Status) {
 			return
 		}
 	}
-	// Heading and one-liner are display's first-class fields; id and status stay
-	// in Extra as task-renderer state. Empty Summary merges as absent (non-zero
-	// fields only), so a later update cannot blank an earlier summary.
+	// Title/Summary are display's own fields; id and status ride in Extra.
+	// An empty Summary merges as absent, so a later update cannot blank one.
 	display := agents.ItemDisplay{
 		Title:   t.Label,
 		Summary: t.Summary,
@@ -180,10 +154,8 @@ func (r *Runner) onTaskUpdate(ctx context.Context, t *tasks.Task) {
 		},
 	}
 	if t.Summary != "" {
-		// A later update cannot blank a summary, so tag whose attempt this summary
-		// is (Extra merges per key). That lets the timeline drop a summary from an
-		// earlier attempt than the card is on, instead of showing a voided failure
-		// as the current result.
+		// Tag whose attempt the summary is (Extra merges per key), so the
+		// timeline can drop a voided earlier attempt's summary.
 		display.Extra["task_summary_attempt"] = t.AttemptNo()
 	}
 	ref, rerr := store.RefFor(ctx, r.db, t.ParentSessionID)
@@ -209,15 +181,8 @@ func (r *Runner) AnnounceTask(ctx context.Context, taskID string) {
 	}
 }
 
-// publishTaskUpdated tells the parent session's subscribers what the task now
-// is. It rides the task's CURRENT run's stream when the hub holds that run —
-// replayed to a connection that attaches mid-run — and is broadcast to every
-// connection that stream does not reach: all of them when there is no run (a
-// task paused before its step, a transition or retry announced before its
-// run registers), and the ones that joined after a run was interrupted on an
-// approval, since a new connection attaches to live runs only. A startup
-// sweep tells nobody either way, which is fine: nobody is connected at
-// startup, and the rows are refetched on load.
+// publishTaskUpdated rides the task's CURRENT run stream when the hub holds it
+// and is broadcast to every connection that stream misses — invariant 37.
 func (r *Runner) publishTaskUpdated(ctx context.Context, t *tasks.Task) {
 	if t == nil || t.RunID == "" || t.ParentSessionID == "" {
 		return
@@ -263,9 +228,8 @@ func (r *Runner) publishTaskUpdated(ctx context.Context, t *tasks.Task) {
 	}
 }
 
-// taskInfoFrom converts the SDK's task view to this server's API shape.
-// MaxAttempts comes from the Runner (the manager's configuration), so every
-// response tells a client whether a retry is still on the table.
+// taskInfoFrom converts the SDK's task view to this server's API shape;
+// MaxAttempts comes from the Runner so every response says if a retry remains.
 func (r *Runner) taskInfoFrom(i *tasks.Info) *TaskInfo {
 	if i == nil {
 		return nil

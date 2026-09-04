@@ -116,10 +116,8 @@ func ToolOutputImageFromBytes(mimeType string, data []byte) ToolOutputImage {
 	return ToolOutputImage{ImageURL: DataURL(mimeType, data)}
 }
 
-// toolOutputContentItem builds a content-list function_call_output input item
-// when output is structured/multimodal content (a ToolOutputContent or a
-// non-empty []ToolOutputContent), reporting false for ordinary values so the
-// caller falls back to the string path.
+// toolOutputContentItem builds a content-list function_call_output item for a
+// ToolOutputContent or non-empty slice; false means use the string path.
 func toolOutputContentItem(callID string, output any) (InputItem, bool) {
 	var parts []ToolOutputContent
 	switch v := output.(type) {

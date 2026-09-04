@@ -11,9 +11,8 @@ import (
 const DefaultMaxTurns = 10
 
 // MaxTurnsUnlimited disables the turn budget when set as
-// RunOptions.Exec.MaxTurns — the run loops until it produces a final output,
-// hands off to a finishing agent, or is cancelled. Use with care: a model that
-// never finishes will loop indefinitely.
+// RunOptions.Exec.MaxTurns: the run loops until a final output, a finishing
+// handoff or cancellation. A model that never finishes loops forever.
 const MaxTurnsUnlimited = -1
 
 // ModelInputData is the editable portion of a model call passed to a
@@ -27,13 +26,10 @@ type ModelInputData struct {
 // model call. Returning an error aborts the run.
 type CallModelInputFilter func(ctx context.Context, rc *RunContext, agent *Agent, data ModelInputData) (ModelInputData, error)
 
-// RunOptions configures a run. The zero value is usable — agents.RunSync(ctx,
-// agent, "hi", agents.RunOptions{}) works as long as the agent can resolve a
-// model (an explicit Agent.ModelImpl, or Model.Override / Model.Provider here).
-//
-// Fields are grouped by what they configure rather than listed flat —
-// Conversation in particular collects options that constrain each other (a local
-// Session and server-managed state are alternatives, not layers).
+// RunOptions configures a run. The zero value works as long as the agent can
+// resolve a model (Agent.ModelImpl, or Model.Override / Model.Provider here).
+// Fields are grouped by what they configure; Conversation in particular
+// collects options that constrain each other (spec §2.0b).
 type RunOptions struct {
 	// Model selects and configures the model behind every agent in the run.
 	Model ModelOptions
@@ -69,15 +65,12 @@ type RunOptions struct {
 	// run; the run wraps it in a fresh RunContext of its own.
 	Context any
 
-	// parentTrace, when set, makes the run record its spans into an existing
-	// trace instead of starting (and finishing) its own. Set internally for
-	// nested agent-as-tool runs; not user-facing.
+	// parentTrace, when set, records the run's spans into an existing trace
+	// instead of starting its own; set internally for nested runs.
 	parentTrace *tracing.TraceHandle
 
-	// parentSpanID, when set alongside parentTrace, parents the nested run's
-	// agent spans under the function span of the agent-as-tool call that
-	// triggered it, so trace trees show which tool call owns the nested run.
-	// Set internally; not user-facing.
+	// parentSpanID, with parentTrace, parents the nested run's agent spans
+	// under the agent-as-tool call's function span. Set internally.
 	parentSpanID string
 }
 
@@ -117,11 +110,10 @@ type ConversationOptions struct {
 	// Session.
 	Settings session.Settings
 
-	// UsePreviousResponseID opts into server-managed conversation state: instead
-	// of resending the full history each turn, the runner chains calls via the
-	// OpenAI Responses API's previous_response_id and sends only new items. This
-	// saves tokens but requires a model that returns response IDs and keeps
-	// responses stored (the default; do not set ModelSettings.Store=false).
+	// UsePreviousResponseID opts into server-managed conversation state: calls
+	// chain via previous_response_id and only new items are sent. It needs a
+	// model that returns response ids and keeps responses stored (do not set
+	// ModelSettings.Store=false).
 	UsePreviousResponseID bool
 
 	// ConversationID attaches the run to a server-side OpenAI conversation
@@ -131,14 +123,10 @@ type ConversationOptions struct {
 	ConversationID string
 
 	// Projectors overrides how session entries become model input, per entry
-	// kind. It is the single place that answers "what does the model get to
-	// read": the defaults send items and compaction checkpoints and nothing
-	// else, so an annotation or terminal output is recorded without being put
-	// in the model's mouth.
-	//
-	// A projector mapped to nil suppresses that kind entirely. The common
-	// override is the opposite — projecting session.EntryKindTerminal as a user message
-	// so the model can see what was run by hand.
+	// kind — the single answer to "what does the model get to read". The
+	// defaults send items and compaction checkpoints and nothing else. A
+	// projector mapped to nil suppresses that kind; the common override is the
+	// opposite, projecting session.EntryKindTerminal as a user message.
 	Projectors map[session.EntryKind]session.Projector
 }
 
@@ -158,12 +146,10 @@ type ExecOptions struct {
 	// ToolNotFoundReturnToModel feeds an error back so the model can retry.
 	ToolNotFoundBehavior ToolNotFoundBehavior
 
-	// PreApprovalToolInputGuardrails, when true, runs a tool's input guardrails
-	// before surfacing a human-approval interruption for it: a guardrail
-	// rejection returns the guardrail message as the tool output without emitting
-	// an approval request or executing the tool. Calls that pass still re-run the
-	// same guardrails immediately before execution after approval, so
-	// time-sensitive checks are revalidated on resume. Off by default.
+	// PreApprovalToolInputGuardrails runs a tool's input guardrails before
+	// surfacing its approval interruption: a rejection returns the guardrail
+	// message as the tool output without asking a human. Calls that pass re-run
+	// them after approval too. Off by default.
 	PreApprovalToolInputGuardrails bool
 
 	// HandoffInputFilter is a run-level default applied to any handoff that does
@@ -185,29 +171,21 @@ type ExecOptions struct {
 	// context did not fit. The zero value returns the error unchanged.
 	Overflow OverflowPolicy
 
-	// ReasoningItemIDPolicy controls whether reasoning-item ids are kept when run
-	// items are converted back into model input on later turns. The default
-	// (ReasoningItemIDPreserve) keeps them; ReasoningItemIDOmit strips them. It
-	// is persisted across interruptions in RunState.
+	// ReasoningItemIDPolicy controls whether reasoning-item ids are kept when
+	// run items go back to the model on later turns (default: kept). Persisted
+	// across interruptions in RunState.
 	ReasoningItemIDPolicy ReasoningItemIDPolicy
 
 	// PrepareNextTurn rebuilds the next turn's configuration at the turn
-	// boundary, returning nil to leave it to the usual resolution.
-	//
-	// It is how a run changes shape mid-flight — swap in a cheaper model once
-	// the hard part is done, withdraw a tool after it has been used, tighten
-	// the instructions — without mutating the Agent, which a concurrent run
-	// may be reading.
+	// boundary (nil leaves it to the usual resolution) — how a run changes
+	// shape mid-flight, swapping a model or withdrawing a tool, without
+	// mutating the Agent a concurrent run may be reading (spec §2.3b).
 	PrepareNextTurn func(ctx context.Context, tr *TurnResult) (*TurnSnapshot, error)
 
 	// ShouldStopAfterTurn ends the run after a turn that would otherwise
-	// continue, instead of calling the model again.
-	//
-	// It is consulted at the turn boundary — after the turn's items are
-	// persisted, before the next model call — so a run stopped here has its
-	// full history saved. It is a predicate, not a producer: the final output
-	// is the turn's last message text, or the last tool output when the turn
-	// produced no message. Anything richer is available on the RunResult.
+	// continue. Consulted at the save point, so a stopped run has its full
+	// history saved. A predicate, not a producer: the final output is the
+	// turn's last message text, else its last tool output (spec §2.3c).
 	ShouldStopAfterTurn func(ctx context.Context, tr *TurnResult) (bool, error)
 }
 
@@ -218,11 +196,9 @@ type ObserveOptions struct {
 	// Build one with tracing.NewTracer(processor).
 	Tracer *tracing.Tracer
 
-	// IncludeSensitiveData controls whether generation spans record the full
-	// model request (model, system instructions, input items) and output items.
-	// nil means include (the default). Set to false when trace exports must not
-	// carry conversation content. The SDK reads no environment variable — the
-	// caller decides (spec §2.14).
+	// IncludeSensitiveData controls whether generation spans record the model
+	// request and output items. nil means include. The SDK reads no
+	// environment variable (spec §2.14).
 	IncludeSensitiveData *bool
 
 	// TraceGroupID links this run's trace to a group of related traces (e.g. one

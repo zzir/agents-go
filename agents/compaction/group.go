@@ -1,12 +1,6 @@
 // Package compaction shrinks a session's history so a long conversation keeps
-// fitting in a model's context window.
-//
-// The unit of work is a group, not an entry. A function call and its output
-// belong together — sending one without the other is rejected by the API — and
-// so does a reasoning block and the tool call it precedes. Grouping makes those
-// pairings structural: once entries are grouped, cutting through a pair is not
-// something a strategy can do wrong, because a strategy only ever includes or
-// excludes whole groups.
+// fitting in a model's context window. The unit of work is a group, not an
+// entry: a strategy only ever includes or excludes whole groups.
 package compaction
 
 import (
@@ -62,15 +56,11 @@ type Group struct {
 	// Tokens is the group's estimated size.
 	Tokens int
 
-	// Excluded marks a group a strategy has removed from the context. The
-	// group itself is NOT deleted: exclusion is a view, so a strategy can be
-	// re-run, undone, or explained, and the stored history stays intact.
+	// Excluded marks a group a strategy removed from the context. The group is
+	// NOT deleted: exclusion is a view (spec §2.5f).
 	Excluded bool
-	// settled marks an exclusion that a later model call has already priced
-	// in: once new entries arrive, any usage they carry measured the view
-	// WITHOUT this group, so ContextTokens must stop subtracting it. Fresh
-	// exclusions (this pass, no call since) are the ones the newest usage
-	// still counts.
+	// settled marks an exclusion a later model call has already priced in: its
+	// usage measured the view WITHOUT this group, so ContextTokens stops subtracting it.
 	settled bool
 	// ExcludeReason names the strategy that excluded it, for tracing and for
 	// telling a user why their history shrank.
@@ -107,9 +97,8 @@ func classify(e session.Entry) (kind GroupKind, isCall, isOutput, isReasoning bo
 	case "assistant":
 		return GroupAssistantText, false, false, false
 	}
-	// A message with no role and no known type: an item kind this build does
-	// not model. Treat it as assistant content so it stays in context rather
-	// than being silently reclassified as non-conversation.
+	// A message with no role and no known type is an item kind this build does
+	// not model; treat it as assistant content so it stays in context.
 	if p.Type == "message" {
 		return GroupAssistantText, false, false, false
 	}

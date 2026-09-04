@@ -10,9 +10,8 @@ import (
 	"time"
 )
 
-// localWaitDelay bounds how long Exec waits for the stdout/stderr pipes after
-// the process exits or the timeout fires. Without it, a backgrounded
-// grandchild that inherited the pipes would block Wait until it exits.
+// localWaitDelay bounds how long Exec waits for the output pipes after exit; a
+// backgrounded grandchild holding them would otherwise block Wait.
 const localWaitDelay = 2 * time.Second
 
 // LocalOptions configures LocalSandbox.
@@ -35,12 +34,10 @@ type LocalOptions struct {
 	MaxReadFileBytes int64
 }
 
-// LocalSandbox runs commands directly on the host in a temporary working
-// directory. It performs NO isolation beyond a minimal default environment
-// (only PATH, HOME and TMPDIR from the host plus ExecRequest.Env, unless
-// LocalOptions.InheritHostEnv is set) and must only be used for development
-// and tests with trusted code — never for untrusted, agent-generated code in
-// production. Use the docker or e2b backend for real isolation.
+// LocalSandbox runs commands directly on the host with NO isolation beyond a
+// minimal default environment (PATH, HOME and TMPDIR plus ExecRequest.Env,
+// unless LocalOptions.InheritHostEnv). Development and trusted code only —
+// never agent-generated code in production; docker or e2b isolate for real.
 type LocalSandbox struct {
 	opts LocalOptions
 }
@@ -51,12 +48,8 @@ func NewLocal() *LocalSandbox { return &LocalSandbox{} }
 // NewLocalWithOptions returns a LocalSandbox with the given options.
 func NewLocalWithOptions(opts LocalOptions) *LocalSandbox { return &LocalSandbox{opts: opts} }
 
-// exec runs req.Cmd in a working directory, wiring stdout/stderr to the
-// provided writers.
-//
-// The command runs in its own process group (on Unix), and the whole group is
-// killed when the timeout fires, so backgrounded grandchildren cannot outlive
-// the deadline or hold the output pipes open indefinitely.
+// exec runs req.Cmd in a working directory, streaming to the writers. The
+// command leads its own process group (Unix), killed whole when the timeout fires.
 func (s *LocalSandbox) exec(ctx context.Context, req ExecRequest, stdout, stderr io.Writer) (*ExecResult, error) {
 	if len(req.Cmd) == 0 {
 		return nil, errors.New("sandbox: ExecRequest.Cmd is empty")
@@ -100,25 +93,17 @@ func (s *LocalSandbox) exec(ctx context.Context, req ExecRequest, stdout, stderr
 
 	runErr := cmd.Run()
 	if cctx.Err() != nil && cmd.Process != nil {
-		// Best-effort sweep of any processes left behind in the group, but ONLY
-		// after the context fired (timeout or cancellation), i.e. when cmd.Cancel
-		// already SIGKILLed the group and stragglers are plausible. After a
-		// normal exit the group leader has been reaped, so its PID — and thus the
-		// process-group ID — may already have been reused; an unconditional
-		// sweep here could SIGKILL an unrelated process group.
+		// Sweep the group ONLY after the context fired: after a normal exit the
+		// leader's PID (and so the group id) may already belong to someone else.
 		_ = killProcessGroup(cmd.Process.Pid)
 	}
 	res := &ExecResult{}
 	if errors.Is(runErr, exec.ErrWaitDelay) {
-		// The process itself exited successfully (a failure would surface as
-		// *exec.ExitError) but something kept the output pipes open past
-		// WaitDelay; treat it as a normal exit.
+		// The process exited fine; something kept the pipes open past WaitDelay.
 		runErr = nil
 	}
-	// The CALLER's ending is checked first. cctx inherits it, deadline included,
-	// so asking cctx first would report a deadline the caller set as this
-	// command's own timeout, and a cancelled run would come back as an ordinary
-	// nonzero exit (spec §2.7m).
+	// The CALLER's ending is checked first, else its deadline would read as this
+	// command's timeout (spec §2.7m).
 	if runErr != nil && ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -156,11 +141,8 @@ func (s *LocalSandbox) ExecStream(ctx context.Context, req ExecRequest, stdout, 
 	return s.exec(ctx, req, stdout, stderr)
 }
 
-// resolve maps a model-supplied path onto the host filesystem with shell
-// semantics, mirroring exec: an absolute path is used as-is, a relative one
-// resolves under WorkDir. LocalSandbox performs no isolation — exec already
-// runs unrestricted on the host — so the file tools share exec's view rather
-// than pretending to a narrower one.
+// resolve maps a model-supplied path with shell semantics, mirroring exec: an
+// absolute path as-is, a relative one under WorkDir (spec §2.7t).
 func (s *LocalSandbox) resolve(p string) string {
 	if filepath.IsAbs(p) {
 		return filepath.Clean(p)
@@ -260,8 +242,7 @@ func (s *LocalSandbox) ListDir(_ context.Context, p string) ([]DirEntry, error) 
 }
 
 // buildEnv assembles the child environment: the full host environment when
-// InheritHostEnv is set, otherwise a minimal set of host variables (PATH,
-// HOME, TMPDIR), plus the request's Env in both cases.
+// InheritHostEnv is set, otherwise PATH/HOME/TMPDIR; plus the request's Env.
 func (s *LocalSandbox) buildEnv(reqEnv map[string]string) []string {
 	env := make([]string, 0, 3+len(reqEnv))
 	if s.opts.InheritHostEnv {

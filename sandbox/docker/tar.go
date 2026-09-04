@@ -11,9 +11,8 @@ import (
 	"time"
 )
 
-// buildTar packs files into a tar stream extracted at workDir, used to stage
-// ExecRequest.Files (and WriteFile's payload) in the workspace volume. Parent
-// directories of nested files are created world-writable.
+// buildTar packs files into a tar stream extracted at workDir, staging
+// ExecRequest.Files and WriteFile's payload; nested parents are world-writable.
 func buildTar(files map[string]string) (io.Reader, error) {
 	names := make([]string, 0, len(files))
 	clean := make(map[string]string, len(files))

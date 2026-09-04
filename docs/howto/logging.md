@@ -1,18 +1,15 @@
 # Logging
 
 The SDK emits structured [`log/slog`](https://pkg.go.dev/log/slog) records
-describing what a run is doing. It is **off by default**: an SDK that logs to
-the process default the moment it is imported is one that shows up uninvited in
-somebody's production output.
+describing what a run is doing. It is **off by default** and never writes to
+`slog.Default()` on its own ([spec §2.11c](../reference/spec.md#211c-logging)).
 
 ```go
 opts.Log = agents.LogConfig{Logger: slog.Default()}
 ```
 
-| Field | Meaning |
-|---|---|
-| `Logger` | Where records go. Nil disables SDK logging entirely |
-| `SensitiveData` | Include conversation content — prompts, tool arguments. Off by default |
+`LogConfig` has two fields — `Logger` (nil disables SDK logging entirely) and
+`SensitiveData` ([pkg.go.dev](https://pkg.go.dev/github.com/zzir/agents-go/agents#LogConfig)).
 
 The logger's own handler sets the level floor. Most of what the SDK has to say
 is `Debug`, so hand it a dedicated logger whose handler enables `Debug` to see
@@ -25,12 +22,11 @@ opts.Log = agents.LogConfig{Logger: slog.New(h)}
 
 ## Sensitive data is a separate decision
 
-"Log what the SDK is doing" and "log what the user said" are different choices,
-and the second one puts a conversation into a log aggregator. It has to be made
-on purpose.
-
-Attributes carrying content are marked with `agents.Sensitive` and dropped
-unless `SensitiveData` is set — the record itself still appears, without them:
+Attributes carrying conversation content are marked with `agents.Sensitive`
+and dropped unless `SensitiveData` is set — a second opt-in, because logging
+what the SDK does and logging what the user said are different exposures
+([spec §2.11c](../reference/spec.md#211c-logging)). The record itself still
+appears, without them:
 
 ```
 level=DEBUG msg="calling model" component=run agent=support turn=2 input_items=7 tools=3
@@ -66,12 +62,7 @@ what went wrong.
 
 ## Relationship to tracing
 
-Logging and [tracing](tracing.md) answer different questions and are configured
-separately. A trace reconstructs one run's structure — spans, timings, parentage
-— for a debugger looking at that run. Logs are a stream for an operator watching
-many runs. `Observe.IncludeSensitiveData` and `Log.SensitiveData` are likewise
-separate: exporting spans to a tracing backend and writing lines to a log file
-are different exposures.
+Logging and [tracing](tracing.md) are configured separately, including their sensitive-data switches — `Log.SensitiveData` here, `Observe.IncludeSensitiveData` for [spans](tracing.md#sensitive-data).
 
 ## Diagnostics: trouble a run survived
 
@@ -88,10 +79,7 @@ for _, d := range res.Diagnostics {
 // model_fallback: … map[used_index:1 models:2 streaming:false]
 ```
 
-The point is the failures that **do not fail the run**: three retries, a
-fallback to a slower model, a compaction pass that gave up, a recovered tool
-panic. None of them reach an error return, so a run that answered after a bad
-time looks identical to one that answered first time.
+They record the failures that do **not** fail the run — retries, a fallback, a compaction pass that gave up, a recovered tool panic — which no error return would ever show ([spec §2.11d](../reference/spec.md#211d-diagnostics)).
 
 | Type | Recorded when |
 |---|---|

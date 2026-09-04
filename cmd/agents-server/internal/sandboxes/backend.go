@@ -11,16 +11,12 @@ import (
 	"github.com/zzir/agents-go/sandbox"
 )
 
-// Backend is one sandbox TYPE: the four things only the type knows — build a
-// project's sandbox (Open), destroy what it left behind (Reclaim), rebuild the
-// compute keeping the storage (Rebuild), and health-check the type (Check).
-// Everything a running sandbox can do is on the Sandbox itself and its optional
-// capabilities, not here.
-//
-// Open takes no context deliberately: building a sandbox is CONFIGURATION, not
-// I/O. The docker backend dials lazily on the first command; a remote backend
-// creates or resumes its instance the same way. That keeps the manager's
-// acquire path — which has no request context of its own — unchanged.
+// Backend is one sandbox TYPE: build a project's sandbox (Open), destroy what
+// it left behind (Reclaim), rebuild the compute keeping the storage (Rebuild),
+// and health-check the type (Check). What a running sandbox can do is on the
+// Sandbox itself. Open takes no context deliberately: building a sandbox is
+// CONFIGURATION, not I/O — backends dial lazily on the first command, so the
+// manager's acquire path needs no request context.
 type Backend interface {
 	// Open builds the Sandbox for spec.
 	Open(spec Spec) (sandbox.Sandbox, error)

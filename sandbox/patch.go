@@ -5,12 +5,8 @@ import (
 	"strings"
 )
 
-// The apply_patch tool consumes a Codex-style patch: file sections delimited by
-// "*** Begin Patch" / "*** End Patch", each an Update / Add / Delete on one
-// file. Update hunks carry NO line numbers — a change is located by its
-// surrounding context lines (and an optional "@@ anchor"), so the model never
-// has to compute offsets. This file only parses and applies; the tool wrapper
-// (edit_tool.go) does the sandbox I/O and atomic rollback.
+// Parser and applier for Codex-style patches: a hunk is located by its context
+// lines (plus an optional "@@ anchor"), never by line number. I/O is edit_tool.go's.
 
 type patchOp int
 
@@ -30,10 +26,8 @@ const (
 	hunkMark   = "@@"
 )
 
-// patchHunk is one contiguous change within an Update section. oldBlock is the
-// context+removed lines that must be found in the file; newBlock is the
-// context+added lines that replace them. When oldBlock is empty the hunk is a
-// pure insertion and must carry an anchor to locate it.
+// patchHunk is one contiguous change: oldBlock (context+removed lines) is
+// replaced by newBlock; an empty oldBlock is an insertion that needs an anchor.
 type patchHunk struct {
 	anchor   string
 	oldBlock string
@@ -50,23 +44,8 @@ type fileEdit struct {
 	hunks    []patchHunk
 }
 
-// parsePatch parses a Codex-style patch into per-file edits. It is pure: no I/O,
-// no path resolution. A structural problem is an error naming the offending line.
-// rejectDuplicateSections refuses a patch whose sections would silently
-// overwrite each other.
-//
-// The hazard is UPDATE: the plan phase reads every section's original from
-// disk BEFORE any write, so a second Update for one file computes from
-// pre-patch content and the commit overwrites the first section's changes,
-// with the tool reporting both as applied. Two Updates for one path are
-// therefore refused — as is a rename onto a path another section touches,
-// where the outcome depends on commit order.
-//
-// Delete + Add of the same path is NOT refused: it is the ordinary
-// full-rewrite idiom (the delete removes the file, the add recreates it), it
-// applied correctly before this guard existed, and there is no single section
-// it could be "merged" into — the equivalent Update would have to match
-// context it is deliberately discarding.
+// rejectDuplicateSections refuses two sections on one path — every section reads the
+// pre-patch file, so the result is order-dependent; Delete + Add is allowed.
 func rejectDuplicateSections(edits []fileEdit) error {
 	ops := make(map[string][]patchOp, len(edits))
 	moves := make(map[string]bool, len(edits))
@@ -83,11 +62,8 @@ func rejectDuplicateSections(edits []fileEdit) error {
 		if len(list) < 2 {
 			continue
 		}
-		// Delete + Add is the full-rewrite idiom and applies correctly: the
-		// delete removes the file, the add recreates it. Every other repeat is
-		// order-dependent — an Update computes from PRE-patch content, so
-		// pairing it with anything else on the same path silently discards one
-		// of the two, and a repeated Add or Delete is a contradiction.
+		// Delete + Add is the full-rewrite idiom; every other repeat is
+		// order-dependent or a contradiction.
 		if len(list) == 2 && !moves[path] &&
 			((list[0] == opDelete && list[1] == opAdd) || (list[0] == opAdd && list[1] == opDelete)) {
 			continue
@@ -114,6 +90,8 @@ func describeOps(list []patchOp) string {
 	return strings.Join(names, " + ")
 }
 
+// parsePatch parses a Codex-style patch into per-file edits. It is pure: no
+// I/O, no path resolution; a structural problem is an error naming the line.
 func parsePatch(patch string) ([]fileEdit, error) {
 	lines := strings.Split(patch, "\n")
 	i := 0
@@ -211,13 +189,8 @@ func parseHunks(lines []string, i int) ([]patchHunk, int, error) {
 				break
 			}
 			if !isHunkBodyLine(bl) {
-				// bl is a completely empty line. Models routinely strip the
-				// single leading space from an empty context line, turning
-				// " " into "". Treat it as an empty context line when more
-				// hunk-body content still follows; otherwise it is a blank
-				// separator before the next hunk or section, so stop and let
-				// the caller skip it (rather than truncating this hunk and
-				// silently dropping the empty line it was meant to keep).
+				// An empty line is an empty context line whose leading space the model
+				// stripped — unless nothing follows, then it is a separator: stop.
 				if !moreBodyFollows(lines, i+1) {
 					break
 				}
@@ -248,12 +221,8 @@ func parseHunks(lines []string, i int) ([]patchHunk, int, error) {
 	return hunks, i, nil
 }
 
-// moreBodyFollows reports whether a hunk-body line (' ', '-' or '+') appears at
-// or after index i before the next hunk marker or file-section boundary. It
-// lets a completely blank line inside a hunk be told apart from a blank
-// separator that precedes the next hunk or section: only the former still has
-// body content ahead. Consecutive blank lines are skipped so a run of empty
-// context lines inside a hunk is recognized as interior.
+// moreBodyFollows reports whether a hunk-body line appears at or after i before
+// the next hunk or section: an interior blank line, not a separator.
 func moreBodyFollows(lines []string, i int) bool {
 	for i < len(lines) {
 		l := trimCR(lines[i])
@@ -268,11 +237,8 @@ func moreBodyFollows(lines []string, i int) bool {
 	return false
 }
 
-// applyHunks applies each hunk to content in order. A hunk is located by the
-// first line-anchored occurrence of its oldBlock at or after the previous
-// hunk's end (the "@@ anchor", when present, first advances the search point).
-// A hunk whose context can't be found is an error — the whole apply is
-// abandoned upstream.
+// applyHunks applies hunks in order; each is located by the first whole-line
+// match of oldBlock after the previous hunk's end (an anchor advances the start).
 func applyHunks(content string, hunks []patchHunk) (string, error) {
 	result := content
 	searchFrom := 0
@@ -291,10 +257,8 @@ func applyHunks(content string, hunks []patchHunk) (string, error) {
 		if h.insert {
 			nl := strings.IndexByte(result[from:], '\n')
 			if nl < 0 {
-				// The anchor sits on the file's last line and that line has no
-				// trailing newline. Terminate it first so the inserted block
-				// starts on its own line instead of being glued onto the last
-				// line's text.
+				// The anchor is the file's last line with no trailing newline: terminate
+				// it so the block starts on its own line.
 				result += "\n" + h.newBlock + "\n"
 				searchFrom = len(result)
 				continue
@@ -315,8 +279,7 @@ func applyHunks(content string, hunks []patchHunk) (string, error) {
 }
 
 // indexLines returns the first occurrence of block in s at or after from that
-// spans whole lines — starting at 0 or right after '\n', ending at len(s) or
-// right before '\n' — so "x = 1" cannot match inside "max = 10".
+// spans whole lines (spec §2.7s).
 func indexLines(s, block string, from int) int {
 	for i := from; i <= len(s); {
 		idx := strings.Index(s[i:], block)
@@ -334,8 +297,7 @@ func indexLines(s, block string, from int) int {
 }
 
 // indexTrimmedLine returns the start of the first whole line at or after from
-// whose space-trimmed text equals the space-trimmed anchor — the fallback for
-// an "@@" anchor written without the file's indentation.
+// whose trimmed text equals the trimmed anchor (an anchor written unindented).
 func indexTrimmedLine(s, anchor string, from int) int {
 	want := strings.TrimSpace(anchor)
 	if want == "" {
@@ -373,12 +335,8 @@ func isHunkBodyLine(l string) bool {
 
 func trimCR(l string) string { return strings.TrimSuffix(l, "\r") }
 
-// parseHunkAnchor extracts the context anchor from a "@@" hunk header. Patches
-// are located by context, never by line number, so the git unified-diff form
-// "@@ -a,b +c,d @@ heading" is tolerated: the "-a,b +c,d" range is dropped and
-// any trailing heading kept as the anchor. The Codex form "@@ heading" is used
-// as-is. A bare range with no heading yields an empty anchor, so the hunk falls
-// back to locating by its context lines.
+// parseHunkAnchor extracts the anchor from a "@@" header. The git form
+// "@@ -a,b +c,d @@ heading" keeps only the heading; a bare range yields "".
 func parseHunkAnchor(l string) string {
 	rest := strings.TrimSpace(l[len(hunkMark):])
 	if strings.HasPrefix(rest, "-") || strings.HasPrefix(rest, "+") {

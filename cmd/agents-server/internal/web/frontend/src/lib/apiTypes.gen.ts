@@ -2943,7 +2943,7 @@ export interface paths {
         post?: never;
         /**
          * Delete project
-         * @description Deletes the working tree too — the container and its volume are removed. The owner deletes their own; an admin deletes any (management, decisions §5.29). The row is gone whenever this answers 200: a storage_error means the STORAGE could not be reclaimed and is left for the operator, not that the project survived.
+         * @description Deletes the working tree too — the container and its volume are removed. The owner deletes their own; an admin deletes any. The row is gone whenever this answers 200: a storage_error means the STORAGE could not be reclaimed and is left for the operator, not that the project survived.
          */
         delete: {
             parameters: {
@@ -7306,9 +7306,8 @@ export interface components {
         /** @description InputTokensDetails aggregates the input token detail fields. */
         "agents.InputTokensDetails": {
             /**
-             * @description CacheWriteTokens counts input tokens written to the prompt cache (surfaced
-             *     by providers that bill cache writes separately). Older serialized RunState
-             *     snapshots without the field decode to zero.
+             * @description CacheWriteTokens counts input tokens written to the prompt cache, for
+             *     providers that bill cache writes separately.
              */
             cache_write_tokens?: number;
             cached_tokens?: number;
@@ -7491,10 +7490,8 @@ export interface components {
             kind?: string;
             label?: string;
             /**
-             * @description MaxAttempts is the ceiling Attempt is measured against: a client offering
-             *     a retry compares the two rather than being told the answer, so its offer
-             *     follows the status it already tracks. Capacity is not part of it — a
-             *     retry can still be refused when the parent session is full.
+             * @description MaxAttempts is the ceiling Attempt is measured against; a client offering
+             *     a retry compares the two (capacity is not part of it).
              */
             max_attempts?: number;
             /**
@@ -7526,10 +7523,8 @@ export interface components {
             kind?: string;
             label?: string;
             /**
-             * @description MaxAttempts is the ceiling Attempt is measured against: a client offering
-             *     a retry compares the two rather than being told the answer, so its offer
-             *     follows the status it already tracks. Capacity is not part of it — a
-             *     retry can still be refused when the parent session is full.
+             * @description MaxAttempts is the ceiling Attempt is measured against; a client offering
+             *     a retry compares the two (capacity is not part of it).
              */
             max_attempts?: number;
             /**
@@ -7547,9 +7542,8 @@ export interface components {
          */
         "bridge.TaskMeta": {
             /**
-             * @description Attempt is which run of the task this is: 1 for the original, more after a
-             *     retry. It rides on run.started so a client can tell a NEW attempt from a
-             *     replay of the old one.
+             * @description Attempt is which run of the task this is (1 for the original); on
+             *     run.started it tells a NEW attempt from a replay of the old one.
              */
             attempt?: number;
             /** @description Kind is the task's kind: "" a sub-agent task, "workflow" an execution. */
@@ -7661,9 +7655,8 @@ export interface components {
             kind?: string;
             last_error?: string;
             /**
-             * @description What the last fire did, for the panel and for a cron that keeps failing:
-             *     the id it started — a task for a workflow, a run for an agent turn — or
-             *     why it started nothing.
+             * @description What the last fire did: the id it started (a task or a run), or why it
+             *     started nothing.
              */
             last_fired_at?: string;
             last_started_id?: string;
@@ -7747,8 +7740,7 @@ export interface components {
             plan?: boolean;
             /**
              * @description ProjectID only matters until the session's first project-carrying run
-             *     permanently binds it; after that the server uses the bound value and
-             *     ignores this field.
+             *     permanently binds it; after that it is ignored.
              */
             project_id?: string;
         };
@@ -7767,7 +7759,7 @@ export interface components {
         "handler.mcpServerListItem": {
             /**
              * @description Config holds the connection settings as JSON (HTTPMcpConfig — the
-             *     streamable_http transport is the only one the server speaks, decisions §5.25).
+             *     streamable_http transport is the only one the server speaks).
              *     Stored as TEXT and exchanged with the API as a raw JSON object.
              */
             config?: number[];
@@ -7786,7 +7778,7 @@ export interface components {
             id?: string;
             name?: string;
             owner_id?: string;
-            /** @description Scope/OwnerID: row visibility and its permanent creator — decisions §5.29. */
+            /** @description Scope/OwnerID: row visibility and its permanent creator. */
             scope?: string;
             /**
              * @description Status is the single derived lifecycle state: disabled, connecting,
@@ -7830,9 +7822,8 @@ export interface components {
             /** @description SystemInstructions is the system prompt to send. */
             system_instructions?: string;
             /**
-             * @description Tools are schema-only tool definitions echoed back from the traced
-             *     request, so the model sees the same tool surface and can emit function
-             *     calls. They are never executed: a single Respond runs no tool loop.
+             * @description Tools are schema-only definitions echoed from the traced request. They
+             *     are never executed: a single Respond runs no tool loop.
              */
             tools?: components["schemas"]["handler.playgroundTool"][];
         };
@@ -7844,9 +7835,8 @@ export interface components {
             usage?: components["schemas"]["agents.Usage"];
         };
         /**
-         * @description OutputSchema, when set, requests structured output — echoed from the
-         *     traced generation so a structured call replays as one. Without it a
-         *     replay of such a call is a different request (free text).
+         * @description OutputSchema requests structured output, echoed from the traced
+         *     generation so a structured call replays as one.
          */
         "handler.playgroundSchema": {
             name?: string;
@@ -7880,16 +7870,15 @@ export interface components {
              * @description Revision is the expected-revision CAS every update lands against.
              *     RuntimeGen is the workbench's ONE runtime axis: it moves when this
              *     project's own content changes AND when the sandbox it names changes
-             *     underneath it, so the instance cache and the terminal registry
-             *     need a single fence rather than one per entity (decisions §5.33). A
-             *     rename moves neither container nor terminal.
+             *     underneath it, so the instance cache and the terminal registry need a
+             *     single fence rather than one per entity. A rename moves neither
+             *     container nor terminal.
              */
             revision?: number;
             /**
-             * @description SandboxID is what the project runs on — the machine and the image, set
-             *     at creation and never writable afterwards. The image half IS editable,
-             *     on the sandbox row: the freeze is on which row, not on its content
-             *     (decisions §5.36).
+             * @description SandboxID is what the project runs on. It may move only to a sandbox at
+             *     the SAME type and destination (checkMove, else 409): the freeze is on
+             *     which machine, not on the image, which edits freely on the sandbox row.
              */
             sandbox_id?: string;
             /**
@@ -7900,8 +7889,8 @@ export interface components {
             /**
              * @description StorageHint names where the files live — the named volume on the
              *     sandbox's daemon. Derived per response by the handler for admins only,
-             *     never stored: a delete DESTROYS that storage (decisions §5.33), so the UI
-             *     can say what will be lost.
+             *     never stored: a delete DESTROYS that storage, so the UI can say what
+             *     will be lost.
              */
             storage_hint?: string;
             updated_at?: string;
@@ -7946,9 +7935,8 @@ export interface components {
         "handler.runWorkflowReq": {
             input?: string;
             /**
-             * @description ProjectID binds a still-unbound session first — the project the composer
-             *     had picked, or the dialog's — so the execution has its file and command
-             *     tools; a bound session ignores it, as a run request's does.
+             * @description ProjectID binds a still-unbound session first, so the execution has its
+             *     file and command tools; a bound session ignores it.
              */
             project_id?: string;
             session_id: string;
@@ -7958,15 +7946,12 @@ export interface components {
             name?: string;
             /**
              * @description Prompt is appended to the instructions of every agent in a session bound
-             *     to a project on this sandbox — type-agnostic, and content rather than
-             *     identity (an edit reaches the next run without retiring live instances).
+             *     to a project on this sandbox; an edit reaches the next run, retiring nothing.
              */
             prompt?: string;
             /**
-             * @description Revision, on update only, is the revision the client's edit was based
-             *     on (from GET/List): editing from a stale form is then 409 instead of
-             *     silently overwriting a concurrent update. Absent (0) keeps
-             *     last-writer-wins. Ignored on create.
+             * @description Revision, on update only, is the revision the edit was based on: a
+             *     stale form is 409. Absent (0) keeps last-writer-wins. Ignored on create.
              */
             revision?: number;
             type?: string;
@@ -7999,9 +7984,8 @@ export interface components {
         };
         "handler.skillImportReq": {
             /**
-             * @description OwnerID names WHICH group this import refreshes — a sync of somebody
-             *     else's published repository, for an admin. Empty means the caller's own
-             *     group, the only one a first import may create (decisions §5.31).
+             * @description OwnerID names WHICH group this import refreshes (an admin syncing a
+             *     member's published repo); empty means the caller's own.
              */
             owner_id?: string;
             url: string;
@@ -8012,8 +7996,7 @@ export interface components {
             skipped?: string[];
             /**
              * @description Truncated reports that GitHub's tree listing was cut off (a very large
-             *     repo): everything listed was imported, but files past the cut were not
-             *     seen at all.
+             *     repo): files past the cut were not seen at all.
              */
             truncated?: boolean;
             unchanged?: string[];
@@ -8101,9 +8084,8 @@ export interface components {
         /** @description InputTokensDetails aggregates the input token detail fields. */
         "session.InputTokensDetails": {
             /**
-             * @description CacheWriteTokens counts input tokens written to the prompt cache (surfaced
-             *     by providers that bill cache writes separately). Older serialized RunState
-             *     snapshots without the field decode to zero.
+             * @description CacheWriteTokens counts input tokens written to the prompt cache, for
+             *     providers that bill cache writes separately.
              */
             cache_write_tokens?: number;
             cached_tokens?: number;
@@ -8174,11 +8156,11 @@ export interface components {
             /**
              * @description ProviderID names the Provider row this agent reaches its model through —
              *     a column, so referential integrity is expressible in SQL. Empty reaches
-             *     no credential: the run fails its pre-flight (decisions §5.30).
+             *     no credential: the run fails its pre-flight.
              */
             provider_id?: string;
             resilience?: components["schemas"]["store.ResilienceGroup"];
-            /** @description Scope/OwnerID: row visibility and its permanent creator — decisions §5.29. */
+            /** @description Scope/OwnerID: row visibility and its permanent creator. */
             scope?: string;
             session?: components["schemas"]["store.SessionGroup"];
             skills?: string;
@@ -8222,34 +8204,29 @@ export interface components {
              */
             reasoning_item_id_policy?: string;
             /**
-             * @description StopAtTools is a comma-separated list of tool names; the run ends after a
-             *     turn that called any of them, instead of feeding the results back to the
-             *     model. Empty means the run continues until the model stops on its own.
+             * @description StopAtTools is a comma-separated list of tool names; the run ends after
+             *     a turn that called any of them. Empty means the model decides.
              */
             stop_at_tools?: string;
             /**
              * @description Subagents grants the agent's chat runs spawn_task / task_status /
-             *     task_stop / task_retry. nil/true = on; a chat-only agent that never
-             *     delegates sets false to reclaim the task schema from every request.
+             *     task_stop / task_retry. nil/true = on.
              */
             subagents?: boolean;
             /**
              * @description ToolChoiceReset resets a pinned tool_choice after a tool runs (the
-             *     SDK's default loop-guard). nil/true = on; false keeps tool_choice
-             *     as-is across turns.
+             *     SDK's default loop-guard). nil/true = on.
              */
             tool_choice_reset?: boolean;
             tool_not_found_behavior?: string;
             /**
              * @description Vision admits image attachments on this agent's runs. Off by default:
-             *     the gate is what turns "model returned 400" into a config error a
-             *     person can act on, so it must be an explicit claim that the model
-             *     accepts image input.
+             *     an explicit claim that the model accepts image input.
              */
             vision?: boolean;
             /**
              * @description WorkflowAuthoring gives the agent's chat runs get_workflow / save_workflow
-             *     (workbench invariant 39). Off by default: the save schema costs every request.
+             *     Off by default: the save schema costs every request.
              */
             workflow_authoring?: boolean;
         };
@@ -8270,9 +8247,8 @@ export interface components {
          */
         "store.CompactionInfo": {
             /**
-             * @description ExcludedIDs are the entries this checkpoint folded away. They are still
-             *     in the session, marked compacted; this is what lets a reader collapse
-             *     them under the checkpoint instead of leaving them loose in the history.
+             * @description ExcludedIDs are the entries this checkpoint folded away — still in the
+             *     session, marked compacted, so a reader can collapse them under it.
              */
             excluded_ids?: string[];
             tokens_after?: number;
@@ -8286,10 +8262,8 @@ export interface components {
              */
             cached_tokens?: number;
             /**
-             * @description CompactionEnabled reports whether the pass runs at all; Threshold is what
-             *     it fires at (the default filled in when the config names none) and Tokens
-             *     is what it compares — ActiveContextTokens over the same history, so the
-             *     number the panel draws is the number that trips.
+             * @description CompactionEnabled reports whether the pass runs; Threshold is what it
+             *     fires at and Tokens what it compares (ActiveContextTokens).
              */
             compaction_enabled?: boolean;
             compaction_threshold?: number;
@@ -8301,8 +8275,7 @@ export interface components {
             context_window?: number;
             /**
              * @description ConversationTokens is the estimated size of the transcript still in
-             *     context — every active, uncompacted entry's estimate summed. The
-             *     conversation's share of the window, on the same ruler as Prompt.
+             *     context — every active, uncompacted entry's estimate summed.
              */
             conversation_tokens?: number;
             /**
@@ -8311,9 +8284,8 @@ export interface components {
              */
             growth?: number[];
             /**
-             * @description InputTokens is what the LAST model call on the branch sent — the history,
-             *     prompt and tool schemas that are in the window right now. OutputTokens is
-             *     that same call's completion.
+             * @description InputTokens is what the LAST model call on the branch sent — what is in
+             *     the window right now. OutputTokens is that same call's completion.
              */
             input_tokens?: number;
             model?: string;
@@ -8321,8 +8293,7 @@ export interface components {
             prompt?: components["schemas"]["store.PromptProfile"];
             /**
              * @description SessionInputTokens / SessionOutputTokens total every model call on the
-             *     branch. Input counts re-sent history once per call, so it runs far ahead
-             *     of InputTokens by design — it is a spend figure, not a window figure.
+             *     branch — a spend figure, not a window figure.
              */
             session_input_tokens?: number;
             session_output_tokens?: number;
@@ -8334,8 +8305,7 @@ export interface components {
         "store.EntryView": {
             /**
              * @description Attachments are the entry's image attachments, resolved from the
-             *     sentinel refs its item carries. URL is filled by the handler, which
-             *     knows the public base; the store contributes the row facts.
+             *     sentinel refs its item carries; URL is filled by the handler.
              */
             attachments?: components["schemas"]["store.EntryAttachment"][];
             compacted?: boolean;
@@ -8349,9 +8319,8 @@ export interface components {
             id?: string;
             kind?: string;
             /**
-             * @description OnPath reports whether this entry is on the session's ACTIVE branch. An
-             *     off-path entry is an abandoned attempt — still recorded, still offerable,
-             *     but not part of the conversation as it currently stands.
+             * @description OnPath reports whether this entry is on the session's ACTIVE branch; an
+             *     off-path entry is an abandoned attempt.
              */
             on_path?: boolean;
             parent_id?: string;
@@ -8392,14 +8361,17 @@ export interface components {
         };
         "store.GuardrailGroup": {
             /**
-             * @description Guardrails is a JSON array of guardrail names. One list, not one per
-             *     stage: a guardrail carries the stages it inspects, so naming it twice
-             *     would be naming the same value twice.
+             * @description Guardrails is a JSON array of guardrail names — one list, since a
+             *     guardrail carries the stages it inspects.
              */
             guardrails?: string;
             output_schema?: string;
         };
         "store.Memory": {
+            /**
+             * @description AgentConfigID scopes the memory to one agent config; empty applies it to
+             *     every agent.
+             */
             agent_config_id?: string;
             content?: string;
             created_at?: string;
@@ -8421,16 +8393,15 @@ export interface components {
              * @description Revision is the expected-revision CAS every update lands against.
              *     RuntimeGen is the workbench's ONE runtime axis: it moves when this
              *     project's own content changes AND when the sandbox it names changes
-             *     underneath it, so the instance cache and the terminal registry
-             *     need a single fence rather than one per entity (decisions §5.33). A
-             *     rename moves neither container nor terminal.
+             *     underneath it, so the instance cache and the terminal registry need a
+             *     single fence rather than one per entity. A rename moves neither
+             *     container nor terminal.
              */
             revision?: number;
             /**
-             * @description SandboxID is what the project runs on — the machine and the image, set
-             *     at creation and never writable afterwards. The image half IS editable,
-             *     on the sandbox row: the freeze is on which row, not on its content
-             *     (decisions §5.36).
+             * @description SandboxID is what the project runs on. It may move only to a sandbox at
+             *     the SAME type and destination (checkMove, else 409): the freeze is on
+             *     which machine, not on the image, which edits freely on the sandbox row.
              */
             sandbox_id?: string;
             /**
@@ -8441,16 +8412,15 @@ export interface components {
             /**
              * @description StorageHint names where the files live — the named volume on the
              *     sandbox's daemon. Derived per response by the handler for admins only,
-             *     never stored: a delete DESTROYS that storage (decisions §5.33), so the UI
-             *     can say what will be lost.
+             *     never stored: a delete DESTROYS that storage, so the UI can say what
+             *     will be lost.
              */
             storage_hint?: string;
             updated_at?: string;
         };
         /**
-         * @description Prompt is what the session's last build put in front of the conversation
-         *     — the instruction layers and the tool surface, in the same estimated
-         *     characters as CompactionTokens. Absent until a run has built once.
+         * @description Prompt is what the session's last build put in front of the
+         *     conversation (instruction layers, tool surface); absent until a run has built once.
          */
         "store.PromptProfile": {
             global_prompt_chars?: number;
@@ -8490,7 +8460,7 @@ export interface components {
             id?: string;
             name?: string;
             owner_id?: string;
-            /** @description Scope/OwnerID: row visibility and its permanent creator — decisions §5.29. */
+            /** @description Scope/OwnerID: row visibility and its permanent creator. */
             scope?: string;
             /**
              * @description Type selects the backend (bridge.ProviderType*). Empty means openai, the
@@ -8529,7 +8499,7 @@ export interface components {
             /**
              * @description Revision counts this row's WRITES, name-only included — the
              *     expected-revision CAS every update carries. No runtime generation here:
-             *     the ONE runtime axis is the project's (decisions §5.33), bumped on every
+             *     the ONE runtime axis is the project's, bumped on every
              *     project naming this sandbox when its content changes.
              */
             revision?: number;
@@ -8560,21 +8530,20 @@ export interface components {
              * @description OwnerID is the user the conversation belongs to — the only ownership
              *     column: a task's hidden session inherits it from its parent, a trigger
              *     fires into a session, an approval is filed on one. Content is the
-             *     owner's alone; an admin may list, stop and delete (workbench invariant 42).
+             *     owner's alone; an admin may list, stop and delete.
              */
             owner_id?: string;
             pinned?: boolean;
             /**
              * @description Planning is the session's plan phase: true means its next run starts
              *     read-only until a plan is approved. Set by the person, cleared by the
-             *     approved submit_plan, copied by a fork — workbench invariant 33.
+             *     approved submit_plan, copied by a fork.
              */
             planning?: boolean;
             /**
              * @description ProjectID is the session's PERMANENT binding: the first project-carrying
-             *     run CAS-writes it (BindProjectIfEmpty) and it is never rewritten —
-             *     decisions §5.28. The project pins the target, so binding the project
-             *     binds the machine too.
+             *     run CAS-writes it (BindProjectIfEmpty) and it is never rewritten. The
+             *     project pins the target, so binding the project binds the machine too.
              */
             project_id?: string;
             updated_at?: string;
@@ -8599,16 +8568,16 @@ export interface components {
              */
             detached?: boolean;
             id?: string;
-            /** @description unique per scope (decisions §5.29) */
+            /** @description unique per scope */
             name?: string;
             owner_id?: string;
             /**
              * @description RepoLabel is SourceRepo reduced to the model-facing prefix ("owner/repo",
              *     or the host), materialized in BeforeAppendModel because the unique name
-             *     indexes key on it (decisions §5.31).
+             *     indexes key on it.
              */
             repo_label?: string;
-            /** @description Scope/OwnerID: row visibility and its permanent creator — decisions §5.29. */
+            /** @description Scope/OwnerID: row visibility and its permanent creator. */
             scope?: string;
             source_path?: string;
             /**
@@ -8622,9 +8591,8 @@ export interface components {
             updated_at?: string;
         };
         /**
-         * @description Gate makes the step a CHECK: its final output decides which edge is taken
-         *     (see StepGate). Nil means the run's own outcome decides — a failure is
-         *     then structural, the step's run errored.
+         * @description Gate makes the step a CHECK: its final output decides which edge is
+         *     taken (StepGate). Nil means the run's own outcome decides.
          */
         "store.StepGate": {
             fail?: string;
@@ -8699,8 +8667,8 @@ export interface components {
         "store.TraceEvent": {
             created_at?: string;
             /**
-             * @description Data is the span's metadata JSON. Its payload fields live in trace_blobs
-             *     (decisions §5.50): Layout names each one and its element count, Refs is
+             * @description Data is the span's metadata JSON. Its payload fields live in trace_blobs:
+             *     Layout names each one and its element count, Refs is
              *     the sha256 of every element in that order, 32 bytes each. Both NULL
              *     when the span has no payload.
              */
@@ -8761,7 +8729,7 @@ export interface components {
             id?: string;
             name?: string;
             owner_id?: string;
-            /** @description Scope/OwnerID: row visibility and its permanent creator — decisions §5.29. */
+            /** @description Scope/OwnerID: row visibility and its permanent creator. */
             scope?: string;
             steps?: components["schemas"]["store.WorkflowStep"][];
             updated_at?: string;
@@ -8794,23 +8762,18 @@ export interface components {
             name?: string;
             on_failure?: string;
             /**
-             * @description OnSuccess and OnFailure name the step to run next — a step id, or
-             *     WorkflowStepEnd to stop there. Their empty defaults differ: OnSuccess
-             *     falls through to the NEXT step in the list (the last one ends the
-             *     execution), an empty OnFailure fails the execution. A back-edge is how a
-             *     sequence loops, bounded only by MaxStepRuns.
+             * @description OnSuccess and OnFailure name the step to run next (a step id, or
+             *     WorkflowStepEnd). Empty OnSuccess falls through to the NEXT step; empty OnFailure fails the execution.
              */
             on_success?: string;
             /**
              * @description PauseBefore holds the sequence before this step until a person approves
-             *     it from the conversation that asked — a step-level gate, for the deploy
-             *     or the send that must not happen unseen. Rejecting cancels the execution.
+             *     it from the conversation that asked; rejecting cancels the execution.
              */
             pause_before?: boolean;
             /**
-             * @description Prompt is the step's input, sent as the user turn that starts it. The
-             *     previous steps are already in the session, so this instructs rather than
-             *     re-passes their output.
+             * @description Prompt is the step's input, sent as the user turn that starts it; the
+             *     previous steps are already in the session.
              */
             prompt?: string;
         };

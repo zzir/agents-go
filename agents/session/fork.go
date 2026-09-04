@@ -5,12 +5,9 @@ import (
 	"fmt"
 )
 
-// Fork extracts a session's active branch into another session, producing an
-// independent conversation that shares its past.
-//
-// It is not "copy everything": abandoned branches stay behind. Entry ids are
-// preserved, so an update that names one still finds its target. dst is cleared
-// first, so it holds exactly the extracted branch.
+// Fork extracts a session's active branch into another session: abandoned
+// branches stay behind, entry ids are preserved so an update still finds its
+// target, and dst is cleared first (spec §2.5d).
 func Fork(ctx context.Context, src, dst *Session) error {
 	path, err := src.PathEntries(ctx)
 	if err != nil {
@@ -19,14 +16,11 @@ func Fork(ctx context.Context, src, dst *Session) error {
 	return writeFork(ctx, dst, path)
 }
 
-// A point-in-time fork — "start over from here" — is the composition of the
-// exported pieces: PathToLeaf(entries, entryID) to cut the branch, then
-// ReplaceEntries on the destination.
+// writeFork writes path as dst's whole history. A point-in-time fork is
+// PathToLeaf(entries, id) to cut the branch, then ReplaceEntries on dst.
 func writeFork(ctx context.Context, dst *Session, path []Entry) error {
-	// Ids and parent links travel with the conversation; the destination
-	// allocates the sequence numbers. One replace instead of clear-then-append
-	// so an AtomicReplacer never shows a cleared-but-unfilled dst on a mid-write
-	// failure.
+	// One replace, not clear-then-append, so an AtomicReplacer never shows a
+	// cleared-but-unfilled dst on a mid-write failure (spec §2.5d).
 	if err := ReplaceEntries(ctx, dst.storage, path...); err != nil {
 		return fmt.Errorf("fork: writing destination session: %w", err)
 	}

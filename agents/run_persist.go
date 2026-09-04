@@ -9,11 +9,8 @@ import (
 	"github.com/zzir/agents-go/tracing"
 )
 
-// persistUserInput writes the run's new user input to the session once, ahead
-// of the first model call, and announces it: nothing the stream has shown is
-// unstored at that point. Later per-turn saves persist only generated items, so
-// the prompt is never rewritten. No-op without a session, when there is no
-// new input, or on a resume (its input was saved before the pause).
+// persistUserInput writes the run's new user input once, ahead of the first
+// model call, and announces it (spec §2.5). No-op without a session or on a resume.
 func (r *runner) persistUserInput(ctx context.Context) error {
 	if r.opts.Conversation.Session == nil || r.userInputSaved || len(r.userInput) == 0 {
 		return nil
@@ -28,11 +25,8 @@ func (r *runner) persistUserInput(ctx context.Context) error {
 	return nil
 }
 
-// persistSessionItems incrementally saves the sessionItems produced since the
-// last save. It persists only the safe leading prefix — a trailing output-less
-// function_call (a HITL pause) is held back for the next turn, so the stored
-// conversation never has a call without its output — from the unfiltered log,
-// so handoff input filters never affect what is stored.
+// persistSessionItems saves the sessionItems produced since the last save, up
+// to safePersistBoundary, from the unfiltered log (spec §2.5).
 func (r *runner) persistSessionItems(ctx context.Context) error {
 	if r.opts.Conversation.Session == nil {
 		return nil
@@ -58,9 +52,8 @@ func (r *runner) persistSessionItems(ctx context.Context) error {
 		r.log.Debug(ctx, "turn persisted", slog.Int("entries", len(toSave)))
 	}
 	r.persistedSessionItems = end
-	// Injected input commits once a write has persisted past its position; a
-	// boundary that stopped short leaves it in flight for the next write or a
-	// rollback.
+	// Injected input commits once a write persisted past its position; a
+	// boundary that stopped short leaves it in flight (spec §2.11b).
 	if r.persistedSessionItems >= r.injectedUpTo {
 		r.ctrl.commitInjected()
 	}
@@ -72,14 +65,8 @@ func (r *runner) persistSessionItems(ctx context.Context) error {
 	return nil
 }
 
-// safePersistBoundary returns the exclusive end index up to which items[start:]
-// can be safely persisted without ever storing a function_call that lacks its
-// matching function_call_output: the largest end where every call in
-// items[start:end] has its output within items[start:end) too.
-//
-// The boundary advances past each point where no call is left open; a pending
-// call and everything ordered after it is held back until its output arrives on
-// resume. A turn whose calls are all paired persists in full.
+// safePersistBoundary returns the exclusive end up to which items[start:] can
+// be stored with no function_call lacking its output — spec §2.5.
 func safePersistBoundary(items []*RunItem, start int) int {
 	if start >= len(items) {
 		return len(items)
@@ -101,9 +88,8 @@ func safePersistBoundary(items []*RunItem, start int) int {
 	return end
 }
 
-// runItemCallID reports a run item's function-call correlation id and whether it
-// is a call or an output, by inspecting its input-item form. Non-function items
-// report isCall=isOutput=false. Works for live and rebuilt items alike.
+// runItemCallID reports a run item's function-call id and whether it is a
+// call or an output; non-function items report neither.
 func runItemCallID(it *RunItem) (callID string, isCall, isOutput bool) {
 	in, err := it.ToInputItem()
 	if err != nil {
@@ -118,19 +104,14 @@ func runItemCallID(it *RunItem) (callID string, isCall, isOutput bool) {
 	return "", false, false
 }
 
-// compactAfterRun is the CompactAfterRun point: the run's items are persisted
-// and its final output produced, so a self-compacting storage gets its turn to
-// shrink what it keeps.
-//
-// It is best-effort housekeeping: a failure is recorded on the trace instead of
-// turning a successful run into a failed one.
+// compactAfterRun is the CompactAfterRun point: best-effort housekeeping whose
+// failure is recorded on the trace, never turned into a failed run.
 func (r *runner) compactAfterRun(ctx context.Context) {
 	if r.opts.Conversation.Session == nil {
 		return
 	}
-	// A configured Compactor records its result as a checkpoint. It and a
-	// self-compacting storage never both apply: compactContext stands aside
-	// when the storage compacts itself.
+	// A Compactor checkpoints; a self-compacting storage compacts itself. The
+	// two never both apply.
 	if r.checkpointAfterRun(ctx) {
 		return
 	}
@@ -163,26 +144,14 @@ func (r *runner) compactAfterRun(ctx context.Context) {
 	}
 }
 
-// offChainItems reports whether the stored log holds anything the server-side
-// response chain rooted at lastResponseID cannot know about — what a storage
-// compacting from that chain would delete without ever having read.
-//
-// A log outgrows the chain four ways: items produced after the last model call
-// (hasOffChainItems, answered fresh from position); a windowed read that
-// truncated; a handoff input filter's drops; and a projector that withholds an
-// item entry (withheldItemEntries). The last three are recorded in
-// offChainHistory as they happen. The filter answers conservatively — running
-// sets the flag — so at worst the pass over-reports and compacts from the
-// stored items, a larger request that succeeds or fails visibly.
+// offChainItems reports whether the stored log holds anything the response
+// chain rooted at lastResponseID cannot know about — decisions §5.51.
 func (r *runner) offChainItems() bool {
 	return r.offChainHistory || hasOffChainItems(r.sessionItems)
 }
 
-// hasOffChainItems reports whether the run's items include any that postdate the
-// last model response — a terminating tool's output, an error handler's
-// fallback, input injected past the last model call. It counts from the last
-// SourceModel item because position, not provenance, is the whole question, and
-// it is the one way a log outgrows the chain that clears on its own.
+// hasOffChainItems reports whether any item postdates the last model response
+// — counted by position from the last SourceModel item (decisions §5.51).
 func hasOffChainItems(items []*RunItem) bool {
 	for i, item := range slices.Backward(items) {
 		if item.Source.Type == SourceModel {
@@ -193,11 +162,8 @@ func hasOffChainItems(items []*RunItem) bool {
 	return len(items) > 0
 }
 
-// withheldItemEntries reports whether the caller's projectors keep an ITEM entry
-// out of the model input entirely — a nil projector, or one returning none.
-// Only item entries can be lost this way: a rewrite carries every other kind
-// over verbatim, and the summary that replaces items is written without any the
-// projector withheld. A projector that REWRITES an item is not withholding it.
+// withheldItemEntries reports whether the projectors keep an ITEM entry out of
+// the model input entirely (nil projector, or one returning none).
 func withheldItemEntries(entries []session.Entry, projectors map[session.EntryKind]session.Projector) bool {
 	project, overridden := projectors[session.EntryKindItem]
 	if !overridden {

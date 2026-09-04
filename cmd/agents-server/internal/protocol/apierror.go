@@ -8,8 +8,7 @@ type APIError struct {
 }
 
 // ErrorResponse is the REST error envelope: {"error": {"code": ..., "message": ...}}.
-// It lives here, not in handler, because the server package also emits it (auth
-// failures, unmatched API paths) and cannot import handler.
+// It lives here because the server package also emits it and cannot import handler.
 type ErrorResponse struct {
 	Error APIError `json:"error"`
 }
@@ -19,11 +18,9 @@ func NewErrorResponse(code, message string) ErrorResponse {
 	return ErrorResponse{Error: APIError{Code: code, Message: message}}
 }
 
-// APIError.Code values, the vocabulary documented in protocol.md "Errors". Stable
-// machine-readable identifiers; the message carries the human-readable detail.
-//
-// This is a namespace of its own, disjoint from the RunError codes in
-// messages.go: these classify a REQUEST, those classify a RUN.
+// APIError.Code values, the vocabulary documented in protocol.md "Errors".
+// A namespace of its own, disjoint from the RunError codes in messages.go:
+// these classify a REQUEST, those classify a RUN.
 const (
 	CodeValidation   = "validation"
 	CodeUnauthorized = "unauthorized"
@@ -32,9 +29,8 @@ const (
 	CodeConflict     = "conflict"
 	CodeUpstream     = "upstream"
 	CodeInternal     = "internal"
-	// CodeUnavailable is a transient refusal — the server is shutting down.
-	// Distinct from internal: the request was fine and retrying elsewhere (or
-	// later) is the answer.
+	// CodeUnavailable is a transient refusal — the server is shutting down;
+	// the request was fine and retrying later is the answer.
 	CodeUnavailable = "unavailable"
 	// CodeRateLimited is a per-client refusal (HTTP 429): the request was fine,
 	// the rate was not.

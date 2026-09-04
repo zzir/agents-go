@@ -10,20 +10,17 @@ import (
 	"github.com/zzir/agents-go/agents"
 )
 
-// SessionIDFrom is how the tools learn which session they are running in. The
-// session id decides which parent a task belongs to, so it comes from the run
-// context, never the model — which would let one conversation spawn tasks onto
-// another.
+// SessionIDFrom is how the tools learn which session they run in. It comes
+// from the run context, never the model, which could otherwise spawn onto another.
 type SessionIDFrom func(rc *agents.RunContext) string
 
 // parentRunKey carries the host's identifier for the currently executing run
 // (see WithParentRunID).
 type parentRunKey struct{}
 
-// WithParentRunID tags ctx with the host's identifier for the executing run.
-// spawn_task stamps it onto Task.ParentRunID, which lets a host UI tie the task
-// back to the spawning run's trace. Display-only; a host without run
-// identifiers can skip it.
+// WithParentRunID tags ctx with the host's identifier for the executing run;
+// spawn_task stamps it onto Task.ParentRunID so a host UI can tie the task to
+// the spawning run's trace. Display-only.
 func WithParentRunID(ctx context.Context, runID string) context.Context {
 	return context.WithValue(ctx, parentRunKey{}, runID)
 }
@@ -66,17 +63,10 @@ type retryArgs struct {
 }
 
 // Tools returns spawn_task, task_status, task_retry and task_stop — SpawnTool
-// followed by TaskTools. A host with more kinds of background work than a
-// plain task (a job it starts by name) provides its own spawn tool from the
-// public parts (Spawn, ModelHasResult, ToolResult) and attaches TaskTools
-// beside it, so the model still sees ONE vocabulary: start, look, retry, stop.
-//
-// A task's own run must NOT be given these — that is what bounds recursion —
-// so a host attaching them should first ask MetaFor whether the session is a
-// task's, and Spawn refuses past the depth limit as the backstop.
-//
-// sessionID resolves the parent session from the run context; nil uses
-// DefaultSessionID.
+// followed by TaskTools. A host with other kinds of background work provides
+// its own spawn tool from the public parts and attaches TaskTools beside it,
+// so the model sees ONE vocabulary (spec §2.13). A task's own run must NOT be
+// given these (ask MetaFor first). sessionID nil uses DefaultSessionID.
 func (m *Manager) Tools(sessionID SessionIDFrom) []*agents.Tool {
 	return append([]*agents.Tool{m.SpawnTool(sessionID)}, m.TaskTools(sessionID)...)
 }
@@ -111,10 +101,8 @@ func (m *Manager) SpawnTool(sessionID SessionIDFrom) *agents.Tool {
 			if err != nil {
 				return agents.ToolResult{}, err
 			}
-			// A task that finished before this call returned carries its result
-			// in the tool output below, so the model has it — waking later to
-			// repeat it would burn a turn. A no-op for the ordinary
-			// still-running case; see ModelHasResult.
+			// A task that finished before this call returned carries its result in
+			// the output below, so nothing is owed; a no-op while still running.
 			m.ModelHasResult(ctx, info)
 			return m.toolResult(info), nil
 		})
@@ -170,9 +158,8 @@ func (m *Manager) TaskTools(sessionID SessionIDFrom) []*agents.Tool {
 					// to report on.
 					return agents.ToolResult{}, err
 				}
-				// A refusal, a lost race or a launch that never started: the
-				// task's state travels with the error, so the model can decide.
-				// Reporting it also settles the wake-up debt, as a success would.
+				// A refusal, a lost race or a launch that never started: the task's
+				// state travels with the error. Reporting it settles the wake-up debt.
 				m.ModelHasResult(ctx, info)
 				return m.refusalResult(info, err), nil
 			}
@@ -190,9 +177,8 @@ func (m *Manager) TaskTools(sessionID SessionIDFrom) []*agents.Tool {
 			}
 			info, err := m.Stop(ctx, args.TaskID, args.Graceful)
 			if err != nil {
-				// A stop of something already finished is news, not a failure:
-				// the model should hear the terminal state rather than an error
-				// it might retry.
+				// A stop of something already finished is news, not a failure: the
+				// model should hear the terminal state, not an error it might retry.
 				if _, ok := errors.AsType[ErrAlreadyFinal](err); info != nil && ok {
 					r := m.toolResult(info)
 					r.IsError = true
@@ -206,11 +192,9 @@ func (m *Manager) TaskTools(sessionID SessionIDFrom) []*agents.Tool {
 	return []*agents.Tool{status, retry, stop}
 }
 
-// ToolResult renders a task for a tool output: what the model reads (Content,
-// the state in words) apart from what a UI renders (Details, the card's data).
-// progress is the host's one line on where the job stands (Progress), or "".
-// Exported for a host tool that starts a task of its own kind and wants the
-// same card.
+// ToolResult renders a task for a tool output: Content for the model, Details
+// for a UI card. progress is the host's line on where the job stands
+// (Progress), or "". Exported for a host's own spawn tool.
 func ToolResult(info *Info, progress string) agents.ToolResult {
 	return agents.TextResult(describe(info, progress)).
 		WithDisplay("task").
@@ -231,9 +215,8 @@ func (m *Manager) toolResult(info *Info) agents.ToolResult {
 	return ToolResult(info, m.Progress(info))
 }
 
-// refusalResult is a ToolResult whose text leads with why the call was refused —
-// the state alone does not explain a refusal the way "already completed" does
-// for task_stop.
+// refusalResult is a ToolResult whose text leads with why the call was
+// refused — the state alone does not explain a refusal.
 func (m *Manager) refusalResult(info *Info, err error) agents.ToolResult {
 	r := agents.TextResult(err.Error() + "\n" + describe(info, m.Progress(info))).
 		WithDisplay("task").
@@ -253,12 +236,8 @@ func taskDetails(info *Info) map[string]any {
 	}
 }
 
-// describeList is the listing: one line per task, summaries only, the host's
-// progress line where it has one. Reading it consumes no wake-up debt —
-// nothing here is the full result — so the finish of a task seen in it is
-// still delivered. A live task says so, and says what NOT to do: an agent
-// with no way to look concluded a task produced nothing and did the work
-// over.
+// describeList is the listing: one line per task, summaries only. Reading it
+// settles no wake-up debt, and a live task says not to redo its work.
 func (m *Manager) describeList(infos []*Info) string {
 	if len(infos) == 0 {
 		return "no tasks in this conversation"

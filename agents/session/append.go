@@ -26,14 +26,9 @@ type AppendPoint struct {
 // sequence numbers it produces predictable.
 var nowNanos = func() int64 { return time.Now().UnixNano() }
 
-// SeqFor returns the sequence number to give the first entry appended to a
-// session whose append point is at.
-//
-// It reads the clock, not "one more than the last". A seq is a cursor position,
-// which must never be handed out twice, must never move for an entry that
-// stays, and must survive a clear or replace — none of which counting a result
-// set gives (spec §2.5e2). The LastSeq guard covers a clock that does not move
-// forward: a stepped clock, or two appends inside one nanosecond.
+// SeqFor returns the sequence number for the first entry appended at at. It
+// reads the clock rather than counting, floored at LastSeq+1 for a clock that
+// did not move (stepped, or two appends in one nanosecond) — spec §2.5e2.
 func SeqFor(at AppendPoint) int64 {
 	return max(nowNanos(), at.LastSeq+1)
 }
@@ -57,16 +52,12 @@ func seqOfEntryID(id string) (int64, bool) {
 func EntryIDFor(seq int64) string { return fmt.Sprintf("e%d", seq) }
 
 // PrepareAppend fills in the fields a store owns — id, sequence number,
-// creation time — and links each entry to the branch it extends.
-//
-// Backends call it so every store links and numbers identically. An entry that
-// already carries an id keeps it (a fork re-adding a known entry keeps the
-// identity an update points at), but every entry gets a fresh sequence number,
-// strictly greater than anything issued before, so no cursor can skip a rewrite.
+// creation time — and links each entry to the branch it extends. Backends
+// call it so every store links and numbers identically. An entry keeps a
+// non-empty id; every entry gets a fresh sequence number (spec §2.5e2).
 func PrepareAppend(entries []Entry, at AppendPoint) []Entry {
-	// An imported id of the minted form e<seq> is a claim on that position:
-	// joining it to the floor stops a destination whose clock trails the source
-	// from later minting an id a preserved entry already holds (spec §2.5e2).
+	// An imported minted-form id (e<seq>) claims that position: joining it to
+	// the floor keeps a slower destination clock from re-minting it (spec §2.5e2).
 	for _, e := range entries {
 		if n, ok := seqOfEntryID(e.ID); ok && n > at.LastSeq {
 			at.LastSeq = n

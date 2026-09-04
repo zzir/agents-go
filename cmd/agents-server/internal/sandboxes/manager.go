@@ -23,27 +23,20 @@ type Spec struct {
 	Sandbox *store.Sandbox
 	Project *store.Project
 	// SaveInstanceRef records the handle a service minted for this project's
-	// sandbox, so the next process finds the same one instead of provisioning
-	// a second. The MANAGER fills it in before handing the spec to a backend —
-	// callers never set it, and a backend that derives its own name (docker)
-	// never calls it.
+	// sandbox, so the next process finds it. The MANAGER fills it in; a backend
+	// that derives its own name (docker) never calls it.
 	SaveInstanceRef func(ctx context.Context, ref string) error
 }
 
-// sandboxKey identifies one live sandbox instance: the PROJECT it serves and
-// that project's RUNTIME GENERATION. One axis is enough because the
-// generation moves for every content change that can reach a container — the
-// project's own, and the target's or template's through
-// ProjectStore.BumpRuntimeGen (decisions §5.33). So a rename anywhere never
-// splits the cache, and a content change anywhere always does.
+// sandboxKey identifies one live instance: the PROJECT and its RUNTIME
+// GENERATION — one axis, moved by every content change (decisions §5.33).
 type sandboxKey struct {
 	projectID string
 	gen       int64
 }
 
-// sandboxInstance is one live sandbox plus everything scoped to its lifetime:
-// how many holders still use it (runs and terminals, via Acquire) and whether
-// an eviction is waiting for the last holder.
+// sandboxInstance is one live sandbox plus what is scoped to its lifetime:
+// its holders (Acquire) and whether an eviction waits for the last one.
 type sandboxInstance struct {
 	// key is where the instance lives in the cache — the idle timer needs it
 	// to evict exactly itself.
@@ -51,10 +44,8 @@ type sandboxInstance struct {
 	// idle, when set, fires the idle-stop: armed by the release that dropped
 	// the last reference, disarmed by the next acquire. Guarded by mu.
 	idle *time.Timer
-	// ready closes once the build finished — sb or buildErr is set from then
-	// on. An instance enters the cache as a PLACEHOLDER before its sandbox is
-	// dialed (see acquire), so concurrent acquirers of one key wait on this
-	// gate instead of dialing again, and they wait OUTSIDE the manager lock.
+	// ready closes once the build finished (sb or buildErr set). An instance
+	// enters the cache as a PLACEHOLDER, so concurrent acquirers wait here, OUTSIDE mu.
 	ready chan struct{}
 	// sb and buildErr are written once, before ready closes; reading them
 	// after <-ready needs no lock.
@@ -62,25 +53,15 @@ type sandboxInstance struct {
 	buildErr error
 	// refs counts live holders. Guarded by the manager's mu.
 	refs int
-	// doomed marks an instance evicted from the cache (a config edit, the
-	// project's deletion, or the last bound session going away) while holders
-	// remain: nothing new can acquire it, and the LAST release closes it — an
-	// in-flight run or an open terminal finishes on the configuration it
-	// started with instead of having its connection torn out from under it.
-	// Guarded by mu.
+	// doomed marks an instance evicted while holders remain: nothing new
+	// acquires it, and the LAST release closes it (invariant 27). Guarded by mu.
 	doomed bool
-	// expired marks a stop in flight — an idle expiry or a user Stop: the
-	// instance stays under its key so an acquire waits on gone instead of
-	// adopting a stopping container (which would look dead and be
-	// force-recreated, wiping its packages — decisions §5.28). gone closes when
-	// the stop finished and the key is free. Guarded by mu.
+	// expired marks a stop in flight: the instance stays under its key so an
+	// acquire waits on gone (decisions §5.28) rather than adopting it. Guarded by mu.
 	expired bool
 	gone    chan struct{}
-	// stopOnRelease pauses the compute when the last holder of a doomed
-	// instance releases it — a user Stop deferred behind live work, or an idle
-	// expiry — rather than only closing the connection, which for e2b releases
-	// nothing remote. A retire, remove or rebuild leaves it false: a successor
-	// generation keeps the sandbox, or a reclaim destroys it. Guarded by mu.
+	// stopOnRelease PAUSES the compute when the last holder of a doomed instance
+	// releases (a deferred Stop, an idle expiry); retire/remove/rebuild leave it false.
 	stopOnRelease bool
 
 	closeOnce sync.Once
@@ -90,10 +71,8 @@ type sandboxInstance struct {
 // user Stop, neither of which has the caller's context to carry.
 const stopTimeout = 30 * time.Second
 
-// close tears down the sandbox, once — the idle expiry and an eviction may
-// both reach it. Called without the manager lock — teardown can block on I/O.
-// The nil check covers a placeholder whose build never finished (process
-// shutdown mid-dial).
+// close tears down the sandbox once, without the manager lock (teardown can
+// block on I/O); the nil check covers a placeholder whose build never finished.
 func (i *sandboxInstance) close() {
 	i.closeOnce.Do(func() {
 		if i.sb != nil {
@@ -102,10 +81,8 @@ func (i *sandboxInstance) close() {
 	})
 }
 
-// stop pauses the compute (Lifecycle.Stop) before releasing the connection —
-// what an idle expiry or a deferred user Stop wants. For e2b that pause is the
-// only thing that ends the billed sandbox (Close releases nothing remote); for
-// docker it stops the container even when this instance never cached its id.
+// stop pauses the compute (Lifecycle.Stop) before releasing the connection:
+// for e2b that pause is the only thing that ends the billed sandbox.
 func (i *sandboxInstance) stop() {
 	if lc, ok := i.sb.(sandbox.Lifecycle); ok {
 		ctx, cancel := context.WithTimeout(context.Background(), stopTimeout)
@@ -122,17 +99,11 @@ func (i *sandboxInstance) stop() {
 type Manager struct {
 	mu        sync.Mutex
 	instances map[sandboxKey]*sandboxInstance
-	// retired maps a project id to the lowest runtime generation still
-	// current — the fence RetireProject moves on every content change that
-	// reaches the project. An acquire that read the rows just before the
-	// change builds from a retired generation; the fence makes that instance
-	// doomed the moment its build lands, so it serves the run that started it
-	// and closes, instead of living in the cache as a stale-credential
-	// instance until process exit.
+	// retired maps a project id to the lowest generation still current — the
+	// fence RetireProject moves; an in-flight build from below it lands doomed.
 	retired map[string]int64
-	// closed latches when CloseAll runs (process shutdown): no new acquire
-	// may start, and every instance — building placeholders included — is
-	// doomed so the last holder's release closes it.
+	// closed latches on CloseAll: no new acquire, and every instance is doomed
+	// so the last holder's release closes it.
 	closed bool
 	// buildOverride, when set (tests only), replaces buildSandbox — see
 	// buildFn.
@@ -140,15 +111,11 @@ type Manager struct {
 	// trust holds per-session exec_command approval grants, consulted by the
 	// commandGate and updated by the approval resolver.
 	trust *TrustStore
-	// writeInstanceRef persists a backend's handle on a project's sandbox.
-	// Wired at bootstrap; without it a remote backend provisions a fresh
-	// sandbox on every restart, so the build refuses rather than leaking one.
+	// writeInstanceRef persists a backend's handle on a project's sandbox; without
+	// it the build refuses rather than provisioning a fresh sandbox per restart.
 	writeInstanceRef func(ctx context.Context, projectID, ref string) error
-	// idleAfter, when set, returns how long an unreferenced instance lives
-	// before the idle-stop evicts it (0 = never). Read per release so a
-	// settings change applies without a restart. The eviction closes the
-	// instance; KeepOnClose makes that a container STOP, and the next
-	// acquire re-adopts it (decisions §5.28).
+	// idleAfter, when set, is how long an unreferenced instance lives (0 =
+	// never), read per release; the eviction STOPS the container (decisions §5.28).
 	idleAfter func() time.Duration
 }
 
@@ -174,9 +141,8 @@ func NewManager() *Manager {
 // record "allow this command" / "allow all" grants for a session.
 func (m *Manager) Trust() *TrustStore { return m.trust }
 
-// commandGate is exec_command's per-call approval gate: approval is required
-// unless the run's session has already trusted this exact command (or all
-// commands). The session id rides in RunContext.Context, set by the runner.
+// commandGate is exec_command's per-call approval gate: required unless the
+// session trusted this command (or all). The session id rides in RunContext.Context.
 func (m *Manager) commandGate(_ context.Context, rc *agents.RunContext, argsJSON string, _ string) (bool, error) {
 	if rc == nil {
 		return true, nil
@@ -201,11 +167,8 @@ func (m *Manager) Acquire(spec Spec) (sandbox.Sandbox, func(), error) {
 	return inst.sb, release, nil
 }
 
-// acquire backs Acquire, returning the instance itself. The build runs
-// OUTSIDE the manager lock — an ssh dial can take seconds, and every other key
-// would stall behind it. The lock covers only the map: the first acquirer
-// installs a placeholder and dials after unlocking; concurrent acquirers of
-// the same key wait on its ready gate.
+// acquire backs Acquire. The build runs OUTSIDE the manager lock (an ssh dial
+// takes seconds): the first acquirer installs a placeholder, the rest wait on ready.
 func (m *Manager) acquire(spec Spec) (*sandboxInstance, func(), error) {
 	if spec.Project == nil || spec.Sandbox == nil {
 		return nil, nil, fmt.Errorf("sandbox acquire needs a sandbox and a project")
@@ -237,27 +200,17 @@ func (m *Manager) acquire(spec Spec) (*sandboxInstance, func(), error) {
 		inst.sb, inst.buildErr = sb, err
 		switch {
 		case err != nil:
-			// A failed build must not poison the key: the placeholder leaves
-			// the cache so the next acquire retries with a fresh dial. Waiters
-			// already holding the placeholder read buildErr off it. (The ==
-			// guard: an eviction may have removed it — or a successor may
-			// occupy the key — while the dial was in flight.)
+			// A failed build must not poison the key: the placeholder leaves the
+			// cache (if still ours — an evictor or successor may hold the key).
 			if m.instances[key] == inst {
 				delete(m.instances, key)
 			}
 		case m.instances[key] != inst:
-			// Evicted while dialing (a config edit's RetireProject, CloseAll,
-			// the last bound session going). The evictor saw refs > 0 and
-			// marked the placeholder doomed, so the last release closes what
-			// was just built — nothing to do here; the case exists to say so.
+			// Evicted while dialing: the evictor marked the placeholder doomed,
+			// so the last release closes what was just built.
 		case m.retired[key.projectID] > key.gen || m.closed:
-			// Built from a generation that was retired while the dial was in
-			// flight (the acquire read the rows just before an update), or the
-			// manager shut down meanwhile. Serve the holders that are already
-			// waiting — their run validly started on this generation — but out
-			// of the cache and doomed: the last release closes it, and no later
-			// acquire can share an instance built from stale credentials or a
-			// stale environment.
+			// Built from a generation retired mid-dial, or after shutdown: serve
+			// the holders already waiting, out of the cache and doomed.
 			delete(m.instances, key)
 			inst.doomed = true
 		}
@@ -289,9 +242,8 @@ func (m *Manager) acquire(spec Spec) (*sandboxInstance, func(), error) {
 	return inst, release, nil
 }
 
-// buildFn returns the sandbox builder — the real one, or a test's injected
-// stand-in (the only way to hold a build open while exercising the concurrent
-// eviction and shutdown paths).
+// buildFn returns the sandbox builder — the real one, or a test's stand-in
+// (the only way to hold a build open in the concurrency tests).
 func (m *Manager) buildFn() func(Spec) (sandbox.Sandbox, error) {
 	if m.buildOverride != nil {
 		return m.buildOverride
@@ -321,9 +273,8 @@ func (m *Manager) release(inst *sandboxInstance) {
 	stopIntent := inst.stopOnRelease
 	if dead && stopIntent {
 		if m.projectCachedLocked(inst.key.projectID) {
-			// New work acquired the project after the deferred Stop was asked
-			// for: pausing now would stop the container out from under it. The
-			// stale stop is superseded; only this connection closes.
+			// New work acquired the project after the deferred Stop: the stale
+			// stop is superseded; only this connection closes.
 			stopIntent = false
 		} else {
 			// Fence the pause like the idle expiry: reclaim the key as an
@@ -360,10 +311,8 @@ func (m *Manager) projectCachedLocked(projectID string) bool {
 	return false
 }
 
-// idleExpire is the idle timer's body: evict and close the instance — unless
-// a new holder arrived (the acquire disarms the timer, but a fire already in
-// flight loses this race and must check), a successor replaced it under the
-// key, or a user Stop already fenced it and owns its teardown.
+// idleExpire is the idle timer's body: evict and stop — unless a holder arrived
+// (a fire in flight loses that race), a successor holds the key, or a Stop owns it.
 func (m *Manager) idleExpire(inst *sandboxInstance) {
 	m.mu.Lock()
 	if m.instances[inst.key] != inst || inst.refs > 0 || inst.expired {
@@ -371,18 +320,15 @@ func (m *Manager) idleExpire(inst *sandboxInstance) {
 		return
 	}
 	// Fence BEFORE stopping: an acquire during the stop waits on gone rather
-	// than adopting a container it would then judge dead and recreate from
-	// scratch.
+	// than adopting a container it would judge dead (decisions §5.28).
 	inst.expired = true
 	inst.gone = make(chan struct{})
 	m.mu.Unlock()
 	m.stopFenced(inst)
 }
 
-// stopFenced pauses inst's compute (not just the connection), then frees its
-// key and its waiters. While the stop runs the instance stays under its key
-// marked expired, so a racing Acquire waits on gone (see acquire); the caller
-// set that fence under the lock.
+// stopFenced pauses inst's compute, then frees its key and waiters; the caller
+// set the expired/gone fence under the lock.
 func (m *Manager) stopFenced(inst *sandboxInstance) {
 	inst.stop()
 	m.mu.Lock()
@@ -393,9 +339,8 @@ func (m *Manager) stopFenced(inst *sandboxInstance) {
 	m.mu.Unlock()
 }
 
-// evictLocked removes an instance from the cache and reports whether the
-// caller should close it now: with holders remaining it is doomed instead,
-// and the last release closes it. Callers hold m.mu.
+// evictLocked removes an instance from the cache and returns it when the caller
+// should close it now; with holders it is doomed instead. Callers hold m.mu.
 func (m *Manager) evictLocked(key sandboxKey) (toClose *sandboxInstance) {
 	inst, ok := m.instances[key]
 	if !ok {
@@ -410,10 +355,8 @@ func (m *Manager) evictLocked(key sandboxKey) (toClose *sandboxInstance) {
 }
 
 // RetireProject evicts every instance of a project built before minLive and
-// fences that generation off, so an acquire whose build is still in flight
-// cannot repopulate the cache with the old configuration. The eviction defers
-// to live holders: a run or terminal already using an instance finishes on
-// what it started with (see sandboxInstance.doomed).
+// fences that generation off, so an in-flight build cannot repopulate the cache
+// with the old configuration; live holders finish on what they have (invariant 27).
 func (m *Manager) RetireProject(projectID string, minLive int64) {
 	var toClose []*sandboxInstance
 	m.mu.Lock()
@@ -435,10 +378,8 @@ func (m *Manager) RetireProject(projectID string, minLive int64) {
 }
 
 // RemoveProject evicts every cached instance of the project and fences its id
-// permanently (a random id is never reused): the project is gone, so a late
-// build from a caller that read it before the delete cannot re-enter the cache
-// with nothing left to retire it. In-flight holders finish on what they
-// acquired; only idle instances close immediately.
+// permanently (ids are never reused), so a late build cannot re-enter the cache.
+// In-flight holders finish on what they acquired.
 func (m *Manager) RemoveProject(projectID string) {
 	var toClose []*sandboxInstance
 	m.mu.Lock()
@@ -520,11 +461,8 @@ func (m *Manager) EvictProject(projectID string) {
 	}
 }
 
-// stopProjectOnRelease evicts every instance of the project and marks it so
-// the last holder's release PAUSES the compute; an instance with no holders is
-// paused now. Unlike EvictProject (a rebuild or unbind that only closes), this
-// is a user Stop deferred behind live work — for e2b, pausing is the only way
-// to end the billed sandbox.
+// stopProjectOnRelease evicts every instance of the project and makes the last
+// holder's release PAUSE it (a user Stop deferred behind live work); idle ones now.
 func (m *Manager) stopProjectOnRelease(projectID string) {
 	var toStop []*sandboxInstance
 	m.mu.Lock()
@@ -540,9 +478,8 @@ func (m *Manager) stopProjectOnRelease(projectID string) {
 			inst.doomed = true
 			continue
 		}
-		// No holders: stop it now, fenced under its key like the idle expiry,
-		// so a racing Acquire waits instead of adopting the stopping container.
-		// Disarm the idle timer; a fire already in flight no-ops on expired.
+		// No holders: stop now, fenced under its key like the idle expiry; a
+		// timer fire already in flight no-ops on expired.
 		if inst.idle != nil {
 			inst.idle.Stop()
 			inst.idle = nil
@@ -557,12 +494,9 @@ func (m *Manager) stopProjectOnRelease(projectID string) {
 	}
 }
 
-// CloseAll evicts everything and latches the manager closed — the process is
-// exiting. Idle instances close now; held ones (a run in teardown, a terminal
-// draining, a build still dialing) are doomed and close on their last
-// release, which is also what keeps this free of the builder's own writes: an
-// instance is only ever closed after its ready gate, never while the dial is
-// in flight.
+// CloseAll evicts everything and latches the manager closed. Idle instances
+// close now; held ones (including a build still dialing) are doomed and close
+// on their last release — always after their ready gate.
 func (m *Manager) CloseAll() {
 	var toClose []*sandboxInstance
 	m.mu.Lock()
@@ -578,10 +512,8 @@ func (m *Manager) CloseAll() {
 	}
 }
 
-// Output caps for the sandbox tools, replacing the SDK's 8192 defaults:
-// read_file must return whole source files (65536 covers a ~2000-line file),
-// while exec_command keeps a tighter per-stream cap — its truncation preserves
-// head and tail, which is what build/test output needs.
+// Output caps for the sandbox tools, above the SDK's 8192 defaults: read_file
+// must return whole source files; exec_command keeps head and tail.
 const (
 	fileToolMaxOutputBytes = 65536
 	execToolMaxOutputBytes = 32768
@@ -670,17 +602,12 @@ func (m *Manager) Stop(ctx context.Context, spec Spec) (stopped bool, err error)
 	if !ok {
 		return false, fmt.Errorf("%s sandbox: %w", spec.Sandbox.Type, sandbox.ErrLifecycleUnsupported)
 	}
-	// "Am I the only holder?" and "fence the instance as stopping" happen under
-	// one lock: otherwise a concurrent Acquire slipping in between the count
-	// and lc.Stop would build against the very container this call stops.
-	// The fence is the idle expiry's (expired/gone): the racing Acquire waits
-	// out the stop; finish then frees the keys, and this call's own release
-	// closes what it detached.
+	// "Sole holder?" and "fence as stopping" under one lock, or a concurrent
+	// Acquire between them builds against the container this call stops.
 	finish, sole := m.detachIfSole(spec.Project.ID)
 	if !sole {
-		// Someone is still working in it; leave the container up and let the
-		// last holder's release PAUSE it — close alone releases nothing remote
-		// for e2b, so a plain eviction would never stop the billed sandbox.
+		// Someone is still working in it: the last holder's release PAUSES it
+		// (close alone releases nothing remote for e2b).
 		m.stopProjectOnRelease(spec.Project.ID)
 		return false, nil
 	}
@@ -689,13 +616,8 @@ func (m *Manager) Stop(ctx context.Context, spec Spec) (stopped bool, err error)
 	return err == nil, err
 }
 
-// detachIfSole reports whether this caller holds the project's only reference,
-// and if so dooms every instance of the project and fences each as stopping
-// (expired + gone) WITHOUT freeing its key, so a racing Acquire waits for the
-// stop to complete instead of adopting a container mid-stop — idleExpire's
-// shape. The returned finish frees the keys and the waiters; the caller runs
-// it after Lifecycle.Stop, error or not. Callers hold one reference (from
-// Acquire).
+// detachIfSole reports whether this caller holds the project's only reference and,
+// if so, fences every instance as stopping (idleExpire's shape); finish frees the keys.
 func (m *Manager) detachIfSole(projectID string) (finish func(), sole bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -867,9 +789,8 @@ func applyImage(opts *dockersb.Options, sb *store.Sandbox) error {
 		opts.User = DefaultContainerUser
 	}
 	opts.Network = dc.Network
-	// A blank limit takes the workbench default, not "unlimited": agent-
-	// generated code runs here, so an uncapped container could exhaust the
-	// host's memory or CPU. An operator raises them per sandbox.
+	// A blank limit takes the workbench default, not "unlimited" (decisions
+	// §5.38); an operator raises them per sandbox.
 	mem := dc.MemoryMB
 	if mem == 0 {
 		mem = DefaultMemoryMB
@@ -883,9 +804,8 @@ func applyImage(opts *dockersb.Options, sb *store.Sandbox) error {
 	return nil
 }
 
-// Default resource caps for a workbench docker sandbox that leaves them blank.
-// 0 in the config means "this default", never "unlimited" — an unbounded
-// container running agent code is a host-DoS surface (decisions §5.38).
+// Default resource caps for a docker sandbox that leaves them blank; 0 means
+// this default, never "unlimited" (decisions §5.38).
 const (
 	DefaultMemoryMB int64   = 4096
 	DefaultCPUs     float64 = 2

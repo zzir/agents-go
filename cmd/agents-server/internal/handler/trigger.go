@@ -24,8 +24,7 @@ import (
 )
 
 // The webhook's signing contract: the caller sends the request's UNIX time and
-// HMAC-SHA256(secret, "<timestamp>.<body>") in hex; a call older or newer than
-// the tolerance is refused, so a captured request cannot be replayed later.
+// HMAC-SHA256(secret, "<timestamp>.<body>") in hex; outside the tolerance is refused.
 const (
 	HookSignatureHeader = "X-Signature-256"
 	HookTimestampHeader = "X-Timestamp"
@@ -41,9 +40,8 @@ type TriggerFirer interface {
 	Sync(ctx context.Context, triggerID string)
 }
 
-// TriggerHandler serves the triggers that start work — a workflow, or a turn
-// of an agent — without a conversation asking, and the webhook endpoint they
-// are called through.
+// TriggerHandler serves the triggers that start work without a conversation
+// asking, and the webhook endpoint they are called through.
 type TriggerHandler struct {
 	store     *store.TriggerStore
 	sessions  *store.SessionStore
@@ -63,10 +61,8 @@ func NewTriggerHandler(s *store.TriggerStore, sessions *store.SessionStore, work
 	return &TriggerHandler{store: s, sessions: sessions, workflows: workflows, agents: agents, firer: firer, replays: replayGuard{seen: map[string]time.Time{}}}
 }
 
-// replayGuard remembers each delivery accepted within the timestamp window —
-// keyed by trigger and signature, which is the timestamp and body — so the
-// same signed request fires once, not once per resend. In memory: the
-// window is minutes, and a restart inside it is the one gap left open.
+// replayGuard remembers each delivery accepted within the timestamp window,
+// keyed by trigger and signature. In memory: a restart inside the window is the one gap.
 type replayGuard struct {
 	mu   sync.Mutex
 	seen map[string]time.Time
@@ -96,9 +92,8 @@ func (g *replayGuard) forget(key string) {
 	delete(g.seen, key)
 }
 
-// TriggerView is a trigger as the API shows it: the secret only when it was
-// just made (creation, rotation), otherwise its last four characters; and the
-// path a webhook is called on.
+// TriggerView is a trigger as the API shows it: the secret only when just
+// made (creation, rotation), else its last four characters; and the webhook path.
 type TriggerView struct {
 	*store.Trigger
 	// Secret is set on the response that minted it, and never again.
@@ -149,10 +144,8 @@ func (r *triggerReq) toModel() *store.Trigger {
 	}
 }
 
-// bind decodes and validates an incoming trigger: its shape, its schedule,
-// and the session it names (a conversation, not a task's own). The target —
-// the workflow or the agent — is checked by the store, in the transaction
-// that writes the row.
+// bind decodes and validates an incoming trigger: shape, schedule, and the
+// session it names. The target is checked by the store, in the writing transaction.
 func (h *TriggerHandler) bind(c *gin.Context) (*store.Trigger, bool) {
 	var req triggerReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -188,9 +181,8 @@ func (h *TriggerHandler) bind(c *gin.Context) (*store.Trigger, bool) {
 		badRequest(c, "session_id names a task's own session; a trigger reports to a conversation")
 		return nil, false
 	}
-	// A workflow target must be one the session's owner may see (decisions §5.29)
-	// — the execution will run under their identity, so a foreign private
-	// definition reads as absent.
+	// A workflow target must be one the session's owner may see (decisions
+	// §5.29): the execution runs under their identity.
 	if t.WorkflowID != "" && h.workflows != nil {
 		wf, err := h.workflows.Get(ctx, t.WorkflowID)
 		if err != nil || !store.Visible(wf.Scope, wf.OwnerID, sess.OwnerID, false) {
@@ -327,9 +319,8 @@ func (h *TriggerHandler) Update(c *gin.Context) {
 	if !ok {
 		return
 	}
-	// The kind is fixed at creation (a webhook's secret and URL would be
-	// meaningless on a cron); UpdateSettings touches the settable columns
-	// only, so a rotation or a fire racing this update is not undone.
+	// The kind is fixed at creation; UpdateSettings touches the settable
+	// columns only, so a racing rotation or fire is not undone.
 	if t.Kind != cur.Kind {
 		badRequest(c, "kind cannot change; create another trigger")
 		return
@@ -456,12 +447,10 @@ func (h *TriggerHandler) RotateSecret(c *gin.Context) {
 }
 
 // Hook is the webhook endpoint (POST /hooks/{id}), outside the token-guarded
-// API and so outside the OpenAPI document's server base — the README is its
-// contract. The caller proves itself with the trigger's secret: X-Timestamp
-// (UNIX seconds, within HookTimestampSkew) and X-Signature-256 =
-// hex(HMAC-SHA256(secret, timestamp + "." + body)); the body, up to
-// HookBodyLimit, is the payload appended to the brief. 401 on a bad or stale
-// signature; otherwise as a manual fire.
+// API — the README is its contract. X-Timestamp (UNIX seconds, within
+// HookTimestampSkew) and X-Signature-256 = hex(HMAC-SHA256(secret, timestamp
+// + "." + body)); the body, up to HookBodyLimit, is appended to the brief.
+// 401 on a bad or stale signature; otherwise as a manual fire.
 func (h *TriggerHandler) Hook(c *gin.Context) {
 	ctx, id := c.Request.Context(), c.Param("id")
 	t, err := h.store.Get(ctx, id)
@@ -484,11 +473,8 @@ func (h *TriggerHandler) Hook(c *gin.Context) {
 		abortError(c, http.StatusUnauthorized, protocol.CodeUnauthorized, "bad or stale signature")
 		return
 	}
-	// A valid delivery fires once: the same timestamp and body resent — by a
-	// retrying sender or a captured request — is a replay, refused. Claimed
-	// before the fire (two copies at once must not both start something) and
-	// released when the fire fails, so a sender's resend of a delivery that
-	// found the session busy or the server draining still gets through.
+	// A valid delivery fires once: claimed before the fire (two copies must
+	// not both start something), released when the fire fails so a resend gets through.
 	key := id + ":" + strings.ToLower(strings.TrimPrefix(strings.TrimSpace(sig), "sha256="))
 	if !h.replays.admit(key, now) {
 		conflict(c, "replayed delivery: this timestamp and body were already accepted or are being delivered")
@@ -509,10 +495,8 @@ func SignHook(secret, timestamp string, body []byte) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-// verifyHookSignature checks a call against the trigger's secret: the
-// timestamp within HookTimestampSkew of now, the signature equal (in constant
-// time) to SignHook's over the same timestamp and body. A "sha256=" prefix on
-// the signature is accepted.
+// verifyHookSignature checks the timestamp is within HookTimestampSkew and
+// the signature equals SignHook's in constant time; a "sha256=" prefix is accepted.
 func verifyHookSignature(secret, timestamp, signature string, body []byte, now time.Time) bool {
 	if secret == "" || timestamp == "" || signature == "" {
 		return false

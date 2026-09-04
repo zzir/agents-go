@@ -1,13 +1,8 @@
-// Package e2b runs a sandbox on any host that speaks the E2B API — E2B's own
-// cloud, a self-hosted E2B, or a compatible service such as Alibaba Cloud's
-// Function Compute cloud sandbox. One backend, one endpoint configuration:
-// the differences between those are the API URL, the sandbox domain and the
-// key (decisions §5.34).
-//
-// The client is written here rather than taken from an SDK: the control plane
-// is six REST calls and the data plane is Connect-over-JSON, so the whole
-// thing needs nothing outside the standard library — which keeps it in the
-// root module instead of behind a submodule.
+// Package e2b runs a sandbox on any host that speaks the E2B API — E2B's cloud,
+// a self-hosted E2B, or a compatible service such as Alibaba Cloud's Function
+// Compute sandbox — one backend whose configuration is the API URL, the sandbox
+// domain and the key (decisions §5.34). The client is standard library only,
+// which keeps it in the root module rather than behind a submodule.
 package e2b
 
 import (
@@ -44,9 +39,8 @@ const (
 // is not a 30-second command.
 const exportTimeout = 10 * time.Minute
 
-// controlCallTimeout bounds a one-shot call that has no deadline of its own —
-// a signal, a terminal write or resize, ensure's rollback kill — so a hung
-// endpoint ends the call rather than blocking the goroutine that made it forever.
+// controlCallTimeout bounds a one-shot call with no deadline of its own (a
+// signal, a terminal write, a rollback kill) so a hung endpoint cannot block it.
 const controlCallTimeout = 30 * time.Second
 
 // DataPlaneAuth selects how envd is authenticated. It is configuration rather
@@ -125,9 +119,8 @@ type Options struct {
 type Sandbox struct {
 	opts Options
 
-	// provMu serializes provisioning (ensureFor's slow path) and is held
-	// across its round trips and the OnSandboxID callback; mu guards the
-	// fields below and is never held across I/O. provMu is taken before mu.
+	// provMu serializes provisioning, held across round trips and the OnSandboxID
+	// callback; mu guards the fields below and is never held across I/O (provMu first).
 	provMu sync.Mutex
 	mu     sync.Mutex
 	// id is the sandbox this client is bound to; empty until the first
@@ -146,10 +139,8 @@ type Sandbox struct {
 	wdMu sync.Mutex
 }
 
-// leaseValid reports whether the lease has enough runway to skip a
-// control-plane refresh: at least half the TTL, and at least the caller's
-// runway — an operation bounded longer than the lease must extend it first.
-// Callers hold s.mu.
+// leaseValid reports whether the lease can skip a control-plane refresh: at
+// least half the TTL and at least the caller's runway. Callers hold s.mu.
 func (s *Sandbox) leaseValid(runway time.Duration) bool {
 	if s.leaseUntil.IsZero() {
 		return false
@@ -207,9 +198,8 @@ func (s *Sandbox) httpClient() *http.Client {
 	return defaultClient
 }
 
-// defaultClient refuses a redirect that leaves the host the request was sent
-// to: envd runs inside the sandbox, and Go forwards the X-API-Key /
-// X-Access-Token credential across redirects (unlike Authorization).
+// defaultClient refuses a redirect off the original host: Go forwards the
+// X-API-Key / X-Access-Token credential across redirects (unlike Authorization).
 var defaultClient = &http.Client{
 	CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		if len(via) > 0 && req.URL.Host != via[0].URL.Host {
@@ -284,9 +274,8 @@ func (s *Sandbox) envdHost(id string) string {
 	return "https://" + s.hostFor(id, EnvdPort)
 }
 
-// ensureWorkDir creates the working directory of a freshly created sandbox
-// (spec §2.7q), exactly once before any command proceeds: the flag falls only
-// on success, and concurrent first commands wait on wdMu.
+// ensureWorkDir creates a fresh sandbox's working directory (spec §2.7q) once
+// before any command: the flag falls only on success, concurrent firsts wait on wdMu.
 func (s *Sandbox) ensureWorkDir(ctx context.Context) error {
 	s.mu.Lock()
 	pending := s.freshWorkDir
@@ -318,8 +307,7 @@ func (s *Sandbox) ensureWorkDir(ctx context.Context) error {
 func (s *Sandbox) Close() error { return nil }
 
 // resolvePath makes a sandbox-absolute path out of a caller's, which may be
-// relative to the working directory — the same shell semantics every other
-// backend follows (decisions §5.14).
+// relative to the working directory (spec §2.7t).
 func (s *Sandbox) resolvePath(p string) string {
 	if strings.HasPrefix(p, "/") {
 		return p

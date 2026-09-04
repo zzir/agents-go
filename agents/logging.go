@@ -66,9 +66,7 @@ func newRunLogger(cfg LogConfig) *runLogger {
 	return &runLogger{log: cfg.Logger, sensitive: cfg.SensitiveData}
 }
 
-// component returns a logger tagged with the subsystem emitting the record, so
-// a caller can filter the SDK's chatter by where it came from without every
-// call site repeating the attribute.
+// component returns a logger tagged with the subsystem emitting the record.
 func (l *runLogger) component(name string) *runLogger {
 	if l == nil || l.log == nil {
 		return l
@@ -121,12 +119,8 @@ func (l *runLogger) emit(ctx context.Context, level slog.Level, msg string, attr
 	l.log.LogAttrs(ctx, level, msg, l.filter(attrs)...)
 }
 
-// filter drops sensitive attributes when they were not asked for, and unwraps
-// them when they were.
-//
-// Unwrapping matters: a caller who opts in wants the argument JSON, not a
-// wrapper type's Go representation, and a handler that does not know about
-// slog.LogValuer would print the latter.
+// filter drops sensitive attributes unless they were asked for, then unwraps them
+// so a handler that ignores slog.LogValuer prints the value, not the wrapper.
 func (l *runLogger) filter(attrs []slog.Attr) []slog.Attr {
 	kept := attrs[:0:0]
 	for _, a := range attrs {

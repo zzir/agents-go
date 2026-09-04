@@ -17,14 +17,7 @@ type streamItem struct {
 }
 
 // synthesizeStream translates the Messages SSE stream into canonical
-// response.* events, yielding them to the consumer.
-//
-// Deltas are forwarded as presentation events the moment they arrive. The
-// finished items — output_item.done and the terminal event — are converted
-// from the accumulated message at message_stop, once the stop reason is
-// known, through the same convertOutput the blocking path uses: a refusal
-// collapses the items, and consecutive text blocks are one message item, so
-// nothing emitted earlier can contradict the terminal output (decisions §5.49).
+// response.* events: deltas live, finished items at message_stop (decisions §5.49).
 func synthesizeStream(stream *ssestream.Stream[ant.MessageStreamEventUnion], yield func(*agents.ResponseStreamEvent, error) bool) {
 	emit := func(ev agents.ResponseStreamEvent, err error) bool {
 		if err != nil {
@@ -109,9 +102,8 @@ func synthesizeStream(stream *ssestream.Stream[ant.MessageStreamEventUnion], yie
 				return
 			}
 		case "message_delta":
-			// Accumulate copies OutputTokens and the cache fields from the
-			// delta but not OutputTokensDetails, and message_start carries it
-			// as 0: without this a streamed call reports zero reasoning tokens.
+			// Accumulate copies OutputTokens but not OutputTokensDetails, and message_start
+			// carries it as 0; without this a streamed call reports zero reasoning tokens.
 			if event.Usage.JSON.OutputTokensDetails.Valid() {
 				acc.Usage.OutputTokensDetails = event.Usage.OutputTokensDetails
 			}
@@ -121,9 +113,8 @@ func synthesizeStream(stream *ssestream.Stream[ant.MessageStreamEventUnion], yie
 				yield(nil, err)
 				return
 			}
-			// Rebuilt from the accumulator in INDEX order: the protocol only
-			// orders start events, and a stop-ordered history could replay
-			// with thinking after text, which the API rejects.
+			// Rebuilt from the accumulator in INDEX order: a stop-ordered history could
+			// replay with thinking after text, which the API rejects.
 			output, err := convertOutput(&acc)
 			if err != nil {
 				yield(nil, err)
@@ -159,17 +150,14 @@ func synthesizeStream(stream *ssestream.Stream[ant.MessageStreamEventUnion], yie
 	yield(nil, modelkit.TruncatedStreamError("anthropic messages stream"))
 }
 
-// blockItemID synthesizes a stable item id for blocks the API leaves
-// anonymous. It must agree between the delta events and the finished item —
-// convertOutput uses the same derivation.
+// blockItemID synthesizes a stable item id for anonymous blocks; convertOutput
+// uses the same derivation so deltas and the finished item agree.
 func blockItemID(msgID string, index int) string {
 	return fmt.Sprintf("%s-%d", msgID, index)
 }
 
-// responseUsage maps Messages usage onto the canonical terminal-event
-// accounting. It owns the summation rule for this adapter — canonical
-// InputTokens is uncached + cache-read + cache-write — and the blocking path's
-// usageFromMessage (convert.go) is built on it rather than repeating it.
+// responseUsage maps Messages usage onto canonical accounting and owns this
+// adapter's summation rule: InputTokens = uncached + cache-read + cache-write.
 func responseUsage(u ant.Usage) modelkit.ResponseUsage {
 	in := u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens
 	return modelkit.ResponseUsage{

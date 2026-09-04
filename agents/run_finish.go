@@ -5,25 +5,15 @@ import (
 	"errors"
 )
 
-// usageSnapshot returns a detached copy of the run's usage accumulator for
-// anything handed to the caller — a RunResult, a RunState, error details. The
-// live accumulator keeps changing, so a copy needs no synchronization and a
-// later resume cannot mutate a result the caller already holds.
+// usageSnapshot returns a detached copy of the run's usage for anything handed
+// to the caller, so a later resume cannot mutate a result already returned.
 func (r *runner) usageSnapshot() *Usage {
 	u := r.rc.Usage.Snapshot()
 	return &u
 }
 
-// baseResult fills the fields every RunResult carries however the run ended: the
-// input, the item log, the responses, the last agent, and the three
-// accumulators. Each ending then adds only what makes it different. Every ending
-// goes through here, so a field added to RunResult is filled once, not at four
-// returns.
-//
-// NewItems is the whole log (r.sessionItems), never the model's view of it: a
-// handoff input filter or a mid-run recompaction restarts the view, while the
-// result reports what the run produced. Nil for a fresh run that failed before
-// producing anything; a resume seeds it from the state.
+// baseResult fills the fields every RunResult carries however the run ended.
+// NewItems is the whole log (r.sessionItems), never the model's view of it.
 func (r *runner) baseResult() *RunResult {
 	return &RunResult{
 		Input:            r.state.originalInput,
@@ -36,11 +26,8 @@ func (r *runner) baseResult() *RunResult {
 	}
 }
 
-// finishRun is the final-output tail shared by the normal completion path and
-// a max-turns recovery. Order: the agent-end hook fires FIRST, before output
-// guardrails, so a tripped guardrail does not suppress it; then output
-// guardrails; then session persistence and compaction, so a guardrail-tripped
-// final output is never persisted.
+// finishRun is the final-output tail: OnEnd first (a tripped guardrail does
+// not suppress it), then output guardrails, then persistence and compaction.
 func (r *runner) finishRun(ctx context.Context, finalOutput any) (*RunResult, error) {
 	agent := r.state.agent
 	if agent.OnEnd != nil {
@@ -51,9 +38,8 @@ func (r *runner) finishRun(ctx context.Context, finalOutput any) (*RunResult, er
 	// Output guardrails: run-level ones first, then the producing agent's.
 	// A Replace decision substitutes the final output and the run continues.
 	if outGuardrails := selectStage(r.runGuardrails(agent), StageOutput); len(outGuardrails) > 0 {
-		// The output stage is the likeliest place for a slow (LLM-based)
-		// guardrail; it gets its own span so it is not misreported under the
-		// turn's last phase ("model" or "tools").
+		// Its own span: the likeliest place for a slow LLM-based guardrail, not
+		// to be misreported under the turn's last phase.
 		gspan := r.trace.StartGuardrailSpan("output", r.agentParentID())
 		res, gerr := runStageConcurrent(ctx, r.rc, outGuardrails,
 			GuardrailPayload{Stage: StageOutput, Agent: agent, Output: finalOutput})
@@ -77,22 +63,14 @@ func (r *runner) finishRun(ctx context.Context, finalOutput any) (*RunResult, er
 	r.compactAfterRun(ctx)
 	res := r.baseResult()
 	res.FinalOutput = finalOutput
-	// A run can also reach its final output on the very turn the stop was asked
-	// for — a single-turn agent always does, and each Loop attempt starts at
-	// turn one, so the loop's turn-boundary check never fires for them. The
-	// flag answers "did the caller stop this", not "where did it stop", so it
-	// is set wherever the request is live.
+	// The flag answers "did the caller stop this", not "where did it stop": a
+	// run can reach its final output on the very turn the stop was asked for (spec §2.12).
 	res.StoppedEarly = r.ctrl.stopRequested()
 	return res, nil
 }
 
-// recoverMaxTurns gives ErrorHandlers.MaxTurns a chance to turn a turn-budget
-// overrun into a normal completion. It returns (nil, nil) when there is no
-// handler or it declines — the caller then fails with the MaxTurnsError. On
-// recovery the agent span still records the overrun, the synthesized fallback
-// message joins the run's items and session unless the handler opted out, and
-// the run finishes through the same guardrail/persist/hook tail as a normal
-// final output.
+// recoverMaxTurns gives ErrorHandlers.MaxTurns a chance to turn an overrun
+// into a normal completion; (nil, nil) means no handler or it declined.
 func (r *runner) recoverMaxTurns(ctx context.Context, cause *MaxTurnsError) (*RunResult, error) {
 	// Handlers see the session view of the run (never reset by handoff input
 	// filters).
@@ -113,9 +91,8 @@ func (r *runner) recoverMaxTurns(ctx context.Context, cause *MaxTurnsError) (*Ru
 	return r.finishRun(ctx, rec.finalOutput)
 }
 
-// fail is how every failure inside the loop leaves it: the cause wrapped in a
-// *RunError carrying the run's progress so far, so a caller reaches the
-// completed turns through RunError.Result instead of getting a bare error.
+// fail wraps every in-loop failure in a *RunError carrying the run's progress,
+// so a caller reaches the completed turns through RunError.Result.
 func (r *runner) fail(err error) error {
 	if errors.Is(err, errConsumerStopped) {
 		// Not a failure: the consumer left, and nobody is told anything.

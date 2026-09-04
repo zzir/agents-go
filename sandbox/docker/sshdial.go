@@ -50,10 +50,8 @@ type SSHAuth struct {
 	ConnectTimeout time.Duration
 }
 
-// sshDialer reaches a remote Docker daemon's unix socket through SSH: every
-// docker API request opens a direct-streamlocal channel on one shared SSH
-// connection (docs/sandbox.md "Remote daemon"). A dead connection is
-// re-established on the next dial.
+// sshDialer reaches a remote daemon's unix socket over one shared SSH
+// connection, one direct-streamlocal channel per request; redialed when dead.
 type sshDialer struct {
 	addr    string // host:port
 	socket  string // remote unix socket path
@@ -68,9 +66,8 @@ type sshDialer struct {
 	agentConn net.Conn
 }
 
-// newSSHDialer parses an ssh://user@host[:port][/socket] URL and validates
-// the auth config; the SSH connection itself is established lazily on first
-// use.
+// newSSHDialer parses an ssh://user@host[:port][/socket] URL and validates the
+// auth config; the SSH connection is established lazily on first use.
 func newSSHDialer(hostURL string, auth SSHAuth) (*sshDialer, error) {
 	u, err := url.Parse(hostURL)
 	if err != nil {
@@ -128,8 +125,7 @@ func (d *sshDialer) DialContext(ctx context.Context, _, _ string) (net.Conn, err
 }
 
 // dialThrough opens one channel of any kind over the shared transport — the
-// daemon socket, or a TCP address inside the remote's networks (which is what
-// reaches a container's port from here).
+// daemon socket, or a TCP address inside the remote's networks.
 func (d *sshDialer) dialThrough(ctx context.Context, network, addr string) (net.Conn, error) {
 	client, err := d.connect(ctx, nil)
 	if err != nil {
@@ -156,9 +152,7 @@ func (d *sshDialer) dialThrough(ctx context.Context, network, addr string) (net.
 }
 
 // connect returns the shared SSH client, dialing when none is cached or when
-// the caller hands back the client that just failed it. Only that exact
-// client is discarded: concurrent retries after one transport drop land on
-// the first replacement instead of serially killing each other's fresh dials.
+// failed is the current one; only that exact client is discarded.
 func (d *sshDialer) connect(ctx context.Context, failed *ssh.Client) (*ssh.Client, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -193,10 +187,8 @@ func (d *sshDialer) connect(ctx context.Context, failed *ssh.Client) (*ssh.Clien
 	return client, nil
 }
 
-// dialSSH dials and handshakes with cfg.Timeout (or an earlier ctx deadline)
-// bounding the WHOLE exchange — ssh.Dial's Timeout covers only the TCP
-// connect, so a stalled sshd would otherwise hang connect(), and with it every
-// queued request, forever.
+// dialSSH bounds the WHOLE handshake with cfg.Timeout (or ctx): ssh.Dial's
+// Timeout covers only the TCP connect, so a stalled sshd would hang forever.
 func dialSSH(ctx context.Context, addr string, cfg *ssh.ClientConfig) (*ssh.Client, error) {
 	dialer := net.Dialer{Timeout: cfg.Timeout}
 	conn, err := dialer.DialContext(ctx, "tcp", addr)
@@ -234,9 +226,8 @@ func (d *sshDialer) Close() error {
 	return nil
 }
 
-// buildSSHAuthMethods turns an SSHAuth into ordered ssh.AuthMethods: agent
-// first, then private key, then password. When UseAgent is set, the returned
-// net.Conn is the agent socket and must be closed with the dialer.
+// buildSSHAuthMethods orders auth: agent, then private key, then password. With
+// UseAgent the returned net.Conn is the agent socket, closed with the dialer.
 func buildSSHAuthMethods(cfg SSHAuth) ([]ssh.AuthMethod, net.Conn, error) {
 	var methods []ssh.AuthMethod
 	var agentConn net.Conn

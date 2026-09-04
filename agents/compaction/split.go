@@ -8,10 +8,8 @@ import (
 )
 
 // SafeSplit snaps a count-based split index to the nearest group boundary at or
-// before it, so neither side holds half of something that must stay together.
-//
-// It returns 0 when no non-empty prefix is safe — the caller should skip rather
-// than split somewhere that corrupts the history.
+// before it, so neither side holds half of what must stay together. It returns
+// 0 when no non-empty prefix is safe.
 func SafeSplit(entries []session.Entry, split int) int {
 	if split <= 0 || len(entries) == 0 {
 		return 0
@@ -35,11 +33,8 @@ func SafeSplit(entries []session.Entry, split int) int {
 }
 
 // IsSummaryOnly reports whether entries amount to nothing but an existing
-// compaction summary.
-//
-// Summarizing that produces a summary of a summary, and a conversation that
-// does it every pass decays into a paraphrase of a paraphrase. Callers check
-// this before spending a model call.
+// compaction summary. Summarizing that yields a summary of a summary; callers
+// check before spending a model call.
 func IsSummaryOnly(entries []session.Entry) bool {
 	if len(entries) == 0 {
 		return false

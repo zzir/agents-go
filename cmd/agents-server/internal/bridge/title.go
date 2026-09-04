@@ -14,12 +14,8 @@ import (
 // A new session is named from its first prompt, by a throwaway one-turn agent
 // running beside the real run.
 
-// maybeGenerateTitle names a still-default ("New Session") session from the user's
-// first message. It runs IN PARALLEL with the run — the title depends only on
-// the user's message, not the answer — so it is fired at run start and takes the
-// input, model and provider directly rather than reading them back after the run
-// (at run start the SDK has not persisted anything yet). It runs on the hub root
-// context so it survives the client disconnecting.
+// maybeGenerateTitle names a still-default session from the user's first
+// message, IN PARALLEL with the run, on the hub root context.
 func (r *Runner) maybeGenerateTitle(parentCtx context.Context, sessionID, model, userInput string, provider agents.ModelProvider, sendEvent func(string, any)) {
 	ctx, cancel := context.WithTimeout(parentCtx, 30*time.Second)
 	defer cancel()
@@ -52,9 +48,8 @@ func (r *Runner) maybeGenerateTitle(parentCtx context.Context, sessionID, model,
 			title = ""
 		}
 	}
-	// A reachable provider that still failed (or garbled the title) leaves the
-	// session nameless; fall back to the user's first message so it is not stuck
-	// as "New Session". Provider absence bailed earlier — that stays a no-op.
+	// A reachable provider that failed or garbled the title leaves the session
+	// nameless; fall back to the first message.
 	if title == "" {
 		title = fallbackTitle(userInput)
 	}
@@ -62,10 +57,8 @@ func (r *Runner) maybeGenerateTitle(parentCtx context.Context, sessionID, model,
 		return
 	}
 
-	// A CAS on the default name: the model took its time, and a person may
-	// have named the session meanwhile — their name stands, and so does the
-	// first of two generators'. The run's own bindSessionAgent only ever sets
-	// agent_config_id, never the name, so it is no contender.
+	// A CAS on the default name: a person may have named the session
+	// meanwhile — their name stands, and so does the first of two generators'.
 	won, err := r.Deps.Sessions.NameIfDefault(ctx, sessionID, title)
 	if err != nil {
 		log.Warn("title gen: save failed", "error", err)
@@ -80,9 +73,8 @@ func (r *Runner) maybeGenerateTitle(parentCtx context.Context, sessionID, model,
 	})
 }
 
-// fallbackTitle derives a readable name from the user's first message when the
-// title model is unavailable: its first line, trimmed to 50 runes with an
-// ellipsis when clipped.
+// fallbackTitle derives a name from the user's first message: its first line,
+// trimmed to 50 runes with an ellipsis.
 func fallbackTitle(userInput string) string {
 	line := userInput
 	if i := strings.IndexAny(line, "\r\n"); i >= 0 {

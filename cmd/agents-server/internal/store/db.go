@@ -22,11 +22,9 @@ func OpenDB(arg string) (*bun.DB, error) {
 	return NewSQLiteDB(fmt.Sprintf("file:%s?cache=shared", arg))
 }
 
-// NewSQLiteDB opens the SQLite database at dsn and returns a bun.DB. The pool is
-// limited to a single connection because SQLite serializes writes. PRAGMAs are
-// executed as statements, never DSN parameters: sqliteshim picks modernc or
-// mattn by build tag, the two disagree on DSN pragma syntax, and each silently
-// drops what it does not recognize.
+// NewSQLiteDB opens the SQLite database at dsn with a single-connection pool.
+// PRAGMAs are executed as statements, never DSN parameters: modernc and mattn
+// disagree on DSN pragma syntax and silently drop what they do not recognize.
 func NewSQLiteDB(dsn string) (*bun.DB, error) {
 	sqldb, err := sql.Open(sqliteshim.DriverName(), dsn)
 	if err != nil {
@@ -34,8 +32,7 @@ func NewSQLiteDB(dsn string) (*bun.DB, error) {
 	}
 	sqldb.SetMaxOpenConns(1)
 	// journal_mode answers with the mode now in force, so the WAL claim is
-	// verified rather than assumed. In-memory databases report "memory" — they
-	// have no journal and need none.
+	// verified; in-memory databases report "memory".
 	var mode string
 	if err := sqldb.QueryRow("PRAGMA journal_mode=WAL").Scan(&mode); err != nil {
 		return nil, fmt.Errorf("enabling WAL: %w", err)
@@ -50,10 +47,9 @@ func NewSQLiteDB(dsn string) (*bun.DB, error) {
 	return db, nil
 }
 
-// NewPostgresDB opens the PostgreSQL database at dsn and returns a bun.DB. A
-// bad DSN or unreachable server surfaces on the first query — CreateSchema at
-// startup, in practice. The pool is capped: unbounded MaxOpenConns lets one
-// burst exhaust the server's max_connections.
+// NewPostgresDB opens the PostgreSQL database at dsn. A bad DSN or
+// unreachable server surfaces on the first query (CreateSchema at startup).
+// The pool is capped so one burst cannot exhaust the server's max_connections.
 func NewPostgresDB(dsn string) *bun.DB {
 	sqldb := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(dsn)))
 	sqldb.SetMaxOpenConns(16)

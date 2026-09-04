@@ -87,12 +87,8 @@ func (s *ConversationsSession) Entries(ctx context.Context, cur session.Cursor) 
 	if err != nil {
 		return nil, err
 	}
-	// Position in what the server returned, which is the only number available
-	// here: the conversation lives on the server, so there is no local store to
-	// have allocated one. It therefore does NOT satisfy the "never moves"
-	// guarantee an entry from a local store does — if the server ever stops
-	// returning an item, everything after it shifts. Reading the most recent N
-	// (a negative limit) is unaffected; resuming from AfterSeq is best-effort.
+	// Position in what the server returned is the only number available, and it
+	// can shift if the server drops an item: resuming from AfterSeq is best-effort.
 	for i := range entries {
 		entries[i].Seq = int64(i + 1)
 	}
@@ -131,11 +127,8 @@ func (s *ConversationsSession) Entry(ctx context.Context, id string) (*session.E
 	return nil, nil
 }
 
-// listEntries reads the conversation as entries, carrying each server item's
-// ID onto the entry it becomes. The server is the id authority here — an entry
-// whose id were left blank could never be found again through Entry, and
-// "a caller that needs an entry reads its id back" (spec §2.5e2) would be
-// unsatisfiable against this store.
+// listEntries reads the conversation as entries carrying each server item's ID:
+// the server is the id authority, and Entry must find them again (spec §2.5e2).
 func (s *ConversationsSession) listEntries(ctx context.Context, limit int) ([]session.Entry, error) {
 	id, err := s.lockedEnsureID(ctx)
 	if err != nil {
@@ -180,14 +173,10 @@ func (s *ConversationsSession) listEntries(ctx context.Context, limit int) ([]se
 // POST /conversations/{id}/items ("You may add up to 20 items at a time").
 const conversationItemsBatchLimit = 20
 
-// Append implements session.Storage.
-//
-// **Only item entries are stored.** A server-managed conversation holds
-// Responses items; there is nowhere on the server for an annotation, a terminal
-// record or a custom entry, so those are dropped rather than failing the write.
-// Losing a UI annotation degrades a timeline; failing the run because one could
-// not be stored server-side is worse. Use a local Session when everything a run
-// records must survive.
+// Append implements session.Storage. Only item entries are stored: a
+// server-managed conversation holds Responses items and has nowhere for an
+// annotation, a terminal record or a custom entry, so those are dropped rather
+// than failing the write. Use a local Session when everything must survive.
 func (s *ConversationsSession) Append(ctx context.Context, entries ...session.Entry) error {
 	items := make([]agents.InputItem, 0, len(entries))
 	for _, e := range entries {
@@ -203,14 +192,8 @@ func (s *ConversationsSession) Append(ctx context.Context, entries ...session.En
 	return s.addItems(ctx, items)
 }
 
-// addItems appends items in API-sized batches
-// (conversationItemsBatchLimit per request), since the runner saves a whole
-// run's items in one call and long runs easily exceed the per-request cap.
-//
-// Each item is sanitized for the Conversations API before persistence
-// (sanitizeConversationItem): provider-only fields are dropped, stale top-level
-// ids are stripped except where the create-item schema requires them, and
-// reasoning items lacking both an id and encrypted content are omitted entirely.
+// addItems appends in API-sized batches (conversationItemsBatchLimit), each
+// item sanitized for the Conversations API first (sanitizeConversationItem).
 func (s *ConversationsSession) addItems(ctx context.Context, in []agents.InputItem) error {
 	if len(in) == 0 {
 		return nil
@@ -237,11 +220,8 @@ func (s *ConversationsSession) addItems(ctx context.Context, in []agents.InputIt
 	if err != nil {
 		return err
 	}
-	// The Conversations API commits each batch independently and offers no way to
-	// roll one back, so a failure after the first batch leaves the server-side
-	// conversation holding a partial turn. We cannot undo it here; instead the
-	// error reports how much was already written so the caller can reconcile
-	// (e.g. reset the session) rather than silently proceeding on half-state.
+	// Each batch commits independently with no rollback, so a failure mid-way
+	// leaves a partial turn; the error reports how much was written to reconcile.
 	written := 0
 	for start := 0; start < len(sanitized); start += conversationItemsBatchLimit {
 		end := min(start+conversationItemsBatchLimit, len(sanitized))
@@ -257,9 +237,8 @@ func (s *ConversationsSession) addItems(ctx context.Context, in []agents.InputIt
 	return nil
 }
 
-// conversationItemTypesWithRequiredID lists the Responses input item types whose
-// top-level id the Conversations create-item schema requires; every other type's
-// id is stripped before persistence.
+// conversationItemTypesWithRequiredID lists the item types whose top-level id
+// the create-item schema requires; every other type's id is stripped.
 var conversationItemTypesWithRequiredID = map[string]bool{
 	"file_search_call":        true,
 	"web_search_call":         true,
@@ -274,12 +253,8 @@ var conversationItemTypesWithRequiredID = map[string]bool{
 	"item_reference":          true,
 }
 
-// sanitizeConversationItem strips provider-specific fields from an item before
-// it is persisted through the Conversations API.
-//
-// It returns the sanitized item and whether it should be persisted at all: a
-// reasoning item lacking both a server id and encrypted content is unpersistable
-// (keep == false). Non-object items pass through unchanged.
+// sanitizeConversationItem strips provider-specific fields before persistence;
+// keep is false for a reasoning item with neither a server id nor encrypted content.
 func sanitizeConversationItem(item agents.InputItem) (agents.InputItem, bool, error) {
 	raw, err := json.Marshal(item)
 	if err != nil {

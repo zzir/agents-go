@@ -8,9 +8,8 @@ import (
 )
 
 // HandoffInputData is passed to a Handoff's InputFilter to transform the
-// conversation the next agent receives. InputHistory is the full conversation as
-// model input items, up to and including the handoff. A common use is to trim
-// earlier tool calls before delegating.
+// conversation the next agent receives; InputHistory is the full conversation
+// as model input items, up to and including the handoff.
 type HandoffInputData struct {
 	InputHistory []InputItem
 }
@@ -23,25 +22,11 @@ type Handoff struct {
 	ToolName string
 	// ToolDescription explains when to hand off.
 	ToolDescription string
-	// InputJSONSchema is the JSON Schema for the (optional) handoff input.
-	//
-	// The model's arguments are validated against the WHOLE schema before the
-	// handoff fires — nested required keys, types, enums and bounds included —
-	// and a violation is a *ModelBehaviorError, so input the target agent could
-	// not have used never reaches it. Arguments must be a JSON object; absent
-	// ones ("" or "null") are read as "{}", which a schema declaring
-	// root-level required keys rejects and one requiring nothing (the default
-	// HandoffTo transfer) accepts.
-	//
-	// A nil schema skips validation entirely. A schema this SDK cannot compile
-	// keeps the checks that need no compilation — arguments still have to be a
-	// JSON object, and still have to be present when the schema declares
-	// required keys — and skips the rest.
-	//
-	// The schema is sent to the provider as written: unless NonStrictSchema is
-	// set it is sent as a strict-mode schema, so a hand-built one has to be in
-	// the strict subset already (see EnsureStrictJSONSchema) or the API rejects
-	// the request.
+	// InputJSONSchema is the JSON Schema for the (optional) handoff input. The
+	// model's arguments are validated against the whole schema before the
+	// handoff fires, and a violation is a *ModelBehaviorError (spec §2.7h);
+	// nil skips validation. Unless NonStrictSchema is set the schema is sent
+	// as strict-mode, so a hand-built one must already be in the strict subset.
 	InputJSONSchema map[string]any
 	// NonStrictSchema opts the handoff input out of strict-mode schema
 	// validation, for schemas strict mode cannot express. The zero value is
@@ -52,11 +37,8 @@ type Handoff struct {
 
 	// Target is the agent this handoff switches to, declared as data so a
 	// consumer can enumerate the handoff graph without invoking user code.
-	// HandoffTo fills it; when OnInvoke is nil the runner switches to Target
-	// directly, so a hand-built static handoff needs no callback.
-	//
-	// A dynamic handoff sets OnInvoke instead and leaves Target nil: nil is how
-	// it says "not statically enumerable".
+	// HandoffTo fills it; a dynamic handoff sets OnInvoke instead and leaves
+	// Target nil.
 	Target *Agent
 
 	// OnInvoke, when non-nil, resolves the handoff target at runtime — it may
@@ -79,19 +61,8 @@ type Handoff struct {
 	IsEnabled func(ctx context.Context, rc *RunContext, agent *Agent) (bool, error)
 }
 
-// validateHandoffInput checks the raw handoff arguments against the handoff's
-// InputJSONSchema before the handoff fires, so input the target agent could not
-// have used is a *ModelBehaviorError fed back to the model instead of a silent
-// transfer with zero-valued input. The check is the whole schema, nested
-// included, the same one tool arguments get.
-//
-// Arguments are checked as sent, without applying schema defaults: OnHandoff,
-// OnInvoke and the session all see the model's raw argument string, and a value
-// invented here would not be in it.
-//
-// The schema is compiled here rather than cached on the Handoff, which the
-// runner copies per turn: one compilation per invocation is nothing next to the
-// model call that produced the arguments.
+// validateHandoffInput checks the raw arguments against InputJSONSchema before
+// the handoff fires: whole schema, no defaults applied, compiled per call (spec §2.7h).
 func validateHandoffInput(h *Handoff, argsJSON string) error {
 	if len(h.InputJSONSchema) == 0 {
 		// No schema is nothing to check against, not a stricter default: such a
@@ -99,9 +70,8 @@ func validateHandoffInput(h *Handoff, argsJSON string) error {
 		return nil
 	}
 	trimmed := strings.TrimSpace(argsJSON)
-	// "" and "null" are how a model spells "no input". Whether the handoff can
-	// accept it is read off the schema's required list directly, so it still
-	// holds for a schema we cannot compile.
+	// "" and "null" spell "no input"; whether the handoff accepts it is read
+	// off the required list directly, so it holds for an uncompilable schema.
 	if trimmed == "" || trimmed == "null" {
 		if required, _ := h.InputJSONSchema["required"].([]any); len(required) > 0 {
 			return NewModelBehaviorError("Handoff function expected non-null input, but got None")
@@ -112,9 +82,8 @@ func validateHandoffInput(h *Handoff, argsJSON string) error {
 	if err := json.Unmarshal([]byte(trimmed), &parsed); err != nil {
 		return NewModelBehaviorError("invalid input for handoff %q: invalid JSON: %v", h.ToolName, err)
 	}
-	// A non-object instance is rejected explicitly: `required`/`properties` say
-	// nothing about a bare scalar, so a schema omitting "type" would otherwise
-	// accept one as the silent zero-value transfer this check prevents.
+	// A non-object instance is rejected explicitly: required/properties say
+	// nothing about a bare scalar (spec §2.7h).
 	if _, ok := parsed.(map[string]any); !ok {
 		return NewModelBehaviorError("invalid input for handoff %q: expected a JSON object", h.ToolName)
 	}
@@ -132,13 +101,10 @@ func transformToolName(name string) string {
 	return strings.ToLower(invalidToolNameChars.ReplaceAllString(strings.ReplaceAll(name, " ", "_"), "_"))
 }
 
-// HandoffTo builds a Handoff that delegates the run to target. The resulting
-// tool is named "transfer_to_<target>" (sanitized) and takes no input. The
-// target is declared statically (Target), not wrapped in an OnInvoke closure,
-// so the built handoff is plain data a consumer can enumerate.
-//
-// To customize the tool name/description or require input, construct a Handoff
-// struct directly.
+// HandoffTo builds a Handoff that delegates the run to target: a tool named
+// "transfer_to_<target>" (sanitized) taking no input, with Target declared
+// statically so the handoff is plain data. To customize the name or require
+// input, construct a Handoff directly.
 func HandoffTo(target *Agent) Handoff {
 	desc := "Handoff to the " + target.Name + " agent to handle the request."
 	if target.HandoffDescription != "" {

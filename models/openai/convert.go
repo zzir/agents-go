@@ -11,11 +11,8 @@ import (
 	"github.com/zzir/agents-go/agents"
 )
 
-// convertTools translates the SDK's tools and handoffs into Responses API tool
-// params. Tools are provider-agnostic: every Tool is a Tool the SDK
-// executes locally (handoffs are modeled as function tools too), so the
-// conversion only emits function-tool params. The SDK has no provider-hosted
-// tool types.
+// convertTools translates tools and handoffs into Responses tool params — all
+// function tools executed locally; the SDK has no provider-hosted tool types.
 func convertTools(tools []*agents.Tool, handoffs []agents.Handoff) []responses.ToolUnionParam {
 	out := make([]responses.ToolUnionParam, 0, len(tools)+len(handoffs))
 	for _, t := range tools {
@@ -48,9 +45,8 @@ func functionToolParam(name, description string, schema map[string]any, strict b
 	return responses.ToolUnionParam{OfFunction: fn}
 }
 
-// convertToolChoice maps an SDK tool-choice string to the Responses API union.
-// An empty choice leaves the field omitted (provider default); any value other
-// than auto/required/none is treated as a specific function tool name.
+// convertToolChoice maps a tool-choice string to the Responses union: empty
+// omits the field, anything but auto/required/none names a function tool.
 func convertToolChoice(choice agents.ToolChoice) (responses.ResponseNewParamsToolChoiceUnion, bool) {
 	switch choice {
 	case "":
@@ -153,10 +149,8 @@ func applySettings(params *responses.ResponseNewParams, s *agents.ModelSettings,
 	}
 }
 
-// convertPrompt translates an agents.Prompt into the Responses API prompt
-// parameter. Variable values must be strings (text substitutions); a non-string
-// value (e.g. an intended image/file content variable, which is not modeled
-// here) is rejected with a *UserError rather than silently stringified.
+// convertPrompt translates an agents.Prompt into the prompt parameter; a
+// non-string variable is a *UserError rather than silently stringified.
 func convertPrompt(p *agents.Prompt) (responses.ResponsePromptParam, error) {
 	out := responses.ResponsePromptParam{ID: p.ID}
 	if p.Version != "" {

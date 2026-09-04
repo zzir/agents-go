@@ -15,35 +15,23 @@ import (
 )
 
 const (
-	// wsOutBuffer bounds a connection's outbound queue. A connection joining
-	// mid-run is attached to EVERY live run of its user with a full replay
-	// (RunHub.EventBufferCap == 512 each) — a chat run and its background
-	// tasks at once — so the queue holds several bursts plus the live events
-	// arriving meanwhile; overflow means a genuinely stuck client and closes it.
+	// wsOutBuffer bounds a connection's outbound queue: a joiner is attached to
+	// EVERY live run of its user with a full replay (512 each); overflow closes it.
 	wsOutBuffer = 8 * 512
 	// wsWriteTimeout caps a single socket write so a client whose TCP receive
 	// window is full can never block the writer goroutine indefinitely.
 	wsWriteTimeout = 15 * time.Second
-	// wsMaxMessageBytes bounds a single inbound WebSocket frame. gorilla's
-	// default read limit is unlimited, so without this cap a client — even an
-	// unauthenticated one, before the auth handshake — could stream an
-	// arbitrarily large frame straight into memory and OOM the process. 1 MiB
-	// comfortably fits the largest legitimate inbound message (a chat prompt in
-	// run.create, or the terminal.open handshake); a peer that exceeds it is
-	// closed with 1009 (message too big).
+	// wsMaxMessageBytes bounds an inbound frame (gorilla's default is unlimited,
+	// pre-auth included); 1 MiB fits the largest legitimate message; over it, 1009.
 	wsMaxMessageBytes = 1 << 20
-	// wsAuthDeadline caps how long an upgraded-but-unauthenticated connection may
-	// take to send its auth frame. Without it, a client that completes the
-	// upgrade but never authenticates pins a goroutine and its read buffer
-	// indefinitely. On success the heartbeat's rolling deadline takes over.
+	// wsAuthDeadline caps how long an upgraded-but-unauthenticated connection
+	// may take to send its auth frame; the heartbeat's deadline takes over after.
 	wsAuthDeadline = 10 * time.Second
 	// wsHandshakeTimeout bounds the upgrade handshake itself, so a slow client
 	// dribbling the upgrade request cannot tie up the accepting goroutine.
 	wsHandshakeTimeout = 10 * time.Second
-	// wsPongWait is the heartbeat's read deadline: a connection that answers no
-	// ping within it is half-open (NAT idled out, client gone without a close
-	// frame) and is dropped instead of pinning its goroutine and outbound queue
-	// until TCP keepalive notices, hours later.
+	// wsPongWait is the heartbeat's read deadline: a connection answering no
+	// ping within it is half-open and dropped, not left to TCP keepalive.
 	wsPongWait = 60 * time.Second
 	// wsPingInterval is how often the heartbeat pings; well under wsPongWait so
 	// one lost ping doesn't kill a healthy connection.
@@ -314,9 +302,7 @@ func (c *WSConn) Close() {
 }
 
 // startHeartbeat arms a rolling read deadline pushed forward by each pong and
-// pings on a ticker to solicit them (browsers and gorilla clients answer pings
-// automatically). Reads fail once the peer stops answering, ending the handler
-// loop. WriteControl is safe alongside the other write methods, so no mutex.
+// pings on a ticker; WriteControl is safe alongside the other writers, no mutex.
 func (c *WSConn) startHeartbeat(pongWait, pingInterval time.Duration) {
 	c.pongWait = pongWait
 	_ = c.conn.SetReadDeadline(time.Now().Add(pongWait))
@@ -397,8 +383,7 @@ func HandleWSWithAuth(handler WSHandlerFunc, auth AuthFunc, guard *AuthGuard, co
 		token := frame.Token
 		conn.recheck = func(ctx context.Context) (protocol.UserInfo, error) { return auth(ctx, token) }
 		// Authenticated: the heartbeat's rolling deadline replaces the auth one
-		// (the stream idles between messages by design, so a bare deadline can't
-		// stay). The read-size limit stays for the whole connection.
+		// (the stream idles by design); the read-size limit stays.
 		conn.startHeartbeat(wsPongWait, wsPingInterval)
 		_ = conn.WriteJSON(map[string]string{"type": protocol.EventAuthOK})
 

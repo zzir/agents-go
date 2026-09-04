@@ -1,18 +1,10 @@
 // Package skills implements the SKILL.md document format of the open Agent
-// Skills spec (https://github.com/agentskills/agentskills) for the agents SDK:
-// a skill is one Markdown document with YAML frontmatter carrying its name and
-// description.
-//
-// The module maps the format's progressive disclosure onto plain SDK
-// primitives and leaves storage to the caller:
-//
-//   - Parse validates a SKILL.md and returns its metadata.
-//   - RenderIndex builds a discovery section (name + description per skill) to
-//     add to an agent's instructions; it tells the model to fetch a skill's
-//     full document through a tool named read_skill, which the caller provides
-//     (a function tool that returns the skill's content by name).
-//
-// It is a separate module so the YAML dependency stays out of the core SDK.
+// Skills spec (https://github.com/agentskills/agentskills): a skill is one
+// Markdown document with YAML frontmatter carrying its name and description.
+// Parse validates a SKILL.md and returns its metadata; RenderIndex builds a
+// discovery section (name + description per skill) for an agent's instructions
+// that tells the model to fetch a skill's full document through a caller-provided
+// read_skill tool. It is a separate module so the YAML dependency stays out of the core.
 package skills
 
 import (

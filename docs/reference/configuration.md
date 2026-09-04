@@ -10,10 +10,10 @@ which one a value is on follows a rule, stated with its reasons in workbench
 | **Environment** | `AGENTS_* env var` | restart | keeping a secret off the command line |
 | **Runtime settings** | Settings panel / API | live, no restart | what an operator tunes while running |
 
-The SDK the workbench embeds reads **no** environment variable of its own —
-everything is passed in ([spec §2.14](spec.md), [SDK config](../howto/config.md)).
-The only model-backend key read from the environment is openai-go's
-`OPENAI_API_KEY`, and that is the provider's, not the server's.
+The SDK the workbench embeds reads no environment variable of its own — its
+own contract, and the vendor libraries' exceptions to it, are
+[spec §2.14](spec.md#214-the-sdk-reads-no-environment-variable)
+([configuring the SDK](../howto/models.md#configuring-the-sdk)).
 
 Authoritative defaults live at the source: `agents-server --help` for the
 flags, and `GET /api/v1/setting-defs` (or

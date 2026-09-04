@@ -1,10 +1,8 @@
 package compaction
 
-// Trigger decides whether a strategy should act on an index.
-//
-// Strategies take two, one to start and one to stop, so a pass can stop at a
-// comfortable size rather than the threshold that alarmed it — stopping at the
-// trigger point just re-triggers next turn.
+// Trigger decides whether a strategy should act on an index. Strategies take
+// two, one to start and one to stop, so a pass can stop at a comfortable size
+// rather than re-trigger next turn.
 type Trigger func(*Index) bool
 
 // Always fires unconditionally.
@@ -41,9 +39,8 @@ func Any(triggers ...Trigger) Trigger {
 // fires reports a trigger's verdict, treating nil as "no".
 func fires(t Trigger, idx *Index) bool { return t != nil && t(idx) }
 
-// reachedTarget reports whether a pass should stop. With no explicit target,
-// stopping means the trigger no longer fires — which is the minimum that avoids
-// an immediate re-trigger, though rarely the best choice.
+// reachedTarget reports whether a pass should stop. With no target, stopping
+// means the trigger no longer fires — the minimum that avoids an immediate re-trigger.
 func reachedTarget(target, trigger Trigger, idx *Index) bool {
 	if target != nil {
 		return target(idx)

@@ -207,7 +207,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
   const providerHint = unsupported.length > 0
     ? `Fails loudly on this backend — leave unset: ${unsupported.slice(0, 6).join(', ')}${unsupported.length > 6 ? ` +${unsupported.length - 6} more` : ''}`
     : 'Endpoints and their API keys are managed under Providers';
-  // Every picker offers only what this agent may REFERENCE (spec §5.29): a
+  // Every picker offers only what this agent may REFERENCE (decisions §5.29): a
   // private agent sees global rows plus its owner's, a global one only global
   // rows. Without this an admin's all-rows listing would offer a foreign
   // private row the save then refuses.

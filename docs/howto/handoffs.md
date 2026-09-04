@@ -42,28 +42,7 @@ h := agents.Handoff{
 }
 ```
 
-A handoff whose target depends on the arguments sets `OnInvoke` instead of
-`Target` — it runs when the model selects the handoff and its return value is
-the agent switched to. Leave `Target` nil in that case: it is the *static*
-declaration, and a consumer enumerating the handoff graph (an approval UI
-rebuilding an agent registry, say) trusts it without invoking any callback.
-
-> A hand-built `Handoff` is strict by default — the zero value of
-> `NonStrictSchema` opts in to strict mode. Set `NonStrictSchema: true`
-> only for a schema strict mode cannot express.
-
-| Field | Purpose |
-|---|---|
-| `ToolName` / `ToolDescription` | What the model sees |
-| `InputJSONSchema` / `NonStrictSchema` | Optional typed handoff input (strict by default) |
-| `Target` | The agent switched to, as a static declaration (`HandoffTo` fills it) |
-| `OnInvoke` | Resolves the target at runtime; overrides `Target` when set |
-| `OnHandoff` | Side-effect callback when the handoff fires (e.g. prefetch data) |
-| `InputFilter` | Rewrites the conversation the next agent sees (below) |
-| `IsEnabled` | Gates whether the handoff is offered to the model this run |
-
-A `Handoff` with neither `Target` nor `OnInvoke` has no one to switch to;
-selecting it fails the run with a `*UserError`.
+A handoff whose target depends on the arguments sets `OnInvoke` instead of `Target` and leaves `Target` nil — it is the *static* declaration a registry-rebuilding consumer trusts without invoking callbacks, and a handoff with neither fails the run with a `*UserError` ([spec §2.4](../reference/spec.md#24-handoffs)). A hand-built `Handoff` is strict by default; set `NonStrictSchema: true` only for a schema strict mode cannot express. Every field (`InputFilter`, `IsEnabled`, …) is on [pkg.go.dev](https://pkg.go.dev/github.com/zzir/agents-go/agents#Handoff).
 
 ## Input filters
 
@@ -108,8 +87,4 @@ Transfers are seamless: do not mention or draw attention to them.`)
 
 ## Semantics worth knowing
 
-- **Handoff input is validated against the whole `InputJSONSchema`** before `OnHandoff` runs — nested `required`, types, enums and bounds, not only root-level keys — and a violation fails the run with a `*ModelBehaviorError` naming the JSON-pointer path. Arguments must be a **JSON object**: `""` and `null` are read as `{}`, which a schema declaring root-level **required** keys rejects with the familiar "Handoff function expected non-null input, but got None". A no-input transfer (the default `HandoffTo`) accepts absent, empty and extra-keyed objects, but its schema still says `"type": "object"`, so a payload that is not an object fails like any other's. Schema `default` values are **not** applied: `OnHandoff`, `OnInvoke` and the session all see the model's raw argument string, and a value invented during validation would not be in it. A `Handoff` with no `InputJSONSchema` is not validated at all; one whose schema this SDK cannot compile keeps the object and required-keys checks and skips the rest.
-- Function tools requested in the same turn run **before** the handoff executes.
-- If the model requests several handoffs in one turn, the **first** wins; the others receive a synthetic "Multiple handoffs detected, ignoring this one." tool output.
-- The handoff's own `OnHandoff` fires when it is selected (before control moves), and the receiving agent's `OnStart` fires before its first turn; there is no run-level handoff hook — watch `*AgentUpdatedStreamEvent` on the stream instead.
-- `RunResult.LastAgent` is the agent that ultimately answered — useful for routing the user's next message.
+Handoff input is validated against the whole `InputJSONSchema` before `OnHandoff` runs, must be a JSON object, and a violation fails the run with a `*ModelBehaviorError` naming the JSON-pointer path ([spec §2.7h](../reference/spec.md#27h-schema-validation)). Function tools in the same turn run **before** the handoff, the **first** of several handoffs wins (the rest get a synthetic "Multiple handoffs detected, ignoring this one." tool output), `OnHandoff` fires before control moves and the target's `OnStart` before its first turn — watch `*AgentUpdatedStreamEvent` for a run-level view — and `RunResult.LastAgent` is the agent that ultimately answered ([spec §2.4](../reference/spec.md#24-handoffs)).

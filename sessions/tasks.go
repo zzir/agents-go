@@ -23,18 +23,10 @@ type taskRow struct {
 	Kind  string `bun:"kind"`
 
 	ParentSessionID string `bun:"parent_session_id,notnull"`
-	// ParentSessionGen and ChildSessionGen are the GENERATIONS of the sessions
-	// this row names (session.Ref). A session id names a session, not a
-	// place: deleting an id and creating it again yields a different session,
-	// and a task row that matched on the id alone attached itself to the
-	// replacement — listing a dead incarnation's tasks under the new one and
-	// owing its wake-ups to a conversation that never spawned them.
-	//
-	// The store fills them from agent_sessions at insert and every read
-	// compares them against the generation that answers to the id NOW (see
-	// liveParent / liveChild), so a stale row is inert rather than wrong. The
-	// tasks API keeps addressing sessions by id — that is the host's
-	// vocabulary — and this column is what makes an id-keyed query safe.
+	// ParentSessionGen and ChildSessionGen are the GENERATIONS of the sessions this
+	// row names (session.Ref): filled from agent_sessions at insert and compared on
+	// every read against the generation the id answers to NOW (liveParent /
+	// liveChild), so a row of a deleted-and-recreated session is inert (spec §2.13).
 	ParentSessionGen string `bun:"parent_session_gen"`
 	ParentRunID      string `bun:"parent_run_id"`
 	ToolCallID       string `bun:"tool_call_id"`
@@ -150,29 +142,16 @@ func CreateTaskSchema(ctx context.Context, db *bun.DB) error {
 	return nil
 }
 
-// terminalStatuses is the statuses this store treats as final, for the two
-// queries that have to filter on them in SQL.
-//
-// tasks.Status.Terminal is the source of truth for what "final" means; a
-// method cannot run inside a WHERE clause, so the set is mirrored here — from
-// the tasks constants rather than as bare strings. A test drives a task into
-// each status it knows and checks the mirror against Terminal(), which catches
-// one changing sides but not a status ADDED upstream: tasks exports no
-// enumeration to walk, so a new one has to be added here and there by hand.
+// terminalStatuses mirrors tasks.Status.Terminal for the WHERE clauses that
+// need it; a test checks the mirror, but a status ADDED to tasks must be added here.
 var terminalStatuses = []string{
 	string(tasks.StatusCompleted),
 	string(tasks.StatusFailed),
 	string(tasks.StatusCancelled),
 }
 
-// liveParent and liveChild scope a task row to the session GENERATION that
-// answers to its session id right now. A row whose session was deleted — and
-// whose id may since belong to a different session — matches neither, so it
-// lists nowhere, owes no wake-up and resolves no run.
-//
-// COALESCE covers a session with no row at all: sessions.New(db, id) is the
-// direct scope, which has no agent_sessions entry, and its tasks store the
-// empty generation for the same reason its entries do.
+// liveParent and liveChild scope a task row to the session GENERATION its id
+// answers to now (spec §2.13); COALESCE covers a direct-scope session with no row.
 const (
 	liveParent = `t.parent_session_gen = COALESCE(` +
 		`(SELECT s.gen FROM agent_sessions AS s WHERE s.id = t.parent_session_id), '')`
@@ -187,10 +166,8 @@ const (
 func (s *TaskStore) Create(ctx context.Context, t *tasks.Task) error {
 	now := time.Now().UTC()
 	t.CreatedAt, t.UpdatedAt = now, now
-	// The generations are read and the row written in ONE statement: resolving
-	// them first and inserting after leaves a window where the session is
-	// deleted in between, and the row would bind to a generation that no
-	// longer exists while claiming to be current.
+	// The generations are read and the row written in ONE statement, so a session
+	// deleted in between cannot leave a row bound to a gone generation.
 	if _, err := s.db.NewInsert().Model(rowFrom(t)).
 		Value("parent_session_gen", genOf, t.ParentSessionID).
 		Value("child_session_gen", genOf, t.ChildSessionID).
@@ -255,15 +232,10 @@ func (s *TaskStore) query(ctx context.Context, apply func(*bun.SelectQuery) *bun
 	return out, nil
 }
 
-// Finalize implements tasks.Store as one conditional UPDATE.
-//
-// Status and result land together, and only while the row is still
-// non-terminal. Writing them separately would let a reader see a terminal
-// task whose result has not arrived — which is exactly what task_status must
-// be able to rely on.
-// The run_id predicate is the other half: a task can leave a terminal state
-// now (RetryClaim), so non-terminality alone no longer says WHICH attempt the
-// finalizer looked at.
+// Finalize implements tasks.Store as one conditional UPDATE: status and result
+// land together, only while the row is still non-terminal, so no reader sees a
+// terminal task without its result. The run_id predicate says WHICH attempt was
+// finalized, since RetryClaim lets a task leave a terminal state.
 func (s *TaskStore) Finalize(ctx context.Context, id, runID string, st tasks.Status, summary, result string, state json.RawMessage) (bool, error) {
 	q := s.db.NewUpdate().Model((*taskRow)(nil)).
 		Set("status = ?", string(st)).
@@ -317,10 +289,8 @@ func (s *TaskStore) RetryClaim(ctx context.Context, id, newRunID string, maxAtte
 	if n, aerr := res.RowsAffected(); aerr == nil && n > 0 {
 		return true, nil
 	}
-	// Zero rows is "could not claim" or "no such task", and the two mean
-	// different things to a caller — the same disambiguation ReclaimWorking
-	// makes, for the same reason: two shipped Stores must not answer one call
-	// differently.
+	// Zero rows is "could not claim" or "no such task", which mean different things
+	// to a caller — the same disambiguation ReclaimWorking makes.
 	exists, eerr := s.db.NewSelect().Model((*taskRow)(nil)).Where("id = ?", id).Exists(ctx)
 	if eerr != nil {
 		return false, fmt.Errorf("claiming a retry of task %q: %w", id, eerr)
@@ -420,11 +390,8 @@ func (s *TaskStore) ReclaimWorking(ctx context.Context, id, runID string) (bool,
 	if n, aerr := res.RowsAffected(); aerr == nil && n > 0 {
 		return true, nil
 	}
-	// Zero rows is either "not in input_required" (lost the claim) or "no such
-	// task", and the two mean different things to a caller. The in-memory
-	// store distinguishes them, so this one must too — two shipped Stores
-	// answering one call differently is how a caller ends up correct against
-	// only the backend it was written against.
+	// Zero rows is "not in input_required" (lost the claim) or "no such task"; the
+	// in-memory store distinguishes them, so two shipped Stores must agree.
 	exists, eerr := s.db.NewSelect().Model((*taskRow)(nil)).Where("id = ?", id).Exists(ctx)
 	if eerr != nil {
 		return false, fmt.Errorf("reclaiming task %q: %w", id, eerr)

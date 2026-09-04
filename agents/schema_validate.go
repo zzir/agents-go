@@ -85,11 +85,8 @@ func (v *schemaValidator) ApplyDefaults(raw []byte) []byte {
 	return out
 }
 
-// relaxAdditionalProperties returns a copy of schema with every
-// `additionalProperties: false` removed, for local validation only — the schema
-// sent to the provider keeps it. Enforcing it locally would only turn a
-// harmless extra key into a failed turn; a misspelled key is still caught by
-// `required`.
+// relaxAdditionalProperties copies schema without any `additionalProperties: false`,
+// for local validation only — the schema sent to the provider keeps it.
 func relaxAdditionalProperties(schema map[string]any) map[string]any {
 	out := make(map[string]any, len(schema))
 	for k, val := range schema {

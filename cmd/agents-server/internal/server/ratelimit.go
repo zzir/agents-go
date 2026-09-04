@@ -11,14 +11,12 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 )
 
-// rateLimiterMaxKeys caps the per-IP bucket map. At the cap, stale entries are
-// pruned; if every entry is fresh the map stops growing and new clients share
-// fate with a full table (429) rather than growing memory without bound.
+// rateLimiterMaxKeys caps the per-IP bucket map: at the cap stale entries are
+// pruned, and if all are fresh new clients get 429 rather than unbounded memory.
 const rateLimiterMaxKeys = 10000
 
-// Per-IP budgets. A credential guess (a failed bearer, a token login, a code
-// exchange) gets a tight budget; the OAuth flow steps and webhooks are hit by
-// legitimate clients in bursts.
+// Per-IP budgets: a credential guess gets a tight one; the OAuth flow steps
+// and webhooks are hit by legitimate clients in bursts.
 const (
 	authRatePerMinute = 10
 	authRateBurst     = 10

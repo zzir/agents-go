@@ -14,10 +14,8 @@ type Envelope struct {
 	Payload json.RawMessage `json:"payload,omitempty"`
 }
 
-// Envelope.Type values. These ARE the wire protocol — every emitter and consumer
-// references these constants, never a string literal, so a typo is a compile
-// error. The frontend mirror lives in web/frontend/src/lib/protocol.ts; keep
-// both in sync when adding an event.
+// Envelope.Type values — the wire protocol, mirrored in
+// web/frontend/src/lib/protocol.ts (invariant 15).
 const (
 	// Client → server
 	EventAuth         = "auth"
@@ -40,9 +38,7 @@ const (
 	EventRunReasoningItem = "run.reasoning_item"
 	EventRunToolCall      = "run.tool_call"
 	// EventRunToolProgress carries a partial result a tool pushed while still
-	// running. It is NOT the tool's answer — that arrives as run.tool_result —
-	// so a client renders it as live output and replaces it when the result
-	// lands, never treating it as final.
+	// running; the answer arrives as run.tool_result and replaces it.
 	EventRunToolProgress = "run.tool_progress"
 	EventRunToolResult   = "run.tool_result"
 	EventRunHandoff      = "run.handoff"
@@ -51,29 +47,22 @@ const (
 	EventRunInterrupted  = "run.interrupted"
 	EventRunCancelled    = "run.cancelled"
 	EventRunCompaction   = "run.compaction"
-	// EventRunDiagnostic reports trouble a run went through and SURVIVED —
-	// retries, a fallback model, a compaction pass that gave up. None reach
-	// run.error, so this is the only signal such a run had a bad time.
+	// EventRunDiagnostic reports trouble a run went through and SURVIVED
+	// (retries, a fallback model, a compaction pass that gave up).
 	EventRunDiagnostic       = "run.diagnostic"
 	EventRunGap              = "run.gap"
 	EventSessionTitleUpdated = "session.title_updated"
 	// EventSessionProjectBound announces that a session's first
-	// project-carrying run permanently bound a project to it — published
-	// exactly once, by the run that won the bind.
+	// project-carrying run bound a project to it — once, by the run that won.
 	EventSessionProjectBound = "session.project_bound"
-	// EventTaskUpdated tells a parent session's subscribers that one of its
-	// background tasks changed state — spawned, paused, moved to its next run,
-	// ended. It rides the TASK run's stream (every connection is attached to
-	// it) and carries the parent id the client files it under; the payload is
-	// the row as the tasks list would return it, so the client merges rather
-	// than refetches. Where the run events say what a RUN did, this says what
-	// it meant for the task — for a job of several runs, not the same thing.
+	// EventTaskUpdated tells a parent session's subscribers that a background
+	// task changed state. It rides the TASK run's stream, carries the parent
+	// id, and its payload is the row as the tasks list returns it.
 	EventTaskUpdated = "task.updated"
 	EventTraceSpan   = "trace.span"
 
-	// Terminal events, exchanged on /ws/terminal (one terminal per
-	// connection). Control frames are JSON Envelopes (text); the terminal
-	// byte stream itself rides binary WebSocket frames in both directions.
+	// Terminal events, exchanged on /ws/terminal: control frames are JSON
+	// Envelopes (text); the byte stream rides binary frames both ways.
 	EventTerminalOpen   = "terminal.open"   // client → server
 	EventTerminalResize = "terminal.resize" // client → server
 	EventTerminalReady  = "terminal.ready"  // server → client
@@ -81,19 +70,10 @@ const (
 	EventTerminalExit   = "terminal.exit"   // server → client
 )
 
-// RunError.Code values. Same single-point rule as the event constants: the
-// frontend branches on these to pick recovery behavior.
-//
-// Two origins share one flat namespace on the wire (PROTOCOL.md F3):
-//
-//   - SDK codes come from agents.CodeOf(err) and are NOT redeclared here —
-//     the SDK owns that vocabulary and adds to it without a change in this
-//     package. The frontend mirror lists them for exhaustive rendering only.
-//   - Transport codes below describe failures that happen before or outside a
-//     run, where no SDK error exists to classify.
-//
-// The two sets must not collide. A client that does not recognize a code falls
-// back to generic error rendering, so the SDK may ship a new one first.
+// RunError.Code values (invariant 15). SDK codes come from agents.CodeOf(err)
+// and are NOT redeclared here; the transport codes below describe failures
+// before or outside a run. The two sets must not collide; a client falls back
+// to generic rendering on a code it does not know.
 const (
 	CodeSessionBusy     = "session_busy"
 	CodeSessionNotFound = "session_not_found"
@@ -121,37 +101,31 @@ type AttachmentRef struct {
 }
 
 // RunCreate is the client request to start a new run within a session.
-// ProjectID only matters until the session's first project-carrying run binds
-// it permanently; after that the server uses the bound value and ignores what
-// the client sends.
+// ProjectID only matters until the session's first project-carrying run
+// binds it permanently.
 type RunCreate struct {
 	SessionID string `json:"session_id"`
 	Input     string `json:"input"`
-	// AttachmentIDs name previously uploaded images (POST /attachments) to
-	// send with the message. Only chat runs carry them, and only when the
-	// agent's Vision behavior flag is on.
+	// AttachmentIDs name uploaded images (POST /attachments) to send with the
+	// message; chat runs only, and only with the agent's Vision flag on.
 	AttachmentIDs []string `json:"attachment_ids,omitempty"`
 	AgentConfigID string   `json:"agent_config_id,omitempty"`
 	ProjectID     string   `json:"project_id,omitempty"`
-	// Plan is what this request asks of the session's plan phase: true runs it
-	// read-only until a plan is approved, false leaves planning, and ABSENT
-	// leaves the phase as it stands — a client that knows nothing about plan
-	// mode cannot knock a session out of it.
+	// Plan asks of the session's plan phase: true enters it, false leaves it,
+	// and ABSENT leaves the phase as it stands.
 	Plan *bool `json:"plan,omitempty"`
 }
 
 // RunCancel is the client request to cancel an in-flight run.
 type RunCancel struct {
 	RunID string `json:"run_id"`
-	// Mode selects how to stop: "" / "abort" cancels immediately (mid-turn);
-	// "graceful" lets the current turn finish (tools + session save) and stops
-	// cleanly before the next one.
+	// Mode selects how to stop: "" / "abort" cancels mid-turn; "graceful"
+	// lets the current turn finish and stops before the next one.
 	Mode string `json:"mode,omitempty"`
 }
 
-// The injection queues a RunInject can name, each a distinct semantic: steer
-// changes course inside the running turn, next-turn rides along with a turn it
-// was taking anyway, and follow-up starts the next exchange once this one lands.
+// The injection queues a RunInject can name: steer changes course inside the
+// running turn, next-turn rides along with the next, follow-up starts a new exchange.
 const (
 	InjectQueueSteer    = "steer"
 	InjectQueueNextTurn = "next_turn"
@@ -168,7 +142,6 @@ type RunInject struct {
 
 // RunSubscribe is the client request to (re)attach to a run's event stream,
 // replaying buffered events after FromSeq (0 replays everything retained).
-// Used after a reconnect to resume a run that kept executing server-side.
 type RunSubscribe struct {
 	RunID   string `json:"run_id"`
 	FromSeq int    `json:"from_seq,omitempty"`
@@ -188,9 +161,8 @@ type ToolReject struct {
 	Reason     string `json:"reason,omitempty"`
 }
 
-// TerminalOpen is the client request that starts an interactive terminal on
-// /ws/terminal; it must be the first message after auth. Cols/Rows of zero
-// use the backend defaults (80x24).
+// TerminalOpen is the first message on /ws/terminal after auth. Cols/Rows of
+// zero use the backend defaults (80x24).
 type TerminalOpen struct {
 	// ProjectID selects the container to open the shell in — the project's
 	// own, the same one a session bound to it uses.
@@ -223,19 +195,14 @@ type TerminalExit struct {
 type RunStarted struct {
 	RunID     string `json:"run_id"`
 	SessionID string `json:"session_id"`
-	// Input is the user prompt that started this run. Run events are broadcast
-	// to every connection, and an in-flight turn is not persisted yet — a
-	// browser that did not send the prompt renders its user bubble from this
-	// (the sender dedups against its own optimistic bubble).
+	// Input is the user prompt that started this run, so a browser that did
+	// not send it can render the user bubble (the sender dedups its own).
 	Input string `json:"input,omitempty"`
 	// Attachments are the message's images, for the same reason Input rides
 	// here: a browser that did not send them still renders the thumbnails.
 	Attachments []AttachmentRef `json:"attachments,omitempty"`
-	// Task metadata, set only for background task runs (spawn_task — a
-	// sub-agent or a workflow): the parent chat session/run this task belongs to and the
-	// spawning tool call. The client routes such runs into the parent session's
-	// task list instead of a chat timeline (SessionID is the task's own hidden
-	// session).
+	// Task metadata, set only for background task runs: the parent chat
+	// session/run and the spawning tool call (SessionID is the task's own hidden session).
 	ParentSessionID string `json:"parent_session_id,omitempty"`
 	ParentRunID     string `json:"parent_run_id,omitempty"`
 	// TaskID is the durable task identity; RunID is this attempt's execution
@@ -244,13 +211,10 @@ type RunStarted struct {
 	ToolCallID string `json:"tool_call_id,omitempty"`
 	Label      string `json:"label,omitempty"`
 	// Kind is the task's kind ("" a sub-agent task, "workflow" an execution's
-	// step run). A client keys what a run's ending means for the task on it: a
-	// step ending is not a workflow ending.
+	// step run): a step ending is not a workflow ending.
 	Kind string `json:"kind,omitempty"`
-	// Attempt is which run of the task this is: 1 for the original, more after
-	// a retry. A client whose card shows the task as finished uses it to tell a
-	// NEW attempt from a replay, and to stop rendering the previous attempt's
-	// outcome over a task that is running again.
+	// Attempt is which run of the task this is: 1 for the original, more
+	// after a retry — how a client tells a NEW attempt from a replay.
 	Attempt int `json:"attempt,omitempty"`
 	// MaxAttempts is the ceiling Attempt is measured against, so a client can
 	// answer "could this be retried" from state it already tracks.
@@ -258,8 +222,7 @@ type RunStarted struct {
 }
 
 // Task status vocabulary, aligned with the MCP Tasks (SEP-1686) five-state
-// lifecycle. The mapping from run status is single-pointed in
-// bridge.TaskStatusFor.
+// lifecycle; the mapping from run status is bridge.TaskStatusFor.
 const (
 	TaskWorking       = "working"
 	TaskInputRequired = "input_required"
@@ -268,17 +231,13 @@ const (
 	TaskCancelled     = "cancelled"
 )
 
-// TaskNotificationPrefix marks a user-input message injected when a background
-// task finishes (the parent run "wakes" on it). The client renders such messages as notifications rather than user
-// bubbles; the model sees the prefixed text verbatim. Aliased from the SDK's
-// constant (which formats the task ones) so it cannot drift.
+// TaskNotificationPrefix marks a user-input message injected when a
+// background task finishes; the client renders it as a notification, the
+// model sees it verbatim. Aliased from the SDK so it cannot drift.
 const TaskNotificationPrefix = tasks.NotificationPrefix
 
-// RunToolProgress is a partial result from a tool that is still running: a
-// command's output as it appears, a sub-agent thinking out loud.
-//
-// Keyed by CallID because several tools stream at once, and a client that keyed
-// on the tool name would interleave two calls to the same tool.
+// RunToolProgress is a partial result from a tool that is still running,
+// keyed by CallID because several calls of one tool may stream at once.
 type RunToolProgress struct {
 	RunID    string `json:"run_id"`
 	CallID   string `json:"call_id"`
@@ -293,9 +252,8 @@ type RunToolProgress struct {
 // RunDiagnostic reports one piece of trouble a run survived.
 type RunDiagnostic struct {
 	RunID string `json:"run_id"`
-	// Type is the diagnostic kind (model_retry, model_fallback, tool_panic, …).
-	// It is an open vocabulary: a client that does not recognize one shows it
-	// generically rather than dropping it.
+	// Type is the diagnostic kind (model_retry, model_fallback, tool_panic, …),
+	// an open vocabulary: an unknown one renders generically.
 	Type string `json:"type"`
 	// Code is the classified error, when there was one.
 	Code string `json:"code,omitempty"`
@@ -327,24 +285,19 @@ type RunReasoning struct {
 	Delta string `json:"delta"`
 }
 
-// RunMessage carries one completed assistant message — the full text of a
-// turn the moment the model finishes it: interim narration between tool calls
-// as well as the final answer. It is the authoritative form of what run.step
-// deltas previewed (and the only text signal on backends that stream no
-// deltas or on resumed runs whose earlier deltas predate the resume).
+// RunMessage carries one completed assistant message — interim narration or
+// the final answer — the authoritative form of what run.step deltas
+// previewed, and the only text signal on backends that stream no deltas.
 type RunMessage struct {
 	RunID string `json:"run_id"`
 	Text  string `json:"text"`
-	// ItemID is the model item's stable id. The client dedups hub replays by it
-	// (falling back to text equality when empty), so a genuinely repeated
-	// identical message is preserved rather than dropped as a replay.
+	// ItemID is the model item's stable id; the client dedups hub replays by
+	// it, falling back to text equality when empty.
 	ItemID string `json:"item_id,omitempty"`
 }
 
-// RunReasoningItem carries one completed reasoning (thinking) block — a
-// turn's full thinking text the moment the model finishes it. Authoritative
-// over run.reasoning deltas, and the only thinking signal on backends that
-// stream no reasoning deltas or on resumed segments.
+// RunReasoningItem carries one completed reasoning (thinking) block,
+// authoritative over run.reasoning deltas.
 type RunReasoningItem struct {
 	RunID string `json:"run_id"`
 	Text  string `json:"text"`
@@ -361,16 +314,14 @@ type RunToolCall struct {
 	NeedsApproval bool   `json:"needs_approval"`
 }
 
-// RunToolResult carries the output of a completed tool call back to the client.
-// The display fields mirror the stored entry's ItemDisplay (same JSON names), so
-// the live card and the one rebuilt from history render from the same data.
+// RunToolResult carries the output of a completed tool call. The display
+// fields mirror the stored entry's ItemDisplay (same JSON names).
 type RunToolResult struct {
 	RunID      string `json:"run_id"`
 	ToolCallID string `json:"tool_call_id"`
 	Output     string `json:"output"`
 	// Title and Summary are the tool's display overrides (ToolResult.Title /
-	// .Summary): a card heading when the tool name is not it, a one-line
-	// account of what happened. Empty means the card keeps its fallbacks.
+	// .Summary); empty means the card keeps its fallbacks.
 	Title   string `json:"title,omitempty"`
 	Summary string `json:"summary,omitempty"`
 	// Renderer is the tool's rendering hint for the output ("diff",
@@ -379,9 +330,7 @@ type RunToolResult struct {
 	// IsError marks a result that reports a failure.
 	IsError bool `json:"is_error,omitempty"`
 	// Extra carries whatever the tool attached via ToolResult.Details — the
-	// card's data as opposed to the model's text (a task result's task_id, an
-	// exec_command's command). It reaches history readers through the stored
-	// entry's display, and live clients through this field.
+	// card's data (a task result's task_id, an exec_command's command).
 	Extra map[string]any `json:"extra,omitempty"`
 }
 
@@ -404,24 +353,20 @@ type RunOutput struct {
 
 // RunError reports that a run failed, with an error code and message.
 // SessionID is set when the failure happened before a run.started could
-// establish the run→session mapping (e.g. session_not_found, session_busy),
-// so the client can still attribute the error.
+// establish the run→session mapping (e.g. session_not_found, session_busy).
 type RunError struct {
 	RunID     string `json:"run_id,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
 	Code      string `json:"code"`
 	Message   string `json:"message"`
-	// Guardrail and Stage are set only when Code is "guardrail_tripwire": the
-	// name of the guardrail that blocked the run and whether it fired on the
-	// input ("input") or the final output ("output"). An output trip means the
-	// answer already streamed to the client and should be marked retracted.
+	// Guardrail and Stage ("input" / "output") are set only when Code is
+	// "guardrail_tripwire"; an output trip means the streamed answer is retracted.
 	Guardrail string `json:"guardrail,omitempty"`
 	Stage     string `json:"stage,omitempty"`
 }
 
-// RunInterrupted signals that the run paused for human tool approval. It is
-// terminal for this run segment's event stream — approving or rejecting
-// resumes execution under the same run id.
+// RunInterrupted signals that the run paused for human tool approval;
+// approving or rejecting resumes execution under the same run id.
 type RunInterrupted struct {
 	RunID string `json:"run_id"`
 }
@@ -431,20 +376,17 @@ type RunCancelled struct {
 	RunID string `json:"run_id"`
 }
 
-// RunCompaction reports session-history compaction progress at the end of a
-// run: phase "started" when the summarization request begins (the run stays
-// busy until it completes), "finished" with item counts once history is
-// rewritten. Transient status — not persisted to traces.
+// RunCompaction reports compaction progress at the end of a run: phase
+// "started" when the summarization request begins, "finished" with item
+// counts once history is rewritten. Transient — not persisted to traces.
 type RunCompaction struct {
 	RunID  string `json:"run_id"`
 	Phase  string `json:"phase"`
 	Detail string `json:"detail,omitempty"`
 }
 
-// RunGap tells one connection that it fell behind and events were dropped for
-// it. Only that connection receives it; the run itself is unaffected. The client
-// resubscribes with from_seq = last_good to fill the hole, rather than leaving
-// the timeline quietly missing events.
+// RunGap tells one connection that it fell behind and events were dropped
+// for it; the client resubscribes with from_seq = last_good to fill the hole.
 type RunGap struct {
 	RunID string `json:"run_id"`
 	// Dropped is how many events were discarded for this connection.
@@ -471,10 +413,8 @@ type SessionProjectBound struct {
 }
 
 // TaskUpdated is a task's state as its parent session's subscribers should
-// now show it — the same shape as a row of GET /sessions/{id}/tasks,
-// Dismissed included so a dismissal made in one window reaches the others.
-// A client merges it under the task id, with the same no-move-backwards
-// rule the durable row gets.
+// show it — the same shape as a row of GET /sessions/{id}/tasks, Dismissed
+// included. A client merges it under the task id, never moving backwards.
 type TaskUpdated struct {
 	TaskID          string          `json:"task_id"`
 	ParentSessionID string          `json:"parent_session_id"`
@@ -489,8 +429,7 @@ type TaskUpdated struct {
 	Summary         string          `json:"summary,omitempty"`
 	State           json.RawMessage `json:"state,omitempty"`
 	// PendingCallID / PendingToolName name the decision an input_required
-	// task waits on — the one thing a client cannot learn from run events when
-	// the pause has no run (a workflow step waiting to start).
+	// task waits on, which a pause with no run (a step waiting to start) has no run event for.
 	PendingCallID   string `json:"pending_call_id,omitempty"`
 	PendingToolName string `json:"pending_tool_name,omitempty"`
 	// Dismissed is the row's hidden-from-the-strip flag, so a dismissal made

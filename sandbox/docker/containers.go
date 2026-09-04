@@ -145,11 +145,8 @@ func RemoveManagedVolume(ctx context.Context, opts Options, name string) error {
 // it asked for and continues; a caller acting on a listing reports it.
 var ErrContainerNotFound = errors.New("container not found")
 
-// withManaged verifies ownership (the fingerprint label) before act runs —
-// these entry points take a NAME, and must never act on a foreign container
-// that happens to hold it. act receives the inspected container's ID, never
-// the name: IDs are not reused, so a remove+recreate racing the inspect
-// cannot hand the name — and the act — to a foreign container.
+// withManaged verifies ownership (the fingerprint label) before act runs, and
+// hands act the inspected ID, never the name: IDs are not reused under a race.
 func withManaged(ctx context.Context, opts Options, name string, act func(cli *client.Client, id string) error) error {
 	cli, done, err := managedClient(opts)
 	if err != nil {
@@ -171,9 +168,7 @@ func withManaged(ctx context.Context, opts Options, name string, act func(cli *c
 }
 
 // ensureOwned is the ownership boundary the by-name entry points share: a
-// container missing this package's fingerprint label was created by someone
-// else and must never be stopped, removed or adopted. cfg is the inspected
-// container's Config (nil-safe).
+// container without this package's fingerprint label is foreign. cfg is nil-safe.
 func ensureOwned(cfg *container.Config, name string) error {
 	var labels map[string]string
 	if cfg != nil {

@@ -118,11 +118,8 @@ func (r ToolResult) ModelOutput() any {
 	return r.Content
 }
 
-// resultFromValue wraps an ordinary tool return value as a ToolResult, so a
-// tool that just returns a string or a struct keeps working unchanged. A value
-// that is already a ToolResult (or *ToolResult) passes through; a
-// ToolOutputContent (or slice) becomes the content; everything else is
-// stringified.
+// resultFromValue wraps a tool's return value as a ToolResult: a ToolResult or
+// *ToolResult passes through, ToolOutputContent becomes content, else stringified.
 func resultFromValue(v any) ToolResult {
 	switch out := v.(type) {
 	case ToolResult:
@@ -141,10 +138,8 @@ func resultFromValue(v any) ToolResult {
 	}
 }
 
-// normalizeDetails round-trips a result's Details through JSON so a value that
-// cannot be serialized fails here, while the tool call is still identifiable,
-// rather than at persistence time. An empty map normalizes to nil so an absent
-// value and an empty one look the same to consumers.
+// normalizeDetails round-trips Details through JSON so an unserializable value
+// fails here, not at persistence time; an empty map normalizes to nil.
 func normalizeDetails(details map[string]any) (map[string]any, error) {
 	if len(details) == 0 {
 		return nil, nil

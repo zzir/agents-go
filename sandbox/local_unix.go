@@ -10,9 +10,7 @@ import (
 )
 
 // setProcessGroup makes the command lead its own process group and replaces
-// the context cancellation with a kill of the whole group, so backgrounded
-// grandchildren are killed together with the command on timeout instead of
-// surviving and holding the stdout/stderr pipes open.
+// the context cancellation with a kill of the whole group, grandchildren included.
 func setProcessGroup(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {

@@ -36,12 +36,8 @@ type Server struct {
 	Conns *ConnTracker
 	// bodyLimits are the per-path overrides of maxBodyBytes (SetBodyLimit).
 	bodyLimits map[string]func() int64
-	// cspPolicy is the Content-Security-Policy every response carries; base
-	// policy from New, extended by ServeStatic with the hashes of the served
-	// page's inline scripts and by SetImageHosts with the avatar and
-	// attachment hosts. Read per request, rewritten at runtime (the
-	// attachment bucket is a runtime-editable setting), hence atomic; the
-	// inputs are guarded by cspMu.
+	// cspPolicy is the Content-Security-Policy every response carries: base from
+	// New, extended with inline-script hashes and image hosts. Atomic; inputs under cspMu.
 	cspPolicy    atomic.Value // string
 	cspMu        sync.Mutex
 	scriptHashes []string
@@ -58,10 +54,8 @@ func (s *Server) SetImageHosts(hosts []string) {
 	s.cspPolicy.Store(buildCSP(s.scriptHashes, hosts))
 }
 
-// maxBodyBytes caps any request body read, matching the WebSocket frame limit
-// (wsMaxMessageBytes): without it every JSON endpoint reads an unbounded body
-// straight into memory. The webhook route applies its own tighter cap; a
-// route that legitimately carries more registers a limit with SetBodyLimit.
+// maxBodyBytes caps any request body read (matching wsMaxMessageBytes); the
+// webhook route has a tighter cap, and SetBodyLimit raises one route's.
 const maxBodyBytes = 1 << 20
 
 // SetBodyLimit gives one path its own body cap, read per request — for the
@@ -99,9 +93,8 @@ func (s *Server) SetTrustedProxies(proxies []string) error {
 // gzipMinLength is the response size from which gzip pays for its framing.
 const gzipMinLength = 1024
 
-// shouldGzip compresses an API response for a client that accepts gzip, except
-// the replay stream: its events are under the floor, which would hold them
-// back until the stream ended.
+// shouldGzip compresses an API response for a gzip-accepting client, except the
+// replay stream: its events are under the floor and would be held back.
 func shouldGzip(c *gin.Context) bool {
 	p := c.Request.URL.Path
 	return strings.Contains(c.GetHeader("Accept-Encoding"), "gzip") &&
@@ -118,10 +111,8 @@ func New(log *slog.Logger, auth AuthFunc, audit protocol.AuditFunc) *Server {
 	engine := gin.New()
 	_ = engine.SetTrustedProxies(nil)
 	engine.Use(gin.Recovery())
-	// API responses of gzipMinLength and more go out gzip-compressed to a
-	// client that accepts it — API only (shouldGzip): the static assets are
-	// pre-compressed at build and the middleware would strip their
-	// Content-Encoding, and the WebSocket is not compressed by design.
+	// API responses of gzipMinLength and more go out gzipped (shouldGzip): static
+	// assets are pre-compressed at build, and the WebSocket is not compressed.
 	engine.Use(gingzip.Gzip(gingzip.DefaultCompression,
 		gingzip.WithMinLength(gzipMinLength),
 		gingzip.WithCustomShouldCompressFn(shouldGzip),
@@ -138,9 +129,8 @@ func New(log *slog.Logger, auth AuthFunc, audit protocol.AuditFunc) *Server {
 	return s
 }
 
-// limitBody caps the request body: a declared length past the cap is
-// refused outright as 413; an undeclared one is cut at the cap by the
-// reader, which the handler's decode then reports.
+// limitBody caps the request body: a declared length past the cap is 413; an
+// undeclared one is cut by the reader, which the handler's decode reports.
 func (s *Server) limitBody(c *gin.Context) {
 	n := int64(maxBodyBytes)
 	if limit := s.bodyLimits[c.Request.URL.Path]; limit != nil {
@@ -199,9 +189,8 @@ func serveAsset(c *gin.Context, sfs fs.FS, httpFS http.FileSystem, p string) boo
 	}
 	if f, err := sfs.Open(p); err == nil {
 		_ = f.Close()
-		// net/http canonicalizes any path ending in /index.html with an
-		// unconditional 301 to "./" — served through FileFromFS that is a
-		// redirect loop, so the index goes out as bytes instead.
+		// net/http 301s any path ending in /index.html to "./" — a redirect loop
+		// through FileFromFS, so the index goes out as bytes.
 		if p == "index.html" || strings.HasSuffix(p, "/index.html") {
 			if data, err := fs.ReadFile(sfs, p); err == nil {
 				c.Data(http.StatusOK, "text/html; charset=utf-8", data)
@@ -237,13 +226,11 @@ func serveAsset(c *gin.Context, sfs fs.FS, httpFS http.FileSystem, p string) boo
 	return false
 }
 
-// buildCSP renders the policy; scriptHashes extends script-src with the
-// sha256 sources of the page's inline scripts, imgHosts extends img-src with
-// the login providers' picture hosts.
+// buildCSP renders the policy: scriptHashes extends script-src with the sha256
+// sources of inline scripts, imgHosts extends img-src with login picture hosts.
 func buildCSP(scriptHashes, imgHosts []string) string {
-	// connect-src is same-origin: the SPA only talks to this server (REST over
-	// http(s), live updates over the ws/wss upgrade of the same origin), so
-	// 'self' already covers same-origin WebSockets in modern browsers.
+	// connect-src is same-origin: 'self' covers same-origin WebSockets in
+	// modern browsers.
 	scriptSrc := "script-src 'self'"
 	for _, h := range scriptHashes {
 		scriptSrc += " 'sha256-" + h + "'"
@@ -271,10 +258,8 @@ func (s *Server) cspMiddleware() gin.HandlerFunc {
 // (type="module", src=…) are external and covered by 'self'.
 var inlineScriptRE = regexp.MustCompile(`(?s)<script>(.*?)</script>`)
 
-// inlineScriptHashes hashes every inline <script> of the FS's index.html —
-// computed from the same bytes the server serves, so the policy cannot drift
-// from the page. (index.html's theme-init must stay inline and synchronous:
-// it gates first paint.)
+// inlineScriptHashes hashes every inline <script> of the FS's index.html, from
+// the bytes served, so the policy cannot drift (theme-init must stay inline).
 func inlineScriptHashes(fsys fs.FS) []string {
 	html := readIndexHTML(fsys)
 	if html == nil {
@@ -308,8 +293,7 @@ func readIndexHTML(fsys fs.FS) []byte {
 }
 
 // redactSensitiveQueryKeys are query parameters scrubbed from request logs:
-// the auth token, and the OAuth authorization code/state that ride the MCP and
-// ChatGPT OAuth callback redirects (a leaked code is a usable credential).
+// the auth token, and the OAuth code/state on callback redirects.
 var redactSensitiveQueryKeys = []string{"token", "code", "state"}
 
 func redactQuery(u *url.URL) string {

@@ -41,11 +41,8 @@ func (e *ToolLoopError) Error() string {
 		"spending the rest of the turn budget rediscovering the same failure", e.Turns)
 }
 
-// noteToolTurn feeds a finished turn's tool results to the consecutive-error
-// valve and reports the error when it trips.
-//
-// A turn with no tool calls at all is not counted either way: the run is
-// talking, not looping.
+// noteToolTurn feeds a turn's tool results to the consecutive-error valve and
+// reports the error when it trips; a turn with no tool calls does not count.
 func (r *runner) noteToolTurn(results []functionToolResult) error {
 	if len(results) == 0 {
 		return nil
@@ -64,9 +61,8 @@ func (r *runner) noteToolTurn(results []functionToolResult) error {
 	return nil
 }
 
-// truncatedCallResults answers every call of a truncated response — function
-// and handoff calls alike — with a refusal instead of running it: the
-// arguments may stop mid-JSON (spec §2.7e).
+// truncatedCallResults answers every call of a truncated response — function and
+// handoff alike — with a refusal instead of running it (spec §2.7e).
 func truncatedCallResults(agent *Agent, calls []functionCall) []functionToolResult {
 	const msg = "The model response was truncated at the output-token limit, so this tool call's " +
 		"arguments may be incomplete. It was NOT executed. Resend the call with complete arguments, " +
@@ -100,9 +96,8 @@ func (r *runner) toolConcurrency(runs []toolRunFunction) int {
 	return r.opts.Exec.MaxToolConcurrency
 }
 
-// discloseTools records the deferred tools this batch's results opened up.
-// Disclosure is cumulative for the rest of the run: a tool told about once
-// stays available.
+// discloseTools records the deferred tools this batch's results opened up;
+// disclosure is cumulative for the rest of the run.
 func (r *runner) discloseTools(results []functionToolResult) {
 	for _, res := range results {
 		for _, name := range res.addedTools {

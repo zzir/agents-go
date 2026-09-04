@@ -210,6 +210,26 @@ non-goals, §3 capabilities not provided). The two that come up most:
   | How to use a capability | that capability's `docs/howto/` page |
   | Every exported signature | pkg.go.dev — never a hand-written table |
 
+  Each home has a fixed shape, and the shape is the size cap. A section that
+  outgrows it is being used as a second home for something:
+
+  | Home | Shape |
+  |---|---|
+  | `spec.md` §2.x | one range sentence, then bold-assertion bullets of ≤3 lines, optional one-line `— see decisions §5.y` tail. A sentence that explains *why* (because / otherwise / rather than / was worse) is evicted to decisions, never kept here. |
+  | `decisions.md` §5.x | **Decision** (1–3 lines) / **Rejected** (one line per alternative + reason) / **Cost accepted** (1–3 lines) / `Rules: spec §2.x` or `invariant N`. ≤40 lines SDK, ≤30 workbench. Dates on the first line only. |
+  | `workbench-invariants.md` N | one rule someone could violate, ≤6 lines, one pointer to the why. Component mechanics belong in that component's godoc, not here. |
+  | `protocol.md` | what a call means beyond its schema. A field's description is a doc comment on the struct field — `make openapi` carries it into the spec — never prose here. |
+  | `docs/howto/` | task, short snippet, link. A snippet that duplicates a program under `examples/` shrinks to a link; a paragraph that restates spec becomes one sentence plus `(spec §2.x)`. |
+
+  A retired feature keeps its number and becomes a ≤5-line tombstone
+  ("Retired DATE. Was X. Because Y. See §Z."). A rename or deletion ledger, a
+  benchmark log, a "verified 9/9 on …" record is git history, not a section.
+  A fact found in a second home is *moved*, not copied — before finishing:
+
+  ```bash
+  grep -rn "§5.29" docs/ README.md --include='*.md'     # the paragraph once, pointers elsewhere
+  ```
+
 ## Principles
 
 - **Simplicity is the default; earn every abstraction.** An interface, wrapper,
@@ -241,6 +261,20 @@ Comment bloat is a recurring regression here — the altitude rule is strict.
   `// … — see decisions §5.29` — never a restatement of the paragraph. Those
   files are the one authority; a copy in a comment is a second one that
   drifts.
+- **A pointer replaces the paragraph; it never sits next to one.** When
+  `// … — see spec §2.7f` is present, it is the whole comment. The failure
+  mode is three or more comment blocks of three or more lines citing the same
+  §: that fact now has four homes. Check before finishing a change that touches
+  comments:
+
+  ```bash
+  grep -rn -B2 'decisions §5.29' --include='*.go' .   # each hit should be a one-liner
+  ```
+
+- **Field comments on `store` models and handler `@Description` lines are
+  OpenAPI text.** `make openapi` publishes them verbatim, so a `decisions §`
+  or `invariant N` there leaks an internal address into the public spec. One
+  factual line per field, no citations.
 - **No historical narrative.** "used to…", "the old API…", "this was a bug
   because…" is git/PR history — delete it. The reader sees only the code that
   exists now.
@@ -248,7 +282,12 @@ Comment bloat is a recurring regression here — the altitude rule is strict.
   on a type or func. Public godoc may run longer *only* for a runnable example or
   a load-bearing caveat the caller needs.
 - **Rough target: ~10–15% comment lines.** A file past ~25% is a smell to review,
-  not a hard limit.
+  not a hard limit. Measure the package you touched, non-test files, before
+  finishing (handler's number includes swag input; subtract `// @` lines there):
+
+  ```bash
+  ls agents/*.go | grep -v _test | xargs cat | awk '/^[[:space:]]*\/\//{c++} NF{n++} END{printf "%d%% comment lines\n", 100*c/n}'
+  ```
 
 ## Commits
 

@@ -7,14 +7,9 @@ import (
 	"time"
 )
 
-// Ref addresses one session: one generation of one id. The generation is what
-// keeps a handle to a deleted-then-recreated id from reading or writing its
-// replacement — two conversations sharing a history, silently. Making it part
-// of the address means a function that takes a Ref cannot be handed a bare id.
-//
-// A ref with no generation is the direct scope, where the id names the storage
-// (sessions.New). It is a scope, NOT a wildcard: a repo's
-// delete does not reach it, and its writes do not reach a repo's sessions.
+// Ref addresses one session: one generation of one id, so a handle to a
+// deleted-then-recreated id cannot reach its replacement. A ref with no
+// generation is the direct scope, where the id names the storage — spec §2.5e2.
 type Ref struct {
 	// ID is the session's name, as a caller knows it.
 	ID string

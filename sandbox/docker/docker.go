@@ -1,19 +1,10 @@
-// Package docker implements the sandbox.Sandbox interface using Docker
-// containers. Two modes are supported:
-//
-// - Ephemeral (default): each Exec creates a fresh container, runs the
-// command, captures output and removes the container.
-// - Persistent (Options.Persistent = true): a single long-lived container is
-// started on the first Exec; subsequent Exec calls use "docker exec" to run
-// commands inside it. The container is removed on Close.
-//
-// The package is split by concern: this file holds the sandbox type and the
-// Exec family, files.go the file operations with their two backends
-// (files_host.go for a bind-mounted host directory, files_container.go for the
-// in-container one) and tar.go the tar packing shared by both.
-//
-// This package pulls the (heavy) Docker client; it is a separate module so the
-// core agents-go module stays dependency-light.
+// Package docker implements sandbox.Sandbox on Docker containers, in two modes:
+// ephemeral (default), where each Exec creates, runs and removes a container,
+// and persistent (Options.Persistent), where one long-lived container serves
+// every Exec through docker exec and is removed on Close. This file holds the
+// sandbox type and the Exec family; files.go the file operations and their two
+// backends (files_host.go, files_container.go); tar.go the packing both share.
+// It is its own module so the Docker client stays out of the core (decisions §5.7).
 package docker
 
 import (
@@ -41,33 +32,22 @@ import (
 )
 
 const (
-	// workDir is the working directory inside the container, matching the
-	// Dockerfile WORKDIR. An anonymous volume is mounted here in ephemeral
-	// mode so files can be copied in before start on a read-only root fs.
+	// workDir is the working directory inside the container (the Dockerfile
+	// WORKDIR); ephemeral mode mounts an anonymous volume here for a read-only root.
 	workDir = "/workspace"
 	// logReadTimeout bounds reading the container logs after a timeout, when
 	// the request's own context is already spent.
 	logReadTimeout = 10 * time.Second
-	// logMaxSize caps the json-file container log on the daemon's disk so a
-	// flooding command cannot fill the host filesystem. Output returned to the
-	// caller is capped separately (ExecRequest.MaxOutputBytes), and well below
-	// this.
+	// logMaxSize caps the json-file container log on the daemon's disk; output
+	// returned to the caller is capped separately, well below this.
 	logMaxSize = "10m"
-	// fingerprintLabel marks a persistent container as created by this package,
-	// carrying a hash of every security-relevant option it was created from.
-	// adoptNamed requires an exact match: a name conflict may only be resolved
-	// by taking over a container this package created from the SAME
-	// configuration — never a foreign container, and never one created under a
-	// laxer policy (network on, root user, no limits) that the current options
-	// no longer allow.
+	// fingerprintLabel marks a persistent container as this package's, carrying a
+	// hash of its security-relevant options; adoptNamed needs an exact match (decisions §5.19).
 	fingerprintLabel = "dev.agents-go.sandbox.fingerprint"
 )
 
-// configFingerprint hashes the options that decide what a persistent container
-// IS security-wise: image, runtime, user, network, the bind source or volume,
-// the resource limits and the environment. Effective values are hashed, not
-// raw ones (the PIDs default is applied here as in buildHostConfig), so
-// equivalent configurations produce one fingerprint.
+// configFingerprint hashes what a persistent container IS security-wise, on
+// EFFECTIVE values, so equivalent configurations produce one fingerprint.
 func (s *Sandbox) configFingerprint() string {
 	pids := s.opts.Limits.PIDs
 	if pids == 0 {
@@ -177,9 +157,8 @@ func New(opts Options) (*Sandbox, error) {
 	if opts.Image == "" {
 		return nil, fmt.Errorf("docker sandbox: Image is required")
 	}
-	// A WorkDir bind is resolved by the DAEMON's filesystem while the file
-	// tools and the workdir mkdir run on THIS host — with a remote daemon the
-	// two silently diverge. Use VolumeName for remote daemons.
+	// A WorkDir bind is resolved by the DAEMON's filesystem while the file tools
+	// run on THIS host; with a remote daemon the two diverge. Use VolumeName.
 	if opts.WorkDir != "" && opts.Host != "" {
 		return nil, fmt.Errorf("docker sandbox: WorkDir needs the local daemon; use VolumeName with Host %q", opts.Host)
 	}
@@ -233,10 +212,7 @@ func (s *Sandbox) ensureImage(ctx context.Context) error {
 }
 
 // ensureContainer lazily creates and starts the persistent container, or
-// restarts (failing that, recreates) one that has exited (e.g. OOM-killed).
-// Creation runs under s.mu — three daemon round-trips — which is what
-// guarantees a single container; a wedged daemon blocks the other s.mu users
-// for as long as the create hangs.
+// restarts (else recreates) an exited one. Creation runs under s.mu.
 func (s *Sandbox) ensureContainer(ctx context.Context) (string, error) {
 	id, err := s.lookupRunning(ctx)
 	if err != nil || id != "" {
@@ -251,11 +227,8 @@ func (s *Sandbox) ensureContainer(ctx context.Context) (string, error) {
 	return s.createContainer(ctx)
 }
 
-// lookupRunning returns the persistent container's ID when one is known AND
-// still running. A stopped container is restarted in place; only one that is
-// positively gone (not found) or refuses to start is force-removed, forgotten,
-// and reported as "" so the caller creates a fresh one. The inspect runs
-// without s.mu: it is a daemon round-trip and every Exec passes through here.
+// lookupRunning returns the container's ID when known AND running, restarting
+// a stopped one in place; one gone or unstartable is removed and reported "".
 func (s *Sandbox) lookupRunning(ctx context.Context) (string, error) {
 	s.mu.Lock()
 	id := s.containerID
@@ -295,8 +268,7 @@ func (s *Sandbox) lookupRunning(ctx context.Context) (string, error) {
 // be called with s.mu held; on success s.containerID is the new ID.
 func (s *Sandbox) createContainer(ctx context.Context) (string, error) {
 	if s.opts.WorkDir != "" {
-		// Linux dockerd auto-creates a missing bind source; Docker Desktop
-		// (macOS/Windows) refuses with "bind source path does not exist".
+		// Linux dockerd auto-creates a missing bind source; Docker Desktop refuses.
 		// Create it up front so behavior does not depend on the platform.
 		if err := os.MkdirAll(s.opts.WorkDir, 0o755); err != nil {
 			return "", fmt.Errorf("docker sandbox: creating bind source %s: %w", s.opts.WorkDir, err)
@@ -306,9 +278,8 @@ func (s *Sandbox) createContainer(ctx context.Context) (string, error) {
 	createOpts := client.ContainerCreateOptions{Config: cfg, HostConfig: hostCfg, Name: s.opts.ContainerName}
 	created, err := s.cli.ContainerCreate(ctx, createOpts)
 	if err != nil {
-		// A fixed ContainerName can collide with a container WE left behind:
-		// adopt a same-configuration one, replace a stale one of ours, and
-		// keep a foreign holder a hard error (decisions §5.19).
+		// A fixed ContainerName can collide with a container WE left behind: adopt or
+		// replace ours, keep a foreign holder a hard error (decisions §5.19).
 		if s.opts.ContainerName != "" && cerrdefs.IsConflict(err) {
 			id, aerr := s.adoptNamed(ctx)
 			if errors.Is(aerr, errStaleOurs) {
@@ -332,9 +303,8 @@ func (s *Sandbox) createContainer(ctx context.Context) (string, error) {
 	}
 	id := created.ID
 
-	// Cleanup must not use ctx directly: when the failure was caused by ctx
-	// being canceled (or timing out), a ctx-bound remove would fail too and
-	// leak the container.
+	// Cleanup must not use ctx directly: a failure caused by ctx ending would
+	// make a ctx-bound remove fail too and leak the container.
 	rmCtx := context.WithoutCancel(ctx)
 	remove := func() {
 		_, _ = s.cli.ContainerRemove(rmCtx, id, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
@@ -356,11 +326,8 @@ func (s *Sandbox) createContainer(ctx context.Context) (string, error) {
 	return id, nil
 }
 
-// adoptNamed takes over the existing container holding our fixed name,
-// provided the fingerprint label proves it OURS from the SAME configuration
-// (decisions §5.19). A stopped match is started; ours-from-an-older-config is
-// errStaleOurs with the stale container's id, so the caller replaces exactly
-// the container it judged; a foreign holder is a hard error.
+// adoptNamed takes over the container holding our name if its fingerprint
+// matches (decisions §5.19); an older config of ours is errStaleOurs with its id.
 func (s *Sandbox) adoptNamed(ctx context.Context) (string, error) {
 	info, err := s.cli.ContainerInspect(ctx, s.opts.ContainerName, client.ContainerInspectOptions{})
 	if err != nil {
@@ -440,9 +407,8 @@ func (s *Sandbox) ExecStream(ctx context.Context, req sandbox.ExecRequest, stdou
 	if s.opts.Persistent {
 		return s.execPersistent(ctx, req, stdout, stderr)
 	}
-	// Ephemeral mode is the one place Exec and ExecStream cannot share a core:
-	// Exec collects the log the daemon already stored once the process exited,
-	// while streaming has to follow the log live (see streamEphemeral).
+	// Ephemeral mode is where Exec and ExecStream cannot share a core: Exec reads
+	// the stored log after exit, streaming follows it live (see streamEphemeral).
 	return s.streamEphemeral(ctx, req, stdout, stderr)
 }
 
@@ -457,14 +423,8 @@ func (s *Sandbox) prepareExec(ctx context.Context, req sandbox.ExecRequest) erro
 	return nil
 }
 
-// execPersistent runs req inside the long-lived container and writes the
-// demultiplexed output to stdout/stderr. It is the shared core of Exec (which
-// passes capped buffers) and ExecStream (which passes the caller's writers), so
-// the returned ExecResult never carries Stdout/Stderr of its own.
-//
-// Because the writers are the caller's, one that refuses a write aborts the
-// call with that error rather than yielding an exit code — see copyAttached for
-// why a stream that ended early cannot be trusted here.
+// execPersistent runs req in the long-lived container, writing demultiplexed
+// output to the caller's writers; a write error aborts the call (see copyAttached).
 func (s *Sandbox) execPersistent(ctx context.Context, req sandbox.ExecRequest, stdout, stderr io.Writer) (*sandbox.ExecResult, error) {
 	id, err := s.ensureContainer(ctx)
 	if err != nil {
@@ -508,10 +468,8 @@ func (s *Sandbox) execPersistent(ctx context.Context, req sandbox.ExecRequest, s
 	cerr := copyAttached(ectx, attached.Reader, attached.Close, stdout, stderr)
 
 	res := &sandbox.ExecResult{}
-	// The CALLER's ending is checked first. ectx inherits it, deadline included,
-	// so asking ectx first would report a deadline the caller set as this
-	// command's own timeout — and TimedOut means "killed for exceeding the
-	// request timeout", nothing else (spec §2.7m).
+	// The CALLER's ending is checked first, else its deadline would read as this
+	// command's own timeout (spec §2.7m).
 	if err := ctx.Err(); err != nil {
 		s.killExec(context.WithoutCancel(ctx), id, marker)
 		return nil, err
@@ -530,9 +488,8 @@ func (s *Sandbox) execPersistent(ctx context.Context, req sandbox.ExecRequest, s
 		return nil, fmt.Errorf("docker sandbox: exec read: %w", cerr)
 	}
 
-	// The stream ended on its own, so the process is done and its exit code is
-	// final. (The read is never cut short while the process still runs — see
-	// copyAttached.)
+	// The stream ended on its own, so the process is done and its exit code final
+	// (the read is never cut short while it runs — see copyAttached).
 	inspect, ierr := s.cli.ExecInspect(ctx, created.ID, client.ExecInspectOptions{})
 	if ierr != nil {
 		return nil, fmt.Errorf("docker sandbox: exec inspect: %w", ierr)
@@ -541,15 +498,8 @@ func (s *Sandbox) execPersistent(ctx context.Context, req sandbox.ExecRequest, s
 	return res, nil
 }
 
-// copyAttached demultiplexes an exec attach stream into stdout/stderr and
-// returns once the copy is finished — never before, so nothing writes to the
-// sinks after it returns. The attach is a hijacked raw net.Conn that no
-// context interrupts, so when ctx fires sever closes it to unblock the read.
-//
-// The stream is read to its END even once the sinks are full: on a live attach
-// the stream ending is what says the process exited, and ExecInspect reports
-// ExitCode 0 for one still running. A frame cut in half (ErrUnexpectedEOF)
-// only truncates output; any other error is returned and fails the call.
+// copyAttached demultiplexes an exec attach stream into stdout/stderr, reading
+// to the END even once the sinks are full: the end is what says the process exited.
 func copyAttached(ctx context.Context, r io.Reader, sever func(), stdout, stderr io.Writer) error {
 	done := make(chan error, 1)
 	go func() {
@@ -571,8 +521,7 @@ func copyAttached(ctx context.Context, r io.Reader, sever func(), stdout, stderr
 }
 
 // execEphemeral runs req in a throw-away container and returns its buffered
-// output. Unlike the persistent core it fills the result's Stdout/Stderr: the
-// container log is read once, after the process has exited.
+// output; unlike the persistent core it fills Stdout/Stderr from the log.
 func (s *Sandbox) execEphemeral(ctx context.Context, req sandbox.ExecRequest) (*sandbox.ExecResult, error) {
 	id, remove, err := s.startEphemeral(ctx, req)
 	if err != nil {
@@ -646,8 +595,7 @@ func (s *Sandbox) streamEphemeral(ctx context.Context, req sandbox.ExecRequest, 
 	defer rc.Close()
 
 	// A copy error costs output, not correctness: the exit status comes from
-	// ContainerWait below. (The persistent core cannot be as relaxed — see
-	// copyAttached.)
+	// ContainerWait below (the persistent core cannot be as relaxed).
 	_, _ = stdcopy.StdCopy(stdout, stderr, rc)
 
 	// The caller's ending is checked before tctx's, as in execEphemeral — see
@@ -663,9 +611,8 @@ func (s *Sandbox) streamEphemeral(ctx context.Context, req sandbox.ExecRequest, 
 		return res, nil
 	}
 
-	// The log stream can end early with the process still running (a broken
-	// follow), so the wait rides tctx too: the deadline must still kill the
-	// container and report TimedOut, never hang on the caller's ctx.
+	// The log stream can end early with the process still running, so the wait
+	// rides tctx too: the deadline must still kill the container and report TimedOut.
 	wait := s.cli.ContainerWait(tctx, id, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
 	select {
 	case status := <-wait.Result:
@@ -689,8 +636,7 @@ func (s *Sandbox) streamEphemeral(ctx context.Context, req sandbox.ExecRequest, 
 }
 
 // startEphemeral creates a throw-away container for req, seeds its working
-// directory and starts it. The returned remove function must be called by the
-// caller (it also runs on the failure paths of the wait/read that follow).
+// directory and starts it; the caller must call the returned remove function.
 func (s *Sandbox) startEphemeral(ctx context.Context, req sandbox.ExecRequest) (string, func(), error) {
 	cfg, hostCfg := s.buildConfig(req)
 	created, err := s.cli.ContainerCreate(ctx, client.ContainerCreateOptions{Config: cfg, HostConfig: hostCfg})
@@ -703,8 +649,7 @@ func (s *Sandbox) startEphemeral(ctx context.Context, req sandbox.ExecRequest) (
 	}
 
 	// Copies the request files in before start; with none the tar is empty and
-	// the copy is a no-op — the working directory comes from the daemon's
-	// WorkingDir handling (spec §2.7q).
+	// the working directory comes from the daemon's WorkingDir (spec §2.7q).
 	tarball, terr := buildTar(req.Files)
 	if terr != nil {
 		remove()
@@ -721,9 +666,8 @@ func (s *Sandbox) startEphemeral(ctx context.Context, req sandbox.ExecRequest) (
 	return id, remove, nil
 }
 
-// buildHostConfig returns the HostConfig. Persistent mode relaxes the
-// read-only root filesystem, so a container whose User can write to it can
-// install packages into itself.
+// buildHostConfig returns the HostConfig; persistent mode relaxes the
+// read-only root so a container whose User can write may install packages.
 func (s *Sandbox) buildHostConfig(persistent bool) *container.HostConfig {
 	netMode := container.NetworkMode("none")
 	if s.opts.Network != "" {
@@ -746,9 +690,8 @@ func (s *Sandbox) buildHostConfig(persistent bool) *container.HostConfig {
 		SecurityOpt:    []string{"no-new-privileges"},
 		Mounts:         mounts,
 		Tmpfs:          map[string]string{"/tmp": "rw,noexec,size=" + s.tmpfsSize() + ",mode=1777"},
-		// Cap the container log on disk: without this, a flooding command
-		// ("yes" and friends) can write gigabytes into the daemon's log
-		// directory within a single timeout window.
+		// Cap the container log on disk: a flooding command could otherwise write
+		// gigabytes into the daemon's log directory within one timeout window.
 		LogConfig: container.LogConfig{
 			Type:   "json-file",
 			Config: map[string]string{"max-size": logMaxSize, "max-file": "1"},
@@ -798,9 +741,8 @@ func (s *Sandbox) buildPersistentConfig() (*container.Config, *container.HostCon
 	return cfg, hostCfg
 }
 
-// readLogs fetches the container output, capping each stream at max bytes.
-// Like demuxLogs, the output collected so far is returned even when err is
-// non-nil, so a timed-out caller can surface the partial output.
+// readLogs fetches the container output, capping each stream at max bytes;
+// like demuxLogs, output collected so far is returned even with a non-nil err.
 func (s *Sandbox) readLogs(ctx context.Context, id string, maxBytes int64) (string, string, error) {
 	rc, err := s.cli.ContainerLogs(ctx, id, client.ContainerLogsOptions{ShowStdout: true, ShowStderr: true})
 	if err != nil {
@@ -814,12 +756,8 @@ func (s *Sandbox) readLogs(ctx context.Context, id string, maxBytes int64) (stri
 	return stdout, stderr, nil
 }
 
-// demuxLogs splits a multiplexed docker log stream into stdout and stderr,
-// capping each at max bytes. Reading stops only once BOTH streams are full —
-// a per-total limit would let a flooding stdout starve a short stderr that
-// arrives later. Safe here because the log is FINISHED (a live attach must be
-// read to its end — see copyAttached). The output collected so far is
-// returned even when err is non-nil.
+// demuxLogs splits a multiplexed, FINISHED log into stdout and stderr, capped
+// each; reading stops only once both are full, and partial output survives err.
 func demuxLogs(r io.Reader, maxBytes int64) (string, string, error) {
 	stdout := &sandbox.CappedBuffer{Max: maxBytes}
 	stderr := &sandbox.CappedBuffer{Max: maxBytes}
@@ -846,10 +784,8 @@ func (s *stopWhenFull) Read(p []byte) (int, error) {
 	return s.r.Read(p)
 }
 
-// execMarkerEnv tags each persistent-mode exec with a unique value so a
-// timed-out process can be found from inside the container. ExecInspect's
-// PID is a HOST-namespace PID, which is meaningless in the container's PID
-// namespace, so killing by inspected PID silently does nothing.
+// execMarkerEnv tags each persistent-mode exec so a timed-out process can be
+// found inside the container: ExecInspect's PID is a host-namespace PID.
 const execMarkerEnv = "AGENTS_SANDBOX_EXEC"
 
 // newExecMarker returns a random per-exec marker value.
@@ -861,10 +797,8 @@ func newExecMarker() string {
 	return hex.EncodeToString(b)
 }
 
-// killExec best-effort terminates a timed-out exec process (and its
-// descendants) inside the container by scanning /proc/*/environ for the
-// exec's marker. Only a re-exec with a scrubbed environment escapes, for
-// which the container's pids/memory limits remain the backstop.
+// killExec best-effort kills a timed-out exec (and descendants) by scanning
+// /proc/*/environ for its marker; a scrubbed re-exec escapes, limits backstop.
 func (s *Sandbox) killExec(ctx context.Context, containerID, marker string) {
 	script := fmt.Sprintf(
 		`for d in /proc/[0-9]*; do if tr '\0' '\n' < "$d/environ" 2>/dev/null | grep -qxF %s; then p=${d#/proc/}; kill -9 -"$p" 2>/dev/null; kill -9 "$p" 2>/dev/null; fi; done`,
@@ -903,8 +837,7 @@ func (s *Sandbox) Close() error {
 }
 
 // containerEnv is the environment an EPHEMERAL container is created with:
-// the sandbox's own, overridden per entry by the request's — that mode has no
-// docker exec to carry them.
+// the sandbox's own overridden by the request's — that mode has no docker exec.
 func (s *Sandbox) containerEnv(req map[string]string) []string {
 	return envSlice(sandbox.MergeEnv(s.opts.Env, req))
 }

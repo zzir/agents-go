@@ -22,7 +22,7 @@ interface ConfigRow {
   owner_id?: string;
 }
 
-// The scoped entities (spec §5.29). Four have a settings panel that lists
+// The scoped entities (decisions §5.29). Four have a settings panel that lists
 // every member's rows itself (invariant 61); only workflows are managed here.
 export type ScopedEntity = 'agents' | 'providers' | 'mcp-servers' | 'skills' | 'workflows';
 
