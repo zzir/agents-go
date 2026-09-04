@@ -1,5 +1,10 @@
 # Quickstart
 
+> **Pre-1.0 API notice.** Until v1.0.0 a minor release may rename or remove
+> exported identifiers — pin the version. Breaking renames are batched, and the
+> [release notes](https://github.com/zzir/agents-go/releases) carry every old
+> spelling beside the new ([decisions §5.8](../explanation/decisions.md#58-public-api-compatibility-begins-at-v100)).
+
 ## Create a project
 
 ```bash

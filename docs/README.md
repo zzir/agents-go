@@ -31,18 +31,18 @@ The pages are sorted by what you came for.
 |---|---|
 | [Running the workbench](tutorial/workbench.md) | **Start here.** From a binary to a first conversation with the Inspector open; a sandbox is the optional second chapter |
 | [Quickstart](tutorial/quickstart.md) | The SDK: build and run your first agent in Go |
-| [Examples](tutorial/examples.md) | Runnable SDK programs, one per capability |
+| [Examples](tutorial/examples.md) | Runnable SDK programs, one per capability, and which need more than `OPENAI_API_KEY` |
 
 ### How-to — solve one problem
 
 | Area | Pages |
 |---|---|
 | Core | [Agents](howto/agents.md) · [Running agents](howto/running_agents.md) · [Results](howto/results.md) |
-| Tools | [Tools](howto/tools.md) · [MCP](howto/mcp.md) · [Sandbox agents](howto/sandbox.md) · [Skills](howto/skills.md) |
+| Tools | [Tools](howto/tools.md) — an argument struct becomes the JSON schema, an agent becomes a tool · [MCP](howto/mcp.md) · [Sandbox agents](howto/sandbox.md) · [Skills](howto/skills.md) |
 | Orchestration | [Agent orchestration](howto/multi_agent.md) · [Handoffs](howto/handoffs.md) · [Background tasks](howto/tasks.md) |
-| Safety | [Guardrails](howto/guardrails.md) · [Human-in-the-loop](howto/human_in_the_loop.md) |
-| State | [Sessions](howto/sessions.md) |
-| Streaming | [Streaming](howto/streaming.md) |
+| Safety | [Guardrails](howto/guardrails.md) · [Human-in-the-loop](howto/human_in_the_loop.md) — a paused run serializes to JSON and resumes in another process |
+| State | [Sessions](howto/sessions.md) — memory, SQLite/Postgres, or the provider's own store |
+| Streaming | [Streaming](howto/streaming.md) — a run is a range-able iterator you can steer mid-flight |
 | Models | [Models](howto/models.md) — configuring the SDK, providers, settings, retry and fallback |
 | Observability | [Tracing](howto/tracing.md) · [Logging and diagnostics](howto/logging.md) |
 | Testing | [Testing your agents](howto/testing.md) — scripted models, no API key |
@@ -61,7 +61,7 @@ The pages are sorted by what you came for.
 
 | Page | |
 |---|---|
-| [Architecture](explanation/architecture.md) | How the pieces compose, and where the extension points are |
+| [Architecture](explanation/architecture.md) | How the pieces compose, and where the extension points are; one small core module, heavy capabilities as opt-in submodules |
 | [Design decisions](explanation/decisions.md) | Settled decisions, each with the reason — read before reopening one |
 | [Scope](explanation/scope.md) | What this is, what it deliberately is not, and the roadmap |
 | [Differences from the Python SDK](explanation/migration_from_python.md) | For readers arriving from `openai-agents-python` |
