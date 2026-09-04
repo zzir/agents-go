@@ -27,6 +27,9 @@ export interface ChatSessionState {
   agentAvatars: Record<string, string>;
   // Trouble the live run survived, badged on its process group.
   diagnostics?: RunDiagnostic[];
+  // Set when the durable task list failed to load, so the Tasks panel says so
+  // instead of showing "no background work".
+  tasksError?: string;
 }
 
 export interface ChatActions {

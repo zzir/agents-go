@@ -54,6 +54,9 @@ export interface SessionState {
   // tasksLoaded is set once the durable task rows have been asked for — what
   // tells a task deep link "not here yet" from "not here".
   tasksLoaded: boolean;
+  // Set when that fetch failed, so an empty task list reads as "could not load"
+  // rather than "no tasks"; cleared by a successful load.
+  tasksError?: string;
   // The task currently inspected in the side panel, or null.
   taskView: TaskViewState | null;
 }
@@ -286,7 +289,12 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       // the conversation. Every terminal event sets running=false and reloads,
       // so skipping here loses nothing.
       updateSS(sid, s => s.running ? s : { ...s, messages: timeline, entries, hasMore });
-    }).catch(() => {});
+    }).catch((e: { status?: number }) => {
+      // The persisted timeline did not reload behind the optimistic stream.
+      // A conversation gone (deleted here or elsewhere: 404) has nothing to refresh.
+      if (deletedRef.current.has(sid) || e?.status === 404) return;
+      toast.error('Could not refresh the conversation — reopen it to retry');
+    });
   }, [fetchTimeline, updateSS]);
 
   const loadSession = useCallback((sid: string): Promise<void> => {
@@ -317,11 +325,16 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
     (api.sessions.tasks(sid) as Promise<TaskRow[]>)
       .then(rows => {
         if (!rows || rows.length === 0) {
-          updateSS(sid, s => s.tasksLoaded ? s : { ...s, tasksLoaded: true });
+          updateSS(sid, s => s.tasksLoaded && !s.tasksError ? s : { ...s, tasksLoaded: true, tasksError: undefined });
           return;
         }
-        updateSS(sid, s => seedTaskRows(s, rows));
-      }).catch(() => { updateSS(sid, s => s.tasksLoaded ? s : { ...s, tasksLoaded: true }); });
+        updateSS(sid, s => ({ ...seedTaskRows(s, rows), tasksError: undefined }));
+      }).catch((e: { status?: number }) => {
+        if (deletedRef.current.has(sid) || e?.status === 404) return;
+        // Loaded-with-error, not loaded-empty: the panel must not read it as "no tasks".
+        updateSS(sid, s => ({ ...s, tasksLoaded: true, tasksError: 'The task list could not be loaded' }));
+        toast.error('Could not load background tasks — reopen the conversation to retry');
+      });
     return msgP;
   }, [fetchTimeline, updateSS]);
 
@@ -913,7 +926,10 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
           };
         });
       })
-      .catch(() => updateSS(sid, s => ({ ...s, loadingMore: false })))
+      .catch(() => {
+        updateSS(sid, s => ({ ...s, loadingMore: false }));
+        if (!deletedRef.current.has(sid)) toast.error('Could not load earlier messages');
+      })
       .finally(() => loadingMoreRef.current.delete(sid));
   }, [updateSS]);
 

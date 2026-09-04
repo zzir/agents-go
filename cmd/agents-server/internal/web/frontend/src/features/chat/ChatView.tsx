@@ -174,7 +174,7 @@ export function ChatView({
   const messages: ChatMessage[] = state.messages;
   const {
     entries, loaded, streaming, reasoning, running, compacting, diagnostics, traceRuns, runQuestions,
-    liveRunId, tasks, tasksLoaded, taskView, hasMore, loadingMore,
+    liveRunId, tasks, tasksLoaded, tasksError, taskView, hasMore, loadingMore,
   } = state;
   const {
     onSend, onCancel, onApprove, onReject, onFork, onLoadEarlier, onSwitchBranch, onCompact, onRegenerate,
@@ -558,8 +558,8 @@ export function ChatView({
     return m;
   }, [agentConfigs]);
   const session = useMemo<ChatSessionState>(
-    () => ({ sessionId, running, compacting, diagnostics, agentAvatars }),
-    [sessionId, running, compacting, agentAvatars, diagnostics],
+    () => ({ sessionId, running, compacting, diagnostics, agentAvatars, tasksError }),
+    [sessionId, running, compacting, agentAvatars, diagnostics, tasksError],
   );
   const turnActions = useMemo<ChatActions>(() => ({
     approve: onApprove, reject: onReject, fork: onFork, switchBranch: onSwitchBranch,

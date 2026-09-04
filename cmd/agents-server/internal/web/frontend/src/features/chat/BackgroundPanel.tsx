@@ -37,6 +37,7 @@ const GROUPS: Array<{ title: string; match: (s: BackgroundItem['status']) => boo
 // the duration (ticking while live). Rows open the detail lens.
 export function BackgroundListPanel({ onClose }: { onClose: () => void }) {
   const items = useChatBackground();
+  const { tasksError } = useChatSession();
   const { approve: onApprove, reject: onReject, inspectTask: onOpen, stopTask, retryTask } = useChatActions();
   const { held, decide } = useDecisionHold();
   const hasActive = items.some(it => isLive(it.status));
@@ -48,7 +49,11 @@ export function BackgroundListPanel({ onClose }: { onClose: () => void }) {
 
   return (
     <SidePanel icon={StackIcon} title="Tasks" count={items.length} onClose={onClose} storageKey="inspectorWidth">
-      {items.length === 0 && <div className="trace-empty">No background work in this session.</div>}
+      {items.length === 0 && (
+        <div className="trace-empty">
+          {tasksError ? `${tasksError} — reopen the conversation to retry.` : 'No background work in this session.'}
+        </div>
+      )}
       {/* One line per row by default (the full result lives in the detail
           lens). Live rows add one action line — activity or Approve/Reject
           on the left, Stop isolated on the right. failed is the only terminal
