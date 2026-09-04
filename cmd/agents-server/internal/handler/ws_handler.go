@@ -280,6 +280,11 @@ func (h *WSHandler) resolve(conn *server.WSConn, toolCallID string, approve bool
 		})})
 		return
 	}
+	// Off the read loop, so the credential is rechecked right before the write
+	// lands: a revocation since the frame's check must not resume the run.
+	if !conn.Recheck() {
+		return
+	}
 	_, sessionID, err := h.runner.ResolveApproval(conn.Context(), toolCallID, approve, scope, reason, nil)
 	if err == nil {
 		h.audit(conn, "ws.approval", toolCallID, auditDecision(approve, scope, pending))
