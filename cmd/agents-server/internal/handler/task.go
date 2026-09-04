@@ -172,7 +172,7 @@ func (h *TaskHandler) ListBySession(c *gin.Context) {
 	for i := range tasks {
 		h.overlay(&tasks[i])
 	}
-	c.JSON(http.StatusOK, tasks)
+	c.JSON(http.StatusOK, nonNilList(tasks))
 }
 
 // TaskPage is one page of the cross-session task list.

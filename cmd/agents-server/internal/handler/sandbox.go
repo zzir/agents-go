@@ -83,7 +83,7 @@ func (h *SandboxHandler) List(c *gin.Context) {
 	for i := range rows {
 		rows[i] = sanitizeSandboxConfig(rows[i])
 	}
-	c.JSON(http.StatusOK, rows)
+	c.JSON(http.StatusOK, nonNilList(rows))
 }
 
 type sandboxReq struct {

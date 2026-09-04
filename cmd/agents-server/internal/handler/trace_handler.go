@@ -43,7 +43,7 @@ func (h *TraceHandler) ListBySession(c *gin.Context) {
 		internalError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, events)
+	c.JSON(http.StatusOK, nonNilList(events))
 }
 
 // GetBySpan responds with one span of the session, payload included.

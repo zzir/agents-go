@@ -53,6 +53,12 @@ stable machine-readable identifier, `message` human-readable detail.
 - **Create** returns `201 Created` with the created resource.
 - **Update** (`PUT`/`PATCH`) returns `200 OK` with the full updated resource —
   except `PATCH /auth/users/:id`, which answers `204` with no body.
+- **`PUT` is a full replace**: a field omitted from the body is written as its
+  zero value, not kept, so a client must send every field the resource should
+  retain. The one exception is a secret field, where the mask sentinel keeps
+  the stored value (see [Secret handling](#secret-handling)). `PATCH`
+  (sessions, users) applies only the fields present.
+- **List** returns `[]` for an empty collection, never `null`.
 - **Delete** returns `204 No Content`.
 - A write (update or delete) against a missing resource returns `404`.
 - Secret fields are write-only — see [Secret handling](#secret-handling).

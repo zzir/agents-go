@@ -211,7 +211,16 @@ func listVisible[T any](c *gin.Context, s *store.CrudStore[T]) ([]T, bool) {
 		internalError(c, err)
 		return nil, false
 	}
-	return rows, true
+	return nonNilList(rows), true
+}
+
+// nonNilList turns a nil slice into an empty one so a list endpoint answers
+// [] for an empty collection, never null — see protocol.md.
+func nonNilList[T any](rows []T) []T {
+	if rows == nil {
+		return []T{}
+	}
+	return rows
 }
 
 // gatedRow loads the row the id path parameter names and runs gate on its

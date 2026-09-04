@@ -31,7 +31,7 @@ func NewGuardrailHandler(s *store.GuardrailStore, r *guardrails.Resolver) *Guard
 //	@Security	BearerAuth
 //	@Router		/guardrails [get]
 func (h *GuardrailHandler) List(c *gin.Context) {
-	c.JSON(http.StatusOK, h.resolver.List(c.Request.Context()))
+	c.JSON(http.StatusOK, nonNilList(h.resolver.List(c.Request.Context())))
 }
 
 func validateGuardrail(g *store.Guardrail) string {

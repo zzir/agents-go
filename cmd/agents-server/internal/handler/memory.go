@@ -33,7 +33,7 @@ func (h *MemoryHandler) List(c *gin.Context) {
 		internalError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, memories)
+	c.JSON(http.StatusOK, nonNilList(memories))
 }
 
 // memoryReq is the request body for both Create and Update.

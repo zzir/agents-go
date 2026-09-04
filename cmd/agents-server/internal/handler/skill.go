@@ -64,7 +64,7 @@ func (h *SkillHandler) List(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, out)
+	c.JSON(http.StatusOK, nonNilList(out))
 }
 
 // Get responds with one skill, content included.
