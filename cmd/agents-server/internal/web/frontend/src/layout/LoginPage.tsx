@@ -64,54 +64,41 @@ export function LoginPage({ onLogin, authError }: { onLogin: () => void; authErr
 
   return (
     <div className="login-page">
-      <section className="login-hero" aria-hidden="true">
-        <div className="login-hero-inner">
-          <h1 className="login-title">agents-go</h1>
-          <p className="login-tagline">the go-native agent workbench you run yourself.</p>
-          <ul className="login-points">
-            <li>Agents and workflows in a sandbox, behind tool approvals</li>
-            <li>Every model call traced — replay it, fork the conversation</li>
-            <li>One binary, SQLite or PostgreSQL, solo or as a team</li>
-          </ul>
-        </div>
-      </section>
-      <section className="login-panel">
-        <form className="login-card" onSubmit={handleSubmit}>
-          <h2 className="login-heading">Sign in</h2>
-          {oauthMsg ? <Flash variant="danger">{oauthMsg}</Flash> : null}
-          {cfgError ? (
-            <>
-              <Flash variant="danger">Couldn&apos;t load the sign-in options from the server.</Flash>
-              <Button block onClick={() => setCfgAttempt(n => n + 1)}>Retry</Button>
-            </>
-          ) : cfg?.mode === 'oauth' ? (
-            (cfg.providers || []).map(p => (
-              // A full-page navigation: the flow returns via the server's
-              // redirect with a one-time code in the fragment.
-              <Button
-                key={p} block variant="primary"
-                onClick={() => { stashReturnHash(); window.location.href = `/api/v1/auth/oauth/${p}/start`; }}
-              >
-                Continue with {p.charAt(0).toUpperCase() + p.slice(1)}
-              </Button>
-            ))
-          ) : cfg ? (
-            <>
-              <SecretInput
-                aria-label="API token"
-                placeholder="Token"
-                block
-                value={token}
-                autoFocus
-                loading={loading || undefined}
-                onChange={(e) => setTokenVal(e.target.value)}
-                validationStatus={error ? 'error' : undefined}
-              />
-              <Button type="submit" variant="primary" block disabled={loading || !token.trim()}>Continue</Button>
-            </>
-          ) : null}
-        </form>
-      </section>
+      <form className="login-card" onSubmit={handleSubmit}>
+        <h2 className="login-heading">Sign in</h2>
+        {oauthMsg ? <Flash variant="danger">{oauthMsg}</Flash> : null}
+        {cfgError ? (
+          <>
+            <Flash variant="danger">Couldn&apos;t load the sign-in options from the server.</Flash>
+            <Button block onClick={() => setCfgAttempt(n => n + 1)}>Retry</Button>
+          </>
+        ) : cfg?.mode === 'oauth' ? (
+          (cfg.providers || []).map(p => (
+            // A full-page navigation: the flow returns via the server's
+            // redirect with a one-time code in the fragment.
+            <Button
+              key={p} block variant="primary"
+              onClick={() => { stashReturnHash(); window.location.href = `/api/v1/auth/oauth/${p}/start`; }}
+            >
+              Continue with {p.charAt(0).toUpperCase() + p.slice(1)}
+            </Button>
+          ))
+        ) : cfg ? (
+          <>
+            <SecretInput
+              aria-label="API token"
+              placeholder="Token"
+              block
+              value={token}
+              autoFocus
+              loading={loading || undefined}
+              onChange={(e) => setTokenVal(e.target.value)}
+              validationStatus={error ? 'error' : undefined}
+            />
+            <Button type="submit" variant="primary" block disabled={loading || !token.trim()}>Continue</Button>
+          </>
+        ) : null}
+      </form>
     </div>
   );
 }
