@@ -19,8 +19,27 @@ step "Frontend build"
 
 step "Frontend audit"
 # The lockfile is deliberately not committed, so the installed tree is what
-# gets audited — high and above fails, here as in CI.
-(cd cmd/agents-server/internal/web/frontend && npm audit --omit=dev --audit-level=high)
+# gets audited — high and above fails, here as in CI. `npm audit` calls the
+# registry's bulk advisory endpoint; a transient failure there makes npm retry
+# the retired *quick* endpoint, which 400s with "Invalid package tree" whatever
+# the tree holds — so retry to ride out a blip. A real high+ advisory carries no
+# endpoint error and fails at once.
+(
+  cd cmd/agents-server/internal/web/frontend
+  for attempt in 1 2 3; do
+    if out=$(npm audit --omit=dev --audit-level=high 2>&1); then
+      printf '%s\n' "$out"; exit 0
+    fi
+    printf '%s\n' "$out"
+    if printf '%s\n' "$out" | grep -q 'audit endpoint returned an error'; then
+      echo "npm audit bulk endpoint failed (attempt ${attempt}/3); retrying" >&2
+      sleep $((attempt * 5)); continue
+    fi
+    exit 1
+  done
+  echo "npm audit could not reach the bulk advisory endpoint after 3 attempts" >&2
+  exit 1
+)
 
 step "Vet"
 go vet ./...

@@ -79,9 +79,29 @@ jobs:
         run: cd cmd/agents-server/internal/web/frontend && npm install --ignore-scripts && npm run lint && npm run build
 
       # The lockfile is deliberately not committed, so the installed tree is
-      # what gets audited — high and above fails the build.
+      # what gets audited — high and above fails the build. `npm audit` calls the
+      # registry's bulk advisory endpoint; when that call fails transiently (a
+      # rate-limit right after the install above, or a registry blip) npm quietly
+      # retries the *quick* endpoint, which the registry has retired — it now
+      # 400s with "Invalid package tree" whatever the tree holds. Retry to ride
+      # out a bulk-endpoint blip; a real high+ advisory carries no endpoint error
+      # and fails on the first pass.
       - name: Frontend audit
-        run: cd cmd/agents-server/internal/web/frontend && npm audit --omit=dev --audit-level=high
+        run: |
+          cd cmd/agents-server/internal/web/frontend
+          for attempt in 1 2 3; do
+            if out=$(npm audit --omit=dev --audit-level=high 2>&1); then
+              printf '%s\n' "$out"; exit 0
+            fi
+            printf '%s\n' "$out"
+            if printf '%s\n' "$out" | grep -q 'audit endpoint returned an error'; then
+              echo "::warning::npm audit bulk endpoint failed (attempt ${attempt}/3); retrying"
+              sleep $((attempt * 5)); continue
+            fi
+            exit 1
+          done
+          echo "::error::npm audit could not reach the bulk advisory endpoint after 3 attempts"
+          exit 1
 
       - name: Test agents-server module
         run: (cd cmd/agents-server && go vet ./... && go test -race ./...)
