@@ -632,8 +632,14 @@ function App() {
   // the attempts live in one session, switchable.
   const handleRegenerate = useCallback(async (userEntryId: string, userContent: string, agentConfigId: string, projectId?: string) => {
     if (!activeSession || !wsRef.current) return;
+    // Probe before switching: a regen that branches the session and then fails
+    // to send would strand the user on a branch with no assistant reply.
+    if (!wsRef.current.isConnected()) {
+      toast.error('WebSocket disconnected — message not sent');
+      return;
+    }
     try {
-      await api.sessions.branch(activeSession, userEntryId);
+      const { previous_leaf } = await api.sessions.branch(activeSession, userEntryId);
       await reloadTimeline(activeSession);
       // The Inspector stays open: regen is in-place (same session), so an open
       // trace/task panel remains valid — the replaced attempt gets its "replaced"
@@ -645,7 +651,15 @@ function App() {
       // the project choice rides along; a bound session ignores it anyway.
       if (projectId) payload.project_id = projectId;
       if (!wsRef.current.send(EV.runCreate, payload)) {
-        toast.error('WebSocket disconnected — message not sent');
+        // The socket dropped between the probe and the send: roll the branch
+        // back to where it was so the person keeps the attempt they had.
+        try {
+          await api.sessions.branch(activeSession, previous_leaf);
+          await reloadTimeline(activeSession);
+          toast.error('WebSocket disconnected — regenerate not started');
+        } catch {
+          toast.error('WebSocket disconnected — the previous attempt is in the attempt switcher');
+        }
       }
     } catch (e) {
       toast.error((e as Error).message || 'Regenerate failed');

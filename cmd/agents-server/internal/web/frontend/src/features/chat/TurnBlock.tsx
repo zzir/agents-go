@@ -169,7 +169,7 @@ export const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, 
                 variant="invisible"
                 size="small"
                 aria-label="Previous attempt"
-                disabled={branches.active === 0}
+                disabled={running || branches.active === 0}
                 onClick={() => switchBranch(branches.tips[branches.active - 1])}
               />
               <span className="branch-count">{branches.active + 1} / {branches.tips.length}</span>
@@ -178,7 +178,7 @@ export const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, 
                 variant="invisible"
                 size="small"
                 aria-label="Next attempt"
-                disabled={branches.active >= branches.tips.length - 1}
+                disabled={running || branches.active >= branches.tips.length - 1}
                 onClick={() => switchBranch(branches.tips[branches.active + 1])}
               />
             </span>

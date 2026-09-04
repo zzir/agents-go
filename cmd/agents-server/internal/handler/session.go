@@ -684,6 +684,7 @@ type branchReq struct {
 //	@Param			branch	body		branchReq	true	"{entry_id}"
 //	@Success		200		{object}	map[string]string
 //	@Failure		400		{object}	ErrorResponse
+//	@Failure		409		{object}	ErrorResponse
 //	@Failure		500		{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/sessions/{id}/branch [post]
@@ -693,10 +694,24 @@ func (h *SessionHandler) Branch(c *gin.Context) {
 		badRequest(c, "entry_id is required")
 		return
 	}
+	id := c.Param("id")
+	// A live run keeps appending to the branch it started on; switching mid-run
+	// grafts its later turns onto the new branch — refuse until it stops.
+	if h.stopper.SessionBusy(id) {
+		conflict(c, "a run is live on this session; stop it first")
+		return
+	}
 	ctx := c.Request.Context()
-	ref, err := h.entries.RefFor(ctx, c.Param("id"))
+	ref, err := h.entries.RefFor(ctx, id)
 	if err != nil {
 		storeError(c, err)
+		return
+	}
+	// The leaf before the switch, so the client can roll the branch back if the
+	// run it meant to start never leaves the ground.
+	previousLeaf, err := h.entries.Leaf(ctx, ref)
+	if err != nil {
+		internalError(c, err)
 		return
 	}
 	if err := h.entries.Branch(ctx, ref, req.EntryID); err != nil {
@@ -708,7 +723,7 @@ func (h *SessionHandler) Branch(c *gin.Context) {
 		internalError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"leaf": leaf})
+	c.JSON(http.StatusOK, gin.H{"leaf": leaf, "previous_leaf": previousLeaf})
 }
 
 var branchSuffixRe = regexp.MustCompile(`\s*\((fork|regen)(?:\s+(\d+))?\)$`)

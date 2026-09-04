@@ -110,7 +110,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     and the client reconciles by refetch: the `on_path === false` filter
     applies before any fork exists, a move bumps the timeline generation so an
     older fetch is dropped, the live tail re-appends only the current run, and
-    an off-path pending approval stays out of view without losing its row.
+    an off-path pending approval stays out of view without losing its row. A
+    branch move is refused (`409`) while a run is live on the session — a
+    switch mid-run would graft the run's later turns onto the new branch.
 
 **Background tasks**
 
