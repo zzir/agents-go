@@ -1,7 +1,7 @@
 import './sessions.css';
 import { useState, useEffect, useRef, type FormEvent, type ReactElement, type RefObject, type SyntheticEvent } from 'react';
 import { ActionList, ActionMenu, Dialog, FormControl, IconButton, TextInput, useConfirm } from '@primer/react';
-import { KebabHorizontalIcon, PencilIcon, PinIcon, PinSlashIcon, PlusIcon, RepoForkedIcon, SearchIcon, TrashIcon, WorkflowIcon } from '@primer/octicons-react';
+import { KebabHorizontalIcon, PencilIcon, PinIcon, PinSlashIcon, PlusIcon, RepoForkedIcon, SearchIcon, TrashIcon, WorkflowIcon, XIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { filterSessionsByName } from '@/lib/sessionFilter';
@@ -155,6 +155,17 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onRe
   }, [reloadKey, reload]);
   const [creating, setCreating] = useState(false);
   const [query, setQuery] = useState('');
+  // The search box is a button until clicked; it stays open while a filter is
+  // typed, so the narrowed list is never shown without the query that made it.
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (searchOpen) searchRef.current?.focus();
+  }, [searchOpen]);
+  const closeSearch = () => {
+    setQuery('');
+    setSearchOpen(false);
+  };
   const [renaming, setRenaming] = useState<Session | null>(null);
 
   // For every mutation: optimistically update the cached list AND migrate active
@@ -256,16 +267,30 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onRe
   return (
     <>
       <div className="sidebar-actions">
-        <TextInput
-          className="sidebar-search"
-          size="medium"
-          leadingVisual={SearchIcon}
-          placeholder="Search"
-          aria-label="Search"
-          value={query}
-          onChange={e => setQuery(e.target.value)}
-        />
+        {searchOpen ? (
+          <TextInput
+            ref={searchRef}
+            className="sidebar-search"
+            size="medium"
+            leadingVisual={SearchIcon}
+            placeholder="Search"
+            aria-label="Search"
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            onBlur={() => { if (!query.trim()) setSearchOpen(false); }}
+            onKeyDown={e => { if (e.key === 'Escape') closeSearch(); }}
+            trailingAction={query ? <TextInput.Action icon={XIcon} aria-label="Clear search" onClick={closeSearch} /> : undefined}
+          />
+        ) : (
+          <IconButton
+            icon={SearchIcon}
+            variant="invisible"
+            aria-label="Search"
+            onClick={() => setSearchOpen(true)}
+          />
+        )}
         <IconButton
+          className="sidebar-hub"
           icon={WorkflowIcon}
           variant="invisible"
           aria-label="Workflows"

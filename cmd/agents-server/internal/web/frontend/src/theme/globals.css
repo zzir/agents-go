@@ -211,9 +211,9 @@ a:hover {
     min-height: 0;
 }
 
-/* Fixed action row at the top of the sidebar: search box + new-session button.
-   Height is explicit — the old ActionList content reached 48px only through
-   its own inset paddings. */
+/* Fixed action row at the top of the sidebar: a search button on the left
+   that expands into the box, Workflows + New on the right. Height is explicit
+   so the row sits on the shared 48px line. */
 .sidebar-actions {
     display: flex;
     align-items: center;
@@ -227,6 +227,12 @@ a:hover {
 .sidebar-actions .sidebar-search {
     flex: 1;
     min-width: 0;
+}
+
+/* The gap between the two sides: free space when the search is a button,
+   nothing once the box takes it. */
+.sidebar-actions .sidebar-hub {
+    margin-left: auto;
 }
 
 /* Session/file list scrollable area inside the body */
