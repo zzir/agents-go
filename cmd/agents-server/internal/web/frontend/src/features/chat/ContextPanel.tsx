@@ -242,7 +242,7 @@ export function ContextPanel({ sessionId, running, reloadKey, onClose, onCompact
               </>
             ) : (
               <div className="ctx-legend">
-                <span className="ctx-muted">No context window set for this agent — add one to see how full it is.</span>
+                <span className="ctx-muted">No context window set — set this agent's context window in Settings → Agents to see how full it is.</span>
               </div>
             )}
             <div className="ctx-note">
