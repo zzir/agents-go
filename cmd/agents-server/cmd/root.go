@@ -121,6 +121,12 @@ func run(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("opening database: %w", err)
 	}
 	defer db.Close()
+	// One instance per database, before the orphan sweep — workbench invariant 63.
+	releaseInstanceLock, err := store.AcquireInstanceLock(ctx, db)
+	if err != nil {
+		return err
+	}
+	defer releaseInstanceLock()
 	if err := store.CreateSchema(ctx, db); err != nil {
 		return fmt.Errorf("creating schema: %w", err)
 	}

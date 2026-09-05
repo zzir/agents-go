@@ -375,3 +375,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     whole-session operations with no reference count (decisions §5.50). Two
     retention layers: row retention drops a rowless session's blobs;
     `trace_payload_retention_days` strips an idle session's (nulling `layout`/`refs`).
+63. **One instance per database, enforced at startup on PostgreSQL.**
+    `AcquireInstanceLock` takes a database-wide advisory lock before the orphan
+    sweep runs, so a second instance is refused rather than failing a live
+    instance's running tasks (`store/db.go`; the multi-instance direction is
+    scope.md's Roadmap). SQLite relies on its single-file, single-process
+    assumption and the lock is a no-op there.

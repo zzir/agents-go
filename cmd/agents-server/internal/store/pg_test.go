@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -150,4 +151,28 @@ func TestPGAttachmentStore(t *testing.T) {
 	if err := s.Delete(ctx, orphan.ID); err != nil {
 		t.Fatal(err) // idempotent for the reaper's retry
 	}
+}
+
+// The instance lock admits one holder per PostgreSQL database (the lock is
+// database-wide): while one connection holds it, a second acquire is refused,
+// and after release the next acquire succeeds.
+func TestPGInstanceLockIsExclusive(t *testing.T) {
+	ctx := context.Background()
+	db1 := pgTestDB(t)
+	db2 := pgTestDB(t) // a different schema, the same database
+
+	release1, err := AcquireInstanceLock(ctx, db1)
+	if err != nil {
+		t.Fatalf("first acquire: %v", err)
+	}
+	if _, err := AcquireInstanceLock(ctx, db2); !errors.Is(err, ErrInstanceLocked) {
+		t.Fatalf("second acquire = %v, want ErrInstanceLocked", err)
+	}
+	release1()
+
+	release2, err := AcquireInstanceLock(ctx, db2)
+	if err != nil {
+		t.Fatalf("acquire after release: %v", err)
+	}
+	release2()
 }

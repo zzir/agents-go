@@ -90,7 +90,9 @@ against graduates into §1.2 above.
   instead of "is it in my memory", maintenance loops kept idempotent,
   SQLite refused for more than one instance — and, before any of it ships, a
   migration mechanism,
-  because a rolling upgrade is two binaries on one schema.
+  because a rolling upgrade is two binaries on one schema. Until then a startup
+  advisory lock on PostgreSQL refuses a second instance outright, so the sweep
+  above cannot fire against a live instance's tasks (invariant 63).
 - **Guardrail ordering at the approval gate.** The tool stages are configurable
   now (a guardrail's `stages` cover `tool_input` / `tool_output` for every tool
   call), but `RunOptions.Exec.PreApprovalToolInputGuardrails` is not exposed

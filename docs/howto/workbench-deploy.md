@@ -94,6 +94,15 @@ is capped at 16 connections:
 ./agents-server --db 'postgres://user:pass@localhost:5432/agents?sslmode=disable'
 ```
 
+Run **one instance per database**. A single process holds the live truth about
+running runs, cron schedules and OAuth in memory, and its startup sweep fails
+every task left `working` by the last shutdown — so a second instance would
+kill the first's work. On PostgreSQL a startup advisory lock refuses the second
+instance outright — it lives on one long-held connection, so an
+`idle_session_timeout` on the server would silently drop it; leave that off for
+the workbench's role. On SQLite the single-file assumption stands. Horizontal
+scaling is on the [roadmap](../explanation/scope.md), not shipped.
+
 Every id that names one of our entities is a `uuid` column: UUIDv4 for
 ordinary entities, UUIDv7 for the append-heavy `entries`, `trace_events` and
 `audit_events`, whose ids double as the pagination cursors (`before_id` /

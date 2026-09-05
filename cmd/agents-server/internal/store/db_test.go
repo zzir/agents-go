@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -30,4 +31,26 @@ func TestSQLiteFileDBRunsInWALMode(t *testing.T) {
 	if timeout != 5000 {
 		t.Fatalf("busy_timeout = %d, want 5000", timeout)
 	}
+}
+
+// On SQLite the instance lock is a no-op: one file, one process by assumption,
+// so acquiring twice both succeed and release is harmless. Built directly on
+// SQLite — newTestDB would be PostgreSQL when AGENTS_PG_TEST_DSN is set.
+func TestInstanceLockNoOpOnSQLite(t *testing.T) {
+	ctx := context.Background()
+	db, err := NewSQLiteDB("file:" + NewID() + "?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	rel1, err := AcquireInstanceLock(ctx, db)
+	if err != nil {
+		t.Fatalf("first acquire: %v", err)
+	}
+	rel2, err := AcquireInstanceLock(ctx, db)
+	if err != nil {
+		t.Fatalf("second acquire: %v", err)
+	}
+	rel1()
+	rel2()
 }
