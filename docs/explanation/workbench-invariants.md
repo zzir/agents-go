@@ -207,6 +207,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     drained — `OnFinished` only drains — when the session can take a turn: the
     end of any run on it, and startup, one turn paying every same-`inherit`
     debt (`bridge/waker.go`). Startup runs `FailOrphans` before any request.
+    *Delivered* means the wake run launched and its prompt reached the session;
+    a run that fails after launch leaves the notification as a durable user
+    entry with an error card and no automatic retry (`bridge/partial_turn.go`).
 33. **Plan mode is a restraint, so only a person turns it on, and it belongs
     to the session.** The switch is the run request's `plan` field (`/plan
     <message>`, `/plan off <message>`), applied inside the run reservation;

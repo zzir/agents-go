@@ -65,6 +65,25 @@ budgets exist, each answering `429` with code `rate_limited` when exceeded:
 
 `/auth/config` is a static fact and carries no budget.
 
+### Trust boundary
+
+The model is **one team, one trust boundary**. Three consequences an operator
+owns from outside the server:
+
+- **Member-supplied URLs are not SSRF-guarded.** MCP server endpoints and skill
+  imports are outbound requests to addresses a member typed, with no
+  private-network defence (decisions §5.29). Confine egress at the network — a
+  proxy allowlist, or `proxy_url` in
+  [runtime settings](../reference/configuration.md#runtime-settings) — if
+  members are not fully trusted or the server can reach an internal network.
+- **Credentials are plaintext at rest without a key.** Set `AGENTS_SECRET_KEY`
+  (or `--secret-key-file`) to seal provider keys and OAuth tokens; without it
+  they are stored in the clear and the server warns once at startup. Settings →
+  General shows whether they are sealed.
+- **Image attachments are world-readable by URL.** The attachment bucket is
+  public-read by design (decisions §5.42), so anyone holding an attachment URL
+  can fetch the image; its only protection is an unguessable key.
+
 ### Logging
 
 Structured records over [`log/slog`](https://pkg.go.dev/log/slog), to stderr.
