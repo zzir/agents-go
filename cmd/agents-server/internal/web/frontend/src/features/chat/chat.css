@@ -120,6 +120,11 @@
 }
 .message-turn:hover .turn-actions,
 .turn-actions:focus-within { opacity: 1; }
+/* Touch devices have no hover, so keep the actions visible or they cannot be
+   reached at all. */
+@media (hover: none) {
+  .turn-actions, .message-user-actions { opacity: 1; }
+}
 .turn-duration {
   font-size: var(--base-text-size-xs);
   color: var(--fgColor-muted);
