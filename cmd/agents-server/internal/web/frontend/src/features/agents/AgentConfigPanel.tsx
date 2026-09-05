@@ -176,7 +176,9 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
     fallback_models: '',
     guardrails: '', output_schema: '', error_handlers: '',
     prompt_id: '', prompt_version: '', history_limit: 0,
-    handoff_input_filter: '', max_tool_concurrency: 0,
+    // New agents default to a bounded fan-out; an existing agent keeps its
+    // stored value (0 = unlimited) via the flattenConfig spread below.
+    handoff_input_filter: '', max_tool_concurrency: initial ? 0 : 8,
     tool_not_found_behavior: '', reasoning_item_id_policy: '', workflow_authoring: false, subagents: true, vision: false, approve_tools: '',
     compaction_enabled: false, compaction_threshold_tokens: 0,
     compaction_window: 0, compaction_model: '', compaction_prompt: '',
