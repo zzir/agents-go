@@ -28,14 +28,19 @@ function TabLoadError() {
 // panels show and offer nothing. readOnly null is "not known yet" (/auth/me
 // still loading): the nav shows, the panel waits, so an admin never sees the
 // read-only note flash.
-export function PanelDialog({ title, tabs, adminTabs, readOnly, onClose }: {
+export function PanelDialog({ title, tabs, adminTabs, readOnly, initialTab, onClose }: {
   title: string;
   tabs: DialogTab[];
   adminTabs?: DialogTab[];
   readOnly?: boolean | null;
+  // Which tab opens selected; falls back to the first when unset or unknown.
+  initialTab?: string;
   onClose: () => void;
 }) {
-  const [tab, setTab] = useState(tabs[0].key);
+  const known = !!initialTab && [...tabs, ...(adminTabs || [])].some(t => t.key === initialTab);
+  const [tab, setTab] = useState(known ? initialTab : tabs[0].key);
+  // A later deep link to another tab selects it while the dialog stays open.
+  useEffect(() => { if (known) setTab(initialTab); }, [initialTab, known]);
   // Keep-alive (invariant 51): a tab's panel is loaded on first visit and
   // then STAYS mounted (hidden). The value is the loaded component, or
   // TabLoadError if its chunk 404'd.

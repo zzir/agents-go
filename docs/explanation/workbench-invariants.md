@@ -366,7 +366,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     sections, then what runs are built from, then an admin's management
     entries after a divider. A scoped entity's tab is one list — a member's
     own and published rows, every member's for an admin, "Mine | All" only
-    narrowing — managed from the row's menu; only Workflows keep a table.
+    narrowing — managed from the row's menu; only Workflows keep a table. The
+    dialog is reachable at `#/settings/:tab`, a one-shot deep link consumed on
+    open: the URL keeps naming the view underneath, so a reload never loses it.
 62. **A span's payload is content-addressed per session, and lives and dies
     with the session's trace.** Payload elements are stored once per session
     in `trace_blobs` under their sha256, so delete, fork and retention are

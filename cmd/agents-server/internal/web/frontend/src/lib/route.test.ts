@@ -10,17 +10,23 @@ beforeEach(() => {
 describe('readHash', () => {
   it('names a conversation, its lens, or the hub', () => {
     window.location.hash = '#/session/abc-1/trace';
-    expect(readHash()).toEqual({ sessionId: 'abc-1', panel: { kind: 'trace' }, hub: null });
+    expect(readHash()).toEqual({ sessionId: 'abc-1', panel: { kind: 'trace' }, hub: null, settings: null });
     window.location.hash = '#/session/abc-1/task/t9';
-    expect(readHash()).toEqual({ sessionId: 'abc-1', panel: { kind: 'task', taskId: 't9' }, hub: null });
+    expect(readHash()).toEqual({ sessionId: 'abc-1', panel: { kind: 'task', taskId: 't9' }, hub: null, settings: null });
     window.location.hash = '#/workflows';
-    expect(readHash()).toEqual({ sessionId: null, panel: null, hub: 'definitions' });
+    expect(readHash()).toEqual({ sessionId: null, panel: null, hub: 'definitions', settings: null });
     window.location.hash = '#/workflows/runs';
     expect(readHash().hub).toBe('runs');
   });
+  it('opens Settings as an overlay, with or without a tab', () => {
+    window.location.hash = '#/settings';
+    expect(readHash()).toEqual({ sessionId: null, panel: null, hub: null, settings: '' });
+    window.location.hash = '#/settings/agents';
+    expect(readHash()).toEqual({ sessionId: null, panel: null, hub: null, settings: 'agents' });
+  });
   it('reads nothing from an unknown or empty fragment', () => {
     window.location.hash = '#auth_code=x';
-    expect(readHash()).toEqual({ sessionId: null, panel: null, hub: null });
+    expect(readHash()).toEqual({ sessionId: null, panel: null, hub: null, settings: null });
   });
 });
 

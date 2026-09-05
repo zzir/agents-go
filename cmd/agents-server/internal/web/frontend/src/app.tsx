@@ -137,13 +137,16 @@ function App() {
   const [activePanel, setActivePanel] = useState<InspectorPanel>(() => readHash().panel);
   // The Workflows hub, when it is the open view (null = a conversation).
   const [hubTab, setHubTab] = useState<HubTab | null>(() => readHash().hub);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(() => readHash().settings != null);
+  const [settingsTab, setSettingsTab] = useState<string | undefined>(() => readHash().settings || undefined);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sessionReloadKey, setSessionReloadKey] = useState(0);
   // Bumped when the settings dialog closes: the composer's pickers and the
   // terminal panel refetch the configuration it may have changed.
   const [settingsReloadKey, setSettingsReloadKey] = useState(0);
   const narrow = useNarrow();
+  const narrowRef = useRef(narrow);
+  narrowRef.current = narrow;
   // The active session's display name and project binding. Captured from the
   // existence-check fetch below and kept fresh by the title_updated /
   // project_bound events; the id guards against a stale response landing after
@@ -221,13 +224,27 @@ function App() {
     runCheck();
   }, [runCheck]);
 
+  // The URL names the view only. A `#/settings/:tab` fragment is a one-shot
+  // deep link: opening the dialog re-runs this and writes the view back, so a
+  // reload never lands on the overlay with the conversation underneath lost.
   useEffect(() => {
     writeHash(activeSession, activePanel, hubTab);
-  }, [activeSession, activePanel, hubTab]);
+  }, [activeSession, activePanel, hubTab, settingsOpen]);
+
+  // A lens belongs to a conversation: none open, none shown.
+  useEffect(() => {
+    if (!activeSession) setActivePanel(null);
+  }, [activeSession]);
 
   useEffect(() => {
     const onHash = () => {
-      const { sessionId, panel, hub } = readHash();
+      const { sessionId, panel, hub, settings } = readHash();
+      // A settings fragment only opens the dialog; the view underneath stays.
+      if (settings != null) {
+        setSettingsTab(settings || undefined);
+        setSettingsOpen(true);
+        return;
+      }
       setHubTab(hub);
       if (hub) return; // the conversation beside the hub stays as it was
       setActiveSession(prev => prev === sessionId ? prev : sessionId);
@@ -675,13 +692,22 @@ function App() {
 
   // One object of callbacks that change only on a session switch: the memo'd
   // view compares it by reference, so a streaming frame never rebuilds it.
+  // The tab is a string or nothing: a menu's onSelect hands over an event,
+  // which must not become a tab name. Reads narrow through a ref so the
+  // callback keeps its identity and chatActions rebuilds only on a session switch.
+  const handleOpenSettings = useCallback((tab?: string) => {
+    setSettingsTab(typeof tab === 'string' ? tab : undefined);
+    setSettingsOpen(true);
+    if (narrowRef.current) setSidebarOpen(false);
+  }, []);
+
   const chatActions = useMemo<ChatViewActions>(() => ({
     onSend: handleSend, onCancel: handleCancel, onApprove: handleApprove, onReject: handleReject, onFork: handleFork,
     onLoadEarlier: handleLoadEarlier, onSwitchBranch: handleSwitchBranch, onCompact: handleCompact, onRegenerate: handleRegenerate,
     onWatchTask: watchTask, onUnwatchTask: unwatchTask, onPatchTask: patchTask, onLoadSpan: handleLoadSpan,
-    onPanelChange: setActivePanel, onTerminalOpen: handleTerminalOpen,
+    onPanelChange: setActivePanel, onTerminalOpen: handleTerminalOpen, onSettingsOpen: handleOpenSettings,
   }), [handleSend, handleCancel, handleApprove, handleReject, handleFork, handleLoadEarlier, handleSwitchBranch, handleCompact,
-    handleRegenerate, watchTask, unwatchTask, patchTask, handleLoadSpan, handleTerminalOpen]);
+    handleRegenerate, watchTask, unwatchTask, patchTask, handleLoadSpan, handleTerminalOpen, handleOpenSettings]);
 
   // A signature that moves with any execution in any conversation (every
   // connection hears every session's task.updated), for the hub's Runs view
@@ -765,11 +791,6 @@ function App() {
     if (narrow) setSidebarOpen(false);
   }, [narrow]);
 
-  const handleOpenSettings = useCallback(() => {
-    setSettingsOpen(true);
-    if (narrow) setSidebarOpen(false);
-  }, [narrow]);
-
   // A run in the hub opens its conversation with the execution's detail in
   // the Inspector — the run belongs to that conversation, and the panel there
   // already knows how to show it.
@@ -828,7 +849,7 @@ function App() {
   return (
     <ThemeProvider>
       <MeContext value={meState}>
-        <AppShell onSettingsOpen={handleOpenSettings} sidebarPane={sidebarPane} sidebarOpen={sidebarOpen} onSidebarToggle={setSidebarOpen}>
+        <AppShell onSettingsOpen={() => handleOpenSettings()} sidebarPane={sidebarPane} sidebarOpen={sidebarOpen} onSidebarToggle={setSidebarOpen}>
           {/* A bad turn payload must not take the sidebar, composer and socket
               down with it; switching session or hub tab retries. */}
           <ErrorBoundary resetKey={hubTab ?? activeSession}>{main}</ErrorBoundary>
@@ -847,8 +868,8 @@ function App() {
         {/* The sidebar relists on close: the admin panels delete and reassign
             conversations. */}
         {settingsOpen && (
-          <PanelDialog title="Settings" tabs={SETTINGS_TABS} adminTabs={isAdmin ? ADMIN_TABS : undefined} readOnly={isAdmin === null ? null : !isAdmin}
-            onClose={() => { setSettingsOpen(false); setSettingsReloadKey(k => k + 1); setSessionReloadKey(k => k + 1); }} />
+          <PanelDialog title="Settings" tabs={SETTINGS_TABS} adminTabs={isAdmin ? ADMIN_TABS : undefined} readOnly={isAdmin === null ? null : !isAdmin} initialTab={settingsTab}
+            onClose={() => { setSettingsOpen(false); setSettingsTab(undefined); setSettingsReloadKey(k => k + 1); setSessionReloadKey(k => k + 1); }} />
         )}
         {/* Lost-connection pill: the socket announces a drop here, not only at
             the moment a send fails. */}

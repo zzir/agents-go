@@ -1,7 +1,6 @@
 import './chat.css';
 import { useState, useEffect, useCallback, useMemo, useRef, type MouseEvent, type ReactNode } from 'react';
-import { Button, ActionMenu, ActionList } from '@primer/react';
-import { Blankslate } from '@primer/react/experimental';
+import { Button, ActionMenu, ActionList, Link } from '@primer/react';
 import { api } from '@/lib/api';
 import { CHECK_ICON } from '@/lib/markdownShared';
 import { type TurnPart, type TimelineEntry, type Branches, type WorkflowStartedNote } from '@/lib/timeline';
@@ -30,7 +29,7 @@ import { TraceDrawer } from '@/features/chat/TracePanel';
 import { ContextPanel } from '@/features/chat/ContextPanel';
 import { ChatTopBar } from '@/features/chat/ChatTopBar';
 import { NewProjectDialog, useProjectMenu } from '@/features/chat/ProjectControls';
-import { ArrowDownIcon, CommentDiscussionIcon, FileDirectoryIcon } from '@primer/octicons-react';
+import { ArrowDownIcon, FileDirectoryIcon } from '@primer/octicons-react';
 import { toast } from '@/lib/toast';
 
 /* ---------- types ---------- */
@@ -131,6 +130,8 @@ export interface ChatViewActions {
   // Loads one trace span's payload (left out of the listing) into the panel
   // showing it, from the session whose stored rows hold the span.
   onLoadSpan?: (spanSessionId: string, runId: string, spanId: string) => Promise<void>;
+  // Opens the Settings dialog, optionally on a named tab (e.g. 'agents').
+  onSettingsOpen?: (tab?: string) => void;
   onPanelChange: (panel: InspectorPanel) => void;
   // Opens the global terminal panel (app-level, independent of the session).
   // Open-only by design: closing/collapsing happens on the panel itself. The
@@ -178,7 +179,7 @@ export function ChatView({
   } = state;
   const {
     onSend, onCancel, onApprove, onReject, onFork, onLoadEarlier, onSwitchBranch, onCompact, onRegenerate,
-    onWatchTask, onUnwatchTask, onPatchTask, onLoadSpan, onPanelChange, onTerminalOpen,
+    onWatchTask, onUnwatchTask, onPatchTask, onLoadSpan, onPanelChange, onTerminalOpen, onSettingsOpen,
   } = actions;
   const [agentConfigId, setAgentConfigIdState] = useState(() => loadSessionAgent(sessionId || ''));
   const [projectId, setProjectIdState] = useState(() => loadSessionProject(sessionId || ''));
@@ -220,7 +221,8 @@ export function ChatView({
     // Adopt the session's server-side agent once it has loaded — only then fall
     // back to the first agent — so the composer never silently runs a different
     // agent than the session is bound to.
-    if (sessionAgentId === undefined) return; // still loading; don't guess yet
+    // No session has no server-side agent to wait for; a session's is still loading.
+    if (sessionId && sessionAgentId === undefined) return;
     if (sessionAgentId && agentConfigs.some(a => a.id === sessionAgentId)) {
       setAgentConfigId(sessionAgentId); // the session's server-side agent
       return;
@@ -229,7 +231,7 @@ export function ChatView({
     // then fall back to the first in the list.
     const last = loadLastAgent();
     setAgentConfigId(agentConfigs.some(a => a.id === last) ? last : agentConfigs[0].id);
-  }, [agentConfigs, agentConfigId, sessionAgentId, setAgentConfigId]);
+  }, [agentConfigs, agentConfigId, sessionId, sessionAgentId, setAgentConfigId]);
 
   // A persisted project may have since been deleted — a send carrying it
   // would be refused, so a now-unknown id drops back to None.
@@ -591,24 +593,6 @@ export function ChatView({
     <ChatSessionProvider session={session} actions={turnActions} tasks={chatTasks}>{body}</ChatSessionProvider>
   );
 
-  if (!sessionId) {
-    return scoped(
-      <div className="chat-main">
-        <div className="chat-content">
-          {topBar}
-          <div className="chat-empty">
-            <Blankslate>
-              <Blankslate.Visual>
-                <CommentDiscussionIcon size={24} />
-              </Blankslate.Visual>
-              <Blankslate.Heading>Start a conversation</Blankslate.Heading>
-            </Blankslate>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   const selectedAgent = agentConfigs?.find(a => a.id === agentConfigId);
   const selectedAgentLabel = selectedAgent?.name || 'Agent';
   const agentCollisions = collidingNames(agentConfigs || []);
@@ -695,7 +679,11 @@ export function ChatView({
             </ActionMenu.Overlay>
           </ActionMenu>
         ) : (
-          <span className="chat-input-toolbar-warn">No agents — go to Settings</span>
+          <span className="chat-input-toolbar-warn">
+            No agents — {onSettingsOpen
+              ? <Link as="button" type="button" onClick={() => onSettingsOpen('agents')}>add one in Settings</Link>
+              : 'add one in Settings'}
+          </span>
         )}
       </div>
     </>
@@ -805,7 +793,9 @@ export function ChatView({
   );
 
 
-  if (!loaded && messages.length === 0) {
+  // A selected session whose timeline is still loading. No session has nothing
+  // to load, so it falls through to the composer below.
+  if (sessionId && !loaded && messages.length === 0) {
     return scoped(
       <div className="chat-main">
         <div className="chat-content">
@@ -816,17 +806,20 @@ export function ChatView({
     );
   }
 
-  if (isEmpty) {
+  // No session yet, or an empty one: the same centered composer. Typing and
+  // sending with no session creates one (app-level handleSend), so the blank
+  // screen is a place to start, not a dead end.
+  if (!sessionId || isEmpty) {
     return scoped(
-      <div className={'chat-main' + (panel ? ' trace-open' : '')}>
+      <div className={'chat-main' + (panel && sessionId ? ' trace-open' : '')}>
         <div className="chat-content">
           {topBar}
           <div className="chat-content chat-content-centered">
-            <Greeting key={`greeting-${sessionId}`} />
+            <Greeting key={`greeting-${sessionId || 'new'}`} />
             <WorkflowStrip />
             <MessageInput
-              key={`input-${sessionId}`}
-              sessionId={sessionId}
+              key={`input-${sessionId || 'new'}`}
+              sessionId={sessionId || ''}
               onSend={handleSend}
               onCancel={handleCancel}
               disabled={running || awaiting || !agentConfigId}
@@ -837,7 +830,7 @@ export function ChatView({
             />
           </div>
         </div>
-        {sidePanels}
+        {sessionId ? sidePanels : null}
       </div>
     );
   }

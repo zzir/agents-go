@@ -4,20 +4,24 @@ import type { HubTab } from '@/features/workflows/WorkflowsHub';
 // The URL names the view: a conversation (with the open Inspector lens), or
 // the Workflows hub (with its tab). The hub is a place of its own, so the
 // conversation last open is kept beside it in state, not in the URL.
-export interface HashState { sessionId: string | null; panel: InspectorPanel; hub: HubTab | null }
+// settings is a one-shot deep link to the Settings dialog, consumed on open:
+// '' names its first tab, a name that tab, null means no such fragment.
+export interface HashState { sessionId: string | null; panel: InspectorPanel; hub: HubTab | null; settings: string | null }
 
 export function readHash(): HashState {
   const h = window.location.hash;
+  const set = /^#\/settings(?:\/([a-zA-Z0-9_-]+))?$/.exec(h);
+  if (set) return { sessionId: null, panel: null, hub: null, settings: set[1] || '' };
   const hub = /^#\/workflows(?:\/(definitions|triggers|runs))?$/.exec(h);
-  if (hub) return { sessionId: null, panel: null, hub: (hub[1] as HubTab) || 'definitions' };
+  if (hub) return { sessionId: null, panel: null, hub: (hub[1] as HubTab) || 'definitions', settings: null };
   const m = /^#\/session\/([a-zA-Z0-9_-]+)(?:\/(trace|tasks|context|task\/([a-zA-Z0-9_-]+)))?$/.exec(h);
-  if (!m) return { sessionId: null, panel: null, hub: null };
+  if (!m) return { sessionId: null, panel: null, hub: null, settings: null };
   let panel: InspectorPanel = null;
   if (m[2] === 'trace') panel = { kind: 'trace' };
   else if (m[2] === 'tasks') panel = { kind: 'tasks' };
   else if (m[2] === 'context') panel = { kind: 'context' };
   else if (m[3]) panel = { kind: 'task', taskId: m[3] };
-  return { sessionId: m[1], panel, hub: null };
+  return { sessionId: m[1], panel, hub: null, settings: null };
 }
 
 export function writeHash(sessionId: string | null, panel: InspectorPanel, hub: HubTab | null) {
