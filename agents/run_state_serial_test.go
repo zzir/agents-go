@@ -305,3 +305,48 @@ func TestHITL_ResumeSendsDeltaWithRestoredCursor(t *testing.T) {
 		}
 	}
 }
+
+// A registry that resolves the current agent but misses an agent named on an
+// item or interruption must fail loudly, naming what it missed — otherwise a
+// cross-process resume drops that attribution to nil in silence.
+func TestRunStateFromJSON_NamesMissingItemAgents(t *testing.T) {
+	var ran bool
+	agent := approvalAgentAndModel(t, &ran) // Name "a"
+	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := res.State.MarshalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Retarget the interruption at an agent the registry will not carry.
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(data, &obj); err != nil {
+		t.Fatal(err)
+	}
+	var interruptions []map[string]json.RawMessage
+	if err := json.Unmarshal(obj["interruptions"], &interruptions); err != nil {
+		t.Fatal(err)
+	}
+	if len(interruptions) == 0 {
+		t.Fatal("expected an interruption to retarget")
+	}
+	interruptions[0]["agent"], _ = json.Marshal("ghost-agent")
+	obj["interruptions"], _ = json.Marshal(interruptions)
+	patched, _ := json.Marshal(obj)
+
+	// The current agent ("a") resolves; only the interruption's agent is missing.
+	_, err = RunStateFromJSON(patched, map[string]*Agent{"a": agent})
+	if err == nil {
+		t.Fatal("expected an error naming the missing item agent")
+	}
+	if !strings.Contains(err.Error(), "ghost-agent") {
+		t.Fatalf("error should name the missing agent, got: %v", err)
+	}
+	var ue *UserError
+	if !errors.As(err, &ue) {
+		t.Fatalf("want a UserError, got %T: %v", err, err)
+	}
+}

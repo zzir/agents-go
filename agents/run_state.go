@@ -664,7 +664,17 @@ func RunStateFromJSON(data []byte, registry map[string]*Agent) (*RunState, error
 	if err := checkRunStateSchemaVersion(in.SchemaVersion); err != nil {
 		return nil, err
 	}
-	lookup := func(name string) *Agent { return registry[name] }
+	// Collects the names the registry misses (an empty name is "no agent") — see spec §2.5.
+	var missingAgents []string
+	seenMissing := map[string]bool{}
+	lookup := func(name string) *Agent {
+		a := registry[name]
+		if a == nil && name != "" && !seenMissing[name] {
+			seenMissing[name] = true
+			missingAgents = append(missingAgents, name)
+		}
+		return a
+	}
 
 	st := &RunState{
 		CurrentAgent:          lookup(in.CurrentAgent),
@@ -755,6 +765,9 @@ func RunStateFromJSON(data []byte, registry map[string]*Agent) (*RunState, error
 			}
 			st.nestedToolStates[callID] = nested
 		}
+	}
+	if len(missingAgents) > 0 {
+		return nil, NewUserError("run state names agents missing from the registry: %s", strings.Join(missingAgents, ", "))
 	}
 	return st, nil
 }

@@ -197,6 +197,9 @@ live pointer is never the only path that works.
 - **A consumer triaging stored states applies the same window through
   `RunStateVersionSupported`**, never string equality against
   `RunStateSchemaVersion`.
+- **The registry must resolve every agent the state names** — the current
+  agent and every agent an item or interruption carries; `RunStateFromJSON`
+  fails with a `*UserError` listing the misses rather than leaving any nil.
 
 — see [decisions §5.18](../explanation/decisions.md#518-a-runstate-decodes-across-a-version-window-and-the-window-is-earned)
 
