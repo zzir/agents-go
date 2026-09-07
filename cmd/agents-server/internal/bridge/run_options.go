@@ -8,6 +8,7 @@ import (
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/session"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/tracing"
@@ -35,7 +36,7 @@ func compactionNotifier(send func(string, any), runID string) store.CompactionNo
 
 // runOptionsFor assembles the RunOptions shared by fresh and resume paths;
 // runContext is the Context value the exec_command gate reads a session id from.
-func runOptionsFor(built *BuildResult, sess *session.Session, provider agents.ModelProvider, tracer *tracing.Tracer, runContext any, log *slog.Logger) agents.RunOptions {
+func runOptionsFor(built *BuildResult, sess *session.Session, provider agents.ModelProvider, tracer *tracing.Tracer, runContext any, log *slog.Logger, budget agents.ContextBudget) agents.RunOptions {
 	opts := agents.RunOptions{
 		Context: runContext,
 		Conversation: agents.ConversationOptions{
@@ -65,7 +66,28 @@ func runOptionsFor(built *BuildResult, sess *session.Session, provider agents.Mo
 	if built.Behavior.HandoffInputFilter == "nest_history" {
 		opts.Exec.HandoffInputFilter = agents.NestHandoffHistory(agents.NestHistoryOptions{})
 	}
+	if budget.Window > 0 {
+		// The notice rides on the input, never the instructions (spec §2.5i).
+		opts.Model.InputFilter = budget.InputFilter()
+	}
 	return opts
+}
+
+// contextBudget is what the model is told about its window: the config's
+// declared size and the conversation's last measured call, invariant 28's
+// provider ruler, never an estimate. No window, nothing.
+func contextBudget(ctx context.Context, built *BuildResult, sa *store.EntryStore, ref session.Ref) agents.ContextBudget {
+	if built.ContextWindow <= 0 {
+		return agents.ContextBudget{}
+	}
+	b := agents.ContextBudget{Window: built.ContextWindow}
+	rep, err := sa.ContextReport(ctx, ref)
+	if err != nil {
+		logging.Ctx(ctx).Warn("context budget: reading the last measured call; the first call carries no figure", "error", err)
+		return b
+	}
+	b.Occupied = rep.InputTokens + rep.OutputTokens
+	return b
 }
 
 // toolNotFoundBehavior: unset means RETURN TO MODEL, not the SDK's stricter

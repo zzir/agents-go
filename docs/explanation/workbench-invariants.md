@@ -184,6 +184,8 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     (`ActiveContextTokens`); and character estimates for the conversation and
     prompt, never for arithmetic against the others. The panel draws one bar
     with the threshold as a tick, and an estimate as two figures behind `~`.
+    The budget notice a run appends to every model call (`ContextBudget`) is
+    built from the provider figure of the last measured call, never an estimate.
 29. **A workflow execution is a task, advanced from the run's teardown, never
     from the starting call's callback.** A step is an ordinary run; `postRun`
     — reached by every segment, fresh or resumed — hands the outcome to the

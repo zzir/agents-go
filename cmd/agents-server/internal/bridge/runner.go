@@ -410,7 +410,8 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 
 	runSession := wrapCompaction(sa, built, provider, sendEvent, runID)
 
-	opts := runOptionsFor(built, runSession, provider, tracer, trustSessionID(sessionID, task), logging.Ctx(ctx))
+	opts := runOptionsFor(built, runSession, provider, tracer, trustSessionID(sessionID, task), logging.Ctx(ctx),
+		contextBudget(ctx, built, sa, sessionRef))
 
 	// The title needs only the first message, so it runs beside the run. Task
 	// sessions are pre-named; a resume's original run already fired it.

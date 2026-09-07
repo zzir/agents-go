@@ -90,6 +90,10 @@ type BuildResult struct {
 	// top-level config's error_handlers field (zero value when unconfigured).
 	ErrorHandlers agents.RunErrorHandlers
 
+	// ContextWindow is the config's declared window in tokens, what the run
+	// tells the model about its budget; 0 is unknown and sends nothing.
+	ContextWindow int
+
 	// TraceIncludeSensitive gates whether generation spans record request and
 	// response content (trace_include_sensitive_data); off, Replay has no seed.
 	TraceIncludeSensitive bool
@@ -282,6 +286,7 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID string,
 	result.Behavior = ac.Behavior
 	result.Compaction = ac.Compaction
 	result.Session = ac.Session
+	result.ContextWindow = ac.ContextWindow
 	if ac.Behavior.ReasoningItemIDPolicy == "omit" {
 		result.ReasoningItemIDPolicy = agents.ReasoningItemIDOmit
 	}

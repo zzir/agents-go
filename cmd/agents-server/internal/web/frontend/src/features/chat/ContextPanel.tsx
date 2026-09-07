@@ -222,6 +222,11 @@ export function ContextPanel({ sessionId, running, reloadKey, onClose, onCompact
                   {thresholdPct > 0 && <span className="ctx-muted">compacts at ~{Math.round(thresholdPct)}%</span>}
                   <span className="ctx-muted">{fmt(Math.max(0, windowSize - used))} free</span>
                 </div>
+                <div className="ctx-legend">
+                  <span className="ctx-muted" title="Every model call ends with a one-line budget notice built from the last measured call, so the model can plan around what is left.">
+                    the model is told this figure on every call
+                  </span>
+                </div>
                 {showNext && (
                   <div className="ctx-legend">
                     <span className="ctx-muted" title="Estimated tokens the NEXT request will send. The figure above is the last measured call and only updates when one follows — so after Compact now this is what the folded conversation now costs.">
