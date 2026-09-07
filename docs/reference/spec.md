@@ -64,6 +64,7 @@ renumbered — which is why the letters run out of alphabetical order in places.
 | [§2.5f](#25f-compaction) | Compaction | Compaction is run-level; a checkpoint is appended, never a rewrite |
 | [§2.5g](#25g-context-overflow) | Context overflow | Overflow reacts where compaction predicted wrong |
 | [§2.5h](#25h-crash-recovery) | Crash recovery | `session.Recover` repairs what a killed process left inconsistent |
+| [§2.5i](#25i-the-model-manages-its-own-context) | The model manages its own context | The budget notice rides on the input, never the instructions |
 | [§2.6](#26-guardrails) | Guardrails | One `Guardrail` type, four stages; placement decides scope |
 | [§2.7](#27-tools) | Tools | Return values, execution, and the approval partition |
 | [§2.7b](#27b-tool-results) | Tool results | `ToolResult` separates what the model sees from what the host sees |
@@ -767,6 +768,22 @@ Compaction predicts; overflow recovery reacts where the prediction was wrong.
 - **It is the counterpart of `RunState`, not a replacement**: `RunState`
   handles a run that paused on purpose; this handles a process that died and
   left only what had been written ([§2.5](#25-session-persistence-boundaries)).
+
+### 2.5i The model manages its own context
+
+What the runtime tells the model about its own context window, and what the
+model may do about it. The first lever is the budget notice.
+
+- **The budget notice is the last input item of a call, never part of the
+  instructions.** `ContextBudget.InputFilter` appends one system text item;
+  the instructions it was handed go out unchanged.
+- **It is not persisted.** An `InputFilter` edit reaches the model and the
+  trace, never the session.
+- **Its figure is the newest measured call**: within the run, the last
+  request's input plus output tokens; before the run's first call, the host's
+  `Occupied`. No figure, or no window, sends nothing.
+
+— see [decisions §5.60](../explanation/decisions.md#560-the-budget-rides-on-the-input-not-the-instructions)
 
 ### 2.6 Guardrails
 
@@ -1788,6 +1805,7 @@ Defaults that callers may depend on:
 | Input guardrails | concurrent with the model call | `Blocking: true` makes one a gate |
 | Session persistence | after each turn | Final turn is written after output guardrails pass |
 | `RunResult.Usage` / `RunState.Usage` | detached snapshot | Never the live accumulator; read without synchronization. Mid-run, `RunContext.Usage` is live — read it via `Snapshot()` |
+| Budget notice | off | `ContextBudget{Window, Occupied}.InputFilter()` appends `Context budget: about N of W tokens in use (P% left).` as the last input item ([§2.5i](#25i-the-model-manages-its-own-context)) |
 
 ---
 

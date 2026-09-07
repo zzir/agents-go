@@ -1387,3 +1387,24 @@ correct for a store that is rebuilt anyway.
 **Cost accepted.** Production use needs this decision reversed first.
 
 Rules: workbench invariant 25.
+
+### 5.60 The budget rides on the input, not the instructions
+
+Decided 2026-09 with `ContextBudget`.
+
+**Decision.** The figure the model gets about its own window is appended as
+the last input item of every call, a system text item, and is never written
+to the session. Every call carries the current number.
+
+**Rejected.** Putting it in the instructions: the number changes every call,
+and an instructions prefix that changes defeats prompt caching for the whole
+conversation. Threshold reminders at 25/50/75%, Codex's shape: one input can
+jump across a mark unnoticed, and a current figure is what the model actually
+reasons with. Persisting it as an entry: it describes the moment it was sent,
+replays wrong later, and inflates the history it measures.
+
+**Cost accepted.** Roughly two dozen tokens per call. Before the run's first
+call the figure is the host's, the conversation's last measured call, so a
+run right after a manual compaction reports the pre-fold number once.
+
+Rules: spec §2.5i

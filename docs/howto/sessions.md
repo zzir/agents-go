@@ -231,6 +231,25 @@ pass and one more attempt at the same turn. It is off by default, the retry
 does not spend the turn budget, and a pass that drops nothing buys no retry
 ([spec §2.5g](../reference/spec.md#25g-context-overflow)).
 
+### Telling the model its budget
+
+Compaction and overflow recovery act for the model. `ContextBudget` lets the
+model see the figure itself:
+
+```go
+opts.Model.InputFilter = agents.ContextBudget{
+	Window:   200_000, // the model's context window, in tokens
+	Occupied: last,    // what the conversation's last call measured; 0 = unknown
+}.InputFilter()
+```
+
+Every call then ends with one system item, `Context budget: about N of W
+tokens in use (P% left).`: the run's own last call once it has one, `Occupied`
+before that, nothing when neither is known. It is appended to the input, never
+to the instructions, so a cached prompt prefix stays cached, and it is not
+saved to the session ([spec §2.5i](../reference/spec.md#25i-the-model-manages-its-own-context)).
+A runnable program is [examples/contextmanagement](../../examples/contextmanagement/main.go).
+
 ### Automatic compaction
 
 `openai.CompactionSession` **decorates** any other `Session`, calling the OpenAI `responses.compact` API to summarize history once it grows past a threshold, then replacing the stored items with the compacted result.
