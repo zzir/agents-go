@@ -797,7 +797,8 @@ model may do about it. The first lever is the budget notice.
   never mid-turn.** `new_context` sets the request on the `RunContext`; the
   save point performs it on the persisted log, after its own pass.
 - **A reset is a forced pass with `Reset` set**: a `CompactionAware` storage
-  folds everything but the newest user message; a `ContextResetter` does the
+  folds everything but the newest user message, earlier checkpoints and
+  stand-ins included, so one summary stands; a `ContextResetter` does the
   same in memory. Neither present, `context_reset_ignored` is recorded.
 - **A turn that ends in an interruption drops the request.** It reaches no
   save point; the model may ask again.

@@ -81,9 +81,12 @@ func (c *Compactor) Reset(ctx context.Context, entries []session.Entry) ([]sessi
 			break
 		}
 	}
+	// Every group but the kept ones folds, the ones an earlier pass or reset
+	// already excluded included: their stand-ins are superseded by this
+	// reset's summary, or the context would carry one per reset.
 	first := -1
 	for i, g := range c.idx.Groups {
-		if i == keep || g.Kind == GroupSystem || g.Excluded {
+		if i == keep || g.Kind == GroupSystem {
 			continue
 		}
 		g.Excluded = true
