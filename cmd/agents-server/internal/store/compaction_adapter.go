@@ -343,72 +343,24 @@ func renderTranscript(entries []session.Entry) string {
 // renderItemText renders one normalized item as transcript text; "" for items
 // with nothing to say (unparseable, or types with no content).
 func renderItemText(raw json.RawMessage) string {
-	var it struct {
-		Type      string          `json:"type"`
-		Role      string          `json:"role"`
-		Content   json.RawMessage `json:"content"`
-		Name      string          `json:"name"`
-		Arguments string          `json:"arguments"`
-		Output    json.RawMessage `json:"output"`
-	}
-	if json.Unmarshal(raw, &it) != nil {
-		return ""
-	}
+	p := session.ProbeItem(raw)
 	switch {
-	case it.Type == "function_call":
-		return "[assistant called tool " + it.Name + " with arguments " + it.Arguments + "]"
-	case it.Type == "function_call_output":
-		out := jsonAsText(it.Output)
+	case p.Type == "function_call":
+		return "[assistant called tool " + p.Name + " with arguments " + p.Args + "]"
+	case p.Type == "function_call_output":
+		out := session.RenderItem(raw)
 		if out == "" {
 			return ""
 		}
 		return "[tool output]\n" + out
-	case it.Role != "":
-		text := contentAsText(it.Content)
+	case p.Role != "":
+		text := session.RenderItem(raw)
 		if text == "" {
 			return ""
 		}
-		return strings.ToUpper(it.Role[:1]) + it.Role[1:] + ":\n" + text
+		return strings.ToUpper(p.Role[:1]) + p.Role[1:] + ":\n" + text
 	}
 	return ""
-}
-
-// contentAsText joins a message's content: either a bare string or an array of
-// parts whose text fields carry the words.
-func contentAsText(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	var s string
-	if json.Unmarshal(raw, &s) == nil {
-		return s
-	}
-	var parts []struct {
-		Text string `json:"text"`
-	}
-	if json.Unmarshal(raw, &parts) != nil {
-		return ""
-	}
-	var texts []string
-	for _, p := range parts {
-		if p.Text != "" {
-			texts = append(texts, p.Text)
-		}
-	}
-	return strings.Join(texts, "\n")
-}
-
-// jsonAsText unwraps a JSON string, and falls back to the raw JSON for
-// structured payloads — the summary model can read either.
-func jsonAsText(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	var s string
-	if json.Unmarshal(raw, &s) == nil {
-		return s
-	}
-	return string(raw)
 }
 
 // persistCompaction marks the folded entries compacted and appends the checkpoint in

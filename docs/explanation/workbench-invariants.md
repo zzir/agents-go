@@ -145,7 +145,8 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     re-derives a display, role or provenance at read time. Compaction
     soft-deletes, appends a checkpoint naming what it folded, and sizes only
     the active branch (`compaction_adapter.go`); the timeline stays decoupled
-    from the fold — folded entries render in full, the checkpoint inline.
+    from the fold — folded entries render in full, the checkpoint inline, and
+    `SearchHistory` reads them back for the model's history tools.
 25. **Schema changes ship without migrations.** `CREATE TABLE / INDEX IF NOT
     EXISTS` is the whole story; a structural change means dropping and
     recreating the database, and ALTER TABLE machinery is never added.

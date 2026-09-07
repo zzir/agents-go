@@ -386,6 +386,7 @@ const (
 	// ToolSourceWorkflows is the workflow-authoring pair, get_workflow and
 	// save_workflow (workbench invariant 39).
 	ToolSourceWorkflows = "workflows"
+	ToolSourceContext   = "context"
 	ToolSourceTodo      = "todo"
 	ToolSourcePlan      = "plan"
 	// ToolSourceMCP is a prefix: "mcp:<server name>".

@@ -8249,6 +8249,11 @@ export interface components {
              */
             compaction_threshold_tokens?: number;
             compaction_window?: number;
+            /**
+             * @description HistoryTools gives the model history_search and history_read over its
+             *     session, folded history included.
+             */
+            history_tools?: boolean;
         };
         /**
          * @description Compaction is present on a checkpoint: what the pass folded away, so a

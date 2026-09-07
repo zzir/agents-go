@@ -64,6 +64,9 @@ type AgentDeps struct {
 	// WorkflowTools is set by NewRunner and builds get_workflow / save_workflow
 	// per run, when the config opts in (behavior.workflow_authoring) — invariant 39.
 	WorkflowTools func(ctx context.Context, ownerID string) []*agents.Tool
+	// HistoryTools is set by NewRunner and builds history_search / history_read
+	// when the config opts in (compaction.history_tools); chat runs only.
+	HistoryTools func(ctx context.Context, ownerID string) []*agents.Tool
 }
 
 // BuildResult contains the built agent and its resolved model provider.
@@ -195,6 +198,13 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, project
 		// (saveWorkflow decides per call, mirroring the REST gate).
 		result.Agent.Tools = append(result.Agent.Tools, deps.WorkflowTools(ctx, ownerID)...)
 		bucketToolsSince(result.Agent, mark, store.ToolSourceWorkflows, &result.Profile)
+	}
+	// A background run's session is a task's own; the tools read the run
+	// context's session, which for a task is its parent's (trustSessionID).
+	if err == nil && !background && result.Compaction.HistoryTools && deps.HistoryTools != nil {
+		mark := len(result.Agent.Tools)
+		result.Agent.Tools = append(result.Agent.Tools, deps.HistoryTools(ctx, ownerID)...)
+		bucketToolsSince(result.Agent, mark, store.ToolSourceContext, &result.Profile)
 	}
 	if err != nil {
 		// A failed build returns no result to Release, so the sandbox

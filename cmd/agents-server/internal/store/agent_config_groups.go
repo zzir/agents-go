@@ -85,6 +85,9 @@ type CompactionGroup struct {
 	Window    int    `json:"compaction_window,omitempty"`
 	Model     string `json:"compaction_model,omitempty"`
 	Prompt    string `json:"compaction_prompt,omitempty"`
+	// HistoryTools gives the model history_search and history_read over its
+	// session, folded history included.
+	HistoryTools bool `json:"history_tools,omitempty"`
 }
 
 // jsonGroupValue / jsonGroupScan back the driver.Valuer / sql.Scanner

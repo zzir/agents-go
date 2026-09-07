@@ -1552,6 +1552,11 @@ components:
           type: integer
         compaction_window:
           type: integer
+        history_tools:
+          description: |-
+            HistoryTools gives the model history_search and history_read over its
+            session, folded history included.
+          type: boolean
       type: object
     store.CompactionInfo:
       description: |-

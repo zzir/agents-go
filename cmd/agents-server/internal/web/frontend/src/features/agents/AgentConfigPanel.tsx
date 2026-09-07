@@ -30,7 +30,7 @@ const CONFIG_GROUPS: Record<string, string[]> = {
   guardrails: ['guardrails', 'output_schema'],
   session: ['prompt_id', 'prompt_version', 'history_limit'],
   approval: ['approve_tools'],
-  compaction: ['compaction_enabled', 'compaction_threshold_tokens', 'compaction_window', 'compaction_model', 'compaction_prompt'],
+  compaction: ['compaction_enabled', 'compaction_threshold_tokens', 'compaction_window', 'compaction_model', 'compaction_prompt', 'history_tools'],
 };
 
 // The spellings the server reads as "feed the bad tool name back to the
@@ -92,6 +92,7 @@ interface AgentFormData {
   compaction_window: number;
   compaction_model: string;
   compaction_prompt: string;
+  history_tools: boolean;
   handoffs?: string;
   tools?: string;
   skills?: string;
@@ -181,7 +182,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
     handoff_input_filter: '', max_tool_concurrency: initial ? 0 : 8,
     tool_not_found_behavior: '', reasoning_item_id_policy: '', workflow_authoring: false, subagents: true, vision: false, approve_tools: '',
     compaction_enabled: false, compaction_threshold_tokens: 0,
-    compaction_window: 0, compaction_model: '', compaction_prompt: '',
+    compaction_window: 0, compaction_model: '', compaction_prompt: '', history_tools: false,
     ...flattenConfig(initial as Record<string, unknown> | undefined),
   });
   const [reasoningEffort, setReasoningEffort] = useState(initMs.reasoning?.effort || '');
@@ -461,6 +462,11 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
           <Checkbox checked={form.compaction_enabled || false} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_enabled', e.target.checked)} />
           <FormControl.Label>Enable compaction</FormControl.Label>
           <FormControl.Caption>Summarize old messages when history grows large (provider-agnostic)</FormControl.Caption>
+        </FormControl>
+        <FormControl>
+          <Checkbox checked={form.history_tools || false} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('history_tools', e.target.checked)} />
+          <FormControl.Label>History tools</FormControl.Label>
+          <FormControl.Caption>history_search and history_read let the model find turns that compaction folded out of its context</FormControl.Caption>
         </FormControl>
         {form.compaction_enabled && <>
           {fc('Threshold (tokens)', <TextInput block type="number" min={0} value={String(form.compaction_threshold_tokens || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_threshold_tokens', parseInt(e.target.value) || 0)} />, 'Token count that triggers compaction (0 = default 50000); sized from real usage, byte-estimated where unmeasured')}
