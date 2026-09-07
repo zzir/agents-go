@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ProgressBar } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { MeterIcon } from '@primer/octicons-react';
@@ -140,24 +140,27 @@ interface SessionMemoryInfo { id: string; key: string; bytes: number; written_by
 function SessionMemory({ sessionId, running, reloadKey }: { sessionId: string; running: boolean; reloadKey?: unknown }) {
   const { data, reload } = useApi<SessionMemoryInfo[]>(() => api.sessions.memory(sessionId) as Promise<SessionMemoryInfo[]>, [sessionId, running, reloadKey]);
   const [open, setOpen] = useState<string | null>(null);
+  // Content is cached per key AND version: a memory the model rewrote moves
+  // its updated_at, so the next expand (or the open row) fetches it again.
   const [content, setContent] = useState<Record<string, string>>({});
   const rows = data || [];
-  const show = async (key: string) => {
-    if (open === key) { setOpen(null); return; }
-    setOpen(key);
-    if (content[key] === undefined) {
-      try {
-        const m = await api.sessions.memoryKey(sessionId, key);
-        setContent(prev => ({ ...prev, [key]: m.content ?? '' }));
-      } catch (e) {
-        setContent(prev => ({ ...prev, [key]: `(could not load: ${e instanceof Error ? e.message : String(e)})` }));
-      }
-    }
-  };
+  const versionOf = (r: SessionMemoryInfo) => `${r.key}@${r.updated_at}`;
+  const openRow = rows.find(r => r.key === open);
+  const openVersion = openRow ? versionOf(openRow) : null;
+  useEffect(() => {
+    if (!openRow || !openVersion || content[openVersion] !== undefined) return;
+    let cancelled = false;
+    api.sessions.memoryKey(sessionId, openRow.key)
+      .then(m => { if (!cancelled) setContent(prev => ({ ...prev, [openVersion]: m.content ?? '' })); })
+      .catch(e => { if (!cancelled) setContent(prev => ({ ...prev, [openVersion]: `(could not load: ${e instanceof Error ? e.message : String(e)})` })); });
+    return () => { cancelled = true; };
+  }, [sessionId, openRow, openVersion, content]);
+  const show = (key: string) => setOpen(open === key ? null : key);
   const del = async (row: SessionMemoryInfo) => {
     if (!window.confirm(`Delete the memory "${row.key}"?`)) return;
     await api.memories.delete(row.id);
-    setContent(prev => { const next = { ...prev }; delete next[row.key]; return next; });
+    setContent(prev => Object.fromEntries(Object.entries(prev).filter(([k]) => !k.startsWith(`${row.key}@`))));
+    if (open === row.key) setOpen(null);
     reload();
   };
   if (rows.length === 0) return null;
@@ -179,7 +182,7 @@ function SessionMemory({ sessionId, running, reloadKey }: { sessionId: string; r
               <button type="button" className="ctx-mem-del" onClick={() => del(r)} title="Delete this memory">×</button>
             </div>
             {open === r.key && (
-              <pre className="ctx-mem-text">{content[r.key] === undefined ? 'Loading…' : content[r.key]}</pre>
+              <pre className="ctx-mem-text">{content[versionOf(r)] === undefined ? 'Loading…' : content[versionOf(r)]}</pre>
             )}
           </li>
         ))}
