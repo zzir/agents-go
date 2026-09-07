@@ -18,10 +18,12 @@ interface CompactionCardProps {
   content?: string;
   tokensBefore?: number;
   tokensAfter?: number;
+  // A reset: the model's context started over with what it kept in memory.
+  reset?: boolean;
 }
 
 export const CompactionCard = memo(function CompactionCard(
-  { content, tokensBefore, tokensAfter }: CompactionCardProps,
+  { content, tokensBefore, tokensAfter, reset }: CompactionCardProps,
 ) {
   const [expanded, setExpanded] = useState(false);
   const summaryText = (content || '').replace(/^\[Conversation Summary\]\s*/, '');
@@ -35,7 +37,7 @@ export const CompactionCard = memo(function CompactionCard(
         onClick={() => setExpanded(!expanded)}
       >
         <ChevronRightIcon size={16} className="process-icon" />
-        <span>Compaction</span>
+        <span>{reset ? 'Context reset' : 'Compaction'}</span>
         {shrank && (
           <span className="compaction-card-savings">
             ~{compactTokens(tokensBefore)} → ~{compactTokens(tokensAfter)} tokens
@@ -45,7 +47,9 @@ export const CompactionCard = memo(function CompactionCard(
       {expanded && (
         <div className="compaction-card-body">
           <div className="compaction-card-note">
-            The history above stays in full — the model now reads this summary in its place.
+            {reset
+              ? 'The history above stays in full — the model started a fresh context with what it kept in memory, and can search the rest.'
+              : 'The history above stays in full — the model now reads this summary in its place.'}
           </div>
           {summaryText && <div className="markdown-body" dangerouslySetInnerHTML={{ __html: summaryHtml }} />}
         </div>

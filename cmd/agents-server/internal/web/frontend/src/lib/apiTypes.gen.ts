@@ -8269,7 +8269,7 @@ export interface components {
             unsupported?: string[];
         };
         /** @enum {string} */
-        "session.DiagnosticType": "model_retry" | "model_fallback" | "stream_error" | "tool_panic" | "tool_timeout" | "compaction_failed" | "response_truncated" | "context_overflow";
+        "session.DiagnosticType": "model_retry" | "model_fallback" | "stream_error" | "tool_panic" | "tool_timeout" | "compaction_failed" | "response_truncated" | "context_overflow" | "context_reset_ignored";
         /**
          * @description Code classifies the underlying error, when there was one.
          * @enum {string}
@@ -8427,6 +8427,12 @@ export interface components {
         };
         "store.CompactionGroup": {
             compaction_enabled?: boolean;
+            /**
+             * @description Mode is summary (the default), reset or hybrid: whether a pass
+             *     summarizes the folded history, drops it carrying the session memory,
+             *     or does both.
+             */
+            compaction_mode?: string;
             compaction_model?: string;
             compaction_prompt?: string;
             /**
@@ -8446,6 +8452,11 @@ export interface components {
              *     session, marked compacted, so a reader can collapse them under it.
              */
             excluded_ids?: string[];
+            /**
+             * @description Reset marks a pass that folded the conversation carrying the session
+             *     memory rather than a summary.
+             */
+            reset?: boolean;
             tokens_after?: number;
             tokens_before?: number;
         };
@@ -8461,6 +8472,8 @@ export interface components {
              *     fires at and Tokens what it compares (ActiveContextTokens).
              */
             compaction_enabled?: boolean;
+            /** @description CompactionMode is the agent's: summary, reset or hybrid. */
+            compaction_mode?: string;
             compaction_threshold?: number;
             compaction_tokens?: number;
             /**

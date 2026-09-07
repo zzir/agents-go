@@ -40,6 +40,7 @@ interface ContextReport {
   compaction_enabled: boolean;
   compaction_threshold?: number;
   compaction_tokens: number;
+  compaction_mode?: string;
   conversation_tokens?: number;
   prompt?: PromptProfile;
 }
@@ -208,6 +209,7 @@ export function ContextPanel({ sessionId, running, reloadKey, onClose, onCompact
   const cached = data?.cached_tokens || 0;
   const hitPct = used > 0 ? (cached / used) * 100 : 0;
   const threshold = (data?.compaction_enabled && data.compaction_threshold) || 0;
+  const resetMode = data?.compaction_mode === 'reset' || data?.compaction_mode === 'hybrid';
   const compactionPct = threshold > 0 ? Math.min(100, ((data?.compaction_tokens || 0) / threshold) * 100) : 0;
   // The fold point on the window's own scale — ONE bar carries both stories.
   // The threshold compares against the compaction figure (last call's total
@@ -254,10 +256,12 @@ export function ContextPanel({ sessionId, running, reloadKey, onClose, onCompact
                   disabled={running || compacting}
                   title={running
                     ? 'The run compacts at its own boundaries — wait for it to finish'
-                    : 'Fold older history into a summary now, keeping the recent window'}
+                    : resetMode
+                      ? 'Start the model over with its session memory and the latest message; the history stays searchable'
+                      : 'Fold older history into a summary now, keeping the recent window'}
                   onClick={compact}
                 >
-                  {compacting ? 'Compacting…' : 'Compact now'}
+                  {compacting ? (resetMode ? 'Resetting…' : 'Compacting…') : resetMode ? 'Reset now' : 'Compact now'}
                 </button>
               )}
             </div>
@@ -275,7 +279,7 @@ export function ContextPanel({ sessionId, running, reloadKey, onClose, onCompact
                 </div>
                 <div className="ctx-legend">
                   <span>used {Math.round(pct)}%</span>
-                  {thresholdPct > 0 && <span className="ctx-muted">compacts at ~{Math.round(thresholdPct)}%</span>}
+                  {thresholdPct > 0 && <span className="ctx-muted">{resetMode ? 'resets' : 'compacts'} at ~{Math.round(thresholdPct)}%</span>}
                   <span className="ctx-muted">{fmt(Math.max(0, windowSize - used))} free</span>
                 </div>
                 <div className="ctx-legend">

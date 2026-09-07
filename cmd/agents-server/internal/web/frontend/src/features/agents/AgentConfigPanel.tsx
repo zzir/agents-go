@@ -30,7 +30,7 @@ const CONFIG_GROUPS: Record<string, string[]> = {
   guardrails: ['guardrails', 'output_schema'],
   session: ['prompt_id', 'prompt_version', 'history_limit'],
   approval: ['approve_tools'],
-  compaction: ['compaction_enabled', 'compaction_threshold_tokens', 'compaction_window', 'compaction_model', 'compaction_prompt'],
+  compaction: ['compaction_enabled', 'compaction_threshold_tokens', 'compaction_window', 'compaction_model', 'compaction_prompt', 'compaction_mode'],
   memory: ['memory_tools', 'memory_agent_write', 'history_tools'],
 };
 
@@ -93,6 +93,7 @@ interface AgentFormData {
   compaction_window: number;
   compaction_model: string;
   compaction_prompt: string;
+  compaction_mode: string;
   memory_tools: boolean;
   memory_agent_write: boolean;
   history_tools: boolean;
@@ -185,7 +186,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
     handoff_input_filter: '', max_tool_concurrency: initial ? 0 : 8,
     tool_not_found_behavior: '', reasoning_item_id_policy: '', workflow_authoring: false, subagents: true, vision: false, approve_tools: '',
     compaction_enabled: false, compaction_threshold_tokens: 0,
-    compaction_window: 0, compaction_model: '', compaction_prompt: '',
+    compaction_window: 0, compaction_model: '', compaction_prompt: '', compaction_mode: '',
     memory_tools: false, memory_agent_write: false, history_tools: false,
     ...flattenConfig(initial as Record<string, unknown> | undefined),
   });
@@ -468,6 +469,11 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
           <FormControl.Caption>Summarize old messages when history grows large (provider-agnostic)</FormControl.Caption>
         </FormControl>
         {form.compaction_enabled && <>
+          {fc('Mode', <Select block value={form.compaction_mode || ''} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => set('compaction_mode', e.target.value)}>
+            <Select.Option value="">Summary — fold older history into a summary</Select.Option>
+            <Select.Option value="reset">Reset — start over with the session memory; the model may call new_context</Select.Option>
+            <Select.Option value="hybrid">Hybrid — reset, carrying a short recap as well</Select.Option>
+          </Select>, 'Reset and hybrid turn on the memory and history tools for the agent')}
           {fc('Threshold (tokens)', <TextInput block type="number" min={0} value={String(form.compaction_threshold_tokens || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_threshold_tokens', parseInt(e.target.value) || 0)} />, 'Token count that triggers compaction (0 = default 50000); sized from real usage, byte-estimated where unmeasured')}
           {fc('Window size', <TextInput block type="number" min={0} value={String(form.compaction_window || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_window', parseInt(e.target.value) || 0)} />, 'Recent items to keep intact (0 = default 10)')}
           {fc('Summary model', <TextInput value={form.compaction_model || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_model', e.target.value)} placeholder="e.g. gpt-4.1-mini" block />, "Model used to generate conversation summaries (empty = the agent's model)")}
