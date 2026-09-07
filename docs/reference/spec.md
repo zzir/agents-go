@@ -796,6 +796,9 @@ model may do about it. The first lever is the budget notice.
 - **A model-requested reset lands at the save point of the turn that asked,
   never mid-turn.** `new_context` sets the request on the `RunContext`; the
   save point performs it on the persisted log, after its own pass.
+- **A run-level compactor reads the whole branch at every point.** The pass,
+  the reset and the after-run checkpoint see the same history;
+  `Settings.Limit` bounds the projection after the pass, never its input.
 - **A reset is a forced pass with `Reset` set**: a `CompactionAware` storage
   folds everything but the newest user message, earlier checkpoints and
   stand-ins included, so one summary stands; a `ContextResetter` does the

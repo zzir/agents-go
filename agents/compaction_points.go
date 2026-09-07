@@ -143,8 +143,10 @@ func (r *runner) recompactAtSavePoint(ctx context.Context) (input []InputItem, o
 		return nil, false, nil
 	}
 
-	cur := session.Cursor{Limit: -session.ResolveLimit(r.opts.Conversation.Settings)}
-	entries, err := sess.ContextEntries(ctx, cur)
+	// The compactor indexes the whole branch, so the checkpoint after the run
+	// describes what the passes saw; the history limit bounds the projection
+	// afterwards, as it does for the first turn (spec §2.5f).
+	entries, err := sess.ContextEntries(ctx, session.Cursor{})
 	if err != nil {
 		return nil, false, err
 	}
@@ -153,13 +155,19 @@ func (r *runner) recompactAtSavePoint(ctx context.Context) (input []InputItem, o
 		return nil, false, nil
 	}
 
-	history, err := session.ProjectEntries(compacted, r.opts.Conversation.Projectors)
+	history, err := session.ProjectEntries(r.historyWindow(compacted), r.opts.Conversation.Projectors)
 	if err != nil {
 		return nil, false, err
 	}
 	// Scrubbed like the first turn's history: dropping a group can orphan a
 	// tool output.
 	return normalizeStoredInput(history), true, nil
+}
+
+// historyWindow applies Conversation.Settings to entries the way the first
+// turn's read does: the newest Limit of them, all when unbounded.
+func (r *runner) historyWindow(entries []session.Entry) []session.Entry {
+	return session.PageEntries(entries, session.Cursor{Limit: -session.ResolveLimit(r.opts.Conversation.Settings)})
 }
 
 // CompactionCheckpointer is an optional Compactor capability: describe the last

@@ -238,3 +238,58 @@ func TestNewContextNeedsWorkBetweenResets(t *testing.T) {
 		t.Fatalf("outputs = %q", outputs)
 	}
 }
+
+// A history limit bounds what the model reads, not what the compactor
+// indexes: the reset under a limit is still recorded by the after-run
+// checkpoint, so the next run starts from the fresh context too.
+func TestNewContextResetsUnderAHistoryLimit(t *testing.T) {
+	ctx := context.Background()
+	sess := session.NewInMemorySession()
+	for i := range 3 {
+		seedParser(t, sess) // six entries, well past the limit below
+		_ = i
+	}
+	compactor := compaction.New(&compaction.TruncationStrategy{Trigger: compaction.Never()}, nil)
+	compactor.ResetSummary = func(context.Context) (string, error) { return "notes: parser by Ada", nil }
+	model := resetScript()
+	agent := &agents.Agent{Name: "a", ModelImpl: model, Tools: []*agents.Tool{agents.NewContextTool()}}
+	opts := agents.RunOptions{
+		Conversation: agents.ConversationOptions{Session: sess, Settings: session.Settings{Limit: 4}},
+		Compaction:   agents.CompactionOptions{Compactor: compactor},
+	}
+	if _, err := agents.RunSync(ctx, agent, "go", opts); err != nil {
+		t.Fatal(err)
+	}
+	if second := inputTexts(model.Requests()[1]); strings.Contains(second, "Ada wrote the parser.") || !strings.Contains(second, "notes: parser by Ada") {
+		t.Fatalf("the second call reads the fresh context: %q", second)
+	}
+	entries, err := sess.Entries(ctx, session.Cursor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reset *session.CompactionPayload
+	for _, e := range entries {
+		if e.Kind == session.EntryKindCompaction {
+			p, err := e.CompactionPayload()
+			if err != nil {
+				t.Fatal(err)
+			}
+			reset = &p
+		}
+	}
+	if reset == nil || !reset.Reset || len(reset.ExcludedIDs) < 6 {
+		t.Fatalf("the reset was not recorded after the run: %+v", reset)
+	}
+	items, err := sess.ContextItems(ctx, session.Cursor{Limit: -4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var texts []string
+	for _, it := range items {
+		texts = append(texts, session.ItemText(it))
+	}
+	joined := strings.Join(texts, "|")
+	if strings.Contains(joined, "Ada wrote the parser.") || !strings.Contains(joined, "notes: parser by Ada") {
+		t.Fatalf("the next run would read %q", joined)
+	}
+}

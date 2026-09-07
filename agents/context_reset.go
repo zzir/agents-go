@@ -85,7 +85,9 @@ func (r *runner) resetContext(ctx context.Context) (input []InputItem, did bool,
 			return nil, false, nil
 		}
 		startSpan()
-		before, rerr := sess.ContextEntries(ctx, cur)
+		// The whole branch, as every compactor pass reads it; the history
+		// limit applies to the projection below (spec §2.5f).
+		before, rerr := sess.ContextEntries(ctx, session.Cursor{})
 		if rerr != nil {
 			return nil, false, rerr
 		}
@@ -95,6 +97,7 @@ func (r *runner) resetContext(ctx context.Context) (input []InputItem, did bool,
 			RecordDiagnostic(ctx, DiagCompactionFailed, rerr, map[string]any{"point": "reset"})
 			return nil, false, nil
 		}
+		entries = r.historyWindow(entries)
 	}
 	history, err := session.ProjectEntries(entries, r.opts.Conversation.Projectors)
 	if err != nil {
