@@ -801,6 +801,9 @@ model may do about it. The first lever is the budget notice.
   same in memory. Neither present, `context_reset_ignored` is recorded.
 - **A turn that ends in an interruption drops the request.** It reaches no
   save point; the model may ask again.
+- **A second reset needs work in between.** While the context is fresh from
+  a reset, `new_context` answers that nothing more can be dropped and asks
+  nothing; a tool call other than it, or a message, ends the fresh state.
 
 — see [decisions §5.60](../explanation/decisions.md#560-the-budget-rides-on-the-input-not-the-instructions), [§5.61](../explanation/decisions.md#561-retrieval-over-summary), [§5.62](../explanation/decisions.md#562-memory-is-one-store-with-scopes), [§5.63](../explanation/decisions.md#563-a-reset-is-a-checkpoint-with-nothing-to-say)
 

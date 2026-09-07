@@ -26,7 +26,9 @@ func NewContextTool() *Tool {
 			"everything but your memory and the user's latest message leaves your context, and history_search still finds it. "+
 			"Write what you need to keep to memory first.",
 		func(_ context.Context, tc *ToolContext, _ struct{}) (string, error) {
-			tc.RequestContextReset()
+			if !tc.RequestContextReset() {
+				return "The context was reset just now: it holds your memory and the latest message, and there is nothing more to drop. Continue with the task; call new_context again only after doing more work.", nil
+			}
 			return "A new context window starts when this turn ends. Your memory and the last user message carry over; use history_search for anything else.", nil
 		})
 }
@@ -99,8 +101,26 @@ func (r *runner) resetContext(ctx context.Context) (input []InputItem, did bool,
 		return nil, false, err
 	}
 	r.log.component("compaction").Info(ctx, "context reset", slog.Int("entries_after", len(entries)))
+	r.rc.contextFresh.Store(true)
 	// Scrubbed like every other rebuild: a fold can orphan a tool output.
 	return normalizeStoredInput(history), true, nil
+}
+
+// turnDidWork reports whether a turn did anything but ask for a reset: a
+// tool call other than new_context, or a message. Such a turn ends the
+// fresh state, so a later reset request is honored again.
+func turnDidWork(items []*RunItem) bool {
+	for _, it := range items {
+		switch it.Kind {
+		case ItemToolCall, ItemHandoffCall:
+			if it.FunctionCall().Name != "new_context" {
+				return true
+			}
+		case ItemMessage:
+			return true
+		}
+	}
+	return false
 }
 
 // isCompactionAware reports whether the session's storage compacts itself.

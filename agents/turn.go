@@ -180,8 +180,12 @@ func (r *runner) savePoint(ctx context.Context, in savePointInput) (savePointRes
 	}
 	out.Recompacted, out.Input = did, compacted
 
-	// A reset the model asked for this turn lands here, on the persisted
-	// log, and wins over the pass above (spec §2.5i).
+	// Work since the last reset ends its fresh state, so the model may ask
+	// for another; a reset the model asked for this turn lands here, on the
+	// persisted log, and wins over the pass above (spec §2.5i).
+	if turnDidWork(in.NewItems) {
+		r.rc.contextFresh.Store(false)
+	}
 	if r.rc.takeContextReset() {
 		rebuilt, did, err := r.resetContext(ctx)
 		if err != nil {

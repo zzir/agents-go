@@ -321,7 +321,8 @@ opts.Compaction = agents.CompactionOptions{Compactor: compactor}
 ```
 
 A session that cannot reset records `context_reset_ignored` and carries on;
-a turn that ends in an interruption drops the request
+a turn that ends in an interruption drops the request, and a fresh context
+refuses another reset until the model has done some work
 ([spec §2.5i](../reference/spec.md#25i-the-model-manages-its-own-context)).
 In the workbench an agent's compaction mode chooses between `summary`
 (the default), `reset` and `hybrid`, and the panel's button becomes

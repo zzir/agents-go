@@ -190,3 +190,51 @@ func TestNewContextIgnoredWithoutAResettableSession(t *testing.T) {
 		t.Fatalf("no context_reset_ignored diagnostic among %+v", res.Diagnostics)
 	}
 }
+
+// A fresh context refuses another reset until the model does some work:
+// the kept user message would otherwise have it ask in every new window.
+func TestNewContextNeedsWorkBetweenResets(t *testing.T) {
+	ctx := context.Background()
+	storage := &resettingStorage{Storage: session.NewInMemoryStorage("s")}
+	sess := session.NewSession(storage)
+	seedParser(t, sess)
+	model := agentstest.NewResponseBuilder().
+		FunctionCall("new_context", "c1", `{}`).
+		NewTurn().
+		FunctionCall("new_context", "c2", `{}`).
+		NewTurn().
+		FunctionCall("get_time", "c3", `{}`).
+		NewTurn().
+		FunctionCall("new_context", "c4", `{}`).
+		NewTurn().
+		Text("done").
+		Build()
+	agent := &agents.Agent{Name: "a", ModelImpl: model, Tools: []*agents.Tool{agents.NewContextTool(), timeTool(t)}}
+	res, err := agents.RunSync(ctx, agent, "reset now", agents.RunOptions{
+		Conversation: agents.ConversationOptions{Session: sess},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resets := 0
+	for _, a := range storage.args {
+		if a.Reset {
+			resets++
+		}
+	}
+	if resets != 2 {
+		t.Fatalf("resets = %d, want 2: the first, then one after the work in between", resets)
+	}
+	var outputs []string
+	for _, it := range res.NewItems {
+		if it.Kind == agents.ItemToolCallOutput {
+			outputs = append(outputs, it.Display().Output)
+		}
+	}
+	if len(outputs) != 4 {
+		t.Fatalf("tool outputs = %d: %q", len(outputs), outputs)
+	}
+	if !strings.Contains(outputs[0], "A new context window starts") || !strings.Contains(outputs[1], "reset just now") || !strings.Contains(outputs[3], "A new context window starts") {
+		t.Fatalf("outputs = %q", outputs)
+	}
+}

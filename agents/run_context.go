@@ -41,16 +41,23 @@ type RunContext struct {
 	nestedMu         sync.Mutex
 	nestedToolStates map[string]*RunState
 
-	// contextReset is a model-requested context reset awaiting the save point.
+	// contextReset is a model-requested context reset awaiting the save point;
+	// contextFresh says the context IS the last reset's, with no work since.
 	contextReset atomic.Bool
+	contextFresh atomic.Bool
 }
 
 // RequestContextReset asks for a fresh context window at the turn's save
-// point (spec §2.5i); NewContextTool is the model's way to call it.
-func (rc *RunContext) RequestContextReset() {
-	if rc != nil {
-		rc.contextReset.Store(true)
+// point (spec §2.5i); NewContextTool is the model's way to call it. It
+// reports false, asking nothing, while the context is still fresh from a
+// reset with no work done since: the kept user message would otherwise have
+// the model ask again in every new window.
+func (rc *RunContext) RequestContextReset() bool {
+	if rc == nil || rc.contextFresh.Load() {
+		return false
 	}
+	rc.contextReset.Store(true)
+	return true
 }
 
 // ContextResetRequested reports a reset asked for and not yet performed.
