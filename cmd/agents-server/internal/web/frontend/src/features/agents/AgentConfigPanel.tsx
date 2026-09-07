@@ -206,6 +206,8 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
   const [selectedMcp, setSelectedMcp] = useState<(string | number)[]>(initTools);
   const [selectedSkills, setSelectedSkills] = useState<string[] | null>(initSkills);
   const set = <K extends keyof AgentFormData>(k: K, v: AgentFormData[K]) => setForm(prev => ({ ...prev, [k]: v }));
+  // Summary is the default mode and the only one with a kept window and a summary prompt.
+  const summaryMode = !form.compaction_mode || form.compaction_mode === 'summary';
   // The backend's facts follow the REFERENCED provider: wording from the
   // static table, machine facts (unsupported features) from the server's
   // registry. An agent with no provider runs on the built-in openai default.
@@ -474,10 +476,13 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
             <Select.Option value="reset">Reset — start over with the session memory; the model may call new_context</Select.Option>
             <Select.Option value="hybrid">Hybrid — reset, carrying a short recap as well</Select.Option>
           </Select>, 'Reset and hybrid turn on the memory and history tools for the agent')}
-          {fc('Threshold (tokens)', <TextInput block type="number" min={0} value={String(form.compaction_threshold_tokens || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_threshold_tokens', parseInt(e.target.value) || 0)} />, 'Token count that triggers compaction (0 = default 50000); sized from real usage, byte-estimated where unmeasured')}
-          {fc('Window size', <TextInput block type="number" min={0} value={String(form.compaction_window || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_window', parseInt(e.target.value) || 0)} />, 'Recent items to keep intact (0 = default 10)')}
-          {fc('Summary model', <TextInput value={form.compaction_model || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_model', e.target.value)} placeholder="e.g. gpt-4.1-mini" block />, "Model used to generate conversation summaries (empty = the agent's model)")}
-          {fc('Summary prompt', <Textarea value={form.compaction_prompt || ''} onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('compaction_prompt', e.target.value)} rows={8} placeholder="Custom summarization instructions (leave empty for default)" block className="textarea-grow" style={{ fontFamily: 'var(--fontStack-monospace)' }} />)}
+          {fc('Threshold (tokens)', <TextInput block type="number" min={0} value={String(form.compaction_threshold_tokens || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_threshold_tokens', parseInt(e.target.value) || 0)} />, 'Token count that triggers a pass (0 = default 50000); sized from real usage, byte-estimated where unmeasured')}
+          {/* A reset keeps the latest message, not a window, and only a summary
+              or a hybrid recap needs the summary model; the prompt is the
+              summary's alone (hybrid's recap has its own). */}
+          {summaryMode && fc('Window size', <TextInput block type="number" min={0} value={String(form.compaction_window || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_window', parseInt(e.target.value) || 0)} />, 'Recent items to keep intact (0 = default 10)')}
+          {form.compaction_mode !== 'reset' && fc('Summary model', <TextInput value={form.compaction_model || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_model', e.target.value)} placeholder="e.g. gpt-4.1-mini" block />, form.compaction_mode === 'hybrid' ? "Model that writes the short recap a reset carries (empty = the agent's model)" : "Model used to generate conversation summaries (empty = the agent's model)")}
+          {summaryMode && fc('Summary prompt', <Textarea value={form.compaction_prompt || ''} onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('compaction_prompt', e.target.value)} rows={8} placeholder="Custom summarization instructions (leave empty for default)" block className="textarea-grow" style={{ fontFamily: 'var(--fontStack-monospace)' }} />)}
         </>}
       </div>
 
