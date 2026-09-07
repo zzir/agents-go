@@ -105,7 +105,10 @@ type BuildResult struct {
 
 	// ContextWindow is the config's declared window in tokens, what the run
 	// tells the model about its budget; 0 is unknown and sends nothing.
-	ContextWindow int
+	// ContextWindows has every built agent's by name, for the agent a
+	// handoff lands on. Set only on the entry build.
+	ContextWindow  int
+	ContextWindows map[string]int
 
 	// TraceIncludeSensitive gates whether generation spans record request and
 	// response content (trace_include_sensitive_data); off, Replay has no seed.
@@ -185,8 +188,10 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, project
 		result.TraceIncludeSensitive = deps.Settings.Bool(ctx, settings.KeyTraceIncludeSensitiveData)
 		result.LogSensitive = deps.Settings.Bool(ctx, settings.KeyLogSensitiveData)
 		result.AgentIDs = make(map[string]string, len(bc.cache))
+		result.ContextWindows = make(map[string]int, len(bc.cache))
 		for id, r := range bc.cache {
 			result.AgentIDs[r.Agent.Name] = id
+			result.ContextWindows[r.Agent.Name] = r.ContextWindow
 		}
 	}
 	if err == nil && !background && deps.TaskManager != nil && result.Behavior.SubagentsOn() {

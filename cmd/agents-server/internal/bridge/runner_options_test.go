@@ -129,7 +129,7 @@ func TestRunOptionsForCarriesTheContextBudget(t *testing.T) {
 		t.Fatal("a declared window must install the budget notice")
 	}
 	// No window: the store is not consulted at all.
-	if b := contextBudget(context.Background(), &BuildResult{}, nil, session.Ref{}); b != (agents.ContextBudget{}) {
+	if b := contextBudget(context.Background(), &BuildResult{}, nil, session.Ref{}); b.Window != 0 || b.Occupied != 0 || b.WindowFor != nil {
 		t.Fatalf("no window must yield the zero budget, got %+v", b)
 	}
 }
@@ -155,7 +155,26 @@ func TestContextBudgetReadsTheLastMeasuredCall(t *testing.T) {
 		}
 	}
 	got := contextBudget(ctx, &BuildResult{ContextWindow: 8000}, sa, ref)
-	if want := (agents.ContextBudget{Window: 8000, Occupied: 2700}); got != want {
-		t.Fatalf("contextBudget = %+v, want %+v", got, want)
+	if got.Window != 8000 || got.Occupied != 2700 {
+		t.Fatalf("contextBudget = %+v, want window 8000 and 2700 occupied", got)
+	}
+}
+
+// A handoff target's window comes from the build: every agent the entry
+// build reached is in ContextWindows, and an unknown name falls back to the
+// entry's Window.
+func TestContextBudgetKnowsEveryBuiltAgentsWindow(t *testing.T) {
+	built := &BuildResult{ContextWindow: 8000, ContextWindows: map[string]int{"entry": 8000, "specialist": 2000}}
+	db := testdb.New(t)
+	ref := session.Direct(store.NewID())
+	b := contextBudget(context.Background(), built, store.NewEntryStoreFor(db, ref), ref)
+	if b.Window != 8000 || b.WindowFor == nil {
+		t.Fatalf("budget = %+v", b)
+	}
+	if got := b.WindowFor(&agents.Agent{Name: "specialist"}); got != 2000 {
+		t.Fatalf("specialist window = %d", got)
+	}
+	if got := b.WindowFor(&agents.Agent{Name: "stranger"}); got != 0 {
+		t.Fatalf("an unknown agent falls back through zero, got %d", got)
 	}
 }

@@ -75,7 +75,9 @@ func (s *MemoryStore) ListConfig(ctx context.Context, callerID string, admin boo
 		q = q.Where("mem.scope_id = ?", scopeID)
 	}
 	if !admin {
-		visible := s.db.NewSelect().Model((*AgentConfig)(nil)).Column("id").
+		// scope_id is text and the agent id a uuid: PostgreSQL compares the
+		// two only through a cast, which SQLite accepts as well.
+		visible := s.db.NewSelect().Model((*AgentConfig)(nil)).ColumnExpr("CAST(id AS TEXT)").
 			Where("scope = ? OR owner_id = ?", ScopeGlobal, callerID)
 		q = q.Where("(mem.scope_kind = ? OR mem.scope_id IN (?))", MemoryScopeGlobal, visible)
 	}
@@ -166,6 +168,14 @@ func upsertMemory(ctx context.Context, tx bun.Tx, m *Memory, appendTo bool, guar
 	}
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
+		// Two creates of different keys never meet on a row lock, so the
+		// count below is serialized per scope on PostgreSQL by an advisory
+		// lock; SQLite's single writer serializes by itself.
+		if tx.Dialect().Name() == dialect.PG {
+			if _, lerr := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?))", sc.Kind+"|"+sc.ID+"|"+sc.Gen); lerr != nil {
+				return fmt.Errorf("locking %s memories: %w", sc.Kind, lerr)
+			}
+		}
 		n, cerr := scopedMemories(tx.NewSelect().Model((*Memory)(nil)), sc).Count(ctx)
 		if cerr != nil {
 			return fmt.Errorf("counting %s memories: %w", sc.Kind, cerr)

@@ -80,7 +80,12 @@ func contextBudget(ctx context.Context, built *BuildResult, sa *store.EntryStore
 	if built.ContextWindow <= 0 {
 		return agents.ContextBudget{}
 	}
-	b := agents.ContextBudget{Window: built.ContextWindow}
+	b := agents.ContextBudget{Window: built.ContextWindow, WindowFor: func(a *agents.Agent) int {
+		if a == nil {
+			return 0
+		}
+		return built.ContextWindows[a.Name]
+	}}
 	rep, err := sa.ContextReport(ctx, ref)
 	if err != nil {
 		logging.Ctx(ctx).Warn("context budget: reading the last measured call; the first call carries no figure", "error", err)

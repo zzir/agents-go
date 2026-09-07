@@ -3,7 +3,9 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/uptrace/bun"
@@ -284,5 +286,54 @@ func TestRunMemoryWritesAsTheModel(t *testing.T) {
 	}
 	if err := NewRunMemory(db, memories, bob, false).Write(ctx, agentScope, "k", "v2"); err != nil {
 		t.Fatalf("the owner may: %v", err)
+	}
+}
+
+// Creates that race for the last slots of a scope never push it past its
+// limit: the count and the insert are one serialized step.
+func TestMemoryCreatesNeverExceedTheLimit(t *testing.T) {
+	createRace(t, newTestDB(t))
+}
+
+func createRace(t *testing.T, db *bun.DB) {
+	t.Helper()
+	ctx := context.Background()
+	s := NewMemoryStore(db)
+	sc := MemoryScope{Kind: MemoryScopeAgent, ID: NewID()}
+	limit := MemoryPolicies[MemoryScopeAgent].MaxKeys
+	for i := range limit - 1 {
+		if err := s.Upsert(ctx, mem(sc.Kind, sc.ID, "", fmt.Sprintf("seed-%03d", i), "v"), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const writers = 8
+	var wg sync.WaitGroup
+	results := make(chan error, writers)
+	for w := range writers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results <- s.Upsert(ctx, mem(sc.Kind, sc.ID, "", fmt.Sprintf("race-%d", w), "v"), nil)
+		}()
+	}
+	wg.Wait()
+	close(results)
+	ok, refused := 0, 0
+	for err := range results {
+		switch {
+		case err == nil:
+			ok++
+		case errors.Is(err, ErrMemoryLimit):
+			refused++
+		default:
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+	rows, err := s.ListScope(ctx, sc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok != 1 || refused != writers-1 || len(rows) != limit {
+		t.Fatalf("ok=%d refused=%d rows=%d, want 1/%d/%d", ok, refused, len(rows), writers-1, limit)
 	}
 }

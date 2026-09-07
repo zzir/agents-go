@@ -182,3 +182,8 @@ func TestPGInstanceLockIsExclusive(t *testing.T) {
 func TestPGMemoryAppendsNeverLoseText(t *testing.T) {
 	appendRace(t, pgTestDB(t))
 }
+
+// The advisory lock is what serializes the count on PostgreSQL.
+func TestPGMemoryCreatesNeverExceedTheLimit(t *testing.T) {
+	createRace(t, pgTestDB(t))
+}
