@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/zzir/agents-go/agents"
 )
@@ -439,9 +440,10 @@ func ValidKey(key string) error {
 	return nil
 }
 
-// Snapshot renders a scope's memories as one text of at most maxChars
-// characters: every memory in full while they fit, then the rest as a list
-// of keys and sizes. Empty when the scope holds nothing.
+// Snapshot renders a scope's memories as one text of at most maxChars bytes
+// (0 for no bound): every memory in full while they fit, then the rest as a
+// list of keys and sizes, itself cut to what fits. Empty when the scope holds
+// nothing.
 func Snapshot(ctx context.Context, store Store, scope Scope, maxChars int) (string, error) {
 	infos, err := store.List(ctx, scope)
 	if err != nil {
@@ -451,6 +453,7 @@ func Snapshot(ctx context.Context, store Store, scope Scope, maxChars int) (stri
 		return "", nil
 	}
 	sort.Slice(infos, func(i, j int) bool { return infos[i].Key < infos[j].Key })
+	fits := func(b *strings.Builder, more string) bool { return maxChars <= 0 || b.Len()+len(more) <= maxChars }
 	var b strings.Builder
 	var rest []Info
 	for i, in := range infos {
@@ -459,7 +462,7 @@ func Snapshot(ctx context.Context, store Store, scope Scope, maxChars int) (stri
 			return "", err
 		}
 		section := fmt.Sprintf("## %s\n%s\n\n", in.Key, text)
-		if maxChars > 0 && b.Len()+len(section) > maxChars {
+		if !fits(&b, section) {
 			rest = infos[i:]
 			break
 		}
@@ -467,9 +470,32 @@ func Snapshot(ctx context.Context, store Store, scope Scope, maxChars int) (stri
 	}
 	if len(rest) > 0 {
 		b.WriteString("## Not shown (read with memory_read)\n")
-		for _, in := range rest {
-			fmt.Fprintf(&b, "- %s (%d bytes)\n", in.Key, in.Bytes)
+		for i, in := range rest {
+			line := fmt.Sprintf("- %s (%d bytes)\n", in.Key, in.Bytes)
+			tail := fmt.Sprintf("- and %d more\n", len(rest)-i)
+			// The last line needs no room left for a tail after it.
+			need := line
+			if i < len(rest)-1 {
+				need += tail
+			}
+			if !fits(&b, need) {
+				b.WriteString(tail)
+				break
+			}
+			b.WriteString(line)
 		}
 	}
-	return strings.TrimRight(b.String(), "\n"), nil
+	return capBytes(strings.TrimRight(b.String(), "\n"), maxChars), nil
+}
+
+// capBytes cuts s to at most n bytes on a rune boundary; n <= 0 leaves it.
+func capBytes(s string, n int) string {
+	if n <= 0 || len(s) <= n {
+		return s
+	}
+	cut := n
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut]
 }

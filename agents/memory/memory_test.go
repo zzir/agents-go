@@ -165,15 +165,40 @@ func TestSnapshotFitsThenLists(t *testing.T) {
 	if !strings.HasPrefix(whole, "## a.md\nay\n\n## b.md\nbee\n\n## c.md\n") || strings.Contains(whole, "Not shown") {
 		t.Fatalf("whole = %q", whole)
 	}
-	cut, err := memory.Snapshot(ctx, store, sessionScope, 40)
+	cut, err := memory.Snapshot(ctx, store, sessionScope, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(cut, "## a.md\nay") || !strings.Contains(cut, "Not shown (read with memory_read)\n- c.md (100 bytes)") {
-		t.Fatalf("cut = %q", cut)
+	if !strings.Contains(cut, "## a.md\nay") || !strings.Contains(cut, "Not shown (read with memory_read)\n- c.md (100 bytes)") || len(cut) > 100 {
+		t.Fatalf("cut = %q (%d bytes)", cut, len(cut))
 	}
 	empty, err := memory.Snapshot(ctx, store, agentScope, 0)
 	if err != nil || empty != "" {
 		t.Fatalf("empty = %q, %v", empty, err)
+	}
+}
+
+// The list of what was not shown counts against the bound too: a hundred
+// long keys never push the snapshot past maxChars.
+func TestSnapshotNeverExceedsTheBound(t *testing.T) {
+	ctx := context.Background()
+	store := memory.NewInMemoryStore()
+	for i := range 100 {
+		key := fmt.Sprintf("%03d-%s.md", i, strings.Repeat("k", 190))
+		if err := store.Write(ctx, sessionScope, key, strings.Repeat("x", 500)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, bound := range []int{20_000, 2_000, 200, 30} {
+		snap, err := memory.Snapshot(ctx, store, sessionScope, bound)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(snap) > bound {
+			t.Fatalf("bound %d: snapshot is %d bytes", bound, len(snap))
+		}
+		if bound >= 200 && !strings.Contains(snap, " more") {
+			t.Fatalf("bound %d: the cut list says how many were left out: %q", bound, snap[len(snap)-60:])
+		}
 	}
 }
