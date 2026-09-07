@@ -110,3 +110,33 @@ func TestContextBudgetSendsNothingWithoutAFigure(t *testing.T) {
 		t.Fatalf("second call: role=%q text=%q", role, text)
 	}
 }
+
+// Under server-managed conversation state only new items go on the wire and
+// the provider stores them, so a notice per call would pile up in the
+// thread: none is sent there.
+func TestContextBudgetStaysOffServerManagedState(t *testing.T) {
+	ctx := context.Background()
+	model := agentstest.NewResponseBuilder().
+		FunctionCall("get_time", "call-1", "{}").
+		Usage(agents.RequestUsage{InputTokens: 1000, OutputTokens: 50, TotalTokens: 1050}).
+		ResponseID("resp-1").
+		NewTurn().
+		Text("noon").
+		Usage(agents.RequestUsage{InputTokens: 1200, OutputTokens: 10, TotalTokens: 1210}).
+		ResponseID("resp-2").
+		Build()
+	agent := &agents.Agent{Name: "a", ModelImpl: model, Tools: []*agents.Tool{timeTool(t)}}
+	if _, err := agents.RunSync(ctx, agent, "time?", agents.RunOptions{
+		Conversation: agents.ConversationOptions{UsePreviousResponseID: true},
+		Model:        agents.ModelOptions{InputFilter: agents.ContextBudget{Window: 10_000, Occupied: 4_000}.InputFilter()},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for i, req := range model.Requests() {
+		for _, it := range req.Input {
+			if strings.HasPrefix(session.ItemText(it), "Context budget:") {
+				t.Fatalf("call %d carried a budget notice under server-managed state", i)
+			}
+		}
+	}
+}

@@ -22,12 +22,23 @@ type ContextBudget struct {
 func (b ContextBudget) InputFilter() CallModelInputFilter {
 	return func(_ context.Context, rc *RunContext, _ *Agent, data ModelInputData) (ModelInputData, error) {
 		used := b.used(rc)
-		if b.Window <= 0 || used <= 0 {
+		if b.Window <= 0 || used <= 0 || serverManaged(rc) {
 			return data, nil
 		}
 		data.Input = append(slices.Clone(data.Input), InputItemsFromSystemText(b.notice(used))...)
 		return data, nil
 	}
+}
+
+// serverManaged reports a run whose history lives with the provider: only
+// new items go on the wire and the provider keeps them, so a notice per call
+// would pile up in the thread rather than replace the last one.
+func serverManaged(rc *RunContext) bool {
+	if rc == nil || rc.inheritedOpts == nil {
+		return false
+	}
+	conv := rc.inheritedOpts.Conversation
+	return conv.UsePreviousResponseID || conv.ConversationID != ""
 }
 
 // used is the newest measured figure: the run's last request, else Occupied.

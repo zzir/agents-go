@@ -110,7 +110,7 @@ func (c *Compactor) Reset(ctx context.Context, entries []session.Entry) ([]sessi
 		}
 		c.idx.Groups[first].Replacement = []session.Entry{e}
 	}
-	c.reset = true
+	c.reset = first >= 0
 	return c.idx.IncludedEntries(), nil
 }
 

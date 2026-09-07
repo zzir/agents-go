@@ -71,3 +71,30 @@ func entry(id, role, text string) session.Entry {
 	e.ID = id
 	return e
 }
+
+// A reset that finds nothing to fold leaves no mark behind: a later pass that
+// folds something is recorded as that pass, not as a reset.
+func TestResetWithNothingToFoldLeavesNoMark(t *testing.T) {
+	ctx := context.Background()
+	only := []session.Entry{entry("u1-id", "user", "the only question")}
+	c := New(&TruncationStrategy{Trigger: Always(), MinimumPreservedGroups: 1}, nil)
+	c.ResetSummary = func(context.Context) (string, error) { return "notes", nil }
+	if _, err := c.Reset(ctx, only); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := c.Checkpoint(only); err != nil {
+		t.Fatal(err)
+	}
+	grown := append(append([]session.Entry(nil), only...),
+		entry("a1-id", "assistant", "an answer"), entry("u2-id", "user", "another question"), entry("a2-id", "assistant", "another answer"))
+	if _, err := c.Compact(ctx, grown); err != nil {
+		t.Fatal(err)
+	}
+	cp, ok, err := c.Checkpoint(grown)
+	if err != nil || !ok {
+		t.Fatalf("checkpoint: %v %v", ok, err)
+	}
+	if p, _ := cp.CompactionPayload(); p.Reset {
+		t.Fatalf("a truncation pass was recorded as a reset: %+v", p)
+	}
+}
