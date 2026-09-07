@@ -131,6 +131,62 @@ function Growth({ points }: { points: number[] }) {
   );
 }
 
+interface SessionMemoryInfo { id: string; key: string; bytes: number; written_by: string; updated_at: string }
+
+// SessionMemory lists what the model wrote for itself in this conversation:
+// the memory that survives compaction and a reset. Read-only here; a row
+// expands to its content, and the owner can delete one.
+function SessionMemory({ sessionId, running, reloadKey }: { sessionId: string; running: boolean; reloadKey?: unknown }) {
+  const { data, reload } = useApi<SessionMemoryInfo[]>(() => api.sessions.memory(sessionId) as Promise<SessionMemoryInfo[]>, [sessionId, running, reloadKey]);
+  const [open, setOpen] = useState<string | null>(null);
+  const [content, setContent] = useState<Record<string, string>>({});
+  const rows = data || [];
+  const show = async (key: string) => {
+    if (open === key) { setOpen(null); return; }
+    setOpen(key);
+    if (content[key] === undefined) {
+      try {
+        const m = await api.sessions.memoryKey(sessionId, key);
+        setContent(prev => ({ ...prev, [key]: m.content ?? '' }));
+      } catch (e) {
+        setContent(prev => ({ ...prev, [key]: `(could not load: ${e instanceof Error ? e.message : String(e)})` }));
+      }
+    }
+  };
+  const del = async (row: SessionMemoryInfo) => {
+    if (!window.confirm(`Delete the memory "${row.key}"?`)) return;
+    await api.memories.delete(row.id);
+    setContent(prev => { const next = { ...prev }; delete next[row.key]; return next; });
+    reload();
+  };
+  if (rows.length === 0) return null;
+  const total = rows.reduce((n, r) => n + r.bytes, 0);
+  return (
+    <section className="ctx-sec">
+      <div className="ctx-sec-head">
+        <span>Session memory</span>
+        <span className="ctx-mono ctx-muted">{rows.length} {rows.length === 1 ? 'key' : 'keys'} · {fmt(total)} bytes</span>
+      </div>
+      <ul className="ctx-rows ctx-rows-plain">
+        {rows.map(r => (
+          <li key={r.id} className="ctx-row ctx-mem-row">
+            <div className="ctx-row-top">
+              <button type="button" className="ctx-mem-key" onClick={() => show(r.key)} title={r.written_by === 'model' ? 'Written by the model' : 'Written by you'}>
+                <span className="ctx-row-name ctx-mono">{r.key}</span>
+              </button>
+              <span className="ctx-mono ctx-row-tok">{fmt(r.bytes)} B</span>
+              <button type="button" className="ctx-mem-del" onClick={() => del(r)} title="Delete this memory">×</button>
+            </div>
+            {open === r.key && (
+              <pre className="ctx-mem-text">{content[r.key] === undefined ? 'Loading…' : content[r.key]}</pre>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 export function ContextPanel({ sessionId, running, reloadKey, onClose, onCompact }: ContextPanelProps) {
   const { data, loading } = useApi<ContextReport>(() => api.sessions.context(sessionId) as Promise<ContextReport>, [sessionId, running, reloadKey]);
   const [compacting, setCompacting] = useState(false);
@@ -313,6 +369,8 @@ export function ContextPanel({ sessionId, running, reloadKey, onClose, onCompact
               </div>
             </section>
           )}
+
+          <SessionMemory sessionId={sessionId} running={running} reloadKey={reloadKey} />
 
           {(data.growth?.length || 0) > 1 && (
             <section className="ctx-sec">

@@ -25,7 +25,8 @@ interface TodoRow { content: string; status: string }
 type ArgBody =
   | { kind: 'patch' | 'command' | 'json' | 'markdown'; text: string }
   | { kind: 'todos'; text: string; todos: TodoRow[] }
-  | { kind: 'workflow'; text: string; spec: WorkflowSpec };
+  | { kind: 'workflow'; text: string; spec: WorkflowSpec }
+  | { kind: 'memory'; text: string; scope: string; key: string; append: boolean };
 
 // primaryArg picks the meaningful content to show for a tool call. For the tools
 // an operator actually reviews at approval time we surface the raw field with
@@ -50,6 +51,11 @@ function primaryArg(toolName: string, args: string): ArgBody {
     }
     if (toolName === 'submit_plan' && typeof parsed.plan === 'string') {
       return { kind: 'markdown', text: parsed.plan };
+    }
+    if ((toolName === 'memory_write' || toolName === 'memory_append') && typeof parsed.text === 'string') {
+      // The approval card of an agent-scope write IS the review: scope, key,
+      // and the text exactly as it would land.
+      return { kind: 'memory', text: parsed.text, scope: typeof parsed.scope === 'string' && parsed.scope ? parsed.scope : 'session', key: typeof parsed.key === 'string' ? parsed.key : '', append: toolName === 'memory_append' };
     }
     if (toolName === 'todo_write' && Array.isArray(parsed.todos)) {
       const todos = (parsed.todos as Array<{ content?: string; status?: string }>)
@@ -111,6 +117,12 @@ function argSummary(toolName: string, args: string): { text: string; mono: boole
       case 'save_workflow':
       case 'get_workflow':
         return typeof p.name === 'string' && p.name ? { text: p.name, mono: false } : null;
+      case 'memory_write':
+      case 'memory_append':
+      case 'memory_read':
+        return typeof p.key === 'string' && p.key ? { text: (typeof p.scope === 'string' && p.scope ? p.scope + ' · ' : '') + p.key, mono: true } : null;
+      case 'memory_search':
+        return typeof p.query === 'string' && p.query ? { text: p.query, mono: false } : null;
       case 'multi_tool_use.parallel': {
         const uses = Array.isArray(p.tool_uses) ? p.tool_uses : [];
         const names = uses
@@ -304,6 +316,15 @@ export function ToolCallCard({ toolCall, live, onInspectTask, onRetryTask }: Too
         <div className="ToolCallCard-plan markdown-body" dangerouslySetInnerHTML={{ __html: planHtml }} />
       ) : body.kind === 'workflow' ? (
         <WorkflowSpecBody spec={body.spec} pending={pendingApproval} />
+      ) : body.kind === 'memory' ? (
+        <div className="ToolCallCard-memory">
+          <div className="ToolCallCard-memory-head">
+            <span className="ToolCallCard-memory-scope">{body.scope} memory</span>
+            <span className="ToolCallCard-memory-key">{body.key}</span>
+            {body.append && <span className="ToolCallCard-memory-op">append</span>}
+          </div>
+          <pre className="ToolCallCard-memory-text">{body.text}</pre>
+        </div>
       ) : body.kind === 'todos' ? (
         <ul className="ToolCallCard-todos">
           {body.todos.map((td, i) => (

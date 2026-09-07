@@ -2450,10 +2450,18 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List memories */
+        /**
+         * List memories
+         * @description Global memories and the memories of agents visible to the caller. Session memory is read under /sessions/{id}/memory.
+         */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description global or agent */
+                    scope_kind?: string;
+                    /** @description An agent id */
+                    scope_id?: string;
+                };
                 header?: never;
                 path?: never;
                 cookie?: never;
@@ -2469,6 +2477,15 @@ export interface paths {
                         "application/json": components["schemas"]["store.Memory"][];
                     };
                 };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
                 /** @description Internal Server Error */
                 500: {
                     headers: {
@@ -2481,7 +2498,10 @@ export interface paths {
             };
         };
         put?: never;
-        /** Create memory */
+        /**
+         * Create memory
+         * @description Global memory is an admin's to write, an agent's memory its editor's, a session's its owner's. An existing key is replaced.
+         */
         post: {
             parameters: {
                 query?: never;
@@ -2489,7 +2509,7 @@ export interface paths {
                 path?: never;
                 cookie?: never;
             };
-            /** @description Memory; agent_config_id scopes it to one agent, empty means global */
+            /** @description Memory */
             requestBody: {
                 content: {
                     "application/json": Record<string, never> | components["schemas"]["handler.memoryReq"];
@@ -2507,6 +2527,24 @@ export interface paths {
                 };
                 /** @description Bad Request */
                 400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description Forbidden */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -2580,7 +2618,10 @@ export interface paths {
                 };
             };
         };
-        /** Update memory */
+        /**
+         * Update memory
+         * @description A memory's scope and key are its identity and must match the row; only content and metadata change.
+         */
         put: {
             parameters: {
                 query?: never;
@@ -2609,6 +2650,15 @@ export interface paths {
                 };
                 /** @description Bad Request */
                 400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description Forbidden */
+                403: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -2650,12 +2700,21 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description deleted */
+                /** @description No Content */
                 204: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content?: never;
+                };
+                /** @description Forbidden */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
                 };
                 /** @description Not Found */
                 404: {
@@ -5129,6 +5188,122 @@ export interface paths {
                 };
             };
         };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/memory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List session memory */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Session ID */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.SessionMemoryInfo"][];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description Internal Server Error */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/memory/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read session memory */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Session ID */
+                    id: string;
+                    /** @description Memory key */
+                    key: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["store.Memory"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description Internal Server Error */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -7632,6 +7807,13 @@ export interface components {
              */
             user_input?: string;
         };
+        "handler.SessionMemoryInfo": {
+            bytes?: number;
+            id?: string;
+            key?: string;
+            updated_at?: string;
+            written_by?: string;
+        };
         "handler.SetOwnerRequest": {
             user_id?: string;
         };
@@ -7809,10 +7991,13 @@ export interface components {
             name?: string;
         };
         "handler.memoryReq": {
-            agent_config_id?: string;
             content?: string;
+            /** @description Key is unique within the scope; path-like, at most 200 characters. */
             key?: string;
             metadata?: string;
+            scope_id?: string;
+            /** @description ScopeKind is global, agent or session; ScopeID the agent or session id, empty for global. */
+            scope_kind?: string;
         };
         "handler.playgroundReq": {
             /** @description AgentConfigID selects whose provider credentials and default model to use. */
@@ -8157,6 +8342,7 @@ export interface components {
             handoffs?: string;
             id?: string;
             instructions?: string;
+            memory?: components["schemas"]["store.MemoryGroup"];
             model?: string;
             /** @description The following are already single JSON blobs, kept as their own columns. */
             model_settings?: string;
@@ -8249,11 +8435,6 @@ export interface components {
              */
             compaction_threshold_tokens?: number;
             compaction_window?: number;
-            /**
-             * @description HistoryTools gives the model history_search and history_read over its
-             *     session, folded history included.
-             */
-            history_tools?: boolean;
         };
         /**
          * @description Compaction is present on a checkpoint: what the pass folded away, so a
@@ -8382,17 +8563,43 @@ export interface components {
             output_schema?: string;
         };
         "store.Memory": {
-            /**
-             * @description AgentConfigID scopes the memory to one agent config; empty applies it to
-             *     every agent.
-             */
-            agent_config_id?: string;
             content?: string;
             created_at?: string;
             id?: string;
+            /** @description Key is unique within the scope; a session memory's key is path-like. */
             key?: string;
             metadata?: string;
+            /**
+             * @description OwnerID is the user who wrote it: the caller, or the session's owner
+             *     when the model did.
+             */
+            owner_id?: string;
+            scope_id?: string;
+            /**
+             * @description ScopeKind is global, agent or session; ScopeID names the agent or
+             *     session it belongs to, empty for global.
+             */
+            scope_kind?: string;
             updated_at?: string;
+            /** @description WrittenBy is user or model. */
+            written_by?: string;
+        };
+        "store.MemoryGroup": {
+            /**
+             * @description HistoryTools gives history_search and history_read over the session,
+             *     folded history included.
+             */
+            history_tools?: boolean;
+            /**
+             * @description AgentWrite lets the model propose agent memory as well; each such
+             *     write waits for the user's approval.
+             */
+            memory_agent_write?: boolean;
+            /**
+             * @description Tools gives the agent's chat runs memory_list / read / search / write /
+             *     append over the session's memory.
+             */
+            memory_tools?: boolean;
         };
         "store.Project": {
             created_at?: string;
@@ -8437,6 +8644,8 @@ export interface components {
          *     conversation (instruction layers, tool surface); absent until a run has built once.
          */
         "store.PromptProfile": {
+            /** @description ContextGuidanceChars is the memory and reset guidance the build appended. */
+            context_guidance_chars?: number;
             global_prompt_chars?: number;
             /** @description The instruction layers, in the order WrapInstructions composed them. */
             instructions_chars?: number;

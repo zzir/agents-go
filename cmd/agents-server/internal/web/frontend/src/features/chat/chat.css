@@ -1086,3 +1086,10 @@
   border: 1px solid var(--borderColor-default);
   cursor: zoom-in;
 }
+
+/* memory_write / memory_append: the approval card is the review — scope, key, text as it lands. */
+.ToolCallCard-memory { display: flex; flex-direction: column; gap: var(--base-size-4); }
+.ToolCallCard-memory-head { display: flex; gap: var(--base-size-8); align-items: baseline; font-size: var(--base-text-size-xs); color: var(--fgColor-muted); }
+.ToolCallCard-memory-key { font-family: var(--fontStack-monospace); color: var(--fgColor-default); }
+.ToolCallCard-memory-op { border: 1px solid var(--borderColor-default); border-radius: var(--borderRadius-small); padding: 0 var(--base-size-4); }
+.ToolCallCard-memory-text { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: var(--base-text-size-xs); }

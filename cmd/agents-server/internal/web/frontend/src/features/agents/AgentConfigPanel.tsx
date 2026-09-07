@@ -30,7 +30,8 @@ const CONFIG_GROUPS: Record<string, string[]> = {
   guardrails: ['guardrails', 'output_schema'],
   session: ['prompt_id', 'prompt_version', 'history_limit'],
   approval: ['approve_tools'],
-  compaction: ['compaction_enabled', 'compaction_threshold_tokens', 'compaction_window', 'compaction_model', 'compaction_prompt', 'history_tools'],
+  compaction: ['compaction_enabled', 'compaction_threshold_tokens', 'compaction_window', 'compaction_model', 'compaction_prompt'],
+  memory: ['memory_tools', 'memory_agent_write', 'history_tools'],
 };
 
 // The spellings the server reads as "feed the bad tool name back to the
@@ -92,6 +93,8 @@ interface AgentFormData {
   compaction_window: number;
   compaction_model: string;
   compaction_prompt: string;
+  memory_tools: boolean;
+  memory_agent_write: boolean;
   history_tools: boolean;
   handoffs?: string;
   tools?: string;
@@ -182,7 +185,8 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
     handoff_input_filter: '', max_tool_concurrency: initial ? 0 : 8,
     tool_not_found_behavior: '', reasoning_item_id_policy: '', workflow_authoring: false, subagents: true, vision: false, approve_tools: '',
     compaction_enabled: false, compaction_threshold_tokens: 0,
-    compaction_window: 0, compaction_model: '', compaction_prompt: '', history_tools: false,
+    compaction_window: 0, compaction_model: '', compaction_prompt: '',
+    memory_tools: false, memory_agent_write: false, history_tools: false,
     ...flattenConfig(initial as Record<string, unknown> | undefined),
   });
   const [reasoningEffort, setReasoningEffort] = useState(initMs.reasoning?.effort || '');
@@ -463,17 +467,33 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
           <FormControl.Label>Enable compaction</FormControl.Label>
           <FormControl.Caption>Summarize old messages when history grows large (provider-agnostic)</FormControl.Caption>
         </FormControl>
-        <FormControl>
-          <Checkbox checked={form.history_tools || false} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('history_tools', e.target.checked)} />
-          <FormControl.Label>History tools</FormControl.Label>
-          <FormControl.Caption>history_search and history_read let the model find turns that compaction folded out of its context</FormControl.Caption>
-        </FormControl>
         {form.compaction_enabled && <>
           {fc('Threshold (tokens)', <TextInput block type="number" min={0} value={String(form.compaction_threshold_tokens || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_threshold_tokens', parseInt(e.target.value) || 0)} />, 'Token count that triggers compaction (0 = default 50000); sized from real usage, byte-estimated where unmeasured')}
           {fc('Window size', <TextInput block type="number" min={0} value={String(form.compaction_window || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_window', parseInt(e.target.value) || 0)} />, 'Recent items to keep intact (0 = default 10)')}
           {fc('Summary model', <TextInput value={form.compaction_model || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_model', e.target.value)} placeholder="e.g. gpt-4.1-mini" block />, "Model used to generate conversation summaries (empty = the agent's model)")}
           {fc('Summary prompt', <Textarea value={form.compaction_prompt || ''} onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('compaction_prompt', e.target.value)} rows={8} placeholder="Custom summarization instructions (leave empty for default)" block className="textarea-grow" style={{ fontFamily: 'var(--fontStack-monospace)' }} />)}
         </>}
+      </div>
+
+      <div className="form-group">
+        <div className="form-group-title">Memory</div>
+        <FormControl>
+          <Checkbox checked={form.memory_tools || false} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('memory_tools', e.target.checked)} />
+          <FormControl.Label>Memory tools</FormControl.Label>
+          <FormControl.Caption>memory_write and friends give the model working notes that survive compaction; the Context panel shows them</FormControl.Caption>
+        </FormControl>
+        {form.memory_tools && (
+          <FormControl>
+            <Checkbox checked={form.memory_agent_write || false} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('memory_agent_write', e.target.checked)} />
+            <FormControl.Label>Model may propose agent memory</FormControl.Label>
+            <FormControl.Caption>Each such write waits for your approval and then reaches every conversation with this agent</FormControl.Caption>
+          </FormControl>
+        )}
+        <FormControl>
+          <Checkbox checked={form.history_tools || false} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('history_tools', e.target.checked)} />
+          <FormControl.Label>History tools</FormControl.Label>
+          <FormControl.Caption>history_search and history_read let the model find turns that compaction folded out of its context</FormControl.Caption>
+        </FormControl>
       </div>
 
       <Disclosure variant="plain" className="advanced-toggle" label="Advanced">
