@@ -42,7 +42,7 @@ PostgreSQL and teams.
 ## What you get
 
 - **Transcript**: an append-only session tree: a cancelled run keeps what finished, a paused one survives a restart.
-- **Context**: what the model was sent, and what each part cost. The model is told how full its window is, can search what compaction folded away, and keeps memory of its own: a session's notes, and an agent's facts with your approval.
+- **Context**: what the model was sent, and what each part cost. The model is told how full its window is, can search what compaction folded away, and keeps memory of its own: a session's notes, and an agent's facts with your approval. An agent can run in reset mode, where a full window starts over from that memory instead of a summary.
 - **Traces**: model, tool, handoff and guardrail spans with tokens, latency and errors. No backend to run.
 - **Replay**: re-run a generation with another prompt, model, settings or tools, diffed against the original. No session is touched.
 - **Fork**: regenerate or branch at any turn: the parent kept, the other branch a click away.

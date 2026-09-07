@@ -101,7 +101,7 @@ func toolNotFoundBehavior(s string) agents.ToolNotFoundBehavior {
 
 // wrapCompaction wraps sa with the compaction adapter when the config enables
 // it; an empty summary model falls back to the agent's own.
-func wrapCompaction(sa *store.EntryStore, built *BuildResult, provider agents.ModelProvider, send func(string, any), runID string) *session.Session {
+func wrapCompaction(sa *store.EntryStore, built *BuildResult, provider agents.ModelProvider, send func(string, any), runID string, memories *store.MemoryStore) *session.Session {
 	if !built.Compaction.Enabled || provider == nil {
 		return session.NewSession(sa)
 	}
@@ -109,10 +109,12 @@ func wrapCompaction(sa *store.EntryStore, built *BuildResult, provider agents.Mo
 	if err != nil || summaryModel == nil {
 		return session.NewSession(sa)
 	}
-	return session.NewSession(store.NewCompactionAdapter(sa, summaryModel,
+	ca := store.NewCompactionAdapter(sa, summaryModel,
 		built.Compaction.Threshold, built.Compaction.Window, built.Compaction.Prompt,
 		compactionNotifier(send, runID),
-	))
+	)
+	ca.Mode, ca.Memories = built.Compaction.Mode, memories
+	return session.NewSession(ca)
 }
 
 // summaryModelFor resolves the compaction summary model — compaction_model,

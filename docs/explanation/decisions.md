@@ -1461,3 +1461,30 @@ rows following its fork and delete, an agent's its delete, global's the
 database's; the policy table is what keeps them apart.
 
 Rules: spec §2.5i; workbench invariant 64.
+
+### 5.63 A reset is a checkpoint with nothing to say
+
+Decided 2026-09 with `new_context` and the reset compaction mode.
+
+**Decision.** A context reset is the compaction checkpoint the log already
+has, with everything but the newest user message in `ExcludedIDs` and the
+model's own session memory in the summary slot. The model asks through
+`new_context`; the run grants it at the turn's save point, on the persisted
+log. Summary stays the default mode; reset and hybrid are an agent's opt-in.
+
+**Rejected.** Resetting mid-turn, when the tool runs: the turn's items are
+not yet persisted, so a call could lose its output and the pairing rule with
+it; the save point is where the log is whole. A second projection path for
+the carried memory: the summary slot already renders up front as a system
+message, and the transcript shows what the model kept. Reset as the default:
+a provider not trained to keep notes loses the task on the first fold. A
+save-point compaction pass for self-compacting storages, so a run could
+reset itself when the threshold trips mid-run: it changes the point contract
+of §2.5f for every such storage; the budget notice and `new_context` cover
+the case this round.
+
+**Cost accepted.** A request made in a turn that ends in an interruption is
+dropped; the model asks again. A reset folds the turn's own tool calls with
+the rest, `new_context` included, which is what Codex does too.
+
+Rules: spec §2.5i; workbench invariant 65.

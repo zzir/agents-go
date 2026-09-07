@@ -609,6 +609,9 @@ type CompactionInfo struct {
 	ExcludedIDs  []string `json:"excluded_ids,omitempty"`
 	TokensBefore int      `json:"tokens_before,omitempty"`
 	TokensAfter  int      `json:"tokens_after,omitempty"`
+	// Reset marks a pass that folded the conversation carrying the session
+	// memory rather than a summary.
+	Reset bool `json:"reset,omitempty"`
 }
 
 // GetEntries returns a page of a session's entries, oldest first. With a
@@ -782,6 +785,7 @@ func compactionInfoOf(e session.Entry) *CompactionInfo {
 		ExcludedIDs:  p.ExcludedIDs,
 		TokensBefore: p.TokensBefore,
 		TokensAfter:  p.TokensAfter,
+		Reset:        p.Reset,
 	}
 }
 

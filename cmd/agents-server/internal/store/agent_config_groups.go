@@ -85,6 +85,22 @@ type CompactionGroup struct {
 	Window    int    `json:"compaction_window,omitempty"`
 	Model     string `json:"compaction_model,omitempty"`
 	Prompt    string `json:"compaction_prompt,omitempty"`
+	// Mode is summary (the default), reset or hybrid: whether a pass
+	// summarizes the folded history, drops it carrying the session memory,
+	// or does both.
+	Mode string `json:"compaction_mode,omitempty"`
+}
+
+// The compaction modes.
+const (
+	CompactionModeSummary = "summary"
+	CompactionModeReset   = "reset"
+	CompactionModeHybrid  = "hybrid"
+)
+
+// ResetMode reports whether a pass folds by reset rather than summary.
+func (g CompactionGroup) ResetMode() bool {
+	return g.Mode == CompactionModeReset || g.Mode == CompactionModeHybrid
 }
 
 // MemoryGroup holds the model's memory surface.

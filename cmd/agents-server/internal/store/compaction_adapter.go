@@ -11,7 +11,9 @@ import (
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/compaction"
+	"github.com/zzir/agents-go/agents/memory"
 	"github.com/zzir/agents-go/agents/session"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/tracing"
 )
 
@@ -43,7 +45,20 @@ type CompactionAdapter struct {
 	windowSize    int
 	summaryPrompt string
 	notify        CompactionNotifier
+
+	// Mode is the agent's compaction mode; reset and hybrid fold by reset
+	// (spec §2.5i). Memories, when set, is where a reset reads the session
+	// memory it carries over.
+	Mode     string
+	Memories *MemoryStore
 }
+
+// resetSnapshotChars caps the session memory a reset checkpoint carries.
+const resetSnapshotChars = 20_000
+
+// DefaultRecapPrompt asks for the short account a hybrid reset carries; the
+// detail is left to history_search.
+const DefaultRecapPrompt = `You are given the transcript of a conversation that is being folded out of an assistant's context. Write a recap of at most 300 words in plain prose: what the user wanted, what was decided, what was done and what remains. Leave out details the assistant can look up again; it keeps a searchable copy of the transcript. No tool syntax, no control tokens, no headings.`
 
 var (
 	_ session.Storage         = (*CompactionAdapter)(nil)
@@ -103,6 +118,10 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args session.Com
 
 	if !args.Force && activeTokens(active) < ca.threshold {
 		return nil
+	}
+
+	if args.Reset || ca.Mode == CompactionModeReset || ca.Mode == CompactionModeHybrid {
+		return ca.resetPass(ctx, args, active)
 	}
 
 	if ca.windowSize >= len(active) {
@@ -237,6 +256,131 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args session.Com
 		ca.notify.OnDone(beforeCount, afterCount)
 	}
 	return nil
+}
+
+// resetPass folds the active branch down to its newest user message and a
+// checkpoint carrying the session memory, plus a short recap of what was
+// folded in hybrid mode; a failed recap degrades to a bare reset (spec §2.5i).
+func (ca *CompactionAdapter) resetPass(ctx context.Context, args session.CompactionArgs, active []entryRow) error {
+	bodies, err := ca.entryBodies(ctx, ca.ref, rowIDs(active))
+	if err != nil {
+		return fmt.Errorf("compaction adapter: loading active entries: %w", err)
+	}
+	keep := -1
+	for i := len(active) - 1; i >= 0; i-- {
+		if e, ok := bodies[active[i].ID]; ok && e.Kind == session.EntryKindItem && session.ItemRole(e.Item) == "user" {
+			keep = i
+			break
+		}
+	}
+	var toCompact []entryRow
+	var folded []session.Entry
+	for i := range active {
+		if i == keep || active[i].Kind != string(session.EntryKindItem) {
+			continue
+		}
+		toCompact = append(toCompact, active[i])
+		if e, ok := bodies[active[i].ID]; ok {
+			folded = append(folded, e)
+		}
+	}
+	if len(toCompact) == 0 {
+		return nil
+	}
+
+	if ca.notify.OnStart != nil {
+		ca.notify.OnStart()
+	}
+	var span *tracing.SpanHandle
+	if args.StartSpan != nil {
+		span = args.StartSpan()
+	}
+	span.Set("reset", true)
+	span.Set("before_items", len(active))
+	span.Set("after_items", 1+(len(active)-len(toCompact)))
+
+	var parts []string
+	if ca.Mode == CompactionModeHybrid && ca.summaryModel != nil {
+		if recap := ca.recap(ctx, folded); recap != "" {
+			parts = append(parts, recap)
+		}
+	}
+	if len(parts) == 0 {
+		parts = append(parts, "The context was reset.")
+	}
+	if snap := ca.sessionMemorySnapshot(ctx); snap != "" {
+		parts = append(parts, "Your session memory:\n"+snap)
+	}
+	parts = append(parts, "Everything earlier in this conversation is searchable with history_search.")
+	text := session.SummaryMarker + "\n\n" + strings.Join(parts, "\n\n")
+
+	excluded := make([]string, 0, len(toCompact))
+	compactIDs := make([]string, len(toCompact))
+	for i, row := range toCompact {
+		compactIDs[i] = row.ID
+		excluded = append(excluded, row.EntryID)
+	}
+	before, after := estimateFold(active, toCompact, text)
+	summary, err := session.NewCompactionEntry(session.CompactionPayload{
+		Summary:      text,
+		ExcludedIDs:  excluded,
+		TokensBefore: before,
+		TokensAfter:  after,
+		Reset:        true,
+	})
+	if err != nil {
+		return fmt.Errorf("compaction adapter: encoding reset: %w", err)
+	}
+	summary.Display = &agents.ItemDisplay{Kind: agents.DisplayMessage, Text: strings.TrimPrefix(text, session.SummaryMarker+"\n\n")}
+
+	applied, err := ca.persistCompaction(ctx, compactIDs, summary)
+	if err != nil {
+		return fmt.Errorf("compaction adapter: persisting reset: %w", err)
+	}
+	if applied && ca.notify.OnDone != nil {
+		ca.notify.OnDone(len(active), 1+(len(active)-len(toCompact)))
+	}
+	return nil
+}
+
+// recap asks the summary model for the short account a hybrid reset carries;
+// "" when the model fails, since a reset never fails the run.
+func (ca *CompactionAdapter) recap(ctx context.Context, folded []session.Entry) string {
+	var replayable []session.Entry
+	for _, e := range folded {
+		raw := adaptForeignItemJSON(e.Item)
+		if raw == nil {
+			continue
+		}
+		replayable = append(replayable, session.Entry{Kind: session.EntryKindItem, Item: NormalizeItemJSON(raw)})
+	}
+	transcript := renderTranscript(replayable)
+	if transcript == "" {
+		return ""
+	}
+	resp, err := ca.summaryModel.Respond(ctx, agents.ModelRequest{
+		SystemInstructions: DefaultRecapPrompt,
+		Input:              agents.InputItemsFromText(transcript),
+	})
+	if err != nil {
+		logging.Ctx(ctx).Warn("compaction: recap failed; resetting without one", "error", err)
+		return ""
+	}
+	return strings.TrimSpace(session.ExtractOutputText(resp.Output))
+}
+
+// sessionMemorySnapshot renders the session's memory for the checkpoint;
+// "" without a memory store, an empty memory, or a read that failed.
+func (ca *CompactionAdapter) sessionMemorySnapshot(ctx context.Context) string {
+	if ca.Memories == nil {
+		return ""
+	}
+	snap, err := memory.Snapshot(ctx, &memoryReader{store: ca.Memories, scope: SessionMemoryScope(ca.ref)}, memory.Scope{}, resetSnapshotChars)
+	if err != nil {
+		logging.Ctx(ctx).Warn("compaction: reading the session memory for the reset", "error", err)
+		return ""
+	}
+	return snap
 }
 
 // activeTokens sizes the non-compacted history the way the threshold

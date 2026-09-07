@@ -394,3 +394,11 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     and the injection query it rather than judge. Injection is an allow-list
     of kinds. Session rows follow their session (a fork copies, a delete
     cascades, a generation is a scope of its own), agent rows their agent.
+65. **A reset checkpoint carries the session memory and keeps the newest user
+    message, and one pass serves every trigger.** In reset or hybrid mode the
+    threshold, `Compact now` and the model's `new_context` all run
+    `resetPass` (`compaction_adapter.go`): fold every other item on the
+    active branch, write a checkpoint marked `reset` whose summary is the
+    session memory snapshot (hybrid: a short recap first), and never call
+    the summary model for the fold itself. The mode is the agent's, needs
+    compaction enabled, and turns the memory and history tools on.

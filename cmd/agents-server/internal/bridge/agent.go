@@ -211,17 +211,28 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, project
 	}
 	// A background run's session is a task's own; the tools read the run
 	// context's session, which for a task is its parent's (trustSessionID).
-	if err == nil && !background && (result.Memory.HistoryTools || result.Memory.Tools) {
+	// A reset mode implies the memory and history tools: a reset keeps only
+	// what the model wrote down, and history_search is how it finds the rest.
+	resetMode := err == nil && result.Compaction.Enabled && result.Compaction.ResetMode()
+	if err == nil && !background && (result.Memory.HistoryTools || result.Memory.Tools || resetMode) {
 		mark := len(result.Agent.Tools)
-		if result.Memory.HistoryTools && deps.HistoryTools != nil {
+		if (result.Memory.HistoryTools || resetMode) && deps.HistoryTools != nil {
 			result.Agent.Tools = append(result.Agent.Tools, deps.HistoryTools(ctx, ownerID)...)
 		}
-		if result.Memory.Tools && deps.MemoryTools != nil {
+		guidance := ""
+		if (result.Memory.Tools || resetMode) && deps.MemoryTools != nil {
 			result.Agent.Tools = append(result.Agent.Tools, deps.MemoryTools(ctx, ownerID, result)...)
+			guidance = store.DefaultMemoryGuidance
+		}
+		if resetMode {
+			result.Agent.Tools = append(result.Agent.Tools, agents.NewContextTool())
+			guidance += "\n\n" + store.DefaultResetGuidance
+		}
+		if guidance != "" {
 			// What each scope is for and when to write: a SUFFIX after the
 			// agent's own instructions, measured like every other layer.
-			result.Agent.Instructions = agents.WrapInstructions(result.Agent.Instructions, "", store.DefaultMemoryGuidance)
-			result.Profile.ContextGuidanceChars = len(store.DefaultMemoryGuidance)
+			result.Agent.Instructions = agents.WrapInstructions(result.Agent.Instructions, "", guidance)
+			result.Profile.ContextGuidanceChars = len(guidance)
 		}
 		bucketToolsSince(result.Agent, mark, store.ToolSourceContext, &result.Profile)
 	}

@@ -114,3 +114,38 @@ func (rm *RunMemory) Append(ctx context.Context, sc memory.Scope, key, text stri
 	}
 	return rm.memories.AppendContent(ctx, ms, key, text, MemoryWrittenByModel, rm.ownerID, rm.guard(ms))
 }
+
+// memoryReader is one scope's rows as a read-only memory.Store, for the
+// snapshot a reset carries when only the rows' scope is known.
+type memoryReader struct {
+	store *MemoryStore
+	scope MemoryScope
+}
+
+func (r *memoryReader) List(ctx context.Context, _ memory.Scope) ([]memory.Info, error) {
+	rows, err := r.store.ListScope(ctx, r.scope)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]memory.Info, len(rows))
+	for i, row := range rows {
+		out[i] = memory.Info{Key: row.Key, Bytes: len(row.Content), UpdatedAt: row.UpdatedAt}
+	}
+	return out, nil
+}
+
+func (r *memoryReader) Read(ctx context.Context, _ memory.Scope, key string) (string, error) {
+	m, err := r.store.GetByKey(ctx, r.scope, key)
+	if err != nil {
+		return "", err
+	}
+	return m.Content, nil
+}
+
+func (r *memoryReader) Write(context.Context, memory.Scope, string, string) error {
+	return errors.New("memory: read-only")
+}
+
+func (r *memoryReader) Append(context.Context, memory.Scope, string, string) error {
+	return errors.New("memory: read-only")
+}

@@ -183,7 +183,11 @@ not zero.
 the threshold: the kept window, pairing-safe split and summary-of-summary
 guards still apply, so the worst outcome is `200` with `compacted: false`.
 `409` while a run is executing (the run compacts at its own boundaries);
-`400` when the agent has compaction disabled or no usable provider.
+`400` when the agent has compaction disabled or no usable provider. With the
+agent's `compaction_mode` at `reset` or `hybrid` the same call, the
+threshold, and the model's own `new_context` run one reset pass instead
+([invariant 65](../explanation/workbench-invariants.md)): the checkpoint
+carries the session memory and answers `reset: true` on the entry.
 
 `/sessions/:id/memory` lists the session's own memory, the keys and sizes the
 model (or its owner) wrote, and `/sessions/:id/memory/*key` reads one in

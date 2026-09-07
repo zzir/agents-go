@@ -71,6 +71,7 @@ func (r *Runner) compactSessionAs(ctx context.Context, sessionID string, ac *sto
 	}}
 	ca := store.NewCompactionAdapter(store.NewEntryStoreFor(r.db, ref), summaryModel,
 		ac.Compaction.Threshold, ac.Compaction.Window, ac.Compaction.Prompt, notify)
+	ca.Mode, ca.Memories = ac.Compaction.Mode, r.Deps.Memories
 	if err := ca.RunCompaction(ctx, session.CompactionArgs{Force: true}); err != nil {
 		return false, 0, 0, err
 	}

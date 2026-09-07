@@ -140,6 +140,14 @@ func DecodeAgentSpec(ac *store.AgentConfig) (*AgentSpec, error) {
 
 	// Enum fields are refused at save, not coerced at run: an unknown value
 	// would parse as "error" while the UI showed something else.
+	switch ac.Compaction.Mode {
+	case "", store.CompactionModeSummary, store.CompactionModeReset, store.CompactionModeHybrid:
+	default:
+		return nil, fmt.Errorf("compaction_mode %q: use summary, reset, hybrid, or leave it unset", ac.Compaction.Mode)
+	}
+	if ac.Compaction.ResetMode() && !ac.Compaction.Enabled {
+		return nil, fmt.Errorf("compaction_mode %q needs compaction_enabled", ac.Compaction.Mode)
+	}
 	switch ac.Behavior.ToolNotFoundBehavior {
 	case "", "return_to_model", "return_error_to_model", "error":
 	default:

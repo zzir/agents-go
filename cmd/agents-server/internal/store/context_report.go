@@ -43,6 +43,8 @@ type ContextReport struct {
 	CompactionEnabled   bool `json:"compaction_enabled"`
 	CompactionThreshold int  `json:"compaction_threshold,omitempty"`
 	CompactionTokens    int  `json:"compaction_tokens"`
+	// CompactionMode is the agent's: summary, reset or hybrid.
+	CompactionMode string `json:"compaction_mode,omitempty"`
 
 	// ConversationTokens is the estimated size of the transcript still in
 	// context — every active, uncompacted entry's estimate summed.
