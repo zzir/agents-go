@@ -782,6 +782,9 @@ model may do about it. The first lever is the budget notice.
 - **Its figure is the newest measured call**: within the run, the last
   request's input plus output tokens; before the run's first call, the host's
   `Occupied`. No figure, or no window, sends nothing.
+- **Its window is the active agent's.** `WindowFor` answers per agent, so a
+  handoff to an agent on another model measures against that model's window;
+  a zero answer falls back to `Window`.
 - **The history tools read the log, never the projection.** `history_search`
   and `history_read` answer from the active branch's item entries, folded ones
   included, newest first; the turn in progress is not visible until it ends.
@@ -803,8 +806,10 @@ model may do about it. The first lever is the budget notice.
   folds everything but the newest user message, earlier checkpoints and
   stand-ins included, so one summary stands; a `ContextResetter` does the
   same in memory. Neither present, `context_reset_ignored` is recorded.
-- **A turn that ends in an interruption drops the request.** It reaches no
-  save point; the model may ask again.
+- **The request and the fresh-context guard ride the paused `RunState`.** A
+  turn that ends in an interruption performs the reset at the resumed turn's
+  save point, and a reset asked for again with no work since is refused
+  across the pause as it would be within a run.
 - **A second reset needs work in between.** While the context is fresh from
   a reset, `new_context` answers that nothing more can be dropped and asks
   nothing; a tool call other than it, or a message, ends the fresh state.
@@ -1831,9 +1836,9 @@ Defaults that callers may depend on:
 | Input guardrails | concurrent with the model call | `Blocking: true` makes one a gate |
 | Session persistence | after each turn | Final turn is written after output guardrails pass |
 | `RunResult.Usage` / `RunState.Usage` | detached snapshot | Never the live accumulator; read without synchronization. Mid-run, `RunContext.Usage` is live — read it via `Snapshot()` |
-| Budget notice | off | `ContextBudget{Window, Occupied}.InputFilter()` appends `Context budget: about N of W tokens in use (P% left).` as the last input item ([§2.5i](#25i-the-model-manages-its-own-context)) |
+| Budget notice | off | `ContextBudget{Window, WindowFor, Occupied}.InputFilter()` appends `Context budget: about N of W tokens in use (P% left).` as the last input item ([§2.5i](#25i-the-model-manages-its-own-context)) |
 | History tools | 20 hits, 2,000-character excerpts, 20,000-character reads, 1,000-character queries | `history.MaxLimit`, `ExcerptChars`, `MaxReadChars`, `MaxQueryChars`; a case-insensitive literal substring, newest first, no ranking ([§2.5i](#25i-the-model-manages-its-own-context)) |
-| Memory tools | 1,000,000 bytes per key, 100 keys per scope, 200-character keys | `memory.DefaultMaxBytes`, `DefaultMaxKeys`, `MaxKeyChars`; a host's `ScopeSpec` may lower them ([§2.5i](#25i-the-model-manages-its-own-context)) |
+| Memory tools | 1,000,000 bytes per key, 100 keys per scope, 200-character keys; 20,000-character reads, 500-character search matches | `memory.DefaultMaxBytes`, `DefaultMaxKeys`, `MaxKeyChars`, `MaxReadChars`, `MaxMatchChars`; a host's `ScopeSpec` may lower the first two ([§2.5i](#25i-the-model-manages-its-own-context)) |
 
 ---
 

@@ -12,6 +12,10 @@ import (
 type ContextBudget struct {
 	// Window is the model's context window in tokens. Zero sends nothing.
 	Window int
+	// WindowFor, when set, answers the active agent's window, so a handoff
+	// to an agent on another model reports that one; a zero answer falls
+	// back to Window.
+	WindowFor func(agent *Agent) int
 	// Occupied is what the last model call before this run measured, input
 	// and output together. Zero means unknown: the run's first call then
 	// carries no figure, and every later call uses the run's own usage.
@@ -20,12 +24,18 @@ type ContextBudget struct {
 
 // InputFilter returns the CallModelInputFilter that appends the notice.
 func (b ContextBudget) InputFilter() CallModelInputFilter {
-	return func(_ context.Context, rc *RunContext, _ *Agent, data ModelInputData) (ModelInputData, error) {
+	return func(_ context.Context, rc *RunContext, agent *Agent, data ModelInputData) (ModelInputData, error) {
+		window := b.Window
+		if b.WindowFor != nil {
+			if w := b.WindowFor(agent); w > 0 {
+				window = w
+			}
+		}
 		used := b.used(rc)
-		if b.Window <= 0 || used <= 0 || serverManaged(rc) {
+		if window <= 0 || used <= 0 || serverManaged(rc) {
 			return data, nil
 		}
-		data.Input = append(slices.Clone(data.Input), InputItemsFromSystemText(b.notice(used))...)
+		data.Input = append(slices.Clone(data.Input), InputItemsFromSystemText(notice(used, window))...)
 		return data, nil
 	}
 }
@@ -53,7 +63,7 @@ func (b ContextBudget) used(rc *RunContext) int64 {
 }
 
 // notice renders the one line the model reads (format: spec §4).
-func (b ContextBudget) notice(used int64) string {
-	left := max(100-used*100/int64(b.Window), 0)
-	return fmt.Sprintf("Context budget: about %d of %d tokens in use (%d%% left).", used, b.Window, left)
+func notice(used int64, window int) string {
+	left := max(100-used*100/int64(window), 0)
+	return fmt.Sprintf("Context budget: about %d of %d tokens in use (%d%% left).", used, window, left)
 }

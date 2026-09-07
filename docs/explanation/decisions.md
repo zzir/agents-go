@@ -1483,12 +1483,14 @@ reset itself when the threshold trips mid-run: it changes the point contract
 of §2.5f for every such storage; the budget notice and `new_context` cover
 the case this round.
 
-**Cost accepted.** A request made in a turn that ends in an interruption is
-dropped; the model asks again. A reset folds the turn's own tool calls with
-the rest, `new_context` included, which is what Codex does too, and which is
-why a fresh context refuses another reset until the model has done some
-work: the kept user message ("reset now") would otherwise be obeyed in every
-new window, seventy times over in the first live run. The checkpoint's first
+**Cost accepted.** Two booleans on `RunState` (a schema minor), so a request
+made in a turn that pauses for approval is performed when the run resumes,
+and the guard below holds across the pause, `new_context` itself
+approval-gated included. A reset folds the turn's own tool calls with the
+rest, `new_context` included, which is what Codex does too, and which is why
+a fresh context refuses another reset until the model has done some work:
+the kept user message ("reset now") would otherwise be obeyed in every new
+window, seventy times over in the first live run. The checkpoint's first
 line says who reset for the same reason.
 
 Rules: spec §2.5i; workbench invariant 65.

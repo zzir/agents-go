@@ -248,6 +248,8 @@ tokens in use (P% left).`: the run's own last call once it has one, `Occupied`
 before that, nothing when neither is known. It is appended to the input, never
 to the instructions, so a cached prompt prefix stays cached, and it is not
 saved to the session ([spec §2.5i](../reference/spec.md#25i-the-model-manages-its-own-context)).
+When handoffs cross models, `WindowFor func(*agents.Agent) int` answers the
+active agent's window and `Window` is the fallback.
 A runnable program is [examples/contextmanagement](../../examples/contextmanagement/main.go).
 
 ### Searching what the model no longer sees
@@ -322,9 +324,10 @@ opts.Compaction = agents.CompactionOptions{Compactor: compactor}
 
 A compactor with no strategy (`compaction.New(nil, nil)`) folds nothing on
 its own and still records a reset the model asked for. A session that cannot
-reset records `context_reset_ignored` and carries on;
-a turn that ends in an interruption drops the request, and a fresh context
-refuses another reset until the model has done some work
+reset records `context_reset_ignored` and carries on; a request made in a
+turn that pauses for approval is performed when the run resumes, and a fresh
+context refuses another reset until the model has done some work, across a
+pause too
 ([spec §2.5i](../reference/spec.md#25i-the-model-manages-its-own-context)).
 In the workbench an agent's compaction mode chooses between `summary`
 (the default), `reset` and `hybrid`, and the panel's button becomes

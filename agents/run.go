@@ -808,6 +808,8 @@ func (r *runner) buildPauseState(turn int, resp *ModelResponse, step *singleStep
 		OffChainHistory:       r.offChainHistory,
 		PendingInput:          r.ctrl.Pending(),
 		DisclosedTools:        sortedKeys(r.disclosed),
+		ContextReset:          r.rc.contextReset.Load(),
+		ContextFresh:          r.rc.contextFresh.Load(),
 		ReasoningItemIDPolicy: r.opts.Exec.ReasoningItemIDPolicy,
 		cursor:                st.cursor,
 		// First-turn input guardrails are not re-run on resume: this is the

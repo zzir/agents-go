@@ -47,9 +47,9 @@ func TestMemoryToolsRoundTrip(t *testing.T) {
 		call("memory_write", "c1", `{"scope":"","key":"plan.md","text":"one\ntwo"}`),
 		call("memory_append", "c2", `{"scope":"session","key":"plan.md","text":"\nthree"}`),
 		call("memory_list", "c3", `{"scope":""}`),
-		call("memory_read", "c4", `{"scope":"","key":"plan.md","start_line":2,"end_line":-1}`),
+		call("memory_read", "c4", `{"scope":"","key":"plan.md","start_line":2,"end_line":-1,"offset":0,"limit":0}`),
 		call("memory_search", "c5", `{"scope":"","query":"TWO","key_prefix":"","max_files":0,"max_matches_per_file":0}`),
-		call("memory_read", "c6", `{"scope":"","key":"nope","start_line":0,"end_line":0}`),
+		call("memory_read", "c6", `{"scope":"","key":"nope","start_line":0,"end_line":0,"offset":0,"limit":0}`),
 		agentstest.Turn{Items: []agents.OutputItem{agentstest.MessageItem("m", "done")}},
 	)
 	agent := &agents.Agent{Name: "a", ModelImpl: model, Tools: memory.Tools(specs(), memory.Static(store))}
@@ -200,5 +200,41 @@ func TestSnapshotNeverExceedsTheBound(t *testing.T) {
 		if bound >= 200 && !strings.Contains(snap, " more") {
 			t.Fatalf("bound %d: the cut list says how many were left out: %q", bound, snap[len(snap)-60:])
 		}
+	}
+}
+
+// A read is a bounded window even over one enormous line, and a search
+// match never returns the whole line.
+func TestMemoryReadAndSearchAreBounded(t *testing.T) {
+	ctx := context.Background()
+	store := memory.NewInMemoryStore()
+	long := strings.Repeat("x", 30_000) + "needle" + strings.Repeat("y", 30_000)
+	if err := store.Write(ctx, sessionScope, "big.md", long); err != nil {
+		t.Fatal(err)
+	}
+	model := agentstest.NewFakeModel(
+		call("memory_read", "c1", `{"scope":"","key":"big.md","start_line":0,"end_line":0,"offset":0,"limit":0}`),
+		call("memory_read", "c2", `{"scope":"","key":"big.md","start_line":0,"end_line":0,"offset":20000,"limit":100}`),
+		call("memory_search", "c3", `{"scope":"","query":"needle","key_prefix":"","max_files":0,"max_matches_per_file":0}`),
+		agentstest.Turn{Items: []agents.OutputItem{agentstest.MessageItem("m", "done")}},
+	)
+	specs := []memory.ScopeSpec{{Scope: sessionScope, Name: "session", Writable: true, Describe: "notes."}}
+	agent := &agents.Agent{Name: "a", ModelImpl: model, Tools: memory.Tools(specs, memory.Static(store))}
+	res, err := agents.RunSync(ctx, agent, "go", agents.RunOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outs := toolOutputs(res)
+	if len(outs) != 3 {
+		t.Fatalf("outputs = %d", len(outs))
+	}
+	if len(outs[0]) > memory.MaxReadChars+120 || !strings.Contains(outs[0], "more characters after offset 20000; pass offset=20000") {
+		t.Fatalf("first read = %d bytes, tail %q", len(outs[0]), outs[0][len(outs[0])-90:])
+	}
+	if !strings.HasPrefix(outs[1], strings.Repeat("x", 100)) || !strings.Contains(outs[1], "after offset 20100") {
+		t.Fatalf("second read = %q…", outs[1][:60])
+	}
+	if len(outs[2]) > memory.MaxMatchChars+200 || !strings.Contains(outs[2], "more characters; memory_read shows the rest") {
+		t.Fatalf("search = %d bytes", len(outs[2]))
 	}
 }

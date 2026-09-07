@@ -2,6 +2,7 @@ package agents_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -338,5 +339,73 @@ func TestNewContextPersistsWithoutAStrategy(t *testing.T) {
 	}
 	if joined := strings.Join(texts, "|"); strings.Contains(joined, "Ada wrote the parser.") || !strings.Contains(joined, "notes: parser by Ada") {
 		t.Fatalf("the next run would read %q", joined)
+	}
+}
+
+// The reset request and the fresh-context guard ride the paused RunState:
+// a new_context that itself waits for approval still resets once the pause
+// is over, and a second one after that pause is refused like any other
+// second reset without work in between.
+func TestNewContextSurvivesAnApprovalPause(t *testing.T) {
+	ctx := context.Background()
+	storage := &resettingStorage{Storage: session.NewInMemoryStorage("s")}
+	sess := session.NewSession(storage)
+	seedParser(t, sess)
+	model := agentstest.NewResponseBuilder().
+		FunctionCall("new_context", "c1", `{}`).
+		NewTurn().
+		FunctionCall("new_context", "c2", `{}`).
+		NewTurn().
+		Text("fresh").
+		Build()
+	gated := agents.NewContextTool()
+	gated.NeedsApproval = true
+	agent := &agents.Agent{Name: "a", ModelImpl: model, Tools: []*agents.Tool{gated}}
+	opts := agents.RunOptions{Conversation: agents.ConversationOptions{Session: sess}}
+
+	res, err := agents.RunSync(ctx, agent, "go", opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var outputs []string
+	for pause := 0; len(res.Interruptions) > 0; pause++ {
+		if pause > 2 {
+			t.Fatal("more pauses than new_context calls")
+		}
+		res.State.Approve(res.Interruptions[0], false)
+		// Through JSON, as a host that survives a restart would carry it.
+		raw, err := res.State.MarshalJSON()
+		if err != nil {
+			t.Fatal(err)
+		}
+		state, err := agents.RunStateFromJSON(raw, map[string]*agents.Agent{"a": agent})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res, err = agents.ResumeRunSync(ctx, state, opts); err != nil {
+			t.Fatal(err)
+		}
+		for _, it := range res.NewItems {
+			// A resume re-lists the interrupted call's output slot without a
+			// value; only what a tool actually answered counts.
+			if it.Kind == agents.ItemToolCallOutput && it.Output != nil {
+				outputs = append(outputs, fmt.Sprint(it.Output))
+			}
+		}
+	}
+	resets := 0
+	for _, a := range storage.args {
+		if a.Reset {
+			resets++
+		}
+	}
+	if resets != 1 {
+		t.Fatalf("resets = %d, want exactly one across the two pauses (args %+v)", resets, storage.args)
+	}
+	if len(outputs) != 2 || !strings.Contains(outputs[0], "new context window starts") || !strings.Contains(outputs[1], "reset just now") {
+		t.Fatalf("new_context answered %q", outputs)
+	}
+	if res.FinalOutputString() != "fresh" {
+		t.Fatalf("final = %q", res.FinalOutputString())
 	}
 }

@@ -49,6 +49,8 @@ const (
 	MaxQueryChars    = 1000
 	MaxSearchFiles   = 20
 	MaxSearchMatches = 10
+	MaxReadChars     = 20_000
+	MaxMatchChars    = 500
 )
 
 // ScopeSpec is one scope the tools expose, under the name the model passes.
@@ -91,6 +93,8 @@ type readArgs struct {
 	Key       string `json:"key" jsonschema:"The memory's key, as memory_list shows it"`
 	StartLine int    `json:"start_line" jsonschema:"First line to return, 1-based; 0 means the beginning; negative counts back from the last line"`
 	EndLine   int    `json:"end_line" jsonschema:"Last line to return, inclusive; 0 means the end; negative counts back from the last line"`
+	Offset    int    `json:"offset" jsonschema:"Character offset into the selected lines to start at; 0 for their beginning"`
+	Limit     int    `json:"limit" jsonschema:"Characters to return, at most 20000; 0 means 20000"`
 }
 
 type searchArgs struct {
@@ -121,7 +125,7 @@ func Tools(scopes []ScopeSpec, resolve Resolver) []*agents.Tool {
 		t.list)
 	list.ReadOnly = true
 	read := agents.NewTool("memory_read",
-		"Read one memory by key, whole or a line range. "+intro,
+		"Read one memory by key: whole, a line range, or a character window (offset, limit) over the selected lines, at most 20000 characters per call. "+intro,
 		t.read)
 	read.ReadOnly = true
 	search := agents.NewTool("memory_search",
@@ -258,11 +262,22 @@ func (t *tools) read(ctx context.Context, tc *agents.ToolContext, a readArgs) (s
 	if start > end {
 		return fmt.Sprintf("%s has %d lines; the range selects none.", a.Key, len(lines)), nil
 	}
-	out := strings.Join(lines[start-1:end], "\n")
-	if start == 1 && end == len(lines) {
-		return out, nil
+	selected := []rune(strings.Join(lines[start-1:end], "\n"))
+	offset := min(max(a.Offset, 0), len(selected))
+	limit := a.Limit
+	if limit <= 0 || limit > MaxReadChars {
+		limit = MaxReadChars
 	}
-	return fmt.Sprintf("Lines %d-%d of %d:\n%s", start, end, len(lines), out), nil
+	stop := min(offset+limit, len(selected))
+	var b strings.Builder
+	if start != 1 || end != len(lines) {
+		fmt.Fprintf(&b, "Lines %d-%d of %d:\n", start, end, len(lines))
+	}
+	b.WriteString(string(selected[offset:stop]))
+	if stop < len(selected) {
+		fmt.Fprintf(&b, "\n(%d more characters after offset %d; pass offset=%d to continue)", len(selected)-stop, stop, stop)
+	}
+	return b.String(), nil
 }
 
 // lineRange resolves a 1-based inclusive range over n lines: 0 means the
@@ -319,7 +334,7 @@ func (t *tools) search(ctx context.Context, tc *agents.ToolContext, a searchArgs
 		var matches []string
 		for i, line := range strings.Split(text, "\n") {
 			if strings.Contains(strings.ToLower(line), needle) {
-				matches = append(matches, fmt.Sprintf("  %d: %s", i+1, line))
+				matches = append(matches, fmt.Sprintf("  %d: %s", i+1, clipRunes(line, MaxMatchChars)))
 				if len(matches) == maxMatches {
 					break
 				}
@@ -486,6 +501,15 @@ func Snapshot(ctx context.Context, store Store, scope Scope, maxChars int) (stri
 		}
 	}
 	return capBytes(strings.TrimRight(b.String(), "\n"), maxChars), nil
+}
+
+// clipRunes cuts a line to n runes, marking the cut.
+func clipRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + fmt.Sprintf("… (%d more characters; memory_read shows the rest)", len(r)-n)
 }
 
 // capBytes cuts s to at most n bytes on a rune boundary; n <= 0 leaves it.

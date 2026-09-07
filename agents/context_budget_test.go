@@ -140,3 +140,33 @@ func TestContextBudgetStaysOffServerManagedState(t *testing.T) {
 		}
 	}
 }
+
+// After a handoff the notice measures against the agent now answering:
+// WindowFor names the target's window, and Window is the entry agent's.
+func TestContextBudgetFollowsTheActiveAgent(t *testing.T) {
+	ctx := context.Background()
+	model := agentstest.NewResponseBuilder().
+		FunctionCall("transfer_to_target", "c1", `{}`).
+		Usage(agents.RequestUsage{InputTokens: 800, OutputTokens: 20, TotalTokens: 820}).
+		NewTurn().
+		Text("handled").
+		Usage(agents.RequestUsage{InputTokens: 900, OutputTokens: 10, TotalTokens: 910}).
+		Build()
+	target := &agents.Agent{Name: "target", ModelImpl: model}
+	entry := &agents.Agent{Name: "entry", ModelImpl: model, Handoffs: []agents.Handoff{agents.HandoffTo(target)}}
+	windows := map[string]int{"entry": 10_000, "target": 2_000}
+	budget := agents.ContextBudget{Window: 10_000, Occupied: 500, WindowFor: func(a *agents.Agent) int { return windows[a.Name] }}
+	if _, err := agents.RunSync(ctx, entry, "go", agents.RunOptions{Model: agents.ModelOptions{InputFilter: budget.InputFilter()}}); err != nil {
+		t.Fatal(err)
+	}
+	reqs := model.Requests()
+	if len(reqs) != 2 {
+		t.Fatalf("model calls = %d", len(reqs))
+	}
+	if _, text := lastInput(t, reqs[0]); text != "Context budget: about 500 of 10000 tokens in use (95% left)." {
+		t.Fatalf("entry call: %q", text)
+	}
+	if _, text := lastInput(t, reqs[1]); text != "Context budget: about 820 of 2000 tokens in use (59% left)." {
+		t.Fatalf("target call: %q", text)
+	}
+}
