@@ -34,9 +34,11 @@ func New(strategy Strategy, estimator TokenEstimator) *Compactor {
 	return &Compactor{strategy: strategy, estimator: estimator}
 }
 
-// Compact implements agents.Compactor.
+// Compact implements agents.Compactor. Without a strategy nothing folds on
+// its own, but an index a Reset built is still kept and served, so the reset
+// reaches the checkpoint after the run.
 func (c *Compactor) Compact(ctx context.Context, entries []session.Entry) ([]session.Entry, error) {
-	if c.strategy == nil || len(entries) == 0 {
+	if len(entries) == 0 {
 		return entries, nil
 	}
 	// A Compactor may be shared across concurrent runs, and the Index is not
@@ -44,13 +46,18 @@ func (c *Compactor) Compact(ctx context.Context, entries []session.Entry) ([]ses
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if c.strategy == nil && c.idx == nil {
+		return entries, nil
+	}
 	if c.idx == nil {
 		c.idx = NewIndex(entries, c.estimator)
 	} else {
 		c.idx.Update(entries)
 	}
-	if _, err := c.strategy.Compact(ctx, c.idx); err != nil {
-		return entries, err
+	if c.strategy != nil {
+		if _, err := c.strategy.Compact(ctx, c.idx); err != nil {
+			return entries, err
+		}
 	}
 	return c.idx.IncludedEntries(), nil
 }

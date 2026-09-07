@@ -293,3 +293,50 @@ func TestNewContextResetsUnderAHistoryLimit(t *testing.T) {
 		t.Fatalf("the next run would read %q", joined)
 	}
 }
+
+// A compactor with no strategy folds nothing on its own, but a reset the
+// model asked for is still recorded after the run.
+func TestNewContextPersistsWithoutAStrategy(t *testing.T) {
+	ctx := context.Background()
+	sess := session.NewInMemorySession()
+	seedParser(t, sess)
+	compactor := compaction.New(nil, nil)
+	compactor.ResetSummary = func(context.Context) (string, error) { return "notes: parser by Ada", nil }
+	model := resetScript()
+	agent := &agents.Agent{Name: "a", ModelImpl: model, Tools: []*agents.Tool{agents.NewContextTool()}}
+	if _, err := agents.RunSync(ctx, agent, "go", agents.RunOptions{
+		Conversation: agents.ConversationOptions{Session: sess},
+		Compaction:   agents.CompactionOptions{Compactor: compactor},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := sess.Entries(ctx, session.Cursor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, e := range entries {
+		if e.Kind != session.EntryKindCompaction {
+			continue
+		}
+		p, err := e.CompactionPayload()
+		if err != nil {
+			t.Fatal(err)
+		}
+		found = p.Reset && len(p.ExcludedIDs) > 0
+	}
+	if !found {
+		t.Fatal("the reset was not recorded after the run")
+	}
+	items, err := sess.ContextItems(ctx, session.Cursor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var texts []string
+	for _, it := range items {
+		texts = append(texts, session.ItemText(it))
+	}
+	if joined := strings.Join(texts, "|"); strings.Contains(joined, "Ada wrote the parser.") || !strings.Contains(joined, "notes: parser by Ada") {
+		t.Fatalf("the next run would read %q", joined)
+	}
+}

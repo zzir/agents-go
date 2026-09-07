@@ -320,7 +320,9 @@ agent.Tools = append(agent.Tools, agents.NewContextTool())
 opts.Compaction = agents.CompactionOptions{Compactor: compactor}
 ```
 
-A session that cannot reset records `context_reset_ignored` and carries on;
+A compactor with no strategy (`compaction.New(nil, nil)`) folds nothing on
+its own and still records a reset the model asked for. A session that cannot
+reset records `context_reset_ignored` and carries on;
 a turn that ends in an interruption drops the request, and a fresh context
 refuses another reset until the model has done some work
 ([spec §2.5i](../reference/spec.md#25i-the-model-manages-its-own-context)).
