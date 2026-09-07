@@ -1408,3 +1408,27 @@ call the figure is the host's, the conversation's last measured call, so a
 run right after a manual compaction reports the pre-fold number once.
 
 Rules: spec §2.5i
+
+### 5.61 Retrieval over summary
+
+Decided 2026-09 with `agents/history`.
+
+**Decision.** The model gets two read-only tools over its own session's log,
+search and read, so a compaction pass may fold freely: what it folded is one
+call away. The log was already kept whole for fork and replay (§2.5f, nothing
+is deleted); the tools are a read on that property, not a second store.
+Search is a case-insensitive literal substring, newest first, bounded.
+
+**Rejected.** A summary that must carry everything: it grows toward what it
+replaced, and a detail it dropped is gone. Ranked or indexed search: a session
+is one conversation, a literal scan is deterministic, and an index is a second
+thing to keep consistent. Deferring the tools until a result names them
+(§2.7i): after a reset nothing would. Codex's "never disclose" framing: the
+transcript shows the same history, and a tool the model must hide is one the
+person cannot debug.
+
+**Cost accepted.** About a thousand tokens of tool schema per call while the
+tools are on. A SQL storage scans the session's bodies for a search; a
+session in the hundreds of megabytes answers in about a second.
+
+Rules: spec §2.5i

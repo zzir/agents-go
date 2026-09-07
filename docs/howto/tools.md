@@ -237,6 +237,12 @@ t := &agents.Tool{
 
 `sandbox.CodeTool` wraps an isolated execution backend — local, Docker (`sandbox/docker`) or an E2B-compatible service (`sandbox/e2b`) — as a "run this code" tool; see [Sandbox agents](sandbox.md).
 
+## Conversation history
+
+`history.Tools` gives the model `history_search` and `history_read` over its
+own session, folded history included:
+[Sessions](sessions.md#searching-what-the-model-no-longer-sees).
+
 ## Web search
 
 There is no built-in web-search tool: the SDK deliberately does not model

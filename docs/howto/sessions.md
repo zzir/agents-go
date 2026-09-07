@@ -250,6 +250,28 @@ to the instructions, so a cached prompt prefix stays cached, and it is not
 saved to the session ([spec §2.5i](../reference/spec.md#25i-the-model-manages-its-own-context)).
 A runnable program is [examples/contextmanagement](../../examples/contextmanagement/main.go).
 
+### Searching what the model no longer sees
+
+`history.Tools` gives the model two read-only tools over its own session:
+`history_search`, a case-insensitive literal substring over messages, tool
+calls and tool outputs, newest first, folded history included; and
+`history_read`, one item in full by id.
+
+```go
+agent.Tools = append(agent.Tools, history.Tools(history.For(sess), history.Options{})...)
+```
+
+They read the log, not the projection, so a compaction pass can fold freely:
+a detail it dropped is one call away. The turn in progress is not visible
+until it ends, since the session is written at turn boundaries. A storage
+that leaves folded entries out of `Entries` implements
+`session.HistorySearcher` to answer searches itself
+([spec §2.5i](../reference/spec.md#25i-the-model-manages-its-own-context));
+the workbench's SQLite and PostgreSQL store does. A `history.Resolver` lets a
+host open another session for a named scope, which is how the workbench lets
+a conversation search its background tasks' own transcripts. The same example
+program shows the tools in use.
+
 ### Automatic compaction
 
 `openai.CompactionSession` **decorates** any other `Session`, calling the OpenAI `responses.compact` API to summarize history once it grows past a threshold, then replacing the stored items with the compacted result.

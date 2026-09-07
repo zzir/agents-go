@@ -1,8 +1,13 @@
 // Command contextmanagement demonstrates the levers a run can hand the model
-// for managing its own context. The first is the budget notice: every model
-// call ends with one line saying how full the window is, appended to the
-// input rather than the instructions so a cached prefix stays cached, and
-// never written to the session.
+// for managing its own context.
+//
+// The budget notice: every model call ends with one line saying how full the
+// window is, appended to the input rather than the instructions so a cached
+// prefix stays cached, and never written to the session.
+//
+// The history tools: history_search and history_read read the session's log,
+// folded history included, so the model can find what its context no longer
+// holds. Here the third question can only be answered by searching.
 //
 // Run with: OPENAI_API_KEY=... go run ./examples/contextmanagement
 package main
@@ -13,6 +18,7 @@ import (
 	"log"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/history"
 	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/models/openai"
 )
@@ -20,12 +26,15 @@ import (
 func main() {
 	ctx := context.Background()
 	provider := openai.NewProvider() // reads OPENAI_API_KEY
+	sess := session.NewInMemorySession()
 
 	agent := &agents.Agent{
 		Name:  "assistant",
 		Model: "gpt-4.1-mini",
 		Instructions: agents.StaticInstructions(
-			"Answer in one sentence. Each request ends with a context budget line; mention how much is left."),
+			"Answer in one sentence. Each request ends with a context budget line; mention how much is left. " +
+				"Use history_search when asked about something said earlier."),
+		Tools: history.Tools(history.For(sess), history.Options{}),
 	}
 
 	// The window is declared: no provider reports it. Occupied stays zero
@@ -46,10 +55,10 @@ func main() {
 				return out, err
 			},
 		},
-		Conversation: agents.ConversationOptions{Session: session.NewInMemorySession()},
+		Conversation: agents.ConversationOptions{Session: sess},
 	}
 
-	for _, q := range []string{"What is the capital of Peru?", "And of Chile?"} {
+	for _, q := range []string{"What is the capital of Peru?", "And of Chile?", "Which capital did I ask about first?"} {
 		fmt.Println("user:", q)
 		res, err := agents.RunSync(ctx, agent, q, opts)
 		if err != nil {

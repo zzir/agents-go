@@ -782,8 +782,14 @@ model may do about it. The first lever is the budget notice.
 - **Its figure is the newest measured call**: within the run, the last
   request's input plus output tokens; before the run's first call, the host's
   `Occupied`. No figure, or no window, sends nothing.
+- **The history tools read the log, never the projection.** `history_search`
+  and `history_read` answer from the active branch's item entries, folded ones
+  included, newest first; the turn in progress is not visible until it ends.
+- **A storage may answer the search itself** (`session.HistorySearcher`); one
+  that leaves folded entries out of `Entries` must, or the folded history is
+  unsearchable. Either way one predicate decides a hit, `MatchesHistory`.
 
-— see [decisions §5.60](../explanation/decisions.md#560-the-budget-rides-on-the-input-not-the-instructions)
+— see [decisions §5.60](../explanation/decisions.md#560-the-budget-rides-on-the-input-not-the-instructions), [§5.61](../explanation/decisions.md#561-retrieval-over-summary)
 
 ### 2.6 Guardrails
 
@@ -1806,6 +1812,7 @@ Defaults that callers may depend on:
 | Session persistence | after each turn | Final turn is written after output guardrails pass |
 | `RunResult.Usage` / `RunState.Usage` | detached snapshot | Never the live accumulator; read without synchronization. Mid-run, `RunContext.Usage` is live — read it via `Snapshot()` |
 | Budget notice | off | `ContextBudget{Window, Occupied}.InputFilter()` appends `Context budget: about N of W tokens in use (P% left).` as the last input item ([§2.5i](#25i-the-model-manages-its-own-context)) |
+| History tools | 20 hits, 2,000-character excerpts, 20,000-character reads, 1,000-character queries | `history.MaxLimit`, `ExcerptChars`, `MaxReadChars`, `MaxQueryChars`; a case-insensitive literal substring, newest first, no ranking ([§2.5i](#25i-the-model-manages-its-own-context)) |
 
 ---
 
