@@ -306,7 +306,7 @@ func (ca *CompactionAdapter) resetPass(ctx context.Context, args session.Compact
 		}
 	}
 	if len(parts) == 0 {
-		parts = append(parts, "The context was reset.")
+		parts = append(parts, resetReason(args))
 	}
 	if snap := ca.sessionMemorySnapshot(ctx); snap != "" {
 		parts = append(parts, "Your session memory:\n"+snap)
@@ -341,6 +341,18 @@ func (ca *CompactionAdapter) resetPass(ctx context.Context, args session.Compact
 		ca.notify.OnDone(len(active), 1+(len(active)-len(toCompact)))
 	}
 	return nil
+}
+
+// resetReason is the first line of a bare reset's checkpoint: who reset,
+// so the model does not ask again for the message it is handed back.
+func resetReason(args session.CompactionArgs) string {
+	switch {
+	case args.Reset:
+		return "You reset the context with new_context; the message below is the one you were working on. Continue from your memory, without calling new_context again for it."
+	case !args.Force:
+		return "The context was reset because it had grown past the agent's threshold."
+	}
+	return "The context was reset."
 }
 
 // recap asks the summary model for the short account a hybrid reset carries;
@@ -527,11 +539,9 @@ func (ca *CompactionAdapter) persistCompaction(ctx context.Context, compactIDs [
 		if n, err := res.RowsAffected(); err == nil && n == 0 {
 			return nil
 		}
-		// The checkpoint's parent is the branch tip AFTER the fold, so refold
-		// the append point before the append reads it (a strict-prefix fold makes this a no-op).
-		if err := ca.refreshAppendPointIn(ctx, tx); err != nil {
-			return err
-		}
+		// The checkpoint extends the branch tip as it stands, folded or not:
+		// the run's view closes its parent links over folded rows, and the
+		// transcript keeps the folded turn on the path (invariant 24).
 		if err := ca.appendTo(ctx, tx, summary); err != nil {
 			return err
 		}

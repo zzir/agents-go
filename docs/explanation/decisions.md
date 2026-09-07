@@ -1485,6 +1485,10 @@ the case this round.
 
 **Cost accepted.** A request made in a turn that ends in an interruption is
 dropped; the model asks again. A reset folds the turn's own tool calls with
-the rest, `new_context` included, which is what Codex does too.
+the rest, `new_context` included, which is what Codex does too, and which is
+why a fresh context refuses another reset until the model has done some
+work: the kept user message ("reset now") would otherwise be obeyed in every
+new window, seventy times over in the first live run. The checkpoint's first
+line says who reset for the same reason.
 
 Rules: spec §2.5i; workbench invariant 65.

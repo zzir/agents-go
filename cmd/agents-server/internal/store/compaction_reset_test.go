@@ -81,6 +81,17 @@ func TestResetPassKeepsTheNewestUserMessage(t *testing.T) {
 	if len(texts) != 2 || !strings.Contains(texts[0], "the plan: fix the parser") || texts[1] != "second question" {
 		t.Fatalf("model view = %q", texts)
 	}
+	// The folded turn stays on the branch for the transcript: the checkpoint
+	// extends the tip as it stood, folded or not (invariant 24).
+	view, err := sa.GetEntries(ctx, session.Direct(sessionID), "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range view {
+		if !e.OnPath {
+			t.Fatalf("entry %s (compacted=%v) fell off the branch after the reset", e.ID, e.Compacted)
+		}
+	}
 }
 
 // Hybrid carries a recap from the summary model in front of the memory; a
@@ -128,8 +139,8 @@ func TestResetPassTriggers(t *testing.T) {
 	if err := ca.RunCompaction(ctx, session.CompactionArgs{}); err != nil {
 		t.Fatal(err)
 	}
-	if p := resetCheckpoint(t, sa); !p.Reset {
-		t.Fatal("the threshold did not reset")
+	if p := resetCheckpoint(t, sa); !p.Reset || !strings.Contains(p.Summary, "past the agent's threshold") {
+		t.Fatalf("the threshold did not reset as the threshold's: %q", p.Summary)
 	}
 
 	sa2 := NewEntryStoreFor(db, session.Direct(NewID()))
@@ -138,7 +149,7 @@ func TestResetPassTriggers(t *testing.T) {
 	if err := ca2.RunCompaction(ctx, session.CompactionArgs{Force: true, Reset: true}); err != nil {
 		t.Fatal(err)
 	}
-	if p := resetCheckpoint(t, sa2); !p.Reset {
-		t.Fatal("a Reset argument did not reset")
+	if p := resetCheckpoint(t, sa2); !p.Reset || !strings.Contains(p.Summary, "without calling new_context again") {
+		t.Fatalf("a Reset argument did not reset as the model's: %q", p.Summary)
 	}
 }

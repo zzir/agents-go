@@ -919,17 +919,25 @@ func TestForkCutOnAFoldedEntry(t *testing.T) {
 		t.Fatalf("stored append point %+v, folded %+v", got, want)
 	}
 
-	// Everything the fork copied was folded away, so its first entry is a root
-	// and the folded copies stay off the branch.
+	// Everything the fork copied was folded away: the model's view closes
+	// its links over the copies, so the next entry is its root, while the
+	// transcript keeps the copies on the branch as the history they are.
 	forked.SetRunID(id("r2"))
 	seed(t, forked, userEntry(t, "regenerated"))
+	model, err := forked.Entries(ctx, session.Cursor{})
+	if err != nil {
+		t.Fatalf("entries: %v", err)
+	}
+	if len(model) != 1 || model[0].ParentID != "" {
+		t.Fatalf("the model's view = %d entries, first parent %q; want one root", len(model), model[0].ParentID)
+	}
 	view, err := forked.GetEntries(ctx, refOf(t, db, dst.ID), "", 10)
 	if err != nil {
 		t.Fatalf("get entries: %v", err)
 	}
 	for _, e := range view {
-		if e.Compacted && e.OnPath {
-			t.Fatalf("entry %s is folded away yet shown on the branch", e.ID)
+		if !e.OnPath {
+			t.Fatalf("entry %s (compacted=%v) fell off the branch", e.ID, e.Compacted)
 		}
 	}
 }

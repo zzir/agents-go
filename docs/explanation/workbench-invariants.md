@@ -146,7 +146,10 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     soft-deletes, appends a checkpoint naming what it folded, and sizes only
     the active branch (`compaction_adapter.go`); the timeline stays decoupled
     from the fold — folded entries render in full, the checkpoint inline, and
-    `SearchHistory` reads them back for the model's history tools.
+    `SearchHistory` reads them back for the model's history tools. A fold
+    never moves the tip: the checkpoint extends the branch as it stood, and
+    the run's view closes its parent links over folded rows (`loadIn`), so a
+    folded turn stays on the transcript's path while leaving the model's.
 25. **Schema changes ship without migrations.** `CREATE TABLE / INDEX IF NOT
     EXISTS` is the whole story; a structural change means dropping and
     recreating the database, and ALTER TABLE machinery is never added.
