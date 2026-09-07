@@ -121,7 +121,7 @@ its own module, the heavy dependency that makes it one. Signatures live on
 
 | Package | Module | What it is |
 |---|---|---|
-| `agents` | root | Core: agents, runner, tools, guardrails, sessions, HITL, tracing hooks |
+| `agents` | root | Core: agents, runner, tools, guardrails, sessions, HITL, tracing hooks; `agents/history` and `agents/memory` are the model's own history search and memory tools |
 | `models/openai` | root | OpenAI Responses API model provider (built on `openai-go` v3) |
 | `models/modelkit` | root | Dependency-free toolkit for model adapters + `conformancetest` golden matrix |
 | `tracing` | root | Traces, spans, processors and exporters |
