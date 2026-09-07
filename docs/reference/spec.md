@@ -788,8 +788,13 @@ model may do about it. The first lever is the budget notice.
 - **A storage may answer the search itself** (`session.HistorySearcher`); one
   that leaves folded entries out of `Entries` must, or the folded history is
   unsearchable. Either way one predicate decides a hit, `MatchesHistory`.
+- **Memory is the host's, by scope.** `memory.Tools` reads and writes the
+  scopes the host binds (`ScopeSpec`): which are writable, which wait for
+  approval and their limits are host policy, never the SDK's.
+- **A memory is never projected.** The model reaches it through the tools, so
+  the context stays the log's projection; a reset carries a `Snapshot`.
 
-— see [decisions §5.60](../explanation/decisions.md#560-the-budget-rides-on-the-input-not-the-instructions), [§5.61](../explanation/decisions.md#561-retrieval-over-summary)
+— see [decisions §5.60](../explanation/decisions.md#560-the-budget-rides-on-the-input-not-the-instructions), [§5.61](../explanation/decisions.md#561-retrieval-over-summary), [§5.62](../explanation/decisions.md#562-memory-is-one-store-with-scopes)
 
 ### 2.6 Guardrails
 
@@ -1813,6 +1818,7 @@ Defaults that callers may depend on:
 | `RunResult.Usage` / `RunState.Usage` | detached snapshot | Never the live accumulator; read without synchronization. Mid-run, `RunContext.Usage` is live — read it via `Snapshot()` |
 | Budget notice | off | `ContextBudget{Window, Occupied}.InputFilter()` appends `Context budget: about N of W tokens in use (P% left).` as the last input item ([§2.5i](#25i-the-model-manages-its-own-context)) |
 | History tools | 20 hits, 2,000-character excerpts, 20,000-character reads, 1,000-character queries | `history.MaxLimit`, `ExcerptChars`, `MaxReadChars`, `MaxQueryChars`; a case-insensitive literal substring, newest first, no ranking ([§2.5i](#25i-the-model-manages-its-own-context)) |
+| Memory tools | 1,000,000 bytes per key, 100 keys per scope, 200-character keys | `memory.DefaultMaxBytes`, `DefaultMaxKeys`, `MaxKeyChars`; a host's `ScopeSpec` may lower them ([§2.5i](#25i-the-model-manages-its-own-context)) |
 
 ---
 

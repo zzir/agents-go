@@ -272,6 +272,36 @@ host open another session for a named scope, which is how the workbench lets
 a conversation search its background tasks' own transcripts. The same example
 program shows the tools in use.
 
+### Giving the model a memory
+
+`memory.Tools` gives the model `memory_list`, `memory_read`, `memory_search`,
+`memory_write` and `memory_append` over the scopes you bind. A scope is a
+name the model uses, a store behind it, and your policy: writable or not,
+approval or not, its limits.
+
+```go
+store := memory.NewInMemoryStore()
+scopes := []memory.ScopeSpec{
+	{Scope: memory.Scope{Kind: "session", ID: sessionID}, Name: "session", Writable: true,
+		Describe: "this conversation's working notes; they survive compaction."},
+	{Scope: memory.Scope{Kind: "agent", ID: "planner"}, Name: "agent", Writable: true, Approve: true,
+		Describe: "what future conversations should know; a write waits for approval."},
+}
+agent.Tools = append(agent.Tools, memory.Tools(scopes, memory.Static(store))...)
+```
+
+The first scope is the default. A write to an `Approve` scope pauses the run
+for approval like any approval-gated tool ([Human in the loop](human_in_the_loop.md));
+a read-only scope answers a write with a refusal the model can read.
+`memory.Snapshot` renders a scope as one text, which is what a context reset
+carries over. A `memory.Resolver` opens the store per call for a host whose
+scopes are known only then; the workbench binds the session and the agent
+that way, with the rules in `store.MemoryPolicies`
+([protocol](../reference/protocol.md#memories--apiv1memories)). A memory is
+never sent to the model on its own: it is read through the tools, so the
+context stays the log's projection
+([spec §2.5i](../reference/spec.md#25i-the-model-manages-its-own-context)).
+
 ### Automatic compaction
 
 `openai.CompactionSession` **decorates** any other `Session`, calling the OpenAI `responses.compact` API to summarize history once it grows past a threshold, then replacing the stored items with the compacted result.

@@ -9,6 +9,10 @@
 // folded history included, so the model can find what its context no longer
 // holds. Here the third question can only be answered by searching.
 //
+// The memory tools: memory_write and friends give the model a memory of its
+// own, by scope. The session scope is its working notes; a host may bind
+// more, writable or not, behind approval or not.
+//
 // Run with: OPENAI_API_KEY=... go run ./examples/contextmanagement
 package main
 
@@ -19,6 +23,7 @@ import (
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/history"
+	"github.com/zzir/agents-go/agents/memory"
 	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/models/openai"
 )
@@ -28,13 +33,22 @@ func main() {
 	provider := openai.NewProvider() // reads OPENAI_API_KEY
 	sess := session.NewInMemorySession()
 
+	// One writable scope: the conversation's own notes. A second, read-only
+	// or approval-gated scope would be one more ScopeSpec.
+	notes := memory.NewInMemoryStore()
+	scopes := []memory.ScopeSpec{{
+		Scope: memory.Scope{Kind: "session", ID: "demo"}, Name: "session", Writable: true,
+		Describe: "this conversation's working notes.",
+	}}
+
 	agent := &agents.Agent{
 		Name:  "assistant",
 		Model: "gpt-4.1-mini",
 		Instructions: agents.StaticInstructions(
 			"Answer in one sentence. Each request ends with a context budget line; mention how much is left. " +
-				"Use history_search when asked about something said earlier."),
-		Tools: history.Tools(history.For(sess), history.Options{}),
+				"Use history_search when asked about something said earlier. " +
+				"After each answer, memory_append the capital you named to the session memory key capitals.md."),
+		Tools: append(history.Tools(history.For(sess), history.Options{}), memory.Tools(scopes, memory.Static(notes))...),
 	}
 
 	// The window is declared: no provider reports it. Occupied stays zero
@@ -66,4 +80,10 @@ func main() {
 		}
 		fmt.Println("assistant:", res.FinalOutputString())
 	}
+
+	snapshot, err := memory.Snapshot(ctx, notes, scopes[0].Scope, 0)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("session memory:\n" + snapshot)
 }
