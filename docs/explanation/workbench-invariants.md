@@ -404,5 +404,7 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     earlier checkpoint on the active branch, write a checkpoint marked
     `reset` whose summary is the session memory snapshot (hybrid: a short
     recap first, over the earlier checkpoints' text too), and never call
-    the summary model for the fold itself. A reset supersedes the last. The mode is the agent's, needs
+    the summary model for the fold itself. A reset supersedes the last. A
+    background run summarizes whatever its agent's mode says: it has no
+    memory tools to write down what a reset would keep. The mode is the agent's, needs
     compaction enabled, and turns the memory and history tools on.

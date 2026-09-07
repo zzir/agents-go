@@ -141,3 +141,25 @@ func TestSearchHistoryPagesAndFiltersTools(t *testing.T) {
 		t.Fatal("an unknown before id matches nothing")
 	}
 }
+
+// A function call renders as name(arguments): the parentheses are not in the
+// stored JSON, so a query carrying one must not be narrowed in SQL.
+func TestSearchHistoryFindsRenderedCalls(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	sa := NewEntryStoreFor(db, session.Direct(NewID()))
+	seed(t, sa,
+		userEntry(t, "look"),
+		rawEntryFrom(t, `{"type":"function_call","call_id":"c1","name":"read_file","arguments":"{\"path\":\"main.go\"}"}`, agents.Source{Type: agents.SourceModel}),
+		toolOutputEntry(t, "c1", "package main"),
+	)
+	for _, q := range []string{"read_file(", `read_file({"path"`, `main.go"})`} {
+		hits, _, err := sa.SearchHistory(ctx, session.HistoryQuery{Query: q})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(hits) != 1 {
+			t.Fatalf("query %q: %d hits, want the call (%v)", q, len(hits), hitTexts(hits))
+		}
+	}
+}

@@ -135,10 +135,11 @@ func (s *EntryStore) callToolNames(ctx context.Context, tool string) (map[string
 
 // likeSafe reports whether a query survives the JSON encoding of the stored
 // entry unchanged, so a SQL LIKE over the text is a sound narrowing: ASCII,
-// printable, and none of the characters encoding/json escapes.
+// printable, none of the characters encoding/json escapes, and no
+// parenthesis, which RenderItem adds around a call's arguments.
 func likeSafe(query string) bool {
 	for _, r := range query {
-		if r > unicode.MaxASCII || r < ' ' || r == unicode.MaxASCII || strings.ContainsRune(`"\<>&`, r) {
+		if r > unicode.MaxASCII || r < ' ' || r == unicode.MaxASCII || strings.ContainsRune(`"\<>&()`, r) {
 			return false
 		}
 	}

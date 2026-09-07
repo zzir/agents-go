@@ -410,7 +410,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	}
 	tracer := newTracer(ctx, sendEvent, r.Deps.Traces, sessionID, runID, spec.wakeParentRunID, r.Deps.Settings.SpanDataCap(ctx))
 
-	runSession := wrapCompaction(sa, built, provider, sendEvent, runID, r.Deps.Memories)
+	runSession := wrapCompaction(sa, built, provider, sendEvent, runID, r.Deps.Memories, task != nil)
 
 	opts := runOptionsFor(built, runSession, provider, tracer, trustSessionID(sessionID, task), logging.Ctx(ctx),
 		contextBudget(ctx, built, sa, sessionRef))

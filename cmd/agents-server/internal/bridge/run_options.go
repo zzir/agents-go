@@ -101,7 +101,7 @@ func toolNotFoundBehavior(s string) agents.ToolNotFoundBehavior {
 
 // wrapCompaction wraps sa with the compaction adapter when the config enables
 // it; an empty summary model falls back to the agent's own.
-func wrapCompaction(sa *store.EntryStore, built *BuildResult, provider agents.ModelProvider, send func(string, any), runID string, memories *store.MemoryStore) *session.Session {
+func wrapCompaction(sa *store.EntryStore, built *BuildResult, provider agents.ModelProvider, send func(string, any), runID string, memories *store.MemoryStore, background bool) *session.Session {
 	if !built.Compaction.Enabled || provider == nil {
 		return session.NewSession(sa)
 	}
@@ -113,8 +113,18 @@ func wrapCompaction(sa *store.EntryStore, built *BuildResult, provider agents.Mo
 		built.Compaction.Threshold, built.Compaction.Window, built.Compaction.Prompt,
 		compactionNotifier(send, runID),
 	)
-	ca.Mode, ca.Memories = built.Compaction.Mode, memories
+	ca.Mode, ca.Memories = compactionModeFor(built, background), memories
 	return session.NewSession(ca)
+}
+
+// compactionModeFor is the mode a run compacts in: the agent's, except that a
+// background run summarizes. It has no memory tools to write down what a
+// reset would keep, and the parent conversation is not its to reset.
+func compactionModeFor(built *BuildResult, background bool) string {
+	if background {
+		return store.CompactionModeSummary
+	}
+	return built.Compaction.Mode
 }
 
 // summaryModelFor resolves the compaction summary model — compaction_model,
