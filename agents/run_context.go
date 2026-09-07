@@ -40,6 +40,27 @@ type RunContext struct {
 	// a resume continues them. Guarded by nestedMu: a resume replays tools concurrently.
 	nestedMu         sync.Mutex
 	nestedToolStates map[string]*RunState
+
+	// contextReset is a model-requested context reset awaiting the save point.
+	contextReset atomic.Bool
+}
+
+// RequestContextReset asks for a fresh context window at the turn's save
+// point (spec §2.5i); NewContextTool is the model's way to call it.
+func (rc *RunContext) RequestContextReset() {
+	if rc != nil {
+		rc.contextReset.Store(true)
+	}
+}
+
+// ContextResetRequested reports a reset asked for and not yet performed.
+func (rc *RunContext) ContextResetRequested() bool {
+	return rc != nil && rc.contextReset.Load()
+}
+
+// takeContextReset consumes the request.
+func (rc *RunContext) takeContextReset() bool {
+	return rc != nil && rc.contextReset.Swap(false)
 }
 
 // TurnInput returns the model input for the turn currently executing: exactly

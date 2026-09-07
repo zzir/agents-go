@@ -793,8 +793,16 @@ model may do about it. The first lever is the budget notice.
   approval and their limits are host policy, never the SDK's.
 - **A memory is never projected.** The model reaches it through the tools, so
   the context stays the log's projection; a reset carries a `Snapshot`.
+- **A model-requested reset lands at the save point of the turn that asked,
+  never mid-turn.** `new_context` sets the request on the `RunContext`; the
+  save point performs it on the persisted log, after its own pass.
+- **A reset is a forced pass with `Reset` set**: a `CompactionAware` storage
+  folds everything but the newest user message; a `ContextResetter` does the
+  same in memory. Neither present, `context_reset_ignored` is recorded.
+- **A turn that ends in an interruption drops the request.** It reaches no
+  save point; the model may ask again.
 
-— see [decisions §5.60](../explanation/decisions.md#560-the-budget-rides-on-the-input-not-the-instructions), [§5.61](../explanation/decisions.md#561-retrieval-over-summary), [§5.62](../explanation/decisions.md#562-memory-is-one-store-with-scopes)
+— see [decisions §5.60](../explanation/decisions.md#560-the-budget-rides-on-the-input-not-the-instructions), [§5.61](../explanation/decisions.md#561-retrieval-over-summary), [§5.62](../explanation/decisions.md#562-memory-is-one-store-with-scopes), [§5.63](../explanation/decisions.md#563-a-reset-is-a-checkpoint-with-nothing-to-say)
 
 ### 2.6 Guardrails
 

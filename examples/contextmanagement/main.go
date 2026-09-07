@@ -13,6 +13,10 @@
 // own, by scope. The session scope is its working notes; a host may bind
 // more, writable or not, behind approval or not.
 //
+// The reset: new_context lets the model start a fresh window at the turn's
+// end; the compactor folds everything but the latest question and carries
+// the session memory in its place, which is what the last question tests.
+//
 // Run with: OPENAI_API_KEY=... go run ./examples/contextmanagement
 package main
 
@@ -22,6 +26,7 @@ import (
 	"log"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/compaction"
 	"github.com/zzir/agents-go/agents/history"
 	"github.com/zzir/agents-go/agents/memory"
 	"github.com/zzir/agents-go/agents/session"
@@ -48,7 +53,15 @@ func main() {
 			"Answer in one sentence. Each request ends with a context budget line; mention how much is left. " +
 				"Use history_search when asked about something said earlier. " +
 				"After each answer, memory_append the capital you named to the session memory key capitals.md."),
-		Tools: append(history.Tools(history.For(sess), history.Options{}), memory.Tools(scopes, memory.Static(notes))...),
+		Tools: append(append(history.Tools(history.For(sess), history.Options{}), memory.Tools(scopes, memory.Static(notes))...),
+			agents.NewContextTool()),
+	}
+
+	// A compactor that never folds on its own; a reset is the model's call,
+	// and what it carries over is the session memory.
+	compactor := compaction.New(&compaction.TruncationStrategy{Trigger: compaction.Never()}, nil)
+	compactor.ResetSummary = func(ctx context.Context) (string, error) {
+		return memory.Snapshot(ctx, notes, scopes[0].Scope, 20_000)
 	}
 
 	// The window is declared: no provider reports it. Occupied stays zero
@@ -70,9 +83,15 @@ func main() {
 			},
 		},
 		Conversation: agents.ConversationOptions{Session: sess},
+		Compaction:   agents.CompactionOptions{Compactor: compactor},
 	}
 
-	for _, q := range []string{"What is the capital of Peru?", "And of Chile?", "Which capital did I ask about first?"} {
+	for _, q := range []string{
+		"What is the capital of Peru?",
+		"And of Chile?",
+		"Which capital did I ask about first?",
+		"Call new_context now, then tell me which capitals you have named so far.",
+	} {
 		fmt.Println("user:", q)
 		res, err := agents.RunSync(ctx, agent, q, opts)
 		if err != nil {

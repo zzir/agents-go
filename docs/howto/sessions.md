@@ -302,6 +302,31 @@ never sent to the model on its own: it is read through the tools, so the
 context stays the log's projection
 ([spec §2.5i](../reference/spec.md#25i-the-model-manages-its-own-context)).
 
+### Letting the model reset its context
+
+`agents.NewContextTool` is `new_context`: the model asks for a fresh window,
+and the run grants it at the turn's save point. A `CompactionAware` storage
+compacts with `CompactionArgs.Reset` set; a run-level `compaction.Compactor`
+implements `ContextResetter` and folds everything but the newest user
+message, carrying `ResetSummary` (the session memory, say) into the fresh
+context:
+
+```go
+compactor := compaction.New(strategy, nil)
+compactor.ResetSummary = func(ctx context.Context) (string, error) {
+	return memory.Snapshot(ctx, store, sessionScope, 20_000)
+}
+agent.Tools = append(agent.Tools, agents.NewContextTool())
+opts.Compaction = agents.CompactionOptions{Compactor: compactor}
+```
+
+A session that cannot reset records `context_reset_ignored` and carries on;
+a turn that ends in an interruption drops the request
+([spec §2.5i](../reference/spec.md#25i-the-model-manages-its-own-context)).
+In the workbench an agent's compaction mode chooses between `summary`
+(the default), `reset` and `hybrid`, and the panel's button becomes
+"Reset now".
+
 ### Automatic compaction
 
 `openai.CompactionSession` **decorates** any other `Session`, calling the OpenAI `responses.compact` API to summarize history once it grows past a threshold, then replacing the stored items with the compacted result.

@@ -16,8 +16,14 @@ type Compactor struct {
 	strategy  Strategy
 	estimator TokenEstimator
 
+	// ResetSummary, when set, is what a Reset carries into the fresh context:
+	// the model's own notes, say (memory.Snapshot). Nil resets bare.
+	ResetSummary func(ctx context.Context) (string, error)
+
 	mu  sync.Mutex
 	idx *Index
+	// reset marks the index as holding a reset the next checkpoint records.
+	reset bool
 }
 
 // New returns a Compactor driving strategy. A nil estimator uses CharEstimator.
@@ -46,6 +52,55 @@ func (c *Compactor) Compact(ctx context.Context, entries []session.Entry) ([]ses
 	if _, err := c.strategy.Compact(ctx, c.idx); err != nil {
 		return entries, err
 	}
+	return c.idx.IncludedEntries(), nil
+}
+
+// Reset implements agents.ContextResetter: every group but the system ones
+// and the newest user message is excluded, the earlier checkpoints included,
+// and ResetSummary's text stands in front of what survives (spec §2.5i).
+func (c *Compactor) Reset(ctx context.Context, entries []session.Entry) ([]session.Entry, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.idx == nil {
+		c.idx = NewIndex(entries, c.estimator)
+	} else {
+		c.idx.Update(entries)
+	}
+	summary := ""
+	if c.ResetSummary != nil {
+		text, err := c.ResetSummary(ctx)
+		if err != nil {
+			return entries, err
+		}
+		summary = text
+	}
+	keep := -1
+	for i := len(c.idx.Groups) - 1; i >= 0; i-- {
+		if c.idx.Groups[i].Kind == GroupUser && !c.idx.Groups[i].Excluded {
+			keep = i
+			break
+		}
+	}
+	first := -1
+	for i, g := range c.idx.Groups {
+		if i == keep || g.Kind == GroupSystem || g.Excluded {
+			continue
+		}
+		g.Excluded = true
+		g.ExcludeReason = "reset"
+		g.Replacement = nil
+		if first < 0 {
+			first = i
+		}
+	}
+	if first >= 0 && summary != "" {
+		e, err := foldedEntry(session.SummaryMarker + "\n\n" + summary)
+		if err != nil {
+			return entries, err
+		}
+		c.idx.Groups[first].Replacement = []session.Entry{e}
+	}
+	c.reset = true
 	return c.idx.IncludedEntries(), nil
 }
 
@@ -113,10 +168,12 @@ func (c *Compactor) Checkpoint(seen []session.Entry) (session.Entry, bool, error
 		ExcludedIDs:  excluded,
 		TokensBefore: before,
 		TokensAfter:  c.idx.ContextTokens(),
+		Reset:        c.reset,
 	})
 	if err != nil {
 		return session.Entry{}, false, err
 	}
+	c.reset = false
 	return e, true, nil
 }
 

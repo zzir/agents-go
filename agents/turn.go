@@ -180,6 +180,18 @@ func (r *runner) savePoint(ctx context.Context, in savePointInput) (savePointRes
 	}
 	out.Recompacted, out.Input = did, compacted
 
+	// A reset the model asked for this turn lands here, on the persisted
+	// log, and wins over the pass above (spec §2.5i).
+	if r.rc.takeContextReset() {
+		rebuilt, did, err := r.resetContext(ctx)
+		if err != nil {
+			return out, err
+		}
+		if did {
+			out.Recompacted, out.Input = true, rebuilt
+		}
+	}
+
 	// Injected input is drained after compaction so it is never folded away by
 	// the pass that ran before it arrived.
 	out.Injected = injectedInput(in.Agent, r.ctrl.takeTurnInput())
