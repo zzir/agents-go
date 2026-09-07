@@ -65,22 +65,22 @@ func TestCrudStoreRoundTrip(t *testing.T) {
 	}
 }
 
-func TestMemoryStoreListForAgent(t *testing.T) {
+func TestMemoryStoreListInjectable(t *testing.T) {
 	ctx := context.Background()
 	s := NewMemoryStore(newTestDB(t))
 	id := ids(t)
 
-	global := &Memory{Key: "g", Content: "global"}
-	scoped := &Memory{AgentConfigID: id("agent-1"), Key: "s", Content: "scoped"}
-	other := &Memory{AgentConfigID: id("agent-2"), Key: "o", Content: "other"}
+	global := &Memory{ScopeKind: MemoryScopeGlobal, Key: "g", Content: "global", WrittenBy: MemoryWrittenByUser}
+	scoped := &Memory{ScopeKind: MemoryScopeAgent, ScopeID: id("agent-1"), Key: "s", Content: "scoped", WrittenBy: MemoryWrittenByUser}
+	other := &Memory{ScopeKind: MemoryScopeAgent, ScopeID: id("agent-2"), Key: "o", Content: "other", WrittenBy: MemoryWrittenByUser}
 	for _, m := range []*Memory{global, scoped, other} {
 		if err := s.Create(ctx, m); err != nil {
 			t.Fatalf("create: %v", err)
 		}
 	}
 
-	// agent-1 sees global + its own, never agent-2's.
-	got, err := s.ListForAgent(ctx, id("agent-1"))
+	// agent-1 reads global + its own, never agent-2's.
+	got, err := s.ListInjectable(ctx, id("agent-1"))
 	if err != nil {
 		t.Fatalf("list for agent: %v", err)
 	}
@@ -88,13 +88,13 @@ func TestMemoryStoreListForAgent(t *testing.T) {
 		t.Fatalf("expected 2 memories for agent-1, got %d: %+v", len(got), got)
 	}
 	for _, m := range got {
-		if m.AgentConfigID == id("agent-2") {
+		if m.ScopeID == id("agent-2") {
 			t.Fatalf("agent-1 leaked agent-2 memory: %+v", m)
 		}
 	}
 
-	// Empty agent id sees only global memories.
-	globalOnly, err := s.ListForAgent(ctx, "")
+	// No agent reads only global memories.
+	globalOnly, err := s.ListInjectable(ctx, "")
 	if err != nil {
 		t.Fatalf("list global: %v", err)
 	}

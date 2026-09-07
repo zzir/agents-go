@@ -145,7 +145,7 @@ Tables are created automatically on startup:
 | `agent_configs`     | Agent configurations                                                                |
 | `mcp_servers`       | MCP server configurations                                                           |
 | `skills`            | Stored `SKILL.md` documents (name/description denormalized from frontmatter)        |
-| `memories`          | Agent memories                                                                      |
+| `memories`          | Memory by scope: global, an agent's, a session's                                     |
 | `attachments`       | Image attachments: the bucket key and owner of each upload, and whether a message bound it |
 | `settings`          | Global key-value settings                                                           |
 | `sandboxes`         | Sandbox rows: where it runs (`docker` / `e2b`) and what runs on it                  |

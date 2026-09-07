@@ -543,6 +543,19 @@ components:
             reconstructs the user bubble from it on reload.
           type: string
       type: object
+    handler.SessionMemoryInfo:
+      properties:
+        bytes:
+          type: integer
+        id:
+          type: string
+        key:
+          type: string
+        updated_at:
+          type: string
+        written_by:
+          type: string
+      type: object
     handler.SetOwnerRequest:
       properties:
         user_id:
@@ -806,13 +819,18 @@ components:
       type: object
     handler.memoryReq:
       properties:
-        agent_config_id:
-          type: string
         content:
           type: string
         key:
+          description: Key is unique within the scope; path-like, at most 200 characters.
           type: string
         metadata:
+          type: string
+        scope_id:
+          type: string
+        scope_kind:
+          description: ScopeKind is global, agent or session; ScopeID the agent or
+            session id, empty for global.
           type: string
       type: object
     handler.playgroundReq:
@@ -1430,6 +1448,8 @@ components:
           type: string
         instructions:
           type: string
+        memory:
+          $ref: '#/components/schemas/store.MemoryGroup'
         model:
           type: string
         model_settings:
@@ -1552,11 +1572,6 @@ components:
           type: integer
         compaction_window:
           type: integer
-        history_tools:
-          description: |-
-            HistoryTools gives the model history_search and history_read over its
-            session, folded history included.
-          type: boolean
       type: object
     store.CompactionInfo:
       description: |-
@@ -1744,11 +1759,6 @@ components:
       type: object
     store.Memory:
       properties:
-        agent_config_id:
-          description: |-
-            AgentConfigID scopes the memory to one agent config; empty applies it to
-            every agent.
-          type: string
         content:
           type: string
         created_at:
@@ -1756,11 +1766,45 @@ components:
         id:
           type: string
         key:
+          description: Key is unique within the scope; a session memory's key is path-like.
           type: string
         metadata:
           type: string
+        owner_id:
+          description: |-
+            OwnerID is the user who wrote it: the caller, or the session's owner
+            when the model did.
+          type: string
+        scope_id:
+          type: string
+        scope_kind:
+          description: |-
+            ScopeKind is global, agent or session; ScopeID names the agent or
+            session it belongs to, empty for global.
+          type: string
         updated_at:
           type: string
+        written_by:
+          description: WrittenBy is user or model.
+          type: string
+      type: object
+    store.MemoryGroup:
+      properties:
+        history_tools:
+          description: |-
+            HistoryTools gives history_search and history_read over the session,
+            folded history included.
+          type: boolean
+        memory_agent_write:
+          description: |-
+            AgentWrite lets the model propose agent memory as well; each such
+            write waits for the user's approval.
+          type: boolean
+        memory_tools:
+          description: |-
+            Tools gives the agent's chat runs memory_list / read / search / write /
+            append over the session's memory.
+          type: boolean
       type: object
     store.Project:
       properties:
@@ -1810,6 +1854,10 @@ components:
         Prompt is what the session's last build put in front of the
         conversation (instruction layers, tool surface); absent until a run has built once.
       properties:
+        context_guidance_chars:
+          description: ContextGuidanceChars is the memory and reset guidance the build
+            appended.
+          type: integer
         global_prompt_chars:
           type: integer
         instructions_chars:
@@ -3838,6 +3886,19 @@ paths:
       - mcp-servers
   /memories:
     get:
+      description: Global memories and the memories of agents visible to the caller.
+        Session memory is read under /sessions/{id}/memory.
+      parameters:
+      - description: global or agent
+        in: query
+        name: scope_kind
+        schema:
+          type: string
+      - description: An agent id
+        in: query
+        name: scope_id
+        schema:
+          type: string
       responses:
         "200":
           content:
@@ -3847,6 +3908,12 @@ paths:
                   $ref: '#/components/schemas/store.Memory'
                 type: array
           description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
         "500":
           content:
             application/json:
@@ -3859,6 +3926,8 @@ paths:
       tags:
       - memories
     post:
+      description: Global memory is an admin's to write, an agent's memory its editor's,
+        a session's its owner's. An existing key is replaced.
       requestBody:
         content:
           application/json:
@@ -3866,10 +3935,9 @@ paths:
               oneOf:
               - type: object
               - $ref: '#/components/schemas/handler.memoryReq'
-                description: Memory; agent_config_id scopes it to one agent, empty
-                  means global
+                description: Memory
                 summary: memory
-        description: Memory; agent_config_id scopes it to one agent, empty means global
+        description: Memory
         required: true
       responses:
         "201":
@@ -3884,6 +3952,18 @@ paths:
               schema:
                 $ref: '#/components/schemas/handler.ErrorResponse'
           description: Bad Request
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
         "500":
           content:
             application/json:
@@ -3906,7 +3986,13 @@ paths:
           type: string
       responses:
         "204":
-          description: deleted
+          description: No Content
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Forbidden
         "404":
           content:
             application/json:
@@ -3957,6 +4043,8 @@ paths:
       tags:
       - memories
     put:
+      description: A memory's scope and key are its identity and must match the row;
+        only content and metadata change.
       parameters:
       - description: Memory ID
         in: path
@@ -3988,6 +4076,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/handler.ErrorResponse'
           description: Bad Request
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Forbidden
         "404":
           content:
             application/json:
@@ -5624,6 +5718,80 @@ paths:
       security:
       - BearerAuth: []
       summary: Fork session
+      tags:
+      - sessions
+  /sessions/{id}/memory:
+    get:
+      parameters:
+      - description: Session ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/handler.SessionMemoryInfo'
+                type: array
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List session memory
+      tags:
+      - sessions
+  /sessions/{id}/memory/{key}:
+    get:
+      parameters:
+      - description: Session ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - description: Memory key
+        in: path
+        name: key
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/store.Memory'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Read session memory
       tags:
       - sessions
   /sessions/{id}/messages:

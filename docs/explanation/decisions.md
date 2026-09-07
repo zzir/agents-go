@@ -1432,3 +1432,32 @@ tools are on. A SQL storage scans the session's bodies for a search; a
 session in the hundreds of megabytes answers in about a second.
 
 Rules: spec §2.5i
+
+### 5.62 Memory is one store with scopes
+
+Decided 2026-09 with `agents/memory` and the rebuilt memories table.
+
+**Decision.** One memories table keyed by (scope_kind, scope_id, gen, key):
+global rows every agent reads, an agent's rows that agent reads, and a
+session's rows the model keeps for itself across compaction and a reset.
+The rules per kind, injection, who writes, whether the model writes and
+after what, size and count, are one Go table (`store.MemoryPolicies`) that
+the handler, the run adapter and the injection consult. The model writes
+session memory freely and proposes agent memory through the approval gate
+save_workflow established (§5.58), under the agent's edit rule (§5.29).
+
+**Rejected.** A separate session_notes table: two concepts for one kind of
+thing, a promotion from session to agent scope crossing tables, and a second
+tool family later for the memory tool the roadmap already wanted. Notes as
+custom session entries: the compaction pass would fold them and the timeline
+read would carry them. Notes as sandbox files: a sandbox retires on a content
+change, and not every session has one. Model writes to global memory: they
+reach every user's every agent; the policy table has the row for it when wanted.
+
+**Cost accepted.** The memories API is breaking (`scope_kind` and `scope_id`
+replace `agent_config_id`) and the table is rebuilt, so existing rows are
+exported and written back. One table carries three lifecycles, a session's
+rows following its fork and delete, an agent's its delete, global's the
+database's; the policy table is what keeps them apart.
+
+Rules: spec §2.5i; workbench invariant 64.

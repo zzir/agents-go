@@ -142,6 +142,7 @@ type AgentConfig struct {
 	Session    SessionGroup    `bun:"session,type:text,nullzero"    json:"session"`
 	Approval   ApprovalGroup   `bun:"approval,type:text,nullzero"   json:"approval"`
 	Compaction CompactionGroup `bun:"compaction,type:text,nullzero" json:"compaction"`
+	Memory     MemoryGroup     `bun:"memory,type:text,nullzero"     json:"memory"`
 
 	// The following are already single JSON blobs, kept as their own columns.
 	ModelSettings string `bun:"model_settings" json:"model_settings,omitempty"`
@@ -302,19 +303,31 @@ type Skill struct {
 	UpdatedAt time.Time `bun:"updated_at,notnull" json:"updated_at"`
 }
 
-// Memory is a stored key/content fact, either global or scoped to an agent config.
+// Memory is one remembered text, keyed within its scope: what an agent reads
+// with every request (the global and agent scopes) or keeps for itself
+// across a conversation's compactions and resets (the session scope). The
+// rules per scope are MemoryPolicies.
 type Memory struct {
 	bun.BaseModel `bun:"table:memories,alias:mem"`
 
-	ID string `bun:"id,pk,type:uuid"     json:"id"`
-	// AgentConfigID scopes the memory to one agent config; empty applies it to
-	// every agent.
-	AgentConfigID string    `bun:"agent_config_id,nullzero,type:uuid" json:"agent_config_id,omitempty"`
-	Key           string    `bun:"key,notnull"          json:"key"`
-	Content       string    `bun:"content,notnull"      json:"content"`
-	Metadata      string    `bun:"metadata"             json:"metadata,omitempty"`
-	CreatedAt     time.Time `bun:"created_at,notnull"   json:"created_at"`
-	UpdatedAt     time.Time `bun:"updated_at,notnull"   json:"updated_at"`
+	ID string `bun:"id,pk,type:uuid" json:"id"`
+	// ScopeKind is global, agent or session; ScopeID names the agent or
+	// session it belongs to, empty for global.
+	ScopeKind string `bun:"scope_kind,notnull" json:"scope_kind"`
+	ScopeID   string `bun:"scope_id,notnull"   json:"scope_id,omitempty"`
+	// Gen is the session generation a session memory belongs to; empty otherwise.
+	Gen string `bun:"gen,notnull" json:"-"`
+	// Key is unique within the scope; a session memory's key is path-like.
+	Key      string `bun:"key,notnull"     json:"key"`
+	Content  string `bun:"content,notnull" json:"content"`
+	Metadata string `bun:"metadata"        json:"metadata,omitempty"`
+	// WrittenBy is user or model.
+	WrittenBy string `bun:"written_by,notnull" json:"written_by"`
+	// OwnerID is the user who wrote it: the caller, or the session's owner
+	// when the model did.
+	OwnerID   string    `bun:"owner_id,nullzero,type:uuid" json:"owner_id,omitempty"`
+	CreatedAt time.Time `bun:"created_at,notnull"          json:"created_at"`
+	UpdatedAt time.Time `bun:"updated_at,notnull"          json:"updated_at"`
 }
 
 // Attachment is one uploaded image: metadata only — the bytes live in the
@@ -358,7 +371,9 @@ type PromptProfile struct {
 	GlobalPromptChars  int `json:"global_prompt_chars,omitempty"`
 	MemoryChars        int `json:"memory_chars,omitempty"`
 	SandboxPromptChars int `json:"sandbox_prompt_chars,omitempty"`
-	SkillsIndexChars   int `json:"skills_index_chars,omitempty"`
+	// ContextGuidanceChars is the memory and reset guidance the build appended.
+	ContextGuidanceChars int `json:"context_guidance_chars,omitempty"`
+	SkillsIndexChars     int `json:"skills_index_chars,omitempty"`
 	// Tools are the locally attached tools, bucketed by what attached them.
 	// MCP is absent here: its tools live on the server, not on the agent, and
 	// are sized by the read path (which is also the only place a live server

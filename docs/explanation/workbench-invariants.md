@@ -387,3 +387,10 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     instance's running tasks (`store/db.go`; the multi-instance direction is
     scope.md's Roadmap). SQLite relies on its single-file, single-process
     assumption and the lock is a no-op there.
+64. **Memory is one table by scope, and its rules have one home.** A row's
+    `scope_kind` (global, agent, session) decides injection, who writes,
+    whether the model writes and after what, and the limits, all from
+    `store.MemoryPolicies` (decisions §5.62); the handler, the run adapter
+    and the injection query it rather than judge. Injection is an allow-list
+    of kinds. Session rows follow their session (a fork copies, a delete
+    cascades, a generation is a scope of its own), agent rows their agent.

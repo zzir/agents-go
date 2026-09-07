@@ -85,6 +85,7 @@ func NewRunner(rootCtx context.Context, db *bun.DB, deps *AgentDeps) *Runner {
 	deps.SpawnTool = r.spawnTool
 	deps.WorkflowTools = r.workflowTools
 	deps.HistoryTools = r.historyTools
+	deps.MemoryTools = r.memoryTools
 	return r
 }
 

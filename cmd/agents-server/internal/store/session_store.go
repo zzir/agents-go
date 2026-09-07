@@ -315,6 +315,9 @@ func deleteSessionRows(ctx context.Context, tx bun.Tx, id string, mustExist bool
 		Exec(ctx); err != nil {
 		return fmt.Errorf("deleting tasks of session %s: %w", id, err)
 	}
+	if err := deleteMemoriesOf(ctx, tx, MemoryScopeSession, id); err != nil {
+		return err
+	}
 	res, err := tx.NewDelete().Model((*Session)(nil)).Where("id = ?", id).Exec(ctx)
 	if err == nil && mustExist {
 		err = requireRows(res)

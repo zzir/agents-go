@@ -205,7 +205,7 @@ func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL st
 			Tasks:      handler.NewTaskHandler(st.Tasks, svc.Runner),
 			Agents:     handler.NewAgentConfigHandler(st.AgentConfigs, st.McpServers, st.Providers, st.Skills, svc.Guardrails),
 			McpServers: handler.NewMcpServerHandler(st.McpServers, svc.Mcp, svc.OAuth, baseURL),
-			Memories:   handler.NewMemoryHandler(st.Memories),
+			Memories:   handler.NewMemoryHandler(st.Memories, st.Sessions, st.AgentConfigs, st.Entries),
 			Settings:   handler.NewSettingHandler(st.Settings),
 			Skills:     handler.NewSkillHandler(st.Skills, st.SettingReader),
 			Providers:  handler.NewProviderHandler(st.Providers),

@@ -58,6 +58,23 @@ func (s *AgentConfigStore) Update(ctx context.Context, id string, m *AgentConfig
 	return nil
 }
 
+// Delete removes the agent and the memory scoped to it, in one transaction.
+func (s *AgentConfigStore) Delete(ctx context.Context, id string) error {
+	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := deleteMemoriesOf(ctx, tx, MemoryScopeAgent, id); err != nil {
+			return err
+		}
+		res, err := tx.NewDelete().Model((*AgentConfig)(nil)).Where("id = ?", id).Exec(ctx)
+		if err == nil {
+			err = requireRows(res)
+		}
+		if err != nil {
+			return fmt.Errorf("deleting agent config %s: %w", id, err)
+		}
+		return nil
+	})
+}
+
 // TransferOwner hands the agent to newOwner, re-checking the provider leg AS
 // the new owner inside the transaction (decisions §5.29). The advisory legs
 // (MCP servers, skills, handoff targets) are the handler's to validate.

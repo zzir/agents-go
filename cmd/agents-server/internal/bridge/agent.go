@@ -65,8 +65,11 @@ type AgentDeps struct {
 	// per run, when the config opts in (behavior.workflow_authoring) — invariant 39.
 	WorkflowTools func(ctx context.Context, ownerID string) []*agents.Tool
 	// HistoryTools is set by NewRunner and builds history_search / history_read
-	// when the config opts in (compaction.history_tools); chat runs only.
+	// when the config opts in (memory.history_tools); chat runs only.
 	HistoryTools func(ctx context.Context, ownerID string) []*agents.Tool
+	// MemoryTools is set by NewRunner and builds the memory_* tools when the
+	// config opts in (memory.memory_tools); chat runs only.
+	MemoryTools func(ctx context.Context, ownerID string, built *BuildResult) []*agents.Tool
 }
 
 // BuildResult contains the built agent and its resolved model provider.
@@ -84,6 +87,13 @@ type BuildResult struct {
 	Behavior   store.BehaviorGroup
 	Compaction store.CompactionGroup
 	Session    store.SessionGroup
+	Memory     store.MemoryGroup
+
+	// ConfigID, ConfigScope and ConfigOwnerID identify the entry config and
+	// its edit rule, which the memory tools apply per call.
+	ConfigID      string
+	ConfigScope   string
+	ConfigOwnerID string
 
 	// ProviderType is the normalized backend selector this agent was built
 	// for ("openai" / "anthropic"). Handoff wiring uses it to refuse a
@@ -201,9 +211,18 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, project
 	}
 	// A background run's session is a task's own; the tools read the run
 	// context's session, which for a task is its parent's (trustSessionID).
-	if err == nil && !background && result.Compaction.HistoryTools && deps.HistoryTools != nil {
+	if err == nil && !background && (result.Memory.HistoryTools || result.Memory.Tools) {
 		mark := len(result.Agent.Tools)
-		result.Agent.Tools = append(result.Agent.Tools, deps.HistoryTools(ctx, ownerID)...)
+		if result.Memory.HistoryTools && deps.HistoryTools != nil {
+			result.Agent.Tools = append(result.Agent.Tools, deps.HistoryTools(ctx, ownerID)...)
+		}
+		if result.Memory.Tools && deps.MemoryTools != nil {
+			result.Agent.Tools = append(result.Agent.Tools, deps.MemoryTools(ctx, ownerID, result)...)
+			// What each scope is for and when to write: a SUFFIX after the
+			// agent's own instructions, measured like every other layer.
+			result.Agent.Instructions = agents.WrapInstructions(result.Agent.Instructions, "", store.DefaultMemoryGuidance)
+			result.Profile.ContextGuidanceChars = len(store.DefaultMemoryGuidance)
+		}
 		bucketToolsSince(result.Agent, mark, store.ToolSourceContext, &result.Profile)
 	}
 	if err != nil {
@@ -296,7 +315,9 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID string,
 	result.Behavior = ac.Behavior
 	result.Compaction = ac.Compaction
 	result.Session = ac.Session
+	result.Memory = ac.Memory
 	result.ContextWindow = ac.ContextWindow
+	result.ConfigID, result.ConfigScope, result.ConfigOwnerID = ac.ID, ac.Scope, ac.OwnerID
 	if ac.Behavior.ReasoningItemIDPolicy == "omit" {
 		result.ReasoningItemIDPolicy = agents.ReasoningItemIDOmit
 	}
@@ -398,7 +419,7 @@ func layerInstructions(ctx context.Context, deps *AgentDeps, agent *agents.Agent
 		agent.Instructions = agents.WrapInstructions(agent.Instructions, global, "")
 		prof.GlobalPromptChars = len(global)
 	}
-	memories, err := deps.Memories.ListForAgent(ctx, ac.ID)
+	memories, err := deps.Memories.ListInjectable(ctx, ac.ID)
 	if err == nil && len(memories) > 0 {
 		block := buildMemoryBlock(memories)
 		agent.Instructions = agents.WrapInstructions(agent.Instructions, "", block)

@@ -969,9 +969,14 @@ func (s *EntryStore) ForkSession(ctx context.Context, dst *Session, src session.
 		if _, err := tx.NewInsert().Model(dst).Exec(ctx); err != nil {
 			return fmt.Errorf("fork create session: %w", err)
 		}
+		dstRef := session.Ref{ID: dst.ID, Gen: dst.Gen}
 		var e error
-		runIDs, e = forkEntriesTx(ctx, tx, src, session.Ref{ID: dst.ID, Gen: dst.Gen}, upToID, exclusive)
-		return e
+		if runIDs, e = forkEntriesTx(ctx, tx, src, dstRef, upToID, exclusive); e != nil {
+			return e
+		}
+		// The fork's memory is its own copy: a note written on one branch of
+		// the tree stays on that branch.
+		return copySessionMemories(ctx, tx, src, dstRef)
 	})
 	if err != nil {
 		return nil, err

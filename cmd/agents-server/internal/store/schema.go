@@ -109,14 +109,24 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 		Exec(ctx); err != nil {
 		return fmt.Errorf("creating trace_events created_at index: %w", err)
 	}
-	// Memories are loaded per agent (its own plus global "" scope).
+	// Memories are read by scope; the key is unique within one, which is what
+	// lets a write be an upsert.
 	if _, err := db.NewCreateIndex().
 		Model((*Memory)(nil)).
-		Index("idx_memories_agent_config_id").
-		Column("agent_config_id").
+		Index("idx_memories_scope").
+		Column("scope_kind", "scope_id").
 		IfNotExists().
 		Exec(ctx); err != nil {
-		return fmt.Errorf("creating memories agent index: %w", err)
+		return fmt.Errorf("creating memories scope index: %w", err)
+	}
+	if _, err := db.NewCreateIndex().
+		Model((*Memory)(nil)).
+		Index("idx_memories_scope_key").
+		Unique().
+		Column("scope_kind", "scope_id", "gen", "key").
+		IfNotExists().
+		Exec(ctx); err != nil {
+		return fmt.Errorf("creating memories key index: %w", err)
 	}
 	// The session list orders by recency OF CHANGE (spec §2.5e2, "the change
 	// record"), so it sorts and indexes on updated_at, not created_at.
