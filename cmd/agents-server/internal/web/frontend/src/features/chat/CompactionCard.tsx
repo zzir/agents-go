@@ -20,10 +20,13 @@ interface CompactionCardProps {
   tokensAfter?: number;
   // A reset: the model's context started over with what it kept in memory.
   reset?: boolean;
+  // Entries the checkpoint folded; a reset's figure, where a token estimate
+  // over a fresh window says nothing.
+  folded?: number;
 }
 
 export const CompactionCard = memo(function CompactionCard(
-  { content, tokensBefore, tokensAfter, reset }: CompactionCardProps,
+  { content, tokensBefore, tokensAfter, reset, folded }: CompactionCardProps,
 ) {
   const [expanded, setExpanded] = useState(false);
   const summaryText = (content || '').replace(/^\[Conversation Summary\]\s*/, '');
@@ -38,7 +41,9 @@ export const CompactionCard = memo(function CompactionCard(
       >
         <ChevronRightIcon size={16} className="process-icon" />
         <span>{reset ? 'Context reset' : 'Compaction'}</span>
-        {shrank && (
+        {reset ? (
+          folded ? <span className="compaction-card-savings">{folded} {folded === 1 ? 'entry' : 'entries'} folded</span> : null
+        ) : shrank && (
           <span className="compaction-card-savings">
             ~{compactTokens(tokensBefore)} → ~{compactTokens(tokensAfter)} tokens
           </span>

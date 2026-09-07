@@ -240,6 +240,8 @@ interface CompactionEntry {
   tokensAfter?: number;
   // A reset folded the conversation carrying the session memory, not a summary.
   reset?: boolean;
+  // How many entries the checkpoint folded.
+  foldedCount?: number;
 }
 
 type TimelineEntry = UserEntry | SystemEntry | TurnEntry | CompactionEntry;
@@ -374,6 +376,7 @@ function assemble(
         content: e.content || '',
         messageId: e.id,
         reset: e.compaction?.reset,
+        foldedCount: e.compaction?.excluded_ids?.length,
         entryId: e.entry_id,
         tokensBefore: e.compaction?.tokens_before,
         tokensAfter: e.compaction?.tokens_after,
