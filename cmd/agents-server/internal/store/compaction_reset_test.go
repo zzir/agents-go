@@ -2,8 +2,12 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/uptrace/bun"
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/session"
@@ -151,5 +155,111 @@ func TestResetPassTriggers(t *testing.T) {
 	}
 	if p := resetCheckpoint(t, sa2); !p.Reset || !strings.Contains(p.Summary, "without calling new_context again") {
 		t.Fatalf("a Reset argument did not reset as the model's: %q", p.Summary)
+	}
+}
+
+// A second reset folds the first reset's checkpoint too: the model reads one
+// summary, the newest snapshot, never one per reset.
+func TestResetPassFoldsEarlierCheckpoints(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	sessionID := NewID()
+	sa := NewEntryStoreFor(db, session.Direct(sessionID))
+	memories := NewMemoryStore(db)
+	ca := NewCompactionAdapter(sa, nil, 1_000_000, 2, "", CompactionNotifier{})
+	ca.Mode, ca.Memories = CompactionModeReset, memories
+
+	seed(t, sa, userEntry(t, "first question"), assistantEntry(t, "first answer"))
+	if err := memories.Upsert(ctx, mem(MemoryScopeSession, sessionID, "", "notes.md", "snapshot one"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := ca.RunCompaction(ctx, session.CompactionArgs{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	first := resetCheckpoint(t, sa)
+
+	seed(t, sa, userEntry(t, "second question"), assistantEntry(t, "second answer"))
+	if err := memories.Upsert(ctx, mem(MemoryScopeSession, sessionID, "", "notes.md", "snapshot two"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := ca.RunCompaction(ctx, session.CompactionArgs{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := session.NewSession(sa).ContextItems(ctx, session.Cursor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var texts []string
+	for _, it := range items {
+		texts = append(texts, session.ItemText(it))
+	}
+	if len(texts) != 2 || !strings.Contains(texts[0], "snapshot two") || strings.Contains(texts[0], "snapshot one") || texts[1] != "second question" {
+		t.Fatalf("model view after two resets = %q", texts)
+	}
+	all, err := sa.load(ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var checkpoints, compactedCheckpoints int
+	for _, e := range all {
+		if e.Kind == session.EntryKindCompaction {
+			checkpoints++
+			p, _ := e.CompactionPayload()
+			if p.Summary == first.Summary {
+				row := new(entryRow)
+				if err := db.NewSelect().Model(row).Where("entry_id = ?", e.ID).Scan(ctx); err != nil {
+					t.Fatal(err)
+				}
+				if row.Compacted {
+					compactedCheckpoints++
+				}
+			}
+		}
+	}
+	if checkpoints != 2 || compactedCheckpoints != 1 {
+		t.Fatalf("checkpoints = %d, earlier one folded = %d", checkpoints, compactedCheckpoints)
+	}
+}
+
+// Appends that race hold the row: none of them overwrites another's text.
+func TestMemoryAppendsNeverLoseText(t *testing.T) {
+	appendRace(t, newTestDB(t))
+}
+
+func appendRace(t *testing.T, db *bun.DB) {
+	t.Helper()
+	ctx := context.Background()
+	s := NewMemoryStore(db)
+	sc := MemoryScope{Kind: MemoryScopeSession, ID: NewID(), Gen: "g"}
+	const writers, each = 8, 5
+	var wg sync.WaitGroup
+	errs := make(chan error, writers*each)
+	for w := range writers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range each {
+				if err := s.AppendContent(ctx, sc, "log.md", fmt.Sprintf("[w%d-%d]", w, i), MemoryWrittenByModel, "", nil); err != nil {
+					errs <- err
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("append: %v", err)
+	}
+	got, err := s.GetByKey(ctx, sc, "log.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for w := range writers {
+		for i := range each {
+			if !strings.Contains(got.Content, fmt.Sprintf("[w%d-%d]", w, i)) {
+				t.Fatalf("append [w%d-%d] was lost; content = %q", w, i, got.Content)
+			}
+		}
 	}
 }

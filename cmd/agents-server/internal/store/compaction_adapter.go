@@ -273,18 +273,33 @@ func (ca *CompactionAdapter) resetPass(ctx context.Context, args session.Compact
 			break
 		}
 	}
+	// Items fold, and so do the earlier checkpoints: a reset supersedes what
+	// they carried, or the context would hold one summary per reset. Other
+	// kinds (annotations, updates) never reach the model and stay.
 	var toCompact []entryRow
 	var folded []session.Entry
+	var earlier []string
 	for i := range active {
-		if i == keep || active[i].Kind != string(session.EntryKindItem) {
+		if i == keep {
+			continue
+		}
+		switch active[i].Kind {
+		case string(session.EntryKindItem):
+			if e, ok := bodies[active[i].ID]; ok {
+				folded = append(folded, e)
+			}
+		case string(session.EntryKindCompaction):
+			if e, ok := bodies[active[i].ID]; ok {
+				if p, perr := e.CompactionPayload(); perr == nil && p.Summary != "" {
+					earlier = append(earlier, p.Summary)
+				}
+			}
+		default:
 			continue
 		}
 		toCompact = append(toCompact, active[i])
-		if e, ok := bodies[active[i].ID]; ok {
-			folded = append(folded, e)
-		}
 	}
-	if len(toCompact) == 0 {
+	if len(folded) == 0 {
 		return nil
 	}
 
@@ -301,7 +316,7 @@ func (ca *CompactionAdapter) resetPass(ctx context.Context, args session.Compact
 
 	var parts []string
 	if ca.Mode == CompactionModeHybrid && ca.summaryModel != nil {
-		if recap := ca.recap(ctx, folded); recap != "" {
+		if recap := ca.recap(ctx, earlier, folded); recap != "" {
 			parts = append(parts, recap)
 		}
 	}
@@ -355,9 +370,10 @@ func resetReason(args session.CompactionArgs) string {
 	return "The context was reset."
 }
 
-// recap asks the summary model for the short account a hybrid reset carries;
-// "" when the model fails, since a reset never fails the run.
-func (ca *CompactionAdapter) recap(ctx context.Context, folded []session.Entry) string {
+// recap asks the summary model for the short account a hybrid reset carries,
+// over what the earlier checkpoints said and what folds now; "" when the
+// model fails, since a reset never fails the run.
+func (ca *CompactionAdapter) recap(ctx context.Context, earlier []string, folded []session.Entry) string {
 	var replayable []session.Entry
 	for _, e := range folded {
 		raw := adaptForeignItemJSON(e.Item)
@@ -367,7 +383,10 @@ func (ca *CompactionAdapter) recap(ctx context.Context, folded []session.Entry) 
 		replayable = append(replayable, session.Entry{Kind: session.EntryKindItem, Item: NormalizeItemJSON(raw)})
 	}
 	transcript := renderTranscript(replayable)
-	if transcript == "" {
+	if len(earlier) > 0 {
+		transcript = "Earlier, before the previous reset:\n" + strings.Join(earlier, "\n\n") + "\n\n" + transcript
+	}
+	if strings.TrimSpace(transcript) == "" {
 		return ""
 	}
 	resp, err := ca.summaryModel.Respond(ctx, agents.ModelRequest{

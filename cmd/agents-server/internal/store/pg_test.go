@@ -176,3 +176,9 @@ func TestPGInstanceLockIsExclusive(t *testing.T) {
 	}
 	release2()
 }
+
+// PostgreSQL runs writers concurrently, so the row lock is what keeps two
+// appends from starting at the same content.
+func TestPGMemoryAppendsNeverLoseText(t *testing.T) {
+	appendRace(t, pgTestDB(t))
+}

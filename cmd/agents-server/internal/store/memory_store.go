@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect"
 
 	"github.com/zzir/agents-go/agents/session"
 )
@@ -110,47 +111,59 @@ func (s *MemoryStore) GetByKey(ctx context.Context, sc MemoryScope, key string) 
 // scope's policy. guard runs first, in the same transaction, for the write
 // rules only the caller knows (an agent's edit rule); nil is unguarded.
 func (s *MemoryStore) Upsert(ctx context.Context, m *Memory, guard func(ctx context.Context, tx bun.Tx) error) error {
-	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		return upsertMemory(ctx, tx, m, guard)
-	})
+	return s.write(ctx, m, false, guard)
 }
 
 // AppendContent adds text to the end of a memory, creating it when new; the
 // writer and owner are stamped on the row either way.
 func (s *MemoryStore) AppendContent(ctx context.Context, sc MemoryScope, key, text, writtenBy, ownerID string, guard func(ctx context.Context, tx bun.Tx) error) error {
-	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		prev := new(Memory)
-		err := scopedMemories(tx.NewSelect().Model(prev), sc).Where("mem.key = ?", key).Scan(ctx)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("reading memory %q: %w", key, err)
-		}
-		content := text
-		if err == nil {
-			content = prev.Content + text
-		}
-		return upsertMemory(ctx, tx, &Memory{
-			ScopeKind: sc.Kind, ScopeID: sc.ID, Gen: sc.Gen, Key: key,
-			Content: content, WrittenBy: writtenBy, OwnerID: ownerID,
-		}, guard)
-	})
+	return s.write(ctx, &Memory{
+		ScopeKind: sc.Kind, ScopeID: sc.ID, Gen: sc.Gen, Key: key,
+		Content: text, WrittenBy: writtenBy, OwnerID: ownerID,
+	}, true, guard)
 }
 
-func upsertMemory(ctx context.Context, tx bun.Tx, m *Memory, guard func(ctx context.Context, tx bun.Tx) error) error {
+// write is the one transaction behind Upsert and AppendContent. Two writers
+// racing to CREATE the same key both pass the locked read; the unique index
+// stops the second, which is retried once against the row the first made.
+func (s *MemoryStore) write(ctx context.Context, m *Memory, appendTo bool, guard func(ctx context.Context, tx bun.Tx) error) error {
+	var err error
+	for range 2 {
+		err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+			return upsertMemory(ctx, tx, m, appendTo, guard)
+		})
+		if _, dup := UniqueViolation(err); err == nil || !dup {
+			return err
+		}
+	}
+	return err
+}
+
+func upsertMemory(ctx context.Context, tx bun.Tx, m *Memory, appendTo bool, guard func(ctx context.Context, tx bun.Tx) error) error {
 	policy, ok := MemoryPolicyFor(m.ScopeKind)
 	if !ok {
 		return fmt.Errorf("%w: %q", ErrMemoryScope, m.ScopeKind)
-	}
-	if len(m.Content) > policy.MaxBytes {
-		return fmt.Errorf("%w: %d bytes, limit %d", ErrMemoryTooLarge, len(m.Content), policy.MaxBytes)
 	}
 	if guard != nil {
 		if err := guard(ctx, tx); err != nil {
 			return err
 		}
 	}
+	// The row is read under a lock, so two appends never both start from
+	// the same content and one overwrite the other's.
 	sc := MemoryScope{Kind: m.ScopeKind, ID: m.ScopeID, Gen: m.Gen}
 	prev := new(Memory)
-	err := scopedMemories(tx.NewSelect().Model(prev), sc).Where("mem.key = ?", m.Key).Scan(ctx)
+	q := scopedMemories(tx.NewSelect().Model(prev), sc).Where("mem.key = ?", m.Key)
+	if tx.Dialect().Name() == dialect.PG {
+		q = q.For("UPDATE")
+	}
+	err := q.Scan(ctx)
+	if err == nil && appendTo {
+		m.Content = prev.Content + m.Content
+	}
+	if len(m.Content) > policy.MaxBytes {
+		return fmt.Errorf("%w: %d bytes, limit %d", ErrMemoryTooLarge, len(m.Content), policy.MaxBytes)
+	}
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		n, cerr := scopedMemories(tx.NewSelect().Model((*Memory)(nil)), sc).Count(ctx)

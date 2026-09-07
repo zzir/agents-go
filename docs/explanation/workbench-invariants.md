@@ -400,8 +400,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
 65. **A reset checkpoint carries the session memory and keeps the newest user
     message, and one pass serves every trigger.** In reset or hybrid mode the
     threshold, `Compact now` and the model's `new_context` all run
-    `resetPass` (`compaction_adapter.go`): fold every other item on the
-    active branch, write a checkpoint marked `reset` whose summary is the
-    session memory snapshot (hybrid: a short recap first), and never call
-    the summary model for the fold itself. The mode is the agent's, needs
+    `resetPass` (`compaction_adapter.go`): fold every other item and every
+    earlier checkpoint on the active branch, write a checkpoint marked
+    `reset` whose summary is the session memory snapshot (hybrid: a short
+    recap first, over the earlier checkpoints' text too), and never call
+    the summary model for the fold itself. A reset supersedes the last. The mode is the agent's, needs
     compaction enabled, and turns the memory and history tools on.
