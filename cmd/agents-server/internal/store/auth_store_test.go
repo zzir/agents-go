@@ -45,9 +45,7 @@ func TestResolveOAuthLoginMergeMatrix(t *testing.T) {
 		t.Fatal("repeat subject must resolve to the same account")
 	}
 
-	// A different provider reporting the same verified email merges. The fake
-	// second provider stands in for GitHub, which lands after P2a — the merge
-	// path must not wait for it to be exercised.
+	// A different provider reporting the same verified email merges.
 	merged, err := s.ResolveOAuthLogin(ctx, OAuthIdentity{Provider: "fake", Subject: "x-9", Email: "a@example.com"}, "")
 	if err != nil {
 		t.Fatalf("merge login: %v", err)

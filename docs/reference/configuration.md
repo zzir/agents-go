@@ -33,6 +33,8 @@ for the runtime settings. The tables below are a convenience copy.
 | `--auth` | `token` | `token` (one static token) or `oauth` (per-user login) |
 | `--oauth-google-client-id` | — | Enables the Google login provider |
 | `--oauth-google-client-secret` | — | Google secret (or env, below) |
+| `--oauth-github-client-id` | — | Enables the GitHub login provider |
+| `--oauth-github-client-secret` | — | GitHub secret (or env, below) |
 | `--allowed-domains` | — | Comma-separated email domains admitted to OAuth |
 | `--allowed-emails` | — | Comma-separated emails admitted to OAuth |
 | `--bootstrap-admin` | — | Email that signs in as admin (the recovery hatch) |
@@ -58,6 +60,7 @@ standalone env knob and no "every flag is also an env var".
 | `AGENTS_TOKEN` | `--token` | The static auth token |
 | `AGENTS_SECRET_KEY` | `--secret-key-file` | The 32-byte credential-sealing key (base64 or hex) |
 | `AGENTS_OAUTH_GOOGLE_CLIENT_SECRET` | `--oauth-google-client-secret` | The Google OAuth client secret |
+| `AGENTS_OAUTH_GITHUB_CLIENT_SECRET` | `--oauth-github-client-secret` | The GitHub OAuth client secret |
 
 ## Runtime settings
 

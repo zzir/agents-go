@@ -50,7 +50,7 @@ PostgreSQL and teams.
 - **Sandboxes**: a Docker container here or on a remote daemon, or any E2B-compatible service. Optional.
 
 Also: MCP servers with OAuth, Agent Skills, background tasks, workflows, image
-input, and a team mode with Google sign-in.
+input, and a team mode with Google or GitHub sign-in.
 
 ## Embed the runtime
 

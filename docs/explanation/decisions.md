@@ -1494,3 +1494,25 @@ window, seventy times over in the first live run. The checkpoint's first
 line says who reset for the same reason.
 
 Rules: spec §2.5i; workbench invariant 65.
+
+### 5.64 Login admission is by verified email, whatever the provider
+
+Decided 2026-09-08.
+
+**Decision.** `--allowed-domains`, `--allowed-emails` and `--bootstrap-admin`
+admit an address the provider verified, and that is the whole admission check
+for every login provider. A GitHub sign-in is admitted by the account's
+primary verified address, the key logins merge on, so one allowlist covers
+Google and GitHub alike.
+
+**Rejected.** A GitHub organization allowlist — a second admission key beside
+the address, a `read:org` scope on every login, one more API call, and an
+organization that restricts OAuth App access answers the membership query
+with "not a member" until an owner approves the app. A GitHub handle
+allowlist — a handle is renamed at will and is nothing the merge rule keys on.
+
+**Cost accepted.** A team on personal GitHub accounts lists its addresses one
+by one with `--allowed-emails`; a domain allowlist admits only the people who
+keep an address on that domain as their primary GitHub email.
+
+Rules: [OAuth mode](../howto/workbench-auth.md#oauth-mode).

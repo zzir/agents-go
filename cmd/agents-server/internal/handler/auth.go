@@ -401,7 +401,7 @@ func (h *AuthHandler) Me(c *gin.Context) {
 //
 //	@Summary	Begin an OAuth login
 //	@Tags		auth
-//	@Param		provider	path	string	true	"Provider name (e.g. google)"
+//	@Param		provider	path	string	true	"Provider name: google or github"
 //	@Success	302			"redirect to the provider's authorize URL"
 //	@Failure	404			{object}	ErrorResponse	"unknown provider (or token mode)"
 //	@Router		/auth/oauth/{provider}/start [get]

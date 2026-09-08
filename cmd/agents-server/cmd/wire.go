@@ -236,7 +236,7 @@ func newAuth(ctx context.Context, st *stores, baseURL string, log *slog.Logger) 
 	switch flagAuthMode {
 	case "token":
 		// Flag wins, then env (keeps the secret off argv/ps, like the secret-key
-		// and google-secret env vars), then a fresh one.
+		// and OAuth client-secret env vars), then a fresh one.
 		token := flagToken
 		if token == "" {
 			token = os.Getenv("AGENTS_TOKEN")
@@ -253,19 +253,30 @@ func newAuth(ctx context.Context, st *stores, baseURL string, log *slog.Logger) 
 		if baseURL == "" {
 			return nil, fmt.Errorf("--auth oauth requires --base-url: the OAuth redirect URI derives from it")
 		}
-		googleSecret := flagGoogleSecret
-		if googleSecret == "" {
-			googleSecret = os.Getenv("AGENTS_OAUTH_GOOGLE_CLIENT_SECRET")
+		// A provider's secret: flag, then env, off argv and ps like the other secrets.
+		secretOf := func(flag, env string) string {
+			if flag != "" {
+				return flag
+			}
+			return os.Getenv(env)
 		}
 		var oauthProviders []authn.OAuthProvider
 		if flagGoogleClientID != "" {
-			if googleSecret == "" {
+			secret := secretOf(flagGoogleSecret, "AGENTS_OAUTH_GOOGLE_CLIENT_SECRET")
+			if secret == "" {
 				return nil, fmt.Errorf("google login needs --oauth-google-client-secret (or AGENTS_OAUTH_GOOGLE_CLIENT_SECRET)")
 			}
-			oauthProviders = append(oauthProviders, &authn.Google{ClientID: flagGoogleClientID, ClientSecret: googleSecret})
+			oauthProviders = append(oauthProviders, &authn.Google{ClientID: flagGoogleClientID, ClientSecret: secret})
+		}
+		if flagGitHubClientID != "" {
+			secret := secretOf(flagGitHubSecret, "AGENTS_OAUTH_GITHUB_CLIENT_SECRET")
+			if secret == "" {
+				return nil, fmt.Errorf("github login needs --oauth-github-client-secret (or AGENTS_OAUTH_GITHUB_CLIENT_SECRET)")
+			}
+			oauthProviders = append(oauthProviders, &authn.GitHub{ClientID: flagGitHubClientID, ClientSecret: secret})
 		}
 		if len(oauthProviders) == 0 {
-			return nil, fmt.Errorf("--auth oauth needs at least one provider (--oauth-google-client-id)")
+			return nil, fmt.Errorf("--auth oauth needs at least one provider (--oauth-google-client-id or --oauth-github-client-id)")
 		}
 		domains, emails := settings.SplitList(flagAllowedDomains), settings.SplitList(flagAllowedEmails)
 		bootstrapAdmin := store.NormalizeEmail(flagBootstrapAdmin)

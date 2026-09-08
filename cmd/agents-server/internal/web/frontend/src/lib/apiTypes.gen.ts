@@ -1236,7 +1236,7 @@ export interface paths {
                 query?: never;
                 header?: never;
                 path: {
-                    /** @description Provider name (e.g. google) */
+                    /** @description Provider name: google or github */
                     provider: string;
                 };
                 cookie?: never;

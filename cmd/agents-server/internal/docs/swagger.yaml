@@ -3128,7 +3128,7 @@ paths:
   /auth/oauth/{provider}/start:
     get:
       parameters:
-      - description: Provider name (e.g. google)
+      - description: 'Provider name: google or github'
         in: path
         name: provider
         required: true

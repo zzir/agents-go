@@ -33,6 +33,8 @@ var (
 	flagAuthMode       string
 	flagGoogleClientID string
 	flagGoogleSecret   string
+	flagGitHubClientID string
+	flagGitHubSecret   string
 	flagAllowedDomains string
 	flagAllowedEmails  string
 	flagBootstrapAdmin string
@@ -58,6 +60,8 @@ func init() {
 	rootCmd.Flags().StringVar(&flagAuthMode, "auth", "token", "Authentication mode: token (single static token) or oauth (per-user login)")
 	rootCmd.Flags().StringVar(&flagGoogleClientID, "oauth-google-client-id", "", "Google OAuth client id (enables the google login provider)")
 	rootCmd.Flags().StringVar(&flagGoogleSecret, "oauth-google-client-secret", "", "Google OAuth client secret (or env AGENTS_OAUTH_GOOGLE_CLIENT_SECRET)")
+	rootCmd.Flags().StringVar(&flagGitHubClientID, "oauth-github-client-id", "", "GitHub OAuth client id (enables the github login provider)")
+	rootCmd.Flags().StringVar(&flagGitHubSecret, "oauth-github-client-secret", "", "GitHub OAuth client secret (or env AGENTS_OAUTH_GITHUB_CLIENT_SECRET)")
 	rootCmd.Flags().StringVar(&flagAllowedDomains, "allowed-domains", "", "Comma-separated email domains admitted to OAuth login")
 	rootCmd.Flags().StringVar(&flagAllowedEmails, "allowed-emails", "", "Comma-separated email addresses admitted to OAuth login")
 	rootCmd.Flags().StringVar(&flagBootstrapAdmin, "bootstrap-admin", "", "Email that signs in as admin (implicitly admitted; the recovery hatch)")

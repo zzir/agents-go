@@ -29,20 +29,29 @@ document. What a schema cannot say about them:
 
 ### OAuth mode
 
-`--auth oauth` replaces the single static token with per-user Google sign-in
-and database-backed credentials:
+`--auth oauth` replaces the single static token with per-user sign-in through
+Google and/or GitHub, and database-backed credentials:
 
 ```bash
 ./agents-server --auth oauth --base-url https://agents.example.com \
   --oauth-google-client-id XXX.apps.googleusercontent.com \
   --oauth-google-client-secret '...' \
+  --oauth-github-client-id '...' \
+  --oauth-github-client-secret '...' \
   --allowed-domains example.com
 ```
+
+Each provider is optional and one is required; the login page shows a button
+per configured provider.
 
 - **Admission is an explicit allowlist** — `--allowed-domains` and/or
   `--allowed-emails` (matched against the provider-verified email, lowercased);
   starting with none configured is a startup error, never allow-everyone. A
   domain with an `@` in it, or an address without one, is a startup error too.
+  The address is the whole check whichever provider signed the person in: a
+  GitHub account is admitted by its primary verified address, never by
+  organization or handle
+  ([decisions §5.64](../explanation/decisions.md#564-login-admission-is-by-verified-email-whatever-the-provider)).
 - **Who is the admin is decided one of two ways.** `--bootstrap-admin <email>`
   names them: implicitly admitted, admin on every login (the recovery hatch),
   and with it set nobody else becomes admin by signing in. Without it, the
@@ -52,9 +61,15 @@ and database-backed credentials:
   are serialized, so there is one first.)
 - **Logins with the same verified email merge into one account** across
   providers; the (provider, subject) identity is the primary key of a login.
+  Google reports the address it verified. GitHub's is the account's primary
+  address, read from `/user/emails` and taken only when verified: the
+  profile's public email is not consulted, and an unverified primary is
+  refused rather than replaced by a verified secondary. A GitHub account
+  without a display name is named by its login.
 - **The provider's picture URL rides `/auth/me` as `avatar_url`** and the
   browser loads it; the CSP's `img-src` admits each configured provider's
-  picture hosts (Google: `https://*.googleusercontent.com`) and nothing else.
+  picture hosts (Google: `https://*.googleusercontent.com`, GitHub:
+  `https://avatars.githubusercontent.com`) and nothing else.
   No picture shows initials.
 - **A login belongs to the browser that started it.** `start` sets one
   HttpOnly cookie (`__Host-agents_oauth` on https, `SameSite=Lax`, ten
@@ -90,9 +105,11 @@ and database-backed credentials:
   in `sessionStorage`, gone with the tab. An OAuth sign-in started from a
   deep link (`#/session/…`) returns to that view after the code exchange.
 - **`--token` is refused in OAuth mode** — programmatic access uses the
-  personal access tokens below. The Google redirect URI to register is
-  `<base-url>/api/v1/auth/oauth/google/callback`.
-- The client secret can come from the environment instead of the flag
+  personal access tokens below. The redirect URI to register with a provider
+  is `<base-url>/api/v1/auth/oauth/<provider>/callback`, `google` or
+  `github`; a GitHub OAuth App holds one callback URL, so each environment
+  registers its own app.
+- A client secret can come from the environment instead of the flag
   ([configuration reference](../reference/configuration.md#environment-variables)).
   Secrets configure the process only; they are never stored in the database.
 
