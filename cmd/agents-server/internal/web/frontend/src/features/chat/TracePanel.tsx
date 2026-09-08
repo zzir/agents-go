@@ -215,13 +215,12 @@ function spanTimeRange(spans: TraceEventData[]): TimeRange | null {
   return { t0, total: Math.max(t1 - t0, 1) };
 }
 
-// barGeometry places an extent on the track as CSS percentages, no narrower
-// than minWidth percent.
-function barGeometry(range: TimeRange, [a, b]: [number, number], minWidth = 0): { left: string; width: string } {
-  return {
-    left: (((a - range.t0) / range.total) * 100).toFixed(2) + '%',
-    width: Math.max(((b - a) / range.total) * 100, minWidth).toFixed(2) + '%',
-  };
+// barGeometry places an extent on the track: a bar in CSS percentages, or a
+// tick (CSS-sized) when the extent is under 1% of the range.
+function barGeometry(range: TimeRange, [a, b]: [number, number]): { left: string; width?: string; tick: boolean } {
+  const left = (((a - range.t0) / range.total) * 100).toFixed(2) + '%';
+  const w = ((b - a) / range.total) * 100;
+  return w < 1 ? { left, tick: true } : { left, width: w.toFixed(2) + '%', tick: false };
 }
 
 // spanHasDetails reports whether a span row can expand: the server strips
@@ -262,7 +261,7 @@ function SpanRow({ node, depth, range, alignChevron, loadSpan }: { node: SpanNod
   const toggle = () => { setOpen(o => !o); setPayload('idle'); };
 
   const own = spanExtent(s);
-  const bar = range && own ? barGeometry(range, own, 1.5) : null;
+  const bar = range && own ? barGeometry(range, own) : null;
   // The children's extents overlay the parent's bar in their own colors, so a
   // collapsed row still shows the run's shape; a gap is time no child explains.
   const segments = range
@@ -305,8 +304,8 @@ function SpanRow({ node, depth, range, alignChevron, loadSpan }: { node: SpanNod
         {s.duration && <span className="trace-span-duration">{s.duration}</span>}
         {bar && (
           <span className="trace-span-track">
-            <span className={'trace-span-bar' + (running ? ' live' : '') + (segments.length ? ' covered' : '')} style={{ left: bar.left, width: bar.width, background: iconColor }} />
-            {segments.map(g => <span key={g.key} className="trace-span-seg" style={{ left: g.left, width: g.width, background: g.color }} />)}
+            <span className={'trace-span-bar' + (running ? ' live' : '') + (segments.length ? ' covered' : '') + (bar.tick ? ' tick' : '')} style={{ left: bar.left, width: bar.width, background: iconColor }} />
+            {segments.map(g => <span key={g.key} className={'trace-span-seg' + (g.tick ? ' tick' : '')} style={{ left: g.left, width: g.width, background: g.color }} />)}
           </span>
         )}
       </div>

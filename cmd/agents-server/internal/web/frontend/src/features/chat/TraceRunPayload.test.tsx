@@ -90,14 +90,18 @@ describe('TraceRun', () => {
       { kind: 'span', name: 'a', type: 'agent', span_id: 'p', started_at: t(0), ended_at: t(100) },
       { kind: 'span', name: 'a', type: 'generation', span_id: 'c1', parent_id: 'p', started_at: t(0), ended_at: t(10) },
       { kind: 'span', name: 'function:ls', type: 'function', span_id: 'c2', parent_id: 'p', started_at: t(50), ended_at: t(51), error: 'boom' },
+      { kind: 'span', name: 'function:cat', type: 'function', span_id: 'c3', parent_id: 'p', started_at: t(80), ended_at: t(80.2) },
     ];
     act(() => { root.render(<Harness events={events} loadSpan={resolve} />); });
     const tracks = container.querySelectorAll('.trace-span-track');
-    expect(tracks).toHaveLength(3);
+    expect(tracks).toHaveLength(4);
     expect(tracks[0].querySelector('.trace-span-bar')!.className).toContain('covered');
     const segs = Array.from(tracks[0].querySelectorAll('.trace-span-seg')) as HTMLElement[];
-    expect(segs.map(g => [g.style.left, g.style.width])).toEqual([['0%', '10%'], ['50%', '1%']]);
+    expect(segs.map(g => [g.style.left, g.style.width])).toEqual([['0%', '10%'], ['50%', '1%'], ['80%', '']]);
     expect(segs[1].getAttribute('style')).toContain('var(--fgColor-danger)');
+    // Under 1% of the range: a tick, on the parent's strip and on its own row.
+    expect(segs.map(g => g.classList.contains('tick'))).toEqual([false, false, true]);
+    expect(tracks[3].querySelector('.trace-span-bar')!.className).toContain('tick');
     expect(tracks[1].querySelector('.trace-span-bar')!.className).not.toContain('covered');
     expect(tracks[1].querySelectorAll('.trace-span-seg')).toHaveLength(0);
     act(() => { root.unmount(); });

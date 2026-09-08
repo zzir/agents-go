@@ -163,6 +163,7 @@
   position: absolute;
   top: 0;
   bottom: 0;
+  min-width: 4px;
   border-radius: var(--borderRadius-small);
   opacity: 0.75;
 }
@@ -170,8 +171,16 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  min-width: 1px;
+  min-width: 4px;
   opacity: 0.85;
+}
+/* A span under 1% of the range is a tick: a full-color 2px line. */
+.trace-span-bar.tick,
+.trace-span-seg.tick {
+  width: 2px;
+  min-width: 0;
+  border-radius: 1px;
+  opacity: 1;
 }
 .trace-span-data {
   margin: var(--base-size-2) var(--base-size-4) var(--base-size-6);
