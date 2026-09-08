@@ -101,6 +101,53 @@ func UserText(items []InputItem) string {
 	return strings.Join(parts, "\n")
 }
 
+// ItemRole classifies an item's wire JSON: a message's role, "tool" for a
+// function call or its output, "" for anything else.
+func ItemRole(raw json.RawMessage) string {
+	p := ProbeItem(raw)
+	switch p.Type {
+	case "function_call", "function_call_output":
+		return "tool"
+	case "reasoning":
+		return ""
+	}
+	return p.Role
+}
+
+// RenderItem is an item's readable text: a message's content, a function call
+// as name(arguments), an output's text; "" for an item with nothing to say.
+func RenderItem(raw json.RawMessage) string {
+	p := ProbeItem(raw)
+	switch p.Type {
+	case "function_call":
+		if p.Name == "" {
+			return ""
+		}
+		return p.Name + "(" + p.Args + ")"
+	case "function_call_output":
+		return JSONText(p.Output)
+	case "reasoning":
+		return ""
+	}
+	if p.Role == "" && p.Type != "message" {
+		return ""
+	}
+	return textFromRaw(raw)
+}
+
+// JSONText unwraps a JSON string, and falls back to the raw JSON for a
+// structured payload; "" for nothing.
+func JSONText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	return string(raw)
+}
+
 // textFromRaw extracts a serialized item's "content" as either a bare string
 // or an array of text parts, the two shapes the Responses API accepts.
 func textFromRaw(raw []byte) string {

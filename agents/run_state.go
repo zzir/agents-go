@@ -17,7 +17,7 @@ import (
 // round-trips within this SDK only. Decoding accepts the same major, no newer
 // than this minor and no older than runStateOldestDecodableMinor; the minors
 // name format steps, not releases — see decisions §5.18.
-const RunStateSchemaVersion = "1.6"
+const RunStateSchemaVersion = "1.7"
 
 // runStateOldestDecodableMinor is the oldest minor this decoder accepts. Raise
 // it when a bump REPLACES or reinterprets a field — decisions §5.18.
@@ -72,6 +72,12 @@ type RunState struct {
 	// DisclosedTools names the deferred tools opened up before the pause, so a
 	// resumed run does not re-hide a tool the model has already been told about.
 	DisclosedTools []string
+
+	// ContextReset is a new_context request the pause cut off before its save
+	// point; ContextFresh says the context is the last reset's with no work
+	// since. Both resume with the run (spec §2.5i).
+	ContextReset bool
+	ContextFresh bool
 
 	// PendingInput carries input queued through RunControl that the run had
 	// not consumed when it paused — spec §2.11b.
@@ -222,6 +228,8 @@ func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, ctrl *run
 	if state.Approvals != nil {
 		rc.Approvals = state.Approvals
 	}
+	rc.contextReset.Store(state.ContextReset)
+	rc.contextFresh.Store(state.ContextFresh)
 	if state.Usage != nil {
 		// A copy: a second resume of the same state (Retry over ResumeRun)
 		// must start from the pause snapshot, not an inflated one.
@@ -316,6 +324,8 @@ type serialRunState struct {
 	ToolsUsed             []string                       `json:"tools_used,omitempty"`
 	OffChainHistory       bool                           `json:"off_chain_history,omitempty"`
 	DisclosedTools        []string                       `json:"disclosed_tools,omitempty"`
+	ContextReset          bool                           `json:"context_reset,omitempty"`
+	ContextFresh          bool                           `json:"context_fresh,omitempty"`
 	PendingInput          *serialPendingInput            `json:"pending_input,omitempty"`
 	ServerCursor          *serialServerCursor            `json:"server_cursor,omitempty"`
 	ModelResponses        []serialResponse               `json:"model_responses"`
@@ -460,6 +470,8 @@ func (s *RunState) MarshalJSON() ([]byte, error) {
 		ToolsUsed:             s.ToolsUsed,
 		OffChainHistory:       s.OffChainHistory,
 		DisclosedTools:        s.DisclosedTools,
+		ContextReset:          s.ContextReset,
+		ContextFresh:          s.ContextFresh,
 		Usage:                 s.Usage,
 		ReasoningItemIDPolicy: reasoningPolicyToString(s.ReasoningItemIDPolicy),
 		GuardrailResults:      toSerialGuardrailResults(s.GuardrailResults),
@@ -684,6 +696,8 @@ func RunStateFromJSON(data []byte, registry map[string]*Agent) (*RunState, error
 		ToolsUsed:             in.ToolsUsed,
 		OffChainHistory:       in.OffChainHistory,
 		DisclosedTools:        in.DisclosedTools,
+		ContextReset:          in.ContextReset,
+		ContextFresh:          in.ContextFresh,
 		Usage:                 in.Usage,
 		ReasoningItemIDPolicy: reasoningPolicyFromString(in.ReasoningItemIDPolicy),
 		GuardrailResults:      fromSerialGuardrailResults(in.GuardrailResults),

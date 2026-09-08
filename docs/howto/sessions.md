@@ -231,6 +231,108 @@ pass and one more attempt at the same turn. It is off by default, the retry
 does not spend the turn budget, and a pass that drops nothing buys no retry
 ([spec §2.5g](../reference/spec.md#25g-context-overflow)).
 
+### Telling the model its budget
+
+Compaction and overflow recovery act for the model. `ContextBudget` lets the
+model see the figure itself:
+
+```go
+opts.Model.InputFilter = agents.ContextBudget{
+	Window:   200_000, // the model's context window, in tokens
+	Occupied: last,    // what the conversation's last call measured; 0 = unknown
+}.InputFilter()
+```
+
+Every call then ends with one system item, `Context budget: about N of W
+tokens in use (P% left).`: the run's own last call once it has one, `Occupied`
+before that, nothing when neither is known. It is appended to the input, never
+to the instructions, so a cached prompt prefix stays cached, and it is not
+saved to the session ([spec §2.5i](../reference/spec.md#25i-the-model-manages-its-own-context)).
+When handoffs cross models, `WindowFor func(*agents.Agent) int` answers the
+active agent's window and `Window` is the fallback.
+A runnable program is [examples/contextmanagement](../../examples/contextmanagement/main.go).
+
+### Searching what the model no longer sees
+
+`history.Tools` gives the model two read-only tools over its own session:
+`history_search`, a case-insensitive literal substring over messages, tool
+calls and tool outputs, newest first, folded history included; and
+`history_read`, one item in full by id.
+
+```go
+agent.Tools = append(agent.Tools, history.Tools(history.For(sess), history.Options{})...)
+```
+
+They read the log, not the projection, so a compaction pass can fold freely:
+a detail it dropped is one call away. The turn in progress is not visible
+until it ends, since the session is written at turn boundaries. A storage
+that leaves folded entries out of `Entries` implements
+`session.HistorySearcher` to answer searches itself
+([spec §2.5i](../reference/spec.md#25i-the-model-manages-its-own-context));
+the workbench's SQLite and PostgreSQL store does. A `history.Resolver` lets a
+host open another session for a named scope, which is how the workbench lets
+a conversation search its background tasks' own transcripts. The same example
+program shows the tools in use.
+
+### Giving the model a memory
+
+`memory.Tools` gives the model `memory_list`, `memory_read`, `memory_search`,
+`memory_write` and `memory_append` over the scopes you bind. A scope is a
+name the model uses, a store behind it, and your policy: writable or not,
+approval or not, its limits.
+
+```go
+store := memory.NewInMemoryStore()
+scopes := []memory.ScopeSpec{
+	{Scope: memory.Scope{Kind: "session", ID: sessionID}, Name: "session", Writable: true,
+		Describe: "this conversation's working notes; they survive compaction."},
+	{Scope: memory.Scope{Kind: "agent", ID: "planner"}, Name: "agent", Writable: true, Approve: true,
+		Describe: "what future conversations should know; a write waits for approval."},
+}
+agent.Tools = append(agent.Tools, memory.Tools(scopes, memory.Static(store))...)
+```
+
+The first scope is the default. A write to an `Approve` scope pauses the run
+for approval like any approval-gated tool ([Human in the loop](human_in_the_loop.md));
+a read-only scope answers a write with a refusal the model can read.
+`memory.Snapshot` renders a scope as one text, which is what a context reset
+carries over. A `memory.Resolver` opens the store per call for a host whose
+scopes are known only then; the workbench binds the session and the agent
+that way, with the rules in `store.MemoryPolicies`
+([protocol](../reference/protocol.md#memories--apiv1memories)). A memory is
+never sent to the model on its own: it is read through the tools, so the
+context stays the log's projection
+([spec §2.5i](../reference/spec.md#25i-the-model-manages-its-own-context)).
+
+### Letting the model reset its context
+
+`agents.NewContextTool` is `new_context`: the model asks for a fresh window,
+and the run grants it at the turn's save point. A `CompactionAware` storage
+compacts with `CompactionArgs.Reset` set; a run-level `compaction.Compactor`
+implements `ContextResetter` and folds everything but the newest user
+message, carrying `ResetSummary` (the session memory, say) into the fresh
+context:
+
+```go
+compactor := compaction.New(strategy, nil)
+compactor.ResetSummary = func(ctx context.Context) (string, error) {
+	return memory.Snapshot(ctx, store, sessionScope, 20_000)
+}
+agent.Tools = append(agent.Tools, agents.NewContextTool())
+opts.Compaction = agents.CompactionOptions{Compactor: compactor}
+```
+
+A compactor with no strategy (`compaction.New(nil, nil)`) folds nothing on
+its own and still records a reset the model asked for. A session that cannot
+reset records `context_reset_ignored` and carries on; a request made in a
+turn that pauses for approval is performed when the run resumes, and a fresh
+context refuses another reset until the model has done some work, across a
+pause too
+([spec §2.5i](../reference/spec.md#25i-the-model-manages-its-own-context)).
+In the workbench an agent's compaction mode chooses between `summary`
+(the default), `reset` and `hybrid`, and the panel's button becomes
+"Reset now".
+
 ### Automatic compaction
 
 `openai.CompactionSession` **decorates** any other `Session`, calling the OpenAI `responses.compact` API to summarize history once it grows past a threshold, then replacing the stored items with the compacted result.

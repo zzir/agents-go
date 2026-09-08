@@ -128,8 +128,10 @@ and `PUT /sessions/:id/owner` work on any; opening, reading or running one
 does not.
 
 **Host configuration** — sandboxes (test and container routes included),
-settings, guardrails, memories — is read by everyone and written by admins: a
-member's `POST`/`PUT`/`DELETE` is `403`. Using configuration is not writing
+settings, guardrails, global memory — is read by everyone and written by
+admins: a member's `POST`/`PUT`/`DELETE` is `403`. An agent's memory follows
+the agent's edit rule and a session's memory is its owner's
+([Memories](#memories--apiv1memories)). Using configuration is not writing
 it: a member runs any agent, workflow or sandbox they can see, in their own
 session, approving their own tool calls.
 
@@ -181,7 +183,16 @@ not zero.
 the threshold: the kept window, pairing-safe split and summary-of-summary
 guards still apply, so the worst outcome is `200` with `compacted: false`.
 `409` while a run is executing (the run compacts at its own boundaries);
-`400` when the agent has compaction disabled or no usable provider.
+`400` when the agent has compaction disabled or no usable provider. With the
+agent's `compaction_mode` at `reset` or `hybrid` the same call, the
+threshold, and the model's own `new_context` run one reset pass instead
+([invariant 65](../explanation/workbench-invariants.md)): the checkpoint
+carries the session memory and answers `reset: true` on the entry.
+
+`/sessions/:id/memory` lists the session's own memory, the keys and sizes the
+model (or its owner) wrote, and `/sessions/:id/memory/*key` reads one in
+full. A row is deleted or edited through `/memories/:id`
+([Memories](#memories--apiv1memories)).
 
 **Pagination** — `messages` and `traces` accept `?limit=` and `?before_id=`.
 Without `limit` the full list comes back oldest-first; with it, the newest
@@ -550,6 +561,22 @@ no longer resolves fails the agent build rather than silently skipping
 ([invariant 13](../explanation/workbench-invariants.md)). Built-in:
 `content_filter` (input + tool_input, regex — jailbreak keywords),
 `max_input_length` (input, 50k chars), `max_output_length` (output, 50k chars).
+
+### Memories — `/api/v1/memories`
+
+A memory is one text under a **scope**: `global` (every agent reads it with
+every request), `agent` (that agent reads it), or `session` (the model's own
+working notes for one conversation, never injected, read back on demand and
+carried into a context reset). `POST` is an upsert by scope and key; `PUT`
+changes content and metadata only, the identity must match. Who writes:
+global is the admin's, an agent's memory follows the agent's edit rule, a
+session's is its owner's; a member sees an agent's memory only when they can
+see the agent. The rules, the model's part included, are one table
+([invariant 64](../explanation/workbench-invariants.md)). `GET /memories`
+lists the global and agent scopes (`scope_kind` and `scope_id` narrow);
+session memory is read under `/sessions/:id/memory`. `written_by` says
+whether a person or the model wrote a row: the model writes session memory
+freely and agent memory only through an approved `memory_write`.
 
 ### Sandboxes — `/api/v1/sandboxes`
 

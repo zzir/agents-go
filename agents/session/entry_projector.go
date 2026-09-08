@@ -84,6 +84,9 @@ type CompactionPayload struct {
 	// it.
 	TokensBefore int `json:"tokens_before,omitzero"`
 	TokensAfter  int `json:"tokens_after,omitzero"`
+	// Reset marks a pass that folded the conversation rather than summarizing
+	// it: what Summary carries is what the model kept for itself (spec §2.5i).
+	Reset bool `json:"reset,omitzero"`
 }
 
 // CompactionPayload decodes a compaction checkpoint's payload.

@@ -85,6 +85,35 @@ type CompactionGroup struct {
 	Window    int    `json:"compaction_window,omitempty"`
 	Model     string `json:"compaction_model,omitempty"`
 	Prompt    string `json:"compaction_prompt,omitempty"`
+	// Mode is summary (the default), reset or hybrid: whether a pass
+	// summarizes the folded history, drops it carrying the session memory,
+	// or does both.
+	Mode string `json:"compaction_mode,omitempty"`
+}
+
+// The compaction modes.
+const (
+	CompactionModeSummary = "summary"
+	CompactionModeReset   = "reset"
+	CompactionModeHybrid  = "hybrid"
+)
+
+// ResetMode reports whether a pass folds by reset rather than summary.
+func (g CompactionGroup) ResetMode() bool {
+	return g.Mode == CompactionModeReset || g.Mode == CompactionModeHybrid
+}
+
+// MemoryGroup holds the model's memory surface.
+type MemoryGroup struct {
+	// Tools gives the agent's chat runs memory_list / read / search / write /
+	// append over the session's memory.
+	Tools bool `json:"memory_tools,omitempty"`
+	// AgentWrite lets the model propose agent memory as well; each such
+	// write waits for the user's approval.
+	AgentWrite bool `json:"memory_agent_write,omitempty"`
+	// HistoryTools gives history_search and history_read over the session,
+	// folded history included.
+	HistoryTools bool `json:"history_tools,omitempty"`
 }
 
 // jsonGroupValue / jsonGroupScan back the driver.Valuer / sql.Scanner
@@ -148,6 +177,12 @@ func (g *ApprovalGroup) Scan(src any) error { return jsonGroupScan(g, src) }
 
 // Value implements driver.Valuer.
 func (g CompactionGroup) Value() (driver.Value, error) { return jsonGroupValue(g) }
+
+// Value implements driver.Valuer.
+func (g MemoryGroup) Value() (driver.Value, error) { return jsonGroupValue(g) }
+
+// Scan implements sql.Scanner.
+func (g *MemoryGroup) Scan(src any) error { return jsonGroupScan(g, src) }
 
 // Scan implements sql.Scanner.
 func (g *CompactionGroup) Scan(src any) error { return jsonGroupScan(g, src) }

@@ -26,6 +26,9 @@ const (
 	// DiagContextOverflow is a model call that failed because the context did
 	// not fit, after which the run compacted and tried again.
 	DiagContextOverflow DiagnosticType = "context_overflow"
+	// DiagContextResetIgnored records a model-requested context reset the run
+	// could not perform: no session, or one that cannot reset.
+	DiagContextResetIgnored DiagnosticType = "context_reset_ignored"
 )
 
 // Diagnostic records trouble a run went through and survived — retries, a

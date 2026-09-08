@@ -145,7 +145,11 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     re-derives a display, role or provenance at read time. Compaction
     soft-deletes, appends a checkpoint naming what it folded, and sizes only
     the active branch (`compaction_adapter.go`); the timeline stays decoupled
-    from the fold — folded entries render in full, the checkpoint inline.
+    from the fold — folded entries render in full, the checkpoint inline, and
+    `SearchHistory` reads them back for the model's history tools. A fold
+    never moves the tip: the checkpoint extends the branch as it stood, and
+    the run's view closes its parent links over folded rows (`loadIn`), so a
+    folded turn stays on the transcript's path while leaving the model's.
 25. **Schema changes ship without migrations.** `CREATE TABLE / INDEX IF NOT
     EXISTS` is the whole story; a structural change means dropping and
     recreating the database, and ALTER TABLE machinery is never added.
@@ -184,6 +188,8 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     (`ActiveContextTokens`); and character estimates for the conversation and
     prompt, never for arithmetic against the others. The panel draws one bar
     with the threshold as a tick, and an estimate as two figures behind `~`.
+    The budget notice a run appends to every model call (`ContextBudget`) is
+    built from the provider figure of the last measured call, never an estimate.
 29. **A workflow execution is a task, advanced from the run's teardown, never
     from the starting call's callback.** A step is an ordinary run; `postRun`
     — reached by every segment, fresh or resumed — hands the outcome to the
@@ -384,3 +390,21 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     instance's running tasks (`store/db.go`; the multi-instance direction is
     scope.md's Roadmap). SQLite relies on its single-file, single-process
     assumption and the lock is a no-op there.
+64. **Memory is one table by scope, and its rules have one home.** A row's
+    `scope_kind` (global, agent, session) decides injection, who writes,
+    whether the model writes and after what, and the limits, all from
+    `store.MemoryPolicies` (decisions §5.62); the handler, the run adapter
+    and the injection query it rather than judge. Injection is an allow-list
+    of kinds. Session rows follow their session (a fork copies, a delete
+    cascades, a generation is a scope of its own), agent rows their agent.
+65. **A reset checkpoint carries the session memory and keeps the newest user
+    message, and one pass serves every trigger.** In reset or hybrid mode the
+    threshold, `Compact now` and the model's `new_context` all run
+    `resetPass` (`compaction_adapter.go`): fold every other item and every
+    earlier checkpoint on the active branch, write a checkpoint marked
+    `reset` whose summary is the session memory snapshot (hybrid: a short
+    recap first, over the earlier checkpoints' text too), and never call
+    the summary model for the fold itself. A reset supersedes the last. A
+    background run summarizes whatever its agent's mode says: it has no
+    memory tools to write down what a reset would keep. The mode is the agent's, needs
+    compaction enabled, and turns the memory and history tools on.

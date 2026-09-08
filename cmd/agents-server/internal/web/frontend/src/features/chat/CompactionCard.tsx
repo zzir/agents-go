@@ -18,10 +18,15 @@ interface CompactionCardProps {
   content?: string;
   tokensBefore?: number;
   tokensAfter?: number;
+  // A reset: the model's context started over with what it kept in memory.
+  reset?: boolean;
+  // Entries the checkpoint folded; a reset's figure, where a token estimate
+  // over a fresh window says nothing.
+  folded?: number;
 }
 
 export const CompactionCard = memo(function CompactionCard(
-  { content, tokensBefore, tokensAfter }: CompactionCardProps,
+  { content, tokensBefore, tokensAfter, reset, folded }: CompactionCardProps,
 ) {
   const [expanded, setExpanded] = useState(false);
   const summaryText = (content || '').replace(/^\[Conversation Summary\]\s*/, '');
@@ -35,8 +40,10 @@ export const CompactionCard = memo(function CompactionCard(
         onClick={() => setExpanded(!expanded)}
       >
         <ChevronRightIcon size={16} className="process-icon" />
-        <span>Compaction</span>
-        {shrank && (
+        <span>{reset ? 'Context reset' : 'Compaction'}</span>
+        {reset ? (
+          folded ? <span className="compaction-card-savings">{folded} {folded === 1 ? 'entry' : 'entries'} folded</span> : null
+        ) : shrank && (
           <span className="compaction-card-savings">
             ~{compactTokens(tokensBefore)} → ~{compactTokens(tokensAfter)} tokens
           </span>
@@ -45,7 +52,9 @@ export const CompactionCard = memo(function CompactionCard(
       {expanded && (
         <div className="compaction-card-body">
           <div className="compaction-card-note">
-            The history above stays in full — the model now reads this summary in its place.
+            {reset
+              ? 'The history above stays in full — the model started a fresh context with what it kept in memory, and can search the rest.'
+              : 'The history above stays in full — the model now reads this summary in its place.'}
           </div>
           {summaryText && <div className="markdown-body" dangerouslySetInnerHTML={{ __html: summaryHtml }} />}
         </div>

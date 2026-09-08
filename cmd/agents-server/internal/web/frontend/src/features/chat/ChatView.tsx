@@ -53,6 +53,8 @@ interface ChatMessage {
   // context size on either side of the pass.
   folded?: TimelineEntry[];
   tokensBefore?: number;
+  reset?: boolean;
+  foldedCount?: number;
   tokensAfter?: number;
   // Present on a workflow-started note (a system row).
   note?: WorkflowStartedNote;
@@ -731,7 +733,7 @@ export function ChatView({
         );
       }
       if (m.role === 'compaction') {
-        return <CompactionCard key={entryKey(m, i, 'compaction')} content={m.content} tokensBefore={m.tokensBefore} tokensAfter={m.tokensAfter} />;
+        return <CompactionCard key={entryKey(m, i, 'compaction')} content={m.content} tokensBefore={m.tokensBefore} tokensAfter={m.tokensAfter} reset={m.reset} folded={m.foldedCount} />;
       }
       if (m.role === 'system' && m.note) {
         return <WorkflowStartedChip key={entryKey(m, i, 'msg')} note={m.note} content={m.content || ''} traceRunId={userRunMap[i] || null} msgIdx={i} />;

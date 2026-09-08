@@ -49,12 +49,13 @@ const (
 
 // Diagnostic types, re-exported alongside the Diagnostic alias.
 const (
-	DiagModelRetry        = session.DiagModelRetry
-	DiagModelFallback     = session.DiagModelFallback
-	DiagStreamError       = session.DiagStreamError
-	DiagToolPanic         = session.DiagToolPanic
-	DiagToolTimeout       = session.DiagToolTimeout
-	DiagCompactionFailed  = session.DiagCompactionFailed
-	DiagContextOverflow   = session.DiagContextOverflow
-	DiagResponseTruncated = session.DiagResponseTruncated
+	DiagModelRetry          = session.DiagModelRetry
+	DiagModelFallback       = session.DiagModelFallback
+	DiagStreamError         = session.DiagStreamError
+	DiagToolPanic           = session.DiagToolPanic
+	DiagToolTimeout         = session.DiagToolTimeout
+	DiagCompactionFailed    = session.DiagCompactionFailed
+	DiagContextOverflow     = session.DiagContextOverflow
+	DiagContextResetIgnored = session.DiagContextResetIgnored
+	DiagResponseTruncated   = session.DiagResponseTruncated
 )

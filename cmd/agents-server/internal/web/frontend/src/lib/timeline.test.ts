@@ -501,6 +501,16 @@ describe('stream/replay isomorphism', () => {
     expect(cp.tokensAfter).toBe(3100);
   });
 
+  it('compaction: a reset checkpoint carries its flag to the marker', () => {
+    const timeline = buildTimeline([
+      { id: "1", entry_id: 'e1', kind: 'item', role: 'user', content: 'old question' },
+      { id: "2", entry_id: 'e2', kind: 'compaction', role: 'compaction', content: 'the session memory', compaction: { excluded_ids: ['e1'], reset: true } },
+      { id: "3", entry_id: 'e3', kind: 'item', role: 'user', content: 'new question' },
+    ]);
+    expect(timeline.map(m => m.role)).toEqual(['user', 'compaction', 'user']);
+    expect((timeline[1] as { reset?: boolean }).reset).toBe(true);
+  });
+
   it('compaction: a second pass leaves the first marker and the history in place', () => {
     const timeline = buildTimeline([
       { id: "1", entry_id: 'e1', kind: 'item', role: 'user', content: 'oldest' },

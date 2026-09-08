@@ -331,11 +331,12 @@ func (s *EntryStore) appendPointIn(ctx context.Context, db bun.IDB) (session.App
 // foldAppendPointIn computes the append point the long way, from the rows —
 // the definition the stored point must agree with (invariant 59).
 func (s *EntryStore) foldAppendPointIn(ctx context.Context, db bun.IDB) (session.AppendPoint, error) {
-	// Read with cross-model adaptation OFF: the stored tree is the same tree
-	// whichever model reads it.
+	// Read with cross-model adaptation OFF, folded rows included: the stored
+	// tree is the same tree whichever model reads it, and its tip may well
+	// be a folded row (a reset folds the turn that asked for it).
 	bare := *s
 	bare.model = ""
-	entries, err := bare.loadIn(ctx, db, false, false)
+	entries, err := bare.loadIn(ctx, db, true, false)
 	if err != nil {
 		return session.AppendPoint{}, err
 	}
@@ -380,8 +381,9 @@ func writeAppendPoint(ctx context.Context, db bun.IDB, ref session.Ref, at sessi
 	return nil
 }
 
-// load reads the session's entries in append order; the RUN excludes
-// compacted rows, the UI includes them.
+// load reads the session's entries in append order; the RUN collapses
+// compacted rows out of the tree (bodies unread, parent links closed over
+// them), the UI includes them.
 func (s *EntryStore) load(ctx context.Context, includeCompacted bool) ([]session.Entry, error) {
 	return s.loadIn(ctx, s.db, includeCompacted, false)
 }
@@ -391,7 +393,9 @@ func (s *EntryStore) loadIn(ctx context.Context, db bun.IDB, includeCompacted, s
 	q := s.scoped(db.NewSelect().Model(&rows)).
 		OrderExpr("seq ASC")
 	if !includeCompacted {
-		q = q.Where("compacted = ?", false)
+		// A folded row's body is what the fold saved reading; its id and
+		// parent still shape the tree, so the row comes back as a skeleton.
+		q = q.ColumnExpr("id, entry_id, parent_id, kind, compacted, CASE WHEN compacted THEN '' ELSE entry END AS entry, source_model")
 	}
 	if err := q.Scan(ctx); err != nil {
 		return nil, fmt.Errorf("loading entries: %w", err)
@@ -411,6 +415,11 @@ func (s *EntryStore) loadIn(ctx context.Context, db bun.IDB, includeCompacted, s
 
 	out := make([]session.Entry, 0, len(rows))
 	for i := range rows {
+		if !includeCompacted && rows[i].Compacted {
+			// Folded: out of the model's view, its parent link closed over it.
+			skipped[rows[i].EntryID] = rows[i].ParentID
+			continue
+		}
 		var e session.Entry
 		if err := json.Unmarshal([]byte(rows[i].Entry), &e); err != nil {
 			if strict {
@@ -609,6 +618,9 @@ type CompactionInfo struct {
 	ExcludedIDs  []string `json:"excluded_ids,omitempty"`
 	TokensBefore int      `json:"tokens_before,omitempty"`
 	TokensAfter  int      `json:"tokens_after,omitempty"`
+	// Reset marks a pass that folded the conversation carrying the session
+	// memory rather than a summary.
+	Reset bool `json:"reset,omitempty"`
 }
 
 // GetEntries returns a page of a session's entries, oldest first. With a
@@ -782,6 +794,7 @@ func compactionInfoOf(e session.Entry) *CompactionInfo {
 		ExcludedIDs:  p.ExcludedIDs,
 		TokensBefore: p.TokensBefore,
 		TokensAfter:  p.TokensAfter,
+		Reset:        p.Reset,
 	}
 }
 
@@ -934,8 +947,7 @@ func forkEntriesTx(ctx context.Context, tx bun.Tx, src, dst session.Ref, upToID 
 	if _, err := tx.NewInsert().Model(&rows).Exec(ctx); err != nil {
 		return nil, fmt.Errorf("fork entries write: %w", err)
 	}
-	// Refold to place the copy's tip: a fork copies compacted rows too, and a
-	// cut landing on one would otherwise make a folded entry the tip.
+	// Fold the copy's tip from its rows: the cut decides where the copy ends.
 	if err := (&EntryStore{ref: dst}).refreshAppendPointIn(ctx, tx); err != nil {
 		return nil, err
 	}
@@ -969,9 +981,14 @@ func (s *EntryStore) ForkSession(ctx context.Context, dst *Session, src session.
 		if _, err := tx.NewInsert().Model(dst).Exec(ctx); err != nil {
 			return fmt.Errorf("fork create session: %w", err)
 		}
+		dstRef := session.Ref{ID: dst.ID, Gen: dst.Gen}
 		var e error
-		runIDs, e = forkEntriesTx(ctx, tx, src, session.Ref{ID: dst.ID, Gen: dst.Gen}, upToID, exclusive)
-		return e
+		if runIDs, e = forkEntriesTx(ctx, tx, src, dstRef, upToID, exclusive); e != nil {
+			return e
+		}
+		// The fork's memory is its own copy: a note written on one branch of
+		// the tree stays on that branch.
+		return copySessionMemories(ctx, tx, src, dstRef)
 	})
 	if err != nil {
 		return nil, err

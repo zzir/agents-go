@@ -64,6 +64,7 @@ renumbered — which is why the letters run out of alphabetical order in places.
 | [§2.5f](#25f-compaction) | Compaction | Compaction is run-level; a checkpoint is appended, never a rewrite |
 | [§2.5g](#25g-context-overflow) | Context overflow | Overflow reacts where compaction predicted wrong |
 | [§2.5h](#25h-crash-recovery) | Crash recovery | `session.Recover` repairs what a killed process left inconsistent |
+| [§2.5i](#25i-the-model-manages-its-own-context) | The model manages its own context | The budget notice rides on the input, never the instructions |
 | [§2.6](#26-guardrails) | Guardrails | One `Guardrail` type, four stages; placement decides scope |
 | [§2.7](#27-tools) | Tools | Return values, execution, and the approval partition |
 | [§2.7b](#27b-tool-results) | Tool results | `ToolResult` separates what the model sees from what the host sees |
@@ -767,6 +768,53 @@ Compaction predicts; overflow recovery reacts where the prediction was wrong.
 - **It is the counterpart of `RunState`, not a replacement**: `RunState`
   handles a run that paused on purpose; this handles a process that died and
   left only what had been written ([§2.5](#25-session-persistence-boundaries)).
+
+### 2.5i The model manages its own context
+
+What the runtime tells the model about its own context window, and what the
+model may do about it. The first lever is the budget notice.
+
+- **The budget notice is the last input item of a call, never part of the
+  instructions.** `ContextBudget.InputFilter` appends one system text item;
+  the instructions it was handed go out unchanged.
+- **It is not persisted.** An `InputFilter` edit reaches the model and the
+  trace, never the session.
+- **Its figure is the newest measured call**: within the run, the last
+  request's input plus output tokens; before the run's first call, the host's
+  `Occupied`. No figure, or no window, sends nothing.
+- **Its window is the active agent's.** `WindowFor` answers per agent, so a
+  handoff to an agent on another model measures against that model's window;
+  a zero answer falls back to `Window`.
+- **The history tools read the log, never the projection.** `history_search`
+  and `history_read` answer from the active branch's item entries, folded ones
+  included, newest first; the turn in progress is not visible until it ends.
+- **A storage may answer the search itself** (`session.HistorySearcher`); one
+  that leaves folded entries out of `Entries` must, or the folded history is
+  unsearchable. Either way one predicate decides a hit, `MatchesHistory`.
+- **Memory is the host's, by scope.** `memory.Tools` reads and writes the
+  scopes the host binds (`ScopeSpec`): which are writable, which wait for
+  approval and their limits are host policy, never the SDK's.
+- **A memory is never projected.** The model reaches it through the tools, so
+  the context stays the log's projection; a reset carries a `Snapshot`.
+- **A model-requested reset lands at the save point of the turn that asked,
+  never mid-turn.** `new_context` sets the request on the `RunContext`; the
+  save point performs it on the persisted log, after its own pass.
+- **A run-level compactor reads the whole branch at every point.** The pass,
+  the reset and the after-run checkpoint see the same history;
+  `Settings.Limit` bounds the projection after the pass, never its input.
+- **A reset is a forced pass with `Reset` set**: a `CompactionAware` storage
+  folds everything but the newest user message, earlier checkpoints and
+  stand-ins included, so one summary stands; a `ContextResetter` does the
+  same in memory. Neither present, `context_reset_ignored` is recorded.
+- **The request and the fresh-context guard ride the paused `RunState`.** A
+  turn that ends in an interruption performs the reset at the resumed turn's
+  save point, and a reset asked for again with no work since is refused
+  across the pause as it would be within a run.
+- **A second reset needs work in between.** While the context is fresh from
+  a reset, `new_context` answers that nothing more can be dropped and asks
+  nothing; a tool call other than it, or a message, ends the fresh state.
+
+— see [decisions §5.60](../explanation/decisions.md#560-the-budget-rides-on-the-input-not-the-instructions), [§5.61](../explanation/decisions.md#561-retrieval-over-summary), [§5.62](../explanation/decisions.md#562-memory-is-one-store-with-scopes), [§5.63](../explanation/decisions.md#563-a-reset-is-a-checkpoint-with-nothing-to-say)
 
 ### 2.6 Guardrails
 
@@ -1788,6 +1836,9 @@ Defaults that callers may depend on:
 | Input guardrails | concurrent with the model call | `Blocking: true` makes one a gate |
 | Session persistence | after each turn | Final turn is written after output guardrails pass |
 | `RunResult.Usage` / `RunState.Usage` | detached snapshot | Never the live accumulator; read without synchronization. Mid-run, `RunContext.Usage` is live — read it via `Snapshot()` |
+| Budget notice | off | `ContextBudget{Window, WindowFor, Occupied}.InputFilter()` appends `Context budget: about N of W tokens in use (P% left).` as the last input item ([§2.5i](#25i-the-model-manages-its-own-context)) |
+| History tools | 20 hits, 2,000-character excerpts, 20,000-character reads, 1,000-character queries | `history.MaxLimit`, `ExcerptChars`, `MaxReadChars`, `MaxQueryChars`; a case-insensitive literal substring, newest first, no ranking ([§2.5i](#25i-the-model-manages-its-own-context)) |
+| Memory tools | 1,000,000 bytes per key, 100 keys per scope, 200-character keys; 20,000-character reads, 500-character search matches | `memory.DefaultMaxBytes`, `DefaultMaxKeys`, `MaxKeyChars`, `MaxReadChars`, `MaxMatchChars`; a host's `ScopeSpec` may lower the first two ([§2.5i](#25i-the-model-manages-its-own-context)) |
 
 ---
 

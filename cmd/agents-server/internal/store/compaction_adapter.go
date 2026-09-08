@@ -11,7 +11,9 @@ import (
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/compaction"
+	"github.com/zzir/agents-go/agents/memory"
 	"github.com/zzir/agents-go/agents/session"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/tracing"
 )
 
@@ -43,7 +45,20 @@ type CompactionAdapter struct {
 	windowSize    int
 	summaryPrompt string
 	notify        CompactionNotifier
+
+	// Mode is the agent's compaction mode; reset and hybrid fold by reset
+	// (spec §2.5i). Memories, when set, is where a reset reads the session
+	// memory it carries over.
+	Mode     string
+	Memories *MemoryStore
 }
+
+// resetSnapshotChars caps the session memory a reset checkpoint carries.
+const resetSnapshotChars = 20_000
+
+// DefaultRecapPrompt asks for the short account a hybrid reset carries; the
+// detail is left to history_search.
+const DefaultRecapPrompt = `You are given the transcript of a conversation that is being folded out of an assistant's context. Write a recap of at most 300 words in plain prose: what the user wanted, what was decided, what was done and what remains. Leave out details the assistant can look up again; it keeps a searchable copy of the transcript. No tool syntax, no control tokens, no headings.`
 
 var (
 	_ session.Storage         = (*CompactionAdapter)(nil)
@@ -103,6 +118,10 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args session.Com
 
 	if !args.Force && activeTokens(active) < ca.threshold {
 		return nil
+	}
+
+	if args.Reset || ca.Mode == CompactionModeReset || ca.Mode == CompactionModeHybrid {
+		return ca.resetPass(ctx, args, active)
 	}
 
 	if ca.windowSize >= len(active) {
@@ -239,6 +258,162 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args session.Com
 	return nil
 }
 
+// resetPass folds the active branch down to its newest user message and a
+// checkpoint carrying the session memory, plus a short recap of what was
+// folded in hybrid mode; a failed recap degrades to a bare reset (spec §2.5i).
+func (ca *CompactionAdapter) resetPass(ctx context.Context, args session.CompactionArgs, active []entryRow) error {
+	bodies, err := ca.entryBodies(ctx, ca.ref, rowIDs(active))
+	if err != nil {
+		return fmt.Errorf("compaction adapter: loading active entries: %w", err)
+	}
+	keep := -1
+	for i := len(active) - 1; i >= 0; i-- {
+		if e, ok := bodies[active[i].ID]; ok && e.Kind == session.EntryKindItem && session.ItemRole(e.Item) == "user" {
+			keep = i
+			break
+		}
+	}
+	// Items fold, and so do the earlier checkpoints: a reset supersedes what
+	// they carried, or the context would hold one summary per reset. Other
+	// kinds (annotations, updates) never reach the model and stay.
+	var toCompact []entryRow
+	var folded []session.Entry
+	var earlier []string
+	for i := range active {
+		if i == keep {
+			continue
+		}
+		switch active[i].Kind {
+		case string(session.EntryKindItem):
+			if e, ok := bodies[active[i].ID]; ok {
+				folded = append(folded, e)
+			}
+		case string(session.EntryKindCompaction):
+			if e, ok := bodies[active[i].ID]; ok {
+				if p, perr := e.CompactionPayload(); perr == nil && p.Summary != "" {
+					earlier = append(earlier, p.Summary)
+				}
+			}
+		default:
+			continue
+		}
+		toCompact = append(toCompact, active[i])
+	}
+	if len(folded) == 0 {
+		return nil
+	}
+
+	if ca.notify.OnStart != nil {
+		ca.notify.OnStart()
+	}
+	var span *tracing.SpanHandle
+	if args.StartSpan != nil {
+		span = args.StartSpan()
+	}
+	span.Set("reset", true)
+	span.Set("before_items", len(active))
+	span.Set("after_items", 1+(len(active)-len(toCompact)))
+
+	var parts []string
+	if ca.Mode == CompactionModeHybrid && ca.summaryModel != nil {
+		if recap := ca.recap(ctx, earlier, folded); recap != "" {
+			parts = append(parts, recap)
+		}
+	}
+	if len(parts) == 0 {
+		parts = append(parts, resetReason(args))
+	}
+	if snap := ca.sessionMemorySnapshot(ctx); snap != "" {
+		parts = append(parts, "Your session memory:\n"+snap)
+	}
+	parts = append(parts, "Everything earlier in this conversation is searchable with history_search.")
+	text := session.SummaryMarker + "\n\n" + strings.Join(parts, "\n\n")
+
+	excluded := make([]string, 0, len(toCompact))
+	compactIDs := make([]string, len(toCompact))
+	for i, row := range toCompact {
+		compactIDs[i] = row.ID
+		excluded = append(excluded, row.EntryID)
+	}
+	before, after := estimateFold(active, toCompact, text)
+	summary, err := session.NewCompactionEntry(session.CompactionPayload{
+		Summary:      text,
+		ExcludedIDs:  excluded,
+		TokensBefore: before,
+		TokensAfter:  after,
+		Reset:        true,
+	})
+	if err != nil {
+		return fmt.Errorf("compaction adapter: encoding reset: %w", err)
+	}
+	summary.Display = &agents.ItemDisplay{Kind: agents.DisplayMessage, Text: strings.TrimPrefix(text, session.SummaryMarker+"\n\n")}
+
+	applied, err := ca.persistCompaction(ctx, compactIDs, summary)
+	if err != nil {
+		return fmt.Errorf("compaction adapter: persisting reset: %w", err)
+	}
+	if applied && ca.notify.OnDone != nil {
+		ca.notify.OnDone(len(active), 1+(len(active)-len(toCompact)))
+	}
+	return nil
+}
+
+// resetReason is the first line of a bare reset's checkpoint: who reset,
+// so the model does not ask again for the message it is handed back.
+func resetReason(args session.CompactionArgs) string {
+	switch {
+	case args.Reset:
+		return "You reset the context with new_context; the message below is the one you were working on. Continue from your memory, without calling new_context again for it."
+	case !args.Force:
+		return "The context was reset because it had grown past the agent's threshold."
+	}
+	return "The context was reset."
+}
+
+// recap asks the summary model for the short account a hybrid reset carries,
+// over what the earlier checkpoints said and what folds now; "" when the
+// model fails, since a reset never fails the run.
+func (ca *CompactionAdapter) recap(ctx context.Context, earlier []string, folded []session.Entry) string {
+	var replayable []session.Entry
+	for _, e := range folded {
+		raw := adaptForeignItemJSON(e.Item)
+		if raw == nil {
+			continue
+		}
+		replayable = append(replayable, session.Entry{Kind: session.EntryKindItem, Item: NormalizeItemJSON(raw)})
+	}
+	transcript := renderTranscript(replayable)
+	if len(earlier) > 0 {
+		transcript = "Earlier, before the previous reset:\n" + strings.Join(earlier, "\n\n") + "\n\n" + transcript
+	}
+	if strings.TrimSpace(transcript) == "" {
+		return ""
+	}
+	resp, err := ca.summaryModel.Respond(ctx, agents.ModelRequest{
+		SystemInstructions: DefaultRecapPrompt,
+		Input:              agents.InputItemsFromText(transcript),
+	})
+	if err != nil {
+		logging.Ctx(ctx).Warn("compaction: recap failed; resetting without one", "error", err)
+		return ""
+	}
+	return strings.TrimSpace(session.ExtractOutputText(resp.Output))
+}
+
+// sessionMemorySnapshot renders the session's memory for the checkpoint;
+// "" without a memory store, an empty memory, or a read that failed.
+func (ca *CompactionAdapter) sessionMemorySnapshot(ctx context.Context) string {
+	if ca.Memories == nil {
+		return ""
+	}
+	snap, err := memory.Snapshot(ctx, &memoryReader{store: ca.Memories, scope: SessionMemoryScope(ca.ref)}, memory.Scope{}, resetSnapshotChars)
+	if err != nil {
+		logging.Ctx(ctx).Warn("compaction: reading the session memory for the reset", "error", err)
+		return ""
+	}
+	return snap
+}
+
 // activeTokens sizes the non-compacted history the way the threshold
 // compares it (ActiveContextTokens), from the lifted columns only.
 func activeTokens(active []entryRow) int {
@@ -343,72 +518,24 @@ func renderTranscript(entries []session.Entry) string {
 // renderItemText renders one normalized item as transcript text; "" for items
 // with nothing to say (unparseable, or types with no content).
 func renderItemText(raw json.RawMessage) string {
-	var it struct {
-		Type      string          `json:"type"`
-		Role      string          `json:"role"`
-		Content   json.RawMessage `json:"content"`
-		Name      string          `json:"name"`
-		Arguments string          `json:"arguments"`
-		Output    json.RawMessage `json:"output"`
-	}
-	if json.Unmarshal(raw, &it) != nil {
-		return ""
-	}
+	p := session.ProbeItem(raw)
 	switch {
-	case it.Type == "function_call":
-		return "[assistant called tool " + it.Name + " with arguments " + it.Arguments + "]"
-	case it.Type == "function_call_output":
-		out := jsonAsText(it.Output)
+	case p.Type == "function_call":
+		return "[assistant called tool " + p.Name + " with arguments " + p.Args + "]"
+	case p.Type == "function_call_output":
+		out := session.RenderItem(raw)
 		if out == "" {
 			return ""
 		}
 		return "[tool output]\n" + out
-	case it.Role != "":
-		text := contentAsText(it.Content)
+	case p.Role != "":
+		text := session.RenderItem(raw)
 		if text == "" {
 			return ""
 		}
-		return strings.ToUpper(it.Role[:1]) + it.Role[1:] + ":\n" + text
+		return strings.ToUpper(p.Role[:1]) + p.Role[1:] + ":\n" + text
 	}
 	return ""
-}
-
-// contentAsText joins a message's content: either a bare string or an array of
-// parts whose text fields carry the words.
-func contentAsText(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	var s string
-	if json.Unmarshal(raw, &s) == nil {
-		return s
-	}
-	var parts []struct {
-		Text string `json:"text"`
-	}
-	if json.Unmarshal(raw, &parts) != nil {
-		return ""
-	}
-	var texts []string
-	for _, p := range parts {
-		if p.Text != "" {
-			texts = append(texts, p.Text)
-		}
-	}
-	return strings.Join(texts, "\n")
-}
-
-// jsonAsText unwraps a JSON string, and falls back to the raw JSON for
-// structured payloads — the summary model can read either.
-func jsonAsText(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	var s string
-	if json.Unmarshal(raw, &s) == nil {
-		return s
-	}
-	return string(raw)
 }
 
 // persistCompaction marks the folded entries compacted and appends the checkpoint in
@@ -431,11 +558,9 @@ func (ca *CompactionAdapter) persistCompaction(ctx context.Context, compactIDs [
 		if n, err := res.RowsAffected(); err == nil && n == 0 {
 			return nil
 		}
-		// The checkpoint's parent is the branch tip AFTER the fold, so refold
-		// the append point before the append reads it (a strict-prefix fold makes this a no-op).
-		if err := ca.refreshAppendPointIn(ctx, tx); err != nil {
-			return err
-		}
+		// The checkpoint extends the branch tip as it stands, folded or not:
+		// the run's view closes its parent links over folded rows, and the
+		// transcript keeps the folded turn on the path (invariant 24).
 		if err := ca.appendTo(ctx, tx, summary); err != nil {
 			return err
 		}

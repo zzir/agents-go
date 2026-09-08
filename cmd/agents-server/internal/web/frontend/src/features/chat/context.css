@@ -175,3 +175,10 @@
 .ctx-rows-plain > li {
   padding: var(--base-size-4) var(--base-size-6);
 }
+
+/* Session memory: a key expands in place to its text; the owner may delete one. */
+.ctx-mem-key { background: none; border: 0; padding: 0; color: inherit; cursor: pointer; text-align: left; font: inherit; }
+.ctx-mem-key:hover .ctx-row-name { text-decoration: underline; }
+.ctx-mem-del { background: none; border: 0; color: var(--fgColor-muted); cursor: pointer; padding: 0 var(--base-size-4); font: inherit; }
+.ctx-mem-del:hover { color: var(--fgColor-danger); }
+.ctx-mem-text { margin: var(--base-size-4) 0 0; white-space: pre-wrap; word-break: break-word; font-size: var(--base-text-size-xs); max-height: 240px; overflow: auto; }

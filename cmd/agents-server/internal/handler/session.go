@@ -561,6 +561,7 @@ func (h *SessionHandler) Context(c *gin.Context) {
 			rep.Model = ac.Model
 			rep.ContextWindow = ac.ContextWindow
 			rep.CompactionEnabled = ac.Compaction.Enabled
+			rep.CompactionMode = ac.Compaction.Mode
 			if ac.Compaction.Enabled {
 				// Same fallback rule as NewCompactionAdapter (<= 0, not just
 				// 0), so the threshold drawn is the threshold that fires.

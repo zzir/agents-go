@@ -215,6 +215,10 @@ export const api = {
     context: (id: string | number) => request(`/sessions/${id}/context`),
     // Forces one compaction pass now; {compacted:false} means nothing to fold.
     compact: (id: string | number) => request(`/sessions/${id}/compact`, { method: 'POST' }),
+    // The session's own memory: what the model wrote for itself, keys and
+    // sizes, then one key in full.
+    memory: (id: string | number) => request<S['handler.SessionMemoryInfo'][]>(`/sessions/${id}/memory`),
+    memoryKey: (id: string | number, key: string) => request<S['store.Memory']>(`/sessions/${id}/memory/${key.split('/').map(encodeURIComponent).join('/')}`),
     approvals: (id: string | number) => request(`/sessions/${id}/approvals`),
     // Moves the session's active branch to an entry. Append-only: the
     // abandoned attempt stays recorded and can be switched back to.

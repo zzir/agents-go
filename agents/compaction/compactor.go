@@ -16,8 +16,14 @@ type Compactor struct {
 	strategy  Strategy
 	estimator TokenEstimator
 
+	// ResetSummary, when set, is what a Reset carries into the fresh context:
+	// the model's own notes, say (memory.Snapshot). Nil resets bare.
+	ResetSummary func(ctx context.Context) (string, error)
+
 	mu  sync.Mutex
 	idx *Index
+	// reset marks the index as holding a reset the next checkpoint records.
+	reset bool
 }
 
 // New returns a Compactor driving strategy. A nil estimator uses CharEstimator.
@@ -28,9 +34,11 @@ func New(strategy Strategy, estimator TokenEstimator) *Compactor {
 	return &Compactor{strategy: strategy, estimator: estimator}
 }
 
-// Compact implements agents.Compactor.
+// Compact implements agents.Compactor. Without a strategy nothing folds on
+// its own, but an index a Reset built is still kept and served, so the reset
+// reaches the checkpoint after the run.
 func (c *Compactor) Compact(ctx context.Context, entries []session.Entry) ([]session.Entry, error) {
-	if c.strategy == nil || len(entries) == 0 {
+	if len(entries) == 0 {
 		return entries, nil
 	}
 	// A Compactor may be shared across concurrent runs, and the Index is not
@@ -38,14 +46,71 @@ func (c *Compactor) Compact(ctx context.Context, entries []session.Entry) ([]ses
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if c.strategy == nil && c.idx == nil {
+		return entries, nil
+	}
 	if c.idx == nil {
 		c.idx = NewIndex(entries, c.estimator)
 	} else {
 		c.idx.Update(entries)
 	}
-	if _, err := c.strategy.Compact(ctx, c.idx); err != nil {
-		return entries, err
+	if c.strategy != nil {
+		if _, err := c.strategy.Compact(ctx, c.idx); err != nil {
+			return entries, err
+		}
 	}
+	return c.idx.IncludedEntries(), nil
+}
+
+// Reset implements agents.ContextResetter: every group but the system ones
+// and the newest user message is excluded, the earlier checkpoints included,
+// and ResetSummary's text stands in front of what survives (spec §2.5i).
+func (c *Compactor) Reset(ctx context.Context, entries []session.Entry) ([]session.Entry, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.idx == nil {
+		c.idx = NewIndex(entries, c.estimator)
+	} else {
+		c.idx.Update(entries)
+	}
+	summary := ""
+	if c.ResetSummary != nil {
+		text, err := c.ResetSummary(ctx)
+		if err != nil {
+			return entries, err
+		}
+		summary = text
+	}
+	keep := -1
+	for i := len(c.idx.Groups) - 1; i >= 0; i-- {
+		if c.idx.Groups[i].Kind == GroupUser && !c.idx.Groups[i].Excluded {
+			keep = i
+			break
+		}
+	}
+	// Every group but the kept ones folds, the ones an earlier pass or reset
+	// already excluded included: their stand-ins are superseded by this
+	// reset's summary, or the context would carry one per reset.
+	first := -1
+	for i, g := range c.idx.Groups {
+		if i == keep || g.Kind == GroupSystem {
+			continue
+		}
+		g.Excluded = true
+		g.ExcludeReason = "reset"
+		g.Replacement = nil
+		if first < 0 {
+			first = i
+		}
+	}
+	if first >= 0 && summary != "" {
+		e, err := foldedEntry(session.SummaryMarker + "\n\n" + summary)
+		if err != nil {
+			return entries, err
+		}
+		c.idx.Groups[first].Replacement = []session.Entry{e}
+	}
+	c.reset = first >= 0
 	return c.idx.IncludedEntries(), nil
 }
 
@@ -113,10 +178,12 @@ func (c *Compactor) Checkpoint(seen []session.Entry) (session.Entry, bool, error
 		ExcludedIDs:  excluded,
 		TokensBefore: before,
 		TokensAfter:  c.idx.ContextTokens(),
+		Reset:        c.reset,
 	})
 	if err != nil {
 		return session.Entry{}, false, err
 	}
+	c.reset = false
 	return e, true, nil
 }
 

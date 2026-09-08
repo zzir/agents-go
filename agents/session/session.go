@@ -183,6 +183,10 @@ type CompactionArgs struct {
 	Store *bool
 	// Force requests compaction regardless of the session's own decision hook.
 	Force bool
+	// Reset asks for a context reset rather than a summary: fold everything
+	// but the newest user message, carrying what the model kept for itself
+	// (spec §2.5i). A storage that cannot reset compacts as it would.
+	Reset bool
 	// OffChainItems reports that the stored history holds items the server-side
 	// chain rooted at ResponseID never saw. A storage that REPLACES the log from
 	// that chain must not do so while it is set — spec §2.5f.

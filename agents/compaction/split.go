@@ -1,7 +1,6 @@
 package compaction
 
 import (
-	"encoding/json"
 	"strings"
 
 	"github.com/zzir/agents-go/agents/session"
@@ -47,33 +46,9 @@ func IsSummaryOnly(entries []session.Entry) bool {
 			continue
 		}
 		p := session.ProbeItem(e.Item)
-		if p.Role != "system" || !strings.Contains(entryText(e), session.SummaryMarker) {
+		if p.Role != "system" || !strings.Contains(session.RenderItem(e.Item), session.SummaryMarker) {
 			return false
 		}
 	}
 	return true
-}
-
-// entryText pulls an entry's readable text, whether its content is a bare
-// string or the parts array the Responses API also accepts.
-func entryText(e session.Entry) string {
-	p := session.ProbeItem(e.Item)
-	if len(p.Content) == 0 {
-		return ""
-	}
-	var s string
-	if err := json.Unmarshal(p.Content, &s); err == nil {
-		return s
-	}
-	var parts []struct {
-		Text string `json:"text"`
-	}
-	if err := json.Unmarshal(p.Content, &parts); err != nil {
-		return ""
-	}
-	var b strings.Builder
-	for _, part := range parts {
-		b.WriteString(part.Text)
-	}
-	return b.String()
 }

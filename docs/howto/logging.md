@@ -91,6 +91,7 @@ They record the failures that do **not** fail the run — retries, a fallback, a
 | `compaction_failed` | A compaction pass failed; the run continued uncompacted. `details.point` names the moment — a `CompactionPoint`, or `overflow_recovery` for a session write that abandoned an overflow recovery |
 | `response_truncated` | A response was cut off and its tool calls refused |
 | `context_overflow` | A model call did not fit the context window; the run compacted and retried ([overflow recovery](sessions.md)) |
+| `context_reset_ignored` | The model asked for a new context window and the run could not grant it: no session, or one that cannot reset ([sessions](sessions.md#letting-the-model-reset-its-context)) |
 
 With a [Session](sessions.md), each diagnostic is stored on the entry for the
 turn it happened in, so the session explains itself long after any log has

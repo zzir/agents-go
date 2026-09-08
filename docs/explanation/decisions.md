@@ -1387,3 +1387,110 @@ correct for a store that is rebuilt anyway.
 **Cost accepted.** Production use needs this decision reversed first.
 
 Rules: workbench invariant 25.
+
+### 5.60 The budget rides on the input, not the instructions
+
+Decided 2026-09 with `ContextBudget`.
+
+**Decision.** The figure the model gets about its own window is appended as
+the last input item of every call, a system text item, and is never written
+to the session. Every call carries the current number.
+
+**Rejected.** Putting it in the instructions: the number changes every call,
+and an instructions prefix that changes defeats prompt caching for the whole
+conversation. Threshold reminders at 25/50/75%, Codex's shape: one input can
+jump across a mark unnoticed, and a current figure is what the model actually
+reasons with. Persisting it as an entry: it describes the moment it was sent,
+replays wrong later, and inflates the history it measures.
+
+**Cost accepted.** Roughly two dozen tokens per call. Before the run's first
+call the figure is the host's, the conversation's last measured call, so a
+run right after a manual compaction reports the pre-fold number once.
+
+Rules: spec §2.5i
+
+### 5.61 Retrieval over summary
+
+Decided 2026-09 with `agents/history`.
+
+**Decision.** The model gets two read-only tools over its own session's log,
+search and read, so a compaction pass may fold freely: what it folded is one
+call away. The log was already kept whole for fork and replay (§2.5f, nothing
+is deleted); the tools are a read on that property, not a second store.
+Search is a case-insensitive literal substring, newest first, bounded.
+
+**Rejected.** A summary that must carry everything: it grows toward what it
+replaced, and a detail it dropped is gone. Ranked or indexed search: a session
+is one conversation, a literal scan is deterministic, and an index is a second
+thing to keep consistent. Deferring the tools until a result names them
+(§2.7i): after a reset nothing would. Codex's "never disclose" framing: the
+transcript shows the same history, and a tool the model must hide is one the
+person cannot debug.
+
+**Cost accepted.** About a thousand tokens of tool schema per call while the
+tools are on. A SQL storage scans the session's bodies for a search; a
+session in the hundreds of megabytes answers in about a second.
+
+Rules: spec §2.5i
+
+### 5.62 Memory is one store with scopes
+
+Decided 2026-09 with `agents/memory` and the rebuilt memories table.
+
+**Decision.** One memories table keyed by (scope_kind, scope_id, gen, key):
+global rows every agent reads, an agent's rows that agent reads, and a
+session's rows the model keeps for itself across compaction and a reset.
+The rules per kind, injection, who writes, whether the model writes and
+after what, size and count, are one Go table (`store.MemoryPolicies`) that
+the handler, the run adapter and the injection consult. The model writes
+session memory freely and proposes agent memory through the approval gate
+save_workflow established (§5.58), under the agent's edit rule (§5.29).
+
+**Rejected.** A separate session_notes table: two concepts for one kind of
+thing, a promotion from session to agent scope crossing tables, and a second
+tool family later for the memory tool the roadmap already wanted. Notes as
+custom session entries: the compaction pass would fold them and the timeline
+read would carry them. Notes as sandbox files: a sandbox retires on a content
+change, and not every session has one. Model writes to global memory: they
+reach every user's every agent; the policy table has the row for it when wanted.
+
+**Cost accepted.** The memories API is breaking (`scope_kind` and `scope_id`
+replace `agent_config_id`) and the table is rebuilt, so existing rows are
+exported and written back. One table carries three lifecycles, a session's
+rows following its fork and delete, an agent's its delete, global's the
+database's; the policy table is what keeps them apart.
+
+Rules: spec §2.5i; workbench invariant 64.
+
+### 5.63 A reset is a checkpoint with nothing to say
+
+Decided 2026-09 with `new_context` and the reset compaction mode.
+
+**Decision.** A context reset is the compaction checkpoint the log already
+has, with everything but the newest user message in `ExcludedIDs` and the
+model's own session memory in the summary slot. The model asks through
+`new_context`; the run grants it at the turn's save point, on the persisted
+log. Summary stays the default mode; reset and hybrid are an agent's opt-in.
+
+**Rejected.** Resetting mid-turn, when the tool runs: the turn's items are
+not yet persisted, so a call could lose its output and the pairing rule with
+it; the save point is where the log is whole. A second projection path for
+the carried memory: the summary slot already renders up front as a system
+message, and the transcript shows what the model kept. Reset as the default:
+a provider not trained to keep notes loses the task on the first fold. A
+save-point compaction pass for self-compacting storages, so a run could
+reset itself when the threshold trips mid-run: it changes the point contract
+of §2.5f for every such storage; the budget notice and `new_context` cover
+the case this round.
+
+**Cost accepted.** Two booleans on `RunState` (a schema minor), so a request
+made in a turn that pauses for approval is performed when the run resumes,
+and the guard below holds across the pause, `new_context` itself
+approval-gated included. A reset folds the turn's own tool calls with the
+rest, `new_context` included, which is what Codex does too, and which is why
+a fresh context refuses another reset until the model has done some work:
+the kept user message ("reset now") would otherwise be obeyed in every new
+window, seventy times over in the first live run. The checkpoint's first
+line says who reset for the same reason.
+
+Rules: spec §2.5i; workbench invariant 65.

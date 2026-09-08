@@ -83,6 +83,8 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		owned.POST("/runs", h.Runs.Create)
 		owned.GET("/approvals", h.Approvals.ListBySession)
 		owned.GET("/tasks", h.Tasks.ListBySession)
+		owned.GET("/memory", h.Memories.ListSession)
+		owned.GET("/memory/*key", h.Memories.ReadSession)
 	}
 	{
 		runs := api.Group("/runs/:id", h.Authz.runGate())
@@ -132,12 +134,14 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		mcpServers.PUT("/:id/owner", admin, h.McpServers.SetOwner)
 	}
 	{
+		// Who writes which scope is store.MemoryPolicies, decided per row
+		// inside the handler (invariant 64), so no route-level admin gate.
 		memories := api.Group("/memories")
 		memories.GET("", h.Memories.List)
-		memories.POST("", admin, h.Memories.Create)
+		memories.POST("", h.Memories.Create)
 		memories.GET("/:id", h.Memories.Get)
-		memories.PUT("/:id", admin, h.Memories.Update)
-		memories.DELETE("/:id", admin, h.Memories.Delete)
+		memories.PUT("/:id", h.Memories.Update)
+		memories.DELETE("/:id", h.Memories.Delete)
 	}
 	{
 		settings := api.Group("/settings")

@@ -84,6 +84,8 @@ func NewRunner(rootCtx context.Context, db *bun.DB, deps *AgentDeps) *Runner {
 	deps.TaskManager = r.tasks
 	deps.SpawnTool = r.spawnTool
 	deps.WorkflowTools = r.workflowTools
+	deps.HistoryTools = r.historyTools
+	deps.MemoryTools = r.memoryTools
 	return r
 }
 
@@ -408,9 +410,10 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	}
 	tracer := newTracer(ctx, sendEvent, r.Deps.Traces, sessionID, runID, spec.wakeParentRunID, r.Deps.Settings.SpanDataCap(ctx))
 
-	runSession := wrapCompaction(sa, built, provider, sendEvent, runID)
+	runSession := wrapCompaction(sa, built, provider, sendEvent, runID, r.Deps.Memories, task != nil)
 
-	opts := runOptionsFor(built, runSession, provider, tracer, trustSessionID(sessionID, task), logging.Ctx(ctx))
+	opts := runOptionsFor(built, runSession, provider, tracer, trustSessionID(sessionID, task), logging.Ctx(ctx),
+		contextBudget(ctx, built, sa, sessionRef))
 
 	// The title needs only the first message, so it runs beside the run. Task
 	// sessions are pre-named; a resume's original run already fired it.

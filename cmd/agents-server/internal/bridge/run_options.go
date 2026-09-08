@@ -8,6 +8,7 @@ import (
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/session"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/tracing"
@@ -35,7 +36,7 @@ func compactionNotifier(send func(string, any), runID string) store.CompactionNo
 
 // runOptionsFor assembles the RunOptions shared by fresh and resume paths;
 // runContext is the Context value the exec_command gate reads a session id from.
-func runOptionsFor(built *BuildResult, sess *session.Session, provider agents.ModelProvider, tracer *tracing.Tracer, runContext any, log *slog.Logger) agents.RunOptions {
+func runOptionsFor(built *BuildResult, sess *session.Session, provider agents.ModelProvider, tracer *tracing.Tracer, runContext any, log *slog.Logger, budget agents.ContextBudget) agents.RunOptions {
 	opts := agents.RunOptions{
 		Context: runContext,
 		Conversation: agents.ConversationOptions{
@@ -65,7 +66,33 @@ func runOptionsFor(built *BuildResult, sess *session.Session, provider agents.Mo
 	if built.Behavior.HandoffInputFilter == "nest_history" {
 		opts.Exec.HandoffInputFilter = agents.NestHandoffHistory(agents.NestHistoryOptions{})
 	}
+	if budget.Window > 0 {
+		// The notice rides on the input, never the instructions (spec §2.5i).
+		opts.Model.InputFilter = budget.InputFilter()
+	}
 	return opts
+}
+
+// contextBudget is what the model is told about its window: the config's
+// declared size and the conversation's last measured call, invariant 28's
+// provider ruler, never an estimate. No window, nothing.
+func contextBudget(ctx context.Context, built *BuildResult, sa *store.EntryStore, ref session.Ref) agents.ContextBudget {
+	if built.ContextWindow <= 0 {
+		return agents.ContextBudget{}
+	}
+	b := agents.ContextBudget{Window: built.ContextWindow, WindowFor: func(a *agents.Agent) int {
+		if a == nil {
+			return 0
+		}
+		return built.ContextWindows[a.Name]
+	}}
+	rep, err := sa.ContextReport(ctx, ref)
+	if err != nil {
+		logging.Ctx(ctx).Warn("context budget: reading the last measured call; the first call carries no figure", "error", err)
+		return b
+	}
+	b.Occupied = rep.InputTokens + rep.OutputTokens
+	return b
 }
 
 // toolNotFoundBehavior: unset means RETURN TO MODEL, not the SDK's stricter
@@ -79,7 +106,7 @@ func toolNotFoundBehavior(s string) agents.ToolNotFoundBehavior {
 
 // wrapCompaction wraps sa with the compaction adapter when the config enables
 // it; an empty summary model falls back to the agent's own.
-func wrapCompaction(sa *store.EntryStore, built *BuildResult, provider agents.ModelProvider, send func(string, any), runID string) *session.Session {
+func wrapCompaction(sa *store.EntryStore, built *BuildResult, provider agents.ModelProvider, send func(string, any), runID string, memories *store.MemoryStore, background bool) *session.Session {
 	if !built.Compaction.Enabled || provider == nil {
 		return session.NewSession(sa)
 	}
@@ -87,10 +114,22 @@ func wrapCompaction(sa *store.EntryStore, built *BuildResult, provider agents.Mo
 	if err != nil || summaryModel == nil {
 		return session.NewSession(sa)
 	}
-	return session.NewSession(store.NewCompactionAdapter(sa, summaryModel,
+	ca := store.NewCompactionAdapter(sa, summaryModel,
 		built.Compaction.Threshold, built.Compaction.Window, built.Compaction.Prompt,
 		compactionNotifier(send, runID),
-	))
+	)
+	ca.Mode, ca.Memories = compactionModeFor(built, background), memories
+	return session.NewSession(ca)
+}
+
+// compactionModeFor is the mode a run compacts in: the agent's, except that a
+// background run summarizes. It has no memory tools to write down what a
+// reset would keep, and the parent conversation is not its to reset.
+func compactionModeFor(built *BuildResult, background bool) string {
+	if background {
+		return store.CompactionModeSummary
+	}
+	return built.Compaction.Mode
 }
 
 // summaryModelFor resolves the compaction summary model — compaction_model,

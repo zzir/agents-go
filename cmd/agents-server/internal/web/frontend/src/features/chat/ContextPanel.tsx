@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ProgressBar } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { MeterIcon } from '@primer/octicons-react';
@@ -40,6 +40,7 @@ interface ContextReport {
   compaction_enabled: boolean;
   compaction_threshold?: number;
   compaction_tokens: number;
+  compaction_mode?: string;
   conversation_tokens?: number;
   prompt?: PromptProfile;
 }
@@ -131,6 +132,65 @@ function Growth({ points }: { points: number[] }) {
   );
 }
 
+interface SessionMemoryInfo { id: string; key: string; bytes: number; written_by: string; updated_at: string }
+
+// SessionMemory lists what the model wrote for itself in this conversation:
+// the memory that survives compaction and a reset. Read-only here; a row
+// expands to its content, and the owner can delete one.
+function SessionMemory({ sessionId, running, reloadKey }: { sessionId: string; running: boolean; reloadKey?: unknown }) {
+  const { data, reload } = useApi<SessionMemoryInfo[]>(() => api.sessions.memory(sessionId) as Promise<SessionMemoryInfo[]>, [sessionId, running, reloadKey]);
+  const [open, setOpen] = useState<string | null>(null);
+  // Content is cached per key AND version: a memory the model rewrote moves
+  // its updated_at, so the next expand (or the open row) fetches it again.
+  const [content, setContent] = useState<Record<string, string>>({});
+  const rows = data || [];
+  const versionOf = (r: SessionMemoryInfo) => `${r.key}@${r.updated_at}`;
+  const openRow = rows.find(r => r.key === open);
+  const openVersion = openRow ? versionOf(openRow) : null;
+  useEffect(() => {
+    if (!openRow || !openVersion || content[openVersion] !== undefined) return;
+    let cancelled = false;
+    api.sessions.memoryKey(sessionId, openRow.key)
+      .then(m => { if (!cancelled) setContent(prev => ({ ...prev, [openVersion]: m.content ?? '' })); })
+      .catch(e => { if (!cancelled) setContent(prev => ({ ...prev, [openVersion]: `(could not load: ${e instanceof Error ? e.message : String(e)})` })); });
+    return () => { cancelled = true; };
+  }, [sessionId, openRow, openVersion, content]);
+  const show = (key: string) => setOpen(open === key ? null : key);
+  const del = async (row: SessionMemoryInfo) => {
+    if (!window.confirm(`Delete the memory "${row.key}"?`)) return;
+    await api.memories.delete(row.id);
+    setContent(prev => Object.fromEntries(Object.entries(prev).filter(([k]) => !k.startsWith(`${row.key}@`))));
+    if (open === row.key) setOpen(null);
+    reload();
+  };
+  if (rows.length === 0) return null;
+  const total = rows.reduce((n, r) => n + r.bytes, 0);
+  return (
+    <section className="ctx-sec">
+      <div className="ctx-sec-head">
+        <span>Session memory</span>
+        <span className="ctx-mono ctx-muted">{rows.length} {rows.length === 1 ? 'key' : 'keys'} · {fmt(total)} bytes</span>
+      </div>
+      <ul className="ctx-rows ctx-rows-plain">
+        {rows.map(r => (
+          <li key={r.id} className="ctx-row ctx-mem-row">
+            <div className="ctx-row-top">
+              <button type="button" className="ctx-mem-key" onClick={() => show(r.key)} title={r.written_by === 'model' ? 'Written by the model' : 'Written by you'}>
+                <span className="ctx-row-name ctx-mono">{r.key}</span>
+              </button>
+              <span className="ctx-mono ctx-row-tok">{fmt(r.bytes)} B</span>
+              <button type="button" className="ctx-mem-del" onClick={() => del(r)} title="Delete this memory">×</button>
+            </div>
+            {open === r.key && (
+              <pre className="ctx-mem-text">{content[versionOf(r)] === undefined ? 'Loading…' : content[versionOf(r)]}</pre>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 export function ContextPanel({ sessionId, running, reloadKey, onClose, onCompact }: ContextPanelProps) {
   const { data, loading } = useApi<ContextReport>(() => api.sessions.context(sessionId) as Promise<ContextReport>, [sessionId, running, reloadKey]);
   const [compacting, setCompacting] = useState(false);
@@ -152,6 +212,7 @@ export function ContextPanel({ sessionId, running, reloadKey, onClose, onCompact
   const cached = data?.cached_tokens || 0;
   const hitPct = used > 0 ? (cached / used) * 100 : 0;
   const threshold = (data?.compaction_enabled && data.compaction_threshold) || 0;
+  const resetMode = data?.compaction_mode === 'reset' || data?.compaction_mode === 'hybrid';
   const compactionPct = threshold > 0 ? Math.min(100, ((data?.compaction_tokens || 0) / threshold) * 100) : 0;
   // The fold point on the window's own scale — ONE bar carries both stories.
   // The threshold compares against the compaction figure (last call's total
@@ -198,10 +259,12 @@ export function ContextPanel({ sessionId, running, reloadKey, onClose, onCompact
                   disabled={running || compacting}
                   title={running
                     ? 'The run compacts at its own boundaries — wait for it to finish'
-                    : 'Fold older history into a summary now, keeping the recent window'}
+                    : resetMode
+                      ? 'Start the model over with its session memory and the latest message; the history stays searchable'
+                      : 'Fold older history into a summary now, keeping the recent window'}
                   onClick={compact}
                 >
-                  {compacting ? 'Compacting…' : 'Compact now'}
+                  {compacting ? (resetMode ? 'Resetting…' : 'Compacting…') : resetMode ? 'Reset now' : 'Compact now'}
                 </button>
               )}
             </div>
@@ -219,8 +282,13 @@ export function ContextPanel({ sessionId, running, reloadKey, onClose, onCompact
                 </div>
                 <div className="ctx-legend">
                   <span>used {Math.round(pct)}%</span>
-                  {thresholdPct > 0 && <span className="ctx-muted">compacts at ~{Math.round(thresholdPct)}%</span>}
+                  {thresholdPct > 0 && <span className="ctx-muted">{resetMode ? 'resets' : 'compacts'} at ~{Math.round(thresholdPct)}%</span>}
                   <span className="ctx-muted">{fmt(Math.max(0, windowSize - used))} free</span>
+                </div>
+                <div className="ctx-legend">
+                  <span className="ctx-muted" title="Every model call ends with a one-line budget notice built from the last measured call, so the model can plan around what is left.">
+                    the model is told this figure on every call
+                  </span>
                 </div>
                 {showNext && (
                   <div className="ctx-legend">
@@ -308,6 +376,8 @@ export function ContextPanel({ sessionId, running, reloadKey, onClose, onCompact
               </div>
             </section>
           )}
+
+          <SessionMemory sessionId={sessionId} running={running} reloadKey={reloadKey} />
 
           {(data.growth?.length || 0) > 1 && (
             <section className="ctx-sec">
