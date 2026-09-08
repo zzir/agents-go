@@ -16,6 +16,14 @@ const AUTH_ERROR_TEXT: Record<string, string> = {
   login_failed: 'Sign-in failed on the server — try again.',
 };
 
+// PROVIDER_LABEL spells a provider the way it spells itself; an unlisted one
+// is capitalized.
+const PROVIDER_LABEL: Record<string, string> = { google: 'Google', github: 'GitHub' };
+
+export function providerLabel(p: string): string {
+  return PROVIDER_LABEL[p] || p.charAt(0).toUpperCase() + p.slice(1);
+}
+
 // exchangeErrorTag maps a failed code exchange to the login page's message:
 // the server refuses a used or expired code with 401; anything else is not
 // the code's fault.
@@ -80,7 +88,7 @@ export function LoginPage({ onLogin, authError }: { onLogin: () => void; authErr
               key={p} block variant="primary"
               onClick={() => { stashReturnHash(); window.location.href = `/api/v1/auth/oauth/${p}/start`; }}
             >
-              Continue with {p.charAt(0).toUpperCase() + p.slice(1)}
+              Continue with {providerLabel(p)}
             </Button>
           ))
         ) : cfg ? (
