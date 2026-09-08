@@ -428,12 +428,15 @@ func splitApproveTools(names []string) (approveTools []string, approveCommands b
 }
 
 // layerInstructions wraps the agent's own instructions in the global system
-// prompt and its memories, measuring each into the profile.
+// prompt (unless the agent overrides it — invariant 67) and its memories,
+// measuring each into the profile.
 func layerInstructions(ctx context.Context, deps *AgentDeps, agent *agents.Agent, ac *store.AgentConfig, prof *store.PromptProfile) {
 	prof.InstructionsChars = len(ac.Instructions)
-	if global := deps.Settings.String(ctx, settings.KeySystemPrompt); global != "" {
-		agent.Instructions = agents.WrapInstructions(agent.Instructions, global, "")
-		prof.GlobalPromptChars = len(global)
+	if !ac.Behavior.OverrideSystemPrompt {
+		if global := deps.Settings.String(ctx, settings.KeySystemPrompt); global != "" {
+			agent.Instructions = agents.WrapInstructions(agent.Instructions, global, "")
+			prof.GlobalPromptChars = len(global)
+		}
 	}
 	memories, err := deps.Memories.ListInjectable(ctx, ac.ID)
 	if err == nil && len(memories) > 0 {

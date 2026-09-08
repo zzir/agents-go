@@ -96,7 +96,7 @@ var defs = []Def{{
 	Group:       GroupPrompt,
 	Label:       "System prompt",
 	Placeholder: "Optional instructions prepended to all agents",
-	Description: "Prepended to every agent, whether or not it binds a sandbox. Keep it tool-agnostic: file and shell tools mount only when a session binds a sandbox, so put machine- and tool-specific instructions in that sandbox's own Prompt, not here.",
+	Description: "Prepended to every agent, whether or not it binds a sandbox; an agent opts out under its own Instructions. Keep it tool-agnostic: file and shell tools mount only when a session binds a sandbox, so put machine- and tool-specific instructions in that sandbox's own Prompt, not here.",
 }, {
 	// Defaulted: every model call adds a span row and a reference list as
 	// long as the conversation it was given — "keep everything" is a choice,

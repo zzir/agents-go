@@ -8394,6 +8394,11 @@ export interface components {
             max_tool_concurrency?: number;
             max_turns?: number;
             /**
+             * @description OverrideSystemPrompt sends this agent's instructions alone: the global
+             *     system prompt is not prepended, even when the instructions are empty.
+             */
+            override_system_prompt?: boolean;
+            /**
              * @description ReasoningItemIDPolicy is "" / "preserve" (keep reasoning-item ids across
              *     turns) or "omit" (strip them).
              */

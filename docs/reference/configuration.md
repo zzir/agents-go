@@ -72,7 +72,7 @@ An empty value returns a key to its default. Keys by panel group:
 | Key | Group | Default | Meaning |
 |---|---|---|---|
 | `proxy_url` | network | — | Route all outbound API/MCP HTTP through this proxy |
-| `system_prompt` | prompt | — | Instructions prepended to every agent |
+| `system_prompt` | prompt | — | Instructions prepended to every agent, unless the agent overrides it (`behavior.override_system_prompt`, [invariant 67](../explanation/workbench-invariants.md)) |
 | `trace_retention_days` | tracing | `30` | Prune trace events older than N days (`0` keeps everything; also checked at startup); a session left with no events loses its stored payloads with them |
 | `trace_payload_retention_days` | tracing | — | Strip the stored payloads (model requests, replies, tool arguments and results) of sessions whose newest trace event is older than N days; the events stay, with timing, usage and errors. Unset or `0` keeps payloads as long as their events |
 | `trace_include_sensitive_data` | tracing | `true` | Record prompts/outputs/tool args in stored traces |

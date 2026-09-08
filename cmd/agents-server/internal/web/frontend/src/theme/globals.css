@@ -748,6 +748,12 @@ textarea.textarea-grow {
     max-height: 60vh;
     overflow: auto;
 }
+/* Content sizing ignores the rows attribute, so an empty growing box would
+   show one line; the floor keeps four on screen. */
+.textarea-grow.textarea-rows-4 textarea,
+textarea.textarea-grow.textarea-rows-4 {
+    min-height: calc(4lh + 2 * var(--base-size-12));
+}
 
 /* Per-panel controls sized by class, not by an inline pixel count. */
 .provider-paste-input {

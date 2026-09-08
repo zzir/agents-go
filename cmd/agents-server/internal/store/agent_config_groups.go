@@ -35,6 +35,9 @@ type BehaviorGroup struct {
 	// Vision admits image attachments on this agent's runs. Off by default:
 	// an explicit claim that the model accepts image input.
 	Vision bool `json:"vision,omitempty"`
+	// OverrideSystemPrompt sends this agent's instructions alone: the global
+	// system prompt is not prepended, even when the instructions are empty.
+	OverrideSystemPrompt bool `json:"override_system_prompt,omitempty"`
 }
 
 // SubagentsOn reports whether the agent's chat runs get the task tools;

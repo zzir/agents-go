@@ -26,7 +26,7 @@ import { providerMeta, providerFacts, type ProviderTypeInfo } from '@/lib/provid
 // objects. The form state stays flat, so flattenConfig lifts a loaded config's
 // group keys to the top level and nestConfig folds them back before saving.
 const CONFIG_GROUPS: Record<string, string[]> = {
-  behavior: ['max_turns', 'handoff_description', 'tool_choice_reset', 'stop_at_tools', 'handoff_input_filter', 'max_tool_concurrency', 'tool_not_found_behavior', 'reasoning_item_id_policy', 'workflow_authoring', 'subagents', 'vision'],
+  behavior: ['max_turns', 'handoff_description', 'tool_choice_reset', 'stop_at_tools', 'handoff_input_filter', 'max_tool_concurrency', 'tool_not_found_behavior', 'reasoning_item_id_policy', 'workflow_authoring', 'subagents', 'vision', 'override_system_prompt'],
   resilience: ['retry_enabled', 'retry_policy', 'fallback_models'],
   guardrails: ['guardrails', 'output_schema'],
   session: ['prompt_id', 'prompt_version', 'history_limit'],
@@ -88,6 +88,7 @@ interface AgentFormData {
   workflow_authoring: boolean;
   subagents: boolean;
   vision: boolean;
+  override_system_prompt: boolean;
   approve_tools: string;
   compaction_enabled: boolean;
   compaction_threshold_tokens: number;
@@ -185,7 +186,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
     // New agents default to a bounded fan-out; an existing agent keeps its
     // stored value (0 = unlimited) via the flattenConfig spread below.
     handoff_input_filter: '', max_tool_concurrency: initial ? 0 : 8,
-    tool_not_found_behavior: '', reasoning_item_id_policy: '', workflow_authoring: false, subagents: true, vision: false, approve_tools: '',
+    tool_not_found_behavior: '', reasoning_item_id_policy: '', workflow_authoring: false, subagents: true, vision: false, override_system_prompt: false, approve_tools: '',
     compaction_enabled: false, compaction_threshold_tokens: 0,
     compaction_window: 0, compaction_model: '', compaction_prompt: '', compaction_mode: '',
     memory_tools: false, memory_agent_write: false, history_tools: false,
@@ -343,7 +344,10 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
 
       <div className="form-group">
         <div className="form-group-title">Instructions</div>
-        {fc('Instructions', <Textarea value={form.instructions} onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('instructions', e.target.value)} rows={8} placeholder="System prompt / instructions for this agent…" block className="textarea-grow" style={{ fontFamily: 'var(--fontStack-monospace)' }} />, null, { hideLabel: true })}
+        {fc('Instructions', <Textarea value={form.instructions} onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('instructions', e.target.value)} rows={4} placeholder="System prompt / instructions for this agent…" block className="textarea-grow textarea-rows-4" style={{ fontFamily: 'var(--fontStack-monospace)' }} />, null, { hideLabel: true })}
+        {/* Total, empty included — decisions §5.65. */}
+        <ToggleRow label="Override the system prompt" checked={form.override_system_prompt || false} onChange={v => set('override_system_prompt', v)}
+          description="Sends these instructions alone, even when empty; the global System prompt is not prepended." />
       </div>
 
       {visibleMcp.length > 0 && <div className="form-group">

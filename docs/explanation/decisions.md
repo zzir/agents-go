@@ -1516,3 +1516,24 @@ by one with `--allowed-emails`; a domain allowlist admits only the people who
 keep an address on that domain as their primary GitHub email.
 
 Rules: [OAuth mode](../howto/workbench-auth.md#oauth-mode).
+
+### 5.65 An agent's override of the system prompt is total
+
+Decided 2026-09-08.
+
+**Decision.** `behavior.override_system_prompt` drops the `system_prompt`
+setting from that agent's instructions wholesale: the model's system prompt
+is the agent's own text, and an agent with no text sends none. The other
+layers — memories, the sandbox prompt, the skills index — keep their own
+switches; a handoff target decides for itself.
+
+**Rejected.** Falling back to the global prompt when the agent's text is
+empty — the empty case is the point: an agent driven by a stored prompt
+(`session.prompt_id`) or by nothing at all has no other way to say so, and
+"empty means inherit" leaves it inexpressible. A per-agent copy of the global
+text — a second home that drifts.
+
+**Cost accepted.** An overriding agent with nothing written runs with no
+system prompt at all; the switch's caption says so.
+
+Rules: [invariant 67](workbench-invariants.md).

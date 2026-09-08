@@ -319,6 +319,9 @@ session, which reports it as `planning`
 ([invariant 33](../explanation/workbench-invariants.md)); workflow authoring
 IS one, `behavior.workflow_authoring`, off by default
 ([invariant 39](../explanation/workbench-invariants.md)).
+`behavior.override_system_prompt` sends the agent's `instructions` alone —
+the `system_prompt` setting is not prepended, even when they are empty
+([invariant 67](../explanation/workbench-invariants.md)).
 
 `GET /agents/:id/tools` reports the agent's CURRENT tool surface as
 schema-only definitions: the built-in tools, connected MCP servers' tools (a

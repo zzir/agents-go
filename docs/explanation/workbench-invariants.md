@@ -415,3 +415,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     (`components/ToggleRow.tsx`), disabled by itself in a read-only dialog. A
     checkbox is for picking several of a list (stages, skills, handoffs) and a
     segmented control for one of several values — neither stands in for on/off.
+67. **The `system_prompt` setting wraps an agent's instructions unless the
+    agent overrides it.** `behavior.override_system_prompt` sends the agent's
+    own text alone, empty included (`layerInstructions`, `bridge/agent.go`),
+    and the Context panel then lists no System prompt layer. Memories, the
+    sandbox prompt and the skills index are other layers with their own
+    switches and are unaffected — decisions §5.65.

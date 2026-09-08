@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/middleware"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
@@ -150,5 +151,76 @@ func TestAgentProviderRechecksScope(t *testing.T) {
 	}
 	if _, err := AgentProvider(ctx, &AgentDeps{Providers: providers}, ac); err == nil || !strings.Contains(err.Error(), "scope") {
 		t.Fatalf("global agent on a demoted provider = %v, want a scope refusal", err)
+	}
+}
+
+// The system_prompt setting wraps every agent's instructions, unless the
+// agent overrides it: then its own text goes alone, empty included
+// (invariant 67).
+func TestBuildFullAgentOverridesSystemPrompt(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	agentConfigs := store.NewAgentConfigStore(db)
+	settingStore := store.NewSettingStore(db)
+	if err := settingStore.Set(ctx, settings.KeySystemPrompt, "Global rules."); err != nil {
+		t.Fatal(err)
+	}
+	deps := &AgentDeps{
+		AgentConfigs: agentConfigs,
+		Providers:    store.NewProviderStore(db),
+		Settings:     settings.NewReader(settingStore),
+		Memories:     store.NewMemoryStore(db),
+	}
+	resolve := func(a *agents.Agent) string {
+		t.Helper()
+		if a.Instructions == nil {
+			return ""
+		}
+		text, err := a.Instructions(ctx, nil, a)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return text
+	}
+	override := store.BehaviorGroup{OverrideSystemPrompt: true}
+
+	// The layer itself: what the model gets as its system prompt.
+	layer := func(ac *store.AgentConfig) (string, store.PromptProfile) {
+		agent := &agents.Agent{Name: ac.Name}
+		if ac.Instructions != "" {
+			agent.Instructions = agents.StaticInstructions(ac.Instructions)
+		}
+		var prof store.PromptProfile
+		layerInstructions(ctx, deps, agent, ac, &prof)
+		return resolve(agent), prof
+	}
+	if text, prof := layer(&store.AgentConfig{Name: "inherits", Instructions: "Be brief."}); text != "Global rules.\n\nBe brief." || prof.GlobalPromptChars != len("Global rules.") {
+		t.Errorf("without the override the global prompt wraps the agent's own and is measured; got %q, %d chars", text, prof.GlobalPromptChars)
+	}
+	if text, prof := layer(&store.AgentConfig{Name: "overrides", Instructions: "Be brief.", Behavior: override}); text != "Be brief." || prof.GlobalPromptChars != 0 {
+		t.Errorf("with the override the agent's own text goes alone; got %q, %d chars", text, prof.GlobalPromptChars)
+	}
+	if text, prof := layer(&store.AgentConfig{Name: "empty", Behavior: override}); text != "" || prof.GlobalPromptChars != 0 {
+		t.Errorf("an overriding agent with no text sends no system prompt at all; got %q, %d chars", text, prof.GlobalPromptChars)
+	}
+
+	// End to end, through the stored row and the full chat build (which wraps
+	// the text in its own guidance).
+	build := func(ac *store.AgentConfig) (string, *BuildResult) {
+		t.Helper()
+		if err := agentConfigs.Create(ctx, ac); err != nil {
+			t.Fatal(err)
+		}
+		built, err := BuildFullAgent(ctx, deps, ac.ID, "", store.LocalUserID)
+		if err != nil {
+			t.Fatalf("build %q: %v", ac.Name, err)
+		}
+		return resolve(built.Agent), built
+	}
+	if text, built := build(&store.AgentConfig{OwnerID: store.LocalUserID, Name: "inherits", Model: "gpt-test", Instructions: "Be brief."}); !strings.Contains(text, "Global rules.\n\nBe brief.") || built.Profile.GlobalPromptChars != len("Global rules.") {
+		t.Errorf("a stored agent without the override carries the global prompt before its own text; got:\n%s", text)
+	}
+	if text, built := build(&store.AgentConfig{OwnerID: store.LocalUserID, Name: "overrides", Model: "gpt-test", Instructions: "Be brief.", Behavior: override}); !strings.Contains(text, "Be brief.") || strings.Contains(text, "Global rules.") || built.Profile.GlobalPromptChars != 0 {
+		t.Errorf("a stored agent with the override carries its own text and no global prompt; got:\n%s", text)
 	}
 }
