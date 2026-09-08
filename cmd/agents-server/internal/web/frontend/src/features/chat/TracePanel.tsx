@@ -12,6 +12,7 @@ import { Disclosure } from '@/components/Disclosure';
 import { useChatActions, useChatSession } from '@/features/chat/ChatSessionContext';
 import { ReplayDialog } from '@/features/chat/ReplayDialog';
 import { PayloadItem, itemTag, itemText, payloadItems, prettyMaybeJSON, type PayloadRecord } from '@/features/chat/TracePayload';
+import { fmtDuration } from '@/lib/background';
 
 export interface TraceEventData {
   kind?: string;
@@ -158,6 +159,36 @@ function buildSpanTree(spans: TraceEventData[]): SpanNode[] {
     else roots.push(node);
   }
   return roots;
+}
+
+// splitEpisodes cuts a run's roots where it stopped and later went on: a root
+// agent span no handoff led to (the loop a resume restarts). Each stretch then
+// gets its own timeline instead of sharing one with the pause between them. A
+// root that is not an agent (a before-run compaction) goes with the agent
+// span after it.
+function splitEpisodes(roots: SpanNode[]): SpanNode[][] {
+  const episodes: SpanNode[][] = [];
+  let pending: SpanNode[] = [];
+  let lastAgent: SpanNode | undefined;
+  for (const root of roots) {
+    if (root.span.type !== 'agent') { pending.push(root); continue; }
+    if (!lastAgent?.children.some(c => c.span.type === 'handoff')) episodes.push([]);
+    episodes[episodes.length - 1].push(...pending, root);
+    pending = [];
+    lastAgent = root;
+  }
+  if (pending.length) {
+    if (episodes.length === 0) episodes.push([]);
+    episodes[episodes.length - 1].push(...pending);
+  }
+  return episodes;
+}
+
+function episodeSpans(roots: SpanNode[]): TraceEventData[] {
+  const out: TraceEventData[] = [];
+  const walk = (n: SpanNode) => { out.push(n.span); n.children.forEach(walk); };
+  roots.forEach(walk);
+  return out;
 }
 
 interface TimeRange {
@@ -343,7 +374,7 @@ export function TraceRun({ segments, label, stale, isLive, isExpanded, onToggle,
 
   const { parts, tokens, spanCount } = useMemo(() => {
     let inp = 0, out = 0, count = 0;
-    const parts = segments.map(seg => {
+    const parts = segments.flatMap(seg => {
       const spanEvents = seg.events.filter(ev => ev.kind === 'span');
       count += spanEvents.length;
       for (const ev of spanEvents) {
@@ -352,13 +383,15 @@ export function TraceRun({ segments, label, stale, isLive, isExpanded, onToggle,
           out += Number(ev.data.output_tokens) || 0;
         }
       }
-      return {
-        runId: seg.runId,
-        label: seg.label,
-        spanRoots: buildSpanTree(spanEvents),
-        range: spanTimeRange(spanEvents),
-        loadSpan: loadSpan && payloadSession ? (spanId: string) => loadSpan(payloadSession, seg.runId, spanId) : undefined,
-      };
+      const load = loadSpan && payloadSession ? (spanId: string) => loadSpan(payloadSession, seg.runId, spanId) : undefined;
+      let prevEnd: number | undefined;
+      return splitEpisodes(buildSpanTree(spanEvents)).map((roots, i) => {
+        const range = spanTimeRange(episodeSpans(roots));
+        // A later stretch is headed by how long the run had been stopped.
+        const label = i === 0 ? seg.label : range && prevEnd !== undefined ? fmtDuration(range.t0 - prevEnd) + ' later' : undefined;
+        if (range) prevEnd = range.t0 + range.total;
+        return { key: seg.runId + ':' + i, label, spanRoots: roots, range, loadSpan: load };
+      });
     });
     return { parts, tokens: inp > 0 ? { input: inp, output: out } : null, spanCount: count };
   }, [segments, loadSpan, payloadSession]);
@@ -411,7 +444,7 @@ export function TraceRun({ segments, label, stale, isLive, isExpanded, onToggle,
     >
       {spanCount === 0 && <div className="trace-empty">No trace events.</div>}
       {parts.map(p => (
-        <div key={p.runId} className="trace-run-segment">
+        <div key={p.key} className="trace-run-segment">
           {p.label && <div className="trace-segment-label">{p.label}</div>}
           {p.spanRoots.map((n, i) => <SpanRow key={n.span.span_id || i} node={n} depth={0} range={p.range} alignChevron={p.spanRoots.some(r => spanHasDetails(r.span))} loadSpan={p.loadSpan} />)}
         </div>

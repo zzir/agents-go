@@ -103,6 +103,35 @@ describe('TraceRun', () => {
     act(() => { root.unmount(); });
   });
 
+  // A run that paused and went on (an approval's resume restarts the loop
+  // under the same run id) renders each stretch on its own timeline, the later
+  // one headed by the length of the pause, a before-run compaction going with
+  // the agent after it; a handoff's agents stay on one timeline.
+  it('gives a resumed run\'s stretches their own timelines', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const t = (s: number) => new Date(Date.UTC(2026, 8, 8, 0, 0, s)).toISOString();
+    const events: TraceEventData[] = [
+      { kind: 'span', name: 'a', type: 'agent', span_id: 'a1', started_at: t(0), ended_at: t(2) },
+      { kind: 'span', name: 'a', type: 'generation', span_id: 'g1', parent_id: 'a1', started_at: t(0), ended_at: t(2) },
+      { kind: 'span', name: 'compaction', type: 'compaction', span_id: 'c1', started_at: t(134), ended_at: t(135) },
+      { kind: 'span', name: 'a', type: 'agent', span_id: 'a2', started_at: t(135), ended_at: t(137) },
+      { kind: 'span', name: 'function:memory_write', type: 'function', span_id: 'f1', parent_id: 'a2', started_at: t(135), ended_at: t(136) },
+      { kind: 'span', name: 'transfer_to_b', type: 'handoff', span_id: 'h1', parent_id: 'a2', started_at: t(136), ended_at: t(137) },
+      { kind: 'span', name: 'b', type: 'agent', span_id: 'a3', started_at: t(137), ended_at: t(140) },
+    ];
+    act(() => { root.render(<Harness events={events} loadSpan={resolve} />); });
+    const segs = container.querySelectorAll('.trace-run-segment');
+    expect(segs).toHaveLength(2);
+    expect(segs[0].querySelector('.trace-segment-label')).toBeNull();
+    expect((segs[0].querySelector('.trace-span-bar') as HTMLElement).style.width).toBe('100%');
+    expect(segs[1].querySelector('.trace-segment-label')!.textContent).toBe('2m12s later');
+    const lefts = Array.from(segs[1].querySelectorAll('.trace-span-bar')).map(b => (b as HTMLElement).style.left);
+    expect(lefts).toEqual(['0%', '16.67%', '16.67%', '33.33%', '50%']);
+    act(() => { root.unmount(); });
+  });
+
   it('says so when the payload cannot be fetched', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
