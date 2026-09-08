@@ -262,8 +262,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     derives from it.** `internal/settings` names every key, kind, default and
     presentation; the backend reads through `settings.Reader` (no reader has
     its own fallback), masking is `Kind == secret`, and the panel renders the
-    served table. Every bool has a registered default and two states (unset =
-    default), stored on click (`SettingsPanel.tsx`); no env fallback (spec §2.14).
+    served table. Every bool has a registered default and is one switch (unset
+    = the default side), stored on click (`SettingsPanel.tsx`); no env
+    fallback (spec §2.14).
 41. **A destructive action confirms once, in one place.** Every Delete goes
     through `useCrud.remove` or the same Primer `useConfirm` dialog
     (conversations, skills, tasks, triggers, unrecognized settings) — never
@@ -408,3 +409,8 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     background run summarizes whatever its agent's mode says: it has no
     memory tools to write down what a reset would keep. The mode is the agent's, needs
     compaction enabled, and turns the memory and history tools on.
+66. **A single boolean in a settings form is a `ToggleRow`.** Name and
+    caption on the left, the On/Off switch on the right, one bordered row
+    (`components/ToggleRow.tsx`), disabled by itself in a read-only dialog. A
+    checkbox is for picking several of a list (stages, skills, handoffs) and a
+    segmented control for one of several values — neither stands in for on/off.

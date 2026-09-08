@@ -1,6 +1,7 @@
 import { useState, type ChangeEvent } from 'react';
 import { TextInput, Label, SegmentedControl, Stack, Checkbox, FormControl } from '@primer/react';
 import { FormActions } from '@/components/FormActions';
+import { ToggleRow } from '@/components/ToggleRow';
 import { CrudPanel, RowActionsMenu } from '@/components/CrudPanel';
 import { ResourceRow } from '@/components/ResourceRow';
 import { api } from '@/lib/api';
@@ -134,11 +135,8 @@ function GuardrailForm({ initial, onSave, onCancel, onDelete, saving }: Guardrai
         'Maximum character count',
       )}
       {stages.includes('input') && (
-        <FormControl>
-          <Checkbox checked={!!form.blocking} onChange={(e: ChangeEvent<HTMLInputElement>) => set('blocking', e.target.checked)} />
-          <FormControl.Label>Blocking</FormControl.Label>
-          <FormControl.Caption>At the input stage, run before the model call (a gate) instead of racing it — a tripwire then prevents the call and any token spend</FormControl.Caption>
-        </FormControl>
+        <ToggleRow label="Blocking" checked={!!form.blocking} onChange={v => set('blocking', v)}
+          description="At the input stage, gate the model call instead of racing it; a tripwire then prevents the call." />
       )}
       <FormActions saving={saving} onSave={handleSave} onCancel={onCancel} onDelete={onDelete} />
     </Stack>

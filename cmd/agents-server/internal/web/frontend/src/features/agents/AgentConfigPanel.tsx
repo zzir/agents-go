@@ -15,6 +15,7 @@ import { fc, seg } from '@/lib/form';
 import { JsonField } from '@/lib/JsonField';
 import { toast } from '@/lib/toast';
 import { Disclosure } from '@/components/Disclosure';
+import { ToggleRow } from '@/components/ToggleRow';
 import { AgentAvatar } from '@/components/AgentAvatar';
 import { ScopeHint, collidingNames } from '@/components/AgentPicker';
 import { AvatarPicker } from './AvatarPicker';
@@ -431,11 +432,8 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
           spawn_task / task_* schema from every request. */}
       <div className="form-group">
         <div className="form-group-title">Subagents</div>
-        <FormControl>
-          <Checkbox checked={form.subagents !== false} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('subagents', e.target.checked)} />
-          <FormControl.Label>Spawn subagents & background tasks</FormControl.Label>
-          <FormControl.Caption>spawn_task / task_status / task_stop / task_retry. Turn off for a chat-only agent to reclaim the task schema from every request. The /workflow command still runs workflows either way.</FormControl.Caption>
-        </FormControl>
+        <ToggleRow label="Spawn subagents & background tasks" checked={form.subagents !== false} onChange={v => set('subagents', v)}
+          description="The spawn_task and task_* tools. Off drops their schema from every request; /workflow still runs." />
       </div>
 
       {/* Off by default: the flag is a claim that the MODEL accepts image
@@ -444,11 +442,8 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
           provider 400. */}
       <div className="form-group">
         <div className="form-group-title">Vision</div>
-        <FormControl>
-          <Checkbox checked={form.vision || false} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('vision', e.target.checked)} />
-          <FormControl.Label>Accept image input</FormControl.Label>
-          <FormControl.Caption>Lets messages to this agent carry images (the model must support vision). Requires the Attachment storage settings to be configured.</FormControl.Caption>
-        </FormControl>
+        <ToggleRow label="Accept image input" checked={form.vision || false} onChange={v => set('vision', v)}
+          description="Messages may carry images; needs a vision model and the Attachment storage settings." />
       </div>
 
       {/* Opt-in, unlike the task and todo tools a chat agent carries by default:
@@ -456,20 +451,14 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
           agent's job, not every agent's. */}
       <div className="form-group">
         <div className="form-group-title">Workflows</div>
-        <FormControl>
-          <Checkbox checked={form.workflow_authoring || false} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('workflow_authoring', e.target.checked)} />
-          <FormControl.Label>Author workflows from the chat</FormControl.Label>
-          <FormControl.Caption>get_workflow / save_workflow — every save is shown to you for approval before it is written. Running one is spawn_task's, which an agent has unless subagents are turned off above.</FormControl.Caption>
-        </FormControl>
+        <ToggleRow label="Author workflows from the chat" checked={form.workflow_authoring || false} onChange={v => set('workflow_authoring', v)}
+          description="get_workflow and save_workflow; each save waits for your approval. Running one needs subagents." />
       </div>
 
       <div className="form-group">
         <div className="form-group-title">Compaction</div>
-        <FormControl>
-          <Checkbox checked={form.compaction_enabled || false} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_enabled', e.target.checked)} />
-          <FormControl.Label>Enable compaction</FormControl.Label>
-          <FormControl.Caption>Summarize old messages when history grows large (provider-agnostic)</FormControl.Caption>
-        </FormControl>
+        <ToggleRow label="Enable compaction" checked={form.compaction_enabled || false} onChange={v => set('compaction_enabled', v)}
+          description="Summarize old messages when history grows large (provider-agnostic)" />
         {form.compaction_enabled && <>
           {fc('Mode', <Select block value={form.compaction_mode || ''} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => set('compaction_mode', e.target.value)}>
             <Select.Option value="">Summary — fold older history into a summary</Select.Option>
@@ -488,23 +477,14 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
 
       <div className="form-group">
         <div className="form-group-title">Memory</div>
-        <FormControl>
-          <Checkbox checked={form.memory_tools || false} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('memory_tools', e.target.checked)} />
-          <FormControl.Label>Memory tools</FormControl.Label>
-          <FormControl.Caption>memory_write and friends give the model working notes that survive compaction; the Context panel shows them</FormControl.Caption>
-        </FormControl>
+        <ToggleRow label="Memory tools" checked={form.memory_tools || false} onChange={v => set('memory_tools', v)}
+          description="memory_write and friends: working notes that survive compaction, shown in the Context panel." />
         {form.memory_tools && (
-          <FormControl>
-            <Checkbox checked={form.memory_agent_write || false} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('memory_agent_write', e.target.checked)} />
-            <FormControl.Label>Model may propose agent memory</FormControl.Label>
-            <FormControl.Caption>Each such write waits for your approval and then reaches every conversation with this agent</FormControl.Caption>
-          </FormControl>
+          <ToggleRow label="Model may propose agent memory" checked={form.memory_agent_write || false} onChange={v => set('memory_agent_write', v)}
+            description="Each such write waits for your approval, then reaches every conversation with this agent." />
         )}
-        <FormControl>
-          <Checkbox checked={form.history_tools || false} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('history_tools', e.target.checked)} />
-          <FormControl.Label>History tools</FormControl.Label>
-          <FormControl.Caption>history_search and history_read let the model find turns that compaction folded out of its context</FormControl.Caption>
-        </FormControl>
+        <ToggleRow label="History tools" checked={form.history_tools || false} onChange={v => set('history_tools', v)}
+          description="history_search and history_read find turns that compaction folded out of the context." />
       </div>
 
       <Disclosure variant="plain" className="advanced-toggle" label="Advanced">
@@ -522,22 +502,14 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
               'What happens when the model calls a tool it does not have — a name it invented, or one plan mode is hiding')}
             {seg('Reasoning item ID policy', form.reasoning_item_id_policy || '', [['', 'Preserve (default)'], ['omit', 'Omit']], v => set('reasoning_item_id_policy', v),
               'Whether reasoning-item ids are kept when prior items are re-sent to the model on later turns')}
-            <div className="form-checkbox-group">
-              <FormControl>
-                <Checkbox checked={form.tool_choice_reset !== false} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('tool_choice_reset', e.target.checked)} />
-                <FormControl.Label>Reset tool choice after use</FormControl.Label>
-                <FormControl.Caption>Clears a pinned tool_choice once a tool has run (the loop guard). Off keeps tool_choice across turns.</FormControl.Caption>
-              </FormControl>
-            </div>
+            <ToggleRow label="Reset tool choice after use" checked={form.tool_choice_reset !== false} onChange={v => set('tool_choice_reset', v)}
+              description="Clears a pinned tool_choice once a tool has run (the loop guard); off keeps it across turns." />
           </div>
 
           <div className="form-group">
             <div className="form-group-title">Resilience</div>
-            <FormControl>
-              <Checkbox checked={form.retry_enabled || false} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('retry_enabled', e.target.checked)} />
-              <FormControl.Label>Enable retry</FormControl.Label>
-              <FormControl.Caption>Automatically retry failed model calls with backoff</FormControl.Caption>
-            </FormControl>
+            <ToggleRow label="Enable retry" checked={form.retry_enabled || false} onChange={v => set('retry_enabled', v)}
+              description="Automatically retry failed model calls with backoff" />
             {form.retry_enabled &&
               <JsonField label="Retry policy (JSON)" value={form.retry_policy || ''} onChange={v => set('retry_policy', v)} placeholder='{"max_attempts":3,"base_delay_ms":500,"max_delay_ms":30000,"multiplier":2}' caption="Empty = SDK defaults" />}
             <JsonField label="Fallback models (JSON)" value={form.fallback_models || ''} onChange={v => set('fallback_models', v)} placeholder='[{"model":"gpt-5.4-mini","api_key":"sk-..."},{"model":"claude-opus-5","provider_type":"anthropic","api_key":"sk-ant-..."}]' caption='JSON array of {model, provider_type, api_key, base_url} — provider_type is "openai" (default) or "anthropic"' />

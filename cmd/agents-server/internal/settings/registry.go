@@ -126,7 +126,7 @@ var defs = []Def{{
 	Group:       GroupTracing,
 	Label:       "Trace sensitive data",
 	Default:     "true",
-	Description: "On records prompts, outputs and tool arguments in stored traces. Off leaves spans with only timing and usage metadata, and the trace panel's Replay nothing to seed from. Applies to new runs.",
+	Description: "Record prompts, outputs and tool arguments in new runs' traces; off keeps timing and usage only.",
 }, {
 	Key:         KeyTraceSpanDataKB,
 	Kind:        KindInt,
@@ -141,7 +141,7 @@ var defs = []Def{{
 	Kind:        KindBool,
 	Group:       GroupLogging,
 	Label:       "Log sensitive data",
-	Description: "Include prompts, tool arguments and model output in the SDK's own log records. Separate from the tracing switch: this one puts conversation content into stderr and whatever collects it. Off by default, and visible only at --log-level debug. Applies to new runs.",
+	Description: "Include prompts, tool arguments and model output in SDK log records, shown at --log-level debug.",
 	Default:     "false",
 }, {
 	Key:         KeyApprovalTTLMinutes,

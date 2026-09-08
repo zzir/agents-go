@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Button, TextInput, Textarea, Label, Checkbox, FormControl, Select, Stack } from '@primer/react';
+import { Button, TextInput, Textarea, Label, Select, Stack } from '@primer/react';
 import { SecretInput } from '@/components/SecretInput';
+import { ToggleRow } from '@/components/ToggleRow';
 import { FormActions } from '@/components/FormActions';
 import { CrudPanel, RowActionsMenu } from '@/components/CrudPanel';
 import { useReadOnly } from '@/lib/access';
@@ -208,22 +209,12 @@ function SandboxForm({ initial, seed, onSave, onCancel, onDelete, saving }: {
       {remote && fc('SSH password',
         <SecretInput block value={form.ssh_password} onChange={e => set('ssh_password', e.target.value)} placeholder="(optional)" />,
       )}
-      {remote && (
-        <FormControl>
-          <Checkbox checked={form.ssh_use_agent} onChange={e => set('ssh_use_agent', e.target.checked)} />
-          <FormControl.Label>Use SSH agent (SSH_AUTH_SOCK)</FormControl.Label>
-        </FormControl>
-      )}
+      {remote && <ToggleRow label="Use SSH agent (SSH_AUTH_SOCK)" checked={form.ssh_use_agent} onChange={v => set('ssh_use_agent', v)} />}
       {remote && fc('SSH known hosts file',
         <TextInput block value={form.ssh_known_hosts} onChange={e => set('ssh_known_hosts', e.target.value)} placeholder="~/.ssh/known_hosts" />,
         'Path on the server host. Empty uses the default ~/.ssh/known_hosts.',
       )}
-      {remote && (
-        <FormControl>
-          <Checkbox checked={form.ssh_insecure_host_key} onChange={e => set('ssh_insecure_host_key', e.target.checked)} />
-          <FormControl.Label>Skip host key verification (insecure -- dev/test only)</FormControl.Label>
-        </FormControl>
-      )}
+      {remote && <ToggleRow label="Skip host key verification (insecure -- dev/test only)" checked={form.ssh_insecure_host_key} onChange={v => set('ssh_insecure_host_key', v)} />}
 
       {form.type === 'e2b' && fc('API URL',
         <TextInput block value={form.api_url} onChange={e => set('api_url', e.target.value)} placeholder="https://api.e2b.app" />,
@@ -282,22 +273,10 @@ function SandboxForm({ initial, seed, onSave, onCancel, onDelete, saving }: {
         'How long a sandbox lives before the service acts on it. Refreshed while in use.',
       )}
       {form.type === 'e2b' && (
-        <FormControl>
-          <Checkbox checked={form.auto_pause} onChange={e => set('auto_pause', e.target.checked)} />
-          <FormControl.Label>Pause on expiry instead of killing</FormControl.Label>
-          <FormControl.Caption>
-            Off means an expired lease DESTROYS the working tree. Some services gate this behind a
-            per-function feature (Alibaba Cloud: snapshots) and refuse to create a sandbox without it —
-            uncheck it there.
-          </FormControl.Caption>
-        </FormControl>
+        <ToggleRow label="Pause on expiry instead of killing" checked={form.auto_pause} onChange={v => set('auto_pause', v)}
+          description="Off means expiry destroys the working tree; services without snapshots (Alibaba Cloud) need it off." />
       )}
-      {form.type === 'e2b' && (
-        <FormControl>
-          <Checkbox checked={form.allow_internet} onChange={e => set('allow_internet', e.target.checked)} />
-          <FormControl.Label>Allow outbound network access</FormControl.Label>
-        </FormControl>
-      )}
+      {form.type === 'e2b' && <ToggleRow label="Allow outbound network access" checked={form.allow_internet} onChange={v => set('allow_internet', v)} />}
       {fc('Prompt',
         <Textarea block rows={3} value={form.prompt} onChange={e => set('prompt', e.target.value)}
           placeholder="e.g. Python 3.12 and Node 20 are installed. No outbound network; use the vendored packages." />,

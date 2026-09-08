@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, type ChangeEvent, type ReactNode } from 'react';
-import { Button, TextInput, Textarea, FormControl, Stack, PageHeader, SegmentedControl, Label, useConfirm } from '@primer/react';
+import { Button, TextInput, Textarea, FormControl, Stack, PageHeader, Label, useConfirm } from '@primer/react';
 import { SecretInput } from '@/components/SecretInput';
+import { ToggleRow } from '@/components/ToggleRow';
 import { useReadOnly } from '@/lib/access';
 import { api } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
@@ -145,31 +146,40 @@ function SettingRow({ def, value, saving, onSave }: SettingRowProps) {
   const changed = draft !== value;
   useEffect(() => { setDraft(value); }, [value]);
 
-  // A segmented control reads as applied on click, so for bools it is: the
-  // click stores the value at once and reverts on failure. The draft-and-Save
-  // step exists only for the typed kinds.
-  const instant = def.kind === 'bool';
-  const setOrSave = instant
-    ? (v: string) => { setDraft(v); void onSave(v).then(ok => { if (!ok) setDraft(value); }); }
-    : setDraft;
-
-  // The default belongs in the caption, not in a placeholder the operator has
-  // to guess at: it is what the server actually applies when the box is empty.
-  const caption = [def.description, def.default ? `Default: ${def.default}.` : null]
-    .filter(Boolean).join(' ');
-
+  // A switch reads as applied on click, so a bool stores at once and reverts
+  // on failure. The draft-and-Save step exists only for the typed kinds.
+  if (def.kind === 'bool') {
+    const store = (on: boolean) => {
+      const v = String(on);
+      setDraft(v);
+      void onSave(v).then(ok => { if (!ok) setDraft(value); });
+    };
+    return <ToggleRow label={def.label} description={def.description} checked={boolOf(def, draft)} onChange={store} />;
+  }
+  const caption = settingCaption(def);
   return (
     <FormControl>
       <FormControl.Label>{def.label}</FormControl.Label>
       {caption && <FormControl.Caption>{caption}</FormControl.Caption>}
-      <SettingInput def={def} draft={draft} setDraft={setOrSave} />
-      {changed && !instant && (
+      <SettingInput def={def} draft={draft} setDraft={setDraft} />
+      {changed && (
         <Button onClick={() => onSave(draft)} disabled={saving} variant="primary" size="small">
           {saving ? 'Saving…' : 'Save'}
         </Button>
       )}
     </FormControl>
   );
+}
+
+// Unset reads as the registered default (Reader.Bool): the switch shows the
+// default side until a value is stored.
+const boolOf = (def: SettingDef, draft: string) => (draft || def.default) === 'true';
+
+// The default belongs in the caption, not in a placeholder the operator has
+// to guess at: it is what the server actually applies when the box is empty.
+// A switch needs none: it stands on the default side until a value is stored.
+function settingCaption(def: SettingDef): string {
+  return [def.description, def.default ? `Default: ${def.default}.` : null].filter(Boolean).join(' ');
 }
 
 function SettingInput({ def, draft, setDraft }: { def: SettingDef; draft: string; setDraft: (v: string) => void }) {
@@ -188,25 +198,6 @@ function SettingInput({ def, draft, setDraft }: { def: SettingDef; draft: string
           style={{ fontFamily: 'var(--fontStack-monospace)' }}
         />
       );
-    case 'bool': {
-      // Two states: every bool has a registered default, and the server reads
-      // unset as that default (Reader.Bool) — so the control is On/Off with
-      // the default side holding until a value is stored.
-      const options: [string, string][] = [['true', 'On'], ['false', 'Off']];
-      const selected = draft === '' ? def.default : draft;
-      return (
-        // onChange makes the control controlled. Without it Primer keeps the
-        // selection in internal state seeded on first render — before the
-        // settings fetch resolves — and ignores `selected` from then on.
-        <SegmentedControl aria-label={def.label} size="small" onChange={i => setDraft(options[i][0])}>
-          {options.map(([v, text]) => (
-            <SegmentedControl.Button key={v} selected={selected === v}>
-              {text}
-            </SegmentedControl.Button>
-          ))}
-        </SegmentedControl>
-      );
-    }
     case 'int':
       return (
         <TextInput
@@ -275,7 +266,7 @@ function StorageForm({ defs, getValue, onSaved }: { defs: SettingDef[]; getValue
     const out: Record<string, unknown> = {};
     for (const d of defs) {
       const field = STORAGE_FIELDS[d.key] ?? d.key;
-      out[field] = d.kind === 'bool' ? (draft[d.key] || d.default) === 'true' : (draft[d.key] ?? '').trim();
+      out[field] = d.kind === 'bool' ? boolOf(d, draft[d.key] ?? '') : (draft[d.key] ?? '').trim();
     }
     return out;
   };
@@ -300,7 +291,10 @@ function StorageForm({ defs, getValue, onSaved }: { defs: SettingDef[]; getValue
 
   return (
     <Stack gap="spacious">
-      {defs.map(def => (
+      {defs.map(def => def.kind === 'bool' ? (
+        <ToggleRow key={def.key} label={def.label} description={def.description}
+          checked={boolOf(def, draft[def.key] ?? '')} onChange={on => setDraft(prev => ({ ...prev, [def.key]: String(on) }))} />
+      ) : (
         <FormControl key={def.key}>
           <FormControl.Label>{def.label}</FormControl.Label>
           {def.description && <FormControl.Caption>{def.description}</FormControl.Caption>}

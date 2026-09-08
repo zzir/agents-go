@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Button, TextInput, Label, Select, Checkbox, FormControl, Stack, ToggleSwitch, useConfirm } from '@primer/react';
+import { Button, TextInput, Label, Select, Stack, ToggleSwitch, useConfirm } from '@primer/react';
 import { SecretInput } from '@/components/SecretInput';
+import { ToggleRow } from '@/components/ToggleRow';
 import { TokenListInput } from '@/components/TokenListInput';
 import { FormActions } from '@/components/FormActions';
 import { CrudPanel, RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
@@ -165,15 +166,9 @@ function McpForm({ initial, onSave, onCancel, onDelete, saving, onClearAuth }: M
       )}
       {fc('Max retry attempts', <TextInput block type="number" min={0} value={String(form.max_retry_attempts || 0)} onChange={e => set('max_retry_attempts', parseInt(e.target.value) || 0)} />, '0 = no retries, -1 = retry indefinitely on a failed list_tools/call_tool')}
       {form.max_retry_attempts !== 0 && fc('Retry backoff (ms)', <TextInput block type="number" min={0} value={String(form.retry_backoff_ms || 0)} onChange={e => set('retry_backoff_ms', parseInt(e.target.value) || 0)} />, 'Base delay for exponential backoff (0 = default 1000ms)')}
-      <FormControl>
-        <Checkbox checked={form.use_structured_content} onChange={e => set('use_structured_content', e.target.checked)} />
-        <FormControl.Label>Use structured content</FormControl.Label>
-        <FormControl.Caption>Use a tool result's structuredContent field exclusively (for servers that only populate it)</FormControl.Caption>
-      </FormControl>
-      <FormControl>
-        <Checkbox checked={form.enabled} onChange={e => set('enabled', e.target.checked)} />
-        <FormControl.Label>Enabled</FormControl.Label>
-      </FormControl>
+      <ToggleRow label="Use structured content" checked={form.use_structured_content} onChange={v => set('use_structured_content', v)}
+        description="Use a tool result's structuredContent field exclusively (for servers that only populate it)" />
+      <ToggleRow label="Enabled" checked={form.enabled} onChange={v => set('enabled', v)} />
       <FormActions
         saving={saving}
         onSave={() => {

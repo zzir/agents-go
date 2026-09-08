@@ -1,0 +1,28 @@
+/* A boolean as one bordered row: name and caption left, the switch right. */
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--base-size-16);
+  padding: var(--base-size-12) var(--base-size-16);
+  border: 1px solid var(--borderColor-default);
+  border-radius: var(--borderRadius-medium);
+  background: var(--bgColor-default);
+}
+
+.toggle-row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.toggle-row-title {
+  font-size: var(--base-text-size-sm);
+  font-weight: var(--base-text-weight-semibold);
+  color: var(--fgColor-default);
+}
+
+.toggle-row-desc {
+  margin-top: var(--base-size-4);
+  font-size: var(--base-text-size-xs);
+  color: var(--fgColor-muted);
+}
