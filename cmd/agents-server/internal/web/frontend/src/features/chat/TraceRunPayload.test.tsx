@@ -136,6 +136,33 @@ describe('TraceRun', () => {
     act(() => { root.unmount(); });
   });
 
+  // A function's mcp child is the same call's transport: hidden until the row
+  // opens, absent from the bar's overlay, hinted by "mcp" after the name. Only
+  // the agent row carries a type tag; the icon says it for the rest.
+  it('folds a function\'s mcp transport row until the row opens', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const t = (s: number) => new Date(Date.UTC(2026, 8, 8, 0, 0, s)).toISOString();
+    const events: TraceEventData[] = [
+      { kind: 'span', name: 'a', type: 'agent', span_id: 'a1', started_at: t(0), ended_at: t(10) },
+      { kind: 'span', name: 'function:search', type: 'function', span_id: 'f1', parent_id: 'a1', started_at: t(1), ended_at: t(3), data: { input: '{}', output: 'ok' } },
+      { kind: 'span', name: 'mcp.call_tool', type: 'mcp', span_id: 'm1', parent_id: 'f1', started_at: t(1), ended_at: t(3) },
+    ];
+    act(() => { root.render(<Harness events={events} loadSpan={resolve} />); });
+    const names = () => Array.from(container.querySelectorAll('.trace-span-name')).map(n => n.textContent);
+    expect(names()).toEqual(['a', 'search']);
+    const fn = container.querySelectorAll('.trace-span')[1] as HTMLElement;
+    expect(fn.textContent).toContain('mcp');
+    expect(fn.querySelectorAll('.trace-span-seg')).toHaveLength(0);
+    act(() => { fn.click(); });
+    expect(names()).toEqual(['a', 'search', 'mcp.call_tool']);
+    expect(Array.from(container.querySelectorAll('.trace-ev-tag-span')).map(e => e.textContent)).toEqual(['agent']);
+    // The timeline is headed by round ticks that fit the 10s range.
+    expect(Array.from(container.querySelectorAll('.trace-axis-tick')).map(e => e.textContent)).toEqual(['0s', '2s', '4s', '6s', '8s']);
+    act(() => { root.unmount(); });
+  });
+
   it('says so when the payload cannot be fetched', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);

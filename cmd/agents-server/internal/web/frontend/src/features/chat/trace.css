@@ -25,6 +25,8 @@
 /* One card can hold a chain of runs (the user's run + the wake-up runs its
    tasks triggered); each segment keeps its own waterfall timeline, with a
    small gap between them. */
+/* Every row of a segment is the same three columns: label, duration, time. */
+.trace-run-segment { --trace-cols: minmax(0, 1fr) 60px clamp(120px, 44%, 360px); container-type: inline-size; }
 .trace-run-segment + .trace-run-segment { margin-top: var(--base-size-8); }
 /* Optional segment heading — the task panel names each attempt of a retried
    task with it. Muted, small: a divider with a name, not a second header. */
@@ -95,12 +97,15 @@
   color: var(--fgColor-success);
 }
 .trace-ev-tokens {
-  display: inline-flex;
-  gap: var(--base-size-6);
   font-size: var(--base-text-size-xs);
   font-family: var(--fontStack-monospace);
   color: var(--fgColor-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
+.trace-ev-tokens > span + span { margin-left: var(--base-size-6); }
 /* Span tree + waterfall */
 .trace-section-label {
   display: flex;
@@ -122,9 +127,9 @@
   background: var(--borderColor-muted);
 }
 .trace-span {
-  display: flex;
+  display: grid;
+  grid-template-columns: var(--trace-cols);
   align-items: center;
-  gap: var(--base-size-4);
   padding: var(--base-size-4) var(--base-size-4);
   border-radius: var(--borderRadius-small);
   font-size: var(--base-text-size-xs);
@@ -133,6 +138,21 @@
 }
 .trace-span:hover { background: var(--bgColor-neutral-muted); }
 .trace-span-clickable { cursor: pointer; }
+/* A tight column clips the label's tail (tokens, tags) and keeps the name. */
+.trace-span-label {
+  display: flex;
+  align-items: center;
+  gap: var(--base-size-4);
+  min-width: 0;
+  overflow: hidden;
+  padding-left: calc(var(--d, 0) * 12px);
+}
+/* "mcp" after a tool's name: the name gives way, the hint stays whole. */
+.trace-span-hint {
+  flex-shrink: 0;
+  font-size: var(--base-text-size-xs);
+  color: var(--fgColor-muted);
+}
 .trace-span-name {
   font-weight: var(--base-text-weight-medium);
   color: var(--fgColor-default);
@@ -140,39 +160,70 @@
   overflow: hidden;
   text-overflow: ellipsis;
   flex-shrink: 1;
-  min-width: 0;
+  min-width: 3ch;
 }
 .trace-span-duration {
   font-size: var(--base-text-size-xs);
   font-family: var(--fontStack-monospace);
   color: var(--fgColor-muted);
   white-space: nowrap;
-  flex-shrink: 0;
+  text-align: right;
+  padding-right: var(--base-size-8);
 }
+/* The time column: bars over faint lines one axis tick apart. */
 .trace-span-track {
   position: relative;
-  flex: 1;
-  min-width: 40px;
-  height: 6px;
-  background: var(--bgColor-neutral-muted);
-  border-radius: var(--borderRadius-small);
+  align-self: stretch;
   overflow: hidden;
-  margin-left: auto;
+  background: linear-gradient(to right, var(--borderColor-muted) 1px, transparent 1px) 0 0 / var(--trace-step, 100%) 100% repeat-x;
 }
 .trace-span-bar {
   position: absolute;
-  top: 0;
-  bottom: 0;
+  top: calc(50% - 4px);
+  height: 8px;
   min-width: 4px;
   border-radius: var(--borderRadius-small);
   opacity: 0.75;
 }
 .trace-span-seg {
   position: absolute;
-  top: 0;
-  bottom: 0;
+  top: calc(50% - 4px);
+  height: 8px;
   min-width: 4px;
   opacity: 0.85;
+}
+.trace-axis {
+  display: grid;
+  grid-template-columns: var(--trace-cols);
+  padding: 0 var(--base-size-4);
+}
+.trace-axis-scale {
+  grid-column: 3;
+  position: relative;
+  height: 18px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--borderColor-default);
+  container-type: inline-size;
+}
+/* A narrow column labels every other tick; a narrow panel drops the time
+   column altogether, and the label and duration get the width. */
+@container (max-width: 200px) {
+  .trace-axis-tick:nth-child(even) { display: none; }
+}
+@container (max-width: 360px) {
+  .trace-axis { display: none; }
+  .trace-span { grid-template-columns: minmax(0, 1fr) 60px; }
+  .trace-span-track { display: none; }
+}
+.trace-axis-tick {
+  position: absolute;
+  top: 0;
+  padding-left: 3px;
+  font-family: var(--fontStack-monospace);
+  font-size: var(--base-text-size-xs);
+  line-height: 18px;
+  color: var(--fgColor-muted);
+  white-space: nowrap;
 }
 /* A span under 1% of the range is a tick: a full-color 2px line. */
 .trace-span-bar.tick,

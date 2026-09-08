@@ -1,10 +1,10 @@
 import './trace.css';
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, type CSSProperties } from 'react';
 import { CounterLabel, Link } from '@primer/react';
 import {
   PulseIcon, ToolsIcon, ArrowSwitchIcon, DiamondIcon,
   DependabotIcon, CpuIcon, ShieldCheckIcon, ChevronRightIcon,
-  CommentIcon,
+  CommentIcon, PlugIcon,
 } from '@primer/octicons-react';
 import type { Icon } from '@primer/octicons-react';
 import { SidePanel } from '@/layout/SidePanel';
@@ -43,6 +43,7 @@ const SPAN_META: Record<string, { color: string; icon: Icon }> = {
   handoff:    { color: 'var(--fgColor-severe)',    icon: ArrowSwitchIcon },
   guardrail:  { color: 'var(--fgColor-attention)', icon: ShieldCheckIcon },
   compaction: { color: 'var(--fgColor-attention)', icon: DiamondIcon },
+  mcp:        { color: 'var(--fgColor-muted)',     icon: PlugIcon },
 };
 const FALLBACK_META = { color: 'var(--fgColor-muted)', icon: DiamondIcon };
 
@@ -223,6 +224,36 @@ function barGeometry(range: TimeRange, [a, b]: [number, number]): { left: string
   return w < 1 ? { left, tick: true } : { left, width: w.toFixed(2) + '%', tick: false };
 }
 
+// tickStep is the axis interval: the smallest round step that fits the range
+// in six ticks or fewer.
+const TICK_STEPS = [100, 200, 500, 1000, 2000, 5000, 10000, 20000, 30000, 60000, 120000, 300000, 600000, 900000, 1800000, 3600000];
+function tickStep(total: number): number {
+  return TICK_STEPS.find(step => total / step <= 6) ?? TICK_STEPS[TICK_STEPS.length - 1];
+}
+
+function tickLabel(ms: number): string {
+  if (ms === 0) return '0s';
+  if (ms < 1000) return ms + 'ms';
+  if (ms < 60000) return +(ms / 1000).toFixed(1) + 's';
+  const m = Math.floor(ms / 60000), s = Math.round((ms % 60000) / 1000);
+  return s ? m + 'm' + s + 's' : m + 'm';
+}
+
+// AxisRow heads a timeline with its tick labels; one past 92% of the column
+// would run off it and is left out.
+function AxisRow({ range }: { range: TimeRange }) {
+  const step = tickStep(range.total);
+  const ticks: number[] = [];
+  for (let t = 0; t / range.total < 0.92; t += step) ticks.push(t);
+  return (
+    <div className="trace-axis" aria-hidden>
+      <span className="trace-axis-scale">
+        {ticks.map(t => <span key={t} className="trace-axis-tick" style={{ left: ((t / range.total) * 100).toFixed(2) + '%' }}>{tickLabel(t)}</span>)}
+      </span>
+    </div>
+  );
+}
+
 // spanHasDetails reports whether a span row can expand: the server strips
 // content-free data before sending, so any data at all means real details
 // (payload, counts), a payload left out of the listing is details to fetch,
@@ -248,8 +279,13 @@ function SpanRow({ node, depth, range, alignChevron, loadSpan }: { node: SpanNod
   const iconColor = spanColor(s);
   const displayName = s.name.includes(':') ? s.name.slice(s.name.indexOf(':') + 1) : s.name;
   const extraData = !!s.data && Object.keys(s.data).length > 0;
-  const hasData = spanHasDetails(s);
-  const childExpandable = node.children.some(c => spanHasDetails(c.span));
+  // A function's mcp child is its transport, the same call over the wire: it
+  // folds under the row until opened, and never overlays the bar.
+  const transport = (c: SpanNode) => s.type === 'function' && c.span.type === 'mcp';
+  const folded = node.children.filter(transport);
+  const shown = open ? node.children : node.children.filter(c => !transport(c));
+  const hasData = spanHasDetails(s) || folded.length > 0;
+  const childExpandable = shown.some(c => spanHasDetails(c.span));
 
   const spanId = s.span_id;
   const omitted = !!s.payloadOmitted;
@@ -265,7 +301,7 @@ function SpanRow({ node, depth, range, alignChevron, loadSpan }: { node: SpanNod
   // The children's extents overlay the parent's bar in their own colors, so a
   // collapsed row still shows the run's shape; a gap is time no child explains.
   const segments = range
-    ? node.children.flatMap((c, i) => {
+    ? node.children.filter(c => !transport(c)).flatMap((c, i) => {
         const e = spanExtent(c.span);
         return e ? [{ key: c.span.span_id || i, color: spanColor(c.span), ...barGeometry(range, e) }] : [];
       })
@@ -275,59 +311,60 @@ function SpanRow({ node, depth, range, alignChevron, loadSpan }: { node: SpanNod
     <>
       <div
         className={'trace-span' + (hasData ? ' trace-span-clickable' : '')}
-        style={{ paddingLeft: 2 + depth * 8 }}
+        style={{ '--d': depth } as CSSProperties}
         role={hasData ? 'button' : undefined}
         tabIndex={hasData ? 0 : undefined}
         aria-expanded={hasData ? open : undefined}
         onClick={hasData ? toggle : undefined}
         onKeyDown={hasData ? e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } } : undefined}
       >
-        {(hasData || alignChevron) && (
-          <span className={'trace-span-chevron' + (open ? ' open' : '')}>
-            {hasData && <ChevronRightIcon size={10} />}
-          </span>
-        )}
-        <span className="trace-ev-icon" style={{ color: iconColor }}><SpanIcon size={12} /></span>
-        <span className={'trace-span-name' + (failed ? ' trace-span-failed' : '')} title={s.name}>{displayName}</span>
-        {s.type && <span className="trace-ev-tag trace-ev-tag-span">{s.type}</span>}
-        {failed && <span className="trace-ev-tag trace-ev-tag-error">error</span>}
-        {s.type === 'generation' && s.data && s.data.input_tokens !== undefined && (
-          <span className="trace-ev-tokens">
-            <span>{'↑' + Number(s.data.input_tokens || 0)}</span>
-            <span>{'↓' + Number(s.data.output_tokens || 0)}</span>
-          </span>
-        )}
-        {s.type === 'compaction' && s.data && s.data.before_items !== undefined && (
-          <span className="trace-ev-detail">{Number(s.data.before_items) + '→' + Number(s.data.after_items) + ' items'}</span>
-        )}
-        {running && <span className="trace-span-live-dot" />}
-        {s.duration && <span className="trace-span-duration">{s.duration}</span>}
-        {bar && (
-          <span className="trace-span-track">
-            <span className={'trace-span-bar' + (running ? ' live' : '') + (segments.length ? ' covered' : '') + (bar.tick ? ' tick' : '')} style={{ left: bar.left, width: bar.width, background: iconColor }} />
-            {segments.map(g => <span key={g.key} className={'trace-span-seg' + (g.tick ? ' tick' : '')} style={{ left: g.left, width: g.width, background: g.color }} />)}
-          </span>
-        )}
+        <span className="trace-span-label">
+          {(hasData || alignChevron) && (
+            <span className={'trace-span-chevron' + (open ? ' open' : '')}>
+              {hasData && <ChevronRightIcon size={10} />}
+            </span>
+          )}
+          <span className="trace-ev-icon" style={{ color: iconColor }}><SpanIcon size={12} /></span>
+          <span className={'trace-span-name' + (failed ? ' trace-span-failed' : '')} title={s.name}>{displayName}</span>
+          {s.type && (s.type === 'agent' || !SPAN_META[s.type]) && <span className="trace-ev-tag trace-ev-tag-span">{s.type}</span>}
+          {failed && <span className="trace-ev-tag trace-ev-tag-error">error</span>}
+          {s.type === 'generation' && s.data && s.data.input_tokens !== undefined && (
+            <span className="trace-ev-tokens">
+              <span>{'↑' + Number(s.data.input_tokens || 0)}</span>
+              <span>{'↓' + Number(s.data.output_tokens || 0)}</span>
+            </span>
+          )}
+          {s.type === 'compaction' && s.data && s.data.before_items !== undefined && (
+            <span className="trace-ev-detail">{Number(s.data.before_items) + '→' + Number(s.data.after_items) + ' items'}</span>
+          )}
+          {folded.length > 0 && <span className="trace-span-hint">mcp</span>}
+          {running && <span className="trace-span-live-dot" />}
+        </span>
+        <span className="trace-span-duration">{s.duration}</span>
+        <span className="trace-span-track">
+          {bar && <span className={'trace-span-bar' + (running ? ' live' : '') + (segments.length ? ' covered' : '') + (bar.tick ? ' tick' : '')} style={{ left: bar.left, width: bar.width, background: iconColor }} />}
+          {bar && segments.map(g => <span key={g.key} className={'trace-span-seg' + (g.tick ? ' tick' : '')} style={{ left: g.left, width: g.width, background: g.color }} />)}
+        </span>
       </div>
       {open && failed && (
-        <div className="trace-span-error" style={{ marginLeft: 14 + depth * 8 }}>{s.error}</div>
+        <div className="trace-span-error" style={{ marginLeft: 14 + depth * 12 }}>{s.error}</div>
       )}
       {open && omitted && payload === 'loading' && (
-        <div className="trace-span-note" style={{ marginLeft: 14 + depth * 8 }}>Loading the payload…</div>
+        <div className="trace-span-note" style={{ marginLeft: 14 + depth * 12 }}>Loading the payload…</div>
       )}
       {open && omitted && payload === 'failed' && (
-        <div className="trace-span-note" style={{ marginLeft: 14 + depth * 8 }}>The payload is not stored yet — a span still running has no row; reopen once it ends.</div>
+        <div className="trace-span-note" style={{ marginLeft: 14 + depth * 12 }}>The payload is not stored yet — a span still running has no row; reopen once it ends.</div>
       )}
       {open && s.data && extraData && !(omitted && payload === 'loading') && (
         s.type === 'generation' && (s.data.input !== undefined || s.data.output !== undefined)
-          ? <GenerationPayload data={s.data} indent={14 + depth * 8} />
+          ? <GenerationPayload data={s.data} indent={14 + depth * 12} />
           : s.type === 'function' && (s.data.input !== undefined || s.data.output !== undefined)
-            ? <FunctionPayload data={s.data} indent={14 + depth * 8} />
-            : <pre className="trace-span-data" style={{ marginLeft: 14 + depth * 8 }}>
+            ? <FunctionPayload data={s.data} indent={14 + depth * 12} />
+            : <pre className="trace-span-data" style={{ marginLeft: 14 + depth * 12 }}>
                 {JSON.stringify(s.data, null, 2)}
               </pre>
       )}
-      {node.children.map((c, i) => <SpanRow key={c.span.span_id || i} node={c} depth={depth + 1} range={range} alignChevron={childExpandable} loadSpan={loadSpan} />)}
+      {shown.map((c, i) => <SpanRow key={c.span.span_id || i} node={c} depth={depth + 1} range={range} alignChevron={childExpandable} loadSpan={loadSpan} />)}
     </>
   );
 }
@@ -443,8 +480,9 @@ export function TraceRun({ segments, label, stale, isLive, isExpanded, onToggle,
     >
       {spanCount === 0 && <div className="trace-empty">No trace events.</div>}
       {parts.map(p => (
-        <div key={p.key} className="trace-run-segment">
+        <div key={p.key} className="trace-run-segment" style={p.range ? { '--trace-step': ((tickStep(p.range.total) / p.range.total) * 100).toFixed(2) + '%' } as CSSProperties : undefined}>
           {p.label && <div className="trace-segment-label">{p.label}</div>}
+          {p.range && <AxisRow range={p.range} />}
           {p.spanRoots.map((n, i) => <SpanRow key={n.span.span_id || i} node={n} depth={0} range={p.range} alignChevron={p.spanRoots.some(r => spanHasDetails(r.span))} loadSpan={p.loadSpan} />)}
         </div>
       ))}
