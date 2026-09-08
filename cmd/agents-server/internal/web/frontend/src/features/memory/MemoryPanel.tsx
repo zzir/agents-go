@@ -1,16 +1,13 @@
 import { useState } from 'react';
-import { TextInput, Textarea, Label, Stack, Select } from '@primer/react';
-import { AgentAvatar } from '@/components/AgentAvatar';
+import { TextInput, Textarea, Stack, Select } from '@primer/react';
 import { AgentPicker } from '@/components/AgentPicker';
 import { FormActions } from '@/components/FormActions';
 import { CrudPanel, RowActionsMenu } from '@/components/CrudPanel';
 import { ResourceRow } from '@/components/ResourceRow';
 import { api } from '@/lib/api';
-import { nameOf } from '@/lib/named';
 import { useApi, useCrud } from '@/lib/hooks';
 import { fc } from '@/lib/form';
 import { JsonField } from '@/lib/JsonField';
-import { BADGE } from '@/lib/badges';
 
 // A configuration memory: global (every agent reads it) or an agent's. A
 // session's own memory lives with the session, in the Context panel.
@@ -42,7 +39,9 @@ interface MemoryFormData {
 }
 
 interface MemoryFormProps {
-  initial?: MemoryFormData | null;
+  initial: MemoryFormData;
+  // An edit keeps its scope and key: they identify the memory.
+  locked?: boolean;
   onSave: (form: MemoryFormData) => void;
   onCancel?: (() => void) | null;
   onDelete?: (() => void) | null;
@@ -50,14 +49,10 @@ interface MemoryFormProps {
   agents: AgentConfig[] | null;
 }
 
-function MemoryForm({ initial, onSave, onCancel, onDelete, saving, agents }: MemoryFormProps) {
-  const [form, setForm] = useState<MemoryFormData>(
-    initial || { scope_kind: 'global', scope_id: '', key: '', content: '', metadata: '' },
-  );
+function MemoryForm({ initial, locked, onSave, onCancel, onDelete, saving, agents }: MemoryFormProps) {
+  const [form, setForm] = useState<MemoryFormData>(initial);
   const set = (k: keyof MemoryFormData, v: string) =>
     setForm(prev => ({ ...prev, [k]: v }));
-  // Scope and key identify a memory; an edit keeps them.
-  const locked = !!initial;
 
   return (
     <Stack gap="normal">
@@ -107,37 +102,59 @@ function MemoryForm({ initial, onSave, onCancel, onDelete, saving, agents }: Mem
   );
 }
 
+// The picker value for the rows of agents since deleted, offered only while
+// any exist, for the admin to clear; no agent id looks like it.
+const DELETED = 'deleted';
+
+// The list shows one scope at a time: global (the default), or one agent's.
 export function MemoryPanel() {
   const { items: memories, loading, adding, editing, startAdd, startEdit, cancel, save, saving, remove } =
     useCrud<Memory, MemoryFormData>(api.memories, 'memories');
   const { data: agents } = useApi<AgentConfig[]>(() => api.agents.list() as Promise<AgentConfig[]>, [], 'agents');
+  const [scope, setScope] = useState('');
 
-  const agentName = (id: string) => (!id || !agents ? 'Global' : nameOf(agents, id));
+  const known = new Set((agents || []).map(a => a.id));
+  const orphans = agents ? memories.filter(m => m.scope_kind === 'agent' && !known.has(m.scope_id || '')) : [];
+  // Only an agent with a memory is on offer: one without would be an empty view.
+  const withMemory = (agents || []).filter(a => memories.some(m => m.scope_kind === 'agent' && m.scope_id === a.id));
+  // A scope that emptied (its last row deleted, its agent gone) falls back to global.
+  const listed = scope === DELETED ? orphans.length > 0 : withMemory.some(a => a.id === scope);
+  const view = scope && !listed ? '' : scope;
+  const rows = view === '' ? memories.filter(m => m.scope_kind === 'global')
+    : view === DELETED ? orphans
+    : memories.filter(m => m.scope_kind === 'agent' && m.scope_id === view);
+
   const toForm = (m: Memory): MemoryFormData => ({ scope_kind: m.scope_kind, scope_id: m.scope_id || '', key: m.key, content: m.content, metadata: m.metadata || '' });
+  // A new memory lands in the scope on view.
+  const fresh: MemoryFormData = view && view !== DELETED
+    ? { scope_kind: 'agent', scope_id: view, key: '', content: '', metadata: '' }
+    : { scope_kind: 'global', scope_id: '', key: '', content: '', metadata: '' };
 
-  const form = adding ? <MemoryForm saving={saving} onSave={save} onCancel={cancel} agents={agents} />
-    : editing ? <MemoryForm saving={saving} initial={toForm(editing)} onSave={save} onCancel={cancel} onDelete={async () => { if (await remove(editing.id, editing.key)) cancel(); }} agents={agents} />
+  // A saved memory is shown where it landed, whichever scope was on view.
+  const saveAndShow = async (f: MemoryFormData) => {
+    if (await save(f)) setScope(f.scope_kind === 'agent' ? f.scope_id : '');
+  };
+
+  const form = adding ? <MemoryForm key="add" initial={fresh} saving={saving} onSave={saveAndShow} onCancel={cancel} agents={agents} />
+    : editing ? <MemoryForm key={editing.id} locked initial={toForm(editing)} saving={saving} onSave={saveAndShow} onCancel={cancel} onDelete={async () => { if (await remove(editing.id, editing.key)) cancel(); }} agents={agents} />
     : null;
 
+  const filter = (
+    <AgentPicker size="small" ariaLabel="Scope" agents={withMemory} value={view} onChange={setScope} emptyLabel="Global"
+      extra={orphans.length ? { value: DELETED, label: `Deleted agents (${orphans.length})` } : undefined} />
+  );
+
   return (
-    <CrudPanel title="Memory" onAdd={startAdd} onCancel={cancel} form={form} loading={loading} isEmpty={memories.length === 0}
-      empty="No memories yet." emptyHint="A memory is text an agent reads with every request. What the model writes for itself during a conversation is in that session's Context panel.">
-      {/* Global is the default and says nothing — only a SCOPED memory
-          carries a badge: the agent it belongs to. A model-written one says so. */}
-      {memories.map(m => (
+    <CrudPanel title="Memory" filter={filter} onAdd={startAdd} onCancel={cancel} form={form} loading={loading} isEmpty={rows.length === 0}
+      empty="No global memories yet."
+      emptyHint="A memory is text an agent reads with every request. What the model writes for itself during a conversation is in that session's Context panel.">
+      {rows.map(m => (
         <ResourceRow key={m.id}
           title={m.key}
-          badges={<>
-            {m.scope_kind === 'agent' && m.scope_id && <Label variant={BADGE.ref}>
-              <span className="agent-inline">
-                <AgentAvatar name={agentName(m.scope_id)} avatar={(agents || []).find(a => a.id === m.scope_id)?.avatar} size={16} />
-                {agentName(m.scope_id)}
-              </span>
-            </Label>}
-            {m.written_by === 'model' && <Label variant="attention">model</Label>}
-          </>}
           sub={m.content.substring(0, 120) + (m.content.length > 120 ? '…' : '')}
-          actions={<RowActionsMenu name={m.key} onEdit={() => startEdit(m)} />}
+          actions={view === DELETED
+            ? <RowActionsMenu name={m.key} onDelete={() => void remove(m.id, m.key)} />
+            : <RowActionsMenu name={m.key} onEdit={() => startEdit(m)} />}
         />
       ))}
     </CrudPanel>

@@ -293,7 +293,8 @@ interface UseCrudResult<T, F> {
   startAdd: () => void;
   startEdit: (item: T) => void;
   cancel: () => void;
-  save: (form: F) => Promise<void>;
+  // True once the write landed and the list reloaded; false on an API error.
+  save: (form: F) => Promise<boolean>;
   remove: (id: CrudId, label?: string) => Promise<boolean>;
 }
 
@@ -324,7 +325,7 @@ export function useCrud<T extends { id: CrudId }, F = Partial<T>>(
   const save = useCallback(async (form: F) => {
     // The ref is the same-tick guard: two clicks can land before a state
     // write renders.
-    if (savingRef.current) return;
+    if (savingRef.current) return false;
     savingRef.current = true;
     setSaving(true);
     try {
@@ -333,6 +334,7 @@ export function useCrud<T extends { id: CrudId }, F = Partial<T>>(
       setAdding(false);
       setEditing(null);
       await reload();
+      return true;
     } catch (e) {
       toast.error((e as Error).message);
       // A 409 on an EDIT means the row changed under the form: resubmitting
@@ -344,6 +346,7 @@ export function useCrud<T extends { id: CrudId }, F = Partial<T>>(
         setEditing(null);
         await reload();
       }
+      return false;
     } finally {
       savingRef.current = false;
       setSaving(false);

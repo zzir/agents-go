@@ -26,7 +26,7 @@ export function ScopeHint({ agent, colliding }: { agent: PickableAgent; collidin
 
 // AgentPicker: the single-select agent dropdown, everywhere one is picked —
 // an ActionMenu rather than a native <select> so each row shows its avatar.
-export function AgentPicker({ agents, value, onChange, placeholder = 'Select an agent…', emptyLabel, ariaLabel = 'Agent', size, block, className }: {
+export function AgentPicker({ agents, value, onChange, placeholder = 'Select an agent…', emptyLabel, extra, ariaLabel = 'Agent', size, block, className }: {
   agents: PickableAgent[];
   value: string;
   onChange: (id: string) => void;
@@ -34,6 +34,9 @@ export function AgentPicker({ agents, value, onChange, placeholder = 'Select an 
   // When set, "" is offered as a real option under this label (e.g. a global
   // scope); when unset, "" only renders as the placeholder.
   emptyLabel?: string;
+  // One more choice after the agents, under a divider: a value no agent
+  // carries (the memories of deleted agents).
+  extra?: { value: string; label: string };
   ariaLabel?: string;
   size?: 'small' | 'medium' | 'large';
   block?: boolean;
@@ -41,11 +44,14 @@ export function AgentPicker({ agents, value, onChange, placeholder = 'Select an 
 }) {
   const selected = agents.find(a => String(a.id) === value);
   const colliding = collidingNames(agents);
+  const label = selected ? labelOf(selected)
+    : extra && value === extra.value ? extra.label
+    : (value === '' && emptyLabel) || placeholder;
   return (
     <ActionMenu>
       <ActionMenu.Button aria-label={ariaLabel} size={size} block={block} className={className}
         leadingVisual={selected ? () => <AgentAvatar name={selected.name} avatar={selected.avatar} size={20} /> : undefined}>
-        {selected ? labelOf(selected) : (value === '' && emptyLabel) || placeholder}
+        {label}
       </ActionMenu.Button>
       <ActionMenu.Overlay>
         <ActionList selectionVariant="single">
@@ -63,6 +69,12 @@ export function AgentPicker({ agents, value, onChange, placeholder = 'Select an 
               )}
             </ActionList.Item>
           ))}
+          {extra && (
+            <>
+              <ActionList.Divider />
+              <ActionList.Item selected={value === extra.value} onSelect={() => onChange(extra.value)}>{extra.label}</ActionList.Item>
+            </>
+          )}
         </ActionList>
       </ActionMenu.Overlay>
     </ActionMenu>

@@ -18,7 +18,7 @@ import { toast } from '@/lib/toast';
  * no Add, and the form opens disabled — a view of the record — with Back
  * where Cancel would be, plus Delete when onDelete allows it (the admin's
  * one write on a foreign private row). */
-export function CrudPanel({ title, as, description, actions, search, onAdd, onCancel, onDelete, form, loading, isEmpty, empty, emptyHint, children }: {
+export function CrudPanel({ title, as, description, actions, search, filter, onAdd, onCancel, onDelete, form, loading, isEmpty, empty, emptyHint, children }: {
   title: string;
   as?: 'page' | 'section';
   description?: ReactNode;
@@ -26,6 +26,8 @@ export function CrudPanel({ title, as, description, actions, search, onAdd, onCa
   actions?: ReactNode;
   // The toolbar's search box; the owner filter beside it comes from context.
   search?: { value: string; onChange: (value: string) => void; placeholder: string };
+  // The panel's own filter control (a scope picker), first in the toolbar.
+  filter?: ReactNode;
   onAdd: () => void;
   // Closes the form; read-only mode's Back button, since the form's own
   // actions are disabled with the rest of it.
@@ -44,7 +46,7 @@ export function CrudPanel({ title, as, description, actions, search, onAdd, onCa
   children: ReactNode;
 }) {
   const readOnly = useReadOnly();
-  const filter = useScopeFilter();
+  const ownerFilter = useScopeFilter();
   const body = (
     <>
       <PageHeader>
@@ -61,13 +63,14 @@ export function CrudPanel({ title, as, description, actions, search, onAdd, onCa
         </PageHeader.Actions>}
         {description && <PageHeader.Description>{description}</PageHeader.Description>}
       </PageHeader>
-      {!form && (search || filter) && (
+      {!form && (search || filter || ownerFilter) && (
         <div className="list-toolbar">
           {search && (
             <TextInput className="list-toolbar-search" size="small" leadingVisual={SearchIcon}
               placeholder={search.placeholder} aria-label={search.placeholder}
               value={search.value} onChange={e => search.onChange(e.target.value)} />
           )}
+          {filter}
           <div className="list-toolbar-filter"><ScopeFilter /></div>
         </div>
       )}
