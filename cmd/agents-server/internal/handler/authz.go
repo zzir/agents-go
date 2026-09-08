@@ -240,12 +240,20 @@ func gatedRow[T any](c *gin.Context, s *store.CrudStore[T], scopeOf func(*T) (st
 // deleteOwned deletes the row the id path parameter names, with the owner
 // deletableRow saw as the predicate (409 when it moved). False: response written.
 func deleteOwned[T any](c *gin.Context, s *store.CrudStore[T], scopeOf func(*T) (string, string)) bool {
+	return deleteOwnedWith(c, s, scopeOf, func(ctx context.Context, id, owner string) error {
+		return store.DeleteOwnedBy(ctx, s, id, owner)
+	})
+}
+
+// deleteOwnedWith is deleteOwned with the store's own delete in place of the
+// row delete: the one that cascades.
+func deleteOwnedWith[T any](c *gin.Context, s *store.CrudStore[T], scopeOf func(*T) (string, string), del func(ctx context.Context, id, owner string) error) bool {
 	row, ok := gatedRow(c, s, scopeOf, deletableRow)
 	if !ok {
 		return false
 	}
 	_, owner := scopeOf(row)
-	if err := store.DeleteOwnedBy(c.Request.Context(), s, c.Param("id"), owner); err != nil {
+	if err := del(c.Request.Context(), c.Param("id"), owner); err != nil {
 		saveError(c, err) // moved since the check -> 409
 		return false
 	}

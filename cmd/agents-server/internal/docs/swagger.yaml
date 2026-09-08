@@ -2448,6 +2448,7 @@ paths:
       - agents
   /agents/{id}:
     delete:
+      description: The memory scoped to the agent is deleted with it.
       parameters:
       - description: Agent ID
         in: path
@@ -3998,6 +3999,8 @@ paths:
       - memories
   /memories/{id}:
     delete:
+      description: Who may write the scope may delete; a memory whose agent has been
+        deleted is an admin's to delete.
       parameters:
       - description: Memory ID
         in: path

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -201,15 +202,16 @@ func (h *MemoryHandler) Update(c *gin.Context) {
 
 // Delete removes a memory.
 //
-//	@Summary	Delete memory
-//	@Tags		memories
-//	@Param		id	path	string	true	"Memory ID"
-//	@Success	204
-//	@Failure	403	{object}	ErrorResponse
-//	@Failure	404	{object}	ErrorResponse
-//	@Failure	500	{object}	ErrorResponse
-//	@Security	BearerAuth
-//	@Router		/memories/{id} [delete]
+//	@Summary		Delete memory
+//	@Description	Who may write the scope may delete; a memory whose agent has been deleted is an admin's to delete.
+//	@Tags			memories
+//	@Param			id	path	string	true	"Memory ID"
+//	@Success		204
+//	@Failure		403	{object}	ErrorResponse
+//	@Failure		404	{object}	ErrorResponse
+//	@Failure		500	{object}	ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/memories/{id} [delete]
 func (h *MemoryHandler) Delete(c *gin.Context) {
 	ctx := c.Request.Context()
 	m, err := h.store.Get(ctx, c.Param("id"))
@@ -217,7 +219,12 @@ func (h *MemoryHandler) Delete(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
-	if _, ok := h.writable(c, memoryReq{ScopeKind: m.ScopeKind, ScopeID: m.ScopeID, Key: m.Key, Content: m.Content}); !ok {
+	if h.orphaned(ctx, m) {
+		if u, _ := server.CurrentUser(c); u.Role != store.RoleAdmin {
+			notFound(c)
+			return
+		}
+	} else if _, ok := h.writable(c, memoryReq{ScopeKind: m.ScopeKind, ScopeID: m.ScopeID, Key: m.Key, Content: m.Content}); !ok {
 		return
 	}
 	if err := h.store.Delete(ctx, m.ID); err != nil {
@@ -348,6 +355,16 @@ func (h *MemoryHandler) writable(c *gin.Context, req memoryReq) (*store.Memory, 
 		m.Gen = ref.Gen
 	}
 	return m, true
+}
+
+// orphaned reports an agent memory whose agent is gone: an admin's to
+// delete, nobody's to edit.
+func (h *MemoryHandler) orphaned(ctx context.Context, m *store.Memory) bool {
+	if m.ScopeKind != store.MemoryScopeAgent {
+		return false
+	}
+	_, err := h.agents.Get(ctx, m.ScopeID)
+	return errors.Is(err, store.ErrNotFound)
 }
 
 // readable checks the caller may read m; a refusal is a 404, as for any

@@ -142,22 +142,28 @@ var ErrOwnershipChanged = errors.New("the configuration's owner or scope changed
 // DeleteOwnedBy removes a row only while it still belongs to expectOwner (an
 // admin names the owner they saw). ErrOwnershipChanged when it moved.
 func DeleteOwnedBy[T any](ctx context.Context, s *CrudStore[T], id, expectOwner string) error {
-	res, err := s.db.NewDelete().Model((*T)(nil)).
+	return deleteOwnedBy[T](ctx, s.db, s.label, id, expectOwner)
+}
+
+// deleteOwnedBy is DeleteOwnedBy on db or a transaction, for a store whose
+// delete cascades.
+func deleteOwnedBy[T any](ctx context.Context, db bun.IDB, label, id, expectOwner string) error {
+	res, err := db.NewDelete().Model((*T)(nil)).
 		Where("id = ?", id).
 		Where("owner_id = ?", expectOwner).
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("deleting %s %s: %w", s.label, id, err)
+		return fmt.Errorf("deleting %s %s: %w", label, id, err)
 	}
 	if n, aerr := res.RowsAffected(); aerr == nil && n == 0 {
-		exists, eerr := s.db.NewSelect().Model((*T)(nil)).Where("id = ?", id).Exists(ctx)
+		exists, eerr := db.NewSelect().Model((*T)(nil)).Where("id = ?", id).Exists(ctx)
 		if eerr != nil {
-			return fmt.Errorf("deleting %s %s: %w", s.label, id, eerr)
+			return fmt.Errorf("deleting %s %s: %w", label, id, eerr)
 		}
 		if !exists {
-			return fmt.Errorf("deleting %s %s: %w", s.label, id, ErrNotFound)
+			return fmt.Errorf("deleting %s %s: %w", label, id, ErrNotFound)
 		}
-		return fmt.Errorf("deleting %s %s: %w", s.label, id, ErrOwnershipChanged)
+		return fmt.Errorf("deleting %s %s: %w", label, id, ErrOwnershipChanged)
 	}
 	return nil
 }

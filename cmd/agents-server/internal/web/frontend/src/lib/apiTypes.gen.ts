@@ -204,7 +204,10 @@ export interface paths {
             };
         };
         post?: never;
-        /** Delete agent */
+        /**
+         * Delete agent
+         * @description The memory scoped to the agent is deleted with it.
+         */
         delete: {
             parameters: {
                 query?: never;
@@ -2687,7 +2690,10 @@ export interface paths {
             };
         };
         post?: never;
-        /** Delete memory */
+        /**
+         * Delete memory
+         * @description Who may write the scope may delete; a memory whose agent has been deleted is an admin's to delete.
+         */
         delete: {
             parameters: {
                 query?: never;

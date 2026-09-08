@@ -234,13 +234,19 @@ func TestAgentDeleteCascadesItsMemory(t *testing.T) {
 	if err := memories.Upsert(ctx, mem(MemoryScopeAgent, ac.ID, "", "k", "v"), nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := agents.Delete(ctx, ac.ID); err != nil {
+	if err := agents.DeleteOwnedBy(ctx, ac.ID, NewID()); !errors.Is(err, ErrOwnershipChanged) {
+		t.Fatalf("delete under another owner: %v", err)
+	}
+	if rows, _ := memories.ListScope(ctx, MemoryScope{Kind: MemoryScopeAgent, ID: ac.ID}); len(rows) != 1 {
+		t.Fatalf("a refused delete touched the memory: %s", keysOf(rows))
+	}
+	if err := agents.DeleteOwnedBy(ctx, ac.ID, ac.OwnerID); err != nil {
 		t.Fatal(err)
 	}
 	if rows, _ := memories.ListScope(ctx, MemoryScope{Kind: MemoryScopeAgent, ID: ac.ID}); len(rows) != 0 {
 		t.Fatalf("agent memory survived the delete: %s", keysOf(rows))
 	}
-	if err := agents.Delete(ctx, ac.ID); !errors.Is(err, ErrNotFound) {
+	if err := agents.DeleteOwnedBy(ctx, ac.ID, ac.OwnerID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("a second delete: %v", err)
 	}
 }

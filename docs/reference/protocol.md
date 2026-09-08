@@ -577,7 +577,9 @@ session's is its owner's; a member sees an agent's memory only when they can
 see the agent. The rules, the model's part included, are one table
 ([invariant 64](../explanation/workbench-invariants.md)). `GET /memories`
 lists the global and agent scopes (`scope_kind` and `scope_id` narrow);
-session memory is read under `/sessions/:id/memory`. `written_by` says
+session memory is read under `/sessions/:id/memory`. Deleting an agent
+deletes its memory with it; a row whose agent is already gone is listed to
+the admin, who alone may delete it, and edited by nobody. `written_by` says
 whether a person or the model wrote a row: the model writes session memory
 freely and agent memory only through an approved `memory_write`.
 

@@ -272,16 +272,17 @@ func (h *AgentConfigHandler) Update(c *gin.Context) {
 
 // Delete removes the agent configuration identified by the id path parameter.
 //
-//	@Summary	Delete agent
-//	@Tags		agents
-//	@Param		id	path	string	true	"Agent ID"
-//	@Success	204	"deleted"
-//	@Failure	404	{object}	ErrorResponse
-//	@Failure	500	{object}	ErrorResponse
-//	@Security	BearerAuth
-//	@Router		/agents/{id} [delete]
+//	@Summary		Delete agent
+//	@Description	The memory scoped to the agent is deleted with it.
+//	@Tags			agents
+//	@Param			id	path	string	true	"Agent ID"
+//	@Success		204	"deleted"
+//	@Failure		404	{object}	ErrorResponse
+//	@Failure		500	{object}	ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/agents/{id} [delete]
 func (h *AgentConfigHandler) Delete(c *gin.Context) {
-	if deleteOwned(c, h.store.CrudStore, agentScope) {
+	if deleteOwnedWith(c, h.store.CrudStore, agentScope, h.store.DeleteOwnedBy) {
 		c.Status(http.StatusNoContent)
 	}
 }

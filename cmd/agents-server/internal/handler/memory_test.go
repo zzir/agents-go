@@ -178,3 +178,79 @@ func TestMemoryValidationAndIdentity(t *testing.T) {
 		t.Fatalf("POST on an existing key: %d %v", code, out)
 	}
 }
+
+// Deleting an agent over HTTP deletes its memory with it (invariant 64). A
+// memory whose agent is already gone is listed to the admin, who alone may
+// delete it; nobody edits it.
+func TestAgentDeleteCascadesItsMemoryOverHTTP(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := testdb.New(t)
+	memories, agents := store.NewMemoryStore(db), store.NewAgentConfigStore(db)
+	mh := NewMemoryHandler(memories, store.NewSessionStore(db), agents, store.NewSharedEntryStore(db))
+	ah := testAgentConfigHandler(db)
+	aliceID := store.NewID()
+	mount := func(id, role string) *gin.Engine {
+		e := engineAs(id, role, mh)
+		e.DELETE("/agents/:id", ah.Delete)
+		return e
+	}
+	admin, alice := mount(store.LocalUserID, store.RoleAdmin), mount(aliceID, store.RoleMember)
+	ctx := context.Background()
+	remember := func(name string) (*store.AgentConfig, string) {
+		ac := &store.AgentConfig{Name: name, Model: "m", Scope: store.ScopePrivate, OwnerID: aliceID}
+		if err := agents.Create(ctx, ac); err != nil {
+			t.Fatal(err)
+		}
+		w := doJSON(t, alice, http.MethodPost, "/memories", `{"scope_kind":"agent","scope_id":"`+ac.ID+`","key":"k","content":"v"}`)
+		if w.Code != 201 {
+			t.Fatalf("write: %d %s", w.Code, w.Body.String())
+		}
+		var out struct {
+			ID string `json:"id"`
+		}
+		_ = json.Unmarshal(w.Body.Bytes(), &out)
+		return ac, out.ID
+	}
+	scopeOf := func(ac *store.AgentConfig) store.MemoryScope {
+		return store.MemoryScope{Kind: store.MemoryScopeAgent, ID: ac.ID}
+	}
+
+	ac, _ := remember("a")
+	if w := doJSON(t, alice, http.MethodDelete, "/agents/"+ac.ID, ""); w.Code != 204 {
+		t.Fatalf("delete agent: %d %s", w.Code, w.Body.String())
+	}
+	if rows, _ := memories.ListScope(ctx, scopeOf(ac)); len(rows) != 0 {
+		t.Fatalf("agent memory survived the delete: %d rows", len(rows))
+	}
+
+	// The agent removed underneath its memory.
+	ac, id := remember("b")
+	if _, err := db.NewDelete().Model((*store.AgentConfig)(nil)).Where("id = ?", ac.ID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if w := doJSON(t, admin, http.MethodGet, "/memories", ""); !strings.Contains(w.Body.String(), `"id":"`+id+`"`) {
+		t.Fatalf("the admin's list lacks the orphan: %s", w.Body.String())
+	}
+	if w := doJSON(t, alice, http.MethodGet, "/memories", ""); strings.Contains(w.Body.String(), id) {
+		t.Fatalf("a member lists an orphan: %s", w.Body.String())
+	}
+	edit := `{"scope_kind":"agent","scope_id":"` + ac.ID + `","key":"k","content":"v2"}`
+	for _, c := range []struct {
+		name               string
+		by                 *gin.Engine
+		method, path, body string
+		want               int
+	}{
+		{"the owner cannot edit an orphan", alice, http.MethodPut, "/memories/" + id, edit, 404},
+		{"nor delete it", alice, http.MethodDelete, "/memories/" + id, "", 404},
+		{"the admin cannot edit it either", admin, http.MethodPut, "/memories/" + id, edit, 404},
+		{"the admin deletes it", admin, http.MethodDelete, "/memories/" + id, "", 204},
+	} {
+		if w := doJSON(t, c.by, c.method, c.path, c.body); w.Code != c.want {
+			t.Fatalf("%s: %d %s", c.name, w.Code, w.Body.String())
+		}
+	}
+	if rows, _ := memories.ListScope(ctx, scopeOf(ac)); len(rows) != 0 {
+		t.Fatalf("the orphan survived the admin's delete")
+	}
+}

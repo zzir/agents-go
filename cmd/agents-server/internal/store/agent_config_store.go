@@ -58,20 +58,14 @@ func (s *AgentConfigStore) Update(ctx context.Context, id string, m *AgentConfig
 	return nil
 }
 
-// Delete removes the agent and the memory scoped to it, in one transaction.
-func (s *AgentConfigStore) Delete(ctx context.Context, id string) error {
+// DeleteOwnedBy removes the agent, while it still belongs to expectOwner, and
+// the memory scoped to it, in one transaction.
+func (s *AgentConfigStore) DeleteOwnedBy(ctx context.Context, id, expectOwner string) error {
 	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if err := deleteMemoriesOf(ctx, tx, MemoryScopeAgent, id); err != nil {
+		if err := deleteOwnedBy[AgentConfig](ctx, tx, s.label, id, expectOwner); err != nil {
 			return err
 		}
-		res, err := tx.NewDelete().Model((*AgentConfig)(nil)).Where("id = ?", id).Exec(ctx)
-		if err == nil {
-			err = requireRows(res)
-		}
-		if err != nil {
-			return fmt.Errorf("deleting agent config %s: %w", id, err)
-		}
-		return nil
+		return deleteMemoriesOf(ctx, tx, MemoryScopeAgent, id)
 	})
 }
 
