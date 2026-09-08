@@ -166,6 +166,13 @@
   border-radius: var(--borderRadius-small);
   opacity: 0.75;
 }
+.trace-span-seg {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 1px;
+  opacity: 0.85;
+}
 .trace-span-data {
   margin: var(--base-size-2) var(--base-size-4) var(--base-size-6);
   padding: var(--base-size-8);
@@ -198,6 +205,12 @@
 }
 .trace-span-bar.live {
   animation: trace-pulse 1.2s ease-in-out infinite;
+}
+/* A parent's own bar sits dimmed and still under its children's segments; the
+   live dot alone pulses. */
+.trace-span-bar.covered {
+  opacity: 0.25;
+  animation: none;
 }
 @keyframes trace-pulse {
   50% { opacity: 0.3; }

@@ -79,6 +79,30 @@ describe('TraceRun', () => {
     act(() => { root.unmount(); });
   });
 
+  // A parent's track carries its children's extents as segments over its own
+  // dimmed bar, each in the child's color; a leaf's bar stands alone.
+  it('overlays a parent\'s bar with its children\'s extents', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const t = (s: number) => new Date(Date.UTC(2026, 7, 19, 0, 0, s)).toISOString();
+    const events: TraceEventData[] = [
+      { kind: 'span', name: 'a', type: 'agent', span_id: 'p', started_at: t(0), ended_at: t(100) },
+      { kind: 'span', name: 'a', type: 'generation', span_id: 'c1', parent_id: 'p', started_at: t(0), ended_at: t(10) },
+      { kind: 'span', name: 'function:ls', type: 'function', span_id: 'c2', parent_id: 'p', started_at: t(50), ended_at: t(51), error: 'boom' },
+    ];
+    act(() => { root.render(<Harness events={events} loadSpan={resolve} />); });
+    const tracks = container.querySelectorAll('.trace-span-track');
+    expect(tracks).toHaveLength(3);
+    expect(tracks[0].querySelector('.trace-span-bar')!.className).toContain('covered');
+    const segs = Array.from(tracks[0].querySelectorAll('.trace-span-seg')) as HTMLElement[];
+    expect(segs.map(g => [g.style.left, g.style.width])).toEqual([['0%', '10%'], ['50%', '1%']]);
+    expect(segs[1].getAttribute('style')).toContain('var(--fgColor-danger)');
+    expect(tracks[1].querySelector('.trace-span-bar')!.className).not.toContain('covered');
+    expect(tracks[1].querySelectorAll('.trace-span-seg')).toHaveLength(0);
+    act(() => { root.unmount(); });
+  });
+
   it('says so when the payload cannot be fetched', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);

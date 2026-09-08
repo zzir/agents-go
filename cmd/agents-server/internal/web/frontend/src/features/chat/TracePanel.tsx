@@ -43,6 +43,12 @@ const SPAN_META: Record<string, { color: string; icon: Icon }> = {
   guardrail:  { color: 'var(--fgColor-attention)', icon: ShieldCheckIcon },
   compaction: { color: 'var(--fgColor-attention)', icon: DiamondIcon },
 };
+const FALLBACK_META = { color: 'var(--fgColor-muted)', icon: DiamondIcon };
+
+// spanColor is a span's color on the waterfall: its type's, or danger once it failed.
+function spanColor(s: TraceEventData): string {
+  return s.error ? 'var(--fgColor-danger)' : (SPAN_META[s.type || ''] || FALLBACK_META).color;
+}
 
 /* ---------- span payloads ---------- */
 
@@ -159,17 +165,32 @@ interface TimeRange {
   total: number;
 }
 
+// spanExtent is a span's [start, end] in ms; a span still running ends where it started.
+function spanExtent(s: TraceEventData): [number, number] | null {
+  if (!s.started_at) return null;
+  const a = new Date(s.started_at).getTime();
+  return [a, s.ended_at ? new Date(s.ended_at).getTime() : a];
+}
+
 function spanTimeRange(spans: TraceEventData[]): TimeRange | null {
   let t0 = Infinity, t1 = -Infinity;
   for (const s of spans) {
-    if (!s.started_at) continue;
-    const a = new Date(s.started_at).getTime();
-    const b = s.ended_at ? new Date(s.ended_at).getTime() : a;
-    if (a < t0) t0 = a;
-    if (b > t1) t1 = b;
+    const e = spanExtent(s);
+    if (!e) continue;
+    if (e[0] < t0) t0 = e[0];
+    if (e[1] > t1) t1 = e[1];
   }
   if (!isFinite(t0)) return null;
   return { t0, total: Math.max(t1 - t0, 1) };
+}
+
+// barGeometry places an extent on the track as CSS percentages, no narrower
+// than minWidth percent.
+function barGeometry(range: TimeRange, [a, b]: [number, number], minWidth = 0): { left: string; width: string } {
+  return {
+    left: (((a - range.t0) / range.total) * 100).toFixed(2) + '%',
+    width: Math.max(((b - a) / range.total) * 100, minWidth).toFixed(2) + '%',
+  };
 }
 
 // spanHasDetails reports whether a span row can expand: the server strips
@@ -193,9 +214,8 @@ function SpanRow({ node, depth, range, alignChevron, loadSpan }: { node: SpanNod
   const s = node.span;
   const failed = !!s.error;
   const running = !s.ended_at;
-  const meta = SPAN_META[s.type || ''] || { color: 'var(--fgColor-muted)', icon: DiamondIcon };
-  const SpanIcon = meta.icon;
-  const iconColor = failed ? 'var(--fgColor-danger)' : meta.color;
+  const SpanIcon = (SPAN_META[s.type || ''] || FALLBACK_META).icon;
+  const iconColor = spanColor(s);
   const displayName = s.name.includes(':') ? s.name.slice(s.name.indexOf(':') + 1) : s.name;
   const extraData = !!s.data && Object.keys(s.data).length > 0;
   const hasData = spanHasDetails(s);
@@ -210,15 +230,16 @@ function SpanRow({ node, depth, range, alignChevron, loadSpan }: { node: SpanNod
   }, [open, omitted, spanId, loadSpan, payload]);
   const toggle = () => { setOpen(o => !o); setPayload('idle'); };
 
-  let bar: { left: string; width: string } | null = null;
-  if (range && s.started_at) {
-    const a = new Date(s.started_at).getTime();
-    const b = s.ended_at ? new Date(s.ended_at).getTime() : a;
-    bar = {
-      left: (((a - range.t0) / range.total) * 100).toFixed(1) + '%',
-      width: Math.max(((b - a) / range.total) * 100, 1.5).toFixed(1) + '%',
-    };
-  }
+  const own = spanExtent(s);
+  const bar = range && own ? barGeometry(range, own, 1.5) : null;
+  // The children's extents overlay the parent's bar in their own colors, so a
+  // collapsed row still shows the run's shape; a gap is time no child explains.
+  const segments = range
+    ? node.children.flatMap((c, i) => {
+        const e = spanExtent(c.span);
+        return e ? [{ key: c.span.span_id || i, color: spanColor(c.span), ...barGeometry(range, e) }] : [];
+      })
+    : [];
 
   return (
     <>
@@ -253,7 +274,8 @@ function SpanRow({ node, depth, range, alignChevron, loadSpan }: { node: SpanNod
         {s.duration && <span className="trace-span-duration">{s.duration}</span>}
         {bar && (
           <span className="trace-span-track">
-            <span className={'trace-span-bar' + (running ? ' live' : '')} style={{ left: bar.left, width: bar.width, background: iconColor }} />
+            <span className={'trace-span-bar' + (running ? ' live' : '') + (segments.length ? ' covered' : '')} style={{ left: bar.left, width: bar.width, background: iconColor }} />
+            {segments.map(g => <span key={g.key} className="trace-span-seg" style={{ left: g.left, width: g.width, background: g.color }} />)}
           </span>
         )}
       </div>
