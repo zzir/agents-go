@@ -194,38 +194,11 @@
   min-width: 4px;
   opacity: 0.85;
 }
-.trace-axis {
-  display: grid;
-  grid-template-columns: var(--trace-cols);
-  padding: 0 var(--base-size-4);
-}
-.trace-axis-scale {
-  grid-column: 3;
-  position: relative;
-  height: 18px;
-  overflow: hidden;
-  border-bottom: 1px solid var(--borderColor-default);
-  container-type: inline-size;
-}
-/* A narrow column labels every other tick; a narrow panel drops the time
-   column altogether, and the label and duration get the width. */
-@container (max-width: 200px) {
-  .trace-axis-tick:nth-child(even) { display: none; }
-}
+/* A narrow panel drops the time column altogether, and the label and
+   duration get the width. */
 @container (max-width: 360px) {
-  .trace-axis { display: none; }
   .trace-span { grid-template-columns: minmax(0, 1fr) 60px; }
   .trace-span-track { display: none; }
-}
-.trace-axis-tick {
-  position: absolute;
-  top: 0;
-  padding-left: 3px;
-  font-family: var(--fontStack-monospace);
-  font-size: var(--base-text-size-xs);
-  line-height: 18px;
-  color: var(--fgColor-muted);
-  white-space: nowrap;
 }
 /* A span under 1% of the range is a tick: a full-color 2px line. */
 .trace-span-bar.tick,

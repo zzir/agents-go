@@ -244,34 +244,11 @@ function barGeometry(range: TimeRange, [a, b]: [number, number]): { left: string
   return w < 1 ? { left, tick: true } : { left, width: w.toFixed(2) + '%', tick: false };
 }
 
-// tickStep is the axis interval: the smallest round step that fits the range
-// in six ticks or fewer.
+// tickStep is the interval of the time column's faint lines: the smallest
+// round step that fits the range in six or fewer.
 const TICK_STEPS = [100, 200, 500, 1000, 2000, 5000, 10000, 20000, 30000, 60000, 120000, 300000, 600000, 900000, 1800000, 3600000];
 function tickStep(total: number): number {
   return TICK_STEPS.find(step => total / step <= 6) ?? TICK_STEPS[TICK_STEPS.length - 1];
-}
-
-function tickLabel(ms: number): string {
-  if (ms === 0) return '0s';
-  if (ms < 1000) return ms + 'ms';
-  if (ms < 60000) return +(ms / 1000).toFixed(1) + 's';
-  const m = Math.floor(ms / 60000), s = Math.round((ms % 60000) / 1000);
-  return s ? m + 'm' + s + 's' : m + 'm';
-}
-
-// AxisRow heads a timeline with its tick labels; one past 92% of the column
-// would run off it and is left out.
-function AxisRow({ range }: { range: TimeRange }) {
-  const step = tickStep(range.total);
-  const ticks: number[] = [];
-  for (let t = 0; t / range.total < 0.92; t += step) ticks.push(t);
-  return (
-    <div className="trace-axis" aria-hidden>
-      <span className="trace-axis-scale">
-        {ticks.map(t => <span key={t} className="trace-axis-tick" style={{ left: ((t / range.total) * 100).toFixed(2) + '%' }}>{tickLabel(t)}</span>)}
-      </span>
-    </div>
-  );
 }
 
 // spanHasDetails reports whether a span row can expand: the server strips
@@ -538,7 +515,6 @@ export function TraceRun({ segments, label, stale, isLive, isExpanded, onToggle,
       {parts.map(p => (
         <div key={p.key} className="trace-run-segment" style={p.range ? { '--trace-step': ((tickStep(p.range.total) / p.range.total) * 100).toFixed(2) + '%' } as CSSProperties : undefined}>
           {p.label && <div className="trace-segment-label">{p.label}</div>}
-          {p.range && <AxisRow range={p.range} />}
           {p.spanRoots.map((n, i) => <SpanRow key={n.span.span_id || i} node={n} depth={0} range={p.range} alignChevron={p.spanRoots.some(r => spanHasDetails(r.span))} loadSpan={p.loadSpan} />)}
         </div>
       ))}

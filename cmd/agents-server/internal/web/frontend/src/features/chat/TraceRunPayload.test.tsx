@@ -206,8 +206,6 @@ describe('TraceRun', () => {
     act(() => { fn.click(); });
     expect(names()).toEqual(['a', 'search', 'mcp.call_tool']);
     expect(Array.from(container.querySelectorAll('.trace-ev-tag-span')).map(e => e.textContent)).toEqual(['agent']);
-    // The timeline is headed by round ticks that fit the 10s range.
-    expect(Array.from(container.querySelectorAll('.trace-axis-tick')).map(e => e.textContent)).toEqual(['0s', '2s', '4s', '6s', '8s']);
     act(() => { root.unmount(); });
   });
 
