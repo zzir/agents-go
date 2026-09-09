@@ -421,3 +421,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     and the Context panel then lists no System prompt layer. Memories, the
     sandbox prompt and the skills index are other layers with their own
     switches and are unaffected — decisions §5.65.
+68. **The sidebar has two shapes and one divider.** Dragged well inside its
+    260px minimum it snaps to a 48px rail (Expand, Workflows, New; the account
+    menu at the foot) and snaps back only past a wider point, so the edge never
+    jitters. The list stays mounted under the rail; only the snap animates, a
+    pointer-tracking resize never. `useResizablePane` (`lib/hooks.ts`) and
+    `AppShell.tsx`; the narrow layout's drawer has no rail.

@@ -17,6 +17,13 @@ export function useNarrow(): boolean {
 }
 
 const RESIZE_ARROW_KEY_STEP = 10;
+// A collapsible pane's hysteresis, in pixels inside `min`: an edge dragged
+// past the first snaps to the rail, and only one dragged back past the second
+// snaps out again.
+const COLLAPSE_GAP = 60;
+const EXPAND_GAP = 40;
+// How long `snapping` stays on after a snap — longer than the CSS transition.
+const SNAP_MS = 200;
 
 function clampPaneWidth(n: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, n));
@@ -41,6 +48,22 @@ function savePaneWidth(storageKey: string, width: number): void {
   }
 }
 
+function readStoredFlag(key: string): boolean {
+  try {
+    return localStorage.getItem(key) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function saveStoredFlag(key: string, on: boolean): void {
+  try {
+    localStorage.setItem(key, on ? '1' : '0');
+  } catch {
+    // As above.
+  }
+}
+
 interface UseResizablePaneOptions {
   storageKey: string;
   min: number;
@@ -50,13 +73,22 @@ interface UseResizablePaneOptions {
    *  a 'left'-docked pane (sidebar) grows when its edge is dragged right, a
    *  'right'-docked one (a trace/detail drawer) grows when dragged left. */
   edge: 'left' | 'right';
+  /** The width the pane snaps to when its edge is dragged well inside `min`
+   *  (the sidebar's icon rail). Absent, the drag stops at `min`. */
+  collapsedWidth?: number;
 }
 
 interface ResizablePane {
+  /** The expanded width, kept while `collapsed` so expanding returns to it. */
   width: number;
+  collapsed: boolean;
+  /** True for a moment after a snap between the two shapes: the pane animates
+   *  its width then, and never while it tracks the pointer. */
+  snapping: boolean;
   /** True while a pointer drag is in flight — drives the handle's accent
    *  dragging visual (Primer PageLayout.DragHandle parity). */
   dragging: boolean;
+  expand: () => void;
   handleProps: {
     onPointerDown: (e: PointerEvent<HTMLDivElement>) => void;
     onPointerMove: (e: PointerEvent<HTMLDivElement>) => void;
@@ -71,16 +103,51 @@ interface ResizablePane {
  * Drag-to-resize behavior shared by the sidebar and any right-docked panel
  * (trace/detail drawers): pointer-drag width persisted per storageKey, with
  * arrow-key nudging and double-click-to-reset. Spread `handleProps` onto the
- * drag-handle element; apply `width` to the pane itself.
+ * drag-handle element; apply `width` to the pane itself. With `collapsedWidth`
+ * the pane also has a collapsed shape (invariant 68): a drag well inside `min`
+ * snaps to it; a drag back out, `expand`, a widening arrow key or a double
+ * click snaps out.
  */
-export function useResizablePane({ storageKey, min, max, defaultWidth, edge }: UseResizablePaneOptions): ResizablePane {
+export function useResizablePane({ storageKey, min, max, defaultWidth, edge, collapsedWidth }: UseResizablePaneOptions): ResizablePane {
+  const collapsible = collapsedWidth !== undefined;
+  const collapsedKey = storageKey + 'Collapsed';
   const [width, setWidth] = useState(() => clampPaneWidth(readStoredPaneWidth(storageKey, defaultWidth), min, max));
+  const [collapsed, setCollapsed] = useState(() => collapsible && readStoredFlag(collapsedKey));
+  const [snapping, setSnapping] = useState(false);
   const [dragging, setDragging] = useState(false);
+  // The handlers read the two states through refs, set eagerly so a burst of
+  // events between renders sees its own changes.
   const widthRef = useRef(width);
   widthRef.current = width;
+  const collapsedRef = useRef(collapsed);
+  collapsedRef.current = collapsed;
+  const snapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dragStartXRef = useRef(0);
   const dragStartWidthRef = useRef(0);
   const sign = edge === 'left' ? 1 : -1;
+
+  useEffect(() => () => { if (snapTimer.current) clearTimeout(snapTimer.current); }, []);
+
+  const snapTo = useCallback((to: boolean) => {
+    collapsedRef.current = to;
+    setCollapsed(to);
+    saveStoredFlag(collapsedKey, to);
+    setSnapping(true);
+    if (snapTimer.current) clearTimeout(snapTimer.current);
+    snapTimer.current = setTimeout(() => { snapTimer.current = null; setSnapping(false); }, SNAP_MS);
+  }, [collapsedKey]);
+
+  // A width that follows the pointer or a key is never animated: it cuts a
+  // snap in progress short.
+  const track = useCallback((next: number) => {
+    widthRef.current = next;
+    setWidth(next);
+    if (snapTimer.current) {
+      clearTimeout(snapTimer.current);
+      snapTimer.current = null;
+      setSnapping(false);
+    }
+  }, []);
 
   const onPointerDown = useCallback((e: PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
@@ -91,17 +158,32 @@ export function useResizablePane({ storageKey, min, max, defaultWidth, edge }: U
       // Pointer capture is a nice-to-have; ignore if unsupported/unavailable.
     }
     dragStartXRef.current = e.clientX;
-    dragStartWidthRef.current = widthRef.current;
+    dragStartWidthRef.current = collapsedRef.current && collapsedWidth !== undefined ? collapsedWidth : widthRef.current;
     setDragging(true);
-  }, []);
+  }, [collapsedWidth]);
 
   const onPointerMove = useCallback((e: PointerEvent<HTMLDivElement>) => {
     if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
     e.preventDefault();
-    const delta = (e.clientX - dragStartXRef.current) * sign;
-    const next = clampPaneWidth(dragStartWidthRef.current + delta, min, max);
-    if (next !== widthRef.current) setWidth(next);
-  }, [min, max, sign]);
+    // Where the edge would be if it simply followed the pointer.
+    const target = dragStartWidthRef.current + (e.clientX - dragStartXRef.current) * sign;
+    if (collapsible) {
+      if (collapsedRef.current) {
+        if (target > min - EXPAND_GAP) {
+          snapTo(false);
+          widthRef.current = clampPaneWidth(target, min, max);
+          setWidth(widthRef.current);
+        }
+        return;
+      }
+      if (target < min - COLLAPSE_GAP) {
+        snapTo(true);
+        return;
+      }
+    }
+    const next = clampPaneWidth(target, min, max);
+    if (next !== widthRef.current) track(next);
+  }, [collapsible, min, max, sign, snapTo, track]);
 
   const onPointerUp = useCallback((e: PointerEvent<HTMLDivElement>) => {
     setDragging(false);
@@ -112,20 +194,37 @@ export function useResizablePane({ storageKey, min, max, defaultWidth, edge }: U
   const onKeyDown = useCallback((e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
     e.preventDefault();
-    const dir = e.key === 'ArrowLeft' ? -1 : 1;
-    const next = clampPaneWidth(widthRef.current + dir * RESIZE_ARROW_KEY_STEP * sign, min, max);
+    // Positive widens the pane, whichever side it is docked to.
+    const step = (e.key === 'ArrowLeft' ? -1 : 1) * RESIZE_ARROW_KEY_STEP * sign;
+    if (collapsible) {
+      if (collapsedRef.current) {
+        if (step > 0) snapTo(false);
+        return;
+      }
+      if (step < 0 && widthRef.current <= min) {
+        snapTo(true);
+        return;
+      }
+    }
+    const next = clampPaneWidth(widthRef.current + step, min, max);
     if (next !== widthRef.current) {
-      setWidth(next);
+      track(next);
       savePaneWidth(storageKey, next);
     }
-  }, [min, max, sign, storageKey]);
+  }, [collapsible, min, max, sign, storageKey, snapTo, track]);
 
   const onDoubleClick = useCallback(() => {
+    if (collapsedRef.current) snapTo(false);
+    widthRef.current = defaultWidth;
     setWidth(defaultWidth);
     savePaneWidth(storageKey, defaultWidth);
-  }, [defaultWidth, storageKey]);
+  }, [defaultWidth, storageKey, snapTo]);
 
-  return { width, dragging, handleProps: { onPointerDown, onPointerMove, onPointerUp, onLostPointerCapture: onPointerUp, onKeyDown, onDoubleClick } };
+  const expand = useCallback(() => {
+    if (collapsedRef.current) snapTo(false);
+  }, [snapTo]);
+
+  return { width, collapsed, snapping, dragging, expand, handleProps: { onPointerDown, onPointerMove, onPointerUp, onLostPointerCapture: onPointerUp, onKeyDown, onDoubleClick } };
 }
 
 interface UseApiResult<T> {

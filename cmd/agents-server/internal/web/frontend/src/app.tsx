@@ -1,9 +1,9 @@
 import type { AttachmentMeta } from '@/lib/attachments';
 import React, { useState, useCallback, useEffect, useRef, useMemo, memo } from 'react';
-import { Flash, Button } from '@primer/react';
+import { Flash, Button, IconButton } from '@primer/react';
 import {
   DependabotIcon, McpIcon, ShieldCheckIcon, SparkleIcon, CpuIcon,
-  ContainerIcon, DatabaseIcon, FileDirectoryIcon, GearIcon, PersonIcon, PeopleIcon, CommentDiscussionIcon, LogIcon, WorkflowIcon,
+  ContainerIcon, DatabaseIcon, FileDirectoryIcon, GearIcon, PersonIcon, PeopleIcon, CommentDiscussionIcon, LogIcon, PlusIcon, WorkflowIcon,
 } from '@primer/octicons-react';
 import { ThemeProvider } from '@/theme/ThemeProvider';
 import { AppShell } from '@/layout/AppShell';
@@ -31,6 +31,7 @@ import { patchToolCall, type ToolCallPatch } from '@/lib/timeline';
 import { syncTaskCard } from '@/lib/streamReducer';
 import { clearSessionPrefs } from '@/lib/drafts';
 import { toast } from '@/lib/toast';
+import { createOrReuseSession } from '@/lib/newSession';
 import { MeContext, useMeLoader } from '@/lib/me';
 import { useNarrow } from '@/lib/hooks';
 import { readHash, writeHash, consumeAuthFragment, restoreReturnHash } from '@/lib/route';
@@ -791,6 +792,23 @@ function App() {
     if (narrow) setSidebarOpen(false);
   }, [narrow]);
 
+  // New from the rail, where the list and its own + are hidden: made here,
+  // then announced the way a picker's New session is, so the list relists.
+  const [railCreating, setRailCreating] = useState(false);
+  const handleRailCreate = useCallback(async () => {
+    setRailCreating(true);
+    try {
+      const sess = await createOrReuseSession();
+      handleSelectSession(sess.id);
+      window.dispatchEvent(new Event(SESSIONS_CHANGED));
+      handleSessionCreated();
+    } catch (e) {
+      toast.error((e as Error).message || 'Could not create chat');
+    } finally {
+      setRailCreating(false);
+    }
+  }, [handleSelectSession, handleSessionCreated]);
+
   // A run in the hub opens its conversation with the execution's detail in
   // the Inspector — the run belongs to that conversation, and the panel there
   // already knows how to show it.
@@ -828,6 +846,12 @@ function App() {
       onOpenHub={handleOpenHub}
     />
   );
+  const railActions = (
+    <>
+      <IconButton icon={WorkflowIcon} variant="invisible" aria-label="Workflows" onClick={handleOpenHub} />
+      <IconButton icon={PlusIcon} variant="invisible" aria-label="New" onClick={() => { void handleRailCreate(); }} disabled={railCreating} />
+    </>
+  );
 
   const main = hubTab ? (
     <WorkflowsHub tab={hubTab} onTabChange={setHubTab} sessionId={activeSession} tasksSig={tasksSig} onOpenRun={handleOpenRun} />
@@ -849,7 +873,7 @@ function App() {
   return (
     <ThemeProvider>
       <MeContext value={meState}>
-        <AppShell onSettingsOpen={() => handleOpenSettings()} sidebarPane={sidebarPane} sidebarOpen={sidebarOpen} onSidebarToggle={setSidebarOpen}>
+        <AppShell onSettingsOpen={() => handleOpenSettings()} sidebarPane={sidebarPane} railActions={railActions} sidebarOpen={sidebarOpen} onSidebarToggle={setSidebarOpen}>
           {/* A bad turn payload must not take the sidebar, composer and socket
               down with it; switching session or hub tab retries. */}
           <ErrorBoundary resetKey={hubTab ?? activeSession}>{main}</ErrorBoundary>

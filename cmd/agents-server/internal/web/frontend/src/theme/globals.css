@@ -202,6 +202,51 @@ a:hover {
     z-index: 1;
 }
 
+/* --- The rail: the sidebar's shape below its minimum width (invariant 68) --- */
+
+/* Only the snap between the two shapes animates; a resize that follows the
+   pointer never does. */
+.app-sidebar-pane.snapping {
+    transition: width 180ms var(--base-easing-ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .app-sidebar-pane.snapping {
+        transition: none;
+    }
+}
+
+/* Clips everything but the drag handle, so during a snap the moving edge
+   reveals or covers the full-width sidebar instead of reflowing it. */
+.sidebar-clip {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+}
+
+.app-sidebar-pane.rail .sidebar-container {
+    display: none;
+}
+
+/* One column of icon buttons as wide as the top bars are tall, so the first
+   sits on their line: Expand, Workflows, New; the account menu at the foot. */
+.sidebar-rail {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: var(--topbar-height);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--base-size-4);
+    padding: var(--base-size-8) 0;
+}
+
+.sidebar-rail-foot {
+    margin-top: auto;
+}
+
 /* Sidebar body — flex column so fixed actions stay put and scroll area scrolls */
 .sidebar-body {
     flex: 1;

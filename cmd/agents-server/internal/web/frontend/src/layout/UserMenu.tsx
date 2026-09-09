@@ -6,8 +6,10 @@ import { useMe } from '@/lib/me';
 
 interface UserMenuProps {
   onSettingsOpen: () => void;
-  // Avatar only (the narrow header); the sidebar footer shows the name too.
+  // Avatar only (the narrow header and the rail); the sidebar footer shows the name too.
   compact?: boolean;
+  // The trigger's edge the menu lines up with: 'end' for one at the right of the screen.
+  align?: 'start' | 'end';
 }
 
 // UserMenu is the signed-in person's corner: their picture and name open
@@ -15,7 +17,7 @@ interface UserMenuProps {
 // out. Until /auth/me answers the trigger is a placeholder so the footer does
 // not jump; once it has answered — even with a failure — the menu opens, so
 // Sign out is always reachable.
-export function UserMenu({ onSettingsOpen, compact }: UserMenuProps) {
+export function UserMenu({ onSettingsOpen, compact, align = 'start' }: UserMenuProps) {
   const { me: user, loading, error, reload } = useMe();
   return (
     <ActionMenu>
@@ -25,7 +27,7 @@ export function UserMenu({ onSettingsOpen, compact }: UserMenuProps) {
           {!compact && user && <span className="user-menu-name">{displayName(user)}</span>}
         </button>
       </ActionMenu.Anchor>
-      <ActionMenu.Overlay width="small" align={compact ? 'end' : 'start'}>
+      <ActionMenu.Overlay width="small" align={align}>
         <ActionList>
           {/* Who this is: a heading, not a menu item, so it is never announced
               as a disabled choice. */}
