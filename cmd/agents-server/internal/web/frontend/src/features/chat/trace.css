@@ -106,6 +106,8 @@
   min-width: 0;
 }
 .trace-ev-tokens > span + span { margin-left: var(--base-size-6); }
+/* An input figure part served from cache: the count is in its tooltip. */
+.trace-ev-tokens-cached { text-decoration: underline dotted; text-underline-offset: 2px; }
 /* Span tree + waterfall */
 .trace-section-label {
   display: flex;
@@ -651,6 +653,8 @@
 .trace-ev-tag-assistant { background: var(--bgColor-success-muted);   color: var(--fgColor-success); }
 .trace-ev-tag-system    { background: var(--bgColor-attention-muted); color: var(--fgColor-attention); }
 .trace-ev-tag-fn        { background: var(--bgColor-done-muted);      color: var(--fgColor-done); }
+.trace-ev-tag-attention { background: var(--bgColor-attention-muted); color: var(--fgColor-attention); }
+.trace-ev-detail-danger { color: var(--fgColor-danger); }
 /* The pictures an item carries: a thumbnail strip on its line, the pictures
    themselves once it is open (click one to zoom). */
 .trace-payload-thumbs {

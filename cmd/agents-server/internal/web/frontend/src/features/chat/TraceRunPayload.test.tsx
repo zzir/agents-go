@@ -155,10 +155,32 @@ describe('TraceRun', () => {
       attachments: [{ id: 'att1', url: 'https://cdn.example/a.png' }],
     };
     act(() => { root.render(<Harness events={[gen]} loadSpan={resolve} />); });
+    expect(container.querySelector('.trace-ev-tokens-cached')?.getAttribute('title')).toBe('3 cached input tokens');
     act(() => { (container.querySelector('.trace-span-clickable') as HTMLElement).click(); });
     expect(container.querySelector('img.trace-payload-thumb')?.getAttribute('src')).toBe('https://cdn.example/a.png');
     expect(container.textContent).toContain('what is this');
     expect(container.textContent).not.toContain('agents-attachment:');
+    act(() => { root.unmount(); });
+  });
+
+  // A run whose loop failed says so on its card, and a stretch after a pause
+  // for approval is headed by how long the approval took.
+  it('marks a failed run and names the pause a resume waited through', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const t = (s: number) => new Date(Date.UTC(2026, 8, 9, 0, 0, s)).toISOString();
+    const events: TraceEventData[] = [
+      { kind: 'span', name: 'a', type: 'agent', span_id: 'a1', started_at: t(0), ended_at: t(2), data: { ended_by: 'interruption', pending_tools: ['exec_command'] } },
+      { kind: 'span', name: 'a', type: 'agent', span_id: 'a2', started_at: t(134), ended_at: t(137), error: 'boom' },
+    ];
+    act(() => { root.render(<Harness events={events} loadSpan={resolve} />); });
+    // The card's own tag, and the failed row's.
+    expect(container.querySelectorAll('.trace-ev-tag-error')).toHaveLength(2);
+    expect(container.querySelector('[title="awaiting approval: exec_command"]')?.textContent).toBe('paused');
+    const segs = container.querySelectorAll('.trace-run-segment');
+    expect(segs).toHaveLength(2);
+    expect(segs[1].querySelector('.trace-segment-label')!.textContent).toBe('waited 2m12s for approval');
     act(() => { root.unmount(); });
   });
 

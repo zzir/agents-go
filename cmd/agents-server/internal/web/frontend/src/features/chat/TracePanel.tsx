@@ -4,7 +4,7 @@ import { CounterLabel, Link } from '@primer/react';
 import {
   PulseIcon, ToolsIcon, ArrowSwitchIcon, DiamondIcon,
   DependabotIcon, CpuIcon, ShieldCheckIcon, ChevronRightIcon,
-  CommentIcon, PlugIcon,
+  CommentIcon, PlugIcon, TerminalIcon, SyncIcon,
 } from '@primer/octicons-react';
 import type { Icon } from '@primer/octicons-react';
 import { SidePanel } from '@/layout/SidePanel';
@@ -48,6 +48,8 @@ const SPAN_META: Record<string, { color: string; icon: Icon }> = {
   guardrail:  { color: 'var(--fgColor-attention)', icon: ShieldCheckIcon },
   compaction: { color: 'var(--fgColor-attention)', icon: DiamondIcon },
   mcp:        { color: 'var(--fgColor-muted)',     icon: PlugIcon },
+  sandbox:    { color: 'var(--fgColor-muted)',     icon: TerminalIcon },
+  model_retry: { color: 'var(--fgColor-attention)', icon: SyncIcon },
 };
 const FALLBACK_META = { color: 'var(--fgColor-muted)', icon: DiamondIcon };
 
@@ -89,11 +91,26 @@ function GenerationPayload({ data, attachments, indent }: { data: PayloadRecord;
   const settings = settingsRaw && Object.keys(settingsRaw).length > 0 ? settingsRaw : null;
   const outputSchema = data.output_schema && typeof data.output_schema === 'object' ? data.output_schema as PayloadRecord : null;
   const instructions = typeof data.system_instructions === 'string' ? data.system_instructions : '';
+  const prompt = data.prompt && typeof data.prompt === 'object' ? data.prompt as PayloadRecord : null;
+  const promptID = prompt ? String(prompt.id ?? prompt.ID ?? '') : '';
+  const promptVersion = prompt ? String(prompt.version ?? prompt.Version ?? '') : '';
+  const partial = typeof data.partial_text === 'string' ? data.partial_text : '';
+  const str = (k: string) => (typeof data[k] === 'string' ? data[k] as string : '');
+  const num = (k: string) => (typeof data[k] === 'number' ? data[k] as number : null);
+  // The model that answered when it is not the one asked for: an alias
+  // resolved, or a fallback taken.
+  const model = str('model'), used = str('model_used'), status = str('status');
   const meta = [
-    typeof data.model === 'string' && data.model ? data.model : null,
-    typeof data.time_to_first_token_ms === 'number' ? 'ttft ' + data.time_to_first_token_ms + 'ms' : null,
-    typeof data.previous_response_id === 'string' && data.previous_response_id ? 'prev: ' + data.previous_response_id : null,
-    typeof data.conversation_id === 'string' && data.conversation_id ? 'conv: ' + data.conversation_id : null,
+    used && used !== model ? (model ? model + ' → ' + used : used) : model || null,
+    num('time_to_first_token_ms') !== null ? 'ttft ' + num('time_to_first_token_ms') + 'ms' : null,
+    num('cached_tokens') !== null ? 'cached ' + num('cached_tokens') : null,
+    num('cache_write_tokens') !== null ? 'cache write ' + num('cache_write_tokens') : null,
+    num('reasoning_tokens') !== null ? 'reasoning ' + num('reasoning_tokens') : null,
+    status && status !== 'completed' ? status + (str('incomplete_reason') ? ' (' + str('incomplete_reason') + ')' : '') : null,
+    num('fallback_index') !== null ? 'fallback #' + num('fallback_index') : null,
+    str('request_id') ? 'req: ' + str('request_id') : null,
+    str('previous_response_id') ? 'prev: ' + str('previous_response_id') : null,
+    str('conversation_id') ? 'conv: ' + str('conversation_id') : null,
   ].filter(Boolean).join(' · ');
 
   return (
@@ -110,6 +127,7 @@ function GenerationPayload({ data, attachments, indent }: { data: PayloadRecord;
       <div className="trace-payload-list">
         <div className="trace-section-label">Request</div>
         {instructions && <PayloadItem tag="system" text={instructions} full={instructions} />}
+        {prompt && <PayloadItem tag="prompt" text={promptID + (promptVersion ? '@' + promptVersion : '')} full={JSON.stringify(prompt, null, 2)} />}
         {tools.length > 0 && (
           <PayloadItem
             tag={'tools (' + tools.length + ')'}
@@ -134,6 +152,7 @@ function GenerationPayload({ data, attachments, indent }: { data: PayloadRecord;
         {typeof data.input === 'string' && <div className="trace-payload-preview">{String(data.input)}</div>}
         <div className="trace-section-label">Response</div>
         {output.map((item, i) => <PayloadItem key={'out-' + i} {...payloadEntry(item)} />)}
+        {partial && <PayloadItem tag="partial" text={partial} full={partial} />}
         {typeof data.output === 'string' && <div className="trace-payload-preview">{String(data.output)}</div>}
       </div>
     </div>
@@ -297,6 +316,14 @@ function SpanRow({ node, depth, range, alignChevron, loadSpan }: { node: SpanNod
   }, [open, omitted, spanId, loadSpan, payload]);
   const toggle = () => { setOpen(o => !o); setPayload('idle'); };
 
+  const d = s.data || {};
+  const num = (k: string) => (typeof d[k] === 'number' ? d[k] as number : null);
+  const str = (k: string) => (typeof d[k] === 'string' ? d[k] as string : '');
+  // A guardrail span's verdicts: the names it consulted, and the one that ruled.
+  const verdicts = s.type === 'guardrail' ? payloadItems(d.guardrails) : [];
+  const ruled = verdicts.find(v => v.action === 'replace' || v.action === 'trip');
+  const pendingTools = Array.isArray(d.pending_tools) ? d.pending_tools.map(String).join(', ') : '';
+
   const own = spanExtent(s);
   const bar = range && own ? barGeometry(range, own) : null;
   // The children's extents overlay the parent's bar in their own colors, so a
@@ -329,15 +356,35 @@ function SpanRow({ node, depth, range, alignChevron, loadSpan }: { node: SpanNod
           <span className={'trace-span-name' + (failed ? ' trace-span-failed' : '')} title={s.name}>{displayName}</span>
           {s.type && (s.type === 'agent' || !SPAN_META[s.type]) && <span className="trace-ev-tag trace-ev-tag-span">{s.type}</span>}
           {failed && <span className="trace-ev-tag trace-ev-tag-error">error</span>}
-          {s.type === 'generation' && s.data && s.data.input_tokens !== undefined && (
+          {s.type === 'generation' && d.input_tokens !== undefined && (
             <span className="trace-ev-tokens">
-              <span>{'↑' + Number(s.data.input_tokens || 0)}</span>
-              <span>{'↓' + Number(s.data.output_tokens || 0)}</span>
+              {(num('cached_tokens') ?? 0) > 0
+                ? <span className="trace-ev-tokens-cached" title={num('cached_tokens') + ' cached input tokens'}>{'↑' + Number(d.input_tokens || 0)}</span>
+                : <span>{'↑' + Number(d.input_tokens || 0)}</span>}
+              <span>{'↓' + Number(d.output_tokens || 0)}</span>
             </span>
           )}
-          {s.type === 'compaction' && s.data && s.data.before_items !== undefined && (
-            <span className="trace-ev-detail">{Number(s.data.before_items) + '→' + Number(s.data.after_items) + ' items'}</span>
+          {s.type === 'generation' && str('status') === 'incomplete' && (
+            <span className="trace-ev-tag trace-ev-tag-attention" title={str('incomplete_reason')}>incomplete</span>
           )}
+          {s.type === 'generation' && num('fallback_index') !== null && <span className="trace-ev-tag trace-ev-tag-attention">fallback</span>}
+          {s.type === 'compaction' && d.before_items !== undefined && (
+            <span className="trace-ev-detail">{Number(d.before_items) + '→' + Number(d.after_items) + ' items'}</span>
+          )}
+          {s.type === 'compaction' && d.reset === true && <span className="trace-ev-tag trace-ev-tag-attention">reset</span>}
+          {s.type === 'handoff' && str('to_agent') && <span className="trace-ev-detail">{'→ ' + str('to_agent')}</span>}
+          {s.type === 'sandbox' && num('exit_code') !== null && (
+            <span className={'trace-ev-detail' + (num('exit_code') ? ' trace-ev-detail-danger' : '')}>{'exit ' + num('exit_code')}</span>
+          )}
+          {s.type === 'model_retry' && num('attempt') !== null && (
+            <span className="trace-ev-detail">{'attempt ' + num('attempt') + (num('max_attempts') !== null ? '/' + num('max_attempts') : '')}</span>
+          )}
+          {verdicts.length > 0 && <span className="trace-ev-detail">{verdicts.map(v => String(v.name || '')).join(', ')}</span>}
+          {ruled && <span className="trace-ev-tag trace-ev-tag-attention">{ruled.action === 'trip' ? 'tripped' : 'replaced'}</span>}
+          {s.type === 'agent' && str('ended_by') === 'interruption' && (
+            <span className="trace-ev-tag trace-ev-tag-attention" title={'awaiting approval' + (pendingTools ? ': ' + pendingTools : '')}>paused</span>
+          )}
+          {s.type === 'agent' && (str('ended_by') === 'stop' || d.stopped_early === true) && <span className="trace-ev-tag">stopped</span>}
           {folded.length > 0 && <span className="trace-span-hint">mcp</span>}
           {running && <span className="trace-span-live-dot" />}
         </span>
@@ -409,8 +456,8 @@ export function TraceRun({ segments, label, stale, isLive, isExpanded, onToggle,
   const { sessionId } = useChatSession();
   const payloadSession = payloadSessionId || sessionId;
 
-  const { parts, tokens, spanCount } = useMemo(() => {
-    let inp = 0, out = 0, count = 0;
+  const { parts, tokens, spanCount, failed } = useMemo(() => {
+    let inp = 0, out = 0, count = 0, failed = false;
     const parts = segments.flatMap(seg => {
       const spanEvents = seg.events.filter(ev => ev.kind === 'span');
       count += spanEvents.length;
@@ -419,18 +466,25 @@ export function TraceRun({ segments, label, stale, isLive, isExpanded, onToggle,
           inp += Number(ev.data.input_tokens) || 0;
           out += Number(ev.data.output_tokens) || 0;
         }
+        // The run failed when its loop did: an agent span carries that error;
+        // a tool's own failure, recovered, stays on the tool's row.
+        if (ev.type === 'agent' && ev.error) failed = true;
       }
       const load = loadSpan && payloadSession ? (spanId: string) => loadSpan(payloadSession, seg.runId, spanId) : undefined;
       let prevEnd: number | undefined;
+      let prevPaused = false;
       return splitEpisodes(buildSpanTree(spanEvents)).map((roots, i) => {
         const range = spanTimeRange(episodeSpans(roots));
-        // A later stretch is headed by how long the run had been stopped.
-        const label = i === 0 ? seg.label : range && prevEnd !== undefined ? fmtDuration(range.t0 - prevEnd) + ' later' : undefined;
+        // A later stretch is headed by how long the run had been stopped — as
+        // a wait for approval when the stretch before it paused for one.
+        const gap = range && prevEnd !== undefined ? fmtDuration(range.t0 - prevEnd) : '';
+        const label = i === 0 ? seg.label : !gap ? undefined : prevPaused ? 'waited ' + gap + ' for approval' : gap + ' later';
         if (range) prevEnd = range.t0 + range.total;
+        prevPaused = roots.some(r => r.span.type === 'agent' && r.span.data?.ended_by === 'interruption');
         return { key: seg.runId + ':' + i, label, spanRoots: roots, range, loadSpan: load };
       });
     });
-    return { parts, tokens: inp > 0 ? { input: inp, output: out } : null, spanCount: count };
+    return { parts, tokens: inp > 0 ? { input: inp, output: out } : null, spanCount: count, failed };
   }, [segments, loadSpan, payloadSession]);
 
   useEffect(() => {
@@ -443,6 +497,7 @@ export function TraceRun({ segments, label, stale, isLive, isExpanded, onToggle,
   const headerLabel = (
     <>
       <span className="trace-run-label">{label}</span>
+      {failed && <span className="trace-ev-tag trace-ev-tag-error">error</span>}
       {stale && <span className="trace-run-stale" title="This answer was regenerated; the session is on another attempt">replaced</span>}
       {isLive && <span className="trace-tab-live" />}
       {onJump && (
