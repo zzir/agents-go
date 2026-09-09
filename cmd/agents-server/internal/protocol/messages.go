@@ -459,4 +459,7 @@ type TraceSpan struct {
 	// PayloadOmitted marks Data whose payload fields were replaced by the live
 	// cap's marker; the stored row (GET /sessions/:id/traces/:span_id) has them.
 	PayloadOmitted bool `json:"payload_omitted,omitempty"`
+	// Attachments are the image attachments the span's input items reference,
+	// resolved so the client renders them without a second request.
+	Attachments []AttachmentRef `json:"attachments,omitempty"`
 }

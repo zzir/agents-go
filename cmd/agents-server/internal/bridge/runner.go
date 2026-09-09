@@ -408,7 +408,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 			return failTurn("", protocol.CodeConfigError, err, "", "")
 		}
 	}
-	tracer := newTracer(ctx, sendEvent, r.Deps.Traces, sessionID, runID, spec.wakeParentRunID, r.Deps.Settings.SpanDataCap(ctx))
+	tracer := newTracer(ctx, sendEvent, r.Deps.Traces, sessionID, runID, spec.wakeParentRunID, r.Deps.Settings.SpanDataCap(ctx), r.traceAttachmentRefs)
 
 	runSession := wrapCompaction(sa, built, provider, sendEvent, runID, r.Deps.Memories, task != nil)
 

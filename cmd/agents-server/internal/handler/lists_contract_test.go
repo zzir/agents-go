@@ -30,7 +30,7 @@ func TestListsNeverNull(t *testing.T) {
 	engine.GET("/mcp-servers", NewMcpServerHandler(store.NewMcpServerStore(db), nil, nil, "").List)
 	engine.GET("/memories", NewMemoryHandler(store.NewMemoryStore(db), store.NewSessionStore(db), store.NewAgentConfigStore(db), store.NewSharedEntryStore(db)).List)
 	engine.GET("/skills", NewSkillHandler(store.NewSkillStore(db), settings.NewReader(nil)).List)
-	engine.GET("/sessions/:id/traces", NewTraceHandler(store.NewTraceStore(db)).ListBySession)
+	engine.GET("/sessions/:id/traces", NewTraceHandler(store.NewTraceStore(db), settings.NewReader(store.NewSettingStore(db))).ListBySession)
 	runner := bridge.NewRunner(t.Context(), db, &bridge.AgentDeps{AgentConfigs: store.NewAgentConfigStore(db), Sessions: store.NewSessionStore(db), Traces: store.NewTraceStore(db)})
 	engine.GET("/sessions/:id/tasks", NewTaskHandler(store.NewTaskStore(db), runner).ListBySession)
 

@@ -447,6 +447,9 @@ type TraceEvent struct {
 	// PayloadOmitted marks a summary row (TraceStore.ListSummaryBySession)
 	// whose payload was left out; GetBySpan serves it inlined into Data.
 	PayloadOmitted bool `bun:"payload_omitted,scanonly" json:"payload_omitted,omitempty"`
+	// Attachments are the image attachments the span's input items reference,
+	// resolved from their stored references; URL is filled by the handler.
+	Attachments []EntryAttachment `bun:"-" json:"attachments,omitempty"`
 }
 
 // TraceBlob is one payload element of a session's spans — an input item, a

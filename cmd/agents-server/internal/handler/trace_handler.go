@@ -5,17 +5,20 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
 // TraceHandler serves trace events recorded for sessions.
 type TraceHandler struct {
-	traces *store.TraceStore
+	traces   *store.TraceStore
+	settings *settings.Reader
 }
 
-// NewTraceHandler returns a handler backed by the given trace store.
-func NewTraceHandler(traces *store.TraceStore) *TraceHandler {
-	return &TraceHandler{traces: traces}
+// NewTraceHandler returns a handler over the trace store; settings supplies
+// the public base the spans' attachment URLs are built against.
+func NewTraceHandler(traces *store.TraceStore, settings *settings.Reader) *TraceHandler {
+	return &TraceHandler{traces: traces, settings: settings}
 }
 
 // ListBySession responds with the trace events for the session identified by the id path parameter.
@@ -43,13 +46,18 @@ func (h *TraceHandler) ListBySession(c *gin.Context) {
 		internalError(c, err)
 		return
 	}
+	if base := h.settings.S3Config(c.Request.Context()).PublicBaseURL; base != "" {
+		for i := range events {
+			fillAttachmentURLs(base, events[i].Attachments)
+		}
+	}
 	c.JSON(http.StatusOK, nonNilList(events))
 }
 
 // GetBySpan responds with one span of the session, payload included.
 //
 //	@Summary		Get one trace span
-//	@Description	The whole row of one span — what a `summary=true` listing left out (`payload_omitted`), or what the live cap replaced with a marker on the WebSocket.
+//	@Description	The whole row of one span — what a `summary=true` listing left out (`payload_omitted`), or what the live cap replaced with a marker on the WebSocket — with the image attachments its input references listed beside it as `attachments`.
 //	@Tags			sessions
 //	@Produce		json
 //	@Param			id		path		string	true	"Session ID"
@@ -64,6 +72,9 @@ func (h *TraceHandler) GetBySpan(c *gin.Context) {
 	if err != nil {
 		storeError(c, err)
 		return
+	}
+	if base := h.settings.S3Config(c.Request.Context()).PublicBaseURL; base != "" {
+		fillAttachmentURLs(base, ev.Attachments)
 	}
 	c.JSON(http.StatusOK, ev)
 }

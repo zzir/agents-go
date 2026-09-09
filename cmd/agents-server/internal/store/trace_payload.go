@@ -9,9 +9,9 @@ import (
 	"sync"
 )
 
-// payloadFields are the span data keys held in trace_blobs rather than on
-// the row — nearly all of a session's trace bytes, which a listing never needs.
-var payloadFields = []string{"input", "output", "system_instructions", "tools", "handoffs", "output_schema"}
+// PayloadFields are the span data keys held in trace_blobs rather than on the
+// row — nearly all of a session's trace bytes, which a listing never needs.
+var PayloadFields = []string{"input", "output", "system_instructions", "tools", "handoffs", "output_schema"}
 
 // The strings a payload element is replaced with: over the per-element cap
 // when written, or gone from trace_blobs when read.
@@ -50,7 +50,7 @@ func splitPayload(data string, elemCap int) (meta string, layout []layoutField, 
 	if json.Unmarshal([]byte(data), &m) != nil || m == nil {
 		return data, nil, nil
 	}
-	for _, f := range payloadFields {
+	for _, f := range PayloadFields {
 		raw, ok := m[f]
 		if !ok {
 			continue

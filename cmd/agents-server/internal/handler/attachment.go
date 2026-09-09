@@ -83,6 +83,13 @@ type attachmentResp struct {
 	Size int64  `json:"size"`
 }
 
+// fillAttachmentURLs turns stored keys into URLs against the current public base.
+func fillAttachmentURLs(base string, atts []store.EntryAttachment) {
+	for i := range atts {
+		atts[i].URL = attachments.PublicURL(base, atts[i].Key)
+	}
+}
+
 func (h *AttachmentHandler) resp(ctx context.Context, a *store.Attachment) attachmentResp {
 	base := h.settings.S3Config(ctx).PublicBaseURL
 	return attachmentResp{

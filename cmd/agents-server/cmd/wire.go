@@ -214,7 +214,7 @@ func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL st
 			Guardrails: handler.NewGuardrailHandler(st.Guardrails, svc.Guardrails),
 			Sandboxes:  handler.NewSandboxHandler(st.SandboxDefs, svc.Sandboxes, retirer),
 			Projects:   projects,
-			Traces:     handler.NewTraceHandler(st.Traces),
+			Traces:     handler.NewTraceHandler(st.Traces, st.SettingReader),
 			Playground: handler.NewPlaygroundHandler(svc.Deps),
 			ChatGPT:    handler.NewChatGPTOAuthHandler(svc.ChatGPT, st.Providers),
 			Files:      handler.NewAttachmentHandler(st.Attachments, st.SettingReader, st.Settings),

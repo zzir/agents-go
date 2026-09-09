@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
@@ -26,7 +27,7 @@ func TestTraceListingSummaryAndSpan(t *testing.T) {
 	if err := traces.Insert(ctx, gen); err != nil {
 		t.Fatal(err)
 	}
-	h := NewTraceHandler(traces)
+	h := NewTraceHandler(traces, settings.NewReader(store.NewSettingStore(db)))
 	engine := newTestEngine()
 	engine.GET("/sessions/:id/traces", h.ListBySession)
 	engine.GET("/sessions/:id/traces/:span_id", h.GetBySpan)
@@ -62,4 +63,40 @@ func traceJSONEqual(a, b string) bool {
 		return a == b
 	}
 	return reflect.DeepEqual(va, vb)
+}
+
+// A span's attachments come back with URLs against the current public base —
+// the store contributes the rows, the handler the deployment fact.
+func TestTraceSpanAttachmentURLs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx := context.Background()
+	db := testdb.New(t)
+	traces := store.NewTraceStore(db)
+	settingStore := store.NewSettingStore(db)
+	if err := settingStore.Set(ctx, settings.KeyS3PublicBaseURL, "https://cdn.example/"); err != nil {
+		t.Fatal(err)
+	}
+	a := &store.Attachment{OwnerID: store.LocalUserID, Key: "attachments/u/a.png", Mime: "image/png", Size: 10}
+	if err := store.NewAttachmentStore(db).Create(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	gen := &store.TraceEvent{SessionID: "s1", RunID: "r1", Kind: "span", SpanID: "sp1", Name: "generation", Detail: "generation",
+		Data: `{"model":"m","input":[{"type":"message","role":"user","content":[{"type":"input_image","image_url":"` + store.AttachmentSentinelURL(a.ID) + `"}]}]}`}
+	if err := traces.Insert(ctx, gen); err != nil {
+		t.Fatal(err)
+	}
+	h := NewTraceHandler(traces, settings.NewReader(settingStore))
+	engine := newTestEngine()
+	engine.GET("/sessions/:id/traces/:span_id", h.GetBySpan)
+
+	var one struct {
+		Attachments []struct{ ID, URL string } `json:"attachments"`
+	}
+	w := doJSON(t, engine, http.MethodGet, "/sessions/s1/traces/sp1", "")
+	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &one) != nil {
+		t.Fatalf("span: %d %s", w.Code, w.Body.String())
+	}
+	if len(one.Attachments) != 1 || one.Attachments[0].ID != a.ID || one.Attachments[0].URL != "https://cdn.example/attachments/u/a.png" {
+		t.Fatalf("attachments = %+v, want the row with its public URL", one.Attachments)
+	}
 }

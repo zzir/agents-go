@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 	"github.com/zzir/agents-go/tracing"
@@ -49,7 +50,7 @@ func TestLiveSpanDataIsBoundedAndTheRowIsWhole(t *testing.T) {
 
 	ctx := context.Background()
 	traces := store.NewTraceStore(testdb.New(t))
-	p := newWSProcessor(ctx, func(string, any) {}, traces, "sess", "run", "", 0)
+	p := newWSProcessor(ctx, func(string, any) {}, traces, "sess", "run", "", 0, nil)
 	p.OnSpanEnd(endedSpan("g1", data))
 
 	row, err := traces.GetBySpan(ctx, "sess", "g1")
@@ -80,7 +81,7 @@ func TestGenerationInputHashesAreStableAcrossCalls(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	traces := store.NewTraceStore(db)
-	p := newWSProcessor(ctx, func(string, any) {}, traces, "sess", "run", "", 0)
+	p := newWSProcessor(ctx, func(string, any) {}, traces, "sess", "run", "", 0, nil)
 
 	turn1 := agents.InputItemsFromText("hello")
 	turn2 := slices.Concat(turn1, agents.InputItemsFromAssistantText("hi"), agents.InputItemsFromText("more"))
@@ -113,7 +114,7 @@ func TestGenerationInputHashesAreStableAcrossCalls(t *testing.T) {
 func TestSpanRowsCarryTheRunLineage(t *testing.T) {
 	ctx := context.Background()
 	traces := store.NewTraceStore(testdb.New(t))
-	p := newWSProcessor(ctx, func(string, any) {}, traces, "sess", "run_wake", "run_origin", 0)
+	p := newWSProcessor(ctx, func(string, any) {}, traces, "sess", "run_wake", "run_origin", 0, nil)
 
 	now := time.Now()
 	p.OnSpanEnd(&tracing.Span{TraceID: "t1", SpanID: "s1", Name: "agent:x", Type: "agent", StartedAt: now, EndedAt: now})
@@ -127,5 +128,44 @@ func TestSpanRowsCarryTheRunLineage(t *testing.T) {
 	}
 	if rows[0].ParentRunID != "run_origin" {
 		t.Fatalf("span row lineage = %q, want run_origin", rows[0].ParentRunID)
+	}
+}
+
+// The live span event carries the images its input references, resolved — as
+// run.started does for the message — while the stored payload keeps the
+// reference and the row lists what rows exist.
+func TestSpanEventCarriesItsAttachments(t *testing.T) {
+	ctx := context.Background()
+	traces := store.NewTraceStore(testdb.New(t))
+	var sent []protocol.TraceSpan
+	resolve := func(_ context.Context, ids []string) []protocol.AttachmentRef {
+		refs := make([]protocol.AttachmentRef, 0, len(ids))
+		for _, id := range ids {
+			refs = append(refs, protocol.AttachmentRef{ID: id, URL: "https://cdn.example/" + id + ".png"})
+		}
+		return refs
+	}
+	p := newWSProcessor(ctx, func(_ string, v any) {
+		if ts, ok := v.(protocol.TraceSpan); ok {
+			sent = append(sent, ts)
+		}
+	}, traces, "sess", "run", "", 0, resolve)
+
+	withImage := []any{map[string]any{"type": "message", "role": "user", "content": []any{
+		map[string]any{"type": "input_text", "text": "what is this"},
+		map[string]any{"type": "input_image", "image_url": store.AttachmentSentinelURL("att1"), "detail": "auto"},
+	}}}
+	p.OnSpanStart(endedSpan("g1", map[string]any{"name": "x"}))
+	p.OnSpanEnd(endedSpan("g1", map[string]any{"name": "x", "input": withImage}))
+	p.OnSpanEnd(endedSpan("g2", map[string]any{"name": "x", "input": []any{map[string]any{"role": "user", "content": "plain"}}}))
+	if len(sent) != 3 || len(sent[0].Attachments) != 0 || len(sent[2].Attachments) != 0 {
+		t.Fatalf("sent = %+v, want attachments only on the span that references one", sent)
+	}
+	if got := sent[1].Attachments; len(got) != 1 || got[0].ID != "att1" || got[0].URL != "https://cdn.example/att1.png" {
+		t.Fatalf("live attachments = %+v", got)
+	}
+	row, err := traces.GetBySpan(ctx, "sess", "g1")
+	if err != nil || !strings.Contains(row.Data, store.AttachmentSentinelURL("att1")) || len(row.Attachments) != 0 {
+		t.Fatalf("row = %+v (%v): the payload keeps its reference, and no attachment row exists here", row, err)
 	}
 }

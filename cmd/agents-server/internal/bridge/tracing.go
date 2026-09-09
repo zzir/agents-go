@@ -6,6 +6,7 @@ import (
 	"maps"
 	"time"
 
+	"github.com/zzir/agents-go/cmd/agents-server/internal/attachments"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
@@ -17,6 +18,10 @@ import (
 const liveSpanDataJSON = 256 << 10
 
 const liveOmitted = "[omitted from the live update — reopen this trace to load it]"
+
+// attachmentResolver turns the attachment ids a span's payload references
+// into the refs the client renders; nil when the server stores no attachments.
+type attachmentResolver func(ctx context.Context, ids []string) []protocol.AttachmentRef
 
 // wsProcessor streams spans to the client: a pending version on start, the
 // full version on end (the only one persisted). No batching — liveness is the point.
@@ -30,17 +35,19 @@ type wsProcessor struct {
 	// parentRunID is the run's lineage (a wake-up run's spawning run), stamped
 	// on every span so the trace itself carries it (a fork does not).
 	parentRunID string
+	resolve     attachmentResolver
 }
 
 // newWSProcessor returns the processor of one run; elemCap is the run's
 // resolved trace_span_data_kb in bytes, read once rather than per span.
-func newWSProcessor(ctx context.Context, send func(string, any), traces *store.TraceStore, sessionID, runID, parentRunID string, elemCap int) *wsProcessor {
+func newWSProcessor(ctx context.Context, send func(string, any), traces *store.TraceStore, sessionID, runID, parentRunID string, elemCap int, resolve attachmentResolver) *wsProcessor {
 	return &wsProcessor{
 		ctx:         context.WithoutCancel(ctx),
 		send:        send,
 		writer:      traces.NewSpanWriter(sessionID, elemCap),
 		runID:       runID,
 		parentRunID: parentRunID,
+		resolve:     resolve,
 	}
 }
 
@@ -71,7 +78,7 @@ func liveSpanData(data map[string]any) (map[string]any, bool) {
 		return cleaned, false
 	}
 	omitted := false
-	for _, k := range []string{"input", "output", "system_instructions", "tools"} {
+	for _, k := range store.PayloadFields {
 		if _, ok := cleaned[k]; ok {
 			cleaned[k] = liveOmitted
 			omitted = true
@@ -128,9 +135,16 @@ func (p *wsProcessor) OnSpanStart(span *tracing.Span) {
 }
 
 // OnSpanEnd pushes the finished span (same span_id; the client replaces the
-// pending one) and persists it, each bounded on its own.
+// pending one) and persists it, each bounded on its own. The images its input
+// references ride the live event resolved, as run.started carries them.
 func (p *wsProcessor) OnSpanEnd(span *tracing.Span) {
 	ts := p.spanMessage(span)
+	data := spanDataJSON(span.Data)
+	if p.resolve != nil {
+		if ids := store.TraceAttachmentIDs(data); len(ids) > 0 {
+			ts.Attachments = p.resolve(p.ctx, ids)
+		}
+	}
 	p.send(protocol.EventTraceSpan, ts)
 	te := &store.TraceEvent{
 		RunID:       p.runID,
@@ -141,7 +155,7 @@ func (p *wsProcessor) OnSpanEnd(span *tracing.Span) {
 		Name:        span.Name,
 		Detail:      span.Type,
 		Error:       ts.Error,
-		Data:        spanDataJSON(span.Data),
+		Data:        data,
 		StartedAt:   ts.StartedAt,
 		EndedAt:     ts.EndedAt,
 	}
@@ -155,6 +169,27 @@ func (p *wsProcessor) Shutdown(context.Context) {}
 
 var _ tracing.Processor = (*wsProcessor)(nil)
 
-func newTracer(ctx context.Context, send func(string, any), traces *store.TraceStore, sessionID, runID, parentRunID string, elemCap int) *tracing.Tracer {
-	return tracing.NewTracer(newWSProcessor(ctx, send, traces, sessionID, runID, parentRunID, elemCap))
+func newTracer(ctx context.Context, send func(string, any), traces *store.TraceStore, sessionID, runID, parentRunID string, elemCap int, resolve attachmentResolver) *tracing.Tracer {
+	return tracing.NewTracer(newWSProcessor(ctx, send, traces, sessionID, runID, parentRunID, elemCap, resolve))
+}
+
+// traceAttachmentRefs is the runs' attachmentResolver: ids to the refs run
+// events carry, against the current public base; a missing row drops off.
+func (r *Runner) traceAttachmentRefs(ctx context.Context, ids []string) []protocol.AttachmentRef {
+	if r.Deps.Attachments == nil {
+		return nil
+	}
+	meta, err := r.Deps.Attachments.MetaBatch(ctx, ids)
+	if err != nil {
+		logging.Ctx(ctx).Warn("resolving a trace span's attachments", "error", err)
+		return nil
+	}
+	base := r.Deps.Settings.S3Config(ctx).PublicBaseURL
+	refs := make([]protocol.AttachmentRef, 0, len(ids))
+	for _, id := range ids {
+		if a, ok := meta[id]; ok {
+			refs = append(refs, protocol.AttachmentRef{ID: a.ID, URL: attachments.PublicURL(base, a.Key)})
+		}
+	}
+	return refs
 }

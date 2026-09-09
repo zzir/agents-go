@@ -873,7 +873,7 @@ which run this is.
 | `session.title_updated` | Title changed — `{session_id, title}`                                                                                                                   |
 | `task.updated`          | A background task moved — the task row (`task_id`, `status`, `kind`, `state`, `attempt`, `dismissed`, a paused one's `pending_call_id`…) as the store has it; on the task's run stream when the hub holds that run, else broadcast to every connection |
 | `session.project_bound` | The session's first project-carrying run permanently bound its project — `{session_id, project_id}`; published exactly once, by the run that won the bind |
-| `trace.span`            | Trace span — `{run_id, trace_id, span_id, error?, data?, payload_omitted?, ...}`; `payload_omitted` says the 256KB live cap replaced the payload fields, which the stored row still has |
+| `trace.span`            | Trace span — `{run_id, trace_id, span_id, error?, data?, payload_omitted?, attachments?, ...}`; `payload_omitted` says the 256KB live cap replaced the payload fields, which the stored row still has; `attachments` lists the image attachments the span's input references, resolved to `{id, url}` as `run.started` carries the message's |
 
 Generation spans carry the full model request/response in their `data` — what
 each call sent after compaction and filters, MCP and skill tool definitions
@@ -882,7 +882,11 @@ included. Stored, those payload elements are content-addressed per session
 the trace panel opens with the SUMMARY listing (`?summary=true`: rows without
 the payload, marked `payload_omitted`) and fetches one span whole
 (`GET /sessions/:id/traces/:span_id`, its payload rebuilt into `data`) when it
-is opened. An element past `trace_span_data_kb` is replaced with a marker
+is opened. A span whose input references image attachments lists them beside
+the payload as `attachments: [{id, url}]`, resolved against the current public
+base; the items keep the stored reference
+([invariant 70](../explanation/workbench-invariants.md)). An element past
+`trace_span_data_kb` is replaced with a marker
 string, its siblings kept; an element whose blob was pruned reads as
 `[omitted: the stored payload was pruned]`. Whether conversation content is
 recorded at all is `trace_include_sensitive_data`

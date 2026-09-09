@@ -2209,6 +2209,14 @@ components:
       type: object
     store.TraceEvent:
       properties:
+        attachments:
+          description: |-
+            Attachments are the image attachments the span's input items reference,
+            resolved from their stored references; URL is filled by the handler.
+          items:
+            $ref: '#/components/schemas/store.EntryAttachment'
+          type: array
+          uniqueItems: false
         created_at:
           type: string
         data:
@@ -6121,7 +6129,8 @@ paths:
     get:
       description: The whole row of one span — what a `summary=true` listing left
         out (`payload_omitted`), or what the live cap replaced with a marker on the
-        WebSocket.
+        WebSocket — with the image attachments its input references listed beside
+        it as `attachments`.
       parameters:
       - description: Session ID
         in: path

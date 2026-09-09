@@ -82,6 +82,9 @@ the [configuration reference](../reference/configuration.md#runtime-settings).
   itself staying readable.
 - Attachments ride chat messages only; task spawns, workflow steps and
   mid-run injections are text-only.
+- **Traces** show them too: a generation span lists the attachments its input
+  references beside the payload, so the user message in the trace renders its
+  pictures as the chat does; a tool result's images render from their own URLs.
 - Anthropic-backed agents work (the adapter translates `input_image` URLs);
   the `detail` hint is OpenAI-only and fixed at `auto`. The ChatGPT-login
   (Codex) backend accepts image input and downloads the URL server-side.

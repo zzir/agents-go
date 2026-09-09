@@ -72,7 +72,7 @@ func TestTracePayloadElementsAreStoredOncePerSession(t *testing.T) {
 	if len(e1.Refs) != 4*hashSize || len(e2.Refs) != 6*hashSize {
 		t.Fatalf("refs = %d / %d bytes, want 4 and 6 hashes", len(e1.Refs), len(e2.Refs))
 	}
-	// Layout order is payloadFields order, input first: both spans start with
+	// Layout order is PayloadFields order, input first: both spans start with
 	// the long user item, and hash it the same.
 	if !bytes.Equal(e1.Refs[:hashSize], e2.Refs[:hashSize]) {
 		t.Fatal("the shared first item hashed differently across the two spans")

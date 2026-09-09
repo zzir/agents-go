@@ -433,3 +433,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     that needs one — a trigger, a Run… — offers "New session" as a choice and
     makes it on Save, so a cancelled form leaves nothing and two triggers never
     share one; a trigger's is named after what it starts (`lib/sessionTitle.ts`).
+70. **A trace span keeps the attachment reference and lists the attachments
+    beside it.** Its payload carries `agents-attachment:<id>` as the entry did;
+    the span endpoint, the full listing and the live `trace.span` event add
+    `attachments: [{id, url}]` resolved against the current public base, as
+    entries and `run.started` do — never a rewritten `image_url`. The panel
+    resolves a part through that list (`TracePayload.tsx`).

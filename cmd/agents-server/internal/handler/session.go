@@ -15,7 +15,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/zzir/agents-go/agents"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/attachments"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
@@ -487,9 +486,7 @@ func (h *SessionHandler) Messages(c *gin.Context) {
 	// fact (the current public base), filled here.
 	if base := h.settings.S3Config(ctx).PublicBaseURL; base != "" {
 		for i := range entries {
-			for j := range entries[i].Attachments {
-				entries[i].Attachments[j].URL = attachments.PublicURL(base, entries[i].Attachments[j].Key)
-			}
+			fillAttachmentURLs(base, entries[i].Attachments)
 		}
 	}
 	c.JSON(http.StatusOK, entries)

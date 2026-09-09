@@ -11,8 +11,9 @@ import { SidePanel } from '@/layout/SidePanel';
 import { Disclosure } from '@/components/Disclosure';
 import { useChatActions, useChatSession } from '@/features/chat/ChatSessionContext';
 import { ReplayDialog } from '@/features/chat/ReplayDialog';
-import { PayloadItem, itemTag, itemText, payloadItems, prettyMaybeJSON, type PayloadRecord } from '@/features/chat/TracePayload';
+import { PayloadItem, payloadEntry, payloadItems, prettyMaybeJSON, toolOutputEntry, type PayloadRecord } from '@/features/chat/TracePayload';
 import { fmtDuration } from '@/lib/background';
+import type { AttachmentMeta } from '@/lib/attachments';
 
 export interface TraceEventData {
   kind?: string;
@@ -33,6 +34,9 @@ export interface TraceEventData {
   // summary listing, or by the live cap — and load on open from the stored
   // row (ChatActions.loadSpan).
   payloadOmitted?: boolean;
+  // The image attachments the span's input items reference, resolved by the
+  // server (the items themselves keep the stored reference).
+  attachments?: AttachmentMeta[];
 }
 
 // Span type → icon + color, mirroring the SDK's typed span constructors.
@@ -55,17 +59,18 @@ function spanColor(s: TraceEventData): string {
 /* ---------- span payloads ---------- */
 
 // Structured view of a function span's data: the tool call's arguments and
-// its stringified result.
+// its stringified result — a multimodal result as its text and pictures.
 function FunctionPayload({ data, indent }: { data: PayloadRecord; indent: number }) {
+  const out = typeof data.output === 'string' ? toolOutputEntry(data.output) : null;
   return (
     <div className="trace-payload" style={{ marginLeft: indent }}>
       <div className="trace-payload-list">
         {data.input !== undefined && (
           <PayloadItem tag="input" text={typeof data.input === 'string' ? data.input : JSON.stringify(data.input)} full={prettyMaybeJSON(data.input)} />
         )}
-        {data.output !== undefined && (
-          <PayloadItem tag="output" text={typeof data.output === 'string' ? data.output : JSON.stringify(data.output)} full={prettyMaybeJSON(data.output)} />
-        )}
+        {data.output !== undefined && (out
+          ? <PayloadItem tag="output" text={out.text} full={out.images.length > 0 ? out.text : prettyMaybeJSON(data.output)} images={out.images} />
+          : <PayloadItem tag="output" text={JSON.stringify(data.output)} full={prettyMaybeJSON(data.output)} />)}
       </div>
     </div>
   );
@@ -74,7 +79,7 @@ function FunctionPayload({ data, indent }: { data: PayloadRecord; indent: number
 // Structured view of a generation span's data: the exact request body the
 // model received (instructions, tool definitions, settings, items) and the
 // items it returned.
-function GenerationPayload({ data, indent }: { data: PayloadRecord; indent: number }) {
+function GenerationPayload({ data, attachments, indent }: { data: PayloadRecord; attachments?: AttachmentMeta[]; indent: number }) {
   const [replayOpen, setReplayOpen] = useState(false);
   const input = payloadItems(data.input);
   const output = payloadItems(data.output);
@@ -99,7 +104,7 @@ function GenerationPayload({ data, indent }: { data: PayloadRecord; indent: numb
           Replay
         </Link>
       </div>
-      {replayOpen && <ReplayDialog data={data} onClose={() => setReplayOpen(false)} />}
+      {replayOpen && <ReplayDialog data={data} attachments={attachments} onClose={() => setReplayOpen(false)} />}
       {/* One shared grid for both sections so the tag column width (and thus
           the preview start) is identical across Request and Response. */}
       <div className="trace-payload-list">
@@ -125,14 +130,10 @@ function GenerationPayload({ data, indent }: { data: PayloadRecord; indent: numb
         {outputSchema && (
           <PayloadItem tag="output_schema" text={String(outputSchema.name || 'schema')} full={JSON.stringify(outputSchema, null, 2)} />
         )}
-        {input.map((item, i) => (
-          <PayloadItem key={'in-' + i} tag={itemTag(item)} text={itemText(item)} full={itemText(item) === JSON.stringify(item) ? JSON.stringify(item, null, 2) : itemText(item)} />
-        ))}
+        {input.map((item, i) => <PayloadItem key={'in-' + i} {...payloadEntry(item, attachments)} />)}
         {typeof data.input === 'string' && <div className="trace-payload-preview">{String(data.input)}</div>}
         <div className="trace-section-label">Response</div>
-        {output.map((item, i) => (
-          <PayloadItem key={'out-' + i} tag={itemTag(item)} text={itemText(item)} full={itemText(item) === JSON.stringify(item) ? JSON.stringify(item, null, 2) : itemText(item)} />
-        ))}
+        {output.map((item, i) => <PayloadItem key={'out-' + i} {...payloadEntry(item)} />)}
         {typeof data.output === 'string' && <div className="trace-payload-preview">{String(data.output)}</div>}
       </div>
     </div>
@@ -357,7 +358,7 @@ function SpanRow({ node, depth, range, alignChevron, loadSpan }: { node: SpanNod
       )}
       {open && s.data && extraData && !(omitted && payload === 'loading') && (
         s.type === 'generation' && (s.data.input !== undefined || s.data.output !== undefined)
-          ? <GenerationPayload data={s.data} indent={14 + depth * 12} />
+          ? <GenerationPayload data={s.data} attachments={s.attachments} indent={14 + depth * 12} />
           : s.type === 'function' && (s.data.input !== undefined || s.data.output !== undefined)
             ? <FunctionPayload data={s.data} indent={14 + depth * 12} />
             : <pre className="trace-span-data" style={{ marginLeft: 14 + depth * 12 }}>

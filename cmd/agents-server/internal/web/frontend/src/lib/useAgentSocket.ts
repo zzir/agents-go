@@ -89,6 +89,7 @@ export function defaultSS(): SessionState {
 export interface TraceRow {
   run_id?: string; parent_run_id?: string; kind?: string; name?: string; data?: string; detail?: string;
   error?: string; span_id?: string; parent_id?: string; started_at?: string; ended_at?: string; payload_omitted?: boolean;
+  attachments?: AttachmentMeta[];
 }
 
 function spanDuration(startedAt?: string, endedAt?: string): string {
@@ -108,7 +109,7 @@ export function traceEventFromRow(ev: TraceRow): TraceEvent {
     kind: 'span', name: ev.name || '', type: ev.detail || '',
     span_id: ev.span_id, parent_id: ev.parent_id, parent_run_id: ev.parent_run_id,
     error: ev.error, started_at: ev.started_at, ended_at: ev.ended_at,
-    data: Object.keys(parsed).length > 0 ? parsed : null,
+    data: Object.keys(parsed).length > 0 ? parsed : null, attachments: ev.attachments,
     duration: spanDuration(ev.started_at, ev.ended_at), payloadOmitted: !!ev.payload_omitted,
   };
 }
@@ -117,6 +118,7 @@ export function traceEventFromRow(ev: TraceRow): TraceEvent {
 interface TraceSpanEvent {
   run_id: string; parent_run_id?: string; name: string; type?: string; span_id?: string; parent_id?: string;
   error?: string; started_at?: string; ended_at?: string; data?: Record<string, unknown>; payload_omitted?: boolean;
+  attachments?: AttachmentMeta[];
 }
 
 function traceEventFromLive(p: TraceSpanEvent): TraceEvent {
@@ -124,7 +126,8 @@ function traceEventFromLive(p: TraceSpanEvent): TraceEvent {
     kind: 'span', name: p.name, type: p.type || '',
     span_id: p.span_id, parent_id: p.parent_id, parent_run_id: p.parent_run_id,
     error: p.error, started_at: p.started_at, ended_at: p.ended_at,
-    data: p.data || null, duration: spanDuration(p.started_at, p.ended_at), payloadOmitted: !!p.payload_omitted,
+    data: p.data || null, attachments: p.attachments,
+    duration: spanDuration(p.started_at, p.ended_at), payloadOmitted: !!p.payload_omitted,
   };
 }
 
@@ -136,7 +139,7 @@ export function withSpanPayload(runs: Record<string, TraceEvent[]>, runId: strin
   const idx = events.findIndex(e => e.span_id === spanId);
   if (idx < 0) return runs;
   const cur = events[idx];
-  const next = { ...cur, data: full.data ?? cur.data, payloadOmitted: false };
+  const next = { ...cur, data: full.data ?? cur.data, attachments: full.attachments ?? cur.attachments, payloadOmitted: false };
   return { ...runs, [runId]: [...events.slice(0, idx), next, ...events.slice(idx + 1)] };
 }
 

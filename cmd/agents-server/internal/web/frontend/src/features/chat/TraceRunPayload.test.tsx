@@ -136,6 +136,32 @@ describe('TraceRun', () => {
     act(() => { root.unmount(); });
   });
 
+  // A user message's pictures show on its line, resolved through the span's
+  // attachments; the stored reference itself never reaches the page.
+  it('shows the images a span\'s input carries', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const gen: TraceEventData = {
+      kind: 'span', name: 'generation', type: 'generation', span_id: 'g1',
+      started_at: '2026-09-09T00:00:00.000Z', ended_at: '2026-09-09T00:00:01.000Z',
+      data: {
+        model: 'm', input_tokens: 5, cached_tokens: 3,
+        input: [{ type: 'message', role: 'user', content: [
+          { type: 'input_text', text: 'what is this' }, { type: 'input_image', image_url: 'agents-attachment:att1' },
+        ] }],
+        output: [],
+      },
+      attachments: [{ id: 'att1', url: 'https://cdn.example/a.png' }],
+    };
+    act(() => { root.render(<Harness events={[gen]} loadSpan={resolve} />); });
+    act(() => { (container.querySelector('.trace-span-clickable') as HTMLElement).click(); });
+    expect(container.querySelector('img.trace-payload-thumb')?.getAttribute('src')).toBe('https://cdn.example/a.png');
+    expect(container.textContent).toContain('what is this');
+    expect(container.textContent).not.toContain('agents-attachment:');
+    act(() => { root.unmount(); });
+  });
+
   // A function's mcp child is the same call's transport: hidden until the row
   // opens, absent from the bar's overlay, hinted by "mcp" after the name. Only
   // the agent row carries a type tag; the icon says it for the rest.

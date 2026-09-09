@@ -5711,7 +5711,7 @@ export interface paths {
         };
         /**
          * Get one trace span
-         * @description The whole row of one span — what a `summary=true` listing left out (`payload_omitted`), or what the live cap replaced with a marker on the WebSocket.
+         * @description The whole row of one span — what a `summary=true` listing left out (`payload_omitted`), or what the live cap replaced with a marker on the WebSocket — with the image attachments its input references listed beside it as `attachments`.
          */
         get: {
             parameters: {
@@ -8912,6 +8912,11 @@ export interface components {
             unavailable?: boolean;
         };
         "store.TraceEvent": {
+            /**
+             * @description Attachments are the image attachments the span's input items reference,
+             *     resolved from their stored references; URL is filled by the handler.
+             */
+            attachments?: components["schemas"]["store.EntryAttachment"][];
             created_at?: string;
             /**
              * @description Data is the span's metadata JSON. Its payload fields live in trace_blobs:

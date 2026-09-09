@@ -7,7 +7,8 @@ import { api } from '@/lib/api';
 import { useApi, useNarrow } from '@/lib/hooks';
 import { diffLines } from '@/lib/diff';
 import { providerMeta } from '@/lib/providers';
-import { PayloadItem, ResponseItems, itemTag, itemText, payloadItems, type PayloadRecord } from '@/features/chat/TracePayload';
+import { PayloadItem, ResponseItems, itemText, payloadEntry, payloadItems, type PayloadRecord } from '@/features/chat/TracePayload';
+import type { AttachmentMeta } from '@/lib/attachments';
 
 interface AgentOption {
   id: string | number;
@@ -65,7 +66,7 @@ function comparableText(items: PayloadRecord[]): string {
 // the trace), the right pane shows the replay attempts next to the original
 // response. Requests go through POST /playground/generate (no session, no
 // run, tools are schema-only and never executed).
-export function ReplayDialog({ data, onClose }: { data: PayloadRecord; onClose: () => void }) {
+export function ReplayDialog({ data, attachments, onClose }: { data: PayloadRecord; attachments?: AttachmentMeta[]; onClose: () => void }) {
   const { data: agentList } = useApi<AgentOption[]>(() => api.agents.list() as Promise<AgentOption[]>, [], 'agents');
   const agents = useMemo(() => agentList || [], [agentList]);
   const [agentId, setAgentId] = useState('');
@@ -401,7 +402,8 @@ export function ReplayDialog({ data, onClose }: { data: PayloadRecord; onClose: 
                       ? <div className="trace-empty">No input items.</div>
                       : (itemsParsed.value || []).map((it, i) => {
                         const item = (it && typeof it === 'object' ? it : { value: it }) as PayloadRecord;
-                        return <PayloadItem key={'in-' + i} tag={itemTag(item)} text={itemText(item)} full={JSON.stringify(item, null, 2)} />;
+                        const entry = payloadEntry(item, attachments);
+                        return <PayloadItem key={'in-' + i} tag={entry.tag} text={entry.text} full={JSON.stringify(item, null, 2)} images={entry.images} />;
                       })}
                 </div>
               </div>

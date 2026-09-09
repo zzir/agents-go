@@ -651,6 +651,54 @@
 .trace-ev-tag-assistant { background: var(--bgColor-success-muted);   color: var(--fgColor-success); }
 .trace-ev-tag-system    { background: var(--bgColor-attention-muted); color: var(--fgColor-attention); }
 .trace-ev-tag-fn        { background: var(--bgColor-done-muted);      color: var(--fgColor-done); }
+/* The pictures an item carries: a thumbnail strip on its line, the pictures
+   themselves once it is open (click one to zoom). */
+.trace-payload-thumbs {
+  display: inline-flex;
+  gap: var(--base-size-4);
+  vertical-align: middle;
+  margin-right: var(--base-size-6);
+}
+.trace-payload-thumb {
+  width: 20px;
+  height: 20px;
+  object-fit: cover;
+  border: 1px solid var(--borderColor-default);
+  border-radius: var(--borderRadius-small);
+  background: var(--bgColor-muted);
+}
+.trace-payload-thumb-missing {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fgColor-muted);
+}
+.trace-payload-list .trace-payload-images {
+  grid-column: 1 / -1;
+}
+.trace-payload-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--base-size-8);
+  margin: var(--base-size-4) 0;
+}
+.trace-payload-image {
+  max-height: 160px;
+  max-width: 100%;
+  border: 1px solid var(--borderColor-default);
+  border-radius: var(--borderRadius-medium);
+  cursor: zoom-in;
+}
+.trace-payload-image-missing {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--base-size-4);
+  font-size: var(--base-text-size-xs);
+  color: var(--fgColor-muted);
+  border: 1px dashed var(--borderColor-muted);
+  border-radius: var(--borderRadius-medium);
+  padding: var(--base-size-4) var(--base-size-8);
+}
 .trace-payload-preview {
   font-size: var(--base-text-size-xs);
   color: var(--fgColor-muted);

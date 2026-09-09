@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -179,8 +180,69 @@ func (s *TraceStore) list(ctx context.Context, sessionID string, beforeID string
 		if err := s.inlineAll(ctx, sessionID, events); err != nil {
 			return nil, fmt.Errorf("listing trace events for session %s: %w", sessionID, err)
 		}
+		ptrs := make([]*TraceEvent, len(events))
+		for i := range events {
+			ptrs[i] = &events[i]
+		}
+		s.attachAttachments(ctx, ptrs)
 	}
 	return events, nil
+}
+
+// TraceAttachmentIDs lists the attachment ids a span's payload references —
+// the stored image urls of its input items — each once, in order.
+func TraceAttachmentIDs(data string) []string {
+	if !strings.Contains(data, AttachmentScheme) {
+		return nil
+	}
+	var probe struct {
+		Input []json.RawMessage `json:"input"`
+	}
+	if json.Unmarshal([]byte(data), &probe) != nil {
+		return nil
+	}
+	var ids []string
+	for _, item := range probe.Input {
+		for _, id := range entryAttachmentIDs(item) {
+			if !slices.Contains(ids, id) {
+				ids = append(ids, id)
+			}
+		}
+	}
+	return ids
+}
+
+// attachAttachments fills events' Attachments from the ids their payload
+// references, with one batch read; a deleted row simply drops off the span.
+func (s *TraceStore) attachAttachments(ctx context.Context, events []*TraceEvent) {
+	perEvent := make([][]string, len(events))
+	var all []string
+	for i, ev := range events {
+		perEvent[i] = TraceAttachmentIDs(ev.Data)
+		for _, id := range perEvent[i] {
+			if !slices.Contains(all, id) {
+				all = append(all, id)
+			}
+		}
+	}
+	if len(all) == 0 {
+		return
+	}
+	var rows []Attachment
+	if err := s.db.NewSelect().Model(&rows).Where("id IN (?)", bun.List(all)).Scan(ctx); err != nil {
+		return // a panel nicety, never worth failing the span
+	}
+	byID := make(map[string]Attachment, len(rows))
+	for _, a := range rows {
+		byID[a.ID] = a
+	}
+	for i, ids := range perEvent {
+		for _, id := range ids {
+			if a, ok := byID[id]; ok {
+				events[i].Attachments = append(events[i].Attachments, EntryAttachment{ID: a.ID, Key: a.Key})
+			}
+		}
+	}
 }
 
 // inlineAll rebuilds every row's payload from one read of the session's
@@ -274,6 +336,7 @@ func (s *TraceStore) GetBySpan(ctx context.Context, sessionID, spanID string) (*
 	if err := inlinePayload(ev, bodies); err != nil {
 		return nil, err
 	}
+	s.attachAttachments(ctx, []*TraceEvent{ev})
 	return ev, nil
 }
 
