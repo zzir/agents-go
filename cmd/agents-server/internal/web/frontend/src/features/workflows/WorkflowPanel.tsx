@@ -6,7 +6,7 @@ import { Blankslate } from '@primer/react/experimental';
 import { Loading } from '@/components/Loading';
 import { ChevronUpIcon, ChevronDownIcon, TrashIcon, PlayIcon, WorkflowIcon, ZapIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
-import { PAGE_SIZE, useApi, useCrud, usePage } from '@/lib/hooks';
+import { PAGE_SIZE, invalidate, useApi, useCrud, usePage } from '@/lib/hooks';
 import { ReadOnlyContext, canDeleteRow, canDemoteRow, canEditRow } from '@/lib/access';
 import { useMe } from '@/lib/me';
 import { RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
@@ -18,7 +18,7 @@ import { toast } from '@/lib/toast';
 import { EdgeGraph, END, stepLabel, type Workflow, type WorkflowBudget, type WorkflowStep } from '@/features/workflows/graph';
 import { Disclosure } from '@/components/Disclosure';
 import { TriggersDialog } from '@/features/workflows/TriggersDialog';
-import { SessionPicker } from '@/features/sessions/SessionPicker';
+import { NEW_SESSION, SESSIONS_CHANGED, SessionPicker } from '@/features/sessions/SessionPicker';
 import { projectLabel, type Project, type SandboxLite } from '@/lib/binding';
 import '@/features/chat/workflow.css';
 import './workflow-panel.css';
@@ -251,23 +251,36 @@ function RunDialog({ workflow, sessionId, onClose }: { workflow: Workflow; sessi
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const { data: targetSession } = useApi<{ project_id?: string } | null>(
-    () => (target ? api.sessions.get(target) as Promise<{ project_id?: string }> : Promise.resolve(null)), [target]);
+    () => (target && target !== NEW_SESSION ? api.sessions.get(target) as Promise<{ project_id?: string }> : Promise.resolve(null)), [target]);
   const { data: sandboxDefs } = useApi<SandboxLite[]>(() => api.sandboxes.list() as Promise<SandboxLite[]>, [], 'sandboxes');
   const { data: projects } = useApi<Project[]>(() => api.projects.list() as Promise<Project[]>, [], 'projects');
   const [projectId, setProjectId] = useState('');
-  const unbound = !!target && !!targetSession && !targetSession.project_id;
+  const unbound = target === NEW_SESSION || (!!target && !!targetSession && !targetSession.project_id);
   const project = (projects || []).find(p => p.id === projectId);
+  // "New session" is made here, on Run, still default-named: the start names
+  // it after the workflow and brief; a refused start takes it back
+  // (invariant 69).
   const run = async () => {
     setBusy(true);
+    let made: string | null = null;
     try {
-      const body: { session_id: string; input: string; project_id?: string } = { session_id: target, input: input.trim() };
+      let sessionId = target;
+      if (sessionId === NEW_SESSION) {
+        made = sessionId = ((await api.sessions.create()) as { id: string }).id;
+      }
+      const body: { session_id: string; input: string; project_id?: string } = { session_id: sessionId, input: input.trim() };
       if (unbound && project) {
         body.project_id = project.id;
       }
       await api.workflows.run(workflow.id, body);
+      if (made) {
+        window.dispatchEvent(new Event(SESSIONS_CHANGED));
+        invalidate('sessions');
+      }
       toast.success(`Started "${workflow.name}" in the background — the result comes back to the conversation`);
       onClose();
     } catch (e) {
+      if (made) void api.sessions.delete(made).catch(() => undefined);
       toast.error((e as Error).message || 'Could not start the workflow');
     } finally {
       setBusy(false);

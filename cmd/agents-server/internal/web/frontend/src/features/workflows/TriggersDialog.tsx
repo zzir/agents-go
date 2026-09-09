@@ -3,17 +3,18 @@ import { ActionList, ActionMenu, Button, Dialog, Flash, IconButton, Label, Selec
 import { Blankslate } from '@primer/react/experimental';
 import { ClockIcon, DependabotIcon, KebabHorizontalIcon, TrashIcon, WebhookIcon, WorkflowIcon, ZapIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
-import { useApi, useCopy } from '@/lib/hooks';
+import { invalidate, useApi, useCopy } from '@/lib/hooks';
 import { nameOf, type Named } from '@/lib/named';
 import { fc } from '@/lib/form';
 import { formatTime } from '@/lib/time';
 import { toast } from '@/lib/toast';
+import { sessionTitle } from '@/lib/sessionTitle';
 import { BADGE } from '@/lib/badges';
 import { Disclosure } from '@/components/Disclosure';
 import { Loading } from '@/components/Loading';
 import { AgentAvatar } from '@/components/AgentAvatar';
 import { AgentPicker } from '@/components/AgentPicker';
-import { SessionPicker, UnboundHint } from '@/features/sessions/SessionPicker';
+import { NEW_SESSION, SESSIONS_CHANGED, SessionPicker, UnboundHint } from '@/features/sessions/SessionPicker';
 import { useServerInfo } from '@/features/settings/serverInfo';
 
 // A trigger starts work without a conversation asking — on a cron schedule,
@@ -249,22 +250,39 @@ export function TriggerForm({ fixedWorkflow, sessionId, initial, timezone, inlin
   const ready = form.session_id
     && (form.target === 'workflow' ? form.workflow_id : form.agent_config_id)
     && (form.kind !== 'cron' || form.schedule.trim());
+  // "New session" is made here, on Save, named after what the trigger starts
+  // so it can be told apart before its first fire; a refused trigger takes it
+  // back (invariant 69).
   const save = async () => {
     setBusy(true);
+    let made: string | null = null;
     try {
+      let sessionId = form.session_id;
+      if (sessionId === NEW_SESSION) {
+        const isAgent = form.target === 'agent';
+        const target = isAgent ? nameOf(agents, form.agent_config_id) : nameOf(workflows, form.workflow_id);
+        const sess = await api.sessions.create({
+          name: sessionTitle(target, form.brief),
+          ...(isAgent ? { agent_config_id: form.agent_config_id } : {}),
+        }) as { id: string };
+        made = sessionId = sess.id;
+      }
       const fields = {
-        target: form.target, kind: form.kind, schedule: form.schedule, session_id: form.session_id, brief: form.brief,
+        target: form.target, kind: form.kind, schedule: form.schedule, session_id: sessionId, brief: form.brief,
         workflow_id: form.target === 'workflow' ? form.workflow_id : undefined,
         agent_config_id: form.target === 'agent' ? form.agent_config_id : undefined,
       };
-      if (initial) {
-        onSaved(await api.triggers.update(initial.id, { ...initial, ...fields }) as Trigger, false);
-        toast.success('Trigger saved');
-      } else {
-        onSaved(await api.triggers.create({ ...fields, enabled: true }) as Trigger, true);
-        toast.success('Trigger added');
+      const saved = initial
+        ? await api.triggers.update(initial.id, { ...initial, ...fields }) as Trigger
+        : await api.triggers.create({ ...fields, enabled: true }) as Trigger;
+      if (made) {
+        window.dispatchEvent(new Event(SESSIONS_CHANGED));
+        invalidate('sessions');
       }
+      onSaved(saved, !initial);
+      toast.success(initial ? 'Trigger saved' : 'Trigger added');
     } catch (e) {
+      if (made) void api.sessions.delete(made).catch(() => undefined);
       toast.error((e as Error).message || (initial ? 'Could not save the trigger' : 'Could not add the trigger'));
     } finally {
       setBusy(false);

@@ -5,7 +5,6 @@ import { KebabHorizontalIcon, PencilIcon, PinIcon, PinSlashIcon, PlusIcon, RepoF
 import { api } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { filterSessionsByName } from '@/lib/sessionFilter';
-import { createOrReuseSession } from '@/lib/newSession';
 import { toast } from '@/lib/toast';
 
 interface Session {
@@ -34,7 +33,9 @@ interface SessionListProps {
   onDelete?: (id: string) => void;
   // A rename landed: the app patches the open conversation's title.
   onRenamed?: (id: string, name: string) => void;
-  onCreated?: () => void;
+  // New: the app opens an empty composer; the first message makes the
+  // conversation (invariant 69).
+  onNew: () => void;
   reloadKey: unknown;
   runningSessions?: Set<string>;
   awaitingSessions?: Set<string>;
@@ -146,14 +147,13 @@ function RenameDialog({ session, onClose, onRenamed }: { session: Session; onClo
   );
 }
 
-export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onRenamed: onRenamedNotify, onCreated, reloadKey, runningSessions, awaitingSessions, onOpenHub }: SessionListProps): ReactElement {
+export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onRenamed: onRenamedNotify, onNew, reloadKey, runningSessions, awaitingSessions, onOpenHub }: SessionListProps): ReactElement {
   const confirmDialog = useConfirm();
   const { data: sessions, reload, mutateData } = useApi(() => api.sessions.list() as Promise<Session[]>);
 
   useEffect(() => {
     if (reloadKey) reload(); // auto-refresh: does not throw
   }, [reloadKey, reload]);
-  const [creating, setCreating] = useState(false);
   const [query, setQuery] = useState('');
   // The search box is a button until clicked; it stays open while a filter is
   // typed, so the narrowed list is never shown without the query that made it.
@@ -171,21 +171,7 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onRe
   // For every mutation: optimistically update the cached list AND migrate active
   // state as soon as the server call succeeds, then reconcile with a background
   // reload. The optimistic list update means a reload failure can't strand a
-  // deleted session in the sidebar, hide a just-created one, or show a stale pin.
-  const handleCreate = async () => {
-    setCreating(true);
-    try {
-      const sess = await createOrReuseSession() as Session;
-      mutateData(prev => (prev ? [sess, ...prev.filter(s => s.id !== sess.id)] : [sess]));
-      onSelect(sess.id);
-      if (onCreated) onCreated();
-      reload();
-    } catch (e) {
-      toast.error((e as Error).message || 'Could not create chat');
-    } finally {
-      setCreating(false);
-    }
-  };
+  // deleted session in the sidebar or show a stale pin.
 
   // The heaviest delete in the app — the conversation goes with its messages,
   // traces and tasks — so it confirms like every other one (invariant 41).
@@ -300,8 +286,7 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onRe
           icon={PlusIcon}
           variant="invisible"
           aria-label="New"
-          onClick={handleCreate}
-          disabled={creating}
+          onClick={onNew}
         />
       </div>
       <div className="sidebar-scroll">

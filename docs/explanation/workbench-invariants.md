@@ -427,3 +427,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     jitters. The list stays mounted under the rail; only the snap animates, a
     pointer-tracking resize never. `useResizablePane` (`lib/hooks.ts`) and
     `AppShell.tsx`; the narrow layout's drawer has no rail.
+69. **A conversation is made by its first message, never by New.** The
+    sidebar's and the rail's New open an empty composer; the send that follows
+    creates the conversation (`app.tsx` handleSend, `/workflow` alike). A form
+    that needs one — a trigger, a Run… — offers "New session" as a choice and
+    makes it on Save, so a cancelled form leaves nothing and two triggers never
+    share one; a trigger's is named after what it starts (`lib/sessionTitle.ts`).

@@ -59,7 +59,7 @@ Three ways, all the same start:
 
 - **You**: type `/workflow ship <brief>` in the composer (typing `/` offers
   the commands; arrow keys walk them), or **Run…** on the definition in the
-  hub, into a conversation of your choice.
+  hub, into a conversation of your choice or a new one.
 - **The model**: `spawn_task(workflow="ship", input=<brief>)` — the one tool
   that starts any background work; the workflow is a parameter, not a fifth
   tool. It asks after it with `task_status(task_id)`, which reports the step
@@ -79,8 +79,9 @@ workflow. A busy session, or one at its background-task cap
 
 ## Run it on a schedule or from a webhook
 
-A **trigger** starts work with no conversation asking. Hub → Triggers → Add,
-or:
+A **trigger** starts work with no conversation asking. Hub → Triggers → Add
+(its conversation is picked there; **New session** makes one, named after the
+trigger, as you add it), or:
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \

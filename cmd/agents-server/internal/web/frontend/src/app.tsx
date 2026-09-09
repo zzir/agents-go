@@ -31,7 +31,6 @@ import { patchToolCall, type ToolCallPatch } from '@/lib/timeline';
 import { syncTaskCard } from '@/lib/streamReducer';
 import { clearSessionPrefs } from '@/lib/drafts';
 import { toast } from '@/lib/toast';
-import { createOrReuseSession } from '@/lib/newSession';
 import { MeContext, useMeLoader } from '@/lib/me';
 import { useNarrow } from '@/lib/hooks';
 import { readHash, writeHash, consumeAuthFragment, restoreReturnHash } from '@/lib/route';
@@ -425,7 +424,7 @@ function App() {
     let sid = activeSession;
     if (!sid) {
       try {
-        const sess = await api.sessions.create('New Session', agentConfigId) as { id: string };
+        const sess = await api.sessions.create(agentConfigId ? { agent_config_id: agentConfigId } : {}) as { id: string };
         sid = sess.id;
         setActiveSession(sid);
         setActivePanel(null);
@@ -494,7 +493,7 @@ function App() {
     let isNew = false;
     if (!sid) {
       try {
-        const sess = await api.sessions.create('New Session', agentConfigId) as { id: string };
+        const sess = await api.sessions.create(agentConfigId ? { agent_config_id: agentConfigId } : {}) as { id: string };
         sid = sess.id;
         isNew = true;
         setActiveSession(sid);
@@ -773,7 +772,7 @@ function App() {
     return set;
   }, [ss]);
 
-  const handleSessionCreated = useCallback(() => {
+  const focusComposer = useCallback(() => {
     setTimeout(() => {
       const el = document.querySelector('.chat-input-box textarea') as HTMLTextAreaElement | null;
       if (el) el.focus();
@@ -792,22 +791,12 @@ function App() {
     if (narrow) setSidebarOpen(false);
   }, [narrow]);
 
-  // New from the rail, where the list and its own + are hidden: made here,
-  // then announced the way a picker's New session is, so the list relists.
-  const [railCreating, setRailCreating] = useState(false);
-  const handleRailCreate = useCallback(async () => {
-    setRailCreating(true);
-    try {
-      const sess = await createOrReuseSession();
-      handleSelectSession(sess.id);
-      window.dispatchEvent(new Event(SESSIONS_CHANGED));
-      handleSessionCreated();
-    } catch (e) {
-      toast.error((e as Error).message || 'Could not create chat');
-    } finally {
-      setRailCreating(false);
-    }
-  }, [handleSelectSession, handleSessionCreated]);
+  // New, from the sidebar or the rail: an empty composer and no conversation
+  // yet — the first message makes one (handleSend) — invariant 69.
+  const handleNewSession = useCallback(() => {
+    handleSelectSession(null);
+    focusComposer();
+  }, [handleSelectSession, focusComposer]);
 
   // A run in the hub opens its conversation with the execution's detail in
   // the Inspector — the run belongs to that conversation, and the panel there
@@ -839,7 +828,7 @@ function App() {
       onSelect={handleSelectSession}
       onDelete={handleDeleteSession}
       onRenamed={handleRenamed}
-      onCreated={handleSessionCreated}
+      onNew={handleNewSession}
       reloadKey={sessionReloadKey}
       runningSessions={runningSessions}
       awaitingSessions={awaitingSessions}
@@ -849,7 +838,7 @@ function App() {
   const railActions = (
     <>
       <IconButton icon={WorkflowIcon} variant="invisible" aria-label="Workflows" onClick={handleOpenHub} />
-      <IconButton icon={PlusIcon} variant="invisible" aria-label="New" onClick={() => { void handleRailCreate(); }} disabled={railCreating} />
+      <IconButton icon={PlusIcon} variant="invisible" aria-label="New" onClick={handleNewSession} />
     </>
   );
 

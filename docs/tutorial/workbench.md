@@ -50,12 +50,12 @@ dialog with a panel per thing.
 2. **Agents** → New: a name, the provider you just made, a model, and
    instructions. Leave the rest at its defaults. Save.
 
-That is enough to talk. **New** (the sidebar's + button) opens a conversation;
-pick the agent in the composer, type, and the reply streams in. The
-conversation appears in the sidebar, and its `…` menu pins, renames, forks or
-deletes it. Drag the sidebar's edge inward past its minimum and it folds into
-an icon rail that keeps Workflows and New; drag it back out, or click the
-rail's expand icon, to restore the list. The top
+That is enough to talk. **New** (the sidebar's + button) opens an empty
+composer; pick the agent, type, and your first message makes the conversation
+as the reply streams in. It appears in the sidebar, and its `…` menu pins,
+renames, forks or deletes it. Drag the sidebar's edge inward past its minimum
+and it folds into an icon rail that keeps Workflows and New; drag it back out,
+or click the rail's expand icon, to restore the list. The top
 bar's three icons open the Inspector beside the conversation: **Traces**
 (every model call, tool call and handoff with tokens and latency — expand a
 generation span to see exactly what the model was sent, and **Replay** it with

@@ -183,7 +183,8 @@ export const api = {
     listAll: () => request<S['store.Session'][]>('/sessions?all=true'),
     setOwner: (id: string, userId: string) =>
       request<S['store.Session']>(`/sessions/${id}/owner`, { method: 'PUT', body: JSON.stringify({ user_id: userId }) }),
-    create: (name: string, agentConfigId?: string) => request('/sessions', { method: 'POST', body: JSON.stringify({ name, ...(agentConfigId ? { agent_config_id: agentConfigId } : {}) }) }),
+    // Both optional: an unnamed conversation is "New Session" until its first message titles it.
+    create: (body: { name?: string; agent_config_id?: string } = {}) => request('/sessions', { method: 'POST', body: JSON.stringify(body) }),
     update: (id: string | number, name: string) => request(`/sessions/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
     // limit/beforeId page BACKWARDS: the newest `limit` entries first, then
     // older pages keyed on the smallest id received. A cursor rather than an
