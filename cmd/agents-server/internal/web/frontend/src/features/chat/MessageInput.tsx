@@ -56,6 +56,16 @@ export function MessageInput({ sessionId, onSend, onCancel, disabled, running, a
     setAtts(saved.map(meta => ({ key: `saved-${meta.id}`, file: null as unknown as File, localUrl: meta.url, status: 'ready' as const, meta })));
   }, [sessionId]);
 
+  // A restored draft opens with the caret at its end, where typing left off:
+  // React writes the initial value before the element is in the document, and
+  // the browser then starts the selection at 0.
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el || !el.value) return;
+    el.setSelectionRange(el.value.length, el.value.length);
+    el.scrollTop = el.scrollHeight;
+  }, []);
+
   const syncAttDraft = useCallback((list: AttachmentDraft[]) => {
     saveAttachmentDraft(sessionId, list.filter(a => a.status === 'ready' && a.meta).map(a => a.meta!));
   }, [sessionId]);
