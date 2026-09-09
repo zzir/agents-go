@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+
+	"github.com/zzir/agents-go/tracing"
 )
 
 // FallbackModel tries a chain of Models in order until one succeeds.
@@ -57,6 +59,7 @@ func (m *FallbackModel) Respond(ctx context.Context, req ModelRequest) (*ModelRe
 				RecordDiagnostic(ctx, DiagModelFallback, errors.Join(errs...), map[string]any{
 					"used_index": i, "models": len(m.models), "streaming": false,
 				})
+				tracing.SpanFrom(ctx).Set("fallback_index", i)
 			}
 			return resp, nil
 		}
@@ -89,6 +92,7 @@ func (m *FallbackModel) StreamResponse(ctx context.Context, req ModelRequest) it
 					RecordDiagnostic(ctx, DiagModelFallback, errors.Join(errs...), map[string]any{
 						"used_index": i, "models": len(m.models), "streaming": true,
 					})
+					tracing.SpanFrom(ctx).Set("fallback_index", i)
 				}
 				return
 			}

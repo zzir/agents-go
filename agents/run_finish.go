@@ -44,6 +44,7 @@ func (r *runner) finishRun(ctx context.Context, finalOutput any) (*RunResult, er
 		res, gerr := runStageConcurrent(ctx, r.rc, outGuardrails,
 			GuardrailPayload{Stage: StageOutput, Agent: agent, Output: finalOutput})
 		r.recordGuardrailResults(res...)
+		annotateGuardrailSpan(gspan, res)
 		if gerr != nil {
 			gspan.SetError(gerr.Error(), nil)
 			gspan.Finish()
@@ -66,6 +67,10 @@ func (r *runner) finishRun(ctx context.Context, finalOutput any) (*RunResult, er
 	// The flag answers "did the caller stop this", not "where did it stop": a
 	// run can reach its final output on the very turn the stop was asked for (spec §2.12).
 	res.StoppedEarly = r.ctrl.stopRequested()
+	r.agentSpan.Set("ended_by", "final_output")
+	if res.StoppedEarly {
+		r.agentSpan.Set("stopped_early", true)
+	}
 	return res, nil
 }
 

@@ -176,6 +176,7 @@ func (m *MessagesModel) Respond(ctx context.Context, req agents.ModelRequest) (*
 		Usage:            usageFromMessage(msg.Usage),
 		ResponseID:       msg.ID,
 		RequestID:        requestID,
+		Model:            string(msg.Model),
 		Status:           status,
 		IncompleteReason: incompleteReason,
 	}, nil

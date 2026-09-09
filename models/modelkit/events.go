@@ -155,6 +155,9 @@ type FinalResponse struct {
 	ID     string
 	Output []agents.OutputItem
 	Usage  ResponseUsage
+	// Model is the model the provider reports having answered with; empty
+	// leaves it off the event.
+	Model string
 }
 
 // terminalEvent builds response.completed / response.incomplete.
@@ -183,6 +186,9 @@ func terminalEvent(eventType, status string, fr FinalResponse, incompleteReason 
 				"reasoning_tokens": fr.Usage.ReasoningTokens,
 			},
 		},
+	}
+	if fr.Model != "" {
+		response["model"] = fr.Model
 	}
 	if incompleteReason != "" {
 		response["incomplete_details"] = map[string]any{"reason": incompleteReason}

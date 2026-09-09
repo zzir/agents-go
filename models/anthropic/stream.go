@@ -125,7 +125,7 @@ func synthesizeStream(stream *ssestream.Stream[ant.MessageStreamEventUnion], yie
 					return
 				}
 			}
-			final := modelkit.FinalResponse{ID: acc.ID, Output: output, Usage: responseUsage(acc.Usage)}
+			final := modelkit.FinalResponse{ID: acc.ID, Output: output, Usage: responseUsage(acc.Usage), Model: string(acc.Model)}
 			if status == "incomplete" {
 				if !emit(modelkit.IncompleteEvent(final, incompleteReason)) {
 					return

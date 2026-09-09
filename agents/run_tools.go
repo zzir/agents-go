@@ -361,7 +361,15 @@ func (r *runner) toolGuardrails(agent *Agent, tool *Tool) []Guardrail {
 // runToolStage runs the guardrails covering stage for one call; replaced means
 // the call's result is the message (input: tool skipped; output: substituted).
 func (r *runner) runToolStage(ctx context.Context, agent *Agent, stage GuardrailStage, run toolRunFunction, output any) (bool, string, error) {
-	results, msg, replaced, err := runStageSequential(ctx, r.rc, r.toolGuardrails(agent, run.Tool), GuardrailPayload{
+	guardrails := selectStage(r.toolGuardrails(agent, run.Tool), stage)
+	if len(guardrails) == 0 {
+		return false, "", nil
+	}
+	// Its own span beside the function span, as the input and output stages
+	// have: a Replace is otherwise invisible in the trace.
+	span := r.trace.StartGuardrailSpan(string(stage), r.agentParentID())
+	defer span.Finish()
+	results, msg, replaced, err := runStageSequential(ctx, r.rc, guardrails, GuardrailPayload{
 		Stage:      stage,
 		Agent:      agent,
 		ToolName:   run.Call.Name,
@@ -370,7 +378,9 @@ func (r *runner) runToolStage(ctx context.Context, agent *Agent, stage Guardrail
 		Output:     output,
 	})
 	r.recordGuardrailResults(results...)
+	annotateGuardrailSpan(span, results)
 	if err != nil {
+		span.SetError(err.Error(), nil)
 		return false, "", err
 	}
 	return replaced, msg, nil

@@ -139,6 +139,7 @@ func (m *ResponsesModel) Respond(ctx context.Context, req agents.ModelRequest) (
 		Usage:            usageFromResponse(usage),
 		ResponseID:       resp.ID,
 		RequestID:        requestID,
+		Model:            resp.Model,
 		Status:           string(resp.Status),
 		IncompleteReason: resp.IncompleteDetails.Reason,
 	}, nil

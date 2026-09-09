@@ -73,6 +73,7 @@ func (r *runner) firstTurnInputGuardrails(
 		res, gerr := runStageConcurrent(ctx, r.rc, blocking,
 			GuardrailPayload{Stage: StageInput, Agent: startAgent, Input: out.original})
 		r.recordGuardrailResults(res...)
+		annotateGuardrailSpan(gspan, res)
 		if repl, ok := inputReplacement(res); ok {
 			// Replace means the model must see the replacement: rebuild THIS
 			// turn's input from it, or the model gets the original.
@@ -115,6 +116,7 @@ func (r *runner) firstTurnInputGuardrails(
 			gspan := r.trace.StartGuardrailSpan("input", parentID)
 			res, gerr := runStageConcurrent(gctx, r.rc, parallel,
 				GuardrailPayload{Stage: StageInput, Agent: startAgent, Input: payloadInput})
+			annotateGuardrailSpan(gspan, res)
 			if gerr != nil {
 				gspan.SetError(gerr.Error(), nil)
 				// The verdict stops the raced call; delivered on ch, it outranks
@@ -183,6 +185,26 @@ func (r *runner) raceModelCall(span *tracing.SpanHandle, call func(context.Conte
 	}
 	out.modelErr = err
 	return out
+}
+
+// guardrailActionNames spells a verdict for span data.
+var guardrailActionNames = map[GuardrailAction]string{
+	GuardrailAllow: "allow", GuardrailReplace: "replace", GuardrailTrip: "trip",
+}
+
+// annotateGuardrailSpan records which guardrails a stage consulted and each
+// one's verdict; names and verdicts are not payload, so no gate applies.
+func annotateGuardrailSpan(span *tracing.SpanHandle, res []GuardrailResult) {
+	if len(res) == 0 {
+		return
+	}
+	out := make([]map[string]any, 0, len(res))
+	for _, g := range res {
+		out = append(out, map[string]any{
+			"name": g.Guardrail.resolvedName(), "action": guardrailActionNames[g.Decision.Action],
+		})
+	}
+	span.Set("guardrails", out)
 }
 
 // recordGuardrailResults appends guardrail results under the lock, since

@@ -310,6 +310,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []In
 		// A graceful stop lands at the turn boundary: the finished turn's
 		// tools and session save are in, so the run ends cleanly.
 		if turn > st.startTurn && r.ctrl.stopRequested() {
+			r.agentSpan.Set("ended_by", "stop")
 			res := r.baseResult()
 			res.StoppedEarly = true
 			return res, nil
@@ -609,6 +610,7 @@ func (r *runner) handleHandoff(ctx context.Context, st *turnState, step *singleS
 	}
 	r.log.Info(ctx, "handoff",
 		slog.String("from", st.agent.Name), slog.String("to", step.NewAgent.Name))
+	r.agentSpan.Set("ended_by", "handoff")
 	st.agent = step.NewAgent
 	st.runStartHooks = true
 	if !r.emit(&AgentUpdatedStreamEvent{NewAgent: st.agent}) {
@@ -626,6 +628,8 @@ func (r *runner) handleInterruption(ctx context.Context, step *singleStepResult,
 	// Commit only after the persist succeeds: a failed attempt leaves the take
 	// for finishStream to roll back and redeliver.
 	r.ctrl.commitInjected()
+	r.agentSpan.Set("ended_by", "interruption")
+	r.agentSpan.Set("pending_tools", pendingToolNames(step.Interruptions))
 	res := r.baseResult()
 	res.Interruptions = step.Interruptions
 	res.State = r.buildPauseState(turn, resp, step)

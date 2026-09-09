@@ -97,8 +97,8 @@ func (r *runner) compactContext(ctx context.Context, point CompactionPoint, entr
 		return entries, false
 	}
 	span.Set("point", point.String())
-	span.Set("entries_before", before)
-	span.Set("entries_after", len(out))
+	span.Set("before_items", before)
+	span.Set("after_items", len(out))
 	span.Finish()
 	// Whole entries, not the count: same count with different content is a
 	// legal pass (spec §2.5f).

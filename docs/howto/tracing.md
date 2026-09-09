@@ -21,11 +21,11 @@ res, err := agents.RunSync(ctx, agent, input, agents.RunOptions{
 
 | Span | `Type` | Covers |
 |---|---|---|
-| `agent:<name>` | `SpanTypeAgent` | One agent's tenure (per handoff segment); parent of the spans below |
-| `generation:<name>` | `SpanTypeGeneration` | One model call (records `response_id`, per-call `input_tokens`/`output_tokens`/`total_tokens`, and — see below — the full request/response) |
+| `agent:<name>` | `SpanTypeAgent` | One agent's tenure (per handoff segment; `ended_by` says how it ended — `final_output`, `handoff`, `interruption` with `pending_tools`, or `stop`); parent of the spans below |
+| `generation:<name>` | `SpanTypeGeneration` | One model call (records `response_id`, `request_id`, `model_used`, the provider's `status`/`incomplete_reason`, per-call `input_tokens`/`output_tokens`/`total_tokens` with `cached_tokens`/`cache_write_tokens`/`reasoning_tokens` when reported, `fallback_index` when a `FallbackModel` answered with a later backend, and — see below — the full request/response) |
 | `function:<tool>` | `SpanTypeFunction` | One function tool invocation (records `call_id`; errors recorded) |
-| `handoff:<tool>` | `SpanTypeHandoff` | A handoff execution |
-| `guardrail:input` / `guardrail:output` | `SpanTypeGuardrail` | Guardrail batches (tripwires recorded as errors) |
+| `handoff:<tool>` | `SpanTypeHandoff` | A handoff execution (records `to_agent`) |
+| `guardrail:input` / `guardrail:output` / `guardrail:tool_input` / `guardrail:tool_output` | `SpanTypeGuardrail` | One stage's guardrails (`guardrails`: each one's name and `action` — `allow`, `replace`, `trip`; tripwires recorded as errors) |
 | `compaction` | `SpanTypeCompaction` | A compaction pass (entries before/after) |
 | `model_retry` | `SpanTypeModelRetry` | One retried model call, nested under the generation span it belongs to |
 | `mcp.list_tools` / `mcp.call_tool` | `SpanTypeMCP` | An MCP server round trip |
@@ -51,9 +51,11 @@ settings; the `Extra*` passthrough fields are excluded), `"handoffs"` (tool
 name, agent name, description, and input schema per handoff), `"output_schema"`
 (`name`, `schema`, `strict`), `"prompt"`, `"previous_response_id"`/`"conversation_id"`,
 and `"output"` (the items returned). Streamed calls additionally record
-`"time_to_first_token_ms"`. Function spans record the tool call's `"input"`
-(arguments JSON) and stringified `"output"`. This is what makes a trace answer
-"what did the model actually see?". Because spans flow through exporters, this
+`"time_to_first_token_ms"`, and one that failed mid-message the items that
+completed as `"output"` and the text in flight as `"partial_text"`. Function
+spans record the tool call's `"input"` (arguments JSON) and stringified
+`"output"`; handoff spans the call's arguments as `"input"`. This is what makes
+a trace answer "what did the model actually see?". Because spans flow through exporters, this
 content leaves the process — disable it when exporting somewhere conversation
 content must not go:
 

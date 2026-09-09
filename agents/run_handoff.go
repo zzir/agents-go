@@ -21,6 +21,9 @@ func (r *runner) executeHandoff(ctx context.Context, from *Agent, handoffs []too
 	}
 	span := r.trace.StartHandoffSpan(run.Handoff.ToolName, r.agentParentID())
 	defer span.Finish()
+	if r.traceIncludeSensitiveData() && run.Call.Arguments != "" {
+		span.Set("input", run.Call.Arguments)
+	}
 	// Invalid input is a *ModelBehaviorError, not a zero-valued transfer (spec §2.7h).
 	if verr := validateHandoffInput(&run.Handoff, run.Call.Arguments); verr != nil {
 		span.SetError(verr.Error(), map[string]any{"details": "invalid handoff input"})
@@ -41,6 +44,7 @@ func (r *runner) executeHandoff(ctx context.Context, from *Agent, handoffs []too
 	} else if target == nil {
 		return nil, NewUserError("handoff %q has neither Target nor OnInvoke", run.Handoff.ToolName)
 	}
+	span.Set("to_agent", target.Name)
 	if run.Handoff.OnHandoff != nil {
 		if err := run.Handoff.OnHandoff(ctx, r.rc, run.Call.Arguments); err != nil {
 			return nil, fmt.Errorf("handoff %q on-handoff callback failed: %w", run.Handoff.ToolName, err)

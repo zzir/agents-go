@@ -1456,6 +1456,25 @@ nothing more: a host renders progress from the stream's own events. Beyond
 - **A span carries the id that joins it to what it produced**: `call_id` on a
   function span, `response_id` on a generation span, recorded whether or not
   sensitive data is.
+- **A generation span records the provider's verdict**: `status`,
+  `incomplete_reason`, `request_id` and `model_used` (the model the provider
+  says answered), ungated like `response_id`.
+- **Usage details are recorded only when reported**: `cached_tokens`,
+  `cache_write_tokens`, `reasoning_tokens`; an absent key means none.
+- **A call a `FallbackModel` answered with a later backend records
+  `fallback_index`** on the generation span.
+- **A streamed call that fails mid-message keeps what it produced**: the items
+  that completed as `output`, the text in flight as `partial_text`, gated
+  like output.
+- **An agent span records how its tenure ended**: `ended_by` is
+  `final_output`, `handoff`, `interruption` (with `pending_tools`) or `stop`;
+  a final output on the turn a stop was asked for adds `stopped_early`.
+- **A handoff span names its target** in `to_agent`; the call's arguments are
+  its `input`, gated like a function span's.
+- **A guardrail span records its verdicts** in `guardrails` — each guardrail
+  consulted with its `action`: `allow`, `replace`, `trip`.
+- **The tool stages get guardrail spans of their own** — `guardrail:tool_input`,
+  `guardrail:tool_output` — beside the function span, under the agent span.
 - **Sandbox is instrumented at the tool layer**, not per backend.
 
 ### 2.11d Diagnostics

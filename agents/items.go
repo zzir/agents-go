@@ -42,6 +42,9 @@ type ModelResponse struct {
 	// headers (e.g. OpenAI's x-request-id), useful for support/debugging. Empty
 	// when the backend does not supply one.
 	RequestID string
+	// Model is the model the provider reports having answered with — an alias
+	// resolved, a fallback taken. Empty when the backend does not say.
+	Model string
 	// Status is the provider's own verdict on the response — "completed",
 	// "incomplete", … — and IncompleteReason says why when it is not complete.
 	// "incomplete" is not "failed": a truncated response still arrives with

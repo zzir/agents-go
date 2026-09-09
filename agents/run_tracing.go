@@ -7,7 +7,8 @@ import (
 )
 
 // setGenerationUsage records one model call's token counts on its generation span;
-// rc.Usage holds the run-wide accumulation separately.
+// rc.Usage holds the run-wide accumulation separately. A detail count is
+// recorded only when the provider reported one.
 func setGenerationUsage(span *tracing.SpanHandle, u *Usage) {
 	if u == nil {
 		return
@@ -15,6 +16,26 @@ func setGenerationUsage(span *tracing.SpanHandle, u *Usage) {
 	span.Set("input_tokens", u.InputTokens)
 	span.Set("output_tokens", u.OutputTokens)
 	span.Set("total_tokens", u.TotalTokens)
+	if n := u.InputTokensDetails.CachedTokens; n > 0 {
+		span.Set("cached_tokens", n)
+	}
+	if n := u.InputTokensDetails.CacheWriteTokens; n > 0 {
+		span.Set("cache_write_tokens", n)
+	}
+	if n := u.OutputTokensDetails.ReasoningTokens; n > 0 {
+		span.Set("reasoning_tokens", n)
+	}
+}
+
+// pendingToolNames lists the tools a pause waits on, each once, in call order.
+func pendingToolNames(interruptions []*ToolApprovalItem) []string {
+	names := make([]string, 0, len(interruptions))
+	for _, it := range interruptions {
+		if !slices.Contains(names, it.ToolName) {
+			names = append(names, it.ToolName)
+		}
+	}
+	return names
 }
 
 // traceIncludeSensitiveData resolves RunOptions.Observe.IncludeSensitiveData; nil
@@ -105,10 +126,23 @@ func (r *runner) startGenerationSpan(agent *Agent, req ModelRequest) *tracing.Sp
 	return span
 }
 
-// finishGenerationSpan records the call's response id, usage and (unless
-// sensitive-data tracing is off) output items, then ends the span.
+// finishGenerationSpan records the call's ids, the model that answered, the
+// provider's status, usage and (unless sensitive-data tracing is off) output
+// items, then ends the span.
 func (r *runner) finishGenerationSpan(span *tracing.SpanHandle, resp *ModelResponse) {
 	span.Set("response_id", resp.ResponseID)
+	if resp.RequestID != "" {
+		span.Set("request_id", resp.RequestID)
+	}
+	if resp.Model != "" {
+		span.Set("model_used", resp.Model)
+	}
+	if resp.Status != "" {
+		span.Set("status", resp.Status)
+	}
+	if resp.IncompleteReason != "" {
+		span.Set("incomplete_reason", resp.IncompleteReason)
+	}
 	setGenerationUsage(span, resp.Usage)
 	if span.Span != nil && r.traceIncludeSensitiveData() {
 		span.Set("output", slices.Clone(resp.Output))

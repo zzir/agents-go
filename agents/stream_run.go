@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"time"
 
@@ -39,6 +40,7 @@ func (r *runner) streamOneModelCall(ctx context.Context, span *tracing.SpanHandl
 	}
 	for event, err := range model.StreamResponse(ctx, req) {
 		if err != nil {
+			r.recordPartialOutput(span, asm)
 			return nil, err
 		}
 		if event == nil {
@@ -53,7 +55,25 @@ func (r *runner) streamOneModelCall(ctx context.Context, span *tracing.SpanHandl
 		}
 		asm.observe(event)
 	}
-	return asm.result()
+	resp, err := asm.result()
+	if err != nil {
+		r.recordPartialOutput(span, asm)
+	}
+	return resp, err
+}
+
+// recordPartialOutput puts what a failed stream had produced on its span — the
+// items that completed, the text of the one in flight — gated like output.
+func (r *runner) recordPartialOutput(span *tracing.SpanHandle, asm *responseAssembler) {
+	if !r.traceIncludeSensitiveData() {
+		return
+	}
+	if len(asm.items) > 0 {
+		span.Set("output", slices.Clone(asm.items))
+	}
+	if asm.text.Len() > 0 {
+		span.Set("partial_text", asm.text.String())
+	}
 }
 
 // responseAssembler assembles the final ModelResponse from a raw Responses
@@ -63,10 +83,15 @@ func (r *runner) streamOneModelCall(ctx context.Context, span *tracing.SpanHandl
 type responseAssembler struct {
 	final *ModelResponse
 	items []OutputItem
+	// text is the assistant text streamed so far: what a stream that fails
+	// mid-message had produced.
+	text strings.Builder
 }
 
 func (a *responseAssembler) observe(event *ResponseStreamEvent) {
 	switch event.Type {
+	case EventResponseOutputTextDelta:
+		a.text.WriteString(event.Delta)
 	case EventResponseOutputItemDone:
 		// Collected as a fallback for backends (e.g. ChatGPT with store=false)
 		// whose terminal event carries an empty Output array.
@@ -78,6 +103,7 @@ func (a *responseAssembler) observe(event *ResponseStreamEvent) {
 			Output:     completed.Response.Output,
 			Usage:      usageFromStreamResponse(&completed.Response),
 			ResponseID: completed.Response.ID,
+			Model:      completed.Response.Model,
 			Status:     string(completed.Response.Status),
 		}
 	case EventResponseIncomplete:
@@ -90,6 +116,7 @@ func (a *responseAssembler) observe(event *ResponseStreamEvent) {
 			Output:           inc.Response.Output,
 			Usage:            usageFromStreamResponse(&inc.Response),
 			ResponseID:       inc.Response.ID,
+			Model:            inc.Response.Model,
 			Status:           string(inc.Response.Status),
 			IncompleteReason: inc.Response.IncompleteDetails.Reason,
 		}

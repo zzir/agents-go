@@ -3,6 +3,8 @@ package agents
 import (
 	"context"
 	"errors"
+	"maps"
+	"slices"
 	"sync"
 	"testing"
 
@@ -317,5 +319,277 @@ func TestFunctionSpanErrorRedaction(t *testing.T) {
 	span = newRun(true)
 	if span.Error == nil || span.Error.Message != "secret-arg-value leaked" {
 		t.Errorf("with sensitive data on, error = %+v, want the raw message", span.Error)
+	}
+}
+
+// A generation span carries the provider's ids and verdict on the call — the
+// request id a support ticket needs, the model that actually answered, the
+// status — and a usage detail count only when the provider reported one.
+func TestGenerationSpanRecordsResponseMeta(t *testing.T) {
+	agent, proc := tracingAgent(t)
+	resp := modelResp(messageOutput(t, "final"))
+	resp.RequestID, resp.Model, resp.Status = "req_1", "fake-model-2026-01", "completed"
+	resp.Usage = &Usage{Requests: 1, InputTokens: 10, OutputTokens: 5, TotalTokens: 15,
+		InputTokensDetails:  InputTokensDetails{CachedTokens: 7, CacheWriteTokens: 2},
+		OutputTokensDetails: OutputTokensDetails{ReasoningTokens: 3}}
+	agent.ModelImpl = &fakeModel{responses: []*ModelResponse{resp}}
+	if _, err := RunSync(context.Background(), agent, "hi", RunOptions{Observe: ObserveOptions{Tracer: tracing.NewTracer(proc)}}); err != nil {
+		t.Fatal(err)
+	}
+	d := proc.generationSpans()[0].Data
+	want := map[string]any{
+		"request_id": "req_1", "model_used": "fake-model-2026-01", "status": "completed",
+		"cached_tokens": int64(7), "cache_write_tokens": int64(2), "reasoning_tokens": int64(3),
+	}
+	for k, v := range want {
+		if d[k] != v {
+			t.Errorf("%s = %#v, want %#v", k, d[k], v)
+		}
+	}
+	if _, ok := d["incomplete_reason"]; ok {
+		t.Errorf("a completed response carries no incomplete_reason: %v", d)
+	}
+
+	// Nothing reported, nothing recorded: most calls have no cache figure,
+	// and an absent key is what the panel reads as "none".
+	agent2, proc2 := tracingAgent(t)
+	if _, err := RunSync(context.Background(), agent2, "hi", RunOptions{Observe: ObserveOptions{Tracer: tracing.NewTracer(proc2)}}); err != nil {
+		t.Fatal(err)
+	}
+	d = proc2.generationSpans()[0].Data
+	for _, k := range []string{"cached_tokens", "cache_write_tokens", "reasoning_tokens", "request_id", "model_used", "status"} {
+		if _, ok := d[k]; ok {
+			t.Errorf("%s recorded without the provider reporting it: %v", k, d)
+		}
+	}
+}
+
+// A streamed call that dies mid-message leaves what it had produced on its
+// span — the items that completed, the text in flight — under the same gate
+// as output.
+func TestGenerationSpanRecordsPartialOutputOnStreamFailure(t *testing.T) {
+	const doneItem = `{"type":"message","id":"m0","role":"assistant","status":"completed","content":[{"type":"output_text","text":"first","annotations":[]}]}`
+	run := func(include bool) *tracing.Span {
+		t.Helper()
+		model := &eventStreamModel{
+			events: []ResponseStreamEvent{
+				mustStreamEvent(t, `{"type":"response.output_item.done","output_index":0,"sequence_number":1,"item":`+doneItem+`}`),
+				mustStreamEvent(t, `{"type":"response.output_text.delta","item_id":"m1","output_index":1,"content_index":0,"delta":"hel","sequence_number":2}`),
+				mustStreamEvent(t, `{"type":"response.output_text.delta","item_id":"m1","output_index":1,"content_index":0,"delta":"lo","sequence_number":3}`),
+			},
+			err: errors.New("connection reset"),
+		}
+		agent := &Agent{Name: "a", ModelImpl: model}
+		proc := &recordingProcessor{}
+		stream, _ := Run(context.Background(), agent, "hi", RunOptions{Observe: ObserveOptions{Tracer: tracing.NewTracer(proc), IncludeSensitiveData: &include}})
+		var runErr error
+		for _, err := range stream {
+			if err != nil {
+				runErr = err
+			}
+		}
+		if runErr == nil {
+			t.Fatal("a stream that failed must fail the run")
+		}
+		gens := proc.generationSpans()
+		if len(gens) != 1 || gens[0].Error == nil {
+			t.Fatalf("want 1 failed generation span, got %+v", gens)
+		}
+		return gens[0]
+	}
+
+	span := run(true)
+	if span.Data["partial_text"] != "hello" {
+		t.Errorf("partial_text = %#v, want the streamed text", span.Data["partial_text"])
+	}
+	if out, ok := span.Data["output"].([]OutputItem); !ok || len(out) != 1 {
+		t.Errorf("output = %#v, want the one completed item", span.Data["output"])
+	}
+
+	span = run(false)
+	for _, k := range []string{"partial_text", "output"} {
+		if _, ok := span.Data[k]; ok {
+			t.Errorf("%s recorded despite the sensitive-data opt-out: %v", k, span.Data)
+		}
+	}
+}
+
+// An agent span says how its tenure ended — a final output, a handoff, a pause
+// for approval — so a trace tells a paused run from a finished one.
+func TestAgentSpanRecordsHowItEnded(t *testing.T) {
+	agentSpans := func(proc *recordingProcessor) map[string]*tracing.Span {
+		out := map[string]*tracing.Span{}
+		for _, s := range proc.spansOfType(tracing.SpanTypeAgent) {
+			out[s.Name] = s
+		}
+		return out
+	}
+
+	t.Run("final output", func(t *testing.T) {
+		agent, proc := tracingAgent(t)
+		if _, err := RunSync(context.Background(), agent, "hi", RunOptions{Observe: ObserveOptions{Tracer: tracing.NewTracer(proc)}}); err != nil {
+			t.Fatal(err)
+		}
+		d := agentSpans(proc)["agent:a"].Data
+		if d["ended_by"] != "final_output" {
+			t.Errorf("ended_by = %#v, want final_output", d["ended_by"])
+		}
+		if _, ok := d["stopped_early"]; ok {
+			t.Errorf("stopped_early recorded on a run nobody stopped: %v", d)
+		}
+	})
+
+	t.Run("interruption names the pending tools", func(t *testing.T) {
+		agent, proc := tracingAgent(t)
+		agent.Tools[0].NeedsApproval = true
+		agent.ModelImpl = &fakeModel{responses: []*ModelResponse{
+			modelResp(functionCallOutput(t, "get_weather", "c1", `{"city":"SF"}`)),
+		}}
+		res, err := RunSync(context.Background(), agent, "hi", RunOptions{Observe: ObserveOptions{Tracer: tracing.NewTracer(proc)}})
+		if err != nil || len(res.Interruptions) != 1 {
+			t.Fatalf("want a paused run, got %+v / %v", res, err)
+		}
+		d := agentSpans(proc)["agent:a"].Data
+		if d["ended_by"] != "interruption" {
+			t.Errorf("ended_by = %#v, want interruption", d["ended_by"])
+		}
+		if names, _ := d["pending_tools"].([]string); !slices.Equal(names, []string{"get_weather"}) {
+			t.Errorf("pending_tools = %#v, want [get_weather]", d["pending_tools"])
+		}
+	})
+
+	t.Run("handoff, and the handoff span names its target", func(t *testing.T) {
+		billing := &Agent{Name: "billing", ModelImpl: &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "paid"))}}}
+		triage := &Agent{Name: "triage", Handoffs: []Handoff{HandoffTo(billing)}, ModelImpl: &fakeModel{responses: []*ModelResponse{
+			modelResp(functionCallOutput(t, "transfer_to_billing", "c1", `{}`)),
+		}}}
+		proc := &recordingProcessor{}
+		if _, err := RunSync(context.Background(), triage, "go", RunOptions{Observe: ObserveOptions{Tracer: tracing.NewTracer(proc)}}); err != nil {
+			t.Fatal(err)
+		}
+		spans := agentSpans(proc)
+		if spans["agent:triage"].Data["ended_by"] != "handoff" || spans["agent:billing"].Data["ended_by"] != "final_output" {
+			t.Errorf("ended_by = %#v / %#v, want handoff / final_output", spans["agent:triage"].Data["ended_by"], spans["agent:billing"].Data["ended_by"])
+		}
+		hs := proc.spansOfType(tracing.SpanTypeHandoff)
+		if len(hs) != 1 || hs[0].Data["to_agent"] != "billing" || hs[0].Data["input"] != "{}" {
+			t.Fatalf("handoff span = %+v, want to_agent billing and the call's input", hs)
+		}
+	})
+
+	// A stop lands at the turn boundary, or the model finishes on the very
+	// turn it was asked for — the span tells the two apart as RunResult does.
+	t.Run("stop", func(t *testing.T) {
+		stopped := func(responses ...*ModelResponse) map[string]any {
+			t.Helper()
+			agent, proc := tracingAgent(t)
+			agent.ModelImpl = &fakeModel{responses: responses}
+			stream, ctrl := Run(context.Background(), agent, "hi", RunOptions{Observe: ObserveOptions{Tracer: tracing.NewTracer(proc)}})
+			ctrl.StopAfterTurn()
+			for _, err := range stream {
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			return agentSpans(proc)["agent:a"].Data
+		}
+		d := stopped(modelResp(functionCallOutput(t, "get_weather", "c1", `{"city":"SF"}`)), modelResp(messageOutput(t, "done")))
+		if d["ended_by"] != "stop" {
+			t.Errorf("a run stopped at the boundary = %v, want ended_by stop", d)
+		}
+		d = stopped(modelResp(messageOutput(t, "done")))
+		if d["ended_by"] != "final_output" || d["stopped_early"] != true {
+			t.Errorf("a run that finished on the stop turn = %v, want final_output with stopped_early", d)
+		}
+	})
+}
+
+// A guardrail span names what it consulted and how each one ruled, and the
+// tool stages get a span of their own beside the function span — a Replace
+// is otherwise invisible in the trace.
+func TestGuardrailSpansRecordVerdicts(t *testing.T) {
+	agent, proc := tracingAgent(t)
+	agent.Guardrails = []Guardrail{{Name: "pii", Stages: []GuardrailStage{StageInput}, Blocking: true,
+		Run: func(context.Context, *RunContext, GuardrailPayload) (GuardrailDecision, error) {
+			return Replace("redacted", nil), nil
+		}}}
+	agent.Tools[0].Guardrails = []Guardrail{
+		{Name: "arg_check", Stages: []GuardrailStage{StageToolInput},
+			Run: func(context.Context, *RunContext, GuardrailPayload) (GuardrailDecision, error) {
+				return Allow(nil), nil
+			}},
+		{Name: "out_check", Stages: []GuardrailStage{StageToolOutput},
+			Run: func(context.Context, *RunContext, GuardrailPayload) (GuardrailDecision, error) {
+				return Replace("clean", nil), nil
+			}},
+	}
+	agent.ModelImpl = &fakeModel{responses: []*ModelResponse{
+		modelResp(functionCallOutput(t, "get_weather", "c1", `{"city":"SF"}`)),
+		modelResp(messageOutput(t, "done")),
+	}}
+	if _, err := RunSync(context.Background(), agent, "hi", RunOptions{Observe: ObserveOptions{Tracer: tracing.NewTracer(proc)}}); err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]*tracing.Span{}
+	for _, s := range proc.spansOfType(tracing.SpanTypeGuardrail) {
+		byName[s.Name] = s
+	}
+	agentID := proc.spansOfType(tracing.SpanTypeAgent)[0].SpanID
+	for name, want := range map[string][2]string{
+		"guardrail:input":       {"pii", "replace"},
+		"guardrail:tool_input":  {"arg_check", "allow"},
+		"guardrail:tool_output": {"out_check", "replace"},
+	} {
+		s := byName[name]
+		if s == nil {
+			t.Fatalf("no %s span; got %v", name, slices.Collect(maps.Keys(byName)))
+		}
+		v, _ := s.Data["guardrails"].([]map[string]any)
+		if len(v) != 1 || v[0]["name"] != want[0] || v[0]["action"] != want[1] {
+			t.Errorf("%s guardrails = %v, want [{%s %s}]", name, s.Data["guardrails"], want[0], want[1])
+		}
+		if s.ParentID != agentID {
+			t.Errorf("%s hangs under %s, want the agent span", name, s.ParentID)
+		}
+	}
+}
+
+// A generation answered by a fallback says so on its span: the model it names
+// is the one configured, not the one that answered.
+func TestGenerationSpanRecordsFallbackIndex(t *testing.T) {
+	agent, proc := tracingAgent(t)
+	backup := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "from backup"))}}
+	agent.ModelImpl = NewFallbackModel(&failingModel{err: errors.New("primary down")}, backup)
+	if _, err := RunSync(context.Background(), agent, "hi", RunOptions{Observe: ObserveOptions{Tracer: tracing.NewTracer(proc)}}); err != nil {
+		t.Fatal(err)
+	}
+	if d := proc.generationSpans()[0].Data; d["fallback_index"] != 1 {
+		t.Errorf("fallback_index = %#v, want 1", d["fallback_index"])
+	}
+
+	agent2, proc2 := tracingAgent(t)
+	if _, err := RunSync(context.Background(), agent2, "hi", RunOptions{Observe: ObserveOptions{Tracer: tracing.NewTracer(proc2)}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := proc2.generationSpans()[0].Data["fallback_index"]; ok {
+		t.Error("fallback_index recorded on a call the primary answered")
+	}
+}
+
+// The runner's own compaction pass spells its counts the way every other
+// compaction span does, so one reader serves them all.
+func TestCompactionPointSpanCounts(t *testing.T) {
+	c := &recordingCompactor{drop: 2}
+	agent, proc := tracingAgent(t)
+	if _, err := RunSync(context.Background(), agent, "now", RunOptions{
+		Conversation: ConversationOptions{Session: seededSession(t, "one", "two", "three")},
+		Compaction:   CompactionOptions{Compactor: c, Points: CompactBeforeRun},
+		Observe:      ObserveOptions{Tracer: tracing.NewTracer(proc)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	spans := proc.spansOfType(tracing.SpanTypeCompaction)
+	if len(spans) != 1 || spans[0].Data["before_items"] != 3 || spans[0].Data["after_items"] != 1 {
+		t.Fatalf("compaction span = %+v, want before_items 3 / after_items 1", spans)
 	}
 }
