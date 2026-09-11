@@ -454,7 +454,7 @@ files inherit the group's scope and owner, so a published repository never
 splits itself on an upstream addition. Documents are capped at 256 KiB,
 imports at 200 skills per repository. In the UI the visibility badge sits on
 the repo group's heading rather than each row, and who owns which group is the
-Settings hub's Skills panel in its All members view.
+Settings hub's Skills panel in its All view.
 
 ### Providers — `/api/v1/providers`
 

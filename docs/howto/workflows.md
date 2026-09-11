@@ -11,7 +11,7 @@ page is the doing.
 
 ## Define one
 
-Sidebar → **Workflows** → Definitions → New. Or over the API:
+Sidebar → **Workflows** → Definitions → **+ Add**. Or over the API:
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
