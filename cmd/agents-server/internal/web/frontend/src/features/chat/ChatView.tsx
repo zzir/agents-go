@@ -1,6 +1,7 @@
 import './chat.css';
 import { useState, useEffect, useCallback, useMemo, useRef, type MouseEvent, type ReactNode } from 'react';
 import { Button, ActionMenu, ActionList, Link } from '@primer/react';
+import { Blankslate } from '@primer/react/experimental';
 import { api } from '@/lib/api';
 import { CHECK_ICON } from '@/lib/markdownShared';
 import { type TurnPart, type TimelineEntry, type Branches, type WorkflowStartedNote } from '@/lib/timeline';
@@ -135,6 +136,8 @@ export interface ChatViewActions {
   onLoadSpan?: (spanSessionId: string, runId: string, spanId: string) => Promise<void>;
   // Opens the Settings dialog, optionally on a named tab (e.g. 'agents').
   onSettingsOpen?: (tab?: string) => void;
+  // Fetches the session's history again after a failed first load.
+  onRetryLoad?: () => void;
   onPanelChange: (panel: InspectorPanel) => void;
   // Opens the global terminal panel (app-level, independent of the session).
   // Open-only by design: closing/collapsing happens on the panel itself. The
@@ -163,6 +166,8 @@ interface ChatViewProps {
   // are blocked until it is made, since the run resumes on it. A paused
   // background task does not block; its marker is the sidebar's.
   awaiting?: boolean;
+  // Why the first load of the history failed, when it did (state.loadError).
+  loadError?: string;
   settingsReloadKey?: number;
   // Bumped by the app when the set of session bindings changed; refreshes the
   // Project picker's list.
@@ -172,7 +177,7 @@ interface ChatViewProps {
 }
 
 export function ChatView({
-  sessionId, sessionName, sessionAgentId, sessionBinding, state, awaiting, settingsReloadKey, bindingsVersion, panel, actions,
+  sessionId, sessionName, sessionAgentId, sessionBinding, state, awaiting, loadError, settingsReloadKey, bindingsVersion, panel, actions,
 }: ChatViewProps) {
   // The rendered timeline drops the entries no longer on the active branch;
   // the trace panel still lists their runs, so it reads the raw entries.
@@ -805,14 +810,20 @@ export function ChatView({
   );
 
 
-  // A selected session whose timeline is still loading. No session has nothing
-  // to load, so it falls through to the composer below.
+  // A selected session whose timeline is still loading, or could not be. No
+  // session has nothing to load, so it falls through to the composer below.
   if (sessionId && !loaded && messages.length === 0) {
     return scoped(
       <div className="chat-main">
         <div className="chat-content">
           {topBar}
-          <Loading kind="panel" />
+          {loadError ? (
+            <Blankslate>
+              <Blankslate.Heading>Could not load this session</Blankslate.Heading>
+              <Blankslate.Description>{loadError}</Blankslate.Description>
+              <Blankslate.PrimaryAction onClick={() => actions.onRetryLoad?.()}>Retry</Blankslate.PrimaryAction>
+            </Blankslate>
+          ) : <Loading kind="panel" />}
         </div>
       </div>
     );

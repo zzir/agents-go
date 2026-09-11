@@ -42,6 +42,8 @@ export interface SessionState {
   runQuestions: Record<string, { question: string; onPath: boolean }>;
   liveRunId: string | null;
   loaded: boolean;
+  // Why the persisted timeline could not be loaded; cleared by the next attempt.
+  loadError?: string;
   // Backwards pagination over the persisted history. entries are the raw rows
   // fetched so far, kept because a later page has to be REBUILT with the ones
   // already shown — buildTimeline folds turns across rows, so prepending a
@@ -326,6 +328,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
     if (!sid || loadedRef.current.has(sid)) return Promise.resolve();
     loadedRef.current.add(sid);
     const gen = timelineGenRef.current[sid] || 0;
+    updateSS(sid, s => (s.loadError ? { ...s, loadError: undefined } : s));
     return fetchTimeline(sid).then(({ timeline, entries, hasMore }) => {
       // Superseded by a later branch move's own reload — drop it (see
       // reloadMessages).
@@ -333,8 +336,9 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
       updateSS(sid, s => s.loaded
         ? { ...s, messages: mergeLiveTail(timeline, s.messages, s.liveRunId), entries, hasMore }
         : { ...s, messages: timeline, entries, hasMore, loaded: true });
-    }).catch(err => {
+    }).catch((err: Error) => {
       loadedRef.current.delete(sid);
+      updateSS(sid, s => ({ ...s, loadError: err?.message || 'Could not load the conversation' }));
       throw err;
     });
   }, [fetchTimeline, updateSS]);

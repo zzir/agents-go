@@ -331,7 +331,11 @@ function App() {
     // unknown session rather than 404, so validate existence explicitly: a 404
     // means drop the id — the app falls back to the empty state and typing then
     // starts a new session instead of running against a non-existent session.
-    const tryLoad = () => loadSession(activeSession).catch(() => toast.error('Could not load conversation'));
+    // A failed first load shows in the view (state.loadError); a failed
+    // re-read of a conversation already on screen can only be said here.
+    const tryLoad = () => loadSession(activeSession).catch(() => {
+      if (ssRef.current[activeSession]?.messages.length) toast.error('Could not refresh the conversation');
+    });
     api.sessions.get(activeSession)
       .then((sess) => {
         if (cancelled) return;
@@ -364,6 +368,11 @@ function App() {
   useEffect(() => {
     if (activeSession) loadTraces(activeSession);
   }, [activeSession, loadTraces]);
+
+  // The view's Retry after a failed first load.
+  const handleRetryLoad = useCallback(() => {
+    if (activeSession) loadSession(activeSession).catch(() => undefined);
+  }, [activeSession, loadSession]);
 
   // reloadTimeline re-reads a session's persisted history after a server-side
   // change the client cannot patch in — a branch move (a different branch is a
@@ -686,9 +695,9 @@ function App() {
     onSend: handleSend, onCancel: handleCancel, onApprove: handleApprove, onReject: handleReject, onFork: handleFork,
     onLoadEarlier: handleLoadEarlier, onSwitchBranch: handleSwitchBranch, onCompact: handleCompact, onRegenerate: handleRegenerate,
     onWatchTask: watchTask, onUnwatchTask: unwatchTask, onPatchTask: patchTask, onLoadSpan: handleLoadSpan,
-    onPanelChange: setActivePanel, onTerminalOpen: handleTerminalOpen, onSettingsOpen: handleOpenSettings,
+    onPanelChange: setActivePanel, onTerminalOpen: handleTerminalOpen, onSettingsOpen: handleOpenSettings, onRetryLoad: handleRetryLoad,
   }), [handleSend, handleCancel, handleApprove, handleReject, handleFork, handleLoadEarlier, handleSwitchBranch, handleCompact,
-    handleRegenerate, watchTask, unwatchTask, patchTask, handleLoadSpan, handleTerminalOpen, handleOpenSettings]);
+    handleRegenerate, watchTask, unwatchTask, patchTask, handleLoadSpan, handleTerminalOpen, handleOpenSettings, handleRetryLoad]);
 
   // A signature that moves with any execution in any conversation (every
   // connection hears every session's task.updated), for the hub's Runs view
@@ -836,6 +845,7 @@ function App() {
       sessionBinding={sessionBinding}
       state={currentSS}
       awaiting={!!activeSession && approvalSessions.has(activeSession)}
+      loadError={currentSS.loadError}
       settingsReloadKey={settingsReloadKey}
       bindingsVersion={bindingsVersion}
       panel={activePanel}

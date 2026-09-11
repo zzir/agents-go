@@ -242,6 +242,20 @@ describe('useAgentSocket run events', () => {
     await t.unmount();
   });
 
+  it('a failed first load records why, and the retry clears it', async () => {
+    apiMock.sessions.messages.mockImplementation(async () => { throw new Error('502 bad gateway'); });
+    const t = await mount(() => S1);
+    await act(async () => { await t.hook().loadSession(S1).catch(() => undefined); });
+    expect(t.store[S1].loaded).toBe(false);
+    expect(t.store[S1].loadError).toBe('502 bad gateway');
+    apiMock.sessions.messages.mockImplementation(async (sid: string) => [userRow(sid, 'hi')]);
+    await act(async () => { await t.hook().loadSession(S1); });
+    expect(t.store[S1].loadError).toBeUndefined();
+    expect(t.store[S1].loaded).toBe(true);
+    expect(t.store[S1].messages).toHaveLength(1);
+    await t.unmount();
+  });
+
   it('a deleted conversation takes no writes until it is loaded again', async () => {
     const t = await mount(() => S1);
     await act(async () => { t.hook().deleteSession(S1); });
