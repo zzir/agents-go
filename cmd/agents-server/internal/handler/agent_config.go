@@ -162,7 +162,7 @@ func (h *AgentConfigHandler) List(c *gin.Context) {
 // Create persists a new agent configuration from the request body.
 //
 //	@Summary		Create agent
-//	@Description	Secret fields (api_key, fallback_models[].api_key) are write-only: responses mask them with ********; sending the mask back keeps the stored value, "" clears it. Tool selections whose statically known tool names would collide are rejected.
+//	@Description	The credential lives on the agent's provider. The one secret field here, resilience.fallback_models[].api_key, is write-only: responses mask it with ********; sending the mask back keeps the stored value, "" clears it. Tool selections whose statically known tool names would collide are rejected.
 //	@Tags			agents
 //	@Accept			json
 //	@Produce		json
@@ -222,7 +222,7 @@ func (h *AgentConfigHandler) Get(c *gin.Context) {
 // Masked secret fields keep their stored values.
 //
 //	@Summary		Update agent
-//	@Description	Full replace. Secret fields are write-only: send back the ******** mask to keep the stored value, "" to clear it; a mask kept across a provider_type or base_url change is rejected (the stored key belongs to the previous destination). Tool selections whose statically known tool names would collide are rejected.
+//	@Description	Full replace. The one secret field, resilience.fallback_models[].api_key, is write-only: send back the ******** mask to keep the stored value, "" to clear it; a masked entry restores its key only against a stored entry with the same provider_type, base_url and model. Tool selections whose statically known tool names would collide are rejected.
 //	@Tags			agents
 //	@Accept			json
 //	@Produce		json

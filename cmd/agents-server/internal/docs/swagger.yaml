@@ -2386,8 +2386,7 @@ info:
   description: 'REST API of agents-server, the web server over the agents-go SDK:
     sessions, runs, agents, MCP servers, memories, settings, skills, providers, workflows,
     triggers, guardrails, sandboxes and projects. A run starts over REST (POST /sessions/{id}/runs)
-    or the WebSocket protocol (docs/reference/protocol.md) and streams over either;
-    this spec covers the HTTP surface.'
+    or the WebSocket protocol and streams over either; this spec covers the HTTP surface.'
   title: agents-server API
   version: "1.0"
 openapi: 3.1.0
@@ -2415,10 +2414,10 @@ paths:
       tags:
       - agents
     post:
-      description: 'Secret fields (api_key, fallback_models[].api_key) are write-only:
-        responses mask them with ********; sending the mask back keeps the stored
-        value, "" clears it. Tool selections whose statically known tool names would
-        collide are rejected.'
+      description: 'The credential lives on the agent''s provider. The one secret
+        field here, resilience.fallback_models[].api_key, is write-only: responses
+        mask it with ********; sending the mask back keeps the stored value, "" clears
+        it. Tool selections whose statically known tool names would collide are rejected.'
       requestBody:
         content:
           application/json:
@@ -2517,10 +2516,11 @@ paths:
       tags:
       - agents
     put:
-      description: 'Full replace. Secret fields are write-only: send back the ********
-        mask to keep the stored value, "" to clear it; a mask kept across a provider_type
-        or base_url change is rejected (the stored key belongs to the previous destination).
-        Tool selections whose statically known tool names would collide are rejected.'
+      description: 'Full replace. The one secret field, resilience.fallback_models[].api_key,
+        is write-only: send back the ******** mask to keep the stored value, "" to
+        clear it; a masked entry restores its key only against a stored entry with
+        the same provider_type, base_url and model. Tool selections whose statically
+        known tool names would collide are rejected.'
       parameters:
       - description: Agent ID
         in: path
@@ -3240,9 +3240,15 @@ paths:
                   $ref: '#/components/schemas/handler.UserLabel'
                 type: array
           description: OK
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Forbidden
       security:
       - BearerAuth: []
-      summary: List user labels (id, name, email) for owner display
+      summary: List user labels (id, name, email) for owner pickers (admin)
       tags:
       - auth
   /auth/users:
@@ -5721,7 +5727,7 @@ paths:
             schema:
               title: fork
               type: object
-        description: '{message_id?: number, exclusive?: bool, label?: string}'
+        description: '{message_id?: string, exclusive?: bool, label?: string}'
       responses:
         "201":
           content:
@@ -5848,7 +5854,7 @@ paths:
         in: query
         name: before_id
         schema:
-          type: integer
+          type: string
       responses:
         "200":
           content:
@@ -5970,8 +5976,9 @@ paths:
       description: 'Starts an agent run on the session. Default returns 201 with a
         run id. With the header `Prefer: wait=N` (RFC 7240) the request is held up
         to N seconds (capped at 10 minutes): 200 with the final output when the run
-        ends in time — or status "interrupted" when it pauses for tool approval (act
-        via /sessions/{id}/approvals) — else 202 with the run id, still running (`Preference-Applied:
+        ends in time — or status "interrupted" when it pauses for tool approval (list
+        via /sessions/{id}/approvals, decide via POST /approvals/{tool_call_id}/approve
+        or /reject) — else 202 with the run id, still running (`Preference-Applied:
         wait=N` marks the honored wait). Fails 409 if the session already has an active
         run.'
       parameters:
@@ -6099,7 +6106,7 @@ paths:
         in: query
         name: before_id
         schema:
-          type: integer
+          type: string
       - description: Leave the payload fields out of data (rows marked payload_omitted)
         in: query
         name: summary
@@ -6186,10 +6193,11 @@ paths:
       - settings
   /settings:
     get:
-      description: Every stored key/value. Secrets are masked; a key the registry
-        no longer defines is flagged `unknown` with its value masked too (whether
-        it was a secret is unknowable), so it can be deleted. The definitions themselves
-        are at /setting-defs.
+      description: Every stored key/value. Secrets are masked, and so is the user:pass
+        of proxy_url; the storage (s3_*) keys are listed for admins only. A key the
+        registry no longer defines is flagged `unknown` with its value masked too
+        (whether it was a secret is unknowable), so it can be deleted. The definitions
+        themselves are at /setting-defs.
       responses:
         "200":
           content:
@@ -6240,6 +6248,8 @@ paths:
       tags:
       - settings
     get:
+      description: Secrets are masked, and so is the user:pass of proxy_url; a storage
+        (s3_*) key is 403 for a member.
       parameters:
       - description: Setting key
         in: path
@@ -6254,6 +6264,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/handler.SettingView'
           description: OK
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Forbidden
         "404":
           content:
             application/json:

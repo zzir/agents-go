@@ -388,8 +388,8 @@ func (h *SessionHandler) Delete(c *gin.Context) {
 }
 
 // Fork creates a new session by copying entries from the source session up
-// to (and including) a given entry row ID. When message_id is omitted (or 0),
-// all entries are copied.
+// to (and including) a given entry id. When message_id is omitted, all
+// entries are copied.
 //
 //	@Summary		Fork session
 //	@Description	Copies entries (and their traces) into a new session. message_id bounds the copy; omit it to copy everything. exclusive=true excludes the boundary entry itself.
@@ -397,7 +397,7 @@ func (h *SessionHandler) Delete(c *gin.Context) {
 //	@Accept			json
 //	@Produce		json
 //	@Param			id		path		string	true	"Source session ID"
-//	@Param			fork	body		object	false	"{message_id?: number, exclusive?: bool, label?: string}"
+//	@Param			fork	body		object	false	"{message_id?: string, exclusive?: bool, label?: string}"
 //	@Success		201		{object}	store.Session
 //	@Failure		400		{object}	ErrorResponse
 //	@Failure		404		{object}	ErrorResponse
@@ -474,7 +474,7 @@ func (h *SessionHandler) Fork(c *gin.Context) {
 //	@Produce		json
 //	@Param			id			path		string	true	"Session ID"
 //	@Param			limit		query		int		false	"Max entries to return; 0 or absent returns all"
-//	@Param			before_id	query		int		false	"Only entries with id < before_id (backwards cursor)"
+//	@Param			before_id	query		string	false	"Only entries with id < before_id (backwards cursor)"
 //	@Success		200			{array}		store.EntryView
 //	@Failure		500			{object}	ErrorResponse
 //	@Security		BearerAuth

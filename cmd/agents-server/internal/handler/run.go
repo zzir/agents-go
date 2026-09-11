@@ -53,7 +53,7 @@ type createRunResp struct {
 // with the run id when N passes first.
 //
 //	@Summary		Start run
-//	@Description	Starts an agent run on the session. Default returns 201 with a run id. With the header `Prefer: wait=N` (RFC 7240) the request is held up to N seconds (capped at 10 minutes): 200 with the final output when the run ends in time — or status "interrupted" when it pauses for tool approval (act via /sessions/{id}/approvals) — else 202 with the run id, still running (`Preference-Applied: wait=N` marks the honored wait). Fails 409 if the session already has an active run.
+//	@Description	Starts an agent run on the session. Default returns 201 with a run id. With the header `Prefer: wait=N` (RFC 7240) the request is held up to N seconds (capped at 10 minutes): 200 with the final output when the run ends in time — or status "interrupted" when it pauses for tool approval (list via /sessions/{id}/approvals, decide via POST /approvals/{tool_call_id}/approve or /reject) — else 202 with the run id, still running (`Preference-Applied: wait=N` marks the honored wait). Fails 409 if the session already has an active run.
 //	@Tags			runs
 //	@Accept			json
 //	@Produce		json
