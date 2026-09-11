@@ -1,8 +1,7 @@
 import type { AttachmentMeta } from '@/lib/attachments';
-// ItemDisplay mirrors the SDK's agents.ItemDisplay: what the RUNNER decided an
+// ItemDisplay mirrors the SDK's agents.ItemDisplay: what the runner decided an
 // entry looks like, recorded when it happened. The frontend never parses
-// wire-format item JSON, and the server no longer re-derives this at read time —
-// it only ever produced a worse version of what the SDK already knew.
+// wire-format item JSON.
 interface ItemDisplay {
   kind: string;
   renderer?: string;
@@ -189,6 +188,9 @@ interface UserEntry {
   runId?: string;
   // The message's image attachments, for the thumbnail grid.
   attachments?: AttachmentMeta[];
+  // Stamped on this browser's own not-yet-sent bubble (no run or row id yet):
+  // what a rollback finds, and what tells two identical sends apart.
+  clientMsgId?: string;
 }
 
 // WorkflowStartedNote is the data of a started note: a workflow's start (which
@@ -246,14 +248,6 @@ interface CompactionEntry {
 
 type TimelineEntry = UserEntry | SystemEntry | TurnEntry | CompactionEntry;
 
-interface HookEvent {
-  agent_name?: string;
-  tool_name?: string;
-  from?: string;
-  to?: string;
-  detail?: string;
-}
-
 interface ToolCallPatch {
   output?: string;
   status?: string | null;
@@ -269,34 +263,17 @@ interface ToolCallPatch {
   task?: ToolCall['task'];
 }
 
-export type { EntryView, ItemDisplay, DisplayExtra, CompactionInfo, CompactionEntry, Branches, ToolCall, ToolsPart, TextPart, ErrorPart, CancelledPart, ThinkingPart, HandoffPart, TurnPart, TurnEntry, UserEntry, SystemEntry, WorkflowStartedNote, TimelineEntry, HookEvent, ToolCallPatch };
-export { DISPLAY };
+export type { EntryView, ItemDisplay, DisplayExtra, CompactionInfo, CompactionEntry, Branches, ToolCall, ToolsPart, TextPart, ErrorPart, CancelledPart, ThinkingPart, HandoffPart, TurnPart, TurnEntry, UserEntry, SystemEntry, WorkflowStartedNote, TimelineEntry, ToolCallPatch };
 
-// buildTimeline folds a session's entries into the rendered timeline.
-//
-// It dispatches on the entry's KIND and its recorded display kind, not on a
-// role string the server invented per row. That is the whole point of the entry
-// model: the runner knew this was a tool call when it made one, and the reader
-// should not be re-deducing it from a projection.
-//
-// The timeline is DECOUPLED from compaction: folded entries render in place,
-// in full, and the checkpoint renders where it sits as an inline marker.
-// Compaction soft-deletes from the MODEL's context, never from what happened —
-// which entries the model still reads is the Context panel's question, not the
-// transcript's. (Hiding the folded turns inside the marker made the
-// conversation unreadable past every pass, and broke everything that reads the
-// rendered timeline — the trace panel's run grouping above all.)
+// buildTimeline folds a session's entries into the rendered timeline,
+// dispatching on each entry's kind and recorded display kind. Folded entries
+// render in place and the checkpoint inline — invariant 24.
 export function buildTimeline(entries: EntryView[] | null | undefined): TimelineEntry[] {
   if (!entries) return [];
 
-  // Off-path entries are abandoned attempts. They are dropped from the rendered
-  // conversation — showing both answers to the same question inline would be
-  // showing a conversation that never happened — and surfaced instead as the
-  // "2 / 3" switcher on the attempt that IS current. The filter is NOT gated
-  // on a fork existing: right after a regenerate's branch switch the abandoned
-  // attempt is still the user message's ONLY child (the new attempt has not
-  // persisted anything yet, and the switch's leaf is not a child), so a fork
-  // gate would leave the old answer on screen for the whole regeneration.
+  // Off-path entries (abandoned attempts) are dropped and surfaced as the
+  // switcher on the current attempt; the filter is not gated on a fork
+  // existing — invariant 19.
   const forks = findForks(entries);
   return assemble(entries.filter(e => e.on_path !== false), forks);
 }

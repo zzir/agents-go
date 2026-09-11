@@ -19,7 +19,7 @@
 //      'completed' — per-call status is not persisted; the rejection notice
 //      survives in the call's output text.
 import { describe, it, expect } from 'vitest';
-import { buildTimeline, type EntryView, type TurnEntry } from '@/lib/timeline';
+import { buildTimeline, type EntryView, type TimelineEntry, type TurnEntry } from '@/lib/timeline';
 import {
   ensureLiveTurn, mergeLiveTail, appendMessageItem, appendReasoningItem, finalizeTurn,
   appendErrorPart, appendCancelledPart, appendToolCall, applyToolResult, applyTaskTerminal, startTaskAttempt, syncTaskCard, appendHandoffPart,
@@ -444,14 +444,14 @@ describe('stream/replay isomorphism', () => {
     const persisted = buildTimeline([
       { id: "1", run_id: 'run-old', kind: 'item', role: 'user', content: 'hello', entry_id: 'u1' },
     ]);
-    const stale = [
+    const stale: TimelineEntry[] = [
       { role: 'user', content: 'hello', clientMsgId: 'c1' },
       { role: 'turn', parts: [{ type: 'text', content: 'OLD ANSWER' }], runId: 'run-old' },
-    ] as unknown as ReturnType<typeof buildTimeline>;
+    ];
     // No live run: the stale turn is dropped, the bubble dedups onto its row.
     expect(mergeLiveTail(persisted, stale, null)).toEqual(persisted);
     // A different run is live: the stale turn still does not come back.
-    const merged = mergeLiveTail(persisted, [...stale, { role: 'turn', parts: [], runId: RUN }] as unknown as ReturnType<typeof buildTimeline>, RUN);
+    const merged = mergeLiveTail(persisted, [...stale, { role: 'turn', parts: [], runId: RUN }], RUN);
     expect(merged.filter(m => m.role === 'turn').map(m => (m as TurnEntry).runId)).toEqual([RUN]);
   });
 
@@ -463,10 +463,10 @@ describe('stream/replay isomorphism', () => {
     const persisted = buildTimeline([
       { id: "1", run_id: 'r0', kind: 'item', role: 'user', content: 'x' },
     ]);
-    const live = [
+    const live: TimelineEntry[] = [
       { role: 'user', content: 'x', clientMsgId: 'c1' },
       { role: 'user', content: 'x', clientMsgId: 'c2' },
-    ] as unknown as ReturnType<typeof buildTimeline>;
+    ];
     const merged = mergeLiveTail(persisted, live);
     expect(merged.filter(m => m.role === 'user')).toHaveLength(2);
   });

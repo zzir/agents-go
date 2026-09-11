@@ -90,14 +90,13 @@ function sameMembers(a: Set<string>, b: Set<string>): boolean {
   return true;
 }
 
-// hasPendingApproval reports whether a conversation's latest turns hold a tool
+// hasPendingApproval reports whether any turn of a conversation holds a tool
 // call that needs approval and has no decision yet.
 function hasPendingApproval(messages: SessionState['messages']): boolean {
   for (const m of messages) {
     if (m.role !== 'turn') continue;
-    for (const part of (m as { parts?: Array<{ type: string; toolCalls?: Array<{ needs_approval?: boolean; status?: string | null }> }> }).parts || []) {
-      if (part.type !== 'tools') continue;
-      if ((part.toolCalls || []).some(tc => tc.needs_approval && !tc.status)) return true;
+    for (const part of m.parts) {
+      if (part.type === 'tools' && part.toolCalls.some(tc => tc.needs_approval && !tc.status)) return true;
     }
   }
   return false;
@@ -517,7 +516,7 @@ function App() {
     if (!wsRef.current.send(EV.runCreate, payload)) {
       // The socket dropped between the isConnected() check and the send: roll
       // back the optimistic bubble so it isn't left stranded with no run.
-      updateSS(sid, s => ({ ...s, messages: s.messages.filter((m: { clientMsgId?: string }) => m.clientMsgId !== clientMsgId) }));
+      updateSS(sid, s => ({ ...s, messages: s.messages.filter(m => !(m.role === 'user' && m.clientMsgId === clientMsgId)) }));
       toast.error('WebSocket disconnected — message not sent');
       return;
     }

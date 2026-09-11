@@ -2,7 +2,7 @@ import type { AttachmentMeta } from '@/lib/attachments';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { WSClient } from '@/lib/ws';
 import { EV, ERR, type RunDiagnostic, type TaskRow } from '@/lib/protocol';
-import { buildTimeline, type DisplayExtra, type EntryView } from '@/lib/timeline';
+import { buildTimeline, type DisplayExtra, type EntryView, type TimelineEntry, type ToolCall } from '@/lib/timeline';
 import {
   ensureLiveTurn, mergeLiveTail, appendMessageItem, appendReasoningItem, finalizeTurn,
   appendErrorPart, appendCancelledPart, appendToolCall, applyToolResult, syncTaskCard, appendToolProgress, appendHandoffPart,
@@ -23,8 +23,7 @@ export { taskStateFromRow, taskRetryable } from '@/lib/taskEvents';
 export type { TaskState, TaskViewState } from '@/lib/taskEvents';
 
 export interface SessionState {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  messages: any[];
+  messages: TimelineEntry[];
   streaming: string;
   reasoning: string;
   running: boolean;
@@ -221,18 +220,18 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
     // A short page means we reached the beginning; a full one means there may
     // be more, and the next fetch settles it.
     const page = { entries, hasMore: limit > 0 && entries.length >= limit };
-    const timeline = buildTimeline(entries) as SessionState['messages'];
+    const timeline = buildTimeline(entries);
     if (!pending || pending.length === 0) return { ...page, timeline };
     const seen = new Set<string>();
     for (const m of timeline) {
       if (m.role !== 'turn') continue;
-      for (const part of (m as { parts?: Array<{ type: string; toolCalls?: Array<{ tool_call_id: string }> }> }).parts || []) {
-        if (part.type === 'tools') for (const tc of part.toolCalls || []) seen.add(tc.tool_call_id);
+      for (const part of m.parts) {
+        if (part.type === 'tools') for (const tc of part.toolCalls) seen.add(tc.tool_call_id);
       }
     }
-    const toolCalls = pending.flatMap(p => (p.tool_calls || []).map(tc => ({
+    const toolCalls: ToolCall[] = pending.flatMap(p => (p.tool_calls || []).map(tc => ({
       tool_call_id: tc.tool_call_id, tool_name: tc.tool_name, arguments: tc.arguments,
-      output: null as string | null, status: null as string | null, needs_approval: true,
+      output: null, status: null, needs_approval: true,
     }))).filter(tc => !seen.has(tc.tool_call_id));
     if (toolCalls.length === 0) return { ...page, timeline };
     const runId = pending[0].run_id;
@@ -247,12 +246,13 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
     // reconstructed whole.
     let lastTurnIdx = -1;
     for (let i = out.length - 1; i >= 0; i--) {
-      if (out[i].role === 'turn') { if (out[i].runId === runId) lastTurnIdx = i; break; }
-      if (out[i].role === 'user') break;
+      const m = out[i];
+      if (m.role === 'turn') { if (m.runId === runId) lastTurnIdx = i; break; }
+      if (m.role === 'user') break;
     }
-    if (lastTurnIdx >= 0) {
-      const turn = out[lastTurnIdx];
-      const parts = [...(turn.parts || [])];
+    const turn = lastTurnIdx >= 0 ? out[lastTurnIdx] : null;
+    if (turn && turn.role === 'turn') {
+      const parts = [...turn.parts];
       const lastPart = parts[parts.length - 1];
       if (lastPart?.type === 'tools') parts[parts.length - 1] = { ...lastPart, toolCalls: [...lastPart.toolCalls, ...toolCalls] };
       else parts.push({ type: 'tools', toolCalls });
@@ -578,11 +578,10 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
         const sid = p.session_id || (p.run_id ? runMapRef.current[p.run_id] : undefined);
         if (sid) {
           updateSS(sid, s => {
-            const msgs = s.messages as Array<{ role?: string; clientMsgId?: string; messageId?: string; runId?: string }>;
-            for (let i = msgs.length - 1; i >= 0; i--) {
-              const m = msgs[i];
+            for (let i = s.messages.length - 1; i >= 0; i--) {
+              const m = s.messages[i];
               if (m.role === 'user' && m.clientMsgId && m.messageId === undefined && m.runId === undefined) {
-                return { ...s, messages: msgs.slice(0, i).concat(msgs.slice(i + 1)) };
+                return { ...s, messages: s.messages.slice(0, i).concat(s.messages.slice(i + 1)) };
               }
             }
             return s;
@@ -919,7 +918,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
           // The live tail is re-merged because the rebuild only knows what is
           // persisted; an in-flight turn has nothing in the store yet. The
           // merge is scoped to the CURRENT live run.
-          const rebuilt = buildTimeline(entries) as SessionState['messages'];
+          const rebuilt = buildTimeline(entries);
           return {
             ...s,
             entries,

@@ -5,6 +5,7 @@ import {
   TERMINAL_TASK_STATUSES,
 } from '@/lib/streamReducer';
 import { toast } from '@/lib/toast';
+import type { TimelineEntry } from '@/lib/timeline';
 import type { SessionState, UpdateSSFn } from '@/lib/useAgentSocket';
 import type { TraceEventData as TraceEvent } from '@/features/chat/TracePanel';
 
@@ -57,8 +58,7 @@ export interface TaskState {
 export interface TaskViewState {
   taskId: string;
   childSessionId: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  messages: any[];
+  messages: TimelineEntry[];
   streaming: string;
   reasoning: string;
   // Trace events grouped by run — one group per ATTEMPT (a retry starts a new
