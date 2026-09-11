@@ -75,7 +75,7 @@ hanging until the five-minute timeout. Read the row's `has_oauth_token`:
 
 ### Start over
 
-Calling connect again while `authorizing` is safe and intended: it supersedes
-the stale attempt and returns a fresh authorize URL. To re-authorize with a
-different account, drop the saved grant first — "Clear auth" in the server's
-edit form (`DELETE /mcp-servers/:id/oauth-token`).
+Connect again — a second connect while `authorizing` supersedes the stale
+attempt ([the wire surface](../reference/protocol.md#mcp-servers--apiv1mcp-servers)).
+To re-authorize with a different account, **Clear auth** in the server's edit
+form first.

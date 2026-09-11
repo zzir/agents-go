@@ -12,9 +12,8 @@ endpoints compose. The panel and handler rules behind those answers are the
 [workbench invariants](../explanation/workbench-invariants.md); the reasoning
 is [decisions §5](../explanation/decisions.md).
 
-The two WebSocket changes still open — entry ids on streaming deltas, one
-`run.entry` event — are frozen in a document that lives next to the code it
-governs: [`cmd/agents-server/PROTOCOL.md`](../../cmd/agents-server/PROTOCOL.md).
+What is still moving — the two WebSocket changes agreed but not shipped, and
+the known gaps in what ships — is the last section, [Open changes](#open-changes).
 
 ---
 
@@ -179,14 +178,12 @@ the `context_profiles` snapshot the runner writes per run, and MCP tools are
 asked live (bounded, 2s) — a server that cannot answer is reported with
 `unavailable: true` on its own bucket, its count unknown rather than zero.
 
-`POST /sessions/:id/compact` forces one compaction pass now — the panel's
-"Compact now" — through the run path's own construction. `Force` skips only
-the threshold: the kept window, pairing-safe split and summary-of-summary
-guards still apply, so the worst outcome is `200` with `compacted: false`.
-`409` while a run is executing (the run compacts at its own boundaries);
-`400` when the agent has compaction disabled or no usable provider. With the
-agent's `compaction_mode` at `reset` or `hybrid` the same call, the
-threshold, and the model's own `new_context` run one reset pass instead
+`POST /sessions/:id/compact` is one compaction pass through the run path's
+own construction, skipping only the threshold — the kept window, the
+pairing-safe split and the summary-of-summary guards still apply, which is
+what `200` with `compacted: false` means. With the agent's `compaction_mode`
+at `reset` or `hybrid` the same call, the threshold, and the model's own
+`new_context` run one reset pass instead
 ([invariant 65](../explanation/workbench-invariants.md)): the checkpoint
 carries the session memory and answers `reset: true` on the entry.
 
@@ -211,40 +208,32 @@ connection that started them** — a dropped client or a page reload does NOT
 cancel the run; reconnect and resubscribe (`GET /runs/:id/events` or the
 WebSocket `run.subscribe`) to pick the stream back up without loss.
 
-`POST /sessions/:id/runs` answers `201` as soon as the run starts. With
-`Prefer: wait=N` ([RFC 7240](https://www.rfc-editor.org/rfc/rfc7240)) it holds
-the request up to N seconds and returns `200` with `final_output` when the run
-ends in time — or `status: "interrupted"` when the run pauses for tool
-approval (list `/sessions/:id/approvals` and decide; the decision resumes the
-SAME run id, continuing its event sequence). When N passes first it returns
-`202` with `status: "running"` and the run keeps going.
-`Preference-Applied: wait=N` marks the honored wait; there is no unbounded
-form, and N is capped at ten minutes (`MaxPreferWait`) — a longer wait is the
-events stream's job. `409` if the session already has an active run. `plan`
-enters or leaves the planning phase with this run; absent leaves the phase as
-it stands ([invariant 33](../explanation/workbench-invariants.md)).
+`POST /sessions/:id/runs` answers `201` as the run starts; `Prefer: wait=N`
+([RFC 7240](https://www.rfc-editor.org/rfc/rfc7240)) trades that for the
+outcome, and there is no unbounded form — N is capped at ten minutes, a
+longer wait being the events stream's job. An `interrupted` outcome is a
+pause, not an end: the decision resumes the SAME run id, continuing its event
+sequence. `plan` enters or leaves the planning phase with this run; absent
+leaves the phase as it stands
+([invariant 33](../explanation/workbench-invariants.md)).
 
-The first run that carries a `project_id` **permanently binds** it to the
-session, validated first — the project must exist and be the caller's own, a
-request that fails validation being `400` that leaves the session unbound —
-and announced once with a `session.project_bound` event; from then on the
-bound value wins over whatever the client sends. A run naming no project never
-binds, and gets **no sandbox tools at all** (decisions §5.33).
+The first run that carries a `project_id` binds it to the session for good
+([invariant 27](../explanation/workbench-invariants.md)): validated first —
+a project that is missing or not the caller's is `400` and binds nothing —
+and announced once with `session.project_bound`; from then on the bound value
+wins over whatever the client sends, and a session with no project gets no
+sandbox tools at all.
 
 `GET /runs/:id` carries `task` only for a background task's run, with the
 parent linkage its `run.started` event carries. Finished runs stay queryable
 and replayable for **15 minutes** after they end, then `404` — the
 session's transcript is always in `/sessions/:id/messages`.
 
-`GET /runs/:id/events` is a Server-Sent Events stream (plain HTTP SSE,
-unrelated to MCP's deprecated SSE transport). Each event's `id:` is the hub
-sequence number; reconnect with `Last-Event-ID` (or `?from_seq=`) to resume
-without loss. The stream closes after a FINAL event — `run.output`,
-`run.error`, `run.cancelled` — or when the hub tears the run's subscription
-down (retention passing, a shutdown), so it never outlives the run;
-`run.interrupted` does NOT close it, the approval decision resuming the SAME
-run id on the connection you already hold. Event payloads mirror the
-WebSocket [server→client events](#server--client).
+`GET /runs/:id/events` is plain HTTP Server-Sent Events (unrelated to MCP's
+deprecated SSE transport), the `id:` of each event its hub sequence number.
+Besides a final event, the hub tearing the run's subscription down (retention
+passing, a shutdown) closes it, so it never outlives the run. Event payloads
+mirror the WebSocket [server→client events](#server--client).
 
 `POST /runs/:id/cancel` stops a run: `?mode=graceful` lets the current turn
 finish and stops before the next, the default aborts mid-turn — `204` either
@@ -267,13 +256,12 @@ curl -s -H "$H" -H "Prefer: wait=60" -X POST $BASE/sessions/$SID/runs -d "$BODY"
 
 ### Approvals — `/api/v1/approvals`
 
-When a tool requires approval the run pauses and the pending decision is
-**persisted, so it survives a server restart**. Approve/reject resume the run
-through the shared hub, so the resulting events stream over
-`GET /runs/:id/events` or the WebSocket; a decision on a session that already
-has an active run is `409`. Unanswered approvals expire after
-`approval_ttl_minutes`: the record is dropped and an error annotation written
-to the session, so the timeout is visible.
+A pending decision is **persisted, so it survives a server restart**, and a
+decision resumes the run over whichever transport is listening — REST and the
+WebSocket share the hub. A decision on a session that already has an active
+run is `409`. Unanswered approvals expire after `approval_ttl_minutes`: the
+record is dropped and an error annotation written to the session, so the
+timeout is visible.
 
 **A newer message wins over a pause.** A run paused for approval is
 abandoned when the session takes a new message (`POST /sessions/:id/runs`,
@@ -287,13 +275,10 @@ to stop.
 
 **exec_command session approval.** An agent whose `approve_tools` includes
 `exec_command` gates each shell command through a per-session trust store
-instead of approving every call. The approval surfaces the command itself,
-and the approve body's `scope` (REST and `tool.approve` alike) decides how far
-it extends: `once` (default — just this call), `same` (this exact command for
-the rest of the session) or `all` (every command this session). Trust is
-in-memory and per session — it survives interrupt/resume and resets on
-restart — and matching is exact, so approving `go test` never green-lights
-`go test && rm -rf`.
+that the approve body's `scope` (REST and `tool.approve` alike) widens:
+`once`, `same` or `all`. Trust is in-memory and per session — it survives
+interrupt/resume and resets on restart — and matching is exact, so approving
+`go test` never green-lights `go test && rm -rf`.
 
 ### Tasks — `/api/v1/tasks`
 
@@ -306,15 +291,12 @@ SDK's [background tasks](../howto/tasks.md)). Status uses the MCP Tasks
 five-state vocabulary, read live from the hub for a running task and from the
 store after it ends.
 
-`stop` is `409` if the task is already final. `retry` is `409` when the task
-is not failed, has used every attempt (3 by default), or its session is at
-the live-task cap (`max_tasks_per_session`, which a retry queues behind like
-a spawn). `dismiss` is `409` while the task still runs, and a retry brings a
-dismissed row back. `GET /sessions/:id/tasks` lists one session's, newest
-first; `GET /tasks` pages every live session's, each row with its
-session's name plus a `total` for the pager — `?kind=workflow` narrows
-to executions, `?live=true` to `working` / `input_required` rows, `?limit=`
-(500 at most) and `?offset=` page it.
+A `retry` counts against the session's live-task cap
+(`max_tasks_per_session`) like a spawn and queues behind it the same way; a
+task that used every attempt (3 by default) is `409`. `GET /sessions/:id/tasks`
+is one session's, newest first; `GET /tasks` pages every live session's, each
+row with its session's name — `?live=true` is the `working` /
+`input_required` rows, `?kind=workflow` the executions.
 
 ### Agents — `/api/v1/agents`
 
@@ -348,15 +330,12 @@ IS one, `behavior.workflow_authoring`, off by default
 the `system_prompt` setting is not prepended, even when they are empty
 ([invariant 67](../explanation/workbench-invariants.md)).
 
-`GET /agents/:id/tools` reports the agent's CURRENT tool surface as
-schema-only definitions: the built-in tools, connected MCP servers' tools (a
-server whose listing fails is skipped, not fatal) and the skills reader —
-everything but sandbox tools, since no sandbox is selected. It backs the
-Replay dialog's tool picker; nothing is executed from it, and a member sees
-the surface their own runs would get. An agent body carries no model-API
+`GET /agents/:id/tools` is the agent's CURRENT surface — the built-ins,
+connected MCP servers' tools (a server whose listing fails is skipped, not
+fatal) and the skills reader — as a member's own runs would get it; it backs
+the Replay dialog's tool picker. An agent body carries no model-API
 credential — it names a provider, which is where the key lives
-([providers](#providers--apiv1providers)); its remaining credential fields
-come back masked ([Secret handling](#secret-handling)).
+([providers](#providers--apiv1providers)).
 
 ### MCP Servers — `/api/v1/mcp-servers`
 
@@ -450,11 +429,10 @@ own group, and is `400` on an imported skill. Ownership moves the same way:
 statement, `409` when the new owner already holds a group for that repository
 (merging two is how a mixed-scope pile forms).
 
-`POST /skill-imports` with `{url, owner_id?}` upserts skills from elsewhere:
-`https://github.com/owner/repo` walks the repository via the GitHub API,
-anonymously (every `SKILL.md` at any depth, pinned to the HEAD commit;
-private repositories are not reachable); any other http(s) URL is fetched as
-a single raw `SKILL.md`. The server never runs git. A sync refreshes exactly
+`POST /skill-imports` with `{url, owner_id?}` upserts skills from elsewhere —
+a GitHub repository walked through its API (every `SKILL.md` at any depth,
+pinned to the HEAD commit) or one raw `SKILL.md` at any other URL; the server
+never runs git. A sync refreshes exactly
 the named group — naming another owner is admin-only (`403` for a member) and
 targets that owner's PUBLISHED group, so a member's private group, or one
 that does not exist, is `404`; a first import may only create the caller's
@@ -605,10 +583,8 @@ every request), `agent` (that agent reads it), or `session` (the model's own
 working notes for one session, never injected, read back on demand and
 carried into a context reset). `POST` is an upsert by scope and key; `PUT`
 changes content and metadata only, the identity must match. Who writes:
-global is the admin's, an agent's memory follows the agent's edit rule, a
-session's is its owner's; a member sees an agent's memory only when they can
-see the agent. The rules, the model's part included, are one table
-([invariant 64](../explanation/workbench-invariants.md)). `GET /memories`
+[Authorization](#authorization) says who, and the model's part is the same
+table ([invariant 64](../explanation/workbench-invariants.md)). `GET /memories`
 lists the global and agent scopes (`scope_kind` and `scope_id` narrow);
 session memory is read under `/sessions/:id/memory`. Deleting an agent
 deletes its memory with it; a row whose agent is already gone is listed to
@@ -644,12 +620,10 @@ Blank `memory_mb` / `cpus` take a capped workbench default, never "unlimited"
 ([deploying](../howto/workbench-deploy.md#requirements)); a project's storage
 is a volume on it (decisions §5.33).
 
-`POST /sandboxes/{id}/test` runs `echo ok` in a throw-away sandbox — a
-container for `docker`, a provisioned-and-destroyed instance for a remote
-service. `200 {ok:false}` means the service was reached and the command RAN
-but did not succeed (non-zero exit or timeout); a daemon or service that
-could not be reached at all — a dial or credential failure — is `502`, a
-different thing a caller must tell apart.
+`POST /sandboxes/{id}/test` tells two failures apart: `200 {ok: false}` is a
+service that was reached and a command that RAN and failed (non-zero exit or
+timeout); a daemon or service that could not be reached at all — a dial or
+credential failure — is `502`.
 
 `DELETE` refuses (`409`) while any project lives on the sandbox: a project's
 working tree is at that address, and deleting a project is what reclaims it.
@@ -675,9 +649,8 @@ struct order; a type mismatch on a known field or a malformed host is `400`.
 One decoder answers every question about a config (save-time validation, the
 content comparison, the identity freeze), so they cannot disagree.
 
-`GET /sandboxes/{id}/containers` lists this package's containers on the
-sandbox's daemon, and the stop/remove routes act on one by name — the
-operator's reclaim surface. It is DOCKER only; a sandbox of another type is
+The `containers` routes — list, stop, remove by name — are the operator's
+reclaim surface on a daemon, and DOCKER only: a sandbox of another type is
 refused by name (`400`).
 
 Every sandbox can host a web terminal and `exec_command`'s persistent shells
@@ -710,17 +683,14 @@ project that survived
 
 An unreferenced container is **idle-stopped** after `sandbox_idle_minutes`
 with no run or terminal using it: stopped, not removed, so installed packages
-survive and the next run starts it again. The same acts are available by hand:
-`GET /projects/{id}/sandbox` reports `absent` / `stopped` / `running`,
-`POST …/sandbox/start` provisions it (the image pull happens there, where a
-person is watching, rather than inside the next run), and `POST …/sandbox/stop`
-releases the compute keeping the tree. A stop while a run or a terminal is
-still using it answers `stopped: false`: the instance is doomed so nothing new
-joins, and it stops when that work ends — the person asked for the sandbox to
-stop, not for the work to die. `POST …/sandbox/rebuild` throws the container
-away and provisions a fresh one from the current template, keeping the volume;
-on an E2B-compatible target the sandbox IS the storage, so the rebuild is
-refused with the way out — export, then create a new project (decisions §5.34).
+survive and the next run starts it again. The same acts are available by hand
+under `/projects/{id}/sandbox` (`absent` / `stopped` / `running`, `start`,
+`stop`, `rebuild`): a `start` is where the image pull happens, with a person
+watching, rather than inside the next run; a `stop` answered `stopped: false`
+dooms the instance — nothing new joins it, and it stops when the run or
+terminal using it ends, since the person asked for the sandbox to stop, not
+for the work to die; a `rebuild` on an E2B-compatible target is refused with
+the way out (decisions §5.34).
 
 A project carries the **environment** its container is created with, so
 `exec_command`, a persistent shell and a terminal all read the same values.
@@ -733,58 +703,41 @@ container **at the project's next run** and severs that project's terminals,
 its siblings on the same sandbox untouched; files under `/workspace` survive,
 anything installed into the container does not, and a rename does neither.
 
-`GET /projects/{id}/export` streams the working tree as an uncompressed tar
-(`application/x-tar`) — the way files leave a sandbox whose storage the host
-cannot open directly. Owner only, and **audited**: it takes a whole tree off
-the machine. The headers go out before the first byte, so a failure
-mid-stream cannot become a JSON error — the client sees a truncated archive,
-which tar itself reports.
+`GET /projects/{id}/export` is how files leave a sandbox whose storage the
+host cannot open directly. Its headers go out before the first byte, so a
+failure mid-stream cannot become a JSON error — the client sees a truncated
+archive, which tar itself reports.
 
 ### Attachments — `/api/v1/attachments`
 
-Image input for the chat ([attachments](../howto/attachments.md); workbench
-invariants 56–58). `POST /attachments` takes one multipart `file`, validating
-the image by DECODING it rather than by the declared content type, and stores
-the bytes under `attachments/<owner id>/<uuid>.<ext>`; the `id` it answers is
-what `attachment_ids` names when a run starts. `DELETE /attachments/:id` is
-the composer's ✕: owner-only (a foreign id reads as absent, `404`), and one
-already accepted by a run is part of session history — `409`.
-
-`GET /attachments/config` reports whether the section is complete and the
-limits a client applies before uploading. The section itself is written as ONE
-value, admin-only: `PUT /attachments/storage` probes the bucket end to end
-first (signed upload, anonymous public read through the public base, delete)
-and refuses with `400` naming the failing stage, else stores the seven keys in
-one transaction; an all-empty body clears the section and turns image input
-off. `POST /attachments/storage/test` runs the same probe without storing —
-`204` or `400`. The form is
+Image input for a session's messages ([attachments](../howto/attachments.md);
+workbench invariants 56–58). An upload is validated by DECODING the image,
+never by its declared content type, and stored under
+`attachments/<owner id>/<uuid>.<ext>`; a foreign id reads as absent (`404`),
+and once a run accepted an upload it is part of session history (`DELETE` is
+`409`). The storage section is written as ONE value, admin-only, probed end to
+end before it is stored, which is why `PUT /settings/:key` refuses the `s3_*`
+keys one at a time; the form is
 [attachments](../howto/attachments.md#configuring-the-bucket).
 
 ### Playground — `/api/v1/playground`
 
-`POST /playground/generate` is one model call, made from a stored generation
-span with edits — the trace panel's Replay. It touches no session and records
-no run. `agent_config_id` selects whose provider and default model answer;
-`tools` are schema-only definitions echoed from the traced request (or picked
-from `GET /agents/:id/tools`) so the model can emit calls — a single call runs
-no tool loop and nothing is executed. Without `stream` the answer carries the
-Responses output items as JSON; with `stream: true` it is SSE — `delta` /
-`reasoning` events as they arrive, then one `done` carrying that same object,
-or `error`. `400` for an agent that cannot be built or a model that cannot be
-resolved, `502` when the model call fails. A replay posts a whole span payload
-back, so its body cap is 64 MiB.
+`POST /playground/generate` is the trace panel's Replay: one model call from
+a stored generation span with edits, `agent_config_id` choosing whose provider
+and default model answer, `tools` schema-only definitions (echoed from the
+traced request, or picked from `GET /agents/:id/tools`) so the model can emit
+calls that nothing executes. `400` for an agent that cannot be built or a
+model that cannot be resolved, `502` when the model call fails; the body cap
+is 64 MiB, since a replay posts a whole span payload back.
 
 ### ChatGPT OAuth
 
 Login, complete, and logout are per-provider, under the provider resource —
-see [Providers](#providers--apiv1providers). Whether a provider is signed in
-is the provider list's derived `chatgpt_logged_in` field, not a separate
-status call. `login` returns an authorize URL and stores the PKCE verifier
-keyed by `state`, expired on a TTL timer; its redirect is the fixed
-`http://localhost:1455/auth/callback`, where nothing listens — the value must
-match the client's registered set and be echoed in the token exchange. The
-user pastes the resulting URL into `complete`, which redeems the code
-server-side against the stored verifier
+see [Providers](#providers--apiv1providers); whether a provider is signed in
+is the list's derived `chatgpt_logged_in`, not a separate status call. The
+flow is a pasted callback URL, not a loopback listener: `login` answers an
+authorize URL, and the URL the browser lands on afterwards goes into
+`complete`
 ([decisions §5.41](../explanation/decisions.md#541-chatgpt-login-redeems-a-pasted-callback-url-not-a-loopback-listener)).
 
 A `chatgpt_login` provider talks to the Codex backend
@@ -978,3 +931,63 @@ member reaches their OWN projects (a foreign project reads as absent), an
 admin any, and a project on a different sandbox is refused (decisions §5.28).
 Terminals are capped per the `max_terminals_per_sandbox` setting, and
 updating or deleting a sandbox closes its live terminals.
+
+---
+
+## Open changes
+
+What the protocol is still being moved toward, agreed up front so the
+frontend and the backend change together instead of renegotiating a payload
+shape three times; changing an item here is a decision, made once. What does
+not change: the `{"type", "payload"}` envelope, the first-message `auth`, run
+events as a broadcast bus per owner that a dropped socket does not cancel
+([invariant 14](../explanation/workbench-invariants.md)), and event types
+single-sourced in Go and mirrored in TypeScript
+([invariant 15](../explanation/workbench-invariants.md)).
+
+### Every streaming delta carries an entry id
+
+`run.step` and `run.reasoning` are `{run_id, delta}`: nothing says which item
+a delta belongs to, so the client attributes deltas by position and
+reconciles the guess against what was persisted (`mergeLiveTail` in
+`streamReducer.ts`). Frozen: they become one `run.delta` —
+
+```jsonc
+{ "run_id": "…", "entry_id": "msg_abc", "field": "text" | "reasoning", "delta": "partial cont" }
+```
+
+— appended into a provisional buffer keyed by `entry_id` that the completed
+entry replaces wholesale, never merges into; an entry with no preceding delta
+renders at once, a delta for an entry already completed is discarded.
+Bandwidth stays O(n), and the live view and the persisted view cannot
+disagree. `run.tool_progress` becomes a `run.delta` on the tool call's entry.
+
+### One `run.entry` event replaces six item events
+
+`run.message`, `run.reasoning_item`, `run.tool_call`, `run.tool_result`,
+`run.handoff` and `run.compaction` each carry an item in a shape of their
+own; the SDK's `session.Entry` makes them one thing. Frozen: `run.entry`
+carries one completed entry — `{id, seq, kind, parent_id, source, display,
+usage, payload}` — **byte-identical in shape** to what
+`/sessions/:id/messages` returns, so one renderer serves both and the
+live-tail merge goes away. `kind` is an open vocabulary, an unknown value of
+which renders through the `custom` fallback; `display` stays a rendering hint
+a client may ignore and still build a correct timeline from `payload`. The
+lifecycle events (`run.started`, `run.agent_start`, `run.output`,
+`run.error`, `run.interrupted`, `run.cancelled`) stay; `run.compaction`
+survives as the progress signal while the checkpoint itself arrives as a
+`run.entry` of `kind: "compaction"`. The two changes travel together —
+roughly half the streaming reducer becomes a replace-by-id; the
+reconciliation between a history fetch and the live events that arrived
+while it was in flight is a client ordering problem no payload shape touches.
+`run.message.item_id` is the first piece of this already on the wire.
+
+### Known gaps
+
+- An expired **chat** approval leaves the hub's record `interrupted` until
+  the run's retention passes; only a task approval's expiry publishes a
+  terminal `run.cancelled`. `GET /runs/:id` inside that window shows a pause
+  no decision can resume.
+- `run.tool_progress` can arrive twice across a gap replay: the envelope
+  carries no sequence number, so a replayed delta cannot be told from a fresh
+  one until the envelope carries `seq`.

@@ -52,8 +52,8 @@ for the runtime settings. The tables below are a convenience copy.
 
 ## Environment variables
 
-Each is the fallback of one flag (flag wins, then env); there is no
-standalone env knob and no "every flag is also an env var".
+Each is the fallback of one flag (flag wins), never a standalone knob
+([invariant 54](../explanation/workbench-invariants.md)).
 
 | Variable | Flag it backs | Holds |
 |---|---|---|

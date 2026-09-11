@@ -38,8 +38,8 @@ curl -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   the plain list. Naming an earlier step is how a sequence loops.
 - `gate: {pass?, fail?}` makes a step's verdict choose the edge: end the
   output with `PASS` or `FAIL` (or the words you set), or answer in structured
-  output. A gate that reports neither fails the execution — a check that
-  forgot to report is a broken step, not a coin flip.
+  output; how a verdict is read, and what a missing one does, is in
+  [the wire surface](../reference/protocol.md#workflows--apiv1workflows).
 - `pause_before` holds the sequence until a person approves the step from the
   session that asked ([invariant 37](../explanation/workbench-invariants.md));
   rejecting cancels the execution.
@@ -112,10 +112,9 @@ curl -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   curl -X POST "$BASE/hooks/$TRIGGER_ID" -H "X-Timestamp: $TS" -H "X-Signature-256: $SIG" -d "$BODY"
   ```
 
-  `X-Timestamp` is UNIX seconds within five minutes of the server's clock and
-  `X-Signature-256` is hex HMAC-SHA256 of `timestamp + "." + body` under the
-  secret; the body (64 KB at most) is appended to the brief as the payload.
-  What is refused, and when a resend counts as a replay, is in
+  `X-Timestamp` is UNIX seconds and `X-Signature-256` hex HMAC-SHA256 of
+  `timestamp + "." + body` under the secret; the window, the body cap, what
+  is refused and when a resend is a replay are in
   [the wire surface](../reference/protocol.md#workflows--apiv1workflows).
 - **Fire now** (`POST /triggers/:id/fire`, with an optional `payload`) runs a
   trigger by hand, as a tick would. Enable / disable, edit and delete are on

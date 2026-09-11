@@ -101,7 +101,7 @@ func TestHandleStreamEvent_EmptyMessageSkipped(t *testing.T) {
 }
 
 // Input injected into a live run is a user entry, which no server → client
-// event carries today (PROTOCOL.md F2's run.entry is the one that will).
+// event carries today (the run.entry of protocol.md's Open changes will).
 // run.message is the nearest-looking event and the wrong one: it would render
 // the user's own text as assistant output. So nothing goes out for it.
 func TestHandleStreamEvent_InjectedInputDropped(t *testing.T) {

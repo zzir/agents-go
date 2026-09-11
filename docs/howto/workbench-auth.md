@@ -137,18 +137,12 @@ host-configuration plane and an admin's manage-never-read reach — is
 [the wire surface's Authorization section](../reference/protocol.md#authorization),
 enforced at `handler/authz.go` ([invariant 42](../explanation/workbench-invariants.md)).
 
-Two consequences worth stating in the operator's terms:
-
-- **A shared sandbox is a shared shell.** Every member who can pick one
-  executes on that host under the credentials the server stores. That is the
-  single-workspace model — one team, one trust boundary — not an oversight.
-- **The UI hides nothing the server would allow.** Settings is one hub
-  ([invariant 61](../explanation/workbench-invariants.md)): a member sees
-  their own scoped rows editable, others' read-only with their author, the
-  host panels read-only, and their Account. An admin's view adds a
-  **Mine | All** filter on each scoped panel and, after a divider, the admin
-  panels — Members, Sessions (reassign or delete, never read), Projects,
-  Workflows, Audit logs.
+The operator's side of it — one team, one trust boundary, a shared sandbox
+being a shared shell — is [deploying: trust boundary](workbench-deploy.md#trust-boundary).
+The UI hides nothing the server would allow: Settings is one hub, an admin's
+views a **Mine | All** filter inside the same panels plus the admin panels
+after a divider ([invariant 61](../explanation/workbench-invariants.md); the
+walk-through is [the tutorial](../tutorial/workbench.md#the-rest-of-the-hub)).
 
 **Switching auth modes keeps the data and changes who can reach it.** Every
 session made in token mode belongs to the local account, which OAuth mode

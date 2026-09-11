@@ -32,11 +32,11 @@ resolves today is what gets built and audited.
 
 ## In this directory
 
-- [`PROTOCOL.md`](PROTOCOL.md) — the two WebSocket changes still open (entry
-  ids on deltas, one `run.entry` event) and the decisions the code cites by
-  number (F3, F4). It stays beside the code because those comments name it
-  by path; the protocol that ships today is in
-  [the wire surface](../../docs/reference/protocol.md).
+- **The wire surface.** What the API and the WebSocket mean is
+  [`docs/reference/protocol.md`](../../docs/reference/protocol.md), the two
+  WebSocket changes still open its last section; the live definition is
+  [`internal/protocol/messages.go`](internal/protocol/messages.go), mirrored
+  in [`src/lib/protocol.ts`](internal/web/frontend/src/lib/protocol.ts).
 - **Generated API surface.** A handler annotation change is three commands:
   `make openapi` here (writes `internal/docs/swagger.yaml`), `npm run gen:api`
   in `internal/web/frontend` (writes `src/lib/apiTypes.gen.ts`), then commit
