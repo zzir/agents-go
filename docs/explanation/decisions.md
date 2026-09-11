@@ -1538,7 +1538,7 @@ system prompt at all; the switch's caption says so.
 
 Rules: [invariant 67](workbench-invariants.md).
 
-### 5.67 A retired instance whose container a successor adopted detaches
+### 5.66 A retired instance whose container a successor adopted detaches
 
 Decided 2026-09-11 (workbench invariant 27).
 

@@ -82,7 +82,7 @@ func (i *sandboxInstance) close() {
 }
 
 // detach lets go of the connection only — the compute is a successor's now
-// (decisions §5.67); a backend without Detach closes as usual.
+// (decisions §5.66); a backend without Detach closes as usual.
 func (i *sandboxInstance) detach() {
 	i.closeOnce.Do(func() {
 		if d, ok := i.sb.(sandbox.Detacher); ok {
@@ -283,7 +283,7 @@ func (m *Manager) release(inst *sandboxInstance) {
 	inst.refs--
 	dead := inst.doomed && inst.refs <= 0
 	// New work occupies the project: the compute is its now, so this instance
-	// only lets go and a deferred Stop is superseded — see decisions §5.67.
+	// only lets go and a deferred Stop is superseded — see decisions §5.66.
 	superseded := dead && m.projectCachedLocked(inst.key.projectID)
 	stopIntent := inst.stopOnRelease && !superseded
 	if dead && stopIntent {
