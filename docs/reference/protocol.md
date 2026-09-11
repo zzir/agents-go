@@ -246,6 +246,12 @@ down (retention passing, a shutdown), so it never outlives the run;
 run id on the connection you already hold. Event payloads mirror the
 WebSocket [server→client events](#server--client).
 
+`POST /runs/:id/cancel` stops a run: `?mode=graceful` lets the current turn
+finish and stops before the next, the default aborts mid-turn — `204` either
+way, `404` for a run the hub no longer holds, and a run paused for approval is
+abandoned ([Approvals](#approvals--apiv1approvals)). The WebSocket's
+`run.cancel` is the same call.
+
 Start a run and stream it with plain curl (token from server startup):
 
 ```bash
@@ -364,9 +370,13 @@ is the base of its exponential backoff (`0` the SDK's 1s), and
 server that fills only that field. A local stdio-only MCP server can join
 through a stdio→HTTP proxy such as `mcp-proxy`.
 Enabled servers are connected automatically on startup and after
-create/update; disabling disconnects, and a disabled server cannot be
-connected (`409`) — agents pick tools by live connection, so the toggle is a
-hard off switch.
+create/update; `POST /mcp-servers/:id/connect` is the manual connect (the
+Connect button), which for an OAuth server may answer with an `authorize_url`
+instead of a connection. Disabling disconnects, and a disabled server cannot
+be connected (`409`) — agents pick tools by live connection, so the toggle is
+a hard off switch. `GET /mcp-servers/:id/tools` lists what a connected server
+exposes; a server that exists but is not connected is `409`, unlike the `404`
+of one the caller cannot see.
 
 Every read endpoint reports one derived `status` per server: `disabled`,
 `connecting` (handshake in flight), `authorizing` (OAuth popup pending user

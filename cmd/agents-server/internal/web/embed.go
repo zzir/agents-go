@@ -3,6 +3,7 @@ package web
 
 import "embed"
 
+//go:generate npm --prefix frontend install
 //go:generate npm --prefix frontend run build
 
 // StaticFS holds the built frontend assets embedded at compile time.

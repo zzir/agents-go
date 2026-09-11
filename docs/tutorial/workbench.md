@@ -39,6 +39,9 @@ make build          # npm install + build the SPA, then go build with it embedde
 ./agents-server
 ```
 
+The development loop — a Vite dev server proxied to a running backend, and
+what CI runs — is in [`cmd/agents-server/README.md`](../../cmd/agents-server/README.md).
+
 ## Add a provider and an agent
 
 Everything you configure lives in one place: **Settings**, in the account
@@ -61,6 +64,14 @@ generation span to see exactly what the model was sent, and **Replay** it with
 a different prompt or model), **Context** (what the context window holds and
 what each part costs) and **Tasks** (background work).
 
+Two commands live in the composer, listed when you type `/`: `/plan <message>`
+runs that message in plan mode — the agent reads and proposes, and its
+`submit_plan` waits for your approval before anything changes — and
+`/plan off <message>` leaves plan mode with that message (`/workflow <name>`
+joins them once you have [workflows](#automate-it)). **Stop** aborts the run
+at once; Shift-click it, or open **More ways to stop** beside it, to let the
+current turn finish first.
+
 ## Give it a sandbox
 
 Everything so far ran without Docker, and an agent without a sandbox already
@@ -80,8 +91,10 @@ Now the agent has `read_file`, `write_file`, `list_files`, `apply_patch` and
 `exec_command`. Tick `exec_command` in the agent's **Approvals** checklist and
 every command pauses for you: approve this call, trust this exact command for
 the session, or trust every command. The top
-bar's project menu opens a **terminal** into the same container, and exports
-the working tree as a tar.
+bar's project menu opens a **terminal** into the same container, sets the
+project's **Environment…** (the variables its container is created with;
+write-only, like every credential), exports the working tree as a tar, and
+stops or rebuilds the container.
 
 ## The rest of the hub
 

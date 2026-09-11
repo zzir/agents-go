@@ -8,6 +8,28 @@ start at [Running the workbench](../../docs/tutorial/workbench.md).
 
 ![screenshot](screenshot.png)
 
+## First mile
+
+`make build` here — Node 22 and npm for the SPA, then Go — leaves
+`./agents-server` beside this file; run it and open `http://127.0.0.1:9527`
+with the token it printed. Add a provider and an agent in Settings, and say
+something. Nothing on that path needs Docker; a sandbox is
+[the tutorial's second chapter](../../docs/tutorial/workbench.md#give-it-a-sandbox).
+
+## Development loop
+
+`make dev` starts the Vite dev server (`npm run dev` in
+`internal/web/frontend`), which proxies `/api` and `/ws` to a backend on
+`127.0.0.1:9527` — start one with `go run . --token X` (add `--db` for a
+scratch database) and edit under `src/` with hot reload. `go run .` embeds
+`internal/web/frontend/dist`, so it needs one build of the SPA first
+(`make frontend`, or `go generate ./internal/web`). `./scripts/ci.sh` at the
+repo root is CI locally; its frontend steps are `npm install`, `npm run lint`,
+`npm run build` (`tsc --noEmit`, `vitest run`, `vite build`, then gzip) and
+`npm audit --omit=dev --audit-level=high`. The lockfile is deliberately not
+committed (`package-lock.json` is gitignored), so the tree `npm install`
+resolves today is what gets built and audited.
+
 ## In this directory
 
 - [`PROTOCOL.md`](PROTOCOL.md) — the two WebSocket changes still open (entry
