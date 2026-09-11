@@ -189,7 +189,7 @@ describe('useAgentSocket replay', () => {
     await t.unmount();
   });
 
-  it('a reconnect drops the live run\'s preview, and the replayed message item ends the mute', async () => {
+  it('a reconnect clears the live run\'s preview and lets the replay rebuild it, deltas included', async () => {
     const t = await mount(() => S1);
     await act(async () => {
       t.sock().receive(EV.runStarted, { session_id: S1, run_id: RUN, input: 'q' });
@@ -199,11 +199,15 @@ describe('useAgentSocket replay', () => {
     expect(t.store[S1].streaming).toBe('sec');
     await t.reconnect();
     expect(t.store[S1].streaming).toBe('');
-    // The hub replays the run from the start: the first item is a duplicate
-    // (kept once), the deltas after it rebuild the preview.
+    // A fresh socket has no old subscription pushing: the hub's replay is the
+    // only source, so its deltas show at once — a stream that is mid-message
+    // when the socket drops is not blank until the message completes.
     await act(async () => {
       t.sock().receive(EV.runStarted, { session_id: S1, run_id: RUN, input: 'q' });
       t.sock().receive(EV.runStep, { run_id: RUN, delta: 'fir' });
+    });
+    expect(t.store[S1].streaming).toBe('fir');
+    await act(async () => {
       t.sock().receive(EV.runMessage, { run_id: RUN, text: 'first', item_id: 'm1' });
       t.sock().receive(EV.runStep, { run_id: RUN, delta: 'sec' });
       t.sock().receive(EV.runStep, { run_id: RUN, delta: 'ond' });
@@ -239,6 +243,27 @@ describe('useAgentSocket run events', () => {
     expect(turns).toHaveLength(1);
     const tools = turns[0].parts.find(p => p.type === 'tools');
     expect(tools && tools.type === 'tools' ? tools.toolCalls.map(tc => [tc.tool_call_id, tc.status]) : null).toEqual([['tc1', 'completed']]);
+    await t.unmount();
+  });
+
+  it('an abandoned run\'s cancel leaves its successor live', async () => {
+    const t = await mount(() => S1);
+    await act(async () => {
+      t.sock().receive(EV.runStarted, { session_id: S1, run_id: RUN, input: 'q' });
+      t.sock().receive(EV.runToolCall, { run_id: RUN, tool_call_id: 'c1', tool_name: 'exec_command', arguments: '{"cmd":"ls"}', needs_approval: true });
+      t.sock().receive(EV.runInterrupted, { run_id: RUN });
+      // The newer message's run starts; the abandoned run's cancel lands after it.
+      t.sock().receive(EV.runStarted, { session_id: S1, run_id: 'run-2', input: 'again' });
+      t.sock().receive(EV.runStep, { run_id: 'run-2', delta: 'on it' });
+      t.sock().receive(EV.runCancelled, { run_id: RUN, reason: 'superseded' });
+    });
+    expect(t.store[S1].liveRunId).toBe('run-2');
+    expect(t.store[S1].running).toBe(true);
+    expect(t.store[S1].streaming).toBe('on it');
+    const notRun = t.store[S1].messages.filter(m => m.role === 'turn')
+      .flatMap(m => (m as TurnEntry).parts).filter(p => p.type === 'tools')
+      .flatMap(p => (p as { toolCalls: { not_run?: string }[] }).toolCalls).filter(c => c.not_run === 'superseded');
+    expect(notRun).toHaveLength(1);
     await t.unmount();
   });
 

@@ -85,6 +85,17 @@ export interface FallbackEntry { provider_id?: string; model?: string; provider_
 // legacyFallbackProvider finds the provider an endpoint-form entry names, the
 // way the server resolves it at run time: "" and "openai" are one backend, a
 // trailing slash the same host.
+// resolveFallbackEntry is what the fallback row renders: a fresh entry has no
+// endpoint yet and stays editable; an entry from before provider_id names an
+// endpoint, and is unreachable when no visible provider matches it.
+export function resolveFallbackEntry(e: FallbackEntry, providers: { id: string; type?: string; base_url?: string }[]): { providerId: string; unreachable: boolean } {
+  if (e.provider_id) return { providerId: e.provider_id, unreachable: false };
+  const legacy = e.provider_type !== undefined || e.base_url !== undefined;
+  if (!legacy) return { providerId: '', unreachable: false };
+  const match = legacyFallbackProvider(e, providers);
+  return { providerId: match || '', unreachable: !match };
+}
+
 export function legacyFallbackProvider(e: FallbackEntry, providers: { id: string; type?: string; base_url?: string }[]): string | undefined {
   const host = (u?: string) => (u || '').trim().replace(/\/+$/, '');
   const type = (t?: string) => t || 'openai';
@@ -276,7 +287,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
   // endpoint, and saves as that provider; one no provider reaches is shown
   // read-only and dropped on save.
   const fallbacks = form.fallback_models || [];
-  const fallbackProviderId = (e: FallbackEntry) => e.provider_id || legacyFallbackProvider(e, visibleProviders) || '';
+  const fallbackProviderId = (e: FallbackEntry) => resolveFallbackEntry(e, visibleProviders).providerId;
   const setFallback = (i: number, patch: Partial<FallbackEntry>) =>
     set('fallback_models', fallbacks.map((e, j) => j === i ? { provider_id: fallbackProviderId(e), model: e.model, ...patch } : e));
   const visibleMcp = (mcpServers || []).filter(refOK);
@@ -607,8 +618,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
               <FormControl.Label>Fallback models</FormControl.Label>
               <Stack gap="condensed">
                 {fallbacks.map((e, i) => {
-                  const providerId = fallbackProviderId(e);
-                  const unreachable = !providerId;
+                  const { providerId, unreachable } = resolveFallbackEntry(e, visibleProviders);
                   return (
                     <div key={i} className="form-row">
                       <Select value={providerId} disabled={unreachable} aria-label={`Fallback ${i + 1} endpoint`} block

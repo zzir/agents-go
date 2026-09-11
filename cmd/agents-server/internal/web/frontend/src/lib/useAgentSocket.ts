@@ -475,13 +475,16 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
       if (sid && sessionRunRef.current[sid] === runId) delete sessionRunRef.current[sid];
     };
 
-    // resubscribe asks the hub to replay a chat run from `fromSeq` and drops
-    // the run's delta preview until a complete item lands (mutedRunsRef).
-    const resubscribe = (runId: string, fromSeq?: number) => {
+    // resubscribe asks the hub to replay a chat run from `fromSeq` and clears
+    // the run's delta preview for the replay to rebuild. Over a live socket the
+    // old subscription still pushes until the hub swaps it, so a gap resync
+    // also mutes deltas until a complete item lands (mutedRunsRef); a fresh
+    // socket has no old subscription and takes the replay as is.
+    const resubscribe = (runId: string, fromSeq?: number, mute = true) => {
       ws.send(EV.runSubscribe, fromSeq === undefined ? { run_id: runId } : { run_id: runId, from_seq: fromSeq });
       streamBufsRef.current[runId] = '';
       reasoningBufsRef.current[runId] = '';
-      mutedRunsRef.current.add(runId);
+      if (mute) mutedRunsRef.current.add(runId);
       const sid = runMapRef.current[runId];
       if (sid) updateSS(sid, s => (s.streaming || s.reasoning ? { ...s, streaming: '', reasoning: '' } : s));
     };
@@ -692,6 +695,10 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
       updateSS(sid, s => {
         let msgs = resolvePendingApprovals(s.messages, rid, reason) || s.messages;
         if (reason !== 'superseded') msgs = appendCancelledPart(msgs, thinking, remaining) || msgs;
+        // A newer run may already own the session (the abandoned one's
+        // cancel can land after its successor started): only the run that
+        // is live stands the session down.
+        if (s.liveRunId && s.liveRunId !== rid) return { ...s, messages: msgs };
         return { ...s, messages: msgs, streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null };
       });
       reloadMessages(sid);
@@ -869,7 +876,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
       // The role may have changed while away (a 1008 close is how the server
       // says so): the app refetches who we are.
       window.dispatchEvent(new Event(ME_RELOAD));
-      for (const runId of Object.values(sessionRunRef.current)) resubscribe(runId);
+      for (const runId of Object.values(sessionRunRef.current)) resubscribe(runId, undefined, false);
       if (document.visibilityState === 'hidden') { resyncPending = true; return; }
       resyncPending = false;
       resyncSessions();

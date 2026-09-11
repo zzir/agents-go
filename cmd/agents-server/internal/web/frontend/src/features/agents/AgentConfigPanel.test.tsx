@@ -6,7 +6,7 @@ vi.mock('@primer/react', () => ({}));
 vi.mock('@primer/react/experimental', () => ({}));
 vi.mock('@/lib/hooks', () => ({ useApi: () => ({}), useCrud: () => ({}) }));
 vi.mock('@/lib/api', () => ({ api: {} }));
-import { APPROVABLE_TOOLS, CONFIG_GROUPS, flattenConfig, legacyFallbackProvider, nestConfig, toggleListEntry } from '@/features/agents/AgentConfigPanel';
+import { APPROVABLE_TOOLS, CONFIG_GROUPS, flattenConfig, legacyFallbackProvider, nestConfig, resolveFallbackEntry, toggleListEntry } from '@/features/agents/AgentConfigPanel';
 
 describe('flattenConfig / nestConfig', () => {
   // A distinct value per grouped key, so a key that fell out or landed in the
@@ -85,5 +85,20 @@ describe('legacyFallbackProvider', () => {
     expect(legacyFallbackProvider({ provider_type: 'openai', base_url: 'https://gw.example/v1/' }, providers)).toBe('gw');
     expect(legacyFallbackProvider({ provider_type: 'openai', base_url: 'https://other.example' }, providers)).toBeUndefined();
     expect(legacyFallbackProvider({ provider_type: 'anthropic', base_url: 'https://gw.example/v1' }, providers)).toBeUndefined();
+  });
+});
+
+describe('resolveFallbackEntry', () => {
+  const providers = [{ id: 'anth', type: 'anthropic', base_url: 'https://api.anthropic.com' }];
+  it('a fresh entry has no endpoint yet and stays editable', () => {
+    expect(resolveFallbackEntry({ provider_id: '' }, providers)).toEqual({ providerId: '', unreachable: false });
+    expect(resolveFallbackEntry({}, [])).toEqual({ providerId: '', unreachable: false });
+  });
+  it('an entry naming a provider is that provider', () => {
+    expect(resolveFallbackEntry({ provider_id: 'anth' }, providers)).toEqual({ providerId: 'anth', unreachable: false });
+  });
+  it('a legacy endpoint entry resolves to its match, or is unreachable', () => {
+    expect(resolveFallbackEntry({ provider_type: 'anthropic', base_url: 'https://api.anthropic.com/' }, providers)).toEqual({ providerId: 'anth', unreachable: false });
+    expect(resolveFallbackEntry({ provider_type: 'openai', base_url: '' }, providers)).toEqual({ providerId: '', unreachable: true });
   });
 });
