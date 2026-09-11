@@ -189,23 +189,11 @@ func DecodeAgentSpec(ac *store.AgentConfig) (*AgentSpec, error) {
 		spec.OutputType = os
 	}
 
-	if err := decodeStringList(ac.Approval.ApproveTools, "approve_tools", &spec.ApproveTools); err != nil {
-		return nil, err
-	}
-	if err := decodeStringList(ac.ToolsJSON, "tools", &spec.Tools); err != nil {
-		return nil, err
-	}
-	if err := decodeStringList(ac.HandoffsJSON, "handoffs", &spec.Handoffs); err != nil {
-		return nil, err
-	}
-	if ac.SkillsJSON != "" {
-		// Fail rather than fall open: a malformed skills selection must not
-		// leave the full skill set attached, widening the capability surface.
-		if err := json.Unmarshal([]byte(ac.SkillsJSON), &spec.Skills); err != nil {
-			return nil, fmt.Errorf("skills selection is invalid: %w", err)
-		}
-		spec.SkillsSet = true
-	}
+	spec.ApproveTools = ac.Approval.ApproveTools
+	spec.Tools = ac.Tools
+	spec.Handoffs = ac.Handoffs
+	// A nil selection is "every skill"; an explicit [] is none.
+	spec.Skills, spec.SkillsSet = ac.Skills, ac.Skills != nil
 
 	if ac.Resilience.RetryPolicy != "" {
 		if err := json.Unmarshal([]byte(ac.Resilience.RetryPolicy), &spec.RetryPolicy); err != nil {
@@ -243,16 +231,4 @@ func DecodeAgentSpec(ac *store.AgentConfig) (*AgentSpec, error) {
 	}
 
 	return spec, nil
-}
-
-// decodeStringList decodes a JSON string-array field into dst, leaving it nil
-// when the field is unset. label names the field in the error message.
-func decodeStringList(raw, label string, dst *[]string) error {
-	if raw == "" {
-		return nil
-	}
-	if err := json.Unmarshal([]byte(raw), dst); err != nil {
-		return fmt.Errorf("%s must be a JSON array of strings: %w", label, err)
-	}
-	return nil
 }

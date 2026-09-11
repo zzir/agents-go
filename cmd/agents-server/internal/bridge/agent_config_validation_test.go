@@ -14,8 +14,7 @@ import (
 
 // Critical config that fails to parse/resolve must fail the build loudly, not
 // silently no-op: a guardrail or output schema that "looks enabled" but never
-// runs is the dangerous case. A malformed skills selection must fail rather
-// than fall open to the full skill set.
+// runs is the dangerous case.
 func TestBuildFullAgentFailsOnBadCriticalConfig(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
@@ -35,11 +34,7 @@ func TestBuildFullAgentFailsOnBadCriticalConfig(t *testing.T) {
 	}{
 		{"bad output_schema", func(a *store.AgentConfig) { a.Guardrails.OutputSchema = "{not json" }, "output_schema"},
 		{"unknown guardrail", func(a *store.AgentConfig) { a.Guardrails.Guardrails = `["no_such_guardrail"]` }, "not found"},
-		{"bad approve_tools", func(a *store.AgentConfig) { a.Approval.ApproveTools = "[not json" }, "approve_tools"},
 		{"wrong-typed model_settings", func(a *store.AgentConfig) { a.ModelSettings = `{"temperature":"hot"}` }, "model_settings"},
-		{"malformed skills selection", func(a *store.AgentConfig) { a.SkillsJSON = "[not json" }, "skills"},
-		{"malformed handoffs", func(a *store.AgentConfig) { a.HandoffsJSON = "{bad" }, "handoffs"},
-		{"malformed tools", func(a *store.AgentConfig) { a.ToolsJSON = "not-json" }, "tools"},
 		{"malformed retry_policy", func(a *store.AgentConfig) {
 			a.Resilience.RetryEnabled = true
 			a.Resilience.RetryPolicy = "{bad"
@@ -134,15 +129,15 @@ func TestValidateAgentToolNamesCatchesPrefixCollisions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	both := `["` + global.ID + `","` + shadow.ID + `"]`
+	both := []string{global.ID, shadow.ID}
 	if err := ValidateAgentToolNames(ctx, servers, both); err == nil || !strings.Contains(err.Error(), "foo") {
 		t.Fatalf("same-named pair = %v, want a prefix-collision refusal", err)
 	}
-	twice := `["` + global.ID + `","` + global.ID + `"]`
+	twice := []string{global.ID, global.ID}
 	if err := ValidateAgentToolNames(ctx, servers, twice); err == nil || !strings.Contains(err.Error(), "twice") {
 		t.Fatalf("same server twice = %v, want a refusal", err)
 	}
-	if err := ValidateAgentToolNames(ctx, servers, `["`+global.ID+`"]`); err != nil {
+	if err := ValidateAgentToolNames(ctx, servers, []string{global.ID}); err != nil {
 		t.Fatalf("a single selection must pass: %v", err)
 	}
 }

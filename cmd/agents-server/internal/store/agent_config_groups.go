@@ -66,9 +66,28 @@ type SessionGroup struct {
 	HistoryLimit int `json:"history_limit,omitempty"`
 }
 
-// ApprovalGroup holds the HITL approval selection (JSON: ["*"] or names).
+// ApprovalGroup holds the HITL approval selection.
 type ApprovalGroup struct {
-	ApproveTools string `json:"approve_tools,omitempty"`
+	// ApproveTools names the tools that pause for approval before each call; ["*"] means every tool.
+	ApproveTools StringList `json:"approve_tools,omitempty"`
+}
+
+// StringList is a list field: a JSON array on the API, JSON text in the
+// column. nil stores as "" and reads back nil, so absent and [] stay distinct.
+type StringList []string
+
+// Value implements driver.Valuer.
+func (l StringList) Value() (driver.Value, error) {
+	if l == nil {
+		return "", nil
+	}
+	return jsonGroupValue(l)
+}
+
+// Scan implements sql.Scanner.
+func (l *StringList) Scan(src any) error {
+	*l = nil
+	return jsonGroupScan(l, src)
 }
 
 // CompactionGroup holds server-side session-compaction settings.

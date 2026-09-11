@@ -1562,3 +1562,30 @@ handle go stale harmlessly. Once a successor exists, only its own idle timer or
 stop ends the container.
 
 Rules: workbench invariant 27; [spec §2.7p](../reference/spec.md#27p-stop-keeps-the-filesystem-and-promises-nothing-else).
+
+### 5.67 A list is an array on the wire and JSON text in the column
+
+Decided 2026-09-11 (workbench invariant 1).
+
+**Decision.** An agent's `tools`, `skills`, `handoffs` and
+`approval.approve_tools` are `[]string` on the REST API (`store.StringList`),
+typed in the OpenAPI document and the generated client, and refused at bind
+when they are not arrays. The column stays `text`: the type's Valuer/Scanner
+writes the JSON array and reads it back, `nil` as `""`, so a row written
+before the change reads unchanged and no schema moves. `skills` keeps its
+third value — `null` is "not customized" (every skill the scope can see),
+`[]` is none — and so travels without `omitempty`.
+
+**Rejected.** Strings holding JSON — the shape the review found: the
+OpenAPI type is `string`, the generated client is untyped, a typo in a name
+surfaces at run time, and every client parses and re-serializes the field.
+A relational join table per list — four tables for four lists of ids, a
+schema change for what is a column's encoding, and a read that stitches rows
+back into the order the operator chose.
+
+**Cost accepted.** A breaking wire change: a client that sent the string form
+gets `400`. `skills: null` appears in responses, the honest spelling of "not
+customized".
+
+Rules: [invariant 1](workbench-invariants.md);
+[protocol.md, Agents](../reference/protocol.md#agents--apiv1agents).

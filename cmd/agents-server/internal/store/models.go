@@ -104,11 +104,14 @@ type AgentConfig struct {
 	Compaction CompactionGroup `bun:"compaction,type:text,nullzero" json:"compaction"`
 	Memory     MemoryGroup     `bun:"memory,type:text,nullzero"     json:"memory"`
 
-	// The following are already single JSON blobs, kept as their own columns.
+	// ModelSettings is a JSON object of model parameters (temperature, reasoning, extra_body, ...).
 	ModelSettings string `bun:"model_settings" json:"model_settings,omitempty"`
-	ToolsJSON     string `bun:"tools"          json:"tools,omitempty"`
-	SkillsJSON    string `bun:"skills"         json:"skills,omitempty"`
-	HandoffsJSON  string `bun:"handoffs"       json:"handoffs,omitempty"`
+	// Tools lists the ids of the MCP servers whose tools the agent carries.
+	Tools StringList `bun:"tools,type:text" json:"tools,omitempty"`
+	// Skills lists the ids of the skills the agent may read; null means every skill its scope can see, [] none.
+	Skills StringList `bun:"skills,type:text" json:"skills"`
+	// Handoffs lists the ids of the agents this one can hand off to.
+	Handoffs StringList `bun:"handoffs,type:text" json:"handoffs,omitempty"`
 	// ErrorHandlers is a JSON object keyed by error kind (max_turns, model_refusal, invalid_final_output); empty keeps every run error fatal.
 	ErrorHandlers string `bun:"error_handlers" json:"error_handlers,omitempty"`
 

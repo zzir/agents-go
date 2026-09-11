@@ -305,7 +305,11 @@ to executions, `?live=true` to `working` / `input_required` rows, `?limit=`
 An agent config is the top-level scalars, the knobs as **grouped nested
 objects** (`behavior`, `resilience`, `guardrails`, `session`, `approval`,
 `compaction` — each group one JSON column, so a new knob needs no schema
-change) and the top-level JSON blobs. Beyond the shape, a write checks:
+change) and the top-level JSON blobs. **The list fields are JSON arrays**
+(decisions §5.67): `tools` (MCP server ids), `handoffs` (agent ids),
+`approval.approve_tools` (tool names, or `["*"]`) and `skills` (skill ids) —
+`skills` is the one whose absence means something: `null`/omitted gives the
+agent every skill its scope can see, `[]` none. Beyond the shape, a write checks:
 `avatar` is a path into the UI's built-in catalog (anything else, an external
 URL included, is `400`); a `fallback_models` entry defaults `provider_type`
 to `openai` and an unknown key in one is `400`; an `error_handlers` entry's

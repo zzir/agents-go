@@ -63,7 +63,7 @@ export function nestConfig(flat: Record<string, unknown>): Record<string, unknow
 }
 
 // The built-in tools an operator gates behind approval, by the group that
-// carries them. MCP tools (server__tool) and anything else go in the JSON.
+// carries them. MCP tools (server__tool) and anything else go in the Other list.
 export const APPROVABLE_TOOLS: { group: string; tools: string[] }[] = [
   { group: 'Sandbox', tools: ['exec_command', 'apply_patch', 'write_file', 'read_file', 'list_files'] },
   { group: 'Subagents', tools: ['spawn_task', 'task_status', 'task_stop', 'task_retry'] },
@@ -72,24 +72,9 @@ export const APPROVABLE_TOOLS: { group: string; tools: string[] }[] = [
   { group: 'Other', tools: ['todo_write', 'read_skill'] },
 ];
 
-// parseApproveTools reads the stored list; null is a value the checklist
-// cannot represent (malformed JSON, or not an array of names).
-export function parseApproveTools(raw: string): string[] | null {
-  if (!raw.trim()) return [];
-  try {
-    const v: unknown = JSON.parse(raw);
-    return Array.isArray(v) && v.every(x => typeof x === 'string') ? v : null;
-  } catch {
-    return null;
-  }
-}
-
-// toggleApproveTool adds or removes one name and returns the stored form;
-// an emptied list stores as '' (unset), the way a fresh agent starts.
-export function toggleApproveTool(raw: string, name: string, on: boolean): string {
-  const list = parseApproveTools(raw) ?? [];
-  const next = on ? (list.includes(name) ? list : [...list, name]) : list.filter(t => t !== name);
-  return next.length ? JSON.stringify(next) : '';
+// toggleListEntry adds or removes one name, keeping the rest in place.
+export function toggleListEntry(list: string[], name: string, on: boolean): string[] {
+  return on ? (list.includes(name) ? list : [...list, name]) : list.filter(t => t !== name);
 }
 
 const MCP_STATUS_NOTE: Record<string, string> = {
@@ -126,7 +111,7 @@ interface AgentFormData {
   subagents: boolean;
   vision: boolean;
   override_system_prompt: boolean;
-  approve_tools: string;
+  approve_tools: string[];
   compaction_enabled: boolean;
   compaction_threshold_tokens: number;
   compaction_window: number;
@@ -136,11 +121,15 @@ interface AgentFormData {
   memory_tools: boolean;
   memory_agent_write: boolean;
   history_tools: boolean;
-  handoffs?: string;
-  tools?: string;
-  skills?: string;
+  handoffs?: string[];
+  tools?: string[];
+  // null (or absent) is "not customized": the agent gets every skill it can see.
+  skills?: string[] | null;
   model_settings?: string;
 }
+
+// The list fields as the form hands them back.
+type AgentLists = { handoffs: string[]; tools: string[]; skills: string[]; model_settings: string };
 
 interface McpServer {
   id: string | number;
@@ -158,10 +147,10 @@ interface Agent {
   model: string;
   provider_id?: string;
   instructions: string;
-  handoffs: string;
-  tools: string;
-  // Empty/absent means "not customized" -> the agent gets every installed skill.
-  skills?: string;
+  handoffs?: string[];
+  tools?: string[];
+  // null/absent means "not customized" -> the agent gets every installed skill.
+  skills?: string[] | null;
   scope?: string;
   owner_id?: string;
 }
@@ -178,7 +167,7 @@ interface ProviderRef {
 
 interface AgentFormProps {
   initial?: Partial<AgentFormData> & { id?: string | number; scope?: string; owner_id?: string };
-  onSave: (form: AgentFormData & { handoffs: string; tools: string; skills: string; model_settings: string }) => void;
+  onSave: (form: AgentFormData & AgentLists) => void;
   onCancel?: () => void;
   onDelete?: () => void;
   saving?: boolean;
@@ -192,20 +181,13 @@ interface AgentFormProps {
 function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, skills, allAgents, providerTypes, providers }: AgentFormProps) {
   const { me } = useMe();
   const meId = me?.id;
-  const initHandoffs = (): (string | number)[] => {
-    try { return JSON.parse((initial && initial.handoffs) || '[]'); } catch { return []; }
-  };
-  const initTools = (): (string | number)[] => {
-    try { return JSON.parse((initial && initial.tools) || '[]'); } catch { return []; }
-  };
   // A brand-new agent starts with NO skills selected — skills are opt-in, so a
   // bot unrelated to any installed skill doesn't silently carry them all. Only
-  // an EXISTING agent whose `skills` is unset (predates per-agent scoping) falls
-  // back to "every installed skill" (null below), so an edit never strips them.
+  // an EXISTING agent whose `skills` is null (not customized) falls back to
+  // "every installed skill" (null below), so an edit never strips them.
   const initSkills = (): string[] | null => {
     if (!initial) return [];
-    if (typeof initial.skills !== 'string' || initial.skills === '') return null;
-    try { return JSON.parse(initial.skills); } catch { return null; }
+    return Array.isArray(initial.skills) ? initial.skills : null;
   };
   const parseModelSettings = (): Record<string, unknown> => {
     try { return JSON.parse((initial && initial.model_settings) || '{}'); } catch { return {}; }
@@ -223,7 +205,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
     // New agents default to a bounded fan-out; an existing agent keeps its
     // stored value (0 = unlimited) via the flattenConfig spread below.
     handoff_input_filter: '', max_tool_concurrency: initial ? 0 : 8,
-    tool_not_found_behavior: '', reasoning_item_id_policy: '', workflow_authoring: false, subagents: true, vision: false, override_system_prompt: false, approve_tools: '',
+    tool_not_found_behavior: '', reasoning_item_id_policy: '', workflow_authoring: false, subagents: true, vision: false, override_system_prompt: false, approve_tools: [],
     compaction_enabled: false, compaction_threshold_tokens: 0,
     compaction_window: 0, compaction_model: '', compaction_prompt: '', compaction_mode: '',
     memory_tools: false, memory_agent_write: false, history_tools: false,
@@ -241,17 +223,19 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
   // would be silently dropped on the next UI save.
   const msFormKeys = ['reasoning', 'service_tier', 'extra_body', 'temperature', 'top_p', 'max_tokens'];
   const preservedMs = Object.fromEntries(Object.entries(parseModelSettings()).filter(([k]) => !msFormKeys.includes(k)));
-  const [selectedHandoffs, setSelectedHandoffs] = useState<(string | number)[]>(initHandoffs);
-  const [selectedMcp, setSelectedMcp] = useState<(string | number)[]>(initTools);
+  const [selectedHandoffs, setSelectedHandoffs] = useState<string[]>(initial?.handoffs ?? []);
+  const [selectedMcp, setSelectedMcp] = useState<string[]>(initial?.tools ?? []);
   const [selectedSkills, setSelectedSkills] = useState<string[] | null>(initSkills);
   const set = <K extends keyof AgentFormData>(k: K, v: AgentFormData[K]) => setForm(prev => ({ ...prev, [k]: v }));
   // Summary is the default mode and the only one with a kept window and a summary prompt.
   const summaryMode = !form.compaction_mode || form.compaction_mode === 'summary';
   const resetImplied = !!form.compaction_enabled && (form.compaction_mode === 'reset' || form.compaction_mode === 'hybrid');
-  const approveList = parseApproveTools(form.approve_tools || '');
-  const approveAll = approveList?.includes('*') ?? false;
+  const approveList = form.approve_tools || [];
+  const approveAll = approveList.includes('*');
   const approveKnown = new Set(APPROVABLE_TOOLS.flatMap(g => g.tools));
-  const approveOthers = (approveList || []).filter(t => t !== '*' && !approveKnown.has(t));
+  // Names the checklist does not know (an MCP server's tool) are edited as tokens.
+  const approveOthers = approveList.filter(t => t !== '*' && !approveKnown.has(t));
+  const setApproveOthers = (others: string[]) => set('approve_tools', [...approveList.filter(t => t === '*' || approveKnown.has(t)), ...others]);
   // The backend's facts follow the REFERENCED provider: wording from the
   // static table, machine facts (unsupported features) from the server's
   // registry. An agent with no provider runs on the built-in openai default.
@@ -278,10 +262,10 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
   const handoffTargets = (allAgents || []).filter(a => a.id !== initial?.id && refOK(a));
   const handoffCollisions = collidingNames(handoffTargets);
   const toggleHandoff = (id: string | number) => {
-    setSelectedHandoffs(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+    setSelectedHandoffs(prev => toggleListEntry(prev, String(id), !prev.includes(String(id))));
   };
   const toggleMcp = (id: string | number) => {
-    setSelectedMcp(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+    setSelectedMcp(prev => toggleListEntry(prev, String(id), !prev.includes(String(id))));
   };
   // null selectedSkills = not customized yet -> effectively "every installed skill".
   // Computed from the live `skills` prop (not stale state) so it's correct even
@@ -407,7 +391,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
           {visibleMcp.map(s => {
             // A disabled server cannot be picked; one that is picked can
             // always be dropped, whatever its status.
-            const selected = selectedMcp.includes(s.id);
+            const selected = selectedMcp.includes(String(s.id));
             const locked = s.status === 'disabled' && !selected;
             return (
               <FormControl key={s.id} disabled={locked}>
@@ -466,7 +450,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
           <div className="form-checkbox-group">
             {handoffTargets.map(a => (
               <FormControl key={a.id}>
-                <Checkbox checked={selectedHandoffs.includes(a.id)} onChange={() => toggleHandoff(a.id)} />
+                <Checkbox checked={selectedHandoffs.includes(String(a.id))} onChange={() => toggleHandoff(a.id)} />
                 <FormControl.Label>
                   <span className="agent-inline">
                     <AgentAvatar name={a.name} avatar={a.avatar} size={20} />
@@ -547,23 +531,20 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
           description={(resetImplied ? 'On while compaction is in reset or hybrid mode. ' : '') + 'history_search and history_read find turns that compaction folded out of the context.'} />
       </div>
 
-      {/* The checklist edits the stored JSON list in place; the JSON stays
-          reachable for names the checklist does not know (an MCP tool). */}
+      {/* The checklist edits the list in place; names it does not know (an
+          MCP tool) are tokens below it. */}
       <div className="form-group">
         <div className="form-group-title">Approvals</div>
-        <ToggleRow label="Every tool waits for approval" checked={approveAll} onChange={v => set('approve_tools', toggleApproveTool(form.approve_tools || '', '*', v))}
+        <ToggleRow label="Every tool waits for approval" checked={approveAll} onChange={v => set('approve_tools', toggleListEntry(approveList, '*', v))}
           description="Each call pauses until you approve it — MCP tools included." />
-        {approveList === null && (
-          <span className="FormControl-caption form-caption-error">Approve tools is not a JSON array of names — fix it under Advanced JSON.</span>
-        )}
         <div className="approve-grid">
           {APPROVABLE_TOOLS.map(g => (
             <div key={g.group} className="approve-group">
               <div className="approve-group-title">{g.group}</div>
               {g.tools.map(t => (
-                <FormControl key={t} disabled={approveAll || approveList === null}>
-                  <Checkbox checked={approveAll || !!approveList?.includes(t)} disabled={approveAll || approveList === null}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('approve_tools', toggleApproveTool(form.approve_tools || '', t, e.target.checked))} />
+                <FormControl key={t} disabled={approveAll}>
+                  <Checkbox checked={approveAll || approveList.includes(t)} disabled={approveAll}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('approve_tools', toggleListEntry(approveList, t, e.target.checked))} />
                   <FormControl.Label><code>{t}</code></FormControl.Label>
                 </FormControl>
               ))}
@@ -571,10 +552,8 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
           ))}
         </div>
         <div className="FormControl-caption">A checked tool pauses before every call until you approve it; exec_command's card also offers trusting that command, or every command, for the session.</div>
-        <Disclosure variant="plain" label={'Advanced JSON' + (approveOthers.length ? ` (${approveOthers.length} more)` : '')}>
-          <JsonField label="Approve tools (JSON)" value={form.approve_tools || ''} onChange={v => set('approve_tools', v)} placeholder='["*"] or ["exec_command","server__tool"]'
-            caption="The list as stored — where a name the checklist does not know goes, such as an MCP server's tool (server__tool)." />
-        </Disclosure>
+        {fc('Other tools', <TokenListInput ariaLabel="Other tools that wait for approval" placeholder="server__tool"
+          values={approveOthers} onChange={setApproveOthers} />, "Names the checklist does not know, such as an MCP server's tool (server__tool)")}
       </div>
 
       <Disclosure variant="plain" className="advanced-toggle" label="Advanced">
@@ -643,8 +622,8 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
             catch { toast.error('Extra body is not valid JSON — fix or clear it before saving'); return; }
           }
           const model_settings = Object.keys(ms).length > 0 ? JSON.stringify(ms) : '';
-          const flatPayload = { ...form, handoffs: JSON.stringify(selectedHandoffs), tools: JSON.stringify(selectedMcp), skills: JSON.stringify(effectiveSkills), model_settings };
-          onSave(nestConfig(flatPayload) as unknown as AgentFormData & { handoffs: string; tools: string; skills: string; model_settings: string });
+          const flatPayload = { ...form, handoffs: selectedHandoffs, tools: selectedMcp, skills: effectiveSkills, model_settings };
+          onSave(nestConfig(flatPayload) as unknown as AgentFormData & AgentLists);
         }}
         onCancel={onCancel}
         onDelete={onDelete}
@@ -658,7 +637,7 @@ export function AgentConfigPanel() {
   const isAdmin = me?.role === 'admin';
   const rowEditable = (a: Agent) => canEditRow(isAdmin, me?.id, a);
   const { items: agents, loading, adding, editing, startAdd, startEdit, cancel, save, saving, remove, reload } =
-    useCrud<Agent, AgentFormData & { handoffs: string; tools: string; skills: string; model_settings: string }>(api.agents, 'agents');
+    useCrud<Agent, AgentFormData & AgentLists>(api.agents, 'agents');
   const [query, setQuery] = useState('');
   const scopeFilter = useScopeFilter();
   const rows = filterRows(agents, { mine: !!scopeFilter?.mine, meId: me?.id, query }, a => `${a.name} ${a.description || ''} ${a.model || ''}`);

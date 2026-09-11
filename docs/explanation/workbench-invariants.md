@@ -12,9 +12,10 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
 
 1. **`config` blobs travel as JSON objects, never strings.** Every
    backend-specific settings blob (`mcp_servers.config`, `sandboxes.config`,
-   `guardrails.config`) is a `json.RawMessage` exchanged inline; the frontend
-   reads and writes it as an object, never `JSON.stringify`/`parse` of the
-   field itself.
+   `guardrails.config`) is a `json.RawMessage` exchanged inline, and a list
+   field (an agent's `tools`, `skills`, `handoffs`, `approve_tools`) a
+   `store.StringList`; the frontend reads and writes each as the value it is,
+   never `JSON.stringify`/`parse` of the field itself (decisions §5.67).
 2. **List responses carry every field the edit form needs.** `useCrud` panels
    initialize the edit form from the list item, so a list-side projection that
    drops fields makes the next save silently wipe them. Return full rows from

@@ -6,7 +6,6 @@ package bridge
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -630,15 +629,9 @@ func bucketToolsSince(agent *agents.Agent, mark int, source string, prof *store.
 // server twice — or two servers sharing a name, legal since names are unique
 // per SCOPE — is a guaranteed collision. The servers' actual tool lists are
 // only known once connected and cannot be validated here.
-func ValidateAgentToolNames(ctx context.Context, mcpServers *store.McpServerStore, toolsJSON string) error {
-	if toolsJSON == "" || mcpServers == nil {
+func ValidateAgentToolNames(ctx context.Context, mcpServers *store.McpServerStore, ids []string) error {
+	if len(ids) == 0 || mcpServers == nil {
 		return nil
-	}
-	// A malformed tools list is rejected here (and at build time) rather than
-	// silently dropping every MCP tool the agent was meant to have.
-	var ids []string
-	if err := json.Unmarshal([]byte(toolsJSON), &ids); err != nil {
-		return fmt.Errorf("tools selection is invalid: %w", err)
 	}
 	seenID := map[string]bool{}
 	prefixOwner := map[string]string{}

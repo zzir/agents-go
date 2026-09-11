@@ -86,7 +86,7 @@ func (h *AgentConfigHandler) validateAgentConfig(c *gin.Context, ac *store.Agent
 			return false
 		}
 	}
-	if err := bridge.ValidateAgentToolNames(c.Request.Context(), h.mcpServers, ac.ToolsJSON); err != nil {
+	if err := bridge.ValidateAgentToolNames(c.Request.Context(), h.mcpServers, ac.Tools); err != nil {
 		badRequest(c, err.Error())
 		return false
 	}

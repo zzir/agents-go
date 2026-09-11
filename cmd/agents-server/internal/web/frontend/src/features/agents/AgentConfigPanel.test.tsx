@@ -6,7 +6,7 @@ vi.mock('@primer/react', () => ({}));
 vi.mock('@primer/react/experimental', () => ({}));
 vi.mock('@/lib/hooks', () => ({ useApi: () => ({}), useCrud: () => ({}) }));
 vi.mock('@/lib/api', () => ({ api: {} }));
-import { APPROVABLE_TOOLS, CONFIG_GROUPS, flattenConfig, nestConfig, parseApproveTools, toggleApproveTool } from '@/features/agents/AgentConfigPanel';
+import { APPROVABLE_TOOLS, CONFIG_GROUPS, flattenConfig, nestConfig, toggleListEntry } from '@/features/agents/AgentConfigPanel';
 
 describe('flattenConfig / nestConfig', () => {
   // A distinct value per grouped key, so a key that fell out or landed in the
@@ -47,28 +47,19 @@ describe('flattenConfig / nestConfig', () => {
 });
 
 describe('approve tools checklist', () => {
-  it('reads the stored list, and refuses what a checklist cannot show', () => {
-    expect(parseApproveTools('')).toEqual([]);
-    expect(parseApproveTools('  ')).toEqual([]);
-    expect(parseApproveTools('["exec_command","*"]')).toEqual(['exec_command', '*']);
-    expect(parseApproveTools('{"a":1}')).toBeNull();
-    expect(parseApproveTools('[1]')).toBeNull();
-    expect(parseApproveTools('not json')).toBeNull();
-  });
-
-  it('toggles one name in place and stores an emptied list as unset', () => {
-    expect(toggleApproveTool('', 'exec_command', true)).toBe('["exec_command"]');
-    expect(toggleApproveTool('["exec_command"]', 'exec_command', true)).toBe('["exec_command"]');
-    expect(toggleApproveTool('["exec_command","srv__tool"]', 'exec_command', false)).toBe('["srv__tool"]');
-    expect(toggleApproveTool('["exec_command"]', 'exec_command', false)).toBe('');
+  it('toggles one name in place, once', () => {
+    expect(toggleListEntry([], 'exec_command', true)).toEqual(['exec_command']);
+    expect(toggleListEntry(['exec_command'], 'exec_command', true)).toEqual(['exec_command']);
+    expect(toggleListEntry(['exec_command', 'srv__tool'], 'exec_command', false)).toEqual(['srv__tool']);
+    expect(toggleListEntry(['exec_command'], 'exec_command', false)).toEqual([]);
   });
 
   // "*" joins the list rather than replacing it, so switching it off again
   // restores the names that were checked before.
   it('keeps the checked names under "every tool"', () => {
-    const all = toggleApproveTool('["exec_command"]', '*', true);
-    expect(parseApproveTools(all)).toEqual(['exec_command', '*']);
-    expect(toggleApproveTool(all, '*', false)).toBe('["exec_command"]');
+    const all = toggleListEntry(['exec_command'], '*', true);
+    expect(all).toEqual(['exec_command', '*']);
+    expect(toggleListEntry(all, '*', false)).toEqual(['exec_command']);
   });
 
   it('lists each built-in name once', () => {

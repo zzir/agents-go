@@ -133,7 +133,7 @@ func TestAgentConfigRejectsDoubleSelectedMcpServer(t *testing.T) {
 	// Cross-server name collisions are prevented by the unique server name, so
 	// the remaining case is the same server selected twice, which would
 	// duplicate every one of its tools.
-	body := `{"name":"a","model":"gpt-4o","tools":"[\"` + s1.ID + `\",\"` + s1.ID + `\"]"}`
+	body := `{"name":"a","model":"gpt-4o","tools":["` + s1.ID + `","` + s1.ID + `"]}`
 	w := doJSON(t, engine, http.MethodPost, "/agents", body)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("create with doubled id: got %d, want 400 (body %s)", w.Code, w.Body.String())
@@ -143,8 +143,8 @@ func TestAgentConfigRejectsDoubleSelectedMcpServer(t *testing.T) {
 	}
 }
 
-// Distinct MCP server names, unknown ids, and malformed tools JSON must all
-// still save — the validator only rejects statically certain collisions.
+// Distinct MCP server names and unknown ids save — the validator only rejects
+// statically certain collisions; a string where the array goes is refused at bind.
 func TestAgentConfigAcceptsValidToolSelections(t *testing.T) {
 	engine, mcpStore := newAgentEngine(t)
 	ctx := context.Background()
@@ -158,21 +158,65 @@ func TestAgentConfigAcceptsValidToolSelections(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Distinct names and unknown ids save (the validator only rejects statically
-	// certain collisions); a malformed tools list is now rejected rather than
-	// silently dropping every MCP tool at run time.
 	for name, body := range map[string]string{
-		"distinct names": `{"name":"a","model":"gpt-4o","tools":"[\"` + s1.ID + `\",\"` + s2.ID + `\"]"}`,
-		"unknown id":     `{"name":"b","model":"gpt-4o","tools":"[\"` + s1.ID + `\",\"gone\"]"}`,
+		"distinct names": `{"name":"a","model":"gpt-4o","tools":["` + s1.ID + `","` + s2.ID + `"]}`,
+		"unknown id":     `{"name":"b","model":"gpt-4o","tools":["` + s1.ID + `","gone"]}`,
 		"no tools":       `{"name":"d","model":"gpt-4o"}`,
 	} {
 		if w := doJSON(t, engine, http.MethodPost, "/agents", body); w.Code != http.StatusCreated {
 			t.Errorf("%s: got %d, want 201 (body %s)", name, w.Code, w.Body.String())
 		}
 	}
-	w := doJSON(t, engine, http.MethodPost, "/agents", `{"name":"c","model":"gpt-4o","tools":"not-json"}`)
+	w := doJSON(t, engine, http.MethodPost, "/agents", `{"name":"c","model":"gpt-4o","tools":"[\"`+s1.ID+`\"]"}`)
 	if w.Code != http.StatusBadRequest {
-		t.Errorf("malformed tools: got %d, want 400 (body %s)", w.Code, w.Body.String())
+		t.Errorf("tools as a JSON string: got %d, want 400 (body %s)", w.Code, w.Body.String())
+	}
+}
+
+// The list fields are arrays on the wire, and they come back as arrays: an
+// absent skills selection reads null, an explicit [] stays [].
+func TestAgentConfigListFieldsRoundTripAsArrays(t *testing.T) {
+	engine, _ := newAgentEngine(t)
+
+	w := doJSON(t, engine, http.MethodPost, "/agents", `{"name":"a","model":"gpt-4o","approval":{"approve_tools":["exec_command"]},"tools":["m1"],"handoffs":["h1"],"skills":[]}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: got %d, want 201 (body %s)", w.Code, w.Body.String())
+	}
+	type lists struct {
+		ID       string    `json:"id"`
+		Tools    []string  `json:"tools"`
+		Handoffs []string  `json:"handoffs"`
+		Skills   *[]string `json:"skills"`
+		Approval struct {
+			ApproveTools []string `json:"approve_tools"`
+		} `json:"approval"`
+	}
+	var got lists
+	decode := func() {
+		t.Helper()
+		got = lists{}
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode: %v (%s)", err, w.Body.String())
+		}
+	}
+	decode()
+	if len(got.Approval.ApproveTools) != 1 || got.Approval.ApproveTools[0] != "exec_command" || len(got.Tools) != 1 || len(got.Handoffs) != 1 {
+		t.Fatalf("lists did not round-trip: %s", w.Body.String())
+	}
+	if got.Skills == nil || len(*got.Skills) != 0 {
+		t.Fatalf("an explicit empty skills selection must read back as [], got %s", w.Body.String())
+	}
+
+	w = doJSON(t, engine, http.MethodPut, "/agents/"+got.ID, `{"name":"a","model":"gpt-4o"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("update: got %d, want 200 (body %s)", w.Code, w.Body.String())
+	}
+	decode()
+	if got.Skills != nil {
+		t.Fatalf("an absent skills selection must read back as null, got %s", w.Body.String())
+	}
+	if len(got.Tools) != 0 || len(got.Approval.ApproveTools) != 0 {
+		t.Fatalf("an omitted list must clear, got %s", w.Body.String())
 	}
 }
 
