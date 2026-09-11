@@ -15,8 +15,8 @@ const FLASH_ICON: Record<string, React.ReactNode> = {
 
 // A queue, not one slot: three errors during a long run stack up instead of
 // each overwriting the last. Errors linger (10s) so they can be read, then
-// auto-dismiss; a click, their close button, or Escape (the newest first) takes
-// one sooner. Each item is its own live region; the stack is none, or a
+// auto-dismiss; a click, their close button, or Escape on a focused one takes
+// it sooner. Each item is its own live region; the stack is none, or a
 // reader would announce every toast twice.
 export function GlobalToast() {
   const [items, setItems] = useState<Array<{ id: number; msg: string; type: string; exiting?: boolean }>>([]);
@@ -56,15 +56,14 @@ export function GlobalToast() {
     };
   }, [dismiss]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || e.defaultPrevented) return;
-      const last = [...itemsRef.current].reverse().find(it => !it.exiting);
-      if (last) dismiss(last.id);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [dismiss]);
+  // Escape takes the toast that has the focus (its close button), and only
+  // that: a dialog underneath keeps its own Escape.
+  const onKeyDown = (id: number) => (e: React.KeyboardEvent) => {
+    if (e.key !== 'Escape') return;
+    e.stopPropagation();
+    e.preventDefault();
+    dismiss(id);
+  };
 
   return (
     <div className="global-toast-stack">
@@ -75,6 +74,7 @@ export function GlobalToast() {
           role={it.type === 'error' ? 'alert' : 'status'}
           className={'global-toast' + (it.exiting ? ' global-toast-exit' : '')}
           onClick={() => dismiss(it.id)}
+          onKeyDown={onKeyDown(it.id)}
         >
           <span className="global-toast-body" title={it.msg}>
             {FLASH_ICON[it.type]}<span className="global-toast-msg">{it.msg}</span>

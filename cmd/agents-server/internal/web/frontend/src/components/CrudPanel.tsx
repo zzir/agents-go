@@ -5,6 +5,7 @@ import { ScopeFilter, useScopeFilter } from '@/components/ScopeFilter';
 import { Blankslate } from '@primer/react/experimental';
 import { RowMenu } from '@/components/ListTable';
 import { Loading } from '@/components/Loading';
+import { UnsavedForm } from '@/components/UnsavedForm';
 import { useReadOnly, type ScopedRow } from '@/lib/access';
 import { BADGE } from '@/lib/badges';
 import { toast } from '@/lib/toast';
@@ -76,7 +77,7 @@ export function CrudPanel({ title, as, description, actions, search, filter, onA
       )}
       {form && (readOnly
         ? <fieldset disabled className="readonly-form settings-form">{form}</fieldset>
-        : <div className="settings-form">{form}</div>)}
+        : <UnsavedForm className="settings-form">{form}</UnsavedForm>)}
       {!form && (
         <div className="Box">
           {children}
