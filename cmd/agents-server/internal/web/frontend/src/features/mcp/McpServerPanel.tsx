@@ -193,6 +193,16 @@ const STATUS_DOT: Record<McpStatus, string> = {
   disabled: 'var(--fgColor-muted)',
 };
 
+// The words behind the dot, for the tooltip and the accessibility tree.
+const STATUS_TEXT: Record<McpStatus, string> = {
+  connected: 'connected',
+  connecting: 'connecting',
+  authorizing: 'authorizing',
+  needs_auth: 'needs authorization',
+  disconnected: 'disconnected',
+  disabled: 'disabled',
+};
+
 // The action button each status offers; connected and disabled offer none.
 // connecting is disabled (a concurrent connect would just error with
 // "already in progress"), but authorizing stays CLICKABLE: the wait is on the
@@ -344,7 +354,8 @@ export function McpServerPanel() {
           const editable = rowEditable(s);
           return (
             <ResourceRow key={s.id}
-              status={<span className="form-status-dot" style={{ background: STATUS_DOT[s.status] || 'var(--fgColor-muted)' }} />}
+              status={<span className="form-status-dot" role="img" title={STATUS_TEXT[s.status] || s.status} aria-label={STATUS_TEXT[s.status] || s.status}
+                style={{ background: STATUS_DOT[s.status] || 'var(--fgColor-muted)' }} />}
               title={s.name}
               badges={<>
                 <ScopeBadge row={s} meId={me?.id} />

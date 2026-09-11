@@ -71,6 +71,9 @@ function SessionItem({ s, activeId, isRunning, isAwaiting, onSelect, onPin, onRe
       {isRunning && !isAwaiting && <span className="session-running" hidden />}
       {isActive && <span className="session-selected" hidden />}
       {s.name}
+      {/* The bars are color alone; the words reach a screen reader here. */}
+      {isAwaiting && <span className="sr-only"> — awaiting your approval</span>}
+      {isRunning && !isAwaiting && <span className="sr-only"> — running</span>}
       {/* TrailingAction renders as a sibling of the item's button inside the
           <li>, unlike TrailingVisual which would nest a button in a button. */}
       <ActionList.TrailingAction
