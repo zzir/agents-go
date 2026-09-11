@@ -13,9 +13,8 @@ const PANEL: Record<Exclude<ScopedEntity, 'workflows'>, LazyExoticComponent<Comp
   skills: lazy(() => import('@/features/skills/SkillsPanel')),
 };
 
-// ScopedEntityPanel is one scoped entity's settings tab: ONE list, in which
-// an admin also sees every other member's rows and gets the "Mine | All"
-// filter to widen it — Mine is where it opens (invariant 61).
+// ScopedEntityPanel is one scoped entity's tab: ONE list, an admin's widened
+// by the "Mine | All" filter that opens on Mine (invariant 61).
 export function ScopedEntityPanel({ entity }: { entity: Exclude<ScopedEntity, 'workflows'> }) {
   const isAdmin = useIsAdmin();
   const [mine, setMine] = useState(true);

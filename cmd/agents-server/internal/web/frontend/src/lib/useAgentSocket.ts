@@ -813,8 +813,8 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
       if (tasks.handoff(p, handoff)) return;
       const sid = runMapRef.current[p.run_id];
       if (!sid || !p.to) return;
-      // Hub replays (reconnect) re-deliver run.handoff; the reducer dedups like
-      // run.message / run.reasoning_item so a reconnect mid-run doesn't stack rows.
+      // A hub replay (reconnect) re-delivers run.handoff; the reducer drops a
+      // part with the same from → to already on the turn, so nothing stacks.
       updateSS(sid, s => {
         const msgs = appendHandoffPart(s.messages, handoff);
         return msgs ? { ...s, messages: msgs } : s;

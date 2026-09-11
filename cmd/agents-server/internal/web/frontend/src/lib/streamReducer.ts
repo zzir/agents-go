@@ -1,11 +1,8 @@
 // Pure transforms that build a live turn's parts from streamed run events;
 // useAgentSocket owns the buffers, dedup sets and frame batching. A turn
-// assembled here must equal the one buildTimeline rebuilds from its rows —
-// invariant 16, pinned by timeline.test.ts.
-//
-// Convention: each transform returns the new messages array, or null when it
-// deliberately changed nothing (no live turn, replay dedup hit) — callers keep
-// their existing state object in that case.
+// assembled here must equal the one buildTimeline rebuilds — invariant 16.
+// Each transform returns the new messages array, or null when it changed
+// nothing (no live turn, replay dedup hit), so callers keep their state.
 
 import { attachmentIdsEqual, type AttachmentMeta } from '@/lib/attachments';
 import { patchToolCall, findToolCall } from '@/lib/timeline';

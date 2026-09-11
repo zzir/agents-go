@@ -12,16 +12,9 @@ import { useApi, useCrud } from '@/lib/hooks';
 import { fc } from '@/lib/form';
 import { toast } from '@/lib/toast';
 
-// A sandbox is one row: WHERE it runs (the daemon or the service, and how to
-// reach it) and WHAT runs on it (the image and the limits). A project picks
-// one. Two types: "docker" (a daemon on this machine or reachable over SSH)
-// and "e2b" (any service speaking the E2B API — E2B's own, a self-hosted one,
-// or a compatible one).
-//
-// The fields split by MUTABILITY, not by section: the type and the destination
-// are a project's identity and freeze while projects live on the sandbox;
-// everything else is editable and reaches bound sessions at their next run
-// (decisions §5.36).
+// A sandbox is one row: WHERE it runs and WHAT runs on it; a project picks one.
+// The fields split by mutability, not section — type and destination freeze
+// while projects live on the sandbox, the rest edits freely (decisions §5.36).
 
 type SandboxType = 'docker' | 'e2b';
 

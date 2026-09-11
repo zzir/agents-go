@@ -23,12 +23,10 @@ function TabLoadError() {
 }
 
 // PanelDialog is the one settings hub (invariant 61): a nav of lazily loaded
-// panels, the admin group under its own heading, one panel shown at a time.
-// readOnly is a member's dialog: shared configuration is theirs to read (the
-// API allows it) and not to write (the server refuses with 403), so the
-// panels show and offer nothing. readOnly null is "not known yet" (/auth/me
-// still loading): the nav shows, the panel waits, so an admin never sees the
-// read-only note flash.
+// panels, the admin tabs after a divider, one panel shown at a time. readOnly
+// is a member's dialog (shared configuration is theirs to read, not write);
+// null is "not known yet", so the nav shows and the panel waits rather than
+// flashing the read-only note at an admin.
 export function PanelDialog({ title, tabs, adminTabs, readOnly, initialTab, onClose }: {
   title: string;
   tabs: DialogTab[];

@@ -37,14 +37,9 @@ import { readHash, writeHash, consumeAuthFragment, restoreReturnHash } from '@/l
 import { frameTooLarge } from '@/lib/messageSize';
 import { installExternalLinkOpener } from '@/lib/externalLinks';
 
-// The one settings hub (invariant 61). The person's own first (account,
-// host-wide settings), then what a run is built from, each section below the
-// ones it depends on: a provider is what an agent talks to, an agent is what
-// runs, then what an agent attaches (tools, execution, state, the checks
-// around it). A scoped entity's tab is one list in which an admin also sees
-// every member's rows. The admin entries come last, under no heading; workflows are
-// authored and watched in the sidebar's hub, so only their management view
-// is here.
+// The settings hub's tabs (invariant 61): the person's own, then what a run is
+// built from in dependency order, the admin entries last; workflows are
+// authored in the sidebar's hub, so only their management view is here.
 const scopedTab = (name: 'ProvidersTab' | 'AgentsTab' | 'McpServersTab' | 'SkillsTab') =>
   () => import('@/features/settings/ScopedEntityPanel').then(m => ({ default: m[name] }));
 
@@ -689,8 +684,7 @@ function App() {
     if (narrowRef.current) setSidebarOpen(false);
   }, []);
 
-  // One object of callbacks, rebuilt when one of them is (a session switch,
-  // a change of the session meta) and never per streaming frame: the memo'd
+  // One object of callbacks, rebuilt only when one of them is; the memo'd
   // view compares it by reference.
   const chatActions = useMemo<ChatViewActions>(() => ({
     onSend: handleSend, onCancel: handleCancel, onApprove: handleApprove, onReject: handleReject, onFork: handleFork,
