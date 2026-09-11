@@ -337,6 +337,11 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 		return "", pending.SessionID, ErrRunNotResumable{RunID: pending.RunID, Status: RunCancelled}
 	}
 	if err != nil {
+		// A session mid-delete gets nothing back: the cascade removes the rows,
+		// and one restored after it would be an orphan.
+		if _, deleting := errors.AsType[ErrSessionDeleting](err); deleting {
+			return "", pending.SessionID, err
+		}
 		// Give the approval back so the decision can be retried; for a task the
 		// row and its input_required go back in ONE write (Pause).
 		if taskMeta != nil && taskMeta.TaskID != "" {
