@@ -13,6 +13,9 @@ interface MessageInputProps {
   onSend: (text: string, attachments?: AttachmentMeta[]) => void;
   onCancel: (graceful?: boolean) => void;
   disabled: boolean;
+  // blocked disables the textarea itself and says why in its placeholder —
+  // nothing can be sent (no agent to send to), so nothing should be typed.
+  blocked?: string;
   running: boolean;
   // allowAttachments gates every image affordance: attachment storage is
   // configured AND the picked agent has Vision on.
@@ -36,7 +39,7 @@ interface AttachmentDraft {
 
 let draftKey = 0;
 
-export function MessageInput({ sessionId, onSend, onCancel, disabled, running, allowAttachments, toolbar, plusItems }: MessageInputProps) {
+export function MessageInput({ sessionId, onSend, onCancel, disabled, blocked, running, allowAttachments, toolbar, plusItems }: MessageInputProps) {
   const [text, setText] = useState(() => loadDraft(sessionId));
   const [atts, setAtts] = useState<AttachmentDraft[]>([]);
   const [attCfg, setAttCfg] = useState<AttachmentConfig | null>(null);
@@ -172,7 +175,7 @@ export function MessageInput({ sessionId, onSend, onCancel, disabled, running, a
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     const trimmed = text.trim();
-    if (disabled || uploading) return;
+    if (disabled || blocked || uploading) return;
     if (!trimmed && readyAtts.length === 0) return;
     onSend(trimmed, readyAtts.length ? readyAtts : undefined);
     setText('');
@@ -241,7 +244,8 @@ export function MessageInput({ sessionId, onSend, onCancel, disabled, running, a
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
           onBlur={() => { if (popupOpen) setDismissedFor(text); }}
-          placeholder="type something here…"
+          disabled={!!blocked}
+          placeholder={blocked || 'type something here…'}
           rows={2}
           aria-autocomplete="list"
           aria-controls={popupOpen ? 'slash-commands' : undefined}

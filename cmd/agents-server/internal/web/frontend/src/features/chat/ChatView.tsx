@@ -21,6 +21,7 @@ import { UserMessage } from '@/features/chat/UserMessage';
 import { WorkflowStartedChip, originText } from '@/features/chat/WorkflowStartedChip';
 import { CompactionCard } from '@/features/chat/CompactionCard';
 import { Greeting } from '@/features/chat/Greeting';
+import { FirstMileCard, composerGate } from '@/features/chat/FirstMile';
 import { ChatToc } from '@/features/chat/ChatToc';
 import { MessageInput } from '@/features/chat/MessageInput';
 import type { AttachmentMeta } from '@/lib/attachments';
@@ -210,7 +211,10 @@ export function ChatView({
   }, [sessionId]);
 
   const [traceActiveRun, setTraceActiveRun] = useState<string | null>(null);
-  const { data: agentConfigs, reload: reloadAgents } = useApi<AgentConfig[]>(() => api.agents.list() as Promise<AgentConfig[]>, [], 'agents');
+  const { data: agentConfigs, error: agentsError, reload: reloadAgents } = useApi<AgentConfig[]>(() => api.agents.list() as Promise<AgentConfig[]>, [], 'agents');
+  // Whether the composer can send at all; null agents are a list not yet in
+  // hand, never "no agents".
+  const gate = composerGate(agentConfigs, agentsError);
   const { data: sandboxDefs, reload: reloadSandboxes } = useApi<SandboxDef[]>(() => api.sandboxes.list() as Promise<SandboxDef[]>, [], 'sandboxes');
   // The caller's project rows for the picker — the same hook the terminal
   // panel's + menu uses.
@@ -680,13 +684,17 @@ export function ChatView({
               </ActionList>
             </ActionMenu.Overlay>
           </ActionMenu>
-        ) : (
+        ) : gate.state === 'error' ? (
+          <span className="chat-input-toolbar-warn">
+            Agents could not be loaded — <Link as="button" type="button" onClick={() => reloadAgents()}>retry</Link>
+          </span>
+        ) : gate.state === 'none' ? (
           <span className="chat-input-toolbar-warn">
             No agents — {onSettingsOpen
               ? <Link as="button" type="button" onClick={() => onSettingsOpen('agents')}>add one in Settings</Link>
               : 'add one in Settings'}
           </span>
-        )}
+        ) : null}
       </div>
     </>
   );
@@ -817,7 +825,11 @@ export function ChatView({
         <div className="chat-content">
           {topBar}
           <div className="chat-content chat-content-centered">
-            <Greeting key={`greeting-${sessionId || 'new'}`} />
+            {/* A workbench with no agent gets the three steps instead of a
+                slogan; a list still loading keeps the slogan. */}
+            {!sessionId && gate.state === 'none'
+              ? <FirstMileCard onSettingsOpen={onSettingsOpen} />
+              : <Greeting key={`greeting-${sessionId || 'new'}`} />}
             <WorkflowStrip />
             <MessageInput
               key={`input-${sessionId || 'new'}`}
@@ -825,10 +837,11 @@ export function ChatView({
               onSend={handleSend}
               onCancel={handleCancel}
               disabled={running || awaiting || !agentConfigId}
+              blocked={gate.blocked}
               running={running}
               allowAttachments={allowAttachments}
               toolbar={inputToolbar}
-      plusItems={plusItems}
+              plusItems={plusItems}
             />
           </div>
         </div>
@@ -867,10 +880,11 @@ export function ChatView({
           onSend={handleSend}
           onCancel={handleCancel}
           disabled={running || awaiting || !agentConfigId}
+          blocked={gate.blocked}
           running={running}
           allowAttachments={allowAttachments}
           toolbar={inputToolbar}
-      plusItems={plusItems}
+          plusItems={plusItems}
         />
       </div>
 
