@@ -62,5 +62,3 @@ export function SidePanel({ icon: PanelIcon, title, count, onClose, children, st
     </div>
   );
 }
-
-export default SidePanel;

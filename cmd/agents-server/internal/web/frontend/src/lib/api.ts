@@ -364,10 +364,7 @@ export const api = {
     import: (url: string, ownerId?: string) =>
       request('/skill-imports', { method: 'POST', body: JSON.stringify({ url, ...(ownerId ? { owner_id: ownerId } : {}) }) }),
   },
-  guardrails: {
-    ...crud<S['store.Guardrail']>('/guardrails'),
-    list: () => request('/guardrails'),
-  },
+  guardrails: crud<S['store.Guardrail']>('/guardrails'),
   providers: {
     ...crud<S['store.Provider']>('/providers'),
     setScope: setScope('/providers'),

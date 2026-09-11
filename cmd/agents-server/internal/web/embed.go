@@ -7,5 +7,5 @@ import "embed"
 
 // StaticFS holds the built frontend assets embedded at compile time.
 //
-//go:embed frontend/dist/*
+//go:embed all:frontend/dist
 var StaticFS embed.FS

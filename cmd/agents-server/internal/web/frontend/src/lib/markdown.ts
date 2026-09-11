@@ -73,7 +73,7 @@ function ensureWorker(): Worker | null {
   return worker;
 }
 
-export function renderMarkdownAsync(text: string): Promise<string> {
+function renderMarkdownAsync(text: string): Promise<string> {
   if (!text) return Promise.resolve('');
   const hit = lruGet(text);
   if (hit !== undefined) return Promise.resolve(hit);
@@ -121,7 +121,7 @@ export function useAsyncMarkdown(text: string): string {
   return html;
 }
 
-/* ---------- SVG / mermaid helpers (unchanged) ---------- */
+/* ---------- SVG / mermaid helpers ---------- */
 
 export function sanitizeSVG(svg: string): string {
   const clean = DOMPurify.sanitize(svg, { USE_PROFILES: { svg: true, svgFilters: true }, ADD_TAGS: ['foreignObject'] });
