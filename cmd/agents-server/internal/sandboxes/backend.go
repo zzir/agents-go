@@ -12,22 +12,17 @@ import (
 )
 
 // Backend is one sandbox TYPE: build a project's sandbox (Open), destroy what
-// it left behind (Reclaim), rebuild the compute keeping the storage (Rebuild),
-// and health-check the type (Check). What a running sandbox can do is on the
-// Sandbox itself. Open takes no context deliberately: building a sandbox is
-// CONFIGURATION, not I/O — backends dial lazily on the first command, so the
-// manager's acquire path needs no request context.
+// it left behind (Reclaim), rebuild the compute keeping the storage (Rebuild)
+// and health-check the type (Check). Open takes no context: backends dial
+// lazily on the first command, so building one is configuration, not I/O.
 type Backend interface {
 	// Open builds the Sandbox for spec.
 	Open(spec Spec) (sandbox.Sandbox, error)
-	// Reclaim destroys the project's compute AND its storage. Called after
-	// the row is gone; a failure leaves reclaimable storage rather than a row
-	// pointing at nothing (decisions §5.33).
+	// Reclaim destroys the project's compute AND its storage, after the row
+	// is gone — decisions §5.33.
 	Reclaim(ctx context.Context, spec Spec) error
-	// Rebuild throws the compute away and provisions it again from the
-	// current template, KEEPING the storage — the way back from a container
-	// someone broke. A backend where the compute IS the storage cannot do
-	// that and refuses, rather than quietly destroying a working tree.
+	// Rebuild replaces the compute from the current template, KEEPING the
+	// storage; a backend where the compute IS the storage refuses (invariant 44).
 	Rebuild(ctx context.Context, spec Spec) error
 	// Check reports whether the sandbox is reachable and runnable, without
 	// touching any project: the health check behind a Test button. It cleans

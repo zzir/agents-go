@@ -26,10 +26,9 @@ const (
 	chatgptAuthURL  = "https://auth.openai.com/oauth/authorize"
 	chatgptTokenURL = "https://auth.openai.com/oauth/token"
 	chatgptScope    = "openid profile email offline_access api.connectors.read api.connectors.invoke"
-	// chatgptRedirectURI is fixed: OpenAI's Codex client only registers loopback
-	// callbacks, and the token exchange must echo the same value the authorize
-	// request used. Nothing on the server listens here — the user pastes the
-	// redirected URL back to CompleteLogin (see decisions §5.41).
+	// chatgptRedirectURI is fixed — the Codex client registers loopback
+	// callbacks only, and the token exchange must echo it; nothing listens here
+	// (decisions §5.41).
 	chatgptRedirectURI = "http://localhost:1455/auth/callback"
 	// ChatGPTBaseURL is the base URL for the ChatGPT Codex API.
 	ChatGPTBaseURL = "https://chatgpt.com/backend-api/codex"
@@ -152,12 +151,9 @@ func (o *ChatGPTOAuth) StartLogin(ctx context.Context, providerID string) (*Chat
 	return &ChatGPTLoginResult{AuthorizeURL: authorizeURL}, nil
 }
 
-// CompleteLogin finishes a login begun by StartLogin. It reads the
-// authorization code and state from the callback URL the user pastes after
-// authorizing, redeems the code for tokens server-side against the stored PKCE
-// verifier, and saves them on the provider. Nothing listens on the redirect
-// URI, so a remotely deployed server — where the browser's localhost is not the
-// server's — can be signed in (decisions §5.41).
+// CompleteLogin finishes a login begun by StartLogin: it redeems the code in
+// the pasted callback URL against the stored PKCE verifier and saves the
+// tokens on the provider (decisions §5.41).
 func (o *ChatGPTOAuth) CompleteLogin(ctx context.Context, providerID, callback string) error {
 	if providerID == "" {
 		return fmt.Errorf("provider_id is required")

@@ -15,9 +15,8 @@ import (
 const WakeKindTask = store.WakeKindTask
 
 // Waker turns finished background work into a turn on the session that asked
-// for it. The debt is a ROW (store.Wakeup), drained at the moments a session
-// becomes able to take one — the end of any run on it, and startup — and one
-// drain pays every same-inherit debt the session has. workbench invariant 32.
+// for it: the debt is a store.Wakeup row, drained at the end of any run on the
+// session and at startup, one drain paying every same-inherit debt — invariant 32.
 type Waker struct{ r *Runner }
 
 // Owe records that sessionID is owed a turn. The caller fills Kind, SourceID,

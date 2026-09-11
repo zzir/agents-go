@@ -39,10 +39,8 @@ func (t *CommandTrust) AllowAll() {
 	t.approveAll = true
 }
 
-// TrustStore maps a session id to its CommandTrust. It is session-scoped and
-// in-memory on purpose: trust survives interrupt/resume within a process and
-// resets on restart (the command is simply re-approved, which is safe). It is
-// never persisted — it's a per-session convenience, not a durable policy.
+// TrustStore maps a session id to its CommandTrust: in-memory on purpose, so
+// trust survives interrupt/resume within a process and resets on restart.
 type TrustStore struct {
 	mu        sync.Mutex
 	bySession map[string]*CommandTrust

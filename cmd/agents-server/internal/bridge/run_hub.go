@@ -532,12 +532,10 @@ func (h *RunHub) Subscribe(runID string, fromSeq int, sink EventSink) (func(), b
 	return cancel, ok
 }
 
-// SubscribeSeq attaches sink to the run's live event stream after replaying the
-// buffered events with seq > fromSeq (0 replays everything retained). It returns
-// the detach function (idempotent), a channel closed once the stream has ended
-// (every event already handed to the sink), and whether the run exists. The
-// sink runs on its own goroutine; an overflow reaches it as a run.gap, and a
-// cursor before the latest run.started gets that event first — invariant 14.
+// SubscribeSeq attaches sink to the run's live event stream after replaying
+// buffered events with seq > fromSeq (0 = everything retained), returning the
+// idempotent detach, a channel closed once the stream has ended, and whether
+// the run exists. The sink runs on its own goroutine — invariant 14.
 func (h *RunHub) SubscribeSeq(runID string, fromSeq int, sink SeqSink) (func(), <-chan struct{}, bool) {
 	h.mu.Lock()
 	rec := h.runs[runID]

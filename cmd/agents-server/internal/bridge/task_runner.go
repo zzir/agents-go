@@ -175,12 +175,9 @@ func (r *Runner) StopTask(taskID string, graceful bool) (*TaskInfo, error) {
 	return r.taskInfoFrom(info), nil
 }
 
-// RetryTask resumes a failed background task on behalf of the REST endpoint,
-// with the same semantics as the model-facing task_retry tool.
-//
-// The hub's root context, not the request's: the run it starts outlives the
-// HTTP call that asked for it, and cancelling on response would kill the
-// attempt the caller was told had started.
+// RetryTask resumes a failed background task for the REST endpoint, with the
+// task_retry tool's semantics, under the hub's root context: the run outlives
+// the HTTP call that asked for it.
 func (r *Runner) RetryTask(taskID string) (*TaskInfo, error) {
 	if r.tasks == nil {
 		return nil, fmt.Errorf("task_retry: tasks are not configured")
@@ -205,10 +202,8 @@ func (r *Runner) RetryTask(taskID string) (*TaskInfo, error) {
 	return r.taskInfoFrom(info), nil
 }
 
-// MaxTaskAttempts is the ceiling a task's attempt count is measured against.
-// Clients get the parameter rather than a precomputed "can I retry": theirs
-// then moves with the status they track live, instead of being stale from the
-// moment the status changes.
+// MaxTaskAttempts is the ceiling a task's attempt count is measured against;
+// clients get the parameter, not a "can I retry" that goes stale as the status moves.
 func (r *Runner) MaxTaskAttempts() int {
 	if r.tasks == nil {
 		return 0
@@ -274,13 +269,10 @@ func (r *Runner) SessionBusy(sessionID string) bool {
 func (r *Runner) AbortSessionDelete(sessionID string) { r.hub.unmarkSessionDeleting(sessionID) }
 
 // StopSessionTree cancels the session's live run and every non-terminal task it
-// spawned — workflow executions are tasks, so their steps are stopped here too
-// — then waits (bounded) for their goroutines to finish, postRun included, so
-// the delete cascade that follows cannot race a write.
-//
-// The teardown marker goes down FIRST: a task's drain could otherwise start a
-// notification run on the session while it is being deleted, and that run would
-// outlive the cascade and write into rows it is about to remove.
+// spawned (a workflow's steps included), then waits, bounded, for their
+// goroutines — postRun included — so the delete cascade cannot race a write.
+// The teardown marker goes down FIRST, or a task's drain could start a
+// notification run on the session mid-delete.
 func (r *Runner) StopSessionTree(sessionID string) {
 	ctx := r.hub.rootCtx
 	r.hub.markSessionDeleting(sessionID)

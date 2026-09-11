@@ -447,10 +447,8 @@ func (h *TriggerHandler) RotateSecret(c *gin.Context) {
 }
 
 // Hook is the webhook endpoint (POST /hooks/{id}), outside the token-guarded
-// API — the README is its contract. X-Timestamp (UNIX seconds, within
-// HookTimestampSkew) and X-Signature-256 = hex(HMAC-SHA256(secret, timestamp
-// + "." + body)); the body, up to HookBodyLimit, is appended to the brief.
-// 401 on a bad or stale signature; otherwise as a manual fire.
+// API; its contract is protocol.md, Workflows. 401 on a bad or stale
+// signature; otherwise as a manual fire.
 func (h *TriggerHandler) Hook(c *gin.Context) {
 	ctx, id := c.Request.Context(), c.Param("id")
 	t, err := h.store.Get(ctx, id)

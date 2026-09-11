@@ -175,9 +175,7 @@ type McpServerConfig struct {
 	UpdatedAt time.Time `bun:"updated_at,notnull"     json:"updated_at"`
 }
 
-// McpRetryConfig holds the per-request retry settings, embedded in
-// HTTPMcpConfig. A single transient failure on list_tools/call_tool
-// otherwise aborts the whole run.
+// McpRetryConfig is the per-request retry settings embedded in HTTPMcpConfig.
 type McpRetryConfig struct {
 	// MaxRetryAttempts retries a failed list_tools/call_tool; 0 disables, -1 retries indefinitely.
 	MaxRetryAttempts int `json:"max_retry_attempts,omitempty"`
@@ -235,9 +233,8 @@ type Skill struct {
 }
 
 // Memory is one remembered text, keyed within its scope: what an agent reads
-// with every request (the global and agent scopes) or keeps for itself
-// across a conversation's compactions and resets (the session scope). The
-// rules per scope are MemoryPolicies.
+// with every request (global, agent) or keeps for itself across a session's
+// compactions and resets (session). The rules per scope are MemoryPolicies.
 type Memory struct {
 	bun.BaseModel `bun:"table:memories,alias:mem"`
 

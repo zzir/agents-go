@@ -39,11 +39,9 @@ func (e *ApprovalNotReadyError) Error() string {
 	return "run " + e.RunID + " is not yet ready for an approval decision; retry"
 }
 
-// StaleApprovalAttemptError reports an approval whose attempt is no longer
-// the task's current one: the task was retried past the run that paused, so
-// the decision has nothing left to resume. The row is discarded — restoring
-// it would refuse forever — and the current attempt is untouched. Handlers
-// map it to 409.
+// StaleApprovalAttemptError reports an approval whose attempt is no longer the
+// task's current one (the task was retried past the run that paused): the row
+// is discarded, the current attempt untouched. Handlers map it to 409.
 type StaleApprovalAttemptError struct {
 	TaskID        string
 	ApprovalRunID string
@@ -81,8 +79,8 @@ func (r *Runner) persistInterruption(result *RunOutcome) error {
 		ProjectID:     result.ProjectID,
 		State:         string(stateJSON),
 		ToolCalls:     callsJSON,
-		// The paused turn's user text, so the UI rebuilds the bubble on reload —
-		// the SDK writes the turn only once it completes.
+		// The paused turn's user text, for a reload during the pause — a
+		// fallback only: the SDK writes the user input ahead of the first model call.
 		UserInput: session.UserText(result.SDKState.UserInput),
 	}
 	// A task's run pauses its TASK in the same write (TaskStore.Pause) —
@@ -192,12 +190,10 @@ func (r *Runner) restorePlanPhase(ctx context.Context, phase *middleware.PlanPha
 }
 
 // ResolveApproval applies an approve/reject decision to the pending tool call
-// and launches the run's continuation under the same run id. It loads the
-// persisted RunState (so it works after a restart and from any transport),
-// deletes the pending record, and resumes via the hub. onDone fires when the
-// continuation terminates (e.g. to persist a further interruption).
-// It also returns the paused session's id (whenever the pending row was loaded,
-// even on a later error) so a failed decision stays attributable to its session.
+// and resumes the run under the same run id from the persisted RunState (so it
+// works after a restart, from any transport); onDone fires when the
+// continuation terminates. sessionID is set whenever the row was loaded, so a
+// failed decision stays attributable to its session.
 func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve bool, scope ApprovalScope, reason string, onDone func(*RunOutcome)) (runID, sessionID string, err error) {
 	if r.Deps.PendingApprovals == nil {
 		return "", "", errors.New("approvals are not persisted")

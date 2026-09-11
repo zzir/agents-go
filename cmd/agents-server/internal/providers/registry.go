@@ -18,8 +18,8 @@ import (
 	openaiProvider "github.com/zzir/agents-go/models/openai"
 )
 
-// The provider_type values an agent config or fallback entry may select.
-// Empty means openai — the value predates the field.
+// The provider_type values a provider row (or a legacy fallback entry) may
+// select; empty means openai.
 const (
 	TypeOpenAI    = "openai"
 	TypeAnthropic = "anthropic"
@@ -29,14 +29,10 @@ const (
 // OpenAI-only: its middleware rewrites Responses-shaped request bodies.
 const AuthModeChatGPTLogin = store.AuthModeChatGPTLogin
 
-// Def is one backend the server can build providers for. It is an
-// INTERNAL table, not a plugin API: everything provider-selection touches —
-// validation, construction, auth modes, capability
-// metadata — derives from this slice, so adding a backend is one entry here
-// (plus its SDK module and a row in the frontend's PROVIDERS table) instead
-// of a hunt across bridge, handlers and docs. Being internal also means its shape may
-// be reworked freely when a third backend's auth or credential model does not
-// fit the current fields.
+// Def is one backend the server can build providers for — an INTERNAL table,
+// not a plugin API: validation, construction, auth modes and capability
+// metadata all derive from this slice, so a backend is one entry here plus
+// its SDK module and a row in the frontend's PROVIDERS table.
 type Def struct {
 	// Type is the provider_type wire value.
 	Type string

@@ -215,8 +215,8 @@ func (h *SessionHandler) Get(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
-	// `planning` rides on the row now (materialized), so the response carries it
-	// with no extra read — and the list gets it for free too.
+	// planning is a column of the row, so the response and the list carry it
+	// with no extra read.
 	c.JSON(http.StatusOK, sess)
 }
 

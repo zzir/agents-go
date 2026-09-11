@@ -33,14 +33,12 @@ type Runner struct {
 	tasks *tasks.Manager
 
 	// OnRunAttach, when set, runs with the run id right after a run registers in
-	// the hub (fresh start or resume), before any publish — invariant 14. Written
-	// once at bootstrap, read unsynchronized: wire it before anything can start
-	// a run (invariant 32).
+	// the hub, before any publish (invariant 14). Wired once at bootstrap, read
+	// unsynchronized: set it before anything can start a run.
 	OnRunAttach func(runID string)
 	// OnBroadcast, when set, delivers an event about sessionID to every
-	// connection of its owner NOT attached to exceptRunID's stream ("" = all of
-	// them) — for a fact no run stream reaches everyone with (invariant 37).
-	// Same wiring rule as OnRunAttach.
+	// connection of its owner NOT attached to exceptRunID's stream ("" = all) —
+	// invariant 37. Same wiring rule as OnRunAttach.
 	OnBroadcast func(env *protocol.Envelope, exceptRunID, sessionID string)
 }
 
@@ -476,14 +474,11 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 }
 
 // ResumeRun registers a continuation of a paused run and launches it in the
-// background under the hub root context, reopening the SAME hub run (one id,
-// one event sequence across interrupt/resume). built is the agent state was
-// restored against — the continuation runs on it, and onDone (fired once when
-// the continuation terminates) is where the caller releases it. Fails with
-// ErrSessionBusy if the session has a live run. verify, when non-nil, runs
-// AFTER the run is registered (a concurrent stop's cancel can find it) but
-// BEFORE the goroutine launches: an error withdraws the run and nothing
-// executes, so an approved tool cannot cause a side effect ahead of a recheck.
+// background, reopening the SAME hub run (one id, one event sequence). built
+// is the agent the state was restored against; onDone fires once when the
+// continuation terminates. ErrSessionBusy if the session has a live run.
+// verify, when non-nil, runs after the run is registered and before the
+// goroutine launches: an error withdraws the run, so nothing executes ahead of a recheck.
 func (r *Runner) ResumeRun(runID string, state *agents.RunState, built *BuildResult, sessionID, agentConfigID, projectID string, verify func() error, onDone func(*RunOutcome)) (string, error) {
 	meta, err := r.taskMeta(r.hub.rootCtx, sessionID)
 	if err != nil {
