@@ -27,7 +27,7 @@ import { providerMeta, providerFacts, type ProviderTypeInfo } from '@/lib/provid
 // The agent-config REST payload nests these scalar settings under JSON group
 // objects. The form state stays flat, so flattenConfig lifts a loaded config's
 // group keys to the top level and nestConfig folds them back before saving.
-const CONFIG_GROUPS: Record<string, string[]> = {
+export const CONFIG_GROUPS: Record<string, string[]> = {
   behavior: ['max_turns', 'handoff_description', 'tool_choice_reset', 'stop_at_tools', 'handoff_input_filter', 'max_tool_concurrency', 'tool_not_found_behavior', 'reasoning_item_id_policy', 'workflow_authoring', 'subagents', 'vision', 'override_system_prompt'],
   resilience: ['retry_enabled', 'retry_policy', 'fallback_models'],
   guardrails: ['guardrails', 'output_schema'],
