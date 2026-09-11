@@ -455,3 +455,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     through the same cascade as a delete; `task_session_retention_days` takes a
     finished task's transcript and its row together after the window. Nothing
     else creates or keeps a hidden session (`session_repo_adapter.go`).
+75. **A person reads "session".** Every label, empty state, toast, dialog
+    title and column a person sees names the thing a session — never
+    conversation or chat; the code, the API and `session_id` were already
+    that word. A list's blank state says why it is blank: nothing yet (and
+    how to add one), the Mine filter, or a search that matched none
+    (`features/settings/listEmpty.ts`).
