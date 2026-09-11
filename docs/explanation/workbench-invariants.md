@@ -192,7 +192,7 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
 28. **Every figure in the Context panel says which ruler it is on, and they
     are never mixed.** `/sessions/:id/context` reports the provider's window
     counts for the last call; `compaction_tokens`, what the pass compares
-    (`ActiveContextTokens`); and character estimates for the conversation and
+    (`ActiveContextTokens`); and character estimates for the transcript and
     prompt, never for arithmetic against the others. The panel draws one bar
     with the threshold as a tick, and an estimate as two figures behind `~`.
     The budget notice a run appends to every model call (`ContextBudget`) is
@@ -203,8 +203,8 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     SDK task manager, which asks the driver (`bridge/workflow.go`). The advance
     is `Store.Advance`, a CAS on `(status = working, run_id)`: a superseded
     attempt cannot drive it, and an interrupted outcome (a pause) moves nothing.
-30. **A workflow runs off the conversation that asked for it, and starts only
-    with a brief written by someone who read that conversation.** Steps run
+30. **A workflow runs off the session that asked for it, and starts only
+    with a brief written by someone who read that session.** Steps run
     on a hidden child session sharing the parent's sandbox; the result comes
     back through a wake-up. The brief comes from the agent (`spawn_task`,
     matched on a required `description`), the person (the manual start) or a
@@ -235,7 +235,7 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     `BackgroundInstructions` as a suffix (`bridge/agent.go`). Background means
     the session is a task's child, and a lookup that FAILS is an error, not
     "no". A chat run drops the task tools only via `behavior.subagents: false`.
-35. **A step's approval is answerable from the conversation that asked.**
+35. **A step's approval is answerable from the session that asked.**
     `GET /sessions/:id/approvals` includes the approvals paused inside this
     session's tasks, tagged with their task, so the chat is the one approval
     surface. The pause itself is invariant 37's.
@@ -274,7 +274,7 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     fallback (spec §2.14).
 41. **A destructive action confirms once, in one place.** Every Delete goes
     through `useCrud.remove` or the same Primer `useConfirm` dialog
-    (conversations, skills, tasks, triggers, unrecognized settings) — never
+    (sessions, skills, tasks, triggers, unrecognized settings) — never
     `window.confirm`, never a bare button. Discarding an edited form is one:
     a settings form's Cancel and the dialog's close paths ask through the
     same dialog while `UnsavedForm` reports edits (`lib/unsaved.tsx`).
@@ -437,9 +437,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     jitters. The list stays mounted under the rail; only the snap animates, a
     pointer-tracking resize never. `useResizablePane` (`lib/hooks.ts`) and
     `AppShell.tsx`; the narrow layout's drawer has no rail.
-69. **A conversation is made by its first message, never by New.** The
+69. **A session is made by its first message, never by New.** The
     sidebar's and the rail's New open an empty composer; the send that follows
-    creates the conversation (`app.tsx` handleSend, `/workflow` alike). A form
+    creates the session (`app.tsx` handleSend, `/workflow` alike). A form
     that needs one — a trigger, a Run… — offers "New session" as a choice and
     makes it on Save, so a cancelled form leaves nothing and two triggers never
     share one; a trigger's is named after what it starts (`lib/sessionTitle.ts`).

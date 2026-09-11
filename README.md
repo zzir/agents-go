@@ -18,7 +18,7 @@ Local, one binary, no account. Your own model keys. MIT.
 
 </div>
 
-![A conversation with the Inspector open beside it: the trace of one run, a generation expanded](cmd/agents-server/screenshot.png)
+![A session with the Inspector open beside it: the trace of one run, a generation expanded](cmd/agents-server/screenshot.png)
 
 ## Get started
 
@@ -34,7 +34,7 @@ needs Docker.
 1. **Say something.** The reply streams in. **Context** shows what the model was sent; **Traces** shows every call with
    tokens and latency.
 2. **Replay it.** Expand a generation in Traces, change the prompt or model, diff the result.
-3. **Or fork it.** Branch the conversation at any turn. The original stays, either way.
+3. **Or fork it.** Branch the session at any turn. The original stays, either way.
 
 [Running the workbench](docs/tutorial/workbench.md) has the full path, from building from source to sandboxes,
 PostgreSQL and teams.
@@ -83,7 +83,7 @@ under [examples/](examples/). The API is pre-1.0: pin a version, and read the
 
 ## Docs
 
-- [Running the workbench](docs/tutorial/workbench.md) — from a binary to a first conversation, then sandboxes and teams
+- [Running the workbench](docs/tutorial/workbench.md) — from a binary to a first session, then sandboxes and teams
 - [Quickstart](docs/tutorial/quickstart.md) — the SDK, in Go
 - [Design spec](docs/reference/spec.md) and [decisions](docs/explanation/decisions.md) — what is always true, and why
 - [The map](docs/) — everything, sorted by what you came for

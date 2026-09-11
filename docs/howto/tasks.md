@@ -138,7 +138,7 @@ branches on it.
 | | |
 |---|---|
 | `spawn_task` | Start a task; returns a `task_id` immediately |
-| `task_status` | Read one, optionally waiting for it to finish; with no id, list the conversation's tasks |
+| `task_status` | Read one, optionally waiting for it to finish; with no id, list the session's tasks |
 | `task_retry` | Resume a FAILED one from where it stopped |
 | `task_stop` | Cancel one |
 
@@ -151,7 +151,7 @@ work is worth resuming.
 `task_status(wait_seconds:)` blocks server-side for up to `MaxStatusWait`
 (default 120s) — one blocked goroutine instead of a polling loop — and returns
 the **full** result where the notification carried a summary. With an empty
-`task_id` it lists the conversation's tasks, newest first, each live one
+`task_id` it lists the session's tasks, newest first, each live one
 flagged "still working — do not redo its work" (the way back to an id a
 compaction dropped; a listing settles no wake-up debt).
 `Config.DescribeState(kind, state) string` — "step 2/3 (verify)" — is shown as
@@ -223,7 +223,7 @@ a restart failing what it interrupted — is
 
 `StopTree` stops the tasks; it deletes nothing, and neither does the Manager.
 What must go with a deleted parent is the whole tree — its task rows (a
-survivor owes a wake-up to a conversation that no longer exists) and the hidden
+survivor owes a wake-up to a session that no longer exists) and the hidden
 sessions its tasks ran in (unreachable forever once left behind). **That
 cascade belongs to the `session.Repo` you pass, on `Delete`**, and only a repo
 that holds both tables can do it:

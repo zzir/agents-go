@@ -98,7 +98,7 @@ error, not a silent fallback — a typo must not quietly turn logging down.
 
 The SDK's own run-loop records join the same stream, so turns, tool calls,
 handoffs and compaction show up beside the server's; most of them are `Debug`,
-so it takes `--log-level debug` to see them. Whether they carry conversation
+so it takes `--log-level debug` to see them. Whether they carry session
 content is `log_sensitive_data` — stderr — which is a different switch from
 `trace_include_sensitive_data`, the database one
 ([runtime settings](../reference/configuration.md#runtime-settings)).
@@ -144,8 +144,8 @@ Tables are created automatically on startup:
 
 | Table               | Description                                                                         |
 |---------------------|-------------------------------------------------------------------------------------|
-| `sessions`          | Chat sessions; `owner_id` is the one ownership column (see [Ownership and roles](workbench-auth.md#ownership-and-roles)) |
-| `entries`           | Session entries (the conversation, annotations and compaction checkpoints)          |
+| `sessions`          | Sessions; `owner_id` is the one ownership column (see [Ownership and roles](workbench-auth.md#ownership-and-roles)) |
+| `entries`           | Session entries (the transcript, annotations and compaction checkpoints)            |
 | `append_points`     | Where each session stands: branch tip + highest sequence number (see invariant 26)  |
 | `agent_configs`     | Agent configurations                                                                |
 | `mcp_servers`       | MCP server configurations                                                           |
@@ -164,7 +164,7 @@ Tables are created automatically on startup:
 | `workflows`         | Fixed step sequences (each step: agent + prompt, with a stable id); an execution is a `tasks` row |
 | `audit_events`      | Who did what, to what, when — see [Audit log](workbench-auth.md#audit-log)                          |
 | `wakeups`           | "This session is owed a turn carrying this" — the debt background work leaves behind; settled rows are pruned after 7 days |
-| `context_profiles`  | One row per session: what its last build put in front of the conversation (prompt layers, tool surface) |
+| `context_profiles`  | One row per session: what its last build put in front of the transcript (prompt layers, tool surface) |
 | `users`             | Accounts and roles (see [Ownership and roles](workbench-auth.md#ownership-and-roles))                |
 | `identities`        | OAuth identities linked to a user                                                   |
 | `auth_tokens`       | Session tokens and personal access tokens (hashes only)                             |

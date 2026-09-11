@@ -1,7 +1,7 @@
 # Running the workbench
 
 `agents-server` is the Go-native agent workbench: one binary, your data, run by
-you. This page takes it from nothing to a first conversation with the
+you. This page takes it from nothing to a first session with the
 Inspector open beside it, and nothing on that path needs Docker. A sandbox is
 the second chapter, and optional. [Deployment](../howto/workbench-deploy.md)
 and [authentication](../howto/workbench-auth.md) take it further; the
@@ -50,12 +50,12 @@ menu at the sidebar's foot, opens the hub — a dialog with a panel per thing.
    instructions. Leave the rest at its defaults. Save.
 
 That is enough to talk. **New** (the sidebar's + button) opens an empty
-composer; pick the agent, type, and your first message makes the conversation
+composer; pick the agent, type, and your first message makes the session
 as the reply streams in. It appears in the sidebar, and its `…` menu pins,
 renames, forks or deletes it. Drag the sidebar's edge inward past its minimum
 and it folds into an icon rail that keeps Workflows and New; drag it back out,
 or click the rail's expand icon, to restore the list. The top
-bar's three icons open the Inspector beside the conversation: **Traces**
+bar's three icons open the Inspector beside the session: **Traces**
 (every model call, tool call and handoff with tokens and latency — expand a
 generation span to see exactly what the model was sent, and **Replay** it with
 a different prompt or model), **Context** (what the context window holds and
@@ -72,9 +72,9 @@ sandbox. This chapter and the ones after it are optional.
    (leave the host empty) or a remote one over SSH, an image, and — if you
    like — a **prompt** describing the machine. Or type `e2b` for any service
    speaking the E2B API. **Test** runs `echo ok` in a throw-away container.
-2. In a conversation, the composer's **Project** picker creates a project on
+2. In a session, the composer's **Project** picker creates a project on
    that sandbox — one user's working tree, mounted at `/workspace`. The first
-   run binds the conversation to it for good.
+   run binds the session to it for good.
 
 Now the agent has `read_file`, `write_file`, `list_files`, `apply_patch` and
 `exec_command`. Tick `exec_command` in the agent's **Approvals** checklist and
@@ -102,5 +102,5 @@ panels: Members, Sessions, Projects, Workflows and Audit logs.
 
 Sidebar → **Workflows** opens the hub for work that outlives a turn: fixed
 step sequences you define once and start with `/workflow <name> <brief>` in a
-conversation, run on a schedule or from a signed webhook with a trigger, and
+session, run on a schedule or from a signed webhook with a trigger, and
 watch under Runs. [Workflows](../howto/workflows.md) walks it end to end.

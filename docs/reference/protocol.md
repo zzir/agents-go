@@ -234,7 +234,7 @@ binds, and gets **no sandbox tools at all** (decisions §5.33).
 `GET /runs/:id` carries `task` only for a background task's run, with the
 parent linkage its `run.started` event carries. Finished runs stay queryable
 and replayable for **15 minutes** after they end, then `404` — the
-conversation itself is always in `/sessions/:id/messages`.
+session's transcript is always in `/sessions/:id/messages`.
 
 `GET /runs/:id/events` is a Server-Sent Events stream (plain HTTP SSE,
 unrelated to MCP's deprecated SSE transport). Each event's `id:` is the hub
@@ -291,7 +291,7 @@ restart — and matching is exact, so approving `go test` never green-lights
 
 ### Tasks — `/api/v1/tasks`
 
-A task is one piece of background work started from a chat through the ONE
+A task is one piece of background work started from a session through the ONE
 tool that starts any: `spawn_task` — a sub-agent on a prompt, or, told a
 `workflow` name, a workflow execution (`kind: "workflow"`, see
 [Workflows](#workflows--apiv1workflows)). Each runs on its own hidden session
@@ -306,7 +306,7 @@ the live-task cap (`max_tasks_per_session`, which a retry queues behind like
 a spawn). `dismiss` is `409` while the task still runs, and a retry brings a
 dismissed row back. `GET /sessions/:id/tasks` lists one session's, newest
 first; `GET /tasks` pages every live session's, each row with its
-conversation's name plus a `total` for the pager — `?kind=workflow` narrows
+session's name plus a `total` for the pager — `?kind=workflow` narrows
 to executions, `?live=true` to `working` / `input_required` rows, `?limit=`
 (500 at most) and `?offset=` page it.
 
@@ -491,11 +491,11 @@ next agent is a handoff). An execution IS a background task — `kind:
 table, no second set of endpoints. Each step is an ordinary run on the
 execution's session, tools and handoffs included but the task and workflow
 tools withheld ([invariant 34](../explanation/workbench-invariants.md)), and
-the conversation is the data flow: later steps read what earlier ones did.
+the transcript is the data flow: later steps read what earlier ones did.
 The [how-to](../howto/workflows.md) walks defining and running one.
 
 An execution starts only with a brief written by someone who read the
-conversation — the agent (`spawn_task(workflow=name, input)`), a person
+session — the agent (`spawn_task(workflow=name, input)`), a person
 (`POST /workflows/:id/runs {session_id, input, project_id?}`) or a trigger
 ([invariant 30](../explanation/workbench-invariants.md)). The brief LEADS the
 first step's turn and is not repeated afterwards; it is kept in the task's
@@ -549,11 +549,11 @@ reached, and deleting a session stops its tasks first, executions included.
 Authoring from the chat (`get_workflow` / `save_workflow`) is per-agent
 opt-in — [invariant 39](../explanation/workbench-invariants.md).
 
-**Triggers** start work with no conversation asking: `kind: cron` on a
+**Triggers** start work with no session asking: `kind: cron` on a
 schedule, `kind: webhook` when something POSTs to `/hooks/:id` (outside
 `/api/v1`). `target: workflow` fires the same start `POST /workflows/:id/runs`
 makes, into the trigger's `session_id`; `target: agent` sends the brief as a
-MESSAGE of that conversation, run by that agent under the conversation's own
+MESSAGE of that session, run by that agent under the session's own
 sandbox binding, with a `trigger_fired` note before it. Either way the brief
 is the author's, written in advance, and a webhook's body (up to 64 KB) is
 appended to it as the payload. A session busy with a run, or at its cap,
@@ -592,7 +592,7 @@ no longer resolves fails the agent build rather than silently skipping
 
 A memory is one text under a **scope**: `global` (every agent reads it with
 every request), `agent` (that agent reads it), or `session` (the model's own
-working notes for one conversation, never injected, read back on demand and
+working notes for one session, never injected, read back on demand and
 carried into a context reset). `POST` is an upsert by scope and key; `PUT`
 changes content and metadata only, the identity must match. Who writes:
 global is the admin's, an agent's memory follows the agent's edit rule, a
