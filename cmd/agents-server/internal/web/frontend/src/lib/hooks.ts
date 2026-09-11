@@ -1,6 +1,9 @@
 import { useState, useEffect, useCallback, useRef, type DependencyList, type RefCallback, type PointerEvent, type KeyboardEvent } from 'react';
 import { useConfirm } from '@primer/react';
 import { toast } from '@/lib/toast';
+import { CACHE_TTL_MS, fetchShared, getCached, setCached, subscribe, notify } from '@/lib/apiCache';
+
+export { invalidate } from '@/lib/apiCache';
 
 const NARROW_QUERY = '(max-width: 767px)';
 
@@ -237,71 +240,13 @@ interface UseApiResult<T> {
   mutateData: (fn: (prev: T | null) => T | null) => void;
 }
 
-// The shared response cache behind keyed useApi calls: one entry per key,
-// served to every mount, revalidated once it is older than CACHE_TTL_MS, and
-// dropped by invalidate(). A fetch in flight is shared, so eight panels asking
-// for the agent list at once make one request.
-const CACHE_TTL_MS = 30_000;
-
-interface CacheEntry {
-  data: unknown;
-  at: number;
-  inflight: Promise<unknown> | null;
-}
-
-type CacheListener = (ev: { kind: 'data'; data: unknown } | { kind: 'invalidate' }) => void;
-
-const cache = new Map<string, CacheEntry>();
-const listeners = new Map<string, Set<CacheListener>>();
-
-function subscribe(key: string, fn: CacheListener): () => void {
-  let set = listeners.get(key);
-  if (!set) { set = new Set(); listeners.set(key, set); }
-  set.add(fn);
-  return () => { set.delete(fn); if (set.size === 0) listeners.delete(key); };
-}
-
-function notify(key: string, ev: Parameters<CacheListener>[0]): void {
-  for (const fn of listeners.get(key) || []) fn(ev);
-}
-
-// fetchShared runs the fetcher once per key at a time: a second caller joins
-// the request in flight, and the answer lands in the cache before it resolves.
-function fetchShared<T>(key: string, fetcher: () => Promise<T>): Promise<T> {
-  const cur = cache.get(key);
-  if (cur?.inflight) return cur.inflight as Promise<T>;
-  const p = fetcher().then(result => {
-    cache.set(key, { data: result, at: Date.now(), inflight: null });
-    notify(key, { kind: 'data', data: result });
-    return result;
-  }, err => {
-    const e = cache.get(key);
-    if (e?.inflight === p) e.inflight = null;
-    throw err;
-  });
-  cache.set(key, { data: cur?.data, at: cur?.at ?? 0, inflight: p });
-  return p;
-}
-
-/** Drops every cached response whose key matches, and has each mounted
- * consumer of it refetch. A mutation that changes a list elsewhere (a save
- * outside useCrud, a scope flip) calls this with the list's key. */
-export function invalidate(key: string | RegExp): void {
-  const matches = (k: string) => (typeof key === 'string' ? k === key : key.test(k));
-  const keys = new Set([...cache.keys(), ...listeners.keys()].filter(matches));
-  for (const k of keys) {
-    cache.delete(k);
-    notify(k, { kind: 'invalidate' });
-  }
-}
-
 /** Fetches once on mount and again when `deps` change. With a `key`, the
  * response is shared through the cache above: a mount finds the last answer
  * at once (revalidating it in the background past the TTL), a reload anywhere
  * reaches every consumer, and invalidate(key) refetches them all. Pick a key
  * that changes with `deps` (put the id in it). */
 export function useApi<T>(fetcher: () => Promise<T>, deps: DependencyList = [], key?: string): UseApiResult<T> {
-  const cached = key ? cache.get(key) : undefined;
+  const cached = key ? getCached(key) : undefined;
   const [data, setData] = useState<T | null>(cached && cached.at > 0 ? cached.data as T : null);
   const [loading, setLoading] = useState(!(cached && cached.at > 0));
   const [error, setError] = useState<string | null>(null);
@@ -338,15 +283,15 @@ export function useApi<T>(fetcher: () => Promise<T>, deps: DependencyList = [], 
     if (!key) { setData(prev => fn(prev)); return; }
     // Keyed: the cache is the truth, and the notify reaches this consumer
     // and every other mount of the key alike.
-    const e = cache.get(key);
+    const e = getCached(key);
     const next = fn((e?.data as T | undefined) ?? null);
-    cache.set(key, { data: next, at: e?.at ?? Date.now(), inflight: e?.inflight ?? null });
+    setCached(key, { data: next, at: e?.at ?? Date.now(), inflight: e?.inflight ?? null });
     notify(key, { kind: 'data', data: next });
   }, [key]);
 
   useEffect(() => {
     if (!key) { reload(); return; }
-    const entry = cache.get(key);
+    const entry = getCached(key);
     if (entry && entry.at > 0) {
       setData(entry.data as T);
       setError(null);
