@@ -451,19 +451,19 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     `401` and charges the guess budget, the rest is `503 unavailable`
     uncharged, and an open WebSocket's `Recheck` keeps the connection and
     asks again on the next frame (`server/auth.go`, `server/ws.go`).
-73. **A hidden session exists only as a task's child; without that edge it
+72. **A hidden session exists only as a task's child; without that edge it
     is collected.** The hourly sweep (`bridge/retention.go`) deletes a hidden
     session no task row names over a live edge, once past the spawn grace,
     through the same cascade as a delete; `task_session_retention_days` takes a
     finished task's transcript and its row together after the window. Nothing
     else creates or keeps a hidden session (`session_repo_adapter.go`).
-74. **A reconnect never leaves a loaded session stale.** The socket
+73. **A reconnect never leaves a loaded session stale.** The socket
     coming back re-reads the session on screen (timeline under its live
     tail, task rows under the no-move-backwards rule, traces with the stored
     rows winning), drops every other loaded one's mark so its next select
     refetches, and relists the sidebar; a reconnect while the tab is hidden
     does this on its next visible moment (`resyncSessions`, `useAgentSocket.ts`).
-75. **A person reads "session".** Every label, empty state, toast, dialog
+74. **A person reads "session".** Every label, empty state, toast, dialog
     title and column a person sees names the thing a session — never
     conversation or chat; the code, the API and `session_id` were already
     that word. A list's blank state says why it is blank: nothing yet (and

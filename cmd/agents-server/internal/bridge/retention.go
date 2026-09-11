@@ -238,7 +238,7 @@ func RunAuditRetention(ctx context.Context, audit *store.AuditStore, days int) {
 const hiddenSessionGrace = time.Hour
 
 // RunTaskSessionRetention collects hidden sessions at startup and then
-// hourly: the ones no task names (invariant 73), and with
+// hourly: the ones no task names (invariant 72), and with
 // task_session_retention_days set, the transcripts of tasks finished for
 // longer than that, task rows included. It blocks until ctx ends — run it in
 // a goroutine.

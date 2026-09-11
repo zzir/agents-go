@@ -445,7 +445,7 @@ function App() {
   const handleSend = useCallback(async (input: string, agentConfigId?: string, projectId?: string, attachments?: AttachmentMeta[]) => {
     if (!wsRef.current) return;
     if (!wsRef.current.isConnected()) {
-      toast.error('WebSocket disconnected — message not sent');
+      toast.error('Connection lost, reconnecting — message not sent');
       return;
     }
     // `/workflow <name> <brief>` starts a workflow into this conversation
@@ -508,7 +508,7 @@ function App() {
       // The socket dropped between the isConnected() check and the send: roll
       // back the optimistic bubble so it isn't left stranded with no run.
       updateSS(sid, s => ({ ...s, messages: s.messages.filter(m => !(m.role === 'user' && m.clientMsgId === clientMsgId)) }));
-      toast.error('WebSocket disconnected — message not sent');
+      toast.error('Connection lost, reconnecting — message not sent');
       return;
     }
   }, [activeSession, updateSS, wsRef, runWorkflowCommand]);
@@ -642,7 +642,7 @@ function App() {
     // Probe before switching: a regen that branches the session and then fails
     // to send would strand the user on a branch with no assistant reply.
     if (!wsRef.current.isConnected()) {
-      toast.error('WebSocket disconnected — message not sent');
+      toast.error('Connection lost, reconnecting — message not sent');
       return;
     }
     try {
@@ -663,9 +663,9 @@ function App() {
         try {
           await api.sessions.branch(activeSession, previous_leaf);
           await reloadTimeline(activeSession);
-          toast.error('WebSocket disconnected — regenerate not started');
+          toast.error('Connection lost, reconnecting — regenerate not started');
         } catch {
-          toast.error('WebSocket disconnected — the previous attempt is in the attempt switcher');
+          toast.error('Connection lost, reconnecting — the previous attempt is in the attempt switcher');
         }
       }
     } catch (e) {

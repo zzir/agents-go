@@ -381,7 +381,7 @@ func unbindUnreferenced(ctx context.Context, tx bun.Tx, ids []string) error {
 }
 
 // DeleteOrphanHidden removes the hidden sessions no task names as its child
-// over a live edge, created before cutoff — invariant 73. The cutoff spares
+// over a live edge, created before cutoff — invariant 72. The cutoff spares
 // a spawn between writing its session and its task row. Returns the count.
 func (s *SessionStore) DeleteOrphanHidden(ctx context.Context, cutoff time.Time) (int, error) {
 	const orphan = `NOT EXISTS (SELECT 1 FROM tasks AS t WHERE t.child_session_id = s.id AND t.child_session_gen = s.gen)`

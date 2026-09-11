@@ -841,7 +841,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
     // resyncSessions repairs what an outage may have moved: the conversation
     // on screen is re-read now (timeline under its live tail, task rows under
     // the no-move-backwards rule, traces with the stored rows winning), every
-    // other loaded one on its next select, and the sidebar list — invariant 74.
+    // other loaded one on its next select, and the sidebar list — invariant 73.
     const resyncSessions = () => {
       loadedRef.current.clear();
       tracesLoadedRef.current.clear();
