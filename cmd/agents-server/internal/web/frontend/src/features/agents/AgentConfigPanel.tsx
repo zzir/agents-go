@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { TextInput, Textarea, FormControl, Checkbox, Select, Stack } from '@primer/react';
+import { TextInput, Textarea, FormControl, Checkbox, Select, Stack, Link } from '@primer/react';
+import { openSettingsTab } from '@/features/settings/settingsLink';
 import { TokenListInput } from '@/components/TokenListInput';
 import { FormActions } from '@/components/FormActions';
 import { CrudPanel, RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
@@ -291,7 +292,8 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
           live on the provider row, which is also where a key is entered. */}
       <div className="form-group">
         <div className="form-group-title">Provider</div>
-        {fc('Endpoint',
+        <FormControl>
+          <FormControl.Label>Endpoint</FormControl.Label>
           <Select value={form.provider_id} onChange={e => set('provider_id', e.target.value)} block>
             {/* An empty provider_id reaches no credential and the run fails
                 its pre-flight, so the empty value is a placeholder, not an
@@ -300,13 +302,21 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
             {visibleProviders.map(p => (
               <Select.Option key={p.id} value={p.id}>{p.name}</Select.Option>
             ))}
-          </Select>,
-          providerHint)}
+          </Select>
+          {form.provider_id
+            ? <FormControl.Caption>{providerHint}</FormControl.Caption>
+            : <FormControl.Validation variant="error">
+                {visibleProviders.length === 0 ? 'No endpoint to pick yet — ' : 'No endpoint picked — every run fails before the model is called. '}
+                <Link as="button" type="button" onClick={() => openSettingsTab('providers')}>
+                  {visibleProviders.length === 0 ? 'add one under Providers' : 'Providers'}
+                </Link>
+              </FormControl.Validation>}
+        </FormControl>
       </div>
 
       <div className="form-group">
         <div className="form-group-title">Model</div>
-        {fc('Model', <TextInput value={form.model} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('model', e.target.value)} placeholder={meta.modelPlaceholder} block />)}
+        {fc('Model', <TextInput value={form.model} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('model', e.target.value)} block />, 'Required — the name the endpoint knows the model by')}
         {fc('Context window',
           <TextInput block type="number" min={0} step={1000} value={String(form.context_window || 0)}
             onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('context_window', parseInt(e.target.value) || 0)} />,

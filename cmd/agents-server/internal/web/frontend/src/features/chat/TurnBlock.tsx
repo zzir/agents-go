@@ -1,5 +1,5 @@
 import { useCallback, useMemo, memo } from 'react';
-import { IconButton } from '@primer/react';
+import { Button, IconButton } from '@primer/react';
 import { useCopy } from '@/lib/hooks';
 import { ChevronRightIcon, ChevronLeftIcon, RepoForkedIcon, CopyIcon, CheckIcon, SyncIcon, AlertIcon, StopIcon, ShieldIcon } from '@primer/octicons-react';
 import { Disclosure } from '@/components/Disclosure';
@@ -19,7 +19,14 @@ const STAGE_NOTES: Record<string, string> = {
   tool_output: "A tool's result was blocked before the model could read it.",
 };
 
-function ErrorCard({ message, guardrail, stage }: { message: string; guardrail?: string; stage?: string }) {
+// endpointTrouble recognizes the pre-flight failures a Providers edit fixes:
+// no endpoint on the agent, or an endpoint it cannot reach any more. The
+// messages are the runner's (bridge/runner.go, provider_resolve.go).
+export function endpointTrouble(message: string): boolean {
+  return /no API key configured|names provider|provider \S+: not found|provider \S+ is out of the agent's scope/i.test(message);
+}
+
+export function ErrorCard({ message, guardrail, stage, onOpenProviders }: { message: string; guardrail?: string; stage?: string; onOpenProviders?: () => void }) {
   // A guardrail block is not a system failure — render it as a distinct
   // "blocked" state.
   if (guardrail) {
@@ -34,6 +41,11 @@ function ErrorCard({ message, guardrail, stage }: { message: string; guardrail?:
   return (
     <Disclosure icon={AlertIcon} label="Error" variant="danger" className="error-card">
       <pre className="error-card-body">{message}</pre>
+      {onOpenProviders && endpointTrouble(message) && (
+        <div className="error-card-actions">
+          <Button size="small" onClick={onOpenProviders}>Open Providers</Button>
+        </div>
+      )}
     </Disclosure>
   );
 }
@@ -93,7 +105,7 @@ export const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, 
   // Live-run state applies to the live turn only — every read below is gated
   // on isLive.
   const { running, compacting } = useChatSession();
-  const { regenerate, fork, switchBranch } = useChatActions();
+  const { regenerate, fork, switchBranch, openSettings } = useChatActions();
   const isEmpty = parts.length === 0 && !streaming && !reasoning;
   const { copied, copy } = useCopy();
 
@@ -140,7 +152,8 @@ export const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, 
       {notices.map((part, i) => (
         part.type === 'cancelled'
           ? <CancelledCard key={'notice-' + i} />
-          : <ErrorCard key={'notice-' + i} message={part.content || 'Unknown error'} guardrail={part.guardrail} stage={part.stage} />
+          : <ErrorCard key={'notice-' + i} message={part.content || 'Unknown error'} guardrail={part.guardrail} stage={part.stage}
+              onOpenProviders={openSettings ? () => openSettings('providers') : undefined} />
       ))}
       {isLive && isEmpty && !compacting && (
         <div className="thinking-indicator">

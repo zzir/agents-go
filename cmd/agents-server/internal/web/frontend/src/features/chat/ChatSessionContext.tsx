@@ -48,6 +48,9 @@ export interface ChatActions {
   // with — from the session whose stored rows hold it (the chat's own, or an
   // inspected task's child).
   loadSpan?: (spanSessionId: string, runId: string, spanId: string) => Promise<void>;
+  // Opens the Settings dialog on a tab — what an error card that a Providers
+  // edit would fix offers.
+  openSettings?: (tab?: string) => void;
 }
 
 export interface ChatTaskLookups {

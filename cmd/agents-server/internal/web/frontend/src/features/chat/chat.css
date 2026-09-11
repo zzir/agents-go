@@ -718,6 +718,7 @@
 /* Error card — content styles (shell is Disclosure with variant=danger) */
 .error-card { margin: var(--base-size-8) 0; }
 .error-card-body { color: var(--fgColor-danger); }
+.error-card-actions { margin-top: var(--base-size-8); }
 
 /* Cancelled marker — softer than an error: the run was stopped, not broken */
 .cancelled-card {
