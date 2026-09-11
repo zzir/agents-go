@@ -153,9 +153,10 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
 25. **Schema changes ship without migrations.** `CREATE TABLE / INDEX IF NOT
     EXISTS` is the whole story; a structural change means dropping and
     recreating the database, and ALTER TABLE machinery is never added.
-    Startup probes every model with a zero-row SELECT, so an old database
-    fails fast with a "delete and recreate" message — the models are the
-    schema version.
+    Startup probes every model with a zero-row SELECT and every UNIQUE index
+    by shape from the catalog (`pg_indexes` / `sqlite_master`), so an old
+    table or index fails fast with a "delete and recreate" message — the
+    models and `schemaIndexes` are the schema version.
 26. **Where a session stands is stored, not folded.** The branch tip and
     highest sequence live in `append_points`, written inside the transaction
     that moved them (`appendTo`, `Clear`, `pop`, `ForkSession`, the compaction
