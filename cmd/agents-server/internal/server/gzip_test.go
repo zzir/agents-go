@@ -122,7 +122,7 @@ func TestRunEventStreamIsNotGzipped(t *testing.T) {
 
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+APIPrefix+"/runs/r1/events", nil)
 	req.Header.Set("Authorization", "Bearer tok")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:bodyclose // closed by the deferred call; the goroutine below only reads
 	if err != nil {
 		t.Fatal(err)
 	}

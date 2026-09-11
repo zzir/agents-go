@@ -186,7 +186,7 @@ func verifyIndexes(ctx context.Context, db *bun.DB, indexes []schemaIndex) error
 		}
 		if err := ix.matches(defs[ix.name]); err != nil {
 			return fmt.Errorf(
-				"database schema is out of date: index %s %v; this build changed the database layout and ships no migrations — back up the database if needed, delete it (or drop its tables), and restart to recreate it",
+				"database schema is out of date: index %s %w; this build changed the database layout and ships no migrations — back up the database if needed, delete it (or drop its tables), and restart to recreate it",
 				ix.name, err)
 		}
 	}
@@ -239,7 +239,13 @@ func (ix schemaIndex) matches(def string) error {
 		pos += i + len(col)
 	}
 	if ix.where != "" {
-		if lit := ix.where[strings.Index(ix.where, "'"):]; !strings.Contains(body, lit) {
+		// The clause's literal part (from its first quote) is what survives
+		// the dialects' rewriting; a clause without one is matched whole.
+		lit := ix.where
+		if q := strings.Index(ix.where, "'"); q >= 0 {
+			lit = ix.where[q:]
+		}
+		if !strings.Contains(body, lit) {
 			return fmt.Errorf("is not partial on %s", ix.where)
 		}
 	}
