@@ -105,9 +105,8 @@ a global row the caller may see but not touch answers `403`.
   servers and workflows a member sees others' shared rows first, then their
   own, each newest first (`created_at DESC`, id the tiebreaker); an admin sees
   the table ungrouped, newest first. Skills group by repository, published
-  groups first. Every member may read `GET /auth/user-labels` (id, name,
-  email) so a listing can name an owner; roles and account state stay
-  admin-only.
+  groups first. `GET /auth/user-labels` (id, name, email), the admin panel's
+  owner directory, is admin-only like the user list.
 - **The write re-checks what authorized it.** Every scoped mutation carries
   the `(scope, owner)` pair into its write and answers `409` when a transfer
   or flip landed in between. A direct DB write that leaves scope empty lands

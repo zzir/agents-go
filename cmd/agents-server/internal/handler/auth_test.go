@@ -110,6 +110,43 @@ func TestOAuthModeSessionTokens(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("me after logout = %d, want 401", rec.Code)
 	}
+
+	// A PAT presented to logout is left standing: a script's sign-out must
+	// not burn the credential it was handed.
+	pat, _, err := tokens.Mint(ctx, u.ID, store.TokenKindPAT, "ci", time.Time{})
+	if err != nil {
+		t.Fatalf("mint pat: %v", err)
+	}
+	withPAT := func(r *http.Request) *http.Request {
+		r.Header.Set("Authorization", "Bearer "+pat)
+		return r
+	}
+	rec = httptest.NewRecorder()
+	engine.ServeHTTP(rec, withPAT(httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("logout with a PAT = %d, want 204", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	engine.ServeHTTP(rec, withPAT(httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("me with the PAT after logout = %d, want 200: logout revoked a PAT", rec.Code)
+	}
+}
+
+// The id→label directory names every account's email; it serves the admin
+// panel's owner pickers and is the admin's, like the user list.
+func TestUserLabelsAreAdminOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := testdb.New(t)
+	local := &store.User{ID: store.LocalUserID, Email: "local@localhost", Role: store.RoleAdmin}
+	s := server.New(slog.New(slog.DiscardHandler), usersByToken, nil)
+	s.RegisterAPI(Handlers{Auth: NewAuthHandler(authn.NewStatic("tok", local), nil, store.NewUserStore(db), nil)}.Register)
+	if rec := serve(s.Engine, as(memberUser, http.MethodGet, "/api/v1/auth/user-labels", "")); rec.Code != http.StatusForbidden {
+		t.Fatalf("member user-labels = %d, want 403", rec.Code)
+	}
+	if rec := serve(s.Engine, as(adminUser, http.MethodGet, "/api/v1/auth/user-labels", "")); rec.Code != http.StatusOK {
+		t.Fatalf("admin user-labels = %d %s, want 200", rec.Code, rec.Body.String())
+	}
 }
 
 // fakeLoginProvider skips the external IdP: any code yields a fixed identity. What

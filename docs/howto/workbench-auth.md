@@ -24,8 +24,12 @@ document. What a schema cannot say about them:
 - `PATCH /auth/users/:id` answers `204` with no body, refuses one's own
   account and the local one, and is `409` when the change would leave no
   enabled admin; disabling also revokes every token the account holds.
-- `GET /auth/user-labels` is readable by every member (it is what labels row
-  owners); roles and account state are admin-only.
+- `GET /auth/user-labels` (id, name, email) is admin-only, like
+  `GET /auth/users`: it serves the admin panel's owner pickers.
+- `POST /auth/logout` revokes the session token it is called with; a PAT
+  presented to it is left standing.
+- In token mode the static token is logged at startup only when the server
+  generated it; one passed by `--token` or `AGENTS_TOKEN` is never logged.
 - A credential the database cannot resolve (an outage) answers `503
   unavailable`, never `401`: the token stays valid, the per-IP guess budget is
   not charged, and open WebSockets stay up

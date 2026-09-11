@@ -166,10 +166,18 @@ func (s *Service) StaticOK(token string) bool {
 }
 
 // Logout revokes the presented session token. A no-op in token mode — the
-// static credential has nothing to revoke.
+// static credential has nothing to revoke — and for a PAT, which a sign-out
+// from a script must not burn.
 func (s *Service) Logout(ctx context.Context, bearer string) error {
 	if s.mode == ModeToken || bearer == "" {
 		return nil
+	}
+	_, t, err := s.tokens.Authenticate(ctx, bearer)
+	if err != nil || t.Kind != store.TokenKindSession {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil
+		}
+		return err
 	}
 	if err := s.tokens.RevokeByPlaintext(ctx, bearer); err != nil && !errors.Is(err, store.ErrNotFound) {
 		return err
