@@ -440,6 +440,9 @@ func (h *RunHub) resume(runID, sessionID, ownerID, agentConfigID, projectID stri
 	}
 	rec.cancel = seg.cancel
 	rec.info.Status = RunRunning
+	// The identity is the caller's fresh read: the session may have changed
+	// owner while the run was paused, and attach/ownsRun key off this record.
+	rec.info.OwnerID, rec.info.AgentConfigID, rec.info.ProjectID = ownerID, agentConfigID, projectID
 	rec.info.GracefulStop = false
 	// Drop the old segment's control (it would steer the wrong run); the new
 	// segment installs its own via setControl.
