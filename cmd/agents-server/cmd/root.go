@@ -175,6 +175,7 @@ func run(_ *cobra.Command, _ []string) error {
 	go bridge.RunAuthTokenCleanup(bgCtx, st.AuthTokens)
 	go bridge.RunWakeupCleanup(bgCtx, st.Wakeups)
 	go bridge.RunAttachmentReaper(bgCtx, st.SettingReader, st.Attachments)
+	go bridge.RunTaskSessionRetention(bgCtx, st.SettingReader, st.Sessions)
 
 	srv, err := newServer(ctx, log, authSvc, recordAudit, st, hs, baseURL)
 	if err != nil {

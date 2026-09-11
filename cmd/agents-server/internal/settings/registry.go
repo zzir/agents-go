@@ -47,6 +47,7 @@ const (
 	KeyS3SecretAccessKey         = "s3_secret_access_key"
 	KeyS3PublicBaseURL           = "s3_public_base_url"
 	KeyS3PathStyle               = "s3_path_style"
+	KeyTaskSessionRetentionDays  = "task_session_retention_days"
 )
 
 // The groups the panel renders as sections, in the order defs are listed.
@@ -224,6 +225,14 @@ var defs = []Def{{
 	Label:       "Path-style addressing",
 	Default:     "false",
 	Description: "On puts the bucket in the URL path (MinIO); off uses virtual-hosted addressing (AWS, R2).",
+}, {
+	Key:         KeyTaskSessionRetentionDays,
+	Kind:        KindInt,
+	Group:       GroupLimits,
+	Label:       "Finished task transcripts (days)",
+	Placeholder: "e.g. 30 — 0 keeps them forever",
+	Description: "A background task finished (completed, failed or cancelled) for longer than this many days loses its transcript and its row hourly; its result stays in the conversation it reported to. 0 keeps them forever.",
+	Min:         0,
 }}
 
 // Defs returns the registry in panel order.

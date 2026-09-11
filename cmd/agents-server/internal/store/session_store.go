@@ -327,3 +327,88 @@ func deleteSessionRows(ctx context.Context, tx bun.Tx, id string, mustExist bool
 	}
 	return nil
 }
+
+// DeleteOrphanHidden removes the hidden sessions no task names as its child
+// over a live edge, created before cutoff — invariant 73. The cutoff spares
+// a spawn between writing its session and its task row. Returns the count.
+func (s *SessionStore) DeleteOrphanHidden(ctx context.Context, cutoff time.Time) (int, error) {
+	const orphan = `NOT EXISTS (SELECT 1 FROM tasks AS t WHERE t.child_session_id = s.id AND t.child_session_gen = s.gen)`
+	var ids []string
+	if err := s.db.NewSelect().Model((*Session)(nil)).Column("id").
+		Where("s.hidden = ?", true).Where("s.created_at < ?", cutoff).Where(orphan).
+		Scan(ctx, &ids); err != nil {
+		return 0, fmt.Errorf("listing orphan hidden sessions: %w", err)
+	}
+	return s.collect(ctx, ids, func(ctx context.Context, tx bun.Tx, id string) (bool, error) {
+		return tx.NewSelect().Model((*Session)(nil)).
+			Where("s.id = ?", id).Where("s.hidden = ?", true).Where("s.created_at < ?", cutoff).Where(orphan).
+			Exists(ctx)
+	})
+}
+
+// DeleteTaskSessionsBefore removes the hidden child sessions of tasks
+// terminal since before cutoff, subtree included as Delete does, and with
+// them the task rows: a task keeps no row once its transcript is gone.
+// Returns the count of sessions removed.
+func (s *SessionStore) DeleteTaskSessionsBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	done := func(q *bun.SelectQuery) *bun.SelectQuery {
+		return q.Where(liveChild).Where("t.status IN "+taskTerminalSet).Where("t.updated_at < ?", cutoff)
+	}
+	var ids []string
+	if err := done(s.db.NewSelect().Model((*Task)(nil)).Column("child_session_id")).
+		Scan(ctx, &ids); err != nil {
+		return 0, fmt.Errorf("listing the sessions of finished tasks: %w", err)
+	}
+	return s.collect(ctx, ids, func(ctx context.Context, tx bun.Tx, id string) (bool, error) {
+		// The task row is locked with the session already held (the cascade's
+		// order), so a retry claimed meanwhile is seen and the row kept.
+		q := done(tx.NewSelect().Model((*Task)(nil)).Column("id").Where("t.child_session_id = ?", id))
+		if tx.Dialect().Name() == dialect.PG {
+			q = q.For("UPDATE")
+		}
+		err := q.Scan(ctx, new(string))
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return err == nil, err
+	})
+}
+
+// collect deletes each session's tree in its own transaction, with the row
+// locked first and still re-checked under the lock; a session that no longer
+// qualifies is skipped, not an error.
+func (s *SessionStore) collect(ctx context.Context, ids []string, still func(ctx context.Context, tx bun.Tx, id string) (bool, error)) (int, error) {
+	n := 0
+	for _, id := range ids {
+		err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+			if err := lockRow(ctx, tx, new(Session), "id = ?", id); err != nil {
+				return err
+			}
+			ok, err := still(ctx, tx, id)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return ErrNotFound
+			}
+			tree, err := sessionTree(ctx, tx, id)
+			if err != nil {
+				return err
+			}
+			for _, cur := range tree {
+				if err := deleteSessionRows(ctx, tx, cur, false); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return n, fmt.Errorf("collecting session %s: %w", id, err)
+		}
+		n++
+	}
+	return n, nil
+}

@@ -447,3 +447,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     `401` and charges the guess budget, the rest is `503 unavailable`
     uncharged, and an open WebSocket's `Recheck` keeps the connection and
     asks again on the next frame (`server/auth.go`, `server/ws.go`).
+73. **A hidden session exists only as a task's child; without that edge it
+    is collected.** The hourly sweep (`bridge/retention.go`) deletes a hidden
+    session no task row names over a live edge, once past the spawn grace,
+    through the same cascade as a delete; `task_session_retention_days` takes a
+    finished task's transcript and its row together after the window. Nothing
+    else creates or keeps a hidden session (`session_repo_adapter.go`).

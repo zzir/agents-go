@@ -82,6 +82,7 @@ An empty value returns a key to its default. Keys by panel group:
 | `max_tasks_per_session` | limits | `6` | Concurrent live background tasks per session; read at each spawn (backs the SDK's `tasks.Config.MaxConcurrentPerParent` resolver) |
 | `max_terminals_per_sandbox` | limits | `4` (max `32`) | Concurrent interactive terminals on one sandbox |
 | `sandbox_idle_minutes` | limits | `30` | Stop a project's container after N idle minutes (`0` disables) |
+| `task_session_retention_days` | limits | — | Delete the transcript (hidden session) and row of a background task finished for longer than N days, hourly; unset or `0` keeps them forever. Hidden sessions no task names are collected regardless ([invariant 73](../explanation/workbench-invariants.md)) |
 | `s3_endpoint` | storage | — | S3-compatible API endpoint image attachments are uploaded to (absolute http(s) URL) |
 | `s3_region` | storage | `auto` | Signing region (`auto` for R2 and MinIO; AWS needs the bucket's region) |
 | `s3_bucket` | storage | — | Bucket the image objects live in; must allow public reads |
