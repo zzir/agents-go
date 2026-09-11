@@ -475,7 +475,11 @@ func (h *RunHub) abortResume(runID string, seg *runSegment, reopened bool) {
 	h.mu.Unlock()
 	if rec != nil {
 		rec.mu.Lock()
-		rec.info.Status = RunInterrupted
+		// A concurrent stop may have ended the record meanwhile (run.cancelled
+		// published); that ending stands.
+		if !isTerminalRunStatus(rec.info.Status) {
+			rec.info.Status = RunInterrupted
+		}
 		rec.ctrl = nil
 		rec.endedAt = time.Now()
 		rec.mu.Unlock()

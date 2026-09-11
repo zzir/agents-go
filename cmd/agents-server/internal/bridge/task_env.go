@@ -171,13 +171,22 @@ func (r *Runner) onTaskUpdate(ctx context.Context, t *tasks.Task) {
 
 // AnnounceTask tells the clients what a task now is, for a change made on the
 // store outside the manager (the approval reaper's expiry). Tasks are an
-// optional dep, as in taskMeta and the approval pause.
+// optional dep, as in taskMeta and the approval pause. A task ended while its
+// run sat paused in the hub ends that run too: left interrupted, the record
+// would hold a task slot and its subscribers until the retention GC.
 func (r *Runner) AnnounceTask(ctx context.Context, taskID string) {
 	if r.Deps.Tasks == nil {
 		return
 	}
-	if t, err := store.NewTaskAdapter(r.Deps.Tasks).Get(ctx, taskID); err == nil {
-		r.onTaskUpdate(ctx, t)
+	t, err := store.NewTaskAdapter(r.Deps.Tasks).Get(ctx, taskID)
+	if err != nil {
+		return
+	}
+	r.onTaskUpdate(ctx, t)
+	if isTerminalTaskStatus(string(t.Status)) {
+		if info, ok := r.hub.Info(t.RunID); ok && info.Status == RunInterrupted {
+			r.publishTaskCancelled(t.RunID)
+		}
 	}
 }
 
