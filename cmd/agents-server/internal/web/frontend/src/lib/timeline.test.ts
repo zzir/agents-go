@@ -19,7 +19,7 @@
 //      'completed' — per-call status is not persisted; the rejection notice
 //      survives in the call's output text.
 import { describe, it, expect } from 'vitest';
-import { buildTimeline, type EntryView, type TimelineEntry, type TurnEntry } from '@/lib/timeline';
+import { buildTimeline, hasPendingApproval, type EntryView, type TimelineEntry, type TurnEntry } from '@/lib/timeline';
 import {
   ensureLiveTurn, mergeLiveTail, appendMessageItem, appendReasoningItem, finalizeTurn,
   appendErrorPart, appendCancelledPart, appendToolCall, applyToolResult, applyTaskTerminal, startTaskAttempt, syncTaskCard, appendHandoffPart,
@@ -609,5 +609,18 @@ describe('workflow-started note', () => {
     const bare = buildTimeline([{ id: "1", kind: 'annotation', role: 'system', content: 'Workflow "x" started by you', display: { kind: 'workflow_started' } }]);
     expect((bare[0] as { note?: { taskId: string } }).note?.taskId).toBe('');
     expect((bare[0] as { content?: string }).content).toBe('Workflow "x" started by you');
+  });
+});
+
+describe('hasPendingApproval', () => {
+  const turn = (status: string | null, needs = true): TimelineEntry => ({
+    role: 'turn', parts: [{ type: 'tools', toolCalls: [{ tool_call_id: 'tc', tool_name: 'exec', arguments: '{}', output: null, status, needs_approval: needs }] }],
+  });
+  it('is the conversation\'s own undecided call, in any turn', () => {
+    expect(hasPendingApproval([turn(null)])).toBe(true);
+    expect(hasPendingApproval([turn(null), { role: 'user', content: 'later' }])).toBe(true);
+    expect(hasPendingApproval([turn('approved')])).toBe(false);
+    expect(hasPendingApproval([turn(null, false)])).toBe(false);
+    expect(hasPendingApproval([])).toBe(false);
   });
 });

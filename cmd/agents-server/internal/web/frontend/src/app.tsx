@@ -27,7 +27,7 @@ import { WorkflowsHub, type HubTab } from '@/features/workflows/WorkflowsHub';
 import { WORKFLOW_COMMAND } from '@/features/chat/SlashMenu';
 import { SESSION_REMOVED } from '@/features/sessions/SessionPicker';
 import { useAgentSocket, defaultSS, type SessionState } from '@/lib/useAgentSocket';
-import { patchToolCall, type ToolCallPatch } from '@/lib/timeline';
+import { hasPendingApproval, patchToolCall, type ToolCallPatch } from '@/lib/timeline';
 import { syncTaskCard } from '@/lib/streamReducer';
 import { clearSessionPrefs } from '@/lib/drafts';
 import { toast } from '@/lib/toast';
@@ -93,18 +93,6 @@ function sameMembers(a: Set<string>, b: Set<string>): boolean {
   if (a.size !== b.size) return false;
   for (const x of a) if (!b.has(x)) return false;
   return true;
-}
-
-// hasPendingApproval reports whether any turn of a conversation holds a tool
-// call that needs approval and has no decision yet.
-function hasPendingApproval(messages: SessionState['messages']): boolean {
-  for (const m of messages) {
-    if (m.role !== 'turn') continue;
-    for (const part of m.parts) {
-      if (part.type === 'tools' && part.toolCalls.some(tc => tc.needs_approval && !tc.status)) return true;
-    }
-  }
-  return false;
 }
 
 // PLAN_COMMAND is the composer's plan-mode command: a prefix that puts the
@@ -740,29 +728,32 @@ function App() {
       : null,
   [sessionMeta, activeSession]);
 
-  // A session is awaiting approval when its latest turn holds a tool call that
-  // needs approval and has no decision yet, or a background task (a workflow
-  // step) is paused for one. Derived from the messages (not a transient socket
-  // flag), so it survives a reload — the paused turn is rebuilt from the durable
-  // approvals — and self-clears the moment approve/reject sets a status.
-  // The scan is per MESSAGE LIST, cached by its identity: a streaming delta
-  // replaces the session's streaming text, not its messages, so the frame
-  // pays one map lookup per session rather than a walk of every turn.
-  const awaitingCache = useRef(new WeakMap<object, boolean>());
+  // Two sets over the same scan. approvalSessions: a tool call in the
+  // conversation's own turns awaits a decision — what blocks the composer,
+  // since the run resumes on it. awaitingSessions adds a background task (a
+  // workflow step) paused for one — the sidebar's marker only: a paused task
+  // never blocks a send (session_busy is about this session's own run).
+  // Derived from the messages, so it survives a reload and self-clears the
+  // moment approve/reject sets a status; the scan is cached per message
+  // list, which a streaming delta does not replace.
+  const approvalCache = useRef(new WeakMap<object, boolean>());
+  const approvalRef = useRef(new Set<string>());
   const awaitingRef = useRef(new Set<string>());
-  const awaitingSessions = useMemo(() => {
-    const set = new Set<string>();
+  const [approvalSessions, awaitingSessions] = useMemo(() => {
+    const approvals = new Set<string>();
+    const awaiting = new Set<string>();
     for (const [sid, state] of Object.entries(ss)) {
-      let awaiting = awaitingCache.current.get(state.messages);
-      if (awaiting === undefined) {
-        awaiting = hasPendingApproval(state.messages);
-        awaitingCache.current.set(state.messages, awaiting);
+      let pending = approvalCache.current.get(state.messages);
+      if (pending === undefined) {
+        pending = hasPendingApproval(state.messages);
+        approvalCache.current.set(state.messages, pending);
       }
-      if (awaiting || hasTaskInStatus(state.tasks, 'input_required')) set.add(sid);
+      if (pending) approvals.add(sid);
+      if (pending || hasTaskInStatus(state.tasks, 'input_required')) awaiting.add(sid);
     }
-    if (sameMembers(awaitingRef.current, set)) return awaitingRef.current;
-    awaitingRef.current = set;
-    return set;
+    if (!sameMembers(approvalRef.current, approvals)) approvalRef.current = approvals;
+    if (!sameMembers(awaitingRef.current, awaiting)) awaitingRef.current = awaiting;
+    return [approvalRef.current, awaitingRef.current];
   }, [ss]);
 
   const focusComposer = useCallback(() => {
@@ -844,7 +835,7 @@ function App() {
       sessionAgentId={sessionMeta && sessionMeta.id === activeSession ? sessionMeta.agentConfigId : undefined}
       sessionBinding={sessionBinding}
       state={currentSS}
-      awaiting={!!activeSession && awaitingSessions.has(activeSession)}
+      awaiting={!!activeSession && approvalSessions.has(activeSession)}
       settingsReloadKey={settingsReloadKey}
       bindingsVersion={bindingsVersion}
       panel={activePanel}

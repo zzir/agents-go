@@ -472,6 +472,19 @@ function assemble(
   return timeline;
 }
 
+// hasPendingApproval reports whether any turn holds a tool call that needs
+// approval and has no decision yet — the conversation's own pause, which a
+// paused background task is not.
+export function hasPendingApproval(messages: TimelineEntry[]): boolean {
+  for (const m of messages) {
+    if (m.role !== 'turn') continue;
+    for (const part of m.parts) {
+      if (part.type === 'tools' && part.toolCalls.some(tc => tc.needs_approval && !tc.status)) return true;
+    }
+  }
+  return false;
+}
+
 // findToolCall returns the tool call with the given id (searching newest-first),
 // or null. Used to read a call's current state before patching it.
 export function findToolCall(messages: TimelineEntry[], toolCallId: string): ToolCall | null {

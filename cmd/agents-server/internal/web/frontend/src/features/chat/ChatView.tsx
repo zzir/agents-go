@@ -159,8 +159,9 @@ interface ChatViewProps {
   // The session as the socket layer keeps it: timeline, stream, live run,
   // tasks, history paging. One reference per session, replaced on change.
   state: SessionState;
-  // The session is paused awaiting a tool approval: block new sends so the
-  // approval is resolved first (a concurrent run would strand it as session_busy).
+  // A tool call in this conversation's own turns awaits a decision: sends
+  // are blocked until it is made, since the run resumes on it. A paused
+  // background task does not block; its marker is the sidebar's.
   awaiting?: boolean;
   settingsReloadKey?: number;
   // Bumped by the app when the set of session bindings changed; refreshes the
