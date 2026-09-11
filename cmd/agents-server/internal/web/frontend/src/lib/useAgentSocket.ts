@@ -9,6 +9,7 @@ import {
   TERMINAL_TASK_STATUSES,
 } from '@/lib/streamReducer';
 import { api, clearToken } from '@/lib/api';
+import { invalidate } from '@/lib/apiCache';
 import { resyncAfterGap, type GapResync } from '@/lib/gapResync';
 import { toast } from '@/lib/toast';
 import { ME_RELOAD } from '@/lib/me';
@@ -142,8 +143,20 @@ export function withSpanPayload(runs: Record<string, TraceEvent[]>, runId: strin
   return { ...runs, [runId]: [...events.slice(0, idx), next, ...events.slice(idx + 1)] };
 }
 
-export function useAgentSocket(updateSSRaw: UpdateSSFn) {
+// SessionEvents is what the socket tells the app about a conversation beyond
+// its run state. Read through a ref on each event, so the socket is not
+// rebuilt when a callback changes.
+export interface SessionEvents {
+  // The conversation on screen: what a reconnect re-reads at once.
+  activeSession: () => string | null;
+  onTitleUpdated: (sessionId: string, title: string) => void;
+  onProjectBound: (sessionId: string, projectId: string) => void;
+}
+
+export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
   const wsRef = useRef<WSClient | null>(null);
+  const eventsRef = useRef(events);
+  eventsRef.current = events;
   // Optimistic true: the indicator marks a LOST connection, not a pending one.
   const [connected, setConnected] = useState(true);
   // Conversations deleted in this page (deleteSession): a late event of the
@@ -300,29 +313,29 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
     });
   }, [fetchTimeline, updateSS]);
 
-  const loadSession = useCallback((sid: string): Promise<void> => {
+  // loadTimeline fetches a session's persisted timeline once (loadedRef): a
+  // session already shown gets the fetched rows merged under its live tail, a
+  // new one takes them whole. A failure rolls the mark back for the retry.
+  const loadTimeline = useCallback((sid: string): Promise<void> => {
     if (!sid || loadedRef.current.has(sid)) return Promise.resolve();
     loadedRef.current.add(sid);
     const gen = timelineGenRef.current[sid] || 0;
-    const msgP = fetchTimeline(sid).then(({ timeline, entries, hasMore }) => {
+    return fetchTimeline(sid).then(({ timeline, entries, hasMore }) => {
       // Superseded by a later branch move's own reload — drop it (see
       // reloadMessages).
       if ((timelineGenRef.current[sid] || 0) !== gen) return;
-      // Live events may have landed while fetching (loaded flipped true, e.g.
-      // a broadcast run.started from another browser's run) — merge them onto
-      // the persisted snapshot instead of dropping either side. Scoped to the
-      // CURRENT live run: a finished or branched-away turn in the tail stays
-      // dropped.
       updateSS(sid, s => s.loaded
         ? { ...s, messages: mergeLiveTail(timeline, s.messages, s.liveRunId), entries, hasMore }
         : { ...s, messages: timeline, entries, hasMore, loaded: true });
     }).catch(err => {
-      // The fetch failed: roll back the loaded mark so a later retry (or a
-      // re-select of this session) re-fetches instead of leaving the history
-      // permanently blank, and rethrow so the caller can toast the failure.
       loadedRef.current.delete(sid);
       throw err;
     });
+  }, [fetchTimeline, updateSS]);
+
+  const loadSession = useCallback((sid: string): Promise<void> => {
+    if (!sid || loadedRef.current.has(sid)) return Promise.resolve();
+    const msgP = loadTimeline(sid);
     // Seed the task list from the durable rows; live task-run events (which
     // may already have arrived) win per task id.
     (api.sessions.tasks(sid) as Promise<TaskRow[]>)
@@ -339,18 +352,14 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
         toast.error('Could not load background tasks — reopen the conversation to retry');
       });
     return msgP;
-  }, [fetchTimeline, updateSS]);
+  }, [loadTimeline, updateSS]);
 
-  // loadTraces pulls the session's persisted span SUMMARY (payloads stay lazy,
-  // fetched per span by loadSpanPayload), once per session, on session load:
-  // the chat labels each turn with its run span's duration, so the data can't
-  // wait for a lens to open. Live runs stream their spans over the WS
-  // regardless; this backfills history. The runs' questions come with them: the
-  // traces cover the whole session while the timeline is paged, so a card's
-  // exchange may not be on screen to label it from.
-  const loadTraces = useCallback((sid: string) => {
-    if (!sid || tracesLoadedRef.current.has(sid)) return;
-    tracesLoadedRef.current.add(sid);
+  // fetchTraces pulls the session's persisted span SUMMARY (payloads stay
+  // lazy, see loadSpanPayload) and the runs' questions, which label a trace
+  // card whose exchange is outside the loaded page. Per run id, the live
+  // group wins unless fetchedWins (a resync after an outage, when the stored
+  // rows are the newer side).
+  const fetchTraces = useCallback((sid: string, fetchedWins: boolean) => {
     (api.sessions.runs(sid) as Promise<Array<{ run_id: string; question: string; on_path: boolean }> | null>)
       .then(rows => {
         if (!rows || rows.length === 0) return;
@@ -359,10 +368,6 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
         updateSS(sid, s => ({ ...s, runQuestions }));
       })
       .catch(() => undefined); // labels degrade to run ids; the spans still load
-    // The SUMMARY listing: every span's row without its payload — the model
-    // request and reply, a tool's arguments and result are nearly all of a
-    // session's trace bytes, and parsing them on open is what stalls the
-    // page. A row opens its payload on demand (loadSpanPayload).
     (api.sessions.traces(sid, { summary: true }) as Promise<TraceRow[] | null>).then(events => {
       if (!events || events.length === 0) return;
       const runs: Record<string, TraceEvent[]> = {};
@@ -373,16 +378,22 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
         if (!runs[rid]) runs[rid] = [];
         runs[rid].push(traceEventFromRow(ev));
       }
-      // Merge per run id with live data winning: a run.started that landed
-      // during this fetch has already seeded (and keeps updating) its own
-      // run's entry.
-      updateSS(sid, s => ({ ...s, traceRuns: { ...runs, ...s.traceRuns } }));
+      updateSS(sid, s => ({ ...s, traceRuns: fetchedWins ? { ...s.traceRuns, ...runs } : { ...runs, ...s.traceRuns } }));
     }).catch(() => {
       // Roll back the mark so the next lens open retries instead of leaving
       // the panel empty for good.
       tracesLoadedRef.current.delete(sid);
     });
   }, [updateSS]);
+
+  // loadTraces backfills a session's traces once, on session load: the chat
+  // labels each turn with its run span's duration, so the data can't wait for
+  // a lens to open.
+  const loadTraces = useCallback((sid: string) => {
+    if (!sid || tracesLoadedRef.current.has(sid)) return;
+    tracesLoadedRef.current.add(sid);
+    fetchTraces(sid, false);
+  }, [fetchTraces]);
 
   // loadSpanPayload fetches one span whole — what the summary listing (or the
   // live cap) left out — and folds it into the span wherever the panel holds
@@ -814,33 +825,58 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       });
     });
 
-    // On reconnect, any run that kept executing server-side may have advanced
-    // or finished while we were away. Re-subscribe to still-live runs (the
-    // hub replays buffered events) and reload persisted history so a run that
-    // completed offline shows its result.
+    ws.on(EV.sessionTitleUpdated, (p: { session_id?: string; title?: string }) => {
+      invalidate('sessions');
+      if (p?.session_id && typeof p.title === 'string') eventsRef.current.onTitleUpdated(p.session_id, p.title);
+    });
+
+    ws.on(EV.sessionProjectBound, (p: { session_id?: string; project_id?: string }) => {
+      if (p?.session_id && p.project_id) eventsRef.current.onProjectBound(p.session_id, p.project_id);
+    });
+
+    // resyncSessions repairs what an outage may have moved: the conversation
+    // on screen is re-read now (timeline under its live tail, task rows under
+    // the no-move-backwards rule, traces with the stored rows winning), every
+    // other loaded one on its next select, and the sidebar list — invariant 74.
+    const resyncSessions = () => {
+      loadedRef.current.clear();
+      tracesLoadedRef.current.clear();
+      invalidate('sessions');
+      const sid = eventsRef.current.activeSession();
+      if (!sid || deletedRef.current.has(sid)) return;
+      loadTimeline(sid).catch(() => toast.error('Could not refresh the conversation — reopen it to retry'));
+      (api.sessions.tasks(sid) as Promise<TaskRow[]>)
+        .then(rows => { if (rows && rows.length > 0) updateSS(sid, s => mergeTaskRows(s, rows)); })
+        .catch(() => undefined);
+      tracesLoadedRef.current.add(sid);
+      fetchTraces(sid, true);
+    };
+
+    // A reconnect while the tab is hidden defers the resync to its next
+    // visible moment; the live runs are re-subscribed either way.
+    let resyncPending = false;
     ws.onReconnect = () => {
       // The role may have changed while away (a 1008 close is how the server
       // says so): the app refetches who we are.
       window.dispatchEvent(new Event(ME_RELOAD));
-      // Task runs are not resubscribed (their terminal events may be gone from
-      // the hub entirely) — re-pull the durable rows so statuses that changed
-      // during the outage land in the chips.
-      for (const sid of loadedRef.current) {
-        (api.sessions.tasks(sid) as Promise<TaskRow[]>)
-          .then(rows => { if (rows && rows.length > 0) updateSS(sid, s => mergeTaskRows(s, rows)); })
-          .catch(() => undefined);
-      }
-      for (const [sid, runId] of Object.entries(sessionRunRef.current)) {
-        ws.send(EV.runSubscribe, { run_id: runId });
-        reloadMessages(sid);
-      }
+      for (const runId of Object.values(sessionRunRef.current)) ws.send(EV.runSubscribe, { run_id: runId });
+      if (document.visibilityState === 'hidden') { resyncPending = true; return; }
+      resyncPending = false;
+      resyncSessions();
     };
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== 'visible' || !resyncPending || !ws.isConnected()) return;
+      resyncPending = false;
+      resyncSessions();
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
 
     ws.connect();
     // The pending-frame map is one Map for the hook's lifetime; the cleanup
     // clears whatever is queued at unmount.
     const rafPending = rafPendingRef.current;
     return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
       ws.close();
       if (rafIdRef.current) {
         cancelAnimationFrame(rafIdRef.current);
@@ -848,7 +884,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       }
       rafPending.clear();
     };
-  }, [updateSS, reloadMessages, scheduleFrame, tasks]);
+  }, [updateSS, reloadMessages, scheduleFrame, tasks, loadTimeline, fetchTraces]);
 
   // watchTask opens the Inspector's live view of a task: snapshot the child
   // session's persisted transcript + traces, then let the router stream the

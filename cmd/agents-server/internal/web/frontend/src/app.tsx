@@ -133,6 +133,8 @@ function App() {
   // a blank screen forever; instead we surface a retryable error state.
   const [checkError, setCheckError] = useState('');
   const [activeSession, setActiveSession] = useState<string | null>(() => readHash().sessionId);
+  const activeSessionRef = useRef(activeSession);
+  activeSessionRef.current = activeSession;
   const [activePanel, setActivePanel] = useState<InspectorPanel>(() => readHash().panel);
   // The Workflows hub, when it is the open view (null = a conversation).
   const [hubTab, setHubTab] = useState<HubTab | null>(() => readHash().hub);
@@ -280,7 +282,22 @@ function App() {
     });
   }, []);
 
-  const { wsRef, sessionRunRef, connected, loadSession, loadTraces, loadSpanPayload, deleteSession, loadEarlier, forgetLoaded, watchTask, unwatchTask } = useAgentSocket(updateSS);
+  // What the socket tells the app about a conversation beyond its runs: the
+  // auto-title after the first turn, and the project binding, whose record
+  // (announcedBindings) survives a meta cleared by a session switch mid-fetch.
+  const sessionEvents = useMemo(() => ({
+    activeSession: () => activeSessionRef.current,
+    onTitleUpdated: (sid: string, title: string) => {
+      setSessionMeta(prev => (prev && prev.id === sid ? { ...prev, name: title } : prev));
+    },
+    onProjectBound: (sid: string, projectId: string) => {
+      announcedBindings.current[sid] = projectId;
+      setSessionMeta(prev => (prev && prev.id === sid ? { ...prev, projectId } : prev));
+      setBindingsVersion(v => v + 1);
+    },
+  }), []);
+
+  const { wsRef, sessionRunRef, connected, loadSession, loadTraces, loadSpanPayload, deleteSession, loadEarlier, forgetLoaded, watchTask, unwatchTask } = useAgentSocket(updateSS, sessionEvents);
 
   // patchTask applies a server-confirmed task state change (e.g. the stop
   // API's response) directly — the fallback for when no hub broadcast will
@@ -351,30 +368,6 @@ function App() {
   useEffect(() => {
     if (activeSession) loadTraces(activeSession);
   }, [activeSession, loadTraces]);
-
-  useEffect(() => {
-    if (!wsRef.current) return;
-    // Single handler per event type — WSClient.on replaces per type, so each
-    // event's full behavior lives in one body (a second .on would clobber it).
-    wsRef.current.on(EV.sessionTitleUpdated, (p: { session_id?: string; title?: string }) => {
-      setSessionReloadKey(k => k + 1);
-      if (p?.session_id && typeof p.title === 'string') {
-        const title = p.title;
-        setSessionMeta(prev => (prev && prev.id === p.session_id ? { ...prev, name: title } : prev));
-      }
-    });
-    wsRef.current.on(EV.sessionProjectBound, (p: { session_id?: string; project_id?: string }) => {
-      if (p?.session_id && p.project_id) {
-        // Record first, then patch the live meta. The record is what makes the
-        // announcement survive the meta being null (session switch mid-fetch):
-        // the fetch merges it when it lands.
-        const projectID = p.project_id;
-        announcedBindings.current[p.session_id] = projectID;
-        setSessionMeta(prev => (prev && prev.id === p.session_id ? { ...prev, projectId: projectID } : prev));
-        setBindingsVersion(v => v + 1);
-      }
-    });
-  }, [wsRef]);
 
   // reloadTimeline re-reads a session's persisted history after a server-side
   // change the client cannot patch in — a branch move (a different branch is a

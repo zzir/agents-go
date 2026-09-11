@@ -455,6 +455,12 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     through the same cascade as a delete; `task_session_retention_days` takes a
     finished task's transcript and its row together after the window. Nothing
     else creates or keeps a hidden session (`session_repo_adapter.go`).
+74. **A reconnect never leaves a loaded session stale.** The socket
+    coming back re-reads the session on screen (timeline under its live
+    tail, task rows under the no-move-backwards rule, traces with the stored
+    rows winning), drops every other loaded one's mark so its next select
+    refetches, and relists the sidebar; a reconnect while the tab is hidden
+    does this on its next visible moment (`resyncSessions`, `useAgentSocket.ts`).
 75. **A person reads "session".** Every label, empty state, toast, dialog
     title and column a person sees names the thing a session — never
     conversation or chat; the code, the API and `session_id` were already
