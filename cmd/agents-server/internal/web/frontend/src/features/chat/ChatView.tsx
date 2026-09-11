@@ -778,6 +778,7 @@ export function ChatView({
           reloadKey={entries}
           onClose={() => onPanelChange(null)}
           onCompact={onCompact}
+          onSettingsOpen={onSettingsOpen}
         />
       )}
       {panel?.kind === 'tasks' && (
