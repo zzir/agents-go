@@ -169,6 +169,7 @@ func (h *ProviderHandler) SetScope(c *gin.Context) {
 			conflict(c, fmt.Sprintf("%d agent(s) outside the owner's private set still reference this provider; repoint them first", refs))
 			return
 		}
+		server.SetAuditDetail(c, "scope="+scope)
 		c.Status(http.StatusNoContent)
 		return
 	}
@@ -176,6 +177,7 @@ func (h *ProviderHandler) SetScope(c *gin.Context) {
 		saveError(c, err) // name collision in the target scope -> 409
 		return
 	}
+	server.SetAuditDetail(c, "scope="+scope)
 	c.Status(http.StatusNoContent)
 }
 

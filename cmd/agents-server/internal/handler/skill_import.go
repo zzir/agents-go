@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/skills"
 )
@@ -150,6 +151,9 @@ func (h *SkillHandler) Import(c *gin.Context) {
 	if resp == nil {
 		return // the importer already answered (a 4xx)
 	}
+	server.SetAuditResource(c, resp.Repo)
+	server.SetAuditDetail(c, fmt.Sprintf("created=%d updated=%d unchanged=%d skipped=%d",
+		len(resp.Created), len(resp.Updated), len(resp.Unchanged), len(resp.Skipped)))
 	c.JSON(http.StatusOK, resp)
 }
 

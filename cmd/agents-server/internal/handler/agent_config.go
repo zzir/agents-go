@@ -330,6 +330,7 @@ func (h *AgentConfigHandler) SetScope(c *gin.Context) {
 		saveError(c, err)
 		return
 	}
+	server.SetAuditDetail(c, "scope="+scope)
 	c.Status(http.StatusNoContent)
 }
 

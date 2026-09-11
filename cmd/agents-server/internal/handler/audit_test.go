@@ -14,6 +14,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/authn"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
@@ -83,6 +84,14 @@ func TestAuditLogRecordsMutations(t *testing.T) {
 	if last := got[len(got)-1]; last.Action != "PUT /agents/:id" || last.Resource != id {
 		t.Fatalf("audit for update = %+v", last)
 	}
+	// A scope flip says which way it went: the path alone does not.
+	if rec := serve(engine, as(adminUser, http.MethodPost, "/api/v1/agents/"+id+"/scope", `{"scope":"global"}`)); rec.Code != http.StatusNoContent {
+		t.Fatalf("publish = %d %s", rec.Code, rec.Body.String())
+	}
+	got = recorded(3)
+	if last := got[len(got)-1]; last.Action != "POST /agents/:id/scope" || last.Resource != id || last.Detail != "scope=global" {
+		t.Fatalf("audit for publish = %+v, want detail scope=global", last)
+	}
 
 	// The admin reads the log back newest first; a member is refused.
 	rec = serve(engine, as(adminUser, http.MethodGet, "/api/v1/auth/audit?limit=10", ""))
@@ -91,5 +100,54 @@ func TestAuditLogRecordsMutations(t *testing.T) {
 	}
 	if rec := serve(engine, as(memberUser, http.MethodGet, "/api/v1/auth/audit", "")); rec.Code != http.StatusForbidden {
 		t.Fatalf("member audit list = %d, want 403", rec.Code)
+	}
+}
+
+// An import and a repository-group scope flip have no path parameter to
+// name their resource, so the line names the repository and says what was
+// created and which way the group went.
+func TestAuditLogNamesImportsAndRepoScopeFlips(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := testdb.New(t)
+	var mu sync.Mutex
+	var seen []protocol.AuditRecord
+	record := func(_ context.Context, r protocol.AuditRecord) {
+		mu.Lock()
+		seen = append(seen, r)
+		mu.Unlock()
+	}
+	h := NewSkillHandler(store.NewSkillStore(db), settings.NewReader(store.NewSettingStore(db)))
+	gh := fakeGitHub(t, "sha1", map[string]string{"pdf/SKILL.md": pdfSkillDoc})
+	h.githubAPI, h.githubRaw = gh.URL, gh.URL
+	s := server.New(slog.New(slog.DiscardHandler), usersByToken, record)
+	s.RegisterAPI(Handlers{Skills: h}.Register)
+	engine := s.Engine
+	recorded := func(n int) []protocol.AuditRecord {
+		deadline := time.Now().Add(2 * time.Second)
+		for {
+			mu.Lock()
+			got := append([]protocol.AuditRecord(nil), seen...)
+			mu.Unlock()
+			if len(got) >= n || time.Now().After(deadline) {
+				return got
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+
+	if rec := serve(engine, as(adminUser, http.MethodPost, "/api/v1/skill-imports", `{"url":"https://github.com/o/r"}`)); rec.Code != http.StatusOK {
+		t.Fatalf("import = %d %s", rec.Code, rec.Body.String())
+	}
+	got := recorded(1)
+	if len(got) != 1 || got[0].Action != "POST /skill-imports" || got[0].Resource != "https://github.com/o/r" ||
+		got[0].Detail != "created=1 updated=0 unchanged=0 skipped=0" {
+		t.Fatalf("audit for import = %+v, want the repository and the counts", got)
+	}
+	if rec := serve(engine, as(adminUser, http.MethodPost, "/api/v1/skill-repos/scope", `{"repo":"https://github.com/o/r","scope":"global"}`)); rec.Code != http.StatusNoContent {
+		t.Fatalf("repo publish = %d %s", rec.Code, rec.Body.String())
+	}
+	got = recorded(2)
+	if last := got[len(got)-1]; last.Action != "POST /skill-repos/scope" || last.Resource != "https://github.com/o/r" || last.Detail != "owner="+adminUser.ID+" scope=global" {
+		t.Fatalf("audit for repo publish = %+v, want the repository, its owner and the scope", last)
 	}
 }

@@ -323,6 +323,7 @@ func setScopePlain[T any](c *gin.Context, s *store.CrudStore[T], kind string, sc
 		saveError(c, err) // name collision in the target scope -> 409
 		return
 	}
+	server.SetAuditDetail(c, "scope="+scope)
 	c.Status(http.StatusNoContent)
 }
 

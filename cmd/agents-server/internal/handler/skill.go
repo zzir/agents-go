@@ -290,6 +290,8 @@ func (h *SkillHandler) SetRepoScope(c *gin.Context) {
 		conflict(c, "the repository's skills are already "+req.Scope)
 		return
 	}
+	server.SetAuditResource(c, req.Repo)
+	server.SetAuditDetail(c, "owner="+groupOwner+" scope="+req.Scope)
 	c.Status(http.StatusNoContent)
 }
 
