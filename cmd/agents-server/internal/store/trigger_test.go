@@ -236,3 +236,42 @@ func TestNormalizeWorkflowChecksTheBudget(t *testing.T) {
 		t.Fatalf("scan(value) = %+v, %v", scanned, err)
 	}
 }
+
+// Deleting an agent takes the triggers that fire it; a trigger of another
+// target stays.
+func TestAgentDeleteCascadesItsTriggers(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	agents := NewAgentConfigStore(db)
+	triggers := NewTriggerStore(db)
+	sessions := NewSessionStore(db)
+
+	sess := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "s"}
+	if err := sessions.Create(ctx, sess); err != nil {
+		t.Fatal(err)
+	}
+	doomed := &AgentConfig{Name: "doomed", Scope: ScopeGlobal, OwnerID: LocalUserID}
+	other := &AgentConfig{Name: "other", Scope: ScopeGlobal, OwnerID: LocalUserID}
+	for _, ac := range []*AgentConfig{doomed, other} {
+		if err := agents.Create(ctx, ac); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fires := &Trigger{Target: TriggerTargetAgent, AgentConfigID: doomed.ID, SessionID: sess.ID, Kind: TriggerKindCron, Schedule: "@hourly", Brief: "go"}
+	stays := &Trigger{Target: TriggerTargetAgent, AgentConfigID: other.ID, SessionID: sess.ID, Kind: TriggerKindCron, Schedule: "@hourly", Brief: "go"}
+	for _, tr := range []*Trigger{fires, stays} {
+		if err := triggers.Create(ctx, tr); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := agents.DeleteOwnedBy(ctx, doomed.ID, LocalUserID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := triggers.Get(ctx, fires.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("the deleted agent's trigger should be gone, got %v", err)
+	}
+	if _, err := triggers.Get(ctx, stays.ID); err != nil {
+		t.Fatalf("the other agent's trigger should stay: %v", err)
+	}
+}

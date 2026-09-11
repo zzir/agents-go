@@ -442,19 +442,3 @@ func (s *TraceStore) ForkBySession(ctx context.Context, srcSessionID, dstSession
 	}
 	return nil
 }
-
-// DeleteBySession removes all trace events and blobs for sessionID.
-func (s *TraceStore) DeleteBySession(ctx context.Context, sessionID string) error {
-	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		for _, model := range []any{(*TraceEvent)(nil), (*TraceBlob)(nil)} {
-			if _, err := tx.NewDelete().Model(model).Where("session_id = ?", sessionID).Exec(ctx); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("deleting trace events for session %s: %w", sessionID, err)
-	}
-	return nil
-}

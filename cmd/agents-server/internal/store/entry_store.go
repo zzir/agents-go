@@ -117,11 +117,12 @@ func (s *EntryStore) scoped(q *bun.SelectQuery) *bun.SelectQuery {
 
 // SessionIsPlanning reports whether the session should START its next run in
 // the planning phase: a single-row read of the materialized column
-// (Session.Planning). The state belongs to the SESSION, not a run.
+// (Session.Planning), addressed by (id, generation) like every other read of
+// a session's state. The state belongs to the SESSION, not a run.
 func (s *EntryStore) SessionIsPlanning(ctx context.Context, ref session.Ref) (bool, error) {
 	var planning bool
 	err := s.db.NewSelect().Model((*Session)(nil)).Column("planning").
-		Where("id = ?", ref.ID).Scan(ctx, &planning)
+		Where("id = ?", ref.ID).Where("gen = ?", ref.Gen).Scan(ctx, &planning)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, nil // a session that no longer exists plans for nobody
@@ -132,12 +133,13 @@ func (s *EntryStore) SessionIsPlanning(ctx context.Context, ref session.Ref) (bo
 }
 
 // SetSessionPlanning writes the session's plan phase; last write wins, the
-// approved submit_plan's unlock included (see armPlanUnlock).
+// approved submit_plan's unlock included (see armPlanUnlock). A replacement
+// generation under the same id is not this session: the write misses it.
 func (s *EntryStore) SetSessionPlanning(ctx context.Context, ref session.Ref, planning bool) error {
 	_, err := s.db.NewUpdate().Model((*Session)(nil)).
 		Set("planning = ?", planning).
 		Set("updated_at = ?", time.Now().UTC()).
-		Where("id = ?", ref.ID).Exec(ctx)
+		Where("id = ?", ref.ID).Where("gen = ?", ref.Gen).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("writing plan phase for session %s: %w", ref.ID, err)
 	}
@@ -1010,19 +1012,4 @@ func (s *EntryStore) ForkSession(ctx context.Context, dst *Session, src session.
 		return nil, err
 	}
 	return runIDs, nil
-}
-
-// DeleteBySession removes every entry of a session, in every generation the
-// repo made; the direct scope (empty generation) is not the repo's to remove.
-func (s *EntryStore) DeleteBySession(ctx context.Context, sessionID string) error {
-	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := tx.NewDelete().Model((*entryRow)(nil)).
-			Where("session_id = ?", sessionID).Where("gen <> ?", "").Exec(ctx); err != nil {
-			return err
-		}
-		// The append point describes those rows, so it goes with them.
-		_, err := tx.NewDelete().Model((*appendPointRow)(nil)).
-			Where("session_id = ?", sessionID).Where("gen <> ?", "").Exec(ctx)
-		return err
-	})
 }

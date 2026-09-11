@@ -385,3 +385,52 @@ func TestSetOwnerMovesTheWholeTree(t *testing.T) {
 		t.Fatalf("reassigning a missing session: want ErrNotFound, got %v", err)
 	}
 }
+
+// The plan phase is addressed by (id, generation): a session recreated under
+// a deleted one's id neither reads nor takes the old handle's phase.
+func TestPlanningIsKeyedByGeneration(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	sessions := NewSessionStore(db)
+	entries := NewSharedEntryStore(db)
+
+	sid := NewID()
+	if err := sessions.Create(ctx, &Session{OwnerID: LocalUserID, ID: sid, Name: "first"}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := RefFor(ctx, db, sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := entries.SetSessionPlanning(ctx, first, true); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := entries.SessionIsPlanning(ctx, first); err != nil || !got {
+		t.Fatalf("first generation planning = %v, %v; want true", got, err)
+	}
+	if err := sessions.Delete(ctx, sid); err != nil {
+		t.Fatal(err)
+	}
+	if err := sessions.Create(ctx, &Session{OwnerID: LocalUserID, ID: sid, Name: "second"}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := RefFor(ctx, db, sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := entries.SessionIsPlanning(ctx, first); err != nil || got {
+		t.Fatalf("stale handle reads planning = %v, %v; want false", got, err)
+	}
+	if err := entries.SetSessionPlanning(ctx, first, true); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := entries.SessionIsPlanning(ctx, second); err != nil || got {
+		t.Fatalf("a stale handle's write reached the replacement: planning = %v, %v", got, err)
+	}
+	if err := entries.SetSessionPlanning(ctx, second, true); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := entries.SessionIsPlanning(ctx, second); err != nil || !got {
+		t.Fatalf("second generation planning = %v, %v; want true", got, err)
+	}
+}
