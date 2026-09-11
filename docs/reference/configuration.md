@@ -28,7 +28,7 @@ for the runtime settings. The tables below are a convenience copy.
 |---|---|---|
 | `--host` | `127.0.0.1` | Bind address (`0.0.0.0` for LAN) |
 | `--port` | `9527` | HTTP port |
-| `--db` | `data.db` | SQLite path, or a `postgres://` DSN |
+| `--db` | `data.db` | SQLite path, or a `postgres://` / `postgresql://` DSN |
 | `--base-url` | — | Public origin of this server (required behind a proxy for OAuth) |
 | `--auth` | `token` | `token` (one static token) or `oauth` (per-user login) |
 | `--oauth-google-client-id` | — | Enables the Google login provider |
@@ -62,10 +62,18 @@ standalone env knob and no "every flag is also an env var".
 | `AGENTS_OAUTH_GOOGLE_CLIENT_SECRET` | `--oauth-google-client-secret` | The Google OAuth client secret |
 | `AGENTS_OAUTH_GITHUB_CLIENT_SECRET` | `--oauth-github-client-secret` | The GitHub OAuth client secret |
 
+Three variables the process does not define but honors, each a vendor
+convention ([spec §2.14](spec.md#214-the-sdk-reads-no-environment-variable)):
+`TZ` is the zone cron triggers tick in (Go's `time.Local`, reported by
+`GET /api/v1/server`), `DOCKER_HOST` is where a docker sandbox with an empty
+`host` dials, and `SSH_AUTH_SOCK` is the agent an `ssh://` sandbox with
+`ssh_use_agent` authenticates through.
+
 ## Runtime settings
 
-Tuned live through `PUT /api/v1/settings/:key` or the Settings panel; a change
-takes effect on the next run, tick or connect. Every key is one entry in the
+Tuned live through `PUT /api/v1/settings/:key` (admin-only, as is `DELETE` —
+host configuration is [written by admins](protocol.md#authorization)) or the
+Settings panel; a change takes effect on the next run, tick or connect. Every key is one entry in the
 settings registry (invariant 40), which also decides masking and validation.
 An empty value returns a key to its default. Keys by panel group:
 

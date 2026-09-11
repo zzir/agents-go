@@ -53,11 +53,12 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
    with `********`; writes resolve the sentinel (mask = keep, `""` = clear,
    else replace) via the shared helpers, with a round-trip test. A mask never
    survives a destination change (a changed `provider_type`/`base_url` is
-   rejected), and it resolves inside the store's transaction or under
-   `expected_revision` — never by a `Get`. An agent has no secret field: a
+   rejected), and it resolves inside the store's transaction or under the
+   row's `revision` — never by a `Get`. An agent has no secret field: a
    fallback entry names a provider (decisions §5.69).
 10. **OAuth-class tokens never leave the server.** Own column with `json:"-"`,
-    excluded from CRUD updates (`ExcludeColumn`), exposed only as a derived
+    kept from the stored row on an update, never taken from the request
+    (`mcp_server_store.go`, `provider_store.go`), exposed only as a derived
     boolean (`has_oauth_token`, `chatgpt_logged_in`). A masked token string is
     never a truthiness signal.
 11. **An OAuth grant persists as a self-contained refreshable unit, through
@@ -212,7 +213,7 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     records each `(step, run)` the launcher started, written under the same
     `Advance` CAS as the row; the lap bound and `MaxStepRuns` count launches,
     and an ending's outcome lands in the `Finalize` write so the log and the
-    terminal status cannot disagree (`store/workflow.go`).
+    terminal status cannot disagree (`store/task_store.go`).
 32. **Delivery is a debt, not a call, and one waker owns it.** "Session S is
     owed a turn carrying P" is a `wakeups` row, written in the transaction
     that lands the task's terminal status (a cancelled task owes nothing) and

@@ -152,7 +152,7 @@ means starting (or forking into) another session.
 
 `fork` copies the source session's entries (and their traces) into a new
 session, bounded by the optional `message_id` (`exclusive: true` stops before
-it). Entry ids and parent links are rewritten into the fork's namespace, and
+it; an id that is not an entry of the source is `404`). Entry ids and parent links are rewritten into the fork's namespace, and
 the fork inherits `agent_config_id` and `project_id` with no fresh bind.
 
 `branch` moves the session's active branch to an entry, so the next run
@@ -176,8 +176,8 @@ usage but leave the window figures, since the model no longer sees them; which
 ruler each figure is on is
 [invariant 28](../explanation/workbench-invariants.md). `prompt` is read from
 the `context_profiles` snapshot the runner writes per run, and MCP tools are
-asked live (bounded, 2s) — a server that cannot answer reads `unavailable`,
-not zero.
+asked live (bounded, 2s) — a server that cannot answer is reported with
+`unavailable: true` on its own bucket, its count unknown rather than zero.
 
 `POST /sessions/:id/compact` forces one compaction pass now — the panel's
 "Compact now" — through the run path's own construction. `Force` skips only
@@ -275,8 +275,9 @@ abandoned when the session takes a new message (`POST /sessions/:id/runs`,
 `run.cancel`): its `pending_approvals` row is deleted, the calls it was
 waiting on are recorded as not run with the reason, and `run.cancelled`
 carries that reason — `superseded` or `stopped`; a decision arriving after
-that is `404`. Only the conversation's own pause: a background task's paused
-run is its task's to stop.
+that is `404`. Only a person's message abandons: a wake-up or a task's start
+leaves the pause standing, and a background task's paused run is its task's
+to stop.
 
 **exec_command session approval.** An agent whose `approve_tools` includes
 `exec_command` gates each shell command through a per-session trust store
@@ -354,9 +355,14 @@ come back masked ([Secret handling](#secret-handling)).
 ### MCP Servers — `/api/v1/mcp-servers`
 
 The one transport is streamable HTTP (decisions §5.25), so `config` is
-`{endpoint, headers, auth_mode, oauth_*}` with `auth_mode` `header` or
-`oauth` — a raw JSON blob the OpenAPI document cannot expand; a local
-stdio-only MCP server can join through a stdio→HTTP proxy such as `mcp-proxy`.
+`{endpoint, headers, auth_mode, oauth_*, max_retry_attempts, retry_backoff_ms,
+use_structured_content}` with `auth_mode` `header` or `oauth` — a raw JSON
+blob the OpenAPI document cannot expand. `max_retry_attempts` retries a failed
+`list_tools`/`call_tool` (`0` never, `-1` without limit), `retry_backoff_ms`
+is the base of its exponential backoff (`0` the SDK's 1s), and
+`use_structured_content` takes a result's `structuredContent` alone, for a
+server that fills only that field. A local stdio-only MCP server can join
+through a stdio→HTTP proxy such as `mcp-proxy`.
 Enabled servers are connected automatically on startup and after
 create/update; disabling disconnects, and a disabled server cannot be
 connected (`409`) — agents pick tools by live connection, so the toggle is a
@@ -552,9 +558,8 @@ sandbox binding, with a `trigger_fired` note before it. Either way the brief
 is the author's, written in advance, and a webhook's body (up to 64 KB) is
 appended to it as the payload. A session busy with a run, or at its cap,
 refuses — that refusal is what the trigger shows as `last_error`. Cron ticks
-missed while the process was down are not replayed. Deleting the session or
-the workflow deletes its triggers; a deleted agent leaves its triggers
-standing, failing with the reason. Triggers are capped at 50 per owner (`409`
+missed while the process was down are not replayed. Deleting the session,
+the workflow or the agent a trigger fires deletes the trigger. Triggers are capped at 50 per owner (`409`
 above it), and the [how-to](../howto/workflows.md) has the cron syntax and a
 signing example.
 
@@ -622,7 +627,8 @@ sandbox id is in the public hostname of every port it serves. For `docker`,
 `host` picks the daemon: empty for this machine's, `ssh://user@host` for a
 remote daemon over pure-Go SSH (sshd with streamlocal forwarding and socket
 access for the SSH user; no remote docker CLI — decisions §5.27),
-`tcp://host:port` for a TCP-exposed one; the `ssh_*` fields come back masked.
+`tcp://host:port` for a TCP-exposed one; `ssh_password` comes back masked,
+the key file path, known-hosts and agent flag in the clear.
 Blank `memory_mb` / `cpus` take a capped workbench default, never "unlimited"
 (decisions §5.38). The daemon is the server's one external dependency
 ([deploying](../howto/workbench-deploy.md#requirements)); a project's storage
@@ -643,9 +649,11 @@ re-apply — answering `409` and counting the projects that block it; every
 other field edits freely
 ([invariant 45](../explanation/workbench-invariants.md),
 [decisions §5.36](../explanation/decisions.md)). Editing the image reaches
-bound sessions at their next run and replaces their containers; editing the
-`prompt` is not a content change — it retires no instance and severs no
-terminal, the same as a rename.
+bound sessions at their next run and replaces their containers; an edit
+outside what a container is made of (a read cap, an SSH setting) hands the
+running container to the next generation instead (decisions §5.66); editing
+the `prompt` is not a content change at all — it retires no instance and
+severs no terminal, the same as a rename.
 
 A `PUT` on a sandbox or a project MAY carry the `revision` the edit was based
 on (from GET/List) to make the write a compare-and-set — a concurrent update
@@ -677,9 +685,9 @@ naming and the per-project container lifecycle are
 [decisions §5.28](../explanation/decisions.md) and §5.33. `sandbox_id` may
 change, but only to a sandbox at the SAME destination — how a project changes
 its image, and no further (`409`; decisions §5.36). On an `e2b` sandbox the
-storage IS the instance, so `instance_ref` remembers which one — recorded
-before the client will use it, since a sandbox nobody recorded is billed
-compute nobody will ever stop. Projects are **personal**: a member manages
+storage IS the instance, and the server records which one before the client
+first uses it — a sandbox nobody recorded is billed compute nobody will ever
+stop; the handle is not on the wire. Projects are **personal**: a member manages
 their own, an admin additionally manages the plane (`?all=true`, delete, stop,
 rebuild; never the export or the environment) — [Authorization](#authorization).
 
@@ -868,12 +876,12 @@ which run this is.
 
 | type                    | Description                                                                                                                                             |
 |-------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `run.started`           | Run begun — `{run_id, session_id, input, attachments?}`; `input` is the user prompt, so a browser that didn't send it can render the user bubble, and `attachments` its image refs (`{id, url}`) for the same reason. A background task run additionally carries `{task_id, parent_session_id, parent_run_id, tool_call_id, label}` — clients key task state by the durable `task_id`, route events by `run_id`, and send it to the parent session's task list, never a chat timeline |
+| `run.started`           | Run begun — `{run_id, session_id, input, attachments?}`; `input` is the user prompt, so a browser that didn't send it can render the user bubble, and `attachments` its image refs (`{id, url}`) for the same reason. A background task run additionally carries `{task_id, parent_session_id, parent_run_id, tool_call_id, label, kind, attempt, max_attempts}` — `kind` is `workflow` for an execution's step run (a step ending is not a workflow ending), `attempt` is which run of the task this is (1, more after a retry — how a new attempt is told from a replay) and `max_attempts` its ceiling; clients key task state by the durable `task_id`, route events by `run_id`, and send it to the parent session's task list, never a chat timeline |
 | `run.agent_start`       | Agent taking its turn — `{run_id, agent_name, agent_config_id?}`; the id names the config behind the agent                                              |
 | `run.step`              | Streaming text delta — `{run_id, delta}`                                                                                                                |
 | `run.reasoning`         | Streaming reasoning delta — `{run_id, delta}`                                                                                                           |
-| `run.message`           | One completed assistant message: a turn's full text, interim narration or final answer, authoritative over its `run.step` deltas — `{run_id, text}`     |
-| `run.reasoning_item`    | One completed reasoning block: a turn's full thinking text, authoritative over its `run.reasoning` deltas — `{run_id, text}`                            |
+| `run.message`           | One completed assistant message: a turn's full text, interim narration or final answer, authoritative over its `run.step` deltas — `{run_id, text, item_id?}`; `item_id` is the model item's stable id, what a client dedups a hub replay by (text equality when absent) |
+| `run.reasoning_item`    | One completed reasoning block: a turn's full thinking text, authoritative over its `run.reasoning` deltas — `{run_id, text, item_id?}`, deduped like `run.message` |
 | `run.tool_call`         | Tool invoked — `{run_id, tool_call_id, tool_name, arguments, needs_approval}`                                                                           |
 | `run.tool_progress`     | Partial output from a running tool — `{run_id, call_id, tool_name, delta, renderer?}`; `delta` appends to what the client holds for the call, `renderer` is a display hint (e.g. `terminal`) |
 | `run.tool_result`       | Tool output — `{run_id, tool_call_id, output, title?, summary?, renderer?, is_error?, extra?}`; the optional display fields mirror the stored output entry's `display` (`extra` is the tool's `Details` bag), so the live card carries the same data a reload rebuilds. A multimodal result's `output` is the Responses content list as JSON (`[{"type":"input_text",…},{"type":"input_image","image_url":…},{"type":"input_file",…}]`, SDK spec §2.7b) — the card shows the image and offers the file; anything else is text |
@@ -903,9 +911,39 @@ base; the items keep the stored reference
 ([invariant 70](../explanation/workbench-invariants.md)). An element past
 `trace_span_data_kb` is replaced with a marker
 string, its siblings kept; an element whose blob was pruned reads as
-`[omitted: the stored payload was pruned]`. Whether conversation content is
+`[omitted: the stored payload was pruned]`. Whether session content is
 recorded at all is `trace_include_sensitive_data`
 ([configuration](configuration.md#runtime-settings)).
+
+### Run error codes
+
+`run.error.code` (and the `code` of a `run.diagnostic`) is one flat
+vocabulary: the SDK's `ErrorCode` (`agents.CodeOf`), plus the codes the
+workbench adds for failures before or outside a run. The two sets never
+collide, and the set grows without a client release — a code a client does
+not know renders as a generic error.
+
+| Code | From | Meaning |
+|---|---|---|
+| `session_busy` | workbench | The session already has a live run (precedes `run.started`, carries `session_id`) |
+| `session_not_found` | workbench | No such session, or not the caller's (precedes `run.started`) |
+| `run_not_found` | workbench | A `run.subscribe`, `run.cancel` or `run.inject` named a run the hub does not hold |
+| `approval_failed` | workbench | A `tool.approve` / `tool.reject` could not resume the run |
+| `config_error` | workbench | The agent could not be built from its configuration (a missing provider, an unresolvable guardrail, a `vision` mismatch) |
+| `persist_error` | workbench | The turn or the pause could not be written to the session |
+| `stream_error` | workbench | A fresh run's segment failed before the SDK classified the error |
+| `resume_error` | workbench | A resumed run's segment failed before the SDK classified the error |
+| `guardrail_tripwire` | SDK | A guardrail tripped; `guardrail` and `stage` name it |
+| `max_turns_exceeded` | SDK | The run hit its turn limit |
+| `model_behavior` | SDK | The model produced something the loop cannot act on (a malformed call, an unknown tool) |
+| `model_refusal` | SDK | The model refused to answer |
+| `user_error` | SDK | A configuration or usage error the caller made |
+| `tool_timeout` | SDK | A tool ran past its timeout |
+| `tool_loop` | SDK | A tool was called in a loop past the SDK's bound |
+| `tool_panic` | SDK | A tool panicked |
+| `sandbox_exec` | SDK | A sandbox command failed as infrastructure (daemon down, image missing), not as a non-zero exit |
+| `mcp` | SDK | An MCP server call failed |
+| `unknown` | SDK | Anything else |
 
 ### Terminal endpoint — `GET /ws/terminal`
 

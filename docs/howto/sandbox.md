@@ -6,7 +6,7 @@ The `sandbox` packages run **model-generated code** in an isolated environment a
 agents.Agent ── CodeTool  ──► sandbox.Sandbox (interface)
              ── FileTools ──►   ├── sandbox.LocalSandbox      (dev only, no isolation)
                                 ├── sandbox/docker.Sandbox    (ephemeral / persistent containers,
-                                │                              local daemon or remote over SSH)
+                                │                              local daemon, or remote over SSH/TCP)
                                 └── sandbox/e2b.Sandbox       (E2B API: E2B's cloud, self-hosted,
                                                                or a compatible service)
 ```
@@ -127,7 +127,7 @@ sb, err := docker.New(docker.Options{
 })
 ```
 
-Each `Exec` creates a locked-down container and removes it afterwards: read-only root filesystem, all capabilities dropped, `no-new-privileges`, writable `work` dir and `/tmp` (tmpfs), the command run as the entrypoint verbatim, a hard per-command timeout, and the daemon-side `json-file` log capped at 10m so output floods cannot fill the host disk. `Options.Limits` are enforced only when set — the workbench caps them by default ([decisions §5.38](../explanation/decisions.md)). An empty `User` is the image's own user and an empty `Network` is no network at all ([spec §2.7o](../reference/spec.md#27o-a-docker-sandbox-runs-as-the-images-user-and-joins-no-network)).
+Each `Exec` creates a locked-down container and removes it afterwards: read-only root filesystem, all capabilities dropped, `no-new-privileges`, writable `/workspace` and `/tmp` (tmpfs), the command run as the entrypoint verbatim, a hard per-command timeout, and the daemon-side `json-file` log capped at 10m so output floods cannot fill the host disk. `Options.Limits` are enforced when set, except `PIDs`, which is 128 when zero; the workbench caps memory and CPU by default too ([decisions §5.38](../explanation/decisions.md)). An empty `User` is the image's own user and an empty `Network` is no network at all ([spec §2.7o](../reference/spec.md#27o-a-docker-sandbox-runs-as-the-images-user-and-joins-no-network)).
 
 With `Persistent: true` a single container is reused across `Exec` calls with a writable root filesystem; `VolumeName` mounts a named volume at `/workspace` (durable on any daemon), `TmpfsSize` resizes `/tmp` (default 64m), and `KeepOnClose` stops the container instead of removing it so a later Sandbox with the same `ContainerName` and configuration adopts it (an older configuration of ours is replaced; a foreign holder is a hard error). `Detach` releases the connection and leaves a persistent container exactly as it is, for a later Sandbox that adopted it meanwhile ([spec §2.7p](../reference/spec.md#27p-stop-keeps-the-filesystem-and-promises-nothing-else)). A timed-out exec has its process tree killed best-effort via an `AGENTS_SANDBOX_EXEC` environment marker — the container's PID/memory limits are the backstop for a process that scrubs its environment.
 

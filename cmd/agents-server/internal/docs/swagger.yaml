@@ -2352,7 +2352,8 @@ paths:
       - agents
   /agents/{id}:
     delete:
-      description: The memory scoped to the agent is deleted with it.
+      description: The memory scoped to the agent and the triggers that fire it are
+        deleted with it.
       parameters:
       - description: Agent ID
         in: path

@@ -313,7 +313,7 @@ func (h *AgentConfigHandler) Update(c *gin.Context) {
 // Delete removes the agent configuration identified by the id path parameter.
 //
 //	@Summary		Delete agent
-//	@Description	The memory scoped to the agent is deleted with it.
+//	@Description	The memory scoped to the agent and the triggers that fire it are deleted with it.
 //	@Tags			agents
 //	@Param			id	path	string	true	"Agent ID"
 //	@Success		204	"deleted"

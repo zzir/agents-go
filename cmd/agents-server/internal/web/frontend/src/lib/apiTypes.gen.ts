@@ -206,7 +206,7 @@ export interface paths {
         post?: never;
         /**
          * Delete agent
-         * @description The memory scoped to the agent is deleted with it.
+         * @description The memory scoped to the agent and the triggers that fire it are deleted with it.
          */
         delete: {
             parameters: {

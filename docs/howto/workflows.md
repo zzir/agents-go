@@ -122,8 +122,8 @@ curl -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   the same row in the hub; a trigger's `last_error` says why the last fire
   started nothing.
 
-Deleting the session or the workflow deletes its triggers; a deleted agent
-leaves its triggers standing, failing with the reason, to be re-pointed.
+Deleting the session, the workflow or the agent a trigger fires deletes the
+trigger with it.
 
 ## Watch it
 

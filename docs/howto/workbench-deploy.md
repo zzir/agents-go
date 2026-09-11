@@ -9,7 +9,9 @@ Only sandboxes need anything beyond the binary: a Docker daemon — this
 machine's, or a remote one over SSH or TCP — or any service speaking the E2B
 API. The server shells out to no binary. Which daemon or service a sandbox
 uses is its config, in
-[Sandboxes](../reference/protocol.md#sandboxes--apiv1sandboxes).
+[Sandboxes](../reference/protocol.md#sandboxes--apiv1sandboxes). A source
+build needs Go 1.27 and Node 22 — the versions CI and the release build pin
+([building it](../tutorial/workbench.md#get-a-binary)).
 
 ### The container image
 
@@ -26,7 +28,10 @@ go on the same line; swap the image for `zzir/agents-server:latest` to pull from
 Docker Hub. A sandbox of type `docker` inside the container still needs a
 daemon to talk to — the host's socket mounted in, as
 [`scripts/docker-compose.yml`](../../scripts/docker-compose.yml) does, or a
-remote one over SSH or TCP.
+remote one over SSH or TCP. That compose file runs the container as
+`user: root` — the image is distroless and non-root; root is what the mounted
+socket needs — and ships `AGENTS_TOKEN=change-me-please` as a placeholder:
+change it before the first start.
 
 ### Deployment
 
@@ -59,8 +64,8 @@ budgets exist, each answering `429` with code `rate_limited` when exceeded:
   that authenticates spends nothing — a signed-in client is never limited,
   however many tabs it opens — and an IP that has exhausted the budget is
   refused before its credential is checked.
-- **OAuth flow steps, 60/min** (`oauth/*/start`, `oauth/*/callback`): they
-  allocate server state per call but guess nothing.
+- **OAuth flow steps, 60/min** (`oauth/*/start`, `oauth/*/callback`), burst
+  30: they allocate server state per call but guess nothing.
 - **Webhooks, 60/min** (`/hooks/:id`), burst 30.
 
 `/auth/config` is a static fact and carries no budget.

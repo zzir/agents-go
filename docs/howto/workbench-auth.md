@@ -54,8 +54,9 @@ per configured provider.
 
 - **Admission is an explicit allowlist** — `--allowed-domains` and/or
   `--allowed-emails` (matched against the provider-verified email, lowercased);
-  starting with none configured is a startup error, never allow-everyone. A
-  domain with an `@` in it, or an address without one, is a startup error too.
+  starting with neither and no `--bootstrap-admin` is a startup error, never
+  allow-everyone — the bootstrap admin alone is an allowlist of one. A domain
+  with an `@` in it, or an address without one, is a startup error too.
   The address is the whole check whichever provider signed the person in: a
   GitHub account is admitted by its primary verified address, never by
   organization or handle
@@ -144,9 +145,10 @@ Two consequences worth stating in the operator's terms:
 - **The UI hides nothing the server would allow.** Settings is one hub
   ([invariant 61](../explanation/workbench-invariants.md)): a member sees
   their own scoped rows editable, others' read-only with their author, the
-  host panels read-only, and their Account. An admin's view adds an **All
-  members** toggle on each scoped panel and an **Administration** group —
-  Members, Sessions (reassign or delete, never read), Projects, Audit logs.
+  host panels read-only, and their Account. An admin's view adds a
+  **Mine | All** filter on each scoped panel and, after a divider, the admin
+  panels — Members, Sessions (reassign or delete, never read), Projects,
+  Workflows, Audit logs.
 
 **Switching auth modes keeps the data and changes who can reach it.** Every
 session made in token mode belongs to the local account, which OAuth mode
@@ -165,10 +167,12 @@ the Settings hub's Sessions panel — where they can be reassigned
   as the action, the caller from the credential, and as the resource the
   path parameter or — for a create, which has none — the id of what was
   created. A handler annotates a short detail where the route alone cannot
-  say what happened: `role=member disabled=true`, `owner=<id>`, and on an
-  approval the verdict, the scope and the tool (`approve scope=all
-  tool=exec_command` is the one to notice). Never a request body, never a
-  secret. Failures and reads leave nothing. The line is written on its own
+  say what happened: `role=member disabled=true`, `scope=global` on a
+  publish, `owner=<id>` on a transfer (`owner=<id> scope=global` on a skill
+  group's flip), `tokens=N` on a revoke, `created=N updated=N unchanged=N
+  skipped=N` on a skill import, and on an approval the verdict, the scope and
+  the tool (`approve scope=all tool=exec_command` is the one to notice).
+  Never a request body, never a secret. Failures and reads leave nothing. The line is written on its own
   goroutine after the response. `POST /auth/login` and `POST /auth/exchange`
   are requests like any other — no credential precedes them, so the handler
   names the account that signed in as the actor (`SetAuditActor`).

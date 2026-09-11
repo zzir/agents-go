@@ -82,6 +82,7 @@ attempt rather than being overwritten by the old one's outcome.
 | `Continue` | "Does this run's ending end the task, or is there a next run?" — see below |
 
 A `Stopper` reports **what it did**, not just whether it errored:
+`StopCancelled` (this call cancelled the run — the ordinary answer),
 `StopAfterTurn` (still going, will record its own ending), `StopAlreadyFinished`
 (its outcome is on its way — the stop waits briefly, and records the ending
 itself if the outcome was lost rather than late) or `StopUnknownRun` (a real

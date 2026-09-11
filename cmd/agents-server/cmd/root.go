@@ -43,7 +43,7 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "agents-go server",
+	Use:   "agents-server",
 	Short: "The Go-native agent workbench you run yourself",
 	RunE:  run,
 }

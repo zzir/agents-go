@@ -26,10 +26,11 @@ tells the two failures apart by which line is missing.
 
 A completing login writes three lines in order:
 
-1. `authorization URL issued` — carries the exact `redirect_uri` the
-   authorization server must send the browser back to.
-2. `callback: authorization code delivered`.
-3. `interactive connect established`.
+1. `mcp oauth authorization URL issued; awaiting browser callback` — carries
+   the exact `redirect_uri` the authorization server must send the browser
+   back to.
+2. `mcp oauth callback: authorization code delivered to the pending connection`.
+3. `mcp oauth interactive connect established`.
 
 Find which one is missing.
 
@@ -49,11 +50,11 @@ the callback. Two causes:
   ([deploying](workbench-deploy.md#deployment)).
 
 A callback that arrives but cannot be matched logs
-`callback: could not deliver authorization code` with the reason.
+`mcp oauth callback: could not deliver authorization code` with the reason.
 
-### `code delivered`, then `ended without connecting`
+### The code was delivered, then `mcp oauth interactive connect ended without connecting`
 
-With `authorization completed but was not accepted`: the browser round-trip
+With the error `authorization completed but was not accepted`: the browser round-trip
 worked, but the authorization did not yield a working session, so the SDK
 re-authorized mid-connect — and the interactive park is single-shot (one
 popup, no second one to service), so the attempt fails fast rather than

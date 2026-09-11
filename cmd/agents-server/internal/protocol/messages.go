@@ -70,10 +70,8 @@ const (
 	EventTerminalExit   = "terminal.exit"   // server → client
 )
 
-// RunError.Code values (invariant 15). SDK codes come from agents.CodeOf(err)
-// and are NOT redeclared here; the transport codes below describe failures
-// before or outside a run. The two sets must not collide; a client falls back
-// to generic rendering on a code it does not know.
+// RunError.Code values the workbench adds (invariant 15); SDK codes come from
+// agents.CodeOf(err). The whole vocabulary is docs/reference/protocol.md, "Run error codes".
 const (
 	CodeSessionBusy     = "session_busy"
 	CodeSessionNotFound = "session_not_found"
