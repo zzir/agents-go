@@ -39,9 +39,6 @@ func TestBuildFullAgentFailsOnBadCriticalConfig(t *testing.T) {
 			a.Resilience.RetryEnabled = true
 			a.Resilience.RetryPolicy = "{bad"
 		}, "retry_policy"},
-		{"malformed fallback_models", func(a *store.AgentConfig) {
-			a.Resilience.FallbackModels = "{bad"
-		}, "fallback_models"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

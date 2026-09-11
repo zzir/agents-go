@@ -1688,6 +1688,23 @@ components:
         value:
           type: string
       type: object
+    store.FallbackModel:
+      properties:
+        base_url:
+          type: string
+        model:
+          description: Model is the model name asked of that provider; empty asks
+            for the agent's own.
+          type: string
+        provider_id:
+          description: ProviderID names the provider the entry runs on; required on
+            a write.
+          type: string
+        provider_type:
+          description: 'ProviderType and BaseURL are read-only: the endpoint an entry
+            named before provider_id, resolved to a provider at run time.'
+          type: string
+      type: object
     store.Guardrail:
       properties:
         blocking:
@@ -1880,7 +1897,12 @@ components:
     store.ResilienceGroup:
       properties:
         fallback_models:
-          type: string
+          description: FallbackModels is the chain tried in order when the agent's
+            provider fails.
+          items:
+            $ref: '#/components/schemas/store.FallbackModel'
+          type: array
+          uniqueItems: false
         retry_enabled:
           type: boolean
         retry_policy:
@@ -2289,10 +2311,10 @@ paths:
       tags:
       - agents
     post:
-      description: 'The credential lives on the agent''s provider. The one secret
-        field here, resilience.fallback_models[].api_key, is write-only: responses
-        mask it with ********; sending the mask back keeps the stored value, "" clears
-        it. Tool selections whose statically known tool names would collide are rejected.'
+      description: 'No secret lives here: the credential is on the agent''s provider,
+        and each resilience.fallback_models entry names a provider by provider_id
+        (an api_key in an entry is 400). Tool selections whose statically known tool
+        names would collide are rejected.'
       requestBody:
         content:
           application/json:
@@ -2391,11 +2413,10 @@ paths:
       tags:
       - agents
     put:
-      description: 'Full replace. The one secret field, resilience.fallback_models[].api_key,
-        is write-only: send back the ******** mask to keep the stored value, "" to
-        clear it; a masked entry restores its key only against a stored entry with
-        the same provider_type, base_url and model. Tool selections whose statically
-        known tool names would collide are rejected.'
+      description: Full replace. Each resilience.fallback_models entry names a provider
+        by provider_id; an entry from before provider_id (provider_type/base_url,
+        read-only) is sent back as a provider_id or dropped. Tool selections whose
+        statically known tool names would collide are rejected.
       parameters:
       - description: Agent ID
         in: path

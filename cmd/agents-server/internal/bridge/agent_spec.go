@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/zzir/agents-go/agents"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/providers"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -36,8 +35,8 @@ type AgentSpec struct {
 	// RetryPolicy is decoded unconditionally (the zero value is a valid policy)
 	// and applied only when RetryEnabled.
 	RetryPolicy agents.RetryPolicy
-	// FallbackModels is the decoded fallback provider chain (nil when unset).
-	FallbackModels []fallbackEntry
+	// FallbackModels is the fallback provider chain (nil when unset).
+	FallbackModels []store.FallbackModel
 	// ErrorHandlers is the declarative run-error recovery config (nil when
 	// unset): per-error-kind static fallback outputs.
 	ErrorHandlers *ErrorHandlersSpec
@@ -200,25 +199,9 @@ func DecodeAgentSpec(ac *store.AgentConfig) (*AgentSpec, error) {
 			return nil, fmt.Errorf("retry_policy is invalid: %w", err)
 		}
 	}
-	if ac.Resilience.FallbackModels != "" {
-		// Unknown keys are rejected: a misspelled selector would silently run
-		// the entry on the default backend.
-		dec := json.NewDecoder(strings.NewReader(ac.Resilience.FallbackModels))
-		dec.DisallowUnknownFields()
-		if err := dec.Decode(&spec.FallbackModels); err != nil {
-			return nil, fmt.Errorf("fallback_models is invalid: %w", err)
-		}
-		// Decode stops after the first JSON value (unlike Unmarshal); trailing
-		// content is a malformed config, not something to silently drop.
-		if dec.More() {
-			return nil, fmt.Errorf("fallback_models is invalid: trailing data after the JSON array")
-		}
-		for i, e := range spec.FallbackModels {
-			if err := providers.ValidateType(e.Provider); err != nil {
-				return nil, fmt.Errorf("fallback_models[%d].provider_type: %w", i, err)
-			}
-		}
-	}
+	// An entry without provider_id is one from before the field: an endpoint,
+	// resolved to a provider when the run builds (provider_resolve.go).
+	spec.FallbackModels = ac.Resilience.FallbackModels
 
 	if ac.ErrorHandlers != "" {
 		// Depends on spec.OutputType (decoded above): a plain-text agent's

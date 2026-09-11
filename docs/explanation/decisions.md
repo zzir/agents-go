@@ -1589,3 +1589,32 @@ customized".
 
 Rules: [invariant 1](workbench-invariants.md);
 [protocol.md, Agents](../reference/protocol.md#agents--apiv1agents).
+
+### 5.69 A fallback entry names a provider
+
+Decided 2026-09-11 (workbench invariant 9).
+
+**Decision.** `resilience.fallback_models` is a typed array of
+`{provider_id, model}`: the entry runs on the provider row it names, under
+the primary's reference rule (§5.29), and carries no credential of its own — a
+key in an entry is `400`. A row from before the field holds the endpoint an
+entry named (`provider_type`, `base_url`) and, at rest, the key it carried;
+the decode drops the key, the read returns the endpoint, and the build
+resolves it to a provider the agent may reference at that endpoint, with a
+warning, or fails loudly. The form offers the resolved provider and drops an
+entry no provider reaches.
+
+**Rejected.** Keeping the inline key with mask round-tripping — the one
+place a model key is entered was the provider (§5.30), and the agent form
+asking for a raw key beside it contradicted that in the UI and in the
+handler's second masking path. Refusing legacy rows outright — an agent
+that ran yesterday must read and run today; only the inline key stops being
+honored.
+
+**Cost accepted.** A breaking wire change: the entry shape and the field's
+type. A legacy entry whose endpoint has no provider row fails the run until
+the operator adds one; its stored key is inert until the next save rewrites
+the field.
+
+Rules: [invariant 9](workbench-invariants.md);
+[protocol.md, Agents](../reference/protocol.md#agents--apiv1agents).

@@ -44,7 +44,7 @@ export interface paths {
         put?: never;
         /**
          * Create agent
-         * @description The credential lives on the agent's provider. The one secret field here, resilience.fallback_models[].api_key, is write-only: responses mask it with ********; sending the mask back keeps the stored value, "" clears it. Tool selections whose statically known tool names would collide are rejected.
+         * @description No secret lives here: the credential is on the agent's provider, and each resilience.fallback_models entry names a provider by provider_id (an api_key in an entry is 400). Tool selections whose statically known tool names would collide are rejected.
          */
         post: {
             parameters: {
@@ -146,7 +146,7 @@ export interface paths {
         };
         /**
          * Update agent
-         * @description Full replace. The one secret field, resilience.fallback_models[].api_key, is write-only: send back the ******** mask to keep the stored value, "" to clear it; a masked entry restores its key only against a stored entry with the same provider_type, base_url and model. Tool selections whose statically known tool names would collide are rejected.
+         * @description Full replace. Each resilience.fallback_models entry names a provider by provider_id; an entry from before provider_id (provider_type/base_url, read-only) is sent back as a provider_id or dropped. Tool selections whose statically known tool names would collide are rejected.
          */
         put: {
             parameters: {
@@ -8441,6 +8441,15 @@ export interface components {
             key?: string;
             value?: string;
         };
+        "store.FallbackModel": {
+            base_url?: string;
+            /** @description Model is the model name asked of that provider; empty asks for the agent's own. */
+            model?: string;
+            /** @description ProviderID names the provider the entry runs on; required on a write. */
+            provider_id?: string;
+            /** @description ProviderType and BaseURL are read-only: the endpoint an entry named before provider_id, resolved to a provider at run time. */
+            provider_type?: string;
+        };
         "store.Guardrail": {
             /** @description Blocking, at the input stage, runs the guardrail before the first model call as a gate; no effect at other stages. */
             blocking?: boolean;
@@ -8546,7 +8555,8 @@ export interface components {
             updated_at?: string;
         };
         "store.ResilienceGroup": {
-            fallback_models?: string;
+            /** @description FallbackModels is the chain tried in order when the agent's provider fails. */
+            fallback_models?: components["schemas"]["store.FallbackModel"][];
             retry_enabled?: boolean;
             retry_policy?: string;
         };

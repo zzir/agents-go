@@ -767,6 +767,10 @@ a:hover {
     flex: 1;
     min-width: 0;
 }
+.form-row > .form-row-action {
+    flex: 0 0 auto;
+    align-self: center;
+}
 
 /* The Name block with the avatar picker riding its right edge. */
 .form-identity {

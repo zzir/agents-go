@@ -1,9 +1,11 @@
 package store
 
 import (
+	"bytes"
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // The AgentConfig scalar settings are grouped into JSON category columns, so
@@ -45,9 +47,93 @@ func (g BehaviorGroup) ToolChoiceResetOn() bool {
 
 // ResilienceGroup holds model retry/fallback settings.
 type ResilienceGroup struct {
-	RetryEnabled   bool   `json:"retry_enabled,omitempty"`
-	RetryPolicy    string `json:"retry_policy,omitempty"`
-	FallbackModels string `json:"fallback_models,omitempty"`
+	RetryEnabled bool   `json:"retry_enabled,omitempty"`
+	RetryPolicy  string `json:"retry_policy,omitempty"`
+	// FallbackModels is the chain tried in order when the agent's provider fails.
+	FallbackModels FallbackModels `json:"fallback_models,omitempty"`
+}
+
+// FallbackModel is one entry of the fallback chain: a provider and the model to ask it for.
+type FallbackModel struct {
+	// ProviderID names the provider the entry runs on; required on a write.
+	ProviderID string `json:"provider_id,omitempty"`
+	// Model is the model name asked of that provider; empty asks for the agent's own.
+	Model string `json:"model,omitempty"`
+	// ProviderType and BaseURL are read-only: the endpoint an entry named before provider_id, resolved to a provider at run time.
+	ProviderType string `json:"provider_type,omitempty"`
+	BaseURL      string `json:"base_url,omitempty"`
+	// inlineKey records that the entry carried an api_key, which the decode drops.
+	inlineKey bool
+}
+
+// FallbackModels decodes the array and, for rows written before it, a JSON
+// string holding one; an entry's api_key is dropped, never kept — decisions §5.69.
+type FallbackModels []FallbackModel
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (l *FallbackModels) UnmarshalJSON(b []byte) error {
+	*l = nil
+	b = bytes.TrimSpace(b)
+	if len(b) == 0 || bytes.Equal(b, []byte("null")) {
+		return nil
+	}
+	if b[0] == '"' {
+		var s string
+		if err := json.Unmarshal(b, &s); err != nil {
+			return err
+		}
+		if strings.TrimSpace(s) == "" {
+			return nil
+		}
+		return l.UnmarshalJSON([]byte(s))
+	}
+	var raw []map[string]json.RawMessage
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return fmt.Errorf("fallback_models: %w", err)
+	}
+	out := make(FallbackModels, 0, len(raw))
+	for i, fields := range raw {
+		var e FallbackModel
+		for k, v := range fields {
+			var dst *string
+			switch k {
+			case "provider_id":
+				dst = &e.ProviderID
+			case "model":
+				dst = &e.Model
+			case "provider_type":
+				dst = &e.ProviderType
+			case "base_url":
+				dst = &e.BaseURL
+			case "api_key":
+				var key string
+				if err := json.Unmarshal(v, &key); err != nil {
+					return fmt.Errorf("fallback_models[%d].api_key: %w", i, err)
+				}
+				e.inlineKey = key != ""
+				continue
+			default:
+				return fmt.Errorf("fallback_models[%d]: unknown field %q", i, k)
+			}
+			if err := json.Unmarshal(v, dst); err != nil {
+				return fmt.Errorf("fallback_models[%d].%s: %w", i, k, err)
+			}
+		}
+		out = append(out, e)
+	}
+	*l = out
+	return nil
+}
+
+// InlineKeyAt returns the index of the first entry that carried an api_key,
+// or -1.
+func (l FallbackModels) InlineKeyAt() int {
+	for i, e := range l {
+		if e.inlineKey {
+			return i
+		}
+	}
+	return -1
 }
 
 // GuardrailGroup holds guardrail names and the output schema.

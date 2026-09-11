@@ -19,20 +19,18 @@ type AgentConfigStore struct {
 // NewAgentConfigStore returns an AgentConfigStore backed by db. Names are
 // unique per scope (partial indexes, decisions §5.29); a duplicate is a UNIQUE error.
 func NewAgentConfigStore(db *bun.DB) *AgentConfigStore {
-	return &AgentConfigStore{CrudStore: NewCrudStore[AgentConfig](db, "agent config", "created_at DESC").withSecrets(sealAgentConfig, openAgentConfig), db: db}
+	return &AgentConfigStore{CrudStore: NewCrudStore[AgentConfig](db, "agent config", "created_at DESC"), db: db}
 }
 
 // Create writes the agent in the provider-guarded transaction: a provider
 // deleted or re-scoped since validation is refused (ErrProviderRef / ErrProviderScope).
 func (s *AgentConfigStore) Create(ctx context.Context, ac *AgentConfig) error {
-	return sealedWrite(ac, sealAgentConfig, openAgentConfig, func() error {
-		return writeReferencingProvider(ctx, s.db, ac.ProviderID, func(ctx context.Context, tx bun.Tx, pv *Provider) error {
-			if err := refProviderScope(pv, ac.Scope, ac.OwnerID); err != nil {
-				return err
-			}
-			_, err := tx.NewInsert().Model(ac).Exec(ctx)
+	return writeReferencingProvider(ctx, s.db, ac.ProviderID, func(ctx context.Context, tx bun.Tx, pv *Provider) error {
+		if err := refProviderScope(pv, ac.Scope, ac.OwnerID); err != nil {
 			return err
-		})
+		}
+		_, err := tx.NewInsert().Model(ac).Exec(ctx)
+		return err
 	})
 }
 

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { TextInput, Textarea, FormControl, Checkbox, Select, Stack, Link } from '@primer/react';
+import { TextInput, Textarea, FormControl, Checkbox, Select, Stack, Link, Button, IconButton } from '@primer/react';
+import { XIcon } from '@primer/octicons-react';
 import { openSettingsTab } from '@/features/settings/settingsLink';
 import { listEmpty } from '@/features/settings/listEmpty';
 import { TokenListInput } from '@/components/TokenListInput';
@@ -77,6 +78,19 @@ export function toggleListEntry(list: string[], name: string, on: boolean): stri
   return on ? (list.includes(name) ? list : [...list, name]) : list.filter(t => t !== name);
 }
 
+// A fallback entry as the API carries it: a provider by id, or — read-only,
+// from before provider_id — the endpoint the entry named.
+export interface FallbackEntry { provider_id?: string; model?: string; provider_type?: string; base_url?: string }
+
+// legacyFallbackProvider finds the provider an endpoint-form entry names, the
+// way the server resolves it at run time: "" and "openai" are one backend, a
+// trailing slash the same host.
+export function legacyFallbackProvider(e: FallbackEntry, providers: { id: string; type?: string; base_url?: string }[]): string | undefined {
+  const host = (u?: string) => (u || '').trim().replace(/\/+$/, '');
+  const type = (t?: string) => t || 'openai';
+  return providers.find(p => type(p.type) === type(e.provider_type) && host(p.base_url) === host(e.base_url))?.id;
+}
+
 const MCP_STATUS_NOTE: Record<string, string> = {
   connected: 'connected', connecting: 'connecting', authorizing: 'authorizing',
   needs_auth: 'needs authorization', disconnected: 'not connected', disabled: 'disabled',
@@ -96,7 +110,7 @@ interface AgentFormData {
   stop_at_tools: string;
   retry_enabled: boolean;
   retry_policy: string;
-  fallback_models: string;
+  fallback_models: FallbackEntry[];
   guardrails: string;
   output_schema: string;
   error_handlers: string;
@@ -155,12 +169,13 @@ interface Agent {
   owner_id?: string;
 }
 
-// The referenced endpoints, for the picker and the list badge. Name and type
-// are all this panel needs — credentials never reach it.
+// The referenced endpoints, for the pickers and the list badge. Name, type and
+// endpoint are all this panel needs — credentials never reach it.
 interface ProviderRef {
   id: string;
   name: string;
   type?: string;
+  base_url?: string;
   scope?: string;
   owner_id?: string;
 }
@@ -199,7 +214,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
     max_turns: 0, handoff_description: '',
     tool_choice_reset: true, stop_at_tools: '',
     retry_enabled: false, retry_policy: '',
-    fallback_models: '',
+    fallback_models: [],
     guardrails: '', output_schema: '', error_handlers: '',
     prompt_id: '', prompt_version: '', history_limit: 0,
     // New agents default to a bounded fan-out; an existing agent keeps its
@@ -257,6 +272,13 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
     : { scope: 'private', owner_id: meId };
   const refOK = (row: { scope?: string; owner_id?: string }) => canReference(holder, row);
   const visibleProviders = (providers || []).filter(refOK);
+  // A fallback entry from before provider_id shows the provider at its
+  // endpoint, and saves as that provider; one no provider reaches is shown
+  // read-only and dropped on save.
+  const fallbacks = form.fallback_models || [];
+  const fallbackProviderId = (e: FallbackEntry) => e.provider_id || legacyFallbackProvider(e, visibleProviders) || '';
+  const setFallback = (i: number, patch: Partial<FallbackEntry>) =>
+    set('fallback_models', fallbacks.map((e, j) => j === i ? { provider_id: fallbackProviderId(e), model: e.model, ...patch } : e));
   const visibleMcp = (mcpServers || []).filter(refOK);
   const visibleSkills = (skills || []).filter(refOK);
   const handoffTargets = (allAgents || []).filter(a => a.id !== initial?.id && refOK(a));
@@ -581,7 +603,32 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
               description="Automatically retry failed model calls with backoff" />
             {form.retry_enabled &&
               <JsonField label="Retry policy (JSON)" value={form.retry_policy || ''} onChange={v => set('retry_policy', v)} placeholder='{"max_attempts":3,"base_delay_ms":500,"max_delay_ms":30000,"multiplier":2}' caption="Empty = SDK defaults" />}
-            <JsonField label="Fallback models (JSON)" value={form.fallback_models || ''} onChange={v => set('fallback_models', v)} placeholder='[{"model":"gpt-5.4-mini","api_key":"sk-..."},{"model":"claude-opus-5","provider_type":"anthropic","api_key":"sk-ant-..."}]' caption='JSON array of {model, provider_type, api_key, base_url} — provider_type is "openai" (default) or "anthropic"' />
+            <FormControl>
+              <FormControl.Label>Fallback models</FormControl.Label>
+              <Stack gap="condensed">
+                {fallbacks.map((e, i) => {
+                  const providerId = fallbackProviderId(e);
+                  const unreachable = !providerId;
+                  return (
+                    <div key={i} className="form-row">
+                      <Select value={providerId} disabled={unreachable} aria-label={`Fallback ${i + 1} endpoint`} block
+                        onChange={ev => setFallback(i, { provider_id: ev.target.value })}>
+                        <Select.Option value="">{unreachable ? `No endpoint for ${e.provider_type || 'openai'} ${e.base_url || ''}`.trim() : 'Select an endpoint…'}</Select.Option>
+                        {visibleProviders.map(p => <Select.Option key={p.id} value={p.id}>{p.name}</Select.Option>)}
+                      </Select>
+                      <TextInput value={e.model || ''} disabled={unreachable} aria-label={`Fallback ${i + 1} model`} placeholder="Model (empty = this agent's)" block
+                        onChange={(ev: React.ChangeEvent<HTMLInputElement>) => setFallback(i, { model: ev.target.value })} />
+                      <IconButton className="form-row-action" icon={XIcon} variant="invisible" aria-label={`Remove fallback ${i + 1}`}
+                        onClick={() => set('fallback_models', fallbacks.filter((_, j) => j !== i))} />
+                    </div>
+                  );
+                })}
+                <div>
+                  <Button size="small" onClick={() => set('fallback_models', [...fallbacks, { provider_id: '' }])}>Add fallback</Button>
+                </div>
+              </Stack>
+              <FormControl.Caption>Tried in order when the endpoint fails. An entry saved before endpoints were rows shows the endpoint that now matches it; one that matches none cannot run and is dropped on save — add the endpoint under Providers first.</FormControl.Caption>
+            </FormControl>
           </div>
 
           <div className="form-group">
@@ -622,7 +669,10 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
             catch { toast.error('Extra body is not valid JSON — fix or clear it before saving'); return; }
           }
           const model_settings = Object.keys(ms).length > 0 ? JSON.stringify(ms) : '';
-          const flatPayload = { ...form, handoffs: selectedHandoffs, tools: selectedMcp, skills: effectiveSkills, model_settings };
+          const fallback_models = fallbacks
+            .map(e => ({ provider_id: fallbackProviderId(e), model: e.model || undefined }))
+            .filter(e => e.provider_id);
+          const flatPayload = { ...form, fallback_models, handoffs: selectedHandoffs, tools: selectedMcp, skills: effectiveSkills, model_settings };
           onSave(nestConfig(flatPayload) as unknown as AgentFormData & AgentLists);
         }}
         onCancel={onCancel}
@@ -645,13 +695,7 @@ export function AgentConfigPanel() {
   // Fork seeds the CREATE form from a row — nothing is written until Save.
   // Cleared on a plain "+ Add" so a stale seed never leaks into a blank form.
   const [forkOf, setForkOf] = useState<Agent | null>(null);
-  const startFork = (a: Agent) => {
-    const raw = a as Agent & { resilience?: { fallback_models?: string } };
-    if (raw.resilience?.fallback_models?.includes('********')) {
-      toast.info('Fallback-model keys are not copied to a fork — re-enter them before saving');
-    }
-    setForkOf(a); startAdd();
-  };
+  const startFork = (a: Agent) => { setForkOf(a); startAdd(); };
   const startBlankAdd = () => { setForkOf(null); startAdd(); };
   const { data: mcpServers } = useApi<McpServer[]>(() => api.mcpServers.list() as Promise<McpServer[]>, [], 'mcp-servers');
   const { data: skills } = useApi<Skill[]>(() => api.skills.list() as Promise<Skill[]>, [], 'skills');
@@ -663,18 +707,7 @@ export function AgentConfigPanel() {
   // scope/owner (the copy lands like any create: private, the caller's) and
   // suffixes the name toward the per-scope unique index.
   const forkSeed = () => {
-    const { id: _id, scope: _scope, owner_id: _owner, ...rest } =
-      forkOf as Agent & { resilience?: { fallback_models?: string } };
-    // A fork copies no secrets: on a create the ******** mask resolves to ""
-    // server-side, so strip it and let the form show the truth instead of a
-    // mask that would save as an empty key.
-    if (rest.resilience?.fallback_models?.includes('********')) {
-      try {
-        const models = JSON.parse(rest.resilience.fallback_models) as { api_key?: string }[];
-        for (const m of models) if (m.api_key === '********') delete m.api_key;
-        rest.resilience = { ...rest.resilience, fallback_models: JSON.stringify(models) };
-      } catch { /* malformed JSON: leave it; the form's JSON field surfaces it */ }
-    }
+    const { id: _id, scope: _scope, owner_id: _owner, ...rest } = forkOf!;
     return { ...rest, name: forkOf!.name + '-fork' };
   };
   const form = adding ? <AgentForm key={forkOf ? 'fork-' + forkOf.id : 'blank'} saving={saving}

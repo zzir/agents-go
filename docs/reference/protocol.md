@@ -311,8 +311,12 @@ change) and the top-level JSON blobs. **The list fields are JSON arrays**
 `skills` is the one whose absence means something: `null`/omitted gives the
 agent every skill its scope can see, `[]` none. Beyond the shape, a write checks:
 `avatar` is a path into the UI's built-in catalog (anything else, an external
-URL included, is `400`); a `fallback_models` entry defaults `provider_type`
-to `openai` and an unknown key in one is `400`; an `error_handlers` entry's
+URL included, is `400`); a `resilience.fallback_models` entry is
+`{provider_id, model}` — the provider must exist and be one the agent may
+reference, an `api_key` or an unknown key in an entry is `400` (decisions
+§5.69); an entry stored before `provider_id` reads back with the endpoint it
+named (`provider_type`, `base_url`, read-only, never its key) and resolves to
+a provider at that endpoint when the run builds; an `error_handlers` entry's
 `final_output` is a string for a plain-text agent or matches `output_schema`
 for a structured one. With compaction enabled, a context-overflow error from
 the provider also triggers a FORCED pass and the turn retries from the shrunk
@@ -771,18 +775,15 @@ Secret fields are **write-only**: GET responses mask them as `********` and
 the plaintext is never sent to a client. On write, the mask keeps the stored
 value, a new value replaces it, `""` clears it — so the UI round-trips whole
 objects without ever seeing a plaintext. Masked fields: provider `api_key`,
-each agent `fallback_models[].api_key`, MCP `headers` values and
-`oauth_client_secret`, the sandbox `ssh_password` and e2b `api_key`, a
-project's environment values, and the settings the registry marks secret. A
-model-API key crosses exactly one surface — the provider.
+MCP `headers` values and `oauth_client_secret`, the sandbox `ssh_password`
+and e2b `api_key`, a project's environment values, and the settings the
+registry marks secret. A model-API key crosses exactly one surface — the
+provider; an agent carries none (its fallback entries name providers).
 
 **A masked key round-trips only to the destination it was stored for.**
 Changing a provider's `type` OR `base_url` while keeping the `********` mask
 is rejected with `400` (replace the key or clear it) — restoring it would send
-the previous backend's real credential to another endpoint. Fallback entries
-restore their masked keys strictly by `(provider_type, base_url, model)`,
-never across providers or endpoints and never by position; an unmatched mask
-clears.
+the previous backend's real credential to another endpoint.
 
 **At rest, secrets are sealed under one process key.** Set `AGENTS_SECRET_KEY`
 (or `--secret-key-file`) to a 32-byte key — `openssl rand -base64 32` — and

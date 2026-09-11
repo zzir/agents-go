@@ -53,8 +53,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
    with `********`; writes resolve the sentinel (mask = keep, `""` = clear,
    else replace) via the shared helpers, with a round-trip test. A mask never
    survives a destination change (a changed `provider_type`/`base_url` is
-   rejected; a fallback entry restores only on an exact match), and it resolves
-   inside the store's transaction or under `expected_revision` — never by a `Get`.
+   rejected), and it resolves inside the store's transaction or under
+   `expected_revision` — never by a `Get`. An agent has no secret field: a
+   fallback entry names a provider (decisions §5.69).
 10. **OAuth-class tokens never leave the server.** Own column with `json:"-"`,
     excluded from CRUD updates (`ExcludeColumn`), exposed only as a derived
     boolean (`has_oauth_token`, `chatgpt_logged_in`). A masked token string is

@@ -114,12 +114,20 @@ func normalizeType(t string) string {
 	return t
 }
 
-// NormalizeType maps the empty provider selector to its meaning
-// ("openai", which predates the field). Exported for the handlers' secret
-// round-tripping: whether a masked key may be restored depends on whether
-// the PROVIDER changed, and that comparison must treat "" and "openai" as
-// the same backend.
+// NormalizeType maps the empty provider selector to its meaning ("openai"),
+// so a comparison of two rows' backends treats "" and "openai" as one.
 func NormalizeType(t string) string { return normalizeType(t) }
+
+// NormalizeBaseURL canonicalizes a base_url for comparing two rows' endpoints:
+// whitespace and the trailing slash only, never anything that could equate two hosts.
+func NormalizeBaseURL(u string) string {
+	return strings.TrimRight(strings.TrimSpace(u), "/")
+}
+
+// SameEndpoint reports whether two (type, base_url) pairs reach the same backend.
+func SameEndpoint(typeA, baseA, typeB, baseB string) bool {
+	return normalizeType(typeA) == normalizeType(typeB) && NormalizeBaseURL(baseA) == NormalizeBaseURL(baseB)
+}
 
 // DefFor resolves a provider selector to its definition. The error
 // names the valid set, and every construction path handles it rather than

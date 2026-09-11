@@ -6,7 +6,7 @@ vi.mock('@primer/react', () => ({}));
 vi.mock('@primer/react/experimental', () => ({}));
 vi.mock('@/lib/hooks', () => ({ useApi: () => ({}), useCrud: () => ({}) }));
 vi.mock('@/lib/api', () => ({ api: {} }));
-import { APPROVABLE_TOOLS, CONFIG_GROUPS, flattenConfig, nestConfig, toggleListEntry } from '@/features/agents/AgentConfigPanel';
+import { APPROVABLE_TOOLS, CONFIG_GROUPS, flattenConfig, legacyFallbackProvider, nestConfig, toggleListEntry } from '@/features/agents/AgentConfigPanel';
 
 describe('flattenConfig / nestConfig', () => {
   // A distinct value per grouped key, so a key that fell out or landed in the
@@ -66,5 +66,24 @@ describe('approve tools checklist', () => {
     const names = APPROVABLE_TOOLS.flatMap(g => g.tools);
     expect(new Set(names).size).toBe(names.length);
     expect(names).toContain('exec_command');
+  });
+});
+
+describe('legacyFallbackProvider', () => {
+  const providers = [
+    { id: 'oa', type: '', base_url: '' },
+    { id: 'an', type: 'anthropic', base_url: '' },
+    { id: 'gw', type: 'openai', base_url: 'https://gw.example/v1' },
+  ];
+
+  // The server's own matching: "" and "openai" are one backend, a trailing
+  // slash the same host, and a provider by id needs no matching at all.
+  it('finds the provider at the endpoint an old entry named', () => {
+    expect(legacyFallbackProvider({ model: 'm' }, providers)).toBe('oa');
+    expect(legacyFallbackProvider({ provider_type: 'openai' }, providers)).toBe('oa');
+    expect(legacyFallbackProvider({ provider_type: 'anthropic' }, providers)).toBe('an');
+    expect(legacyFallbackProvider({ provider_type: 'openai', base_url: 'https://gw.example/v1/' }, providers)).toBe('gw');
+    expect(legacyFallbackProvider({ provider_type: 'openai', base_url: 'https://other.example' }, providers)).toBeUndefined();
+    expect(legacyFallbackProvider({ provider_type: 'anthropic', base_url: 'https://gw.example/v1' }, providers)).toBeUndefined();
   });
 });
