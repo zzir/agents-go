@@ -16,42 +16,34 @@ import (
 // session, and only its result text lands here, as any tool output.
 type ContextReport struct {
 	Model string `json:"model,omitempty"`
-	// ContextWindow is the agent config's declared window in tokens; 0 means
-	// unconfigured and the client shows occupancy without a denominator.
+	// ContextWindow is the agent's declared window in tokens; 0 shows occupancy without a denominator.
 	ContextWindow int `json:"context_window,omitempty"`
 
-	// InputTokens is what the LAST model call on the branch sent — what is in
-	// the window right now. OutputTokens is that same call's completion.
+	// InputTokens is what the last model call on the branch sent, OutputTokens that call's completion.
 	InputTokens  int64 `json:"input_tokens"`
 	OutputTokens int64 `json:"output_tokens"`
-	// CachedTokens / CacheWriteTokens split that call's input by cache
-	// disposition, for providers that report it.
+	// CachedTokens and CacheWriteTokens split that call's input by cache disposition, when the provider reports it.
 	CachedTokens     int64 `json:"cached_tokens"`
 	CacheWriteTokens int64 `json:"cache_write_tokens"`
 
-	// SessionInputTokens / SessionOutputTokens total every model call on the
-	// branch — a spend figure, not a window figure.
+	// SessionInputTokens and SessionOutputTokens total every model call on the branch: spend, not window.
 	SessionInputTokens  int64 `json:"session_input_tokens"`
 	SessionOutputTokens int64 `json:"session_output_tokens"`
 
-	// Growth is each model call's input tokens in order — the curve the panel
-	// draws, where a compaction pass shows up as the drop it caused.
+	// Growth is each model call's input tokens in order; a compaction pass shows as a drop.
 	Growth []int64 `json:"growth,omitempty"`
 
-	// CompactionEnabled reports whether the pass runs; Threshold is what it
-	// fires at and Tokens what it compares (ActiveContextTokens).
+	// CompactionEnabled reports whether the pass runs; Threshold is what it fires at, Tokens what it compares.
 	CompactionEnabled   bool `json:"compaction_enabled"`
 	CompactionThreshold int  `json:"compaction_threshold,omitempty"`
 	CompactionTokens    int  `json:"compaction_tokens"`
 	// CompactionMode is the agent's: summary, reset or hybrid.
 	CompactionMode string `json:"compaction_mode,omitempty"`
 
-	// ConversationTokens is the estimated size of the transcript still in
-	// context — every active, uncompacted entry's estimate summed.
+	// ConversationTokens is the estimated size of the transcript still in context: active, uncompacted entries summed.
 	ConversationTokens int `json:"conversation_tokens"`
 
-	// Prompt is what the session's last build put in front of the
-	// conversation (instruction layers, tool surface); absent until a run has built once.
+	// Prompt is what the last build put in front of the conversation; absent until a run has built once.
 	Prompt *PromptProfile `json:"prompt,omitempty"`
 }
 

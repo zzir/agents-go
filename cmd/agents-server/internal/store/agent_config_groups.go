@@ -14,29 +14,22 @@ import (
 type BehaviorGroup struct {
 	MaxTurns           int    `json:"max_turns,omitempty"`
 	HandoffDescription string `json:"handoff_description,omitempty"`
-	// ToolChoiceReset resets a pinned tool_choice after a tool runs (the
-	// SDK's default loop-guard). nil/true = on.
+	// ToolChoiceReset resets a pinned tool_choice after a tool runs; nil/true = on.
 	ToolChoiceReset *bool `json:"tool_choice_reset,omitempty"`
-	// StopAtTools is a comma-separated list of tool names; the run ends after
-	// a turn that called any of them. Empty means the model decides.
+	// StopAtTools is a comma-separated list of tool names the run ends after; empty lets the model decide.
 	StopAtTools          string `json:"stop_at_tools,omitempty"`
 	HandoffInputFilter   string `json:"handoff_input_filter,omitempty"`
 	MaxToolConcurrency   int    `json:"max_tool_concurrency,omitempty"`
 	ToolNotFoundBehavior string `json:"tool_not_found_behavior,omitempty"`
-	// ReasoningItemIDPolicy is "" / "preserve" (keep reasoning-item ids across
-	// turns) or "omit" (strip them).
+	// ReasoningItemIDPolicy is "" / "preserve" (keep reasoning-item ids across turns) or "omit".
 	ReasoningItemIDPolicy string `json:"reasoning_item_id_policy,omitempty"`
-	// WorkflowAuthoring gives the agent's chat runs get_workflow / save_workflow
-	// Off by default: the save schema costs every request.
+	// WorkflowAuthoring gives the agent's chat runs get_workflow / save_workflow; off by default.
 	WorkflowAuthoring bool `json:"workflow_authoring,omitempty"`
-	// Subagents grants the agent's chat runs spawn_task / task_status /
-	// task_stop / task_retry. nil/true = on.
+	// Subagents grants the agent's chat runs the task tools; nil/true = on.
 	Subagents *bool `json:"subagents,omitempty"`
-	// Vision admits image attachments on this agent's runs. Off by default:
-	// an explicit claim that the model accepts image input.
+	// Vision admits image attachments on this agent's runs; off by default.
 	Vision bool `json:"vision,omitempty"`
-	// OverrideSystemPrompt sends this agent's instructions alone: the global
-	// system prompt is not prepended, even when the instructions are empty.
+	// OverrideSystemPrompt sends this agent's instructions alone, empty included; the global system prompt is not prepended.
 	OverrideSystemPrompt bool `json:"override_system_prompt,omitempty"`
 }
 
@@ -59,8 +52,7 @@ type ResilienceGroup struct {
 
 // GuardrailGroup holds guardrail names and the output schema.
 type GuardrailGroup struct {
-	// Guardrails is a JSON array of guardrail names — one list, since a
-	// guardrail carries the stages it inspects.
+	// Guardrails is a JSON array of guardrail names; each carries the stages it inspects.
 	Guardrails   string `json:"guardrails,omitempty"`
 	OutputSchema string `json:"output_schema,omitempty"`
 }
@@ -82,15 +74,12 @@ type ApprovalGroup struct {
 // CompactionGroup holds server-side session-compaction settings.
 type CompactionGroup struct {
 	Enabled bool `json:"compaction_enabled,omitempty"`
-	// Threshold is in TOKENS; a stored compaction_threshold (an entry count)
-	// is not read, since 20 entries read as 20 tokens would compact every turn.
+	// Threshold is in tokens.
 	Threshold int    `json:"compaction_threshold_tokens,omitempty"`
 	Window    int    `json:"compaction_window,omitempty"`
 	Model     string `json:"compaction_model,omitempty"`
 	Prompt    string `json:"compaction_prompt,omitempty"`
-	// Mode is summary (the default), reset or hybrid: whether a pass
-	// summarizes the folded history, drops it carrying the session memory,
-	// or does both.
+	// Mode is summary (the default), reset or hybrid.
 	Mode string `json:"compaction_mode,omitempty"`
 }
 

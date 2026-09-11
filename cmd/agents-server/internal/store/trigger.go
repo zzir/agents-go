@@ -32,28 +32,22 @@ type Trigger struct {
 	bun.BaseModel `bun:"table:triggers,alias:trg"`
 
 	ID string `bun:"id,pk,type:uuid" json:"id"`
-	// Target says what a fire starts; WorkflowID or AgentConfigID names it,
-	// the other stays empty.
+	// Target says what a fire starts; WorkflowID or AgentConfigID names it, the other stays empty.
 	Target        string `bun:"target,notnull"           json:"target"`
 	WorkflowID    string `bun:"workflow_id,nullzero,type:uuid" json:"workflow_id,omitempty"`
 	AgentConfigID string `bun:"agent_config_id,nullzero,type:uuid" json:"agent_config_id,omitempty"`
-	// SessionID is the conversation the work reports to — or, for an agent
-	// turn, happens in.
+	// SessionID is the conversation the work reports to, or for an agent turn happens in.
 	SessionID string `bun:"session_id,notnull,type:uuid" json:"session_id"`
 	Kind      string `bun:"kind,notnull"       json:"kind"`
-	// Brief leads every execution or turn this trigger starts; a webhook's
-	// payload is appended to it.
+	// Brief leads every execution or turn this trigger starts; a webhook's payload is appended.
 	Brief string `bun:"brief,notnull" json:"brief"`
-	// Schedule is the cron expression (five fields, or a descriptor such as
-	// @hourly or @every 10m). Cron kind only.
+	// Schedule is the cron expression (five fields, @hourly, @every 10m); cron kind only.
 	Schedule string `bun:"schedule,nullzero" json:"schedule,omitempty"`
-	// Secret signs a webhook's calls (HMAC-SHA256); never serialized — the API
-	// shows it once, at creation or rotation.
+	// Secret signs a webhook's calls (HMAC-SHA256); the API shows it once, at creation or rotation.
 	Secret  string `bun:"secret,nullzero" json:"-"`
 	Enabled bool   `bun:"enabled,notnull" json:"enabled"`
 
-	// What the last fire did: the id it started (a task or a run), or why it
-	// started nothing.
+	// What the last fire did: the task or run it started, or why it started nothing.
 	LastFiredAt   time.Time `bun:"last_fired_at,nullzero"   json:"last_fired_at,omitzero"`
 	LastStartedID string    `bun:"last_started_id,nullzero,type:uuid" json:"last_started_id,omitempty"`
 	LastError     string    `bun:"last_error,nullzero"      json:"last_error,omitempty"`

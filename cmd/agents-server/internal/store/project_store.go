@@ -17,8 +17,8 @@ type ProjectStore struct {
 	db *bun.DB
 }
 
-// NewProjectStore returns a ProjectStore backed by db. (owner, target, name)
-// uniqueness is enforced by the DB (idx_projects_owner_target_name).
+// NewProjectStore returns a ProjectStore backed by db. (owner, sandbox, name)
+// is unique (idx_projects_owner_sandbox_name); a duplicate is a UNIQUE error.
 func NewProjectStore(db *bun.DB) *ProjectStore {
 	return &ProjectStore{CrudStore: NewCrudStore[Project](db, "project", "name ASC").withSecrets(sealProject, openProject), db: db}
 }

@@ -16,26 +16,20 @@ import (
 // WorkflowStep is one step of a fixed sequence: an agent and the prompt that
 // starts its turn — a full RUN on the execution's session, task/workflow tools withheld.
 type WorkflowStep struct {
-	// ID is stable across edits of the definition, so an execution in flight
-	// and a "retry from here" keep naming the same step; a position would shift.
+	// ID is stable across edits of the definition; an execution in flight and a retry name the step by it.
 	ID   string `json:"id"`
 	Name string `json:"name,omitempty"`
-	// AgentConfigID is which agent runs this step — the point of a workflow:
-	// plan, exec and verify are usually different agents on different models.
+	// AgentConfigID is which agent runs this step.
 	AgentConfigID string `json:"agent_config_id"`
-	// Prompt is the step's input, sent as the user turn that starts it; the
-	// previous steps are already in the session.
+	// Prompt is the step's input, sent as the user turn that starts it.
 	Prompt string `json:"prompt"`
 	// CompactBefore folds the conversation into a summary before this step runs.
 	CompactBefore bool `json:"compact_before,omitempty"`
-	// PauseBefore holds the sequence before this step until a person approves
-	// it from the conversation that asked; rejecting cancels the execution.
+	// PauseBefore holds the sequence until a person approves this step; rejecting cancels the execution.
 	PauseBefore bool `json:"pause_before,omitempty"`
-	// Gate makes the step a CHECK: its final output decides which edge is
-	// taken (StepGate). Nil means the run's own outcome decides.
+	// Gate makes the step a check whose final output picks the edge (StepGate); nil lets the run's outcome decide.
 	Gate *StepGate `json:"gate,omitempty"`
-	// OnSuccess and OnFailure name the step to run next (a step id, or
-	// WorkflowStepEnd). Empty OnSuccess falls through to the NEXT step; empty OnFailure fails the execution.
+	// OnSuccess and OnFailure name the next step (an id or WorkflowStepEnd); empty falls through, or fails the execution.
 	OnSuccess string `json:"on_success,omitempty"`
 	OnFailure string `json:"on_failure,omitempty"`
 }
@@ -209,8 +203,7 @@ type Workflow struct {
 
 	ID   string `bun:"id,pk,type:uuid" json:"id"`
 	Name string `bun:"name,notnull" json:"name"`
-	// Description says WHEN to run this, in one line. An agent matching a
-	// request against it is the only way a workflow starts, so it is required.
+	// Description says when to run this, in one line; an agent matches requests against it, so it is required.
 	Description string        `bun:"description,notnull" json:"description"`
 	Steps       WorkflowSteps `bun:"steps,type:text,nullzero" json:"steps"`
 	// Budget bounds every execution of this workflow (zero fields = no bound).
@@ -233,8 +226,7 @@ type WorkflowBudget struct {
 	MaxSteps   int `json:"max_steps,omitempty"`
 	MaxTokens  int `json:"max_tokens,omitempty"`
 	MaxMinutes int `json:"max_minutes,omitempty"`
-	// MaxLaps bounds how many times one execution may take the same backward
-	// edge (verify → exec, fix → review): the loop bound.
+	// MaxLaps bounds how many times one execution may take the same backward edge.
 	MaxLaps int `json:"max_laps,omitempty"`
 }
 
@@ -296,15 +288,12 @@ func (b WorkflowBudget) Exceeded(spent BudgetSpent) error {
 type StepRun struct {
 	StepID string `json:"step_id"`
 	RunID  string `json:"run_id"`
-	// Outcome is how the run ended, written when the sequence moves on from it
-	// (StepOutcome*). Empty on the current run — the task's status says.
+	// Outcome is how the run ended (StepOutcome*), written when the sequence moves on; empty on the current run.
 	Outcome string `json:"outcome,omitempty"`
-	// StartedAt is stamped at launch, EndedAt with the outcome: the run's time,
-	// which is what the minutes budget sums.
+	// StartedAt is stamped at launch and EndedAt with the outcome; the minutes budget sums them.
 	StartedAt time.Time `json:"started_at,omitzero"`
 	EndedAt   time.Time `json:"ended_at,omitzero"`
-	// Retry marks a run a person's task_retry launched — the same step again,
-	// by hand, which is not a lap of the sequence's own edges.
+	// Retry marks a run a person's task_retry launched, which is not a lap of the sequence's edges.
 	Retry bool `json:"retry,omitempty"`
 }
 
@@ -359,26 +348,20 @@ func (s StepRuns) Minutes() float64 {
 // writes it atomically with the run it belongs to (tasks.Store.Advance) at
 // the start, every launch, every step transition, and the end.
 type WorkflowState struct {
-	// WorkflowID names the definition this came from; it may since have been
-	// edited or deleted, which is why Steps is the snapshot that executes.
+	// WorkflowID names the definition this came from; Steps is the snapshot that executes.
 	WorkflowID string        `json:"workflow_id,omitempty"`
 	Steps      WorkflowSteps `json:"steps"`
 	// Budget is the definition's, snapshotted with the steps.
 	Budget WorkflowBudget `json:"budget,omitzero"`
-	// Input is the brief: what this execution is about, written by the AGENT
-	// that read the conversation. It leads the first step's turn only.
+	// Input is the brief, written by whoever read the conversation; it leads the first step's turn only.
 	Input string `json:"input,omitempty"`
-	// StepID is the step currently running (or the one a terminal state
-	// stopped at, which is what a retry resumes from).
+	// StepID is the step running, or the one a terminal state stopped at and a retry resumes from.
 	StepID string `json:"step_id"`
-	// StepRuns is every (step, run) this execution has LAUNCHED, in order —
-	// appended by the launcher, so a run that never started is not in it.
+	// StepRuns is every (step, run) this execution launched, in order; a run that never started is not in it.
 	StepRuns StepRuns `json:"step_runs,omitempty"`
-	// PendingInput is the turn a PauseBefore step will start with once a
-	// person approves it. Cleared at launch.
+	// PendingInput is the turn a PauseBefore step starts with once approved; cleared at launch.
 	PendingInput string `json:"pending_input,omitempty"`
-	// Stopped names the bound that ended the execution for good — StoppedBy*
-	// — so a client knows a retry would be refused before it asks.
+	// Stopped names the bound that ended the execution for good (StoppedBy*); a retry would be refused.
 	Stopped string `json:"stopped,omitempty"`
 }
 

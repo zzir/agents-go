@@ -14,7 +14,7 @@ import (
 	"github.com/zzir/agents-go/agents/session"
 )
 
-// SessionStore persists sessions and cascades deletes to their messages.
+// SessionStore persists sessions; a delete cascades to everything keyed by the session.
 type SessionStore struct {
 	db *bun.DB
 }
