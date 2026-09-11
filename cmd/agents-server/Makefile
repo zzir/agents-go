@@ -13,7 +13,7 @@ LDFLAGS  := -s -w \
 
 PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64
 
-.PHONY: all build frontend dev run clean test release openapi
+.PHONY: all build frontend dev run clean test release openapi settings-doc
 
 all: build
 
@@ -21,6 +21,10 @@ all: build
 openapi:
 	go tool swag fmt -g main.go -d .,internal/handler
 	go tool swag init --v3.1 -g main.go --parseDependency --parseInternal -o internal/docs --outputTypes yaml
+
+# Regenerate the runtime-settings table of docs/reference/configuration.md from the registry.
+settings-doc:
+	go test ./internal/settings -run TestConfigurationDocTable -update
 
 frontend:
 	cd $(FRONTEND) && npm install && npm run build

@@ -40,4 +40,7 @@ resolves today is what gets built and audited.
 - **Generated API surface.** A handler annotation change is three commands:
   `make openapi` here (writes `internal/docs/swagger.yaml`), `npm run gen:api`
   in `internal/web/frontend` (writes `src/lib/apiTypes.gen.ts`), then commit
-  both. CI fails when either is stale, and lints the frontend.
+  both. CI fails when either is stale, and lints the frontend. A settings
+  registry change is one more: `make settings-doc` rewrites the runtime
+  settings table of [`docs/reference/configuration.md`](../../docs/reference/configuration.md),
+  and the settings tests fail while it is stale.

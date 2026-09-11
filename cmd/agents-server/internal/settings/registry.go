@@ -89,7 +89,7 @@ var defs = []Def{{
 	Group:       GroupNetwork,
 	Label:       "Proxy URL",
 	Placeholder: "http://127.0.0.1:7890 or socks5://127.0.0.1:1080",
-	Description: "All outbound API and MCP HTTP requests will be routed through this proxy.",
+	Description: "All outbound API and MCP HTTP requests are routed through this proxy; a user:pass@ in it is masked on read.",
 	Validate:    validateProxyURL,
 }, {
 	Key:         KeySystemPrompt,
@@ -231,7 +231,7 @@ var defs = []Def{{
 	Group:       GroupLimits,
 	Label:       "Finished task transcripts (days)",
 	Placeholder: "e.g. 30 — 0 keeps them forever",
-	Description: "A background task finished (completed, failed or cancelled) for longer than this many days loses its transcript and its row hourly; its result stays in the conversation it reported to. 0 keeps them forever.",
+	Description: "A background task finished (completed, failed or cancelled) for longer than this many days loses its transcript and its row hourly; its result stays in the session it reported to. 0 keeps them forever.",
 	Min:         0,
 }}
 
