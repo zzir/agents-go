@@ -351,9 +351,10 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
 57. **Attachments enter through the composer alone, and leave only by the
     reaper.** `attachment_ids` exists on run creation (REST and WS) and
     nowhere else. A run accepting the ids binds them (owner, cap, the agent's
-    `vision` flag — checked before anything executes); bound rows are
-    permanent across session deletion and forks. Only never-accepted uploads
-    are collected, object before row, after a 24h grace.
+    `vision` flag — checked before anything executes). A session delete
+    unbinds the attachments no other session's entry references (a fork's
+    copy keeps them bound), so the reaper collects them with the
+    never-accepted uploads: object before row, past the 24h grace from upload.
 58. **The attachment bucket is public-read by design, and the settings save
     proves it.** URLs are stable and unsigned (decisions §5.42). The section
     saves as one group; every non-empty save and Test probes end to end

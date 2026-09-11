@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -291,7 +292,9 @@ func sessionTree(ctx context.Context, tx bun.Tx, id string) ([]string, error) {
 }
 
 // deleteSessionRows removes one session of the tree: its row, everything
-// keyed by its id, the task rows naming it as PARENT or CHILD, and its triggers. mustExist makes a missing row ErrNotFound.
+// keyed by its id, the task rows naming it as PARENT or CHILD, and its
+// triggers; the attachments only its entries referenced are unbound for the
+// reaper. mustExist makes a missing row ErrNotFound.
 func deleteSessionRows(ctx context.Context, tx bun.Tx, id string, mustExist bool) error {
 	// The session row's lock first — the order every entry write takes
 	// (EntryStore.lockSessionIn), so an append and this cascade cannot deadlock.
@@ -302,12 +305,19 @@ func deleteSessionRows(ctx context.Context, tx bun.Tx, id string, mustExist bool
 			return fmt.Errorf("deleting session %s: %w", id, err)
 		}
 	}
+	attachmentIDs, err := attachmentRefsOf(ctx, tx, id)
+	if err != nil {
+		return err
+	}
 	for _, model := range []any{(*entryRow)(nil), (*appendPointRow)(nil), (*TraceEvent)(nil), (*TraceBlob)(nil), (*PendingApproval)(nil), (*ContextProfile)(nil), (*Wakeup)(nil), (*Trigger)(nil)} {
 		if _, err := tx.NewDelete().Model(model).
 			Where("session_id = ?", id).
 			Exec(ctx); err != nil {
 			return fmt.Errorf("deleting session %s data: %w", id, err)
 		}
+	}
+	if err := unbindUnreferenced(ctx, tx, attachmentIDs); err != nil {
+		return err
 	}
 	if _, err := tx.NewDelete().Model((*Task)(nil)).
 		Where("parent_session_id = ?", id).
@@ -324,6 +334,48 @@ func deleteSessionRows(ctx context.Context, tx bun.Tx, id string, mustExist bool
 	}
 	if err != nil {
 		return fmt.Errorf("deleting session %s: %w", id, err)
+	}
+	return nil
+}
+
+// attachmentRefsOf lists the attachment ids the session's entries reference,
+// read before the cascade takes the rows.
+func attachmentRefsOf(ctx context.Context, tx bun.Tx, sessionID string) ([]string, error) {
+	var raws []string
+	if err := tx.NewSelect().Model((*entryRow)(nil)).Column("entry").
+		Where("session_id = ?", sessionID).
+		Where("entry LIKE ?", "%"+AttachmentScheme+"%").
+		Scan(ctx, &raws); err != nil {
+		return nil, fmt.Errorf("listing the attachments of session %s: %w", sessionID, err)
+	}
+	seen := map[string]bool{}
+	var ids []string
+	for _, raw := range raws {
+		var e session.Entry
+		if json.Unmarshal([]byte(raw), &e) != nil {
+			continue
+		}
+		for _, id := range entryAttachmentIDs(e.Item) {
+			if !seen[id] {
+				seen[id] = true
+				ids = append(ids, id)
+			}
+		}
+	}
+	return ids, nil
+}
+
+// unbindUnreferenced hands the attachments no remaining entry references to
+// the reaper (bound = false); one another session's entry still shows stays bound.
+func unbindUnreferenced(ctx context.Context, tx bun.Tx, ids []string) error {
+	for _, id := range ids {
+		if _, err := tx.NewUpdate().Model((*Attachment)(nil)).
+			Set("bound = ?", false).
+			Where("id = ?", id).
+			Where("NOT EXISTS (SELECT 1 FROM entries AS e WHERE e.entry LIKE ?)", "%"+AttachmentSentinelURL(id)+"%").
+			Exec(ctx); err != nil {
+			return fmt.Errorf("unbinding attachment %s: %w", id, err)
+		}
 	}
 	return nil
 }

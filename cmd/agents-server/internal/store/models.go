@@ -345,8 +345,8 @@ type Attachment struct {
 	Key  string `bun:"key,notnull"  json:"key"`
 	Mime string `bun:"mime,notnull" json:"mime"`
 	Size int64  `bun:"size,notnull" json:"size"`
-	// Bound flips when a run accepts the attachment; an unbound row past the
-	// grace window is an orphan the reaper collects, object included.
+	// Bound is set when a run accepts the attachment and cleared when the last
+	// session referencing it is deleted; an unbound row past the grace is collected, object included.
 	Bound     bool      `bun:"bound,notnull"      json:"bound"`
 	CreatedAt time.Time `bun:"created_at,notnull" json:"created_at"`
 }
