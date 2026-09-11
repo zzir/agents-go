@@ -886,15 +886,25 @@ func (s *EntryStore) appendHostNote(ctx context.Context, ref session.Ref, kind, 
 
 // forkEntriesTx copies a prefix of src's entries into dst, rewriting entry
 // ids to the destination's namespace and remapping parent links alongside.
+// A boundary that is not a row of src is ErrNotFound; a row whose entry does
+// not decode is left out of the copy.
 func forkEntriesTx(ctx context.Context, tx bun.Tx, src, dst session.Ref, upToID string, exclusive bool) ([]string, error) {
 	var rows []entryRow
 	q := tx.NewSelect().Model(&rows).
 		Where("session_id = ?", src.ID).Where("gen = ?", src.Gen).
 		OrderExpr("seq ASC")
 	if upToID != "" {
-		// The boundary names a row; the prefix is everything at or before
-		// its position.
-		at := tx.NewSelect().Model((*entryRow)(nil)).Column("seq").Where("id = ?", upToID)
+		// The boundary names a row of THIS session; the prefix is everything
+		// at or before its position.
+		at := tx.NewSelect().Model((*entryRow)(nil)).Column("seq").
+			Where("id = ?", upToID).Where("session_id = ?", src.ID).Where("gen = ?", src.Gen)
+		exists, err := at.Exists(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("fork boundary read: %w", err)
+		}
+		if !exists {
+			return nil, fmt.Errorf("fork boundary %s: %w", upToID, ErrNotFound)
+		}
 		if exclusive {
 			q = q.Where("seq < (?)", at)
 		} else {
@@ -911,22 +921,24 @@ func forkEntriesTx(ctx context.Context, tx bun.Tx, src, dst session.Ref, upToID 
 	var runIDs []string
 	seen := map[string]bool{}
 	remap := make(map[string]string, len(rows))
+	copied := make([]entryRow, 0, len(rows))
 	now := time.Now().UTC()
 	// The fork's own numbering, from the shared allocator: the destination is a
 	// new session, so its positions start where any new session's would.
 	seq := session.SeqFor(session.AppendPoint{})
 	for i := range rows {
+		var e session.Entry
+		if err := json.Unmarshal([]byte(rows[i].Entry), &e); err != nil {
+			// Its children link past it, to the nearest ancestor copied.
+			remap[rows[i].EntryID] = remap[rows[i].ParentID]
+			continue
+		}
 		if rid := rows[i].RunID; rid != "" && !seen[rid] {
 			seen[rid] = true
 			runIDs = append(runIDs, rid)
 		}
 		newID := session.EntryIDFor(seq)
 		remap[rows[i].EntryID] = newID
-
-		var e session.Entry
-		if err := json.Unmarshal([]byte(rows[i].Entry), &e); err != nil {
-			continue
-		}
 		e.ID = newID
 		e.ParentID = remap[e.ParentID] // "" for a root maps to "" — the zero value
 		e.Seq = seq
@@ -935,17 +947,21 @@ func forkEntriesTx(ctx context.Context, tx bun.Tx, src, dst session.Ref, upToID 
 		if err != nil {
 			return nil, fmt.Errorf("fork entries encode: %w", err)
 		}
-		rows[i].ID = "" // minted afresh on insert
-		rows[i].SessionID = dst.ID
-		rows[i].Gen = dst.Gen
-		rows[i].Seq = e.Seq
-		rows[i].EntryID = newID
-		rows[i].ParentID = e.ParentID
-		rows[i].Entry = string(raw)
-		rows[i].CreatedAt = now
+		row := rows[i]
+		row.ID = "" // minted afresh on insert
+		row.SessionID = dst.ID
+		row.Gen = dst.Gen
+		row.Seq = e.Seq
+		row.EntryID = newID
+		row.ParentID = e.ParentID
+		row.Entry = string(raw)
+		row.CreatedAt = now
+		copied = append(copied, row)
 	}
-	if _, err := tx.NewInsert().Model(&rows).Exec(ctx); err != nil {
-		return nil, fmt.Errorf("fork entries write: %w", err)
+	if len(copied) > 0 {
+		if _, err := tx.NewInsert().Model(&copied).Exec(ctx); err != nil {
+			return nil, fmt.Errorf("fork entries write: %w", err)
+		}
 	}
 	// Fold the copy's tip from its rows: the cut decides where the copy ends.
 	if err := (&EntryStore{ref: dst}).refreshAppendPointIn(ctx, tx); err != nil {

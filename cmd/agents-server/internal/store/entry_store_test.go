@@ -1084,3 +1084,77 @@ func TestEntryReadsOrderBySeqNotID(t *testing.T) {
 		t.Fatalf("page before the third = %d rows ending %q, want first, second", len(page), page[len(page)-1].Content)
 	}
 }
+
+// A boundary that names another session's row is not a boundary of this one:
+// the fork is refused as not found and no session is created.
+func TestForkRefusesABoundaryOfAnotherSession(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	id := ids(t)
+	sessions := NewSessionStore(db)
+	src := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "src"}
+	other := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "other"}
+	for _, sess := range []*Session{src, other} {
+		if err := sessions.Create(ctx, sess); err != nil {
+			t.Fatalf("create: %v", err)
+		}
+	}
+	s := storeFor(t, db, src.ID)
+	s.SetRunID(id("r"))
+	seed(t, s, userEntry(t, "1"), userEntry(t, "2"))
+	o := storeFor(t, db, other.ID)
+	seed(t, o, userEntry(t, "x"))
+	foreign, err := o.GetEntries(ctx, refOf(t, db, other.ID), "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, cut := range []string{foreign[0].ID, NewID()} {
+		dst := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "dst"}
+		if _, err := s.ForkSession(ctx, dst, refOf(t, db, src.ID), cut, false); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("cut %s: want ErrNotFound, got %v", cut, err)
+		}
+		if _, err := sessions.Get(ctx, dst.ID); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("cut %s: the destination must not exist after a refused fork, got %v", cut, err)
+		}
+	}
+}
+
+// A row whose entry does not decode is left out of the copy: the fork
+// carries the rest, relinked around the gap.
+func TestForkLeavesAnUndecodableEntryOut(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	id := ids(t)
+	sessions := NewSessionStore(db)
+	src := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "src"}
+	if err := sessions.Create(ctx, src); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	s := storeFor(t, db, src.ID)
+	s.SetRunID(id("r"))
+	seed(t, s, userEntry(t, "1"), userEntry(t, "2"), userEntry(t, "3"))
+	all, err := s.GetEntries(ctx, refOf(t, db, src.ID), "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.NewUpdate().Model((*entryRow)(nil)).Set("entry = ?", "not json").
+		Where("id = ?", all[1].ID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	dst := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "dst"}
+	if _, err := s.ForkSession(ctx, dst, refOf(t, db, src.ID), "", false); err != nil {
+		t.Fatalf("fork: %v", err)
+	}
+	copied, err := s.GetEntries(ctx, refOf(t, db, dst.ID), "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(copied) != 2 {
+		t.Fatalf("copied %d entries, want the 2 that decode", len(copied))
+	}
+	if copied[1].ParentID != copied[0].EntryID {
+		t.Fatalf("the entry after the gap links to %q, want the one before it %q", copied[1].ParentID, copied[0].EntryID)
+	}
+}
