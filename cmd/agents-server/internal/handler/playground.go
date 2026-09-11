@@ -343,7 +343,9 @@ func (h *PlaygroundHandler) AgentTools(c *gin.Context) {
 	// A server whose listing fails is skipped rather than failing the
 	// endpoint: one broken server should not blank a picker.
 	for _, srv := range built.Agent.MCPServers {
-		tools, lerr := srv.ListTools(c.Request.Context(), nil, built.Agent)
+		ctx, cancel := context.WithTimeout(c.Request.Context(), contextMCPTimeout)
+		tools, lerr := srv.ListTools(ctx, nil, built.Agent)
+		cancel()
 		if lerr != nil {
 			continue
 		}

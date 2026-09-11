@@ -796,3 +796,14 @@ func TestSessionCreateHidesForeignPrivateAgents(t *testing.T) {
 		t.Fatalf("owner binding their own agent = %d, want 201 (%s)", rec.Code, rec.Body.String())
 	}
 }
+
+// A store the approval gate cannot read is a fault, not an absence: the
+// caller hears 500 and retries, not 404 and gives up.
+func TestApprovalGateReportsAStoreFault(t *testing.T) {
+	r := authzRig(t)
+	_ = r.db.Close()
+	rec := serve(r.engine, as(memberUser, http.MethodPost, "/api/v1/approvals/"+store.NewID()+"/approve", "{}"))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("approve with the store down = %d %s, want 500", rec.Code, rec.Body.String())
+	}
+}

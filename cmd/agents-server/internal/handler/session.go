@@ -167,12 +167,19 @@ func (h *SessionHandler) Create(c *gin.Context) {
 		return
 	}
 	req.Name = cmp.Or(req.Name, store.DefaultSessionName)
+	if !nameFits(c, req.Name) {
+		return
+	}
 	ctx := c.Request.Context()
 	u, _ := server.CurrentUser(c)
 	if req.AgentConfigID != "" {
 		// A foreign private agent reads as absent, admin included — the rule
 		// the run-time build applies (decisions §5.29).
 		ac, err := h.agents.Get(ctx, req.AgentConfigID)
+		if err != nil && !errors.Is(err, store.ErrNotFound) && !store.IsMalformedID(err) {
+			storeError(c, err)
+			return
+		}
 		if err != nil || !store.Visible(ac.Scope, ac.OwnerID, u.ID, false) {
 			badRequest(c, "agent_config_id does not reference an existing agent")
 			return
@@ -244,6 +251,9 @@ func (h *SessionHandler) Patch(c *gin.Context) {
 	}
 	if req.Name != nil && *req.Name == "" {
 		badRequest(c, "name cannot be empty")
+		return
+	}
+	if req.Name != nil && !nameFits(c, *req.Name) {
 		return
 	}
 	ctx := c.Request.Context()
@@ -619,7 +629,8 @@ func (h *SessionHandler) Compact(c *gin.Context) {
 	c.JSON(http.StatusOK, CompactResponse{Compacted: compacted, BeforeItems: before, AfterItems: after})
 }
 
-// contextMCPTimeout bounds the tools/list calls one context report makes; a
+// contextMCPTimeout bounds one tools/list made on a request's behalf (a
+// context report, a tool listing); a
 // slow server costs the report that server's row, not the report.
 const contextMCPTimeout = 2 * time.Second
 

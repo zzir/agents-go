@@ -2,8 +2,10 @@ package handler
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 
@@ -113,6 +115,18 @@ func pageParams(c *gin.Context) (beforeID string, limit int) {
 		limit = 0
 	}
 	return beforeID, limit
+}
+
+// maxNameLen caps a free-text name (a session's, an agent's) at bind time.
+const maxNameLen = 256
+
+// nameFits reports whether name is within maxNameLen, answering 400 when not.
+func nameFits(c *gin.Context, name string) bool {
+	if utf8.RuneCountInString(name) > maxNameLen {
+		badRequest(c, fmt.Sprintf("name is longer than %d characters", maxNameLen))
+		return false
+	}
+	return true
 }
 
 // created answers 201 with body and names id as the request's audit

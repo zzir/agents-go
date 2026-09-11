@@ -273,10 +273,15 @@ func (h *WSHandler) handleRunCreate(conn *server.WSConn, msg protocol.RunCreate)
 // decision resumes the SAME run id; OnRunAttach re-attaches connections not yet watching.
 func (h *WSHandler) resolve(conn *server.WSConn, toolCallID string, approve bool, scope bridge.ApprovalScope, reason string) {
 	log := logging.Ctx(conn.Context())
-	pending, ok := ownsApproval(conn.Context(), h.approvals, h.sessions, conn.User.ID, toolCallID)
-	if !ok {
+	pending, err := ownsApproval(conn.Context(), h.approvals, h.sessions, conn.User.ID, toolCallID)
+	if err != nil {
+		msg := "approval not found"
+		if !errors.Is(err, store.ErrNotFound) {
+			log.Error("approval lookup", "error", err)
+			msg = "approval lookup failed"
+		}
 		_ = conn.WriteJSON(&protocol.Envelope{Type: protocol.EventRunError, Payload: mustJSON(protocol.RunError{
-			Code: protocol.CodeApprovalFailed, Message: "approval not found",
+			Code: protocol.CodeApprovalFailed, Message: msg,
 		})})
 		return
 	}

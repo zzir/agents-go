@@ -175,3 +175,12 @@ func TestAgentConfigAcceptsValidToolSelections(t *testing.T) {
 		t.Errorf("malformed tools: got %d, want 400 (body %s)", w.Code, w.Body.String())
 	}
 }
+
+// A name past the cap is refused at bind.
+func TestAgentConfigRejectsLongName(t *testing.T) {
+	engine, _ := newAgentEngine(t)
+	w := doJSON(t, engine, http.MethodPost, "/agents", `{"name":"`+strings.Repeat("n", maxNameLen+1)+`","model":"m"}`)
+	if w.Code != http.StatusBadRequest || !strings.Contains(errMessage(t, w.Body.Bytes()), "longer than") {
+		t.Fatalf("create with a long name = %d %s, want 400", w.Code, w.Body.String())
+	}
+}

@@ -50,6 +50,9 @@ func (h *AgentConfigHandler) validateAgentConfig(c *gin.Context, ac *store.Agent
 		badRequest(c, "name is required")
 		return false
 	}
+	if !nameFits(c, ac.Name) {
+		return false
+	}
 	// No provider ships a default model: an empty one is a *UserError at run
 	// time, so refuse it at save.
 	if ac.Model == "" {
