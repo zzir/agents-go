@@ -243,8 +243,9 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 	if err != nil {
 		return "", pending.SessionID, fmt.Errorf("rebuilding agent: %w", err)
 	}
-	// The rebuilt agent IS the resumed run's executor, so its sandbox reference
-	// lives as long as that run: handed to onDone below, else released here.
+	// The rebuilt agent IS the resumed run's executor (ResumeRun), so its
+	// sandbox reference lives as long as that run: released by onDone below
+	// once handed off, else here.
 	handedOff := false
 	defer func() {
 		if !handedOff {
@@ -330,7 +331,7 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 		}
 		return nil
 	}
-	runID, err = r.ResumeRun(pending.RunID, state, pending.SessionID, pending.AgentConfigID, pending.ProjectID, verify, resumeDone)
+	runID, err = r.ResumeRun(pending.RunID, state, rebuilt, pending.SessionID, pending.AgentConfigID, pending.ProjectID, verify, resumeDone)
 	if errors.Is(err, errResumeStopped) {
 		// Stopped between the claim and the launch: nothing ran, nothing to
 		// restore. A 409 like a terminal run's, not a 500.

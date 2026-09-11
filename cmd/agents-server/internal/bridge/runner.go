@@ -212,6 +212,9 @@ type segmentSpec struct {
 	// fresh gates the fresh-run extras (session pre-check, run.agent_start,
 	// arming the plan unlock, title generation); a resume already did them.
 	fresh bool
+	// built is a resume's agent, built by the approval path and released by
+	// its onDone; nil means the segment builds (and releases) its own.
+	built *BuildResult
 	// start launches the SDK run — agents.Run for a fresh segment,
 	// agents.ResumeRun for a continuation.
 	start func(ctx context.Context, agent *agents.Agent, opts agents.RunOptions) (agents.RunStream, agents.RunControl)
@@ -355,13 +358,16 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 
 	// A BACKGROUND run (a task's, a workflow step's) is built without the tools
 	// and modes that need a person in front of it — invariant 34.
-	built, err := buildFullAgent(ctx, r.Deps, agentConfigID, projectID, task != nil, ownerID)
-	if err != nil {
-		return failTurn("", protocol.CodeConfigError, err, "", "")
+	built := spec.built
+	if built == nil {
+		var err error
+		built, err = buildFullAgent(ctx, r.Deps, agentConfigID, projectID, task != nil, ownerID)
+		if err != nil {
+			return failTurn("", protocol.CodeConfigError, err, "", "")
+		}
+		// This segment is the build's only holder.
+		defer built.Release()
 	}
-	// This segment is the build's only holder; a resume releases the approval
-	// path's own rebuild (see ResolveApproval).
-	defer built.Release()
 
 	// The build's prompt profile, for the Context panel; a failure costs a
 	// panel section, never the run.
@@ -469,13 +475,14 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 
 // ResumeRun registers a continuation of a paused run and launches it in the
 // background under the hub root context, reopening the SAME hub run (one id,
-// one event sequence across interrupt/resume). onDone fires once when the
-// continuation terminates. Fails with ErrSessionBusy if the session has a live
-// run. verify, when non-nil, runs AFTER the run is registered (a concurrent
-// stop's cancel can find it) but BEFORE the goroutine launches: an error
-// withdraws the run and nothing executes, so an approved tool cannot cause a
-// side effect ahead of a recheck.
-func (r *Runner) ResumeRun(runID string, state *agents.RunState, sessionID, agentConfigID, projectID string, verify func() error, onDone func(*RunOutcome)) (string, error) {
+// one event sequence across interrupt/resume). built is the agent state was
+// restored against — the continuation runs on it, and onDone (fired once when
+// the continuation terminates) is where the caller releases it. Fails with
+// ErrSessionBusy if the session has a live run. verify, when non-nil, runs
+// AFTER the run is registered (a concurrent stop's cancel can find it) but
+// BEFORE the goroutine launches: an error withdraws the run and nothing
+// executes, so an approved tool cannot cause a side effect ahead of a recheck.
+func (r *Runner) ResumeRun(runID string, state *agents.RunState, built *BuildResult, sessionID, agentConfigID, projectID string, verify func() error, onDone func(*RunOutcome)) (string, error) {
 	meta, err := r.taskMeta(r.hub.rootCtx, sessionID)
 	if err != nil {
 		return "", err
@@ -500,17 +507,18 @@ func (r *Runner) ResumeRun(runID string, state *agents.RunState, sessionID, agen
 		r.OnRunAttach(runID)
 	}
 	r.launchSegment(seg, runID, sessionID, onDone, func() *RunOutcome {
-		return r.resumeStreamed(ctx, runID, state, sessionID, agentConfigID, projectID)
+		return r.resumeStreamed(ctx, runID, state, built, sessionID, agentConfigID, projectID)
 	})
 	return runID, nil
 }
 
 // resumeStreamed continues an interrupted run under its original run id
 // through execStreamed, so the resumed segment's events go live too.
-func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents.RunState, sessionID, agentConfigID, projectID string) *RunOutcome {
+func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents.RunState, built *BuildResult, sessionID, agentConfigID, projectID string) *RunOutcome {
 	return r.execStreamed(ctx, runID, sessionID, agentConfigID, projectID, segmentSpec{
 		input:    session.UserText(state.UserInput),
 		failCode: "resume_error",
+		built:    built,
 		start: func(ctx context.Context, _ *agents.Agent, opts agents.RunOptions) (agents.RunStream, agents.RunControl) {
 			return agents.ResumeRun(ctx, state, opts)
 		},
