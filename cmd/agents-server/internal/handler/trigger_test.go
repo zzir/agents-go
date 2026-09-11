@@ -219,7 +219,7 @@ func TestHookVerifiesTheSignature(t *testing.T) {
 }
 
 // A manual fire is the same fire, token-guarded, with an optional payload; a
-// disabled trigger is a 400 with the reason.
+// disabled trigger is a 409 with the reason.
 func TestTriggerFireByHand(t *testing.T) {
 	engine, firer, wf, sess := triggerRig(t)
 	b, _ := json.Marshal(map[string]any{"workflow_id": wf.ID, "session_id": sess.ID, "kind": "cron", "schedule": "@daily", "brief": "go", "enabled": true})
@@ -231,8 +231,8 @@ func TestTriggerFireByHand(t *testing.T) {
 		t.Fatalf("fires = %v", firer.fires)
 	}
 	firer.refuse = bridge.ErrTriggerDisabled
-	if w := doJSON(t, engine, "POST", server.APIPrefix+"/triggers/"+created.ID+"/fire", ""); w.Code != http.StatusBadRequest {
-		t.Fatalf("fire of a disabled trigger: %d, want 400", w.Code)
+	if w := doJSON(t, engine, "POST", server.APIPrefix+"/triggers/"+created.ID+"/fire", ""); w.Code != http.StatusConflict {
+		t.Fatalf("fire of a disabled trigger: %d, want 409", w.Code)
 	}
 	// Update keeps the kind; delete takes it off the clock.
 	b, _ = json.Marshal(map[string]any{"workflow_id": wf.ID, "session_id": sess.ID, "kind": "webhook", "brief": "go", "enabled": false})

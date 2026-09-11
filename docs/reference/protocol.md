@@ -53,7 +53,8 @@ stable machine-readable identifier, `message` human-readable detail.
 
 - **Create** returns `201 Created` with the created resource.
 - **Update** (`PUT`/`PATCH`) returns `200 OK` with the full updated resource —
-  except `PATCH /auth/users/:id`, which answers `204` with no body.
+  except `PATCH /auth/users/:id` and every `PUT /<entity>/:id/owner` transfer
+  (sessions included), which answer `204` with no body.
 - **`PUT` is a full replace**: a field omitted from the body is written as its
   zero value, not kept, so a client must send every field the resource should
   retain. The one exception is a secret field, where the mask sentinel keeps
@@ -553,8 +554,8 @@ in memory; a restart inside the five-minute window is the one gap). Only a
 delivery that FIRED is remembered: one refused before anything started — the
 session busy or at its cap, the server draining — may be resent as it was.
 `POST /triggers/:id/fire` is a person's fire, answering `201` with the task (a
-workflow) or `{run_id}` (an agent turn), `400` when the trigger is disabled or
-its target cannot start, `409` when the session is busy or at its cap.
+workflow) or `{run_id}` (an agent turn), `400` when its target cannot start,
+`409` when the trigger is disabled or the session is busy or at its cap.
 
 ### Guardrails — `/api/v1/guardrails`
 

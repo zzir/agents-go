@@ -279,9 +279,9 @@ func (h *SessionHandler) Patch(c *gin.Context) {
 //	@Summary	Reassign session owner (admin)
 //	@Tags		sessions
 //	@Accept		json
-//	@Param		id		path		string			true	"Session ID"
-//	@Param		body	body		SetOwnerRequest	true	"The new owner"
-//	@Success	200		{object}	store.Session
+//	@Param		id		path	string			true	"Session ID"
+//	@Param		body	body	SetOwnerRequest	true	"The new owner"
+//	@Success	204		"reassigned"
 //	@Failure	400		{object}	ErrorResponse	"malformed body, or no such user"
 //	@Failure	403		{object}	ErrorResponse
 //	@Failure	404		{object}	ErrorResponse
@@ -329,13 +329,8 @@ func (h *SessionHandler) SetOwner(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
-	sess, err = h.sessions.Get(c.Request.Context(), id)
-	if err != nil {
-		storeError(c, err)
-		return
-	}
 	server.SetAuditDetail(c, "owner="+req.UserID)
-	c.JSON(http.StatusOK, sess)
+	c.Status(http.StatusNoContent)
 }
 
 // SetOwnerRequest is the body of PUT /sessions/:id/owner.

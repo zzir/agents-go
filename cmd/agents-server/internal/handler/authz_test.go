@@ -500,7 +500,7 @@ func TestSessionReassignIsAdminManagement(t *testing.T) {
 	if rec := serve(engine, as(adminUser, http.MethodPut, "/api/v1/sessions/"+store.NewID()+"/owner", body)); rec.Code != http.StatusNotFound {
 		t.Fatalf("reassign a missing session = %d, want 404", rec.Code)
 	}
-	if rec := serve(engine, as(adminUser, http.MethodPut, "/api/v1/sessions/"+sess.ID+"/owner", body)); rec.Code != http.StatusOK {
+	if rec := serve(engine, as(adminUser, http.MethodPut, "/api/v1/sessions/"+sess.ID+"/owner", body)); rec.Code != http.StatusNoContent {
 		t.Fatalf("admin reassign = %d (%s)", rec.Code, rec.Body.String())
 	}
 	if rec := serve(engine, as(otherUser, http.MethodGet, "/api/v1/sessions/"+sess.ID, "")); rec.Code != http.StatusOK {
@@ -540,7 +540,7 @@ func TestSessionReassignRespectsProjectBinding(t *testing.T) {
 	}
 
 	toOther := `{"user_id":"` + otherUser.ID + `"}`
-	if rec := serve(engine, as(adminUser, http.MethodPut, "/api/v1/sessions/"+unbound.ID+"/owner", toOther)); rec.Code != http.StatusOK {
+	if rec := serve(engine, as(adminUser, http.MethodPut, "/api/v1/sessions/"+unbound.ID+"/owner", toOther)); rec.Code != http.StatusNoContent {
 		t.Fatalf("reassign unbound = %d (%s)", rec.Code, rec.Body.String())
 	}
 	// Bound: neither the current owner nor the admin owns the project.
@@ -553,7 +553,7 @@ func TestSessionReassignRespectsProjectBinding(t *testing.T) {
 	if got, _ := sessions.Get(ctx, bound.ID); got.OwnerID != otherUser.ID {
 		t.Fatalf("a refused reassign moved the session to %s", got.OwnerID)
 	}
-	if rec := serve(engine, as(adminUser, http.MethodPut, "/api/v1/sessions/"+bound.ID+"/owner", `{"user_id":"`+memberUser.ID+`"}`)); rec.Code != http.StatusOK {
+	if rec := serve(engine, as(adminUser, http.MethodPut, "/api/v1/sessions/"+bound.ID+"/owner", `{"user_id":"`+memberUser.ID+`"}`)); rec.Code != http.StatusNoContent {
 		t.Fatalf("reassign bound to the project's owner = %d (%s)", rec.Code, rec.Body.String())
 	}
 	if got, _ := sessions.Get(ctx, bound.ID); got.OwnerID != memberUser.ID {
