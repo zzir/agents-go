@@ -79,7 +79,7 @@ export function RunsView({ version, onOpenRun, active = true }: { version: strin
       ),
     },
     {
-      header: 'Conversation', field: 'sessionName', width: 'auto',
+      header: 'Session', field: 'sessionName', width: 'auto',
       renderCell: r => <span className="hub-clip hub-clip-session" title={r.sessionName}>{r.sessionName}</span>,
     },
     { header: 'Started', id: 'started', width: 'auto', renderCell: r => <span className="hub-nowrap">{r.createdAt ? formatTime(new Date(r.createdAt).toISOString()) : ''}</span> },

@@ -17,6 +17,7 @@ import { useCrud } from '@/lib/hooks';
 import { fc } from '@/lib/form';
 import { JsonField } from '@/lib/JsonField';
 import { toast } from '@/lib/toast';
+import { listEmpty } from '@/features/settings/listEmpty';
 
 const AUTH_MODES = [
   { value: '', label: 'None' },
@@ -345,8 +346,7 @@ export function McpServerPanel() {
     <ReadOnlyContext value={!!editing && !rowEditable(editing)}>
       <CrudPanel title="MCP servers" onAdd={startAdd} onCancel={cancel} form={form} loading={loading} isEmpty={rows.length === 0}
         search={{ value: query, onChange: setQuery, placeholder: 'Search MCP servers' }}
-        empty={servers.length === 0 ? 'No MCP servers yet.' : 'No matching MCP servers.'}
-        emptyHint={servers.length === 0 ? 'An MCP server lends its tools to the agents that select it.' : undefined}
+        {...listEmpty({ noun: 'MCP servers', total: servers.length, query, mine: !!scopeFilter?.mine, hint: 'An MCP server lends its tools to the agents that select it.' })}
         onDelete={editing && canDeleteRow(isAdmin, me?.id, editing)
           ? async () => { if (await remove(editing.id, editing.name)) cancel(); } : null}>
         {rows.map(s => {

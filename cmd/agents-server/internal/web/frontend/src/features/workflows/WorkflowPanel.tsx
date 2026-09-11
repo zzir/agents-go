@@ -157,12 +157,12 @@ function WorkflowForm({ initial, onSave, onCancel, onDelete, saving, agents }: W
             </div>
             <Textarea block rows={8} value={step.prompt}
               onChange={e => setStep(i, { prompt: e.target.value })}
-              placeholder="What this step should do — the previous steps are already in the conversation" />
+              placeholder="What this step should do — the previous steps are already in the session" />
             <div className="wf-step-opts">
               <label className="wf-step-opt">
                 <input type="checkbox" checked={!!step.compact_before}
                   onChange={e => setStep(i, { compact_before: e.target.checked })} />
-                {' '}Compact the conversation before this step
+                {' '}Compact the session before this step
               </label>
               <label className="wf-step-opt">
                 <input type="checkbox" checked={!!step.pause_before}
@@ -277,7 +277,7 @@ function RunDialog({ workflow, sessionId, onClose }: { workflow: Workflow; sessi
         window.dispatchEvent(new Event(SESSIONS_CHANGED));
         invalidate('sessions');
       }
-      toast.success(`Started "${workflow.name}" in the background — the result comes back to the conversation`);
+      toast.success(`Started "${workflow.name}" in the background — the result comes back to the session`);
       onClose();
     } catch (e) {
       if (made) void api.sessions.delete(made).catch(() => undefined);
@@ -294,15 +294,15 @@ function RunDialog({ workflow, sessionId, onClose }: { workflow: Workflow; sessi
       ]}>
       <Stack gap="condensed">
         <div className="wf-run-hint">
-          It runs in a session of its own and cannot see the conversation: put everything it needs to know in the brief.
+          It runs in a session of its own and cannot see this one: put everything it needs to know in the brief.
         </div>
-        {fc('Conversation', <SessionPicker value={target} onChange={setTarget} />, 'Where the result comes back')}
+        {fc('Session', <SessionPicker value={target} onChange={setTarget} />, 'Where the result comes back')}
         {unbound && (
           fc('Project', <Select block value={projectId} onChange={e => setProjectId(e.target.value)}>
-            <Select.Option value="">None — chat only, no file or command tools</Select.Option>
+            <Select.Option value="">None — no file or command tools</Select.Option>
             {(projects || []).filter(p => (sandboxDefs || []).some(sb => sb.id === p.sandbox_id))
               .map(p => <Select.Option key={p.id} value={p.id}>{projectLabel(p.name, nameOf(sandboxDefs, p.sandbox_id))}</Select.Option>)}
-          </Select>, 'This conversation has no project bound yet; the one picked here becomes its binding, as a first message\'s would')
+          </Select>, 'This session has no project bound yet; the one picked here becomes its binding, as a first message\'s would')
         )}
         <Textarea block rows={8} value={input} onChange={e => setInput(e.target.value)} autoFocus
           placeholder="What this run is about — the brief that leads the first step" />
@@ -393,7 +393,7 @@ export function WorkflowPanel({ sessionId }: { sessionId: string | null }) {
               </div>
               <div className="resource-row-actions" onClick={e => e.stopPropagation()}>
                 <Button onClick={() => setRunning(w)} size="small" variant="invisible" leadingVisual={PlayIcon}
-                  title="Run it, with a brief, into a conversation of your choice">
+                  title="Run it, with a brief, into a session of your choice">
                   Run…
                 </Button>
                 <Button onClick={() => setTriggersFor(w)} size="small" variant="invisible" leadingVisual={ZapIcon}

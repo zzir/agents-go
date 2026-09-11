@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { TextInput, Textarea, FormControl, Checkbox, Select, Stack, Link } from '@primer/react';
 import { openSettingsTab } from '@/features/settings/settingsLink';
+import { listEmpty } from '@/features/settings/listEmpty';
 import { TokenListInput } from '@/components/TokenListInput';
 import { FormActions } from '@/components/FormActions';
 import { CrudPanel, RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
@@ -246,6 +247,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
   const set = <K extends keyof AgentFormData>(k: K, v: AgentFormData[K]) => setForm(prev => ({ ...prev, [k]: v }));
   // Summary is the default mode and the only one with a kept window and a summary prompt.
   const summaryMode = !form.compaction_mode || form.compaction_mode === 'summary';
+  const resetImplied = !!form.compaction_enabled && (form.compaction_mode === 'reset' || form.compaction_mode === 'hybrid');
   const approveList = parseApproveTools(form.approve_tools || '');
   const approveAll = approveList?.includes('*') ?? false;
   const approveKnown = new Set(APPROVABLE_TOOLS.flatMap(g => g.tools));
@@ -472,7 +474,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
                     <ScopeHint agent={a} colliding={handoffCollisions} />
                   </span>
                 </FormControl.Label>
-                <FormControl.Caption>{a.model || 'default model'}</FormControl.Caption>
+                <FormControl.Caption>{a.model || 'no model'}</FormControl.Caption>
               </FormControl>
             ))}
           </div>
@@ -507,8 +509,8 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
           agent's job, not every agent's. */}
       <div className="form-group">
         <div className="form-group-title">Workflows</div>
-        <ToggleRow label="Author workflows from the chat" checked={form.workflow_authoring || false} onChange={v => set('workflow_authoring', v)}
-          description="get_workflow and save_workflow; each save waits for your approval. Running one needs subagents." />
+        <ToggleRow label="Author workflows from a session" checked={form.workflow_authoring || false} onChange={v => set('workflow_authoring', v)}
+          description="get_workflow and save_workflow; each save waits for your approval. /workflow runs one whether or not subagents are on." />
       </div>
 
       <div className="form-group">
@@ -526,21 +528,23 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
               or a hybrid recap needs the summary model; the prompt is the
               summary's alone (hybrid's recap has its own). */}
           {summaryMode && fc('Window size', <TextInput block type="number" min={0} value={String(form.compaction_window || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_window', parseInt(e.target.value) || 0)} />, 'Recent items to keep intact (0 = default 10)')}
-          {form.compaction_mode !== 'reset' && fc('Summary model', <TextInput value={form.compaction_model || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_model', e.target.value)} placeholder="e.g. gpt-4.1-mini" block />, form.compaction_mode === 'hybrid' ? "Model that writes the short recap a reset carries (empty = the agent's model)" : "Model used to generate conversation summaries (empty = the agent's model)")}
+          {form.compaction_mode !== 'reset' && fc('Summary model', <TextInput value={form.compaction_model || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_model', e.target.value)} placeholder="e.g. gpt-4.1-mini" block />, form.compaction_mode === 'hybrid' ? "Model that writes the short recap a reset carries (empty = the agent's model)" : "Model that writes the history summaries (empty = the agent's model)")}
           {summaryMode && fc('Summary prompt', <Textarea value={form.compaction_prompt || ''} onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('compaction_prompt', e.target.value)} rows={8} placeholder="Custom summarization instructions (leave empty for default)" block className="textarea-grow" style={{ fontFamily: 'var(--fontStack-monospace)' }} />)}
         </>}
       </div>
 
       <div className="form-group">
         <div className="form-group-title">Memory</div>
-        <ToggleRow label="Memory tools" checked={form.memory_tools || false} onChange={v => set('memory_tools', v)}
-          description="memory_write and friends: working notes that survive compaction, shown in the Context panel." />
-        {form.memory_tools && (
+        {/* A reset mode implies both tool sets (bridge/agent.go), so the
+            switches show that rather than an Off the run ignores. */}
+        <ToggleRow label="Memory tools" checked={resetImplied || form.memory_tools || false} disabled={resetImplied} onChange={v => set('memory_tools', v)}
+          description={(resetImplied ? 'On while compaction is in reset or hybrid mode. ' : '') + 'memory_write and friends: working notes that survive compaction, shown in the Context panel.'} />
+        {(resetImplied || form.memory_tools) && (
           <ToggleRow label="Model may propose agent memory" checked={form.memory_agent_write || false} onChange={v => set('memory_agent_write', v)}
-            description="Each such write waits for your approval, then reaches every conversation with this agent." />
+            description="Each such write waits for your approval, then reaches every session with this agent." />
         )}
-        <ToggleRow label="History tools" checked={form.history_tools || false} onChange={v => set('history_tools', v)}
-          description="history_search and history_read find turns that compaction folded out of the context." />
+        <ToggleRow label="History tools" checked={resetImplied || form.history_tools || false} disabled={resetImplied} onChange={v => set('history_tools', v)}
+          description={(resetImplied ? 'On while compaction is in reset or hybrid mode. ' : '') + 'history_search and history_read find turns that compaction folded out of the context.'} />
       </div>
 
       {/* The checklist edits the stored JSON list in place; the JSON stays
@@ -605,7 +609,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
             <div className="form-group-title">Guardrails &amp; output</div>
             <JsonField label="Guardrails (JSON)" value={form.guardrails || ''} onChange={v => set('guardrails', v)} placeholder='["content_filter","max_output_length"]' caption="JSON array of guardrail names. Each guardrail carries the stages it inspects, so it is named once." />
             <JsonField label="Output schema (JSON Schema)" value={form.output_schema || ''} onChange={v => set('output_schema', v)} placeholder='{"type":"object","properties":{...},"required":[...]}' caption="Structured output JSON Schema — leave empty for plain text" multiline rows={3} />
-            <JsonField label="Error handlers (JSON)" value={form.error_handlers || ''} onChange={v => set('error_handlers', v)} placeholder='{"max_turns":{"final_output":"Ran out of turns — please narrow the request."},"invalid_final_output":{"final_output":{...}}}' caption='Fallback final outputs keyed by error kind (max_turns / model_refusal / invalid_final_output) — the run completes with the fallback instead of failing. Values must be a JSON string for plain-text agents, or match the output schema. Optional per-kind "exclude_from_history": true keeps the fallback out of the conversation.' multiline rows={3} />
+            <JsonField label="Error handlers (JSON)" value={form.error_handlers || ''} onChange={v => set('error_handlers', v)} placeholder='{"max_turns":{"final_output":"Ran out of turns — please narrow the request."},"invalid_final_output":{"final_output":{...}}}' caption='Fallback final outputs keyed by error kind (max_turns / model_refusal / invalid_final_output) — the run completes with the fallback instead of failing. Values must be a JSON string for plain-text agents, or match the output schema. Optional per-kind "exclude_from_history": true keeps the fallback out of the history.' multiline rows={3} />
           </div>
 
           <div className="form-group">
@@ -708,8 +712,7 @@ export function AgentConfigPanel() {
         search={{ value: query, onChange: setQuery, placeholder: 'Search agents' }}
         onDelete={editing && canDeleteRow(isAdmin, me?.id, editing)
           ? async () => { if (await remove(editing.id, editing.name)) cancel(); } : null}
-        empty={agents.length === 0 ? 'No agents yet.' : 'No matching agents.'}
-        emptyHint={agents.length === 0 ? 'An agent is a model on an endpoint with its instructions and tools.' : undefined}>
+        {...listEmpty({ noun: 'agents', total: agents.length, query, mine: !!scopeFilter?.mine, hint: 'An agent is a model on an endpoint with its instructions and tools.' })}>
         {rows.map(a => {
           const rowProvider = (providers || []).find(p => p.id === a.provider_id);
           return (

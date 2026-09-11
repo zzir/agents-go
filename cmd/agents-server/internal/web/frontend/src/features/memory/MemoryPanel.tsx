@@ -147,7 +147,7 @@ export function MemoryPanel() {
   return (
     <CrudPanel title="Memory" filter={filter} onAdd={startAdd} onCancel={cancel} form={form} loading={loading} isEmpty={rows.length === 0}
       empty="No global memories yet."
-      emptyHint="A memory is text an agent reads with every request. What the model writes for itself during a conversation is in that session's Context panel.">
+      emptyHint="A memory is text an agent reads with every request. What the model writes for itself during a session is in its Context panel.">
       {rows.map(m => (
         <ResourceRow key={m.id}
           title={m.key}

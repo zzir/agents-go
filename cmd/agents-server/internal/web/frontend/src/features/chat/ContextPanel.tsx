@@ -71,7 +71,7 @@ function compositionRows(data: ContextReport): Array<{ label: string; tokens: nu
     });
   }
   if ((data.conversation_tokens || 0) > 0) {
-    rows.push({ label: 'Conversation', tokens: data.conversation_tokens! });
+    rows.push({ label: 'Messages', tokens: data.conversation_tokens! });
   }
   return rows;
 }
@@ -369,7 +369,7 @@ export function ContextPanel({ sessionId, running, reloadKey, onClose, onCompact
                 </ul>
                 <div className="ctx-note">
                   The window's composition, by the character estimator: the prompt layers and tool schemas the build
-                  sends every turn, and the conversation so far. Shares of their own total — not provider counts.
+                  sends every turn, and the messages so far. Shares of their own total — not provider counts.
                 </div>
               </section>
             );

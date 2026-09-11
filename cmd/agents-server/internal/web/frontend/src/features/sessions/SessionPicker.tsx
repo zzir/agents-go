@@ -35,7 +35,7 @@ const NEW_SESSION_TEXT = 'New session';
 // when it fits neither it tries the sides — beside a block-wide anchor that
 // is off the viewport's edge, and the panel lands clamped at the far left of
 // the screen. A short panel fits one side or the other.
-export function SessionPicker({ value, onChange, placeholder = 'Select a conversation…' }:
+export function SessionPicker({ value, onChange, placeholder = 'Select a session…' }:
   { value: string; onChange: (id: string) => void; placeholder?: string }) {
   const { data: sessions } = useApi<SessionRef[]>(() => api.sessions.list() as Promise<SessionRef[]>);
   const [open, setOpen] = useState(false);
@@ -58,11 +58,11 @@ export function SessionPicker({ value, onChange, placeholder = 'Select a convers
 
   return (
     <SelectPanel
-      title="Conversation"
+      title="Session"
       className="session-picker-list"
       renderAnchor={({ children: _children, ...anchorProps }) => (
         <Button block alignContent="start" trailingAction={TriangleDownIcon} className="session-picker-anchor"
-          aria-label={'Conversation: ' + (selectedName || 'none picked')} title={selectedName || undefined} {...anchorProps}>
+          aria-label={'Session: ' + (selectedName || 'none picked')} title={selectedName || undefined} {...anchorProps}>
           {selectedName || placeholder}
         </Button>
       )}
@@ -94,7 +94,7 @@ export function UnboundHint({ sessionId, what }: { sessionId: string; what: stri
   if (!sessionId || (!isNew && (!data || data.project_id))) return null;
   return (
     <Flash variant="warning" style={{ fontSize: 'var(--base-text-size-xs)', padding: 'var(--base-size-6) var(--base-size-8)' }}>
-      {isNew ? 'A new conversation' : 'This conversation'} has no project bound — {what} will have no file or command tools. Bind
+      {isNew ? 'A new session' : 'This session'} has no project bound — {what} will have no file or command tools. Bind
       one by sending it a message with a project picked, if the work touches files.
     </Flash>
   );

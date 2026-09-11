@@ -11,6 +11,7 @@ import { api } from '@/lib/api';
 import { useCrud } from '@/lib/hooks';
 import { ReadOnlyContext, canDeleteRow, canDemoteRow, canEditRow } from '@/lib/access';
 import { toast } from '@/lib/toast';
+import { listEmpty } from '@/features/settings/listEmpty';
 import { type Skill, type SkillGroup, groupSkills } from '@/lib/skills';
 import { BADGE } from '@/lib/badges';
 import { useMe } from '@/lib/me';
@@ -217,8 +218,7 @@ export function SkillsPanel() {
         actions={<Button onClick={() => setImporting(true)} size="small">Import</Button>}
         onDelete={editing && canDeleteRow(isAdmin, me?.id, editing)
           ? async () => { if (await remove(editing.id, editing.name)) cancel(); } : null}
-        empty={skills.length === 0 ? 'No skills yet.' : 'No matching skills.'}
-        emptyHint={skills.length === 0 ? 'Create a SKILL.md in the workbench, or import every skill from a GitHub repository.' : undefined}>
+        {...listEmpty({ noun: 'skills', total: skills.length, query, mine: !!scopeFilter?.mine, hint: 'A skill is a SKILL.md an agent reads on demand.', addHint: '+ Add writes one here; Import brings a GitHub repository’s.' })}>
         {grouped.map(group => {
           // Sync re-imports the repo, updating every row in the group — so it
           // is offered only when every row is the caller's to update. Publishing

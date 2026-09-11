@@ -125,13 +125,13 @@ function RenameDialog({ session, onClose, onRenamed }: { session: Session; onClo
       await api.sessions.update(session.id, trimmed);
       onRenamed(session.id, trimmed);
     } catch (e) {
-      toast.error((e as Error).message || 'Could not rename chat');
+      toast.error((e as Error).message || 'Could not rename session');
       setBusy(false);
     }
   };
   return (
     <Dialog
-      title="Rename conversation"
+      title="Rename session"
       onClose={onClose}
       width="medium"
       initialFocusRef={inputRef}
@@ -182,7 +182,7 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onRe
     const name = (sessions || []).find(s => s.id === id)?.name || id.slice(0, 8);
     const ok = await confirmDialog({
       title: `Delete “${name}”?`,
-      content: 'The conversation is removed with its messages, traces and tasks. This cannot be undone.',
+      content: 'The session is removed with its messages, traces and tasks. This cannot be undone.',
       confirmButtonContent: 'Delete',
       confirmButtonType: 'danger',
     });
@@ -190,7 +190,7 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onRe
     try {
       await api.sessions.delete(id);
     } catch (e) {
-      toast.error((e as Error).message || 'Could not delete chat');
+      toast.error((e as Error).message || 'Could not delete session');
       return;
     }
     mutateData(prev => (prev ? prev.filter(s => s.id !== id) : prev));
@@ -206,7 +206,7 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onRe
       onSelect(forked.id);
       reload();
     } catch (e) {
-      toast.error((e as Error).message || 'Could not fork chat');
+      toast.error((e as Error).message || 'Could not fork session');
     }
   };
 
@@ -236,7 +236,7 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onRe
   const pinned = visible.filter(s => s.pinned);
   const recents = visible.filter(s => !s.pinned);
   const loaded = sessions !== null;
-  const emptyText = query.trim() ? 'No matching chats' : 'No conversations yet';
+  const emptyText = query.trim() ? 'No matching sessions' : 'No sessions yet';
 
   const renderItem = (s: Session) => (
     <SessionItem

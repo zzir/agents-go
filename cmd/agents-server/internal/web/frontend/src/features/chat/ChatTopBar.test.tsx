@@ -67,7 +67,7 @@ describe('ChatTopBar', () => {
   it('offers the terminal, the environment, the export, the compute switch and the rebuild, in that order', () => {
     const host = render();
     const items = [...host.querySelectorAll('li')].map(li => li.textContent);
-    expect(items).toEqual(['Terminal panel', 'Settings…', 'Export as tar…', 'Stop sandbox', 'Rebuild container']);
+    expect(items).toEqual(['Terminal panel', 'Environment…', 'Export as tar…', 'Stop sandbox', 'Rebuild container']);
   });
 
   // A running sandbox offers Stop; anything else offers Start, and says why.
