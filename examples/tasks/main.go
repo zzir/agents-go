@@ -100,9 +100,6 @@ func main() {
 					mu.Unlock()
 				}()
 
-				if req.Wake {
-					fmt.Printf("\n  ↩ parent woken:\n     %s\n", req.Input)
-				}
 				sess, err := repo.Open(context.Background(), req.SessionID)
 				if err != nil {
 					log.Println("open session:", err)

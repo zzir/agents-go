@@ -244,6 +244,10 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	// Attachments are validated before anything is announced; the metadata
 	// also feeds run.started so clients render thumbnails without a request.
 	attMeta, attErr := r.validateAttachments(ctx, ownerID, spec.attachmentIDs)
+	if attErr != nil {
+		// Ids that failed validation never reach the turn's record.
+		spec.attachmentIDs = nil
+	}
 
 	// A resume re-announces the prompt so a browser attached at resume can
 	// render the user bubble; earlier subscribers dedup it.

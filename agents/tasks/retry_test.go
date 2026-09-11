@@ -62,9 +62,6 @@ func TestRetry_KeepsTheTaskAndSessionAndChangesTheRun(t *testing.T) {
 		t.Errorf("launch = run %q session %q, want run %q session %q",
 			last.RunID, last.SessionID, after.RunID, before.ChildSessionID)
 	}
-	if last.Wake {
-		t.Error("a retry is the task's own run, not a wake-up")
-	}
 	if string(last.Inherit) != string(before.Inherit) {
 		t.Errorf("inherit = %s, want the spawn snapshot %s", last.Inherit, before.Inherit)
 	}
@@ -351,16 +348,9 @@ func TestRetry_LaunchFailureDebtFollowsTheCaller(t *testing.T) {
 		h := newHarness(t)
 		info := h.spawn(t)
 		h.fail(t, info.TaskID, "boom") // wake #1: the original failure
-		// Only the retry's own run fails to start; the wake-up that follows
-		// can go out. The hook runs on the launching goroutine, so flipping
-		// err per request is ordered, not raced.
-		h.launcher.beforeLaunch = func(req LaunchRequest) {
-			if req.Wake {
-				h.launcher.err = nil
-			} else {
-				h.launcher.err = errors.New("nope")
-			}
-		}
+		// The retry's run fails to start; the wake-up that follows is the
+		// host's own run, outside the launcher.
+		h.launcher.err = errors.New("nope")
 		if _, err := h.m.Retry(ctx, info.TaskID); err == nil {
 			t.Fatal("retry reported success with no run started")
 		}

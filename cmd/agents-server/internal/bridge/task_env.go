@@ -3,7 +3,6 @@ package bridge
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/zzir/agents-go/agents"
@@ -68,15 +67,6 @@ func (t taskLauncher) Launch(ctx context.Context, req tasks.LaunchRequest) error
 		return t.r.launchWorkflowStep(ctx, req)
 	}
 	in := store.DecodeInherit(req.Inherit)
-	if req.Wake {
-		// The parent's wake-up run: the spawning run's agent and project, with
-		// the lineage for the trace (invariant 32).
-		if in.AgentConfigID == "" {
-			return fmt.Errorf("task notification undeliverable: no agent config for session %s", req.SessionID)
-		}
-		_, err := t.r.StartWakeRun(req.SessionID, in.AgentConfigID, in.ProjectID, req.Input, req.ParentRunID, nil)
-		return err
-	}
 	// The task's own run shares the parent's project, and thereby its command-
 	// trust scope; the child's first run CAS-binds its hidden session with it.
 	_, err := t.r.startRunWithID(req.RunID, req.SessionID, in.TaskAgentID, in.ProjectID, TextInput(req.Input), "", nil, nil)
