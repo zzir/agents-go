@@ -24,7 +24,7 @@ func (e *TaskFinalError) Error() string { return "task already " + e.Status }
 // publishTaskCancelled advances the hub record of the task's run and broadcasts
 // run.cancelled; a no-op after GC or a restart.
 func (r *Runner) publishTaskCancelled(runID string) {
-	env, err := protocol.NewEnvelope(protocol.EventRunCancelled, protocol.RunCancelled{RunID: runID})
+	env, err := protocol.NewEnvelope(protocol.EventRunCancelled, protocol.RunCancelled{RunID: runID, Reason: protocol.RunCancelStopped})
 	if err != nil {
 		return
 	}

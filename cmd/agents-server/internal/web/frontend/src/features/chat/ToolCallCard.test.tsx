@@ -88,6 +88,17 @@ describe('ToolCallCard approval', () => {
     m.unmount();
   });
 
+  // A call an abandoned pause never ran offers no decision and says why.
+  it('a not-run call offers no decision and names the reason', () => {
+    const m = mount({ ...pending('exec_command', { cmd: 'ls' }), status: 'not_run', not_run: 'superseded' });
+    expect(m.buttons()).toEqual([]);
+    expect(m.host.textContent).toContain('not run — superseded by a newer message');
+    m.unmount();
+    const s = mount({ ...pending('exec_command', { cmd: 'ls' }), status: 'not_run', not_run: 'stopped' });
+    expect(s.host.textContent).toContain('not run — stopped');
+    s.unmount();
+  });
+
   it('shows the command as typed, with its working directory', () => {
     const m = mount(pending('exec_command', { cmd: 'make test', workdir: 'src' }));
     expect(m.host.querySelector('.disclosure-body pre')?.textContent).toBe('cd src && make test');

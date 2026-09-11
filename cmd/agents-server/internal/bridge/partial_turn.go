@@ -35,6 +35,10 @@ type partialTurn struct {
 	// guardrail and stage, when set, tag an "error" marker as a guardrail block.
 	guardrail string
 	stage     string
+	// notRun are the tool calls an abandoned pause never ran, each written as a
+	// call whose display carries not_run: notRunReason (a run.cancelled reason).
+	notRun       []store.PendingToolCall
+	notRunReason string
 }
 
 // savePartialTurn records what the SDK cannot for a cancelled or failed run: streamed
@@ -74,6 +78,12 @@ func (r *Runner) savePartialTurn(t partialTurn) {
 	if t.partialText != "" {
 		entries = append(entries, session.NewAnnotationEntry(
 			agents.ItemDisplay{Kind: agents.DisplayMessage, Text: t.partialText},
+			agents.Source{Type: agents.SourceModel}))
+	}
+	for _, c := range t.notRun {
+		entries = append(entries, session.NewAnnotationEntry(
+			agents.ItemDisplay{Kind: agents.DisplayToolCall, CallID: c.ToolCallID, ToolName: c.ToolName, Arguments: c.Arguments,
+				Extra: map[string]any{"not_run": t.notRunReason}},
 			agents.Source{Type: agents.SourceModel}))
 	}
 

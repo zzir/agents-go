@@ -606,8 +606,35 @@ func (h *RunHub) finish(runID string, interrupted bool) {
 	} else if rec.info.Status == RunRunning {
 		rec.info.Status = RunCompleted
 	}
+	// The segment is over: its control would steer nothing, and a paused
+	// record must not hand a stop to a dead segment.
+	rec.ctrl = nil
 	rec.endedAt = time.Now()
 	rec.mu.Unlock()
+}
+
+// endPaused ends an interrupted record as cancelled, publishing run.cancelled
+// with the reason; false when the hub holds no paused run by that id. The
+// status flips under rec.mu, so a resume racing it is refused.
+func (h *RunHub) endPaused(runID, reason string) bool {
+	h.mu.Lock()
+	rec := h.runs[runID]
+	h.mu.Unlock()
+	if rec == nil {
+		return false
+	}
+	rec.mu.Lock()
+	if rec.info.Status != RunInterrupted {
+		rec.mu.Unlock()
+		return false
+	}
+	rec.info.Status = RunCancelled
+	rec.endedAt = time.Now()
+	rec.mu.Unlock()
+	if env, err := protocol.NewEnvelope(protocol.EventRunCancelled, protocol.RunCancelled{RunID: runID, Reason: reason}); err == nil {
+		h.publish(runID, env)
+	}
+	return true
 }
 
 // waitDone blocks until the run's current segment has fully finished or the

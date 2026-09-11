@@ -107,14 +107,15 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     Bottom-following re-fires on content growth and yields to an upward
     wheel/drag or an actively changing selection; a stale selection never
     blocks re-sticking (`useScrollToBottom` in `lib/hooks.ts`).
-19. **A branch move obsoletes every client view of the old path.** Regenerate
-    and attempt-switch are server-side appends (`POST /sessions/:id/branch`)
-    and the client reconciles by refetch: the `on_path === false` filter
-    applies before any fork exists, a move bumps the timeline generation so an
-    older fetch is dropped, the live tail re-appends only the current run, and
-    an off-path pending approval stays out of view without losing its row. A
-    branch move is refused (`409`) while a run is live on the session — a
-    switch mid-run would graft the run's later turns onto the new branch.
+19. **A newer message wins over a paused approval; a branch move obsoletes
+    every client view of the old path.** A send or a cancel while the
+    session's run waits for approval abandons that run — row deleted, calls
+    persisted as not run, `run.cancelled` saying why — so the composer never
+    waits (decisions §5.68). Regenerate and attempt-switch are server-side
+    appends (`POST /sessions/:id/branch`) reconciled by refetch: the
+    `on_path === false` filter, a bumped timeline generation, the live tail
+    re-appending only the current run; an off-path pending approval stays
+    out of view, its row kept. A branch move is `409` while a run is live.
 
 **Background tasks**
 

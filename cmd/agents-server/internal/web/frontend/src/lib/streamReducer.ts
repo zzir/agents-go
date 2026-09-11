@@ -153,6 +153,35 @@ export function appendErrorPart(msgs: Msgs, err: ErrorPart, thinking: string, re
   return withParts(msgs, turn, parts);
 }
 
+// markNotRun resolves every undecided approval card in the turns pick admits
+// as not run for the reason; null when none was pending.
+function markNotRun(msgs: Msgs, pick: (turn: TurnEntry) => boolean, reason: string): Msgs | null {
+  let changed = false;
+  const out = msgs.map(m => {
+    if (m.role !== 'turn' || !pick(m as TurnEntry)) return m;
+    const parts = (m as TurnEntry).parts.map(p => {
+      if (p.type !== 'tools' || !p.toolCalls.some(tc => tc.needs_approval && !tc.status)) return p;
+      changed = true;
+      return { ...p, toolCalls: p.toolCalls.map(tc => tc.needs_approval && !tc.status ? { ...tc, status: 'not_run', not_run: reason } : tc) };
+    });
+    return { ...m, parts } as TurnEntry;
+  });
+  return changed ? out : null;
+}
+
+// resolvePendingApprovals marks the run's undecided approval cards not run:
+// what run.cancelled with a reason means for a paused run.
+export function resolvePendingApprovals(msgs: Msgs, runId: string, reason: string): Msgs | null {
+  return markNotRun(msgs, t => t.runId === runId, reason);
+}
+
+// supersedePendingApprovals marks every other run's undecided approval cards
+// superseded once a newer run starts on the session — the server abandoned the
+// pause before it (invariant 19), whether or not its run.cancelled arrived.
+export function supersedePendingApprovals(msgs: Msgs, newRunId: string): Msgs | null {
+  return markNotRun(msgs, t => t.runId !== newRunId, 'superseded');
+}
+
 // appendCancelledPart marks the live turn cancelled, flushing leftover
 // buffers first. No turn -> nothing to mark (null).
 export function appendCancelledPart(msgs: Msgs, thinking: string, remaining: string): Msgs | null {

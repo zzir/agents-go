@@ -162,10 +162,6 @@ interface ChatViewProps {
   // The session as the socket layer keeps it: timeline, stream, live run,
   // tasks, history paging. One reference per session, replaced on change.
   state: SessionState;
-  // A tool call in this conversation's own turns awaits a decision: sends
-  // are blocked until it is made, since the run resumes on it. A paused
-  // background task does not block; its marker is the sidebar's.
-  awaiting?: boolean;
   // Why the first load of the history failed, when it did (state.loadError).
   loadError?: string;
   settingsReloadKey?: number;
@@ -177,7 +173,7 @@ interface ChatViewProps {
 }
 
 export function ChatView({
-  sessionId, sessionName, sessionAgentId, sessionBinding, state, awaiting, loadError, settingsReloadKey, bindingsVersion, panel, actions,
+  sessionId, sessionName, sessionAgentId, sessionBinding, state, loadError, settingsReloadKey, bindingsVersion, panel, actions,
 }: ChatViewProps) {
   // The rendered timeline drops the entries no longer on the active branch;
   // the trace panel still lists their runs, so it reads the raw entries.
@@ -849,7 +845,7 @@ export function ChatView({
               sessionId={sessionId || ''}
               onSend={handleSend}
               onCancel={handleCancel}
-              disabled={running || awaiting || !agentConfigId}
+              disabled={running || !agentConfigId}
               blocked={gate.blocked}
               running={running}
               allowAttachments={allowAttachments}
@@ -892,7 +888,7 @@ export function ChatView({
           sessionId={sessionId}
           onSend={handleSend}
           onCancel={handleCancel}
-          disabled={running || awaiting || !agentConfigId}
+          disabled={running || !agentConfigId}
           blocked={gate.blocked}
           running={running}
           allowAttachments={allowAttachments}

@@ -1590,6 +1590,33 @@ customized".
 Rules: [invariant 1](workbench-invariants.md);
 [protocol.md, Agents](../reference/protocol.md#agents--apiv1agents).
 
+### 5.68 A newer message abandons a paused run
+
+Decided 2026-09-11 (workbench invariant 19).
+
+**Decision.** A chat run paused for tool approval ends when its session takes
+a new message, or when the paused run is cancelled: the `pending_approvals`
+row is deleted (the claim a racing decision loses), the calls it waited on
+persist as `tool_call` annotations whose display carries `not_run` with the
+reason, and the hub ends the record with `run.cancelled {reason}` —
+`superseded` or `stopped`. The UI resolves the cards from the live event,
+from the stored marker on reload, and from the newer run's `run.started`
+when the event never came (a restart between the pause and the message).
+A background task's paused run is its task's to stop and is left alone.
+
+**Rejected.** Refusing the send (`409`) — the composer sat locked on a
+question the person had moved past. Letting both stand — the later approval
+resumed the old `RunState` and its answer landed after the newer turn, out
+of order and out of context. Persisting the pending calls as items — an
+abandoned call must not enter the model's history.
+
+**Cost accepted.** A newer message discards a pause by design; the cards say
+so. A stale hub record on a restarted server publishes nothing, so the
+client's `run.started` rule carries that case.
+
+Rules: [invariant 19](workbench-invariants.md);
+[protocol.md, Approvals](../reference/protocol.md#approvals--apiv1approvals).
+
 ### 5.69 A fallback entry names a provider
 
 Decided 2026-09-11 (workbench invariant 9).

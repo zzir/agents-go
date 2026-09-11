@@ -3997,7 +3997,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Cancel run */
+        /**
+         * Cancel run
+         * @description A run paused for tool approval is abandoned either way: its approval is deleted, the calls it waited on are recorded as not run, and run.cancelled carries reason stopped.
+         */
         post: {
             parameters: {
                 query?: {

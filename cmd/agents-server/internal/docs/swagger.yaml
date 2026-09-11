@@ -4833,6 +4833,9 @@ paths:
       - runs
   /runs/{id}/cancel:
     post:
+      description: 'A run paused for tool approval is abandoned either way: its approval
+        is deleted, the calls it waited on are recorded as not run, and run.cancelled
+        carries reason stopped.'
       parameters:
       - description: Run ID
         in: path

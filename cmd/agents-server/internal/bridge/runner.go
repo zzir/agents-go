@@ -122,8 +122,10 @@ type RunOutcome struct {
 // background under the hub's root context (so it survives the connection that
 // started it). It returns the run id; subscribe via Hub() to stream events.
 // onDone, if non-nil, is invoked once when the run terminates. It fails with
-// ErrSessionBusy when the session already has a live run.
+// ErrSessionBusy when the session already has a live run; a run paused for
+// approval is abandoned first — invariant 19.
 func (r *Runner) StartRun(sessionID, agentConfigID, projectID string, input RunInput, plan *bool, onDone func(*RunOutcome)) (string, error) {
+	r.abandonPaused(r.hub.rootCtx, sessionID, protocol.RunCancelSuperseded)
 	return r.startRunWithID(store.NewID(), sessionID, agentConfigID, projectID, input, "", plan, onDone)
 }
 
@@ -291,7 +293,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 		turn.userAttachments = spec.attachmentIDs
 		turn.annRole = "cancelled"
 		r.savePartialTurn(turn)
-		sendEvent(protocol.EventRunCancelled, protocol.RunCancelled{RunID: runID})
+		sendEvent(protocol.EventRunCancelled, protocol.RunCancelled{RunID: runID, Reason: protocol.RunCancelStopped})
 		res := mkResult()
 		res.Cancelled = true
 		return res
@@ -572,7 +574,15 @@ func (r *Runner) StopRunAfterTurn(runID string) {
 	}
 }
 
-// CancelRun cancels the in-flight run with the given run id, if one is active.
+// CancelRun cancels the in-flight run with the given run id, if one is active;
+// a chat run paused for approval is abandoned instead (its approval deleted,
+// the pending calls recorded as not run) — a task's paused run is its task's to stop.
 func (r *Runner) CancelRun(runID string) {
+	if info, ok := r.hub.Info(runID); ok && info.Status == RunInterrupted && info.Task == nil {
+		if pending, err := r.Deps.PendingApprovals.Get(r.hub.rootCtx, runID); err == nil {
+			r.abandonApproval(r.hub.rootCtx, pending, protocol.RunCancelStopped)
+			return
+		}
+	}
 	r.hub.Cancel(runID)
 }

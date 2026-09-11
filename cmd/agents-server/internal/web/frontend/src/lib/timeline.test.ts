@@ -23,6 +23,7 @@ import { buildTimeline, hasPendingApproval, type EntryView, type TimelineEntry, 
 import {
   ensureLiveTurn, mergeLiveTail, appendMessageItem, appendReasoningItem, finalizeTurn,
   appendErrorPart, appendCancelledPart, appendToolCall, applyToolResult, applyTaskTerminal, startTaskAttempt, syncTaskCard, appendHandoffPart,
+  resolvePendingApprovals, supersedePendingApprovals,
 } from '@/lib/streamReducer';
 
 const RUN = 'run-1';
@@ -336,6 +337,55 @@ describe('stream/replay isomorphism', () => {
       { type: 'cancelled', content: '' },
     ]);
     expect(partsOf(buildTimeline(rows))).toEqual(streamParts);
+  });
+
+  // A pause abandoned by a newer message (invariant 19): the pending card
+  // resolves to not run / superseded on both paths, and no cancelled marker
+  // follows — the newer turn does. The stored form is the call's display
+  // carrying not_run.
+  it('abandoned pause: pending call → not run (superseded), no marker', () => {
+    let live = ensureLiveTurn([], RUN)!;
+    live = appendToolCall(live, { tool_call_id: 'c1', tool_name: 'exec_command', arguments: '{}', needs_approval: true, status: null, output: null }, '')!;
+    live = resolvePendingApprovals(live, RUN, 'superseded')!;
+
+    const rows: EntryView[] = [
+      { id: "1", run_id: RUN, kind: 'annotation', role: 'assistant', display: { kind: 'tool_call', call_id: 'c1', tool_name: 'exec_command', arguments: '{}', extra: { not_run: 'superseded' } } },
+    ];
+    const streamParts = (live[live.length - 1] as TurnEntry).parts;
+    expect(streamParts).toEqual([
+      { type: 'tools', toolCalls: [{ tool_call_id: 'c1', tool_name: 'exec_command', arguments: '{}', needs_approval: true, status: 'not_run', not_run: 'superseded', output: null }] },
+    ]);
+    expect(hasPendingApproval(live)).toBe(false);
+    const replayed = partsOf(buildTimeline(rows));
+    // needs_approval is a live-only flag (the stored call carries not_run
+    // instead); everything else matches.
+    expect(replayed).toEqual([{ type: 'tools', toolCalls: [{ tool_call_id: 'c1', tool_name: 'exec_command', arguments: '{}', status: 'not_run', not_run: 'superseded', output: null }] }]);
+    // A newer run's start settles the older run's pending card the same way.
+    let other = ensureLiveTurn([], RUN)!;
+    other = appendToolCall(other, { tool_call_id: 'c2', tool_name: 'exec_command', arguments: '{}', needs_approval: true, status: null, output: null }, '')!;
+    other = ensureLiveTurn(other, 'run-2', 'next')!;
+    other = supersedePendingApprovals(other, 'run-2')!;
+    expect(hasPendingApproval(other)).toBe(false);
+    expect(supersedePendingApprovals(other, 'run-2')).toBeNull();
+  });
+
+  // The same pause stopped by an explicit cancel: not run / stopped, and the
+  // cancelled marker a stop always leaves.
+  it('abandoned pause: pending call → not run (stopped) → cancelled marker', () => {
+    let live = ensureLiveTurn([], RUN)!;
+    live = appendToolCall(live, { tool_call_id: 'c1', tool_name: 'exec_command', arguments: '{}', needs_approval: true, status: null, output: null }, '')!;
+    live = resolvePendingApprovals(live, RUN, 'stopped')!;
+    live = appendCancelledPart(live, '', '')!;
+
+    const rows: EntryView[] = [
+      { id: "1", run_id: RUN, kind: 'annotation', role: 'assistant', display: { kind: 'tool_call', call_id: 'c1', tool_name: 'exec_command', arguments: '{}', extra: { not_run: 'stopped' } } },
+      { id: "2", run_id: RUN, kind: 'annotation', role: 'system', content: '', display: { kind: 'cancelled' } },
+    ];
+    const streamParts = (live[live.length - 1] as TurnEntry).parts;
+    expect(streamParts[1]).toEqual({ type: 'cancelled', content: '' });
+    const replayed = partsOf(buildTimeline(rows));
+    expect(replayed[0]).toEqual({ type: 'tools', toolCalls: [{ tool_call_id: 'c1', tool_name: 'exec_command', arguments: '{}', status: 'not_run', not_run: 'stopped', output: null }] });
+    expect(replayed[1]).toEqual(streamParts[1]);
   });
 
   it('failed turn: partial text renders as prose whatever role the server sent', () => {

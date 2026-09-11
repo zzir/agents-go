@@ -29,6 +29,8 @@ interface ItemDisplay {
 interface DisplayExtra {
   guardrail?: string;
   stage?: string;
+  // On a tool_call an abandoned pause never ran: the run.cancelled reason.
+  not_run?: string;
   task_id?: string;
   task_status?: string;
   // Which run of the task this describes: 1 for the original, more after a
@@ -109,7 +111,10 @@ interface ToolCall {
   tool_name: string;
   arguments: string;
   output: string | null;
+  // approved / rejected (live), completed, or not_run — a call an abandoned
+  // pause never ran, with not_run saying why (a run.cancelled reason).
   status: string | null;
+  not_run?: string;
   needs_approval?: boolean;
   // title/summary are the tool's display overrides from its result (a card
   // heading over the tool name, a one-line account of what happened). Set by
@@ -375,6 +380,7 @@ function assemble(
         anchor(e);
         const x = d.extra;
         const tc: ToolCall = { tool_call_id: d.call_id, tool_name: d.tool_name || '', arguments: d.arguments || '', output: null, status: null };
+        if (typeof x?.not_run === 'string') { tc.status = 'not_run'; tc.not_run = x.not_run; }
         if (x?.task_id || x?.task_status) {
           // A summary from an earlier attempt than the card's is a leftover a
           // retry voided, not the current result — the fold cannot blank it

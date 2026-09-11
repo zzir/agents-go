@@ -5,7 +5,7 @@ import { EV, ERR, type RunDiagnostic, type TaskRow } from '@/lib/protocol';
 import { buildTimeline, type DisplayExtra, type EntryView, type TimelineEntry, type ToolCall } from '@/lib/timeline';
 import {
   ensureLiveTurn, mergeLiveTail, appendMessageItem, appendReasoningItem, finalizeTurn,
-  appendErrorPart, appendCancelledPart, appendToolCall, applyToolResult, syncTaskCard, appendToolProgress, appendHandoffPart,
+  appendErrorPart, appendCancelledPart, appendToolCall, applyToolResult, syncTaskCard, appendToolProgress, appendHandoffPart, resolvePendingApprovals, supersedePendingApprovals,
   TERMINAL_TASK_STATUSES,
 } from '@/lib/streamReducer';
 import { api, clearToken } from '@/lib/api';
@@ -505,12 +505,14 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
       // keeps the live entries accumulated meanwhile).
       updateSS(sid, s => {
         // Hub replays (reconnect / re-subscribe) re-deliver run.started; the
-        // reducer returns null instead of growing a second live turn.
-        const appended = ensureLiveTurn(s.messages, p.run_id, p.input, p.attachments);
+        // reducer returns null instead of growing a second live turn. A newer
+        // run's start also settles an older run's pending approval cards: the
+        // server abandoned that pause before starting this run.
+        const appended = ensureLiveTurn(s.messages, p.run_id, p.input, p.attachments) || s.messages;
         return {
           ...s, running: true, compacting: false, diagnostics: [], liveRunId: p.run_id,
           loaded: true,
-          messages: appended || s.messages,
+          messages: supersedePendingApprovals(appended, p.run_id) || appended,
           traceRuns: { ...s.traceRuns, [p.run_id]: s.traceRuns[p.run_id] || [] },
         };
       });
@@ -673,7 +675,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
       if (p.code !== ERR.guardrailTripwire) reloadMessages(sid);
     });
 
-    ws.on(EV.runCancelled, (p: { run_id?: string; code?: string }) => {
+    ws.on(EV.runCancelled, (p: { run_id?: string; reason?: string }) => {
       if (p?.run_id && tasks.cancelled({ run_id: p.run_id })) { dropRunRefs(p.run_id); return; }
       const rid = p?.run_id;
       const sid = rid ? runMapRef.current[rid] : null;
@@ -681,12 +683,16 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
       const remaining = streamBufsRef.current[rid] || '';
       const thinking = reasoningBufsRef.current[rid] || '';
       dropRunRefs(rid);
+      const reason = p.reason || 'stopped';
       // The marker shows immediately, mirroring how run.error appends its card
       // optimistically, instead of waiting on the async reload (which the next
-      // run's start can also skip).
+      // run's start can also skip). A paused run's pending cards resolve to
+      // not run; superseded by a newer message, the cards say so and no
+      // marker follows (the newer turn does).
       updateSS(sid, s => {
-        const msgs = appendCancelledPart(s.messages, thinking, remaining);
-        return { ...s, messages: msgs || s.messages, streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null };
+        let msgs = resolvePendingApprovals(s.messages, rid, reason) || s.messages;
+        if (reason !== 'superseded') msgs = appendCancelledPart(msgs, thinking, remaining) || msgs;
+        return { ...s, messages: msgs, streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null };
       });
       reloadMessages(sid);
     });

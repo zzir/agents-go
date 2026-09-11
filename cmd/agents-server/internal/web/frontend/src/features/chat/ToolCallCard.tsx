@@ -234,7 +234,10 @@ export function ToolCallCard({ toolCall, live, onInspectTask, onRetryTask }: Too
   const planHtml = useAsyncMarkdown(body.kind === 'markdown' ? body.text : '');
 
   const pendingApproval = !!needs_approval && !status;
-  const isRunning = !!live && !pendingApproval && !output && status !== 'completed' && status !== 'rejected';
+  // A call an abandoned pause never ran: the pause was stopped, or a newer
+  // message superseded it (invariant 19).
+  const notRun = status === 'not_run';
+  const isRunning = !!live && !pendingApproval && !notRun && !output && status !== 'completed' && status !== 'rejected';
   // A decision unmounts the buttons; focus moves to the card's header first,
   // so a keyboard user is not dropped on <body>.
   const cardRef = useRef<HTMLDivElement>(null);
@@ -249,14 +252,16 @@ export function ToolCallCard({ toolCall, live, onInspectTask, onRetryTask }: Too
   // otherwise stay quiet. It outranks 'approved' (the outcome over the
   // process) but not 'rejected' — a rejection notice is not the tool failing.
   const failed = !!toolCall.is_error && status !== 'rejected';
-  const showStatus = status === 'approved' || status === 'rejected' || pendingApproval || isRunning || failed;
+  const showStatus = status === 'approved' || status === 'rejected' || pendingApproval || isRunning || failed || notRun;
   const statusLabel = status === 'rejected' ? 'rejected'
     : failed ? 'error'
+    : notRun ? 'not run — ' + (toolCall.not_run === 'superseded' ? 'superseded by a newer message' : 'stopped')
     : status === 'approved' ? 'approved'
     : pendingApproval ? 'pending'
     : 'running…';
   const statusVariant = status === 'rejected' ? 'danger'
     : failed ? 'danger'
+    : notRun ? 'secondary'
     : status === 'approved' ? 'success'
     : pendingApproval ? 'attention'
     : 'accent';

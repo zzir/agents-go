@@ -12,6 +12,7 @@ import (
 	"github.com/zzir/agents-go/agents/middleware"
 	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
@@ -356,6 +357,52 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 	}
 	handedOff = true
 	return runID, pending.SessionID, nil
+}
+
+// abandonPaused abandons the session's chat run paused for approval, if any: a
+// newer message wins over the pause — invariant 19. A task's paused run is
+// left to its task.
+func (r *Runner) abandonPaused(ctx context.Context, sessionID, reason string) {
+	if r.Deps.PendingApprovals == nil {
+		return
+	}
+	rows, err := r.Deps.PendingApprovals.ListBySession(ctx, sessionID)
+	if err != nil {
+		logging.Ctx(ctx).Warn("listing the session's pending approvals", "error", err, "session_id", sessionID)
+		return
+	}
+	for i := range rows {
+		if rows[i].Kind != "" {
+			continue
+		}
+		if meta, err := r.taskMeta(ctx, sessionID); err != nil || meta != nil {
+			continue
+		}
+		r.abandonApproval(ctx, &rows[i], reason)
+	}
+}
+
+// abandonApproval ends a paused chat run for good: deleting the row is the
+// claim (a decision that took it first wins), the pending calls persist as
+// not run, and the hub record ends with run.cancelled carrying the reason.
+func (r *Runner) abandonApproval(ctx context.Context, pending *store.PendingApproval, reason string) bool {
+	if err := r.Deps.PendingApprovals.Delete(ctx, pending.RunID); err != nil {
+		return false
+	}
+	var calls []store.PendingToolCall
+	_ = json.Unmarshal(pending.ToolCalls, &calls)
+	turn := partialTurn{sessionID: pending.SessionID, runID: pending.RunID, userInput: pending.UserInput, notRun: calls, notRunReason: reason}
+	if reason != protocol.RunCancelSuperseded {
+		turn.annRole = "cancelled"
+	}
+	r.savePartialTurn(turn)
+	// The paused segment's finish may still be in flight right after
+	// run.interrupted; the record must be paused before it can be ended.
+	r.hub.waitDone(pending.RunID, time.Now().Add(approvalSettleTimeout))
+	if !r.hub.endPaused(pending.RunID, reason) {
+		logging.Ctx(ctx).Info("abandoned approval had no paused hub run to end", "run_id", pending.RunID, "reason", reason)
+	}
+	return true
 }
 
 // restorePendingApproval writes a claimed row back after a failed claim/resume

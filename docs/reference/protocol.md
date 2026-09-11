@@ -269,6 +269,15 @@ has an active run is `409`. Unanswered approvals expire after
 `approval_ttl_minutes`: the record is dropped and an error annotation written
 to the session, so the timeout is visible.
 
+**A newer message wins over a pause.** A run paused for approval is
+abandoned when the session takes a new message (`POST /sessions/:id/runs`,
+`run.create`) or when the paused run is cancelled (`POST /runs/:id/cancel`,
+`run.cancel`): its `pending_approvals` row is deleted, the calls it was
+waiting on are recorded as not run with the reason, and `run.cancelled`
+carries that reason — `superseded` or `stopped`; a decision arriving after
+that is `404`. Only the conversation's own pause: a background task's paused
+run is its task's to stop.
+
 **exec_command session approval.** An agent whose `approve_tools` includes
 `exec_command` gates each shell command through a per-session trust store
 instead of approving every call. The approval surfaces the command itself,
@@ -850,7 +859,7 @@ which run this is.
 |-----------------|-----------------------------------------------------------------------------------------------------------------|
 | `run.create`    | Start a run — `{session_id, input, attachment_ids?, agent_config_id?, project_id?, plan?}` (the project matters only until the session's first project-carrying run binds it; `plan` and `attachment_ids` as in the REST body) |
 | `run.subscribe` | (Re)attach to a run's event stream — `{run_id, from_seq?}` (omit `from_seq` or `0` replays everything retained) |
-| `run.cancel`    | Cancel an in-flight run — `{run_id, mode?}`; `mode: "graceful"` finishes the current turn, default aborts       |
+| `run.cancel`    | Cancel an in-flight run — `{run_id, mode?}`; `mode: "graceful"` finishes the current turn, default aborts; a run paused for approval is abandoned either way (see [Approvals](#approvals--apiv1approvals)) |
 | `run.inject`    | Inject input into the live run — `{run_id, queue, input}`; `queue: "steer"` changes course inside the current exchange, `"next_turn"` is consumed at the next turn boundary, `"follow_up"` starts a new exchange once this one finishes |
 | `tool.approve`  | Approve a pending tool call — `{tool_call_id, scope?}`; `scope` widens an `exec_command` approval's trust: `"once"` (default), `"same"` (this exact command, for the session) or `"all"` (every command) |
 | `tool.reject`   | Reject a tool call — `{tool_call_id, reason?}`                                                                  |
@@ -875,7 +884,7 @@ which run this is.
 | `run.diagnostic`        | Trouble the run survived — `{run_id, type, code?, message?, details?}`; `type` is an open vocabulary (`model_retry`, `model_fallback`, `tool_panic`, …), so show unknown kinds generically |
 | `run.gap`               | This connection fell behind and events were dropped — `{run_id, dropped, last_good, next}`; resubscribe from `last_good` to refetch. A gap with `last_good: 0` is the ring having moved past the run's start before this connection attached: nothing to refetch (the UI does not ask) |
 | `run.error`             | Error — `{run_id?, session_id?, code, message, guardrail?, stage?}`; `session_id` is set when the failure precedes `run.started` (e.g. `session_busy`, `session_not_found`); `guardrail`/`stage` are set when `code` is `guardrail_tripwire` |
-| `run.cancelled`         | Cancelled — `{run_id}`                                                                                                                                  |
+| `run.cancelled`         | Cancelled — `{run_id, reason}`; `reason` is `stopped` (a cancel, a task stop) or `superseded` (a newer message on the session while the run waited for approval — [invariant 19](../explanation/workbench-invariants.md)) |
 | `session.title_updated` | Title changed — `{session_id, title}`                                                                                                                   |
 | `task.updated`          | A background task moved — the task row (`task_id`, `status`, `kind`, `state`, `attempt`, `dismissed`, a paused one's `pending_call_id`…) as the store has it; on the task's run stream when the hub holds that run, else broadcast to every connection |
 | `session.project_bound` | The session's first project-carrying run permanently bound its project — `{session_id, project_id}`; published exactly once, by the run that won the bind |

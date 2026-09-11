@@ -215,14 +215,15 @@ func (h *RunHandler) Get(c *gin.Context) {
 
 // Cancel cancels the run identified by the id path parameter.
 //
-//	@Summary	Cancel run
-//	@Tags		runs
-//	@Param		id		path	string	true	"Run ID"
-//	@Param		mode	query	string	false	"graceful = stop after the current turn; default aborts immediately"
-//	@Success	204		"cancelling"
-//	@Failure	404		{object}	ErrorResponse
-//	@Security	BearerAuth
-//	@Router		/runs/{id}/cancel [post]
+//	@Summary		Cancel run
+//	@Description	A run paused for tool approval is abandoned either way: its approval is deleted, the calls it waited on are recorded as not run, and run.cancelled carries reason stopped.
+//	@Tags			runs
+//	@Param			id		path	string	true	"Run ID"
+//	@Param			mode	query	string	false	"graceful = stop after the current turn; default aborts immediately"
+//	@Success		204		"cancelling"
+//	@Failure		404		{object}	ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/runs/{id}/cancel [post]
 func (h *RunHandler) Cancel(c *gin.Context) {
 	if _, ok := h.runner.Hub().Info(c.Param("id")); !ok {
 		notFound(c)
