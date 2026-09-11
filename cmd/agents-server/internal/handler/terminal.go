@@ -29,7 +29,7 @@ const (
 // binary frames carry the byte stream both ways while text envelopes carry
 // control (resize, exit). Only a persistent container can host one
 // (sandbox.TerminalOpener). Live terminals are tracked per project so a
-// configuration change can tear them down.
+// configuration change can tear them down, and capped per sandbox.
 type TerminalHandler struct {
 	// Audit, when set, records every terminal opened: a shell on a sandbox
 	// host is the act most worth a line. Wired at bootstrap.
@@ -57,12 +57,14 @@ type sandboxProvider interface {
 var _ sandboxProvider = (*sandboxes.Manager)(nil)
 
 // liveTerminal pairs a Terminal with its connection so a teardown can stop
-// both pumps; gen is the config generation it opened under.
+// both pumps; gen is the config generation it opened under, sandboxID what
+// the cap counts it against.
 type liveTerminal struct {
 	term      sandbox.Terminal
 	conn      *server.WSConn
 	gen       int64
 	projectID string
+	sandboxID string
 }
 
 // NewTerminalHandler returns a handler backed by the given stores and sandbox manager.
@@ -100,11 +102,11 @@ func (h *TerminalHandler) Handle(conn *server.WSConn) {
 	}
 	// The instance reference lives exactly as long as this connection.
 	defer release()
-	lt := &liveTerminal{term: term, conn: conn, gen: proj.RuntimeGen, projectID: proj.ID}
+	lt := &liveTerminal{term: term, conn: conn, gen: proj.RuntimeGen, projectID: proj.ID, sandboxID: proj.SandboxID}
 	limit := h.settings.Int(conn.Context(), settings.KeyMaxTerminalsPerSandbox)
 	if ok, stale := h.register(proj.ID, lt, limit); !ok {
 		_ = term.Close()
-		msg := fmt.Sprintf("too many open terminals for this project (max %d)", limit)
+		msg := fmt.Sprintf("too many open terminals on this sandbox (max %d)", limit)
 		if stale {
 			// The project changed (or was deleted) while this terminal was
 			// dialing; reconnect to open under the current one.
@@ -235,24 +237,38 @@ func (h *TerminalHandler) open(conn *server.WSConn) (sandbox.Terminal, *store.Pr
 	return term, proj, release, nil
 }
 
-// register adds a live terminal, enforcing the per-project cap and the
-// generation fence under one lock. full is temporary, stale is final.
+// register adds a live terminal, enforcing the per-sandbox cap (projects on
+// one sandbox share a container) and the generation fence under one lock.
+// full is temporary, stale is final.
 func (h *TerminalHandler) register(projectID string, lt *liveTerminal, limit int) (ok, stale bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if lt.gen < h.fence[projectID] {
 		return false, true
 	}
-	set := h.live[projectID]
-	if len(set) >= limit {
+	if h.openOnLocked(lt.sandboxID) >= limit {
 		return false, false
 	}
+	set := h.live[projectID]
 	if set == nil {
 		set = map[*liveTerminal]struct{}{}
 		h.live[projectID] = set
 	}
 	set[lt] = struct{}{}
 	return true, false
+}
+
+// openOnLocked counts the live terminals on sandboxID across every project.
+func (h *TerminalHandler) openOnLocked(sandboxID string) int {
+	n := 0
+	for _, set := range h.live {
+		for lt := range set {
+			if lt.sandboxID == sandboxID {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 func (h *TerminalHandler) unregister(projectID string, lt *liveTerminal) {
