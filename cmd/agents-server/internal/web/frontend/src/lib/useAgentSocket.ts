@@ -341,6 +341,9 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
 
   const loadSession = useCallback((sid: string): Promise<void> => {
     if (!sid || loadedRef.current.has(sid)) return Promise.resolve();
+    // Loaded again is not deleted: a conversation transferred away and back
+    // (deleteSession marked it on the way out) takes writes again.
+    deletedRef.current.delete(sid);
     const msgP = loadTimeline(sid);
     // Seed the task list from the durable rows; live task-run events (which
     // may already have arrived) win per task id.

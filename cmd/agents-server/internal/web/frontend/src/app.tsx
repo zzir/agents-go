@@ -34,7 +34,8 @@ import { toast } from '@/lib/toast';
 import { MeContext, useMeLoader } from '@/lib/me';
 import { useNarrow } from '@/lib/hooks';
 import { readHash, writeHash, consumeAuthFragment, restoreReturnHash } from '@/lib/route';
-import { isTooLarge } from '@/lib/messageSize';
+import { frameTooLarge } from '@/lib/messageSize';
+import { installExternalLinkOpener } from '@/lib/externalLinks';
 
 // The one settings hub (invariant 61). The person's own first (account,
 // host-wide settings), then what a run is built from, each section below the
@@ -69,6 +70,10 @@ const ADMIN_TABS: DialogTab[] = [
 ];
 
 const DEFAULT_SS = defaultSS();
+
+// The width of a session id, for sizing a message's frame before the
+// conversation it starts exists.
+const PLACEHOLDER_SESSION_ID = '00000000-0000-0000-0000-000000000000';
 
 // Monotonic client-side id stamped on each optimistic user bubble. It lets the
 // socket layer roll back a specific un-sent message (on session_busy or a
@@ -254,6 +259,9 @@ function App() {
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
+
+  // A link in rendered markdown opens elsewhere; the page stays.
+  useEffect(() => installExternalLinkOpener(), []);
 
   useEffect(() => {
     // A logout is a definitive "not authenticated" — clear any lingering
@@ -463,9 +471,17 @@ function App() {
       toast.info(planOff ? '/plan off takes the message to run: /plan off <what to do>' : '/plan takes the message to plan for: /plan <what to do>');
       return;
     }
+    // The phase travels WITH the message: only a /plan message says anything,
+    // and an absent `plan` leaves the session's phase alone — an approved plan
+    // is what unlocks it again.
+    const payload: Record<string, unknown> = { session_id: activeSession || PLACEHOLDER_SESSION_ID, input: text, agent_config_id: agentConfigId };
+    if (attachments?.length) payload.attachment_ids = attachments.map(a => a.id);
+    if (planned) payload.plan = true;
+    if (planOff) payload.plan = false;
+    if (projectId) payload.project_id = projectId;
     // Over the server's frame limit the socket would be closed (1009), with
-    // no run.error to say why.
-    if (isTooLarge(text)) {
+    // no run.error to say why — measured before a conversation is made for it.
+    if (frameTooLarge(EV.runCreate, payload)) {
       toast.error('Message is too large');
       return;
     }
@@ -488,16 +504,9 @@ function App() {
         return;
       }
     }
+    payload.session_id = sid;
     const clientMsgId = nextClientMsgId();
     updateSS(sid, s => ({ ...s, messages: [...s.messages, { role: 'user', content: text, clientMsgId, attachments }], ...(isNew ? { loaded: true } : {}) }));
-    // The phase travels WITH the message: only a /plan message says anything,
-    // and an absent `plan` leaves the session's phase alone — an approved plan
-    // is what unlocks it again.
-    const payload: Record<string, unknown> = { session_id: sid, input: text, agent_config_id: agentConfigId };
-    if (attachments?.length) payload.attachment_ids = attachments.map(a => a.id);
-    if (planned) payload.plan = true;
-    if (planOff) payload.plan = false;
-    if (projectId) payload.project_id = projectId;
     if (!wsRef.current.send(EV.runCreate, payload)) {
       // The socket dropped between the isConnected() check and the send: roll
       // back the optimistic bubble so it isn't left stranded with no run.

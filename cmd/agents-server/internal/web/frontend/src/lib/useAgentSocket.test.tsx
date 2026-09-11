@@ -242,6 +242,18 @@ describe('useAgentSocket run events', () => {
     await t.unmount();
   });
 
+  it('a deleted conversation takes no writes until it is loaded again', async () => {
+    const t = await mount(() => S1);
+    await act(async () => { t.hook().deleteSession(S1); });
+    await act(async () => { t.sock().receive(EV.runStarted, { session_id: S1, run_id: RUN, input: 'late' }); });
+    expect(t.store[S1]).toBeUndefined();
+    // Transferred back: the select loads it, and its runs render again.
+    await act(async () => { await t.hook().loadSession(S1); });
+    await act(async () => { t.sock().receive(EV.runStarted, { session_id: S1, run_id: 'run-2', input: 'again' }); });
+    expect(t.store[S1].running).toBe(true);
+    await t.unmount();
+  });
+
   it('session_busy rolls back the newest unsent bubble and leaves the rest', async () => {
     const t = await mount(() => S1);
     const updateSS = (fn: (s: SessionState) => SessionState) => { t.store[S1] = fn(t.store[S1] || defaultSS()); };

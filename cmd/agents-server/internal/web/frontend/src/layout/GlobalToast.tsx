@@ -16,8 +16,8 @@ const FLASH_ICON: Record<string, React.ReactNode> = {
 // A queue, not one slot: three errors during a long run stack up instead of
 // each overwriting the last. Errors linger (10s) so they can be read, then
 // auto-dismiss; a click, their close button, or Escape (the newest first) takes
-// one sooner. The stack div always exists so the live region is established
-// before the first announcement.
+// one sooner. Each item is its own live region; the stack is none, or a
+// reader would announce every toast twice.
 export function GlobalToast() {
   const [items, setItems] = useState<Array<{ id: number; msg: string; type: string; exiting?: boolean }>>([]);
   const seqRef = useRef(0);
@@ -67,12 +67,12 @@ export function GlobalToast() {
   }, [dismiss]);
 
   return (
-    <div className="global-toast-stack" role="status" aria-live="polite">
+    <div className="global-toast-stack">
       {items.map(it => (
         <Flash
           key={it.id}
           variant={FLASH_VARIANT[it.type] || 'default'}
-          role={it.type === 'error' ? 'alert' : undefined}
+          role={it.type === 'error' ? 'alert' : 'status'}
           className={'global-toast' + (it.exiting ? ' global-toast-exit' : '')}
           onClick={() => dismiss(it.id)}
         >
