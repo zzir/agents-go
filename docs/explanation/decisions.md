@@ -1537,3 +1537,28 @@ text — a second home that drifts.
 system prompt at all; the switch's caption says so.
 
 Rules: [invariant 67](workbench-invariants.md).
+
+### 5.67 A retired instance whose container a successor adopted detaches
+
+Decided 2026-09-11 (workbench invariant 27).
+
+**Decision.** A content change bumps the project's runtime generation, but the
+docker adoption fingerprint (§5.19) covers only what a container IS — image,
+runtime, user, network, limits, environment. A change outside it (a read cap,
+an SSH setting) has the successor generation adopt the SAME running container.
+So when a retired instance's last holder releases while a successor of the
+project occupies the cache, it releases only its connection
+(`sandbox.Detacher`), stopping and removing nothing; a deferred user Stop that
+new work overtook is superseded the same way. Without a successor it closes as
+before.
+
+**Rejected.** Widening the fingerprint to the whole content — every unrelated
+edit would replace the container and discard what was installed into it.
+Stopping anyway — the successor's commands and shells die mid-flight and its
+next call cold-starts the container it was already using.
+
+**Cost accepted.** A successor that replaced rather than adopted sees the old
+handle go stale harmlessly. Once a successor exists, only its own idle timer or
+stop ends the container.
+
+Rules: workbench invariant 27; [spec §2.7p](../reference/spec.md#27p-stop-keeps-the-filesystem-and-promises-nothing-else).

@@ -104,3 +104,35 @@ func TestDockerSandbox_NetworkIsolated(t *testing.T) {
 		t.Error("expected network access to be blocked")
 	}
 }
+
+// Two Sandboxes on one named container: the second adopts the first's; the
+// first's Detach leaves it running for the second, where Close would stop it.
+func TestDockerSandbox_DetachHandsTheContainerOver(t *testing.T) {
+	ctx := context.Background()
+	opts := Options{Image: "python:3.12-slim", Persistent: true, KeepOnClose: true, ContainerName: "agents-detach-" + newExecMarker()[:8]}
+	first, err := New(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = RemoveManaged(ctx, opts, opts.ContainerName) })
+	if _, err := first.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"true"}}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := New(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	if _, err := second.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"true"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Detach(); err != nil {
+		t.Fatal(err)
+	}
+	if st, err := second.Status(ctx); err != nil || st != sandbox.StateRunning {
+		t.Fatalf("status after the first's Detach = %v, %v; want running", st, err)
+	}
+	if res, err := second.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"echo", "still here"}}); err != nil || !strings.Contains(res.Stdout, "still here") {
+		t.Fatalf("exec after the hand-over = %+v, %v", res, err)
+	}
+}

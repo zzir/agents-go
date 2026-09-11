@@ -172,7 +172,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     project ⇒ no sandbox tools at all. Instances are cached per `(project,
     runtime generation)` — the one fence, bumped by any content change — and
     reference-counted (`SandboxManager.Acquire`): an eviction closes an idle
-    instance and only dooms a held one. A project delete destroys its volume
+    instance and only dooms a held one, and a doomed instance whose project a
+    successor already occupies detaches on its last release — the container is
+    the successor's now (decisions §5.67). A project delete destroys its volume
     (decisions §5.33); task child sessions inherit the parent's project.
     A container found stopped is restarted in place; remove-and-recreate only
     when the start fails or the container is gone. The expired/gone fence is

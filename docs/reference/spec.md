@@ -1215,6 +1215,9 @@ an activated environment survive between calls.
   `docker`'s `Stop` and `Status` (like `StopManaged`/`RemoveManaged`) verify
   the ownership fingerprint first — a foreign holder of the name is an error —
   and `Stop` then acts on the resolved id, not the name.
+- **`Detacher.Detach` releases the Sandbox's connection and touches neither
+  compute nor files** — the hand-over to another Sandbox that adopted the same
+  container. A backend without it is closed instead.
 
 ### 2.7q A sandbox makes its working directory
 

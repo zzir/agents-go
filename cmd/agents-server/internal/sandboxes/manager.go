@@ -81,6 +81,18 @@ func (i *sandboxInstance) close() {
 	})
 }
 
+// detach lets go of the connection only — the compute is a successor's now
+// (decisions §5.67); a backend without Detach closes as usual.
+func (i *sandboxInstance) detach() {
+	i.closeOnce.Do(func() {
+		if d, ok := i.sb.(sandbox.Detacher); ok {
+			_ = d.Detach()
+		} else if i.sb != nil {
+			_ = i.sb.Close()
+		}
+	})
+}
+
 // stop pauses the compute (Lifecycle.Stop) before releasing the connection:
 // for e2b that pause is the only thing that ends the billed sandbox.
 func (i *sandboxInstance) stop() {
@@ -270,19 +282,16 @@ func (m *Manager) release(inst *sandboxInstance) {
 	m.mu.Lock()
 	inst.refs--
 	dead := inst.doomed && inst.refs <= 0
-	stopIntent := inst.stopOnRelease
+	// New work occupies the project: the compute is its now, so this instance
+	// only lets go and a deferred Stop is superseded — see decisions §5.67.
+	superseded := dead && m.projectCachedLocked(inst.key.projectID)
+	stopIntent := inst.stopOnRelease && !superseded
 	if dead && stopIntent {
-		if m.projectCachedLocked(inst.key.projectID) {
-			// New work acquired the project after the deferred Stop: the stale
-			// stop is superseded; only this connection closes.
-			stopIntent = false
-		} else {
-			// Fence the pause like the idle expiry: reclaim the key as an
-			// expired placeholder so a racing Acquire waits the stop out.
-			inst.expired = true
-			inst.gone = make(chan struct{})
-			m.instances[inst.key] = inst
-		}
+		// Fence the pause like the idle expiry: reclaim the key as an
+		// expired placeholder so a racing Acquire waits the stop out.
+		inst.expired = true
+		inst.gone = make(chan struct{})
+		m.instances[inst.key] = inst
 	}
 	if !dead && inst.refs <= 0 && !m.closed && idle > 0 {
 		if inst.idle != nil {
@@ -291,12 +300,16 @@ func (m *Manager) release(inst *sandboxInstance) {
 		inst.idle = time.AfterFunc(idle, func() { m.idleExpire(inst) })
 	}
 	m.mu.Unlock()
-	if dead {
-		if stopIntent {
-			m.stopFenced(inst)
-		} else {
-			inst.close()
-		}
+	if !dead {
+		return
+	}
+	switch {
+	case stopIntent:
+		m.stopFenced(inst)
+	case superseded:
+		inst.detach()
+	default:
+		inst.close()
 	}
 }
 
