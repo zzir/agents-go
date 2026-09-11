@@ -18,7 +18,7 @@ import { toast } from '@/lib/toast';
 import { EdgeGraph, END, stepLabel, type Workflow, type WorkflowBudget, type WorkflowStep } from '@/features/workflows/graph';
 import { Disclosure } from '@/components/Disclosure';
 import { TriggersDialog } from '@/features/workflows/TriggersDialog';
-import { NEW_SESSION, SESSIONS_CHANGED, SessionPicker } from '@/features/sessions/SessionPicker';
+import { NEW_SESSION, SessionPicker } from '@/features/sessions/SessionPicker';
 import { projectLabel, type Project, type SandboxLite } from '@/lib/binding';
 import '@/features/chat/workflow.css';
 import './workflow-panel.css';
@@ -273,10 +273,7 @@ function RunDialog({ workflow, sessionId, onClose }: { workflow: Workflow; sessi
         body.project_id = project.id;
       }
       await api.workflows.run(workflow.id, body);
-      if (made) {
-        window.dispatchEvent(new Event(SESSIONS_CHANGED));
-        invalidate('sessions');
-      }
+      if (made) invalidate('sessions');
       toast.success(`Started "${workflow.name}" in the background — the result comes back to the session`);
       onClose();
     } catch (e) {

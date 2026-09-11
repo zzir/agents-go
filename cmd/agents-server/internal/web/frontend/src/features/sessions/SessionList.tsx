@@ -152,7 +152,7 @@ function RenameDialog({ session, onClose, onRenamed }: { session: Session; onClo
 
 export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onRenamed: onRenamedNotify, onNew, reloadKey, runningSessions, awaitingSessions, onOpenHub }: SessionListProps): ReactElement {
   const confirmDialog = useConfirm();
-  const { data: sessions, reload, mutateData } = useApi(() => api.sessions.list() as Promise<Session[]>);
+  const { data: sessions, reload, mutateData } = useApi(() => api.sessions.list() as Promise<Session[]>, [], 'sessions');
 
   useEffect(() => {
     if (reloadKey) reload(); // auto-refresh: does not throw

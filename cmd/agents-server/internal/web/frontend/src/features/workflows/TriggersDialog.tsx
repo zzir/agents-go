@@ -14,7 +14,7 @@ import { Disclosure } from '@/components/Disclosure';
 import { Loading } from '@/components/Loading';
 import { AgentAvatar } from '@/components/AgentAvatar';
 import { AgentPicker } from '@/components/AgentPicker';
-import { NEW_SESSION, SESSIONS_CHANGED, SessionPicker, UnboundHint } from '@/features/sessions/SessionPicker';
+import { NEW_SESSION, SessionPicker, UnboundHint } from '@/features/sessions/SessionPicker';
 import { useServerInfo } from '@/features/settings/serverInfo';
 
 // A trigger starts work without a conversation asking — on a cron schedule,
@@ -275,10 +275,7 @@ export function TriggerForm({ fixedWorkflow, sessionId, initial, timezone, inlin
       const saved = initial
         ? await api.triggers.update(initial.id, { ...initial, ...fields }) as Trigger
         : await api.triggers.create({ ...fields, enabled: true }) as Trigger;
-      if (made) {
-        window.dispatchEvent(new Event(SESSIONS_CHANGED));
-        invalidate('sessions');
-      }
+      if (made) invalidate('sessions');
       onSaved(saved, !initial);
       toast.success(initial ? 'Trigger saved' : 'Trigger added');
     } catch (e) {

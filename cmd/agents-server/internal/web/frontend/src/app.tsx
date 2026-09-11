@@ -25,7 +25,7 @@ import { EV, TASK_KIND_WORKFLOW } from '@/lib/protocol';
 import { hasTaskInStatus } from '@/lib/background';
 import { WorkflowsHub, type HubTab } from '@/features/workflows/WorkflowsHub';
 import { WORKFLOW_COMMAND } from '@/features/chat/SlashMenu';
-import { SESSIONS_CHANGED, SESSION_REMOVED } from '@/features/sessions/SessionPicker';
+import { SESSION_REMOVED } from '@/features/sessions/SessionPicker';
 import { useAgentSocket, defaultSS, type SessionState } from '@/lib/useAgentSocket';
 import { patchToolCall, type ToolCallPatch } from '@/lib/timeline';
 import { syncTaskCard } from '@/lib/streamReducer';
@@ -271,14 +271,6 @@ function App() {
     window.addEventListener('storage', handler);
     return () => window.removeEventListener('storage', handler);
   }, [authed]);
-
-  // A conversation made somewhere other than the sidebar (a picker's "New
-  // session") is a conversation the sidebar must list.
-  useEffect(() => {
-    const handler = () => setSessionReloadKey(k => k + 1);
-    window.addEventListener(SESSIONS_CHANGED, handler);
-    return () => window.removeEventListener(SESSIONS_CHANGED, handler);
-  }, []);
 
   const updateSS = useCallback((sid: string, fn: (s: SessionState) => SessionState) => {
     setSS(prev => {

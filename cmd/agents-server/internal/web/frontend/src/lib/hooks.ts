@@ -232,9 +232,8 @@ interface UseApiResult<T> {
   loading: boolean;
   error: string | null;
   reload: (opts?: { throwOnError?: boolean }) => Promise<void>;
-  // mutateData optimistically updates the cached data without a refetch, so a
-  // mutation can migrate the local view immediately and reconcile in the
-  // background.
+  // mutateData updates the data without a refetch — with a key, for every
+  // consumer of it — so a mutation shows at once and reconciles later.
   mutateData: (fn: (prev: T | null) => T | null) => void;
 }
 
@@ -336,14 +335,13 @@ export function useApi<T>(fetcher: () => Promise<T>, deps: DependencyList = [], 
     // Bump the generation so any in-flight reload's result is discarded — the
     // optimistic update is the source of truth until a newer reload lands.
     genRef.current++;
-    setData(prev => {
-      const next = fn(prev);
-      if (key) {
-        const e = cache.get(key);
-        cache.set(key, { data: next, at: e?.at ?? Date.now(), inflight: e?.inflight ?? null });
-      }
-      return next;
-    });
+    if (!key) { setData(prev => fn(prev)); return; }
+    // Keyed: the cache is the truth, and the notify reaches this consumer
+    // and every other mount of the key alike.
+    const e = cache.get(key);
+    const next = fn((e?.data as T | undefined) ?? null);
+    cache.set(key, { data: next, at: e?.at ?? Date.now(), inflight: e?.inflight ?? null });
+    notify(key, { kind: 'data', data: next });
   }, [key]);
 
   useEffect(() => {

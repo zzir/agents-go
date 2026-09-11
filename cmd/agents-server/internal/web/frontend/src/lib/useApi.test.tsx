@@ -66,6 +66,19 @@ describe('useApi shared cache', () => {
     await b.unmount();
   });
 
+  it('mutateData reaches every consumer of the key and a later mount', async () => {
+    const fetcher = vi.fn(async () => ['a']);
+    const a = await mount('k5', fetcher);
+    const b = await mount('k5', fetcher);
+    await act(async () => { a.last().mutateData(prev => [...(prev || []), 'b']); });
+    expect(a.last().data).toEqual(['a', 'b']);
+    expect(b.last().data).toEqual(['a', 'b']);
+    const c = await mount('k5', fetcher);
+    expect(c.last().data).toEqual(['a', 'b']);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    await a.unmount(); await b.unmount(); await c.unmount();
+  });
+
   it('a failed fetch is not cached: the next mount retries', async () => {
     let fail = true;
     const fetcher = vi.fn(async () => { if (fail) throw new Error('boom'); return ['ok']; });

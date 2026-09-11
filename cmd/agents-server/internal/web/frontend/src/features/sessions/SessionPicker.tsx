@@ -9,10 +9,6 @@ import './sessions.css';
 
 interface SessionRef { id: string; name: string; pinned?: boolean; project_id?: string }
 
-// SESSIONS_CHANGED is raised when a conversation is made outside the sidebar
-// (a trigger's or a Run…'s own, on save), so the sidebar's list refetches —
-// the same one-shot window event the API layer uses for a logout.
-export const SESSIONS_CHANGED = 'sessions:changed';
 // SESSION_REMOVED carries (detail) the id of a conversation this browser can
 // no longer see — deleted or reassigned from the Admin dialog — for the app
 // to drop its state the way the sidebar's own delete does.
