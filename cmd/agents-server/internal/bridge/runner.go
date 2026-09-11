@@ -561,11 +561,11 @@ func (r *Runner) finishResult(res *agents.RunResult, runID, sessionID, agentConf
 }
 
 // StopRunAfterTurn asks the in-flight run to stop gracefully after its current
-// turn (tools + session save) instead of aborting mid-turn. Falls back to a hard
-// cancel when the run has no live stop hook (e.g. between turns).
+// turn (tools + session save) instead of aborting mid-turn. A run with no live
+// stop hook (between turns, or paused for approval) takes CancelRun's path.
 func (r *Runner) StopRunAfterTurn(runID string) {
 	if !r.hub.StopAfterTurn(runID) {
-		r.hub.Cancel(runID)
+		r.CancelRun(runID)
 	}
 }
 

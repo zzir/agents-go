@@ -132,6 +132,17 @@ func TestAbandonPausedApproval(t *testing.T) {
 		t.Fatalf("persisted turn: not_run=%d reason=%q cancelled=%d, want one stopped call and the marker", notRun, reason, cancelled)
 	}
 
+	// A graceful stop has no turn to finish on a paused run: it abandons the same way.
+	sid = newSession()
+	got = pausedRun(t, runner, sid, "paused-4")
+	runner.StopRunAfterTurn("paused-4")
+	if r := cancelledReason(t, got); r != protocol.RunCancelStopped {
+		t.Fatalf("graceful stop on a pause: reason = %q, want stopped", r)
+	}
+	if _, err := approvals.Get(ctx, "paused-4"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("the approval row must be gone after a graceful stop, got %v", err)
+	}
+
 	// A decision that claimed the row first wins: nothing to abandon.
 	sid = newSession()
 	got = pausedRun(t, runner, sid, "paused-3")

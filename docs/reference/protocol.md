@@ -238,8 +238,8 @@ mirror the WebSocket [server→client events](#server--client).
 `POST /runs/:id/cancel` stops a run: `?mode=graceful` lets the current turn
 finish and stops before the next, the default aborts mid-turn — `204` either
 way, `404` for a run the hub no longer holds, and a run paused for approval is
-abandoned ([Approvals](#approvals--apiv1approvals)). The WebSocket's
-`run.cancel` is the same call.
+abandoned by either mode ([Approvals](#approvals--apiv1approvals)). The
+WebSocket's `run.cancel` is the same call.
 
 Start a run and stream it with plain curl (token from server startup):
 
@@ -311,8 +311,10 @@ agent every skill its scope can see, `[]` none. Beyond the shape, a write checks
 `avatar` is a path into the UI's built-in catalog (anything else, an external
 URL included, is `400`); a `resilience.fallback_models` entry is
 `{provider_id, model}` — the provider must exist and be one the agent may
-reference, an `api_key` or an unknown key in an entry is `400` (decisions
-§5.69); an entry stored before `provider_id` reads back with the endpoint it
+reference (re-checked as the row is written, and a fallback entry holds the
+provider like a primary would: its delete, unpublish and transfer are refused
+while the agent stands), an `api_key` or an unknown key in an entry is `400`
+(decisions §5.69); an entry stored before `provider_id` reads back with the endpoint it
 named (`provider_type`, `base_url`, read-only, never its key) and resolves to
 a provider at that endpoint when the run builds; an `error_handlers` entry's
 `final_output` is a string for a plain-text agent or matches `output_schema`

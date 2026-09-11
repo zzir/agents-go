@@ -4,6 +4,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -29,6 +31,9 @@ func (s *AgentConfigStore) Create(ctx context.Context, ac *AgentConfig) error {
 		if err := refProviderScope(pv, ac.Scope, ac.OwnerID); err != nil {
 			return err
 		}
+		if err := checkFallbackRefs(ctx, tx, ac.Resilience.FallbackModels, ac.Scope, ac.OwnerID); err != nil {
+			return err
+		}
 		_, err := tx.NewInsert().Model(ac).Exec(ctx)
 		return err
 	})
@@ -47,7 +52,10 @@ func (s *AgentConfigStore) Update(ctx context.Context, id string, m *AgentConfig
 			}
 			// prepare restored m's scope/owner from prev; check with the
 			// values the row will actually hold.
-			return refProviderScope(pv, m.Scope, m.OwnerID)
+			if err := refProviderScope(pv, m.Scope, m.OwnerID); err != nil {
+				return err
+			}
+			return checkFallbackRefs(ctx, tx, m.Resilience.FallbackModels, m.Scope, m.OwnerID)
 		})
 	})
 	if err != nil {
@@ -139,6 +147,9 @@ func (s *AgentConfigStore) rewriteScopeOrOwner(ctx context.Context, id string, w
 		if err := refProviderScope(pv, scope, owner); err != nil {
 			return err
 		}
+		if err := checkFallbackRefs(ctx, tx, ac.Resilience.FallbackModels, scope, owner); err != nil {
+			return err
+		}
 		res, err := tx.NewUpdate().Model((*AgentConfig)(nil)).
 			Set("scope = ?", scope).
 			Set("owner_id = ?", owner).
@@ -150,4 +161,27 @@ func (s *AgentConfigStore) rewriteScopeOrOwner(ctx context.Context, id string, w
 		}
 		return err
 	})
+}
+
+// checkFallbackRefs re-reads each fallback provider inside the write's
+// transaction: one deleted since validation is ErrProviderRef, one the holder
+// could not see at the scope/owner the row will hold is ErrProviderScope.
+// Entries from before provider_id name an endpoint and are resolved at run time.
+func checkFallbackRefs(ctx context.Context, tx bun.Tx, entries FallbackModels, holderScope, holderOwner string) error {
+	for _, e := range entries {
+		if e.ProviderID == "" {
+			continue
+		}
+		pv := new(Provider)
+		if err := tx.NewSelect().Model(pv).Where("id = ?", e.ProviderID).Scan(ctx); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrProviderRef
+			}
+			return err
+		}
+		if err := refProviderScope(pv, holderScope, holderOwner); err != nil {
+			return err
+		}
+	}
+	return nil
 }

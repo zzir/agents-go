@@ -92,9 +92,13 @@ func (s *ProviderStore) ClearChatGPTToken(ctx context.Context, id string) error 
 	return s.SaveChatGPTToken(ctx, id, "")
 }
 
+// agentReferencesProvider matches an agent that names the provider as its
+// primary or in a resilience.fallback_models entry (the group is JSON text).
+const agentReferencesProvider = `(provider_id = ? OR resilience LIKE '%' || ? || '%')`
+
 // providerUnreferenced is the clause that keeps a delete from stranding a
 // reference: an agent pointing here blocks it.
-const providerUnreferenced = `NOT EXISTS (SELECT 1 FROM agent_configs WHERE provider_id = ?)`
+const providerUnreferenced = `NOT EXISTS (SELECT 1 FROM agent_configs WHERE ` + agentReferencesProvider + `)`
 
 // DeleteIfUnreferenced deletes the provider only while nothing references it,
 // in one atomic statement. It returns how many references blocked the
@@ -103,7 +107,7 @@ func (s *ProviderStore) DeleteIfUnreferenced(ctx context.Context, id, expectOwne
 	res, err := s.db.NewDelete().Model((*Provider)(nil)).
 		Where("id = ?", id).
 		Where("owner_id = ?", expectOwner). // the pair the caller was authorized against
-		Where(providerUnreferenced, id).
+		Where(providerUnreferenced, id, id).
 		Exec(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("deleting provider %s: %w", id, err)
@@ -128,7 +132,7 @@ func (s *ProviderStore) explainRefusal(ctx context.Context, id string) (int, err
 	if !exists {
 		return 0, fmt.Errorf("deleting provider %s: %w", id, ErrNotFound)
 	}
-	agents, err := s.db.NewSelect().Model((*AgentConfig)(nil)).Where("provider_id = ?", id).Count(ctx)
+	agents, err := s.db.NewSelect().Model((*AgentConfig)(nil)).Where(agentReferencesProvider, id, id).Count(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("counting agents on provider %s: %w", id, err)
 	}
@@ -194,7 +198,7 @@ func (s *ProviderStore) DemoteToPrivate(ctx context.Context, id string) (int, er
 // private to owner (RefVisible as a query — decisions §5.29).
 func countStrandedRefs(ctx context.Context, tx bun.Tx, providerID, owner string) (int, error) {
 	return tx.NewSelect().Model((*AgentConfig)(nil)).
-		Where("provider_id = ?", providerID).
+		Where(agentReferencesProvider, providerID, providerID).
 		Where("(scope = ? OR owner_id != ?)", ScopeGlobal, owner).
 		Count(ctx)
 }
