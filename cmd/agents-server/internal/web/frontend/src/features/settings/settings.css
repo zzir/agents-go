@@ -11,3 +11,28 @@
   font-size: var(--base-text-size-xs);
   color: var(--fgColor-muted);
 }
+
+/* The Approve tools checklist: the built-in tools by group, in columns that
+   wrap on a narrow form. */
+.approve-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--base-size-8) var(--base-size-16);
+  margin: var(--base-size-8) 0;
+}
+.approve-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--base-size-4);
+}
+.approve-group-title {
+  font-size: var(--base-text-size-xs);
+  font-weight: var(--base-text-weight-medium);
+  color: var(--fgColor-muted);
+}
+.approve-group code {
+  font-size: var(--base-text-size-xs);
+}
+.form-caption-error {
+  color: var(--fgColor-danger);
+}

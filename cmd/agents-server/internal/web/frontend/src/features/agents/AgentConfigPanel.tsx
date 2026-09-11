@@ -40,7 +40,7 @@ const CONFIG_GROUPS: Record<string, string[]> = {
 // model" — which is what an unset tool_not_found_behavior now means.
 const RETURN_TO_MODEL = new Set(['return_to_model', 'return_error_to_model']);
 
-function flattenConfig(c: Record<string, unknown> | undefined): Record<string, unknown> {
+export function flattenConfig(c: Record<string, unknown> | undefined): Record<string, unknown> {
   if (!c) return {};
   const out: Record<string, unknown> = { ...c };
   for (const [group, keys] of Object.entries(CONFIG_GROUPS)) {
@@ -51,7 +51,7 @@ function flattenConfig(c: Record<string, unknown> | undefined): Record<string, u
   return out;
 }
 
-function nestConfig(flat: Record<string, unknown>): Record<string, unknown> {
+export function nestConfig(flat: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = { ...flat };
   for (const [group, keys] of Object.entries(CONFIG_GROUPS)) {
     const g: Record<string, unknown> = {};
@@ -60,6 +60,41 @@ function nestConfig(flat: Record<string, unknown>): Record<string, unknown> {
   }
   return out;
 }
+
+// The built-in tools an operator gates behind approval, by the group that
+// carries them. MCP tools (server__tool) and anything else go in the JSON.
+export const APPROVABLE_TOOLS: { group: string; tools: string[] }[] = [
+  { group: 'Sandbox', tools: ['exec_command', 'apply_patch', 'write_file', 'read_file', 'list_files'] },
+  { group: 'Subagents', tools: ['spawn_task', 'task_status', 'task_stop', 'task_retry'] },
+  { group: 'Memory', tools: ['memory_write', 'memory_append', 'memory_read', 'memory_search'] },
+  { group: 'History', tools: ['history_search', 'history_read', 'new_context'] },
+  { group: 'Other', tools: ['todo_write', 'read_skill'] },
+];
+
+// parseApproveTools reads the stored list; null is a value the checklist
+// cannot represent (malformed JSON, or not an array of names).
+export function parseApproveTools(raw: string): string[] | null {
+  if (!raw.trim()) return [];
+  try {
+    const v: unknown = JSON.parse(raw);
+    return Array.isArray(v) && v.every(x => typeof x === 'string') ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+// toggleApproveTool adds or removes one name and returns the stored form;
+// an emptied list stores as '' (unset), the way a fresh agent starts.
+export function toggleApproveTool(raw: string, name: string, on: boolean): string {
+  const list = parseApproveTools(raw) ?? [];
+  const next = on ? (list.includes(name) ? list : [...list, name]) : list.filter(t => t !== name);
+  return next.length ? JSON.stringify(next) : '';
+}
+
+const MCP_STATUS_NOTE: Record<string, string> = {
+  connected: 'connected', connecting: 'connecting', authorizing: 'authorizing',
+  needs_auth: 'needs authorization', disconnected: 'not connected', disabled: 'disabled',
+};
 
 interface AgentFormData {
   name: string;
@@ -211,6 +246,10 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
   const set = <K extends keyof AgentFormData>(k: K, v: AgentFormData[K]) => setForm(prev => ({ ...prev, [k]: v }));
   // Summary is the default mode and the only one with a kept window and a summary prompt.
   const summaryMode = !form.compaction_mode || form.compaction_mode === 'summary';
+  const approveList = parseApproveTools(form.approve_tools || '');
+  const approveAll = approveList?.includes('*') ?? false;
+  const approveKnown = new Set(APPROVABLE_TOOLS.flatMap(g => g.tools));
+  const approveOthers = (approveList || []).filter(t => t !== '*' && !approveKnown.has(t));
   // The backend's facts follow the REFERENCED provider: wording from the
   // static table, machine facts (unsupported features) from the server's
   // registry. An agent with no provider runs on the built-in openai default.
@@ -364,21 +403,24 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
         <div className="form-group-title">MCP servers</div>
         <div className="form-checkbox-group">
           {visibleMcp.map(s => {
-            const usable = s.status === 'connected';
+            // A disabled server cannot be picked; one that is picked can
+            // always be dropped, whatever its status.
+            const selected = selectedMcp.includes(s.id);
+            const locked = s.status === 'disabled' && !selected;
             return (
-              <FormControl key={s.id} disabled={!usable}>
-                <Checkbox checked={selectedMcp.includes(s.id)} disabled={!usable} onChange={() => toggleMcp(s.id)} />
+              <FormControl key={s.id} disabled={locked}>
+                <Checkbox checked={selected} disabled={locked} onChange={() => toggleMcp(s.id)} />
                 <FormControl.Label>
                   {s.name}
-                  {usable
-                    ? <span className="form-status-dot form-status-dot--success form-status-dot--inline" />
-                    : <span className="resource-row-sub form-label-note">({s.status === 'disabled' ? 'disabled' : 'not connected'})</span>}
+                  {s.status === 'connected'
+                    ? <span className="form-status-dot form-status-dot--success form-status-dot--inline" role="img" title="connected" aria-label="connected" />
+                    : <span className="resource-row-sub form-label-note">({MCP_STATUS_NOTE[s.status || ''] || 'status unknown'})</span>}
                 </FormControl.Label>
               </FormControl>
             );
           })}
         </div>
-        <div className="FormControl-caption">Select which MCP servers this agent can use — greyed-out servers are disabled or not currently connected</div>
+        <div className="FormControl-caption">Which MCP servers this agent can use. One not connected right now is still selectable — its tools appear once it connects; a disabled one is not.</div>
       </div>}
 
       {visibleSkills.length > 0 && <div className="form-group">
@@ -501,6 +543,36 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
           description="history_search and history_read find turns that compaction folded out of the context." />
       </div>
 
+      {/* The checklist edits the stored JSON list in place; the JSON stays
+          reachable for names the checklist does not know (an MCP tool). */}
+      <div className="form-group">
+        <div className="form-group-title">Approvals</div>
+        <ToggleRow label="Every tool waits for approval" checked={approveAll} onChange={v => set('approve_tools', toggleApproveTool(form.approve_tools || '', '*', v))}
+          description="Each call pauses until you approve it — MCP tools included." />
+        {approveList === null && (
+          <span className="FormControl-caption form-caption-error">Approve tools is not a JSON array of names — fix it under Advanced JSON.</span>
+        )}
+        <div className="approve-grid">
+          {APPROVABLE_TOOLS.map(g => (
+            <div key={g.group} className="approve-group">
+              <div className="approve-group-title">{g.group}</div>
+              {g.tools.map(t => (
+                <FormControl key={t} disabled={approveAll || approveList === null}>
+                  <Checkbox checked={approveAll || !!approveList?.includes(t)} disabled={approveAll || approveList === null}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('approve_tools', toggleApproveTool(form.approve_tools || '', t, e.target.checked))} />
+                  <FormControl.Label><code>{t}</code></FormControl.Label>
+                </FormControl>
+              ))}
+            </div>
+          ))}
+        </div>
+        <div className="FormControl-caption">A checked tool pauses before every call until you approve it; exec_command's card also offers trusting that command, or every command, for the session.</div>
+        <Disclosure variant="plain" label={'Advanced JSON' + (approveOthers.length ? ` (${approveOthers.length} more)` : '')}>
+          <JsonField label="Approve tools (JSON)" value={form.approve_tools || ''} onChange={v => set('approve_tools', v)} placeholder='["*"] or ["exec_command","server__tool"]'
+            caption="The list as stored — where a name the checklist does not know goes, such as an MCP server's tool (server__tool)." />
+        </Disclosure>
+      </div>
+
       <Disclosure variant="plain" className="advanced-toggle" label="Advanced">
         <div className="advanced-section">
           <div className="form-group">
@@ -534,11 +606,6 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
             <JsonField label="Guardrails (JSON)" value={form.guardrails || ''} onChange={v => set('guardrails', v)} placeholder='["content_filter","max_output_length"]' caption="JSON array of guardrail names. Each guardrail carries the stages it inspects, so it is named once." />
             <JsonField label="Output schema (JSON Schema)" value={form.output_schema || ''} onChange={v => set('output_schema', v)} placeholder='{"type":"object","properties":{...},"required":[...]}' caption="Structured output JSON Schema — leave empty for plain text" multiline rows={3} />
             <JsonField label="Error handlers (JSON)" value={form.error_handlers || ''} onChange={v => set('error_handlers', v)} placeholder='{"max_turns":{"final_output":"Ran out of turns — please narrow the request."},"invalid_final_output":{"final_output":{...}}}' caption='Fallback final outputs keyed by error kind (max_turns / model_refusal / invalid_final_output) — the run completes with the fallback instead of failing. Values must be a JSON string for plain-text agents, or match the output schema. Optional per-kind "exclude_from_history": true keeps the fallback out of the conversation.' multiline rows={3} />
-          </div>
-
-          <div className="form-group">
-            <div className="form-group-title">Approvals</div>
-            <JsonField label="Approve tools (HITL)" value={form.approve_tools || ''} onChange={v => set('approve_tools', v)} placeholder='["*"] or ["tool_name1","tool_name2"]' caption='JSON array of tool names requiring human approval before execution. Use ["*"] for all tools.' />
           </div>
 
           <div className="form-group">
