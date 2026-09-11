@@ -94,12 +94,17 @@ func (s *Server) SetTrustedProxies(proxies []string) error {
 const gzipMinLength = 1024
 
 // shouldGzip compresses an API response for a gzip-accepting client, except the
-// replay stream: its events are under the floor and would be held back.
+// two streams (a run's events, the replay): their pieces are under the floor
+// and would be held back until it filled.
 func shouldGzip(c *gin.Context) bool {
-	p := c.Request.URL.Path
-	return strings.Contains(c.GetHeader("Accept-Encoding"), "gzip") &&
-		strings.HasPrefix(p, APIPrefix+"/") &&
-		p != APIPrefix+"/playground/generate"
+	if !strings.Contains(c.GetHeader("Accept-Encoding"), "gzip") || !strings.HasPrefix(c.Request.URL.Path, APIPrefix+"/") {
+		return false
+	}
+	switch c.FullPath() {
+	case APIPrefix + "/runs/:id/events", APIPrefix + "/playground/generate":
+		return false
+	}
+	return true
 }
 
 // New creates a Server with a gin engine configured for release mode, recovery, and request logging.
