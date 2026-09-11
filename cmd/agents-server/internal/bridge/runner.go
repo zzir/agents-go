@@ -392,7 +392,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 		// Bound NOW: a run paused on an approval can outlive the orphan
 		// reaper's grace window, and a bound row is what the reaper leaves alone.
 		if err := r.Deps.Attachments.MarkBound(ctx, spec.attachmentIDs); err != nil {
-			return failTurn(agent.Model, "persist_error", err, "", "")
+			return failTurn(agent.Model, protocol.CodePersistError, err, "", "")
 		}
 	}
 
@@ -445,7 +445,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	if err != nil {
 		// The pause could not be made durable (invariant 37: an approval IS a
 		// row): fail the segment instead, retryable; nothing was announced.
-		return failTurn(agent.Model, "persist_error", err, streamedReasoning, streamedText)
+		return failTurn(agent.Model, protocol.CodePersistError, err, streamedReasoning, streamedText)
 	}
 	return out
 }
@@ -457,7 +457,7 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 		input:           input.Text,
 		attachmentIDs:   input.AttachmentIDs,
 		wakeParentRunID: wakeParentRunID,
-		failCode:        "stream_error",
+		failCode:        protocol.CodeStreamError,
 		fresh:           true,
 		start: func(ctx context.Context, agent *agents.Agent, opts agents.RunOptions) (agents.RunStream, agents.RunControl) {
 			// Empty input means "continue from the branch point" (regenerate):
@@ -514,7 +514,7 @@ func (r *Runner) ResumeRun(runID string, state *agents.RunState, built *BuildRes
 func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents.RunState, built *BuildResult, sessionID, agentConfigID, projectID string) *RunOutcome {
 	return r.execStreamed(ctx, runID, sessionID, agentConfigID, projectID, segmentSpec{
 		input:    session.UserText(state.UserInput),
-		failCode: "resume_error",
+		failCode: protocol.CodeResumeError,
 		built:    built,
 		start: func(ctx context.Context, _ *agents.Agent, opts agents.RunOptions) (agents.RunStream, agents.RunControl) {
 			return agents.ResumeRun(ctx, state, opts)

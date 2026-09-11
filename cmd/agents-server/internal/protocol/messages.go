@@ -78,6 +78,9 @@ const (
 	CodeRunNotFound     = "run_not_found"
 	CodeApprovalFailed  = "approval_failed"
 	CodeConfigError     = "config_error"
+	CodePersistError    = "persist_error"
+	CodeStreamError     = "stream_error"
+	CodeResumeError     = "resume_error"
 )
 
 // NewEnvelope marshals payload and wraps it in an Envelope of the given type.
