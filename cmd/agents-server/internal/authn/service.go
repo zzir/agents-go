@@ -27,9 +27,10 @@ const (
 	ModeOAuth = "oauth"
 )
 
-// errUnauthorized is every authentication failure: wrong, expired, and revoked
-// are indistinguishable to the caller on purpose.
-var errUnauthorized = errors.New("unauthorized")
+// ErrUnauthorized is Authenticate's answer to a wrong, expired or revoked
+// credential — indistinguishable on purpose; any other error means the store
+// could not say.
+var ErrUnauthorized = server.ErrUnauthorized
 
 // Service resolves bearer credentials and (in OAuth mode) runs login flows.
 type Service struct {
@@ -136,21 +137,21 @@ func (s *Service) ConfigView() protocol.AuthConfig {
 	return protocol.AuthConfig{Mode: s.mode, Providers: s.providerNames}
 }
 
-// Authenticate resolves a presented bearer to its user, or errUnauthorized.
+// Authenticate resolves a presented bearer to its user, or ErrUnauthorized.
 func (s *Service) Authenticate(ctx context.Context, bearer string) (protocol.UserInfo, error) {
 	if bearer == "" {
-		return protocol.UserInfo{}, errUnauthorized
+		return protocol.UserInfo{}, ErrUnauthorized
 	}
 	if s.mode == ModeToken {
 		if s.staticToken == "" || subtle.ConstantTimeCompare([]byte(bearer), []byte(s.staticToken)) != 1 {
-			return protocol.UserInfo{}, errUnauthorized
+			return protocol.UserInfo{}, ErrUnauthorized
 		}
 		return s.localUser, nil
 	}
 	u, _, err := s.tokens.Authenticate(ctx, bearer)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return protocol.UserInfo{}, errUnauthorized
+			return protocol.UserInfo{}, ErrUnauthorized
 		}
 		return protocol.UserInfo{}, err
 	}

@@ -439,3 +439,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     `attachments: [{id, url}]` resolved against the current public base, as
     entries and `run.started` do — never a rewritten `image_url`. The panel
     resolves a part through that list (`TracePayload.tsx`).
+71. **A credential the store cannot resolve is not a wrong one.** An
+    `AuthFunc` answers `server.ErrUnauthorized` for a wrong, expired or
+    revoked bearer and any other error when it cannot tell; only the first is
+    `401` and charges the guess budget, the rest is `503 unavailable`
+    uncharged, and an open WebSocket's `Recheck` keeps the connection and
+    asks again on the next frame (`server/auth.go`, `server/ws.go`).

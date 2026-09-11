@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"sync"
@@ -103,12 +104,17 @@ func (c *WSConn) ResumeHeartbeat() {
 // expired, demoted — the connection is closed with a policy-violation frame
 // and false is returned: the client reconnects, and the reconnect's auth
 // frame decides afresh. Called before a frame acts, so a revocation takes
-// effect at the next action rather than at the next reconnect.
+// effect at the next action rather than at the next reconnect. A credential
+// the store cannot resolve is not a revoked one: the connection stays and the
+// next frame asks again.
 func (c *WSConn) Recheck() bool {
 	if c.recheck == nil {
 		return true
 	}
 	u, err := c.recheck(c.ctx)
+	if err != nil && !errors.Is(err, ErrUnauthorized) {
+		return true
+	}
 	if err == nil && u.ID == c.User.ID && u.Role == c.User.Role {
 		return true
 	}
@@ -375,6 +381,11 @@ func HandleWSWithAuth(handler WSHandlerFunc, auth AuthFunc, guard *AuthGuard, co
 		}
 		user, err := auth(c.Request.Context(), frame.Token)
 		if err != nil {
+			if !errors.Is(err, ErrUnauthorized) {
+				logging.Ctx(c.Request.Context()).Error("credential check", "error", err)
+				conn.closeWith(websocket.CloseTryAgainLater, "credential could not be checked")
+				return
+			}
 			guard.Failed(ip)
 			conn.Close()
 			return

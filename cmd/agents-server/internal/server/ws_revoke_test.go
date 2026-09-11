@@ -54,7 +54,7 @@ func TestWSRecheckClosesARevokedConnection(t *testing.T) {
 	var revoked, demoted atomic.Bool
 	auth := func(_ context.Context, bearer string) (protocol.UserInfo, error) {
 		if bearer != "tok" || revoked.Load() {
-			return protocol.UserInfo{}, errors.New("unauthorized")
+			return protocol.UserInfo{}, ErrUnauthorized
 		}
 		role := "admin"
 		if demoted.Load() {
@@ -113,7 +113,7 @@ func TestConnTrackerClosesAUsersConnections(t *testing.T) {
 		case "b":
 			return protocol.UserInfo{ID: "ub"}, nil
 		}
-		return protocol.UserInfo{}, errors.New("unauthorized")
+		return protocol.UserInfo{}, ErrUnauthorized
 	}
 	tracker := NewConnTracker()
 	engine := gin.New()
@@ -145,4 +145,71 @@ func TestConnTrackerClosesAUsersConnections(t *testing.T) {
 func isTimeout(err error) bool {
 	var ne interface{ Timeout() bool }
 	return errors.As(err, &ne) && ne.Timeout()
+}
+
+// A credential the store cannot resolve is not a revoked one: a frame under
+// an outage still acts and the connection stays up (the next frame asks
+// again), while a NEW connection during the outage is closed with 1013 rather
+// than treated as a bad guess.
+func TestWSRecheckKeepsAConnectionTheStoreCannotResolve(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var down atomic.Bool
+	auth := func(_ context.Context, bearer string) (protocol.UserInfo, error) {
+		if down.Load() {
+			return protocol.UserInfo{}, errors.New("sql: database is closed")
+		}
+		if bearer != "tok" {
+			return protocol.UserInfo{}, ErrUnauthorized
+		}
+		return protocol.UserInfo{ID: "u1", Role: "admin"}, nil
+	}
+	acted := make(chan struct{}, 8)
+	guard := NewAuthGuard()
+	engine := gin.New()
+	engine.GET("/ws", HandleWSWithAuth(func(conn *WSConn) {
+		for {
+			var frame map[string]string
+			if err := conn.ReadJSON(&frame); err != nil {
+				return
+			}
+			if !conn.Recheck() {
+				return
+			}
+			acted <- struct{}{}
+		}
+	}, auth, guard, nil))
+	srv := httptest.NewServer(engine)
+	defer srv.Close()
+
+	conn := dialAuthed(t, srv, "tok")
+	down.Store(true)
+	_ = conn.WriteJSON(map[string]string{"type": "ping"})
+	select {
+	case <-acted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a frame during the outage must act on the open connection")
+	}
+
+	fresh, resp, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http")+"/ws", nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	resp.Body.Close()
+	defer fresh.Close()
+	_ = fresh.WriteJSON(map[string]string{"type": "auth", "token": "tok"})
+	_ = fresh.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if _, _, err := fresh.ReadMessage(); !websocket.IsCloseError(err, websocket.CloseTryAgainLater) {
+		t.Fatalf("new connection during the outage: want a 1013 close, got %v", err)
+	}
+	if guard.Exhausted("127.0.0.1") {
+		t.Fatal("the outage charged the guess budget")
+	}
+
+	down.Store(false)
+	_ = conn.WriteJSON(map[string]string{"type": "ping"})
+	select {
+	case <-acted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the connection must still act once the store answers again")
+	}
 }

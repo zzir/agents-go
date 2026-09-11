@@ -293,7 +293,7 @@ func TestTerminalWS_ProjectOwnership(t *testing.T) {
 	th := NewTerminalHandler(store.NewSandboxStore(db), projects, provider, settings.NewReader(nil))
 	asMember := func(_ context.Context, bearer string) (protocol.UserInfo, error) {
 		if bearer != testWSToken {
-			return protocol.UserInfo{}, errors.New("unauthorized")
+			return protocol.UserInfo{}, server.ErrUnauthorized
 		}
 		return member, nil
 	}

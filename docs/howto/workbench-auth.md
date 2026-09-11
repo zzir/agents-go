@@ -26,6 +26,10 @@ document. What a schema cannot say about them:
   enabled admin; disabling also revokes every token the account holds.
 - `GET /auth/user-labels` is readable by every member (it is what labels row
   owners); roles and account state are admin-only.
+- A credential the database cannot resolve (an outage) answers `503
+  unavailable`, never `401`: the token stays valid, the per-IP guess budget is
+  not charged, and open WebSockets stay up
+  ([invariant 71](../explanation/workbench-invariants.md)).
 
 ### OAuth mode
 

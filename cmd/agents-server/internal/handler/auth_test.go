@@ -422,3 +422,40 @@ func TestGuessBudgetKeyedByClientIP(t *testing.T) {
 		t.Fatalf("behind a trusted proxy a different forwarded client = %d, want 401 (own budget)", got)
 	}
 }
+
+// The database the credential check reads is down: 503 `unavailable`, not
+// 401 — the SPA signs out on 401, and nobody's credential is wrong here.
+func TestUnreachableStoreIs503NotUnauthorized(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	users, tokens := store.NewUserStore(db), store.NewAuthTokenStore(db)
+	u, err := users.ResolveOAuthLogin(ctx, store.OAuthIdentity{Provider: "google", Subject: "s1", Email: "a@example.com", Name: "A"}, "")
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	secret, _, err := tokens.Mint(ctx, u.ID, store.TokenKindSession, "", time.Time{})
+	if err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+	engine := authEngine(t, authn.NewOAuth(authn.OAuthConfig{Users: users, Tokens: tokens}), tokens)
+	me := func(bearer string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+		r.Header.Set("Authorization", "Bearer "+bearer)
+		rec := httptest.NewRecorder()
+		engine.ServeHTTP(rec, r)
+		return rec
+	}
+	if rec := me(secret); rec.Code != http.StatusOK {
+		t.Fatalf("me = %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := me("nope"); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("me with a wrong token = %d, want 401", rec.Code)
+	}
+	_ = db.Close()
+	for _, bearer := range []string{secret, "nope"} {
+		rec := me(bearer)
+		if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), `"code":"unavailable"`) {
+			t.Fatalf("me with the store down = %d %s, want 503 unavailable", rec.Code, rec.Body.String())
+		}
+	}
+}

@@ -1,14 +1,19 @@
 package server
 
 import (
+	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 )
 
 // Every exempt path must name a route this router actually serves. An
@@ -86,5 +91,50 @@ func TestErrorEnvelopeMatchesTheSharedShape(t *testing.T) {
 				t.Errorf("body = %s, want %s", got, tc.body)
 			}
 		})
+	}
+}
+
+// A credential the store cannot resolve is refused 503 `unavailable`, not
+// 401: the caller keeps its token and the guess budget is not charged, so an
+// outage cannot sign an office out or lock its NAT address. A wrong
+// credential is still 401 and, repeated, still exhausts the budget.
+func TestUnresolvableCredentialIs503AndUncharged(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var down atomic.Bool
+	auth := func(ctx context.Context, bearer string) (protocol.UserInfo, error) {
+		if down.Load() {
+			return protocol.UserInfo{}, errors.New("sql: database is closed")
+		}
+		return staticAuth("tok")(ctx, bearer)
+	}
+	s := New(slog.New(slog.DiscardHandler), auth, nil)
+	s.Engine.GET(APIPrefix+"/ping", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
+	do := func(token string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodGet, APIPrefix+"/ping", nil)
+		r.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		s.Engine.ServeHTTP(w, r)
+		return w
+	}
+
+	down.Store(true)
+	const want = `{"error":{"code":"unavailable","message":"credential could not be checked; retry"}}`
+	for range authRateBurst + 5 {
+		if w := do("tok"); w.Code != http.StatusServiceUnavailable || strings.TrimSpace(w.Body.String()) != want {
+			t.Fatalf("during the outage = %d %s, want 503 %s", w.Code, w.Body.String(), want)
+		}
+	}
+	down.Store(false)
+	if w := do("tok"); w.Code != http.StatusOK {
+		t.Fatalf("after the outage = %d, want 200: the outage charged the guess budget", w.Code)
+	}
+
+	for range authRateBurst {
+		if w := do("nope"); w.Code != http.StatusUnauthorized {
+			t.Fatalf("wrong credential = %d, want 401", w.Code)
+		}
+	}
+	if w := do("nope"); w.Code != http.StatusTooManyRequests {
+		t.Fatalf("wrong credential past the budget = %d, want 429", w.Code)
 	}
 }

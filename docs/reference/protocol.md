@@ -46,7 +46,7 @@ stable machine-readable identifier, `message` human-readable detail.
 | `conflict`     | 409  | Resource is in the wrong state for the request                                |
 | `upstream`     | 502  | A failing upstream dependency (model provider, MCP server, sandbox host, git) |
 | `internal`     | 500  | Unexpected server error (detail is logged, not returned)                      |
-| `unavailable`  | 503  | Transient refusal while the server drains for shutdown — retry later          |
+| `unavailable`  | 503  | Transient refusal: the server drains for shutdown, or the credential could not be checked against the store — retry later |
 | `rate_limited` | 429  | This client IP exceeded an endpoint's rate budget — slow down and retry       |
 
 ### Response conventions
