@@ -680,17 +680,18 @@ function App() {
     return loadSpanPayload(activeSession, spanSessionId, runId, spanId);
   }, [activeSession, loadSpanPayload]);
 
-  // One object of callbacks that change only on a session switch: the memo'd
-  // view compares it by reference, so a streaming frame never rebuilds it.
   // The tab is a string or nothing: a menu's onSelect hands over an event,
   // which must not become a tab name. Reads narrow through a ref so the
-  // callback keeps its identity and chatActions rebuilds only on a session switch.
+  // callback keeps its identity.
   const handleOpenSettings = useCallback((tab?: string) => {
     setSettingsTab(typeof tab === 'string' ? tab : undefined);
     setSettingsOpen(true);
     if (narrowRef.current) setSidebarOpen(false);
   }, []);
 
+  // One object of callbacks, rebuilt when one of them is (a session switch,
+  // a change of the session meta) and never per streaming frame: the memo'd
+  // view compares it by reference.
   const chatActions = useMemo<ChatViewActions>(() => ({
     onSend: handleSend, onCancel: handleCancel, onApprove: handleApprove, onReject: handleReject, onFork: handleFork,
     onLoadEarlier: handleLoadEarlier, onSwitchBranch: handleSwitchBranch, onCompact: handleCompact, onRegenerate: handleRegenerate,

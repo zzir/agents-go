@@ -512,17 +512,9 @@ export function useScrollToBottom(dep: unknown, resetDep: unknown): ScrollAnchor
     }
   }, []);
 
-  // Timestamps of the last "stop following" intents. Both veto re-sticking
-  // only while recent (350ms) — a standing state would deadlock against the
-  // pin-to-bottom writes, a one-shot would lose to their trailing scroll
-  // events, so recency is the discriminator.
-  //  - lastSelChange: an actively changing selection (mid-drag). A static
-  //    leftover selection must NOT veto — it survives the follow (morphdom
-  //    keeps its nodes alive), and scrolling back down means "follow again".
-  //  - lastUpIntent: an upward wheel/drag. While pinned, each delta rewrites
-  //    scrollTop, so upward wheel motion barely moves the position and the
-  //    dist<80 threshold takes several fighting frames to cross — the intent
-  //    must win instantly, not by out-scrolling the pin.
+  // When the person last stopped following (a changing selection, an upward
+  // wheel or drag); each vetoes re-sticking only while recent (350ms) —
+  // invariant 18.
   const lastSelChange = useRef(0);
   const lastUpIntent = useRef(0);
   const selectionInside = useCallback(() => {

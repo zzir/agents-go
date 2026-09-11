@@ -901,13 +901,6 @@ textarea.textarea-grow.textarea-rows-4 {
     margin-top: var(--base-size-4);
 }
 
-/* Legacy hairline — kept for one-off separators */
-.divider {
-    height: 1px;
-    background: var(--borderColor-muted);
-    margin: var(--base-size-16) 0;
-}
-
 /* Cards — visual treatment borrowed from Primer React Card component */
 .Box {
     background-color: var(--bgColor-default);
