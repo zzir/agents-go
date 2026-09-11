@@ -50,8 +50,9 @@ let savedRAF: unknown;
 beforeAll(() => {
   savedActEnv = g.IS_REACT_ACT_ENVIRONMENT; g.IS_REACT_ACT_ENVIRONMENT = true;
   savedWS = g.WebSocket; g.WebSocket = FakeSocket;
-  // Delta frames flush synchronously: the assertions read state right after an event.
-  savedRAF = g.requestAnimationFrame; g.requestAnimationFrame = (cb: FrameRequestCallback) => { cb(0); return 1; };
+  // Delta frames flush synchronously, so an assertion reads state right after
+  // an event; the id is 0 so the hook never thinks a frame is still pending.
+  savedRAF = g.requestAnimationFrame; g.requestAnimationFrame = (cb: FrameRequestCallback) => { cb(0); return 0; };
 });
 afterAll(() => {
   if (savedActEnv === undefined) delete g.IS_REACT_ACT_ENVIRONMENT; else g.IS_REACT_ACT_ENVIRONMENT = savedActEnv;
@@ -157,6 +158,59 @@ describe('useAgentSocket reconnect', () => {
     // Once repaired, a later visibility flip does nothing.
     await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
     expect(apiMock.sessions.messages).toHaveBeenCalledTimes(2);
+    await t.unmount();
+  });
+});
+
+describe('useAgentSocket replay', () => {
+  it('a gap drops the delta preview and ignores deltas until the next complete item', async () => {
+    const t = await mount(() => S1);
+    await act(async () => {
+      t.sock().receive(EV.runStarted, { session_id: S1, run_id: RUN, input: 'q' });
+      t.sock().receive(EV.runStep, { run_id: RUN, delta: 'Hel' });
+    });
+    expect(t.store[S1].streaming).toBe('Hel');
+    await act(async () => { t.sock().receive(EV.runGap, { run_id: RUN, dropped: 2, last_good: 5 }); });
+    expect(t.sock().sentOf(EV.runSubscribe)).toEqual([{ run_id: RUN, from_seq: 5 }]);
+    expect(t.store[S1].streaming).toBe('');
+    // What the old subscription still pushes, and what the replay re-delivers,
+    // cannot be told apart: neither reaches the preview.
+    await act(async () => {
+      t.sock().receive(EV.runStep, { run_id: RUN, delta: 'lo' });
+      t.sock().receive(EV.runStep, { run_id: RUN, delta: 'lo' });
+    });
+    expect(t.store[S1].streaming).toBe('');
+    await act(async () => {
+      t.sock().receive(EV.runMessage, { run_id: RUN, text: 'Hello', item_id: 'm1' });
+      t.sock().receive(EV.runStep, { run_id: RUN, delta: ' world' });
+    });
+    expect(textParts(t.store[S1])).toEqual(['Hello']);
+    expect(t.store[S1].streaming).toBe(' world');
+    await t.unmount();
+  });
+
+  it('a reconnect drops the live run\'s preview, and the replayed message item ends the mute', async () => {
+    const t = await mount(() => S1);
+    await act(async () => {
+      t.sock().receive(EV.runStarted, { session_id: S1, run_id: RUN, input: 'q' });
+      t.sock().receive(EV.runMessage, { run_id: RUN, text: 'first', item_id: 'm1' });
+      t.sock().receive(EV.runStep, { run_id: RUN, delta: 'sec' });
+    });
+    expect(t.store[S1].streaming).toBe('sec');
+    await t.reconnect();
+    expect(t.store[S1].streaming).toBe('');
+    // The hub replays the run from the start: the first item is a duplicate
+    // (kept once), the deltas after it rebuild the preview.
+    await act(async () => {
+      t.sock().receive(EV.runStarted, { session_id: S1, run_id: RUN, input: 'q' });
+      t.sock().receive(EV.runStep, { run_id: RUN, delta: 'fir' });
+      t.sock().receive(EV.runMessage, { run_id: RUN, text: 'first', item_id: 'm1' });
+      t.sock().receive(EV.runStep, { run_id: RUN, delta: 'sec' });
+      t.sock().receive(EV.runStep, { run_id: RUN, delta: 'ond' });
+    });
+    expect(textParts(t.store[S1])).toEqual(['first']);
+    expect(t.store[S1].streaming).toBe('second');
+    expect(t.store[S1].messages.filter(m => m.role === 'turn')).toHaveLength(1);
     await t.unmount();
   });
 });

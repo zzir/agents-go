@@ -171,6 +171,12 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
   const sessionRunRef = useRef<Record<string, string>>({});
   const streamBufsRef = useRef<Record<string, string>>({});
   const reasoningBufsRef = useRef<Record<string, string>>({});
+  // Runs whose delta preview was dropped for a replay (a gap's resync, a
+  // reconnect): their deltas are ignored until the next complete message or
+  // reasoning item, which the replay re-delivers deduped by id. The envelope
+  // carries no sequence number, so a replayed delta cannot be told from a
+  // fresh one any other way.
+  const mutedRunsRef = useRef<Set<string>>(new Set());
   // Per-run set of completed message/reasoning item ids already folded into the
   // timeline. Hub replays (reconnect) re-deliver those events; deduping by item
   // id — rather than by text — keeps a genuinely repeated identical message from
@@ -427,6 +433,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
       delete reasoningBufsRef.current[runId];
       delete appendedItemsRef.current[runId];
       delete gapResyncRef.current[runId];
+      mutedRunsRef.current.delete(runId);
     }
     delete sessionRunRef.current[deletedId];
     tasks.forgetSession(deletedId);
@@ -457,7 +464,19 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
       delete appendedItemsRef.current[runId];
       delete gapResyncRef.current[runId];
       delete runMapRef.current[runId];
+      mutedRunsRef.current.delete(runId);
       if (sid && sessionRunRef.current[sid] === runId) delete sessionRunRef.current[sid];
+    };
+
+    // resubscribe asks the hub to replay a chat run from `fromSeq` and drops
+    // the run's delta preview until a complete item lands (mutedRunsRef).
+    const resubscribe = (runId: string, fromSeq?: number) => {
+      ws.send(EV.runSubscribe, fromSeq === undefined ? { run_id: runId } : { run_id: runId, from_seq: fromSeq });
+      streamBufsRef.current[runId] = '';
+      reasoningBufsRef.current[runId] = '';
+      mutedRunsRef.current.add(runId);
+      const sid = runMapRef.current[runId];
+      if (sid) updateSS(sid, s => (s.streaming || s.reasoning ? { ...s, streaming: '', reasoning: '' } : s));
     };
 
     ws.on(EV.runStarted, (p: { session_id?: string; run_id: string; input?: string; attachments?: AttachmentMeta[]; parent_session_id?: string; parent_run_id?: string; task_id?: string; kind?: string; tool_call_id?: string; label?: string; attempt?: number; max_attempts?: number }) => {
@@ -495,7 +514,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
     ws.on(EV.runStep, (p: { run_id: string; delta: string }) => {
       if (tasks.step(p)) return;
       const sid = runMapRef.current[p.run_id];
-      if (!sid) return;
+      if (!sid || mutedRunsRef.current.has(p.run_id)) return;
       streamBufsRef.current[p.run_id] = (streamBufsRef.current[p.run_id] || '') + p.delta;
       scheduleFrame('step:' + p.run_id, () => {
         const buf = streamBufsRef.current[p.run_id];
@@ -506,7 +525,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
     ws.on(EV.runReasoning, (p: { run_id: string; delta: string }) => {
       if (tasks.reasoning(p)) return;
       const sid = runMapRef.current[p.run_id];
-      if (!sid) return;
+      if (!sid || mutedRunsRef.current.has(p.run_id)) return;
       reasoningBufsRef.current[p.run_id] = (reasoningBufsRef.current[p.run_id] || '') + p.delta;
       scheduleFrame('reasoning:' + p.run_id, () => {
         const buf = reasoningBufsRef.current[p.run_id];
@@ -522,6 +541,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
       if (tasks.message(p)) return;
       const sid = runMapRef.current[p.run_id];
       if (!sid || !p.text) return;
+      mutedRunsRef.current.delete(p.run_id);
       streamBufsRef.current[p.run_id] = '';
       const seen = appendedItemsRef.current[p.run_id] || (appendedItemsRef.current[p.run_id] = new Set());
       // Hub replays (reconnect / re-subscribe) re-deliver run.message. Dedup by
@@ -544,6 +564,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
       if (tasks.reasoningItem(p)) return;
       const sid = runMapRef.current[p.run_id];
       if (!sid || !p.text) return;
+      mutedRunsRef.current.delete(p.run_id);
       reasoningBufsRef.current[p.run_id] = '';
       const seen = appendedItemsRef.current[p.run_id] || (appendedItemsRef.current[p.run_id] = new Set());
       // Hub replays re-deliver run.reasoning_item. Dedup by item id when present;
@@ -562,12 +583,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
       if (!sid) return;
       const text = p.final_output || streamBufsRef.current[p.run_id] || '';
       const thinking = reasoningBufsRef.current[p.run_id] || '';
-      delete streamBufsRef.current[p.run_id];
-      delete reasoningBufsRef.current[p.run_id];
-      delete appendedItemsRef.current[p.run_id];
-      delete gapResyncRef.current[p.run_id];
-      delete runMapRef.current[p.run_id];
-      delete sessionRunRef.current[sid];
+      dropRunRefs(p.run_id);
       updateSS(sid, s => {
         const msgs = finalizeTurn(s.messages, text, thinking);
         return { ...s, messages: msgs || s.messages, streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null };
@@ -614,15 +630,8 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
       // ago): clear the stale mapping and fall back to persisted history.
       if (p.code === ERR.runNotFound) {
         const staleSid = p.run_id ? runMapRef.current[p.run_id] : undefined;
-        if (p.run_id) {
-          delete runMapRef.current[p.run_id];
-          delete streamBufsRef.current[p.run_id];
-          delete reasoningBufsRef.current[p.run_id];
-          delete appendedItemsRef.current[p.run_id];
-          delete gapResyncRef.current[p.run_id];
-        }
+        if (p.run_id) dropRunRefs(p.run_id);
         if (staleSid) {
-          delete sessionRunRef.current[staleSid];
           updateSS(staleSid, s => ({ ...s, streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null }));
           reloadMessages(staleSid);
         }
@@ -638,11 +647,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
       const rid = p.run_id || '';
       const remaining = streamBufsRef.current[rid] || '';
       const thinking = reasoningBufsRef.current[rid] || '';
-      delete streamBufsRef.current[rid];
-      delete reasoningBufsRef.current[rid];
-      delete appendedItemsRef.current[rid];
-      delete gapResyncRef.current[rid];
-      delete runMapRef.current[rid];
+      dropRunRefs(rid);
       delete sessionRunRef.current[sid];
       // A guardrail block carries the guardrail name + stage so the turn renders
       // a distinct "blocked" card instead of a generic error.
@@ -668,12 +673,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
       if (!sid || !rid) return;
       const remaining = streamBufsRef.current[rid] || '';
       const thinking = reasoningBufsRef.current[rid] || '';
-      delete streamBufsRef.current[rid];
-      delete reasoningBufsRef.current[rid];
-      delete appendedItemsRef.current[rid];
-      delete gapResyncRef.current[rid];
-      delete runMapRef.current[rid];
-      delete sessionRunRef.current[sid];
+      dropRunRefs(rid);
       // The marker shows immediately, mirroring how run.error appends its card
       // optimistically, instead of waiting on the async reload (which the next
       // run's start can also skip).
@@ -753,26 +753,23 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
       if (!sid) return;
       delete streamBufsRef.current[p.run_id];
       delete reasoningBufsRef.current[p.run_id];
+      mutedRunsRef.current.delete(p.run_id);
       updateSS(sid, s => ({
         ...s, streaming: '', reasoning: '', running: false, compacting: false,
         liveRunId: null,
       }));
     });
 
-    // This connection fell behind and the server dropped events for it — for
-    // this connection only; the run is unaffected. The repair is the hub's own
-    // replay ring: re-subscribing from the last good sequence number delivers
-    // the dropped events again (items dedup by id). Chat runs only — the
-    // inspector's live view of a task run keeps no item ids to dedup a replay
-    // by. A range the ring has already evicted is not asked for
-    // (resyncAfterGap) — see invariant 14.
+    // This connection fell behind: re-subscribe from the last good cursor and
+    // the hub replays what it dropped — invariant 14. Chat runs only; a task
+    // run's inspector view keeps no item ids to dedup a replay by.
     ws.on(EV.runGap, (p: { run_id: string; dropped: number; last_good: number }) => {
       if (!runMapRef.current[p.run_id]) return;
       const now = Date.now();
       if (!resyncAfterGap(gapResyncRef.current[p.run_id], p.last_good, now)) return;
       gapResyncRef.current[p.run_id] = { at: now, cursor: p.last_good };
       console.warn(`dropped ${p.dropped} event(s) after seq ${p.last_good}; resyncing from the hub's replay`);
-      ws.send(EV.runSubscribe, { run_id: p.run_id, from_seq: p.last_good });
+      resubscribe(p.run_id, p.last_good);
     });
 
     // Trouble the run survived. It arrives with the terminal event, so it is
@@ -859,7 +856,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
       // The role may have changed while away (a 1008 close is how the server
       // says so): the app refetches who we are.
       window.dispatchEvent(new Event(ME_RELOAD));
-      for (const runId of Object.values(sessionRunRef.current)) ws.send(EV.runSubscribe, { run_id: runId });
+      for (const runId of Object.values(sessionRunRef.current)) resubscribe(runId);
       if (document.visibilityState === 'hidden') { resyncPending = true; return; }
       resyncPending = false;
       resyncSessions();
