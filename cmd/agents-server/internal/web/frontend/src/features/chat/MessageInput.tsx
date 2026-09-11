@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useMemo, type FormEvent, type KeyboardEvent, type ClipboardEvent, type ReactNode } from 'react';
 import { ActionList, ActionMenu, IconButton, Spinner } from '@primer/react';
-import { ImageIcon, PaperAirplaneIcon, PlusIcon, SquareCircleIcon, XIcon, SyncIcon } from '@primer/octicons-react';
+import { ImageIcon, PaperAirplaneIcon, PlusIcon, SquareCircleIcon, TriangleDownIcon, XIcon, SyncIcon } from '@primer/octicons-react';
 import { loadDraft, saveDraft, clearDraft, loadAttachmentDraft, saveAttachmentDraft } from '@/lib/drafts';
 import { onComposerInsert } from '@/lib/composer';
 import { api } from '@/lib/api';
@@ -281,13 +281,34 @@ export function MessageInput({ sessionId, onSend, onCancel, disabled, blocked, r
           <div className="chat-input-toolbar-send">
             <span className="chat-input-divider" />
             {running ? (
-              <IconButton
-                icon={SquareCircleIcon}
-                variant="invisible"
-                aria-label="Stop (Shift-click to finish the current turn first)"
-                onClick={(e) => { e.preventDefault(); onCancel(e.shiftKey); }}
-                style={{ color: 'var(--fgColor-danger)' }}
-              />
+              <>
+                <IconButton
+                  icon={SquareCircleIcon}
+                  variant="invisible"
+                  aria-label="Stop now (Shift-click to finish the current turn first)"
+                  onClick={(e) => { e.preventDefault(); onCancel(e.shiftKey); }}
+                  style={{ color: 'var(--fgColor-danger)' }}
+                />
+                {/* The graceful stop, reachable without a modifier key: a
+                    touch or keyboard user opens the menu beside the button. */}
+                <ActionMenu>
+                  <ActionMenu.Anchor>
+                    <IconButton icon={TriangleDownIcon} size="small" variant="invisible" aria-label="More ways to stop" />
+                  </ActionMenu.Anchor>
+                  <ActionMenu.Overlay>
+                    <ActionList>
+                      <ActionList.Item variant="danger" onSelect={() => onCancel(false)}>
+                        Stop now
+                        <ActionList.Description variant="block">Cancels the run where it is.</ActionList.Description>
+                      </ActionList.Item>
+                      <ActionList.Item onSelect={() => onCancel(true)}>
+                        Finish this turn, then stop
+                        <ActionList.Description variant="block">The current step completes; no further turn starts.</ActionList.Description>
+                      </ActionList.Item>
+                    </ActionList>
+                  </ActionMenu.Overlay>
+                </ActionMenu>
+              </>
             ) : (
               <IconButton
                 icon={PaperAirplaneIcon}

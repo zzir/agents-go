@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { Button, Label } from '@primer/react';
 import { StatusLabel } from '@/lib/status';
 import { ToolsIcon, StackIcon, SyncIcon, CheckIcon, DotFillIcon, CircleIcon } from '@primer/octicons-react';
@@ -234,6 +235,13 @@ export function ToolCallCard({ toolCall, live, onInspectTask, onRetryTask }: Too
 
   const pendingApproval = !!needs_approval && !status;
   const isRunning = !!live && !pendingApproval && !output && status !== 'completed' && status !== 'rejected';
+  // A decision unmounts the buttons; focus moves to the card's header first,
+  // so a keyboard user is not dropped on <body>.
+  const cardRef = useRef<HTMLDivElement>(null);
+  const decide = (send: () => void) => {
+    cardRef.current?.querySelector<HTMLElement>('.disclosure-header')?.focus();
+    send();
+  };
   // A card with live output opens itself: a spinner the user has to click to
   // see through defeats the point of streaming it.
 
@@ -298,6 +306,7 @@ export function ToolCallCard({ toolCall, live, onInspectTask, onRetryTask }: Too
 
   return (
     <Disclosure
+      ref={cardRef}
       icon={ToolsIcon}
       variant="done"
       // A div header: the label nests the inspect/retry buttons of a task
@@ -366,22 +375,22 @@ export function ToolCallCard({ toolCall, live, onInspectTask, onRetryTask }: Too
         <div className="ToolCallCard-approval">
           {tool_name === 'exec_command' ? (
             <>
-              <Button size="small" variant="primary" onClick={() => onApprove && onApprove(tool_call_id, 'once')}>
+              <Button size="small" variant="primary" onClick={() => decide(() => onApprove && onApprove(tool_call_id, 'once'))}>
                 Approve once
               </Button>
-              <Button size="small" onClick={() => onApprove && onApprove(tool_call_id, 'same')}>
+              <Button size="small" onClick={() => decide(() => onApprove && onApprove(tool_call_id, 'same'))}>
                 Trust this command
               </Button>
-              <Button size="small" onClick={() => onApprove && onApprove(tool_call_id, 'all')}>
+              <Button size="small" onClick={() => decide(() => onApprove && onApprove(tool_call_id, 'all'))}>
                 Trust all this session
               </Button>
             </>
           ) : (
-            <Button size="small" variant="primary" onClick={() => onApprove && onApprove(tool_call_id, 'once')}>
+            <Button size="small" variant="primary" onClick={() => decide(() => onApprove && onApprove(tool_call_id, 'once'))}>
               {tool_name === 'submit_plan' ? 'Approve plan' : tool_name === 'save_workflow' ? 'Save workflow' : 'Approve'}
             </Button>
           )}
-          <Button size="small" variant="danger" onClick={() => onReject && onReject(tool_call_id)}>
+          <Button size="small" variant="danger" onClick={() => decide(() => onReject && onReject(tool_call_id))}>
             Reject
           </Button>
         </div>
