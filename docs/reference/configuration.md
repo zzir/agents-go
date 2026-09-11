@@ -71,7 +71,7 @@ An empty value returns a key to its default. Keys by panel group:
 
 | Key | Group | Default | Meaning |
 |---|---|---|---|
-| `proxy_url` | network | — | Route all outbound API/MCP HTTP through this proxy |
+| `proxy_url` | network | — | Route all outbound API/MCP HTTP through this proxy (a `user:pass@` in it is masked on read) |
 | `system_prompt` | prompt | — | Instructions prepended to every agent, unless the agent overrides it (`behavior.override_system_prompt`, [invariant 67](../explanation/workbench-invariants.md)) |
 | `trace_retention_days` | tracing | `30` | Prune trace events older than N days (`0` keeps everything; also checked at startup); a session left with no events loses its stored payloads with them |
 | `trace_payload_retention_days` | tracing | — | Strip the stored payloads (model requests, replies, tool arguments and results) of sessions whose newest trace event is older than N days; the events stay, with timing, usage and errors. Unset or `0` keeps payloads as long as their events |
@@ -90,7 +90,8 @@ An empty value returns a key to its default. Keys by panel group:
 | `s3_public_base_url` | storage | — | Public prefix an object's key is appended to (absolute http(s) URL) |
 | `s3_path_style` | storage | `false` | Path-style addressing (MinIO) instead of virtual-hosted (AWS, R2) |
 
-The seven `storage` keys are written as **one group** through
-`PUT /api/v1/attachments/storage`, never key by key — see
+The seven `storage` keys are **admin-only to read** (a member's
+`GET /settings` leaves them out, `GET /settings/:key` is `403`) and are written
+as **one group** through `PUT /api/v1/attachments/storage`, never key by key — see
 [attachments](../howto/attachments.md#configuring-the-bucket) and
 [invariant 58](../explanation/workbench-invariants.md).

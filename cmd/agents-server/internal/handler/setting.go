@@ -2,9 +2,12 @@ package handler
 
 import (
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
@@ -38,16 +41,55 @@ func settingViewOf(st store.Setting) SettingView {
 		v.Value = maskSecret(v.Value)
 		return v
 	}
-	if settings.IsSecret(st.Key) {
+	switch {
+	case settings.IsSecret(st.Key):
 		v.Value = maskSecret(v.Value)
+	case st.Key == settings.KeyProxyURL:
+		v.Value = maskProxyUserinfo(v.Value)
 	}
 	return v
 }
 
-// List responds with all stored settings, secret values masked.
+// maskProxyUserinfo hides a proxy URL's user:pass — the credential the proxy
+// client sends as Proxy-Authorization (settings/read.go).
+func maskProxyUserinfo(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.User == nil {
+		return raw
+	}
+	u.User = nil // url.Userinfo would percent-encode the mask's asterisks
+	return u.Scheme + "://" + SecretMask + "@" + strings.TrimPrefix(u.String(), u.Scheme+"://")
+}
+
+// keepProxyUserinfo restores prev's user:pass into next when next carries the
+// mask back; a mask with nothing stored behind it is dropped, never stored.
+func keepProxyUserinfo(next, prev string) string {
+	n, err := url.Parse(next)
+	if err != nil || n.User == nil || n.User.Username() != SecretMask {
+		return next
+	}
+	n.User = nil
+	if p, err := url.Parse(prev); err == nil && p.User != nil {
+		n.User = p.User
+	}
+	return n.String()
+}
+
+// storageReadable reports whether the caller may read key: the storage group
+// is the admin's in both directions, as its form is; the rest is everyone's.
+func storageReadable(c *gin.Context, key string) bool {
+	if !settings.IsS3Key(key) {
+		return true
+	}
+	u, _ := server.CurrentUser(c)
+	return u.Role == store.RoleAdmin
+}
+
+// List responds with all stored settings, secret values masked; a member's
+// listing leaves the storage group out.
 //
 //	@Summary		List settings
-//	@Description	Every stored key/value. Secrets are masked; a key the registry no longer defines is flagged `unknown` with its value masked too (whether it was a secret is unknowable), so it can be deleted. The definitions themselves are at /setting-defs.
+//	@Description	Every stored key/value. Secrets are masked, and so is the user:pass of proxy_url; the storage (s3_*) keys are listed for admins only. A key the registry no longer defines is flagged `unknown` with its value masked too (whether it was a secret is unknowable), so it can be deleted. The definitions themselves are at /setting-defs.
 //	@Tags			settings
 //	@Produce		json
 //	@Success		200	{array}		SettingView
@@ -60,26 +102,34 @@ func (h *SettingHandler) List(c *gin.Context) {
 		internalError(c, err)
 		return
 	}
-	out := make([]SettingView, len(stored))
-	for i, st := range stored {
-		out[i] = settingViewOf(st)
+	out := make([]SettingView, 0, len(stored))
+	for _, st := range stored {
+		if storageReadable(c, st.Key) {
+			out = append(out, settingViewOf(st))
+		}
 	}
 	c.JSON(http.StatusOK, out)
 }
 
 // Get responds with the setting identified by the key path parameter, secret
-// values masked.
+// values masked; a storage key is an admin's to read.
 //
-//	@Summary	Get setting
-//	@Tags		settings
-//	@Produce	json
-//	@Param		key	path		string	true	"Setting key"
-//	@Success	200	{object}	SettingView
-//	@Failure	404	{object}	ErrorResponse
-//	@Failure	500	{object}	ErrorResponse
-//	@Security	BearerAuth
-//	@Router		/settings/{key} [get]
+//	@Summary		Get setting
+//	@Description	Secrets are masked, and so is the user:pass of proxy_url; a storage (s3_*) key is 403 for a member.
+//	@Tags			settings
+//	@Produce		json
+//	@Param			key	path		string	true	"Setting key"
+//	@Success		200	{object}	SettingView
+//	@Failure		403	{object}	ErrorResponse
+//	@Failure		404	{object}	ErrorResponse
+//	@Failure		500	{object}	ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/settings/{key} [get]
 func (h *SettingHandler) Get(c *gin.Context) {
+	if !storageReadable(c, c.Param("key")) {
+		requireAdmin(c)
+		return
+	}
 	st, err := h.store.Get(c.Request.Context(), c.Param("key"))
 	if err != nil {
 		storeError(c, err)
@@ -129,6 +179,9 @@ func (h *SettingHandler) Set(c *gin.Context) {
 			if found {
 				req.Value = prev
 			}
+		}
+		if key == settings.KeyProxyURL {
+			req.Value = keepProxyUserinfo(req.Value, prev)
 		}
 		if err := settings.Validate(key, req.Value); err != nil {
 			return "", badRequestError(err.Error())
