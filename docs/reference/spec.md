@@ -1300,6 +1300,9 @@ what a row configures and what a response carries are kept apart.
 - **`Address` is a read**: it never provisions or resumes and changes nothing
   on the client; `ErrNoSandbox` before a sandbox exists and once the service no
   longer has it.
+- **`Status` believes a `paused` record and a 404, and confirms a `running`
+  one through the daemon**: a `/health` the sandbox's gateway answers with a
+  5xx is stopped — see decisions §5.71.
 
 ### 2.8 Nested agent-as-tool attribution
 

@@ -171,6 +171,44 @@ func TestE2BStopStartKeepsTheTree(t *testing.T) {
 	}
 }
 
+// A service whose record says running for a paused sandbox (Bailian) is read
+// through the daemon: Stop then Status is stopped, on the client that stopped
+// it and on a fresh one bound to the id, as the workbench reads it
+// (decisions §5.71).
+func TestE2BStatusConfirmsRunningThroughTheDaemon(t *testing.T) {
+	sb, f := fakeBackedSandbox(t)
+	f.staleState = true
+	if err := sb.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := sb.Status(t.Context()); err != nil || got != sandbox.StateRunning {
+		t.Fatalf("Status after Start = %v, %v; want running", got, err)
+	}
+	if err := sb.Stop(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := sb.Status(t.Context()); err != nil || got != sandbox.StateStopped {
+		t.Fatalf("Status after Stop = %v, %v; want stopped (the record still says running)", got, err)
+	}
+	base, _ := url.Parse(f.URL())
+	fresh, err := e2b.New(e2b.Options{
+		APIURL: f.URL(), Domain: "test", APIKey: "key", TemplateID: "base", SandboxID: f.only().id,
+		HTTPClient: &http.Client{Transport: envdRedirect{to: base, next: http.DefaultTransport}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := fresh.Status(t.Context()); err != nil || got != sandbox.StateStopped {
+		t.Fatalf("Status on a fresh client = %v, %v; want stopped", got, err)
+	}
+	if err := sb.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := fresh.Status(t.Context()); err != nil || got != sandbox.StateRunning {
+		t.Fatalf("Status after Start = %v, %v; want running", got, err)
+	}
+}
+
 // Destroy kills the sandbox; afterwards the client provisions a new one
 // rather than failing every command against a dead id.
 func TestE2BDestroyThenReprovision(t *testing.T) {

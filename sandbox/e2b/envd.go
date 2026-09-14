@@ -75,6 +75,27 @@ func (s *Sandbox) authenticate(req *http.Request) {
 	}
 }
 
+// health asks the daemon whether it answers. Only a 5xx says stopped: it is
+// the gateway of a paused sandbox (502 on E2B, 500 on Bailian).
+func (s *Sandbox) health(ctx context.Context, id string) (sandbox.State, error) {
+	ctx, cancel := withTimeout(ctx, controlCallTimeout)
+	defer cancel()
+	req, err := s.envdRequestAt(ctx, s.envdHost(id), http.MethodGet, "/health", nil)
+	if err != nil {
+		return sandbox.StateAbsent, err
+	}
+	resp, err := s.httpClient().Do(req)
+	if err != nil {
+		return sandbox.StateAbsent, fmt.Errorf("e2b: health of %s: %w", id, err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode >= http.StatusInternalServerError {
+		return sandbox.StateStopped, nil
+	}
+	return sandbox.StateRunning, nil
+}
+
 /* ---------- files ---------- */
 
 // ReadFile fetches a file's bytes over envd's /files endpoint.

@@ -49,11 +49,10 @@ func (s *Sandbox) Stop(ctx context.Context) error {
 }
 
 // Status reports the sandbox's state without provisioning one: an id we have
-// never had, or one the service no longer knows, is absent.
+// never had, or one the service no longer knows, is absent. A record that
+// says running is confirmed through the daemon — see decisions §5.71.
 func (s *Sandbox) Status(ctx context.Context) (sandbox.State, error) {
-	s.mu.Lock()
-	id := s.id
-	s.mu.Unlock()
+	id := s.currentID()
 	if id == "" {
 		return sandbox.StateAbsent, nil
 	}
@@ -67,7 +66,9 @@ func (s *Sandbox) Status(ctx context.Context) (sandbox.State, error) {
 	if info.paused() {
 		return sandbox.StateStopped, nil
 	}
-	return sandbox.StateRunning, nil
+	// The daemon's credential rides on the record; the probe needs it.
+	s.adopt(info)
+	return s.health(ctx, id)
 }
 
 // Destroy kills the sandbox AND the stored state behind it. It is not part of

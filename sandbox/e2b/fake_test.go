@@ -62,6 +62,9 @@ type fakeService struct {
 	// requireHeader, when set, is a header every request on BOTH planes must
 	// carry — a service that authenticates with its own header.
 	requireHeader [2]string
+	// staleState keeps the record at "running" whatever the sandbox is doing —
+	// Bailian's shape; the daemon's /health is then the only truth.
+	staleState bool
 }
 
 type fakeBox struct {
@@ -98,6 +101,8 @@ func (f *fakeService) route(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case strings.HasPrefix(r.URL.Path, "/sandboxes"):
 		f.control(w, r)
+	case r.URL.Path == "/health":
+		f.health(w)
 	case r.URL.Path == "/files":
 		f.files(w, r)
 	case strings.HasPrefix(r.URL.Path, "/process.Process/"),
@@ -186,7 +191,7 @@ func (f *fakeService) infoOfBase(b *fakeBox) map[string]any {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	state := "running"
-	if b.paused {
+	if b.paused && !f.staleState {
 		state = "paused"
 	}
 	return map[string]any{"sandboxID": b.id, "envdAccessToken": b.token, "state": state}
@@ -214,6 +219,22 @@ func (f *fakeService) only() *fakeBox {
 		return b
 	}
 	return nil
+}
+
+/* ---------- envd: /health ---------- */
+
+// health answers the way both services' gateways do: ok while the sandbox
+// runs, a 5xx while it is paused.
+func (f *fakeService) health(w http.ResponseWriter) {
+	box := f.only()
+	f.mu.Lock()
+	paused := box != nil && box.paused
+	f.mu.Unlock()
+	if box == nil || paused {
+		http.Error(w, `{"message":"sandbox not running"}`, http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, map[string]any{"status": "ok"})
 }
 
 /* ---------- envd: /files ---------- */

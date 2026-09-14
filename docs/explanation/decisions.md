@@ -1676,3 +1676,29 @@ page off the table.
 
 Rules: [invariant 53](workbench-invariants.md);
 [protocol.md, Projects](../reference/protocol.md#projects--apiv1projects).
+
+### 5.71 A running record is confirmed through the daemon
+
+Decided 2026-09-14; verified against Bailian.
+
+**Decision.** `Status` trusts a record that says `paused` and a 404, and
+confirms one that says `running` with a GET of the daemon's `/health`: a 5xx
+from the sandbox's gateway (502 on E2B, 500 on Bailian) answers stopped, any
+answer the daemon gives is running, and a transport failure is the error.
+Bailian's record says `running` for a paused sandbox — after its own `pause`
+returned 204, and past the `endAt` it auto-paused at — while the same
+service's `?state=paused` filter and its gateway both tell the truth. The
+probe is E2B's own SDK's definition of "is running".
+
+**Rejected.** Trusting the record — the workbench's menu offered "Stop
+sandbox" on a sandbox it had just stopped. The `?state=` list filter — a scan
+of every sandbox on the account, on a service that drops the metadata a
+filter would narrow it by. `endAt` — an explicit pause leaves it in the
+future. Remembering the pause on the client — the workbench reads through a
+fresh client, and a pause from the console or a timeout is nobody's memory.
+
+**Cost accepted.** One data-plane round trip per status read of a running
+sandbox. A transient 5xx reads as stopped, whose remedy — Start — is a
+`connect` that only extends a running sandbox's lease.
+
+Rules: spec §2.7u.
