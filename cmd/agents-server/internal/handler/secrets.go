@@ -3,6 +3,8 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
+	"maps"
+	"slices"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/providers"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
@@ -131,10 +133,14 @@ func restoreMcpConfig(incoming, prev json.RawMessage) json.RawMessage {
 // credential — the mask-across-destination refusal only applies when it does.
 func storedSandboxSecret(prev json.RawMessage) bool {
 	var cfg struct {
-		SSHPassword string `json:"ssh_password"`
-		APIKey      string `json:"api_key"`
+		SSHPassword string            `json:"ssh_password"`
+		APIKey      string            `json:"api_key"`
+		Headers     map[string]string `json:"headers"`
 	}
-	return json.Unmarshal(prev, &cfg) == nil && (cfg.SSHPassword != "" || cfg.APIKey != "")
+	if json.Unmarshal(prev, &cfg) != nil {
+		return false
+	}
+	return cfg.SSHPassword != "" || cfg.APIKey != "" || slices.ContainsFunc(slices.Collect(maps.Values(cfg.Headers)), func(v string) bool { return v != "" })
 }
 
 // maskAcrossDestination reports whether incoming still carries the mask
@@ -153,10 +159,10 @@ func maskAcrossDestination(incoming, prev json.RawMessage, field string) bool {
 	return is != os
 }
 
-// sanitizeSandboxConfig returns sb shaped for a response: the credential (an
-// SSH password, or a service's API key) masked, the type's supports filled.
+// sanitizeSandboxConfig returns sb shaped for a response: the credentials (an
+// SSH password, a service's API key, the e2b headers) masked, the type's supports filled.
 func sanitizeSandboxConfig(sb store.Sandbox) store.Sandbox {
-	sb.Config = maskJSONFields(sb.Config, false, sandboxSecretFields...)
+	sb.Config = maskJSONFields(sb.Config, true, sandboxSecretFields...)
 	sb.Supports = store.SandboxSupportsFor(sb.Type)
 	return sb
 }
@@ -164,11 +170,11 @@ func sanitizeSandboxConfig(sb store.Sandbox) store.Sandbox {
 // restoreSandboxConfig resolves a masked credential in an incoming sandbox
 // config against the previously stored one.
 func restoreSandboxConfig(incoming, prev json.RawMessage) json.RawMessage {
-	return restoreJSONFields(incoming, prev, false, sandboxSecretFields...)
+	return restoreJSONFields(incoming, prev, true, sandboxSecretFields...)
 }
 
-// sandboxSecretFields are every sandbox type's credential fields — one list,
-// mirroring the store's sealing list.
+// sandboxSecretFields are every sandbox type's credential STRING fields — one
+// list, mirroring the store's sealing list (which adds the e2b headers map).
 var sandboxSecretFields = []string{"ssh_password", "api_key"}
 
 // sanitizeProvider masks a provider's key for API responses and projects the

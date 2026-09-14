@@ -429,12 +429,14 @@ type DockerConfig struct {
 type E2BConfig struct {
 	// APIURL is the control plane base; empty means E2B's own.
 	APIURL string `json:"api_url,omitempty"`
-	// Domain is the suffix a sandbox's public hosts are built from; empty means E2B's own.
+	// Domain is the suffix a sandbox's public hosts are built from; a domain the service returns takes precedence, empty means E2B's own.
 	Domain string `json:"domain,omitempty"`
 	// APIKey authenticates the control plane. Write-only (mask semantics).
 	APIKey string `json:"api_key,omitempty"`
 	// DataPlaneAuth selects the in-sandbox daemon's credential: "" (auto), "access_token", "api_key" or "none".
 	DataPlaneAuth string `json:"data_plane_auth,omitempty"`
+	// Headers are sent with every request to the service and its sandboxes, for one that authenticates with its own header. Values are write-only (mask semantics).
+	Headers map[string]string `json:"headers,omitempty"`
 
 	// TemplateID names a template that already exists on the service.
 	TemplateID string `json:"template_id"`

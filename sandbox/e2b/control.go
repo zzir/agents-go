@@ -227,6 +227,7 @@ func (s *Sandbox) control(ctx context.Context, method, path string, in, out any)
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	s.addHeaders(req)
 	resp, err := s.httpClient().Do(req)
 	if err != nil {
 		return fmt.Errorf("e2b: %s %s: %w", method, path, err)

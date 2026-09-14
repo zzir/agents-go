@@ -55,6 +55,29 @@ func TestSandboxPasswordMasking(t *testing.T) {
 	}
 }
 
+// An e2b sandbox's headers are credentials like its api_key: masked out,
+// resolved back on write, and counted as a stored secret by the destination guard.
+func TestSandboxHeadersMasking(t *testing.T) {
+	cfg := store.Sandbox{
+		Type:   "e2b",
+		Config: json.RawMessage(`{"api_url":"https://x","api_key":"e2b_1","headers":{"Authorization":"Bearer bl-1"},"template_id":"t"}`),
+	}
+	masked := sanitizeSandboxConfig(cfg)
+	if strings.Contains(string(masked.Config), "bl-1") {
+		t.Fatalf("sanitize leaked a header value: %s", masked.Config)
+	}
+	restored := restoreSandboxConfig(masked.Config, cfg.Config)
+	if !strings.Contains(string(restored), "Bearer bl-1") || !strings.Contains(string(restored), "e2b_1") {
+		t.Fatalf("restore did not resolve the secrets: %s", restored)
+	}
+	if !storedSandboxSecret(json.RawMessage(`{"headers":{"Authorization":"Bearer bl-1"}}`)) {
+		t.Fatal("a stored header value does not count as a stored secret")
+	}
+	if storedSandboxSecret(json.RawMessage(`{"headers":{}}`)) {
+		t.Fatal("empty headers count as a stored secret")
+	}
+}
+
 // The credential mask now round-trips on ONE surface: the provider. A masked
 // key means "keep the stored one", which only holds while the destination is
 // unchanged — moving the backend or the endpoint must refuse it.

@@ -770,15 +770,15 @@ Rules: workbench invariant 27; [Projects](../reference/protocol.md#projects--api
 
 ### 5.34 One E2B-compatible backend, written here, not one backend per cloud
 
-Decided 2026-08-28; verified against E2B's cloud and Alibaba Cloud Function
-Compute.
+Decided 2026-08-28; verified against E2B's cloud, Alibaba Cloud Function Compute and Bailian.
 
 **Decision.** Function Compute's cloud sandbox is E2B SDK compatible across
 everything the workbench needs, so the second backend is **one backend that
 speaks the E2B API** and a sandbox row naming the service — `api_url`,
-`domain`, `api_key` — with no `flavor` discriminator: the moment one appears
-that configuration cannot express, it is a new decision, not a switch to
-grow. The client is written here — six REST calls and Connect-over-JSON,
+`domain`, `api_key`, and since 2026-09-14 `headers` (Bailian authenticates
+with a bearer header and ignores the key) — with no `flavor` discriminator: the
+moment one appears that configuration cannot express, it is a new decision,
+not a switch to grow. The client is written here — six REST calls and Connect-over-JSON,
 ~150 lines of standard library — which keeps `sandbox/e2b` in the ROOT module
 (§5.7). The sandbox is remembered, not searched for: its id lands in
 `projects.instance_ref` before the client will use it, and a failure to
@@ -790,8 +790,10 @@ the whole of §5.33's delete, and `auto_pause` defaults to true. Every create
 asks for a per-sandbox token (`secure: true`), because without it E2B's
 daemon takes no credential at all.
 
-**Rejected.** One backend per cloud — the services differ in three fields. A
-community Go SDK, or a protobuf toolchain with generated stubs — two module
+**Rejected.** One backend per cloud — the services differ in four fields. An
+auth-scheme switch (`X-API-Key` vs `Authorization: Bearer`) instead of
+`headers` — Bailian wants both at once, and `headers` is the E2B SDK's own
+parameter. A community Go SDK, or a protobuf toolchain with generated stubs — two module
 dependencies for six messages; generate them if the surface grows past that.
 A metadata query to find a sandbox — a filter syntax the compatible services
 do not document identically. A keepalive goroutine — the extension rides the

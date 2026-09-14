@@ -22,6 +22,9 @@ func TestNormalizeE2BConfig(t *testing.T) {
 		`{"data_plane_auth":"basic","template_id":"base"}`,
 		`{}`, // an e2b sandbox must name a template that exists on the service
 		`{"template_id":"base","timeout_seconds":-1}`,
+		`{"template_id":"base","headers":{"":"v"}}`,
+		`{"template_id":"base","headers":{"Authorization":""}}`,
+		`{"template_id":"base","headers":{"x-api-key":"k"}}`, // the client's own credential header
 	} {
 		if _, err := NormalizeSandboxConfig("e2b", json.RawMessage(bad)); err == nil {
 			t.Errorf("%s was accepted", bad)
@@ -32,6 +35,21 @@ func TestNormalizeE2BConfig(t *testing.T) {
 	}
 	if !strings.Contains(string(got), `"template_id":"base"`) {
 		t.Errorf("canonical form = %s", got)
+	}
+}
+
+// A header edit is a content change — the next run must carry the new
+// credential — while key order and an absent-vs-empty map are not.
+func TestE2BSandboxContentEqualHeaders(t *testing.T) {
+	base := json.RawMessage(`{"template_id":"t","headers":{"A":"1","B":"2"}}`)
+	if !SandboxContentEqual("e2b", base, json.RawMessage(`{"template_id":"t","headers":{"B":"2","A":"1"}}`)) {
+		t.Error("header order counted as a change")
+	}
+	if SandboxContentEqual("e2b", base, json.RawMessage(`{"template_id":"t","headers":{"A":"1","B":"3"}}`)) {
+		t.Error("a changed header value was not a change")
+	}
+	if !SandboxContentEqual("e2b", json.RawMessage(`{"template_id":"t"}`), json.RawMessage(`{"template_id":"t","headers":{}}`)) {
+		t.Error("an empty headers map counted as a change")
 	}
 }
 

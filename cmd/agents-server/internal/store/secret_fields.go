@@ -67,8 +67,8 @@ func openMcpServer(m *McpServerConfig) (err error) {
 }
 
 // sandboxSecretKeys are the credential fields inside a sandbox's config,
-// across every type — one list.
-var sandboxSecretKeys = []string{"ssh_password", "api_key"}
+// across every type — one list; e2b headers carry bearer tokens.
+var sandboxSecretKeys = []string{"ssh_password", "api_key", "headers"}
 
 func sealSandbox(sb *Sandbox) (err error) {
 	sb.Config, err = sealJSONKeys(labelSandboxConfig, sb.Config, sandboxSecretKeys...)

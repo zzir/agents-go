@@ -56,6 +56,9 @@ type fakeService struct {
 	// makeDirHook, when set, runs in the MakeDir handler; a non-empty code
 	// answers the RPC with that error instead of touching the filesystem.
 	makeDirHook func(path string) (code, msg string)
+	// requireHeader, when set, is a header every request on BOTH planes must
+	// carry — a service that authenticates with its own header.
+	requireHeader [2]string
 }
 
 type fakeBox struct {
@@ -85,6 +88,10 @@ func newFakeService(t *testing.T, root string) *fakeService {
 func (f *fakeService) URL() string { return f.srv.URL }
 
 func (f *fakeService) route(w http.ResponseWriter, r *http.Request) {
+	if k := f.requireHeader[0]; k != "" && r.Header.Get(k) != f.requireHeader[1] {
+		http.Error(w, `{"message":"missing `+k+`"}`, http.StatusUnauthorized)
+		return
+	}
 	switch {
 	case strings.HasPrefix(r.URL.Path, "/sandboxes"):
 		f.control(w, r)

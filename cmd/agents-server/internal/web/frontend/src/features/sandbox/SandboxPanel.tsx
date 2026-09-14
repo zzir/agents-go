@@ -10,6 +10,7 @@ import { api } from '@/lib/api';
 import { BADGE } from '@/lib/badges';
 import { useApi, useCrud } from '@/lib/hooks';
 import { fc } from '@/lib/form';
+import { JsonField } from '@/lib/JsonField';
 import { toast } from '@/lib/toast';
 
 // A sandbox is one row: WHERE it runs and WHAT runs on it; a project picks one.
@@ -65,6 +66,7 @@ interface E2BShape {
   domain?: string;
   api_key?: string;
   data_plane_auth?: string;
+  headers?: Record<string, string>;
   template_id?: string;
   user?: string;
   timeout_seconds?: number;
@@ -95,6 +97,7 @@ interface FormState {
   domain: string;
   api_key: string;
   data_plane_auth: string;
+  headers: string; // JSON object text; empty = none
   // e2b: what
   template_id: string;
   timeout_seconds: string;
@@ -121,6 +124,7 @@ export function flatten(s: Partial<SandboxRow>): FormState {
     runtime: c.runtime || '', user: c.user || '', network: c.network || '',
     api_url: c.api_url || '', domain: c.domain || '', api_key: c.api_key || '',
     data_plane_auth: c.data_plane_auth || '',
+    headers: c.headers && Object.keys(c.headers).length > 0 ? JSON.stringify(c.headers) : '',
     template_id: c.template_id || '',
     timeout_seconds: c.timeout_seconds ? String(c.timeout_seconds) : '',
     auto_pause: c.auto_pause ?? true,
@@ -131,6 +135,7 @@ export function flatten(s: Partial<SandboxRow>): FormState {
   };
 }
 
+// Throws on invalid JSON in the Headers field so the caller can block the save.
 export function pack(form: FormState): PackedForm {
   const maxRead = parseInt(form.max_read_file_bytes, 10);
   if (form.type === 'e2b') {
@@ -142,6 +147,14 @@ export function pack(form: FormState): PackedForm {
       auto_pause: form.auto_pause,
       allow_internet: form.allow_internet,
     };
+    const headersRaw = form.headers.trim();
+    if (headersRaw) {
+      let parsed: unknown;
+      try { parsed = JSON.parse(headersRaw); }
+      catch { throw new Error('Headers is not valid JSON — fix or clear it before saving'); }
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Headers must be a JSON object, e.g. {"Authorization": "Bearer <token>"}');
+      if (Object.keys(parsed).length > 0) config.headers = parsed as Record<string, string>;
+    }
     const timeout = parseInt(form.timeout_seconds, 10);
     if (Number.isFinite(timeout) && timeout > 0) config.timeout_seconds = timeout;
     if (Number.isFinite(maxRead) && maxRead > 0) config.max_read_file_bytes = maxRead;
@@ -219,11 +232,12 @@ function SandboxForm({ initial, seed, inUse, onSave, onCancel, onDelete, saving 
       )}
       {form.type === 'e2b' && fc('Sandbox domain',
         <TextInput block value={form.domain} disabled={frozen} onChange={e => set('domain', e.target.value)} placeholder="e2b.app" />,
-        'The suffix a sandbox\'s public hosts are built from: <port>-<sandbox id>.<domain>.' + frozenNote,
+        'The suffix a sandbox\'s public hosts are built from: <port>-<sandbox id>.<domain>. Empty uses the one the service returns, or E2B\'s own.' + frozenNote,
       )}
       {form.type === 'e2b' && fc('API key',
         <SecretInput block value={form.api_key} onChange={e => set('api_key', e.target.value)} placeholder="e2b_…" />,
       )}
+      {form.type === 'e2b' && <JsonField label="Headers (JSON object)" value={form.headers} onChange={v => set('headers', v)} placeholder='{"Authorization": "Bearer <token>"}' caption="Sent with every request to the service and its sandboxes — for one that authenticates with its own header. Values are write-only." />}
       {form.type === 'e2b' && fc('Daemon credential', (
         <Select block value={form.data_plane_auth} onChange={e => set('data_plane_auth', e.target.value)}>
           <Select.Option value="">Automatic</Select.Option>
@@ -283,7 +297,17 @@ function SandboxForm({ initial, seed, inUse, onSave, onCancel, onDelete, saving 
         <TextInput block type="number" value={form.max_read_file_bytes} onChange={e => set('max_read_file_bytes', e.target.value)} placeholder="8388608" />,
         'Cap on bytes a single read_file returns; larger files fail instead of loading into memory. Empty = 8 MiB default.',
       )}
-      <FormActions saving={saving} onSave={() => onSave({ ...pack(form), revision: initial?.revision })} onCancel={onCancel} onDelete={onDelete} />
+      <FormActions
+        saving={saving}
+        onSave={() => {
+          let packed: PackedForm;
+          try { packed = pack(form); }
+          catch (e) { toast.error((e as Error).message); return; }
+          onSave({ ...packed, revision: initial?.revision });
+        }}
+        onCancel={onCancel}
+        onDelete={onDelete}
+      />
     </Stack>
   );
 }
@@ -319,6 +343,7 @@ function copyOf(s: SandboxRow): SandboxRow {
   const config = { ...(s.config || {}) };
   delete config.ssh_password;
   delete config.api_key;
+  delete config.headers;
   return { id: '', name: s.name + ' copy', type: s.type, config, prompt: s.prompt };
 }
 

@@ -611,7 +611,10 @@ round-trips unmasked.
 service speaking the E2B API (decisions §5.34); the workbench builds no
 templates, so `template_id` must already exist there, and every sandbox is
 created `secure` — its daemon requires the per-sandbox token, since the
-sandbox id is in the public hostname of every port it serves. For `docker`,
+sandbox id is in the public hostname of every port it serves. `headers` are
+sent with every request to the service and its sandboxes, for one that
+authenticates with its own header rather than the API key; a name the client
+sets itself (`X-API-Key`, `X-Access-Token`) is refused. For `docker`,
 `host` picks the daemon: empty for this machine's, `ssh://user@host` for a
 remote daemon over pure-Go SSH (sshd with streamlocal forwarding and socket
 access for the SSH user; no remote docker CLI — decisions §5.27),
@@ -757,8 +760,8 @@ Secret fields are **write-only**: GET responses mask them as `********` and
 the plaintext is never sent to a client. On write, the mask keeps the stored
 value, a new value replaces it, `""` clears it — so the UI round-trips whole
 objects without ever seeing a plaintext. Masked fields: provider `api_key`,
-MCP `headers` values and `oauth_client_secret`, the sandbox `ssh_password`
-and e2b `api_key`, a project's environment values, and the settings the
+MCP `headers` values and `oauth_client_secret`, the sandbox `ssh_password`,
+e2b `api_key` and `headers` values, a project's environment values, and the settings the
 registry marks secret. A model-API key crosses exactly one surface — the
 provider; an agent carries none (its fallback entries name providers).
 

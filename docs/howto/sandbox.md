@@ -137,7 +137,12 @@ Optional capabilities are discovered by type assertion — `ExecStreamer`, `Term
 own cloud, a self-hosted one, or a compatible service such as Alibaba Cloud's
 Function Compute cloud sandbox. It needs an `APIKey`, a `TemplateID` that
 already exists on the service, and — for anything but E2B's own cloud — the
-`APIURL` and `Domain` that address it. The remote sandbox is created lazily on
+`APIURL` that addresses it. `Domain` is optional: a `domain` the service's
+create response carries is adopted over it, and it is the fallback for a
+service that returns none. A service that authenticates with its own header
+(a bearer token, say) sets `Headers`, sent with every request on both planes —
+the control plane and the sandbox's daemon — after the credential headers, so
+a same-named entry replaces them. The remote sandbox is created lazily on
 first use, exactly as the docker container is; `OnSandboxID` is how a caller
 remembers which one, so a restart resumes it rather than provisioning a second
 ([decisions §5.34](../explanation/decisions.md)). Any template works, including

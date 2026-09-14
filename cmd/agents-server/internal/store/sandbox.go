@@ -52,10 +52,10 @@ var sandboxKinds = map[string]sandboxKind{
 		supports:     SandboxSupports{Rebuild: true},
 	},
 	"e2b": {
-		contentEqual: func(a, b json.RawMessage) bool { return canonicalEqual(a, b, func(*E2BConfig) {}) },
+		contentEqual: e2bContentEqual,
 		destination:  e2bDestination,
 		identity:     e2bIdentity,
-		frozenFields: "its type, service address, template and lifecycle (auto-pause, internet) are frozen — the api key, timeout, read limit and name stay editable",
+		frozenFields: "its type, service address, template and lifecycle (auto-pause, internet) are frozen — the api key, headers, timeout, read limit and name stay editable",
 		storageWhere: e2bStorageWhere,
 		supports:     SandboxSupports{},
 	},
@@ -134,6 +134,14 @@ func NormalizeSandboxConfig(typ string, raw json.RawMessage) (json.RawMessage, e
 		default:
 			return nil, errors.New(`data_plane_auth must be "", "access_token", "api_key" or "none"`)
 		}
+		for k, v := range ec.Headers {
+			if strings.TrimSpace(k) == "" || v == "" {
+				return nil, errors.New("every header needs a name and a value")
+			}
+			if slices.Contains(reservedE2BHeaders, strings.ToLower(k)) {
+				return nil, fmt.Errorf("header %s is set by the backend itself: api_key and data_plane_auth choose the credential", k)
+			}
+		}
 		if ec.TemplateID == "" {
 			return nil, errors.New("an e2b sandbox requires config.template_id — build it on the service first")
 		}
@@ -150,6 +158,9 @@ func NormalizeSandboxConfig(typ string, raw json.RawMessage) (json.RawMessage, e
 		return nil, fmt.Errorf("sandbox type must be one of %s, got %q", strings.Join(SandboxTypes, ", "), typ)
 	}
 }
+
+// reservedE2BHeaders are the request headers the e2b client sets itself.
+var reservedE2BHeaders = []string{"x-api-key", "x-access-token", "content-type", "connect-protocol-version"}
 
 // SandboxContentEqual reports whether two payloads mean the same runtime
 // CONTENT — the predicate behind contentChanged. Canonical typed comparison
@@ -215,6 +226,20 @@ func e2bDestination(raw json.RawMessage) (string, error) {
 		return "", err
 	}
 	return jsonKey(ec.APIURL, ec.Domain), nil
+}
+
+// e2bContentEqual is canonicalEqual for a config with a map field: the
+// headers compare as a map, the rest through the canonical JSON.
+func e2bContentEqual(a, b json.RawMessage) bool {
+	var va, vb E2BConfig
+	if DecodeConfig(a, &va) != nil || DecodeConfig(b, &vb) != nil {
+		return false
+	}
+	if !maps.Equal(va.Headers, vb.Headers) {
+		return false
+	}
+	va.Headers, vb.Headers = nil, nil
+	return jsonKey(va) == jsonKey(vb)
 }
 
 func e2bIdentity(raw json.RawMessage) (string, error) {
