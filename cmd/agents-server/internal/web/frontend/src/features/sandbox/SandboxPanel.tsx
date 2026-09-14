@@ -11,6 +11,7 @@ import { BADGE } from '@/lib/badges';
 import { useApi, useCrud } from '@/lib/hooks';
 import { fc } from '@/lib/form';
 import { JsonField } from '@/lib/JsonField';
+import { headersToText, parseHeadersText } from '@/lib/headers';
 import { toast } from '@/lib/toast';
 
 // A sandbox is one row: WHERE it runs and WHAT runs on it; a project picks one.
@@ -124,7 +125,7 @@ export function flatten(s: Partial<SandboxRow>): FormState {
     runtime: c.runtime || '', user: c.user || '', network: c.network || '',
     api_url: c.api_url || '', domain: c.domain || '', api_key: c.api_key || '',
     data_plane_auth: c.data_plane_auth || '',
-    headers: c.headers && Object.keys(c.headers).length > 0 ? JSON.stringify(c.headers) : '',
+    headers: headersToText(c.headers),
     template_id: c.template_id || '',
     timeout_seconds: c.timeout_seconds ? String(c.timeout_seconds) : '',
     auto_pause: c.auto_pause ?? true,
@@ -147,14 +148,8 @@ export function pack(form: FormState): PackedForm {
       auto_pause: form.auto_pause,
       allow_internet: form.allow_internet,
     };
-    const headersRaw = form.headers.trim();
-    if (headersRaw) {
-      let parsed: unknown;
-      try { parsed = JSON.parse(headersRaw); }
-      catch { throw new Error('Headers is not valid JSON — fix or clear it before saving'); }
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Headers must be a JSON object, e.g. {"Authorization": "Bearer <token>"}');
-      if (Object.keys(parsed).length > 0) config.headers = parsed as Record<string, string>;
-    }
+    const headers = parseHeadersText(form.headers);
+    if (headers) config.headers = headers;
     const timeout = parseInt(form.timeout_seconds, 10);
     if (Number.isFinite(timeout) && timeout > 0) config.timeout_seconds = timeout;
     if (Number.isFinite(maxRead) && maxRead > 0) config.max_read_file_bytes = maxRead;
@@ -232,7 +227,7 @@ function SandboxForm({ initial, seed, inUse, onSave, onCancel, onDelete, saving 
       )}
       {form.type === 'e2b' && fc('Sandbox domain',
         <TextInput block value={form.domain} disabled={frozen} onChange={e => set('domain', e.target.value)} placeholder="e2b.app" />,
-        'The suffix a sandbox\'s public hosts are built from: <port>-<sandbox id>.<domain>. Empty uses the one the service returns, or E2B\'s own.' + frozenNote,
+        'The suffix a sandbox\'s public hosts are built from: <port>-<sandbox id>.<domain>. Empty uses the one the service returns, or E2B\'s own. Changing it on a saved sandbox means re-entering the API key and headers.' + frozenNote,
       )}
       {form.type === 'e2b' && fc('API key',
         <SecretInput block value={form.api_key} onChange={e => set('api_key', e.target.value)} placeholder="e2b_…" />,

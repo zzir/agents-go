@@ -51,6 +51,9 @@ describe('SandboxPanel flatten / pack', () => {
     const base = flatten({ name: 'n', type: 'e2b', config: { template_id: 't' } });
     expect(() => pack({ ...base, headers: '{not json' })).toThrow(/valid JSON/);
     expect(() => pack({ ...base, headers: '["a"]' })).toThrow(/JSON object/);
+    expect(() => pack({ ...base, headers: '{"X": 1}' })).toThrow(/string value/);
+    expect(() => pack({ ...base, headers: '{"": "v"}' })).toThrow(/name/);
+    expect(() => pack({ ...base, headers: '{"X": ""}' })).toThrow(/value/);
     expect(pack({ ...base, headers: ' {} ' }).config).not.toHaveProperty('headers');
   });
 

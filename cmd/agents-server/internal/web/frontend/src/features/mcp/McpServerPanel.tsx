@@ -16,6 +16,7 @@ import { BADGE } from '@/lib/badges';
 import { useCrud } from '@/lib/hooks';
 import { fc } from '@/lib/form';
 import { JsonField } from '@/lib/JsonField';
+import { headersToText, parseHeadersText } from '@/lib/headers';
 import { toast } from '@/lib/toast';
 import { listEmpty } from '@/features/settings/listEmpty';
 
@@ -80,7 +81,7 @@ function flatten(s: Partial<McpServer>): McpFormData {
   return {
     name: s.name || '', enabled: s.enabled !== false,
     endpoint: c.endpoint || '',
-    headers: c.headers ? JSON.stringify(c.headers) : '',
+    headers: headersToText(c.headers),
     auth_mode: c.auth_mode || '',
     oauth_client_id: c.oauth_client_id || '',
     oauth_client_secret: c.oauth_client_secret || '',
@@ -98,14 +99,8 @@ function pack(form: McpFormData): Partial<McpServer> {
   const base: Partial<McpServer> = { name: form.name, enabled: form.enabled };
   const config: McpServerConfig = { endpoint: form.endpoint };
   if (form.auth_mode === 'header' || !form.auth_mode) {
-    const headersRaw = form.headers.trim();
-    if (headersRaw) {
-      let parsed: unknown;
-      try { parsed = JSON.parse(headersRaw); }
-      catch { throw new Error('Headers is not valid JSON — fix or clear it before saving'); }
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Headers must be a JSON object, e.g. {"Authorization": "Bearer <token>"}');
-      if (Object.keys(parsed).length > 0) config.headers = parsed as Record<string, string>;
-    }
+    const headers = parseHeadersText(form.headers);
+    if (headers) config.headers = headers;
   }
   if (form.auth_mode === 'oauth') {
     config.auth_mode = 'oauth';

@@ -5,10 +5,7 @@ import { api } from '@/lib/api';
 import { useCopy } from '@/lib/hooks';
 import type { Project } from '@/lib/binding';
 
-/* Where a port inside the sandbox is public, on a service that publishes every
-   port at <port>-<sandbox id>.<domain>: the address to copy, with <port> left
-   for the reader — the port is the server's inside the sandbox, which the
-   person knows and the workbench does not (decisions §5.70). */
+/* The bound project's sandbox address, <port> left to the reader — see decisions §5.70. */
 export function ProjectHostDialog({ project, onClose }: { project: Project; onClose: () => void }): ReactElement {
   const [host, setHost] = useState<{ sandbox_id: string; domain: string } | null>(null);
   const [error, setError] = useState<string | null>(null);

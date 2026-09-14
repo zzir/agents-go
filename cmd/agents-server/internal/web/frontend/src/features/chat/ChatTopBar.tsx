@@ -41,7 +41,8 @@ export interface ProjectMenu {
   /* False on a backend where the sandbox IS the storage, and replacing it
      would take the working tree with it. */
   rebuildable: boolean;
-  /* True where every port inside the sandbox is public (supports.public_host). */
+  /* True where every port inside the sandbox is public (supports.public_host);
+     the item is withheld while no sandbox exists to address. */
   hostable: boolean;
   onEnv: () => void;
   onHost: () => void;
@@ -103,7 +104,7 @@ export function ChatTopBar({
                   <ActionList.LeadingVisual><DownloadIcon /></ActionList.LeadingVisual>
                   Export as tar…
                 </ActionList.Item>
-                {projectMenu.hostable && (
+                {projectMenu.hostable && projectMenu.state !== 'absent' && (
                   <ActionList.Item onSelect={projectMenu.onHost}>
                     <ActionList.LeadingVisual><GlobeIcon /></ActionList.LeadingVisual>
                     Public URL…

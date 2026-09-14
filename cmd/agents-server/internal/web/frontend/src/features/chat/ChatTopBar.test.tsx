@@ -75,6 +75,9 @@ describe('ChatTopBar', () => {
     const host = render({ projectMenu: { busy: false, state: 'running', rebuildable: false, hostable: true, stateLoading: false, onEnv: noop, onHost: noop, onStart: noop, onStop: noop, onExport: noop, onRebuild: noop, onOpen: noop } });
     const items = [...host.querySelectorAll('li')].map(li => li.textContent);
     expect(items).toEqual(['Terminal panel', 'Environment…', 'Export as tar…', 'Public URL…', 'Stop sandbox']);
+    // Nothing to address yet: the item is withheld rather than opening onto an error.
+    const absent = render({ projectMenu: { busy: false, state: 'absent', rebuildable: false, hostable: true, stateLoading: false, onEnv: noop, onHost: noop, onStart: noop, onStop: noop, onExport: noop, onRebuild: noop, onOpen: noop } });
+    expect([...absent.querySelectorAll('li')].map(li => li.textContent)).not.toContain('Public URL…');
   });
 
   // A running sandbox offers Stop; anything else offers Start, and says why.
