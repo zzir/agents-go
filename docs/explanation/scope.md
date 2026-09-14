@@ -21,7 +21,7 @@ consumed a second way: embedded in your own Go program, with no dependency on
 or reporting to the workbench ([§1.2](#12-non-goals), last row). Two consumers,
 one core, one dependency edge.
 
-**The first conversation is frozen.** It is one process, SQLite by default,
+**The first session is frozen.** It is one process, SQLite by default,
 and no Docker: a downloaded binary, one API key and a browser reach a
 streamed reply with the Inspector open. Sandboxes, PostgreSQL, deployment,
 team sign-in and anything else that needs a second thing installed are

@@ -8,7 +8,7 @@ it is built on, the `agents` package, embeddable on its own. One core, two
 consumers ([scope §1.1](explanation/scope.md#11-what-this-is)).
 
 **New here?** [Running the workbench](tutorial/workbench.md) goes from a
-binary to a first conversation with the Inspector open; nothing on that path
+binary to a first session with the Inspector open; nothing on that path
 needs Docker. Embedding the SDK in your own program starts at the
 [Quickstart](tutorial/quickstart.md).
 
@@ -29,7 +29,7 @@ The pages are sorted by what you came for.
 
 | Page | |
 |---|---|
-| [Running the workbench](tutorial/workbench.md) | **Start here.** From a binary to a first conversation with the Inspector open; a sandbox is the optional second chapter |
+| [Running the workbench](tutorial/workbench.md) | **Start here.** From a binary to a first session with the Inspector open; a sandbox is the optional second chapter |
 | [Quickstart](tutorial/quickstart.md) | The SDK: build and run your first agent in Go |
 | [Examples](tutorial/examples.md) | Runnable SDK programs, one per capability, and which need more than `OPENAI_API_KEY` |
 
@@ -46,7 +46,7 @@ The pages are sorted by what you came for.
 | Models | [Models](howto/models.md) — configuring the SDK, providers, settings, retry and fallback |
 | Observability | [Tracing](howto/tracing.md) · [Logging and diagnostics](howto/logging.md) |
 | Testing | [Testing your agents](howto/testing.md) — scripted models, no API key |
-| Workbench, power user | None of these are needed for the first conversation. [Deploying](howto/workbench-deploy.md) · [Authentication](howto/workbench-auth.md) · [Workflows](howto/workflows.md) · [Image input](howto/attachments.md) · [MCP OAuth in the workbench](howto/mcp-oauth-troubleshooting.md) |
+| Workbench, power user | None of these are needed for the first session. [Deploying](howto/workbench-deploy.md) · [Authentication](howto/workbench-auth.md) · [Workflows](howto/workflows.md) · [Image input](howto/attachments.md) · [MCP OAuth in the workbench](howto/mcp-oauth-troubleshooting.md) |
 
 ### Reference — look something up
 

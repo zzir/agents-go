@@ -70,16 +70,17 @@ const (
 	EventTerminalExit   = "terminal.exit"   // server → client
 )
 
-// RunError.Code values (invariant 15). SDK codes come from agents.CodeOf(err)
-// and are NOT redeclared here; the transport codes below describe failures
-// before or outside a run. The two sets must not collide; a client falls back
-// to generic rendering on a code it does not know.
+// RunError.Code values the workbench adds (invariant 15); SDK codes come from
+// agents.CodeOf(err). The whole vocabulary is docs/reference/protocol.md, "Run error codes".
 const (
 	CodeSessionBusy     = "session_busy"
 	CodeSessionNotFound = "session_not_found"
 	CodeRunNotFound     = "run_not_found"
 	CodeApprovalFailed  = "approval_failed"
 	CodeConfigError     = "config_error"
+	CodePersistError    = "persist_error"
+	CodeStreamError     = "stream_error"
+	CodeResumeError     = "resume_error"
 )
 
 // NewEnvelope marshals payload and wraps it in an Envelope of the given type.
@@ -374,7 +375,16 @@ type RunInterrupted struct {
 // RunCancelled notifies the client that a run was cancelled.
 type RunCancelled struct {
 	RunID string `json:"run_id"`
+	// Reason is why: stopped by request, or superseded by a newer message on
+	// the session while the run waited for approval.
+	Reason string `json:"reason,omitempty"`
 }
+
+// The run.cancelled reasons.
+const (
+	RunCancelStopped    = "stopped"
+	RunCancelSuperseded = "superseded"
+)
 
 // RunCompaction reports compaction progress at the end of a run: phase
 // "started" when the summarization request begins, "finished" with item

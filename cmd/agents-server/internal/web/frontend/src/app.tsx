@@ -25,25 +25,21 @@ import { EV, TASK_KIND_WORKFLOW } from '@/lib/protocol';
 import { hasTaskInStatus } from '@/lib/background';
 import { WorkflowsHub, type HubTab } from '@/features/workflows/WorkflowsHub';
 import { WORKFLOW_COMMAND } from '@/features/chat/SlashMenu';
-import { SESSIONS_CHANGED, SESSION_REMOVED } from '@/features/sessions/SessionPicker';
+import { SESSION_REMOVED } from '@/features/sessions/SessionPicker';
 import { useAgentSocket, defaultSS, type SessionState } from '@/lib/useAgentSocket';
-import { patchToolCall, type ToolCallPatch } from '@/lib/timeline';
+import { hasPendingApproval, patchToolCall, type ToolCallPatch } from '@/lib/timeline';
 import { syncTaskCard } from '@/lib/streamReducer';
 import { clearSessionPrefs } from '@/lib/drafts';
 import { toast } from '@/lib/toast';
 import { MeContext, useMeLoader } from '@/lib/me';
 import { useNarrow } from '@/lib/hooks';
 import { readHash, writeHash, consumeAuthFragment, restoreReturnHash } from '@/lib/route';
-import { isTooLarge } from '@/lib/messageSize';
+import { frameTooLarge } from '@/lib/messageSize';
+import { installExternalLinkOpener } from '@/lib/externalLinks';
 
-// The one settings hub (invariant 61). The person's own first (account,
-// host-wide settings), then what a run is built from, each section below the
-// ones it depends on: a provider is what an agent talks to, an agent is what
-// runs, then what an agent attaches (tools, execution, state, the checks
-// around it). A scoped entity's tab is one list in which an admin also sees
-// every member's rows. The admin entries come last, under no heading; workflows are
-// authored and watched in the sidebar's hub, so only their management view
-// is here.
+// The settings hub's tabs (invariant 61): the person's own, then what a run is
+// built from in dependency order, the admin entries last; workflows are
+// authored in the sidebar's hub, so only their management view is here.
 const scopedTab = (name: 'ProvidersTab' | 'AgentsTab' | 'McpServersTab' | 'SkillsTab') =>
   () => import('@/features/settings/ScopedEntityPanel').then(m => ({ default: m[name] }));
 
@@ -70,6 +66,10 @@ const ADMIN_TABS: DialogTab[] = [
 
 const DEFAULT_SS = defaultSS();
 
+// The width of a session id, for sizing a message's frame before the
+// conversation it starts exists.
+const PLACEHOLDER_SESSION_ID = '00000000-0000-0000-0000-000000000000';
+
 // Monotonic client-side id stamped on each optimistic user bubble. It lets the
 // socket layer roll back a specific un-sent message (on session_busy or a
 // dropped send) and lets the stream reducer dedup two identical-text sends
@@ -88,19 +88,6 @@ function sameMembers(a: Set<string>, b: Set<string>): boolean {
   if (a.size !== b.size) return false;
   for (const x of a) if (!b.has(x)) return false;
   return true;
-}
-
-// hasPendingApproval reports whether a conversation's latest turns hold a tool
-// call that needs approval and has no decision yet.
-function hasPendingApproval(messages: SessionState['messages']): boolean {
-  for (const m of messages) {
-    if (m.role !== 'turn') continue;
-    for (const part of (m as { parts?: Array<{ type: string; toolCalls?: Array<{ needs_approval?: boolean; status?: string | null }> }> }).parts || []) {
-      if (part.type !== 'tools') continue;
-      if ((part.toolCalls || []).some(tc => tc.needs_approval && !tc.status)) return true;
-    }
-  }
-  return false;
 }
 
 // PLAN_COMMAND is the composer's plan-mode command: a prefix that puts the
@@ -134,6 +121,8 @@ function App() {
   // a blank screen forever; instead we surface a retryable error state.
   const [checkError, setCheckError] = useState('');
   const [activeSession, setActiveSession] = useState<string | null>(() => readHash().sessionId);
+  const activeSessionRef = useRef(activeSession);
+  activeSessionRef.current = activeSession;
   const [activePanel, setActivePanel] = useState<InspectorPanel>(() => readHash().panel);
   // The Workflows hub, when it is the open view (null = a conversation).
   const [hubTab, setHubTab] = useState<HubTab | null>(() => readHash().hub);
@@ -254,6 +243,9 @@ function App() {
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
+  // A link in rendered markdown opens elsewhere; the page stays.
+  useEffect(() => installExternalLinkOpener(), []);
+
   useEffect(() => {
     // A logout is a definitive "not authenticated" — clear any lingering
     // network-error state so the login page shows, not the retry screen.
@@ -273,14 +265,6 @@ function App() {
     return () => window.removeEventListener('storage', handler);
   }, [authed]);
 
-  // A conversation made somewhere other than the sidebar (a picker's "New
-  // session") is a conversation the sidebar must list.
-  useEffect(() => {
-    const handler = () => setSessionReloadKey(k => k + 1);
-    window.addEventListener(SESSIONS_CHANGED, handler);
-    return () => window.removeEventListener(SESSIONS_CHANGED, handler);
-  }, []);
-
   const updateSS = useCallback((sid: string, fn: (s: SessionState) => SessionState) => {
     setSS(prev => {
       const cur = prev[sid] || defaultSS();
@@ -289,7 +273,22 @@ function App() {
     });
   }, []);
 
-  const { wsRef, sessionRunRef, connected, loadSession, loadTraces, loadSpanPayload, deleteSession, loadEarlier, forgetLoaded, watchTask, unwatchTask } = useAgentSocket(updateSS);
+  // What the socket tells the app about a conversation beyond its runs: the
+  // auto-title after the first turn, and the project binding, whose record
+  // (announcedBindings) survives a meta cleared by a session switch mid-fetch.
+  const sessionEvents = useMemo(() => ({
+    activeSession: () => activeSessionRef.current,
+    onTitleUpdated: (sid: string, title: string) => {
+      setSessionMeta(prev => (prev && prev.id === sid ? { ...prev, name: title } : prev));
+    },
+    onProjectBound: (sid: string, projectId: string) => {
+      announcedBindings.current[sid] = projectId;
+      setSessionMeta(prev => (prev && prev.id === sid ? { ...prev, projectId } : prev));
+      setBindingsVersion(v => v + 1);
+    },
+  }), []);
+
+  const { wsRef, sessionRunRef, connected, loadSession, loadTraces, loadSpanPayload, deleteSession, loadEarlier, forgetLoaded, watchTask, unwatchTask } = useAgentSocket(updateSS, sessionEvents);
 
   // patchTask applies a server-confirmed task state change (e.g. the stop
   // API's response) directly — the fallback for when no hub broadcast will
@@ -327,7 +326,11 @@ function App() {
     // unknown session rather than 404, so validate existence explicitly: a 404
     // means drop the id — the app falls back to the empty state and typing then
     // starts a new session instead of running against a non-existent session.
-    const tryLoad = () => loadSession(activeSession).catch(() => toast.error('Could not load conversation'));
+    // A failed first load shows in the view (state.loadError); a failed
+    // re-read of a conversation already on screen can only be said here.
+    const tryLoad = () => loadSession(activeSession).catch(() => {
+      if (ssRef.current[activeSession]?.messages.length) toast.error('Could not refresh the conversation');
+    });
     api.sessions.get(activeSession)
       .then((sess) => {
         if (cancelled) return;
@@ -361,29 +364,10 @@ function App() {
     if (activeSession) loadTraces(activeSession);
   }, [activeSession, loadTraces]);
 
-  useEffect(() => {
-    if (!wsRef.current) return;
-    // Single handler per event type — WSClient.on replaces per type, so each
-    // event's full behavior lives in one body (a second .on would clobber it).
-    wsRef.current.on(EV.sessionTitleUpdated, (p: { session_id?: string; title?: string }) => {
-      setSessionReloadKey(k => k + 1);
-      if (p?.session_id && typeof p.title === 'string') {
-        const title = p.title;
-        setSessionMeta(prev => (prev && prev.id === p.session_id ? { ...prev, name: title } : prev));
-      }
-    });
-    wsRef.current.on(EV.sessionProjectBound, (p: { session_id?: string; project_id?: string }) => {
-      if (p?.session_id && p.project_id) {
-        // Record first, then patch the live meta. The record is what makes the
-        // announcement survive the meta being null (session switch mid-fetch):
-        // the fetch merges it when it lands.
-        const projectID = p.project_id;
-        announcedBindings.current[p.session_id] = projectID;
-        setSessionMeta(prev => (prev && prev.id === p.session_id ? { ...prev, projectId: projectID } : prev));
-        setBindingsVersion(v => v + 1);
-      }
-    });
-  }, [wsRef]);
+  // The view's Retry after a failed first load.
+  const handleRetryLoad = useCallback(() => {
+    if (activeSession) loadSession(activeSession).catch(() => undefined);
+  }, [activeSession, loadSession]);
 
   // reloadTimeline re-reads a session's persisted history after a server-side
   // change the client cannot patch in — a branch move (a different branch is a
@@ -456,7 +440,7 @@ function App() {
   const handleSend = useCallback(async (input: string, agentConfigId?: string, projectId?: string, attachments?: AttachmentMeta[]) => {
     if (!wsRef.current) return;
     if (!wsRef.current.isConnected()) {
-      toast.error('WebSocket disconnected — message not sent');
+      toast.error('Connection lost, reconnecting — message not sent');
       return;
     }
     // `/workflow <name> <brief>` starts a workflow into this conversation
@@ -479,9 +463,17 @@ function App() {
       toast.info(planOff ? '/plan off takes the message to run: /plan off <what to do>' : '/plan takes the message to plan for: /plan <what to do>');
       return;
     }
+    // The phase travels WITH the message: only a /plan message says anything,
+    // and an absent `plan` leaves the session's phase alone — an approved plan
+    // is what unlocks it again.
+    const payload: Record<string, unknown> = { session_id: activeSession || PLACEHOLDER_SESSION_ID, input: text, agent_config_id: agentConfigId };
+    if (attachments?.length) payload.attachment_ids = attachments.map(a => a.id);
+    if (planned) payload.plan = true;
+    if (planOff) payload.plan = false;
+    if (projectId) payload.project_id = projectId;
     // Over the server's frame limit the socket would be closed (1009), with
-    // no run.error to say why.
-    if (isTooLarge(text)) {
+    // no run.error to say why — measured before a conversation is made for it.
+    if (frameTooLarge(EV.runCreate, payload)) {
       toast.error('Message is too large');
       return;
     }
@@ -504,21 +496,14 @@ function App() {
         return;
       }
     }
+    payload.session_id = sid;
     const clientMsgId = nextClientMsgId();
     updateSS(sid, s => ({ ...s, messages: [...s.messages, { role: 'user', content: text, clientMsgId, attachments }], ...(isNew ? { loaded: true } : {}) }));
-    // The phase travels WITH the message: only a /plan message says anything,
-    // and an absent `plan` leaves the session's phase alone — an approved plan
-    // is what unlocks it again.
-    const payload: Record<string, unknown> = { session_id: sid, input: text, agent_config_id: agentConfigId };
-    if (attachments?.length) payload.attachment_ids = attachments.map(a => a.id);
-    if (planned) payload.plan = true;
-    if (planOff) payload.plan = false;
-    if (projectId) payload.project_id = projectId;
     if (!wsRef.current.send(EV.runCreate, payload)) {
       // The socket dropped between the isConnected() check and the send: roll
       // back the optimistic bubble so it isn't left stranded with no run.
-      updateSS(sid, s => ({ ...s, messages: s.messages.filter((m: { clientMsgId?: string }) => m.clientMsgId !== clientMsgId) }));
-      toast.error('WebSocket disconnected — message not sent');
+      updateSS(sid, s => ({ ...s, messages: s.messages.filter(m => !(m.role === 'user' && m.clientMsgId === clientMsgId)) }));
+      toast.error('Connection lost, reconnecting — message not sent');
       return;
     }
   }, [activeSession, updateSS, wsRef, runWorkflowCommand]);
@@ -652,7 +637,7 @@ function App() {
     // Probe before switching: a regen that branches the session and then fails
     // to send would strand the user on a branch with no assistant reply.
     if (!wsRef.current.isConnected()) {
-      toast.error('WebSocket disconnected — message not sent');
+      toast.error('Connection lost, reconnecting — message not sent');
       return;
     }
     try {
@@ -673,9 +658,9 @@ function App() {
         try {
           await api.sessions.branch(activeSession, previous_leaf);
           await reloadTimeline(activeSession);
-          toast.error('WebSocket disconnected — regenerate not started');
+          toast.error('Connection lost, reconnecting — regenerate not started');
         } catch {
-          toast.error('WebSocket disconnected — the previous attempt is in the attempt switcher');
+          toast.error('Connection lost, reconnecting — the previous attempt is in the attempt switcher');
         }
       }
     } catch (e) {
@@ -690,24 +675,24 @@ function App() {
     return loadSpanPayload(activeSession, spanSessionId, runId, spanId);
   }, [activeSession, loadSpanPayload]);
 
-  // One object of callbacks that change only on a session switch: the memo'd
-  // view compares it by reference, so a streaming frame never rebuilds it.
   // The tab is a string or nothing: a menu's onSelect hands over an event,
   // which must not become a tab name. Reads narrow through a ref so the
-  // callback keeps its identity and chatActions rebuilds only on a session switch.
+  // callback keeps its identity.
   const handleOpenSettings = useCallback((tab?: string) => {
     setSettingsTab(typeof tab === 'string' ? tab : undefined);
     setSettingsOpen(true);
     if (narrowRef.current) setSidebarOpen(false);
   }, []);
 
+  // One object of callbacks, rebuilt only when one of them is; the memo'd
+  // view compares it by reference.
   const chatActions = useMemo<ChatViewActions>(() => ({
     onSend: handleSend, onCancel: handleCancel, onApprove: handleApprove, onReject: handleReject, onFork: handleFork,
     onLoadEarlier: handleLoadEarlier, onSwitchBranch: handleSwitchBranch, onCompact: handleCompact, onRegenerate: handleRegenerate,
     onWatchTask: watchTask, onUnwatchTask: unwatchTask, onPatchTask: patchTask, onLoadSpan: handleLoadSpan,
-    onPanelChange: setActivePanel, onTerminalOpen: handleTerminalOpen, onSettingsOpen: handleOpenSettings,
+    onPanelChange: setActivePanel, onTerminalOpen: handleTerminalOpen, onSettingsOpen: handleOpenSettings, onRetryLoad: handleRetryLoad,
   }), [handleSend, handleCancel, handleApprove, handleReject, handleFork, handleLoadEarlier, handleSwitchBranch, handleCompact,
-    handleRegenerate, watchTask, unwatchTask, patchTask, handleLoadSpan, handleTerminalOpen, handleOpenSettings]);
+    handleRegenerate, watchTask, unwatchTask, patchTask, handleLoadSpan, handleTerminalOpen, handleOpenSettings, handleRetryLoad]);
 
   // A signature that moves with any execution in any conversation (every
   // connection hears every session's task.updated), for the hub's Runs view
@@ -747,29 +732,26 @@ function App() {
       : null,
   [sessionMeta, activeSession]);
 
-  // A session is awaiting approval when its latest turn holds a tool call that
-  // needs approval and has no decision yet, or a background task (a workflow
-  // step) is paused for one. Derived from the messages (not a transient socket
-  // flag), so it survives a reload — the paused turn is rebuilt from the durable
-  // approvals — and self-clears the moment approve/reject sets a status.
-  // The scan is per MESSAGE LIST, cached by its identity: a streaming delta
-  // replaces the session's streaming text, not its messages, so the frame
-  // pays one map lookup per session rather than a walk of every turn.
-  const awaitingCache = useRef(new WeakMap<object, boolean>());
+  // The sidebar's marker: a tool call in the conversation's own turns, or a
+  // background task (a workflow step) of it, awaits a decision. Nothing
+  // blocks a send — a newer message abandons the conversation's own pause
+  // (invariant 19). Derived from the messages, so it survives a reload and
+  // self-clears the moment a status lands; the scan is cached per message
+  // list, which a streaming delta does not replace.
+  const approvalCache = useRef(new WeakMap<object, boolean>());
   const awaitingRef = useRef(new Set<string>());
   const awaitingSessions = useMemo(() => {
-    const set = new Set<string>();
+    const awaiting = new Set<string>();
     for (const [sid, state] of Object.entries(ss)) {
-      let awaiting = awaitingCache.current.get(state.messages);
-      if (awaiting === undefined) {
-        awaiting = hasPendingApproval(state.messages);
-        awaitingCache.current.set(state.messages, awaiting);
+      let pending = approvalCache.current.get(state.messages);
+      if (pending === undefined) {
+        pending = hasPendingApproval(state.messages);
+        approvalCache.current.set(state.messages, pending);
       }
-      if (awaiting || hasTaskInStatus(state.tasks, 'input_required')) set.add(sid);
+      if (pending || hasTaskInStatus(state.tasks, 'input_required')) awaiting.add(sid);
     }
-    if (sameMembers(awaitingRef.current, set)) return awaitingRef.current;
-    awaitingRef.current = set;
-    return set;
+    if (!sameMembers(awaitingRef.current, awaiting)) awaitingRef.current = awaiting;
+    return awaitingRef.current;
   }, [ss]);
 
   const focusComposer = useCallback(() => {
@@ -851,7 +833,7 @@ function App() {
       sessionAgentId={sessionMeta && sessionMeta.id === activeSession ? sessionMeta.agentConfigId : undefined}
       sessionBinding={sessionBinding}
       state={currentSS}
-      awaiting={!!activeSession && awaitingSessions.has(activeSession)}
+      loadError={currentSS.loadError}
       settingsReloadKey={settingsReloadKey}
       bindingsVersion={bindingsVersion}
       panel={activePanel}

@@ -31,6 +31,10 @@
 .code-block-wrapper:hover .btn-copy,
 .code-block-wrapper .btn-copy:focus-visible,
 .code-block-wrapper .btn-copy.copied { opacity: 1; }
+.code-block-wrapper .btn-copy:focus-visible {
+  outline: 2px solid var(--focus-outlineColor);
+  outline-offset: 1px;
+}
 .streaming .btn-copy { display: none; }
 .code-block-wrapper .btn-copy.copied { color: var(--fgColor-success); }
 .code-block-wrapper .hljs-code-block {
@@ -97,6 +101,16 @@
 }
 .code-block-wrapper:hover .code-block-actions,
 .code-block-actions:focus-within { opacity: 1; }
+.code-block-actions .btn-octicon:focus-visible {
+  outline: 2px solid var(--focus-outlineColor);
+  outline-offset: 1px;
+}
+/* Touch devices have no hover, so the code-block controls stay visible or
+   they cannot be reached at all. */
+@media (hover: none) {
+  .code-block-wrapper .btn-copy,
+  .code-block-actions { opacity: 1; }
+}
 .code-block-actions .btn-octicon {
   padding: var(--base-size-4);
   border-radius: var(--borderRadius-small);

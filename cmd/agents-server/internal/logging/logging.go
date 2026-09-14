@@ -1,10 +1,7 @@
 // Package logging is the server's one logging seam: where records go, at what
-// level and in what format, plus how a subsystem reaches the logger without a
-// handle threaded through every call.
-//
-// The logger is a plain *slog.Logger. slog.Handler is already the swap point,
-// so there is no interface here to replace it with — changing the destination
-// is a different handler passed to New, and nothing else moves.
+// level and in what format, and how a subsystem reaches the logger without a
+// handle threaded through every call. The logger is a plain *slog.Logger;
+// slog.Handler is the swap point, so no interface wraps it.
 package logging
 
 import (
@@ -16,10 +13,9 @@ import (
 	"time"
 )
 
-// New builds the process logger. level is one of debug/info/warn/error and
-// format is text or json; both are compared case-insensitively, and an
-// unrecognized value is an error rather than a silent fallback — a typo in a
-// flag must not quietly turn logging down.
+// New builds the process logger from a level (debug/info/warn/error) and a
+// format (text/json), case-insensitively; an unrecognized value is an error,
+// never a silent fallback.
 func New(w io.Writer, level, format string) (*slog.Logger, error) {
 	var lv slog.Level
 	switch strings.ToLower(strings.TrimSpace(level)) {
@@ -63,10 +59,8 @@ func Into(ctx context.Context, l *slog.Logger) context.Context {
 	return context.WithValue(ctx, ctxKey{}, l)
 }
 
-// Ctx returns the logger carried by ctx. A context with none yields one that
-// discards, so no call site has to check — a subsystem reached from a context
-// nobody wired (a test, a bare background goroutine) stays silent rather than
-// panicking or writing somewhere unasked.
+// Ctx returns the logger carried by ctx, or one that discards when none was
+// wired, so no call site has to check.
 func Ctx(ctx context.Context) *slog.Logger {
 	if ctx != nil {
 		if l, ok := ctx.Value(ctxKey{}).(*slog.Logger); ok && l != nil {

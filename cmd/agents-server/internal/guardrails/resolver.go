@@ -25,10 +25,9 @@ func NewResolver(s *store.GuardrailStore) *Resolver {
 	return &Resolver{store: s}
 }
 
-// Build resolves a JSON array of guardrail names into SDK guardrails.
-// A malformed list or an unknown name is a config error rather than a silent
-// drop: a guardrail that appears enabled but never runs is a security hole, so
-// the caller fails the build instead.
+// Build resolves a JSON array of guardrail names into SDK guardrails; a
+// malformed list or an unknown name fails the build rather than silently
+// dropping (invariant 13).
 func (r *Resolver) Build(ctx context.Context, namesJSON string) ([]agents.Guardrail, error) {
 	var names []string
 	if namesJSON == "" {
@@ -145,10 +144,8 @@ func (r *Resolver) findByName(ctx context.Context, name string) *store.Guardrail
 }
 
 // inspected returns the text a guardrail examines at the stage it was invoked
-// at. One definition covering several stages is the SDK's model — a content
-// scanner that should see the input, the tool arguments and the final output is
-// one guardrail with three stages, not three near-identical copies, which is
-// what this server had.
+// at: one definition covers several stages, so a content scanner is one
+// guardrail with three stages, not three copies.
 func inspected(p agents.GuardrailPayload) string {
 	switch p.Stage {
 	case agents.StageInput:

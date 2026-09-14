@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useMemo, type FormEvent, type KeyboardEvent, type ClipboardEvent, type ReactNode } from 'react';
 import { ActionList, ActionMenu, IconButton, Spinner } from '@primer/react';
-import { ImageIcon, PaperAirplaneIcon, PlusIcon, SquareCircleIcon, XIcon, SyncIcon } from '@primer/octicons-react';
+import { ImageIcon, PaperAirplaneIcon, PlusIcon, SquareCircleIcon, TriangleDownIcon, XIcon, SyncIcon } from '@primer/octicons-react';
 import { loadDraft, saveDraft, clearDraft, loadAttachmentDraft, saveAttachmentDraft } from '@/lib/drafts';
 import { onComposerInsert } from '@/lib/composer';
 import { api } from '@/lib/api';
@@ -13,6 +13,9 @@ interface MessageInputProps {
   onSend: (text: string, attachments?: AttachmentMeta[]) => void;
   onCancel: (graceful?: boolean) => void;
   disabled: boolean;
+  // blocked disables the textarea itself and says why in its placeholder —
+  // nothing can be sent (no agent to send to), so nothing should be typed.
+  blocked?: string;
   running: boolean;
   // allowAttachments gates every image affordance: attachment storage is
   // configured AND the picked agent has Vision on.
@@ -36,7 +39,7 @@ interface AttachmentDraft {
 
 let draftKey = 0;
 
-export function MessageInput({ sessionId, onSend, onCancel, disabled, running, allowAttachments, toolbar, plusItems }: MessageInputProps) {
+export function MessageInput({ sessionId, onSend, onCancel, disabled, blocked, running, allowAttachments, toolbar, plusItems }: MessageInputProps) {
   const [text, setText] = useState(() => loadDraft(sessionId));
   const [atts, setAtts] = useState<AttachmentDraft[]>([]);
   const [attCfg, setAttCfg] = useState<AttachmentConfig | null>(null);
@@ -172,7 +175,7 @@ export function MessageInput({ sessionId, onSend, onCancel, disabled, running, a
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     const trimmed = text.trim();
-    if (disabled || uploading) return;
+    if (disabled || blocked || uploading) return;
     if (!trimmed && readyAtts.length === 0) return;
     onSend(trimmed, readyAtts.length ? readyAtts : undefined);
     setText('');
@@ -241,7 +244,8 @@ export function MessageInput({ sessionId, onSend, onCancel, disabled, running, a
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
           onBlur={() => { if (popupOpen) setDismissedFor(text); }}
-          placeholder="type something here…"
+          disabled={!!blocked}
+          placeholder={blocked || 'type something here…'}
           rows={2}
           aria-autocomplete="list"
           aria-controls={popupOpen ? 'slash-commands' : undefined}
@@ -277,13 +281,34 @@ export function MessageInput({ sessionId, onSend, onCancel, disabled, running, a
           <div className="chat-input-toolbar-send">
             <span className="chat-input-divider" />
             {running ? (
-              <IconButton
-                icon={SquareCircleIcon}
-                variant="invisible"
-                aria-label="Stop (Shift-click to finish the current turn first)"
-                onClick={(e) => { e.preventDefault(); onCancel(e.shiftKey); }}
-                style={{ color: 'var(--fgColor-danger)' }}
-              />
+              <>
+                <IconButton
+                  icon={SquareCircleIcon}
+                  variant="invisible"
+                  aria-label="Stop now (Shift-click to finish the current turn first)"
+                  onClick={(e) => { e.preventDefault(); onCancel(e.shiftKey); }}
+                  style={{ color: 'var(--fgColor-danger)' }}
+                />
+                {/* The graceful stop, reachable without a modifier key: a
+                    touch or keyboard user opens the menu beside the button. */}
+                <ActionMenu>
+                  <ActionMenu.Anchor>
+                    <IconButton icon={TriangleDownIcon} size="small" variant="invisible" aria-label="More ways to stop" />
+                  </ActionMenu.Anchor>
+                  <ActionMenu.Overlay>
+                    <ActionList>
+                      <ActionList.Item variant="danger" onSelect={() => onCancel(false)}>
+                        Stop now
+                        <ActionList.Description variant="block">Cancels the run where it is.</ActionList.Description>
+                      </ActionList.Item>
+                      <ActionList.Item onSelect={() => onCancel(true)}>
+                        Finish this turn, then stop
+                        <ActionList.Description variant="block">The current step completes; no further turn starts.</ActionList.Description>
+                      </ActionList.Item>
+                    </ActionList>
+                  </ActionMenu.Overlay>
+                </ActionMenu>
+              </>
             ) : (
               <IconButton
                 icon={PaperAirplaneIcon}

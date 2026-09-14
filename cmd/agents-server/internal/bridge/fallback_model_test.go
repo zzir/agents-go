@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/zzir/agents-go/agents"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
 // recordingProvider records the model name it is asked for.
@@ -26,14 +25,5 @@ func TestFixedModelProviderUsesConfiguredModel(t *testing.T) {
 	}
 	if got != "gpt-4o-mini" {
 		t.Fatalf("fallback provider was asked for %q, want the configured gpt-4o-mini", got)
-	}
-}
-
-// DecodeAgentSpec fails on malformed fallback_models instead of silently
-// dropping it (which would look like fallback is configured but do nothing).
-func TestDecodeAgentSpecFallbackMalformedFails(t *testing.T) {
-	_, err := DecodeAgentSpec(&store.AgentConfig{OwnerID: store.LocalUserID, Name: "a", Resilience: store.ResilienceGroup{FallbackModels: "{not json"}})
-	if err == nil {
-		t.Fatal("malformed fallback_models must fail, not silently drop fallback")
 	}
 }

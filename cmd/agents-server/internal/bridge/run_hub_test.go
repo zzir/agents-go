@@ -572,3 +572,50 @@ func TestRunHubLiveRunIDs(t *testing.T) {
 		t.Fatalf("after interrupt: got %v", got)
 	}
 }
+
+// A paused record ends by endPaused: cancelled, run.cancelled carrying the
+// reason to its subscribers, and a resume racing it refused. A running or
+// already-ended record is not its to end. finish drops the segment's control,
+// so a stop aimed at a paused run has no dead segment to hit.
+func TestRunHubEndPausedCancelsWithReason(t *testing.T) {
+	h := NewRunHub(context.Background())
+	if _, _, err := h.register("run1", "sess1", "", "", "", nil); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	h.setControl("run1", &fakeControl{})
+	got := make(chan *protocol.Envelope, 8)
+	if _, ok := h.Subscribe("run1", 0, func(env *protocol.Envelope) { got <- env }); !ok {
+		t.Fatal("subscribe")
+	}
+	if h.endPaused("run1", protocol.RunCancelSuperseded) {
+		t.Fatal("a running record is not paused")
+	}
+	h.finish("run1", true)
+	if h.StopAfterTurn("run1") {
+		t.Fatal("a paused record holds no live control to stop")
+	}
+	if !h.endPaused("run1", protocol.RunCancelSuperseded) {
+		t.Fatal("a paused record must end")
+	}
+	if info, _ := h.Info("run1"); info.Status != RunCancelled {
+		t.Fatalf("status = %q, want cancelled", info.Status)
+	}
+	select {
+	case env := <-got:
+		var p protocol.RunCancelled
+		if env.Type != protocol.EventRunCancelled || json.Unmarshal(env.Payload, &p) != nil || p.Reason != protocol.RunCancelSuperseded {
+			t.Fatalf("event = %s %s, want run.cancelled with reason superseded", env.Type, env.Payload)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no run.cancelled reached the subscriber")
+	}
+	if _, _, _, err := h.resume("run1", "sess1", "", "", "", nil); !errors.As(err, new(ErrRunNotResumable)) {
+		t.Fatalf("resume after abandon = %v, want ErrRunNotResumable", err)
+	}
+	if h.endPaused("run1", protocol.RunCancelStopped) {
+		t.Fatal("an ended record does not end twice")
+	}
+	if h.endPaused("nope", protocol.RunCancelStopped) {
+		t.Fatal("an unknown run is nobody's to end")
+	}
+}

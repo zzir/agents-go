@@ -12,6 +12,7 @@ import (
 	"github.com/zzir/agents-go/agents/middleware"
 	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
@@ -38,11 +39,9 @@ func (e *ApprovalNotReadyError) Error() string {
 	return "run " + e.RunID + " is not yet ready for an approval decision; retry"
 }
 
-// StaleApprovalAttemptError reports an approval whose attempt is no longer
-// the task's current one: the task was retried past the run that paused, so
-// the decision has nothing left to resume. The row is discarded — restoring
-// it would refuse forever — and the current attempt is untouched. Handlers
-// map it to 409.
+// StaleApprovalAttemptError reports an approval whose attempt is no longer the
+// task's current one (the task was retried past the run that paused): the row
+// is discarded, the current attempt untouched. Handlers map it to 409.
 type StaleApprovalAttemptError struct {
 	TaskID        string
 	ApprovalRunID string
@@ -80,8 +79,8 @@ func (r *Runner) persistInterruption(result *RunOutcome) error {
 		ProjectID:     result.ProjectID,
 		State:         string(stateJSON),
 		ToolCalls:     callsJSON,
-		// The paused turn's user text, so the UI rebuilds the bubble on reload —
-		// the SDK writes the turn only once it completes.
+		// The paused turn's user text, for a reload during the pause — a
+		// fallback only: the SDK writes the user input ahead of the first model call.
 		UserInput: session.UserText(result.SDKState.UserInput),
 	}
 	// A task's run pauses its TASK in the same write (TaskStore.Pause) —
@@ -191,12 +190,10 @@ func (r *Runner) restorePlanPhase(ctx context.Context, phase *middleware.PlanPha
 }
 
 // ResolveApproval applies an approve/reject decision to the pending tool call
-// and launches the run's continuation under the same run id. It loads the
-// persisted RunState (so it works after a restart and from any transport),
-// deletes the pending record, and resumes via the hub. onDone fires when the
-// continuation terminates (e.g. to persist a further interruption).
-// It also returns the paused session's id (whenever the pending row was loaded,
-// even on a later error) so a failed decision stays attributable to its session.
+// and resumes the run under the same run id from the persisted RunState (so it
+// works after a restart, from any transport); onDone fires when the
+// continuation terminates. sessionID is set whenever the row was loaded, so a
+// failed decision stays attributable to its session.
 func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve bool, scope ApprovalScope, reason string, onDone func(*RunOutcome)) (runID, sessionID string, err error) {
 	if r.Deps.PendingApprovals == nil {
 		return "", "", errors.New("approvals are not persisted")
@@ -243,8 +240,9 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 	if err != nil {
 		return "", pending.SessionID, fmt.Errorf("rebuilding agent: %w", err)
 	}
-	// The rebuilt agent IS the resumed run's executor, so its sandbox reference
-	// lives as long as that run: handed to onDone below, else released here.
+	// The rebuilt agent IS the resumed run's executor (ResumeRun), so its
+	// sandbox reference lives as long as that run: released by onDone below
+	// once handed off, else here.
 	handedOff := false
 	defer func() {
 		if !handedOff {
@@ -330,13 +328,18 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 		}
 		return nil
 	}
-	runID, err = r.ResumeRun(pending.RunID, state, pending.SessionID, pending.AgentConfigID, pending.ProjectID, verify, resumeDone)
+	runID, err = r.ResumeRun(pending.RunID, state, rebuilt, pending.SessionID, pending.AgentConfigID, pending.ProjectID, verify, resumeDone)
 	if errors.Is(err, errResumeStopped) {
 		// Stopped between the claim and the launch: nothing ran, nothing to
 		// restore. A 409 like a terminal run's, not a 500.
 		return "", pending.SessionID, ErrRunNotResumable{RunID: pending.RunID, Status: RunCancelled}
 	}
 	if err != nil {
+		// A session mid-delete gets nothing back: the cascade removes the rows,
+		// and one restored after it would be an orphan.
+		if _, deleting := errors.AsType[ErrSessionDeleting](err); deleting {
+			return "", pending.SessionID, err
+		}
 		// Give the approval back so the decision can be retried; for a task the
 		// row and its input_required go back in ONE write (Pause).
 		if taskMeta != nil && taskMeta.TaskID != "" {
@@ -350,6 +353,52 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 	}
 	handedOff = true
 	return runID, pending.SessionID, nil
+}
+
+// abandonPaused abandons the session's chat run paused for approval, if any: a
+// newer message wins over the pause — invariant 19. A task's paused run is
+// left to its task.
+func (r *Runner) abandonPaused(ctx context.Context, sessionID, reason string) {
+	if r.Deps.PendingApprovals == nil {
+		return
+	}
+	rows, err := r.Deps.PendingApprovals.ListBySession(ctx, sessionID)
+	if err != nil {
+		logging.Ctx(ctx).Warn("listing the session's pending approvals", "error", err, "session_id", sessionID)
+		return
+	}
+	for i := range rows {
+		if rows[i].Kind != "" {
+			continue
+		}
+		if meta, err := r.taskMeta(ctx, sessionID); err != nil || meta != nil {
+			continue
+		}
+		r.abandonApproval(ctx, &rows[i], reason)
+	}
+}
+
+// abandonApproval ends a paused chat run for good: deleting the row is the
+// claim (a decision that took it first wins), the pending calls persist as
+// not run, and the hub record ends with run.cancelled carrying the reason.
+func (r *Runner) abandonApproval(ctx context.Context, pending *store.PendingApproval, reason string) bool {
+	if err := r.Deps.PendingApprovals.Delete(ctx, pending.RunID); err != nil {
+		return false
+	}
+	var calls []store.PendingToolCall
+	_ = json.Unmarshal(pending.ToolCalls, &calls)
+	turn := partialTurn{sessionID: pending.SessionID, runID: pending.RunID, userInput: pending.UserInput, notRun: calls, notRunReason: reason}
+	if reason != protocol.RunCancelSuperseded {
+		turn.annRole = "cancelled"
+	}
+	r.savePartialTurn(turn)
+	// The paused segment's finish may still be in flight right after
+	// run.interrupted; the record must be paused before it can be ended.
+	r.hub.waitDone(pending.RunID, time.Now().Add(approvalSettleTimeout))
+	if !r.hub.endPaused(pending.RunID, reason) {
+		logging.Ctx(ctx).Info("abandoned approval had no paused hub run to end", "run_id", pending.RunID, "reason", reason)
+	}
+	return true
 }
 
 // restorePendingApproval writes a claimed row back after a failed claim/resume

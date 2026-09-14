@@ -167,12 +167,19 @@ func (h *SessionHandler) Create(c *gin.Context) {
 		return
 	}
 	req.Name = cmp.Or(req.Name, store.DefaultSessionName)
+	if !nameFits(c, req.Name) {
+		return
+	}
 	ctx := c.Request.Context()
 	u, _ := server.CurrentUser(c)
 	if req.AgentConfigID != "" {
 		// A foreign private agent reads as absent, admin included — the rule
 		// the run-time build applies (decisions §5.29).
 		ac, err := h.agents.Get(ctx, req.AgentConfigID)
+		if err != nil && !errors.Is(err, store.ErrNotFound) && !store.IsMalformedID(err) {
+			storeError(c, err)
+			return
+		}
 		if err != nil || !store.Visible(ac.Scope, ac.OwnerID, u.ID, false) {
 			badRequest(c, "agent_config_id does not reference an existing agent")
 			return
@@ -208,8 +215,8 @@ func (h *SessionHandler) Get(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
-	// `planning` rides on the row now (materialized), so the response carries it
-	// with no extra read — and the list gets it for free too.
+	// planning is a column of the row, so the response and the list carry it
+	// with no extra read.
 	c.JSON(http.StatusOK, sess)
 }
 
@@ -246,6 +253,9 @@ func (h *SessionHandler) Patch(c *gin.Context) {
 		badRequest(c, "name cannot be empty")
 		return
 	}
+	if req.Name != nil && !nameFits(c, *req.Name) {
+		return
+	}
 	ctx := c.Request.Context()
 	id := c.Param("id")
 	if req.Name != nil || req.Pinned != nil {
@@ -269,9 +279,9 @@ func (h *SessionHandler) Patch(c *gin.Context) {
 //	@Summary	Reassign session owner (admin)
 //	@Tags		sessions
 //	@Accept		json
-//	@Param		id		path		string			true	"Session ID"
-//	@Param		body	body		SetOwnerRequest	true	"The new owner"
-//	@Success	200		{object}	store.Session
+//	@Param		id		path	string			true	"Session ID"
+//	@Param		body	body	SetOwnerRequest	true	"The new owner"
+//	@Success	204		"reassigned"
 //	@Failure	400		{object}	ErrorResponse	"malformed body, or no such user"
 //	@Failure	403		{object}	ErrorResponse
 //	@Failure	404		{object}	ErrorResponse
@@ -319,13 +329,8 @@ func (h *SessionHandler) SetOwner(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
-	sess, err = h.sessions.Get(c.Request.Context(), id)
-	if err != nil {
-		storeError(c, err)
-		return
-	}
 	server.SetAuditDetail(c, "owner="+req.UserID)
-	c.JSON(http.StatusOK, sess)
+	c.Status(http.StatusNoContent)
 }
 
 // SetOwnerRequest is the body of PUT /sessions/:id/owner.
@@ -378,8 +383,8 @@ func (h *SessionHandler) Delete(c *gin.Context) {
 }
 
 // Fork creates a new session by copying entries from the source session up
-// to (and including) a given entry row ID. When message_id is omitted (or 0),
-// all entries are copied.
+// to (and including) a given entry id. When message_id is omitted, all
+// entries are copied.
 //
 //	@Summary		Fork session
 //	@Description	Copies entries (and their traces) into a new session. message_id bounds the copy; omit it to copy everything. exclusive=true excludes the boundary entry itself.
@@ -387,7 +392,7 @@ func (h *SessionHandler) Delete(c *gin.Context) {
 //	@Accept			json
 //	@Produce		json
 //	@Param			id		path		string	true	"Source session ID"
-//	@Param			fork	body		object	false	"{message_id?: number, exclusive?: bool, label?: string}"
+//	@Param			fork	body		object	false	"{message_id?: string, exclusive?: bool, label?: string}"
 //	@Success		201		{object}	store.Session
 //	@Failure		400		{object}	ErrorResponse
 //	@Failure		404		{object}	ErrorResponse
@@ -464,7 +469,7 @@ func (h *SessionHandler) Fork(c *gin.Context) {
 //	@Produce		json
 //	@Param			id			path		string	true	"Session ID"
 //	@Param			limit		query		int		false	"Max entries to return; 0 or absent returns all"
-//	@Param			before_id	query		int		false	"Only entries with id < before_id (backwards cursor)"
+//	@Param			before_id	query		string	false	"Only entries with id < before_id (backwards cursor)"
 //	@Success		200			{array}		store.EntryView
 //	@Failure		500			{object}	ErrorResponse
 //	@Security		BearerAuth
@@ -619,7 +624,8 @@ func (h *SessionHandler) Compact(c *gin.Context) {
 	c.JSON(http.StatusOK, CompactResponse{Compacted: compacted, BeforeItems: before, AfterItems: after})
 }
 
-// contextMCPTimeout bounds the tools/list calls one context report makes; a
+// contextMCPTimeout bounds one tools/list made on a request's behalf (a
+// context report, a tool listing); a
 // slow server costs the report that server's row, not the report.
 const contextMCPTimeout = 2 * time.Second
 

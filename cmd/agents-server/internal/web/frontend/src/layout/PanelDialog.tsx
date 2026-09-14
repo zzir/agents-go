@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { Dialog, NavList as PrimerNavList, Flash } from '@primer/react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { Dialog, NavList as PrimerNavList, Flash, useConfirm } from '@primer/react';
 import { LockIcon } from '@primer/octicons-react';
 import type { Icon } from '@primer/octicons-react';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { ReadOnlyContext } from '@/lib/access';
 import { useNarrow } from '@/lib/hooks';
+import { DISCARD_PROMPT, UnsavedContext, type UnsavedRegistry } from '@/lib/unsaved';
 
 export interface DialogTab {
   key: string;
@@ -22,12 +23,10 @@ function TabLoadError() {
 }
 
 // PanelDialog is the one settings hub (invariant 61): a nav of lazily loaded
-// panels, the admin group under its own heading, one panel shown at a time.
-// readOnly is a member's dialog: shared configuration is theirs to read (the
-// API allows it) and not to write (the server refuses with 403), so the
-// panels show and offer nothing. readOnly null is "not known yet" (/auth/me
-// still loading): the nav shows, the panel waits, so an admin never sees the
-// read-only note flash.
+// panels, the admin tabs after a divider, one panel shown at a time. readOnly
+// is a member's dialog (shared configuration is theirs to read, not write);
+// null is "not known yet", so the nav shows and the panel waits rather than
+// flashing the read-only note at an admin.
 export function PanelDialog({ title, tabs, adminTabs, readOnly, initialTab, onClose }: {
   title: string;
   tabs: DialogTab[];
@@ -48,6 +47,19 @@ export function PanelDialog({ title, tabs, adminTabs, readOnly, initialTab, onCl
   const all = useMemo(() => (adminTabs ? [...tabs, ...adminTabs] : tabs), [tabs, adminTabs]);
 
   const narrow = useNarrow();
+
+  // The forms inside with unsaved edits, whichever tab holds them (panels
+  // stay mounted): every close path asks before discarding them.
+  const dirtyForms = useRef(new Set<string>());
+  const unsaved = useMemo<UnsavedRegistry>(() => ({
+    set: (id, dirty) => { if (dirty) dirtyForms.current.add(id); else dirtyForms.current.delete(id); },
+    any: () => dirtyForms.current.size > 0,
+  }), []);
+  const confirm = useConfirm();
+  const close = async () => {
+    if (unsaved.any() && !(await confirm(DISCARD_PROMPT))) return;
+    onClose();
+  };
 
   useEffect(() => {
     if (loaded[tab]) return;
@@ -78,7 +90,7 @@ export function PanelDialog({ title, tabs, adminTabs, readOnly, initialTab, onCl
   return (
     <Dialog
       title={title}
-      onClose={() => onClose()}
+      onClose={() => void close()}
       height="auto"
       position={{ narrow: 'fullscreen', regular: 'center' }}
       // Both sides scale with the viewport and cap, so the dialog stays a
@@ -108,28 +120,30 @@ export function PanelDialog({ title, tabs, adminTabs, readOnly, initialTab, onCl
             )}
           </PrimerNavList>
         </nav>
-        <div className="settings-content">
-          {readOnly !== null && all.map(t => {
-            const Comp = loaded[t.key];
-            if (!Comp) return null; // never visited → never mounted
-            const showNote = !!readOnly && t.key !== 'account' && !t.scoped;
-            return (
-              <div key={t.key} className="settings-panel" hidden={t.key !== tab}>
-                {showNote && (
-                  <Flash variant="default" className="settings-readonly-note">
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                      <LockIcon size={16} />
-                      Read-only. Shared configuration is managed by admins; you can use all of it in your own sessions.
-                    </span>
-                  </Flash>
-                )}
-                <ReadOnlyContext value={!!readOnly && !t.scoped}>
-                  <ErrorBoundary resetKey={t.key}><Comp /></ErrorBoundary>
-                </ReadOnlyContext>
-              </div>
-            );
-          })}
-        </div>
+        <UnsavedContext value={unsaved}>
+          <div className="settings-content">
+            {readOnly !== null && all.map(t => {
+              const Comp = loaded[t.key];
+              if (!Comp) return null; // never visited → never mounted
+              const showNote = !!readOnly && t.key !== 'account' && !t.scoped;
+              return (
+                <div key={t.key} className="settings-panel" hidden={t.key !== tab}>
+                  {showNote && (
+                    <Flash variant="default" className="settings-readonly-note">
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                        <LockIcon size={16} />
+                        Read-only. Shared configuration is managed by admins; you can use all of it in your own sessions.
+                      </span>
+                    </Flash>
+                  )}
+                  <ReadOnlyContext value={!!readOnly && !t.scoped}>
+                    <ErrorBoundary resetKey={t.key}><Comp /></ErrorBoundary>
+                  </ReadOnlyContext>
+                </div>
+              );
+            })}
+          </div>
+        </UnsavedContext>
       </div>
     </Dialog>
   );

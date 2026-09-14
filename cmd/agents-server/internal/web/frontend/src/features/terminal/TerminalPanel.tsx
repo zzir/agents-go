@@ -120,7 +120,7 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
       return;
     }
     if (!insertIntoComposer(quoteAsCodeBlock(sel))) {
-      toast.warn('Open a chat to quote into');
+      toast.warn('Open a session to quote into');
     }
   };
 
@@ -270,7 +270,7 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
                 icon={QuoteIcon}
                 variant="invisible"
                 size="small"
-                aria-label="Quote selection to chat"
+                aria-label="Quote selection to the composer"
                 disabled={!activeHasSelection}
                 // Keep focus (and the xterm selection) where they are.
                 onMouseDown={e => e.preventDefault()}

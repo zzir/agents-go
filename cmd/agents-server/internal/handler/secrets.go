@@ -3,7 +3,6 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
-	"strings"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/providers"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
@@ -30,89 +29,10 @@ func resolveSecret(incoming, prev string) string {
 	return incoming
 }
 
-// normalizeEndpoint canonicalizes a base_url for credential-identity
-// comparison — trailing slash and whitespace only, never anything that could equate two endpoints.
-func normalizeEndpoint(u string) string {
-	return strings.TrimRight(strings.TrimSpace(u), "/")
-}
-
 // credentialTargetChanged reports whether a stored api_key's destination, the
 // (provider_type, base_url) pair, differs between the row and the update (invariant 9).
 func credentialTargetChanged(prevProvider, prevBaseURL, newProvider, newBaseURL string) bool {
-	return providers.NormalizeType(prevProvider) != providers.NormalizeType(newProvider) ||
-		normalizeEndpoint(prevBaseURL) != normalizeEndpoint(newBaseURL)
-}
-
-// maskFallbackModels masks the api_key of every entry in a fallback-models
-// JSON array; input that doesn't parse is returned unchanged.
-func maskFallbackModels(raw string) string {
-	if raw == "" {
-		return ""
-	}
-	var entries []map[string]any
-	if err := json.Unmarshal([]byte(raw), &entries); err != nil {
-		return raw
-	}
-	changed := false
-	for _, e := range entries {
-		if s, ok := e["api_key"].(string); ok && s != "" {
-			e["api_key"] = SecretMask
-			changed = true
-		}
-	}
-	if !changed {
-		return raw
-	}
-	out, err := json.Marshal(entries)
-	if err != nil {
-		return raw
-	}
-	return string(out)
-}
-
-// restoreFallbackModels resolves masked api_keys against the stored array by
-// (normalized provider_type, normalized base_url, model), never by position — invariant 9.
-func restoreFallbackModels(incoming, prev string) string {
-	if incoming == "" || !strings.Contains(incoming, SecretMask) {
-		return incoming
-	}
-	var in []map[string]any
-	if err := json.Unmarshal([]byte(incoming), &in); err != nil {
-		return incoming
-	}
-	var old []map[string]any
-	_ = json.Unmarshal([]byte(prev), &old)
-	entryIdentity := func(e map[string]any) string {
-		p, _ := e["provider_type"].(string)
-		u, _ := e["base_url"].(string)
-		m, _ := e["model"].(string)
-		return providers.NormalizeType(p) + "\x00" + normalizeEndpoint(u) + "\x00" + m
-	}
-	// Keys queue PER IDENTITY and are consumed in order, so two same-identity
-	// entries each keep their own key.
-	prevKeys := map[string][]string{}
-	for _, o := range old {
-		if k, ok := o["api_key"].(string); ok {
-			id := entryIdentity(o)
-			prevKeys[id] = append(prevKeys[id], k)
-		}
-	}
-	for _, e := range in {
-		if s, ok := e["api_key"].(string); ok && s == SecretMask {
-			id := entryIdentity(e)
-			if q := prevKeys[id]; len(q) > 0 {
-				e["api_key"] = q[0]
-				prevKeys[id] = q[1:]
-			} else {
-				e["api_key"] = ""
-			}
-		}
-	}
-	out, err := json.Marshal(in)
-	if err != nil {
-		return incoming
-	}
-	return string(out)
+	return !providers.SameEndpoint(prevProvider, prevBaseURL, newProvider, newBaseURL)
 }
 
 // maskJSONFields masks the named string fields of a JSON object, plus every
@@ -250,12 +170,6 @@ func restoreSandboxConfig(incoming, prev json.RawMessage) json.RawMessage {
 // sandboxSecretFields are every sandbox type's credential fields — one list,
 // mirroring the store's sealing list.
 var sandboxSecretFields = []string{"ssh_password", "api_key"}
-
-// sanitizeAgentConfig masks the per-entry fallback-model keys for API
-// responses (the provider credential lives on the Provider entity).
-func sanitizeAgentConfig(ac *store.AgentConfig) {
-	ac.Resilience.FallbackModels = maskFallbackModels(ac.Resilience.FallbackModels)
-}
 
 // sanitizeProvider masks a provider's key for API responses and projects the
 // ChatGPT token into the logged-in signal — the ONE place a model key is masked.

@@ -31,7 +31,6 @@ const (
 	labelSandboxConfig        = "sandboxes.config"
 	labelProjectEnv           = "projects.env"
 	labelTriggerSecret        = "triggers.secret"
-	labelAgentFallbackModels  = "agent_configs.fallback_models"
 	labelSetting              = "settings.value"
 )
 
@@ -127,40 +126,4 @@ func sealTrigger(t *Trigger) error {
 func openTrigger(t *Trigger) (err error) {
 	t.Secret, err = openSecret(labelTriggerSecret, t.Secret)
 	return err
-}
-
-// An agent's fallback chain is a JSON array of entries each carrying its own
-// api_key.
-func sealAgentConfig(ac *AgentConfig) (err error) {
-	ac.Resilience.FallbackModels, err = mapJSONArrayKey(labelAgentFallbackModels, ac.Resilience.FallbackModels, "api_key", func(l, s string) (string, error) { return sealSecret(l, s), nil })
-	return err
-}
-
-func openAgentConfig(ac *AgentConfig) (err error) {
-	ac.Resilience.FallbackModels, err = mapJSONArrayKey(labelAgentFallbackModels, ac.Resilience.FallbackModels, "api_key", openSecret)
-	return err
-}
-
-// mapJSONArrayKey applies fn to the named string field of every object in a
-// JSON array (the fallback chain); anything else passes through.
-func mapJSONArrayKey(label, raw, key string, fn func(label, s string) (string, error)) (string, error) {
-	if raw == "" || secretBox == nil && !hasSealed(json.RawMessage(raw)) {
-		return raw, nil
-	}
-	var items []json.RawMessage
-	if json.Unmarshal([]byte(raw), &items) != nil {
-		return raw, nil //nolint:nilerr // not an array: nothing here to seal, the value passes through
-	}
-	for i, item := range items {
-		out, err := mapJSONKeys(label, item, fn, key)
-		if err != nil {
-			return "", err
-		}
-		items[i] = out
-	}
-	b, err := json.Marshal(items)
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
 }

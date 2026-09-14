@@ -29,7 +29,7 @@ func NewTraceHandler(traces *store.TraceStore, settings *settings.Reader) *Trace
 //	@Produce		json
 //	@Param			id			path		string	true	"Session ID"
 //	@Param			limit		query		int		false	"Max events to return; 0 or absent returns all"
-//	@Param			before_id	query		int		false	"Only events with id < before_id (backwards cursor)"
+//	@Param			before_id	query		string	false	"Only events with id < before_id (backwards cursor)"
 //	@Param			summary		query		bool	false	"Leave the payload fields out of data (rows marked payload_omitted)"
 //	@Success		200			{array}		store.TraceEvent
 //	@Failure		500			{object}	ErrorResponse

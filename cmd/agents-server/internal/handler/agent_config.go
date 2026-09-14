@@ -3,6 +3,7 @@ package handler
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"regexp"
 
@@ -50,6 +51,9 @@ func (h *AgentConfigHandler) validateAgentConfig(c *gin.Context, ac *store.Agent
 		badRequest(c, "name is required")
 		return false
 	}
+	if !nameFits(c, ac.Name) {
+		return false
+	}
 	// No provider ships a default model: an empty one is a *UserError at run
 	// time, so refuse it at save.
 	if ac.Model == "" {
@@ -83,7 +87,7 @@ func (h *AgentConfigHandler) validateAgentConfig(c *gin.Context, ac *store.Agent
 			return false
 		}
 	}
-	if err := bridge.ValidateAgentToolNames(c.Request.Context(), h.mcpServers, ac.ToolsJSON); err != nil {
+	if err := bridge.ValidateAgentToolNames(c.Request.Context(), h.mcpServers, ac.Tools); err != nil {
 		badRequest(c, err.Error())
 		return false
 	}
@@ -93,6 +97,30 @@ func (h *AgentConfigHandler) validateAgentConfig(c *gin.Context, ac *store.Agent
 	if err != nil {
 		badRequest(c, err.Error())
 		return false
+	}
+	// A fallback provider follows the primary's reference rule; an entry from
+	// before provider_id names an endpoint and is checked when the run resolves it.
+	for i, e := range spec.FallbackModels {
+		if e.ProviderID == "" {
+			continue
+		}
+		pv, err := h.providers.Get(c.Request.Context(), e.ProviderID)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				badRequest(c, fmt.Sprintf("fallback_models[%d].provider_id names no provider", i))
+			} else {
+				internalError(c, err)
+			}
+			return false
+		}
+		if !store.RefVisible(pv.Scope, pv.OwnerID, ac.Scope, ac.OwnerID) {
+			if !callerSees(c, pv.Scope, pv.OwnerID) {
+				badRequest(c, fmt.Sprintf("fallback_models[%d].provider_id names no provider", i))
+			} else {
+				badRequest(c, refScopeError("provider", pv.Name, ac.Scope))
+			}
+			return false
+		}
 	}
 	// MCP servers, skills and handoff targets must be ones this scope may
 	// name; missing ids are tolerated (the run filters them loudly).
@@ -136,7 +164,32 @@ func (h *AgentConfigHandler) validateAgentConfig(c *gin.Context, ac *store.Agent
 	return true
 }
 
-// List responds with all agent configurations, secrets masked.
+// bindAgentConfig reads a Create/Update body; false means the response is
+// written. A fallback entry must name a provider: the endpoint fields are
+// read-only and a key lives on the provider row (decisions §5.69).
+func bindAgentConfig(c *gin.Context, ac *store.AgentConfig) bool {
+	if err := c.ShouldBindJSON(ac); err != nil {
+		badRequest(c, err.Error())
+		return false
+	}
+	if i := ac.Resilience.FallbackModels.InlineKeyAt(); i >= 0 {
+		badRequest(c, fmt.Sprintf("fallback_models[%d].api_key: a key lives on a provider; name one by provider_id", i))
+		return false
+	}
+	for i, e := range ac.Resilience.FallbackModels {
+		if e.ProviderID == "" {
+			badRequest(c, fmt.Sprintf("fallback_models[%d].provider_id is required", i))
+			return false
+		}
+		if e.ProviderType != "" || e.BaseURL != "" {
+			badRequest(c, fmt.Sprintf("fallback_models[%d]: provider_type and base_url are read-only; the provider row carries the endpoint", i))
+			return false
+		}
+	}
+	return true
+}
+
+// List responds with all agent configurations.
 //
 //	@Summary	List agents
 //	@Tags		agents
@@ -150,16 +203,13 @@ func (h *AgentConfigHandler) List(c *gin.Context) {
 	if !ok {
 		return
 	}
-	for i := range configs {
-		sanitizeAgentConfig(&configs[i])
-	}
 	c.JSON(http.StatusOK, configs)
 }
 
 // Create persists a new agent configuration from the request body.
 //
 //	@Summary		Create agent
-//	@Description	Secret fields (api_key, fallback_models[].api_key) are write-only: responses mask them with ********; sending the mask back keeps the stored value, "" clears it. Tool selections whose statically known tool names would collide are rejected.
+//	@Description	No secret lives here: the credential is on the agent's provider, and each resilience.fallback_models entry names a provider by provider_id (an api_key in an entry is 400). Tool selections whose statically known tool names would collide are rejected.
 //	@Tags			agents
 //	@Accept			json
 //	@Produce		json
@@ -171,8 +221,7 @@ func (h *AgentConfigHandler) List(c *gin.Context) {
 //	@Router			/agents [post]
 func (h *AgentConfigHandler) Create(c *gin.Context) {
 	var ac store.AgentConfig
-	if err := c.ShouldBindJSON(&ac); err != nil {
-		badRequest(c, err.Error())
+	if !bindAgentConfig(c, &ac) {
 		return
 	}
 	// id/timestamps are server-owned (BeforeAppendModel stamps them).
@@ -183,18 +232,15 @@ func (h *AgentConfigHandler) Create(c *gin.Context) {
 	if !h.validateAgentConfig(c, &ac) {
 		return
 	}
-	// There is no stored value yet, so a mask sentinel resolves to empty.
-	ac.Resilience.FallbackModels = restoreFallbackModels(ac.Resilience.FallbackModels, "")
 	if err := h.store.Create(c.Request.Context(), &ac); err != nil {
 		saveError(c, err) // duplicate name -> 409
 		return
 	}
-	sanitizeAgentConfig(&ac)
 	created(c, ac.ID, ac)
 }
 
 // Get responds with the agent configuration identified by the id path
-// parameter, secrets masked.
+// parameter.
 //
 //	@Summary	Get agent
 //	@Tags		agents
@@ -210,16 +256,14 @@ func (h *AgentConfigHandler) Get(c *gin.Context) {
 	if !ok {
 		return
 	}
-	sanitizeAgentConfig(ac)
 	c.JSON(http.StatusOK, ac)
 }
 
 // Update overwrites the agent configuration identified by the id path
-// parameter and responds with the updated configuration (secrets masked).
-// Masked secret fields keep their stored values.
+// parameter and responds with the updated configuration.
 //
 //	@Summary		Update agent
-//	@Description	Full replace. Secret fields are write-only: send back the ******** mask to keep the stored value, "" to clear it; a mask kept across a provider_type or base_url change is rejected (the stored key belongs to the previous destination). Tool selections whose statically known tool names would collide are rejected.
+//	@Description	Full replace. Each resilience.fallback_models entry names a provider by provider_id; an entry from before provider_id (provider_type/base_url, read-only) is sent back as a provider_id or dropped. Tool selections whose statically known tool names would collide are rejected.
 //	@Tags			agents
 //	@Accept			json
 //	@Produce		json
@@ -233,8 +277,7 @@ func (h *AgentConfigHandler) Get(c *gin.Context) {
 //	@Router			/agents/{id} [put]
 func (h *AgentConfigHandler) Update(c *gin.Context) {
 	var ac store.AgentConfig
-	if err := c.ShouldBindJSON(&ac); err != nil {
-		badRequest(c, err.Error())
+	if !bindAgentConfig(c, &ac) {
 		return
 	}
 	ctx := c.Request.Context()
@@ -249,12 +292,10 @@ func (h *AgentConfigHandler) Update(c *gin.Context) {
 	if !h.validateAgentConfig(c, &ac) {
 		return
 	}
-	// Masked fallback-model keys resolve against the stored row inside the
-	// transaction; ownershipGuard turns a transfer that landed since into 409.
+	// ownershipGuard turns a transfer that landed since into 409.
 	err := h.store.Update(ctx, id, &ac, ownershipGuard(cur.Scope, cur.OwnerID, agentScope,
 		func(prev *store.AgentConfig) error {
 			ac.Scope, ac.OwnerID = prev.Scope, prev.OwnerID
-			ac.Resilience.FallbackModels = restoreFallbackModels(ac.Resilience.FallbackModels, prev.Resilience.FallbackModels)
 			return nil
 		}))
 	if err != nil {
@@ -266,14 +307,13 @@ func (h *AgentConfigHandler) Update(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
-	sanitizeAgentConfig(updated)
 	c.JSON(http.StatusOK, updated)
 }
 
 // Delete removes the agent configuration identified by the id path parameter.
 //
 //	@Summary		Delete agent
-//	@Description	The memory scoped to the agent is deleted with it.
+//	@Description	The memory scoped to the agent and the triggers that fire it are deleted with it.
 //	@Tags			agents
 //	@Param			id	path	string	true	"Agent ID"
 //	@Success		204	"deleted"
@@ -330,6 +370,7 @@ func (h *AgentConfigHandler) SetScope(c *gin.Context) {
 		saveError(c, err)
 		return
 	}
+	server.SetAuditDetail(c, "scope="+scope)
 	c.Status(http.StatusNoContent)
 }
 

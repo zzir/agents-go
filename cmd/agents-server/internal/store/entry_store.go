@@ -117,11 +117,12 @@ func (s *EntryStore) scoped(q *bun.SelectQuery) *bun.SelectQuery {
 
 // SessionIsPlanning reports whether the session should START its next run in
 // the planning phase: a single-row read of the materialized column
-// (Session.Planning). The state belongs to the SESSION, not a run.
+// (Session.Planning), addressed by (id, generation) like every other read of
+// a session's state. The state belongs to the SESSION, not a run.
 func (s *EntryStore) SessionIsPlanning(ctx context.Context, ref session.Ref) (bool, error) {
 	var planning bool
 	err := s.db.NewSelect().Model((*Session)(nil)).Column("planning").
-		Where("id = ?", ref.ID).Scan(ctx, &planning)
+		Where("id = ?", ref.ID).Where("gen = ?", ref.Gen).Scan(ctx, &planning)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, nil // a session that no longer exists plans for nobody
@@ -132,12 +133,13 @@ func (s *EntryStore) SessionIsPlanning(ctx context.Context, ref session.Ref) (bo
 }
 
 // SetSessionPlanning writes the session's plan phase; last write wins, the
-// approved submit_plan's unlock included (see armPlanUnlock).
+// approved submit_plan's unlock included (see armPlanUnlock). A replacement
+// generation under the same id is not this session: the write misses it.
 func (s *EntryStore) SetSessionPlanning(ctx context.Context, ref session.Ref, planning bool) error {
 	_, err := s.db.NewUpdate().Model((*Session)(nil)).
 		Set("planning = ?", planning).
 		Set("updated_at = ?", time.Now().UTC()).
-		Where("id = ?", ref.ID).Exec(ctx)
+		Where("id = ?", ref.ID).Where("gen = ?", ref.Gen).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("writing plan phase for session %s: %w", ref.ID, err)
 	}
@@ -886,15 +888,25 @@ func (s *EntryStore) appendHostNote(ctx context.Context, ref session.Ref, kind, 
 
 // forkEntriesTx copies a prefix of src's entries into dst, rewriting entry
 // ids to the destination's namespace and remapping parent links alongside.
+// A boundary that is not a row of src is ErrNotFound; a row whose entry does
+// not decode is left out of the copy.
 func forkEntriesTx(ctx context.Context, tx bun.Tx, src, dst session.Ref, upToID string, exclusive bool) ([]string, error) {
 	var rows []entryRow
 	q := tx.NewSelect().Model(&rows).
 		Where("session_id = ?", src.ID).Where("gen = ?", src.Gen).
 		OrderExpr("seq ASC")
 	if upToID != "" {
-		// The boundary names a row; the prefix is everything at or before
-		// its position.
-		at := tx.NewSelect().Model((*entryRow)(nil)).Column("seq").Where("id = ?", upToID)
+		// The boundary names a row of THIS session; the prefix is everything
+		// at or before its position.
+		at := tx.NewSelect().Model((*entryRow)(nil)).Column("seq").
+			Where("id = ?", upToID).Where("session_id = ?", src.ID).Where("gen = ?", src.Gen)
+		exists, err := at.Exists(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("fork boundary read: %w", err)
+		}
+		if !exists {
+			return nil, fmt.Errorf("fork boundary %s: %w", upToID, ErrNotFound)
+		}
 		if exclusive {
 			q = q.Where("seq < (?)", at)
 		} else {
@@ -911,22 +923,24 @@ func forkEntriesTx(ctx context.Context, tx bun.Tx, src, dst session.Ref, upToID 
 	var runIDs []string
 	seen := map[string]bool{}
 	remap := make(map[string]string, len(rows))
+	copied := make([]entryRow, 0, len(rows))
 	now := time.Now().UTC()
 	// The fork's own numbering, from the shared allocator: the destination is a
 	// new session, so its positions start where any new session's would.
 	seq := session.SeqFor(session.AppendPoint{})
 	for i := range rows {
+		var e session.Entry
+		if err := json.Unmarshal([]byte(rows[i].Entry), &e); err != nil {
+			// Its children link past it, to the nearest ancestor copied.
+			remap[rows[i].EntryID] = remap[rows[i].ParentID]
+			continue
+		}
 		if rid := rows[i].RunID; rid != "" && !seen[rid] {
 			seen[rid] = true
 			runIDs = append(runIDs, rid)
 		}
 		newID := session.EntryIDFor(seq)
 		remap[rows[i].EntryID] = newID
-
-		var e session.Entry
-		if err := json.Unmarshal([]byte(rows[i].Entry), &e); err != nil {
-			continue
-		}
 		e.ID = newID
 		e.ParentID = remap[e.ParentID] // "" for a root maps to "" — the zero value
 		e.Seq = seq
@@ -935,17 +949,21 @@ func forkEntriesTx(ctx context.Context, tx bun.Tx, src, dst session.Ref, upToID 
 		if err != nil {
 			return nil, fmt.Errorf("fork entries encode: %w", err)
 		}
-		rows[i].ID = "" // minted afresh on insert
-		rows[i].SessionID = dst.ID
-		rows[i].Gen = dst.Gen
-		rows[i].Seq = e.Seq
-		rows[i].EntryID = newID
-		rows[i].ParentID = e.ParentID
-		rows[i].Entry = string(raw)
-		rows[i].CreatedAt = now
+		row := rows[i]
+		row.ID = "" // minted afresh on insert
+		row.SessionID = dst.ID
+		row.Gen = dst.Gen
+		row.Seq = e.Seq
+		row.EntryID = newID
+		row.ParentID = e.ParentID
+		row.Entry = string(raw)
+		row.CreatedAt = now
+		copied = append(copied, row)
 	}
-	if _, err := tx.NewInsert().Model(&rows).Exec(ctx); err != nil {
-		return nil, fmt.Errorf("fork entries write: %w", err)
+	if len(copied) > 0 {
+		if _, err := tx.NewInsert().Model(&copied).Exec(ctx); err != nil {
+			return nil, fmt.Errorf("fork entries write: %w", err)
+		}
 	}
 	// Fold the copy's tip from its rows: the cut decides where the copy ends.
 	if err := (&EntryStore{ref: dst}).refreshAppendPointIn(ctx, tx); err != nil {
@@ -994,19 +1012,4 @@ func (s *EntryStore) ForkSession(ctx context.Context, dst *Session, src session.
 		return nil, err
 	}
 	return runIDs, nil
-}
-
-// DeleteBySession removes every entry of a session, in every generation the
-// repo made; the direct scope (empty generation) is not the repo's to remove.
-func (s *EntryStore) DeleteBySession(ctx context.Context, sessionID string) error {
-	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := tx.NewDelete().Model((*entryRow)(nil)).
-			Where("session_id = ?", sessionID).Where("gen <> ?", "").Exec(ctx); err != nil {
-			return err
-		}
-		// The append point describes those rows, so it goes with them.
-		_, err := tx.NewDelete().Model((*appendPointRow)(nil)).
-			Where("session_id = ?", sessionID).Where("gen <> ?", "").Exec(ctx)
-		return err
-	})
 }

@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/zzir/agents-go/agents"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/providers"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -36,8 +35,8 @@ type AgentSpec struct {
 	// RetryPolicy is decoded unconditionally (the zero value is a valid policy)
 	// and applied only when RetryEnabled.
 	RetryPolicy agents.RetryPolicy
-	// FallbackModels is the decoded fallback provider chain (nil when unset).
-	FallbackModels []fallbackEntry
+	// FallbackModels is the fallback provider chain (nil when unset).
+	FallbackModels []store.FallbackModel
 	// ErrorHandlers is the declarative run-error recovery config (nil when
 	// unset): per-error-kind static fallback outputs.
 	ErrorHandlers *ErrorHandlersSpec
@@ -189,48 +188,20 @@ func DecodeAgentSpec(ac *store.AgentConfig) (*AgentSpec, error) {
 		spec.OutputType = os
 	}
 
-	if err := decodeStringList(ac.Approval.ApproveTools, "approve_tools", &spec.ApproveTools); err != nil {
-		return nil, err
-	}
-	if err := decodeStringList(ac.ToolsJSON, "tools", &spec.Tools); err != nil {
-		return nil, err
-	}
-	if err := decodeStringList(ac.HandoffsJSON, "handoffs", &spec.Handoffs); err != nil {
-		return nil, err
-	}
-	if ac.SkillsJSON != "" {
-		// Fail rather than fall open: a malformed skills selection must not
-		// leave the full skill set attached, widening the capability surface.
-		if err := json.Unmarshal([]byte(ac.SkillsJSON), &spec.Skills); err != nil {
-			return nil, fmt.Errorf("skills selection is invalid: %w", err)
-		}
-		spec.SkillsSet = true
-	}
+	spec.ApproveTools = ac.Approval.ApproveTools
+	spec.Tools = ac.Tools
+	spec.Handoffs = ac.Handoffs
+	// A nil selection is "every skill"; an explicit [] is none.
+	spec.Skills, spec.SkillsSet = ac.Skills, ac.Skills != nil
 
 	if ac.Resilience.RetryPolicy != "" {
 		if err := json.Unmarshal([]byte(ac.Resilience.RetryPolicy), &spec.RetryPolicy); err != nil {
 			return nil, fmt.Errorf("retry_policy is invalid: %w", err)
 		}
 	}
-	if ac.Resilience.FallbackModels != "" {
-		// Unknown keys are rejected: a misspelled selector would silently run
-		// the entry on the default backend.
-		dec := json.NewDecoder(strings.NewReader(ac.Resilience.FallbackModels))
-		dec.DisallowUnknownFields()
-		if err := dec.Decode(&spec.FallbackModels); err != nil {
-			return nil, fmt.Errorf("fallback_models is invalid: %w", err)
-		}
-		// Decode stops after the first JSON value (unlike Unmarshal); trailing
-		// content is a malformed config, not something to silently drop.
-		if dec.More() {
-			return nil, fmt.Errorf("fallback_models is invalid: trailing data after the JSON array")
-		}
-		for i, e := range spec.FallbackModels {
-			if err := providers.ValidateType(e.Provider); err != nil {
-				return nil, fmt.Errorf("fallback_models[%d].provider_type: %w", i, err)
-			}
-		}
-	}
+	// An entry without provider_id is one from before the field: an endpoint,
+	// resolved to a provider when the run builds (provider_resolve.go).
+	spec.FallbackModels = ac.Resilience.FallbackModels
 
 	if ac.ErrorHandlers != "" {
 		// Depends on spec.OutputType (decoded above): a plain-text agent's
@@ -243,16 +214,4 @@ func DecodeAgentSpec(ac *store.AgentConfig) (*AgentSpec, error) {
 	}
 
 	return spec, nil
-}
-
-// decodeStringList decodes a JSON string-array field into dst, leaving it nil
-// when the field is unset. label names the field in the error message.
-func decodeStringList(raw, label string, dst *[]string) error {
-	if raw == "" {
-		return nil
-	}
-	if err := json.Unmarshal([]byte(raw), dst); err != nil {
-		return fmt.Errorf("%s must be a JSON array of strings: %w", label, err)
-	}
-	return nil
 }

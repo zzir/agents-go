@@ -27,9 +27,10 @@ const (
 	ModeOAuth = "oauth"
 )
 
-// errUnauthorized is every authentication failure: wrong, expired, and revoked
-// are indistinguishable to the caller on purpose.
-var errUnauthorized = errors.New("unauthorized")
+// ErrUnauthorized is Authenticate's answer to a wrong, expired or revoked
+// credential — indistinguishable on purpose; any other error means the store
+// could not say.
+var ErrUnauthorized = server.ErrUnauthorized
 
 // Service resolves bearer credentials and (in OAuth mode) runs login flows.
 type Service struct {
@@ -136,21 +137,21 @@ func (s *Service) ConfigView() protocol.AuthConfig {
 	return protocol.AuthConfig{Mode: s.mode, Providers: s.providerNames}
 }
 
-// Authenticate resolves a presented bearer to its user, or errUnauthorized.
+// Authenticate resolves a presented bearer to its user, or ErrUnauthorized.
 func (s *Service) Authenticate(ctx context.Context, bearer string) (protocol.UserInfo, error) {
 	if bearer == "" {
-		return protocol.UserInfo{}, errUnauthorized
+		return protocol.UserInfo{}, ErrUnauthorized
 	}
 	if s.mode == ModeToken {
 		if s.staticToken == "" || subtle.ConstantTimeCompare([]byte(bearer), []byte(s.staticToken)) != 1 {
-			return protocol.UserInfo{}, errUnauthorized
+			return protocol.UserInfo{}, ErrUnauthorized
 		}
 		return s.localUser, nil
 	}
 	u, _, err := s.tokens.Authenticate(ctx, bearer)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return protocol.UserInfo{}, errUnauthorized
+			return protocol.UserInfo{}, ErrUnauthorized
 		}
 		return protocol.UserInfo{}, err
 	}
@@ -165,10 +166,18 @@ func (s *Service) StaticOK(token string) bool {
 }
 
 // Logout revokes the presented session token. A no-op in token mode — the
-// static credential has nothing to revoke.
+// static credential has nothing to revoke — and for a PAT, which a sign-out
+// from a script must not burn.
 func (s *Service) Logout(ctx context.Context, bearer string) error {
 	if s.mode == ModeToken || bearer == "" {
 		return nil
+	}
+	_, t, err := s.tokens.Authenticate(ctx, bearer)
+	if err != nil || t.Kind != store.TokenKindSession {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil
+		}
+		return err
 	}
 	if err := s.tokens.RevokeByPlaintext(ctx, bearer); err != nil && !errors.Is(err, store.ErrNotFound) {
 		return err

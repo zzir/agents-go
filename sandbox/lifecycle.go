@@ -52,6 +52,16 @@ type Lifecycle interface {
 	Status(ctx context.Context) (State, error)
 }
 
+// Detacher is implemented by backends whose Close would end compute another
+// Sandbox has since taken over (docker, where a later Sandbox adopts the
+// same container): Detach releases the connection and leaves the compute as
+// it is. A backend without it is closed instead (spec §2.7p).
+type Detacher interface {
+	// Detach releases this Sandbox's connection, touching neither the compute
+	// nor the files.
+	Detach() error
+}
+
 // Exporter is implemented by backends that can hand the working tree back as
 // a tar stream — how files leave a sandbox whose storage the host cannot open.
 type Exporter interface {

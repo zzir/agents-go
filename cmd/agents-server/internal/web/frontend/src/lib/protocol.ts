@@ -72,6 +72,9 @@ export const ERR = {
   runNotFound: 'run_not_found',
   approvalFailed: 'approval_failed',
   configError: 'config_error',
+  persistError: 'persist_error',
+  streamError: 'stream_error',
+  resumeError: 'resume_error',
 
   // SDK — mirrors agents.Code* in agents/errors.go
   guardrailTripwire: 'guardrail_tripwire',
@@ -81,6 +84,7 @@ export const ERR = {
   userError: 'user_error',
   toolTimeout: 'tool_timeout',
   toolPanic: 'tool_panic',
+  toolLoop: 'tool_loop',
   sandboxExec: 'sandbox_exec',
   mcp: 'mcp',
   unknown: 'unknown',

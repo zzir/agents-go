@@ -1,5 +1,8 @@
 import React, { useState } from 'react';
-import { TextInput, Textarea, FormControl, Checkbox, Select, Stack } from '@primer/react';
+import { TextInput, Textarea, FormControl, Checkbox, Select, Stack, Link, Button, IconButton } from '@primer/react';
+import { XIcon } from '@primer/octicons-react';
+import { openSettingsTab } from '@/features/settings/settingsLink';
+import { listEmpty } from '@/features/settings/listEmpty';
 import { TokenListInput } from '@/components/TokenListInput';
 import { FormActions } from '@/components/FormActions';
 import { CrudPanel, RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
@@ -25,7 +28,7 @@ import { providerMeta, providerFacts, type ProviderTypeInfo } from '@/lib/provid
 // The agent-config REST payload nests these scalar settings under JSON group
 // objects. The form state stays flat, so flattenConfig lifts a loaded config's
 // group keys to the top level and nestConfig folds them back before saving.
-const CONFIG_GROUPS: Record<string, string[]> = {
+export const CONFIG_GROUPS: Record<string, string[]> = {
   behavior: ['max_turns', 'handoff_description', 'tool_choice_reset', 'stop_at_tools', 'handoff_input_filter', 'max_tool_concurrency', 'tool_not_found_behavior', 'reasoning_item_id_policy', 'workflow_authoring', 'subagents', 'vision', 'override_system_prompt'],
   resilience: ['retry_enabled', 'retry_policy', 'fallback_models'],
   guardrails: ['guardrails', 'output_schema'],
@@ -39,7 +42,7 @@ const CONFIG_GROUPS: Record<string, string[]> = {
 // model" — which is what an unset tool_not_found_behavior now means.
 const RETURN_TO_MODEL = new Set(['return_to_model', 'return_error_to_model']);
 
-function flattenConfig(c: Record<string, unknown> | undefined): Record<string, unknown> {
+export function flattenConfig(c: Record<string, unknown> | undefined): Record<string, unknown> {
   if (!c) return {};
   const out: Record<string, unknown> = { ...c };
   for (const [group, keys] of Object.entries(CONFIG_GROUPS)) {
@@ -50,7 +53,7 @@ function flattenConfig(c: Record<string, unknown> | undefined): Record<string, u
   return out;
 }
 
-function nestConfig(flat: Record<string, unknown>): Record<string, unknown> {
+export function nestConfig(flat: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = { ...flat };
   for (const [group, keys] of Object.entries(CONFIG_GROUPS)) {
     const g: Record<string, unknown> = {};
@@ -59,6 +62,50 @@ function nestConfig(flat: Record<string, unknown>): Record<string, unknown> {
   }
   return out;
 }
+
+// The built-in tools an operator gates behind approval, by the group that
+// carries them. MCP tools (server__tool) and anything else go in the Other list.
+export const APPROVABLE_TOOLS: { group: string; tools: string[] }[] = [
+  { group: 'Sandbox', tools: ['exec_command', 'apply_patch', 'write_file', 'read_file', 'list_files'] },
+  { group: 'Subagents', tools: ['spawn_task', 'task_status', 'task_stop', 'task_retry'] },
+  { group: 'Memory', tools: ['memory_write', 'memory_append', 'memory_read', 'memory_search'] },
+  { group: 'History', tools: ['history_search', 'history_read', 'new_context'] },
+  { group: 'Other', tools: ['todo_write', 'read_skill'] },
+];
+
+// toggleListEntry adds or removes one name, keeping the rest in place.
+export function toggleListEntry(list: string[], name: string, on: boolean): string[] {
+  return on ? (list.includes(name) ? list : [...list, name]) : list.filter(t => t !== name);
+}
+
+// A fallback entry as the API carries it: a provider by id, or — read-only,
+// from before provider_id — the endpoint the entry named.
+export interface FallbackEntry { provider_id?: string; model?: string; provider_type?: string; base_url?: string }
+
+// legacyFallbackProvider finds the provider an endpoint-form entry names, the
+// way the server resolves it at run time: "" and "openai" are one backend, a
+// trailing slash the same host.
+// resolveFallbackEntry is what the fallback row renders: a fresh entry has no
+// endpoint yet and stays editable; an entry from before provider_id names an
+// endpoint, and is unreachable when no visible provider matches it.
+export function resolveFallbackEntry(e: FallbackEntry, providers: { id: string; type?: string; base_url?: string }[]): { providerId: string; unreachable: boolean } {
+  if (e.provider_id) return { providerId: e.provider_id, unreachable: false };
+  const legacy = e.provider_type !== undefined || e.base_url !== undefined;
+  if (!legacy) return { providerId: '', unreachable: false };
+  const match = legacyFallbackProvider(e, providers);
+  return { providerId: match || '', unreachable: !match };
+}
+
+export function legacyFallbackProvider(e: FallbackEntry, providers: { id: string; type?: string; base_url?: string }[]): string | undefined {
+  const host = (u?: string) => (u || '').trim().replace(/\/+$/, '');
+  const type = (t?: string) => t || 'openai';
+  return providers.find(p => type(p.type) === type(e.provider_type) && host(p.base_url) === host(e.base_url))?.id;
+}
+
+const MCP_STATUS_NOTE: Record<string, string> = {
+  connected: 'connected', connecting: 'connecting', authorizing: 'authorizing',
+  needs_auth: 'needs authorization', disconnected: 'not connected', disabled: 'disabled',
+};
 
 interface AgentFormData {
   name: string;
@@ -74,7 +121,7 @@ interface AgentFormData {
   stop_at_tools: string;
   retry_enabled: boolean;
   retry_policy: string;
-  fallback_models: string;
+  fallback_models: FallbackEntry[];
   guardrails: string;
   output_schema: string;
   error_handlers: string;
@@ -89,7 +136,7 @@ interface AgentFormData {
   subagents: boolean;
   vision: boolean;
   override_system_prompt: boolean;
-  approve_tools: string;
+  approve_tools: string[];
   compaction_enabled: boolean;
   compaction_threshold_tokens: number;
   compaction_window: number;
@@ -99,11 +146,15 @@ interface AgentFormData {
   memory_tools: boolean;
   memory_agent_write: boolean;
   history_tools: boolean;
-  handoffs?: string;
-  tools?: string;
-  skills?: string;
+  handoffs?: string[];
+  tools?: string[];
+  // null (or absent) is "not customized": the agent gets every skill it can see.
+  skills?: string[] | null;
   model_settings?: string;
 }
+
+// The list fields as the form hands them back.
+type AgentLists = { handoffs: string[]; tools: string[]; skills: string[]; model_settings: string };
 
 interface McpServer {
   id: string | number;
@@ -121,27 +172,28 @@ interface Agent {
   model: string;
   provider_id?: string;
   instructions: string;
-  handoffs: string;
-  tools: string;
-  // Empty/absent means "not customized" -> the agent gets every installed skill.
-  skills?: string;
+  handoffs?: string[];
+  tools?: string[];
+  // null/absent means "not customized" -> the agent gets every installed skill.
+  skills?: string[] | null;
   scope?: string;
   owner_id?: string;
 }
 
-// The referenced endpoints, for the picker and the list badge. Name and type
-// are all this panel needs — credentials never reach it.
+// The referenced endpoints, for the pickers and the list badge. Name, type and
+// endpoint are all this panel needs — credentials never reach it.
 interface ProviderRef {
   id: string;
   name: string;
   type?: string;
+  base_url?: string;
   scope?: string;
   owner_id?: string;
 }
 
 interface AgentFormProps {
   initial?: Partial<AgentFormData> & { id?: string | number; scope?: string; owner_id?: string };
-  onSave: (form: AgentFormData & { handoffs: string; tools: string; skills: string; model_settings: string }) => void;
+  onSave: (form: AgentFormData & AgentLists) => void;
   onCancel?: () => void;
   onDelete?: () => void;
   saving?: boolean;
@@ -155,20 +207,13 @@ interface AgentFormProps {
 function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, skills, allAgents, providerTypes, providers }: AgentFormProps) {
   const { me } = useMe();
   const meId = me?.id;
-  const initHandoffs = (): (string | number)[] => {
-    try { return JSON.parse((initial && initial.handoffs) || '[]'); } catch { return []; }
-  };
-  const initTools = (): (string | number)[] => {
-    try { return JSON.parse((initial && initial.tools) || '[]'); } catch { return []; }
-  };
   // A brand-new agent starts with NO skills selected — skills are opt-in, so a
   // bot unrelated to any installed skill doesn't silently carry them all. Only
-  // an EXISTING agent whose `skills` is unset (predates per-agent scoping) falls
-  // back to "every installed skill" (null below), so an edit never strips them.
+  // an EXISTING agent whose `skills` is null (not customized) falls back to
+  // "every installed skill" (null below), so an edit never strips them.
   const initSkills = (): string[] | null => {
     if (!initial) return [];
-    if (typeof initial.skills !== 'string' || initial.skills === '') return null;
-    try { return JSON.parse(initial.skills); } catch { return null; }
+    return Array.isArray(initial.skills) ? initial.skills : null;
   };
   const parseModelSettings = (): Record<string, unknown> => {
     try { return JSON.parse((initial && initial.model_settings) || '{}'); } catch { return {}; }
@@ -180,13 +225,13 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
     max_turns: 0, handoff_description: '',
     tool_choice_reset: true, stop_at_tools: '',
     retry_enabled: false, retry_policy: '',
-    fallback_models: '',
+    fallback_models: [],
     guardrails: '', output_schema: '', error_handlers: '',
     prompt_id: '', prompt_version: '', history_limit: 0,
     // New agents default to a bounded fan-out; an existing agent keeps its
     // stored value (0 = unlimited) via the flattenConfig spread below.
     handoff_input_filter: '', max_tool_concurrency: initial ? 0 : 8,
-    tool_not_found_behavior: '', reasoning_item_id_policy: '', workflow_authoring: false, subagents: true, vision: false, override_system_prompt: false, approve_tools: '',
+    tool_not_found_behavior: '', reasoning_item_id_policy: '', workflow_authoring: false, subagents: true, vision: false, override_system_prompt: false, approve_tools: [],
     compaction_enabled: false, compaction_threshold_tokens: 0,
     compaction_window: 0, compaction_model: '', compaction_prompt: '', compaction_mode: '',
     memory_tools: false, memory_agent_write: false, history_tools: false,
@@ -204,12 +249,19 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
   // would be silently dropped on the next UI save.
   const msFormKeys = ['reasoning', 'service_tier', 'extra_body', 'temperature', 'top_p', 'max_tokens'];
   const preservedMs = Object.fromEntries(Object.entries(parseModelSettings()).filter(([k]) => !msFormKeys.includes(k)));
-  const [selectedHandoffs, setSelectedHandoffs] = useState<(string | number)[]>(initHandoffs);
-  const [selectedMcp, setSelectedMcp] = useState<(string | number)[]>(initTools);
+  const [selectedHandoffs, setSelectedHandoffs] = useState<string[]>(initial?.handoffs ?? []);
+  const [selectedMcp, setSelectedMcp] = useState<string[]>(initial?.tools ?? []);
   const [selectedSkills, setSelectedSkills] = useState<string[] | null>(initSkills);
   const set = <K extends keyof AgentFormData>(k: K, v: AgentFormData[K]) => setForm(prev => ({ ...prev, [k]: v }));
   // Summary is the default mode and the only one with a kept window and a summary prompt.
   const summaryMode = !form.compaction_mode || form.compaction_mode === 'summary';
+  const resetImplied = !!form.compaction_enabled && (form.compaction_mode === 'reset' || form.compaction_mode === 'hybrid');
+  const approveList = form.approve_tools || [];
+  const approveAll = approveList.includes('*');
+  const approveKnown = new Set(APPROVABLE_TOOLS.flatMap(g => g.tools));
+  // Names the checklist does not know (an MCP server's tool) are edited as tokens.
+  const approveOthers = approveList.filter(t => t !== '*' && !approveKnown.has(t));
+  const setApproveOthers = (others: string[]) => set('approve_tools', [...approveList.filter(t => t === '*' || approveKnown.has(t)), ...others]);
   // The backend's facts follow the REFERENCED provider: wording from the
   // static table, machine facts (unsupported features) from the server's
   // registry. An agent with no provider runs on the built-in openai default.
@@ -231,15 +283,22 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
     : { scope: 'private', owner_id: meId };
   const refOK = (row: { scope?: string; owner_id?: string }) => canReference(holder, row);
   const visibleProviders = (providers || []).filter(refOK);
+  // A fallback entry from before provider_id shows the provider at its
+  // endpoint, and saves as that provider; one no provider reaches is shown
+  // read-only and dropped on save.
+  const fallbacks = form.fallback_models || [];
+  const fallbackProviderId = (e: FallbackEntry) => resolveFallbackEntry(e, visibleProviders).providerId;
+  const setFallback = (i: number, patch: Partial<FallbackEntry>) =>
+    set('fallback_models', fallbacks.map((e, j) => j === i ? { provider_id: fallbackProviderId(e), model: e.model, ...patch } : e));
   const visibleMcp = (mcpServers || []).filter(refOK);
   const visibleSkills = (skills || []).filter(refOK);
   const handoffTargets = (allAgents || []).filter(a => a.id !== initial?.id && refOK(a));
   const handoffCollisions = collidingNames(handoffTargets);
   const toggleHandoff = (id: string | number) => {
-    setSelectedHandoffs(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+    setSelectedHandoffs(prev => toggleListEntry(prev, String(id), !prev.includes(String(id))));
   };
   const toggleMcp = (id: string | number) => {
-    setSelectedMcp(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+    setSelectedMcp(prev => toggleListEntry(prev, String(id), !prev.includes(String(id))));
   };
   // null selectedSkills = not customized yet -> effectively "every installed skill".
   // Computed from the live `skills` prop (not stale state) so it's correct even
@@ -291,7 +350,8 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
           live on the provider row, which is also where a key is entered. */}
       <div className="form-group">
         <div className="form-group-title">Provider</div>
-        {fc('Endpoint',
+        <FormControl>
+          <FormControl.Label>Endpoint</FormControl.Label>
           <Select value={form.provider_id} onChange={e => set('provider_id', e.target.value)} block>
             {/* An empty provider_id reaches no credential and the run fails
                 its pre-flight, so the empty value is a placeholder, not an
@@ -300,13 +360,21 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
             {visibleProviders.map(p => (
               <Select.Option key={p.id} value={p.id}>{p.name}</Select.Option>
             ))}
-          </Select>,
-          providerHint)}
+          </Select>
+          {form.provider_id
+            ? <FormControl.Caption>{providerHint}</FormControl.Caption>
+            : <FormControl.Validation variant="error">
+                {visibleProviders.length === 0 ? 'No endpoint to pick yet — ' : 'No endpoint picked — every run fails before the model is called. '}
+                <Link as="button" type="button" onClick={() => openSettingsTab('providers')}>
+                  {visibleProviders.length === 0 ? 'add one under Providers' : 'Providers'}
+                </Link>
+              </FormControl.Validation>}
+        </FormControl>
       </div>
 
       <div className="form-group">
         <div className="form-group-title">Model</div>
-        {fc('Model', <TextInput value={form.model} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('model', e.target.value)} placeholder={meta.modelPlaceholder} block />)}
+        {fc('Model', <TextInput value={form.model} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('model', e.target.value)} block />, 'Required — the name the endpoint knows the model by')}
         {fc('Context window',
           <TextInput block type="number" min={0} step={1000} value={String(form.context_window || 0)}
             onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('context_window', parseInt(e.target.value) || 0)} />,
@@ -354,21 +422,24 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
         <div className="form-group-title">MCP servers</div>
         <div className="form-checkbox-group">
           {visibleMcp.map(s => {
-            const usable = s.status === 'connected';
+            // A disabled server cannot be picked; one that is picked can
+            // always be dropped, whatever its status.
+            const selected = selectedMcp.includes(String(s.id));
+            const locked = s.status === 'disabled' && !selected;
             return (
-              <FormControl key={s.id} disabled={!usable}>
-                <Checkbox checked={selectedMcp.includes(s.id)} disabled={!usable} onChange={() => toggleMcp(s.id)} />
+              <FormControl key={s.id} disabled={locked}>
+                <Checkbox checked={selected} disabled={locked} onChange={() => toggleMcp(s.id)} />
                 <FormControl.Label>
                   {s.name}
-                  {usable
-                    ? <span className="form-status-dot form-status-dot--success form-status-dot--inline" />
-                    : <span className="resource-row-sub form-label-note">({s.status === 'disabled' ? 'disabled' : 'not connected'})</span>}
+                  {s.status === 'connected'
+                    ? <span className="form-status-dot form-status-dot--success form-status-dot--inline" role="img" title="connected" aria-label="connected" />
+                    : <span className="resource-row-sub form-label-note">({MCP_STATUS_NOTE[s.status || ''] || 'status unknown'})</span>}
                 </FormControl.Label>
               </FormControl>
             );
           })}
         </div>
-        <div className="FormControl-caption">Select which MCP servers this agent can use — greyed-out servers are disabled or not currently connected</div>
+        <div className="FormControl-caption">Which MCP servers this agent can use. One not connected right now is still selectable — its tools appear once it connects; a disabled one is not.</div>
       </div>}
 
       {visibleSkills.length > 0 && <div className="form-group">
@@ -412,7 +483,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
           <div className="form-checkbox-group">
             {handoffTargets.map(a => (
               <FormControl key={a.id}>
-                <Checkbox checked={selectedHandoffs.includes(a.id)} onChange={() => toggleHandoff(a.id)} />
+                <Checkbox checked={selectedHandoffs.includes(String(a.id))} onChange={() => toggleHandoff(a.id)} />
                 <FormControl.Label>
                   <span className="agent-inline">
                     <AgentAvatar name={a.name} avatar={a.avatar} size={20} />
@@ -420,7 +491,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
                     <ScopeHint agent={a} colliding={handoffCollisions} />
                   </span>
                 </FormControl.Label>
-                <FormControl.Caption>{a.model || 'default model'}</FormControl.Caption>
+                <FormControl.Caption>{a.model || 'no model'}</FormControl.Caption>
               </FormControl>
             ))}
           </div>
@@ -455,8 +526,8 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
           agent's job, not every agent's. */}
       <div className="form-group">
         <div className="form-group-title">Workflows</div>
-        <ToggleRow label="Author workflows from the chat" checked={form.workflow_authoring || false} onChange={v => set('workflow_authoring', v)}
-          description="get_workflow and save_workflow; each save waits for your approval. Running one needs subagents." />
+        <ToggleRow label="Author workflows from a session" checked={form.workflow_authoring || false} onChange={v => set('workflow_authoring', v)}
+          description="get_workflow and save_workflow; each save waits for your approval. /workflow runs one whether or not subagents are on." />
       </div>
 
       <div className="form-group">
@@ -474,21 +545,48 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
               or a hybrid recap needs the summary model; the prompt is the
               summary's alone (hybrid's recap has its own). */}
           {summaryMode && fc('Window size', <TextInput block type="number" min={0} value={String(form.compaction_window || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_window', parseInt(e.target.value) || 0)} />, 'Recent items to keep intact (0 = default 10)')}
-          {form.compaction_mode !== 'reset' && fc('Summary model', <TextInput value={form.compaction_model || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_model', e.target.value)} placeholder="e.g. gpt-4.1-mini" block />, form.compaction_mode === 'hybrid' ? "Model that writes the short recap a reset carries (empty = the agent's model)" : "Model used to generate conversation summaries (empty = the agent's model)")}
+          {form.compaction_mode !== 'reset' && fc('Summary model', <TextInput value={form.compaction_model || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_model', e.target.value)} placeholder="e.g. gpt-4.1-mini" block />, form.compaction_mode === 'hybrid' ? "Model that writes the short recap a reset carries (empty = the agent's model)" : "Model that writes the history summaries (empty = the agent's model)")}
           {summaryMode && fc('Summary prompt', <Textarea value={form.compaction_prompt || ''} onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('compaction_prompt', e.target.value)} rows={8} placeholder="Custom summarization instructions (leave empty for default)" block className="textarea-grow" style={{ fontFamily: 'var(--fontStack-monospace)' }} />)}
         </>}
       </div>
 
       <div className="form-group">
         <div className="form-group-title">Memory</div>
-        <ToggleRow label="Memory tools" checked={form.memory_tools || false} onChange={v => set('memory_tools', v)}
-          description="memory_write and friends: working notes that survive compaction, shown in the Context panel." />
-        {form.memory_tools && (
+        {/* A reset mode implies both tool sets (bridge/agent.go), so the
+            switches show that rather than an Off the run ignores. */}
+        <ToggleRow label="Memory tools" checked={resetImplied || form.memory_tools || false} disabled={resetImplied} onChange={v => set('memory_tools', v)}
+          description={(resetImplied ? 'On while compaction is in reset or hybrid mode. ' : '') + 'memory_write and friends: working notes that survive compaction, shown in the Context panel.'} />
+        {(resetImplied || form.memory_tools) && (
           <ToggleRow label="Model may propose agent memory" checked={form.memory_agent_write || false} onChange={v => set('memory_agent_write', v)}
-            description="Each such write waits for your approval, then reaches every conversation with this agent." />
+            description="Each such write waits for your approval, then reaches every session with this agent." />
         )}
-        <ToggleRow label="History tools" checked={form.history_tools || false} onChange={v => set('history_tools', v)}
-          description="history_search and history_read find turns that compaction folded out of the context." />
+        <ToggleRow label="History tools" checked={resetImplied || form.history_tools || false} disabled={resetImplied} onChange={v => set('history_tools', v)}
+          description={(resetImplied ? 'On while compaction is in reset or hybrid mode. ' : '') + 'history_search and history_read find turns that compaction folded out of the context.'} />
+      </div>
+
+      {/* The checklist edits the list in place; names it does not know (an
+          MCP tool) are tokens below it. */}
+      <div className="form-group">
+        <div className="form-group-title">Approvals</div>
+        <ToggleRow label="Every tool waits for approval" checked={approveAll} onChange={v => set('approve_tools', toggleListEntry(approveList, '*', v))}
+          description="Each call pauses until you approve it — MCP tools included." />
+        <div className="approve-grid">
+          {APPROVABLE_TOOLS.map(g => (
+            <div key={g.group} className="approve-group">
+              <div className="approve-group-title">{g.group}</div>
+              {g.tools.map(t => (
+                <FormControl key={t} disabled={approveAll}>
+                  <Checkbox checked={approveAll || approveList.includes(t)} disabled={approveAll}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('approve_tools', toggleListEntry(approveList, t, e.target.checked))} />
+                  <FormControl.Label><code>{t}</code></FormControl.Label>
+                </FormControl>
+              ))}
+            </div>
+          ))}
+        </div>
+        <div className="FormControl-caption">A checked tool pauses before every call until you approve it; exec_command's card also offers trusting that command, or every command, for the session.</div>
+        {fc('Other tools', <TokenListInput ariaLabel="Other tools that wait for approval" placeholder="server__tool"
+          values={approveOthers} onChange={setApproveOthers} />, "Names the checklist does not know, such as an MCP server's tool (server__tool)")}
       </div>
 
       <Disclosure variant="plain" className="advanced-toggle" label="Advanced">
@@ -516,19 +614,38 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
               description="Automatically retry failed model calls with backoff" />
             {form.retry_enabled &&
               <JsonField label="Retry policy (JSON)" value={form.retry_policy || ''} onChange={v => set('retry_policy', v)} placeholder='{"max_attempts":3,"base_delay_ms":500,"max_delay_ms":30000,"multiplier":2}' caption="Empty = SDK defaults" />}
-            <JsonField label="Fallback models (JSON)" value={form.fallback_models || ''} onChange={v => set('fallback_models', v)} placeholder='[{"model":"gpt-5.4-mini","api_key":"sk-..."},{"model":"claude-opus-5","provider_type":"anthropic","api_key":"sk-ant-..."}]' caption='JSON array of {model, provider_type, api_key, base_url} — provider_type is "openai" (default) or "anthropic"' />
+            <FormControl>
+              <FormControl.Label>Fallback models</FormControl.Label>
+              <Stack gap="condensed">
+                {fallbacks.map((e, i) => {
+                  const { providerId, unreachable } = resolveFallbackEntry(e, visibleProviders);
+                  return (
+                    <div key={i} className="form-row">
+                      <Select value={providerId} disabled={unreachable} aria-label={`Fallback ${i + 1} endpoint`} block
+                        onChange={ev => setFallback(i, { provider_id: ev.target.value })}>
+                        <Select.Option value="">{unreachable ? `No endpoint for ${e.provider_type || 'openai'} ${e.base_url || ''}`.trim() : 'Select an endpoint…'}</Select.Option>
+                        {visibleProviders.map(p => <Select.Option key={p.id} value={p.id}>{p.name}</Select.Option>)}
+                      </Select>
+                      <TextInput value={e.model || ''} disabled={unreachable} aria-label={`Fallback ${i + 1} model`} placeholder="Model (empty = this agent's)" block
+                        onChange={(ev: React.ChangeEvent<HTMLInputElement>) => setFallback(i, { model: ev.target.value })} />
+                      <IconButton className="form-row-action" icon={XIcon} variant="invisible" aria-label={`Remove fallback ${i + 1}`}
+                        onClick={() => set('fallback_models', fallbacks.filter((_, j) => j !== i))} />
+                    </div>
+                  );
+                })}
+                <div>
+                  <Button size="small" onClick={() => set('fallback_models', [...fallbacks, { provider_id: '' }])}>Add fallback</Button>
+                </div>
+              </Stack>
+              <FormControl.Caption>Tried in order when the endpoint fails. An entry saved before endpoints were rows shows the endpoint that now matches it; one that matches none cannot run and is dropped on save — add the endpoint under Providers first.</FormControl.Caption>
+            </FormControl>
           </div>
 
           <div className="form-group">
             <div className="form-group-title">Guardrails &amp; output</div>
             <JsonField label="Guardrails (JSON)" value={form.guardrails || ''} onChange={v => set('guardrails', v)} placeholder='["content_filter","max_output_length"]' caption="JSON array of guardrail names. Each guardrail carries the stages it inspects, so it is named once." />
             <JsonField label="Output schema (JSON Schema)" value={form.output_schema || ''} onChange={v => set('output_schema', v)} placeholder='{"type":"object","properties":{...},"required":[...]}' caption="Structured output JSON Schema — leave empty for plain text" multiline rows={3} />
-            <JsonField label="Error handlers (JSON)" value={form.error_handlers || ''} onChange={v => set('error_handlers', v)} placeholder='{"max_turns":{"final_output":"Ran out of turns — please narrow the request."},"invalid_final_output":{"final_output":{...}}}' caption='Fallback final outputs keyed by error kind (max_turns / model_refusal / invalid_final_output) — the run completes with the fallback instead of failing. Values must be a JSON string for plain-text agents, or match the output schema. Optional per-kind "exclude_from_history": true keeps the fallback out of the conversation.' multiline rows={3} />
-          </div>
-
-          <div className="form-group">
-            <div className="form-group-title">Approvals</div>
-            <JsonField label="Approve tools (HITL)" value={form.approve_tools || ''} onChange={v => set('approve_tools', v)} placeholder='["*"] or ["tool_name1","tool_name2"]' caption='JSON array of tool names requiring human approval before execution. Use ["*"] for all tools.' />
+            <JsonField label="Error handlers (JSON)" value={form.error_handlers || ''} onChange={v => set('error_handlers', v)} placeholder='{"max_turns":{"final_output":"Ran out of turns — please narrow the request."},"invalid_final_output":{"final_output":{...}}}' caption='Fallback final outputs keyed by error kind (max_turns / model_refusal / invalid_final_output) — the run completes with the fallback instead of failing. Values must be a JSON string for plain-text agents, or match the output schema. Optional per-kind "exclude_from_history": true keeps the fallback out of the history.' multiline rows={3} />
           </div>
 
           <div className="form-group">
@@ -562,8 +679,11 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
             catch { toast.error('Extra body is not valid JSON — fix or clear it before saving'); return; }
           }
           const model_settings = Object.keys(ms).length > 0 ? JSON.stringify(ms) : '';
-          const flatPayload = { ...form, handoffs: JSON.stringify(selectedHandoffs), tools: JSON.stringify(selectedMcp), skills: JSON.stringify(effectiveSkills), model_settings };
-          onSave(nestConfig(flatPayload) as unknown as AgentFormData & { handoffs: string; tools: string; skills: string; model_settings: string });
+          const fallback_models = fallbacks
+            .map(e => ({ provider_id: fallbackProviderId(e), model: e.model || undefined }))
+            .filter(e => e.provider_id);
+          const flatPayload = { ...form, fallback_models, handoffs: selectedHandoffs, tools: selectedMcp, skills: effectiveSkills, model_settings };
+          onSave(nestConfig(flatPayload) as unknown as AgentFormData & AgentLists);
         }}
         onCancel={onCancel}
         onDelete={onDelete}
@@ -577,7 +697,7 @@ export function AgentConfigPanel() {
   const isAdmin = me?.role === 'admin';
   const rowEditable = (a: Agent) => canEditRow(isAdmin, me?.id, a);
   const { items: agents, loading, adding, editing, startAdd, startEdit, cancel, save, saving, remove, reload } =
-    useCrud<Agent, AgentFormData & { handoffs: string; tools: string; skills: string; model_settings: string }>(api.agents, 'agents');
+    useCrud<Agent, AgentFormData & AgentLists>(api.agents, 'agents');
   const [query, setQuery] = useState('');
   const scopeFilter = useScopeFilter();
   const rows = filterRows(agents, { mine: !!scopeFilter?.mine, meId: me?.id, query }, a => `${a.name} ${a.description || ''} ${a.model || ''}`);
@@ -585,13 +705,7 @@ export function AgentConfigPanel() {
   // Fork seeds the CREATE form from a row — nothing is written until Save.
   // Cleared on a plain "+ Add" so a stale seed never leaks into a blank form.
   const [forkOf, setForkOf] = useState<Agent | null>(null);
-  const startFork = (a: Agent) => {
-    const raw = a as Agent & { resilience?: { fallback_models?: string } };
-    if (raw.resilience?.fallback_models?.includes('********')) {
-      toast.info('Fallback-model keys are not copied to a fork — re-enter them before saving');
-    }
-    setForkOf(a); startAdd();
-  };
+  const startFork = (a: Agent) => { setForkOf(a); startAdd(); };
   const startBlankAdd = () => { setForkOf(null); startAdd(); };
   const { data: mcpServers } = useApi<McpServer[]>(() => api.mcpServers.list() as Promise<McpServer[]>, [], 'mcp-servers');
   const { data: skills } = useApi<Skill[]>(() => api.skills.list() as Promise<Skill[]>, [], 'skills');
@@ -603,18 +717,7 @@ export function AgentConfigPanel() {
   // scope/owner (the copy lands like any create: private, the caller's) and
   // suffixes the name toward the per-scope unique index.
   const forkSeed = () => {
-    const { id: _id, scope: _scope, owner_id: _owner, ...rest } =
-      forkOf as Agent & { resilience?: { fallback_models?: string } };
-    // A fork copies no secrets: on a create the ******** mask resolves to ""
-    // server-side, so strip it and let the form show the truth instead of a
-    // mask that would save as an empty key.
-    if (rest.resilience?.fallback_models?.includes('********')) {
-      try {
-        const models = JSON.parse(rest.resilience.fallback_models) as { api_key?: string }[];
-        for (const m of models) if (m.api_key === '********') delete m.api_key;
-        rest.resilience = { ...rest.resilience, fallback_models: JSON.stringify(models) };
-      } catch { /* malformed JSON: leave it; the form's JSON field surfaces it */ }
-    }
+    const { id: _id, scope: _scope, owner_id: _owner, ...rest } = forkOf!;
     return { ...rest, name: forkOf!.name + '-fork' };
   };
   const form = adding ? <AgentForm key={forkOf ? 'fork-' + forkOf.id : 'blank'} saving={saving}
@@ -631,8 +734,7 @@ export function AgentConfigPanel() {
         search={{ value: query, onChange: setQuery, placeholder: 'Search agents' }}
         onDelete={editing && canDeleteRow(isAdmin, me?.id, editing)
           ? async () => { if (await remove(editing.id, editing.name)) cancel(); } : null}
-        empty={agents.length === 0 ? 'No agents yet.' : 'No matching agents.'}
-        emptyHint={agents.length === 0 ? 'An agent is a model on an endpoint with its instructions and tools.' : undefined}>
+        {...listEmpty({ noun: 'agents', total: agents.length, query, mine: !!scopeFilter?.mine, hint: 'An agent is a model on an endpoint with its instructions and tools.' })}>
         {rows.map(a => {
           const rowProvider = (providers || []).find(p => p.id === a.provider_id);
           return (

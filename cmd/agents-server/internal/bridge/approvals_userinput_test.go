@@ -26,9 +26,8 @@ func userInputItems(t *testing.T, raws ...string) []agents.InputItem {
 	return items
 }
 
-// persistInterruption must capture the paused turn's user prompt so a reload
-// during approval can rebuild the user bubble (the SDK only writes the turn to
-// `messages` on completion).
+// persistInterruption keeps the paused turn's user prompt on the row, so a
+// reload during approval rebuilds the bubble without the entries.
 func TestPersistInterruptionStoresUserInput(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)

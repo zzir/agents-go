@@ -26,23 +26,18 @@ type Wakeup struct {
 	bun.BaseModel `bun:"table:wakeups,alias:wku"`
 
 	ID string `bun:"id,pk,type:uuid" json:"id"`
-	// SessionID is who is owed the turn, matched by id alone: the session
-	// delete cascade removes the row, so no incarnation inherits a dead debt.
+	// SessionID is who is owed the turn; the session delete cascade removes the row.
 	SessionID string `bun:"session_id,notnull,type:uuid" json:"session_id"`
-	// Kind and SourceID name what owes it — the source's bookkeeping handle for
-	// cancelling its own debt; the waker never reads them.
+	// Kind and SourceID name what owes it, so a source can cancel its own debt; the waker never reads them.
 	Kind     string `bun:"kind,notnull" json:"kind"`
 	SourceID string `bun:"source_id,nullzero,type:uuid" json:"source_id,omitempty"`
-	// Inherit is the encoded run configuration the turn runs under, frozen
-	// when the work was ASKED for; the drain GROUPS debts by this string.
+	// Inherit is the encoded run configuration the turn runs under, frozen at the ask; the drain groups debts by it.
 	Inherit string `bun:"inherit,nullzero" json:"-"`
-	// ParentRunID is the run whose tool call started the work, so the wake-up's
-	// trace nests under it instead of opening a second root.
+	// ParentRunID is the run whose tool call started the work; the wake-up's trace nests under it.
 	ParentRunID string `bun:"parent_run_id,nullzero,type:uuid" json:"parent_run_id,omitempty"`
 	// Payload is the text the turn carries.
 	Payload string `bun:"payload" json:"payload"`
-	// Attempt binds the debt to the try that owes it, so an in-flight drain
-	// cannot mark a NEW attempt delivered.
+	// Attempt binds the debt to the try that owes it; a drain cannot settle a newer attempt's.
 	Attempt string `bun:"attempt" json:"attempt,omitempty"`
 	State   string `bun:"state,notnull" json:"state"`
 

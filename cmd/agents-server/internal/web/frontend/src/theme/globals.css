@@ -767,6 +767,10 @@ a:hover {
     flex: 1;
     min-width: 0;
 }
+.form-row > .form-row-action {
+    flex: 0 0 auto;
+    align-self: center;
+}
 
 /* The Name block with the avatar picker riding its right edge. */
 .form-identity {
@@ -899,13 +903,6 @@ textarea.textarea-grow.textarea-rows-4 {
     flex-direction: column;
     gap: var(--base-size-4);
     margin-top: var(--base-size-4);
-}
-
-/* Legacy hairline — kept for one-off separators */
-.divider {
-    height: 1px;
-    background: var(--borderColor-muted);
-    margin: var(--base-size-16) 0;
 }
 
 /* Cards — visual treatment borrowed from Primer React Card component */

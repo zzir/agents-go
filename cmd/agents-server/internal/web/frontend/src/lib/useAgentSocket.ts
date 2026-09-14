@@ -2,13 +2,14 @@ import type { AttachmentMeta } from '@/lib/attachments';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { WSClient } from '@/lib/ws';
 import { EV, ERR, type RunDiagnostic, type TaskRow } from '@/lib/protocol';
-import { buildTimeline, type DisplayExtra, type EntryView } from '@/lib/timeline';
+import { buildTimeline, type DisplayExtra, type EntryView, type TimelineEntry, type ToolCall } from '@/lib/timeline';
 import {
   ensureLiveTurn, mergeLiveTail, appendMessageItem, appendReasoningItem, finalizeTurn,
-  appendErrorPart, appendCancelledPart, appendToolCall, applyToolResult, syncTaskCard, appendToolProgress, appendHandoffPart,
+  appendErrorPart, appendCancelledPart, appendToolCall, applyToolResult, syncTaskCard, appendToolProgress, appendHandoffPart, resolvePendingApprovals, supersedePendingApprovals,
   TERMINAL_TASK_STATUSES,
 } from '@/lib/streamReducer';
 import { api, clearToken } from '@/lib/api';
+import { invalidate } from '@/lib/apiCache';
 import { resyncAfterGap, type GapResync } from '@/lib/gapResync';
 import { toast } from '@/lib/toast';
 import { ME_RELOAD } from '@/lib/me';
@@ -23,8 +24,7 @@ export { taskStateFromRow, taskRetryable } from '@/lib/taskEvents';
 export type { TaskState, TaskViewState } from '@/lib/taskEvents';
 
 export interface SessionState {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  messages: any[];
+  messages: TimelineEntry[];
   streaming: string;
   reasoning: string;
   running: boolean;
@@ -42,6 +42,8 @@ export interface SessionState {
   runQuestions: Record<string, { question: string; onPath: boolean }>;
   liveRunId: string | null;
   loaded: boolean;
+  // Why the persisted timeline could not be loaded; cleared by the next attempt.
+  loadError?: string;
   // Backwards pagination over the persisted history. entries are the raw rows
   // fetched so far, kept because a later page has to be REBUILT with the ones
   // already shown — buildTimeline folds turns across rows, so prepending a
@@ -143,8 +145,20 @@ export function withSpanPayload(runs: Record<string, TraceEvent[]>, runId: strin
   return { ...runs, [runId]: [...events.slice(0, idx), next, ...events.slice(idx + 1)] };
 }
 
-export function useAgentSocket(updateSSRaw: UpdateSSFn) {
+// SessionEvents is what the socket tells the app about a conversation beyond
+// its run state. Read through a ref on each event, so the socket is not
+// rebuilt when a callback changes.
+export interface SessionEvents {
+  // The conversation on screen: what a reconnect re-reads at once.
+  activeSession: () => string | null;
+  onTitleUpdated: (sessionId: string, title: string) => void;
+  onProjectBound: (sessionId: string, projectId: string) => void;
+}
+
+export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
   const wsRef = useRef<WSClient | null>(null);
+  const eventsRef = useRef(events);
+  eventsRef.current = events;
   // Optimistic true: the indicator marks a LOST connection, not a pending one.
   const [connected, setConnected] = useState(true);
   // Conversations deleted in this page (deleteSession): a late event of the
@@ -159,6 +173,12 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
   const sessionRunRef = useRef<Record<string, string>>({});
   const streamBufsRef = useRef<Record<string, string>>({});
   const reasoningBufsRef = useRef<Record<string, string>>({});
+  // Runs whose delta preview was dropped for a replay (a gap's resync, a
+  // reconnect): their deltas are ignored until the next complete message or
+  // reasoning item, which the replay re-delivers deduped by id. The envelope
+  // carries no sequence number, so a replayed delta cannot be told from a
+  // fresh one any other way.
+  const mutedRunsRef = useRef<Set<string>>(new Set());
   // Per-run set of completed message/reasoning item ids already folded into the
   // timeline. Hub replays (reconnect) re-deliver those events; deduping by item
   // id — rather than by text — keeps a genuinely repeated identical message from
@@ -221,18 +241,18 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
     // A short page means we reached the beginning; a full one means there may
     // be more, and the next fetch settles it.
     const page = { entries, hasMore: limit > 0 && entries.length >= limit };
-    const timeline = buildTimeline(entries) as SessionState['messages'];
+    const timeline = buildTimeline(entries);
     if (!pending || pending.length === 0) return { ...page, timeline };
     const seen = new Set<string>();
     for (const m of timeline) {
       if (m.role !== 'turn') continue;
-      for (const part of (m as { parts?: Array<{ type: string; toolCalls?: Array<{ tool_call_id: string }> }> }).parts || []) {
-        if (part.type === 'tools') for (const tc of part.toolCalls || []) seen.add(tc.tool_call_id);
+      for (const part of m.parts) {
+        if (part.type === 'tools') for (const tc of part.toolCalls) seen.add(tc.tool_call_id);
       }
     }
-    const toolCalls = pending.flatMap(p => (p.tool_calls || []).map(tc => ({
+    const toolCalls: ToolCall[] = pending.flatMap(p => (p.tool_calls || []).map(tc => ({
       tool_call_id: tc.tool_call_id, tool_name: tc.tool_name, arguments: tc.arguments,
-      output: null as string | null, status: null as string | null, needs_approval: true,
+      output: null, status: null, needs_approval: true,
     }))).filter(tc => !seen.has(tc.tool_call_id));
     if (toolCalls.length === 0) return { ...page, timeline };
     const runId = pending[0].run_id;
@@ -247,12 +267,13 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
     // reconstructed whole.
     let lastTurnIdx = -1;
     for (let i = out.length - 1; i >= 0; i--) {
-      if (out[i].role === 'turn') { if (out[i].runId === runId) lastTurnIdx = i; break; }
-      if (out[i].role === 'user') break;
+      const m = out[i];
+      if (m.role === 'turn') { if (m.runId === runId) lastTurnIdx = i; break; }
+      if (m.role === 'user') break;
     }
-    if (lastTurnIdx >= 0) {
-      const turn = out[lastTurnIdx];
-      const parts = [...(turn.parts || [])];
+    const turn = lastTurnIdx >= 0 ? out[lastTurnIdx] : null;
+    if (turn && turn.role === 'turn') {
+      const parts = [...turn.parts];
       const lastPart = parts[parts.length - 1];
       if (lastPart?.type === 'tools') parts[parts.length - 1] = { ...lastPart, toolCalls: [...lastPart.toolCalls, ...toolCalls] };
       else parts.push({ type: 'tools', toolCalls });
@@ -300,29 +321,34 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
     });
   }, [fetchTimeline, updateSS]);
 
-  const loadSession = useCallback((sid: string): Promise<void> => {
+  // loadTimeline fetches a session's persisted timeline once (loadedRef): a
+  // session already shown gets the fetched rows merged under its live tail, a
+  // new one takes them whole. A failure rolls the mark back for the retry.
+  const loadTimeline = useCallback((sid: string): Promise<void> => {
     if (!sid || loadedRef.current.has(sid)) return Promise.resolve();
     loadedRef.current.add(sid);
     const gen = timelineGenRef.current[sid] || 0;
-    const msgP = fetchTimeline(sid).then(({ timeline, entries, hasMore }) => {
+    updateSS(sid, s => (s.loadError ? { ...s, loadError: undefined } : s));
+    return fetchTimeline(sid).then(({ timeline, entries, hasMore }) => {
       // Superseded by a later branch move's own reload — drop it (see
       // reloadMessages).
       if ((timelineGenRef.current[sid] || 0) !== gen) return;
-      // Live events may have landed while fetching (loaded flipped true, e.g.
-      // a broadcast run.started from another browser's run) — merge them onto
-      // the persisted snapshot instead of dropping either side. Scoped to the
-      // CURRENT live run: a finished or branched-away turn in the tail stays
-      // dropped.
       updateSS(sid, s => s.loaded
         ? { ...s, messages: mergeLiveTail(timeline, s.messages, s.liveRunId), entries, hasMore }
         : { ...s, messages: timeline, entries, hasMore, loaded: true });
-    }).catch(err => {
-      // The fetch failed: roll back the loaded mark so a later retry (or a
-      // re-select of this session) re-fetches instead of leaving the history
-      // permanently blank, and rethrow so the caller can toast the failure.
+    }).catch((err: Error) => {
       loadedRef.current.delete(sid);
+      updateSS(sid, s => ({ ...s, loadError: err?.message || 'Could not load the conversation' }));
       throw err;
     });
+  }, [fetchTimeline, updateSS]);
+
+  const loadSession = useCallback((sid: string): Promise<void> => {
+    if (!sid || loadedRef.current.has(sid)) return Promise.resolve();
+    // Loaded again is not deleted: a conversation transferred away and back
+    // (deleteSession marked it on the way out) takes writes again.
+    deletedRef.current.delete(sid);
+    const msgP = loadTimeline(sid);
     // Seed the task list from the durable rows; live task-run events (which
     // may already have arrived) win per task id.
     (api.sessions.tasks(sid) as Promise<TaskRow[]>)
@@ -339,18 +365,14 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
         toast.error('Could not load background tasks — reopen the conversation to retry');
       });
     return msgP;
-  }, [fetchTimeline, updateSS]);
+  }, [loadTimeline, updateSS]);
 
-  // loadTraces pulls the session's persisted span SUMMARY (payloads stay lazy,
-  // fetched per span by loadSpanPayload), once per session, on session load:
-  // the chat labels each turn with its run span's duration, so the data can't
-  // wait for a lens to open. Live runs stream their spans over the WS
-  // regardless; this backfills history. The runs' questions come with them: the
-  // traces cover the whole session while the timeline is paged, so a card's
-  // exchange may not be on screen to label it from.
-  const loadTraces = useCallback((sid: string) => {
-    if (!sid || tracesLoadedRef.current.has(sid)) return;
-    tracesLoadedRef.current.add(sid);
+  // fetchTraces pulls the session's persisted span SUMMARY (payloads stay
+  // lazy, see loadSpanPayload) and the runs' questions, which label a trace
+  // card whose exchange is outside the loaded page. Per run id, the live
+  // group wins unless fetchedWins (a resync after an outage, when the stored
+  // rows are the newer side).
+  const fetchTraces = useCallback((sid: string, fetchedWins: boolean) => {
     (api.sessions.runs(sid) as Promise<Array<{ run_id: string; question: string; on_path: boolean }> | null>)
       .then(rows => {
         if (!rows || rows.length === 0) return;
@@ -359,10 +381,6 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
         updateSS(sid, s => ({ ...s, runQuestions }));
       })
       .catch(() => undefined); // labels degrade to run ids; the spans still load
-    // The SUMMARY listing: every span's row without its payload — the model
-    // request and reply, a tool's arguments and result are nearly all of a
-    // session's trace bytes, and parsing them on open is what stalls the
-    // page. A row opens its payload on demand (loadSpanPayload).
     (api.sessions.traces(sid, { summary: true }) as Promise<TraceRow[] | null>).then(events => {
       if (!events || events.length === 0) return;
       const runs: Record<string, TraceEvent[]> = {};
@@ -373,16 +391,22 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
         if (!runs[rid]) runs[rid] = [];
         runs[rid].push(traceEventFromRow(ev));
       }
-      // Merge per run id with live data winning: a run.started that landed
-      // during this fetch has already seeded (and keeps updating) its own
-      // run's entry.
-      updateSS(sid, s => ({ ...s, traceRuns: { ...runs, ...s.traceRuns } }));
+      updateSS(sid, s => ({ ...s, traceRuns: fetchedWins ? { ...s.traceRuns, ...runs } : { ...runs, ...s.traceRuns } }));
     }).catch(() => {
       // Roll back the mark so the next lens open retries instead of leaving
       // the panel empty for good.
       tracesLoadedRef.current.delete(sid);
     });
   }, [updateSS]);
+
+  // loadTraces backfills a session's traces once, on session load: the chat
+  // labels each turn with its run span's duration, so the data can't wait for
+  // a lens to open.
+  const loadTraces = useCallback((sid: string) => {
+    if (!sid || tracesLoadedRef.current.has(sid)) return;
+    tracesLoadedRef.current.add(sid);
+    fetchTraces(sid, false);
+  }, [fetchTraces]);
 
   // loadSpanPayload fetches one span whole — what the summary listing (or the
   // live cap) left out — and folds it into the span wherever the panel holds
@@ -416,6 +440,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       delete reasoningBufsRef.current[runId];
       delete appendedItemsRef.current[runId];
       delete gapResyncRef.current[runId];
+      mutedRunsRef.current.delete(runId);
     }
     delete sessionRunRef.current[deletedId];
     tasks.forgetSession(deletedId);
@@ -446,7 +471,22 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       delete appendedItemsRef.current[runId];
       delete gapResyncRef.current[runId];
       delete runMapRef.current[runId];
+      mutedRunsRef.current.delete(runId);
       if (sid && sessionRunRef.current[sid] === runId) delete sessionRunRef.current[sid];
+    };
+
+    // resubscribe asks the hub to replay a chat run from `fromSeq` and clears
+    // the run's delta preview for the replay to rebuild. Over a live socket the
+    // old subscription still pushes until the hub swaps it, so a gap resync
+    // also mutes deltas until a complete item lands (mutedRunsRef); a fresh
+    // socket has no old subscription and takes the replay as is.
+    const resubscribe = (runId: string, fromSeq?: number, mute = true) => {
+      ws.send(EV.runSubscribe, fromSeq === undefined ? { run_id: runId } : { run_id: runId, from_seq: fromSeq });
+      streamBufsRef.current[runId] = '';
+      reasoningBufsRef.current[runId] = '';
+      if (mute) mutedRunsRef.current.add(runId);
+      const sid = runMapRef.current[runId];
+      if (sid) updateSS(sid, s => (s.streaming || s.reasoning ? { ...s, streaming: '', reasoning: '' } : s));
     };
 
     ws.on(EV.runStarted, (p: { session_id?: string; run_id: string; input?: string; attachments?: AttachmentMeta[]; parent_session_id?: string; parent_run_id?: string; task_id?: string; kind?: string; tool_call_id?: string; label?: string; attempt?: number; max_attempts?: number }) => {
@@ -468,12 +508,14 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       // keeps the live entries accumulated meanwhile).
       updateSS(sid, s => {
         // Hub replays (reconnect / re-subscribe) re-deliver run.started; the
-        // reducer returns null instead of growing a second live turn.
-        const appended = ensureLiveTurn(s.messages, p.run_id, p.input, p.attachments);
+        // reducer returns null instead of growing a second live turn. A newer
+        // run's start also settles an older run's pending approval cards: the
+        // server abandoned that pause before starting this run.
+        const appended = ensureLiveTurn(s.messages, p.run_id, p.input, p.attachments) || s.messages;
         return {
           ...s, running: true, compacting: false, diagnostics: [], liveRunId: p.run_id,
           loaded: true,
-          messages: appended || s.messages,
+          messages: supersedePendingApprovals(appended, p.run_id) || appended,
           traceRuns: { ...s.traceRuns, [p.run_id]: s.traceRuns[p.run_id] || [] },
         };
       });
@@ -484,7 +526,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
     ws.on(EV.runStep, (p: { run_id: string; delta: string }) => {
       if (tasks.step(p)) return;
       const sid = runMapRef.current[p.run_id];
-      if (!sid) return;
+      if (!sid || mutedRunsRef.current.has(p.run_id)) return;
       streamBufsRef.current[p.run_id] = (streamBufsRef.current[p.run_id] || '') + p.delta;
       scheduleFrame('step:' + p.run_id, () => {
         const buf = streamBufsRef.current[p.run_id];
@@ -495,7 +537,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
     ws.on(EV.runReasoning, (p: { run_id: string; delta: string }) => {
       if (tasks.reasoning(p)) return;
       const sid = runMapRef.current[p.run_id];
-      if (!sid) return;
+      if (!sid || mutedRunsRef.current.has(p.run_id)) return;
       reasoningBufsRef.current[p.run_id] = (reasoningBufsRef.current[p.run_id] || '') + p.delta;
       scheduleFrame('reasoning:' + p.run_id, () => {
         const buf = reasoningBufsRef.current[p.run_id];
@@ -511,6 +553,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       if (tasks.message(p)) return;
       const sid = runMapRef.current[p.run_id];
       if (!sid || !p.text) return;
+      mutedRunsRef.current.delete(p.run_id);
       streamBufsRef.current[p.run_id] = '';
       const seen = appendedItemsRef.current[p.run_id] || (appendedItemsRef.current[p.run_id] = new Set());
       // Hub replays (reconnect / re-subscribe) re-deliver run.message. Dedup by
@@ -533,6 +576,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       if (tasks.reasoningItem(p)) return;
       const sid = runMapRef.current[p.run_id];
       if (!sid || !p.text) return;
+      mutedRunsRef.current.delete(p.run_id);
       reasoningBufsRef.current[p.run_id] = '';
       const seen = appendedItemsRef.current[p.run_id] || (appendedItemsRef.current[p.run_id] = new Set());
       // Hub replays re-deliver run.reasoning_item. Dedup by item id when present;
@@ -551,12 +595,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       if (!sid) return;
       const text = p.final_output || streamBufsRef.current[p.run_id] || '';
       const thinking = reasoningBufsRef.current[p.run_id] || '';
-      delete streamBufsRef.current[p.run_id];
-      delete reasoningBufsRef.current[p.run_id];
-      delete appendedItemsRef.current[p.run_id];
-      delete gapResyncRef.current[p.run_id];
-      delete runMapRef.current[p.run_id];
-      delete sessionRunRef.current[sid];
+      dropRunRefs(p.run_id);
       updateSS(sid, s => {
         const msgs = finalizeTurn(s.messages, text, thinking);
         return { ...s, messages: msgs || s.messages, streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null };
@@ -578,11 +617,10 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
         const sid = p.session_id || (p.run_id ? runMapRef.current[p.run_id] : undefined);
         if (sid) {
           updateSS(sid, s => {
-            const msgs = s.messages as Array<{ role?: string; clientMsgId?: string; messageId?: string; runId?: string }>;
-            for (let i = msgs.length - 1; i >= 0; i--) {
-              const m = msgs[i];
+            for (let i = s.messages.length - 1; i >= 0; i--) {
+              const m = s.messages[i];
               if (m.role === 'user' && m.clientMsgId && m.messageId === undefined && m.runId === undefined) {
-                return { ...s, messages: msgs.slice(0, i).concat(msgs.slice(i + 1)) };
+                return { ...s, messages: s.messages.slice(0, i).concat(s.messages.slice(i + 1)) };
               }
             }
             return s;
@@ -604,15 +642,8 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       // ago): clear the stale mapping and fall back to persisted history.
       if (p.code === ERR.runNotFound) {
         const staleSid = p.run_id ? runMapRef.current[p.run_id] : undefined;
-        if (p.run_id) {
-          delete runMapRef.current[p.run_id];
-          delete streamBufsRef.current[p.run_id];
-          delete reasoningBufsRef.current[p.run_id];
-          delete appendedItemsRef.current[p.run_id];
-          delete gapResyncRef.current[p.run_id];
-        }
+        if (p.run_id) dropRunRefs(p.run_id);
         if (staleSid) {
-          delete sessionRunRef.current[staleSid];
           updateSS(staleSid, s => ({ ...s, streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null }));
           reloadMessages(staleSid);
         }
@@ -628,11 +659,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       const rid = p.run_id || '';
       const remaining = streamBufsRef.current[rid] || '';
       const thinking = reasoningBufsRef.current[rid] || '';
-      delete streamBufsRef.current[rid];
-      delete reasoningBufsRef.current[rid];
-      delete appendedItemsRef.current[rid];
-      delete gapResyncRef.current[rid];
-      delete runMapRef.current[rid];
+      dropRunRefs(rid);
       delete sessionRunRef.current[sid];
       // A guardrail block carries the guardrail name + stage so the turn renders
       // a distinct "blocked" card instead of a generic error.
@@ -651,25 +678,28 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       if (p.code !== ERR.guardrailTripwire) reloadMessages(sid);
     });
 
-    ws.on(EV.runCancelled, (p: { run_id?: string; code?: string }) => {
+    ws.on(EV.runCancelled, (p: { run_id?: string; reason?: string }) => {
       if (p?.run_id && tasks.cancelled({ run_id: p.run_id })) { dropRunRefs(p.run_id); return; }
       const rid = p?.run_id;
       const sid = rid ? runMapRef.current[rid] : null;
       if (!sid || !rid) return;
       const remaining = streamBufsRef.current[rid] || '';
       const thinking = reasoningBufsRef.current[rid] || '';
-      delete streamBufsRef.current[rid];
-      delete reasoningBufsRef.current[rid];
-      delete appendedItemsRef.current[rid];
-      delete gapResyncRef.current[rid];
-      delete runMapRef.current[rid];
-      delete sessionRunRef.current[sid];
+      dropRunRefs(rid);
+      const reason = p.reason || 'stopped';
       // The marker shows immediately, mirroring how run.error appends its card
       // optimistically, instead of waiting on the async reload (which the next
-      // run's start can also skip).
+      // run's start can also skip). A paused run's pending cards resolve to
+      // not run; superseded by a newer message, the cards say so and no
+      // marker follows (the newer turn does).
       updateSS(sid, s => {
-        const msgs = appendCancelledPart(s.messages, thinking, remaining);
-        return { ...s, messages: msgs || s.messages, streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null };
+        let msgs = resolvePendingApprovals(s.messages, rid, reason) || s.messages;
+        if (reason !== 'superseded') msgs = appendCancelledPart(msgs, thinking, remaining) || msgs;
+        // A newer run may already own the session (the abandoned one's
+        // cancel can land after its successor started): only the run that
+        // is live stands the session down.
+        if (s.liveRunId && s.liveRunId !== rid) return { ...s, messages: msgs };
+        return { ...s, messages: msgs, streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null };
       });
       reloadMessages(sid);
     });
@@ -743,26 +773,23 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       if (!sid) return;
       delete streamBufsRef.current[p.run_id];
       delete reasoningBufsRef.current[p.run_id];
+      mutedRunsRef.current.delete(p.run_id);
       updateSS(sid, s => ({
         ...s, streaming: '', reasoning: '', running: false, compacting: false,
         liveRunId: null,
       }));
     });
 
-    // This connection fell behind and the server dropped events for it — for
-    // this connection only; the run is unaffected. The repair is the hub's own
-    // replay ring: re-subscribing from the last good sequence number delivers
-    // the dropped events again (items dedup by id). Chat runs only — the
-    // inspector's live view of a task run keeps no item ids to dedup a replay
-    // by. A range the ring has already evicted is not asked for
-    // (resyncAfterGap) — see invariant 14.
+    // This connection fell behind: re-subscribe from the last good cursor and
+    // the hub replays what it dropped — invariant 14. Chat runs only; a task
+    // run's inspector view keeps no item ids to dedup a replay by.
     ws.on(EV.runGap, (p: { run_id: string; dropped: number; last_good: number }) => {
       if (!runMapRef.current[p.run_id]) return;
       const now = Date.now();
       if (!resyncAfterGap(gapResyncRef.current[p.run_id], p.last_good, now)) return;
       gapResyncRef.current[p.run_id] = { at: now, cursor: p.last_good };
       console.warn(`dropped ${p.dropped} event(s) after seq ${p.last_good}; resyncing from the hub's replay`);
-      ws.send(EV.runSubscribe, { run_id: p.run_id, from_seq: p.last_good });
+      resubscribe(p.run_id, p.last_good);
     });
 
     // Trouble the run survived. It arrives with the terminal event, so it is
@@ -793,8 +820,8 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       if (tasks.handoff(p, handoff)) return;
       const sid = runMapRef.current[p.run_id];
       if (!sid || !p.to) return;
-      // Hub replays (reconnect) re-deliver run.handoff; the reducer dedups like
-      // run.message / run.reasoning_item so a reconnect mid-run doesn't stack rows.
+      // A hub replay (reconnect) re-delivers run.handoff; the reducer drops a
+      // part with the same from → to already on the turn, so nothing stacks.
       updateSS(sid, s => {
         const msgs = appendHandoffPart(s.messages, handoff);
         return msgs ? { ...s, messages: msgs } : s;
@@ -815,33 +842,58 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       });
     });
 
-    // On reconnect, any run that kept executing server-side may have advanced
-    // or finished while we were away. Re-subscribe to still-live runs (the
-    // hub replays buffered events) and reload persisted history so a run that
-    // completed offline shows its result.
+    ws.on(EV.sessionTitleUpdated, (p: { session_id?: string; title?: string }) => {
+      invalidate('sessions');
+      if (p?.session_id && typeof p.title === 'string') eventsRef.current.onTitleUpdated(p.session_id, p.title);
+    });
+
+    ws.on(EV.sessionProjectBound, (p: { session_id?: string; project_id?: string }) => {
+      if (p?.session_id && p.project_id) eventsRef.current.onProjectBound(p.session_id, p.project_id);
+    });
+
+    // resyncSessions repairs what an outage may have moved: the conversation
+    // on screen is re-read now (timeline under its live tail, task rows under
+    // the no-move-backwards rule, traces with the stored rows winning), every
+    // other loaded one on its next select, and the sidebar list — invariant 73.
+    const resyncSessions = () => {
+      loadedRef.current.clear();
+      tracesLoadedRef.current.clear();
+      invalidate('sessions');
+      const sid = eventsRef.current.activeSession();
+      if (!sid || deletedRef.current.has(sid)) return;
+      loadTimeline(sid).catch(() => toast.error('Could not refresh the conversation — reopen it to retry'));
+      (api.sessions.tasks(sid) as Promise<TaskRow[]>)
+        .then(rows => { if (rows && rows.length > 0) updateSS(sid, s => mergeTaskRows(s, rows)); })
+        .catch(() => undefined);
+      tracesLoadedRef.current.add(sid);
+      fetchTraces(sid, true);
+    };
+
+    // A reconnect while the tab is hidden defers the resync to its next
+    // visible moment; the live runs are re-subscribed either way.
+    let resyncPending = false;
     ws.onReconnect = () => {
       // The role may have changed while away (a 1008 close is how the server
       // says so): the app refetches who we are.
       window.dispatchEvent(new Event(ME_RELOAD));
-      // Task runs are not resubscribed (their terminal events may be gone from
-      // the hub entirely) — re-pull the durable rows so statuses that changed
-      // during the outage land in the chips.
-      for (const sid of loadedRef.current) {
-        (api.sessions.tasks(sid) as Promise<TaskRow[]>)
-          .then(rows => { if (rows && rows.length > 0) updateSS(sid, s => mergeTaskRows(s, rows)); })
-          .catch(() => undefined);
-      }
-      for (const [sid, runId] of Object.entries(sessionRunRef.current)) {
-        ws.send(EV.runSubscribe, { run_id: runId });
-        reloadMessages(sid);
-      }
+      for (const runId of Object.values(sessionRunRef.current)) resubscribe(runId, undefined, false);
+      if (document.visibilityState === 'hidden') { resyncPending = true; return; }
+      resyncPending = false;
+      resyncSessions();
     };
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== 'visible' || !resyncPending || !ws.isConnected()) return;
+      resyncPending = false;
+      resyncSessions();
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
 
     ws.connect();
     // The pending-frame map is one Map for the hook's lifetime; the cleanup
     // clears whatever is queued at unmount.
     const rafPending = rafPendingRef.current;
     return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
       ws.close();
       if (rafIdRef.current) {
         cancelAnimationFrame(rafIdRef.current);
@@ -849,7 +901,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
       }
       rafPending.clear();
     };
-  }, [updateSS, reloadMessages, scheduleFrame, tasks]);
+  }, [updateSS, reloadMessages, scheduleFrame, tasks, loadTimeline, fetchTraces]);
 
   // watchTask opens the Inspector's live view of a task: snapshot the child
   // session's persisted transcript + traces, then let the router stream the
@@ -919,7 +971,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn) {
           // The live tail is re-merged because the rebuild only knows what is
           // persisted; an in-flight turn has nothing in the store yet. The
           // merge is scoped to the CURRENT live run.
-          const rebuilt = buildTimeline(entries) as SessionState['messages'];
+          const rebuilt = buildTimeline(entries);
           return {
             ...s,
             entries,

@@ -13,6 +13,7 @@ import { api } from '@/lib/api';
 import { useApi, useCrud } from '@/lib/hooks';
 import { fc, seg } from '@/lib/form';
 import { toast } from '@/lib/toast';
+import { listEmpty } from '@/features/settings/listEmpty';
 import { PROVIDERS, providerMeta, providerFacts, type ProviderTypeInfo } from '@/lib/providers';
 
 // A configured endpoint and its credential. Agents and provider routes point
@@ -94,7 +95,7 @@ function ProviderForm({ initial, onSave, onCancel, onDelete, saving, providerTyp
           // (a masked key 400s pointing at a field this mode hides), and there
           // is no control left to clear them below.
           onClick={() => setForm(prev => ({ ...prev, auth_mode: 'chatgpt_login', api_key: '', base_url: '' }))}>
-          ChatGPT Subscribe
+          ChatGPT sign-in
         </SegmentedControl.Button>
       </SegmentedControl>, 'Choose authentication method')}
 
@@ -190,8 +191,7 @@ export function ProviderPanel() {
         search={{ value: query, onChange: setQuery, placeholder: 'Search providers' }}
         onDelete={editing && canDeleteRow(isAdmin, me?.id, editing)
           ? async () => { if (await remove(editing.id, editing.name)) cancel(); } : null}
-        empty={providers.length === 0 ? 'No providers yet.' : 'No matching providers.'}
-        emptyHint={providers.length === 0 ? 'A provider holds an endpoint and its API key; an agent that names none fails pre-flight.' : undefined}>
+        {...listEmpty({ noun: 'providers', total: providers.length, query, mine: !!scopeFilter?.mine, hint: 'A provider holds an endpoint and its API key; an agent that names none fails pre-flight.' })}>
         {rows.map(p => {
           const meta = providerMeta(p.type || '');
           const chatgpt = p.auth_mode === 'chatgpt_login';

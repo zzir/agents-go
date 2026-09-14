@@ -14,7 +14,7 @@ import { Disclosure } from '@/components/Disclosure';
 import { Loading } from '@/components/Loading';
 import { AgentAvatar } from '@/components/AgentAvatar';
 import { AgentPicker } from '@/components/AgentPicker';
-import { NEW_SESSION, SESSIONS_CHANGED, SessionPicker, UnboundHint } from '@/features/sessions/SessionPicker';
+import { NEW_SESSION, SessionPicker, UnboundHint } from '@/features/sessions/SessionPicker';
 import { useServerInfo } from '@/features/settings/serverInfo';
 
 // A trigger starts work without a conversation asking — on a cron schedule,
@@ -275,10 +275,7 @@ export function TriggerForm({ fixedWorkflow, sessionId, initial, timezone, inlin
       const saved = initial
         ? await api.triggers.update(initial.id, { ...initial, ...fields }) as Trigger
         : await api.triggers.create({ ...fields, enabled: true }) as Trigger;
-      if (made) {
-        window.dispatchEvent(new Event(SESSIONS_CHANGED));
-        invalidate('sessions');
-      }
+      if (made) invalidate('sessions');
       onSaved(saved, !initial);
       toast.success(initial ? 'Trigger saved' : 'Trigger added');
     } catch (e) {
@@ -297,8 +294,8 @@ export function TriggerForm({ fixedWorkflow, sessionId, initial, timezone, inlin
         ) : (
           <>
             {fc('Starts', <Select block value={form.target} onChange={e => set({ target: e.target.value as TriggerFields['target'] })}>
-              <Select.Option value="workflow">A workflow — an execution that reports back to the conversation</Select.Option>
-              <Select.Option value="agent">An agent turn — the brief sent as a message of the conversation</Select.Option>
+              <Select.Option value="workflow">A workflow — an execution that reports back to the session</Select.Option>
+              <Select.Option value="agent">An agent turn — the brief sent as a message of the session</Select.Option>
             </Select>)}
             {form.target === 'workflow'
               ? fc('Workflow', <Select block value={form.workflow_id} onChange={e => set({ workflow_id: e.target.value })}>
@@ -306,7 +303,7 @@ export function TriggerForm({ fixedWorkflow, sessionId, initial, timezone, inlin
                   {(workflows || []).map(w => <Select.Option key={w.id} value={w.id}>{w.name || w.id.slice(0, 8)}</Select.Option>)}
                 </Select>)
               : fc('Agent', <AgentPicker block agents={agents || []} value={form.agent_config_id}
-                  onChange={id => set({ agent_config_id: id })} />, 'Runs the brief as an ordinary turn, with the conversation’s own sandbox')}
+                  onChange={id => set({ agent_config_id: id })} />, 'Runs the brief as an ordinary turn, with the session’s own sandbox')}
           </>
         )}
         {fc('Fires', <Select block value={form.kind} onChange={e => set({ kind: e.target.value as TriggerFields['kind'] })}>
@@ -316,11 +313,11 @@ export function TriggerForm({ fixedWorkflow, sessionId, initial, timezone, inlin
         {form.kind === 'cron' && fc('Schedule', <TextInput block value={form.schedule} placeholder="0 9 * * 1-5"
           onChange={e => set({ schedule: e.target.value })} />,
           SCHEDULE_HINT + (timezone ? ` In server time (${timezone}).` : ' In server time.'))}
-        {fc('Conversation', <SessionPicker value={form.session_id} onChange={id => set({ session_id: id })} />,
+        {fc('Session', <SessionPicker value={form.session_id} onChange={id => set({ session_id: id })} />,
           form.target === 'agent' ? 'Where the turn happens' : 'Where each run reports back')}
         <UnboundHint key={form.session_id} sessionId={form.session_id} what={form.target === 'agent' ? 'the turn' : 'each run'} />
         {fc('Brief', <Textarea block rows={8} value={form.brief}
-          placeholder={form.target === 'agent' ? 'The message to send each time — say everything the agent needs' : 'What each run is about — it cannot see the conversation, so say everything it needs'}
+          placeholder={form.target === 'agent' ? 'The message to send each time — say everything the agent needs' : 'What each run is about — it cannot see the session, so say everything it needs'}
           onChange={e => set({ brief: e.target.value })} />,
           form.kind === 'webhook' ? 'The call’s body is appended as the payload' : null)}
         <Stack direction="horizontal" gap="condensed">
@@ -353,7 +350,7 @@ export function TriggersDialog({ workflowId, workflowName, sessionId, onClose }:
       <Stack gap="normal">
         <div className="wf-run-hint">
           A trigger runs this workflow without anyone asking — on a schedule, or when something calls its webhook —
-          into the conversation you pick, with the brief you write here. The result comes back there like any run's.
+          into the session you pick, with the brief you write here. The result comes back there like any run's.
         </div>
 
         {actions.minted && <SecretBox trigger={actions.minted} />}

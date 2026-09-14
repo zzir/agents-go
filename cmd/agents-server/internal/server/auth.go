@@ -4,16 +4,23 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 )
 
-// AuthFunc resolves a presented bearer credential to the calling user, or an
-// error for every failure mode — the transport layer never learns why.
+// ErrUnauthorized is an AuthFunc's answer to a credential that is wrong,
+// expired or revoked — which of those, the transport never learns.
+var ErrUnauthorized = errors.New("unauthorized")
+
+// AuthFunc resolves a presented bearer credential to the calling user,
+// ErrUnauthorized when it is not one, or another error when it cannot tell
+// (the store is down) — refused 503 without charging the guess budget.
 type AuthFunc func(ctx context.Context, bearer string) (protocol.UserInfo, error)
 
 // GenerateToken returns a cryptographically random 32-character hex string.
@@ -85,6 +92,12 @@ func TokenAuth(auth AuthFunc, guard *AuthGuard) gin.HandlerFunc {
 		}
 		user, err := auth(c.Request.Context(), BearerToken(c))
 		if err != nil {
+			if !errors.Is(err, ErrUnauthorized) {
+				logging.Ctx(c.Request.Context()).Error("credential check", "error", err)
+				c.AbortWithStatusJSON(http.StatusServiceUnavailable,
+					protocol.NewErrorResponse(protocol.CodeUnavailable, "credential could not be checked; retry"))
+				return
+			}
 			guard.Failed(ip)
 			c.AbortWithStatusJSON(http.StatusUnauthorized,
 				protocol.NewErrorResponse(protocol.CodeUnauthorized, "unauthorized"))

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -547,7 +548,9 @@ func (h *McpServerHandler) Tools(c *gin.Context) {
 		conflict(c, "server not connected")
 		return
 	}
-	tools, err := srv.ListTools(c.Request.Context(), nil, nil)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), contextMCPTimeout)
+	defer cancel()
+	tools, err := srv.ListTools(ctx, nil, nil)
 	if err != nil {
 		upstreamError(c, err)
 		return

@@ -48,7 +48,7 @@ func (s *TaskStore) Create(ctx context.Context, t *Task) error {
 	return nil
 }
 
-// Get returns the task with the given id (== its run id).
+// Get returns the task with the given id.
 func (s *TaskStore) Get(ctx context.Context, id string) (*Task, error) {
 	t := new(Task)
 	if err := s.db.NewSelect().Model(t).Where("t.id = ?", id).Scan(ctx); err != nil {

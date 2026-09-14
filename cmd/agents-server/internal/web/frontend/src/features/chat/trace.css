@@ -62,12 +62,22 @@
   transition: opacity var(--base-duration-100) var(--base-easing-ease);
   flex-shrink: 0;
 }
-.trace-run .disclosure-header:hover .trace-run-jump {
+.trace-run .disclosure-header:hover .trace-run-jump,
+.trace-run-jump:focus-visible {
   opacity: 1;
 }
-.trace-run-jump:hover {
+.trace-run-jump:hover,
+.trace-run-jump:focus-visible {
   color: var(--fgColor-accent);
   background: var(--bgColor-accent-muted);
+}
+.trace-run-jump:focus-visible {
+  outline: 2px solid var(--focus-outlineColor);
+  outline-offset: 1px;
+}
+/* Touch devices have no hover, so the jump control stays visible. */
+@media (hover: none) {
+  .trace-run-jump { opacity: 1; }
 }
 .trace-empty {
   font-size: var(--base-text-size-xs);

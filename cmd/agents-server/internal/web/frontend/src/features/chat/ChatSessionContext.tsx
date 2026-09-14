@@ -4,19 +4,10 @@ import { backgroundItems, type BackgroundItem } from '@/lib/background';
 import { taskRetryable, type TaskState } from '@/lib/useAgentSocket';
 
 // The chat's session scope, split four ways by how often each value moves,
-// because a context has no selectors — every consumer re-renders when its
-// value changes:
-//   - ChatSessionState: the run lifecycle. Flips per run, never per delta.
-//   - ChatActions: callbacks. Memoized upstream, so the value only changes on a
-//     session switch or a picker change.
-//   - ChatTaskLookups: the per-call maps the tool cards read. Identity-stable:
-//     it moves only when a lookup's CONTENT changes, not on every task event
-//     (a child run's every tool call patches the task's lastTool).
-//   - the background items: the list the strip, the Tasks panel and the top
-//     bar read. Moves per task event, which is what those show.
-// What changes per streaming delta (streaming, reasoning, the live turn's
-// parts) is deliberately NOT here: it stays a prop of the one live TurnBlock,
-// which is what keeps a delta from re-rendering a finished turn.
+// since a context has no selectors (invariant 38): the run lifecycle (per
+// run), the actions (per session switch), the per-call task lookups (per
+// content change) and the background items (per task event). What moves per
+// streaming delta stays a prop of the one live TurnBlock.
 
 export interface ChatSessionState {
   sessionId: string | null;
@@ -48,6 +39,9 @@ export interface ChatActions {
   // with — from the session whose stored rows hold it (the chat's own, or an
   // inspected task's child).
   loadSpan?: (spanSessionId: string, runId: string, spanId: string) => Promise<void>;
+  // Opens the Settings dialog on a tab — what an error card that a Providers
+  // edit would fix offers.
+  openSettings?: (tab?: string) => void;
 }
 
 export interface ChatTaskLookups {

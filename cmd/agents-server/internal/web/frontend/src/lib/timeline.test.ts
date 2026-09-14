@@ -19,10 +19,11 @@
 //      'completed' — per-call status is not persisted; the rejection notice
 //      survives in the call's output text.
 import { describe, it, expect } from 'vitest';
-import { buildTimeline, type EntryView, type TurnEntry } from '@/lib/timeline';
+import { buildTimeline, hasPendingApproval, type EntryView, type TimelineEntry, type TurnEntry } from '@/lib/timeline';
 import {
   ensureLiveTurn, mergeLiveTail, appendMessageItem, appendReasoningItem, finalizeTurn,
   appendErrorPart, appendCancelledPart, appendToolCall, applyToolResult, applyTaskTerminal, startTaskAttempt, syncTaskCard, appendHandoffPart,
+  resolvePendingApprovals, supersedePendingApprovals,
 } from '@/lib/streamReducer';
 
 const RUN = 'run-1';
@@ -338,6 +339,55 @@ describe('stream/replay isomorphism', () => {
     expect(partsOf(buildTimeline(rows))).toEqual(streamParts);
   });
 
+  // A pause abandoned by a newer message (invariant 19): the pending card
+  // resolves to not run / superseded on both paths, and no cancelled marker
+  // follows — the newer turn does. The stored form is the call's display
+  // carrying not_run.
+  it('abandoned pause: pending call → not run (superseded), no marker', () => {
+    let live = ensureLiveTurn([], RUN)!;
+    live = appendToolCall(live, { tool_call_id: 'c1', tool_name: 'exec_command', arguments: '{}', needs_approval: true, status: null, output: null }, '')!;
+    live = resolvePendingApprovals(live, RUN, 'superseded')!;
+
+    const rows: EntryView[] = [
+      { id: "1", run_id: RUN, kind: 'annotation', role: 'assistant', display: { kind: 'tool_call', call_id: 'c1', tool_name: 'exec_command', arguments: '{}', extra: { not_run: 'superseded' } } },
+    ];
+    const streamParts = (live[live.length - 1] as TurnEntry).parts;
+    expect(streamParts).toEqual([
+      { type: 'tools', toolCalls: [{ tool_call_id: 'c1', tool_name: 'exec_command', arguments: '{}', needs_approval: true, status: 'not_run', not_run: 'superseded', output: null }] },
+    ]);
+    expect(hasPendingApproval(live)).toBe(false);
+    const replayed = partsOf(buildTimeline(rows));
+    // needs_approval is a live-only flag (the stored call carries not_run
+    // instead); everything else matches.
+    expect(replayed).toEqual([{ type: 'tools', toolCalls: [{ tool_call_id: 'c1', tool_name: 'exec_command', arguments: '{}', status: 'not_run', not_run: 'superseded', output: null }] }]);
+    // A newer run's start settles the older run's pending card the same way.
+    let other = ensureLiveTurn([], RUN)!;
+    other = appendToolCall(other, { tool_call_id: 'c2', tool_name: 'exec_command', arguments: '{}', needs_approval: true, status: null, output: null }, '')!;
+    other = ensureLiveTurn(other, 'run-2', 'next')!;
+    other = supersedePendingApprovals(other, 'run-2')!;
+    expect(hasPendingApproval(other)).toBe(false);
+    expect(supersedePendingApprovals(other, 'run-2')).toBeNull();
+  });
+
+  // The same pause stopped by an explicit cancel: not run / stopped, and the
+  // cancelled marker a stop always leaves.
+  it('abandoned pause: pending call → not run (stopped) → cancelled marker', () => {
+    let live = ensureLiveTurn([], RUN)!;
+    live = appendToolCall(live, { tool_call_id: 'c1', tool_name: 'exec_command', arguments: '{}', needs_approval: true, status: null, output: null }, '')!;
+    live = resolvePendingApprovals(live, RUN, 'stopped')!;
+    live = appendCancelledPart(live, '', '')!;
+
+    const rows: EntryView[] = [
+      { id: "1", run_id: RUN, kind: 'annotation', role: 'assistant', display: { kind: 'tool_call', call_id: 'c1', tool_name: 'exec_command', arguments: '{}', extra: { not_run: 'stopped' } } },
+      { id: "2", run_id: RUN, kind: 'annotation', role: 'system', content: '', display: { kind: 'cancelled' } },
+    ];
+    const streamParts = (live[live.length - 1] as TurnEntry).parts;
+    expect(streamParts[1]).toEqual({ type: 'cancelled', content: '' });
+    const replayed = partsOf(buildTimeline(rows));
+    expect(replayed[0]).toEqual({ type: 'tools', toolCalls: [{ tool_call_id: 'c1', tool_name: 'exec_command', arguments: '{}', status: 'not_run', not_run: 'stopped', output: null }] });
+    expect(replayed[1]).toEqual(streamParts[1]);
+  });
+
   it('failed turn: partial text renders as prose whatever role the server sent', () => {
     // A mid-stream provider failure (e.g. content inspection): savePartialTurn
     // wrote the streamed text as an annotation. Older servers mapped its role
@@ -444,14 +494,14 @@ describe('stream/replay isomorphism', () => {
     const persisted = buildTimeline([
       { id: "1", run_id: 'run-old', kind: 'item', role: 'user', content: 'hello', entry_id: 'u1' },
     ]);
-    const stale = [
+    const stale: TimelineEntry[] = [
       { role: 'user', content: 'hello', clientMsgId: 'c1' },
       { role: 'turn', parts: [{ type: 'text', content: 'OLD ANSWER' }], runId: 'run-old' },
-    ] as unknown as ReturnType<typeof buildTimeline>;
+    ];
     // No live run: the stale turn is dropped, the bubble dedups onto its row.
     expect(mergeLiveTail(persisted, stale, null)).toEqual(persisted);
     // A different run is live: the stale turn still does not come back.
-    const merged = mergeLiveTail(persisted, [...stale, { role: 'turn', parts: [], runId: RUN }] as unknown as ReturnType<typeof buildTimeline>, RUN);
+    const merged = mergeLiveTail(persisted, [...stale, { role: 'turn', parts: [], runId: RUN }], RUN);
     expect(merged.filter(m => m.role === 'turn').map(m => (m as TurnEntry).runId)).toEqual([RUN]);
   });
 
@@ -463,10 +513,10 @@ describe('stream/replay isomorphism', () => {
     const persisted = buildTimeline([
       { id: "1", run_id: 'r0', kind: 'item', role: 'user', content: 'x' },
     ]);
-    const live = [
+    const live: TimelineEntry[] = [
       { role: 'user', content: 'x', clientMsgId: 'c1' },
       { role: 'user', content: 'x', clientMsgId: 'c2' },
-    ] as unknown as ReturnType<typeof buildTimeline>;
+    ];
     const merged = mergeLiveTail(persisted, live);
     expect(merged.filter(m => m.role === 'user')).toHaveLength(2);
   });
@@ -609,5 +659,18 @@ describe('workflow-started note', () => {
     const bare = buildTimeline([{ id: "1", kind: 'annotation', role: 'system', content: 'Workflow "x" started by you', display: { kind: 'workflow_started' } }]);
     expect((bare[0] as { note?: { taskId: string } }).note?.taskId).toBe('');
     expect((bare[0] as { content?: string }).content).toBe('Workflow "x" started by you');
+  });
+});
+
+describe('hasPendingApproval', () => {
+  const turn = (status: string | null, needs = true): TimelineEntry => ({
+    role: 'turn', parts: [{ type: 'tools', toolCalls: [{ tool_call_id: 'tc', tool_name: 'exec', arguments: '{}', output: null, status, needs_approval: needs }] }],
+  });
+  it('is the conversation\'s own undecided call, in any turn', () => {
+    expect(hasPendingApproval([turn(null)])).toBe(true);
+    expect(hasPendingApproval([turn(null), { role: 'user', content: 'later' }])).toBe(true);
+    expect(hasPendingApproval([turn('approved')])).toBe(false);
+    expect(hasPendingApproval([turn(null, false)])).toBe(false);
+    expect(hasPendingApproval([])).toBe(false);
   });
 });

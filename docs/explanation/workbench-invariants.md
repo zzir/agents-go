@@ -12,29 +12,31 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
 
 1. **`config` blobs travel as JSON objects, never strings.** Every
    backend-specific settings blob (`mcp_servers.config`, `sandboxes.config`,
-   `guardrails.config`) is a `json.RawMessage` exchanged inline; the frontend
-   reads and writes it as an object, never `JSON.stringify`/`parse` of the
-   field itself.
+   `guardrails.config`) is a `json.RawMessage` exchanged inline, and a list
+   field (an agent's `tools`, `skills`, `handoffs`, `approve_tools`) a
+   `store.StringList`; the frontend reads and writes each as the value it is,
+   never `JSON.stringify`/`parse` of the field itself (decisions §5.67).
 2. **List responses carry every field the edit form needs.** `useCrud` panels
    initialize the edit form from the list item, so a list-side projection that
    drops fields makes the next save silently wipe them. Return full rows from
-   List, or make the panel fetch Get before editing.
+   List, or make the panel fetch Get before editing (`useCrud`, `lib/hooks.ts`).
 3. **Derived state is computed in one backend function; the frontend renders
    it verbatim.** A lifecycle is one server-derived `status` (MCP: `disabled |
    connecting | authorizing | needs_auth | disconnected | connected`) or
    boolean (`chatgpt_logged_in`, `has_oauth_token`). The frontend never
-   reconstructs state from several fields or its own per-item maps.
+   reconstructs state from several fields or its own per-item maps
+   (`mcpservers/manager.go`).
 4. **Swagger annotations match the actual response type.** Run `make openapi`
-   after any handler change — CI diffs the generated spec.
+   after any handler change — CI diffs the generated spec (`scripts/ci.sh`).
 
 **State & lifecycle**
 
 5. **An off switch holds at every entrance.** A resource with `enabled=false`
    is refused by every path that could activate it — manual connect, agent
    assembly, startup auto-connect. Agents pick MCP tools by live connection,
-   so one unguarded path voids the whole switch.
+   so one unguarded path voids the whole switch (`mcpservers/manager.go`).
 6. **Create and Update trigger the same side effects.** If updating a resource
-   reconciles a live connection, creating one does too.
+   reconciles a live connection, creating one does too (`handler/mcp_server.go`).
 7. **Async settling uses grace-window polling, not per-item timers.** After a
    mutation that completes in the background (reconnect, OAuth), the panel
    polls the list while any row is transitional or an ~8s grace window is
@@ -44,7 +46,7 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
 8. **In-progress buttons stay retryable when the wait is on an external
    actor.** A button whose completion depends on the user finishing a popup
    allows a superseding retry (cancel the stale attempt, start fresh) rather
-   than disabling itself until a timeout.
+   than disabling itself until a timeout (`McpServerPanel.tsx`).
 
 **Secrets**
 
@@ -52,10 +54,12 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
    with `********`; writes resolve the sentinel (mask = keep, `""` = clear,
    else replace) via the shared helpers, with a round-trip test. A mask never
    survives a destination change (a changed `provider_type`/`base_url` is
-   rejected; a fallback entry restores only on an exact match), and it resolves
-   inside the store's transaction or under `expected_revision` — never by a `Get`.
+   rejected), and it resolves inside the store's transaction or under the
+   row's `revision` — never by a `Get`. An agent has no secret field: a
+   fallback entry names a provider (decisions §5.69).
 10. **OAuth-class tokens never leave the server.** Own column with `json:"-"`,
-    excluded from CRUD updates (`ExcludeColumn`), exposed only as a derived
+    kept from the stored row on an update, never taken from the request
+    (`mcp_server_store.go`, `provider_store.go`), exposed only as a derived
     boolean (`has_oauth_token`, `chatgpt_logged_in`). A masked token string is
     never a truthiness signal.
 11. **An OAuth grant persists as a self-contained refreshable unit, through
@@ -69,11 +73,12 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
 
 12. **No bun `default:` tags on booleans.** bun swaps a zero-value field for
     SQL `DEFAULT` on insert, so `default:true` silently enables a row created
-    with `enabled=false`. Use `notnull` and set the value in Go.
+    with `enabled=false`. Use `notnull` and set the value in Go (`store/models.go`).
 13. **Deleting a referenced resource fails loud at use, never silently skips a
     safety feature.** Guardrail names that no longer resolve fail the agent
     build; dangling MCP/skill ids are filtered with a visible count in the UI.
-    A new reference picks one of those two behaviors deliberately.
+    A new reference picks one of those two behaviors deliberately
+    (`guardrails/resolver.go`, `bridge/agent.go`).
 
 **Chat / run streaming**
 
@@ -98,21 +103,19 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     handler (output/error/cancelled) applies its optimistic parts, then
     reloads the persisted timeline as the authority. The one exception is
     `guardrail_tripwire`, which keeps the retracted-answer view the SDK never
-    persists; a new exception is listed here.
+    persists; a new exception is listed here (`useAgentSocket.ts`).
 18. **The streaming block patches the DOM; user intent beats the pin.** Live
     text is morphdom-patched, never rewritten via innerHTML — node identity is
     what keeps a selection alive across deltas (`StreamingMarkdown.tsx`).
     Bottom-following re-fires on content growth and yields to an upward
     wheel/drag or an actively changing selection; a stale selection never
     blocks re-sticking (`useScrollToBottom` in `lib/hooks.ts`).
-19. **A branch move obsoletes every client view of the old path.** Regenerate
-    and attempt-switch are server-side appends (`POST /sessions/:id/branch`)
-    and the client reconciles by refetch: the `on_path === false` filter
-    applies before any fork exists, a move bumps the timeline generation so an
-    older fetch is dropped, the live tail re-appends only the current run, and
-    an off-path pending approval stays out of view without losing its row. A
-    branch move is refused (`409`) while a run is live on the session — a
-    switch mid-run would graft the run's later turns onto the new branch.
+19. **A newer message wins over a paused approval; a branch move obsoletes
+    every client view of the old path.** A send or a cancel while the
+    session's run waits for approval abandons that run (decisions §5.68);
+    regenerate and attempt-switch are server-side appends
+    (`POST /sessions/:id/branch`) reconciled by refetch, an off-path pending
+    approval kept but out of view; `409` while a run is live (`useAgentSocket.ts`).
 
 **Background tasks**
 
@@ -141,21 +144,17 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     run whose row has not landed is still `working`. A new publisher of
     terminal events gets an atomic hub transition, never a third compensation.
 24. **One entry in, the same entry out.** `entries` stores whole
-    `session.Entry` JSON, only query columns lifted out; the server never
-    re-derives a display, role or provenance at read time. Compaction
-    soft-deletes, appends a checkpoint naming what it folded, and sizes only
-    the active branch (`compaction_adapter.go`); the timeline stays decoupled
-    from the fold — folded entries render in full, the checkpoint inline, and
-    `SearchHistory` reads them back for the model's history tools. A fold
-    never moves the tip: the checkpoint extends the branch as it stood, and
-    the run's view closes its parent links over folded rows (`loadIn`), so a
-    folded turn stays on the transcript's path while leaving the model's.
+    `session.Entry` JSON with only query columns lifted out, and the server
+    never re-derives a display, role or provenance at read time. Compaction
+    soft-deletes and appends a checkpoint that extends the branch as it stood
+    — never moving the tip — and the timeline stays decoupled from the fold:
+    folded entries render in full, the checkpoint inline (`compaction_adapter.go`, `entry_store.go`).
 25. **Schema changes ship without migrations.** `CREATE TABLE / INDEX IF NOT
-    EXISTS` is the whole story; a structural change means dropping and
+    EXISTS` is the whole story: a structural change means dropping and
     recreating the database, and ALTER TABLE machinery is never added.
-    Startup probes every model with a zero-row SELECT, so an old database
-    fails fast with a "delete and recreate" message — the models are the
-    schema version.
+    Startup probes every model and every UNIQUE index by shape, so an old
+    table or index fails fast with a "delete and recreate" message — the
+    models and `schemaIndexes` are the schema version (`store/schema.go`).
 26. **Where a session stands is stored, not folded.** The branch tip and
     highest sequence live in `append_points`, written inside the transaction
     that moved them (`appendTo`, `Clear`, `pop`, `ForkSession`, the compaction
@@ -164,58 +163,39 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     `GetEntries` still folds, once per page.
 27. **A session's `project_id` binding is immutable and server-authoritative.**
     The first project-carrying run binds it (`BindProjectIfEmpty`): no unbind,
-    rebind or PATCH, the run overrides what the client sends, and bind and
-    delete guard each other atomically per dialect (`bridge/binding.go`). It
-    binds WHICH tree, not the container's configuration: the project's
-    environment (write-only, decisions §5.32) and the sandbox's image are
-    content, editable while bound, reaching sessions at their next run. No
-    project ⇒ no sandbox tools at all. Instances are cached per `(project,
-    runtime generation)` — the one fence, bumped by any content change — and
-    reference-counted (`SandboxManager.Acquire`): an eviction closes an idle
-    instance and only dooms a held one. A project delete destroys its volume
-    (decisions §5.33); task child sessions inherit the parent's project.
-    A container found stopped is restarted in place; remove-and-recreate only
-    when the start fails or the container is gone. The expired/gone fence is
-    the one shape for every stop (idle, user Stop, deferred last release): the
-    instance keeps its cache key until `Lifecycle.Stop` returns, and a
-    deferred stop that new work overtook is superseded. On PostgreSQL a bind
-    takes `FOR KEY SHARE` on the project row, a project delete `FOR UPDATE` on
-    its own row, sandbox-guarded writes `FOR UPDATE` on the sandbox row, each
-    re-evaluating its guard under the lock.
+    rebind or PATCH, the run overrides what the client sends, and no project
+    means no sandbox tools. It binds WHICH tree, not the container's
+    configuration: environment and image are content, editable while bound,
+    reaching sessions at their next run (`bridge/binding.go`, `sandboxes/manager.go`; decisions §5.32, §5.33, §5.66).
 28. **Every figure in the Context panel says which ruler it is on, and they
     are never mixed.** `/sessions/:id/context` reports the provider's window
-    counts for the last call; `compaction_tokens`, what the pass compares
-    (`ActiveContextTokens`); and character estimates for the conversation and
-    prompt, never for arithmetic against the others. The panel draws one bar
-    with the threshold as a tick, and an estimate as two figures behind `~`.
-    The budget notice a run appends to every model call (`ContextBudget`) is
-    built from the provider figure of the last measured call, never an estimate.
+    counts for the last call, `compaction_tokens` (what the pass compares,
+    `ActiveContextTokens`) and character estimates for the transcript and
+    prompt — never for arithmetic against the others. The panel draws one bar
+    with the threshold as a tick, an estimate as two figures behind `~` (`store/context_report.go`, `ContextPanel.tsx`).
 29. **A workflow execution is a task, advanced from the run's teardown, never
     from the starting call's callback.** A step is an ordinary run; `postRun`
     — reached by every segment, fresh or resumed — hands the outcome to the
     SDK task manager, which asks the driver (`bridge/workflow.go`). The advance
     is `Store.Advance`, a CAS on `(status = working, run_id)`: a superseded
     attempt cannot drive it, and an interrupted outcome (a pause) moves nothing.
-30. **A workflow runs off the conversation that asked for it, and starts only
-    with a brief written by someone who read that conversation.** Steps run
+30. **A workflow runs off the session that asked for it, and starts only
+    with a brief written by someone who read that session.** Steps run
     on a hidden child session sharing the parent's sandbox; the result comes
     back through a wake-up. The brief comes from the agent (`spawn_task`,
     matched on a required `description`), the person (the manual start) or a
-    trigger's author — never a bare button. The call's card is the execution's.
+    trigger's author — never a bare button. The call's card is the execution's (`bridge/workflow.go`).
 31. **An execution's state logs every step launched.** `state.step_runs`
     records each `(step, run)` the launcher started, written under the same
     `Advance` CAS as the row; the lap bound and `MaxStepRuns` count launches,
     and an ending's outcome lands in the `Finalize` write so the log and the
-    terminal status cannot disagree (`store/workflow.go`).
+    terminal status cannot disagree (`store/task_store.go`).
 32. **Delivery is a debt, not a call, and one waker owns it.** "Session S is
-    owed a turn carrying P" is a `wakeups` row, written in the transaction
-    that lands the task's terminal status (a cancelled task owes nothing) and
-    drained — `OnFinished` only drains — when the session can take a turn: the
-    end of any run on it, and startup, one turn paying every same-`inherit`
-    debt (`bridge/waker.go`). Startup runs `FailOrphans` before any request.
-    *Delivered* means the wake run launched and its prompt reached the session;
-    a run that fails after launch leaves the notification as a durable user
-    entry with an error card and no automatic retry (`bridge/partial_turn.go`).
+    owed a turn carrying P" is a `wakeups` row, written with the task's
+    terminal status and drained when the session can take a turn — the end of
+    any run on it, and startup after `FailOrphans` (`bridge/waker.go`). One
+    turn pays every same-`inherit` debt; a wake run that fails after launch
+    leaves the notification as a durable entry (`bridge/partial_turn.go`).
 33. **Plan mode is a restraint, so only a person turns it on, and it belongs
     to the session.** The switch is the run request's `plan` field (`/plan
     <message>`, `/plan off <message>`), applied inside the run reservation;
@@ -228,7 +208,7 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     `BackgroundInstructions` as a suffix (`bridge/agent.go`). Background means
     the session is a task's child, and a lookup that FAILS is an error, not
     "no". A chat run drops the task tools only via `behavior.subagents: false`.
-35. **A step's approval is answerable from the conversation that asked.**
+35. **A step's approval is answerable from the session that asked.**
     `GET /sessions/:id/approvals` includes the approvals paused inside this
     session's tasks, tagged with their task, so the chat is the one approval
     surface. The pause itself is invariant 37's.
@@ -261,21 +241,21 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
 40. **A global setting is one entry in the registry, and everything else
     derives from it.** `internal/settings` names every key, kind, default and
     presentation; the backend reads through `settings.Reader` (no reader has
-    its own fallback), masking is `Kind == secret`, and the panel renders the
-    served table. Every bool has a registered default and is one switch (unset
-    = the default side), stored on click (`SettingsPanel.tsx`); no env
-    fallback (spec §2.14).
+    its own fallback), masking is `Kind == secret`, the panel renders the
+    served table, and every bool is one switch with a registered default,
+    stored on click (`SettingsPanel.tsx`); no env fallback (spec §2.14).
 41. **A destructive action confirms once, in one place.** Every Delete goes
     through `useCrud.remove` or the same Primer `useConfirm` dialog
-    (conversations, skills, tasks, triggers, unrecognized settings) — never
-    `window.confirm`, never a bare button.
+    (sessions, skills, tasks, triggers, unrecognized settings) — never
+    `window.confirm`, never a bare button. Discarding an edited form is one:
+    a settings form's Cancel and the dialog's close paths ask through the
+    same dialog while `UnsavedForm` reports edits (`lib/unsaved.tsx`).
 42. **Ownership is sessions' owner column, configuration scope, or projects'
     per-user ownership — nothing invents a fourth scheme.** A hidden task
     session, a trigger or an approval takes its session's owner; configuration
     is host-owned or row-scoped — `scope` for visibility, `owner_id` for
-    authorship, two independent facts (decisions §5.29); a working tree is a
-    project (decisions §5.28). Every mutation re-checks the pair as it writes
-    (`409`); the matrix is in [protocol.md](../reference/protocol.md#authorization).
+    authorship (decisions §5.29); a working tree is a project (§5.28). Every
+    mutation re-checks the pair (`409`); the matrix: [protocol.md](../reference/protocol.md#authorization).
 43. **Shutdown is ordered, and every waiter is told.** The clock stops, then
     the maintenance loops, then every run is cancelled and waited for (its
     partial turn persists), every broadcaster is closed so SSE streams
@@ -333,13 +313,13 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     plane is decided by a rule.** A process flag is for what is needed before
     the DB and API exist or is security-load-bearing (`--token`,
     `--trusted-proxies`, `--audit-retention-days`); an environment variable is
-    only a flag's fallback that keeps a secret off argv, never a standalone
-    knob; everything tuned live is a DB setting (invariant 40), a cap the SDK
-    consumes included. Tables: [configuration](../reference/configuration.md).
+    only a flag's fallback that keeps a secret off argv; everything tuned live
+    is a DB setting (invariant 40). Tables: [configuration](../reference/configuration.md).
 55. **A persisted MCP OAuth grant is bound to the config identity it was
     minted under.** An update that moves the endpoint, the auth mode or the
     client id clears the stored grant in the same transaction; a token minted
-    under the previous identity must never silently authenticate the new one.
+    under the previous identity must never silently authenticate the new one
+    (`oauthIdentityChanged`, `handler/mcp_server.go`).
 56. **An image attachment is stored as a reference; only the model boundary
     expands it.** Entries carry `agents-attachment:<id>`; a
     `hydratingProvider` around the run's ModelProvider resolves it against
@@ -348,10 +328,10 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     decisions §5.42.
 57. **Attachments enter through the composer alone, and leave only by the
     reaper.** `attachment_ids` exists on run creation (REST and WS) and
-    nowhere else. A run accepting the ids binds them (owner, cap, the agent's
-    `vision` flag — checked before anything executes); bound rows are
-    permanent across session deletion and forks. Only never-accepted uploads
-    are collected, object before row, after a 24h grace.
+    nowhere else; a run accepting the ids binds them after checking owner, cap
+    and the agent's `vision` flag. A session delete unbinds what no other
+    session's entry references, and the reaper collects unbound rows past the
+    24h grace, object before row (`RunAttachmentReaper`, `bridge/retention.go`).
 58. **The attachment bucket is public-read by design, and the settings save
     proves it.** URLs are stable and unsigned (decisions §5.42). The section
     saves as one group; every non-empty save and Test probes end to end
@@ -373,13 +353,10 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     statement otherwise aborts the whole transaction (`25P02`).
 61. **Settings is one hub; an admin's views are a toggle inside the same
     panel, never a second dialog.** One `PanelDialog`: the person's own
-    sections, then what runs are built from, then an admin's management
-    entries after a divider. A scoped entity's tab is one list — a member's
-    own and published rows, every member's for an admin, "Mine | All" only
-    narrowing and opening on Mine — managed from the row's menu; only
-    Workflows keep a table. The dialog is reachable at `#/settings/:tab`, a
-    one-shot deep link consumed on open: the URL keeps naming the view
-    underneath, so a reload never loses it.
+    sections, what runs are built from, then an admin's entries after a
+    divider. A scoped entity's tab is one list — every member's rows for an
+    admin, "Mine | All" only narrowing and opening on Mine (`ScopedEntityPanel.tsx`);
+    `#/settings/:tab` is a one-shot deep link the URL underneath keeps naming.
 62. **A span's payload is content-addressed per session, and lives and dies
     with the session's trace.** Payload elements are stored once per session
     in `trace_blobs` under their sha256, so delete, fork and retention are
@@ -396,20 +373,14 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     `scope_kind` (global, agent, session) decides injection, who writes,
     whether the model writes and after what, and the limits, all from
     `store.MemoryPolicies` (decisions §5.62); the handler, the run adapter
-    and the injection query it rather than judge. Injection is an allow-list
-    of kinds. Session rows follow their session (a fork copies, a delete
-    cascades, a generation is a scope of its own), agent rows their agent.
+    and the injection query it rather than judge. Session rows follow their
+    session (a fork copies, a delete cascades), agent rows their agent.
 65. **A reset checkpoint carries the session memory and keeps the newest user
     message, and one pass serves every trigger.** In reset or hybrid mode the
     threshold, `Compact now` and the model's `new_context` all run
-    `resetPass` (`compaction_adapter.go`): fold every other item and every
-    earlier checkpoint on the active branch, write a checkpoint marked
-    `reset` whose summary is the session memory snapshot (hybrid: a short
-    recap first, over the earlier checkpoints' text too), and never call
-    the summary model for the fold itself. A reset supersedes the last. A
-    background run summarizes whatever its agent's mode says: it has no
-    memory tools to write down what a reset would keep. The mode is the agent's, needs
-    compaction enabled, and turns the memory and history tools on.
+    `resetPass` (`compaction_adapter.go`), which never calls the summary
+    model for the fold and supersedes the last reset. The mode is the
+    agent's, needs compaction enabled, and turns the memory and history tools on.
 66. **A single boolean in a settings form is a `ToggleRow`.** Name and
     caption on the left, the On/Off switch on the right, one bordered row
     (`components/ToggleRow.tsx`), disabled by itself in a read-only dialog. A
@@ -427,9 +398,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     jitters. The list stays mounted under the rail; only the snap animates, a
     pointer-tracking resize never. `useResizablePane` (`lib/hooks.ts`) and
     `AppShell.tsx`; the narrow layout's drawer has no rail.
-69. **A conversation is made by its first message, never by New.** The
+69. **A session is made by its first message, never by New.** The
     sidebar's and the rail's New open an empty composer; the send that follows
-    creates the conversation (`app.tsx` handleSend, `/workflow` alike). A form
+    creates the session (`app.tsx` handleSend, `/workflow` alike). A form
     that needs one — a trigger, a Run… — offers "New session" as a choice and
     makes it on Save, so a cancelled form leaves nothing and two triggers never
     share one; a trigger's is named after what it starts (`lib/sessionTitle.ts`).
@@ -439,3 +410,27 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     `attachments: [{id, url}]` resolved against the current public base, as
     entries and `run.started` do — never a rewritten `image_url`. The panel
     resolves a part through that list (`TracePayload.tsx`).
+71. **A credential the store cannot resolve is not a wrong one.** An
+    `AuthFunc` answers `server.ErrUnauthorized` for a wrong, expired or
+    revoked bearer and any other error when it cannot tell; only the first is
+    `401` and charges the guess budget, the rest is `503 unavailable`
+    uncharged, and an open WebSocket's `Recheck` keeps the connection and
+    asks again on the next frame (`server/auth.go`, `server/ws.go`).
+72. **A hidden session exists only as a task's child; without that edge it
+    is collected.** The hourly sweep (`bridge/retention.go`) deletes a hidden
+    session no task row names over a live edge, once past the spawn grace,
+    through the same cascade as a delete; `task_session_retention_days` takes a
+    finished task's transcript and its row together after the window. Nothing
+    else creates or keeps a hidden session (`session_repo_adapter.go`).
+73. **A reconnect never leaves a loaded session stale.** The socket
+    coming back re-reads the session on screen (timeline under its live
+    tail, task rows under the no-move-backwards rule, traces with the stored
+    rows winning), drops every other loaded one's mark so its next select
+    refetches, and relists the sidebar; a reconnect while the tab is hidden
+    does this on its next visible moment (`resyncSessions`, `useAgentSocket.ts`).
+74. **A person reads "session".** Every label, empty state, toast, dialog
+    title and column a person sees names the thing a session — never
+    conversation or chat; the code, the API and `session_id` were already
+    that word. A list's blank state says why it is blank: nothing yet (and
+    how to add one), the Mine filter, or a search that matched none
+    (`features/settings/listEmpty.ts`).

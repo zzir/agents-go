@@ -3,10 +3,13 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
@@ -14,10 +17,17 @@ import (
 
 func newSettingEngine(t *testing.T) (*gin.Engine, *store.SettingStore) {
 	t.Helper()
+	return newSettingEngineAs(t, protocol.UserInfo{ID: store.LocalUserID, Email: "local@localhost", Role: store.RoleAdmin})
+}
+
+// newSettingEngineAs mounts the setting routes with user signed in.
+func newSettingEngineAs(t *testing.T, user protocol.UserInfo) (*gin.Engine, *store.SettingStore) {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 	st := store.NewSettingStore(testdb.New(t))
 	h := NewSettingHandler(st)
-	e := newTestEngine()
+	e := gin.New()
+	e.Use(func(c *gin.Context) { server.SetCurrentUser(c, user); c.Next() })
 	e.GET("/settings", h.List)
 	e.GET("/settings/:key", h.Get)
 	e.PUT("/settings/:key", h.Set)
@@ -137,4 +147,75 @@ func mustQuote(s string) string {
 		panic(err)
 	}
 	return string(b)
+}
+
+// http://user:pass@proxy is a supported proxy credential, so a read masks the
+// user:pass and a write that echoes the mask keeps the stored one; a mask
+// with nothing behind it is dropped rather than stored.
+func TestProxyURLUserinfoIsMaskedOnReadAndKeptOnEcho(t *testing.T) {
+	e, st := newSettingEngine(t)
+	const full, masked = "http://alice:s3cret@proxy.local:3128", "http://********@proxy.local:3128"
+	stored := func() string {
+		t.Helper()
+		got, err := st.Get(t.Context(), settings.KeyProxyURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got.Value
+	}
+	if w := doJSON(t, e, http.MethodPut, "/settings/proxy_url", `{"value":"`+full+`"}`); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), masked) || strings.Contains(w.Body.String(), "s3cret") {
+		t.Fatalf("set = %d %s, want the masked url back", w.Code, w.Body)
+	}
+	for _, path := range []string{"/settings/proxy_url", "/settings"} {
+		if w := doJSON(t, e, http.MethodGet, path, ""); !strings.Contains(w.Body.String(), masked) || strings.Contains(w.Body.String(), "s3cret") {
+			t.Fatalf("GET %s = %s, want the masked url", path, w.Body)
+		}
+	}
+	if w := doJSON(t, e, http.MethodPut, "/settings/proxy_url", `{"value":"`+masked+`"}`); w.Code != http.StatusOK {
+		t.Fatalf("echo = %d %s", w.Code, w.Body)
+	}
+	if got := stored(); got != full {
+		t.Fatalf("stored after echoing the mask = %q, want %q kept", got, full)
+	}
+	if w := doJSON(t, e, http.MethodPut, "/settings/proxy_url", `{"value":"http://proxy.local:3128"}`); w.Code != http.StatusOK {
+		t.Fatalf("clear userinfo = %d %s", w.Code, w.Body)
+	}
+	if got := stored(); got != "http://proxy.local:3128" {
+		t.Fatalf("stored after a url without userinfo = %q, want it as sent", got)
+	}
+	if w := doJSON(t, e, http.MethodPut, "/settings/proxy_url", `{"value":"http://********@other.local:1"}`); w.Code != http.StatusOK {
+		t.Fatalf("mask over nothing = %d %s", w.Code, w.Body)
+	}
+	if got := stored(); got != "http://other.local:1" {
+		t.Fatalf("stored after a mask with nothing behind it = %q, want the mask dropped", got)
+	}
+}
+
+// The storage group is the admin's to read as it is to write: a member's
+// listing leaves the s3_* keys out and a direct read is 403.
+func TestStorageSettingsAreReadByAdminsOnly(t *testing.T) {
+	member := protocol.UserInfo{ID: "u-member", Email: "member@example.com", Role: store.RoleMember}
+	e, st := newSettingEngineAs(t, member)
+	for k, v := range map[string]string{settings.KeyS3Bucket: "pics", settings.KeyS3AccessKeyID: "AKIA", settings.KeyProxyURL: "http://proxy.local:1"} {
+		if err := st.Set(t.Context(), k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w := doJSON(t, e, http.MethodGet, "/settings", "")
+	if strings.Contains(w.Body.String(), "s3_") || !strings.Contains(w.Body.String(), "proxy_url") {
+		t.Fatalf("member listing = %s, want the storage keys out and the rest in", w.Body)
+	}
+	if w := doJSON(t, e, http.MethodGet, "/settings/s3_bucket", ""); w.Code != http.StatusForbidden {
+		t.Fatalf("member GET s3_bucket = %d, want 403", w.Code)
+	}
+	ae, ast := newSettingEngineAs(t, protocol.UserInfo{ID: "u-admin", Role: store.RoleAdmin})
+	if err := ast.Set(t.Context(), settings.KeyS3Bucket, "pics"); err != nil {
+		t.Fatal(err)
+	}
+	if w := doJSON(t, ae, http.MethodGet, "/settings/s3_bucket", ""); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "pics") {
+		t.Fatalf("admin GET s3_bucket = %d %s, want the value", w.Code, w.Body)
+	}
+	if w := doJSON(t, ae, http.MethodGet, "/settings", ""); !strings.Contains(w.Body.String(), "s3_bucket") {
+		t.Fatalf("admin listing = %s, want the storage keys in", w.Body)
+	}
 }

@@ -302,18 +302,23 @@ func TestTraceMissingBlobReadsAsPruned(t *testing.T) {
 	}
 }
 
-// Deleting a session's traces takes its blobs; another session's stay.
-func TestTraceDeleteBySessionDropsBlobs(t *testing.T) {
+// Deleting a session takes its trace rows and blobs; another session's stay.
+func TestSessionDeleteDropsTraceBlobs(t *testing.T) {
 	ctx := context.Background()
-	ts := NewTraceStore(newTestDB(t))
+	db := newTestDB(t)
+	ts := NewTraceStore(db)
+	sessions := NewSessionStore(db)
 	id := ids(t)
 	data := `{"input":[` + item("user", "a") + `]}`
 	for _, sid := range []string{id("s1"), id("s2")} {
+		if err := sessions.Create(ctx, &Session{OwnerID: LocalUserID, ID: sid, Name: sid}); err != nil {
+			t.Fatal(err)
+		}
 		if err := ts.Insert(ctx, &TraceEvent{SessionID: sid, RunID: id("r1"), Kind: "span", SpanID: "g1", Name: "generation", Detail: "generation", Data: data}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := ts.DeleteBySession(ctx, id("s1")); err != nil {
+	if err := sessions.Delete(ctx, id("s1")); err != nil {
 		t.Fatal(err)
 	}
 	if n := blobCount(t, ts, id("s1")); n != 0 {

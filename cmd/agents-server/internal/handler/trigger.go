@@ -366,7 +366,7 @@ type fireReq struct {
 // Fire starts what the trigger names now, by hand — the way to test one.
 //
 //	@Summary		Fire a trigger
-//	@Description	Starts the trigger's workflow into its session, or its agent's turn in it, as a tick or a webhook call would; the optional payload is appended to the brief. 201 with the task (a workflow) or {run_id} (an agent turn). 400 when the trigger is disabled or the workflow cannot start, 404 for an unknown trigger, 409 when the session is at its background-task cap or busy with a run.
+//	@Description	Starts the trigger's workflow into its session, or its agent's turn in it, as a tick or a webhook call would; the optional payload is appended to the brief. 201 with the task (a workflow) or {run_id} (an agent turn). 400 when the workflow cannot start, 404 for an unknown trigger, 409 when the trigger is disabled or the session is at its background-task cap or busy with a run.
 //	@Tags			triggers
 //	@Accept			json
 //	@Produce		json
@@ -400,9 +400,9 @@ func (h *TriggerHandler) fire(c *gin.Context, id, payload, source string) bool {
 		_, deleting := errors.AsType[bridge.ErrSessionDeleting](err)
 		_, draining := errors.AsType[bridge.ErrShuttingDown](err)
 		switch {
-		case errors.Is(err, bridge.ErrTriggerDisabled), errors.Is(err, bridge.ErrWorkflowUnavailable), errors.Is(err, bridge.ErrTriggerTarget):
+		case errors.Is(err, bridge.ErrWorkflowUnavailable), errors.Is(err, bridge.ErrTriggerTarget):
 			badRequest(c, err.Error())
-		case taskLimit, bridgeLimit, busy, deleting:
+		case errors.Is(err, bridge.ErrTriggerDisabled), taskLimit, bridgeLimit, busy, deleting:
 			conflict(c, err.Error())
 		case draining:
 			unavailable(c, err.Error())
@@ -447,10 +447,8 @@ func (h *TriggerHandler) RotateSecret(c *gin.Context) {
 }
 
 // Hook is the webhook endpoint (POST /hooks/{id}), outside the token-guarded
-// API — the README is its contract. X-Timestamp (UNIX seconds, within
-// HookTimestampSkew) and X-Signature-256 = hex(HMAC-SHA256(secret, timestamp
-// + "." + body)); the body, up to HookBodyLimit, is appended to the brief.
-// 401 on a bad or stale signature; otherwise as a manual fire.
+// API; its contract is protocol.md, Workflows. 401 on a bad or stale
+// signature; otherwise as a manual fire.
 func (h *TriggerHandler) Hook(c *gin.Context) {
 	ctx, id := c.Request.Context(), c.Param("id")
 	t, err := h.store.Get(ctx, id)

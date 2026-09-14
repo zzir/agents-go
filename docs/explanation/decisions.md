@@ -1537,3 +1537,111 @@ text — a second home that drifts.
 system prompt at all; the switch's caption says so.
 
 Rules: [invariant 67](workbench-invariants.md).
+
+### 5.66 A retired instance whose container a successor adopted detaches
+
+Decided 2026-09-11 (workbench invariant 27).
+
+**Decision.** A content change bumps the project's runtime generation, but the
+docker adoption fingerprint (§5.19) covers only what a container IS — image,
+runtime, user, network, limits, environment. A change outside it (a read cap,
+an SSH setting) has the successor generation adopt the SAME running container.
+So when a retired instance's last holder releases while a successor of the
+project occupies the cache, it releases only its connection
+(`sandbox.Detacher`), stopping and removing nothing; a deferred user Stop that
+new work overtook is superseded the same way. Without a successor it closes as
+before.
+
+**Rejected.** Widening the fingerprint to the whole content — every unrelated
+edit would replace the container and discard what was installed into it.
+Stopping anyway — the successor's commands and shells die mid-flight and its
+next call cold-starts the container it was already using.
+
+**Cost accepted.** A successor that replaced rather than adopted sees the old
+handle go stale harmlessly. Once a successor exists, only its own idle timer or
+stop ends the container.
+
+Rules: workbench invariant 27; [spec §2.7p](../reference/spec.md#27p-stop-keeps-the-filesystem-and-promises-nothing-else).
+
+### 5.67 A list is an array on the wire and JSON text in the column
+
+Decided 2026-09-11 (workbench invariant 1).
+
+**Decision.** An agent's `tools`, `skills`, `handoffs` and
+`approval.approve_tools` are `[]string` on the REST API (`store.StringList`),
+typed in the OpenAPI document and the generated client, and refused at bind
+when they are not arrays. The column stays `text`: the type's Valuer/Scanner
+writes the JSON array and reads it back, `nil` as `""`, so a row written
+before the change reads unchanged and no schema moves. `skills` keeps its
+third value — `null` is "not customized" (every skill the scope can see),
+`[]` is none — and so travels without `omitempty`.
+
+**Rejected.** Strings holding JSON — the shape the review found: the
+OpenAPI type is `string`, the generated client is untyped, a typo in a name
+surfaces at run time, and every client parses and re-serializes the field.
+A relational join table per list — four tables for four lists of ids, a
+schema change for what is a column's encoding, and a read that stitches rows
+back into the order the operator chose.
+
+**Cost accepted.** A breaking wire change: a client that sent the string form
+gets `400`. `skills: null` appears in responses, the honest spelling of "not
+customized".
+
+Rules: [invariant 1](workbench-invariants.md);
+[protocol.md, Agents](../reference/protocol.md#agents--apiv1agents).
+
+### 5.68 A newer message abandons a paused run
+
+Decided 2026-09-11 (workbench invariant 19).
+
+**Decision.** A chat run paused for tool approval ends when its session takes
+a new message, or when the paused run is cancelled: the `pending_approvals`
+row is deleted (the claim a racing decision loses), the calls it waited on
+persist as `tool_call` annotations whose display carries `not_run` with the
+reason, and the hub ends the record with `run.cancelled {reason}` —
+`superseded` or `stopped`. The UI resolves the cards from the live event,
+from the stored marker on reload, and from the newer run's `run.started`
+when the event never came (a restart between the pause and the message).
+A background task's paused run is its task's to stop and is left alone.
+
+**Rejected.** Refusing the send (`409`) — the composer sat locked on a
+question the person had moved past. Letting both stand — the later approval
+resumed the old `RunState` and its answer landed after the newer turn, out
+of order and out of context. Persisting the pending calls as items — an
+abandoned call must not enter the model's history.
+
+**Cost accepted.** A newer message discards a pause by design; the cards say
+so. A stale hub record on a restarted server publishes nothing, so the
+client's `run.started` rule carries that case.
+
+Rules: [invariant 19](workbench-invariants.md);
+[protocol.md, Approvals](../reference/protocol.md#approvals--apiv1approvals).
+
+### 5.69 A fallback entry names a provider
+
+Decided 2026-09-11 (workbench invariant 9).
+
+**Decision.** `resilience.fallback_models` is a typed array of
+`{provider_id, model}`: the entry runs on the provider row it names, under
+the primary's reference rule (§5.29), and carries no credential of its own — a
+key in an entry is `400`. A row from before the field holds the endpoint an
+entry named (`provider_type`, `base_url`) and, at rest, the key it carried;
+the decode drops the key, the read returns the endpoint, and the build
+resolves it to a provider the agent may reference at that endpoint, with a
+warning, or fails loudly. The form offers the resolved provider and drops an
+entry no provider reaches.
+
+**Rejected.** Keeping the inline key with mask round-tripping — the one
+place a model key is entered was the provider (§5.30), and the agent form
+asking for a raw key beside it contradicted that in the UI and in the
+handler's second masking path. Refusing legacy rows outright — an agent
+that ran yesterday must read and run today; only the inline key stops being
+honored.
+
+**Cost accepted.** A breaking wire change: the entry shape and the field's
+type. A legacy entry whose endpoint has no provider row fails the run until
+the operator adds one; its stored key is inert until the next save rewrites
+the field.
+
+Rules: [invariant 9](workbench-invariants.md);
+[protocol.md, Agents](../reference/protocol.md#agents--apiv1agents).

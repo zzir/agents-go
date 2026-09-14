@@ -78,7 +78,7 @@ export function SessionsPanel() {
           <PageHeader.Title><span id="sessions-title">Sessions</span></PageHeader.Title>
         </PageHeader.TitleArea>
         <PageHeader.Description>
-          Every owner's conversations, newest first. Content is theirs alone;
+          Every owner's sessions, newest first. Content is theirs alone;
           an admin may delete or reassign one.
         </PageHeader.Description>
       </PageHeader>
@@ -92,7 +92,7 @@ export function SessionsPanel() {
           <Blankslate>
             <Blankslate.Visual><CommentDiscussionIcon size={24} /></Blankslate.Visual>
             <Blankslate.Heading>No sessions</Blankslate.Heading>
-            <Blankslate.Description>Conversations list here as members start them.</Blankslate.Description>
+            <Blankslate.Description>Sessions list here as members start them.</Blankslate.Description>
           </Blankslate>
         )}
       />

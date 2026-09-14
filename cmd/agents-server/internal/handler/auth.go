@@ -86,13 +86,14 @@ type UserLabel struct {
 	Email string `json:"email"`
 }
 
-// ListUserLabels serves the id→label directory any authenticated member reads
-// to render row owners. Roles, timestamps and state stay admin-only (ListUsers).
+// ListUserLabels serves the id→label directory the admin panel's owner
+// pickers render from; the route carries the admin gate, as ListUsers does.
 //
-//	@Summary	List user labels (id, name, email) for owner display
+//	@Summary	List user labels (id, name, email) for owner pickers (admin)
 //	@Tags		auth
 //	@Produce	json
-//	@Success	200	{array}	UserLabel
+//	@Success	200	{array}		UserLabel
+//	@Failure	403	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/auth/user-labels [get]
 func (h *AuthHandler) ListUserLabels(c *gin.Context) {

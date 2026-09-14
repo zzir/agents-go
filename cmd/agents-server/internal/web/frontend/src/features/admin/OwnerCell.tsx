@@ -10,7 +10,18 @@ export function OwnerCell({ ownerId, ownerOf, labelFor }: {
   labelFor: (id?: string) => string;
 }) {
   if (!ownerId) return <span className="list-clip owner-none">no author</span>;
-  return <OwnerName owner={ownerOf(ownerId)} fallback={labelFor(ownerId)} />;
+  const owner = ownerOf(ownerId);
+  // Name and email both, as the Members table shows a person: members can
+  // share a name, and the email is the identity accounts merge on.
+  if (owner?.name && owner.email) {
+    return (
+      <span className="list-person-text">
+        <span className="list-clip">{owner.name}</span>
+        <span className="list-clip account-muted">{owner.email}</span>
+      </span>
+    );
+  }
+  return <OwnerName owner={owner} fallback={labelFor(ownerId)} />;
 }
 
 // ownerLabel is the text form of the same, for search and confirmations.

@@ -94,7 +94,7 @@ export function ChatTopBar({
                 </ActionList.Item>
                 <ActionList.Item onSelect={projectMenu.onEnv}>
                   <ActionList.LeadingVisual><KeyAsteriskIcon /></ActionList.LeadingVisual>
-                  Settings…
+                  Environment…
                 </ActionList.Item>
                 <ActionList.Item onSelect={projectMenu.onExport}>
                   <ActionList.LeadingVisual><DownloadIcon /></ActionList.LeadingVisual>

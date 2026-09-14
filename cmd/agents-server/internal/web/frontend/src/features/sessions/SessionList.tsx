@@ -71,6 +71,9 @@ function SessionItem({ s, activeId, isRunning, isAwaiting, onSelect, onPin, onRe
       {isRunning && !isAwaiting && <span className="session-running" hidden />}
       {isActive && <span className="session-selected" hidden />}
       {s.name}
+      {/* The bars are color alone; the words reach a screen reader here. */}
+      {isAwaiting && <span className="sr-only"> — awaiting your approval</span>}
+      {isRunning && !isAwaiting && <span className="sr-only"> — running</span>}
       {/* TrailingAction renders as a sibling of the item's button inside the
           <li>, unlike TrailingVisual which would nest a button in a button. */}
       <ActionList.TrailingAction
@@ -122,13 +125,13 @@ function RenameDialog({ session, onClose, onRenamed }: { session: Session; onClo
       await api.sessions.update(session.id, trimmed);
       onRenamed(session.id, trimmed);
     } catch (e) {
-      toast.error((e as Error).message || 'Could not rename chat');
+      toast.error((e as Error).message || 'Could not rename session');
       setBusy(false);
     }
   };
   return (
     <Dialog
-      title="Rename conversation"
+      title="Rename session"
       onClose={onClose}
       width="medium"
       initialFocusRef={inputRef}
@@ -149,7 +152,7 @@ function RenameDialog({ session, onClose, onRenamed }: { session: Session; onClo
 
 export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onRenamed: onRenamedNotify, onNew, reloadKey, runningSessions, awaitingSessions, onOpenHub }: SessionListProps): ReactElement {
   const confirmDialog = useConfirm();
-  const { data: sessions, reload, mutateData } = useApi(() => api.sessions.list() as Promise<Session[]>);
+  const { data: sessions, reload, mutateData } = useApi(() => api.sessions.list() as Promise<Session[]>, [], 'sessions');
 
   useEffect(() => {
     if (reloadKey) reload(); // auto-refresh: does not throw
@@ -179,7 +182,7 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onRe
     const name = (sessions || []).find(s => s.id === id)?.name || id.slice(0, 8);
     const ok = await confirmDialog({
       title: `Delete “${name}”?`,
-      content: 'The conversation is removed with its messages, traces and tasks. This cannot be undone.',
+      content: 'The session is removed with its messages, traces and tasks. This cannot be undone.',
       confirmButtonContent: 'Delete',
       confirmButtonType: 'danger',
     });
@@ -187,7 +190,7 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onRe
     try {
       await api.sessions.delete(id);
     } catch (e) {
-      toast.error((e as Error).message || 'Could not delete chat');
+      toast.error((e as Error).message || 'Could not delete session');
       return;
     }
     mutateData(prev => (prev ? prev.filter(s => s.id !== id) : prev));
@@ -203,7 +206,7 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onRe
       onSelect(forked.id);
       reload();
     } catch (e) {
-      toast.error((e as Error).message || 'Could not fork chat');
+      toast.error((e as Error).message || 'Could not fork session');
     }
   };
 
@@ -233,7 +236,7 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onRe
   const pinned = visible.filter(s => s.pinned);
   const recents = visible.filter(s => !s.pinned);
   const loaded = sessions !== null;
-  const emptyText = query.trim() ? 'No matching chats' : 'No conversations yet';
+  const emptyText = query.trim() ? 'No matching sessions' : 'No sessions yet';
 
   const renderItem = (s: Session) => (
     <SessionItem

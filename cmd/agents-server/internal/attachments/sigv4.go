@@ -11,10 +11,8 @@ import (
 	"time"
 )
 
-// AWS Signature Version 4 for the three S3 operations this package performs.
-// Implemented here rather than importing an SDK: the surface is one signing
-// algorithm over three requests, and the AWS SDK would be the module's
-// heaviest dependency by far.
+// AWS Signature Version 4 for the three S3 operations this package performs,
+// hand-rolled rather than the AWS SDK (decisions §5.42).
 
 const signAlgorithm = "AWS4-HMAC-SHA256"
 

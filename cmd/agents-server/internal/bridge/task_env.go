@@ -3,7 +3,6 @@ package bridge
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/zzir/agents-go/agents"
@@ -68,15 +67,6 @@ func (t taskLauncher) Launch(ctx context.Context, req tasks.LaunchRequest) error
 		return t.r.launchWorkflowStep(ctx, req)
 	}
 	in := store.DecodeInherit(req.Inherit)
-	if req.Wake {
-		// The parent's wake-up run: the spawning run's agent and project, with
-		// the lineage for the trace (invariant 32).
-		if in.AgentConfigID == "" {
-			return fmt.Errorf("task notification undeliverable: no agent config for session %s", req.SessionID)
-		}
-		_, err := t.r.StartWakeRun(req.SessionID, in.AgentConfigID, in.ProjectID, req.Input, req.ParentRunID, nil)
-		return err
-	}
 	// The task's own run shares the parent's project, and thereby its command-
 	// trust scope; the child's first run CAS-binds its hidden session with it.
 	_, err := t.r.startRunWithID(req.RunID, req.SessionID, in.TaskAgentID, in.ProjectID, TextInput(req.Input), "", nil, nil)
@@ -171,13 +161,22 @@ func (r *Runner) onTaskUpdate(ctx context.Context, t *tasks.Task) {
 
 // AnnounceTask tells the clients what a task now is, for a change made on the
 // store outside the manager (the approval reaper's expiry). Tasks are an
-// optional dep, as in taskMeta and the approval pause.
+// optional dep, as in taskMeta and the approval pause. A task ended while its
+// run sat paused in the hub ends that run too: left interrupted, the record
+// would hold a task slot and its subscribers until the retention GC.
 func (r *Runner) AnnounceTask(ctx context.Context, taskID string) {
 	if r.Deps.Tasks == nil {
 		return
 	}
-	if t, err := store.NewTaskAdapter(r.Deps.Tasks).Get(ctx, taskID); err == nil {
-		r.onTaskUpdate(ctx, t)
+	t, err := store.NewTaskAdapter(r.Deps.Tasks).Get(ctx, taskID)
+	if err != nil {
+		return
+	}
+	r.onTaskUpdate(ctx, t)
+	if isTerminalTaskStatus(string(t.Status)) {
+		if info, ok := r.hub.Info(t.RunID); ok && info.Status == RunInterrupted {
+			r.publishTaskCancelled(t.RunID)
+		}
 	}
 }
 

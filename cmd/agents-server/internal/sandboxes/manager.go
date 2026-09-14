@@ -81,6 +81,18 @@ func (i *sandboxInstance) close() {
 	})
 }
 
+// detach lets go of the connection only — the compute is a successor's now
+// (decisions §5.66); a backend without Detach closes as usual.
+func (i *sandboxInstance) detach() {
+	i.closeOnce.Do(func() {
+		if d, ok := i.sb.(sandbox.Detacher); ok {
+			_ = d.Detach()
+		} else if i.sb != nil {
+			_ = i.sb.Close()
+		}
+	})
+}
+
 // stop pauses the compute (Lifecycle.Stop) before releasing the connection:
 // for e2b that pause is the only thing that ends the billed sandbox.
 func (i *sandboxInstance) stop() {
@@ -270,19 +282,16 @@ func (m *Manager) release(inst *sandboxInstance) {
 	m.mu.Lock()
 	inst.refs--
 	dead := inst.doomed && inst.refs <= 0
-	stopIntent := inst.stopOnRelease
+	// New work occupies the project: the compute is its now, so this instance
+	// only lets go and a deferred Stop is superseded — see decisions §5.66.
+	superseded := dead && m.projectCachedLocked(inst.key.projectID)
+	stopIntent := inst.stopOnRelease && !superseded
 	if dead && stopIntent {
-		if m.projectCachedLocked(inst.key.projectID) {
-			// New work acquired the project after the deferred Stop: the stale
-			// stop is superseded; only this connection closes.
-			stopIntent = false
-		} else {
-			// Fence the pause like the idle expiry: reclaim the key as an
-			// expired placeholder so a racing Acquire waits the stop out.
-			inst.expired = true
-			inst.gone = make(chan struct{})
-			m.instances[inst.key] = inst
-		}
+		// Fence the pause like the idle expiry: reclaim the key as an
+		// expired placeholder so a racing Acquire waits the stop out.
+		inst.expired = true
+		inst.gone = make(chan struct{})
+		m.instances[inst.key] = inst
 	}
 	if !dead && inst.refs <= 0 && !m.closed && idle > 0 {
 		if inst.idle != nil {
@@ -291,12 +300,16 @@ func (m *Manager) release(inst *sandboxInstance) {
 		inst.idle = time.AfterFunc(idle, func() { m.idleExpire(inst) })
 	}
 	m.mu.Unlock()
-	if dead {
-		if stopIntent {
-			m.stopFenced(inst)
-		} else {
-			inst.close()
-		}
+	if !dead {
+		return
+	}
+	switch {
+	case stopIntent:
+		m.stopFenced(inst)
+	case superseded:
+		inst.detach()
+	default:
+		inst.close()
 	}
 }
 
@@ -401,10 +414,8 @@ func (m *Manager) RemoveProject(projectID string) {
 // maxGen fences a project id permanently: no runtime generation can reach it.
 const maxGen = int64(1) << 62
 
-// ReclaimProject destroys the project's compute AND its storage, after
-// evicting the cached instance — deleting a project deletes its files
-// (decisions §5.33). The caller deletes the row first, so a failure here
-// leaves reclaimable storage rather than a row pointing at nothing.
+// ReclaimProject evicts the cached instance, then destroys the project's
+// compute AND its storage (decisions §5.33); the caller deletes the row first.
 func (m *Manager) ReclaimProject(ctx context.Context, spec Spec) error {
 	m.RemoveProject(spec.Project.ID)
 	b, err := backendFor(spec)
@@ -415,9 +426,8 @@ func (m *Manager) ReclaimProject(ctx context.Context, spec Spec) error {
 }
 
 // RebuildContainer discards the project's compute and provisions it again
-// from the current template and environment. What "discard" means is the
-// backend's (workbench invariant 44); in-flight commands in the old container
-// fail, and the caller warns before taking that deal.
+// from the current template and environment (invariant 44); in-flight
+// commands in the old container fail.
 func (m *Manager) RebuildContainer(ctx context.Context, spec Spec) error {
 	b, err := backendFor(spec)
 	if err != nil {
@@ -519,13 +529,11 @@ const (
 	execToolMaxOutputBytes = 32768
 )
 
-// SandboxTools returns exec_command plus read_file, write_file, list_files and
-// apply_patch for the given project, all over the one Sandbox, holding a
-// reference the returned release drops (see Acquire). exec_command offers
-// named shells (session_id) when the sandbox can hold a PTY open; they are
-// scoped to this toolset, so the release closes any the run opened. When
-// commandApproval is set, exec_command is gated per call through the session
-// command-trust store.
+// SandboxTools returns exec_command, read_file, write_file, list_files and
+// apply_patch for the project over one Sandbox, holding a reference the
+// returned release drops (see Acquire); the named shells exec_command offers
+// on a PTY-capable sandbox close with that release. commandApproval gates
+// exec_command per call through the session command-trust store.
 func (m *Manager) SandboxTools(spec Spec, commandApproval bool) ([]*agents.Tool, func(), error) {
 	sb, release, err := m.Acquire(spec)
 	if err != nil {
@@ -590,8 +598,6 @@ func (m *Manager) EnsureRunning(ctx context.Context, spec Spec) error {
 // Stop releases the project's compute, keeping its storage. It reports
 // whether the sandbox stopped NOW: with another holder — a run in flight, an
 // open terminal — the instance is only doomed, and the last release stops it.
-// Tearing a live run off its container would be the other option, and it is
-// not one: the person asked for the sandbox to stop, not for the work to die.
 func (m *Manager) Stop(ctx context.Context, spec Spec) (stopped bool, err error) {
 	sb, release, err := m.Acquire(spec)
 	if err != nil {
@@ -767,10 +773,8 @@ func DaemonOptions(sb *store.Sandbox) (dockersb.Options, error) {
 	return opts, nil
 }
 
-// DefaultContainerUser is what a sandbox that names no user runs as. Root,
-// deliberately: the container is the isolation boundary, its files live in a
-// volume nobody else mounts, and a workbench whose agent cannot install a
-// package is a workbench that cannot do the work (decisions §5.33).
+// DefaultContainerUser is what a sandbox that names no user runs as — root,
+// deliberately (decisions §5.33).
 const DefaultContainerUser = "root"
 
 // applyImage layers the image and container shape onto the daemon options.

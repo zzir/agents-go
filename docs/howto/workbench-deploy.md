@@ -9,7 +9,9 @@ Only sandboxes need anything beyond the binary: a Docker daemon — this
 machine's, or a remote one over SSH or TCP — or any service speaking the E2B
 API. The server shells out to no binary. Which daemon or service a sandbox
 uses is its config, in
-[Sandboxes](../reference/protocol.md#sandboxes--apiv1sandboxes).
+[Sandboxes](../reference/protocol.md#sandboxes--apiv1sandboxes). A source
+build needs Go 1.27 and Node 22 — the versions CI and the release build pin
+([building it](../tutorial/workbench.md#get-a-binary)).
 
 ### The container image
 
@@ -26,7 +28,10 @@ go on the same line; swap the image for `zzir/agents-server:latest` to pull from
 Docker Hub. A sandbox of type `docker` inside the container still needs a
 daemon to talk to — the host's socket mounted in, as
 [`scripts/docker-compose.yml`](../../scripts/docker-compose.yml) does, or a
-remote one over SSH or TCP.
+remote one over SSH or TCP. That compose file runs the container as
+`user: root` — the image is distroless and non-root; root is what the mounted
+socket needs — and ships `AGENTS_TOKEN=change-me-please` as a placeholder:
+change it before the first start.
 
 ### Deployment
 
@@ -59,8 +64,8 @@ budgets exist, each answering `429` with code `rate_limited` when exceeded:
   that authenticates spends nothing — a signed-in client is never limited,
   however many tabs it opens — and an IP that has exhausted the budget is
   refused before its credential is checked.
-- **OAuth flow steps, 60/min** (`oauth/*/start`, `oauth/*/callback`): they
-  allocate server state per call but guess nothing.
+- **OAuth flow steps, 60/min** (`oauth/*/start`, `oauth/*/callback`), burst
+  30: they allocate server state per call but guess nothing.
 - **Webhooks, 60/min** (`/hooks/:id`), burst 30.
 
 `/auth/config` is a static fact and carries no budget.
@@ -80,9 +85,11 @@ owns from outside the server:
   (or `--secret-key-file`) to seal provider keys and OAuth tokens; without it
   they are stored in the clear and the server warns once at startup. Settings →
   General shows whether they are sealed.
-- **Image attachments are world-readable by URL.** The attachment bucket is
-  public-read by design (decisions §5.42), so anyone holding an attachment URL
-  can fetch the image; its only protection is an unguessable key.
+- **Image attachments are world-readable by URL** — the bucket is public-read
+  by design (decisions §5.42), the only protection an unguessable key.
+- **A shared sandbox is a shared shell.** Every member who can pick one
+  executes on that host under the credentials the server stores — the
+  single-workspace model, not an oversight.
 
 ### Logging
 
@@ -93,7 +100,7 @@ error, not a silent fallback — a typo must not quietly turn logging down.
 
 The SDK's own run-loop records join the same stream, so turns, tool calls,
 handoffs and compaction show up beside the server's; most of them are `Debug`,
-so it takes `--log-level debug` to see them. Whether they carry conversation
+so it takes `--log-level debug` to see them. Whether they carry session
 content is `log_sensitive_data` — stderr — which is a different switch from
 `trace_include_sensitive_data`, the database one
 ([runtime settings](../reference/configuration.md#runtime-settings)).
@@ -113,14 +120,12 @@ is capped at 16 connections:
 ./agents-server --db 'postgres://user:pass@localhost:5432/agents?sslmode=disable'
 ```
 
-Run **one instance per database**. A single process holds the live truth about
-running runs, cron schedules and OAuth in memory, and its startup sweep fails
-every task left `working` by the last shutdown — so a second instance would
-kill the first's work. On PostgreSQL a startup advisory lock refuses the second
-instance outright — it lives on one long-held connection, so an
-`idle_session_timeout` on the server would silently drop it; leave that off for
-the workbench's role. On SQLite the single-file assumption stands. Horizontal
-scaling is on the [roadmap](../explanation/scope.md), not shipped.
+Run **one instance per database**
+([invariant 63](../explanation/workbench-invariants.md)): on PostgreSQL a
+startup advisory lock refuses a second, and it lives on one long-held
+connection — leave `idle_session_timeout` off for the workbench's role. On
+SQLite the single-file assumption stands. Horizontal scaling is on the
+[roadmap](../explanation/scope.md), not shipped.
 
 Every id that names one of our entities is a `uuid` column: UUIDv4 for
 ordinary entities, UUIDv7 for the append-heavy `entries`, `trace_events` and
@@ -139,8 +144,8 @@ Tables are created automatically on startup:
 
 | Table               | Description                                                                         |
 |---------------------|-------------------------------------------------------------------------------------|
-| `sessions`          | Chat sessions; `owner_id` is the one ownership column (see [Ownership and roles](workbench-auth.md#ownership-and-roles)) |
-| `entries`           | Session entries (the conversation, annotations and compaction checkpoints)          |
+| `sessions`          | Sessions; `owner_id` is the one ownership column (see [Ownership and roles](workbench-auth.md#ownership-and-roles)) |
+| `entries`           | Session entries (the transcript, annotations and compaction checkpoints)            |
 | `append_points`     | Where each session stands: branch tip + highest sequence number (see invariant 26)  |
 | `agent_configs`     | Agent configurations                                                                |
 | `mcp_servers`       | MCP server configurations                                                           |
@@ -159,7 +164,7 @@ Tables are created automatically on startup:
 | `workflows`         | Fixed step sequences (each step: agent + prompt, with a stable id); an execution is a `tasks` row |
 | `audit_events`      | Who did what, to what, when — see [Audit log](workbench-auth.md#audit-log)                          |
 | `wakeups`           | "This session is owed a turn carrying this" — the debt background work leaves behind; settled rows are pruned after 7 days |
-| `context_profiles`  | One row per session: what its last build put in front of the conversation (prompt layers, tool surface) |
+| `context_profiles`  | One row per session: what its last build put in front of the transcript (prompt layers, tool surface) |
 | `users`             | Accounts and roles (see [Ownership and roles](workbench-auth.md#ownership-and-roles))                |
 | `identities`        | OAuth identities linked to a user                                                   |
 | `auth_tokens`       | Session tokens and personal access tokens (hashes only)                             |

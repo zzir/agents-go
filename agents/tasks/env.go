@@ -24,11 +24,11 @@ type Spec struct {
 // agents.Run directly or a request to a hub that owns run lifecycles.
 type Launcher func(ctx context.Context, req LaunchRequest) error
 
-// LaunchRequest describes a run to start.
+// LaunchRequest describes a task's run to start.
 type LaunchRequest struct {
 	// TaskID, Kind and State name the job this run belongs to, as the Task
 	// carries them — a host launching a multi-run job reads State for where it
-	// stands. Empty on a Wake launch, which is no task's run.
+	// stands.
 	TaskID    string
 	Kind      string
 	State     json.RawMessage
@@ -36,18 +36,10 @@ type LaunchRequest struct {
 	SessionID string
 	Input     string
 	Inherit   json.RawMessage
-	// Wake marks the parent's notification run rather than the task itself.
-	// A host may treat the two differently — different tools, no task tools on
-	// a task run — and cannot tell them apart otherwise.
-	Wake bool
 	// Retry marks a run started by Retry: Input is then the retry prompt, and a
 	// host whose job carries its own instruction for the current stage (a
 	// workflow step) re-issues that instruction with it.
 	Retry bool
-	// ParentRunID, on a Wake launch, is the run that spawned the task(s) being
-	// delivered (the first carrying it when several drained at once) — the
-	// run's lineage, for the host to record on its own traces (spec §2.13).
-	ParentRunID string
 }
 
 // StopOutcome is what a host did with a stop request; "no error" is not

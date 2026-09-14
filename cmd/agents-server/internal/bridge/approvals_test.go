@@ -110,6 +110,64 @@ func TestResolveApprovalBusyKeepsPending(t *testing.T) {
 	}
 }
 
+// A decision on a session whose delete cascade has begun is refused without
+// restoring the claimed row: the cascade removes the approvals, and a row
+// written back after it would be an orphan nothing can reach.
+func TestResolveApprovalDeletingSessionDoesNotRestore(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+
+	agentConfigs := store.NewAgentConfigStore(db)
+	approvals := store.NewPendingApprovalStore(db)
+	sessions := store.NewSessionStore(db)
+	ac := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "approver", Model: "gpt-test"}
+	if err := agentConfigs.Create(ctx, ac); err != nil {
+		t.Fatal(err)
+	}
+	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "s"}
+	if err := sessions.Create(ctx, sess); err != nil {
+		t.Fatal(err)
+	}
+	runner := NewRunner(ctx, db, &AgentDeps{
+		AgentConfigs:     agentConfigs,
+		Providers:        store.NewProviderStore(db),
+		Sessions:         sessions,
+		Settings:         settings.NewReader(store.NewSettingStore(db)),
+		Memories:         store.NewMemoryStore(db),
+		PendingApprovals: approvals,
+	})
+	var rawCall agents.OutputItem
+	if err := json.Unmarshal([]byte(`{"type":"function_call","call_id":"call-del-1","name":"shell","arguments":"{}"}`), &rawCall); err != nil {
+		t.Fatal(err)
+	}
+	state := &agents.RunState{
+		CurrentAgent: &agents.Agent{Name: "approver"},
+		Approvals:    agents.NewApprovalStore(),
+		Interruptions: []*agents.ToolApprovalItem{{
+			Agent: &agents.Agent{Name: "approver"}, ToolName: "shell", CallID: "call-del-1", Raw: rawCall,
+		}},
+	}
+	stateJSON, err := state.MarshalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls, _ := json.Marshal([]store.PendingToolCall{{ToolCallID: "call-del-1", ToolName: "shell"}})
+	if err := approvals.Save(ctx, &store.PendingApproval{
+		RunID: "paused-run", SessionID: sess.ID, AgentConfigID: ac.ID, State: string(stateJSON), ToolCalls: calls,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	runner.hub.markSessionDeleting(sess.ID)
+	_, _, err = runner.ResolveApproval(ctx, "call-del-1", true, ApprovalOnce, "", nil)
+	if _, ok := errors.AsType[ErrSessionDeleting](err); !ok {
+		t.Fatalf("want ErrSessionDeleting, got %v", err)
+	}
+	if _, err := approvals.Get(ctx, "paused-run"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("the claimed row must not be restored on a deleting session, got %v", err)
+	}
+}
+
 // A pending approval whose serialized RunState predates the current schema
 // version is unresumable: ResolveApproval reports a StaleApprovalStateError and
 // discards the row so it can't wedge the session with a masked 500 on retry.

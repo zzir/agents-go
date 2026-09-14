@@ -52,7 +52,7 @@ export function attachmentIdsEqual(a?: AttachmentMeta[], b?: AttachmentMeta[]): 
 // downscaleImage re-encodes file with its longest side capped at maxPx.
 // PNG sources stay PNG (alpha survives), everything else becomes JPEG. A file
 // already within the cap is uploaded as-is — no pointless re-encode.
-export async function downscaleImage(file: File, maxPx: number): Promise<Blob> {
+async function downscaleImage(file: File, maxPx: number): Promise<Blob> {
   const bmp = await createImageBitmap(file);
   try {
     const longest = Math.max(bmp.width, bmp.height);

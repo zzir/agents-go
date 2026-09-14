@@ -88,17 +88,21 @@ func requireRunOwner(c *gin.Context, info bridge.RunInfo, ok bool) bool {
 }
 
 // ownsApproval returns the pending tool call toolCallID when userID owns the
-// session its approval is filed on (a task's hidden session inherits the parent's owner).
-func ownsApproval(ctx context.Context, approvals *store.PendingApprovalStore, sessions *store.SessionStore, userID, toolCallID string) (*store.PendingToolCall, bool) {
+// session its approval is filed on (a task's hidden session inherits the
+// parent's owner); a foreign one is store.ErrNotFound, a store fault its error.
+func ownsApproval(ctx context.Context, approvals *store.PendingApprovalStore, sessions *store.SessionStore, userID, toolCallID string) (*store.PendingToolCall, error) {
 	pending, call, err := approvals.FindByToolCall(ctx, toolCallID)
 	if err != nil {
-		return nil, false
+		return nil, err
 	}
 	sess, err := sessions.Get(ctx, pending.SessionID)
-	if err != nil || sess.OwnerID != userID {
-		return nil, false
+	if err != nil {
+		return nil, err
 	}
-	return call, true
+	if sess.OwnerID != userID {
+		return nil, store.ErrNotFound
+	}
+	return call, nil
 }
 
 // approvalKey is where approvalGate parks the pending call for the handler.
@@ -167,9 +171,9 @@ func (d AuthzDeps) taskGate() gin.HandlerFunc {
 func (d AuthzDeps) approvalGate() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		u, _ := server.CurrentUser(c)
-		pending, ok := ownsApproval(c.Request.Context(), d.Approvals, d.Sessions, u.ID, c.Param("tool_call_id"))
-		if !ok {
-			notFound(c)
+		pending, err := ownsApproval(c.Request.Context(), d.Approvals, d.Sessions, u.ID, c.Param("tool_call_id"))
+		if err != nil {
+			storeError(c, err)
 			c.Abort()
 			return
 		}
@@ -323,6 +327,7 @@ func setScopePlain[T any](c *gin.Context, s *store.CrudStore[T], kind string, sc
 		saveError(c, err) // name collision in the target scope -> 409
 		return
 	}
+	server.SetAuditDetail(c, "scope="+scope)
 	c.Status(http.StatusNoContent)
 }
 

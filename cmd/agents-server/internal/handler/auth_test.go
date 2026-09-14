@@ -110,6 +110,43 @@ func TestOAuthModeSessionTokens(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("me after logout = %d, want 401", rec.Code)
 	}
+
+	// A PAT presented to logout is left standing: a script's sign-out must
+	// not burn the credential it was handed.
+	pat, _, err := tokens.Mint(ctx, u.ID, store.TokenKindPAT, "ci", time.Time{})
+	if err != nil {
+		t.Fatalf("mint pat: %v", err)
+	}
+	withPAT := func(r *http.Request) *http.Request {
+		r.Header.Set("Authorization", "Bearer "+pat)
+		return r
+	}
+	rec = httptest.NewRecorder()
+	engine.ServeHTTP(rec, withPAT(httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("logout with a PAT = %d, want 204", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	engine.ServeHTTP(rec, withPAT(httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("me with the PAT after logout = %d, want 200: logout revoked a PAT", rec.Code)
+	}
+}
+
+// The id→label directory names every account's email; it serves the admin
+// panel's owner pickers and is the admin's, like the user list.
+func TestUserLabelsAreAdminOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := testdb.New(t)
+	local := &store.User{ID: store.LocalUserID, Email: "local@localhost", Role: store.RoleAdmin}
+	s := server.New(slog.New(slog.DiscardHandler), usersByToken, nil)
+	s.RegisterAPI(Handlers{Auth: NewAuthHandler(authn.NewStatic("tok", local), nil, store.NewUserStore(db), nil)}.Register)
+	if rec := serve(s.Engine, as(memberUser, http.MethodGet, "/api/v1/auth/user-labels", "")); rec.Code != http.StatusForbidden {
+		t.Fatalf("member user-labels = %d, want 403", rec.Code)
+	}
+	if rec := serve(s.Engine, as(adminUser, http.MethodGet, "/api/v1/auth/user-labels", "")); rec.Code != http.StatusOK {
+		t.Fatalf("admin user-labels = %d %s, want 200", rec.Code, rec.Body.String())
+	}
 }
 
 // fakeLoginProvider skips the external IdP: any code yields a fixed identity. What
@@ -420,5 +457,42 @@ func TestGuessBudgetKeyedByClientIP(t *testing.T) {
 	}
 	if got := bad(s.Engine, "203.0.113.8"); got != http.StatusUnauthorized {
 		t.Fatalf("behind a trusted proxy a different forwarded client = %d, want 401 (own budget)", got)
+	}
+}
+
+// The database the credential check reads is down: 503 `unavailable`, not
+// 401 — the SPA signs out on 401, and nobody's credential is wrong here.
+func TestUnreachableStoreIs503NotUnauthorized(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	users, tokens := store.NewUserStore(db), store.NewAuthTokenStore(db)
+	u, err := users.ResolveOAuthLogin(ctx, store.OAuthIdentity{Provider: "google", Subject: "s1", Email: "a@example.com", Name: "A"}, "")
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	secret, _, err := tokens.Mint(ctx, u.ID, store.TokenKindSession, "", time.Time{})
+	if err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+	engine := authEngine(t, authn.NewOAuth(authn.OAuthConfig{Users: users, Tokens: tokens}), tokens)
+	me := func(bearer string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+		r.Header.Set("Authorization", "Bearer "+bearer)
+		rec := httptest.NewRecorder()
+		engine.ServeHTTP(rec, r)
+		return rec
+	}
+	if rec := me(secret); rec.Code != http.StatusOK {
+		t.Fatalf("me = %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := me("nope"); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("me with a wrong token = %d, want 401", rec.Code)
+	}
+	_ = db.Close()
+	for _, bearer := range []string{secret, "nope"} {
+		rec := me(bearer)
+		if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), `"code":"unavailable"`) {
+			t.Fatalf("me with the store down = %d %s, want 503 unavailable", rec.Code, rec.Body.String())
+		}
 	}
 }

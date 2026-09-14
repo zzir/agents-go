@@ -17,6 +17,7 @@ import { useCrud } from '@/lib/hooks';
 import { fc } from '@/lib/form';
 import { JsonField } from '@/lib/JsonField';
 import { toast } from '@/lib/toast';
+import { listEmpty } from '@/features/settings/listEmpty';
 
 const AUTH_MODES = [
   { value: '', label: 'None' },
@@ -193,6 +194,16 @@ const STATUS_DOT: Record<McpStatus, string> = {
   disabled: 'var(--fgColor-muted)',
 };
 
+// The words behind the dot, for the tooltip and the accessibility tree.
+const STATUS_TEXT: Record<McpStatus, string> = {
+  connected: 'connected',
+  connecting: 'connecting',
+  authorizing: 'authorizing',
+  needs_auth: 'needs authorization',
+  disconnected: 'disconnected',
+  disabled: 'disabled',
+};
+
 // The action button each status offers; connected and disabled offer none.
 // connecting is disabled (a concurrent connect would just error with
 // "already in progress"), but authorizing stays CLICKABLE: the wait is on the
@@ -335,8 +346,7 @@ export function McpServerPanel() {
     <ReadOnlyContext value={!!editing && !rowEditable(editing)}>
       <CrudPanel title="MCP servers" onAdd={startAdd} onCancel={cancel} form={form} loading={loading} isEmpty={rows.length === 0}
         search={{ value: query, onChange: setQuery, placeholder: 'Search MCP servers' }}
-        empty={servers.length === 0 ? 'No MCP servers yet.' : 'No matching MCP servers.'}
-        emptyHint={servers.length === 0 ? 'An MCP server lends its tools to the agents that select it.' : undefined}
+        {...listEmpty({ noun: 'MCP servers', total: servers.length, query, mine: !!scopeFilter?.mine, hint: 'An MCP server lends its tools to the agents that select it.' })}
         onDelete={editing && canDeleteRow(isAdmin, me?.id, editing)
           ? async () => { if (await remove(editing.id, editing.name)) cancel(); } : null}>
         {rows.map(s => {
@@ -344,7 +354,8 @@ export function McpServerPanel() {
           const editable = rowEditable(s);
           return (
             <ResourceRow key={s.id}
-              status={<span className="form-status-dot" style={{ background: STATUS_DOT[s.status] || 'var(--fgColor-muted)' }} />}
+              status={<span className="form-status-dot" role="img" title={STATUS_TEXT[s.status] || s.status} aria-label={STATUS_TEXT[s.status] || s.status}
+                style={{ background: STATUS_DOT[s.status] || 'var(--fgColor-muted)' }} />}
               title={s.name}
               badges={<>
                 <ScopeBadge row={s} meId={me?.id} />

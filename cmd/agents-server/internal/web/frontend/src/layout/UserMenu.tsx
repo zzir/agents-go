@@ -12,11 +12,9 @@ interface UserMenuProps {
   align?: 'start' | 'end';
 }
 
-// UserMenu is the signed-in person's corner: their picture and name open
-// Settings (the one hub, administration included — invariant 61) and Sign
-// out. Until /auth/me answers the trigger is a placeholder so the footer does
-// not jump; once it has answered — even with a failure — the menu opens, so
-// Sign out is always reachable.
+// UserMenu is the signed-in person's corner: picture and name open Settings
+// (invariant 61) and Sign out. Until /auth/me answers the trigger is a
+// placeholder so the footer does not jump; after any answer the menu opens.
 export function UserMenu({ onSettingsOpen, compact, align = 'start' }: UserMenuProps) {
   const { me: user, loading, error, reload } = useMe();
   return (

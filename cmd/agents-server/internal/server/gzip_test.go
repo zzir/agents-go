@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -96,5 +97,51 @@ func TestPrecompressedAssetsAreServedOnce(t *testing.T) {
 	s.Engine.ServeHTTP(w, r)
 	if w.Header().Get("Content-Encoding") != "" || w.Body.String() != html {
 		t.Fatalf("client without gzip got %v (%d bytes), want the inflated page", w.Header(), w.Body.Len())
+	}
+}
+
+// A run's event stream reaches a gzip-accepting client event by event: the
+// small run.interrupted a paused run ends on is not held back by the floor.
+// Go's transport asks for gzip and inflates transparently, as a browser does.
+func TestRunEventStreamIsNotGzipped(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	s := New(slog.New(slog.DiscardHandler), staticAuth("tok"), nil)
+	const event = "id: 1\nevent: run.interrupted\ndata: {\"run_id\":\"r1\"}\n\n"
+	release := make(chan struct{})
+	s.Engine.GET(APIPrefix+"/runs/:id/events", func(c *gin.Context) {
+		c.Header("Content-Type", "text/event-stream")
+		c.Stream(func(w io.Writer) bool {
+			_, _ = io.WriteString(w, event)
+			return false
+		})
+		<-release // the run idles, paused for approval
+	})
+	srv := httptest.NewServer(s.Engine)
+	defer srv.Close()
+	defer close(release)
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+APIPrefix+"/runs/r1/events", nil)
+	req.Header.Set("Authorization", "Bearer tok")
+	resp, err := http.DefaultClient.Do(req) //nolint:bodyclose // closed by the deferred call; the goroutine below only reads
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.Header.Get("Content-Encoding") != "" {
+		t.Fatalf("event stream headers = %v, want no Content-Encoding", resp.Header)
+	}
+	got := make(chan string, 1)
+	go func() {
+		buf := make([]byte, 4096)
+		n, _ := resp.Body.Read(buf)
+		got <- string(buf[:n])
+	}()
+	select {
+	case body := <-got:
+		if body != event {
+			t.Fatalf("first read = %q, want the event as written", body)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the event did not arrive while the run idled: held back by the gzip floor")
 	}
 }

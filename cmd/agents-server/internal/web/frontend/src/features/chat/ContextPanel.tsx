@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ProgressBar } from '@primer/react';
+import { Link, ProgressBar, useConfirm } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { MeterIcon } from '@primer/octicons-react';
 import { SidePanel } from '@/layout/SidePanel';
@@ -71,7 +71,7 @@ function compositionRows(data: ContextReport): Array<{ label: string; tokens: nu
     });
   }
   if ((data.conversation_tokens || 0) > 0) {
-    rows.push({ label: 'Conversation', tokens: data.conversation_tokens! });
+    rows.push({ label: 'Messages', tokens: data.conversation_tokens! });
   }
   return rows;
 }
@@ -90,6 +90,9 @@ interface ContextPanelProps {
   // onCompact forces one compaction pass now; it owns the API call, the
   // toasts and the timeline reload — the panel only shows the pending state.
   onCompact?: () => Promise<void>;
+  // Opens the Settings dialog on a tab — the hint to set a context window
+  // links to Agents through it.
+  onSettingsOpen?: (tab?: string) => void;
 }
 
 const fmt = (n: number) => n.toLocaleString();
@@ -156,8 +159,15 @@ function SessionMemory({ sessionId, running, reloadKey }: { sessionId: string; r
     return () => { cancelled = true; };
   }, [sessionId, openRow, openVersion, content]);
   const show = (key: string) => setOpen(open === key ? null : key);
+  const confirm = useConfirm();
+  // A delete confirms like every other one (invariant 41).
   const del = async (row: SessionMemoryInfo) => {
-    if (!window.confirm(`Delete the memory "${row.key}"?`)) return;
+    if (!await confirm({
+      title: `Delete “${row.key}”?`,
+      content: 'The memory is removed from this session. This cannot be undone.',
+      confirmButtonContent: 'Delete',
+      confirmButtonType: 'danger',
+    })) return;
     await api.memories.delete(row.id);
     setContent(prev => Object.fromEntries(Object.entries(prev).filter(([k]) => !k.startsWith(`${row.key}@`))));
     if (open === row.key) setOpen(null);
@@ -179,7 +189,7 @@ function SessionMemory({ sessionId, running, reloadKey }: { sessionId: string; r
                 <span className="ctx-row-name ctx-mono">{r.key}</span>
               </button>
               <span className="ctx-mono ctx-row-tok">{fmt(r.bytes)} B</span>
-              <button type="button" className="ctx-mem-del" onClick={() => del(r)} title="Delete this memory">×</button>
+              <button type="button" className="ctx-mem-del" onClick={() => del(r)} title="Delete this memory" aria-label={`Delete memory ${r.key}`}>×</button>
             </div>
             {open === r.key && (
               <pre className="ctx-mem-text">{content[versionOf(r)] === undefined ? 'Loading…' : content[versionOf(r)]}</pre>
@@ -191,7 +201,7 @@ function SessionMemory({ sessionId, running, reloadKey }: { sessionId: string; r
   );
 }
 
-export function ContextPanel({ sessionId, running, reloadKey, onClose, onCompact }: ContextPanelProps) {
+export function ContextPanel({ sessionId, running, reloadKey, onClose, onCompact, onSettingsOpen }: ContextPanelProps) {
   const { data, loading } = useApi<ContextReport>(() => api.sessions.context(sessionId) as Promise<ContextReport>, [sessionId, running, reloadKey]);
   const [compacting, setCompacting] = useState(false);
   const compact = async () => {
@@ -310,7 +320,13 @@ export function ContextPanel({ sessionId, running, reloadKey, onClose, onCompact
               </>
             ) : (
               <div className="ctx-legend">
-                <span className="ctx-muted">No context window set — set this agent's context window in Settings → Agents to see how full it is.</span>
+                <span className="ctx-muted">
+                  No context window set — set this agent's context window in{' '}
+                  {onSettingsOpen
+                    ? <Link as="button" type="button" onClick={() => onSettingsOpen('agents')}>Settings → Agents</Link>
+                    : 'Settings → Agents'}
+                  {' '}to see how full it is.
+                </span>
               </div>
             )}
             <div className="ctx-note">
@@ -353,7 +369,7 @@ export function ContextPanel({ sessionId, running, reloadKey, onClose, onCompact
                 </ul>
                 <div className="ctx-note">
                   The window's composition, by the character estimator: the prompt layers and tool schemas the build
-                  sends every turn, and the conversation so far. Shares of their own total — not provider counts.
+                  sends every turn, and the messages so far. Shares of their own total — not provider counts.
                 </div>
               </section>
             );

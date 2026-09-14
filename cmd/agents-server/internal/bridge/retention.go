@@ -232,3 +232,35 @@ func RunAuditRetention(ctx context.Context, audit *store.AuditStore, days int) {
 
 	runEvery(ctx, 24*time.Hour, prune)
 }
+
+// hiddenSessionGrace spares a spawn between writing its child session and its
+// task row: a hidden session younger than this is not yet an orphan.
+const hiddenSessionGrace = time.Hour
+
+// RunTaskSessionRetention collects hidden sessions at startup and then
+// hourly: the ones no task names (invariant 72), and with
+// task_session_retention_days set, the transcripts of tasks finished for
+// longer than that, task rows included. It blocks until ctx ends — run it in
+// a goroutine.
+func RunTaskSessionRetention(ctx context.Context, cfg *settings.Reader, sessions *store.SessionStore) {
+	log := logging.Ctx(ctx)
+	sweep := func() {
+		now := time.Now().UTC()
+		n, err := sessions.DeleteOrphanHidden(ctx, now.Add(-hiddenSessionGrace))
+		if err != nil {
+			log.Error("hidden session sweep failed", "error", err)
+		} else if n > 0 {
+			log.Info("removed orphan hidden sessions", "removed", n)
+		}
+		if days := cfg.Int(ctx, settings.KeyTaskSessionRetentionDays); days > 0 {
+			n, err := sessions.DeleteTaskSessionsBefore(ctx, now.AddDate(0, 0, -days))
+			if err != nil {
+				log.Error("task session retention failed", "error", err)
+			} else if n > 0 {
+				log.Info("removed the transcripts of finished tasks", "removed", n, "retention_days", days)
+			}
+		}
+	}
+
+	runEvery(ctx, time.Hour, sweep)
+}

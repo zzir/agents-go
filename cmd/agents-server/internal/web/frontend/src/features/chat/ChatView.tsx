@@ -1,6 +1,7 @@
 import './chat.css';
 import { useState, useEffect, useCallback, useMemo, useRef, type MouseEvent, type ReactNode } from 'react';
 import { Button, ActionMenu, ActionList, Link } from '@primer/react';
+import { Blankslate } from '@primer/react/experimental';
 import { api } from '@/lib/api';
 import { CHECK_ICON } from '@/lib/markdownShared';
 import { type TurnPart, type TimelineEntry, type Branches, type WorkflowStartedNote } from '@/lib/timeline';
@@ -21,6 +22,7 @@ import { UserMessage } from '@/features/chat/UserMessage';
 import { WorkflowStartedChip, originText } from '@/features/chat/WorkflowStartedChip';
 import { CompactionCard } from '@/features/chat/CompactionCard';
 import { Greeting } from '@/features/chat/Greeting';
+import { FirstMileCard, composerGate } from '@/features/chat/FirstMile';
 import { ChatToc } from '@/features/chat/ChatToc';
 import { MessageInput } from '@/features/chat/MessageInput';
 import type { AttachmentMeta } from '@/lib/attachments';
@@ -134,6 +136,8 @@ export interface ChatViewActions {
   onLoadSpan?: (spanSessionId: string, runId: string, spanId: string) => Promise<void>;
   // Opens the Settings dialog, optionally on a named tab (e.g. 'agents').
   onSettingsOpen?: (tab?: string) => void;
+  // Fetches the session's history again after a failed first load.
+  onRetryLoad?: () => void;
   onPanelChange: (panel: InspectorPanel) => void;
   // Opens the global terminal panel (app-level, independent of the session).
   // Open-only by design: closing/collapsing happens on the panel itself. The
@@ -158,9 +162,8 @@ interface ChatViewProps {
   // The session as the socket layer keeps it: timeline, stream, live run,
   // tasks, history paging. One reference per session, replaced on change.
   state: SessionState;
-  // The session is paused awaiting a tool approval: block new sends so the
-  // approval is resolved first (a concurrent run would strand it as session_busy).
-  awaiting?: boolean;
+  // Why the first load of the history failed, when it did (state.loadError).
+  loadError?: string;
   settingsReloadKey?: number;
   // Bumped by the app when the set of session bindings changed; refreshes the
   // Project picker's list.
@@ -170,7 +173,7 @@ interface ChatViewProps {
 }
 
 export function ChatView({
-  sessionId, sessionName, sessionAgentId, sessionBinding, state, awaiting, settingsReloadKey, bindingsVersion, panel, actions,
+  sessionId, sessionName, sessionAgentId, sessionBinding, state, loadError, settingsReloadKey, bindingsVersion, panel, actions,
 }: ChatViewProps) {
   // The rendered timeline drops the entries no longer on the active branch;
   // the trace panel still lists their runs, so it reads the raw entries.
@@ -210,7 +213,10 @@ export function ChatView({
   }, [sessionId]);
 
   const [traceActiveRun, setTraceActiveRun] = useState<string | null>(null);
-  const { data: agentConfigs, reload: reloadAgents } = useApi<AgentConfig[]>(() => api.agents.list() as Promise<AgentConfig[]>, [], 'agents');
+  const { data: agentConfigs, error: agentsError, reload: reloadAgents } = useApi<AgentConfig[]>(() => api.agents.list() as Promise<AgentConfig[]>, [], 'agents');
+  // Whether the composer can send at all; null agents are a list not yet in
+  // hand, never "no agents".
+  const gate = composerGate(agentConfigs, agentsError);
   const { data: sandboxDefs, reload: reloadSandboxes } = useApi<SandboxDef[]>(() => api.sandboxes.list() as Promise<SandboxDef[]>, [], 'sandboxes');
   // The caller's project rows for the picker — the same hook the terminal
   // panel's + menu uses.
@@ -568,8 +574,8 @@ export function ChatView({
   const turnActions = useMemo<ChatActions>(() => ({
     approve: onApprove, reject: onReject, fork: onFork, switchBranch: onSwitchBranch,
     regenerate: onRegenerate ? handleRegen : undefined,
-    openTrace, inspectTask, retryTask, stopTask, dismissTask, loadSpan: onLoadSpan,
-  }), [onApprove, onReject, onFork, onSwitchBranch, onRegenerate, handleRegen, openTrace, inspectTask, retryTask, stopTask, dismissTask, onLoadSpan]);
+    openTrace, inspectTask, retryTask, stopTask, dismissTask, loadSpan: onLoadSpan, openSettings: onSettingsOpen,
+  }), [onApprove, onReject, onFork, onSwitchBranch, onRegenerate, handleRegen, openTrace, inspectTask, retryTask, stopTask, dismissTask, onLoadSpan, onSettingsOpen]);
 
   const topBar = (
     <ChatTopBar
@@ -680,13 +686,17 @@ export function ChatView({
               </ActionList>
             </ActionMenu.Overlay>
           </ActionMenu>
-        ) : (
+        ) : gate.state === 'error' ? (
+          <span className="chat-input-toolbar-warn">
+            Agents could not be loaded — <Link as="button" type="button" onClick={() => reloadAgents()}>retry</Link>
+          </span>
+        ) : gate.state === 'none' ? (
           <span className="chat-input-toolbar-warn">
             No agents — {onSettingsOpen
               ? <Link as="button" type="button" onClick={() => onSettingsOpen('agents')}>add one in Settings</Link>
               : 'add one in Settings'}
           </span>
-        )}
+        ) : null}
       </div>
     </>
   );
@@ -770,6 +780,7 @@ export function ChatView({
           reloadKey={entries}
           onClose={() => onPanelChange(null)}
           onCompact={onCompact}
+          onSettingsOpen={onSettingsOpen}
         />
       )}
       {panel?.kind === 'tasks' && (
@@ -795,14 +806,20 @@ export function ChatView({
   );
 
 
-  // A selected session whose timeline is still loading. No session has nothing
-  // to load, so it falls through to the composer below.
+  // A selected session whose timeline is still loading, or could not be. No
+  // session has nothing to load, so it falls through to the composer below.
   if (sessionId && !loaded && messages.length === 0) {
     return scoped(
       <div className="chat-main">
         <div className="chat-content">
           {topBar}
-          <Loading kind="panel" />
+          {loadError ? (
+            <Blankslate>
+              <Blankslate.Heading>Could not load this session</Blankslate.Heading>
+              <Blankslate.Description>{loadError}</Blankslate.Description>
+              <Blankslate.PrimaryAction onClick={() => actions.onRetryLoad?.()}>Retry</Blankslate.PrimaryAction>
+            </Blankslate>
+          ) : <Loading kind="panel" />}
         </div>
       </div>
     );
@@ -817,18 +834,23 @@ export function ChatView({
         <div className="chat-content">
           {topBar}
           <div className="chat-content chat-content-centered">
-            <Greeting key={`greeting-${sessionId || 'new'}`} />
+            {/* A workbench with no agent gets the three steps instead of a
+                slogan; a list still loading keeps the slogan. */}
+            {!sessionId && gate.state === 'none'
+              ? <FirstMileCard onSettingsOpen={onSettingsOpen} />
+              : <Greeting key={`greeting-${sessionId || 'new'}`} />}
             <WorkflowStrip />
             <MessageInput
               key={`input-${sessionId || 'new'}`}
               sessionId={sessionId || ''}
               onSend={handleSend}
               onCancel={handleCancel}
-              disabled={running || awaiting || !agentConfigId}
+              disabled={running || !agentConfigId}
+              blocked={gate.blocked}
               running={running}
               allowAttachments={allowAttachments}
               toolbar={inputToolbar}
-      plusItems={plusItems}
+              plusItems={plusItems}
             />
           </div>
         </div>
@@ -866,11 +888,12 @@ export function ChatView({
           sessionId={sessionId}
           onSend={handleSend}
           onCancel={handleCancel}
-          disabled={running || awaiting || !agentConfigId}
+          disabled={running || !agentConfigId}
+          blocked={gate.blocked}
           running={running}
           allowAttachments={allowAttachments}
           toolbar={inputToolbar}
-      plusItems={plusItems}
+          plusItems={plusItems}
         />
       </div>
 

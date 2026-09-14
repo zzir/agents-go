@@ -293,7 +293,7 @@ func TestTerminalWS_ProjectOwnership(t *testing.T) {
 	th := NewTerminalHandler(store.NewSandboxStore(db), projects, provider, settings.NewReader(nil))
 	asMember := func(_ context.Context, bearer string) (protocol.UserInfo, error) {
 		if bearer != testWSToken {
-			return protocol.UserInfo{}, errors.New("unauthorized")
+			return protocol.UserInfo{}, server.ErrUnauthorized
 		}
 		return member, nil
 	}
@@ -520,5 +520,29 @@ func TestCloseProjectTerminalsSparesSiblings(t *testing.T) {
 	var netErr net.Error
 	if !errors.As(err, &netErr) || !netErr.Timeout() {
 		t.Errorf("sibling terminal read = %v, want a timeout (connection still open)", err)
+	}
+}
+
+// The cap is the sandbox's, not the project's: projects on one sandbox share
+// a container, so their terminals count together, and a sibling sandbox is
+// its own budget.
+func TestTerminalCapCountsPerSandbox(t *testing.T) {
+	th := NewTerminalHandler(nil, nil, nil, settings.NewReader(nil))
+	for range 2 {
+		if ok, _ := th.register("p1", &liveTerminal{sandboxID: "sb-a"}, 3); !ok {
+			t.Fatal("p1 under the cap must register")
+		}
+	}
+	if ok, _ := th.register("p2", &liveTerminal{sandboxID: "sb-a"}, 3); !ok {
+		t.Fatal("p2's first terminal fills sb-a's cap and must register")
+	}
+	if ok, stale := th.register("p2", &liveTerminal{sandboxID: "sb-a"}, 3); ok || stale {
+		t.Fatalf("p2 past sb-a's cap: ok=%v stale=%v, want a full refusal", ok, stale)
+	}
+	if ok, _ := th.register("p1", &liveTerminal{sandboxID: "sb-a"}, 3); ok {
+		t.Fatal("p1 past sb-a's cap must be refused: the cap is shared")
+	}
+	if ok, _ := th.register("p3", &liveTerminal{sandboxID: "sb-b"}, 3); !ok {
+		t.Fatal("another sandbox is its own budget")
 	}
 }

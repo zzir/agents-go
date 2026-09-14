@@ -116,10 +116,31 @@ func TestRunAttachmentGates(t *testing.T) {
 		if err := runner.Deps.Sessions.Create(ctx, sess); err != nil {
 			t.Fatal(err)
 		}
+		missing := store.NewID()
 		res := runner.runStreamed(ctx, store.NewID(), sess.ID, cfgID, "",
-			RunInput{Text: "hi", AttachmentIDs: []string{store.NewID()}}, "")
+			RunInput{Text: "hi", AttachmentIDs: []string{missing}}, "")
 		if res.ErrCode != protocol.CodeConfigError || !strings.Contains(res.ErrMessage, "not found") {
 			t.Fatalf("outcome = %q %q, want config error naming the missing attachment", res.ErrCode, res.ErrMessage)
+		}
+		// The failed turn keeps its prompt, never the id that failed validation.
+		entries, err := mustStore(t, db, sess.ID).Entries(ctx, session.Cursor{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		prompt := false
+		for _, e := range entries {
+			if e.Kind != session.EntryKindItem {
+				continue
+			}
+			if strings.Contains(string(e.Item), store.AttachmentSentinelURL(missing)) {
+				t.Errorf("the failed run persisted the refused attachment: %s", e.Item)
+			}
+			if strings.Contains(string(e.Item), `"hi"`) {
+				prompt = true
+			}
+		}
+		if !prompt {
+			t.Error("the failed run did not persist its prompt")
 		}
 	})
 

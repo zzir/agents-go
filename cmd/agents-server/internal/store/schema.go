@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect"
@@ -39,7 +41,8 @@ var schemaModels = []any{
 }
 
 // CreateSchema creates every table and supporting index if they do not
-// already exist, then verifies the result is the schema this build expects (verifySchema).
+// already exist, then verifies the tables (verifySchema) and the unique
+// indexes (verifyIndexes) are the shape this build expects.
 func CreateSchema(ctx context.Context, db *bun.DB) error {
 	for _, model := range schemaModels {
 		if _, err := db.NewCreateTable().Model(model).IfNotExists().Exec(ctx); err != nil {
@@ -49,265 +52,107 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 	if err := verifySchema(ctx, db); err != nil {
 		return err
 	}
-	// Entry rows are addressed by (session, generation). Both indexes are
-	// UNIQUE and load-bearing: seqs and entry ids are never issued twice (spec §2.5e2).
-	if _, err := db.NewCreateIndex().
-		Model((*entryRow)(nil)).
-		Index("idx_entries_session_seq").
-		Unique().
-		Column("session_id", "gen", "seq").
-		IfNotExists().
-		Exec(ctx); err != nil {
-		return fmt.Errorf("creating entries index: %w", err)
-	}
-	// Point lookups by entry id: resolving one entry would otherwise read the
-	// whole session.
-	if _, err := db.NewCreateIndex().
-		Model((*entryRow)(nil)).
-		Index("idx_entries_entry_id").
-		Unique().
-		Column("session_id", "gen", "entry_id").
-		IfNotExists().
-		Exec(ctx); err != nil {
-		return fmt.Errorf("creating entries entry_id index: %w", err)
-	}
-	// Trace events are read as "all spans of a session, ordered by id", so
-	// index (session_id, id), not (session_id, run_id).
-	if _, err := db.NewCreateIndex().
-		Model((*TraceEvent)(nil)).
-		Index("idx_trace_events_session_id").
-		Column("session_id", "id").
-		IfNotExists().
-		Exec(ctx); err != nil {
-		return fmt.Errorf("creating trace_events session index: %w", err)
-	}
-	// Task lookups run by parent (per chat turn) and by child session (per
-	// run start) — index both edges, generation included.
-	if _, err := db.NewCreateIndex().
-		Model((*Task)(nil)).
-		Index("idx_tasks_parent_session_id").
-		Column("parent_session_id", "parent_session_gen").
-		IfNotExists().
-		Exec(ctx); err != nil {
-		return fmt.Errorf("creating tasks parent index: %w", err)
-	}
-	if _, err := db.NewCreateIndex().
-		Model((*Task)(nil)).
-		Index("idx_tasks_child_session_id").
-		Column("child_session_id", "child_session_gen").
-		IfNotExists().
-		Exec(ctx); err != nil {
-		return fmt.Errorf("creating tasks child index: %w", err)
-	}
-	// Trace retention prunes by age; without this the periodic DELETE
-	// full-scans the largest table in the DB.
-	if _, err := db.NewCreateIndex().
-		Model((*TraceEvent)(nil)).
-		Index("idx_trace_events_created_at").
-		Column("created_at").
-		IfNotExists().
-		Exec(ctx); err != nil {
-		return fmt.Errorf("creating trace_events created_at index: %w", err)
-	}
-	// Memories are read by scope; the key is unique within one, which is what
-	// lets a write be an upsert.
-	if _, err := db.NewCreateIndex().
-		Model((*Memory)(nil)).
-		Index("idx_memories_scope").
-		Column("scope_kind", "scope_id").
-		IfNotExists().
-		Exec(ctx); err != nil {
-		return fmt.Errorf("creating memories scope index: %w", err)
-	}
-	if _, err := db.NewCreateIndex().
-		Model((*Memory)(nil)).
-		Index("idx_memories_scope_key").
-		Unique().
-		Column("scope_kind", "scope_id", "gen", "key").
-		IfNotExists().
-		Exec(ctx); err != nil {
-		return fmt.Errorf("creating memories key index: %w", err)
-	}
-	// The session list orders by recency OF CHANGE (spec §2.5e2, "the change
-	// record"), so it sorts and indexes on updated_at, not created_at.
-	if _, err := db.NewCreateIndex().
-		Model((*Session)(nil)).
-		Index("idx_sessions_updated_at").
-		Column("updated_at").
-		IfNotExists().
-		Exec(ctx); err != nil {
-		return fmt.Errorf("creating sessions updated_at index: %w", err)
-	}
-	// Scoped-entity names: unique per visibility context via two partial
-	// indexes per table (decisions §5.29). HITL run state names agents by name.
-	for _, t := range []struct {
-		model any
-		table string
-	}{
-		{(*AgentConfig)(nil), "agent_configs"},
-		{(*Provider)(nil), "providers"},
-		{(*McpServerConfig)(nil), "mcp_servers"},
-	} {
-		if _, err := db.NewCreateIndex().
-			Model(t.model).
-			Index("idx_" + t.table + "_name_global").
-			Unique().
-			Column("name").
-			Where("scope = 'global'").
-			IfNotExists().
-			Exec(ctx); err != nil {
-			return fmt.Errorf("creating %s global name index: %w", t.table, err)
+	pg := db.Dialect().Name() == dialect.PG
+	indexes := schemaIndexes(pg)
+	for _, ix := range indexes {
+		q := db.NewCreateIndex().Model(ix.model).Index(ix.name).IfNotExists()
+		if ix.unique {
+			q = q.Unique()
 		}
-		if _, err := db.NewCreateIndex().
-			Model(t.model).
-			Index("idx_"+t.table+"_name_private").
-			Unique().
-			Column("owner_id", "name").
-			Where("scope = 'private'").
-			IfNotExists().
-			Exec(ctx); err != nil {
-			return fmt.Errorf("creating %s private name index: %w", t.table, err)
+		if ix.expr != "" {
+			q = q.ColumnExpr(ix.expr)
+		} else {
+			q = q.Column(ix.columns...)
+		}
+		if ix.where != "" {
+			q = q.Where(ix.where)
+		}
+		if _, err := q.Exec(ctx); err != nil {
+			return fmt.Errorf("creating index %s: %w", ix.name, err)
 		}
 	}
-	// Skill uniqueness is per (visibility context, repo LABEL) — decisions
-	// §5.31. COALESCE because NULLs never collide in a unique index.
-	if _, err := db.NewCreateIndex().
-		Model((*Skill)(nil)).
-		Index("idx_skills_name_global").
-		Unique().
-		ColumnExpr("COALESCE(repo_label, ''), name").
-		Where("scope = 'global'").
-		IfNotExists().
-		Exec(ctx); err != nil {
-		return fmt.Errorf("creating skills global name index: %w", err)
-	}
-	if _, err := db.NewCreateIndex().
-		Model((*Skill)(nil)).
-		Index("idx_skills_name_private").
-		Unique().
-		ColumnExpr("owner_id, COALESCE(repo_label, ''), name").
-		Where("scope = 'private'").
-		IfNotExists().
-		Exec(ctx); err != nil {
-		return fmt.Errorf("creating skills private name index: %w", err)
-	}
-	// Guardrails are referenced by name within a type; a duplicate (type, name)
-	// makes an agent's reference order-dependent. Enforce uniqueness at the DB.
-	if _, err := db.NewCreateIndex().
-		Model((*Guardrail)(nil)).
-		Index("idx_guardrails_name").
-		Unique().
-		Column("name").
-		IfNotExists().
-		Exec(ctx); err != nil {
-		return fmt.Errorf("creating guardrails unique name index: %w", err)
-	}
-	// Workflow names follow the same per-scope rule, case-insensitively (the
-	// tool matches names with EqualFold).
+	return verifyIndexes(ctx, db, indexes)
+}
+
+// schemaIndex is one supporting index, created IF NOT EXISTS and, when
+// unique, probed by shape at startup (verifyIndexes).
+type schemaIndex struct {
+	model  any
+	name   string
+	unique bool
+	// columns are the indexed columns in order. With expr set, creation uses
+	// that raw expression and columns are the identifiers the probe expects in it.
+	columns []string
+	expr    string
+	where   string
+}
+
+// schemaIndexes lists every supporting index; the case-insensitive workflow
+// name is the one dialect-specific expression.
+func schemaIndexes(pg bool) []schemaIndex {
 	workflowName := "name COLLATE NOCASE"
-	if db.Dialect().Name() == dialect.PG {
+	if pg {
 		workflowName = "lower(name)"
 	}
-	if _, err := db.NewCreateIndex().
-		Model((*Workflow)(nil)).
-		Index("idx_workflows_name_global").
-		Unique().
-		ColumnExpr(workflowName).
-		Where("scope = 'global'").
-		IfNotExists().
-		Exec(ctx); err != nil {
-		return fmt.Errorf("creating workflows global name index: %w", err)
+	return []schemaIndex{
+		// Entry rows are addressed by (session, generation); both indexes are
+		// UNIQUE and load-bearing: seqs and entry ids are never issued twice (spec §2.5e2).
+		{model: (*entryRow)(nil), name: "idx_entries_session_seq", unique: true, columns: []string{"session_id", "gen", "seq"}},
+		// Point lookups by entry id, else resolving one entry reads the session.
+		{model: (*entryRow)(nil), name: "idx_entries_entry_id", unique: true, columns: []string{"session_id", "gen", "entry_id"}},
+		// Trace events are read as "all spans of a session, ordered by id".
+		{model: (*TraceEvent)(nil), name: "idx_trace_events_session_id", columns: []string{"session_id", "id"}},
+		// Task lookups run by parent (per chat turn) and by child session (per
+		// run start), generation included.
+		{model: (*Task)(nil), name: "idx_tasks_parent_session_id", columns: []string{"parent_session_id", "parent_session_gen"}},
+		{model: (*Task)(nil), name: "idx_tasks_child_session_id", columns: []string{"child_session_id", "child_session_gen"}},
+		// Trace retention prunes by age; without this the periodic DELETE
+		// full-scans the largest table.
+		{model: (*TraceEvent)(nil), name: "idx_trace_events_created_at", columns: []string{"created_at"}},
+		// Memories are read by scope; the key is unique within one, which is
+		// what lets a write be an upsert.
+		{model: (*Memory)(nil), name: "idx_memories_scope", columns: []string{"scope_kind", "scope_id"}},
+		{model: (*Memory)(nil), name: "idx_memories_scope_key", unique: true, columns: []string{"scope_kind", "scope_id", "gen", "key"}},
+		// The session list orders by recency OF CHANGE (spec §2.5e2), per
+		// owner in the sidebar; a project's sessions are counted before its delete.
+		{model: (*Session)(nil), name: "idx_sessions_updated_at", columns: []string{"updated_at"}},
+		{model: (*Session)(nil), name: "idx_sessions_owner_updated_at", columns: []string{"owner_id", "updated_at"}},
+		{model: (*Session)(nil), name: "idx_sessions_project_id", columns: []string{"project_id"}},
+		// Scoped-entity names: unique per visibility context, two partial
+		// indexes per table (decisions §5.29). HITL run state names agents by name.
+		{model: (*AgentConfig)(nil), name: "idx_agent_configs_name_global", unique: true, columns: []string{"name"}, where: "scope = 'global'"},
+		{model: (*AgentConfig)(nil), name: "idx_agent_configs_name_private", unique: true, columns: []string{"owner_id", "name"}, where: "scope = 'private'"},
+		{model: (*Provider)(nil), name: "idx_providers_name_global", unique: true, columns: []string{"name"}, where: "scope = 'global'"},
+		{model: (*Provider)(nil), name: "idx_providers_name_private", unique: true, columns: []string{"owner_id", "name"}, where: "scope = 'private'"},
+		{model: (*McpServerConfig)(nil), name: "idx_mcp_servers_name_global", unique: true, columns: []string{"name"}, where: "scope = 'global'"},
+		{model: (*McpServerConfig)(nil), name: "idx_mcp_servers_name_private", unique: true, columns: []string{"owner_id", "name"}, where: "scope = 'private'"},
+		// Skill uniqueness is per (visibility context, repo LABEL) — decisions
+		// §5.31. COALESCE because NULLs never collide in a unique index.
+		{model: (*Skill)(nil), name: "idx_skills_name_global", unique: true, expr: "COALESCE(repo_label, ''), name", columns: []string{"repo_label", "name"}, where: "scope = 'global'"},
+		{model: (*Skill)(nil), name: "idx_skills_name_private", unique: true, expr: "owner_id, COALESCE(repo_label, ''), name", columns: []string{"owner_id", "repo_label", "name"}, where: "scope = 'private'"},
+		// Agents reference guardrails by name; a duplicate would make the
+		// reference order-dependent.
+		{model: (*Guardrail)(nil), name: "idx_guardrails_name", unique: true, columns: []string{"name"}},
+		// Workflow names follow the per-scope rule, case-insensitively (the
+		// tool matches names with EqualFold).
+		{model: (*Workflow)(nil), name: "idx_workflows_name_global", unique: true, expr: workflowName, columns: []string{"name"}, where: "scope = 'global'"},
+		{model: (*Workflow)(nil), name: "idx_workflows_name_private", unique: true, expr: "owner_id, " + workflowName, columns: []string{"owner_id", "name"}, where: "scope = 'private'"},
+		// Draining asks for one session's debts, the restart sweep for every
+		// session owed one, the hourly prune for the settled ones by age.
+		{model: (*Wakeup)(nil), name: "idx_wakeups_session_state", columns: []string{"session_id", "state"}},
+		{model: (*Wakeup)(nil), name: "idx_wakeups_state_created", columns: []string{"state", "created_at"}},
+		// A project's name is how a person picks it per (owner, sandbox).
+		{model: (*Project)(nil), name: "idx_projects_owner_sandbox_name", unique: true, columns: []string{"owner_id", "sandbox_id", "name"}},
+		// Accounts merge by verified email; UNIQUE also arbitrates two first
+		// logins racing to create the same account.
+		{model: (*User)(nil), name: "idx_users_email", unique: true, columns: []string{"email"}},
+		// One provider subject is one login; UNIQUE arbitrates concurrent logins.
+		{model: (*Identity)(nil), name: "idx_identities_subject", unique: true, columns: []string{"provider", "subject"}},
+		// The audit log is read newest-first and pruned by age.
+		{model: (*AuditEvent)(nil), name: "idx_audit_events_created_at", columns: []string{"created_at"}},
+		// Every request authenticates by hash lookup — this index IS the auth path.
+		{model: (*AuthToken)(nil), name: "idx_auth_tokens_hash", unique: true, columns: []string{"token_hash"}},
 	}
-	if _, err := db.NewCreateIndex().
-		Model((*Workflow)(nil)).
-		Index("idx_workflows_name_private").
-		Unique().
-		ColumnExpr("owner_id, " + workflowName).
-		Where("scope = 'private'").
-		IfNotExists().
-		Exec(ctx); err != nil {
-		return fmt.Errorf("creating workflows private name index: %w", err)
-	}
-	// Draining asks for one session's debts, and the restart sweep asks for
-	// every session owed one; the hourly prune asks for the settled ones by age.
-	if _, err := db.NewCreateIndex().
-		Model((*Wakeup)(nil)).
-		Index("idx_wakeups_session_state").
-		Column("session_id", "state").
-		IfNotExists().
-		Exec(ctx); err != nil {
-		return fmt.Errorf("creating wakeups index: %w", err)
-	}
-	if _, err := db.NewCreateIndex().
-		Model((*Wakeup)(nil)).
-		Index("idx_wakeups_state_created").
-		Column("state", "created_at").
-		IfNotExists().
-		Exec(ctx); err != nil {
-		return fmt.Errorf("creating wakeups prune index: %w", err)
-	}
-	// A project's name is how a person picks it per (owner, sandbox); two
-	// sharing one make the choice a coin flip.
-	if _, err := db.NewCreateIndex().
-		Model((*Project)(nil)).
-		Index("idx_projects_owner_sandbox_name").
-		Unique().
-		Column("owner_id", "sandbox_id", "name").
-		IfNotExists().
-		Exec(ctx); err != nil {
-		return fmt.Errorf("creating projects unique name index: %w", err)
-	}
-	// The sidebar lists one owner's sessions by recency of change.
-	if _, err := db.NewCreateIndex().
-		Model((*Session)(nil)).
-		Index("idx_sessions_owner_updated_at").
-		Column("owner_id", "updated_at").
-		IfNotExists().
-		Exec(ctx); err != nil {
-		return fmt.Errorf("creating sessions owner index: %w", err)
-	}
-	// Accounts merge by verified email, so email is an identity; UNIQUE also
-	// arbitrates two first logins racing to create the same account.
-	if _, err := db.NewCreateIndex().
-		Model((*User)(nil)).
-		Index("idx_users_email").
-		Unique().
-		Column("email").
-		IfNotExists().
-		Exec(ctx); err != nil {
-		return fmt.Errorf("creating users unique email index: %w", err)
-	}
-	// One provider subject is one login; UNIQUE arbitrates concurrent logins
-	// of the same subject racing to link it.
-	if _, err := db.NewCreateIndex().
-		Model((*Identity)(nil)).
-		Index("idx_identities_subject").
-		Unique().
-		Column("provider", "subject").
-		IfNotExists().
-		Exec(ctx); err != nil {
-		return fmt.Errorf("creating identities unique subject index: %w", err)
-	}
-	// The audit log is read newest-first and pruned by age.
-	if _, err := db.NewCreateIndex().
-		Model((*AuditEvent)(nil)).
-		Index("idx_audit_events_created_at").
-		Column("created_at").
-		IfNotExists().
-		Exec(ctx); err != nil {
-		return fmt.Errorf("creating audit_events created_at index: %w", err)
-	}
-	// Every request authenticates by hash lookup — this index IS the auth path.
-	if _, err := db.NewCreateIndex().
-		Model((*AuthToken)(nil)).
-		Index("idx_auth_tokens_hash").
-		Unique().
-		Column("token_hash").
-		IfNotExists().
-		Exec(ctx); err != nil {
-		return fmt.Errorf("creating auth_tokens unique hash index: %w", err)
-	}
-	return nil
 }
 
 // verifySchema probes every model with a zero-row SELECT, so a database of
@@ -324,4 +169,106 @@ func verifySchema(ctx context.Context, db *bun.DB) error {
 		}
 	}
 	return nil
+}
+
+// verifyIndexes reads every UNIQUE index's definition from the catalog and
+// checks its shape — uniqueness, the indexed identifiers in order, the
+// partial predicate's literal — since CREATE INDEX IF NOT EXISTS keeps an
+// index of an older shape — invariant 25.
+func verifyIndexes(ctx context.Context, db *bun.DB, indexes []schemaIndex) error {
+	defs, err := indexDefinitions(ctx, db)
+	if err != nil {
+		return fmt.Errorf("reading the index catalog: %w", err)
+	}
+	for _, ix := range indexes {
+		if !ix.unique {
+			continue
+		}
+		if err := ix.matches(defs[ix.name]); err != nil {
+			return fmt.Errorf(
+				"database schema is out of date: index %s %w; this build changed the database layout and ships no migrations — back up the database if needed, delete it (or drop its tables), and restart to recreate it",
+				ix.name, err)
+		}
+	}
+	return nil
+}
+
+// indexDefinitions returns the catalog's CREATE INDEX statement per index
+// name, for the current schema.
+func indexDefinitions(ctx context.Context, db *bun.DB) (map[string]string, error) {
+	query := `SELECT name, sql FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL`
+	if db.Dialect().Name() == dialect.PG {
+		query = `SELECT indexname, indexdef FROM pg_indexes WHERE schemaname = current_schema()`
+	}
+	rows, err := db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	defs := map[string]string{}
+	for rows.Next() {
+		var name, def string
+		if err := rows.Scan(&name, &def); err != nil {
+			return nil, err
+		}
+		defs[name] = def
+	}
+	return defs, rows.Err()
+}
+
+// matches reports why def is not this index's shape, nil when it is.
+func (ix schemaIndex) matches(def string) error {
+	if def == "" {
+		return errors.New("is missing")
+	}
+	d := strings.ToLower(def)
+	if !strings.Contains(d, "unique") {
+		return errors.New("is not unique")
+	}
+	// The indexed list starts at the first parenthesis after the table name.
+	body := d
+	if i := strings.Index(d, "("); i >= 0 {
+		body = d[i:]
+	}
+	pos := 0
+	for _, col := range ix.columns {
+		i := identIndex(body[pos:], col)
+		if i < 0 {
+			return fmt.Errorf("does not index %s in (%s)", col, strings.Join(ix.columns, ", "))
+		}
+		pos += i + len(col)
+	}
+	if ix.where != "" {
+		// The clause's literal part (from its first quote) is what survives
+		// the dialects' rewriting; a clause without one is matched whole.
+		lit := ix.where
+		if q := strings.Index(ix.where, "'"); q >= 0 {
+			lit = ix.where[q:]
+		}
+		if !strings.Contains(body, lit) {
+			return fmt.Errorf("is not partial on %s", ix.where)
+		}
+	}
+	return nil
+}
+
+// identIndex is strings.Index for an identifier: the match may not touch
+// another identifier character on either side.
+func identIndex(s, ident string) int {
+	isIdent := func(c byte) bool {
+		return c == '_' || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+	}
+	for from := 0; from < len(s); {
+		i := strings.Index(s[from:], ident)
+		if i < 0 {
+			return -1
+		}
+		i += from
+		end := i + len(ident)
+		if (i == 0 || !isIdent(s[i-1])) && (end == len(s) || !isIdent(s[end])) {
+			return i
+		}
+		from = i + 1
+	}
+	return -1
 }

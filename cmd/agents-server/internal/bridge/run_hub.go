@@ -440,6 +440,9 @@ func (h *RunHub) resume(runID, sessionID, ownerID, agentConfigID, projectID stri
 	}
 	rec.cancel = seg.cancel
 	rec.info.Status = RunRunning
+	// The identity is the caller's fresh read: the session may have changed
+	// owner while the run was paused, and attach/ownsRun key off this record.
+	rec.info.OwnerID, rec.info.AgentConfigID, rec.info.ProjectID = ownerID, agentConfigID, projectID
 	rec.info.GracefulStop = false
 	// Drop the old segment's control (it would steer the wrong run); the new
 	// segment installs its own via setControl.
@@ -472,7 +475,11 @@ func (h *RunHub) abortResume(runID string, seg *runSegment, reopened bool) {
 	h.mu.Unlock()
 	if rec != nil {
 		rec.mu.Lock()
-		rec.info.Status = RunInterrupted
+		// A concurrent stop may have ended the record meanwhile (run.cancelled
+		// published); that ending stands.
+		if !isTerminalRunStatus(rec.info.Status) {
+			rec.info.Status = RunInterrupted
+		}
 		rec.ctrl = nil
 		rec.endedAt = time.Now()
 		rec.mu.Unlock()
@@ -525,12 +532,10 @@ func (h *RunHub) Subscribe(runID string, fromSeq int, sink EventSink) (func(), b
 	return cancel, ok
 }
 
-// SubscribeSeq attaches sink to the run's live event stream after replaying the
-// buffered events with seq > fromSeq (0 replays everything retained). It returns
-// the detach function (idempotent), a channel closed once the stream has ended
-// (every event already handed to the sink), and whether the run exists. The
-// sink runs on its own goroutine; an overflow reaches it as a run.gap, and a
-// cursor before the latest run.started gets that event first — invariant 14.
+// SubscribeSeq attaches sink to the run's live event stream after replaying
+// buffered events with seq > fromSeq (0 = everything retained), returning the
+// idempotent detach, a channel closed once the stream has ended, and whether
+// the run exists. The sink runs on its own goroutine — invariant 14.
 func (h *RunHub) SubscribeSeq(runID string, fromSeq int, sink SeqSink) (func(), <-chan struct{}, bool) {
 	h.mu.Lock()
 	rec := h.runs[runID]
@@ -599,8 +604,35 @@ func (h *RunHub) finish(runID string, interrupted bool) {
 	} else if rec.info.Status == RunRunning {
 		rec.info.Status = RunCompleted
 	}
+	// The segment is over: its control would steer nothing, and a paused
+	// record must not hand a stop to a dead segment.
+	rec.ctrl = nil
 	rec.endedAt = time.Now()
 	rec.mu.Unlock()
+}
+
+// endPaused ends an interrupted record as cancelled, publishing run.cancelled
+// with the reason; false when the hub holds no paused run by that id. The
+// status flips under rec.mu, so a resume racing it is refused.
+func (h *RunHub) endPaused(runID, reason string) bool {
+	h.mu.Lock()
+	rec := h.runs[runID]
+	h.mu.Unlock()
+	if rec == nil {
+		return false
+	}
+	rec.mu.Lock()
+	if rec.info.Status != RunInterrupted {
+		rec.mu.Unlock()
+		return false
+	}
+	rec.info.Status = RunCancelled
+	rec.endedAt = time.Now()
+	rec.mu.Unlock()
+	if env, err := protocol.NewEnvelope(protocol.EventRunCancelled, protocol.RunCancelled{RunID: runID, Reason: reason}); err == nil {
+		h.publish(runID, env)
+	}
+	return true
 }
 
 // waitDone blocks until the run's current segment has fully finished or the

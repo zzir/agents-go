@@ -1,6 +1,6 @@
 # Image input (attachments)
 
-Paste images into the chat composer, or pick them from its **+** menu, and the
+Paste images into the composer, or pick them from its **+** menu, and the
 model sees them as native vision input. This is a **workbench** feature: a user
 message with `input_image` parts was always valid SDK input; what the server
 adds is storage, upload, and the resolution of stored references at the model
@@ -78,13 +78,13 @@ the [configuration reference](../reference/configuration.md#runtime-settings).
 - Entries store a reference that only the model boundary expands
   ([invariant 56](../explanation/workbench-invariants.md)), so **changing the
   bucket or public base URL without moving the objects breaks images already
-  in history** — they degrade to `[image unavailable]`, the conversation
+  in history** — they degrade to `[image unavailable]`, the session
   itself staying readable.
-- Attachments ride chat messages only; task spawns, workflow steps and
+- Attachments ride a session's messages only; task spawns, workflow steps and
   mid-run injections are text-only.
 - **Traces** show them too: a generation span lists the attachments its input
   references beside the payload, so the user message in the trace renders its
-  pictures as the chat does; a tool result's images render from their own URLs.
+  pictures as the timeline does; a tool result's images render from their own URLs.
 - Anthropic-backed agents work (the adapter translates `input_image` URLs);
   the `detail` hint is OpenAI-only and fixed at `auto`. The ChatGPT-login
   (Codex) backend accepts image input and downloads the URL server-side.

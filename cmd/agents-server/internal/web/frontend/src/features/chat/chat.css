@@ -718,6 +718,7 @@
 /* Error card — content styles (shell is Disclosure with variant=danger) */
 .error-card { margin: var(--base-size-8) 0; }
 .error-card-body { color: var(--fgColor-danger); }
+.error-card-actions { margin-top: var(--base-size-8); }
 
 /* Cancelled marker — softer than an error: the run was stopped, not broken */
 .cancelled-card {
@@ -775,6 +776,42 @@
   font-weight: var(--base-text-weight-semibold);
   color: var(--fgColor-default);
   font-family: var(--fontStack-sansSerif);
+}
+
+/* First-mile card: the greeting's place on a workbench with no agent. */
+.first-mile {
+  width: 100%;
+  max-width: var(--content-max-width);
+  margin-bottom: var(--base-size-24);
+  padding: var(--base-size-16) var(--base-size-20);
+  border: 1px solid var(--borderColor-default);
+  border-radius: var(--borderRadius-large);
+  background: var(--bgColor-muted);
+}
+.first-mile-title {
+  font-size: var(--base-text-size-md);
+  font-weight: var(--base-text-weight-semibold);
+  margin-bottom: var(--base-size-12);
+}
+.first-mile-steps {
+  margin: 0;
+  padding-left: var(--base-size-20);
+  display: flex;
+  flex-direction: column;
+  gap: var(--base-size-8);
+}
+.first-mile-step {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--base-size-8);
+  font-size: var(--base-text-size-sm);
+}
+.first-mile-link {
+  font-weight: var(--base-text-weight-medium);
+}
+.first-mile-detail {
+  color: var(--fgColor-muted);
 }
 
 /* Empty state — vertically centered Blankslate */

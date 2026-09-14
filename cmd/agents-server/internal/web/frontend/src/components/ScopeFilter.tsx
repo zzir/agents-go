@@ -1,10 +1,9 @@
 import { createContext, useContext } from 'react';
 import { SegmentedControl } from '@primer/react';
 
-// ScopeFilter narrows a scoped entity's list to the caller's own rows. The
-// state is set by an admin's settings tab (invariant 61) — the one list that
-// holds other members' rows — and absent elsewhere, so the control renders
-// nothing on a member's panel.
+// ScopeFilter narrows a scoped entity's list to the caller's own rows; the
+// state exists only on an admin's tab (invariant 61), so a member's panel
+// renders nothing.
 export interface ScopeFilterState {
   mine: boolean;
   setMine: (mine: boolean) => void;

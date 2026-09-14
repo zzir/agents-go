@@ -881,3 +881,65 @@ func TestManagerDeferredStopSupersededByNewAcquire(t *testing.T) {
 		t.Errorf("closes = %d, want 1 — the doomed instance's connection still closes", sb.closes.Load())
 	}
 }
+
+// detachCountingSandbox tells a detach from a close, as the docker backend does.
+type detachCountingSandbox struct {
+	closeCountingSandbox
+	detaches atomic.Int64
+}
+
+func (d *detachCountingSandbox) Detach() error { d.detaches.Add(1); return nil }
+
+// A retired generation whose project a successor already occupies lets go of
+// its connection only: the container is the successor's now (a content change
+// outside the adoption fingerprint hands the SAME running container over).
+// Without a successor a retired instance closes as before.
+func TestReleaseDetachesWhenASuccessorHoldsTheProject(t *testing.T) {
+	m := NewManager()
+	var built []*detachCountingSandbox // in build order
+	m.buildOverride = func(Spec) (sandbox.Sandbox, error) {
+		sb := &detachCountingSandbox{}
+		built = append(built, sb)
+		return sb, nil
+	}
+	want := func(i int, detaches, closes int64) {
+		t.Helper()
+		if got := built[i]; got.detaches.Load() != detaches || got.closes.Load() != closes {
+			t.Fatalf("build %d: detaches=%d closes=%d, want %d/%d", i, got.detaches.Load(), got.closes.Load(), detaches, closes)
+		}
+	}
+
+	_, rel1, err := m.Acquire(specGen("p", "", 1)) // built[0]
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.RetireProject("p", 2) // doomed under its holder
+	// built[1], the successor.
+	_, rel2, err := m.Acquire(specGen("p", "", 2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel1()
+	want(0, 1, 0)
+
+	// The same for a deferred user Stop that new work overtook.
+	m.stopProjectOnRelease("p")
+	_, rel3, err := m.Acquire(specGen("p", "", 2)) // built[2]
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel2()
+	want(1, 1, 0)
+	rel3()
+
+	// No successor: an idle retired instance closes now, a held one on release.
+	m.RetireProject("p", 3)
+	want(2, 0, 1)
+	_, rel4, err := m.Acquire(specGen("p", "", 3)) // built[3]
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.RetireProject("p", 4)
+	rel4()
+	want(3, 0, 1)
+}

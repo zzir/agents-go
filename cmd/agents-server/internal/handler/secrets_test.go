@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -9,60 +8,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/zzir/agents-go/cmd/agents-server/internal/guardrails"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
-
-func TestAgentConfigSecretRoundTrip(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	ctx := context.Background()
-	db := testdb.New(t)
-	st := store.NewAgentConfigStore(db)
-	h := NewAgentConfigHandler(st, store.NewMcpServerStore(db), store.NewProviderStore(db), store.NewSkillStore(db), guardrails.NewResolver(store.NewGuardrailStore(db)))
-
-	engine := newTestEngine()
-	engine.POST("/agents", h.Create)
-	engine.GET("/agents/:id", h.Get)
-	engine.PUT("/agents/:id", h.Update)
-
-	// The provider credential is not an agent field any more; what remains on
-	// this surface is the per-entry fallback-model keys.
-	w := doJSON(t, engine, http.MethodPost, "/agents",
-		`{"name":"a","model":"gpt-4o","resilience":{"fallback_models":"[{\"model\":\"m1\",\"api_key\":\"sk-fb-1\"}]"}}`)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("create: got %d: %s", w.Code, w.Body.String())
-	}
-	var created struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
-		t.Fatalf("unmarshal create response: %v", err)
-	}
-
-	w = doJSON(t, engine, http.MethodGet, "/agents/"+created.ID, "")
-	body := w.Body.String()
-	if strings.Contains(body, "sk-fb-1") {
-		t.Fatalf("GET leaked plaintext secret: %s", body)
-	}
-	if !strings.Contains(body, SecretMask) {
-		t.Fatalf("GET should mask the stored fallback key: %s", body)
-	}
-
-	// PUT sending the mask back keeps the stored value.
-	w = doJSON(t, engine, http.MethodPut, "/agents/"+created.ID,
-		`{"name":"a2","model":"gpt-4o","resilience":{"fallback_models":"[{\"model\":\"m1\",\"api_key\":\"`+SecretMask+`\"}]"}}`)
-	if w.Code != http.StatusOK {
-		t.Fatalf("update: got %d: %s", w.Code, w.Body.String())
-	}
-	stored, err := st.Get(ctx, created.ID)
-	if err != nil {
-		t.Fatalf("get stored: %v", err)
-	}
-	if !strings.Contains(stored.Resilience.FallbackModels, "sk-fb-1") {
-		t.Errorf("mask round-trip lost fallback key: %q", stored.Resilience.FallbackModels)
-	}
-}
 
 func TestMcpConfigHeaderMasking(t *testing.T) {
 	cfg := store.McpServerConfig{
@@ -149,94 +97,5 @@ func TestProviderUpdateRejectsMaskedKeyAcrossDestinationChange(t *testing.T) {
 		`{"name":"glm","type":"openai","api_key":"********","base_url":"https://x"}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("masked key, same destination: got %d (body %s)", w.Code, w.Body.String())
-	}
-}
-
-// Fallback keys restore strictly by (normalized provider_type, model): never
-// across providers, never by position.
-func TestRestoreFallbackModelsMatchesByProviderAndModel(t *testing.T) {
-	prev := `[{"model":"m1","provider_type":"","api_key":"k-openai"},{"model":"m2","provider_type":"anthropic","api_key":"k-ant"}]`
-
-	// Reordered entries still restore by identity ("" normalizes to openai).
-	got := restoreFallbackModels(
-		`[{"model":"m2","provider_type":"anthropic","api_key":"********"},{"model":"m1","provider_type":"openai","api_key":"********"}]`, prev)
-	if !strings.Contains(got, `"k-ant"`) || !strings.Contains(got, `"k-openai"`) || strings.Contains(got, SecretMask) {
-		t.Fatalf("identity restore failed: %s", got)
-	}
-
-	// Same model, switched provider: no restore — the mask clears instead of
-	// carrying the old provider's key across.
-	got = restoreFallbackModels(`[{"model":"m1","provider_type":"anthropic","api_key":"********"}]`, prev)
-	if strings.Contains(got, "k-openai") {
-		t.Fatalf("cross-provider restore must not happen: %s", got)
-	}
-	if !strings.Contains(got, `"api_key":""`) {
-		t.Fatalf("unmatched mask must clear: %s", got)
-	}
-
-	// A new model at the position of an old entry gets nothing (no positional
-	// fallback).
-	got = restoreFallbackModels(`[{"model":"m9","provider_type":"openai","api_key":"********"}]`, prev)
-	if strings.Contains(got, "k-openai") || strings.Contains(got, "k-ant") {
-		t.Fatalf("positional restore must not happen: %s", got)
-	}
-}
-
-// The credential's identity includes the ENDPOINT: same provider_type but a
-// different base_url is a different destination, and a masked key must not
-// follow it there. Trailing-slash variants of the same endpoint are not a
-func TestRestoreFallbackModelsRespectsBaseURL(t *testing.T) {
-	prev := `[{"model":"m","provider_type":"openai","base_url":"https://one.example/v1","api_key":"k-one"},` +
-		`{"model":"m","provider_type":"openai","base_url":"https://two.example/v1","api_key":"k-two"}]`
-
-	// Each entry restores its own endpoint's key.
-	got := restoreFallbackModels(
-		`[{"model":"m","provider_type":"openai","base_url":"https://two.example/v1","api_key":"********"},`+
-			`{"model":"m","provider_type":"openai","base_url":"https://one.example/v1","api_key":"********"}]`, prev)
-	if !strings.Contains(got, `"k-one"`) || !strings.Contains(got, `"k-two"`) || strings.Contains(got, SecretMask) {
-		t.Fatalf("per-endpoint restore failed: %s", got)
-	}
-
-	// A moved endpoint gets nothing — the mask clears.
-	got = restoreFallbackModels(
-		`[{"model":"m","provider_type":"openai","base_url":"https://three.example/v1","api_key":"********"}]`, prev)
-	if strings.Contains(got, "k-one") || strings.Contains(got, "k-two") {
-		t.Fatalf("cross-endpoint restore must not happen: %s", got)
-	}
-
-	// Slash variants are the same endpoint.
-	got = restoreFallbackModels(
-		`[{"model":"m","provider_type":"openai","base_url":"https://one.example/v1/","api_key":"********"}]`, prev)
-	if !strings.Contains(got, `"k-one"`) {
-		t.Fatalf("slash variant must restore: %s", got)
-	}
-}
-
-// Two same-identity fallback entries (key rotation against one endpoint)
-// each keep their OWN key across a masked round-trip: keys queue per
-// identity and are consumed in order, never collapsed onto the first.
-func TestRestoreFallbackModelsKeyRotationQueue(t *testing.T) {
-	prev := `[{"model":"m","provider_type":"openai","base_url":"https://one.example","api_key":"k-first"},` +
-		`{"model":"m","provider_type":"openai","base_url":"https://one.example","api_key":"k-second"}]`
-
-	got := restoreFallbackModels(
-		`[{"model":"m","provider_type":"openai","base_url":"https://one.example","api_key":"********"},`+
-			`{"model":"m","provider_type":"openai","base_url":"https://one.example","api_key":"********"}]`, prev)
-	first := strings.Index(got, "k-first")
-	second := strings.Index(got, "k-second")
-	if first < 0 || second < 0 {
-		t.Fatalf("both rotation keys must survive: %s", got)
-	}
-	if first > second {
-		t.Fatalf("queue order must follow stored order: %s", got)
-	}
-
-	// A third masked entry of the same identity has no key left: it clears.
-	got = restoreFallbackModels(
-		`[{"model":"m","provider_type":"openai","base_url":"https://one.example","api_key":"********"},`+
-			`{"model":"m","provider_type":"openai","base_url":"https://one.example","api_key":"********"},`+
-			`{"model":"m","provider_type":"openai","base_url":"https://one.example","api_key":"********"}]`, prev)
-	if strings.Count(got, "k-first") != 1 || strings.Count(got, "k-second") != 1 || !strings.Contains(got, `"api_key":""`) {
-		t.Fatalf("exhausted queue must clear the extra mask: %s", got)
 	}
 }

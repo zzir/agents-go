@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -13,7 +14,7 @@ import (
 	"github.com/zzir/agents-go/agents/session"
 )
 
-// SessionStore persists sessions and cascades deletes to their messages.
+// SessionStore persists sessions; a delete cascades to everything keyed by the session.
 type SessionStore struct {
 	db *bun.DB
 }
@@ -291,7 +292,9 @@ func sessionTree(ctx context.Context, tx bun.Tx, id string) ([]string, error) {
 }
 
 // deleteSessionRows removes one session of the tree: its row, everything
-// keyed by its id, the task rows naming it as PARENT or CHILD, and its triggers. mustExist makes a missing row ErrNotFound.
+// keyed by its id, the task rows naming it as PARENT or CHILD, and its
+// triggers; the attachments only its entries referenced are unbound for the
+// reaper. mustExist makes a missing row ErrNotFound.
 func deleteSessionRows(ctx context.Context, tx bun.Tx, id string, mustExist bool) error {
 	// The session row's lock first — the order every entry write takes
 	// (EntryStore.lockSessionIn), so an append and this cascade cannot deadlock.
@@ -302,12 +305,19 @@ func deleteSessionRows(ctx context.Context, tx bun.Tx, id string, mustExist bool
 			return fmt.Errorf("deleting session %s: %w", id, err)
 		}
 	}
+	attachmentIDs, err := attachmentRefsOf(ctx, tx, id)
+	if err != nil {
+		return err
+	}
 	for _, model := range []any{(*entryRow)(nil), (*appendPointRow)(nil), (*TraceEvent)(nil), (*TraceBlob)(nil), (*PendingApproval)(nil), (*ContextProfile)(nil), (*Wakeup)(nil), (*Trigger)(nil)} {
 		if _, err := tx.NewDelete().Model(model).
 			Where("session_id = ?", id).
 			Exec(ctx); err != nil {
 			return fmt.Errorf("deleting session %s data: %w", id, err)
 		}
+	}
+	if err := unbindUnreferenced(ctx, tx, attachmentIDs); err != nil {
+		return err
 	}
 	if _, err := tx.NewDelete().Model((*Task)(nil)).
 		Where("parent_session_id = ?", id).
@@ -326,4 +336,131 @@ func deleteSessionRows(ctx context.Context, tx bun.Tx, id string, mustExist bool
 		return fmt.Errorf("deleting session %s: %w", id, err)
 	}
 	return nil
+}
+
+// attachmentRefsOf lists the attachment ids the session's entries reference,
+// read before the cascade takes the rows.
+func attachmentRefsOf(ctx context.Context, tx bun.Tx, sessionID string) ([]string, error) {
+	var raws []string
+	if err := tx.NewSelect().Model((*entryRow)(nil)).Column("entry").
+		Where("session_id = ?", sessionID).
+		Where("entry LIKE ?", "%"+AttachmentScheme+"%").
+		Scan(ctx, &raws); err != nil {
+		return nil, fmt.Errorf("listing the attachments of session %s: %w", sessionID, err)
+	}
+	seen := map[string]bool{}
+	var ids []string
+	for _, raw := range raws {
+		var e session.Entry
+		if json.Unmarshal([]byte(raw), &e) != nil {
+			continue
+		}
+		for _, id := range entryAttachmentIDs(e.Item) {
+			if !seen[id] {
+				seen[id] = true
+				ids = append(ids, id)
+			}
+		}
+	}
+	return ids, nil
+}
+
+// unbindUnreferenced hands the attachments no remaining entry references to
+// the reaper (bound = false); one another session's entry still shows stays bound.
+func unbindUnreferenced(ctx context.Context, tx bun.Tx, ids []string) error {
+	for _, id := range ids {
+		if _, err := tx.NewUpdate().Model((*Attachment)(nil)).
+			Set("bound = ?", false).
+			Where("id = ?", id).
+			Where("NOT EXISTS (SELECT 1 FROM entries AS e WHERE e.entry LIKE ?)", "%"+AttachmentSentinelURL(id)+"%").
+			Exec(ctx); err != nil {
+			return fmt.Errorf("unbinding attachment %s: %w", id, err)
+		}
+	}
+	return nil
+}
+
+// DeleteOrphanHidden removes the hidden sessions no task names as its child
+// over a live edge, created before cutoff — invariant 72. The cutoff spares
+// a spawn between writing its session and its task row. Returns the count.
+func (s *SessionStore) DeleteOrphanHidden(ctx context.Context, cutoff time.Time) (int, error) {
+	const orphan = `NOT EXISTS (SELECT 1 FROM tasks AS t WHERE t.child_session_id = s.id AND t.child_session_gen = s.gen)`
+	var ids []string
+	if err := s.db.NewSelect().Model((*Session)(nil)).Column("id").
+		Where("s.hidden = ?", true).Where("s.created_at < ?", cutoff).Where(orphan).
+		Scan(ctx, &ids); err != nil {
+		return 0, fmt.Errorf("listing orphan hidden sessions: %w", err)
+	}
+	return s.collect(ctx, ids, func(ctx context.Context, tx bun.Tx, id string) (bool, error) {
+		return tx.NewSelect().Model((*Session)(nil)).
+			Where("s.id = ?", id).Where("s.hidden = ?", true).Where("s.created_at < ?", cutoff).Where(orphan).
+			Exists(ctx)
+	})
+}
+
+// DeleteTaskSessionsBefore removes the hidden child sessions of tasks
+// terminal since before cutoff, subtree included as Delete does, and with
+// them the task rows: a task keeps no row once its transcript is gone.
+// Returns the count of sessions removed.
+func (s *SessionStore) DeleteTaskSessionsBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	done := func(q *bun.SelectQuery) *bun.SelectQuery {
+		return q.Where(liveChild).Where("t.status IN "+taskTerminalSet).Where("t.updated_at < ?", cutoff)
+	}
+	var ids []string
+	if err := done(s.db.NewSelect().Model((*Task)(nil)).Column("child_session_id")).
+		Scan(ctx, &ids); err != nil {
+		return 0, fmt.Errorf("listing the sessions of finished tasks: %w", err)
+	}
+	return s.collect(ctx, ids, func(ctx context.Context, tx bun.Tx, id string) (bool, error) {
+		// The task row is locked with the session already held (the cascade's
+		// order), so a retry claimed meanwhile is seen and the row kept.
+		q := done(tx.NewSelect().Model((*Task)(nil)).Column("id").Where("t.child_session_id = ?", id))
+		if tx.Dialect().Name() == dialect.PG {
+			q = q.For("UPDATE")
+		}
+		err := q.Scan(ctx, new(string))
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return err == nil, err
+	})
+}
+
+// collect deletes each session's tree in its own transaction, with the row
+// locked first and still re-checked under the lock; a session that no longer
+// qualifies is skipped, not an error.
+func (s *SessionStore) collect(ctx context.Context, ids []string, still func(ctx context.Context, tx bun.Tx, id string) (bool, error)) (int, error) {
+	n := 0
+	for _, id := range ids {
+		err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+			if err := lockRow(ctx, tx, new(Session), "id = ?", id); err != nil {
+				return err
+			}
+			ok, err := still(ctx, tx, id)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return ErrNotFound
+			}
+			tree, err := sessionTree(ctx, tx, id)
+			if err != nil {
+				return err
+			}
+			for _, cur := range tree {
+				if err := deleteSessionRows(ctx, tx, cur, false); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return n, fmt.Errorf("collecting session %s: %w", id, err)
+		}
+		n++
+	}
+	return n, nil
 }

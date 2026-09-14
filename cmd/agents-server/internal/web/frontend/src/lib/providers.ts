@@ -13,7 +13,7 @@ export interface ProviderTypeInfo {
 }
 
 export interface ProviderMeta {
-  /** provider_type wire value; '' is the openai default (predates the field). */
+  /** provider_type wire value; '' is the openai default. */
   value: string;
   /** The wire value the server reports for this entry ('' maps to 'openai'). */
   type: string;

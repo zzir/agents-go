@@ -33,14 +33,12 @@ type Runner struct {
 	tasks *tasks.Manager
 
 	// OnRunAttach, when set, runs with the run id right after a run registers in
-	// the hub (fresh start or resume), before any publish — invariant 14. Written
-	// once at bootstrap, read unsynchronized: wire it before anything can start
-	// a run (invariant 32).
+	// the hub, before any publish (invariant 14). Wired once at bootstrap, read
+	// unsynchronized: set it before anything can start a run.
 	OnRunAttach func(runID string)
 	// OnBroadcast, when set, delivers an event about sessionID to every
-	// connection of its owner NOT attached to exceptRunID's stream ("" = all of
-	// them) — for a fact no run stream reaches everyone with (invariant 37).
-	// Same wiring rule as OnRunAttach.
+	// connection of its owner NOT attached to exceptRunID's stream ("" = all) —
+	// invariant 37. Same wiring rule as OnRunAttach.
 	OnBroadcast func(env *protocol.Envelope, exceptRunID, sessionID string)
 }
 
@@ -122,8 +120,10 @@ type RunOutcome struct {
 // background under the hub's root context (so it survives the connection that
 // started it). It returns the run id; subscribe via Hub() to stream events.
 // onDone, if non-nil, is invoked once when the run terminates. It fails with
-// ErrSessionBusy when the session already has a live run.
+// ErrSessionBusy when the session already has a live run; a run paused for
+// approval is abandoned first — invariant 19.
 func (r *Runner) StartRun(sessionID, agentConfigID, projectID string, input RunInput, plan *bool, onDone func(*RunOutcome)) (string, error) {
+	r.abandonPaused(r.hub.rootCtx, sessionID, protocol.RunCancelSuperseded)
 	return r.startRunWithID(store.NewID(), sessionID, agentConfigID, projectID, input, "", plan, onDone)
 }
 
@@ -212,6 +212,9 @@ type segmentSpec struct {
 	// fresh gates the fresh-run extras (session pre-check, run.agent_start,
 	// arming the plan unlock, title generation); a resume already did them.
 	fresh bool
+	// built is a resume's agent, built by the approval path and released by
+	// its onDone; nil means the segment builds (and releases) its own.
+	built *BuildResult
 	// start launches the SDK run — agents.Run for a fresh segment,
 	// agents.ResumeRun for a continuation.
 	start func(ctx context.Context, agent *agents.Agent, opts agents.RunOptions) (agents.RunStream, agents.RunControl)
@@ -244,6 +247,10 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	// Attachments are validated before anything is announced; the metadata
 	// also feeds run.started so clients render thumbnails without a request.
 	attMeta, attErr := r.validateAttachments(ctx, ownerID, spec.attachmentIDs)
+	if attErr != nil {
+		// Ids that failed validation never reach the turn's record.
+		spec.attachmentIDs = nil
+	}
 
 	// A resume re-announces the prompt so a browser attached at resume can
 	// render the user bubble; earlier subscribers dedup it.
@@ -284,7 +291,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 		turn.userAttachments = spec.attachmentIDs
 		turn.annRole = "cancelled"
 		r.savePartialTurn(turn)
-		sendEvent(protocol.EventRunCancelled, protocol.RunCancelled{RunID: runID})
+		sendEvent(protocol.EventRunCancelled, protocol.RunCancelled{RunID: runID, Reason: protocol.RunCancelStopped})
 		res := mkResult()
 		res.Cancelled = true
 		return res
@@ -351,13 +358,16 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 
 	// A BACKGROUND run (a task's, a workflow step's) is built without the tools
 	// and modes that need a person in front of it — invariant 34.
-	built, err := buildFullAgent(ctx, r.Deps, agentConfigID, projectID, task != nil, ownerID)
-	if err != nil {
-		return failTurn("", protocol.CodeConfigError, err, "", "")
+	built := spec.built
+	if built == nil {
+		var err error
+		built, err = buildFullAgent(ctx, r.Deps, agentConfigID, projectID, task != nil, ownerID)
+		if err != nil {
+			return failTurn("", protocol.CodeConfigError, err, "", "")
+		}
+		// This segment is the build's only holder.
+		defer built.Release()
 	}
-	// This segment is the build's only holder; a resume releases the approval
-	// path's own rebuild (see ResolveApproval).
-	defer built.Release()
 
 	// The build's prompt profile, for the Context panel; a failure costs a
 	// panel section, never the run.
@@ -382,7 +392,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 		// Bound NOW: a run paused on an approval can outlive the orphan
 		// reaper's grace window, and a bound row is what the reaper leaves alone.
 		if err := r.Deps.Attachments.MarkBound(ctx, spec.attachmentIDs); err != nil {
-			return failTurn(agent.Model, "persist_error", err, "", "")
+			return failTurn(agent.Model, protocol.CodePersistError, err, "", "")
 		}
 	}
 
@@ -435,7 +445,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	if err != nil {
 		// The pause could not be made durable (invariant 37: an approval IS a
 		// row): fail the segment instead, retryable; nothing was announced.
-		return failTurn(agent.Model, "persist_error", err, streamedReasoning, streamedText)
+		return failTurn(agent.Model, protocol.CodePersistError, err, streamedReasoning, streamedText)
 	}
 	return out
 }
@@ -447,7 +457,7 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 		input:           input.Text,
 		attachmentIDs:   input.AttachmentIDs,
 		wakeParentRunID: wakeParentRunID,
-		failCode:        "stream_error",
+		failCode:        protocol.CodeStreamError,
 		fresh:           true,
 		start: func(ctx context.Context, agent *agents.Agent, opts agents.RunOptions) (agents.RunStream, agents.RunControl) {
 			// Empty input means "continue from the branch point" (regenerate):
@@ -464,14 +474,12 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 }
 
 // ResumeRun registers a continuation of a paused run and launches it in the
-// background under the hub root context, reopening the SAME hub run (one id,
-// one event sequence across interrupt/resume). onDone fires once when the
-// continuation terminates. Fails with ErrSessionBusy if the session has a live
-// run. verify, when non-nil, runs AFTER the run is registered (a concurrent
-// stop's cancel can find it) but BEFORE the goroutine launches: an error
-// withdraws the run and nothing executes, so an approved tool cannot cause a
-// side effect ahead of a recheck.
-func (r *Runner) ResumeRun(runID string, state *agents.RunState, sessionID, agentConfigID, projectID string, verify func() error, onDone func(*RunOutcome)) (string, error) {
+// background, reopening the SAME hub run (one id, one event sequence). built
+// is the agent the state was restored against; onDone fires once when the
+// continuation terminates. ErrSessionBusy if the session has a live run.
+// verify, when non-nil, runs after the run is registered and before the
+// goroutine launches: an error withdraws the run, so nothing executes ahead of a recheck.
+func (r *Runner) ResumeRun(runID string, state *agents.RunState, built *BuildResult, sessionID, agentConfigID, projectID string, verify func() error, onDone func(*RunOutcome)) (string, error) {
 	meta, err := r.taskMeta(r.hub.rootCtx, sessionID)
 	if err != nil {
 		return "", err
@@ -496,17 +504,18 @@ func (r *Runner) ResumeRun(runID string, state *agents.RunState, sessionID, agen
 		r.OnRunAttach(runID)
 	}
 	r.launchSegment(seg, runID, sessionID, onDone, func() *RunOutcome {
-		return r.resumeStreamed(ctx, runID, state, sessionID, agentConfigID, projectID)
+		return r.resumeStreamed(ctx, runID, state, built, sessionID, agentConfigID, projectID)
 	})
 	return runID, nil
 }
 
 // resumeStreamed continues an interrupted run under its original run id
 // through execStreamed, so the resumed segment's events go live too.
-func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents.RunState, sessionID, agentConfigID, projectID string) *RunOutcome {
+func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents.RunState, built *BuildResult, sessionID, agentConfigID, projectID string) *RunOutcome {
 	return r.execStreamed(ctx, runID, sessionID, agentConfigID, projectID, segmentSpec{
 		input:    session.UserText(state.UserInput),
-		failCode: "resume_error",
+		failCode: protocol.CodeResumeError,
+		built:    built,
 		start: func(ctx context.Context, _ *agents.Agent, opts agents.RunOptions) (agents.RunStream, agents.RunControl) {
 			return agents.ResumeRun(ctx, state, opts)
 		},
@@ -552,15 +561,23 @@ func (r *Runner) finishResult(res *agents.RunResult, runID, sessionID, agentConf
 }
 
 // StopRunAfterTurn asks the in-flight run to stop gracefully after its current
-// turn (tools + session save) instead of aborting mid-turn. Falls back to a hard
-// cancel when the run has no live stop hook (e.g. between turns).
+// turn (tools + session save) instead of aborting mid-turn. A run with no live
+// stop hook (between turns, or paused for approval) takes CancelRun's path.
 func (r *Runner) StopRunAfterTurn(runID string) {
 	if !r.hub.StopAfterTurn(runID) {
-		r.hub.Cancel(runID)
+		r.CancelRun(runID)
 	}
 }
 
-// CancelRun cancels the in-flight run with the given run id, if one is active.
+// CancelRun cancels the in-flight run with the given run id, if one is active;
+// a chat run paused for approval is abandoned instead (its approval deleted,
+// the pending calls recorded as not run) — a task's paused run is its task's to stop.
 func (r *Runner) CancelRun(runID string) {
+	if info, ok := r.hub.Info(runID); ok && info.Status == RunInterrupted && info.Task == nil {
+		if pending, err := r.Deps.PendingApprovals.Get(r.hub.rootCtx, runID); err == nil {
+			r.abandonApproval(r.hub.rootCtx, pending, protocol.RunCancelStopped)
+			return
+		}
+	}
 	r.hub.Cancel(runID)
 }

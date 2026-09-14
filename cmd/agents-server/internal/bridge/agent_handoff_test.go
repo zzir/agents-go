@@ -2,7 +2,6 @@ package bridge
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 	"testing"
 
@@ -14,11 +13,7 @@ import (
 
 func mkAgent(t *testing.T, s *store.AgentConfigStore, name string, handoffIDs ...string) string {
 	t.Helper()
-	ac := &store.AgentConfig{OwnerID: store.LocalUserID, Name: name, Model: "gpt-test"}
-	if len(handoffIDs) > 0 {
-		raw, _ := json.Marshal(handoffIDs)
-		ac.HandoffsJSON = string(raw)
-	}
+	ac := &store.AgentConfig{OwnerID: store.LocalUserID, Name: name, Model: "gpt-test", Handoffs: handoffIDs}
 	if err := s.Create(context.Background(), ac); err != nil {
 		t.Fatalf("create agent %s: %v", name, err)
 	}
@@ -118,8 +113,7 @@ func TestBuildFullAgentRealCycleBroken(t *testing.T) {
 	a := mkAgent(t, s, "A")
 	b := mkAgent(t, s, "B", a)
 	aCfg, _ := s.Get(ctx, a)
-	raw, _ := json.Marshal([]string{b})
-	aCfg.HandoffsJSON = string(raw)
+	aCfg.Handoffs = store.StringList{b}
 	if err := s.Update(ctx, a, aCfg, nil); err != nil {
 		t.Fatalf("update A: %v", err)
 	}

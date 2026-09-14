@@ -811,7 +811,7 @@ func (s *Sandbox) killExec(ctx context.Context, containerID, marker string) {
 }
 
 // Close implements sandbox.Sandbox. In persistent mode it also removes the
-// long-lived container.
+// long-lived container (stops it with KeepOnClose).
 func (s *Sandbox) Close() error {
 	s.mu.Lock()
 	id := s.containerID
@@ -829,6 +829,20 @@ func (s *Sandbox) Close() error {
 			_, _ = s.cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
 		}
 	}
+	return s.disconnect()
+}
+
+// Detach implements sandbox.Detacher: the connection goes, the container stays
+// exactly as it is — for the Sandbox that adopted it meanwhile.
+func (s *Sandbox) Detach() error {
+	s.mu.Lock()
+	s.containerID = ""
+	s.mu.Unlock()
+	return s.disconnect()
+}
+
+// disconnect releases the daemon client and, for an ssh:// host, its tunnel.
+func (s *Sandbox) disconnect() error {
 	err := s.cli.Close()
 	if s.sshDial != nil {
 		_ = s.sshDial.Close()
@@ -858,3 +872,4 @@ func envSlice(env map[string]string) []string {
 
 var _ sandbox.Sandbox = (*Sandbox)(nil)
 var _ sandbox.ExecStreamer = (*Sandbox)(nil)
+var _ sandbox.Detacher = (*Sandbox)(nil)

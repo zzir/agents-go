@@ -39,7 +39,7 @@ func newTestEngine() *gin.Engine {
 func testAuthFunc(tok string) server.AuthFunc {
 	return func(_ context.Context, bearer string) (protocol.UserInfo, error) {
 		if bearer != tok {
-			return protocol.UserInfo{}, errors.New("unauthorized")
+			return protocol.UserInfo{}, server.ErrUnauthorized
 		}
 		return protocol.UserInfo{ID: store.LocalUserID, Email: "local@localhost", Role: "admin"}, nil
 	}

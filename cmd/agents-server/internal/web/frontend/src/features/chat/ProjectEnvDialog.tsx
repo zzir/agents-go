@@ -118,7 +118,7 @@ export function ProjectEnvDialog({ project, sessionCount, onClose }: ProjectEnvD
 
   return (
     <Dialog
-      title={`Settings — ${project.name}`}
+      title={`Environment — ${project.name}`}
       onClose={onClose}
       width="xlarge"
       footerButtons={[

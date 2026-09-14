@@ -12,13 +12,8 @@ import (
 )
 
 // Reader reads typed setting values, falling back to each key's registered
-// default. A nil Reader — or one built without a store — yields every default,
-// so callers never branch on whether configuration is wired.
-//
-// Reads are not cached: every consumer reads per run, per connect or per tick,
-// never per token, and a cache would owe an invalidation contract nobody asked
-// for. ProxyClient pools the transport it BUILDS from a read, which is a
-// different thing — the key is the value, so there is nothing to invalidate.
+// default; a nil Reader, or one without a store, yields every default. Reads
+// are uncached — every consumer reads per run, connect or tick, never per token.
 type Reader struct {
 	store *store.SettingStore
 	// transports pools one *http.Transport per proxy URL; see ProxyClient.
@@ -56,9 +51,8 @@ func (r *Reader) String(ctx context.Context, key string) string {
 	return r.resolve(ctx, key)
 }
 
-// Int returns the stored number. A value that no longer parses (stored before
-// validation, or edited in the database) falls back to the default rather than
-// taking the feature down.
+// Int returns the stored number; a value that does not parse (edited in the
+// database) falls back to the default rather than taking the feature down.
 func (r *Reader) Int(ctx context.Context, key string) int {
 	n, err := strconv.Atoi(r.resolve(ctx, key))
 	if err != nil {
@@ -79,11 +73,8 @@ func (r *Reader) Bool(ctx context.Context, key string) bool {
 }
 
 // ProxyClient returns a fresh *http.Client routed through the proxy_url
-// setting, or nil when none is set. The client is the caller's to configure
-// (its Timeout, say); what is shared is the transport behind it — one
-// connection pool per proxy URL, keyed by the URL, so an edited setting lands
-// on a new pool. A nil Reader reads no store, and proxy_url has no default,
-// so it proxies nothing.
+// setting, or nil when none is set; the transport behind it is pooled per
+// proxy URL, so an edited setting lands on a new pool.
 func (r *Reader) ProxyClient(ctx context.Context) *http.Client {
 	u, err := url.Parse(r.String(ctx, KeyProxyURL))
 	if r == nil || err != nil || u.String() == "" {

@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"errors"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 )
@@ -12,7 +11,7 @@ import (
 func staticAuth(tok string) AuthFunc {
 	return func(_ context.Context, bearer string) (protocol.UserInfo, error) {
 		if bearer != tok {
-			return protocol.UserInfo{}, errors.New("unauthorized")
+			return protocol.UserInfo{}, ErrUnauthorized
 		}
 		return protocol.UserInfo{ID: "local", Email: "local@localhost", Role: "admin"}, nil
 	}

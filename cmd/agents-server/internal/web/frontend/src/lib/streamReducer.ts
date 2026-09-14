@@ -1,22 +1,13 @@
-// Pure transforms that build a live turn's parts from streamed run events.
-// useAgentSocket owns the wiring (buffers, dedup sets, raf batching) and calls
-// these for every messages mutation, so the streaming assembly is testable —
-// timeline.test.ts locks the isomorphism contract: a turn assembled here from
-// events must equal the same turn rebuilt by buildTimeline from its persisted
-// rows (documented intentional differences aside). Change a shape on one side
-// and that test is what fails, instead of a reload silently rendering
-// differently than the stream did.
-//
-// Convention: each transform returns the new messages array, or null when it
-// deliberately changed nothing (no live turn, replay dedup hit) — callers keep
-// their existing state object in that case.
+// Pure transforms that build a live turn's parts from streamed run events;
+// useAgentSocket owns the buffers, dedup sets and frame batching. A turn
+// assembled here must equal the one buildTimeline rebuilds — invariant 16.
+// Each transform returns the new messages array, or null when it changed
+// nothing (no live turn, replay dedup hit), so callers keep their state.
 
 import { attachmentIdsEqual, type AttachmentMeta } from '@/lib/attachments';
 import { patchToolCall, findToolCall } from '@/lib/timeline';
 import type { TimelineEntry, TurnEntry, TurnPart, ToolCall, ToolCallPatch, DisplayExtra, ErrorPart, UserEntry } from '@/lib/timeline';
 
-// Loose message shape: live state mixes TimelineEntry rows with optimistic
-// entries, so transforms only assume `role` and (for turns) `parts`.
 type Msgs = TimelineEntry[];
 
 // lastTurn returns the trailing message when it is a turn, else null. Every
@@ -59,18 +50,9 @@ export function ensureLiveTurn(msgs: Msgs, runId: string, input?: string, attach
   return out;
 }
 
-// mergeLiveTail reconciles a fetched persisted timeline with live entries that
-// streamed in while the fetch was in flight: everything without a messageId at
-// the tail of `current` (optimistic/broadcast user bubbles, the in-flight
-// turn) is re-appended after the persisted rows, deduping entries the store
-// already covers. Without this, a broadcast replay arriving before the fetch
-// marked the session loaded and the fetch result was dropped — a second
-// browser saw the live turn but no history.
-//
-// liveRunId scopes which TURN is genuinely in flight: only the current live
-// run's turn survives the merge. A finished turn whose terminal reload hasn't
-// landed yet, or one paused on an approval, also sits unstamped in the tail
-// and must not be re-appended after a regenerate's branch switch.
+// mergeLiveTail re-appends the unstamped tail of `current` (optimistic and
+// broadcast bubbles, the in-flight turn) after a fetched timeline, deduping
+// what the store already covers; only liveRunId's turn survives — invariant 19.
 export function mergeLiveTail(persisted: Msgs, current: Msgs, liveRunId?: string | null): Msgs {
   let i = current.length;
   while (i > 0 && current[i - 1].messageId === undefined) i--;
@@ -81,17 +63,15 @@ export function mergeLiveTail(persisted: Msgs, current: Msgs, liveRunId?: string
   // claimed by an earlier tail entry can't absorb a second identical one, so two
   // successive identical sends don't collapse into a single message.
   const contentConsumed = new Set<number>();
-  for (const m of tail) {
-    if (m.role === 'user') {
-      const u = m as UserEntry & { clientMsgId?: string };
+  for (const u of tail) {
+    if (u.role === 'user') {
       // Identity keys win: a shared runId or clientMsgId means the same message.
       // Two DISTINCT optimistic sends of the same text carry different
       // clientMsgIds and must both survive.
       let dup = out.some(p => {
         if (p.role !== 'user') return false;
-        const pu = p as UserEntry & { clientMsgId?: string };
-        if (pu.runId && u.runId) return pu.runId === u.runId;
-        if (pu.clientMsgId && u.clientMsgId) return pu.clientMsgId === u.clientMsgId;
+        if (p.runId && u.runId) return p.runId === u.runId;
+        if (p.clientMsgId && u.clientMsgId) return p.clientMsgId === u.clientMsgId;
         return false;
       });
       // Content equality is the last resort, only when neither side shares an id
@@ -102,20 +82,19 @@ export function mergeLiveTail(persisted: Msgs, current: Msgs, liveRunId?: string
           if (contentConsumed.has(idx)) continue;
           const p = out[idx];
           if (p.role !== 'user') continue;
-          const pu = p as UserEntry & { clientMsgId?: string };
-          if (pu.runId && u.runId) continue;
-          if (pu.clientMsgId && u.clientMsgId) continue;
-          if (pu.content === u.content && attachmentIdsEqual(pu.attachments, u.attachments)) { contentConsumed.add(idx); dup = true; break; }
+          if (p.runId && u.runId) continue;
+          if (p.clientMsgId && u.clientMsgId) continue;
+          if (p.content === u.content && attachmentIdsEqual(p.attachments, u.attachments)) { contentConsumed.add(idx); dup = true; break; }
         }
       }
-      if (!dup) out.push(m);
-    } else if (m.role === 'turn') {
-      const rid = (m as TurnEntry).runId;
+      if (!dup) out.push(u);
+    } else if (u.role === 'turn') {
+      const rid = u.runId;
       if (!rid || rid !== liveRunId) continue;
-      const dup = out.some(p => p.role === 'turn' && (p as TurnEntry).runId === rid);
-      if (!dup) out.push(m);
+      const dup = out.some(p => p.role === 'turn' && p.runId === rid);
+      if (!dup) out.push(u);
     } else {
-      out.push(m);
+      out.push(u);
     }
   }
   return out;
@@ -169,6 +148,35 @@ export function appendErrorPart(msgs: Msgs, err: ErrorPart, thinking: string, re
   if (remaining) parts.push({ type: 'text', content: remaining });
   parts.push(err);
   return withParts(msgs, turn, parts);
+}
+
+// markNotRun resolves every undecided approval card in the turns pick admits
+// as not run for the reason; null when none was pending.
+function markNotRun(msgs: Msgs, pick: (turn: TurnEntry) => boolean, reason: string): Msgs | null {
+  let changed = false;
+  const out = msgs.map(m => {
+    if (m.role !== 'turn' || !pick(m as TurnEntry)) return m;
+    const parts = (m as TurnEntry).parts.map(p => {
+      if (p.type !== 'tools' || !p.toolCalls.some(tc => tc.needs_approval && !tc.status)) return p;
+      changed = true;
+      return { ...p, toolCalls: p.toolCalls.map(tc => tc.needs_approval && !tc.status ? { ...tc, status: 'not_run', not_run: reason } : tc) };
+    });
+    return { ...m, parts } as TurnEntry;
+  });
+  return changed ? out : null;
+}
+
+// resolvePendingApprovals marks the run's undecided approval cards not run:
+// what run.cancelled with a reason means for a paused run.
+export function resolvePendingApprovals(msgs: Msgs, runId: string, reason: string): Msgs | null {
+  return markNotRun(msgs, t => t.runId === runId, reason);
+}
+
+// supersedePendingApprovals marks every other run's undecided approval cards
+// superseded once a newer run starts on the session — the server abandoned the
+// pause before it (invariant 19), whether or not its run.cancelled arrived.
+export function supersedePendingApprovals(msgs: Msgs, newRunId: string): Msgs | null {
+  return markNotRun(msgs, t => t.runId !== newRunId, 'superseded');
 }
 
 // appendCancelledPart marks the live turn cancelled, flushing leftover

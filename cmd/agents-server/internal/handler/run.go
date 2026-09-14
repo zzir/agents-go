@@ -53,7 +53,7 @@ type createRunResp struct {
 // with the run id when N passes first.
 //
 //	@Summary		Start run
-//	@Description	Starts an agent run on the session. Default returns 201 with a run id. With the header `Prefer: wait=N` (RFC 7240) the request is held up to N seconds (capped at 10 minutes): 200 with the final output when the run ends in time — or status "interrupted" when it pauses for tool approval (act via /sessions/{id}/approvals) — else 202 with the run id, still running (`Preference-Applied: wait=N` marks the honored wait). Fails 409 if the session already has an active run.
+//	@Description	Starts an agent run on the session. Default returns 201 with a run id. With the header `Prefer: wait=N` (RFC 7240) the request is held up to N seconds (capped at 10 minutes): 200 with the final output when the run ends in time — or status "interrupted" when it pauses for tool approval (list via /sessions/{id}/approvals, decide via POST /approvals/{tool_call_id}/approve or /reject) — else 202 with the run id, still running (`Preference-Applied: wait=N` marks the honored wait). Fails 409 if the session already has an active run.
 //	@Tags			runs
 //	@Accept			json
 //	@Produce		json
@@ -215,14 +215,15 @@ func (h *RunHandler) Get(c *gin.Context) {
 
 // Cancel cancels the run identified by the id path parameter.
 //
-//	@Summary	Cancel run
-//	@Tags		runs
-//	@Param		id		path	string	true	"Run ID"
-//	@Param		mode	query	string	false	"graceful = stop after the current turn; default aborts immediately"
-//	@Success	204		"cancelling"
-//	@Failure	404		{object}	ErrorResponse
-//	@Security	BearerAuth
-//	@Router		/runs/{id}/cancel [post]
+//	@Summary		Cancel run
+//	@Description	A run paused for tool approval is abandoned either way: its approval is deleted, the calls it waited on are recorded as not run, and run.cancelled carries reason stopped.
+//	@Tags			runs
+//	@Param			id		path	string	true	"Run ID"
+//	@Param			mode	query	string	false	"graceful = stop after the current turn; default aborts immediately"
+//	@Success		204		"cancelling"
+//	@Failure		404		{object}	ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/runs/{id}/cancel [post]
 func (h *RunHandler) Cancel(c *gin.Context) {
 	if _, ok := h.runner.Hub().Info(c.Param("id")); !ok {
 		notFound(c)

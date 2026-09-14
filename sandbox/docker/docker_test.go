@@ -558,3 +558,37 @@ func TestLookupRunningRestartsStoppedContainer(t *testing.T) {
 		}
 	})
 }
+
+// Detach lets the daemon connection go and leaves the persistent container
+// exactly as it is: no stop, no remove — another Sandbox has adopted it.
+func TestDetachTouchesNoContainer(t *testing.T) {
+	var mu sync.Mutex
+	var touched []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/_ping") {
+			w.Header().Set("API-Version", "1.44")
+			return
+		}
+		mu.Lock()
+		touched = append(touched, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(srv.Close)
+	sb, err := New(Options{Host: "tcp://" + srv.Listener.Addr().String(), Image: "img", Persistent: true, KeepOnClose: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sb.containerID = "cid"
+	if err := sb.Detach(); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(touched) != 0 {
+		t.Fatalf("Detach reached the daemon: %v", touched)
+	}
+	if sb.containerID != "" {
+		t.Errorf("containerID = %q, want forgotten", sb.containerID)
+	}
+}

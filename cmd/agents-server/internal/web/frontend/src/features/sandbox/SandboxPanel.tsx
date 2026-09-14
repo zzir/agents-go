@@ -8,20 +8,13 @@ import { useReadOnly } from '@/lib/access';
 import { ResourceRow } from '@/components/ResourceRow';
 import { api } from '@/lib/api';
 import { BADGE } from '@/lib/badges';
-import { useCrud } from '@/lib/hooks';
+import { useApi, useCrud } from '@/lib/hooks';
 import { fc } from '@/lib/form';
 import { toast } from '@/lib/toast';
 
-// A sandbox is one row: WHERE it runs (the daemon or the service, and how to
-// reach it) and WHAT runs on it (the image and the limits). A project picks
-// one. Two types: "docker" (a daemon on this machine or reachable over SSH)
-// and "e2b" (any service speaking the E2B API — E2B's own, a self-hosted one,
-// or a compatible one).
-//
-// The fields split by MUTABILITY, not by section: the type and the destination
-// are a project's identity and freeze while projects live on the sandbox;
-// everything else is editable and reaches bound sessions at their next run
-// (decisions §5.36).
+// A sandbox is one row: WHERE it runs and WHAT runs on it; a project picks one.
+// The fields split by mutability, not section — type and destination freeze
+// while projects live on the sandbox, the rest edits freely (decisions §5.36).
 
 type SandboxType = 'docker' | 'e2b';
 
@@ -113,7 +106,7 @@ interface FormState {
   max_read_file_bytes: string;
 }
 
-function flatten(s: Partial<SandboxRow>): FormState {
+export function flatten(s: Partial<SandboxRow>): FormState {
   const c = (s.config || {}) as DockerShape & E2BShape;
   const type = (s.type as SandboxType) || 'docker';
   return {
@@ -138,7 +131,7 @@ function flatten(s: Partial<SandboxRow>): FormState {
   };
 }
 
-function pack(form: FormState): PackedForm {
+export function pack(form: FormState): PackedForm {
   const maxRead = parseInt(form.max_read_file_bytes, 10);
   if (form.type === 'e2b') {
     const config: Record<string, unknown> = {
@@ -173,10 +166,14 @@ function pack(form: FormState): PackedForm {
   return { name: form.name, type: 'docker', config, prompt: form.prompt };
 }
 
-function SandboxForm({ initial, seed, onSave, onCancel, onDelete, saving }: {
+function SandboxForm({ initial, seed, inUse, onSave, onCancel, onDelete, saving }: {
   // initial edits that row; seed prefills a NEW one from a copy.
   initial?: SandboxRow;
   seed?: SandboxRow;
+  // Whether projects live on the row being edited — what freezes its
+  // identity fields (invariant 45). Unknown leaves them editable; the
+  // server's 409 still refuses a change.
+  inUse?: boolean;
   onSave: (form: PackedForm) => void;
   onCancel?: () => void;
   onDelete?: () => void;
@@ -185,22 +182,22 @@ function SandboxForm({ initial, seed, onSave, onCancel, onDelete, saving }: {
   const [form, setForm] = useState<FormState>(flatten(initial ?? seed ?? { name: '' }));
   const set = (k: keyof FormState, v: unknown) => setForm(prev => ({ ...prev, [k]: v }));
   const remote = form.type === 'docker' && form.host.startsWith('ssh://');
+  const frozen = !!initial && !!inUse;
+  const frozenNote = frozen ? ' Frozen while projects live on it.' : ' Freezes once a project lives on it.';
 
   return (
     <Stack gap="normal">
       {fc('Name', <TextInput block value={form.name} onChange={e => set('name', e.target.value)} placeholder="e.g. laptop · python-3.12" />)}
       {fc('Type', (
-        // Frozen on an existing sandbox: the type is its identity, and the
-        // server refuses the change while projects live on it.
-        <Select block value={form.type} disabled={!!initial} onChange={e => set('type', e.target.value as SandboxType)}>
+        <Select block value={form.type} disabled={frozen} onChange={e => set('type', e.target.value as SandboxType)}>
           <Select.Option value="docker">Docker daemon</Select.Option>
           <Select.Option value="e2b">E2B-compatible service</Select.Option>
         </Select>
-      ), 'Frozen once projects live on it.')}
+      ), frozenNote.trim())}
 
       {form.type === 'docker' && fc('Daemon',
-        <TextInput block value={form.host} onChange={e => set('host', e.target.value)} placeholder="ssh://user@host — empty for the local daemon" />,
-        'Where the containers run: empty = this machine\'s Docker daemon; ssh://user@host reaches a remote daemon over SSH; tcp://host:port a TCP-exposed one. Frozen once projects live on it.',
+        <TextInput block value={form.host} disabled={frozen} onChange={e => set('host', e.target.value)} placeholder="ssh://user@host — empty for the local daemon" />,
+        'Where the containers run: empty = this machine\'s Docker daemon; ssh://user@host reaches a remote daemon over SSH; tcp://host:port a TCP-exposed one.' + frozenNote,
       )}
       {remote && fc('SSH private key file',
         <TextInput block value={form.ssh_key_file} onChange={e => set('ssh_key_file', e.target.value)} placeholder="~/.ssh/id_ed25519" />,
@@ -217,12 +214,12 @@ function SandboxForm({ initial, seed, onSave, onCancel, onDelete, saving }: {
       {remote && <ToggleRow label="Skip host key verification (insecure -- dev/test only)" checked={form.ssh_insecure_host_key} onChange={v => set('ssh_insecure_host_key', v)} />}
 
       {form.type === 'e2b' && fc('API URL',
-        <TextInput block value={form.api_url} onChange={e => set('api_url', e.target.value)} placeholder="https://api.e2b.app" />,
-        'The control plane. Empty uses E2B\'s own; a compatible service (Alibaba Cloud Function Compute, a self-hosted E2B) has its own. Frozen once projects live on it.',
+        <TextInput block value={form.api_url} disabled={frozen} onChange={e => set('api_url', e.target.value)} placeholder="https://api.e2b.app" />,
+        'The control plane. Empty uses E2B\'s own; a compatible service (Alibaba Cloud Function Compute, a self-hosted E2B) has its own.' + frozenNote,
       )}
       {form.type === 'e2b' && fc('Sandbox domain',
-        <TextInput block value={form.domain} onChange={e => set('domain', e.target.value)} placeholder="e2b.app" />,
-        'The suffix a sandbox\'s public hosts are built from: <port>-<sandbox id>.<domain>.',
+        <TextInput block value={form.domain} disabled={frozen} onChange={e => set('domain', e.target.value)} placeholder="e2b.app" />,
+        'The suffix a sandbox\'s public hosts are built from: <port>-<sandbox id>.<domain>.' + frozenNote,
       )}
       {form.type === 'e2b' && fc('API key',
         <SecretInput block value={form.api_key} onChange={e => set('api_key', e.target.value)} placeholder="e2b_…" />,
@@ -261,8 +258,8 @@ function SandboxForm({ initial, seed, onSave, onCancel, onDelete, saving }: {
       )}
 
       {form.type === 'e2b' && fc('Template id',
-        <TextInput block value={form.template_id} onChange={e => set('template_id', e.target.value)} placeholder="base" />,
-        'A template that already exists on the service — the workbench builds none. Its console or CLI is where they are made.',
+        <TextInput block value={form.template_id} disabled={frozen} onChange={e => set('template_id', e.target.value)} placeholder="base" />,
+        'A template that already exists on the service — the workbench builds none. Its console or CLI is where they are made.' + frozenNote,
       )}
       {form.type === 'e2b' && fc('User',
         <TextInput block value={form.user} onChange={e => set('user', e.target.value)} placeholder="user (default)" />,
@@ -273,10 +270,10 @@ function SandboxForm({ initial, seed, onSave, onCancel, onDelete, saving }: {
         'How long a sandbox lives before the service acts on it. Refreshed while in use.',
       )}
       {form.type === 'e2b' && (
-        <ToggleRow label="Pause on expiry instead of killing" checked={form.auto_pause} onChange={v => set('auto_pause', v)}
-          description="Off means expiry destroys the working tree; services without snapshots (Alibaba Cloud) need it off." />
+        <ToggleRow label="Pause on expiry instead of killing" checked={form.auto_pause} disabled={frozen} onChange={v => set('auto_pause', v)}
+          description={'Off means expiry destroys the working tree; services without snapshots (Alibaba Cloud) need it off.' + frozenNote} />
       )}
-      {form.type === 'e2b' && <ToggleRow label="Allow outbound network access" checked={form.allow_internet} onChange={v => set('allow_internet', v)} />}
+      {form.type === 'e2b' && <ToggleRow label="Allow outbound network access" checked={form.allow_internet} disabled={frozen} onChange={v => set('allow_internet', v)} description={frozenNote.trim()} />}
       {fc('Prompt',
         <Textarea block rows={3} value={form.prompt} onChange={e => set('prompt', e.target.value)}
           placeholder="e.g. Python 3.12 and Node 20 are installed. No outbound network; use the vendored packages." />,
@@ -331,6 +328,11 @@ export function SandboxPanel() {
     useCrud<SandboxRow, PackedForm>(api.sandboxes, 'sandboxes');
   const [seed, setSeed] = useState<SandboxRow | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
+  // Every owner's projects, to know which sandboxes have projects on them
+  // (the admin's listing; a member's form is disabled as a whole anyway).
+  const { data: projects } = useApi<{ sandbox_id?: string }[]>(
+    () => (readOnly ? Promise.resolve([]) : api.projects.listAll() as Promise<{ sandbox_id?: string }[]>), [readOnly], readOnly ? undefined : 'admin:projects');
+  const inUse = (id: string) => projects ? projects.some(p => p.sandbox_id === id) : undefined;
 
   const handleTest = async (s: SandboxRow) => {
     setTestingId(s.id);
@@ -350,7 +352,7 @@ export function SandboxPanel() {
 
   const close = () => { setSeed(null); cancel(); };
   const form = adding ? <SandboxForm saving={saving} seed={seed ?? undefined} onSave={save} onCancel={close} />
-    : editing ? <SandboxForm saving={saving} initial={editing} onSave={save} onCancel={close} onDelete={async () => { if (await remove(editing.id, editing.name)) close(); }} />
+    : editing ? <SandboxForm saving={saving} initial={editing} inUse={inUse(editing.id)} onSave={save} onCancel={close} onDelete={async () => { if (await remove(editing.id, editing.name)) close(); }} />
     : null;
 
   return (

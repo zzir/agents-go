@@ -18,8 +18,8 @@ import (
 	openaiProvider "github.com/zzir/agents-go/models/openai"
 )
 
-// The provider_type values an agent config or fallback entry may select.
-// Empty means openai — the value predates the field.
+// The provider_type values a provider row (or a legacy fallback entry) may
+// select; empty means openai.
 const (
 	TypeOpenAI    = "openai"
 	TypeAnthropic = "anthropic"
@@ -29,14 +29,10 @@ const (
 // OpenAI-only: its middleware rewrites Responses-shaped request bodies.
 const AuthModeChatGPTLogin = store.AuthModeChatGPTLogin
 
-// Def is one backend the server can build providers for. It is an
-// INTERNAL table, not a plugin API: everything provider-selection touches —
-// validation, construction, auth modes, capability
-// metadata — derives from this slice, so adding a backend is one entry here
-// (plus its SDK module and a row in the frontend's PROVIDERS table) instead
-// of a hunt across bridge, handlers and docs. Being internal also means its shape may
-// be reworked freely when a third backend's auth or credential model does not
-// fit the current fields.
+// Def is one backend the server can build providers for — an INTERNAL table,
+// not a plugin API: validation, construction, auth modes and capability
+// metadata all derive from this slice, so a backend is one entry here plus
+// its SDK module and a row in the frontend's PROVIDERS table.
 type Def struct {
 	// Type is the provider_type wire value.
 	Type string
@@ -114,12 +110,20 @@ func normalizeType(t string) string {
 	return t
 }
 
-// NormalizeType maps the empty provider selector to its meaning
-// ("openai", which predates the field). Exported for the handlers' secret
-// round-tripping: whether a masked key may be restored depends on whether
-// the PROVIDER changed, and that comparison must treat "" and "openai" as
-// the same backend.
+// NormalizeType maps the empty provider selector to its meaning ("openai"),
+// so a comparison of two rows' backends treats "" and "openai" as one.
 func NormalizeType(t string) string { return normalizeType(t) }
+
+// NormalizeBaseURL canonicalizes a base_url for comparing two rows' endpoints:
+// whitespace and the trailing slash only, never anything that could equate two hosts.
+func NormalizeBaseURL(u string) string {
+	return strings.TrimRight(strings.TrimSpace(u), "/")
+}
+
+// SameEndpoint reports whether two (type, base_url) pairs reach the same backend.
+func SameEndpoint(typeA, baseA, typeB, baseB string) bool {
+	return normalizeType(typeA) == normalizeType(typeB) && NormalizeBaseURL(baseA) == NormalizeBaseURL(baseB)
+}
 
 // DefFor resolves a provider selector to its definition. The error
 // names the valid set, and every construction path handles it rather than

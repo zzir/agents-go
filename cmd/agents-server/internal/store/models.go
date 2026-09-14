@@ -14,27 +14,18 @@ type Session struct {
 	bun.BaseModel `bun:"table:sessions,alias:s"`
 
 	ID string `bun:"id,pk,type:uuid"     json:"id"`
-	// Gen names which generation of this id owns the session's entries; see
-	// session.Ref.
+	// Gen is the generation of this id that owns the session's entries (session.Ref).
 	Gen string `bun:"gen,notnull"          json:"-"`
-	// OwnerID is the user the conversation belongs to — the only ownership
-	// column: a task's hidden session inherits it from its parent, a trigger
-	// fires into a session, an approval is filed on one. Content is the
-	// owner's alone; an admin may list, stop and delete.
+	// OwnerID is the user the conversation belongs to; a task's hidden session inherits its parent's.
 	OwnerID string `bun:"owner_id,notnull,type:uuid" json:"owner_id"`
 	Name    string `bun:"name,notnull"         json:"name"`
 	Pinned  bool   `bun:"pinned"               json:"pinned"`
-	// Hidden marks a session that exists to serve another one — a background
-	// task's transcript. Listings leave it out by default.
+	// Hidden marks a background task's transcript session; listings leave it out.
 	Hidden        bool   `bun:"hidden"               json:"hidden,omitempty"`
 	AgentConfigID string `bun:"agent_config_id,nullzero,type:uuid" json:"agent_config_id,omitempty"`
-	// ProjectID is the session's PERMANENT binding: the first project-carrying
-	// run CAS-writes it (BindProjectIfEmpty) and it is never rewritten. The
-	// project pins the target, so binding the project binds the machine too.
+	// ProjectID is the project the session is bound to, set once by the first project-carrying run and never rewritten.
 	ProjectID string `bun:"project_id,nullzero,type:uuid" json:"project_id,omitempty"`
-	// Planning is the session's plan phase: true means its next run starts
-	// read-only until a plan is approved. Set by the person, cleared by the
-	// approved submit_plan, copied by a fork.
+	// Planning is the session's plan phase: the next run starts read-only until a plan is approved.
 	Planning  bool      `bun:"planning"             json:"planning"`
 	CreatedAt time.Time `bun:"created_at,notnull"   json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,notnull"   json:"updated_at"`
@@ -49,22 +40,14 @@ type Task struct {
 	bun.BaseModel `bun:"table:tasks,alias:t"`
 
 	ID string `bun:"id,pk,type:uuid"      json:"task_id"`
-	// RunID is the id of the task's CURRENT run: a retry replaces it, and so
-	// does each step of a workflow. It is distinct from the task id because the
-	// task is the durable entity and a run is one try at it — which is what
-	// makes a retry expressible at all.
+	// RunID is the task's current run; a retry and each workflow step replace it.
 	RunID string `bun:"run_id,nullzero,type:uuid" json:"run_id,omitempty"`
-	// Kind is the SDK's host-defined discriminator: "" for a sub-agent task,
-	// TaskKindWorkflow for a workflow execution.
+	// Kind is "" for a sub-agent task, TaskKindWorkflow for a workflow execution.
 	Kind string `bun:"kind" json:"kind,omitempty"`
-	// State is the SDK's opaque per-job record — for a workflow, the encoded
-	// WorkflowState (the definition snapshot and where the sequence stands).
+	// State is the SDK's opaque per-job record; a workflow's is its encoded WorkflowState.
 	State           json.RawMessage `bun:"state,type:text,nullzero" json:"state,omitempty"`
 	ParentSessionID string          `bun:"parent_session_id,notnull,type:uuid" json:"parent_session_id"`
-	// ParentSessionGen and ChildSessionGen are the GENERATIONS of the sessions
-	// this row names (session.Ref): a row matched on the id alone would attach
-	// itself to a replacement created under the same name. Bound
-	// at insert, compared on every by-session read (liveParent / liveChild).
+	// ParentSessionGen and ChildSessionGen bind the row to the session generations it names; by-session reads compare them.
 	ParentSessionGen string `bun:"parent_session_gen" json:"-"`
 	ParentRunID      string `bun:"parent_run_id,nullzero,type:uuid" json:"parent_run_id,omitempty"`
 	ToolCallID       string `bun:"tool_call_id"         json:"tool_call_id,omitempty"`
@@ -72,31 +55,20 @@ type Task struct {
 	AgentConfigID    string `bun:"agent_config_id,nullzero,type:uuid" json:"agent_config_id,omitempty"`
 	ChildSessionID   string `bun:"child_session_id,notnull,type:uuid" json:"child_session_id"`
 	ChildSessionGen  string `bun:"child_session_gen"        json:"-"`
-	// Depth is how many task hops from a user-initiated run. Persisted because
-	// it is the ONLY input to the recursion bound: dropping it made every task
-	// report depth 0, so MaxDepth — the documented backstop against a task
-	// spawning tasks forever — could never trip on this host.
+	// Depth is how many task hops from a user-initiated run; the recursion bound (MaxDepth) reads it.
 	Depth int `bun:"depth" json:"depth,omitempty"`
-	// Attempt counts this task's runs: 1 for the original, one more per retry.
-	// Zero reads as the first attempt (the SDK's AttemptNo contract).
+	// Attempt counts this task's runs, 1 for the original; zero reads as the first.
 	Attempt int `bun:"attempt" json:"attempt,omitempty"`
-	// ParentAgentConfigID / ParentProjectID snapshot the spawning run's
-	// configuration so the completion notification (and a retry) can start a
-	// run with the same setup.
+	// ParentAgentConfigID and ParentProjectID snapshot the spawning run's configuration for the wake-up run and a retry.
 	ParentAgentConfigID string `bun:"parent_agent_config_id,nullzero,type:uuid" json:"-"`
 	ParentProjectID     string `bun:"parent_project_id,nullzero,type:uuid" json:"-"`
 	Status              string `bun:"status,notnull"     json:"status"`
 	Summary             string `bun:"summary,nullzero"   json:"summary,omitempty"`
-	// Result is the task's full final output. The row summary (and the wake
-	// notification) stay truncated to keep prompts and lists lean; the parent
-	// model pulls this on demand through task_status.
+	// Result is the task's full final output; Summary and the wake-up notification stay truncated.
 	Result string `bun:"result,nullzero" json:"-"`
-	// Dismissed hides a terminal task from the conversation's live strip; the
-	// panel still lists it. A retry clears it — the work is live again.
+	// Dismissed hides a terminal task from the conversation's live strip; a retry clears it.
 	Dismissed bool `bun:"dismissed" json:"dismissed,omitempty"`
-	// MaxAttempts is the ceiling Attempt is measured against — filled for the
-	// wire, not stored: the task manager's configuration, not a fact about the
-	// task. Clients derive "retryable" from it and the status they track.
+	// MaxAttempts is the task manager's ceiling on Attempt, filled for the wire and not stored.
 	MaxAttempts int       `bun:"-" json:"max_attempts,omitempty"`
 	CreatedAt   time.Time `bun:"created_at,notnull" json:"created_at"`
 	UpdatedAt   time.Time `bun:"updated_at,notnull" json:"updated_at"`
@@ -112,30 +84,18 @@ type AgentConfig struct {
 
 	ID   string `bun:"id,pk,type:uuid" json:"id"`
 	Name string `bun:"name,notnull"   json:"name"`
-	// Description is what this agent is FOR, in a sentence — the text an
-	// automatic agent picker will match a request against (not the model-facing
-	// instructions).
+	// Description is what the agent is for, in a sentence; an agent picker matches requests against it.
 	Description string `bun:"description,nullzero" json:"description,omitempty"`
-	// Avatar is the agent's picture as a same-origin path into the built-in
-	// catalog ("/avatars/<name>.svg"); empty renders an initial. Handlers
-	// reject anything else — external URLs would be blocked by CSP anyway.
+	// Avatar is a same-origin path into the built-in catalog ("/avatars/<name>.svg"); empty renders an initial.
 	Avatar       string `bun:"avatar,nullzero"      json:"avatar,omitempty"`
 	Instructions string `bun:"instructions"   json:"instructions"`
 	Model        string `bun:"model"          json:"model"`
-	// ProviderID names the Provider row this agent reaches its model through —
-	// a column, so referential integrity is expressible in SQL. Empty reaches
-	// no credential: the run fails its pre-flight.
+	// ProviderID names the Provider the agent reaches its model through; empty fails the run's pre-flight.
 	ProviderID string `bun:"provider_id,nullzero,type:uuid" json:"provider_id,omitempty"`
-	// ContextWindow is the model's window in tokens, declared rather than
-	// discovered — no provider reports it on a response. It sits beside Model
-	// because it describes the model, not the endpoint: two agents on one
-	// provider may run different models. 0 leaves the Context panel showing
-	// occupancy without a denominator.
+	// ContextWindow is the model's window in tokens, declared per agent; 0 leaves the Context panel without a denominator.
 	ContextWindow int `bun:"context_window" json:"context_window,omitempty"`
 
-	// The remaining knobs are grouped into JSON category columns (see
-	// agent_config_groups.go) so the table holds only category columns and a new
-	// setting needs no schema change. In the REST API each is a nested object.
+	// The run-level settings, one JSON column per category (agent_config_groups.go); each a nested object in the API.
 	Behavior   BehaviorGroup   `bun:"behavior,type:text,nullzero"   json:"behavior"`
 	Resilience ResilienceGroup `bun:"resilience,type:text,nullzero" json:"resilience"`
 	Guardrails GuardrailGroup  `bun:"guardrails,type:text,nullzero" json:"guardrails"`
@@ -144,15 +104,15 @@ type AgentConfig struct {
 	Compaction CompactionGroup `bun:"compaction,type:text,nullzero" json:"compaction"`
 	Memory     MemoryGroup     `bun:"memory,type:text,nullzero"     json:"memory"`
 
-	// The following are already single JSON blobs, kept as their own columns.
+	// ModelSettings is a JSON object of model parameters (temperature, reasoning, extra_body, ...).
 	ModelSettings string `bun:"model_settings" json:"model_settings,omitempty"`
-	ToolsJSON     string `bun:"tools"          json:"tools,omitempty"`
-	SkillsJSON    string `bun:"skills"         json:"skills,omitempty"`
-	HandoffsJSON  string `bun:"handoffs"       json:"handoffs,omitempty"`
-	// ErrorHandlers is a JSON object keyed by error kind (max_turns /
-	// model_refusal / invalid_final_output), each entry carrying a static
-	// final_output (a JSON value) and an optional exclude_from_history flag.
-	// Empty means every run error stays fatal.
+	// Tools lists the ids of the MCP servers whose tools the agent carries.
+	Tools StringList `bun:"tools,type:text" json:"tools,omitempty"`
+	// Skills lists the ids of the skills the agent may read; null means every skill its scope can see, [] none.
+	Skills StringList `bun:"skills,type:text" json:"skills"`
+	// Handoffs lists the ids of the agents this one can hand off to.
+	Handoffs StringList `bun:"handoffs,type:text" json:"handoffs,omitempty"`
+	// ErrorHandlers is a JSON object keyed by error kind (max_turns, model_refusal, invalid_final_output); empty keeps every run error fatal.
 	ErrorHandlers string `bun:"error_handlers" json:"error_handlers,omitempty"`
 
 	// Scope/OwnerID: row visibility and its permanent creator.
@@ -171,23 +131,16 @@ type Provider struct {
 
 	ID   string `bun:"id,pk,type:uuid" json:"id"`
 	Name string `bun:"name,notnull" json:"name"`
-	// Type selects the backend (bridge.ProviderType*). Empty means openai, the
-	// value that predates the field.
+	// Type selects the backend (bridge.ProviderType*); empty means openai.
 	Type string `bun:"type"      json:"type,omitempty"`
-	// AuthMode is "" (API key) or a mode the backend offers, validated against
-	// the provider registry on save.
+	// AuthMode is "" (API key) or a mode the backend offers, validated on save.
 	AuthMode string `bun:"auth_mode" json:"auth_mode,omitempty"`
-	// APIKey is masked on the way out (see sanitizeProvider) and restored from
-	// the stored row when a client sends the mask back.
+	// APIKey is masked on the way out and restored from the stored row when the mask is sent back.
 	APIKey  string `bun:"api_key"   json:"api_key,omitempty"`
 	BaseURL string `bun:"base_url"  json:"base_url,omitempty"`
-	// ChatGPTToken is the serialized OAuth token for auth_mode chatgpt_login.
-	// It lives on the provider because it IS this endpoint's credential — every
-	// agent pointed here shares the one login instead of each re-authenticating.
-	// Never serialized (json:"-"); preserved across CRUD updates.
+	// ChatGPTToken is the serialized OAuth token for auth_mode chatgpt_login; never serialized, kept across updates.
 	ChatGPTToken string `bun:"chatgpt_token,type:text,nullzero" json:"-"`
-	// ChatGPTLoggedIn is the API-facing derived login signal (set when
-	// sanitizing); the token itself never leaves the server.
+	// ChatGPTLoggedIn is derived when sanitizing: whether a ChatGPT token is stored.
 	ChatGPTLoggedIn bool `bun:"-" json:"chatgpt_logged_in,omitempty"`
 
 	// Scope/OwnerID: row visibility and its permanent creator.
@@ -205,21 +158,13 @@ type McpServerConfig struct {
 
 	ID   string `bun:"id,pk,type:uuid"        json:"id"`
 	Name string `bun:"name,notnull"           json:"name"`
-	// Enabled deliberately carries no bun default tag: with `default:true`,
-	// bun swaps a zero-value false for SQL DEFAULT on insert, silently
-	// enabling a server that was created with enabled=false.
+	// Enabled carries no bun default tag: with one, bun would write SQL DEFAULT for a false on insert.
 	Enabled bool `bun:"enabled,notnull"        json:"enabled"`
 
-	// Config holds the connection settings as JSON (HTTPMcpConfig — the
-	// streamable_http transport is the only one the server speaks).
-	// Stored as TEXT and exchanged with the API as a raw JSON object.
+	// Config holds the connection settings as JSON (HTTPMcpConfig), exchanged with the API as a raw object.
 	Config json.RawMessage `bun:"config,type:text,nullzero" json:"config,omitempty"`
 
-	// OAuthToken is the JSON-serialized OAuth grant obtained during the OAuth
-	// flow: the oauth2.Token plus the token endpoint and client credentials
-	// needed to refresh it across restarts (bridge.tokenPayload). Stored
-	// separately from Config so that regular CRUD updates (which overwrite
-	// Config) don't erase it, and hidden from the API (json:"-").
+	// OAuthToken is the JSON OAuth grant with what refreshes it (bridge.tokenPayload), kept apart from Config and off the API.
 	OAuthToken string `bun:"oauth_token,type:text,nullzero" json:"-"`
 
 	// Scope/OwnerID: row visibility and its permanent creator.
@@ -230,30 +175,23 @@ type McpServerConfig struct {
 	UpdatedAt time.Time `bun:"updated_at,notnull"     json:"updated_at"`
 }
 
-// McpRetryConfig holds the per-request retry settings, embedded in
-// HTTPMcpConfig. A single transient failure on list_tools/call_tool
-// otherwise aborts the whole run.
+// McpRetryConfig is the per-request retry settings embedded in HTTPMcpConfig.
 type McpRetryConfig struct {
-	// MaxRetryAttempts retries a failed list_tools/call_tool this many times.
-	// 0 (default) disables retries; -1 retries indefinitely.
+	// MaxRetryAttempts retries a failed list_tools/call_tool; 0 disables, -1 retries indefinitely.
 	MaxRetryAttempts int `json:"max_retry_attempts,omitempty"`
-	// RetryBackoffMs is the base delay (milliseconds) for exponential backoff
-	// between retries. 0 leaves the SDK default (1s) when retries are enabled.
+	// RetryBackoffMs is the base delay for exponential backoff; 0 leaves the SDK default (1s).
 	RetryBackoffMs int `json:"retry_backoff_ms,omitempty"`
 }
 
 // HTTPMcpConfig is the McpServerConfig.Config payload (streamable HTTP).
 type HTTPMcpConfig struct {
 	Endpoint string `json:"endpoint"`
-	// Headers are added to every HTTP request to the server, e.g. an
-	// "Authorization: Bearer <token>" or an API-key header.
+	// Headers are added to every request, e.g. an Authorization or API-key header.
 	Headers map[string]string `json:"headers,omitempty"`
 
-	// AuthMode selects the authentication method: "" or "header" for static
-	// headers (the default), "oauth" for the OAuth 2.1 authorization code flow.
+	// AuthMode is "" or "header" for static headers, "oauth" for the OAuth 2.1 authorization code flow.
 	AuthMode string `json:"auth_mode,omitempty"`
-	// OAuthClientID is an optional pre-registered client ID. When empty and
-	// AuthMode is "oauth", the server will use dynamic client registration.
+	// OAuthClientID is a pre-registered client id; empty uses dynamic client registration.
 	OAuthClientID string `json:"oauth_client_id,omitempty"`
 	// OAuthClientSecret is the corresponding client secret (if pre-registered).
 	OAuthClientSecret string `json:"oauth_client_secret,omitempty"`
@@ -261,9 +199,7 @@ type HTTPMcpConfig struct {
 	OAuthScopes string `json:"oauth_scopes,omitempty"`
 
 	McpRetryConfig // max_retry_attempts / retry_backoff_ms
-	// UseStructuredContent uses a tool result's structuredContent field
-	// exclusively (default: use the content blocks). For servers that only
-	// populate the structured field.
+	// UseStructuredContent takes a tool result's structuredContent alone, for servers that fill only that field.
 	UseStructuredContent bool `json:"use_structured_content,omitempty"`
 }
 
@@ -276,23 +212,16 @@ type Skill struct {
 	ID          string `bun:"id,pk,type:uuid" json:"id"`
 	Name        string `bun:"name,notnull"    json:"name"` // unique per scope
 	Description string `bun:"description,notnull" json:"description"`
-	// Content is the full SKILL.md; capped at write time (maxSkillBytes) and
-	// omitted from list responses (ListMeta).
+	// Content is the full SKILL.md, capped at write time (maxSkillBytes) and omitted from list responses.
 	Content string `bun:"content,notnull,type:text" json:"content,omitempty"`
 
-	// Source records where an imported skill came from — the repo or raw URL,
-	// the path inside the repo, and the commit it was fetched at — so a
-	// re-import can match and refresh it. All empty for a skill authored in
-	// the workbench.
+	// SourceRepo, SourcePath and SourceSHA record where an import came from, for a re-import to match; empty when authored here.
 	SourceRepo string `bun:"source_repo,nullzero" json:"source_repo,omitempty"`
 	SourcePath string `bun:"source_path,nullzero" json:"source_path,omitempty"`
 	SourceSHA  string `bun:"source_sha,nullzero"  json:"source_sha,omitempty"`
-	// RepoLabel is SourceRepo reduced to the model-facing prefix ("owner/repo",
-	// or the host), materialized in BeforeAppendModel because the unique name
-	// indexes key on it.
+	// RepoLabel is SourceRepo reduced to the prefix the unique name indexes key on ("owner/repo" or the host), derived on write.
 	RepoLabel string `bun:"repo_label,nullzero" json:"repo_label,omitempty"`
-	// Detached marks an imported skill edited in the workbench: a re-import
-	// skips it instead of overwriting the local edit.
+	// Detached marks an imported skill edited here; a re-import skips it.
 	Detached bool `bun:"detached,notnull" json:"detached,omitempty"`
 
 	// Scope/OwnerID: row visibility and its permanent creator.
@@ -304,15 +233,13 @@ type Skill struct {
 }
 
 // Memory is one remembered text, keyed within its scope: what an agent reads
-// with every request (the global and agent scopes) or keeps for itself
-// across a conversation's compactions and resets (the session scope). The
-// rules per scope are MemoryPolicies.
+// with every request (global, agent) or keeps for itself across a session's
+// compactions and resets (session). The rules per scope are MemoryPolicies.
 type Memory struct {
 	bun.BaseModel `bun:"table:memories,alias:mem"`
 
 	ID string `bun:"id,pk,type:uuid" json:"id"`
-	// ScopeKind is global, agent or session; ScopeID names the agent or
-	// session it belongs to, empty for global.
+	// ScopeKind is global, agent or session; ScopeID names the agent or session, empty for global.
 	ScopeKind string `bun:"scope_kind,notnull" json:"scope_kind"`
 	ScopeID   string `bun:"scope_id,notnull"   json:"scope_id,omitempty"`
 	// Gen is the session generation a session memory belongs to; empty otherwise.
@@ -323,8 +250,7 @@ type Memory struct {
 	Metadata string `bun:"metadata"        json:"metadata,omitempty"`
 	// WrittenBy is user or model.
 	WrittenBy string `bun:"written_by,notnull" json:"written_by"`
-	// OwnerID is the user who wrote it: the caller, or the session's owner
-	// when the model did.
+	// OwnerID is the user who wrote it: the caller, or the session's owner when the model did.
 	OwnerID   string    `bun:"owner_id,nullzero,type:uuid" json:"owner_id,omitempty"`
 	CreatedAt time.Time `bun:"created_at,notnull"          json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,notnull"          json:"updated_at"`
@@ -339,14 +265,11 @@ type Attachment struct {
 
 	ID      string `bun:"id,pk,type:uuid"           json:"id"`
 	OwnerID string `bun:"owner_id,notnull,type:uuid" json:"owner_id"`
-	// Key addresses the object in the bucket; the public URL is derived from
-	// the CURRENT s3_public_base_url setting, so moving buckets means moving
-	// objects, never rewriting history.
+	// Key addresses the object in the bucket; the public URL is derived from the current s3_public_base_url.
 	Key  string `bun:"key,notnull"  json:"key"`
 	Mime string `bun:"mime,notnull" json:"mime"`
 	Size int64  `bun:"size,notnull" json:"size"`
-	// Bound flips when a run accepts the attachment; an unbound row past the
-	// grace window is an orphan the reaper collects, object included.
+	// Bound: set when a run accepts the attachment, cleared when the last session referencing it is deleted; unbound rows are collected.
 	Bound     bool      `bun:"bound,notnull"      json:"bound"`
 	CreatedAt time.Time `bun:"created_at,notnull" json:"created_at"`
 }
@@ -374,10 +297,7 @@ type PromptProfile struct {
 	// ContextGuidanceChars is the memory and reset guidance the build appended.
 	ContextGuidanceChars int `json:"context_guidance_chars,omitempty"`
 	SkillsIndexChars     int `json:"skills_index_chars,omitempty"`
-	// Tools are the locally attached tools, bucketed by what attached them.
-	// MCP is absent here: its tools live on the server, not on the agent, and
-	// are sized by the read path (which is also the only place a live server
-	// can be asked).
+	// Tools are the locally attached tools by origin; MCP tools are sized by the read path, not here.
 	Tools []ToolBucket `json:"tools,omitempty"`
 	// MCPServerIDs are the servers the build wired up, in config order.
 	MCPServerIDs []string `json:"mcp_server_ids,omitempty"`
@@ -388,8 +308,7 @@ type ToolBucket struct {
 	Source string `json:"source"`
 	Count  int    `json:"count"`
 	Chars  int    `json:"chars"`
-	// Unavailable marks a bucket that could not be measured (an MCP server that
-	// is disconnected or did not answer). Reported as unknown, never as zero.
+	// Unavailable marks a bucket that could not be measured (a disconnected MCP server): unknown, never zero.
 	Unavailable bool `json:"unavailable,omitempty"`
 }
 
@@ -423,10 +342,7 @@ type TraceEvent struct {
 	ID        string `bun:"id,pk,type:uuid"      json:"id"`
 	SessionID string `bun:"session_id,notnull,type:uuid" json:"session_id"`
 	RunID     string `bun:"run_id,notnull,type:uuid" json:"run_id"`
-	// ParentRunID is the run's LINEAGE: for a task wake-up run, the run whose
-	// spawn started the chain. Recorded on the trace itself so the panel's run
-	// grouping reads it directly — deriving it from task rows or notification
-	// text broke on every surface that does not carry them (forks above all).
+	// ParentRunID is the run whose spawn started this run's chain; the panel groups runs by it.
 	ParentRunID string `bun:"parent_run_id,nullzero,type:uuid" json:"parent_run_id,omitempty"`
 	Kind        string `bun:"kind,notnull"         json:"kind"`
 	SpanID      string `bun:"span_id"              json:"span_id,omitempty"`
@@ -434,21 +350,16 @@ type TraceEvent struct {
 	Name        string `bun:"name,notnull"         json:"name"`
 	Detail      string `bun:"detail"               json:"detail,omitempty"`
 	Error       string `bun:"error"                json:"error,omitempty"`
-	// Data is the span's metadata JSON. Its payload fields live in trace_blobs:
-	// Layout names each one and its element count, Refs is
-	// the sha256 of every element in that order, 32 bytes each. Both NULL
-	// when the span has no payload.
+	// Data is the span's metadata JSON; Layout and Refs (32-byte sha256 per element) address its payload in trace_blobs, NULL without one.
 	Data      string    `bun:"data"                 json:"data,omitempty"`
 	Layout    string    `bun:"layout,nullzero"      json:"-"`
 	Refs      []byte    `bun:"refs,nullzero"        json:"-"`
 	StartedAt string    `bun:"started_at"           json:"started_at,omitempty"`
 	EndedAt   string    `bun:"ended_at"             json:"ended_at,omitempty"`
 	CreatedAt time.Time `bun:"created_at,notnull"   json:"created_at"`
-	// PayloadOmitted marks a summary row (TraceStore.ListSummaryBySession)
-	// whose payload was left out; GetBySpan serves it inlined into Data.
+	// PayloadOmitted marks a summary row whose payload was left out; GetBySpan serves it inlined into Data.
 	PayloadOmitted bool `bun:"payload_omitted,scanonly" json:"payload_omitted,omitempty"`
-	// Attachments are the image attachments the span's input items reference,
-	// resolved from their stored references; URL is filled by the handler.
+	// Attachments are the image attachments the span's input references; URL is filled by the handler.
 	Attachments []EntryAttachment `bun:"-" json:"attachments,omitempty"`
 }
 
@@ -464,55 +375,38 @@ type TraceBlob struct {
 	Body []byte `bun:"body,notnull"`
 }
 
-// Sandbox is a complete sandbox definition: WHERE it runs and WHAT runs on
-// it, one row (decisions §5.36). Its fields split by MUTABILITY: the type and
-// the destination are a project's identity and freeze while projects live on
-// the sandbox (SandboxIdentityChanged); everything else is content, reaching
-// bound sessions at their next run (workbench invariant 45).
+// Sandbox is a complete sandbox definition, where it runs and what runs on
+// it — see decisions §5.36.
 type Sandbox struct {
 	bun.BaseModel `bun:"table:sandboxes,alias:sb"`
 
 	ID   string `bun:"id,pk,type:uuid" json:"id"`
 	Name string `bun:"name,notnull" json:"name"`
-	// Type is the backend — one of SandboxTypes.
+	// Type is the backend, one of SandboxTypes; frozen while projects live on the sandbox.
 	Type string `bun:"type,notnull" json:"type"`
 
-	// Config holds the settings as JSON (DockerConfig or E2BConfig). Stored
-	// as TEXT and sent to/received from the API as a raw JSON object (no
-	// double-encoding).
+	// Config holds the settings as JSON (DockerConfig or E2BConfig), exchanged with the API as a raw object.
 	Config json.RawMessage `bun:"config,type:text,nullzero" json:"config,omitempty"`
 
-	// Prompt is appended to the instructions of every agent in a session bound
-	// to a project on this sandbox — content, not identity, and not a
-	// retirement trigger: an edit reaches the next run without replacing live
-	// instances.
+	// Prompt is appended to the instructions of every agent in a session bound to a project here; an edit reaches the next run.
 	Prompt string `bun:"prompt" json:"prompt,omitempty"`
 
-	// Revision counts this row's WRITES, name-only included — the
-	// expected-revision CAS every update carries. No runtime generation here:
-	// the ONE runtime axis is the project's, bumped on every
-	// project naming this sandbox when its content changes.
+	// Revision counts the row's writes, name-only included; every update carries the one it expects.
 	Revision int64 `bun:"revision,notnull,default:1" json:"revision,omitempty"`
 
 	CreatedAt time.Time `bun:"created_at,notnull" json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,notnull" json:"updated_at"`
 
-	// Supports is the type's capability row, derived per response (never
-	// stored) — see SandboxSupports.
+	// Supports is the type's capability row (SandboxSupports), derived per response and never stored.
 	Supports SandboxSupports `bun:"-" json:"supports"`
 }
 
-// DockerConfig is the Sandbox.Config payload for type "docker". The first
-// group is the DESTINATION — which daemon, and how to reach it — and freezes
-// while projects live on the sandbox; the rest is content.
+// DockerConfig is the Sandbox.Config payload for type "docker": the daemon
+// and how to reach it (frozen while projects live on the sandbox), then content.
 type DockerConfig struct {
-	// Host reaches a remote daemon: "ssh://user@host[:port]" (pure-Go SSH to
-	// the remote's docker socket) or "tcp://host:port". Empty = the local
-	// daemon.
+	// Host reaches a remote daemon, "ssh://user@host[:port]" or "tcp://host:port"; empty is the local daemon.
 	Host string `json:"host,omitempty"`
-	// The SSH authentication for an ssh:// Host: methods are tried in order
-	// (agent, key file, password); host keys verify against known_hosts
-	// unless the insecure flag opts out.
+	// SSH authentication for an ssh:// Host, tried in order: agent, key file, password; host keys verify against known_hosts unless insecure.
 	SSHUseAgent        bool   `json:"ssh_use_agent,omitempty"`
 	SSHKeyFile         string `json:"ssh_key_file,omitempty"`
 	SSHPassword        string `json:"ssh_password,omitempty"` // write-only (mask semantics)
@@ -522,47 +416,33 @@ type DockerConfig struct {
 	Image   string `json:"image"`
 	Runtime string `json:"runtime,omitempty"` // OCI runtime (e.g. "runsc" for gVisor)
 	User    string `json:"user,omitempty"`    // user[:group] the container runs as; "" = the image's own user
-	// Network names the docker network the container joins; empty leaves it
-	// with no network at all.
+	// Network is the docker network the container joins; empty leaves it with none.
 	Network string `json:"network,omitempty"`
-	// MemoryMB / CPUs cap the container's resources; 0 = unlimited (memory)
-	// and the daemon default (cpus).
+	// MemoryMB and CPUs cap the container; 0 takes the workbench default (sandboxes.DefaultMemoryMB, DefaultCPUs).
 	MemoryMB         int64   `json:"memory_mb,omitempty"`
 	CPUs             float64 `json:"cpus,omitempty"`
 	MaxReadFileBytes int64   `json:"max_read_file_bytes,omitempty"` // read_file cap in bytes; 0 = backend default (8 MiB)
 }
 
-// E2BConfig is the Sandbox.Config payload for type "e2b": which service, and
-// which of its templates. APIURL and Domain are the destination; they, the
-// template and the lifecycle policy a /connect resume cannot re-apply
-// (template_id, auto_pause, allow_internet) all freeze while projects live on
-// the sandbox (see SandboxIdentityChanged).
+// E2BConfig is the Sandbox.Config payload for type "e2b": the service and
+// its template; APIURL, Domain, TemplateID, AutoPause and AllowInternet freeze while projects live on the sandbox.
 type E2BConfig struct {
 	// APIURL is the control plane base; empty means E2B's own.
 	APIURL string `json:"api_url,omitempty"`
-	// Domain is the suffix a sandbox's public hosts are built from; empty
-	// means E2B's own.
+	// Domain is the suffix a sandbox's public hosts are built from; empty means E2B's own.
 	Domain string `json:"domain,omitempty"`
 	// APIKey authenticates the control plane. Write-only (mask semantics).
 	APIKey string `json:"api_key,omitempty"`
-	// DataPlaneAuth selects the credential the in-sandbox daemon takes:
-	// "" (auto), "access_token", "api_key" or "none". Configuration rather
-	// than a constant because the compatible services differ.
+	// DataPlaneAuth selects the in-sandbox daemon's credential: "" (auto), "access_token", "api_key" or "none".
 	DataPlaneAuth string `json:"data_plane_auth,omitempty"`
 
 	// TemplateID names a template that already exists on the service.
 	TemplateID string `json:"template_id"`
-	// User is the account commands run as; "" = e2b's default ("user"). It must
-	// be an account the template provides, so a template that names its account
-	// differently is reachable. Passed per request, so editing it needs no rebuild.
+	// User is the account commands run as, one the template provides; "" is e2b's default ("user").
 	User string `json:"user,omitempty"`
-	// TimeoutSeconds is the lease a sandbox is created and refreshed with;
-	// 0 uses the backend default.
+	// TimeoutSeconds is the lease a sandbox is created and refreshed with; 0 uses the backend default.
 	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
-	// AutoPause makes the lease PAUSE the sandbox rather than kill it, so an
-	// idle project keeps its files. Defaults to true when absent (set by
-	// NormalizeSandboxConfig); serialized explicitly — no omitempty — so a
-	// false (kill on expiry) is never confused with an unset field.
+	// AutoPause pauses rather than kills on lease expiry; true when absent, serialized without omitempty so false is kept.
 	AutoPause bool `json:"auto_pause"`
 	// AllowInternet gives the sandbox outbound network access.
 	AllowInternet bool `json:"allow_internet,omitempty"`
@@ -579,40 +459,23 @@ type Project struct {
 
 	ID      string `bun:"id,pk,type:uuid"               json:"id"`
 	OwnerID string `bun:"owner_id,notnull,type:uuid"    json:"owner_id"`
-	// SandboxID is what the project runs on. It may move only to a sandbox at
-	// the SAME type and destination (checkMove, else 409): the freeze is on
-	// which machine, not on the image, which edits freely on the sandbox row.
+	// SandboxID is what the project runs on; it may move only to a sandbox of the same type and destination (409 otherwise).
 	SandboxID string `bun:"sandbox_id,notnull,type:uuid" json:"sandbox_id"`
-	// Name is display only — the storage is keyed by ID, so a rename moves
-	// nothing. Unique per (owner, sandbox) via idx_projects_owner_sandbox_name.
+	// Name is display only, unique per (owner, sandbox); a rename moves nothing.
 	Name string `bun:"name,notnull"                json:"name"`
-	// Env is the canonical environment the container is created with
-	// (NormalizeProjectEnv), values sealed at rest. json:"-" is the default
-	// that keeps it off every listing: GET /projects/{id} is the one endpoint
-	// that returns it, and it returns names with masked values.
+	// Env is the canonical environment the container is created with, sealed at rest; GET /projects/{id} alone returns it, values masked.
 	Env string `bun:"env,type:text,nullzero" json:"-"`
-	// InstanceRef is the backend's own handle on the project's live sandbox,
-	// for a backend whose instance id it does not derive from the project id.
-	// Docker derives its container name and needs none; it exists so a remote
-	// backend has somewhere to keep the id its API minted.
+	// InstanceRef is the backend's handle on the live instance, for a backend that does not derive it from the project id.
 	InstanceRef string `bun:"instance_ref,nullzero" json:"-"`
 	// Revision is the expected-revision CAS every update lands against.
-	// RuntimeGen is the workbench's ONE runtime axis: it moves when this
-	// project's own content changes AND when the sandbox it names changes
-	// underneath it, so the instance cache and the terminal registry need a
-	// single fence rather than one per entity. A rename moves neither
-	// container nor terminal.
+	// RuntimeGen moves when the project's content or its sandbox changes; the instance cache and terminals fence on it.
 	Revision   int64     `bun:"revision,notnull,default:1"    json:"revision,omitempty"`
 	RuntimeGen int64     `bun:"runtime_gen,notnull,default:1" json:"-"`
 	CreatedAt  time.Time `bun:"created_at,notnull"            json:"created_at"`
 	UpdatedAt  time.Time `bun:"updated_at,notnull"            json:"updated_at"`
-	// StorageHint names where the files live — the named volume on the
-	// sandbox's daemon. Derived per response by the handler for admins only,
-	// never stored: a delete DESTROYS that storage, so the UI can say what
-	// will be lost.
+	// StorageHint names where the files live (the named volume), derived per response for admins only and never stored.
 	StorageHint string `bun:"-" json:"storage_hint,omitempty"`
-	// SessionCount is how many sessions bind this project — filled by List
-	// (scanonly), so a delete knows whether it will be refused.
+	// SessionCount is how many sessions bind this project, filled by List.
 	SessionCount int `bun:"session_count,scanonly" json:"session_count,omitempty"`
 }
 
@@ -624,16 +487,11 @@ type Guardrail struct {
 	ID          string `bun:"id,pk,type:uuid"    json:"id"`
 	Name        string `bun:"name,notnull"       json:"name"`
 	Description string `bun:"description"        json:"description"`
-	// Stages are the run stages this guardrail inspects: input, output,
-	// tool_input, tool_output. One definition covering several is the SDK's
-	// model — a content scanner that should see the input, the tool arguments
-	// and the final output is one guardrail, not three near-identical copies.
+	// Stages are the run stages this guardrail inspects: input, output, tool_input, tool_output.
 	Stages []string        `bun:"stages,type:text"   json:"stages"`
 	Mode   string          `bun:"mode,notnull"       json:"mode"` // regex | max_length
 	Config json.RawMessage `bun:"config,type:text,nullzero" json:"config,omitempty"`
-	// Blocking, at the input stage, runs the guardrail to completion BEFORE the
-	// first model call (a gate) instead of racing it — a tripwire then prevents
-	// the call and any token spend. No effect at the other stages.
+	// Blocking, at the input stage, runs the guardrail before the first model call as a gate; no effect at other stages.
 	Blocking  bool      `bun:"blocking" json:"blocking"`
 	CreatedAt time.Time `bun:"created_at,notnull" json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,notnull" json:"updated_at"`
@@ -654,22 +512,15 @@ type PendingApproval struct {
 
 	RunID     string `bun:"run_id,pk,type:uuid"    json:"run_id"`
 	SessionID string `bun:"session_id,notnull,type:uuid" json:"session_id"`
-	// Kind is what the decision is about: "" a tool call the run paused on
-	// (State is the run to resume), ApprovalKindStep a workflow step waiting to
-	// start (no run exists yet — approving launches it, rejecting cancels the
-	// execution).
+	// Kind is "" for a tool call the run paused on, ApprovalKindStep for a workflow step waiting to start.
 	Kind          string `bun:"kind"                   json:"kind,omitempty"`
 	AgentConfigID string `bun:"agent_config_id,nullzero,type:uuid" json:"agent_config_id,omitempty"`
 	ProjectID     string `bun:"project_id,nullzero,type:uuid" json:"project_id,omitempty"`
 	// State is the JSON from agents.RunState.MarshalJSON. Hidden from the API.
 	State string `bun:"state,type:text,notnull" json:"-"`
-	// ToolCalls is the JSON array of pending tool calls ([]PendingToolCall)
-	// shown to the user.
+	// ToolCalls is the JSON array of pending tool calls ([]PendingToolCall) shown to the user.
 	ToolCalls json.RawMessage `bun:"tool_calls,type:text,nullzero" json:"tool_calls,omitempty"`
-	// UserInput is the text of the message that started this paused turn. The
-	// SDK only persists the turn to `messages` on completion, so during the
-	// pause this is the only place the user's prompt is stored — the UI
-	// reconstructs the user bubble from it on reload.
+	// UserInput is the text of the message that started the paused turn; the UI shows it while the run waits.
 	UserInput string    `bun:"user_input,type:text,nullzero" json:"user_input,omitempty"`
 	CreatedAt time.Time `bun:"created_at,notnull"            json:"created_at"`
 }
@@ -786,12 +637,10 @@ type User struct {
 	ID    string `bun:"id,pk,type:uuid" json:"id"`
 	Email string `bun:"email,notnull"  json:"email"` // lowercased; unique via idx_users_email
 	Name  string `bun:"name,nullzero"  json:"name,omitempty"`
-	// AvatarURL is the provider's picture URL, carried by /auth/me and loaded
-	// by the browser; the CSP admits the configured providers' image hosts.
+	// AvatarURL is the provider's picture URL; the CSP admits the configured providers' image hosts.
 	AvatarURL string `bun:"avatar_url,nullzero" json:"avatar_url,omitempty"`
 	Role      string `bun:"role,notnull"        json:"role"` // RoleAdmin | RoleMember
-	// DisabledAt, when set, is when an admin switched the account off: no
-	// credential of theirs authenticates until it is cleared.
+	// DisabledAt is when an admin switched the account off; no credential authenticates until it is cleared.
 	DisabledAt time.Time `bun:"disabled_at,nullzero" json:"disabled_at,omitzero"`
 
 	LastLoginAt time.Time `bun:"last_login_at,nullzero" json:"last_login_at,omitzero"`

@@ -32,6 +32,7 @@ go run ./examples/hello
 | [`examples/middleware`](../../examples/middleware/main.go) | Run middleware: `Retry` + `Approval` policy + evaluator-driven `Loop`, stacked |
 | [`examples/planmode`](../../examples/planmode/main.go) | Plan mode + todo list: read-only exploration, a `submit_plan` approval pause, then execution in the same run |
 | [`examples/runcompaction`](../../examples/runcompaction/main.go) | Run-level compaction: a `compaction.Strategy` folding tool results mid-run, at the turn boundary |
+| [`examples/contextmanagement`](../../examples/contextmanagement/main.go) | The context levers: the budget notice, `history_search`/`history_read` over folded history, the model's own memory by scope, and a `new_context` reset |
 | [`examples/conversations`](../../examples/conversations/main.go) | `openai.ConversationsSession`: history stored server-side via the Conversations API |
 | [`examples/prompt`](../../examples/prompt/main.go) | Binding an OpenAI stored prompt via `Agent.Prompt` |
 | [`examples/sandbox`](../../examples/sandbox/main.go) | An agent that writes and runs code in a local sandbox |

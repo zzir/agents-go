@@ -242,9 +242,11 @@ func newAuth(ctx context.Context, st *stores, baseURL string, log *slog.Logger) 
 			token = os.Getenv("AGENTS_TOKEN")
 		}
 		if token == "" {
+			// Logged only when generated: a token the operator chose is theirs
+			// to keep out of the log.
 			token = server.GenerateToken()
+			log.Info("auth token", "token", token)
 		}
-		log.Info("auth token", "token", token)
 		return authn.NewStatic(token, localUser), nil
 	case "oauth":
 		if flagToken != "" {

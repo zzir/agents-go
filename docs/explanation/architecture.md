@@ -215,6 +215,7 @@ cmd/agents-server/
 │   ├── providers/              the registry of model-provider backends; the ChatGPT login
 │   ├── sandboxes/              live sandbox instances behind stored configs; exec_command trust
 │   ├── guardrails/             stored + built-in guardrail definitions → SDK guardrails
+│   ├── attachments/            image attachments: the S3 client (SigV4, three operations) and the upload reaper
 │   ├── settings/               the settings registry and the typed reader (incl. the proxy client)
 │   ├── logging/                structured logging + context propagation
 │   ├── docs/                   generated OpenAPI 3.1 document, swagger.yaml (make openapi)

@@ -238,7 +238,7 @@ type repoScopeReq struct {
 }
 
 // SetRepoScope flips a whole repo group between private and global — all or
-// nothing, so a group is always one scope (decisions §5.29). Promote is
+// nothing, so a group is always one scope (decisions §5.31). Promote is
 // admin-only; demote is the admin's or the group owner's, returning the rows
 // to their author.
 //
@@ -290,6 +290,8 @@ func (h *SkillHandler) SetRepoScope(c *gin.Context) {
 		conflict(c, "the repository's skills are already "+req.Scope)
 		return
 	}
+	server.SetAuditResource(c, req.Repo)
+	server.SetAuditDetail(c, "owner="+groupOwner+" scope="+req.Scope)
 	c.Status(http.StatusNoContent)
 }
 

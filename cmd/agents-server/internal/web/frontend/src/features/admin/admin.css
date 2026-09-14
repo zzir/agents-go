@@ -1,4 +1,4 @@
-/* A row with no author (a legacy global row): said as such, quietly. */
+/* A row with no author: said as such, quietly. */
 .owner-none {
   color: var(--fgColor-muted);
   font-style: italic;
