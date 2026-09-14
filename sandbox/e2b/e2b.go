@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/zzir/agents-go/sandbox"
@@ -106,9 +105,9 @@ type Options struct {
 	User string
 	// DataPlaneAuth selects the envd credential; empty means AuthAuto.
 	DataPlaneAuth DataPlaneAuth
-	// Headers are added to every request on both planes, after the credential
-	// headers, so a same-named entry replaces them — for a compatible service
-	// that authenticates with its own header.
+	// Headers are added to every request on both planes, under the client's
+	// own credential and protocol headers, which a same-named entry cannot
+	// replace — for a compatible service that authenticates with its own header.
 	Headers map[string]string
 	// MaxReadFileBytes caps ReadFile; zero means the SDK default.
 	MaxReadFileBytes int64
@@ -143,9 +142,6 @@ type Sandbox struct {
 	freshWorkDir bool
 	// wdMu serializes that first-use mkdir; taken before (never under) s.mu.
 	wdMu sync.Mutex
-	// noTimeout remembers a service that answered /timeout with 501 (Bailian),
-	// so the lease extends through /connect from then on.
-	noTimeout atomic.Bool
 }
 
 // leaseValid reports whether the lease can skip a control-plane refresh: at
@@ -221,7 +217,8 @@ var defaultClient = &http.Client{
 	},
 }
 
-// addHeaders applies Options.Headers to req, last so they win.
+// addHeaders applies Options.Headers to req, first, so the client's own
+// headers set after them win.
 func (s *Sandbox) addHeaders(req *http.Request) {
 	for k, v := range s.opts.Headers {
 		req.Header.Set(k, v)

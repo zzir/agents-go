@@ -4,24 +4,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"time"
 
 	"github.com/zzir/agents-go/sandbox"
 )
 
-// Start provisions the sandbox — creating it, or resuming a paused one — and
-// extends its lease. It is what ensure already does on the first command,
-// exposed so a person can wait for the provisioning where they can see it.
+// Start provisions the sandbox — creating it, or resuming a paused one — on
+// a fresh full lease (a runway of the whole TTL forces the one connect). It is
+// what ensure already does on the first command, exposed so a person can wait
+// for the provisioning where they can see it.
 func (s *Sandbox) Start(ctx context.Context) error {
-	id, err := s.ensure(ctx)
-	if err != nil {
+	if _, err := s.ensureFor(ctx, time.Duration(s.timeout())*time.Second); err != nil {
 		return err
 	}
-	if err := s.ensureWorkDir(ctx); err != nil {
-		return err
-	}
-	return s.refresh(ctx, id, 0)
+	return s.ensureWorkDir(ctx)
 }
 
 // Stop pauses the sandbox, keeping its filesystem. On a service that
@@ -93,25 +89,27 @@ func (s *Sandbox) Destroy(ctx context.Context) error {
 	return nil
 }
 
-// ErrNotProvisioned is Address's answer before any sandbox exists.
-var ErrNotProvisioned = errors.New("e2b: no sandbox has been provisioned yet")
+// ErrNoSandbox is Address's answer when there is nothing to address: no
+// sandbox provisioned yet, or the service no longer has the one this client held.
+var ErrNoSandbox = errors.New("e2b: no sandbox to address")
 
 // Address is where the sandbox's ports are public — "<port>-<id>.<domain>",
-// the service's own scheme. It reads, never provisions or resumes: a sandbox
-// this client has not created or been given is ErrNotProvisioned, one the
-// service no longer knows is fs.ErrNotExist.
+// the service's own scheme. It is a read: it neither provisions nor resumes,
+// and changes nothing on the client (spec §2.7u).
 func (s *Sandbox) Address(ctx context.Context) (id, domain string, err error) {
 	id = s.currentID()
 	if id == "" {
-		return "", "", ErrNotProvisioned
+		return "", "", ErrNoSandbox
 	}
 	info, err := s.get(ctx, id)
 	if err != nil {
 		if isNotFound(err) {
-			return "", "", fmt.Errorf("e2b: sandbox %s: %w", id, fs.ErrNotExist)
+			return "", "", fmt.Errorf("e2b: sandbox %s is gone: %w", id, ErrNoSandbox)
 		}
 		return "", "", err
 	}
-	s.adopt(info)
+	if info.Domain != "" {
+		return id, info.Domain, nil
+	}
 	return id, s.sandboxDomain(), nil
 }

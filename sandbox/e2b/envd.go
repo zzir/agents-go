@@ -48,8 +48,8 @@ func (s *Sandbox) envdRequestAt(ctx context.Context, base, method, path string, 
 	if err != nil {
 		return nil, fmt.Errorf("e2b: %s %s: %w", method, path, err)
 	}
-	s.authenticate(req)
 	s.addHeaders(req)
+	s.authenticate(req)
 	return req, nil
 }
 

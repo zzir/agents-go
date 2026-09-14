@@ -141,8 +141,9 @@ already exists on the service, and — for anything but E2B's own cloud — the
 create response carries is adopted over it, and it is the fallback for a
 service that returns none. A service that authenticates with its own header
 (a bearer token, say) sets `Headers`, sent with every request on both planes —
-the control plane and the sandbox's daemon — after the credential headers, so
-a same-named entry replaces them. The remote sandbox is created lazily on
+the control plane and the sandbox's daemon — under the client's own credential
+headers ([spec §2.7u](../reference/spec.md#27u-an-e2b-compatible-service-is-addressed-by-its-responses)).
+The remote sandbox is created lazily on
 first use, exactly as the docker container is; `OnSandboxID` is how a caller
 remembers which one, so a restart resumes it rather than provisioning a second
 ([decisions §5.34](../explanation/decisions.md)). Any template works, including
@@ -150,8 +151,8 @@ a stock one: the working directory is created on the sandbox rather than
 expected of the image ([spec §2.7q](../reference/spec.md#27q-a-sandbox-makes-its-working-directory)).
 
 `Address` returns the sandbox id and the domain its ports are public under
-(`<port>-<id>.<domain>`), reading only — `ErrNotProvisioned` before a sandbox
-exists ([decisions §5.70](../explanation/decisions.md)).
+(`<port>-<id>.<domain>`), reading only — `ErrNoSandbox` when there is none to
+address ([decisions §5.70](../explanation/decisions.md)).
 
 `Env` sets variables on the **container**, so a command, a persistent shell and a terminal opened into it all read the same values; an `ExecRequest.Env` entry of the same name wins for that one call. It is part of the adoption fingerprint: changing it replaces a persistent container instead of adopting the old one, keeping `/workspace` but discarding whatever was installed into the container itself ([spec §2.7n](../reference/spec.md#27n-a-sandboxs-environment-is-part-of-its-container-identity)).
 

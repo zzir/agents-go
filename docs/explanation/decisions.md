@@ -775,17 +775,16 @@ Decided 2026-08-28; verified against E2B's cloud, Alibaba Cloud Function Compute
 **Decision.** Function Compute's cloud sandbox is E2B SDK compatible across
 everything the workbench needs, so the second backend is **one backend that
 speaks the E2B API** and a sandbox row naming the service — `api_url`,
-`domain`, `api_key`, and since 2026-09-14 `headers` (Bailian authenticates
-with a bearer header and ignores the key) — with no `flavor` discriminator: the
-moment one appears that configuration cannot express, it is a new decision,
-not a switch to grow. The client is written here — six REST calls and Connect-over-JSON,
+`domain`, `api_key`, `headers` — with no `flavor` discriminator: the moment
+one appears that configuration cannot express, it is a new decision, not a
+switch to grow. The client is written here — five REST calls and Connect-over-JSON,
 ~150 lines of standard library — which keeps `sandbox/e2b` in the ROOT module
 (§5.7). The sandbox is remembered, not searched for: its id lands in
 `projects.instance_ref` before the client will use it, and a failure to
 record fails the create, since an unrecorded sandbox is billed compute nobody
 will ever stop. The lease is extended on demand — every control call sends
-`max(configured TTL, the operation's own bound)` to `/timeout`, or to
-`/connect` once a service answers 501 (Bailian) — never by a keepalive. Stop
+`max(configured TTL, the operation's own bound)` through `connect`, which
+resumes a paused sandbox and only extends a running one — never by a keepalive. Stop
 is pause and Reclaim is kill: the sandbox IS the storage, so killing it is
 the whole of §5.33's delete, and `auto_pause` defaults to true. Every create
 asks for a per-sandbox token (`secure: true`), because without it E2B's
@@ -794,7 +793,8 @@ daemon takes no credential at all.
 **Rejected.** One backend per cloud — the services differ in four fields. An
 auth-scheme switch (`X-API-Key` vs `Authorization: Bearer`) instead of
 `headers` — Bailian wants both at once, and `headers` is the E2B SDK's own
-parameter. A community Go SDK, or a protobuf toolchain with generated stubs — two module
+parameter. `/timeout` for the extension — Bailian lacks it, and its 404 would
+read as a dead sandbox. A community Go SDK, or a protobuf toolchain with generated stubs — two module
 dependencies for six messages; generate them if the surface grows past that.
 A metadata query to find a sandbox — a filter syntax the compatible services
 do not document identically. A keepalive goroutine — the extension rides the
@@ -805,8 +805,8 @@ probe, not a schema. A terminal idle past one full lease can lose its
 sandbox. Pausing on Function Compute is gated behind a per-function feature,
 and the client passes the service's refusal through verbatim.
 
-Rules: [Sandboxes](../reference/protocol.md#sandboxes--apiv1sandboxes); the
-services' rendering quirks live on the code that absorbs them (`sandbox/e2b`).
+Rules: spec §2.7u; [Sandboxes](../reference/protocol.md#sandboxes--apiv1sandboxes);
+the services' rendering quirks live on the code that absorbs them (`sandbox/e2b`).
 
 ### 5.35 A port preview is a gateway with a grant, not a published port (retired)
 

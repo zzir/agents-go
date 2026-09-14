@@ -1284,6 +1284,23 @@ does.
 
 — see [decisions §5.14](../explanation/decisions.md#514-sandbox-file-tools-share-execs-path-view)
 
+### 2.7u An E2B-compatible service is addressed by its responses
+
+`sandbox/e2b` speaks to E2B's cloud and to the services that copy its API;
+what a row configures and what a response carries are kept apart.
+
+- **`Options.Headers` ride on every request on both planes, under the client's
+  own credential and protocol headers** — a same-named entry never replaces
+  `X-API-Key`, `X-Access-Token`, `Content-Type` or `Connect-Protocol-Version`.
+- **A `domain` the service returns is adopted over the configured one**; the
+  configured one is the fallback for a service that returns none.
+- **The lease is extended through `connect` alone**: it resumes a paused
+  sandbox and only extends a running one's TTL, and its 404 is the one sign the
+  sandbox is gone — see decisions §5.34.
+- **`Address` is a read**: it never provisions or resumes and changes nothing
+  on the client; `ErrNoSandbox` before a sandbox exists and once the service no
+  longer has it.
+
 ### 2.8 Nested agent-as-tool attribution
 
 | Aspect | Attribution |

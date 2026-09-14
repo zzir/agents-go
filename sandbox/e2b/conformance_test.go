@@ -45,7 +45,7 @@ func fakeBackedSandbox(t *testing.T) (*e2b.Sandbox, *fakeService) {
 
 // fakeBackedSandboxWith chooses how the fake renders the protobuf: E2B 0.7's
 // spelling, or the older numeric one.
-func fakeBackedSandboxWith(t *testing.T, numericEnums bool) (*e2b.Sandbox, *fakeService) {
+func fakeBackedSandboxWith(t *testing.T, numericEnums bool, tweak ...func(*e2b.Options)) (*e2b.Sandbox, *fakeService) {
 	t.Helper()
 	root := t.TempDir()
 	f := newFakeService(t, root)
@@ -54,7 +54,7 @@ func fakeBackedSandboxWith(t *testing.T, numericEnums bool) (*e2b.Sandbox, *fake
 	if err != nil {
 		t.Fatal(err)
 	}
-	sb, err := e2b.New(e2b.Options{
+	opts := e2b.Options{
 		APIURL:     f.URL(),
 		Domain:     "test",
 		APIKey:     "key",
@@ -63,7 +63,11 @@ func fakeBackedSandboxWith(t *testing.T, numericEnums bool) (*e2b.Sandbox, *fake
 		// The fake serves one directory as the sandbox's filesystem, so the
 		// working directory is that directory.
 		WorkDir: root,
-	})
+	}
+	for _, fn := range tweak {
+		fn(&opts)
+	}
+	sb, err := e2b.New(opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,11 +229,11 @@ func TestE2BExportReaderCloseAbortsTheStream(t *testing.T) {
 	}
 }
 
-// timeoutCalls snapshots the TTLs the fake's /timeout endpoint was asked for.
-func timeoutCalls(f *fakeService) []int {
+// connectCalls snapshots the TTLs the fake's /connect endpoint was asked for.
+func connectCalls(f *fakeService) []int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return slices.Clone(f.timeoutCalls)
+	return slices.Clone(f.connectCalls)
 }
 
 // leasedAtLeast reports whether some call in calls asked for at least secs.
@@ -253,8 +257,8 @@ func TestE2BExportExtendsTheLease(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = rc.Close()
-	if calls := timeoutCalls(f); !leasedAtLeast(calls, 600) {
-		t.Fatalf("no refresh covered the 600s export bound; /timeout calls = %v", calls)
+	if calls := connectCalls(f); !leasedAtLeast(calls, 600) {
+		t.Fatalf("no refresh covered the 600s export bound; /connect calls = %v", calls)
 	}
 }
 
@@ -268,32 +272,8 @@ func TestE2BLongExecExtendsTheLease(t *testing.T) {
 	if _, err := sb.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}, Timeout: 20 * time.Minute}); err != nil {
 		t.Fatal(err)
 	}
-	if calls := timeoutCalls(f); !leasedAtLeast(calls, 1200) {
-		t.Fatalf("no refresh covered the 20m exec deadline; /timeout calls = %v", calls)
-	}
-}
-
-// A service without /timeout (Bailian answers 501) extends the lease through
-// /connect instead — once learned, /timeout is not asked again.
-func TestE2BLeaseFallsBackToConnect(t *testing.T) {
-	sb, f := fakeBackedSandbox(t)
-	f.noTimeout = true
-	if _, err := sb.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err != nil {
-		t.Fatal(err)
-	}
-	for _, timeout := range []time.Duration{20 * time.Minute, 30 * time.Minute} {
-		if _, err := sb.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}, Timeout: timeout}); err != nil {
-			t.Fatalf("exec with a %s bound: %v", timeout, err)
-		}
-	}
-	f.mu.Lock()
-	defused, connects := f.timeoutRefused, slices.Clone(f.connectCalls)
-	f.mu.Unlock()
-	if defused != 1 {
-		t.Errorf("/timeout was asked %d times, want once", defused)
-	}
-	if !leasedAtLeast(connects, 1800) {
-		t.Errorf("no /connect covered the 30m exec deadline; calls = %v", connects)
+	if calls := connectCalls(f); !leasedAtLeast(calls, 1200) {
+		t.Fatalf("no refresh covered the 20m exec deadline; /connect calls = %v", calls)
 	}
 }
 
@@ -309,8 +289,8 @@ func TestE2BOpenTerminalRefreshesTheLease(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer term.Close()
-	if calls := timeoutCalls(f); !leasedAtLeast(calls, e2b.DefaultTimeout) {
-		t.Fatalf("opening a terminal did not refresh the lease; /timeout calls = %v", calls)
+	if calls := connectCalls(f); !leasedAtLeast(calls, e2b.DefaultTimeout) {
+		t.Fatalf("opening a terminal did not refresh the lease; /connect calls = %v", calls)
 	}
 	// End the shell so its stream request does not outlive the server.
 	if _, err := term.Write([]byte("exit 0\n")); err != nil {

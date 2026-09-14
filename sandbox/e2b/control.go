@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// The control plane: the six calls a sandbox's life needs; everything else the
+// The control plane: the five calls a sandbox's life needs; everything else the
 // API offers is deliberately absent (decisions §5.34).
 
 // sandboxInfo is the service's view of one sandbox; only the fields this
@@ -61,27 +61,12 @@ func (s *Sandbox) ensureFor(ctx context.Context, runway time.Duration) (string, 
 		return id, nil // provisioned while waiting for the lock
 	}
 	if id := s.currentID(); id != "" {
-		info, err := s.get(ctx, id)
+		// One call covers every state: connect resumes a paused sandbox and
+		// extends a running one's lease, and its 404 is the one sign it is gone.
+		info, err := s.resume(ctx, id, runway)
 		switch {
-		case err == nil && !info.paused():
-			// Running: adopt its credential and extend the lease so a long
-			// session does not lose the sandbox to its TTL.
-			s.adopt(info)
-			switch rerr := s.refresh(ctx, id, runway); {
-			case rerr == nil:
-				s.markLeased(runway)
-				return id, nil
-			case isNotFound(rerr):
-				s.forget(id) // vanished between the read and the refresh; rebuild
-			default:
-				return "", rerr
-			}
 		case err == nil:
-			resumed, rerr := s.resume(ctx, id, runway)
-			if rerr != nil {
-				return "", rerr
-			}
-			s.adopt(resumed)
+			s.adopt(info)
 			s.markLeased(runway)
 			return id, nil
 		case isNotFound(err):
@@ -185,8 +170,9 @@ func (s *Sandbox) get(ctx context.Context, id string) (sandboxInfo, error) {
 	return out, err
 }
 
-// resume wakes a paused sandbox and extends its lease via `connect`, the
-// endpoint both E2B and the compatible services document (not deprecated `resume`).
+// resume connects to the sandbox via `connect`, the endpoint every service
+// documents (not the deprecated `resume`): a paused sandbox is resumed, a
+// running one's lease is extended — spec §2.7u.
 func (s *Sandbox) resume(ctx context.Context, id string, runway time.Duration) (sandboxInfo, error) {
 	var out sandboxInfo
 	err := s.control(ctx, http.MethodPost, "/sandboxes/"+id+"/connect", map[string]any{"timeout": s.leaseSeconds(runway)}, &out)
@@ -201,24 +187,6 @@ func (s *Sandbox) pause(ctx context.Context, id string) error {
 // kill destroys the sandbox AND its stored state.
 func (s *Sandbox) kill(ctx context.Context, id string) error {
 	return s.control(ctx, http.MethodDelete, "/sandboxes/"+id, nil, nil)
-}
-
-// refresh extends the sandbox's lease: /timeout, or /connect (which also
-// sets the timeout) on a service without it — Bailian answers 501.
-func (s *Sandbox) refresh(ctx context.Context, id string, runway time.Duration) error {
-	if !s.noTimeout.Load() {
-		err := s.control(ctx, http.MethodPost, "/sandboxes/"+id+"/timeout", map[string]any{"timeout": s.leaseSeconds(runway)}, nil)
-		if !isNotImplemented(err) {
-			return err
-		}
-		s.noTimeout.Store(true)
-	}
-	info, err := s.resume(ctx, id, runway)
-	if err != nil {
-		return err
-	}
-	s.adopt(info)
-	return nil
 }
 
 // control performs one control-plane call. A 404 comes back as a not_found
@@ -236,11 +204,11 @@ func (s *Sandbox) control(ctx context.Context, method, path string, in, out any)
 	if err != nil {
 		return fmt.Errorf("e2b: %s %s: %w", method, path, err)
 	}
+	s.addHeaders(req)
 	req.Header.Set("X-API-Key", s.opts.APIKey)
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	s.addHeaders(req)
 	resp, err := s.httpClient().Do(req)
 	if err != nil {
 		return fmt.Errorf("e2b: %s %s: %w", method, path, err)
@@ -282,12 +250,6 @@ func (e *httpError) Error() string {
 func isConflict(err error) bool {
 	var he *httpError
 	return errors.As(err, &he) && he.Status == http.StatusConflict
-}
-
-// isNotImplemented reports a 501 — an endpoint the service does not have.
-func isNotImplemented(err error) bool {
-	var he *httpError
-	return errors.As(err, &he) && he.Status == http.StatusNotImplemented
 }
 
 // maxErrBody caps an error message so a huge or HTML error page does not flood
