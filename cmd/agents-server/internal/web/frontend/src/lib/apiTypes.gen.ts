@@ -3125,6 +3125,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/projects/{id}/host": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Project sandbox public address
+         * @description The sandbox id and the domain a port inside the sandbox is public at, as https://<port>-<sandbox_id>.<domain>. Only a sandbox whose row declares supports.public_host answers; a project whose sandbox was never provisioned is 409.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Project id */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.projectHostResp"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description no sandbox provisioned yet */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description Bad Gateway */
+                502: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{id}/sandbox": {
         parameters: {
             query?: never;
@@ -8062,6 +8131,10 @@ export interface components {
             storage_hint?: string;
             updated_at?: string;
         };
+        "handler.projectHostResp": {
+            domain?: string;
+            sandbox_id?: string;
+        };
         "handler.projectReq": {
             /**
              * @description Env is the environment the project's container is created with;
@@ -8585,6 +8658,8 @@ export interface components {
         };
         /** @description Supports is the type's capability row (SandboxSupports), derived per response and never stored. */
         "store.SandboxSupports": {
+            /** @description PublicHost: every port inside the sandbox is public at <port>-<sandbox id>.<domain>. */
+            public_host?: boolean;
             /** @description Rebuild: the compute can be thrown away in place, keeping the storage. */
             rebuild?: boolean;
         };

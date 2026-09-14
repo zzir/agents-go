@@ -1648,3 +1648,31 @@ the field.
 
 Rules: [invariant 9](workbench-invariants.md);
 [protocol.md, Agents](../reference/protocol.md#agents--apiv1agents).
+
+### 5.70 An E2B port is an address to copy, not a proxy
+
+Decided 2026-09-14 (workbench invariant 53).
+
+**Decision.** On a service speaking the E2B API every sandbox port is already
+public at `<port>-<sandbox id>.<domain>`, so the workbench shows that address
+— the id and the domain the service returned, `<port>` left to the reader —
+in a dialog to copy. Nothing is proxied, granted or published, and the read
+neither creates nor resumes the sandbox. The row declares it through
+`supports.public_host`; docker, whose ports are not public, declares nothing
+and offers nothing.
+
+**Rejected.** A port input in the menu — the port is the server's inside the
+sandbox, which the person knows and the workbench does not. Reviving the port
+preview (§5.35) for e2b — its cost was the gateway, which this needs none of.
+Persisting the domain beside `instance_ref` — a schema column for a fact one
+GET returns.
+
+**Cost accepted.** One control-plane GET per open. The address is what the
+service publishes; reachability is its policy — a service may gate port
+traffic with a token, or answer every response with
+`Content-Disposition: attachment` (Bailian's gateway does, whatever the
+content type), which leaves the URL to `curl` and `fetch` and takes a browser
+page off the table.
+
+Rules: [invariant 53](workbench-invariants.md);
+[protocol.md, Projects](../reference/protocol.md#projects--apiv1projects).

@@ -40,6 +40,8 @@ type sandboxKind struct {
 type SandboxSupports struct {
 	// Rebuild: the compute can be thrown away in place, keeping the storage.
 	Rebuild bool `json:"rebuild"`
+	// PublicHost: every port inside the sandbox is public at <port>-<sandbox id>.<domain>.
+	PublicHost bool `json:"public_host"`
 }
 
 var sandboxKinds = map[string]sandboxKind{
@@ -57,7 +59,7 @@ var sandboxKinds = map[string]sandboxKind{
 		identity:     e2bIdentity,
 		frozenFields: "its type, service address, template and lifecycle (auto-pause, internet) are frozen — the api key, headers, timeout, read limit and name stay editable",
 		storageWhere: e2bStorageWhere,
-		supports:     SandboxSupports{},
+		supports:     SandboxSupports{PublicHost: true},
 	},
 }
 

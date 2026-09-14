@@ -24,7 +24,7 @@ func TestSandboxSupportsPerType(t *testing.T) {
 	if got, want := SandboxSupportsFor("docker"), (SandboxSupports{Rebuild: true}); got != want {
 		t.Errorf("docker = %+v, want %+v", got, want)
 	}
-	if got, want := SandboxSupportsFor("e2b"), (SandboxSupports{}); got != want {
+	if got, want := SandboxSupportsFor("e2b"), (SandboxSupports{PublicHost: true}); got != want {
 		t.Errorf("e2b = %+v, want %+v", got, want)
 	}
 	if want := []string{"docker", "e2b"}; !slices.Equal(SandboxTypes, want) {

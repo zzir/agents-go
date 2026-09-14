@@ -713,6 +713,13 @@ host cannot open directly. Its headers go out before the first byte, so a
 failure mid-stream cannot become a JSON error — the client sees a truncated
 archive, which tar itself reports.
 
+`GET /projects/{id}/host` names where a port inside the sandbox is public:
+the sandbox id and the domain the service returned, from which a client
+renders `https://<port>-<sandbox_id>.<domain>` (decisions §5.70). Only a
+sandbox whose row declares `supports.public_host` answers; a project whose
+sandbox was never provisioned is `409`. It reads — it neither creates nor
+resumes the sandbox.
+
 ### Attachments — `/api/v1/attachments`
 
 Image input for a session's messages ([attachments](../howto/attachments.md);

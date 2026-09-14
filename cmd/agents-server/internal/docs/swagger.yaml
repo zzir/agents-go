@@ -939,6 +939,13 @@ components:
         updated_at:
           type: string
       type: object
+    handler.projectHostResp:
+      properties:
+        domain:
+          type: string
+        sandbox_id:
+          type: string
+      type: object
     handler.projectReq:
       properties:
         env:
@@ -1953,6 +1960,10 @@ components:
       description: Supports is the type's capability row (SandboxSupports), derived
         per response and never stored.
       properties:
+        public_host:
+          description: 'PublicHost: every port inside the sandbox is public at <port>-<sandbox
+            id>.<domain>.'
+          type: boolean
         rebuild:
           description: 'Rebuild: the compute can be thrown away in place, keeping
             the storage.'
@@ -4293,6 +4304,49 @@ paths:
       security:
       - BearerAuth: []
       summary: Export the project's working tree
+      tags:
+      - projects
+  /projects/{id}/host:
+    get:
+      description: The sandbox id and the domain a port inside the sandbox is public
+        at, as https://<port>-<sandbox_id>.<domain>. Only a sandbox whose row declares
+        supports.public_host answers; a project whose sandbox was never provisioned
+        is 409.
+      parameters:
+      - description: Project id
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.projectHostResp'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: no sandbox provisioned yet
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Gateway
+      security:
+      - BearerAuth: []
+      summary: Project sandbox public address
       tags:
       - projects
   /projects/{id}/sandbox:

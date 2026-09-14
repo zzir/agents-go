@@ -34,11 +34,14 @@ type fakeService struct {
 	// number — the way Alibaba Cloud's older envd does. The default is E2B's
 	// spelling. Both are real; a client that handles one is broken.
 	numericEnums bool
-	mu           sync.Mutex
-	boxes        map[string]*fakeBox
-	nextID       int
-	nextPID      uint32
-	procs        map[uint32]*fakeProc
+	// domain, when set, rides on every sandbox response — the way a service
+	// tells the client where the sandbox's ports live.
+	domain  string
+	mu      sync.Mutex
+	boxes   map[string]*fakeBox
+	nextID  int
+	nextPID uint32
+	procs   map[uint32]*fakeProc
 	// createCalls counts provisioning, so a test can assert a client does not
 	// create a second sandbox for one project.
 	createCalls int
@@ -189,6 +192,14 @@ func (f *fakeService) control(w http.ResponseWriter, r *http.Request) {
 }
 
 func (f *fakeService) infoOf(b *fakeBox) map[string]any {
+	info := f.infoOfBase(b)
+	if f.domain != "" {
+		info["domain"] = f.domain
+	}
+	return info
+}
+
+func (f *fakeService) infoOfBase(b *fakeBox) map[string]any {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	state := "running"

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	e2bsb "github.com/zzir/agents-go/sandbox/e2b"
 )
 
 // ProjectHandler manages projects — per-user working trees on a sandbox
@@ -410,6 +412,42 @@ func (h *ProjectHandler) SandboxStatus(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, sandboxStateResp{State: state.String()})
+}
+
+// projectHostResp is where a port inside the project's sandbox is public: https://<port>-<sandbox_id>.<domain>.
+type projectHostResp struct {
+	SandboxID string `json:"sandbox_id"`
+	Domain    string `json:"domain"`
+}
+
+// SandboxHost names where the project's sandbox serves its ports.
+//
+//	@Summary		Project sandbox public address
+//	@Description	The sandbox id and the domain a port inside the sandbox is public at, as https://<port>-<sandbox_id>.<domain>. Only a sandbox whose row declares supports.public_host answers; a project whose sandbox was never provisioned is 409.
+//	@Tags			projects
+//	@Produce		json
+//	@Param			id	path		string	true	"Project id"
+//	@Success		200	{object}	projectHostResp
+//	@Failure		404	{object}	ErrorResponse
+//	@Failure		409	{object}	ErrorResponse	"no sandbox provisioned yet"
+//	@Failure		502	{object}	ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/projects/{id}/host [get]
+func (h *ProjectHandler) SandboxHost(c *gin.Context) {
+	spec, ok := h.spec(c)
+	if !ok {
+		return
+	}
+	id, domain, err := h.manager.Address(c.Request.Context(), spec)
+	switch {
+	case errors.Is(err, e2bsb.ErrNotProvisioned):
+		conflict(c, "no sandbox yet — it is created at the first run, or by Start")
+		return
+	case err != nil:
+		upstreamError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, projectHostResp{SandboxID: id, Domain: domain})
 }
 
 // SandboxStart provisions the project's sandbox and makes it ready — the

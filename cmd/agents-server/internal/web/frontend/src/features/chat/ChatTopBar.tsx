@@ -1,5 +1,5 @@
 import { ActionList, ActionMenu, IconButton } from '@primer/react';
-import { DownloadIcon, FileDirectoryIcon, KeyAsteriskIcon, KebabHorizontalIcon, MeterIcon, PlayIcon, PulseIcon, SquareFillIcon, StackIcon, SyncIcon, TerminalIcon } from '@primer/octicons-react';
+import { DownloadIcon, FileDirectoryIcon, GlobeIcon, KeyAsteriskIcon, KebabHorizontalIcon, MeterIcon, PlayIcon, PulseIcon, SquareFillIcon, StackIcon, SyncIcon, TerminalIcon } from '@primer/octicons-react';
 import type { ReactElement } from 'react';
 import type { InspectorPanel } from '@/features/chat/ChatView';
 import { useChatSession } from '@/features/chat/ChatSessionContext';
@@ -41,7 +41,10 @@ export interface ProjectMenu {
   /* False on a backend where the sandbox IS the storage, and replacing it
      would take the working tree with it. */
   rebuildable: boolean;
+  /* True where every port inside the sandbox is public (supports.public_host). */
+  hostable: boolean;
   onEnv: () => void;
+  onHost: () => void;
   onStart: () => void;
   onStop: () => void;
   onExport: () => void;
@@ -100,6 +103,12 @@ export function ChatTopBar({
                   <ActionList.LeadingVisual><DownloadIcon /></ActionList.LeadingVisual>
                   Export as tar…
                 </ActionList.Item>
+                {projectMenu.hostable && (
+                  <ActionList.Item onSelect={projectMenu.onHost}>
+                    <ActionList.LeadingVisual><GlobeIcon /></ActionList.LeadingVisual>
+                    Public URL…
+                  </ActionList.Item>
+                )}
                 <ActionList.Divider />
                 {projectMenu.stateLoading && projectMenu.state === '' ? (
                   // Only the very first read shows this: a re-read of a known

@@ -2,6 +2,9 @@ package e2b
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io/fs"
 	"time"
 
 	"github.com/zzir/agents-go/sandbox"
@@ -88,4 +91,27 @@ func (s *Sandbox) Destroy(ctx context.Context) error {
 	}
 	s.forget(id)
 	return nil
+}
+
+// ErrNotProvisioned is Address's answer before any sandbox exists.
+var ErrNotProvisioned = errors.New("e2b: no sandbox has been provisioned yet")
+
+// Address is where the sandbox's ports are public — "<port>-<id>.<domain>",
+// the service's own scheme. It reads, never provisions or resumes: a sandbox
+// this client has not created or been given is ErrNotProvisioned, one the
+// service no longer knows is fs.ErrNotExist.
+func (s *Sandbox) Address(ctx context.Context) (id, domain string, err error) {
+	id = s.currentID()
+	if id == "" {
+		return "", "", ErrNotProvisioned
+	}
+	info, err := s.get(ctx, id)
+	if err != nil {
+		if isNotFound(err) {
+			return "", "", fmt.Errorf("e2b: sandbox %s: %w", id, fs.ErrNotExist)
+		}
+		return "", "", err
+	}
+	s.adopt(info)
+	return id, s.sandboxDomain(), nil
 }

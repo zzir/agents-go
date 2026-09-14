@@ -302,6 +302,7 @@ export function ChatView({
   const { menu: projectMenu, dialog: envDialog } = useProjectMenu({
     project: boundProject,
     rebuildable: !!boundProject && !!boundSandbox?.supports?.rebuild,
+    hostable: !!boundProject && !!boundSandbox?.supports?.public_host,
     running,
     onProjectsChanged: reloadProjects,
   });

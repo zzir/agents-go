@@ -149,6 +149,10 @@ remembers which one, so a restart resumes it rather than provisioning a second
 a stock one: the working directory is created on the sandbox rather than
 expected of the image ([spec §2.7q](../reference/spec.md#27q-a-sandbox-makes-its-working-directory)).
 
+`Address` returns the sandbox id and the domain its ports are public under
+(`<port>-<id>.<domain>`), reading only — `ErrNotProvisioned` before a sandbox
+exists ([decisions §5.70](../explanation/decisions.md)).
+
 `Env` sets variables on the **container**, so a command, a persistent shell and a terminal opened into it all read the same values; an `ExecRequest.Env` entry of the same name wins for that one call. It is part of the adoption fingerprint: changing it replaces a persistent container instead of adopting the old one, keeping `/workspace` but discarding whatever was installed into the container itself ([spec §2.7n](../reference/spec.md#27n-a-sandboxs-environment-is-part-of-its-container-identity)).
 
 ### Remote daemon over SSH
