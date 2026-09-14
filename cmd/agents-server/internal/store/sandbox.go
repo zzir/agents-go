@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/textproto"
 	"slices"
 	"strings"
 
@@ -46,7 +47,7 @@ type SandboxSupports struct {
 
 var sandboxKinds = map[string]sandboxKind{
 	"docker": {
-		contentEqual: func(a, b json.RawMessage) bool { return canonicalEqual(a, b, func(*DockerConfig) {}) },
+		contentEqual: canonicalEqual[DockerConfig],
 		destination:  dockerDestination,
 		identity:     dockerDestination, // nothing beyond the destination freezes
 		frozenFields: "its type and machine are frozen — the image, the limits, the credential and the name stay editable",
@@ -54,7 +55,7 @@ var sandboxKinds = map[string]sandboxKind{
 		supports:     SandboxSupports{Rebuild: true},
 	},
 	"e2b": {
-		contentEqual: e2bContentEqual,
+		contentEqual: canonicalEqual[E2BConfig],
 		destination:  e2bDestination,
 		identity:     e2bIdentity,
 		frozenFields: "its type, service address, template and lifecycle (auto-pause, internet) are frozen — the api key, headers, timeout, read limit and name stay editable",
@@ -136,14 +137,14 @@ func NormalizeSandboxConfig(typ string, raw json.RawMessage) (json.RawMessage, e
 		default:
 			return nil, errors.New(`data_plane_auth must be "", "access_token", "api_key" or "none"`)
 		}
-		for k, v := range ec.Headers {
-			if strings.TrimSpace(k) == "" || v == "" {
-				return nil, errors.New("every header needs a name and a value")
-			}
-			if slices.Contains(reservedE2BHeaders, strings.ToLower(k)) {
-				return nil, fmt.Errorf("header %s is set by the backend itself: api_key and data_plane_auth choose the credential", k)
-			}
+		if ec.APIKey == "" {
+			return nil, errors.New("an e2b sandbox requires config.api_key — a placeholder where the service authenticates with a header")
 		}
+		headers, err := canonicalHeaders(ec.Headers)
+		if err != nil {
+			return nil, err
+		}
+		ec.Headers = headers
 		if ec.TemplateID == "" {
 			return nil, errors.New("an e2b sandbox requires config.template_id — build it on the service first")
 		}
@@ -161,8 +162,70 @@ func NormalizeSandboxConfig(typ string, raw json.RawMessage) (json.RawMessage, e
 	}
 }
 
-// reservedE2BHeaders are the request headers the e2b client sets itself.
-var reservedE2BHeaders = []string{"x-api-key", "x-access-token", "content-type", "connect-protocol-version"}
+// reservedE2BHeaders are the request headers the e2b client sets itself, in
+// the canonical form the wire carries.
+var reservedE2BHeaders = []string{
+	textproto.CanonicalMIMEHeaderKey("X-API-Key"),
+	textproto.CanonicalMIMEHeaderKey("X-Access-Token"),
+	textproto.CanonicalMIMEHeaderKey("Content-Type"),
+	textproto.CanonicalMIMEHeaderKey("Connect-Protocol-Version"),
+}
+
+// canonicalHeaders returns h with its names in canonical form, refusing a
+// malformed name or value, two names that canonicalize alike, and a reserved one.
+func canonicalHeaders(h map[string]string) (map[string]string, error) {
+	if len(h) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]string, len(h))
+	for k, v := range h {
+		if !validHeaderName(k) {
+			return nil, fmt.Errorf("header name %q is not a valid HTTP token", k)
+		}
+		if !validHeaderValue(v) {
+			return nil, fmt.Errorf("header %s needs a non-empty value without control characters", k)
+		}
+		ck := textproto.CanonicalMIMEHeaderKey(k)
+		if slices.Contains(reservedE2BHeaders, ck) {
+			return nil, fmt.Errorf("header %s is set by the backend itself: api_key and data_plane_auth choose the credential", k)
+		}
+		if _, dup := out[ck]; dup {
+			return nil, fmt.Errorf("header %s is given twice", ck)
+		}
+		out[ck] = v
+	}
+	return out, nil
+}
+
+// validHeaderName reports an RFC 9110 token — what net/http sends without complaint.
+func validHeaderName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case strings.ContainsRune("!#$%&'*+-.^_`|~", r):
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// validHeaderValue refuses an empty value and control characters (a CR or LF
+// would end the header line).
+func validHeaderValue(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < 0x20 && r != '\t' || r == 0x7f {
+			return false
+		}
+	}
+	return true
+}
 
 // SandboxContentEqual reports whether two payloads mean the same runtime
 // CONTENT — the predicate behind contentChanged. Canonical typed comparison
@@ -228,20 +291,6 @@ func e2bDestination(raw json.RawMessage) (string, error) {
 		return "", err
 	}
 	return jsonKey(ec.APIURL, ec.Domain), nil
-}
-
-// e2bContentEqual is canonicalEqual for a config with a map field: the
-// headers compare as a map, the rest through the canonical JSON.
-func e2bContentEqual(a, b json.RawMessage) bool {
-	var va, vb E2BConfig
-	if DecodeConfig(a, &va) != nil || DecodeConfig(b, &vb) != nil {
-		return false
-	}
-	if !maps.Equal(va.Headers, vb.Headers) {
-		return false
-	}
-	va.Headers, vb.Headers = nil, nil
-	return jsonKey(va) == jsonKey(vb)
 }
 
 func e2bIdentity(raw json.RawMessage) (string, error) {
@@ -478,16 +527,14 @@ func (s *SandboxStore) countBlockers(ctx context.Context, id string) (int, error
 	return max(n, 1), nil
 }
 
-// canonicalEqual compares two raw payloads through T, canonicalized. The
-// comparable constraint makes a new slice or map field a build error, not a silent semantic change.
-func canonicalEqual[T comparable](a, b json.RawMessage, canon func(*T)) bool {
+// canonicalEqual compares two raw payloads through T as canonical JSON: a map
+// field compares by value, a slice by order, an undecodable side as unequal.
+func canonicalEqual[T any](a, b json.RawMessage) bool {
 	var va, vb T
 	if DecodeConfig(a, &va) != nil || DecodeConfig(b, &vb) != nil {
 		return false
 	}
-	canon(&va)
-	canon(&vb)
-	return va == vb
+	return jsonKey(va) == jsonKey(vb)
 }
 
 // jsonHasKey reports whether the top-level JSON object in raw carries key —

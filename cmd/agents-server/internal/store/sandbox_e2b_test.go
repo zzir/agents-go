@@ -22,9 +22,13 @@ func TestNormalizeE2BConfig(t *testing.T) {
 		`{"data_plane_auth":"basic","template_id":"base"}`,
 		`{}`, // an e2b sandbox must name a template that exists on the service
 		`{"template_id":"base","timeout_seconds":-1}`,
-		`{"template_id":"base","headers":{"":"v"}}`,
-		`{"template_id":"base","headers":{"Authorization":""}}`,
-		`{"template_id":"base","headers":{"x-api-key":"k"}}`, // the client's own credential header
+		`{"template_id":"base"}`, // the key is required even where the service ignores it
+		`{"api_key":"k","template_id":"base","headers":{"":"v"}}`,
+		`{"api_key":"k","template_id":"base","headers":{"Authorization":""}}`,
+		`{"api_key":"k","template_id":"base","headers":{"x-api-key":"k"}}`, // the client's own credential header
+		`{"api_key":"k","template_id":"base","headers":{"Authorization":"a","authorization":"b"}}`,
+		`{"api_key":"k","template_id":"base","headers":{" X-Auth":"v"}}`,
+		`{"api_key":"k","template_id":"base","headers":{"X-Auth":"v\r\nInjected: 1"}}`,
 	} {
 		if _, err := NormalizeSandboxConfig("e2b", json.RawMessage(bad)); err == nil {
 			t.Errorf("%s was accepted", bad)
@@ -35,6 +39,11 @@ func TestNormalizeE2BConfig(t *testing.T) {
 	}
 	if !strings.Contains(string(got), `"template_id":"base"`) {
 		t.Errorf("canonical form = %s", got)
+	}
+	// Names are stored as the wire carries them.
+	got, err = NormalizeSandboxConfig("e2b", json.RawMessage(`{"api_key":"k","template_id":"base","headers":{"authorization":"Bearer x"}}`))
+	if err != nil || !strings.Contains(string(got), `"Authorization":"Bearer x"`) {
+		t.Errorf("header name not canonicalized: %s (%v)", got, err)
 	}
 }
 

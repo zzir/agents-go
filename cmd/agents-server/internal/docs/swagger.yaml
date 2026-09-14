@@ -4309,9 +4309,9 @@ paths:
   /projects/{id}/host:
     get:
       description: The sandbox id and the domain a port inside the sandbox is public
-        at, as https://<port>-<sandbox_id>.<domain>. Only a sandbox whose row declares
-        supports.public_host answers; a project whose sandbox was never provisioned
-        is 409.
+        at, as https://<port>-<sandbox_id>.<domain>. Owner only. 409 where the sandbox's
+        row does not declare supports.public_host, or where there is no sandbox to
+        address (none provisioned yet, or gone).
       parameters:
       - description: Project id
         in: path
@@ -4337,7 +4337,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/handler.ErrorResponse'
-          description: no sandbox provisioned yet
+          description: ports not public, or no sandbox to address
         "502":
           content:
             application/json:
@@ -4990,7 +4990,7 @@ paths:
         instructions of every session bound to a project on this sandbox — no project,
         no sandbox tools, no prompt; editing it reaches the next run without retiring
         the container. Every returned row carries "supports" — the type''s capability
-        flags (rebuild), derived and read-only.'
+        flags (rebuild, public_host), derived and read-only.'
       requestBody:
         content:
           application/json:

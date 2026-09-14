@@ -420,32 +420,44 @@ type projectHostResp struct {
 	Domain    string `json:"domain"`
 }
 
-// SandboxHost names where the project's sandbox serves its ports.
+// SandboxHost names where the project's sandbox serves its ports. Owner
+// only, like Export: the address reaches whatever runs in the sandbox.
 //
 //	@Summary		Project sandbox public address
-//	@Description	The sandbox id and the domain a port inside the sandbox is public at, as https://<port>-<sandbox_id>.<domain>. Only a sandbox whose row declares supports.public_host answers; a project whose sandbox was never provisioned is 409.
+//	@Description	The sandbox id and the domain a port inside the sandbox is public at, as https://<port>-<sandbox_id>.<domain>. Owner only. 409 where the sandbox's row does not declare supports.public_host, or where there is no sandbox to address (none provisioned yet, or gone).
 //	@Tags			projects
 //	@Produce		json
 //	@Param			id	path		string	true	"Project id"
 //	@Success		200	{object}	projectHostResp
 //	@Failure		404	{object}	ErrorResponse
-//	@Failure		409	{object}	ErrorResponse	"no sandbox provisioned yet"
+//	@Failure		409	{object}	ErrorResponse	"ports not public, or no sandbox to address"
 //	@Failure		502	{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/projects/{id}/host [get]
 func (h *ProjectHandler) SandboxHost(c *gin.Context) {
-	spec, ok := h.spec(c)
+	spec, ok := h.ownSpec(c)
 	if !ok {
+		return
+	}
+	if !store.SandboxSupportsFor(spec.Sandbox.Type).PublicHost {
+		conflict(c, "this sandbox's ports are not public")
 		return
 	}
 	id, domain, err := h.manager.Address(c.Request.Context(), spec)
 	switch {
-	case errors.Is(err, e2bsb.ErrNotProvisioned):
-		conflict(c, "no sandbox yet — it is created at the first run, or by Start")
+	case errors.Is(err, e2bsb.ErrNoSandbox):
+		conflict(c, "no sandbox to address — one is created at the first run, or by Start")
 		return
 	case err != nil:
 		upstreamError(c, err)
 		return
+	}
+	if h.Audit != nil {
+		user, _ := server.CurrentUser(c)
+		h.Audit(context.WithoutCancel(c.Request.Context()), protocol.AuditRecord{
+			Actor: user, Action: "project.host", Resource: spec.Project.ID,
+			Detail: "project " + spec.Project.Name,
+		})
 	}
 	c.JSON(http.StatusOK, projectHostResp{SandboxID: id, Domain: domain})
 }
@@ -512,13 +524,8 @@ func (h *ProjectHandler) SandboxStop(c *gin.Context) {
 func (h *ProjectHandler) Export(c *gin.Context) {
 	// Owner only, unlike the lifecycle routes: this hands over the whole
 	// working tree, and managing the plane is not reading someone's files.
-	p, ok := h.own(c)
+	spec, ok := h.ownSpec(c)
 	if !ok {
-		return
-	}
-	spec, err := resolveSpec(c.Request.Context(), h.sandboxes, p)
-	if err != nil {
-		storeError(c, err)
 		return
 	}
 	rc, err := h.manager.ExportProject(c.Request.Context(), spec)
@@ -562,9 +569,18 @@ func tarFilename(name string) string {
 }
 
 // spec resolves the caller's project into a build spec, answering the error
-// when it cannot.
+// when it cannot; owner or admin (see manage).
 func (h *ProjectHandler) spec(c *gin.Context) (sandboxes.Spec, bool) {
-	p, ok := h.manage(c)
+	return h.specFrom(c, h.manage)
+}
+
+// ownSpec is spec for the routes that reach into the sandbox: owner only.
+func (h *ProjectHandler) ownSpec(c *gin.Context) (sandboxes.Spec, bool) {
+	return h.specFrom(c, h.own)
+}
+
+func (h *ProjectHandler) specFrom(c *gin.Context, resolve func(*gin.Context) (*store.Project, bool)) (sandboxes.Spec, bool) {
+	p, ok := resolve(c)
 	if !ok {
 		return sandboxes.Spec{}, false
 	}

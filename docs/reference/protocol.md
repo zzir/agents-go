@@ -613,8 +613,10 @@ templates, so `template_id` must already exist there, and every sandbox is
 created `secure` — its daemon requires the per-sandbox token, since the
 sandbox id is in the public hostname of every port it serves. `headers` are
 sent with every request to the service and its sandboxes, for one that
-authenticates with its own header rather than the API key; a name the client
-sets itself (`X-API-Key`, `X-Access-Token`) is refused. For `docker`,
+authenticates with its own header rather than the API key (which is still
+required, as the placeholder such a service asks for); names are stored in
+canonical form, and one the client sets itself (`X-API-Key`, `X-Access-Token`)
+is refused. For `docker`,
 `host` picks the daemon: empty for this machine's, `ssh://user@host` for a
 remote daemon over pure-Go SSH (sshd with streamlocal forwarding and socket
 access for the SSH user; no remote docker CLI — decisions §5.27),
@@ -677,7 +679,8 @@ storage IS the instance, and the server records which one before the client
 first uses it — a sandbox nobody recorded is billed compute nobody will ever
 stop; the handle is not on the wire. Projects are **personal**: a member manages
 their own, an admin additionally manages the plane (`?all=true`, delete, stop,
-rebuild; never the export or the environment) — [Authorization](#authorization).
+rebuild; never the export, the environment or the public address) —
+[Authorization](#authorization).
 
 `DELETE` refuses (`409`) while any session binds the project, and otherwise
 **destroys the working tree**: the container and its volume are removed
@@ -715,10 +718,11 @@ archive, which tar itself reports.
 
 `GET /projects/{id}/host` names where a port inside the sandbox is public:
 the sandbox id and the domain the service returned, from which a client
-renders `https://<port>-<sandbox_id>.<domain>` (decisions §5.70). Only a
-sandbox whose row declares `supports.public_host` answers; a project whose
-sandbox was never provisioned is `409`. It reads — it neither creates nor
-resumes the sandbox.
+renders `https://<port>-<sandbox_id>.<domain>` (decisions §5.70). Owner
+only, like the export: the address reaches whatever runs in the sandbox. A
+sandbox whose row does not declare `supports.public_host`, or a project with
+no sandbox to address (none provisioned yet, or gone), is `409`. It reads — it
+neither creates nor resumes the sandbox.
 
 ### Attachments — `/api/v1/attachments`
 

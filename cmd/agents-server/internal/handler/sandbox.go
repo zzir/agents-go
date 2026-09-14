@@ -123,7 +123,7 @@ func (h *SandboxHandler) validate(c *gin.Context, req *sandboxReq) bool {
 // Create persists a new sandbox from the request body.
 //
 //	@Summary		Create sandbox
-//	@Description	type "docker" config: host ("" = local daemon, tcp://, or ssh://user@host with ssh_* auth), image (required), runtime, user ("" = root), network (docker network name; "" = no network), memory_mb/cpus caps, max_read_file_bytes. type "e2b" config: api_url, domain, api_key, data_plane_auth, headers (sent with every request, for a service that authenticates with its own header), template_id (required — build it on the service first), user ("" = the template's default account, "user"), timeout_seconds, auto_pause, allow_internet, max_read_file_bytes. ssh_password, api_key and the headers values are write-only, ******** mask semantics. Top-level optional "prompt" (both types) is appended to the agent instructions of every session bound to a project on this sandbox — no project, no sandbox tools, no prompt; editing it reaches the next run without retiring the container. Every returned row carries "supports" — the type's capability flags (rebuild), derived and read-only.
+//	@Description	type "docker" config: host ("" = local daemon, tcp://, or ssh://user@host with ssh_* auth), image (required), runtime, user ("" = root), network (docker network name; "" = no network), memory_mb/cpus caps, max_read_file_bytes. type "e2b" config: api_url, domain, api_key, data_plane_auth, headers (sent with every request, for a service that authenticates with its own header), template_id (required — build it on the service first), user ("" = the template's default account, "user"), timeout_seconds, auto_pause, allow_internet, max_read_file_bytes. ssh_password, api_key and the headers values are write-only, ******** mask semantics. Top-level optional "prompt" (both types) is appended to the agent instructions of every session bound to a project on this sandbox — no project, no sandbox tools, no prompt; editing it reaches the next run without retiring the container. Every returned row carries "supports" — the type's capability flags (rebuild, public_host), derived and read-only.
 //	@Tags			sandboxes
 //	@Accept			json
 //	@Produce		json
@@ -144,7 +144,12 @@ func (h *SandboxHandler) Create(c *gin.Context) {
 	}
 	sb := req.toSandbox()
 	// No stored config yet: mask sentinels resolve to empty.
-	sb.Config = restoreSandboxConfig(sb.Config, nil)
+	restored, err := restoreSandboxConfig(sb.Config, nil)
+	if err != nil {
+		badRequest(c, err.Error())
+		return
+	}
+	sb.Config = restored
 	canonical, err := store.NormalizeSandboxConfig(sb.Type, sb.Config)
 	if err != nil {
 		badRequest(c, err.Error())
@@ -224,7 +229,12 @@ func (h *SandboxHandler) Update(c *gin.Context) {
 		badRequest(c, "the destination changed: the stored credential belongs to the previous one — replace it or clear it")
 		return
 	}
-	sb.Config = restoreSandboxConfig(sb.Config, prev.Config)
+	restored, err := restoreSandboxConfig(sb.Config, prev.Config)
+	if err != nil {
+		badRequest(c, err.Error())
+		return
+	}
+	sb.Config = restored
 	// Normalize AFTER the mask restore: the canonical form must carry the
 	// real secret, not the ******** sentinel.
 	canonical, err := store.NormalizeSandboxConfig(sb.Type, sb.Config)

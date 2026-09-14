@@ -3134,7 +3134,7 @@ export interface paths {
         };
         /**
          * Project sandbox public address
-         * @description The sandbox id and the domain a port inside the sandbox is public at, as https://<port>-<sandbox_id>.<domain>. Only a sandbox whose row declares supports.public_host answers; a project whose sandbox was never provisioned is 409.
+         * @description The sandbox id and the domain a port inside the sandbox is public at, as https://<port>-<sandbox_id>.<domain>. Owner only. 409 where the sandbox's row does not declare supports.public_host, or where there is no sandbox to address (none provisioned yet, or gone).
          */
         get: {
             parameters: {
@@ -3166,7 +3166,7 @@ export interface paths {
                         "application/json": components["schemas"]["handler.ErrorResponse"];
                     };
                 };
-                /** @description no sandbox provisioned yet */
+                /** @description ports not public, or no sandbox to address */
                 409: {
                     headers: {
                         [name: string]: unknown;
@@ -4203,7 +4203,7 @@ export interface paths {
         put?: never;
         /**
          * Create sandbox
-         * @description type "docker" config: host ("" = local daemon, tcp://, or ssh://user@host with ssh_* auth), image (required), runtime, user ("" = root), network (docker network name; "" = no network), memory_mb/cpus caps, max_read_file_bytes. type "e2b" config: api_url, domain, api_key, data_plane_auth, headers (sent with every request, for a service that authenticates with its own header), template_id (required — build it on the service first), user ("" = the template's default account, "user"), timeout_seconds, auto_pause, allow_internet, max_read_file_bytes. ssh_password, api_key and the headers values are write-only, ******** mask semantics. Top-level optional "prompt" (both types) is appended to the agent instructions of every session bound to a project on this sandbox — no project, no sandbox tools, no prompt; editing it reaches the next run without retiring the container. Every returned row carries "supports" — the type's capability flags (rebuild), derived and read-only.
+         * @description type "docker" config: host ("" = local daemon, tcp://, or ssh://user@host with ssh_* auth), image (required), runtime, user ("" = root), network (docker network name; "" = no network), memory_mb/cpus caps, max_read_file_bytes. type "e2b" config: api_url, domain, api_key, data_plane_auth, headers (sent with every request, for a service that authenticates with its own header), template_id (required — build it on the service first), user ("" = the template's default account, "user"), timeout_seconds, auto_pause, allow_internet, max_read_file_bytes. ssh_password, api_key and the headers values are write-only, ******** mask semantics. Top-level optional "prompt" (both types) is appended to the agent instructions of every session bound to a project on this sandbox — no project, no sandbox tools, no prompt; editing it reaches the next run without retiring the container. Every returned row carries "supports" — the type's capability flags (rebuild, public_host), derived and read-only.
          */
         post: {
             parameters: {
