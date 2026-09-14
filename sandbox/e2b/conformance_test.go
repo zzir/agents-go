@@ -273,6 +273,30 @@ func TestE2BLongExecExtendsTheLease(t *testing.T) {
 	}
 }
 
+// A service without /timeout (Bailian answers 501) extends the lease through
+// /connect instead — once learned, /timeout is not asked again.
+func TestE2BLeaseFallsBackToConnect(t *testing.T) {
+	sb, f := fakeBackedSandbox(t)
+	f.noTimeout = true
+	if _, err := sb.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, timeout := range []time.Duration{20 * time.Minute, 30 * time.Minute} {
+		if _, err := sb.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}, Timeout: timeout}); err != nil {
+			t.Fatalf("exec with a %s bound: %v", timeout, err)
+		}
+	}
+	f.mu.Lock()
+	defused, connects := f.timeoutRefused, slices.Clone(f.connectCalls)
+	f.mu.Unlock()
+	if defused != 1 {
+		t.Errorf("/timeout was asked %d times, want once", defused)
+	}
+	if !leasedAtLeast(connects, 1800) {
+		t.Errorf("no /connect covered the 30m exec deadline; calls = %v", connects)
+	}
+}
+
 // A terminal session is open-ended and there is no keepalive: opening one at
 // least starts it from a freshly refreshed full lease.
 func TestE2BOpenTerminalRefreshesTheLease(t *testing.T) {

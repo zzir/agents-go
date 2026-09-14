@@ -45,6 +45,11 @@ type fakeService struct {
 	// timeoutCalls records each /timeout request's requested TTL in seconds,
 	// so a test can assert a long operation extended the lease enough.
 	timeoutCalls []int
+	// noTimeout answers /timeout with 501, the way Bailian does; connectCalls
+	// then records the TTLs /connect was asked for, and timeoutRefused counts the 501s.
+	noTimeout      bool
+	connectCalls   []int
+	timeoutRefused int
 	// signalCalls counts SendSignal RPCs — the client's cleanup of a process
 	// whose stream it abandoned.
 	signalCalls int
@@ -160,11 +165,21 @@ func (f *fakeService) control(w http.ResponseWriter, r *http.Request) {
 		f.setPaused(box, true)
 		w.WriteHeader(http.StatusNoContent)
 	case action == "connect":
+		req, _ := body(r)
+		f.mu.Lock()
+		f.connectCalls = append(f.connectCalls, int(num(req["timeout"])))
+		f.mu.Unlock()
 		f.setPaused(box, false)
 		writeJSON(w, f.infoOf(box))
 	case action == "timeout":
 		req, _ := body(r)
 		f.mu.Lock()
+		if f.noTimeout {
+			f.timeoutRefused++
+			f.mu.Unlock()
+			http.Error(w, `{"code":100001,"message":"set sandbox timeout is not supported yet"}`, http.StatusNotImplemented)
+			return
+		}
 		f.timeoutCalls = append(f.timeoutCalls, int(num(req["timeout"])))
 		f.mu.Unlock()
 		w.WriteHeader(http.StatusNoContent)

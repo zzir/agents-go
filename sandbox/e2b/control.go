@@ -203,9 +203,22 @@ func (s *Sandbox) kill(ctx context.Context, id string) error {
 	return s.control(ctx, http.MethodDelete, "/sandboxes/"+id, nil, nil)
 }
 
-// refresh extends the sandbox's lease without touching anything else.
+// refresh extends the sandbox's lease: /timeout, or /connect (which also
+// sets the timeout) on a service without it — Bailian answers 501.
 func (s *Sandbox) refresh(ctx context.Context, id string, runway time.Duration) error {
-	return s.control(ctx, http.MethodPost, "/sandboxes/"+id+"/timeout", map[string]any{"timeout": s.leaseSeconds(runway)}, nil)
+	if !s.noTimeout.Load() {
+		err := s.control(ctx, http.MethodPost, "/sandboxes/"+id+"/timeout", map[string]any{"timeout": s.leaseSeconds(runway)}, nil)
+		if !isNotImplemented(err) {
+			return err
+		}
+		s.noTimeout.Store(true)
+	}
+	info, err := s.resume(ctx, id, runway)
+	if err != nil {
+		return err
+	}
+	s.adopt(info)
+	return nil
 }
 
 // control performs one control-plane call. A 404 comes back as a not_found
@@ -269,6 +282,12 @@ func (e *httpError) Error() string {
 func isConflict(err error) bool {
 	var he *httpError
 	return errors.As(err, &he) && he.Status == http.StatusConflict
+}
+
+// isNotImplemented reports a 501 — an endpoint the service does not have.
+func isNotImplemented(err error) bool {
+	var he *httpError
+	return errors.As(err, &he) && he.Status == http.StatusNotImplemented
 }
 
 // maxErrBody caps an error message so a huge or HTML error page does not flood

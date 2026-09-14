@@ -784,7 +784,8 @@ not a switch to grow. The client is written here — six REST calls and Connect-
 `projects.instance_ref` before the client will use it, and a failure to
 record fails the create, since an unrecorded sandbox is billed compute nobody
 will ever stop. The lease is extended on demand — every control call sends
-`max(configured TTL, the operation's own bound)` — never by a keepalive. Stop
+`max(configured TTL, the operation's own bound)` to `/timeout`, or to
+`/connect` once a service answers 501 (Bailian) — never by a keepalive. Stop
 is pause and Reclaim is kill: the sandbox IS the storage, so killing it is
 the whole of §5.33's delete, and `auto_pause` defaults to true. Every create
 asks for a per-sandbox token (`secure: true`), because without it E2B's

@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/zzir/agents-go/sandbox"
@@ -142,6 +143,9 @@ type Sandbox struct {
 	freshWorkDir bool
 	// wdMu serializes that first-use mkdir; taken before (never under) s.mu.
 	wdMu sync.Mutex
+	// noTimeout remembers a service that answered /timeout with 501 (Bailian),
+	// so the lease extends through /connect from then on.
+	noTimeout atomic.Bool
 }
 
 // leaseValid reports whether the lease can skip a control-plane refresh: at
