@@ -1662,8 +1662,14 @@ A task is a sub-agent that outlives the turn that started it
   vocabulary for the model: four verbs** — `spawn_task`, `task_status`,
   `task_retry`, `task_stop`. A host with more kinds provides its own spawn
   tool from the public parts (`SpawnTool` / `TaskTools`, `Spawn`,
-  `ModelHasResult`, `ToolResult`) with the kind as a parameter, never a fifth
-  verb.
+  `SpawnTarget`, `ModelHasResult`, `ToolResult`) with the kind as a parameter,
+  never a fifth verb.
+- **`spawn_task` names a task's agent from the spawning agent's handoff
+  targets.** `agent_name` is resolved against `Agent.Handoffs` (`SpawnTarget`)
+  before the host's Resolver sees it: empty or the agent's own name is the
+  agent itself (the Resolver gets `""`), a target's name is that target's
+  `AgentName`, and any other name is refused with the targets listed. `Spawn`
+  itself resolves whatever the Resolver accepts. — see decisions §5.72
 
 **Endings, stops and delivery**
 

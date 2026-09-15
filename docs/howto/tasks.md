@@ -31,6 +31,7 @@ mgr := tasks.New(tasks.Config{
 	Store:    tasks.NewInMemoryStore(),   // or sessions.NewTaskStore(db)
 	Sessions: repo,                       // a session.Repo — see "Deleting a session"
 	Resolver: func(ctx context.Context, parentSessionID, name string) (tasks.Spec, error) {
+		// name: "" for the spawning agent itself, else one of its handoff targets
 		return tasks.Spec{DisplayName: name, Inherit: lookUpAgent(name).Snapshot()}, nil
 	},
 	Launcher: func(ctx context.Context, req tasks.LaunchRequest) error {
@@ -137,10 +138,19 @@ branches on it.
 
 | | |
 |---|---|
-| `spawn_task` | Start a task; returns a `task_id` immediately |
+| `spawn_task` | Start a task, as yourself or as one of your handoff targets (`agent_name`); returns a `task_id` immediately |
 | `task_status` | Read one, optionally waiting for it to finish; with no id, list the session's tasks |
 | `task_retry` | Resume a FAILED one from where it stopped |
 | `task_stop` | Cancel one |
+
+`spawn_task(agent_name:)` names the task's agent from the spawning agent's
+handoffs — the names the model already sees on its `transfer_to_*` tools.
+Empty runs the task as the agent itself (the Resolver gets `""`), a target's
+name reaches the Resolver as that target's `AgentName`, and a name outside the
+graph is refused with the targets listed
+([spec §2.13](../reference/spec.md#213-background-tasks)). A host whose
+spawnable agents are not its handoffs provides its own spawn tool, with
+`tasks.SpawnTarget` replaced by its own rule.
 
 `task_retry` starts a new run on the task's existing session, so the model
 continues from the progress the failed attempt made. Only a **failed** task can
@@ -159,7 +169,8 @@ compaction dropped; a listing settles no wake-up debt).
 
 Four verbs are the whole model-facing surface, whatever the kind: a host that
 starts jobs by name provides its own spawn tool from the public parts
-(`Manager.Spawn`, `Manager.ModelHasResult`, `tasks.ToolResult`) and attaches
+(`Manager.Spawn`, `tasks.SpawnTarget`, `Manager.ModelHasResult`,
+`tasks.ToolResult`) and attaches
 `TaskTools` beside it ([spec §2.13](../reference/spec.md#213-background-tasks)).
 
 A task's own run must not get these tools — that is what bounds recursion. Ask
