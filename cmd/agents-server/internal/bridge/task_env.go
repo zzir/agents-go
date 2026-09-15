@@ -18,8 +18,8 @@ import (
 // taskResolver answers "what is this agent called" from the agent-config table.
 type taskResolver struct{ r *Runner }
 
-// Resolve implements tasks.AgentResolver: "default"/"self" resolve to the
-// parent's own config; an unknown explicit name fails, listing what exists.
+// Resolve implements tasks.AgentResolver: "" is the parent's own config, a
+// config id or name is that config; an unknown name fails, listing what exists.
 func (t taskResolver) Resolve(ctx context.Context, parentSessionID, name string) (tasks.Spec, error) {
 	cfg, err := t.r.resolveSpawnAgent(ctx, parentSessionID, name)
 	if err != nil {

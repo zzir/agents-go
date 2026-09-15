@@ -58,8 +58,9 @@ type AgentDeps struct {
 	// tools. A BACKGROUND run never gets them — invariant 34.
 	TaskManager *tasks.Manager
 	// SpawnTool is set by NewRunner and builds the run's spawn_task per run (the
-	// workflows on offer change without a restart); never on a background run.
-	SpawnTool func(ctx context.Context, ownerID string) *agents.Tool
+	// workflows on offer change without a restart, and the agents on offer are
+	// the entry agent's handoff targets); never on a background run.
+	SpawnTool func(ctx context.Context, ownerID string, entry *BuildResult) *agents.Tool
 	// WorkflowTools is set by NewRunner and builds get_workflow / save_workflow
 	// per run, when the config opts in (behavior.workflow_authoring) — invariant 39.
 	WorkflowTools func(ctx context.Context, ownerID string) []*agents.Tool
@@ -198,7 +199,7 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, project
 		// 34); an agent may opt out (behavior.subagents=false).
 		mark := len(result.Agent.Tools)
 		if deps.SpawnTool != nil {
-			result.Agent.Tools = append(result.Agent.Tools, deps.SpawnTool(ctx, ownerID))
+			result.Agent.Tools = append(result.Agent.Tools, deps.SpawnTool(ctx, ownerID, result))
 		} else {
 			result.Agent.Tools = append(result.Agent.Tools, deps.TaskManager.SpawnTool(nil))
 		}

@@ -283,7 +283,8 @@ interrupt/resume and resets on restart — and matching is exact, so approving
 ### Tasks — `/api/v1/tasks`
 
 A task is one piece of background work started from a session through the ONE
-tool that starts any: `spawn_task` — a sub-agent on a prompt, or, told a
+tool that starts any: `spawn_task` — a sub-agent on a prompt (the asking agent
+itself, or one of its handoff targets by `agent_name`), or, told a
 `workflow` name, a workflow execution (`kind: "workflow"`, see
 [Workflows](#workflows--apiv1workflows)). Each runs on its own hidden session
 and reports back by injecting a notification into the parent session (the
