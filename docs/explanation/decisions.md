@@ -1702,3 +1702,28 @@ sandbox. A transient 5xx reads as stopped, whose remedy — Start — is a
 `connect` that only extends a running sandbox's lease.
 
 Rules: spec §2.7u.
+
+### 5.72 spawn_task chooses from the handoff graph
+
+Decided 2026-09-14. The agents a `spawn_task` call may name are the spawning
+agent's handoff targets, plus itself.
+
+**Decision.** `agent_name` is resolved against `Agent.Handoffs` before the
+host's Resolver sees it. The model already has those names from its
+`transfer_to_*` tools, so the set needs no second listing to stay in step, and
+one declaration names an agent's collaborators for both shapes of delegation:
+hand the conversation over, or run in the background. The workbench lists the
+targets in the tool's description as well and passes the SDK the config id its
+build gave each target, not the name (invariant 75).
+
+**Rejected.** Resolving any agent the host knows: the model cannot discover
+the names, and a guessed one either fails or lands on an agent nobody wired to
+the caller. A per-agent "spawnable" list: a second registry beside handoffs,
+drifting from it. An enum in the schema: the SDK tool is built before it knows
+its agent, and strict-mode schemas are reflected from the struct.
+
+**Cost accepted.** An agent spawnable in the background is also a handoff
+target, with a transfer tool the model may pick instead. A host with a flat
+catalog writes its own spawn tool from the public parts.
+
+Rules: spec §2.13; [invariant 75](workbench-invariants.md)

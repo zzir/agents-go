@@ -434,3 +434,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     that word. A list's blank state says why it is blank: nothing yet (and
     how to add one), the Mine filter, or a search that matched none
     (`features/settings/listEmpty.ts`).
+75. **`spawn_task` offers the run's handoff graph and hands the SDK the built
+    id.** Its description lists the entry agent's handoff targets, the call
+    resolves `agent_name` against them (`tasks.SpawnTarget`) and passes the
+    config id the build gave that target — never a name lookup, which a
+    same-named private agent would capture — so the task runs as the agent
+    the model was offered (`bridge/spawn_tool.go`; decisions §5.72).

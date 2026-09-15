@@ -1,6 +1,6 @@
 # Handoffs
 
-Handoffs let an agent delegate the rest of the run to another agent. The model sees each handoff as a tool named `transfer_to_<agent_name>`; when it calls one, the runner switches the active agent and continues the loop with the full conversation.
+Handoffs let an agent delegate the rest of the run to another agent. The model sees each handoff as a tool named `transfer_to_<agent_name>`; when it calls one, the runner switches the active agent and continues the loop with the full conversation. A handoff target is also an agent `spawn_task` may run a background task as ([tasks](tasks.md#the-tools)).
 
 ## Creating a handoff
 

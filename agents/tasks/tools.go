@@ -43,7 +43,7 @@ func DefaultSessionID(rc *agents.RunContext) string {
 }
 
 type spawnArgs struct {
-	AgentName string `json:"agent_name" jsonschema:"Agent to run the task with; empty uses the current agent"`
+	AgentName string `json:"agent_name" jsonschema:"Run the task as one of the agents you can hand off to (a transfer_to_* target), by that agent's name; empty runs it as yourself"`
 	Input     string `json:"input" jsonschema:"The task prompt for the agent"`
 	Label     string `json:"label" jsonschema:"Short human-readable task label shown in the UI"`
 }
@@ -63,21 +63,23 @@ type retryArgs struct {
 }
 
 // Tools returns spawn_task, task_status, task_retry and task_stop — SpawnTool
-// followed by TaskTools. A host with other kinds of background work provides
-// its own spawn tool from the public parts and attaches TaskTools beside it,
-// so the model sees ONE vocabulary (spec §2.13). A task's own run must NOT be
-// given these (ask MetaFor first). sessionID nil uses DefaultSessionID.
+// followed by TaskTools. A host with other kinds of background work, or a
+// wider choice of agents, provides its own spawn tool from the public parts
+// (Spawn, SpawnTarget, ModelHasResult, ToolResult) and attaches TaskTools
+// beside it, so the model sees ONE vocabulary (spec §2.13). A task's own run
+// must NOT be given these (ask MetaFor first). sessionID nil uses DefaultSessionID.
 func (m *Manager) Tools(sessionID SessionIDFrom) []*agents.Tool {
 	return append([]*agents.Tool{m.SpawnTool(sessionID)}, m.TaskTools(sessionID)...)
 }
 
-// SpawnTool is spawn_task alone: start a plain background task with an agent.
+// SpawnTool is spawn_task alone: start a plain background task as the
+// spawning agent or one of its handoff targets (SpawnTarget).
 func (m *Manager) SpawnTool(sessionID SessionIDFrom) *agents.Tool {
 	if sessionID == nil {
 		sessionID = DefaultSessionID
 	}
 	return agents.NewTool("spawn_task",
-		"Start a background task: another agent works on the input while you continue. "+
+		"Start a background task: an agent works on the input while you continue — you, or one of the agents you can hand off to (agent_name). "+
 			"Returns a task_id immediately. When the task finishes you are notified automatically in a later turn — "+
 			"after spawning, finish your reply and END YOUR TURN instead of polling. "+
 			"Only reach for task_status when the user explicitly asks for progress (use its wait_seconds rather than a polling loop); task_stop cancels.",
@@ -86,9 +88,13 @@ func (m *Manager) SpawnTool(sessionID SessionIDFrom) *agents.Tool {
 			if parent == "" {
 				return agents.ToolResult{}, fmt.Errorf("spawn_task: no session in the run context")
 			}
+			target, err := SpawnTarget(tc.Agent, args.AgentName)
+			if err != nil {
+				return agents.ToolResult{}, err
+			}
 			info, err := m.Spawn(ctx, SpawnRequest{
 				ParentSessionID: parent,
-				AgentName:       args.AgentName,
+				AgentName:       target,
 				Input:           args.Input,
 				Label:           args.Label,
 				// The spawning call id lets the task's later state changes
@@ -106,6 +112,49 @@ func (m *Manager) SpawnTool(sessionID SessionIDFrom) *agents.Tool {
 			m.ModelHasResult(ctx, info)
 			return m.toolResult(info), nil
 		})
+}
+
+// SpawnTarget resolves spawn_task's agent_name against the spawning agent's
+// handoff targets, which is where the model learned the names: "" and the
+// agent's own name are the agent itself (""), a target's name (as written, or
+// as its transfer_to_* tool spells it) is that target's Handoff.AgentName, and
+// any other name is refused with the targets listed — spec §2.13. Exported
+// for a host's own spawn tool.
+func SpawnTarget(agent *agents.Agent, name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", nil
+	}
+	var targets []string
+	if agent != nil {
+		if sameAgentName(name, agent.Name) {
+			return "", nil
+		}
+		for _, h := range agent.Handoffs {
+			tname := h.AgentName
+			if tname == "" && h.Target != nil {
+				tname = h.Target.Name
+			}
+			if tname == "" {
+				continue
+			}
+			if sameAgentName(name, tname) {
+				return tname, nil
+			}
+			targets = append(targets, tname)
+		}
+	}
+	if len(targets) == 0 {
+		return "", fmt.Errorf("spawn_task: no agent named %q: you have no agents to hand off to, leave agent_name empty to run the task yourself", name)
+	}
+	return "", fmt.Errorf("spawn_task: no agent named %q; available: %s (or empty for yourself)", name, strings.Join(targets, ", "))
+}
+
+// sameAgentName compares agent names the way a transfer_to_* tool name would:
+// case-insensitively, spaces and underscores alike.
+func sameAgentName(a, b string) bool {
+	fold := func(s string) string { return strings.ToLower(strings.ReplaceAll(s, " ", "_")) }
+	return fold(a) == fold(b)
 }
 
 // TaskTools are the three tools that name an existing task: task_status,

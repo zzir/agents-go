@@ -44,13 +44,12 @@ func main() {
 	store := tasks.NewInMemoryStore()
 
 	// The agents this program can run as. A real host would look these up.
-	catalog := map[string]*agents.Agent{
-		"researcher": {
-			Name:         "researcher",
-			Model:        "gpt-4.1-mini",
-			Instructions: agents.StaticInstructions("Answer the question in one short sentence."),
-		},
+	researcher := &agents.Agent{
+		Name:         "researcher",
+		Model:        "gpt-4.1-mini",
+		Instructions: agents.StaticInstructions("Answer the question in one short sentence."),
 	}
+	catalog := map[string]*agents.Agent{"researcher": researcher}
 
 	var (
 		mu      sync.Mutex
@@ -63,7 +62,8 @@ func main() {
 		Store:    store,
 		Sessions: repo,
 
-		// "What is this agent called?"
+		// "What is this agent called?" name is "" when the coordinator spawns
+		// itself; this program has only the researcher to run tasks as.
 		Resolver: tasks.AgentResolver(func(_ context.Context, _, name string) (tasks.Spec, error) {
 			name = cmp.Or(name, "researcher")
 			if _, ok := catalog[name]; !ok {
@@ -144,13 +144,15 @@ func main() {
 	}
 	_ = parent
 
+	// spawn_task may name the coordinator's handoff targets: the researcher.
 	coordinator := &agents.Agent{
 		Name:  "coordinator",
 		Model: "gpt-4.1-mini",
 		Instructions: agents.StaticInstructions(
-			"Delegate research to background tasks with spawn_task, then finish your turn. " +
+			"Delegate research to the researcher as a background task with spawn_task, then finish your turn. " +
 				"Do not poll — you will be notified when a task finishes."),
-		Tools: mgr.Tools(nil),
+		Handoffs: []agents.Handoff{agents.HandoffTo(researcher)},
+		Tools:    mgr.Tools(nil),
 	}
 
 	fmt.Println("parent turn — the coordinator may delegate…")

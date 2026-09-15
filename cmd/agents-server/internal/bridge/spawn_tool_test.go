@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -213,7 +214,7 @@ func TestSpawnToolListsWorkflowsOnlyWhenThereAreAny(t *testing.T) {
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatal(err)
 	}
-	tool := runner.spawnTool(ctx, "")
+	tool := runner.spawnTool(ctx, "", &BuildResult{})
 	if tool == nil || tool.Name != SpawnToolName || strings.Contains(tool.Description, "Available:") {
 		t.Fatalf("no workflows: tool = %v, want spawn_task with no workflow list", tool)
 	}
@@ -224,9 +225,80 @@ func TestSpawnToolListsWorkflowsOnlyWhenThereAreAny(t *testing.T) {
 	if err := runner.Deps.Workflows.Create(ctx, wf); err != nil {
 		t.Fatal(err)
 	}
-	tool = runner.spawnTool(ctx, "")
+	tool = runner.spawnTool(ctx, "", &BuildResult{})
 	if !strings.Contains(tool.Description, "- deploy: ship it") {
 		t.Fatalf("a workflow exists: the description must list it, got %q", tool.Description)
+	}
+}
+
+// spawn_task offers the entry agent's handoff targets: listed in its
+// description, resolved by the id the build gave each — so the task runs as
+// the agent the model was offered. A private "researcher" beside the global
+// one the handoff is wired to must not capture it, as a name lookup would.
+func TestSpawnToolOffersTheHandoffTargets(t *testing.T) {
+	ctx := context.Background()
+	model := &endlessModel{arrived: make(chan struct{}, 1), gone: make(chan struct{})}
+	srv := httptest.NewServer(model)
+	defer srv.Close()
+
+	runner, sessions, tasks, agentConfigs := newTaskTestRunner(t)
+	pv := testProvider(t, runner.db, "endpoint", "k", srv.URL)
+	global := &store.AgentConfig{OwnerID: store.LocalUserID, Scope: store.ScopeGlobal, Name: "researcher", Model: "gpt-test", ProviderID: pv,
+		Behavior: store.BehaviorGroup{HandoffDescription: "Digs up facts."}}
+	private := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "researcher", Model: "gpt-test", ProviderID: pv}
+	for _, ac := range []*store.AgentConfig{global, private} {
+		if err := agentConfigs.Create(ctx, ac); err != nil {
+			t.Fatal(err)
+		}
+	}
+	chat := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "chat", Model: "gpt-test", ProviderID: pv, Handoffs: store.StringList{global.ID}}
+	if err := agentConfigs.Create(ctx, chat); err != nil {
+		t.Fatal(err)
+	}
+	built, err := buildFullAgent(ctx, runner.Deps, chat.ID, "", false, store.LocalUserID)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	defer built.Release()
+	// The tool as the build attaches it, before the plan gate wraps it.
+	spawn := runner.spawnTool(ctx, store.LocalUserID, built)
+	if !strings.Contains(spawn.Description, "- researcher: Digs up facts.") {
+		t.Fatalf("spawn_task must list the handoff target with its description, got %q", spawn.Description)
+	}
+
+	parent := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "chat", AgentConfigID: chat.ID}
+	if err := sessions.Create(ctx, parent); err != nil {
+		t.Fatal(err)
+	}
+	tc := &agents.ToolContext{RunContext: agents.NewRunContext(parent.ID), ToolCallID: "call-7", Agent: built.Agent}
+	res, err := spawn.OnInvoke(ctx, tc, `{"agent_name":"Researcher","workflow":"","input":"find out","label":"facts"}`)
+	if err != nil {
+		t.Fatalf("spawn as a handoff target: %v", err)
+	}
+	select {
+	case <-model.arrived:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("the task run never reached the model; result = %+v", res)
+	}
+	taskID, _ := res.Details["task_id"].(string)
+	row, err := tasks.Get(ctx, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.AgentConfigID != global.ID {
+		t.Fatalf("the task runs as %s, want the handoff target %s (the same-named private agent is %s)", row.AgentConfigID, global.ID, private.ID)
+	}
+	if _, err := runner.StopTask(row.ID, false); err != nil {
+		t.Fatalf("StopTask: %v", err)
+	}
+
+	// A name outside the graph is refused with the graph listed, before
+	// anything is created.
+	if _, err := spawn.OnInvoke(ctx, tc, `{"agent_name":"auditor","workflow":"","input":"x","label":""}`); err == nil || !strings.Contains(err.Error(), "researcher") {
+		t.Fatalf("a name outside the handoff graph: err = %v, want a refusal listing researcher", err)
+	}
+	if list, _ := tasks.ListByParent(ctx, parent.ID); len(list) != 1 {
+		t.Fatalf("tasks = %d, want the one spawned as researcher only", len(list))
 	}
 }
 

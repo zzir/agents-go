@@ -43,8 +43,9 @@ func isTerminalTaskStatus(s string) bool {
 // terminal rows alone.
 func IsTerminalTaskStatus(s string) bool { return isTerminalTaskStatus(s) }
 
-// resolveSpawnAgent: an explicit config name/id wins; an empty name or the
-// "default"/"self"/"current" aliases fall back to the spawning run's agent.
+// resolveSpawnAgent: an explicit config id or name wins (spawn_task passes
+// the id its build gave the handoff target); an empty name is the spawning
+// run's agent.
 func (r *Runner) resolveSpawnAgent(ctx context.Context, parentSessionID, name string) (*store.AgentConfig, error) {
 	// Resolved within the parent session owner's view (decisions §5.29); a
 	// lookup that cannot be made refuses (spec §2.13).
@@ -52,17 +53,12 @@ func (r *Runner) resolveSpawnAgent(ctx context.Context, parentSessionID, name st
 	if err != nil {
 		return nil, fmt.Errorf("spawn_task: resolving the parent session: %w", err)
 	}
-	ownerID := sess.OwnerID
-	n := strings.TrimSpace(name)
-	alias := n == "" || strings.EqualFold(n, "default") || strings.EqualFold(n, "self") || strings.EqualFold(n, "current")
-	if n != "" {
-		cfg, err := r.agentConfigByName(ctx, ownerID, n)
-		if err == nil {
-			return cfg, nil
+	if n := strings.TrimSpace(name); n != "" {
+		cfg, err := r.agentConfigByName(ctx, sess.OwnerID, n)
+		if err != nil {
+			return nil, fmt.Errorf("spawn_task: %w", err)
 		}
-		if !alias {
-			return nil, fmt.Errorf("spawn_task: %w", err) // explicit name: honest not-found with the available list
-		}
+		return cfg, nil
 	}
 	if rid, ok := r.hub.ActiveRunForSession(parentSessionID); ok {
 		if info, ok := r.hub.Info(rid); ok && info.AgentConfigID != "" {
@@ -73,7 +69,7 @@ func (r *Runner) resolveSpawnAgent(ctx context.Context, parentSessionID, name st
 	if sess.AgentConfigID != "" {
 		return r.Deps.AgentConfigs.Get(ctx, sess.AgentConfigID)
 	}
-	return nil, fmt.Errorf("spawn_task: agent_name %q not resolvable and no current agent to default to", name)
+	return nil, fmt.Errorf("spawn_task: no current agent to run the task as")
 }
 
 // errNoSuchAgent is agentConfigByName's not-found, distinct from a store fault.

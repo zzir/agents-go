@@ -4,11 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/zzir/agents-go/agents"
 )
+
+// spawner is the agent the tools run under: it can hand off to "worker", so
+// that is the one name spawn_task may pass on.
+func spawner() *agents.Agent {
+	return &agents.Agent{Name: "coordinator", Handoffs: []agents.Handoff{agents.HandoffTo(&agents.Agent{Name: "worker"})}}
+}
 
 // invoke calls a tool the way the runner would.
 func invoke(t *testing.T, tool *agents.Tool, sessionID, argsJSON string) (agents.ToolResult, error) {
@@ -17,7 +24,7 @@ func invoke(t *testing.T, tool *agents.Tool, sessionID, argsJSON string) (agents
 	if !ok {
 		t.Fatalf("tool %q is not invokable", tool.Name)
 	}
-	tc := &agents.ToolContext{RunContext: agents.NewRunContext(sessionID), ToolCallID: "call-1"}
+	tc := &agents.ToolContext{RunContext: agents.NewRunContext(sessionID), ToolCallID: "call-1", Agent: spawner()}
 	return inv.OnInvoke(context.Background(), tc, argsJSON)
 }
 
@@ -67,6 +74,51 @@ func TestTools_SpawnRefusesWithoutASession(t *testing.T) {
 		`{"agent_name":"worker","input":"do it"}`)
 	if err == nil {
 		t.Fatal("a spawn without a session was accepted")
+	}
+}
+
+// The agents spawn_task may name are the spawning agent's handoff targets —
+// the names the model already has from its transfer_to_* tools — plus itself:
+// a target's name reaches the Resolver as the target declares it, the agent's
+// own name and the empty name reach it as "", and any other name is refused
+// with the targets listed (spec §2.13).
+func TestTools_SpawnNamesAgentsByTheHandoffGraph(t *testing.T) {
+	var resolved []string
+	h := newHarness(t, func(c *Config) {
+		inner := c.Resolver
+		c.Resolver = func(ctx context.Context, parent, name string) (Spec, error) {
+			resolved = append(resolved, name)
+			return inner(ctx, parent, name)
+		}
+	})
+	spawn := toolNamed(h.m.Tools(nil), "spawn_task")
+	for _, name := range []string{"worker", " Worker ", "", "coordinator", "Coordinator"} {
+		if _, err := invoke(t, spawn, "parent", `{"agent_name":"`+name+`","input":"do it","label":""}`); err != nil {
+			t.Fatalf("agent_name %q: %v", name, err)
+		}
+	}
+	if want := []string{"worker", "worker", "", "", ""}; !slices.Equal(resolved, want) {
+		t.Fatalf("the Resolver saw %q, want %q", resolved, want)
+	}
+	_, err := invoke(t, spawn, "parent", `{"agent_name":"stranger","input":"do it","label":""}`)
+	if err == nil || !strings.Contains(err.Error(), "worker") {
+		t.Fatalf("a name outside the handoff graph: err = %v, want a refusal listing worker", err)
+	}
+	if len(resolved) != 5 {
+		t.Fatalf("the Resolver was asked about a refused name: %q", resolved)
+	}
+
+	// A target named the way its transfer tool spells it is still that target;
+	// an agent with no handoffs can only spawn itself.
+	got, err := SpawnTarget(&agents.Agent{Name: "lead", Handoffs: []agents.Handoff{agents.HandoffTo(&agents.Agent{Name: "Research Agent"})}}, "research_agent")
+	if err != nil || got != "Research Agent" {
+		t.Fatalf("SpawnTarget(research_agent) = %q, %v; want the target's own name", got, err)
+	}
+	if _, err := SpawnTarget(&agents.Agent{Name: "solo"}, "worker"); err == nil {
+		t.Fatal("an agent without handoffs accepted a name")
+	}
+	if got, err := SpawnTarget(&agents.Agent{Name: "solo"}, ""); err != nil || got != "" {
+		t.Fatalf("SpawnTarget(\"\") = %q, %v; want the agent itself", got, err)
 	}
 }
 
@@ -291,7 +343,7 @@ func TestTools_SpawnRecordsTheParentRun(t *testing.T) {
 	if inv.OnInvoke == nil {
 		t.Fatal("spawn_task is not invokable")
 	}
-	tc := &agents.ToolContext{RunContext: agents.NewRunContext("parent"), ToolCallID: "call-1"}
+	tc := &agents.ToolContext{RunContext: agents.NewRunContext("parent"), ToolCallID: "call-1", Agent: spawner()}
 	ctx := WithParentRunID(context.Background(), "run-42")
 	if _, err := inv.OnInvoke(ctx, tc, `{"agent_name":"worker","input":"do it","label":"job"}`); err != nil {
 		t.Fatal(err)
