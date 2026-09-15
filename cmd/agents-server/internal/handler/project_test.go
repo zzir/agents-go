@@ -49,6 +49,7 @@ func TestProjectAdminSurface(t *testing.T) {
 
 	mount := func(e *gin.Engine) *gin.Engine {
 		e.GET("/projects", h.List)
+		e.GET("/projects/:id/host", h.SandboxHost)
 		e.DELETE("/projects/:id", h.Delete)
 		return e
 	}
@@ -96,6 +97,16 @@ func TestProjectAdminSurface(t *testing.T) {
 		if r.StorageHint == "" {
 			t.Fatalf("admin listing row %s misses its storage_hint", r.Name)
 		}
+	}
+
+	// The public address reaches whatever runs in the sandbox, so like the
+	// export it is the owner's: a foreign project reads as absent even to an
+	// admin. The owner's own docker project answers 409 — its ports are not public.
+	if w := doJSON(t, admin, http.MethodGet, "/projects/"+memberProj.ID+"/host", ""); w.Code != http.StatusNotFound {
+		t.Fatalf("admin reading a member's public address: %d, want 404", w.Code)
+	}
+	if w := doJSON(t, member, http.MethodGet, "/projects/"+memberProj.ID+"/host", ""); w.Code != http.StatusConflict {
+		t.Fatalf("public address of a docker project: %d, want 409", w.Code)
 	}
 
 	// Admin delete of a member's project: refused while a session binds it,

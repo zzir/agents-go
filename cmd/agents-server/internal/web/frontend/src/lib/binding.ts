@@ -7,6 +7,8 @@
 export interface SandboxSupports {
   /* The container can be rebuilt in place. */
   rebuild?: boolean;
+  /* Every port inside the sandbox is public at <port>-<sandbox id>.<domain>. */
+  public_host?: boolean;
 }
 
 export interface SandboxLite {

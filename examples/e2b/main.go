@@ -20,6 +20,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -54,7 +55,22 @@ func run() error {
 
 	// New does no I/O; the remote sandbox appears on first use. AllowInternet is
 	// off — this task needs no network, and the E2B sandbox joins none by default.
-	sb, err := e2b.New(e2b.Options{APIKey: apiKey, TemplateID: templateID, AllowInternet: false})
+	// A compatible service may authenticate with its own header:
+	// E2B_HEADERS='{"Authorization": "Bearer <key>"}'.
+	var headers map[string]string
+	if raw := os.Getenv("E2B_HEADERS"); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &headers); err != nil {
+			return fmt.Errorf("E2B_HEADERS: %w", err)
+		}
+	}
+	sb, err := e2b.New(e2b.Options{
+		APIURL:        os.Getenv("E2B_API_URL"),
+		Domain:        os.Getenv("E2B_DOMAIN"),
+		APIKey:        apiKey,
+		Headers:       headers,
+		TemplateID:    templateID,
+		AllowInternet: false,
+	})
 	if err != nil {
 		return err
 	}

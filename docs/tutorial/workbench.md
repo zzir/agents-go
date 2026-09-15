@@ -93,8 +93,9 @@ every command pauses for you: approve this call, trust this exact command for
 the session, or trust every command. The top
 bar's project menu opens a **terminal** into the same container, sets the
 project's **Environment…** (the variables its container is created with;
-write-only, like every credential), exports the working tree as a tar, and
-stops or rebuilds the container.
+write-only, like every credential), exports the working tree as a tar, shows
+the **Public URL…** of a sandbox whose ports are public (an E2B-compatible
+service), and stops or rebuilds the container.
 
 ## The rest of the hub
 

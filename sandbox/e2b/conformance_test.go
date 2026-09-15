@@ -45,7 +45,7 @@ func fakeBackedSandbox(t *testing.T) (*e2b.Sandbox, *fakeService) {
 
 // fakeBackedSandboxWith chooses how the fake renders the protobuf: E2B 0.7's
 // spelling, or the older numeric one.
-func fakeBackedSandboxWith(t *testing.T, numericEnums bool) (*e2b.Sandbox, *fakeService) {
+func fakeBackedSandboxWith(t *testing.T, numericEnums bool, tweak ...func(*e2b.Options)) (*e2b.Sandbox, *fakeService) {
 	t.Helper()
 	root := t.TempDir()
 	f := newFakeService(t, root)
@@ -54,7 +54,7 @@ func fakeBackedSandboxWith(t *testing.T, numericEnums bool) (*e2b.Sandbox, *fake
 	if err != nil {
 		t.Fatal(err)
 	}
-	sb, err := e2b.New(e2b.Options{
+	opts := e2b.Options{
 		APIURL:     f.URL(),
 		Domain:     "test",
 		APIKey:     "key",
@@ -63,7 +63,11 @@ func fakeBackedSandboxWith(t *testing.T, numericEnums bool) (*e2b.Sandbox, *fake
 		// The fake serves one directory as the sandbox's filesystem, so the
 		// working directory is that directory.
 		WorkDir: root,
-	})
+	}
+	for _, fn := range tweak {
+		fn(&opts)
+	}
+	sb, err := e2b.New(opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,6 +171,44 @@ func TestE2BStopStartKeepsTheTree(t *testing.T) {
 	}
 }
 
+// A service whose record says running for a paused sandbox (Bailian) is read
+// through the daemon: Stop then Status is stopped, on the client that stopped
+// it and on a fresh one bound to the id, as the workbench reads it
+// (decisions §5.71).
+func TestE2BStatusConfirmsRunningThroughTheDaemon(t *testing.T) {
+	sb, f := fakeBackedSandbox(t)
+	f.staleState = true
+	if err := sb.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := sb.Status(t.Context()); err != nil || got != sandbox.StateRunning {
+		t.Fatalf("Status after Start = %v, %v; want running", got, err)
+	}
+	if err := sb.Stop(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := sb.Status(t.Context()); err != nil || got != sandbox.StateStopped {
+		t.Fatalf("Status after Stop = %v, %v; want stopped (the record still says running)", got, err)
+	}
+	base, _ := url.Parse(f.URL())
+	fresh, err := e2b.New(e2b.Options{
+		APIURL: f.URL(), Domain: "test", APIKey: "key", TemplateID: "base", SandboxID: f.only().id,
+		HTTPClient: &http.Client{Transport: envdRedirect{to: base, next: http.DefaultTransport}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := fresh.Status(t.Context()); err != nil || got != sandbox.StateStopped {
+		t.Fatalf("Status on a fresh client = %v, %v; want stopped", got, err)
+	}
+	if err := sb.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := fresh.Status(t.Context()); err != nil || got != sandbox.StateRunning {
+		t.Fatalf("Status after Start = %v, %v; want running", got, err)
+	}
+}
+
 // Destroy kills the sandbox; afterwards the client provisions a new one
 // rather than failing every command against a dead id.
 func TestE2BDestroyThenReprovision(t *testing.T) {
@@ -225,11 +267,11 @@ func TestE2BExportReaderCloseAbortsTheStream(t *testing.T) {
 	}
 }
 
-// timeoutCalls snapshots the TTLs the fake's /timeout endpoint was asked for.
-func timeoutCalls(f *fakeService) []int {
+// connectCalls snapshots the TTLs the fake's /connect endpoint was asked for.
+func connectCalls(f *fakeService) []int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return slices.Clone(f.timeoutCalls)
+	return slices.Clone(f.connectCalls)
 }
 
 // leasedAtLeast reports whether some call in calls asked for at least secs.
@@ -253,8 +295,8 @@ func TestE2BExportExtendsTheLease(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = rc.Close()
-	if calls := timeoutCalls(f); !leasedAtLeast(calls, 600) {
-		t.Fatalf("no refresh covered the 600s export bound; /timeout calls = %v", calls)
+	if calls := connectCalls(f); !leasedAtLeast(calls, 600) {
+		t.Fatalf("no refresh covered the 600s export bound; /connect calls = %v", calls)
 	}
 }
 
@@ -268,8 +310,8 @@ func TestE2BLongExecExtendsTheLease(t *testing.T) {
 	if _, err := sb.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}, Timeout: 20 * time.Minute}); err != nil {
 		t.Fatal(err)
 	}
-	if calls := timeoutCalls(f); !leasedAtLeast(calls, 1200) {
-		t.Fatalf("no refresh covered the 20m exec deadline; /timeout calls = %v", calls)
+	if calls := connectCalls(f); !leasedAtLeast(calls, 1200) {
+		t.Fatalf("no refresh covered the 20m exec deadline; /connect calls = %v", calls)
 	}
 }
 
@@ -285,8 +327,8 @@ func TestE2BOpenTerminalRefreshesTheLease(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer term.Close()
-	if calls := timeoutCalls(f); !leasedAtLeast(calls, e2b.DefaultTimeout) {
-		t.Fatalf("opening a terminal did not refresh the lease; /timeout calls = %v", calls)
+	if calls := connectCalls(f); !leasedAtLeast(calls, e2b.DefaultTimeout) {
+		t.Fatalf("opening a terminal did not refresh the lease; /connect calls = %v", calls)
 	}
 	// End the shell so its stream request does not outlive the server.
 	if _, err := term.Write([]byte("exit 0\n")); err != nil {

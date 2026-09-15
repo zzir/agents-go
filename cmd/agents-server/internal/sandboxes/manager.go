@@ -684,6 +684,23 @@ func (m *Manager) Status(ctx context.Context, spec Spec) (sandbox.State, error) 
 	return lc.Status(ctx)
 }
 
+// Address is where the project's sandbox serves its ports — the sandbox id
+// and the domain of "<port>-<id>.<domain>" — on a backend whose ports are public.
+func (m *Manager) Address(ctx context.Context, spec Spec) (id, domain string, err error) {
+	sb, release, err := m.Acquire(spec)
+	if err != nil {
+		return "", "", err
+	}
+	defer release()
+	a, ok := sb.(interface {
+		Address(context.Context) (string, string, error)
+	})
+	if !ok {
+		return "", "", fmt.Errorf("%s sandbox: its ports are not public", spec.Sandbox.Type)
+	}
+	return a.Address(ctx)
+}
+
 // ExportProject streams the project's working tree as a tar archive. The
 // reference the export holds is released when the returned reader is closed:
 // the archive is produced lazily by the backend, so releasing at return would

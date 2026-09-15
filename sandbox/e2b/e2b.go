@@ -68,7 +68,8 @@ type Options struct {
 	// APIURL is the control plane base URL; empty means DefaultAPIURL.
 	APIURL string
 	// Domain is the suffix a sandbox's hosts are built from:
-	// "<port>-<sandbox id>.<domain>". Empty means DefaultDomain.
+	// "<port>-<sandbox id>.<domain>". A domain the create response carries
+	// takes precedence; empty means DefaultDomain.
 	Domain string
 	// APIKey authenticates the control plane (X-API-Key). Required.
 	APIKey string
@@ -104,12 +105,16 @@ type Options struct {
 	User string
 	// DataPlaneAuth selects the envd credential; empty means AuthAuto.
 	DataPlaneAuth DataPlaneAuth
+	// Headers are added to every request on both planes, under the client's
+	// own credential and protocol headers, which a same-named entry cannot
+	// replace — for a compatible service that authenticates with its own header.
+	Headers map[string]string
 	// MaxReadFileBytes caps ReadFile; zero means the SDK default.
 	MaxReadFileBytes int64
 	// HTTPClient overrides the client used for both planes. The default refuses
 	// cross-host redirects because Go forwards the X-API-Key / X-Access-Token
-	// credential across them; a replacement without that CheckRedirect guard
-	// can leak the credential to wherever a redirect points.
+	// credential and the Headers across them; a replacement without that
+	// CheckRedirect guard can leak them to wherever a redirect points.
 	HTTPClient *http.Client
 }
 
@@ -210,6 +215,14 @@ var defaultClient = &http.Client{
 		}
 		return nil
 	},
+}
+
+// addHeaders applies Options.Headers to req, first, so the client's own
+// headers set after them win.
+func (s *Sandbox) addHeaders(req *http.Request) {
+	for k, v := range s.opts.Headers {
+		req.Header.Set(k, v)
+	}
 }
 
 func (s *Sandbox) apiURL() string {

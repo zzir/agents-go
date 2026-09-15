@@ -186,7 +186,12 @@ func (h *McpServerHandler) Create(c *gin.Context) {
 		return
 	}
 	// No stored config yet: mask sentinels resolve to empty.
-	cfg.Config = restoreMcpConfig(cfg.Config, nil)
+	restored, err := restoreMcpConfig(cfg.Config, nil)
+	if err != nil {
+		badRequest(c, err.Error())
+		return
+	}
+	cfg.Config = restored
 	if err := h.store.Create(c.Request.Context(), cfg); err != nil {
 		saveError(c, err) // duplicate name -> 409
 		return
@@ -262,7 +267,11 @@ func (h *McpServerHandler) Update(c *gin.Context) {
 			if maskAcrossDestination(cfg.Config, prev.Config, "endpoint") {
 				return badRequestError("endpoint changed: the stored secrets belong to the previous endpoint — replace them or clear them")
 			}
-			cfg.Config = restoreMcpConfig(cfg.Config, prev.Config)
+			restored, rerr := restoreMcpConfig(cfg.Config, prev.Config)
+			if rerr != nil {
+				return badRequestError(rerr.Error())
+			}
+			cfg.Config = restored
 			// A grant is bound to endpoint + auth mode + client id; when any
 			// moved, drop it in the same transaction — invariant 55.
 			if oauthIdentityChanged(cfg.Config, prev.Config) {
