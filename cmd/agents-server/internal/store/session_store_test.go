@@ -473,3 +473,18 @@ func TestMetadataUpdatesKeepTheListingOrder(t *testing.T) {
 		t.Fatalf("got name %q pinned %v, want the writes to have landed", after.Name, after.Pinned)
 	}
 }
+
+func TestClipRunesEndsACutNameWithAnEllipsis(t *testing.T) {
+	if got := ClipRunes("short", 40); got != "short" {
+		t.Fatalf("short name changed to %q", got)
+	}
+	long := "研究 inter-session context handoff design and write it up for the team wiki"
+	got := ClipName(long)
+	if r := []rune(got); len(r) != AutoNameMax || r[len(r)-1] != '…' {
+		t.Fatalf("ClipName(long) = %q (%d runes), want %d ending in an ellipsis", got, len(r), AutoNameMax)
+	}
+	// A cut that lands on a space does not leave it before the ellipsis.
+	if got := ClipRunes("abcd efgh", 6); got != "abcd…" {
+		t.Fatalf("ClipRunes on a space = %q, want %q", got, "abcd…")
+	}
+}

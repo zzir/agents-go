@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -96,6 +97,22 @@ func (s *SessionStore) Update(ctx context.Context, id string, name string) error
 // DefaultSessionName is the name a session is created with until it is named
 // by the person or the title generator.
 const DefaultSessionName = "New Session"
+
+// AutoNameMax is how long a name the workbench makes for a session may be,
+// in runes, the ellipsis included (invariant 78).
+const AutoNameMax = 40
+
+// ClipName shortens a machine-made session name to AutoNameMax runes.
+func ClipName(s string) string { return ClipRunes(s, AutoNameMax) }
+
+// ClipRunes cuts s to n runes, the last one an ellipsis when it was cut.
+func ClipRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return strings.TrimSpace(string(r[:n-1])) + "…"
+}
 
 // NameIfDefault sets the name only while the session still carries the
 // default one — the title generator's CAS. Reports whether the write took.

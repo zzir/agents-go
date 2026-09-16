@@ -107,15 +107,13 @@ func (r *Runner) RunWorkflow(ctx context.Context, workflowID, sessionID, input s
 }
 
 // nameSessionAfterWorkflow names a still-default session "<workflow>: <brief>"
-// and tells every connection, best effort.
+// (clipped like every machine-made name) and tells every connection, best effort.
 func (r *Runner) nameSessionAfterWorkflow(ctx context.Context, sessionID, workflowName, brief string) {
 	title := workflowName
 	if b := strings.Join(strings.Fields(brief), " "); b != "" {
 		title += ": " + b
 	}
-	if rs := []rune(title); len(rs) > 40 {
-		title = string(rs[:39]) + "…"
-	}
+	title = store.ClipName(title)
 	won, err := r.Deps.Sessions.NameIfDefault(ctx, sessionID, title)
 	if err != nil || !won || r.OnBroadcast == nil {
 		return

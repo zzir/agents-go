@@ -42,11 +42,7 @@ func (r *Runner) maybeGenerateTitle(parentCtx context.Context, sessionID, model,
 	if err != nil {
 		log.Warn("title gen: run failed, using first message", "error", err)
 	} else {
-		title = strings.Trim(strings.TrimSpace(res.FinalOutputString()), "\"'")
-		if len([]rune(title)) > 50 {
-			log.Warn("title gen: too long, using first message", "raw", title)
-			title = ""
-		}
+		title = store.ClipName(strings.Trim(strings.TrimSpace(res.FinalOutputString()), "\"'"))
 	}
 	// A reachable provider that failed or garbled the title leaves the session
 	// nameless; fall back to the first message.
@@ -74,15 +70,11 @@ func (r *Runner) maybeGenerateTitle(parentCtx context.Context, sessionID, model,
 }
 
 // fallbackTitle derives a name from the user's first message: its first line,
-// trimmed to 50 runes with an ellipsis.
+// clipped like every machine-made name.
 func fallbackTitle(userInput string) string {
 	line := userInput
 	if i := strings.IndexAny(line, "\r\n"); i >= 0 {
 		line = line[:i]
 	}
-	line = strings.TrimSpace(line)
-	if r := []rune(line); len(r) > 50 {
-		return strings.TrimSpace(string(r[:50])) + "…"
-	}
-	return line
+	return store.ClipName(strings.TrimSpace(line))
 }

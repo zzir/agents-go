@@ -48,3 +48,16 @@ func TestMaybeGenerateTitleGuards(t *testing.T) {
 		t.Errorf("no-provider New Session renamed to %q", got.Name)
 	}
 }
+
+// The fallback name is the first line of the message, clipped like every
+// machine-made name (invariant 78).
+func TestFallbackTitleClipsTheFirstLine(t *testing.T) {
+	if got := fallbackTitle("  hello there  \nand a second line"); got != "hello there" {
+		t.Fatalf("fallbackTitle = %q, want the first line", got)
+	}
+	long := "Research the inter-session context handoff design and write up the findings"
+	got := fallbackTitle(long)
+	if r := []rune(got); len(r) != store.AutoNameMax || r[len(r)-1] != '…' {
+		t.Fatalf("fallbackTitle(long) = %q (%d runes), want %d ending in an ellipsis", got, len(r), store.AutoNameMax)
+	}
+}

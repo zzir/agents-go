@@ -742,8 +742,10 @@ func branchName(name, label string) string {
 	if m != nil && m[1] == label {
 		n++
 	}
-	if n <= 1 {
-		return fmt.Sprintf("%s (%s)", base, label)
+	suffix := " (" + label + ")"
+	if n > 1 {
+		suffix = fmt.Sprintf(" (%s %d)", label, n)
 	}
-	return fmt.Sprintf("%s (%s %d)", base, label, n)
+	// The suffix must fit inside the cap a rename is held to.
+	return store.ClipRunes(base, maxNameLen-len([]rune(suffix))) + suffix
 }
