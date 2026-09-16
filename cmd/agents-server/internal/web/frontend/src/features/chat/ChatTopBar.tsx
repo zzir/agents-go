@@ -64,7 +64,7 @@ export function ChatTopBar({
   return (
     <div className="chat-topbar">
       <div className="chat-topbar-info">
-        <div className="chat-topbar-title">{sessionName}</div>
+        <div className="chat-topbar-title" title={sessionName}>{sessionName}</div>
         {binding && (
           // Quiet metadata next to the title: just the project's name — the
           // name a person knows it by — in muted text.

@@ -39,10 +39,17 @@
   white-space: nowrap;
   font-size: var(--base-text-size-sm);
   font-weight: var(--base-text-weight-semibold); /* match .side-panel-title */
-  /* The title is the session's identity — it never yields to the badge.
-     Its own max-width still clamps a truly long name. */
+  /* The title is the session's identity — it never yields to the badge:
+     it takes the bar, less the badge's own room once one is there, and the
+     badge shrinks. Its cap of 60 characters still clamps a long name on a
+     wide screen, and clears what a sidebar row at its widest (400px) can
+     show, so the bar never shows less of the name than the sidebar. */
   flex-shrink: 0;
-  max-width: 50%;
+  max-width: min(100%, 60ch);
+}
+.chat-topbar-info:has(.chat-topbar-binding) .chat-topbar-title {
+  /* what the badge keeps when squeezed (its icon), the kebab, the two gaps */
+  max-width: min(calc(100% - 72px), 60ch);
 }
 
 /* The bound-workdir hint beside the title: muted metadata text showing only
