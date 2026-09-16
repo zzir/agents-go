@@ -47,6 +47,16 @@ export const saveLastAgent = (agentConfigId: string): void => { try { if (agentC
 export const loadSessionProject = (sessionId: string): string => loadKey('project', sessionId);
 export const saveSessionProject = (sessionId: string, projectId: string): void => saveKey('project', sessionId, projectId);
 
+// A New composer drafts its agent and project picks under the empty id; the
+// send that makes the session moves them to its id — invariant 77.
+export function adoptNewSessionPrefs(sessionId: string): void {
+  for (const kind of ['agent', 'project']) {
+    const v = loadKey(kind, '');
+    if (v) saveKey(kind, sessionId, v);
+    saveKey(kind, '', '');
+  }
+}
+
 export function clearSessionPrefs(sessionId: string): void {
   saveKey('draft', sessionId, '');
   saveKey('agent', sessionId, '');

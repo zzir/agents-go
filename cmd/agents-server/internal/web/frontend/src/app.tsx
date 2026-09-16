@@ -29,7 +29,7 @@ import { SESSION_REMOVED } from '@/features/sessions/SessionPicker';
 import { useAgentSocket, defaultSS, type SessionState } from '@/lib/useAgentSocket';
 import { hasPendingApproval, patchToolCall, type ToolCallPatch } from '@/lib/timeline';
 import { syncTaskCard } from '@/lib/streamReducer';
-import { clearSessionPrefs } from '@/lib/drafts';
+import { adoptNewSessionPrefs, clearSessionPrefs } from '@/lib/drafts';
 import { toast } from '@/lib/toast';
 import { MeContext, useMeLoader } from '@/lib/me';
 import { useNarrow } from '@/lib/hooks';
@@ -410,6 +410,7 @@ function App() {
       try {
         const sess = await api.sessions.create(agentConfigId ? { agent_config_id: agentConfigId } : {}) as { id: string };
         sid = sess.id;
+        adoptNewSessionPrefs(sid);
         setActiveSession(sid);
         setActivePanel(null);
         setSessionReloadKey(k => k + 1);
@@ -488,6 +489,7 @@ function App() {
         const sess = await api.sessions.create(agentConfigId ? { agent_config_id: agentConfigId } : {}) as { id: string };
         sid = sess.id;
         isNew = true;
+        adoptNewSessionPrefs(sid);
         setActiveSession(sid);
         setActivePanel(null);
         setSessionReloadKey(k => k + 1);

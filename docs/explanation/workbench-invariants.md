@@ -447,3 +447,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     naming a month-old session does not carry it to the top, and unpinning
     returns a session to where its last message left it
     (`SessionStore.UpdateFields`, `NameIfDefault`).
+77. **A New composer's picks go to the session its first message makes.**
+    The agent and project chosen before a session exists are drafted under
+    the empty id; the send that creates the session moves them to its id and
+    clears the empty one (`adoptNewSessionPrefs`, `lib/drafts.ts`). A project
+    is a binding the session keeps for life, so the next New never inherits
+    one; it opens on the last agent picked anywhere, never the last one sent.
