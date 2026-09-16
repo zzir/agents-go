@@ -34,17 +34,20 @@ type fakeService struct {
 	// number — the way Alibaba Cloud's older envd does. The default is E2B's
 	// spelling. Both are real; a client that handles one is broken.
 	numericEnums bool
-	mu           sync.Mutex
-	boxes        map[string]*fakeBox
-	nextID       int
-	nextPID      uint32
-	procs        map[uint32]*fakeProc
+	// domain, when set, rides on every sandbox response — the way a service
+	// tells the client where the sandbox's ports live.
+	domain  string
+	mu      sync.Mutex
+	boxes   map[string]*fakeBox
+	nextID  int
+	nextPID uint32
+	procs   map[uint32]*fakeProc
 	// createCalls counts provisioning, so a test can assert a client does not
 	// create a second sandbox for one project.
 	createCalls int
-	// timeoutCalls records each /timeout request's requested TTL in seconds,
+	// connectCalls records each /connect request's requested TTL in seconds,
 	// so a test can assert a long operation extended the lease enough.
-	timeoutCalls []int
+	connectCalls []int
 	// signalCalls counts SendSignal RPCs — the client's cleanup of a process
 	// whose stream it abandoned.
 	signalCalls int
@@ -56,6 +59,12 @@ type fakeService struct {
 	// makeDirHook, when set, runs in the MakeDir handler; a non-empty code
 	// answers the RPC with that error instead of touching the filesystem.
 	makeDirHook func(path string) (code, msg string)
+	// requireHeader, when set, is a header every request on BOTH planes must
+	// carry — a service that authenticates with its own header.
+	requireHeader [2]string
+	// staleState keeps the record at "running" whatever the sandbox is doing —
+	// Bailian's shape; the daemon's /health is then the only truth.
+	staleState bool
 }
 
 type fakeBox struct {
@@ -85,9 +94,15 @@ func newFakeService(t *testing.T, root string) *fakeService {
 func (f *fakeService) URL() string { return f.srv.URL }
 
 func (f *fakeService) route(w http.ResponseWriter, r *http.Request) {
+	if k := f.requireHeader[0]; k != "" && r.Header.Get(k) != f.requireHeader[1] {
+		http.Error(w, `{"message":"missing `+k+`"}`, http.StatusUnauthorized)
+		return
+	}
 	switch {
 	case strings.HasPrefix(r.URL.Path, "/sandboxes"):
 		f.control(w, r)
+	case r.URL.Path == "/health":
+		f.health(w)
 	case r.URL.Path == "/files":
 		f.files(w, r)
 	case strings.HasPrefix(r.URL.Path, "/process.Process/"),
@@ -153,24 +168,30 @@ func (f *fakeService) control(w http.ResponseWriter, r *http.Request) {
 		f.setPaused(box, true)
 		w.WriteHeader(http.StatusNoContent)
 	case action == "connect":
-		f.setPaused(box, false)
-		writeJSON(w, f.infoOf(box))
-	case action == "timeout":
 		req, _ := body(r)
 		f.mu.Lock()
-		f.timeoutCalls = append(f.timeoutCalls, int(num(req["timeout"])))
+		f.connectCalls = append(f.connectCalls, int(num(req["timeout"])))
 		f.mu.Unlock()
-		w.WriteHeader(http.StatusNoContent)
+		f.setPaused(box, false)
+		writeJSON(w, f.infoOf(box))
 	default:
 		http.Error(w, `{"message":"unknown action"}`, http.StatusNotFound)
 	}
 }
 
 func (f *fakeService) infoOf(b *fakeBox) map[string]any {
+	info := f.infoOfBase(b)
+	if f.domain != "" {
+		info["domain"] = f.domain
+	}
+	return info
+}
+
+func (f *fakeService) infoOfBase(b *fakeBox) map[string]any {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	state := "running"
-	if b.paused {
+	if b.paused && !f.staleState {
 		state = "paused"
 	}
 	return map[string]any{"sandboxID": b.id, "envdAccessToken": b.token, "state": state}
@@ -198,6 +219,22 @@ func (f *fakeService) only() *fakeBox {
 		return b
 	}
 	return nil
+}
+
+/* ---------- envd: /health ---------- */
+
+// health answers the way both services' gateways do: ok while the sandbox
+// runs, a 5xx while it is paused.
+func (f *fakeService) health(w http.ResponseWriter) {
+	box := f.only()
+	f.mu.Lock()
+	paused := box != nil && box.paused
+	f.mu.Unlock()
+	if box == nil || paused {
+		http.Error(w, `{"message":"sandbox not running"}`, http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, map[string]any{"status": "ok"})
 }
 
 /* ---------- envd: /files ---------- */

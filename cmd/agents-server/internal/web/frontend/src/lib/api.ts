@@ -391,6 +391,7 @@ export const api = {
     // The project's compute: what it is doing, and starting/stopping it by
     // hand rather than leaving both to the next run and the idle timer.
     sandboxStatus: (id: string) => request<{ state: string }>(`/projects/${id}/sandbox`),
+    sandboxHost: (id: string) => request<{ sandbox_id: string; domain: string }>(`/projects/${id}/host`),
     sandboxStart: (id: string) => request<null>(`/projects/${id}/sandbox/start`, { method: 'POST' }),
     sandboxStop: (id: string) => request<{ stopped: boolean }>(`/projects/${id}/sandbox/stop`, { method: 'POST' }),
     // The working tree as a tar. It is a DOWNLOAD, not JSON, so it bypasses

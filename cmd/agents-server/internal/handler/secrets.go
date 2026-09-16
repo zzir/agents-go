@@ -3,6 +3,7 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/providers"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
@@ -73,14 +74,16 @@ func maskJSONFields(raw json.RawMessage, maskHeaders bool, fields ...string) jso
 }
 
 // restoreJSONFields resolves masked values against the stored JSON object
-// (the named fields, plus "headers" when restoreHeaders); no counterpart is "".
-func restoreJSONFields(incoming, prev json.RawMessage, restoreHeaders bool, fields ...string) json.RawMessage {
+// (the named fields, plus "headers" when restoreHeaders). A masked field with
+// no counterpart is ""; a masked header with none is an error, since the mask
+// cannot follow a renamed key.
+func restoreJSONFields(incoming, prev json.RawMessage, restoreHeaders bool, fields ...string) (json.RawMessage, error) {
 	if len(incoming) == 0 || !bytes.Contains(incoming, []byte(SecretMask)) {
-		return incoming
+		return incoming, nil
 	}
 	var in map[string]any
 	if err := json.Unmarshal(incoming, &in); err != nil {
-		return incoming
+		return incoming, nil //nolint:nilerr // not an object: validation answers, not the mask
 	}
 	var old map[string]any
 	_ = json.Unmarshal(prev, &old)
@@ -89,11 +92,11 @@ func restoreJSONFields(incoming, prev json.RawMessage, restoreHeaders bool, fiel
 		if hdrs, ok := in["headers"].(map[string]any); ok {
 			for k, v := range hdrs {
 				if s, ok := v.(string); ok && s == SecretMask {
-					if ov, ok := oldHeaders[k].(string); ok {
-						hdrs[k] = ov
-					} else {
-						hdrs[k] = ""
+					ov, ok := oldHeaders[k].(string)
+					if !ok {
+						return nil, fmt.Errorf("header %s is masked but not stored under that name — enter its value", k)
 					}
+					hdrs[k] = ov
 				}
 			}
 		}
@@ -109,9 +112,9 @@ func restoreJSONFields(incoming, prev json.RawMessage, restoreHeaders bool, fiel
 	}
 	out, err := json.Marshal(in)
 	if err != nil {
-		return incoming
+		return incoming, nil //nolint:nilerr // what decoded re-encodes; nothing to report
 	}
-	return out
+	return out, nil
 }
 
 // sanitizeMcpConfig returns cfg with its secrets masked: header values and
@@ -123,18 +126,35 @@ func sanitizeMcpConfig(cfg store.McpServerConfig) store.McpServerConfig {
 
 // restoreMcpConfig resolves masked secrets in an incoming config against the
 // previously stored config.
-func restoreMcpConfig(incoming, prev json.RawMessage) json.RawMessage {
+func restoreMcpConfig(incoming, prev json.RawMessage) (json.RawMessage, error) {
 	return restoreJSONFields(incoming, prev, true, "oauth_client_secret")
 }
 
 // storedSandboxSecret reports whether a stored sandbox actually holds a
 // credential — the mask-across-destination refusal only applies when it does.
 func storedSandboxSecret(prev json.RawMessage) bool {
-	var cfg struct {
-		SSHPassword string `json:"ssh_password"`
-		APIKey      string `json:"api_key"`
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(prev, &obj) != nil {
+		return false
 	}
-	return json.Unmarshal(prev, &cfg) == nil && (cfg.SSHPassword != "" || cfg.APIKey != "")
+	for _, k := range store.SandboxSecretKeys {
+		v, ok := obj[k]
+		if !ok {
+			continue
+		}
+		var s string
+		if json.Unmarshal(v, &s) == nil {
+			if s != "" {
+				return true
+			}
+			continue
+		}
+		var m map[string]string
+		if json.Unmarshal(v, &m) == nil && len(m) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // maskAcrossDestination reports whether incoming still carries the mask
@@ -153,23 +173,19 @@ func maskAcrossDestination(incoming, prev json.RawMessage, field string) bool {
 	return is != os
 }
 
-// sanitizeSandboxConfig returns sb shaped for a response: the credential (an
-// SSH password, or a service's API key) masked, the type's supports filled.
+// sanitizeSandboxConfig returns sb shaped for a response: the credentials
+// (store.SandboxSecretKeys) masked, the type's supports filled.
 func sanitizeSandboxConfig(sb store.Sandbox) store.Sandbox {
-	sb.Config = maskJSONFields(sb.Config, false, sandboxSecretFields...)
+	sb.Config = maskJSONFields(sb.Config, true, store.SandboxSecretKeys...)
 	sb.Supports = store.SandboxSupportsFor(sb.Type)
 	return sb
 }
 
 // restoreSandboxConfig resolves a masked credential in an incoming sandbox
 // config against the previously stored one.
-func restoreSandboxConfig(incoming, prev json.RawMessage) json.RawMessage {
-	return restoreJSONFields(incoming, prev, false, sandboxSecretFields...)
+func restoreSandboxConfig(incoming, prev json.RawMessage) (json.RawMessage, error) {
+	return restoreJSONFields(incoming, prev, true, store.SandboxSecretKeys...)
 }
-
-// sandboxSecretFields are every sandbox type's credential fields — one list,
-// mirroring the store's sealing list.
-var sandboxSecretFields = []string{"ssh_password", "api_key"}
 
 // sanitizeProvider masks a provider's key for API responses and projects the
 // ChatGPT token into the logged-in signal — the ONE place a model key is masked.

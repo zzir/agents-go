@@ -6,6 +6,7 @@ import { toast } from '@/lib/toast';
 import type { EnvVar, Project } from '@/lib/binding';
 import { EnvEditor, cleanEnv, envError } from '@/components/EnvEditor';
 import { ProjectEnvDialog } from '@/features/chat/ProjectEnvDialog';
+import { ProjectHostDialog } from '@/features/chat/ProjectHostDialog';
 import type { ProjectMenu } from '@/features/chat/ChatTopBar';
 
 // What the chat does TO a project, apart from picking one: creating it, and
@@ -89,10 +90,12 @@ export function NewProjectDialog({ sandboxes, initialSandboxId, onCreated, onClo
 // useProjectMenu is the bound project's menu (ChatTopBar.projectMenu): the
 // container's state and the acts on it. `menu` is null while nothing is
 // bound; `dialog` is the environment editor, open or not.
-export function useProjectMenu({ project, rebuildable, running, onProjectsChanged }: {
+export function useProjectMenu({ project, rebuildable, hostable, running, onProjectsChanged }: {
   project: Project | null;
   // False until the sandbox row declares `rebuild` — never offered on a guess.
   rebuildable: boolean;
+  // False until the sandbox row declares `public_host`.
+  hostable: boolean;
   running: boolean;
   // The environment dialog closed: the project rows may have changed.
   onProjectsChanged: () => void;
@@ -101,6 +104,7 @@ export function useProjectMenu({ project, rebuildable, running, onProjectsChange
   // The project whose environment is open for editing, and whether a
   // container call is in flight (both disable the menu).
   const [envProject, setEnvProject] = useState<Project | null>(null);
+  const [hostProject, setHostProject] = useState<Project | null>(null);
   const [containerBusy, setContainerBusy] = useState(false);
   // The compute state, refreshed when the project changes and after every act
   // on it. '' means "not asked yet".
@@ -211,7 +215,9 @@ export function useProjectMenu({ project, rebuildable, running, onProjectsChange
     state: sandboxState,
     stateLoading,
     rebuildable,
+    hostable,
     onEnv: () => setEnvProject(project),
+    onHost: () => setHostProject(project),
     onStart: () => { void startSandbox(); },
     onStop: () => { void stopSandbox(); },
     onExport: () => { void exportProject(); },
@@ -219,12 +225,17 @@ export function useProjectMenu({ project, rebuildable, running, onProjectsChange
     onOpen: () => { void refreshSandboxState(project.id); },
   } : null;
 
-  const dialog = envProject && (
-    <ProjectEnvDialog
-      project={envProject}
-      sessionCount={envProject.session_count}
-      onClose={() => { setEnvProject(null); onProjectsChanged(); }}
-    />
+  const dialog = (
+    <>
+      {envProject && (
+        <ProjectEnvDialog
+          project={envProject}
+          sessionCount={envProject.session_count}
+          onClose={() => { setEnvProject(null); onProjectsChanged(); }}
+        />
+      )}
+      {hostProject && <ProjectHostDialog project={hostProject} onClose={() => setHostProject(null)} />}
+    </>
   );
 
   return { menu, dialog };

@@ -11,6 +11,7 @@ package e2b_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"testing"
 
@@ -34,6 +35,7 @@ func TestRealServiceConformance(t *testing.T) {
 			Domain:     os.Getenv("E2B_DOMAIN"),
 			APIKey:     key,
 			TemplateID: template,
+			Headers:    headersEnv(t),
 			// The suite writes relative paths; E2B sandboxes run as "user",
 			// whose home is where a template puts anything anyway.
 			WorkDir: "/home/user",
@@ -54,4 +56,19 @@ func TestRealServiceConformance(t *testing.T) {
 		})
 		return sb
 	})
+}
+
+// headersEnv decodes E2B_HEADERS, a JSON object — the extra headers a
+// compatible service authenticates with.
+func headersEnv(t *testing.T) map[string]string {
+	t.Helper()
+	raw := os.Getenv("E2B_HEADERS")
+	if raw == "" {
+		return nil
+	}
+	var h map[string]string
+	if err := json.Unmarshal([]byte(raw), &h); err != nil {
+		t.Fatalf("E2B_HEADERS: %v", err)
+	}
+	return h
 }

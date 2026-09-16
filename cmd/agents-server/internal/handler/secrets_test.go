@@ -26,7 +26,7 @@ func TestMcpConfigHeaderMasking(t *testing.T) {
 	}
 
 	// Sending the masked config back restores the stored secrets.
-	restored := restoreMcpConfig(masked.Config, cfg.Config)
+	restored := must(t)(restoreMcpConfig(masked.Config, cfg.Config))
 	rs := string(restored)
 	if !strings.Contains(rs, "Bearer tok") || !strings.Contains(rs, "cs-1") {
 		t.Fatalf("restore did not resolve masks: %s", rs)
@@ -34,7 +34,7 @@ func TestMcpConfigHeaderMasking(t *testing.T) {
 
 	// A changed header value wins over the stored one; a new header passes through.
 	edited := json.RawMessage(`{"endpoint":"https://x","headers":{"Authorization":"Bearer new","X-K":"v"},"oauth_client_secret":"` + SecretMask + `"}`)
-	rs = string(restoreMcpConfig(edited, cfg.Config))
+	rs = string(must(t)(restoreMcpConfig(edited, cfg.Config)))
 	if !strings.Contains(rs, "Bearer new") || !strings.Contains(rs, `"X-K":"v"`) || !strings.Contains(rs, "cs-1") {
 		t.Fatalf("partial edit resolved wrong: %s", rs)
 	}
@@ -49,9 +49,38 @@ func TestSandboxPasswordMasking(t *testing.T) {
 	if strings.Contains(string(masked.Config), "pw-1") {
 		t.Fatalf("sanitize leaked password: %s", masked.Config)
 	}
-	restored := restoreSandboxConfig(masked.Config, cfg.Config)
-	if !strings.Contains(string(restored), "pw-1") {
-		t.Fatalf("restore did not resolve password: %s", restored)
+	restored, err := restoreSandboxConfig(masked.Config, cfg.Config)
+	if err != nil || !strings.Contains(string(restored), "pw-1") {
+		t.Fatalf("restore did not resolve password: %s (%v)", restored, err)
+	}
+}
+
+// An e2b sandbox's headers are credentials like its api_key: masked out,
+// resolved back on write, and counted as a stored secret by the destination guard.
+func TestSandboxHeadersMasking(t *testing.T) {
+	cfg := store.Sandbox{
+		Type:   "e2b",
+		Config: json.RawMessage(`{"api_url":"https://x","api_key":"e2b_1","headers":{"Authorization":"Bearer bl-1"},"template_id":"t"}`),
+	}
+	masked := sanitizeSandboxConfig(cfg)
+	if strings.Contains(string(masked.Config), "bl-1") {
+		t.Fatalf("sanitize leaked a header value: %s", masked.Config)
+	}
+	restored, err := restoreSandboxConfig(masked.Config, cfg.Config)
+	if err != nil || !strings.Contains(string(restored), "Bearer bl-1") || !strings.Contains(string(restored), "e2b_1") {
+		t.Fatalf("restore did not resolve the secrets: %s (%v)", restored, err)
+	}
+	// The mask cannot follow a renamed key: that is an error naming the key,
+	// not a silently emptied value.
+	renamed := json.RawMessage(`{"api_url":"https://x","api_key":"` + SecretMask + `","headers":{"X-Auth":"` + SecretMask + `"},"template_id":"t"}`)
+	if _, err := restoreSandboxConfig(renamed, cfg.Config); err == nil || !strings.Contains(err.Error(), "X-Auth") {
+		t.Fatalf("a masked header under a new name resolved: %v", err)
+	}
+	if !storedSandboxSecret(json.RawMessage(`{"headers":{"Authorization":"Bearer bl-1"}}`)) {
+		t.Fatal("a stored header value does not count as a stored secret")
+	}
+	if storedSandboxSecret(json.RawMessage(`{"headers":{}}`)) {
+		t.Fatal("empty headers count as a stored secret")
 	}
 }
 
@@ -97,5 +126,17 @@ func TestProviderUpdateRejectsMaskedKeyAcrossDestinationChange(t *testing.T) {
 		`{"name":"glm","type":"openai","api_key":"********","base_url":"https://x"}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("masked key, same destination: got %d (body %s)", w.Code, w.Body.String())
+	}
+}
+
+// must unwraps a restore that this test expects to succeed.
+func must(t *testing.T) func(json.RawMessage, error) json.RawMessage {
+	t.Helper()
+	return func(raw json.RawMessage, err error) json.RawMessage {
+		t.Helper()
+		if err != nil {
+			t.Fatalf("restore: %v", err)
+		}
+		return raw
 	}
 }

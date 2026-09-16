@@ -37,12 +37,24 @@ describe('SandboxPanel flatten / pack', () => {
       id: 'sb2', name: 'cloud', type: 'e2b',
       config: {
         api_url: 'https://api.example', domain: 'example.app', api_key: 'k', data_plane_auth: 'api_key',
+        headers: { Authorization: 'Bearer t' },
         template_id: 'base', user: 'user', auto_pause: false, allow_internet: true, timeout_seconds: 600, max_read_file_bytes: 1024,
       },
     };
     expect(pack(flatten(row))).toEqual({ name: 'cloud', type: 'e2b', prompt: '', config: row.config });
     expect(flatten({ name: 'n', type: 'e2b', config: {} }).auto_pause).toBe(true);
     expect(flatten({ name: 'n', type: 'e2b', config: {} }).image).toBe('');
+    expect(flatten({ name: 'n', type: 'e2b', config: { headers: {} } }).headers).toBe('');
+  });
+
+  it('refuses malformed headers and omits empty ones', () => {
+    const base = flatten({ name: 'n', type: 'e2b', config: { template_id: 't' } });
+    expect(() => pack({ ...base, headers: '{not json' })).toThrow(/valid JSON/);
+    expect(() => pack({ ...base, headers: '["a"]' })).toThrow(/JSON object/);
+    expect(() => pack({ ...base, headers: '{"X": 1}' })).toThrow(/string value/);
+    expect(() => pack({ ...base, headers: '{"": "v"}' })).toThrow(/name/);
+    expect(() => pack({ ...base, headers: '{"X": ""}' })).toThrow(/value/);
+    expect(pack({ ...base, headers: ' {} ' }).config).not.toHaveProperty('headers');
   });
 
   it('drops a non-numeric or non-positive limit instead of sending it', () => {

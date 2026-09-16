@@ -770,28 +770,31 @@ Rules: workbench invariant 27; [Projects](../reference/protocol.md#projects--api
 
 ### 5.34 One E2B-compatible backend, written here, not one backend per cloud
 
-Decided 2026-08-28; verified against E2B's cloud and Alibaba Cloud Function
-Compute.
+Decided 2026-08-28; verified against E2B's cloud, Alibaba Cloud Function Compute and Bailian.
 
 **Decision.** Function Compute's cloud sandbox is E2B SDK compatible across
 everything the workbench needs, so the second backend is **one backend that
 speaks the E2B API** and a sandbox row naming the service — `api_url`,
-`domain`, `api_key` — with no `flavor` discriminator: the moment one appears
-that configuration cannot express, it is a new decision, not a switch to
-grow. The client is written here — six REST calls and Connect-over-JSON,
+`domain`, `api_key`, `headers` — with no `flavor` discriminator: the moment
+one appears that configuration cannot express, it is a new decision, not a
+switch to grow. The client is written here — five REST calls and Connect-over-JSON,
 ~150 lines of standard library — which keeps `sandbox/e2b` in the ROOT module
 (§5.7). The sandbox is remembered, not searched for: its id lands in
 `projects.instance_ref` before the client will use it, and a failure to
 record fails the create, since an unrecorded sandbox is billed compute nobody
 will ever stop. The lease is extended on demand — every control call sends
-`max(configured TTL, the operation's own bound)` — never by a keepalive. Stop
+`max(configured TTL, the operation's own bound)` through `connect`, which
+resumes a paused sandbox and only extends a running one — never by a keepalive. Stop
 is pause and Reclaim is kill: the sandbox IS the storage, so killing it is
 the whole of §5.33's delete, and `auto_pause` defaults to true. Every create
 asks for a per-sandbox token (`secure: true`), because without it E2B's
 daemon takes no credential at all.
 
-**Rejected.** One backend per cloud — the services differ in three fields. A
-community Go SDK, or a protobuf toolchain with generated stubs — two module
+**Rejected.** One backend per cloud — the services differ in four fields. An
+auth-scheme switch (`X-API-Key` vs `Authorization: Bearer`) instead of
+`headers` — Bailian wants both at once, and `headers` is the E2B SDK's own
+parameter. `/timeout` for the extension — Bailian lacks it, and its 404 would
+read as a dead sandbox. A community Go SDK, or a protobuf toolchain with generated stubs — two module
 dependencies for six messages; generate them if the surface grows past that.
 A metadata query to find a sandbox — a filter syntax the compatible services
 do not document identically. A keepalive goroutine — the extension rides the
@@ -802,8 +805,8 @@ probe, not a schema. A terminal idle past one full lease can lose its
 sandbox. Pausing on Function Compute is gated behind a per-function feature,
 and the client passes the service's refusal through verbatim.
 
-Rules: [Sandboxes](../reference/protocol.md#sandboxes--apiv1sandboxes); the
-services' rendering quirks live on the code that absorbs them (`sandbox/e2b`).
+Rules: spec §2.7u; [Sandboxes](../reference/protocol.md#sandboxes--apiv1sandboxes);
+the services' rendering quirks live on the code that absorbs them (`sandbox/e2b`).
 
 ### 5.35 A port preview is a gateway with a grant, not a published port (retired)
 
@@ -1645,6 +1648,60 @@ the field.
 
 Rules: [invariant 9](workbench-invariants.md);
 [protocol.md, Agents](../reference/protocol.md#agents--apiv1agents).
+
+### 5.70 An E2B port is an address to copy, not a proxy
+
+Decided 2026-09-14 (workbench invariant 53).
+
+**Decision.** On a service speaking the E2B API every sandbox port is already
+public at `<port>-<sandbox id>.<domain>`, so the workbench shows that address
+— the id and the domain the service returned, `<port>` left to the reader —
+in a dialog to copy. Nothing is proxied, granted or published, and the read
+neither creates nor resumes the sandbox. The row declares it through
+`supports.public_host`; docker, whose ports are not public, declares nothing
+and offers nothing.
+
+**Rejected.** A port input in the menu — the port is the server's inside the
+sandbox, which the person knows and the workbench does not. Reviving the port
+preview (§5.35) for e2b — its cost was the gateway, which this needs none of.
+Persisting the domain beside `instance_ref` — a schema column for a fact one
+GET returns.
+
+**Cost accepted.** One control-plane GET per open. The address is what the
+service publishes; reachability is its policy — a service may gate port
+traffic with a token, or answer every response with
+`Content-Disposition: attachment` (Bailian's gateway does, whatever the
+content type), which leaves the URL to `curl` and `fetch` and takes a browser
+page off the table.
+
+Rules: [invariant 53](workbench-invariants.md);
+[protocol.md, Projects](../reference/protocol.md#projects--apiv1projects).
+
+### 5.71 A running record is confirmed through the daemon
+
+Decided 2026-09-14; verified against Bailian.
+
+**Decision.** `Status` trusts a record that says `paused` and a 404, and
+confirms one that says `running` with a GET of the daemon's `/health`: a 5xx
+from the sandbox's gateway (502 on E2B, 500 on Bailian) answers stopped, any
+answer the daemon gives is running, and a transport failure is the error.
+Bailian's record says `running` for a paused sandbox — after its own `pause`
+returned 204, and past the `endAt` it auto-paused at — while the same
+service's `?state=paused` filter and its gateway both tell the truth. The
+probe is E2B's own SDK's definition of "is running".
+
+**Rejected.** Trusting the record — the workbench's menu offered "Stop
+sandbox" on a sandbox it had just stopped. The `?state=` list filter — a scan
+of every sandbox on the account, on a service that drops the metadata a
+filter would narrow it by. `endAt` — an explicit pause leaves it in the
+future. Remembering the pause on the client — the workbench reads through a
+fresh client, and a pause from the console or a timeout is nobody's memory.
+
+**Cost accepted.** One data-plane round trip per status read of a running
+sandbox. A transient 5xx reads as stopped, whose remedy — Start — is a
+`connect` that only extends a running sandbox's lease.
+
+Rules: spec §2.7u.
 
 ### 5.72 spawn_task chooses from the handoff graph
 

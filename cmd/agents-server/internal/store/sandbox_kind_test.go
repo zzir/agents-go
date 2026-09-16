@@ -24,7 +24,7 @@ func TestSandboxSupportsPerType(t *testing.T) {
 	if got, want := SandboxSupportsFor("docker"), (SandboxSupports{Rebuild: true}); got != want {
 		t.Errorf("docker = %+v, want %+v", got, want)
 	}
-	if got, want := SandboxSupportsFor("e2b"), (SandboxSupports{}); got != want {
+	if got, want := SandboxSupportsFor("e2b"), (SandboxSupports{PublicHost: true}); got != want {
 		t.Errorf("e2b = %+v, want %+v", got, want)
 	}
 	if want := []string{"docker", "e2b"}; !slices.Equal(SandboxTypes, want) {
@@ -37,7 +37,7 @@ func TestSandboxFrozenFieldsPerType(t *testing.T) {
 	if got := SandboxFrozenFields("docker"); got != "its type and machine are frozen — the image, the limits, the credential and the name stay editable" {
 		t.Errorf("docker = %q", got)
 	}
-	if got := SandboxFrozenFields("e2b"); got != "its type, service address, template and lifecycle (auto-pause, internet) are frozen — the api key, timeout, read limit and name stay editable" {
+	if got := SandboxFrozenFields("e2b"); got != "its type, service address, template and lifecycle (auto-pause, internet) are frozen — the api key, headers, timeout, read limit and name stay editable" {
 		t.Errorf("e2b = %q", got)
 	}
 }
