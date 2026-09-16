@@ -87,7 +87,7 @@ func (s *SessionStore) Get(ctx context.Context, id string) (*Session, error) {
 	return sess, nil
 }
 
-// Update renames the session with the given id and refreshes its updated_at.
+// Update renames the session with the given id.
 func (s *SessionStore) Update(ctx context.Context, id string, name string) error {
 	np := &name
 	return s.UpdateFields(ctx, id, np, nil)
@@ -102,7 +102,6 @@ const DefaultSessionName = "New Session"
 func (s *SessionStore) NameIfDefault(ctx context.Context, id, name string) (bool, error) {
 	res, err := s.db.NewUpdate().Model((*Session)(nil)).
 		Set("name = ?", name).
-		Set("updated_at = ?", time.Now().UTC()).
 		Where("id = ?", id).
 		Where("name = ?", DefaultSessionName).
 		Exec(ctx)
@@ -116,11 +115,11 @@ func (s *SessionStore) NameIfDefault(ctx context.Context, id, name string) (bool
 	return n > 0, nil
 }
 
-// UpdateFields applies a partial update to the session (non-nil fields only;
-// updated_at always refreshed). ErrNotFound-wrapping error when absent.
+// UpdateFields applies a partial update to the session (non-nil fields only).
+// Name and pin are metadata: updated_at, which orders the listing, stays
+// (invariant 76). ErrNotFound-wrapping error when absent.
 func (s *SessionStore) UpdateFields(ctx context.Context, id string, name *string, pinned *bool) error {
 	q := s.db.NewUpdate().Model((*Session)(nil)).
-		Set("updated_at = ?", time.Now().UTC()).
 		Where("id = ?", id)
 	if name != nil {
 		q = q.Set("name = ?", *name)

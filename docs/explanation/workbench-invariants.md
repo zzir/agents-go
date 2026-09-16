@@ -440,3 +440,10 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     config id the build gave that target — never a name lookup, which a
     same-named private agent would capture — so the task runs as the agent
     the model was offered (`bridge/spawn_tool.go`; decisions §5.72).
+76. **The sidebar orders by what the session said, not what it is called.**
+    `updated_at`, the listing's sort key, moves only when the transcript
+    does (a run's per-turn persist, `touchSessionIn`) or the plan phase
+    flips. A rename, a pin, an unpin and the generated title leave it alone:
+    naming a month-old session does not carry it to the top, and unpinning
+    returns a session to where its last message left it
+    (`SessionStore.UpdateFields`, `NameIfDefault`).

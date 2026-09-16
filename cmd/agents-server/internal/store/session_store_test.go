@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/uptrace/bun"
 )
@@ -432,5 +433,43 @@ func TestPlanningIsKeyedByGeneration(t *testing.T) {
 	}
 	if got, err := entries.SessionIsPlanning(ctx, second); err != nil || !got {
 		t.Fatalf("second generation planning = %v, %v; want true", got, err)
+	}
+}
+
+// Naming and pinning are metadata: the listing's sort key does not move for
+// them, so a renamed or unpinned session stays where its last message left it
+// (invariant 76).
+func TestMetadataUpdatesKeepTheListingOrder(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	sessions := NewSessionStore(db)
+	sess := &Session{OwnerID: LocalUserID, ID: NewID(), Name: DefaultSessionName}
+	if err := sessions.Create(ctx, sess); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := sessions.Get(ctx, sess.ID)
+	time.Sleep(2 * time.Millisecond)
+
+	if _, err := sessions.NameIfDefault(ctx, sess.ID, "Generated"); err != nil {
+		t.Fatal(err)
+	}
+	if err := sessions.Update(ctx, sess.ID, "Renamed"); err != nil {
+		t.Fatal(err)
+	}
+	pinned := true
+	if err := sessions.UpdateFields(ctx, sess.ID, nil, &pinned); err != nil {
+		t.Fatal(err)
+	}
+	pinned = false
+	if err := sessions.UpdateFields(ctx, sess.ID, nil, &pinned); err != nil {
+		t.Fatal(err)
+	}
+
+	after, _ := sessions.Get(ctx, sess.ID)
+	if !after.UpdatedAt.Equal(before.UpdatedAt) {
+		t.Fatalf("updated_at moved %v -> %v on metadata-only updates", before.UpdatedAt, after.UpdatedAt)
+	}
+	if after.Name != "Renamed" || after.Pinned {
+		t.Fatalf("got name %q pinned %v, want the writes to have landed", after.Name, after.Pinned)
 	}
 }
