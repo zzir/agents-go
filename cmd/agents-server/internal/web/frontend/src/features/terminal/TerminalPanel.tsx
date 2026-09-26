@@ -1,9 +1,9 @@
 import './terminal.css';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { ActionMenu, ActionList, IconButton } from '@primer/react';
-import { PlusIcon, QuoteIcon, SyncIcon, TerminalIcon, XIcon } from '@primer/octicons-react';
+import { ChevronDownIcon, PlusIcon, QuoteIcon, SyncIcon, TerminalIcon, XIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
-import { useApi } from '@/lib/hooks';
+import { readStoredSize, saveStoredSize, useApi } from '@/lib/hooks';
 import { insertIntoComposer, quoteAsCodeBlock } from '@/lib/composer';
 import { useProjects } from '@/lib/useProjects';
 import { toast } from '@/lib/toast';
@@ -44,18 +44,26 @@ interface TerminalPanelProps {
 // header bar (sessions keep running); dragging back up past it re-expands.
 const COLLAPSE_AT = 80;
 const MIN_HEIGHT = 120;
+const DEFAULT_HEIGHT = 300;
+const HEIGHT_KEY = 'terminalHeight';
+const HEIGHT_ARROW_KEY_STEP = 10;
+const maxHeight = () => Math.round(window.innerHeight * 0.8);
 
 // TerminalPanel is the global bottom panel hosting sandbox terminals in tabs.
 // It is session-agnostic and stays mounted while hidden so every tab's shell
 // survives panel toggles, chat switches and sandbox re-selection; only
-// closing a tab (or the page) ends that session.
+// closing a tab (or the page) ends that session (invariant 81).
 export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersion, openRequest }: TerminalPanelProps) {
   const [tabs, setTabs] = useState<TerminalTab[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
   const nextId = useRef(1);
   const dragRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  const [height, setHeight] = useState(300);
+  const [height, setHeight] = useState(() => readStoredSize(HEIGHT_KEY, DEFAULT_HEIGHT));
+  // The drag handlers read it through the ref, set eagerly so a burst of
+  // moves between renders sees its own changes.
+  const heightRef = useRef(height);
+  heightRef.current = height;
   const [dragging, setDragging] = useState(false);
   // Collapsed = header-only strip, aligned with the left sidebar's footer.
   const [collapsed, setCollapsed] = useState(false);
@@ -108,6 +116,27 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
     setActiveId(id);
     setActiveHasSelection(!!viewRefs.current.get(id)?.getSelection());
     expand();
+  };
+
+  // Roving tabindex: the active tab is the list's one Tab stop, the arrow
+  // keys move (and activate) along the strip. Only a tab's own keys count —
+  // the "+" menu on the same strip uses Home/End for its items.
+  const tabRefs = useRef(new Map<number, HTMLDivElement | null>());
+  const onTabListKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (tabs.length === 0 || (e.target as HTMLElement).getAttribute('role') !== 'tab') return;
+    const idx = tabs.findIndex(t => t.id === activeId);
+    let next: number;
+    switch (e.key) {
+      case 'ArrowLeft': next = idx <= 0 ? tabs.length - 1 : idx - 1; break;
+      case 'ArrowRight': next = idx < 0 || idx >= tabs.length - 1 ? 0 : idx + 1; break;
+      case 'Home': next = 0; break;
+      case 'End': next = tabs.length - 1; break;
+      default: return;
+    }
+    e.preventDefault();
+    const id = tabs[next].id;
+    activateTab(id);
+    tabRefs.current.get(id)?.focus();
   };
 
   // Quote the active tab's selection into the chat composer as a code block.
@@ -167,9 +196,14 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
         return;
       }
       setCollapsed(false);
-      setHeight(Math.min(Math.max(raw, MIN_HEIGHT), Math.round(window.innerHeight * 0.8)));
+      const next = Math.min(Math.max(raw, MIN_HEIGHT), maxHeight());
+      heightRef.current = next;
+      setHeight(next);
     };
-    const onUp = () => setDragging(false);
+    const onUp = () => {
+      setDragging(false);
+      saveStoredSize(HEIGHT_KEY, heightRef.current);
+    };
     const onDown = (down: PointerEvent) => {
       if (down.button !== 0) return;
       down.preventDefault();
@@ -190,21 +224,55 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
     };
   }, []);
 
+  // The keyboard's resize: ArrowUp grows, ArrowDown shrinks and, at the
+  // minimum, collapses; ArrowUp on a collapsed panel expands it.
+  const onResizeKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    e.preventDefault();
+    const step = e.key === 'ArrowUp' ? HEIGHT_ARROW_KEY_STEP : -HEIGHT_ARROW_KEY_STEP;
+    if (collapsed) {
+      if (step > 0) setCollapsed(false);
+      return;
+    }
+    if (step < 0 && heightRef.current <= MIN_HEIGHT) {
+      setCollapsed(true);
+      return;
+    }
+    const next = Math.min(Math.max(heightRef.current + step, MIN_HEIGHT), maxHeight());
+    if (next === heightRef.current) return;
+    heightRef.current = next;
+    setHeight(next);
+    saveStoredSize(HEIGHT_KEY, next);
+  };
+
   return (
     <div
       ref={panelRef}
       className={'terminal-panel' + (collapsed ? ' terminal-panel-collapsed' : '')}
       style={{ height: collapsed ? undefined : height, display: open ? undefined : 'none' }}
     >
-      <div ref={dragRef} className={'terminal-panel-resize pane-resize-handle' + (dragging ? ' dragging' : '')} />
+      <div
+        ref={dragRef}
+        className={'terminal-panel-resize pane-resize-handle' + (dragging ? ' dragging' : '')}
+        role="slider"
+        aria-orientation="vertical"
+        aria-label="Resize terminal panel"
+        aria-valuemin={0}
+        aria-valuemax={maxHeight()}
+        aria-valuenow={collapsed ? 0 : height}
+        aria-valuetext={collapsed ? 'Terminal panel collapsed to its header' : `Terminal panel height ${height} pixels`}
+        tabIndex={0}
+        onKeyDown={onResizeKeyDown}
+      />
       <div className="terminal-panel-header">
-        <div className="terminal-panel-tabs" role="tablist">
-          {tabs.map(tab => (
+        <div className="terminal-panel-tabs" role="tablist" onKeyDown={onTabListKeyDown}>
+          {tabs.map((tab, i) => (
             <div
               key={tab.id}
+              ref={el => { if (el) tabRefs.current.set(tab.id, el); else tabRefs.current.delete(tab.id); }}
               role="tab"
               aria-selected={tab.id === activeId}
-              tabIndex={0}
+              tabIndex={tab.id === activeId || (activeId === null && i === 0) ? 0 : -1}
               className={'terminal-tab' + (tab.id === activeId ? ' terminal-tab-active' : '')}
               onClick={() => activateTab(tab.id)}
               onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activateTab(tab.id); } }}
@@ -285,7 +353,8 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
               />
             </>
           )}
-          <IconButton icon={XIcon} variant="invisible" size="small" aria-label="Close" onClick={onClose} />
+          {/* Hides the panel; the shells keep running (invariant 81). */}
+          <IconButton icon={ChevronDownIcon} variant="invisible" size="small" aria-label="Hide terminal panel" onClick={onClose} />
         </div>
       </div>
       {tabs.length === 0 ? (

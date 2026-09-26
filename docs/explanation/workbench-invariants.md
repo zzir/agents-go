@@ -469,3 +469,8 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     `numberDraft` seeds it, `parseWholeNumber` reads it back — an empty box is
     0, a negative stays (`-1` = unlimited retries), and what is not a whole
     number refuses the save with the field's name (`lib/numericField.ts`).
+81. **A terminal tab's lifetime is its shell's: closing the tab ends the
+    session, hiding the panel keeps it. The panel's close control hides.**
+    The panel stays mounted while hidden and its control is a chevron labelled
+    "Hide terminal panel"; only a tab's own X (or the page) ends that shell
+    (`TerminalPanel.tsx`, `TerminalView.tsx`).

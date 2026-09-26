@@ -32,7 +32,9 @@ function clampPaneWidth(n: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, n));
 }
 
-function readStoredPaneWidth(storageKey: string, fallback: number): number {
+/** A pane's stored size in pixels (a width, a height), or the fallback when
+ * nothing usable is stored or storage is unavailable. */
+export function readStoredSize(storageKey: string, fallback: number): number {
   try {
     const raw = localStorage.getItem(storageKey);
     if (raw === null) return fallback;
@@ -43,9 +45,9 @@ function readStoredPaneWidth(storageKey: string, fallback: number): number {
   }
 }
 
-function savePaneWidth(storageKey: string, width: number): void {
+export function saveStoredSize(storageKey: string, size: number): void {
   try {
-    localStorage.setItem(storageKey, String(Math.round(width)));
+    localStorage.setItem(storageKey, String(Math.round(size)));
   } catch {
     // Ignore write errors (private browsing, quota exceeded, etc.)
   }
@@ -114,7 +116,7 @@ interface ResizablePane {
 export function useResizablePane({ storageKey, min, max, defaultWidth, edge, collapsedWidth }: UseResizablePaneOptions): ResizablePane {
   const collapsible = collapsedWidth !== undefined;
   const collapsedKey = storageKey + 'Collapsed';
-  const [width, setWidth] = useState(() => clampPaneWidth(readStoredPaneWidth(storageKey, defaultWidth), min, max));
+  const [width, setWidth] = useState(() => clampPaneWidth(readStoredSize(storageKey, defaultWidth), min, max));
   const [collapsed, setCollapsed] = useState(() => collapsible && readStoredFlag(collapsedKey));
   const [snapping, setSnapping] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -191,7 +193,7 @@ export function useResizablePane({ storageKey, min, max, defaultWidth, edge, col
   const onPointerUp = useCallback((e: PointerEvent<HTMLDivElement>) => {
     setDragging(false);
     if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
-    savePaneWidth(storageKey, widthRef.current);
+    saveStoredSize(storageKey, widthRef.current);
   }, [storageKey]);
 
   const onKeyDown = useCallback((e: KeyboardEvent<HTMLDivElement>) => {
@@ -212,7 +214,7 @@ export function useResizablePane({ storageKey, min, max, defaultWidth, edge, col
     const next = clampPaneWidth(widthRef.current + step, min, max);
     if (next !== widthRef.current) {
       track(next);
-      savePaneWidth(storageKey, next);
+      saveStoredSize(storageKey, next);
     }
   }, [collapsible, min, max, sign, storageKey, snapTo, track]);
 
@@ -220,7 +222,7 @@ export function useResizablePane({ storageKey, min, max, defaultWidth, edge, col
     if (collapsedRef.current) snapTo(false);
     widthRef.current = defaultWidth;
     setWidth(defaultWidth);
-    savePaneWidth(storageKey, defaultWidth);
+    saveStoredSize(storageKey, defaultWidth);
   }, [defaultWidth, storageKey, snapTo]);
 
   const expand = useCallback(() => {
