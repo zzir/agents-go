@@ -5042,7 +5042,7 @@ export interface paths {
                         "application/json": components["schemas"]["handler.ErrorResponse"];
                     };
                 };
-                /** @description Conflict */
+                /** @description a run or a background task is live on the session */
                 409: {
                     headers: {
                         [name: string]: unknown;
@@ -5508,7 +5508,7 @@ export interface paths {
                         "application/json": components["schemas"]["handler.ErrorResponse"];
                     };
                 };
-                /** @description a run is live on the session, or it is bound to a project the new owner does not own */
+                /** @description a run or a background task is live on the session, or it is bound to a project the new owner does not own */
                 409: {
                     headers: {
                         [name: string]: unknown;

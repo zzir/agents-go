@@ -35,8 +35,10 @@ type RunStopper interface {
 	// ForgetSessionTrust drops a deleted session's exec_command trust grants —
 	// in-memory state that would otherwise outlive the row until restart.
 	ForgetSessionTrust(sessionID string)
-	// SessionBusy reports whether a run is live on the session.
-	SessionBusy(sessionID string) bool
+	// WithSessionTreeFenced runs fn with the session and the hidden sessions
+	// serving it at rest and fenced against new runs; bridge.ErrSessionBusy
+	// when a run is live on any of them.
+	WithSessionTreeFenced(ctx context.Context, sessionID string, fn func() error) error
 }
 
 // MCPToolLister answers what a connected MCP server currently exposes
@@ -273,8 +275,9 @@ func (h *SessionHandler) Patch(c *gin.Context) {
 }
 
 // SetOwner reassigns the session (and the hidden sessions serving it) to
-// another account (admin). Refused while a run is live on it, and a session
-// bound to a project transfers only to that project's owner (409 otherwise).
+// another account (admin). Refused while a run or a background task is live
+// anywhere in that tree, and a session bound to a project transfers only to
+// that project's owner (409 otherwise).
 //
 //	@Summary	Reassign session owner (admin)
 //	@Tags		sessions
@@ -285,7 +288,7 @@ func (h *SessionHandler) Patch(c *gin.Context) {
 //	@Failure	400		{object}	ErrorResponse	"malformed body, or no such user"
 //	@Failure	403		{object}	ErrorResponse
 //	@Failure	404		{object}	ErrorResponse
-//	@Failure	409		{object}	ErrorResponse	"a run is live on the session, or it is bound to a project the new owner does not own"
+//	@Failure	409		{object}	ErrorResponse	"a run or a background task is live on the session, or it is bound to a project the new owner does not own"
 //	@Security	BearerAuth
 //	@Router		/sessions/{id}/owner [put]
 func (h *SessionHandler) SetOwner(c *gin.Context) {
@@ -321,16 +324,31 @@ func (h *SessionHandler) SetOwner(c *gin.Context) {
 			return
 		}
 	}
-	if h.stopper.SessionBusy(id) {
-		conflict(c, "a run is live on this session; stop it first")
-		return
-	}
-	if err := h.sessions.SetOwner(c.Request.Context(), id, req.UserID); err != nil {
-		storeError(c, err)
+	// At rest, hub-fenced for the write: a run or task live anywhere in the
+	// tree would carry on under the old owner's identity — invariant 82.
+	err = h.stopper.WithSessionTreeFenced(c.Request.Context(), id, func() error {
+		return h.sessions.SetOwner(c.Request.Context(), id, req.UserID)
+	})
+	if err != nil {
+		fencedError(c, err)
 		return
 	}
 	server.SetAuditDetail(c, "owner="+req.UserID)
 	c.Status(http.StatusNoContent)
+}
+
+// fencedError maps a fenced write's failure: a live run or task is 409, a
+// badRequestError 400, the rest as storeError.
+func fencedError(c *gin.Context, err error) {
+	if _, busy := errors.AsType[bridge.ErrSessionBusy](err); busy {
+		conflict(c, "a run or a background task is live on this session; stop it first")
+		return
+	}
+	if bad, ok := errors.AsType[badRequestError](err); ok {
+		badRequest(c, bad.Error())
+		return
+	}
+	storeError(c, err)
 }
 
 // SetOwnerRequest is the body of PUT /sessions/:id/owner.
@@ -655,7 +673,7 @@ type branchReq struct {
 //	@Param			branch	body		branchReq	true	"{entry_id}"
 //	@Success		200		{object}	map[string]string
 //	@Failure		400		{object}	ErrorResponse
-//	@Failure		409		{object}	ErrorResponse
+//	@Failure		409		{object}	ErrorResponse	"a run or a background task is live on the session"
 //	@Failure		500		{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/sessions/{id}/branch [post]
@@ -666,32 +684,31 @@ func (h *SessionHandler) Branch(c *gin.Context) {
 		return
 	}
 	id := c.Param("id")
-	// A live run keeps appending to the branch it started on; switching mid-run
-	// grafts its later turns onto the new branch — refuse until it stops.
-	if h.stopper.SessionBusy(id) {
-		conflict(c, "a run is live on this session; stop it first")
-		return
-	}
 	ctx := c.Request.Context()
 	ref, err := h.entries.RefFor(ctx, id)
 	if err != nil {
 		storeError(c, err)
 		return
 	}
-	// The leaf before the switch, so the client can roll the branch back if the
-	// run it meant to start never leaves the ground.
-	previousLeaf, err := h.entries.Leaf(ctx, ref)
+	// A live run keeps appending to the branch it started on; switching mid-run
+	// would graft its later turns onto the new branch — so the move happens
+	// with the session fenced against one (invariant 82).
+	var leaf, previousLeaf string
+	err = h.stopper.WithSessionTreeFenced(ctx, id, func() error {
+		// The leaf before the switch, so the client can roll the branch back if
+		// the run it meant to start never leaves the ground.
+		var err error
+		if previousLeaf, err = h.entries.Leaf(ctx, ref); err != nil {
+			return err
+		}
+		if err := h.entries.Branch(ctx, ref, req.EntryID); err != nil {
+			return badRequestError(err.Error())
+		}
+		leaf, err = h.entries.Leaf(ctx, ref)
+		return err
+	})
 	if err != nil {
-		internalError(c, err)
-		return
-	}
-	if err := h.entries.Branch(ctx, ref, req.EntryID); err != nil {
-		badRequest(c, err.Error())
-		return
-	}
-	leaf, err := h.entries.Leaf(ctx, ref)
-	if err != nil {
-		internalError(c, err)
+		fencedError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"leaf": leaf, "previous_leaf": previousLeaf})

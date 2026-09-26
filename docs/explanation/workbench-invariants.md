@@ -115,7 +115,8 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     session's run waits for approval abandons that run (decisions §5.68);
     regenerate and attempt-switch are server-side appends
     (`POST /sessions/:id/branch`) reconciled by refetch, an off-path pending
-    approval kept but out of view; `409` while a run is live (`useAgentSocket.ts`).
+    approval kept but out of view; `409` while a run is live — held by the
+    hub fence of invariant 82, not a snapshot taken before the write (`useAgentSocket.ts`).
 
 **Background tasks**
 
@@ -474,3 +475,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     The panel stays mounted while hidden and its control is a chevron labelled
     "Hide terminal panel"; only a tab's own X (or the page) ends that shell
     (`TerminalPanel.tsx`, `TerminalView.tsx`).
+82. **A session transfers or branches only at rest: no run is live on it or
+    on any hidden session serving it, and the hub fences the whole tree for
+    the write.** `PUT /sessions/:id/owner` and `POST /sessions/:id/branch` run
+    inside `Runner.WithSessionTreeFenced`: a live run anywhere in the tree is
+    `409`, register and resume refuse the fenced sessions meanwhile, and the
+    release drains their wake-ups so a refused debt is paid at once.

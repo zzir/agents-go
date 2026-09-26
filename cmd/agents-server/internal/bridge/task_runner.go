@@ -253,10 +253,25 @@ func (r *Runner) DrainPendingWakeups(ctx context.Context) { (Waker{r}).DrainAll(
 // partial turn persists before the process exits.
 func (r *Runner) Shutdown(ctx context.Context) { r.hub.Shutdown(ctx) }
 
-// SessionBusy reports whether a run is live on the session.
-func (r *Runner) SessionBusy(sessionID string) bool {
-	_, ok := r.hub.ActiveRunForSession(sessionID)
-	return ok
+// WithSessionTreeFenced runs fn with the session and every hidden session
+// serving it fenced in the hub — no run live on any, none starting until fn
+// returns — then drains the wake-ups the fence refused. ErrSessionBusy when
+// one is live; fn's error is returned as is.
+func (r *Runner) WithSessionTreeFenced(ctx context.Context, sessionID string, fn func() error) error {
+	tree, err := r.Deps.Sessions.Tree(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	release, err := r.hub.reserveSessions(tree...)
+	if err != nil {
+		return err
+	}
+	err = fn()
+	release()
+	for _, id := range tree {
+		(Waker{r}).Drain(r.hub.rootCtx, id)
+	}
+	return err
 }
 
 // AbortSessionDelete undoes StopSessionTree's deleting mark after the store

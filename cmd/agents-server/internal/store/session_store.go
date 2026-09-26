@@ -283,14 +283,21 @@ func (s *SessionStore) SetOwner(ctx context.Context, id, ownerID string) error {
 	})
 }
 
+// Tree lists id and every hidden session serving it, parents before children
+// — what a delete cascades over and a transfer moves. A missing root is a
+// tree of one.
+func (s *SessionStore) Tree(ctx context.Context, id string) ([]string, error) {
+	return sessionTree(ctx, s.db, id)
+}
+
 // sessionTree lists id and every hidden session serving it, parents before
 // children, following the live task edges only.
-func sessionTree(ctx context.Context, tx bun.Tx, id string) ([]string, error) {
+func sessionTree(ctx context.Context, db bun.IDB, id string) ([]string, error) {
 	tree := []string{id}
 	visited := map[string]bool{id: true}
 	for i := 0; i < len(tree); i++ {
 		var childIDs []string
-		if err := tx.NewSelect().Model((*Task)(nil)).
+		if err := db.NewSelect().Model((*Task)(nil)).
 			Column("child_session_id").
 			Where("parent_session_id = ?", tree[i]).
 			Where(liveParent).Where(liveChild).

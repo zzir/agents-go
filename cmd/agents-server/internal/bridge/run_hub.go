@@ -208,6 +208,9 @@ type RunHub struct {
 	// deleting marks sessions mid delete-cascade: register and resume refuse
 	// them, so no late resume or postRun drain starts a run on one.
 	deleting map[string]bool
+	// fenced marks sessions a transfer or branch is writing (reserveSessions):
+	// register and resume refuse them until the write releases — invariant 82.
+	fenced map[string]bool
 }
 
 // NewRunHub returns a hub scoped to rootCtx and starts its GC loop. The cap
@@ -223,6 +226,7 @@ func NewRunHub(rootCtx context.Context) *RunHub {
 		runs:      make(map[string]*runRecord),
 		bySession: make(map[string]string),
 		deleting:  make(map[string]bool),
+		fenced:    make(map[string]bool),
 	}
 	go h.gcLoop()
 	return h
@@ -306,6 +310,44 @@ func (h *RunHub) deletingLocked(sessionID string, task *TaskMeta) error {
 	return nil
 }
 
+// fencedLocked refuses a run whose session, or task parent, is fenced for a
+// write; the run id is empty since no run holds it. Callers hold h.mu.
+func (h *RunHub) fencedLocked(sessionID string, task *TaskMeta) error {
+	if h.fenced[sessionID] || (task != nil && task.ParentSessionID != "" && h.fenced[task.ParentSessionID]) {
+		return ErrSessionBusy{}
+	}
+	return nil
+}
+
+// reserveSessions fences ids for a write that needs every one of them at
+// rest: ErrSessionBusy when any has a live run or is already fenced, else the
+// fence holds until release. Register and resume refuse a fenced session.
+func (h *RunHub) reserveSessions(ids ...string) (release func(), err error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, id := range ids {
+		if runID, live := h.bySession[id]; live {
+			return nil, ErrSessionBusy{RunID: runID}
+		}
+		if h.fenced[id] {
+			return nil, ErrSessionBusy{}
+		}
+	}
+	for _, id := range ids {
+		h.fenced[id] = true
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			h.mu.Lock()
+			for _, id := range ids {
+				delete(h.fenced, id)
+			}
+			h.mu.Unlock()
+		})
+	}, nil
+}
+
 // ErrSessionDeleting is returned by register/resume when the session is being
 // torn down by a delete cascade — a new run must not be started on it.
 type ErrSessionDeleting struct{ SessionID string }
@@ -321,10 +363,16 @@ type ErrShuttingDown struct{}
 
 func (ErrShuttingDown) Error() string { return "server is shutting down" }
 
-// ErrSessionBusy is returned by register when the session already has a live run.
+// ErrSessionBusy is returned by register and resume when the session already
+// has a live run, or (RunID empty) is fenced for a transfer or branch write.
 type ErrSessionBusy struct{ RunID string }
 
-func (e ErrSessionBusy) Error() string { return "session already has an active run: " + e.RunID }
+func (e ErrSessionBusy) Error() string {
+	if e.RunID == "" {
+		return "session is fenced for a write; retry"
+	}
+	return "session already has an active run: " + e.RunID
+}
 
 // ErrTaskLimit is returned by register when the parent session is already at
 // its live-task cap. Enforced inside the hub lock so concurrent spawns in one
@@ -350,6 +398,9 @@ func (h *RunHub) register(runID, sessionID, ownerID, agentConfigID, projectID st
 		return nil, nil, ErrShuttingDown{}
 	}
 	if err := h.deletingLocked(sessionID, task); err != nil {
+		return nil, nil, err
+	}
+	if err := h.fencedLocked(sessionID, task); err != nil {
 		return nil, nil, err
 	}
 	if existing, ok := h.bySession[sessionID]; ok {
@@ -410,6 +461,9 @@ func (h *RunHub) resume(runID, sessionID, ownerID, agentConfigID, projectID stri
 		return nil, nil, false, ErrShuttingDown{}
 	}
 	if err := h.deletingLocked(sessionID, task); err != nil {
+		return nil, nil, false, err
+	}
+	if err := h.fencedLocked(sessionID, task); err != nil {
 		return nil, nil, false, err
 	}
 	if existing, ok := h.bySession[sessionID]; ok {

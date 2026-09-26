@@ -69,7 +69,9 @@ func (noopStopper) StopSessionTree(string)       {}
 func (noopStopper) AbortSessionDelete(string)    {}
 func (noopStopper) ReleaseSessionBinding(string) {}
 func (noopStopper) ForgetSessionTrust(string)    {}
-func (noopStopper) SessionBusy(string) bool      { return false }
+func (noopStopper) WithSessionTreeFenced(_ context.Context, _ string, fn func() error) error {
+	return fn()
+}
 
 // noopCompactor is a SessionCompactor that finds nothing to fold.
 type noopCompactor struct{}

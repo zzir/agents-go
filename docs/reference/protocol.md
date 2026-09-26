@@ -124,8 +124,9 @@ alone: a foreign id is `404`, listings are the caller's, a
 workflow or trigger starts only into a session the caller owns, and run events
 reach the owner's connections only. An admin manages, never reads:
 `GET /sessions?all=true` lists every owner's sessions, `DELETE /sessions/:id`
-and `PUT /sessions/:id/owner` work on any; opening, reading or running one
-does not.
+and `PUT /sessions/:id/owner` work on any (the transfer is `409` while any
+run in the session's tree — a background task's included — is live); opening,
+reading or running one does not.
 
 **Host configuration** — sandboxes (test and container routes included),
 settings, guardrails, global memory — is read by everyone and written by

@@ -561,6 +561,83 @@ func TestSessionReassignRespectsProjectBinding(t *testing.T) {
 	}
 }
 
+// A transfer is refused while a background task of the session is at work:
+// the task's run lives on a hidden child session, which the hub fence covers
+// by walking the tree (invariant 82). Once the run ends the transfer goes
+// through, the child with it.
+func TestSessionReassignRefusesALiveTaskInTheTree(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx := context.Background()
+	db := testdb.New(t)
+	for _, u := range []protocol.UserInfo{adminUser, memberUser, otherUser} {
+		if _, err := db.NewInsert().Model(&store.User{ID: u.ID, Email: u.Email, Role: u.Role}).Exec(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sessions := store.NewSessionStore(db)
+	parent := &store.Session{ID: store.NewID(), OwnerID: memberUser.ID, Name: "chat"}
+	child := &store.Session{ID: store.NewID(), OwnerID: memberUser.ID, Name: "task", Hidden: true}
+	for _, s := range []*store.Session{parent, child} {
+		if err := sessions.Create(ctx, s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.NewTaskStore(db).Create(ctx, &store.Task{ID: store.NewID(), RunID: store.NewID(), ParentSessionID: parent.ID, ChildSessionID: child.ID, Status: "working"}); err != nil {
+		t.Fatal(err)
+	}
+	srv := slowModel(t, 30*time.Second)
+	t.Cleanup(srv.Close)
+	pv := &store.Provider{Name: "endpoint", APIKey: "k", BaseURL: srv.URL, OwnerID: memberUser.ID}
+	if err := store.NewProviderStore(db).Create(ctx, pv); err != nil {
+		t.Fatal(err)
+	}
+	agents := store.NewAgentConfigStore(db)
+	ac := &store.AgentConfig{Name: "a", Model: "gpt-test", ProviderID: pv.ID, OwnerID: memberUser.ID}
+	if err := agents.Create(ctx, ac); err != nil {
+		t.Fatal(err)
+	}
+	runner := bridge.NewRunner(t.Context(), db, &bridge.AgentDeps{
+		AgentConfigs: agents, Providers: store.NewProviderStore(db), Sessions: sessions,
+		Traces: store.NewTraceStore(db), Settings: settings.NewReader(store.NewSettingStore(db)), Memories: store.NewMemoryStore(db),
+	})
+	// The task at work: a run live on the hidden child, held by the slow model.
+	runID, err := runner.StartRun(child.ID, ac.ID, "", bridge.TextInput("work"), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := NewSessionHandler(testSessionDeps(db, func(d *SessionDeps) { d.Sessions, d.Stopper = sessions, runner }))
+	engine := newTestEngine()
+	engine.PUT("/sessions/:id/owner", h.SetOwner)
+
+	toOther := `{"user_id":"` + otherUser.ID + `"}`
+	if w := doJSON(t, engine, http.MethodPut, "/sessions/"+parent.ID+"/owner", toOther); w.Code != http.StatusConflict {
+		t.Fatalf("reassign with a task at work = %d, want 409 (%s)", w.Code, w.Body.String())
+	}
+	if got, _ := sessions.Get(ctx, parent.ID); got.OwnerID != memberUser.ID {
+		t.Fatalf("a refused reassign moved the session to %s", got.OwnerID)
+	}
+
+	runner.CancelRun(runID)
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, live := runner.Hub().ActiveRunForSession(child.ID); !live {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the task's run never ended after cancel")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if w := doJSON(t, engine, http.MethodPut, "/sessions/"+parent.ID+"/owner", toOther); w.Code != http.StatusNoContent {
+		t.Fatalf("reassign at rest = %d, want 204 (%s)", w.Code, w.Body.String())
+	}
+	for _, id := range []string{parent.ID, child.ID} {
+		if got, _ := sessions.Get(ctx, id); got.OwnerID != otherUser.ID {
+			t.Fatalf("session %s owner = %s, want the whole tree transferred", id, got.OwnerID)
+		}
+	}
+}
+
 // Run events reach the owner's connections and nobody else's: a second user
 // watching the bus hears nothing of a run in a session they do not own.
 func TestRunEventsStayWithTheOwner(t *testing.T) {
