@@ -213,7 +213,7 @@ func TestRedialContextOutlivesTheCall(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = server.Close() })
 
-	if !server.redial(server.session.Load()) {
+	if healed, _ := server.redial(server.session.Load()); !healed {
 		t.Fatal("redial did not replace the session")
 	}
 	if got == nil {
@@ -227,5 +227,77 @@ func TestRedialContextOutlivesTheCall(t *testing.T) {
 	_ = server.Close()
 	if got.Err() == nil {
 		t.Fatal("the redial context outlived Close")
+	}
+}
+
+// TestThrottledWatcherRetriesAfterTheCooldown locks the other half of the
+// throttle: a connection that dies inside the redial cooldown — healed, then
+// dead again at once — is not left dead until a caller trips over it. The
+// watcher waits the cooldown out and dials once more (spec §2.16).
+func TestThrottledWatcherRetriesAfterTheCooldown(t *testing.T) {
+	swap := &swapHandler{h: mcpHandlerWith("ping")}
+	endpoint := httptest.NewServer(swap)
+	t.Cleanup(endpoint.Close)
+
+	var dials atomic.Int32
+	server, err := NewWithTransport(context.Background(), "healer",
+		&mcpsdk.StreamableClientTransport{Endpoint: endpoint.URL},
+		Options{
+			Redial: func(context.Context) (mcpsdk.Transport, error) {
+				dials.Add(1)
+				return &mcpsdk.StreamableClientTransport{Endpoint: endpoint.URL}, nil
+			},
+		})
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(func() { _ = server.Close() })
+
+	rc := agents.NewRunContext(nil)
+	agent := &agents.Agent{Name: "a"}
+	if _, err := server.ListTools(context.Background(), rc, agent); err != nil {
+		t.Fatalf("list tools: %v", err)
+	}
+	first := server.session.Load()
+
+	// As if a heal had just landed: the death that follows falls inside the
+	// cooldown, so the first redial it asks for is throttled.
+	forced := time.Now()
+	server.dialMu.Lock()
+	server.lastDial = forced
+	server.dialMu.Unlock()
+
+	// The restart kills the connection on the call that discovers it.
+	swap.set(mcpHandlerWith("pong"))
+	for deadline := time.Now().Add(10 * time.Second); ; {
+		server.InvalidateToolsCache()
+		if _, err := server.ListTools(context.Background(), rc, agent); err != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the restart never killed the connection")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// No more calls from here: only the watcher can heal the slot.
+	for deadline := time.Now().Add(10 * time.Second); server.session.Load() == first; {
+		if time.Now().After(deadline) {
+			t.Fatalf("the watcher never redialed after the cooldown (dials = %d)", dials.Load())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if since := time.Since(forced); since < redialCooldown {
+		t.Errorf("healed %v after the forced dial, inside the %v cooldown", since, redialCooldown)
+	}
+	if n := dials.Load(); n != 1 {
+		t.Errorf("dials = %d, want exactly the one retry", n)
+	}
+	tools, err := server.ListTools(context.Background(), rc, agent)
+	if err != nil {
+		t.Fatalf("list tools on the healed connection: %v", err)
+	}
+	if len(tools) != 1 || tools[0].Name != "pong" {
+		t.Fatalf("healed onto the wrong server: %v", toolNames(tools))
 	}
 }

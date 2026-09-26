@@ -1851,7 +1851,8 @@ runs, their background tasks, other conversations.
   `mcp.Options.Redial`, so every holder of that server recovers. Without
   `Redial` the failure is reported, not repaired.
 - **A death is noticed as it happens** — the connection is watched — **and
-  healing is throttled.**
+  healing is throttled**; a heal the throttle skipped is retried once after
+  the cooldown.
 - **Only idempotent work is repeated.** `tools/list` is re-issued on the fresh
   session; a failed tool CALL is reported to the model, never retried by the
   redial.

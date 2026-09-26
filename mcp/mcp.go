@@ -200,7 +200,8 @@ func (s *Server) connect(ctx context.Context, transport mcpsdk.Transport) error 
 }
 
 // watch heals the connection the moment it dies — one goroutine per live
-// connection, ending with it (decisions §5.21).
+// connection, ending with it (decisions §5.21). A death inside the redial
+// cooldown is retried once after it, so the slot is not left dead for a caller to find.
 func (s *Server) watch(session *mcpsdk.ClientSession) {
 	if s.opts.Redial == nil {
 		return
@@ -210,36 +211,49 @@ func (s *Server) watch(session *mcpsdk.ClientSession) {
 		if s.closed.Load() {
 			return
 		}
+		healed, throttled := s.redial(session)
+		if healed || !throttled {
+			return
+		}
+		select {
+		case <-time.After(redialCooldown):
+		case <-s.rpcCtx.Done():
+			return
+		}
+		if s.closed.Load() || s.session.Load() != session {
+			return
+		}
 		s.redial(session)
 	}()
 }
 
-// redial replaces the dead session failed with a fresh one and reports whether
-// this call did it; concurrent discoverers dial once (decisions §5.21).
-func (s *Server) redial(failed *mcpsdk.ClientSession) bool {
+// redial replaces the dead session failed with a fresh one: healed reports a
+// live session in the slot (this call's or a concurrent discoverer's — they
+// dial once, decisions §5.21); throttled reports a dial skipped for the cooldown.
+func (s *Server) redial(failed *mcpsdk.ClientSession) (healed, throttled bool) {
 	if s.opts.Redial == nil || s.closed.Load() {
-		return false
+		return false, false
 	}
 	s.dialMu.Lock()
 	defer s.dialMu.Unlock()
 	if s.session.Load() != failed {
-		return true // somebody else already healed it; the caller should retry
+		return true, false // somebody else already healed it; the caller should retry
 	}
 	if !s.lastDial.IsZero() && time.Since(s.lastDial) < redialCooldown {
-		return false
+		return false, true
 	}
 	s.lastDial = time.Now()
 	// The transport gets the connection's context (a subprocess must outlive this
 	// call); only the HANDSHAKE is bounded, because it runs under dialMu.
 	transport, err := s.opts.Redial(s.rpcCtx)
 	if err != nil {
-		return false
+		return false, false
 	}
 	hctx, cancel := context.WithTimeout(s.rpcCtx, redialConnectTimeout)
 	defer cancel()
 	session, err := s.newClient().Connect(hctx, transport, nil)
 	if err != nil {
-		return false
+		return false, false
 	}
 	if failed != nil {
 		_ = failed.Close()
@@ -249,13 +263,13 @@ func (s *Server) redial(failed *mcpsdk.ClientSession) bool {
 	// Close racing this swap is caught here rather than leaking the new session.
 	if s.closed.Load() {
 		_ = session.Close()
-		return false
+		return false, false
 	}
 	s.watch(session)
 	// A new session is a new server as far as tools go — it may have restarted
 	// with a different set.
 	s.InvalidateToolsCache()
-	return true
+	return true, false
 }
 
 // healed reports whether err means the connection is gone and a fresh one
@@ -264,7 +278,8 @@ func (s *Server) healed(err error, failed *mcpsdk.ClientSession) bool {
 	if err == nil || s.closed.Load() || !errors.Is(err, mcpsdk.ErrConnectionClosed) {
 		return false
 	}
-	return s.redial(failed)
+	healed, _ := s.redial(failed)
+	return healed
 }
 
 // NewWithTransport connects to an MCP server over an arbitrary transport. Use
