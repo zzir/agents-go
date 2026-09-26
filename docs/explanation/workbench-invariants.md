@@ -464,3 +464,8 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     `useCrud`'s `error` and `reload` and shows `LoadError` over the rows a
     cache still holds — a stale list under a line, never a "No X yet" that
     reads as none, and never a toast for a read (`components/LoadError.tsx`).
+80. **A numeric form field holds a string while editing and parses on save;
+    empty means the server's zero value, never a literal 0 in the box.**
+    `numberDraft` seeds it, `parseWholeNumber` reads it back — an empty box is
+    0, a negative stays (`-1` = unlimited retries), and what is not a whole
+    number refuses the save with the field's name (`lib/numericField.ts`).

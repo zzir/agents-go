@@ -17,6 +17,7 @@ import { useCrud } from '@/lib/hooks';
 import { fc } from '@/lib/form';
 import { JsonField } from '@/lib/JsonField';
 import { headersToText, parseHeadersText } from '@/lib/headers';
+import { numberDraft, parseWholeNumber } from '@/lib/numericField';
 import { toast } from '@/lib/toast';
 import { listEmpty } from '@/features/settings/listEmpty';
 
@@ -62,8 +63,9 @@ interface McpFormData {
   oauth_client_id: string;
   oauth_client_secret: string;
   oauth_scopes: string;
-  max_retry_attempts: number;
-  retry_backoff_ms: number;
+  // Whole numbers, held as strings while editing (invariant 80).
+  max_retry_attempts: string;
+  retry_backoff_ms: string;
   use_structured_content: boolean;
 }
 
@@ -86,15 +88,15 @@ function flatten(s: Partial<McpServer>): McpFormData {
     oauth_client_id: c.oauth_client_id || '',
     oauth_client_secret: c.oauth_client_secret || '',
     oauth_scopes: c.oauth_scopes || '',
-    max_retry_attempts: c.max_retry_attempts || 0,
-    retry_backoff_ms: c.retry_backoff_ms || 0,
+    max_retry_attempts: numberDraft(c.max_retry_attempts),
+    retry_backoff_ms: numberDraft(c.retry_backoff_ms),
     use_structured_content: c.use_structured_content || false,
   };
 }
 
-// Throws on invalid JSON in the Args / Headers fields so the caller can block
-// the save and surface it — parsing to an empty value and saving anyway
-// silently discarded whatever the user typed.
+// Throws on invalid JSON in the Args / Headers fields, or a retry number that
+// is not one, so the caller can block the save and surface it — parsing to
+// an empty value and saving anyway silently discarded whatever the user typed.
 function pack(form: McpFormData): Partial<McpServer> {
   const base: Partial<McpServer> = { name: form.name, enabled: form.enabled };
   const config: McpServerConfig = { endpoint: form.endpoint };
@@ -110,8 +112,10 @@ function pack(form: McpFormData): Partial<McpServer> {
   } else if (form.auth_mode === 'header') {
     config.auth_mode = 'header';
   }
-  if (form.max_retry_attempts) config.max_retry_attempts = form.max_retry_attempts;
-  if (form.retry_backoff_ms) config.retry_backoff_ms = form.retry_backoff_ms;
+  const retries = parseWholeNumber(form.max_retry_attempts, 'Max retry attempts');
+  const backoff = parseWholeNumber(form.retry_backoff_ms, 'Retry backoff');
+  if (retries) config.max_retry_attempts = retries;
+  if (backoff) config.retry_backoff_ms = backoff;
   if (form.use_structured_content) config.use_structured_content = true;
   return { ...base, config };
 }
@@ -160,8 +164,8 @@ function McpForm({ initial, onSave, onCancel, onDelete, saving, onClearAuth }: M
         <Button onClick={handleClearAuth} variant="danger" disabled={clearing}>Clear auth</Button>,
         'Disconnects and deletes the saved OAuth token; the next connect asks for authorization again.',
       )}
-      {fc('Max retry attempts', <TextInput block type="number" min={0} value={String(form.max_retry_attempts || 0)} onChange={e => set('max_retry_attempts', parseInt(e.target.value) || 0)} />, '0 = no retries, -1 = retry indefinitely on a failed list_tools/call_tool')}
-      {form.max_retry_attempts !== 0 && fc('Retry backoff (ms)', <TextInput block type="number" min={0} value={String(form.retry_backoff_ms || 0)} onChange={e => set('retry_backoff_ms', parseInt(e.target.value) || 0)} />, 'Base delay for exponential backoff (0 = default 1000ms)')}
+      {fc('Max retry attempts', <TextInput block type="number" min={-1} value={form.max_retry_attempts} placeholder="0" onChange={e => set('max_retry_attempts', e.target.value)} />, '0 = no retries, -1 = retry indefinitely on a failed list_tools/call_tool')}
+      {Number(form.max_retry_attempts.trim() || 0) !== 0 && fc('Retry backoff (ms)', <TextInput block type="number" min={0} value={form.retry_backoff_ms} placeholder="0" onChange={e => set('retry_backoff_ms', e.target.value)} />, 'Base delay for exponential backoff (0 = default 1000ms)')}
       <ToggleRow label="Use structured content" checked={form.use_structured_content} onChange={v => set('use_structured_content', v)}
         description="Use a tool result's structuredContent field exclusively (for servers that only populate it)" />
       <ToggleRow label="Enabled" checked={form.enabled} onChange={v => set('enabled', v)} />

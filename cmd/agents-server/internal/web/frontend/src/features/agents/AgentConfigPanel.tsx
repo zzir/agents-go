@@ -16,6 +16,7 @@ import { api } from '@/lib/api';
 import { useApi, useCrud } from '@/lib/hooks';
 import { fc, seg } from '@/lib/form';
 import { JsonField } from '@/lib/JsonField';
+import { numberDraft, parseWholeNumber } from '@/lib/numericField';
 import { toast } from '@/lib/toast';
 import { Disclosure } from '@/components/Disclosure';
 import { ToggleRow } from '@/components/ToggleRow';
@@ -107,6 +108,18 @@ const MCP_STATUS_NOTE: Record<string, string> = {
   needs_auth: 'needs authorization', disconnected: 'not connected', disabled: 'disabled',
 };
 
+// The whole-number settings, held as strings while editing (invariant 80) and
+// parsed on save under these labels.
+const NUMERIC_FIELDS = {
+  context_window: 'Context window',
+  max_turns: 'Max turns',
+  max_tool_concurrency: 'Max tool concurrency',
+  history_limit: 'History limit',
+  compaction_threshold_tokens: 'Threshold',
+  compaction_window: 'Window size',
+} as const;
+type NumericField = keyof typeof NUMERIC_FIELDS;
+
 interface AgentFormData {
   name: string;
   avatar: string;
@@ -114,8 +127,8 @@ interface AgentFormData {
   instructions: string;
   model: string;
   provider_id: string;
-  context_window: number;
-  max_turns: number;
+  context_window: string;
+  max_turns: string;
   handoff_description: string;
   tool_choice_reset: boolean;
   stop_at_tools: string;
@@ -127,9 +140,9 @@ interface AgentFormData {
   error_handlers: string;
   prompt_id: string;
   prompt_version: string;
-  history_limit: number;
+  history_limit: string;
   handoff_input_filter: string;
-  max_tool_concurrency: number;
+  max_tool_concurrency: string;
   tool_not_found_behavior: string;
   reasoning_item_id_policy: string;
   workflow_authoring: boolean;
@@ -138,8 +151,8 @@ interface AgentFormData {
   override_system_prompt: boolean;
   approve_tools: string[];
   compaction_enabled: boolean;
-  compaction_threshold_tokens: number;
-  compaction_window: number;
+  compaction_threshold_tokens: string;
+  compaction_window: string;
   compaction_model: string;
   compaction_prompt: string;
   compaction_mode: string;
@@ -219,23 +232,27 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
     try { return JSON.parse((initial && initial.model_settings) || '{}'); } catch { return {}; }
   };
   const initMs = parseModelSettings() as { reasoning?: { effort?: string }; service_tier?: string; extra_body?: Record<string, unknown>; temperature?: number; top_p?: number; max_tokens?: number };
-  const [form, setForm] = useState<AgentFormData>({
-    name: '', avatar: '', description: '', instructions: '', model: '',
-    provider_id: '', context_window: 0,
-    max_turns: 0, handoff_description: '',
-    tool_choice_reset: true, stop_at_tools: '',
-    retry_enabled: false, retry_policy: '',
-    fallback_models: [],
-    guardrails: '', output_schema: '', error_handlers: '',
-    prompt_id: '', prompt_version: '', history_limit: 0,
-    // New agents default to a bounded fan-out; an existing agent keeps its
-    // stored value (0 = unlimited) via the flattenConfig spread below.
-    handoff_input_filter: '', max_tool_concurrency: initial ? 0 : 8,
-    tool_not_found_behavior: '', reasoning_item_id_policy: '', workflow_authoring: false, subagents: true, vision: false, override_system_prompt: false, approve_tools: [],
-    compaction_enabled: false, compaction_threshold_tokens: 0,
-    compaction_window: 0, compaction_model: '', compaction_prompt: '', compaction_mode: '',
-    memory_tools: false, memory_agent_write: false, history_tools: false,
-    ...flattenConfig(initial as Record<string, unknown> | undefined),
+  const [form, setForm] = useState<AgentFormData>(() => {
+    const stored = flattenConfig(initial as Record<string, unknown> | undefined);
+    for (const k of Object.keys(NUMERIC_FIELDS) as NumericField[]) if (k in stored) stored[k] = numberDraft(stored[k] as number);
+    return {
+      name: '', avatar: '', description: '', instructions: '', model: '',
+      provider_id: '', context_window: '',
+      max_turns: '', handoff_description: '',
+      tool_choice_reset: true, stop_at_tools: '',
+      retry_enabled: false, retry_policy: '',
+      fallback_models: [],
+      guardrails: '', output_schema: '', error_handlers: '',
+      prompt_id: '', prompt_version: '', history_limit: '',
+      // New agents default to a bounded fan-out; an existing agent keeps its
+      // stored value (0 = unlimited) via the spread below.
+      handoff_input_filter: '', max_tool_concurrency: initial ? '' : '8',
+      tool_not_found_behavior: '', reasoning_item_id_policy: '', workflow_authoring: false, subagents: true, vision: false, override_system_prompt: false, approve_tools: [],
+      compaction_enabled: false, compaction_threshold_tokens: '',
+      compaction_window: '', compaction_model: '', compaction_prompt: '', compaction_mode: '',
+      memory_tools: false, memory_agent_write: false, history_tools: false,
+      ...stored,
+    };
   });
   const [reasoningEffort, setReasoningEffort] = useState(initMs.reasoning?.effort || '');
   const [serviceTier, setServiceTier] = useState(initMs.service_tier || '');
@@ -376,8 +393,8 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
         <div className="form-group-title">Model</div>
         {fc('Model', <TextInput value={form.model} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('model', e.target.value)} block />, 'Required — the name the endpoint knows the model by')}
         {fc('Context window',
-          <TextInput block type="number" min={0} step={1000} value={String(form.context_window || 0)}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('context_window', parseInt(e.target.value) || 0)} />,
+          <TextInput block type="number" min={0} step={1000} value={form.context_window} placeholder="0"
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('context_window', e.target.value)} />,
           'Tokens this model accepts — the Context panel needs it to show how full the window is (0 = unknown, no provider reports it)')}
         <div className="form-row">
           <div>
@@ -540,11 +557,11 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
             <Select.Option value="reset">Reset — start over with the session memory; the model may call new_context</Select.Option>
             <Select.Option value="hybrid">Hybrid — reset, carrying a short recap as well</Select.Option>
           </Select>, 'Reset and hybrid turn on the memory and history tools for the agent')}
-          {fc('Threshold (tokens)', <TextInput block type="number" min={0} value={String(form.compaction_threshold_tokens || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_threshold_tokens', parseInt(e.target.value) || 0)} />, 'Token count that triggers a pass (0 = default 50000); sized from real usage, byte-estimated where unmeasured')}
+          {fc('Threshold (tokens)', <TextInput block type="number" min={0} value={form.compaction_threshold_tokens} placeholder="0" onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_threshold_tokens', e.target.value)} />, 'Token count that triggers a pass (0 = default 50000); sized from real usage, byte-estimated where unmeasured')}
           {/* A reset keeps the latest message, not a window, and only a summary
               or a hybrid recap needs the summary model; the prompt is the
               summary's alone (hybrid's recap has its own). */}
-          {summaryMode && fc('Window size', <TextInput block type="number" min={0} value={String(form.compaction_window || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_window', parseInt(e.target.value) || 0)} />, 'Recent items to keep intact (0 = default 10)')}
+          {summaryMode && fc('Window size', <TextInput block type="number" min={0} value={form.compaction_window} placeholder="0" onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_window', e.target.value)} />, 'Recent items to keep intact (0 = default 10)')}
           {form.compaction_mode !== 'reset' && fc('Summary model', <TextInput value={form.compaction_model || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('compaction_model', e.target.value)} placeholder="e.g. gpt-4.1-mini" block />, form.compaction_mode === 'hybrid' ? "Model that writes the short recap a reset carries (empty = the agent's model)" : "Model that writes the history summaries (empty = the agent's model)")}
           {summaryMode && fc('Summary prompt', <Textarea value={form.compaction_prompt || ''} onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('compaction_prompt', e.target.value)} rows={8} placeholder="Custom summarization instructions (leave empty for default)" block className="textarea-grow" style={{ fontFamily: 'var(--fontStack-monospace)' }} />)}
         </>}
@@ -593,8 +610,8 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
         <div className="advanced-section">
           <div className="form-group">
             <div className="form-group-title">Behavior</div>
-            {fc('Max turns', <TextInput block type="number" min={0} value={String(form.max_turns || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('max_turns', parseInt(e.target.value) || 0)} />, '0 = SDK default (10)')}
-            {fc('Max tool concurrency', <TextInput block type="number" min={0} value={String(form.max_tool_concurrency || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('max_tool_concurrency', parseInt(e.target.value) || 0)} />, '0 = unlimited')}
+            {fc('Max turns', <TextInput block type="number" min={0} value={form.max_turns} placeholder="0" onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('max_turns', e.target.value)} />, '0 = SDK default (10)')}
+            {fc('Max tool concurrency', <TextInput block type="number" min={0} value={form.max_tool_concurrency} placeholder="0" onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('max_tool_concurrency', e.target.value)} />, '0 = unlimited')}
             {fc('Stop at tools', <TokenListInput ariaLabel="Stop at tools" placeholder="tool1, tool2"
               values={(form.stop_at_tools || '').split(',').map(s => s.trim()).filter(Boolean)}
               onChange={vals => set('stop_at_tools', vals.join(','))} />, 'End the run after a turn that calls any of these; empty = run until the model stops')}
@@ -650,7 +667,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
 
           <div className="form-group">
             <div className="form-group-title">Session</div>
-            {fc('History limit', <TextInput block type="number" min={0} value={String(form.history_limit || 0)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('history_limit', parseInt(e.target.value) || 0)} />, 'Max recent session items loaded per turn (0 = full history)')}
+            {fc('History limit', <TextInput block type="number" min={0} value={form.history_limit} placeholder="0" onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('history_limit', e.target.value)} />, 'Max recent session items loaded per turn (0 = full history)')}
             {fc('Stored prompt ID', <TextInput value={form.prompt_id || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('prompt_id', e.target.value)} placeholder="prompt_abc123" block />, 'OpenAI stored prompt ID')}
             {form.prompt_id && fc('Prompt version', <TextInput value={form.prompt_version || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('prompt_version', e.target.value)} placeholder="Optional version pin" block />)}
           </div>
@@ -682,7 +699,12 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
           const fallback_models = fallbacks
             .map(e => ({ provider_id: fallbackProviderId(e), model: e.model || undefined }))
             .filter(e => e.provider_id);
-          const flatPayload = { ...form, fallback_models, handoffs: selectedHandoffs, tools: selectedMcp, skills: effectiveSkills, model_settings };
+          const numbers: Partial<Record<NumericField, number>> = {};
+          for (const [k, label] of Object.entries(NUMERIC_FIELDS) as [NumericField, string][]) {
+            try { numbers[k] = parseWholeNumber(form[k], label); }
+            catch (e) { toast.error((e as Error).message); return; }
+          }
+          const flatPayload = { ...form, ...numbers, fallback_models, handoffs: selectedHandoffs, tools: selectedMcp, skills: effectiveSkills, model_settings };
           onSave(nestConfig(flatPayload) as unknown as AgentFormData & AgentLists);
         }}
         onCancel={onCancel}
