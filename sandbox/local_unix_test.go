@@ -6,7 +6,6 @@ import (
 	"context"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -38,12 +37,9 @@ func TestLocalSandbox_TimeoutKillsProcessGroup(t *testing.T) {
 	if perr != nil {
 		t.Fatalf("could not parse grandchild pid from stdout %q: %v", res.Stdout, perr)
 	}
-	// The grandchild must be gone (allow a moment for init to reap it).
+	// The grandchild must be gone: reaped, or a zombie its new parent never reaps.
 	deadline := time.Now().Add(3 * time.Second)
-	for {
-		if err := syscall.Kill(pid, 0); err == syscall.ESRCH {
-			return // killed and reaped
-		}
+	for !processDead(pid) {
 		if time.Now().After(deadline) {
 			t.Fatalf("grandchild %d still alive after timeout: it escaped the process-group kill", pid)
 		}
