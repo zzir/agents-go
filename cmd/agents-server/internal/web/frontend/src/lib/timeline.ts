@@ -63,8 +63,8 @@ const DISPLAY = {
 } as const;
 
 // EntryView is one row of GET /sessions/:id/messages — a stored session entry
-// plus the row id the cursor pages on. Update entries are already folded into
-// their targets server-side, so nothing here needs to apply them.
+// plus its row id. Update entries are already folded into their targets
+// server-side, so nothing here needs to apply them.
 interface EntryView {
   id?: string;
   entry_id?: string;
@@ -269,6 +269,14 @@ interface ToolCallPatch {
 }
 
 export type { EntryView, ItemDisplay, DisplayExtra, CompactionInfo, CompactionEntry, Branches, ToolCall, ToolsPart, TextPart, ErrorPart, CancelledPart, ThinkingPart, HandoffPart, TurnPart, TurnEntry, UserEntry, SystemEntry, WorkflowStartedNote, TimelineEntry, ToolCallPatch };
+
+// originText says who started the execution, the way the trace card and the
+// chip both phrase it.
+export function originText(origin: WorkflowStartedNote['origin']): string {
+  if (origin.kind !== 'trigger') return 'you';
+  const kind = origin.trigger_kind || 'trigger';
+  return origin.schedule ? `${kind} ${origin.schedule}` : kind;
+}
 
 // buildTimeline folds a session's entries into the rendered timeline,
 // dispatching on each entry's kind and recorded display kind. Folded entries

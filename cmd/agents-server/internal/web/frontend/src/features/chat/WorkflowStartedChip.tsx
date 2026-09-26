@@ -1,17 +1,9 @@
 import { memo } from 'react';
 import { Label } from '@primer/react';
 import { WorkflowIcon, ZapIcon } from '@primer/octicons-react';
-import type { WorkflowStartedNote } from '@/lib/timeline';
+import { originText, type WorkflowStartedNote } from '@/lib/timeline';
 import { useChatActions, useChatSession } from '@/features/chat/ChatSessionContext';
 import { AgentAvatar } from '@/components/AgentAvatar';
-
-// originText says who started the execution, the way the trace card and the
-// chip both phrase it.
-export function originText(origin: WorkflowStartedNote['origin']): string {
-  if (origin.kind !== 'trigger') return 'you';
-  const kind = origin.trigger_kind || 'trigger';
-  return origin.schedule ? `${kind} ${origin.schedule}` : kind;
-}
 
 // WorkflowStartedChip is the row a person's or a trigger's workflow start
 // leaves in the conversation: the exchange's question, when no run asked. It

@@ -464,25 +464,22 @@ func (h *SessionHandler) Fork(c *gin.Context) {
 // Messages responds with the session entries for the id path parameter.
 //
 //	@Summary		List session entries
-//	@Description	Without limit, returns all entries oldest-first. With limit, returns the newest `limit` entries (still oldest-first); page backwards by passing the smallest received id as before_id. Update entries are folded into their targets server-side.
+//	@Description	Returns every entry of the session, oldest first. Update entries are folded into their targets server-side.
 //	@Tags			sessions
 //	@Produce		json
-//	@Param			id			path		string	true	"Session ID"
-//	@Param			limit		query		int		false	"Max entries to return; 0 or absent returns all"
-//	@Param			before_id	query		string	false	"Only entries with id < before_id (backwards cursor)"
-//	@Success		200			{array}		store.EntryView
-//	@Failure		500			{object}	ErrorResponse
+//	@Param			id	path		string	true	"Session ID"
+//	@Success		200	{array}		store.EntryView
+//	@Failure		500	{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/sessions/{id}/messages [get]
 func (h *SessionHandler) Messages(c *gin.Context) {
-	beforeID, limit := pageParams(c)
 	ctx := c.Request.Context()
 	ref, err := h.entries.RefFor(ctx, c.Param("id"))
 	if err != nil {
 		storeError(c, err)
 		return
 	}
-	entries, err := h.entries.GetEntries(ctx, ref, beforeID, limit)
+	entries, err := h.entries.GetEntries(ctx, ref)
 	if err != nil {
 		internalError(c, err)
 		return
@@ -495,36 +492,6 @@ func (h *SessionHandler) Messages(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, entries)
-}
-
-// Runs responds with the session's runs and what each was asked.
-//
-//	@Summary		List session runs
-//	@Description	Every run that left entries on the session, oldest first, each with the user text it started from (`question` — its own message, or for a regenerate the message it answered again) and whether its entries are on the active branch (`on_path`). What the trace panel labels a run by when its message lies outside the page of history it has loaded.
-//	@Tags			sessions
-//	@Produce		json
-//	@Param			id	path		string	true	"Session ID"
-//	@Success		200	{array}		store.RunQuestion
-//	@Failure		404	{object}	ErrorResponse
-//	@Failure		500	{object}	ErrorResponse
-//	@Security		BearerAuth
-//	@Router			/sessions/{id}/runs [get]
-func (h *SessionHandler) Runs(c *gin.Context) {
-	ctx := c.Request.Context()
-	ref, err := h.entries.RefFor(ctx, c.Param("id"))
-	if err != nil {
-		storeError(c, err)
-		return
-	}
-	runs, err := h.entries.RunQuestions(ctx, ref)
-	if err != nil {
-		internalError(c, err)
-		return
-	}
-	if runs == nil {
-		runs = []store.RunQuestion{}
-	}
-	c.JSON(http.StatusOK, runs)
 }
 
 // Context responds with the session's context-window report.

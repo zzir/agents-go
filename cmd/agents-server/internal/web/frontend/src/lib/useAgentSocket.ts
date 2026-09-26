@@ -35,23 +35,13 @@ export interface SessionState {
   // first time. Cleared when a new run starts.
   diagnostics: RunDiagnostic[];
   traceRuns: Record<string, TraceEvent[]>;
-  // Every persisted run's question and whether it is on the active branch,
-  // fetched with the traces (loadTraces): what labels a trace card whose
-  // exchange lies outside the page of history loaded — the timeline pages,
-  // the traces do not.
-  runQuestions: Record<string, { question: string; onPath: boolean }>;
   liveRunId: string | null;
   loaded: boolean;
   // Why the persisted timeline could not be loaded; cleared by the next attempt.
   loadError?: string;
-  // Backwards pagination over the persisted history. entries are the raw rows
-  // fetched so far, kept because a later page has to be REBUILT with the ones
-  // already shown — buildTimeline folds turns across rows, so prepending a
-  // page to the assembled timeline would split a turn at the page boundary.
-  // hasMore is false once a fetch comes back short of the page size.
+  // The raw rows messages was built from, off-path attempts included: what
+  // the trace panel labels a branched-away run from.
   entries: EntryView[];
-  hasMore: boolean;
-  loadingMore: boolean;
   tasks: Record<string, TaskState>;
   // tasksLoaded is set once the durable task rows have been asked for — what
   // tells a task deep link "not here yet" from "not here".
@@ -63,18 +53,10 @@ export interface SessionState {
   taskView: TaskViewState | null;
 }
 
-// HISTORY_PAGE is how many entries a session loads up front, and how many each
-// "load earlier" adds. Big enough that an ordinary conversation arrives whole,
-// small enough that a months-old session opens promptly.
-const HISTORY_PAGE = 200;
-
-// TimelinePage is one fetch: the assembled timeline, the raw entries it came
-// from (kept so a later page can be rebuilt WITH them), and whether older
-// entries remain.
-interface TimelinePage {
+// A fetched timeline: the assembled messages and the raw entries they came from.
+interface FetchedTimeline {
   timeline: SessionState['messages'];
   entries: EntryView[];
-  hasMore: boolean;
 }
 
 export type UpdateSSFn = (sid: string, updater: (s: SessionState) => SessionState) => void;
@@ -82,8 +64,8 @@ export type UpdateSSFn = (sid: string, updater: (s: SessionState) => SessionStat
 export function defaultSS(): SessionState {
   return {
     messages: [], streaming: '', reasoning: '', running: false, compacting: false, diagnostics: [],
-    traceRuns: {}, runQuestions: {}, liveRunId: null, loaded: false,
-    entries: [], hasMore: false, loadingMore: false, tasks: {}, tasksLoaded: false, taskView: null,
+    traceRuns: {}, liveRunId: null, loaded: false,
+    entries: [], tasks: {}, tasksLoaded: false, taskView: null,
   };
 }
 
@@ -194,10 +176,6 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
   // a fetch launched before the bump describes a path the session is no
   // longer on, and its late resolution is dropped.
   const timelineGenRef = useRef<Record<string, number>>({});
-  // Sessions with a "load earlier" fetch in flight. A ref rather than the
-  // loadingMore flag because the guard must hold across the render the flag
-  // needs to land, and React may run the state updater twice.
-  const loadingMoreRef = useRef<Set<string>>(new Set());
 
   // Coalesce high-frequency delta updates (run.step / run.reasoning) to one
   // setState per animation frame per key — buffers accumulate synchronously
@@ -220,10 +198,10 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
   // the stored entries, with a durable pending approval's tool calls merged
   // INTO the persisted turn they belong to (the prompt and the safe prefix
   // are stored before the pause), fetched together and applied as one update.
-  const fetchTimeline = useCallback(async (sid: string, limit = HISTORY_PAGE): Promise<TimelinePage> => {
+  const fetchTimeline = useCallback(async (sid: string): Promise<FetchedTimeline> => {
     type PendingApproval = { run_id: string; user_input?: string; task_id?: string; tool_calls?: Array<{ tool_call_id: string; tool_name: string; arguments: string }> };
     const [msgs, pendingAll] = await Promise.all([
-      api.sessions.messages(sid, { limit }) as Promise<EntryView[]>,
+      api.sessions.messages(sid) as Promise<EntryView[]>,
       (api.sessions.approvals(sid) as Promise<PendingApproval[]>).catch(() => [] as PendingApproval[]),
     ]);
     // A background task's approval surfaces on its chip, never in the chat
@@ -238,11 +216,8 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
     // re-admits it here and lets the pause resume).
     const offPathRuns = new Set(entries.filter(e => e.run_id && e.on_path === false).map(e => e.run_id));
     const pending = (pendingAll || []).filter(p => !p.task_id && !offPathRuns.has(p.run_id));
-    // A short page means we reached the beginning; a full one means there may
-    // be more, and the next fetch settles it.
-    const page = { entries, hasMore: limit > 0 && entries.length >= limit };
     const timeline = buildTimeline(entries);
-    if (!pending || pending.length === 0) return { ...page, timeline };
+    if (!pending || pending.length === 0) return { entries, timeline };
     const seen = new Set<string>();
     for (const m of timeline) {
       if (m.role !== 'turn') continue;
@@ -254,7 +229,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
       tool_call_id: tc.tool_call_id, tool_name: tc.tool_name, arguments: tc.arguments,
       output: null, status: null, needs_approval: true,
     }))).filter(tc => !seen.has(tc.tool_call_id));
-    if (toolCalls.length === 0) return { ...page, timeline };
+    if (toolCalls.length === 0) return { entries, timeline };
     const runId = pending[0].run_id;
     const userInput = pending[0].user_input || '';
     // The synthesized rows have no row id: a pending approval was never
@@ -278,12 +253,12 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
       if (lastPart?.type === 'tools') parts[parts.length - 1] = { ...lastPart, toolCalls: [...lastPart.toolCalls, ...toolCalls] };
       else parts.push({ type: 'tools', toolCalls });
       out[lastTurnIdx] = { ...turn, parts };
-      return { ...page, timeline: out };
+      return { entries, timeline: out };
     }
     const hasUser = out.some(m => m.role === 'user' && (m.runId === runId || (userInput && m.content === userInput)));
     if (userInput && !hasUser) out.push({ role: 'user', content: userInput, runId, messageId: undefined });
     out.push({ role: 'turn', parts: [{ type: 'tools', toolCalls }], runId, messageId: undefined });
-    return { ...page, timeline: out };
+    return { entries, timeline: out };
   }, [updateSS]);
 
   // The task router lives for the hook's lifetime; it reads the latest
@@ -302,7 +277,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
 
   const reloadMessages = useCallback((sid: string) => {
     const gen = timelineGenRef.current[sid] || 0;
-    fetchTimeline(sid).then(({ timeline, entries, hasMore }) => {
+    fetchTimeline(sid).then(({ timeline, entries }) => {
       // A branch move happened while this fetch was in flight: the response
       // describes the abandoned path — drop it, the move's own reload owns
       // the state.
@@ -312,7 +287,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
       // deleted as the resume's claim), so a reload in that window would blank
       // the conversation. Every terminal event sets running=false and reloads,
       // so skipping here loses nothing.
-      updateSS(sid, s => s.running ? s : { ...s, messages: timeline, entries, hasMore });
+      updateSS(sid, s => s.running ? s : { ...s, messages: timeline, entries });
     }).catch((e: { status?: number }) => {
       // The persisted timeline did not reload behind the optimistic stream.
       // A conversation gone (deleted here or elsewhere: 404) has nothing to refresh.
@@ -329,13 +304,13 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
     loadedRef.current.add(sid);
     const gen = timelineGenRef.current[sid] || 0;
     updateSS(sid, s => (s.loadError ? { ...s, loadError: undefined } : s));
-    return fetchTimeline(sid).then(({ timeline, entries, hasMore }) => {
+    return fetchTimeline(sid).then(({ timeline, entries }) => {
       // Superseded by a later branch move's own reload — drop it (see
       // reloadMessages).
       if ((timelineGenRef.current[sid] || 0) !== gen) return;
       updateSS(sid, s => s.loaded
-        ? { ...s, messages: mergeLiveTail(timeline, s.messages, s.liveRunId), entries, hasMore }
-        : { ...s, messages: timeline, entries, hasMore, loaded: true });
+        ? { ...s, messages: mergeLiveTail(timeline, s.messages, s.liveRunId), entries }
+        : { ...s, messages: timeline, entries, loaded: true });
     }).catch((err: Error) => {
       loadedRef.current.delete(sid);
       updateSS(sid, s => ({ ...s, loadError: err?.message || 'Could not load the conversation' }));
@@ -368,19 +343,10 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
   }, [loadTimeline, updateSS]);
 
   // fetchTraces pulls the session's persisted span SUMMARY (payloads stay
-  // lazy, see loadSpanPayload) and the runs' questions, which label a trace
-  // card whose exchange is outside the loaded page. Per run id, the live
-  // group wins unless fetchedWins (a resync after an outage, when the stored
-  // rows are the newer side).
+  // lazy, see loadSpanPayload). Per run id, the live group wins unless
+  // fetchedWins (a resync after an outage, when the stored rows are the newer
+  // side).
   const fetchTraces = useCallback((sid: string, fetchedWins: boolean) => {
-    (api.sessions.runs(sid) as Promise<Array<{ run_id: string; question: string; on_path: boolean }> | null>)
-      .then(rows => {
-        if (!rows || rows.length === 0) return;
-        const runQuestions: SessionState['runQuestions'] = {};
-        for (const r of rows) runQuestions[r.run_id] = { question: r.question || '', onPath: r.on_path !== false };
-        updateSS(sid, s => ({ ...s, runQuestions }));
-      })
-      .catch(() => undefined); // labels degrade to run ids; the spans still load
     (api.sessions.traces(sid, { summary: true }) as Promise<TraceRow[] | null>).then(events => {
       if (!events || events.length === 0) return;
       const runs: Record<string, TraceEvent[]> = {};
@@ -951,43 +917,6 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
 
   const unwatchTask = useCallback((sid: string) => tasks.unwatch(sid), [tasks]);
 
-  // loadEarlier prepends the previous page of history. It rebuilds the
-  // timeline from ALL fetched entries rather than prepending the new page's
-  // timeline to the old one: buildTimeline folds turns across entries, and
-  // assembling the halves separately splits whichever turn straddles the
-  // page boundary. beforeId is passed IN, not read from state: a state
-  // updater runs when React processes the update, not at the call.
-  const loadEarlier = useCallback((sid: string, beforeId: string): void => {
-    if (!sid || !beforeId || loadingMoreRef.current.has(sid)) return;
-    const oldest = beforeId;
-    loadingMoreRef.current.add(sid);
-    updateSS(sid, s => ({ ...s, loadingMore: true }));
-    (api.sessions.messages(sid, { limit: HISTORY_PAGE, beforeId: oldest }) as Promise<EntryView[]>)
-      .then(older => {
-        updateSS(sid, s => {
-          const page = older || [];
-          if (page.length === 0) return { ...s, hasMore: false, loadingMore: false };
-          const entries = [...page, ...s.entries];
-          // The live tail is re-merged because the rebuild only knows what is
-          // persisted; an in-flight turn has nothing in the store yet. The
-          // merge is scoped to the CURRENT live run.
-          const rebuilt = buildTimeline(entries);
-          return {
-            ...s,
-            entries,
-            messages: mergeLiveTail(rebuilt, s.messages, s.liveRunId),
-            hasMore: page.length >= HISTORY_PAGE,
-            loadingMore: false,
-          };
-        });
-      })
-      .catch(() => {
-        updateSS(sid, s => ({ ...s, loadingMore: false }));
-        if (!deletedRef.current.has(sid)) toast.error('Could not load earlier messages');
-      })
-      .finally(() => loadingMoreRef.current.delete(sid));
-  }, [updateSS]);
-
   // forgetLoaded drops the "already fetched" mark so the next loadSession
   // re-reads from the server. A branch switch is the case that needs it: the
   // conversation changed shape server-side, and no local patch can express
@@ -996,8 +925,8 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
   const forgetLoaded = useCallback((sid: string) => {
     loadedRef.current.delete(sid);
     timelineGenRef.current[sid] = (timelineGenRef.current[sid] || 0) + 1;
-    updateSS(sid, s => ({ ...s, loaded: false, entries: [], hasMore: false }));
+    updateSS(sid, s => ({ ...s, loaded: false, entries: [] }));
   }, [updateSS]);
 
-  return { wsRef, sessionRunRef, connected, loadSession, loadTraces, loadSpanPayload, deleteSession, loadEarlier, forgetLoaded, watchTask, unwatchTask };
+  return { wsRef, sessionRunRef, connected, loadSession, loadTraces, loadSpanPayload, deleteSession, forgetLoaded, watchTask, unwatchTask };
 }

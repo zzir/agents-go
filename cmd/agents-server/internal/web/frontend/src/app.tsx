@@ -288,7 +288,7 @@ function App() {
     },
   }), []);
 
-  const { wsRef, sessionRunRef, connected, loadSession, loadTraces, loadSpanPayload, deleteSession, loadEarlier, forgetLoaded, watchTask, unwatchTask } = useAgentSocket(updateSS, sessionEvents);
+  const { wsRef, sessionRunRef, connected, loadSession, loadTraces, loadSpanPayload, deleteSession, forgetLoaded, watchTask, unwatchTask } = useAgentSocket(updateSS, sessionEvents);
 
   // patchTask applies a server-confirmed task state change (e.g. the stop
   // API's response) directly — the fallback for when no hub broadcast will
@@ -576,14 +576,6 @@ function App() {
     return () => window.removeEventListener(SESSION_REMOVED, handler);
   }, [handleDeleteSession]);
 
-  const handleLoadEarlier = useCallback(() => {
-    if (!activeSession) return;
-    const s = ssRef.current[activeSession];
-    if (!s?.hasMore || s.loadingMore || s.entries.length === 0) return;
-    const oldest = s.entries[0]?.id;
-    if (oldest) loadEarlier(activeSession, oldest);
-  }, [activeSession, loadEarlier]);
-
   // A rename from the sidebar: the open conversation's title follows at once
   // (the server announces no rename over the socket).
   const handleRenamed = useCallback((id: string, name: string) => {
@@ -690,10 +682,10 @@ function App() {
   // view compares it by reference.
   const chatActions = useMemo<ChatViewActions>(() => ({
     onSend: handleSend, onCancel: handleCancel, onApprove: handleApprove, onReject: handleReject, onFork: handleFork,
-    onLoadEarlier: handleLoadEarlier, onSwitchBranch: handleSwitchBranch, onCompact: handleCompact, onRegenerate: handleRegenerate,
+    onSwitchBranch: handleSwitchBranch, onCompact: handleCompact, onRegenerate: handleRegenerate,
     onWatchTask: watchTask, onUnwatchTask: unwatchTask, onPatchTask: patchTask, onLoadSpan: handleLoadSpan,
     onPanelChange: setActivePanel, onTerminalOpen: handleTerminalOpen, onSettingsOpen: handleOpenSettings, onRetryLoad: handleRetryLoad,
-  }), [handleSend, handleCancel, handleApprove, handleReject, handleFork, handleLoadEarlier, handleSwitchBranch, handleCompact,
+  }), [handleSend, handleCancel, handleApprove, handleReject, handleFork, handleSwitchBranch, handleCompact,
     handleRegenerate, watchTask, unwatchTask, patchTask, handleLoadSpan, handleTerminalOpen, handleOpenSettings, handleRetryLoad]);
 
   // A signature that moves with any execution in any conversation (every

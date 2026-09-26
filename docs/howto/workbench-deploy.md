@@ -129,9 +129,9 @@ SQLite the single-file assumption stands. Horizontal scaling is on the
 
 Every id that names one of our entities is a `uuid` column: UUIDv4 for
 ordinary entities, UUIDv7 for the append-heavy `entries`, `trace_events` and
-`audit_events`, whose ids double as the pagination cursors (`before_id` /
-`before`). Order is read off an id only where nothing better exists: a
-session's entries are read, paged, forked and compacted in `seq` order, while
+`audit_events` — the latter two's ids double as the pagination cursors
+(`before_id` / `before`). Order is read off an id only where nothing better
+exists: a session's entries are read, forked and compacted in `seq` order, while
 trace events have no `seq` and list by id, which is append order within one
 process and nothing more. An identifier of foreign shape stays text — entry
 ids (`e<seq>`), span ids (`span_<hex>`), a model's `tool_call_id`. "Unset" is

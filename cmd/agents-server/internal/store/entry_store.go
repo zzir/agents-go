@@ -525,8 +525,8 @@ func (s *EntryStore) Clear(ctx context.Context) error {
 
 var _ session.Storage = (*EntryStore)(nil)
 
-// EntryView is the REST shape of one entry: the stored entry plus the row id
-// the cursor pages on. Nothing is re-derived.
+// EntryView is the REST shape of one entry: the stored entry plus its row id.
+// Nothing is re-derived.
 type EntryView struct {
 	ID       string `json:"id"`
 	EntryID  string `json:"entry_id"`
@@ -625,11 +625,9 @@ type CompactionInfo struct {
 	Reset bool `json:"reset,omitempty"`
 }
 
-// GetEntries returns a page of a session's entries, oldest first. With a
-// limit it returns the NEWEST that many and the caller pages backwards with
-// the smallest id it received. Update entries are folded into their targets
-// here, over the whole session before the cursor applies — so every call reads every row.
-func (s *EntryStore) GetEntries(ctx context.Context, ref session.Ref, beforeID string, limit int) ([]EntryView, error) {
+// GetEntries returns all of a session's entries, oldest first, with update
+// entries folded into their targets — every call reads every row.
+func (s *EntryStore) GetEntries(ctx context.Context, ref session.Ref) ([]EntryView, error) {
 	var rows []entryRow
 	if err := s.db.NewSelect().Model(&rows).
 		Where("session_id = ?", ref.ID).Where("gen = ?", ref.Gen).
@@ -673,69 +671,7 @@ func (s *EntryStore) GetEntries(ctx context.Context, ref session.Ref, beforeID s
 		})
 	}
 	s.attachEntryAttachments(ctx, views, attIDs)
-
-	// The cursor applies to the folded list (raw row ids would give short
-	// pages where an update was folded); the cut is at that row's seq.
-	if beforeID != "" {
-		var beforeSeq int64 = -1
-		for i := range rows {
-			if rows[i].ID == beforeID {
-				beforeSeq = rows[i].Seq
-				break
-			}
-		}
-		cut := len(views)
-		for i, v := range views {
-			if beforeSeq >= 0 && meta[v.EntryID].Seq >= beforeSeq {
-				cut = i
-				break
-			}
-		}
-		views = views[:cut]
-	}
-	if limit > 0 && len(views) > limit {
-		views = views[len(views)-limit:]
-	}
 	return views, nil
-}
-
-// RunQuestion is one run of a session and what it was asked (the user entry
-// it started from, or for a regenerate the message it answered again), and
-// whether its entries are on the active branch — the trace panel's card label.
-type RunQuestion struct {
-	RunID    string `json:"run_id"`
-	Question string `json:"question"`
-	OnPath   bool   `json:"on_path"`
-}
-
-// RunQuestions lists every run that left entries on the session's current
-// generation, oldest first (a full GetEntries read).
-func (s *EntryStore) RunQuestions(ctx context.Context, ref session.Ref) ([]RunQuestion, error) {
-	views, err := s.GetEntries(ctx, ref, "", 0)
-	if err != nil {
-		return nil, err
-	}
-	var out []RunQuestion
-	at := make(map[string]int)
-	lastUser := ""
-	for _, v := range views {
-		if v.Role == "user" && v.Content != "" {
-			lastUser = v.Content
-		}
-		if v.RunID == "" {
-			continue
-		}
-		i, seen := at[v.RunID]
-		if !seen {
-			i = len(out)
-			at[v.RunID] = i
-			out = append(out, RunQuestion{RunID: v.RunID, Question: lastUser, OnPath: true})
-		}
-		if !v.OnPath {
-			out[i].OnPath = false
-		}
-	}
-	return out, nil
 }
 
 // roleOf maps an entry's provenance to the role a renderer groups by.

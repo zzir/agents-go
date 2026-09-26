@@ -162,11 +162,9 @@ Regenerating is `branch` back to the user's message followed by a run with an
 EMPTY input: nothing to add, history to answer.
 
 `/sessions/:id/messages` returns **session entries** — the SDK's
-`session.Entry` as the runner wrote it, plus the row id the cursor pages on;
-update entries are folded into their targets server-side, so a client never
-applies them itself. `/sessions/:id/runs` is the server's walk over every
-entry — one row per run with the question that started it — which is how a
-trace card whose exchange is not on screen is labeled.
+`session.Entry` as the runner wrote it, plus its row id — the whole session,
+oldest first; update entries are folded into their targets server-side, so a
+client never applies them itself.
 
 `/sessions/:id/context` reports what the session's ACTIVE branch occupies of
 its model's context window, recomputed per call — there is no live event; the
@@ -192,13 +190,11 @@ model (or its owner) wrote, and `/sessions/:id/memory/*key` reads one in
 full. A row is deleted or edited through `/memories/:id`
 ([Memories](#memories--apiv1memories)).
 
-**Pagination** — `messages` and `traces` accept `?limit=` and `?before_id=`.
-Without `limit` the full list comes back oldest-first; with it, the newest
-`limit` items — page backwards by passing the smallest id you received as
+**Pagination** — `traces` accepts `?limit=` and `?before_id=`. Without
+`limit` the full list comes back oldest-first; with it, the newest `limit`
+events — page backwards by passing the smallest id you received as
 `before_id` (an exclusive upper bound; row ids are UUIDv7 and order by
-insertion). For `messages` the limit counts the ENTRIES a client receives, not
-table rows: update entries are folded first, so a page is never short of what
-was asked for.
+insertion). `messages` does not page.
 
 ### Runs — `/api/v1/runs`
 

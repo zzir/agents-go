@@ -160,7 +160,7 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     that moved them (`appendTo`, `Clear`, `pop`, `ForkSession`, the compaction
     fold); `foldAppendPointIn` is the definition they must agree with, field
     for field. A missing row falls back to the fold, never to "empty". Only
-    `GetEntries` still folds, once per page.
+    `GetEntries` still folds, once per read.
 27. **A session's `project_id` binding is immutable and server-authoritative.**
     The first project-carrying run binds it (`BindProjectIfEmpty`): no unbind,
     rebind or PATCH, the run overrides what the client sends, and no project

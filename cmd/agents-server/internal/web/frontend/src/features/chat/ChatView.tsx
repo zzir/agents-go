@@ -5,6 +5,7 @@ import { Blankslate } from '@primer/react/experimental';
 import { api } from '@/lib/api';
 import { CHECK_ICON } from '@/lib/markdownShared';
 import { type TurnPart, type TimelineEntry, type Branches, type WorkflowStartedNote } from '@/lib/timeline';
+import { labelRuns } from '@/lib/runLabels';
 import { useScrollToBottom, useApi, useCopy } from '@/lib/hooks';
 import { loadSessionAgent, saveSessionAgent, loadLastAgent, saveLastAgent, loadSessionProject, saveSessionProject } from '@/lib/drafts';
 import { composerProjectRows, composerSandboxView, projectLabel, type SandboxSupports, type SessionBinding } from '@/lib/binding';
@@ -19,7 +20,7 @@ import { Loading } from '@/components/Loading';
 import { MessageBubble } from '@/features/chat/MessageBubble';
 import { TurnBlock } from '@/features/chat/TurnBlock';
 import { UserMessage } from '@/features/chat/UserMessage';
-import { WorkflowStartedChip, originText } from '@/features/chat/WorkflowStartedChip';
+import { WorkflowStartedChip } from '@/features/chat/WorkflowStartedChip';
 import { CompactionCard } from '@/features/chat/CompactionCard';
 import { Greeting } from '@/features/chat/Greeting';
 import { FirstMileCard, composerGate } from '@/features/chat/FirstMile';
@@ -117,9 +118,6 @@ export interface ChatViewActions {
   onApprove?: (id: string, scope?: string) => void;
   onReject?: (id: string) => void;
   onFork?: (id: string) => void;
-  // Backwards pagination over the persisted history (state.hasMore says
-  // older entries exist).
-  onLoadEarlier?: () => void;
   // Switches the session's active branch to another attempt.
   onSwitchBranch?: (tipEntryId: string) => void;
   // Forces one compaction pass now (the Context panel's button); resolves
@@ -160,7 +158,7 @@ interface ChatViewProps {
   // afterwards — switching projects means starting a new session.
   sessionBinding?: SessionBinding | null;
   // The session as the socket layer keeps it: timeline, stream, live run,
-  // tasks, history paging. One reference per session, replaced on change.
+  // tasks. One reference per session, replaced on change.
   state: SessionState;
   // Why the first load of the history failed, when it did (state.loadError).
   loadError?: string;
@@ -179,11 +177,11 @@ export function ChatView({
   // the trace panel still lists their runs, so it reads the raw entries.
   const messages: ChatMessage[] = state.messages;
   const {
-    entries, loaded, streaming, reasoning, running, compacting, diagnostics, traceRuns, runQuestions,
-    liveRunId, tasks, tasksLoaded, tasksError, taskView, hasMore, loadingMore,
+    entries, loaded, streaming, reasoning, running, compacting, diagnostics, traceRuns,
+    liveRunId, tasks, tasksLoaded, tasksError, taskView,
   } = state;
   const {
-    onSend, onCancel, onApprove, onReject, onFork, onLoadEarlier, onSwitchBranch, onCompact, onRegenerate,
+    onSend, onCancel, onApprove, onReject, onFork, onSwitchBranch, onCompact, onRegenerate,
     onWatchTask, onUnwatchTask, onPatchTask, onLoadSpan, onPanelChange, onTerminalOpen, onSettingsOpen,
   } = actions;
   const [agentConfigId, setAgentConfigIdState] = useState(() => loadSessionAgent(sessionId || ''));
@@ -344,92 +342,10 @@ export function ChatView({
     return (workflow ? 'workflow result: ' : 'task result: ') + which;
   }, [tasks]);
 
-  const { turnRunMap, userRunMap, runLabels, staleRuns } = useMemo(() => {
-    const tMap: Record<number, string> = {};
-    const uMap: Record<number, string> = {};
-    const labels: Record<string, string> = {};
-    // A workflow-started note is the question of an exchange no run asked:
-    // the wake-up run that later delivers that execution's result is labeled
-    // by it and jumps to it. Notes precede their results in the timeline.
-    const noteIdxByTask: Record<string, number> = {};
-    let turnIdx = 0;
-    for (let i = 0; i < messages.length; i++) {
-      const entry = messages[i] as unknown as { role: string; runId?: string; content?: string; note?: WorkflowStartedNote };
-      const rid = entry.runId;
-      if (entry.role === 'system' && entry.note?.taskId) {
-        noteIdxByTask[entry.note.taskId] = i;
-        continue;
-      }
-      // Label runs from the user message directly, so a run whose reply
-      // produced no visible turn still shows its question in the trace panel.
-      if (entry.role === 'user' && rid && traceRuns[rid]) {
-        const notif = parseTaskNotification(entry.content);
-        // Notifications don't render, so they anchor no jump target — label
-        // the run but keep it out of userRunMap/messageRunIds — unless the
-        // execution's start left a note, which then IS the anchor.
-        if (!notif) uMap[i] = rid;
-        if (entry.content && !labels[rid]) labels[rid] = runLabelFor(entry.content);
-        if (notif) {
-          const noted = notif.items.find(it => it.taskId && noteIdxByTask[it.taskId] !== undefined);
-          if (noted?.taskId !== undefined && noted.taskId !== null) {
-            const idx = noteIdxByTask[noted.taskId];
-            const note = (messages[idx] as unknown as { note: WorkflowStartedNote }).note;
-            uMap[idx] = rid;
-            labels[rid] = '▶ ' + (note.workflowName || noted.label) + ' (' + originText(note.origin) + ')';
-          }
-        }
-      } else if (entry.role === 'turn') {
-        if (rid && traceRuns[rid]) {
-          tMap[i] = rid;
-          let userContent: string | null = null;
-          for (let j = i - 1; j >= 0; j--) {
-            if (messages[j].role === 'user') {
-              userContent = messages[j].content ?? null;
-              // The turn's run OVERWRITES the one the user message carries:
-              // a message's own run_id is whichever run first produced it —
-              // after a regenerate, an attempt the session has branched away
-              // from. On the active branch a message is followed by exactly
-              // one turn, so there is nothing to contend over.
-              if (!parseTaskNotification(messages[j].content)) uMap[j] = rid;
-              break;
-            }
-          }
-          if (!labels[rid]) {
-            labels[rid] = userContent ? runLabelFor(userContent) : 'Turn ' + (turnIdx + 1);
-          }
-        }
-        turnIdx++;
-      }
-    }
-    // Runs whose turn is NOT in the rendered timeline: a regenerated answer
-    // the session has since branched away from. Their traces are still listed
-    // — the work happened — but the timeline has no turn to label them from,
-    // so they fell back to a raw run id. Label them from the entries instead,
-    // and mark them, so "5 traces, 3 exchanges" reads as what it is rather
-    // than as a mismatch.
-    const stale = new Set<string>();
-    const paged = new Set<string>();
-    let lastUser: string | null = null;
-    for (const e of entries || []) {
-      if (e.role === 'user' && e.content) lastUser = e.content;
-      const rid = e.run_id;
-      if (!rid || !traceRuns[rid]) continue;
-      paged.add(rid);
-      if (e.on_path === false) stale.add(rid);
-      if (!labels[rid] && lastUser) labels[rid] = runLabelFor(lastUser);
-    }
-    // Runs whose exchange lies before the page of history loaded: the timeline
-    // pages, the traces do not. The server's own walk over ALL the entries
-    // (GET /sessions/:id/runs) names them the same way, and says which of them
-    // the session has branched away from. A run the page holds is the page's
-    // to judge — its entries are current, this snapshot is from the trace load.
-    for (const [rid, q] of Object.entries(runQuestions || {})) {
-      if (!traceRuns[rid] || paged.has(rid)) continue;
-      if (!labels[rid] && q.question) labels[rid] = runLabelFor(q.question);
-      if (!q.onPath) stale.add(rid);
-    }
-    return { turnRunMap: tMap, userRunMap: uMap, runLabels: labels, staleRuns: stale };
-  }, [messages, entries, traceRuns, runQuestions, runLabelFor]);
+  const { turnRunMap, userRunMap, runLabels, staleRuns } = useMemo(
+    () => labelRuns(state.messages, entries, traceRuns, runLabelFor),
+    [state.messages, entries, traceRuns, runLabelFor],
+  );
 
   // Wake-up run → the run whose spawn_task started the chain, read straight
   // off the trace: a wake run's spans carry parent_run_id, recorded at launch.
@@ -866,13 +782,6 @@ export function ChatView({
         {topBar}
         <div className="chat-messages-area">
         <div ref={composedScrollRef} className="chat-messages" onClick={handleCopyClick}>
-          {hasMore && (
-            <div className="load-earlier">
-              <Button size="small" variant="invisible" onClick={onLoadEarlier} disabled={loadingMore}>
-                {loadingMore ? 'Loading…' : 'Load earlier messages'}
-              </Button>
-            </div>
-          )}
           {messages.map(renderMessage)}
         </div>
 

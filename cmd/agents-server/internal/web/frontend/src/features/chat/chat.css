@@ -1046,13 +1046,6 @@
   50%      { opacity: 1; }
 }
 
-/* "Load earlier messages" — history paginates backwards from the newest page. */
-.load-earlier {
-  display: flex;
-  justify-content: center;
-  padding: var(--base-size-8) 0;
-}
-
 /* Attempt switcher — "2 / 3 ‹ ›" on a turn that was regenerated. */
 .branch-switcher {
   display: inline-flex;

@@ -5406,16 +5406,11 @@ export interface paths {
         };
         /**
          * List session entries
-         * @description Without limit, returns all entries oldest-first. With limit, returns the newest `limit` entries (still oldest-first); page backwards by passing the smallest received id as before_id. Update entries are folded into their targets server-side.
+         * @description Returns every entry of the session, oldest first. Update entries are folded into their targets server-side.
          */
         get: {
             parameters: {
-                query?: {
-                    /** @description Max entries to return; 0 or absent returns all */
-                    limit?: number;
-                    /** @description Only entries with id < before_id (backwards cursor) */
-                    before_id?: string;
-                };
+                query?: never;
                 header?: never;
                 path: {
                     /** @description Session ID */
@@ -5538,51 +5533,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * List session runs
-         * @description Every run that left entries on the session, oldest first, each with the user text it started from (`question` — its own message, or for a regenerate the message it answered again) and whether its entries are on the active branch (`on_path`). What the trace panel labels a run by when its message lies outside the page of history it has loaded.
-         */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description Session ID */
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["store.RunQuestion"][];
-                    };
-                };
-                /** @description Not Found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-                /** @description Internal Server Error */
-                500: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-            };
-        };
+        get?: never;
         put?: never;
         /**
          * Start run
@@ -8635,11 +8586,6 @@ export interface components {
             fallback_models?: components["schemas"]["store.FallbackModel"][];
             retry_enabled?: boolean;
             retry_policy?: string;
-        };
-        "store.RunQuestion": {
-            on_path?: boolean;
-            question?: string;
-            run_id?: string;
         };
         "store.Sandbox": {
             /** @description Config holds the settings as JSON (DockerConfig or E2BConfig), exchanged with the API as a raw object. */

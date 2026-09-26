@@ -140,7 +140,7 @@ func TestGetEntriesPreservesWhatTheRunnerWrote(t *testing.T) {
 	call.Diagnostics = []agents.Diagnostic{{Type: agents.DiagToolTimeout, Message: "slow"}}
 	seed(t, s, userEntry(t, "weather?"), call)
 
-	views, err := s.GetEntries(ctx, session.Direct(id("s1")), "", 0)
+	views, err := s.GetEntries(ctx, session.Direct(id("s1")))
 	if err != nil {
 		t.Fatalf("get entries: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestGetEntriesFallsBackToItemText(t *testing.T) {
 	s := NewEntryStoreFor(db, session.Direct(id("s1")))
 	seed(t, s, rawEntry(t, `{"type":"message","role":"assistant","content":[{"type":"text","text":"最终回答"}],"status":"completed"}`))
 
-	views, err := s.GetEntries(ctx, session.Direct(id("s1")), "", 0)
+	views, err := s.GetEntries(ctx, session.Direct(id("s1")))
 	if err != nil {
 		t.Fatalf("get entries: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestPartialTextAnnotationReadsBackAsAssistant(t *testing.T) {
 		agents.ItemDisplay{Kind: agents.DisplayMessage, Text: "partial answer"},
 		agents.Source{Type: agents.SourceModel}))
 
-	views, err := s.GetEntries(ctx, session.Direct(id("s1")), "", 0)
+	views, err := s.GetEntries(ctx, session.Direct(id("s1")))
 	if err != nil {
 		t.Fatalf("get entries: %v", err)
 	}
@@ -273,7 +273,7 @@ func TestGetEntriesReportsWhatACheckpointFolded(t *testing.T) {
 	}
 	seed(t, s, cp)
 
-	views, err := s.GetEntries(ctx, session.Direct(id("s1")), "", 0)
+	views, err := s.GetEntries(ctx, session.Direct(id("s1")))
 	if err != nil {
 		t.Fatalf("get entries: %v", err)
 	}
@@ -299,10 +299,9 @@ func TestGetEntriesReportsWhatACheckpointFolded(t *testing.T) {
 	}
 }
 
-// Paging must count what the CLIENT receives, not raw rows. Folding an update
-// into its target removes a row from the page, so a cursor over raw ids returns
-// short pages — and a client that stops when a page is short stops early.
-func TestGetEntriesPagesOverFoldedEntries(t *testing.T) {
+// An update entry is a row in the table, never an entry a client receives:
+// GetEntries folds it into its target.
+func TestGetEntriesFoldsUpdates(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	id := ids(t)
@@ -312,7 +311,6 @@ func TestGetEntriesPagesOverFoldedEntries(t *testing.T) {
 	call := rawEntry(t, `{"type":"function_call","call_id":"c1","name":"f","arguments":"{}"}`)
 	call.Display = &agents.ItemDisplay{Kind: agents.DisplayToolCall, CallID: "c1", ToolName: "f"}
 	seed(t, s, userEntry(t, "one"), call, userEntry(t, "two"), userEntry(t, "three"))
-	// Two update entries: rows in the table, never entries in a page.
 	if err := s.AppendCallDisplayUpdate(ctx, session.Direct(id("s1")), "c1", agents.ItemDisplay{Output: "done"}); err != nil {
 		t.Fatalf("update: %v", err)
 	}
@@ -320,7 +318,7 @@ func TestGetEntriesPagesOverFoldedEntries(t *testing.T) {
 		t.Fatalf("update 2: %v", err)
 	}
 
-	all, err := s.GetEntries(ctx, session.Direct(id("s1")), "", 0)
+	all, err := s.GetEntries(ctx, session.Direct(id("s1")))
 	if err != nil {
 		t.Fatalf("get all: %v", err)
 	}
@@ -331,76 +329,11 @@ func TestGetEntriesPagesOverFoldedEntries(t *testing.T) {
 	if all[1].Display == nil || all[1].Display.Output != "done" || all[1].Display.Text != "finished" {
 		t.Fatalf("updates not folded into the call: %+v", all[1].Display)
 	}
-
-	// A limit is a count of ENTRIES. Asking for 2 must give the newest 2.
-	page, err := s.GetEntries(ctx, session.Direct(id("s1")), "", 2)
-	if err != nil {
-		t.Fatalf("get page: %v", err)
-	}
-	if len(page) != 2 || page[0].ID != all[2].ID || page[1].ID != all[3].ID {
-		t.Fatalf("newest page wrong: got %d entries, ids %v", len(page), idsOf(page))
-	}
-
-	// Paging backwards from it reaches the beginning without skipping the call
-	// the updates were folded into.
-	older, err := s.GetEntries(ctx, session.Direct(id("s1")), page[0].ID, 2)
-	if err != nil {
-		t.Fatalf("get older: %v", err)
-	}
-	if len(older) != 2 || older[0].ID != all[0].ID || older[1].ID != all[1].ID {
-		t.Fatalf("cursor page wrong: got %v, want the first two", idsOf(older))
-	}
 }
 
 // Branching keeps both attempts and marks which one is current. Deleting the
 // abandoned one is what a fork-a-new-session regenerate did instead, and it is
 // why "show me the other answer" was not offerable.
-// A run is labeled by the user text it started from: its own message, or —
-// for a regenerate, which leaves no user entry of its own — the message it
-// answered again; and a run the session branched away from says so.
-func TestRunQuestionsNameEveryRunByItsQuestion(t *testing.T) {
-	ctx := context.Background()
-	db := newTestDB(t)
-	id := ids(t)
-	s := NewEntryStoreFor(db, session.Direct(id("s1")))
-	answer := func(text string) session.Entry {
-		return rawEntryFrom(t, `{"type":"message","role":"assistant","content":[{"type":"output_text","text":`+quoteJSON(text)+`}]}`, agents.Source{})
-	}
-
-	s.SetRunID(id("r1"))
-	seed(t, s, userEntry(t, "first question"), answer("first answer"))
-	s.SetRunID(id("r2"))
-	seed(t, s, userEntry(t, "second question"), answer("second answer"))
-	// Regenerate the second answer: a new run whose only entries are its turn.
-	stored, err := s.Entries(ctx, session.Cursor{})
-	if err != nil || len(stored) != 4 {
-		t.Fatalf("seeded entries: %v %v", stored, err)
-	}
-	if err := s.Branch(ctx, session.Direct(id("s1")), stored[2].ID); err != nil {
-		t.Fatalf("branch: %v", err)
-	}
-	s.SetRunID(id("r3"))
-	seed(t, s, answer("second answer, again"))
-
-	runs, err := s.RunQuestions(ctx, session.Direct(id("s1")))
-	if err != nil {
-		t.Fatalf("run questions: %v", err)
-	}
-	want := []RunQuestion{
-		{RunID: id("r1"), Question: "first question", OnPath: true},
-		{RunID: id("r2"), Question: "second question", OnPath: false}, // its answer was branched away
-		{RunID: id("r3"), Question: "second question", OnPath: true},
-	}
-	if len(runs) != len(want) {
-		t.Fatalf("runs = %+v, want %+v", runs, want)
-	}
-	for i := range want {
-		if runs[i] != want[i] {
-			t.Errorf("run %d = %+v, want %+v", i, runs[i], want[i])
-		}
-	}
-}
-
 func TestBranchMarksTheActiveAttempt(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
@@ -422,7 +355,7 @@ func TestBranchMarksTheActiveAttempt(t *testing.T) {
 	}
 	seed(t, s, rawEntryFrom(t, `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"second"}]}`, agents.Source{}))
 
-	views, gerr := s.GetEntries(ctx, session.Direct(id("s1")), "", 0)
+	views, gerr := s.GetEntries(ctx, session.Direct(id("s1")))
 	if gerr != nil {
 		t.Fatalf("get entries: %v", gerr)
 	}
@@ -467,7 +400,7 @@ func TestBranchMarksTheActiveAttempt(t *testing.T) {
 	if err := s.Branch(ctx, session.Direct(id("s1")), firstID); err != nil {
 		t.Fatalf("branch back: %v", err)
 	}
-	views, _ = s.GetEntries(ctx, session.Direct(id("s1")), "", 0)
+	views, _ = s.GetEntries(ctx, session.Direct(id("s1")))
 	for _, v := range views {
 		if v.Content == "first" && !v.OnPath {
 			t.Error("switching back did not restore the first attempt")
@@ -476,14 +409,6 @@ func TestBranchMarksTheActiveAttempt(t *testing.T) {
 			t.Error("the second attempt is still on the path after switching back")
 		}
 	}
-}
-
-func idsOf(views []EntryView) []string {
-	out := make([]string, len(views))
-	for i, v := range views {
-		out[i] = v.ID
-	}
-	return out
 }
 
 // Appending, popping and clearing move the session in the listing: the entry
@@ -611,7 +536,7 @@ func TestForkEntriesCopiesSnapshot(t *testing.T) {
 	if len(runIDs) != 2 {
 		t.Fatalf("run ids = %v, want 2 deduped", runIDs)
 	}
-	copied, err := s.GetEntries(ctx, refOf(t, db, dst.ID), "", 0)
+	copied, err := s.GetEntries(ctx, refOf(t, db, dst.ID))
 	if err != nil {
 		t.Fatalf("get dst: %v", err)
 	}
@@ -628,7 +553,7 @@ func TestForkEntriesCopiesSnapshot(t *testing.T) {
 			t.Fatalf("entry %d parent = %q, want %q", i, e.ParentID, copied[i-1].EntryID)
 		}
 	}
-	if orig, err := s.GetEntries(ctx, refOf(t, db, src.ID), "", 0); err != nil || len(orig) != 3 {
+	if orig, err := s.GetEntries(ctx, refOf(t, db, src.ID)); err != nil || len(orig) != 3 {
 		t.Fatalf("src changed by fork: %d rows (%v)", len(orig), err)
 	}
 }
@@ -647,7 +572,7 @@ func TestForkEntriesUpToBoundary(t *testing.T) {
 	s.SetRunID(id("r"))
 	seed(t, s, userEntry(t, "1"), userEntry(t, "2"), userEntry(t, "3"))
 
-	all, err := s.GetEntries(ctx, refOf(t, db, src.ID), "", 0)
+	all, err := s.GetEntries(ctx, refOf(t, db, src.ID))
 	if err != nil {
 		t.Fatalf("get src: %v", err)
 	}
@@ -657,7 +582,7 @@ func TestForkEntriesUpToBoundary(t *testing.T) {
 	if _, err := s.ForkSession(ctx, inc, refOf(t, db, src.ID), cut, false); err != nil {
 		t.Fatalf("inclusive fork: %v", err)
 	}
-	got, _ := s.GetEntries(ctx, refOf(t, db, inc.ID), "", 0)
+	got, _ := s.GetEntries(ctx, refOf(t, db, inc.ID))
 	if len(got) != 2 {
 		t.Fatalf("inclusive up-to copied %d, want 2", len(got))
 	}
@@ -666,7 +591,7 @@ func TestForkEntriesUpToBoundary(t *testing.T) {
 	if _, err := s.ForkSession(ctx, exc, refOf(t, db, src.ID), cut, true); err != nil {
 		t.Fatalf("exclusive fork: %v", err)
 	}
-	got, _ = s.GetEntries(ctx, refOf(t, db, exc.ID), "", 0)
+	got, _ = s.GetEntries(ctx, refOf(t, db, exc.ID))
 	if len(got) != 1 {
 		t.Fatalf("exclusive up-to copied %d, want 1", len(got))
 	}
@@ -931,7 +856,7 @@ func TestForkCutOnAFoldedEntry(t *testing.T) {
 	if len(model) != 1 || model[0].ParentID != "" {
 		t.Fatalf("the model's view = %d entries, first parent %q; want one root", len(model), model[0].ParentID)
 	}
-	view, err := forked.GetEntries(ctx, refOf(t, db, dst.ID), "", 10)
+	view, err := forked.GetEntries(ctx, refOf(t, db, dst.ID))
 	if err != nil {
 		t.Fatalf("get entries: %v", err)
 	}
@@ -1034,8 +959,7 @@ func TestRunHasItemsIsScopedToTheGeneration(t *testing.T) {
 // Append order is seq, not the row id: a UUIDv7 id follows the wall clock,
 // which a clock step or a second process can run backwards, and the history
 // the model reads must not reorder with it. With the newest row given the
-// smallest id, every read still comes back in append order, and the page
-// cursor still cuts at the named row.
+// smallest id, every read still comes back in append order.
 func TestEntryReadsOrderBySeqNotID(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
@@ -1067,21 +991,12 @@ func TestEntryReadsOrderBySeqNotID(t *testing.T) {
 	if !slices.Equal(got, []string{"first", "second", "third"}) {
 		t.Fatalf("load order = %v, want append order", got)
 	}
-	views, err := s.GetEntries(ctx, ref, "", 0)
+	views, err := s.GetEntries(ctx, ref)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if views[0].Content != "first" || views[2].Content != "third" {
 		t.Fatalf("GetEntries order = %q, %q, %q", views[0].Content, views[1].Content, views[2].Content)
-	}
-	// The cursor names the third row (which now carries the smallest id):
-	// the page before it is the first two.
-	page, err := s.GetEntries(ctx, ref, views[2].ID, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(page) != 2 || page[1].Content != "second" {
-		t.Fatalf("page before the third = %d rows ending %q, want first, second", len(page), page[len(page)-1].Content)
 	}
 }
 
@@ -1104,7 +1019,7 @@ func TestForkRefusesABoundaryOfAnotherSession(t *testing.T) {
 	seed(t, s, userEntry(t, "1"), userEntry(t, "2"))
 	o := storeFor(t, db, other.ID)
 	seed(t, o, userEntry(t, "x"))
-	foreign, err := o.GetEntries(ctx, refOf(t, db, other.ID), "", 0)
+	foreign, err := o.GetEntries(ctx, refOf(t, db, other.ID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1134,7 +1049,7 @@ func TestForkLeavesAnUndecodableEntryOut(t *testing.T) {
 	s := storeFor(t, db, src.ID)
 	s.SetRunID(id("r"))
 	seed(t, s, userEntry(t, "1"), userEntry(t, "2"), userEntry(t, "3"))
-	all, err := s.GetEntries(ctx, refOf(t, db, src.ID), "", 0)
+	all, err := s.GetEntries(ctx, refOf(t, db, src.ID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1147,7 +1062,7 @@ func TestForkLeavesAnUndecodableEntryOut(t *testing.T) {
 	if _, err := s.ForkSession(ctx, dst, refOf(t, db, src.ID), "", false); err != nil {
 		t.Fatalf("fork: %v", err)
 	}
-	copied, err := s.GetEntries(ctx, refOf(t, db, dst.ID), "", 0)
+	copied, err := s.GetEntries(ctx, refOf(t, db, dst.ID))
 	if err != nil {
 		t.Fatal(err)
 	}

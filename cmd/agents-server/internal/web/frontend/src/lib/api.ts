@@ -186,17 +186,8 @@ export const api = {
     // Both optional: an unnamed conversation is "New Session" until its first message titles it.
     create: (body: { name?: string; agent_config_id?: string } = {}) => request('/sessions', { method: 'POST', body: JSON.stringify(body) }),
     update: (id: string | number, name: string) => request(`/sessions/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
-    // limit/beforeId page BACKWARDS: the newest `limit` entries first, then
-    // older pages keyed on the smallest id received. A cursor rather than an
-    // offset because entries keep arriving — an offset shifts under a
-    // concurrent append and silently repeats or skips a row.
-    messages: (id: string | number, opts?: { limit?: number; beforeId?: string }) => {
-      const q = new URLSearchParams();
-      if (opts?.limit) q.set('limit', String(opts.limit));
-      if (opts?.beforeId) q.set('before_id', opts.beforeId);
-      const qs = q.toString();
-      return request(`/sessions/${id}/messages` + (qs ? '?' + qs : ''));
-    },
+    // The session's entries, all of them, oldest first.
+    messages: (id: string | number) => request(`/sessions/${id}/messages`),
     // The session's background work — tasks and workflow executions — newest first.
     tasks: (id: string | number) => request(`/sessions/${id}/tasks`),
     // summary leaves the payload fields (the model request and reply, a
@@ -206,10 +197,6 @@ export const api = {
     traces: (id: string | number, opts?: { summary?: boolean }) =>
       request(`/sessions/${id}/traces` + (opts?.summary ? '?summary=true' : '')),
     traceSpan: (id: string | number, spanId: string) => request(`/sessions/${id}/traces/${encodeURIComponent(spanId)}`),
-    // Every run that left entries, oldest first, with the user text it started
-    // from and whether it is on the active branch — the trace panel's labels
-    // for runs whose exchange the paged timeline has not loaded.
-    runs: (id: string | number) => request(`/sessions/${id}/runs`),
     // What the session's active branch occupies of the model's context window.
     // Recomputed per call from the entries — there is no live event for it, so
     // the panel refetches when a run ends.

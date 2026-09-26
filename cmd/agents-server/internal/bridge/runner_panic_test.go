@@ -97,7 +97,7 @@ func TestRunPanicFailsTheRunWithAnError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	views, err := store.NewSharedEntryStore(runner.db).GetEntries(ctx, ref, "", 0)
+	views, err := store.NewSharedEntryStore(runner.db).GetEntries(ctx, ref)
 	if err != nil {
 		t.Fatal(err)
 	}

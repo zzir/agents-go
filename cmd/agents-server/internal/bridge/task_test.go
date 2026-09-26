@@ -211,7 +211,7 @@ func TestDrainTaskNotificationsQueuesWhileBusy(t *testing.T) {
 	found := false
 	deadline := time.Now().Add(5 * time.Second)
 	for !found && time.Now().Before(deadline) {
-		rows, err := entries.GetEntries(ctx, mustRef(t, runner.db, parent.ID), "", 50)
+		rows, err := entries.GetEntries(ctx, mustRef(t, runner.db, parent.ID))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -268,7 +268,7 @@ func TestStartupSweepDeliversPendingNotifications(t *testing.T) {
 	found := false
 	deadline := time.Now().Add(5 * time.Second)
 	for !found && time.Now().Before(deadline) {
-		rows, err := entries.GetEntries(ctx, mustRef(t, runner.db, parent.ID), "", 50)
+		rows, err := entries.GetEntries(ctx, mustRef(t, runner.db, parent.ID))
 		if err != nil {
 			t.Fatal(err)
 		}

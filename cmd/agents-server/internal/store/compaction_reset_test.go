@@ -87,7 +87,7 @@ func TestResetPassKeepsTheNewestUserMessage(t *testing.T) {
 	}
 	// The folded turn stays on the branch for the transcript: the checkpoint
 	// extends the tip as it stood, folded or not (invariant 24).
-	view, err := sa.GetEntries(ctx, session.Direct(sessionID), "", 0)
+	view, err := sa.GetEntries(ctx, session.Direct(sessionID))
 	if err != nil {
 		t.Fatal(err)
 	}

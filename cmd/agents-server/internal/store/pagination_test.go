@@ -9,7 +9,8 @@ import (
 	"github.com/zzir/agents-go/agents/session"
 )
 
-func TestGetEntriesPagination(t *testing.T) {
+// GetEntries is the whole session, oldest first.
+func TestGetEntriesReturnsAllOldestFirst(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	id := ids(t)
@@ -20,8 +21,7 @@ func TestGetEntriesPagination(t *testing.T) {
 		seed(t, s, userEntry(t, fmt.Sprint(i)))
 	}
 
-	// No limit: all 5, oldest-first.
-	all, err := s.GetEntries(ctx, session.Direct(id("s1")), "", 0)
+	all, err := s.GetEntries(ctx, session.Direct(id("s1")))
 	if err != nil {
 		t.Fatalf("get all: %v", err)
 	}
@@ -32,24 +32,6 @@ func TestGetEntriesPagination(t *testing.T) {
 		if all[i].ID <= all[i-1].ID {
 			t.Fatalf("entries not oldest-first at %d", i)
 		}
-	}
-
-	// limit=2 returns the newest two, still ascending.
-	page, err := s.GetEntries(ctx, session.Direct(id("s1")), "", 2)
-	if err != nil {
-		t.Fatalf("get page: %v", err)
-	}
-	if len(page) != 2 || page[0].ID != all[3].ID || page[1].ID != all[4].ID {
-		t.Fatalf("newest page wrong: %+v", page)
-	}
-
-	// before_id cursor: everything older than the page's first id, newest 2.
-	older, err := s.GetEntries(ctx, session.Direct(id("s1")), page[0].ID, 2)
-	if err != nil {
-		t.Fatalf("get older: %v", err)
-	}
-	if len(older) != 2 || older[1].ID != all[2].ID {
-		t.Fatalf("cursor page wrong: %+v", older)
 	}
 }
 

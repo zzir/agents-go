@@ -6,10 +6,9 @@ import { createRoot } from 'react-dom/client';
 vi.mock('@/lib/apiCache', async importOriginal => ({ ...(await importOriginal<typeof import('@/lib/apiCache')>()), invalidate: vi.fn() }));
 const apiMock = vi.hoisted(() => ({
   sessions: {
-    messages: vi.fn(async (_sid: string, _o?: unknown) => [] as unknown[]),
+    messages: vi.fn(async (_sid: string) => [] as unknown[]),
     approvals: vi.fn(async (_sid: string) => [] as unknown[]),
     tasks: vi.fn(async (_sid: string) => [] as unknown[]),
-    runs: vi.fn(async (_sid: string) => [] as unknown[]),
     traces: vi.fn(async (_sid: string, _o?: unknown) => [] as unknown[]),
     traceSpan: vi.fn(),
   },

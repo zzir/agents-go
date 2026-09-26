@@ -80,7 +80,7 @@ func TestTriggerFireStartsTheWorkflowAndRecordsIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	views, err := store.NewEntryStoreFor(runner.db, ref).GetEntries(ctx, ref, "", 0)
+	views, err := store.NewEntryStoreFor(runner.db, ref).GetEntries(ctx, ref)
 	if err != nil {
 		t.Fatal(err)
 	}
