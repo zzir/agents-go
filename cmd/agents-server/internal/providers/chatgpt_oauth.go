@@ -9,9 +9,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -49,6 +51,8 @@ type ChatGPTOAuth struct {
 	providers *store.ProviderStore
 	// settings routes token endpoint calls through the configured proxy_url.
 	settings *settings.Reader
+	// tokenURL is the token endpoint; tests point it at a fake.
+	tokenURL string
 
 	mu      sync.Mutex
 	pending map[string]*chatgptPending // keyed by state
@@ -76,6 +80,7 @@ func NewChatGPTOAuth(providers *store.ProviderStore, cfg *settings.Reader) *Chat
 	return &ChatGPTOAuth{
 		providers: providers,
 		settings:  cfg,
+		tokenURL:  chatgptTokenURL,
 		pending:   make(map[string]*chatgptPending),
 	}
 }
@@ -181,8 +186,14 @@ func (o *ChatGPTOAuth) CompleteLogin(ctx context.Context, providerID, callback s
 		return fmt.Errorf("%w: this callback belongs to a different sign-in", ErrChatGPTCallbackInvalid)
 	}
 
-	tokens, err := exchangeCode(ctx, o.httpClient(ctx), code, p.codeVerifier, chatgptRedirectURI)
+	tokens, err := exchangeCode(ctx, o.httpClient(ctx), o.tokenURL, code, p.codeVerifier, chatgptRedirectURI)
 	if err != nil {
+		// A refusal (4xx) is the code's fault: spent, expired, or another
+		// flow's. A 5xx or transport failure stays a server error.
+		var te *tokenError
+		if errors.As(err, &te) && te.status < 500 {
+			return fmt.Errorf("%w: %w", ErrChatGPTCallbackInvalid, err)
+		}
 		return err
 	}
 	if err := o.saveTokens(ctx, providerID, tokens); err != nil {
@@ -292,7 +303,7 @@ func (o *ChatGPTOAuth) refreshCredentials(ctx context.Context, providerID string
 		}
 	}
 
-	refreshed, err := refreshToken(ctx, o.httpClient(ctx), tok.RefreshToken)
+	refreshed, err := refreshToken(ctx, o.httpClient(ctx), o.tokenURL, tok.RefreshToken)
 	if err != nil {
 		return chatgptTokens{}, fmt.Errorf("token refresh failed: %w", err)
 	}
@@ -381,7 +392,7 @@ func (o *ChatGPTOAuth) saveTokens(ctx context.Context, providerID string, tok *c
 	return o.providers.SaveChatGPTToken(ctx, providerID, string(data))
 }
 
-func exchangeCode(ctx context.Context, client *http.Client, code, verifier, redirectURI string) (*chatgptTokens, error) {
+func exchangeCode(ctx context.Context, client *http.Client, tokenURL, code, verifier, redirectURI string) (*chatgptTokens, error) {
 	form := url.Values{
 		"grant_type":    {"authorization_code"},
 		"code":          {code},
@@ -389,7 +400,7 @@ func exchangeCode(ctx context.Context, client *http.Client, code, verifier, redi
 		"client_id":     {chatgptClientID},
 		"code_verifier": {verifier},
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, chatgptTokenURL, strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return nil, fmt.Errorf("token exchange request: %w", err)
 	}
@@ -399,40 +410,16 @@ func exchangeCode(ctx context.Context, client *http.Client, code, verifier, redi
 		return nil, fmt.Errorf("token exchange request: %w", err)
 	}
 	defer resp.Body.Close()
-
-	var result struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
-		IDToken      string `json:"id_token"`
-		ExpiresIn    int64  `json:"expires_in"`
-		Error        string `json:"error"`
-		ErrorDesc    string `json:"error_description"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decoding token response: %w", err)
-	}
-	if result.Error != "" {
-		return nil, fmt.Errorf("%s: %s", result.Error, result.ErrorDesc)
-	}
-
-	tok := &chatgptTokens{
-		AccessToken:  result.AccessToken,
-		RefreshToken: result.RefreshToken,
-		IDToken:      result.IDToken,
-	}
-	if result.ExpiresIn > 0 {
-		tok.ExpiresAt = time.Now().Unix() + result.ExpiresIn
-	}
-	return tok, nil
+	return decodeTokenResponse(resp)
 }
 
-func refreshToken(ctx context.Context, client *http.Client, refresh string) (*chatgptTokens, error) {
+func refreshToken(ctx context.Context, client *http.Client, tokenURL, refresh string) (*chatgptTokens, error) {
 	body, _ := json.Marshal(map[string]string{
 		"client_id":     chatgptClientID,
 		"grant_type":    "refresh_token",
 		"refresh_token": refresh,
 	})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, chatgptTokenURL, strings.NewReader(string(body)))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(string(body)))
 	if err != nil {
 		return nil, err
 	}
@@ -442,32 +429,98 @@ func refreshToken(ctx context.Context, client *http.Client, refresh string) (*ch
 		return nil, err
 	}
 	defer resp.Body.Close()
-
-	var result struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
-		IDToken      string `json:"id_token"`
-		ExpiresIn    int64  `json:"expires_in"`
-		Error        string `json:"error"`
-		ErrorDesc    string `json:"error_description"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	tok, err := decodeTokenResponse(resp)
+	if err != nil {
 		return nil, err
 	}
-	if result.Error != "" {
-		return nil, fmt.Errorf("%s: %s", result.Error, result.ErrorDesc)
-	}
-
-	tok := &chatgptTokens{
-		AccessToken:  result.AccessToken,
-		IDToken:      result.IDToken,
-		RefreshToken: result.RefreshToken,
-	}
+	// The endpoint may omit the refresh token when it does not rotate it.
 	tok.RefreshToken = cmp.Or(tok.RefreshToken, refresh)
+	return tok, nil
+}
+
+// tokenError is the token endpoint's refusal: its status and the error code
+// and message it carried.
+type tokenError struct {
+	status        int
+	code, message string
+}
+
+func (e *tokenError) Error() string {
+	head := strconv.Itoa(e.status)
+	if e.code != "" {
+		head += " " + e.code
+	}
+	return "token endpoint refused (" + head + "): " + e.message
+}
+
+// tokenErrorField decodes the "error" member in either shape the token
+// endpoint uses: RFC 6749's string ({"error":"invalid_grant"}) or OpenAI's
+// object ({"error":{"code":"token_expired","message":"..."}}).
+type tokenErrorField struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+func (f *tokenErrorField) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err == nil {
+		*f = tokenErrorField{Code: s}
+		return nil
+	}
+	type plain tokenErrorField // no UnmarshalJSON, so this cannot recurse
+	var obj plain
+	if err := json.Unmarshal(b, &obj); err != nil {
+		return err
+	}
+	*f = tokenErrorField(obj)
+	return nil
+}
+
+// tokenResponseCap bounds how much of a token response is read; a real one is
+// a few KB.
+const tokenResponseCap = 1 << 20
+
+// decodeTokenResponse turns a token endpoint answer into tokens, or into a
+// *tokenError when the status or the body says it refused.
+func decodeTokenResponse(resp *http.Response) (*chatgptTokens, error) {
+	body, err := io.ReadAll(io.LimitReader(resp.Body, tokenResponseCap))
+	if err != nil {
+		return nil, fmt.Errorf("reading token response: %w", err)
+	}
+	var result struct {
+		AccessToken  string          `json:"access_token"`
+		RefreshToken string          `json:"refresh_token"`
+		IDToken      string          `json:"id_token"`
+		ExpiresIn    int64           `json:"expires_in"`
+		Error        tokenErrorField `json:"error"`
+		ErrorDesc    string          `json:"error_description"`
+	}
+	decodeErr := json.Unmarshal(body, &result)
+	if resp.StatusCode < 200 || resp.StatusCode > 299 || result.Error.Code != "" {
+		te := &tokenError{status: resp.StatusCode, code: result.Error.Code, message: cmp.Or(result.Error.Message, result.ErrorDesc)}
+		if decodeErr != nil || te.message == "" {
+			te.message = bodySnippet(body)
+		}
+		return nil, te
+	}
+	if decodeErr != nil {
+		return nil, fmt.Errorf("decoding token response: %w", decodeErr)
+	}
+	tok := &chatgptTokens{AccessToken: result.AccessToken, RefreshToken: result.RefreshToken, IDToken: result.IDToken}
 	if result.ExpiresIn > 0 {
 		tok.ExpiresAt = time.Now().Unix() + result.ExpiresIn
 	}
 	return tok, nil
+}
+
+// bodySnippet is the start of a response body that carried no parseable
+// error, for the error message.
+func bodySnippet(body []byte) string {
+	s := strings.TrimSpace(string(body))
+	if len(s) > 200 {
+		s = s[:200] + "..."
+	}
+	return s
 }
 
 func randomString(n int) (string, error) {
