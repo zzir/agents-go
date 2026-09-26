@@ -230,6 +230,9 @@ stored.
   nothing following it**, which the API rejects on a resume or replay. A call
   carrying no `call_id` is KEPT — the server decides rather than the SDK
   over-pruning.
+- **`logprobs` never goes back to the model.** `OutputToInput` and stored-input
+  normalization strip the key from an assistant message's content parts; the
+  id, status, text and annotations stay. — see decisions §5.73
 - **`UnmarshalInputItem` preserves a typed item the union does not know**, so a
   session written by a newer build stays readable. An item with no `type` is
   still rejected.

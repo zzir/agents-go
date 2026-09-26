@@ -2,6 +2,7 @@ package agents
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/openai/openai-go/v3/responses"
@@ -74,6 +75,28 @@ func TestOutputToInputAssistantMessage(t *testing.T) {
 		t.Fatalf("re-marshal input item: %v", err)
 	}
 	assertMessageJSON(t, b2)
+}
+
+// A content part's logprobs never go back as input (spec §2.1b).
+func TestOutputToInputStripsLogprobs(t *testing.T) {
+	raw := `{"type":"message","id":"msg_1","status":"completed","role":"assistant",` +
+		`"content":[{"type":"output_text","text":"hello world","annotations":[],"logprobs":[]}]}`
+	var item responses.ResponseOutputItemUnion
+	if err := json.Unmarshal([]byte(raw), &item); err != nil {
+		t.Fatalf("unmarshal output: %v", err)
+	}
+	in, err := outputItemToInput(item)
+	if err != nil {
+		t.Fatalf("outputItemToInput: %v", err)
+	}
+	b, err := json.Marshal(in)
+	if err != nil {
+		t.Fatalf("marshal input item: %v", err)
+	}
+	if strings.Contains(string(b), "logprobs") {
+		t.Fatalf("logprobs echoed: %s", b)
+	}
+	assertMessageJSON(t, b)
 }
 
 func assertMessageJSON(t *testing.T, b []byte) {

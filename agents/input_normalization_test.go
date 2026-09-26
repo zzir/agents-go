@@ -2,6 +2,8 @@ package agents
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/openai/openai-go/v3/responses"
@@ -140,5 +142,26 @@ func TestRun_SessionOrphanCallScrubbed(t *testing.T) {
 	// The model must not have received the dangling call.
 	if ids := callIDsOf(model.lastReq.Input); len(ids) != 0 {
 		t.Errorf("model saw orphan call ids %v, want none", ids)
+	}
+}
+
+func TestNormalizeStoredInput_StripsMessageLogprobs(t *testing.T) {
+	raw := `{"type":"message","id":"msg_1","status":"completed","role":"assistant",` +
+		`"content":[{"type":"output_text","text":"hi","annotations":[],"logprobs":[]}]}`
+	msg, err := session.UnmarshalInputItem([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := []InputItem{userMsg("hello"), msg}
+	out := normalizeStoredInput(in)
+	if len(out) != 2 {
+		t.Fatalf("len = %d", len(out))
+	}
+	b, _ := json.Marshal(out[1])
+	if strings.Contains(string(b), "logprobs") || !strings.Contains(string(b), `"text":"hi"`) {
+		t.Fatalf("stored message not scrubbed: %s", b)
+	}
+	if b2, _ := json.Marshal(in[1]); !strings.Contains(string(b2), "logprobs") {
+		t.Fatal("caller's slice was mutated")
 	}
 }

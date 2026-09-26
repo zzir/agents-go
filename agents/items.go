@@ -96,8 +96,10 @@ func outputItemToInput(out OutputItem) (InputItem, error) {
 	// Assistant messages must be converted explicitly: the input union decoder
 	// matches "type":"message" against EasyInputMessageParam first, whose content
 	// union cannot represent output_text/refusal parts, silently dropping them.
+	// Its logprobs stay behind: an input never carries them — see spec §2.1b.
 	if out.Type == "message" {
-		p := out.AsMessage().ToParam()
+		cleaned, _ := stripMessageLogprobs([]byte(raw))
+		p := param.Override[responses.ResponseOutputMessageParam](json.RawMessage(cleaned))
 		return InputItem{OfOutputMessage: &p}, nil
 	}
 	// A type we do not model goes back on the wire byte for byte: decoding it

@@ -1727,3 +1727,26 @@ target, with a transfer tool the model may pick instead. A host with a flat
 catalog writes its own spawn tool from the public parts.
 
 Rules: spec §2.13; [invariant 75](workbench-invariants.md)
+
+### 5.73 An echoed assistant message carries no logprobs
+
+Decided 2026-09-22. `OutputToInput` and `normalizeStoredInput` remove
+`logprobs` from every content part of an assistant message before it goes
+back as input.
+
+**Decision.** Logprobs annotate one response's tokens; as input they carry
+nothing the model reads. Observed 2026-09-21 on a gateway fronting two
+upstreams: one emits `"logprobs": []` on every message, the other rejects any
+input carrying the key, so a conversation that touched both died on the next
+turn. The strip runs at both entry points so a history written before this
+rule is scrubbed on load as well as a fresh echo; the id, status, text and
+annotations ride through untouched.
+
+**Rejected.** Stripping in the OpenAI adapter alone: the canonical format is
+provider-agnostic and a stored session would still carry the field. A setting:
+nothing consumes an echoed logprobs, so there is no case that keeps it.
+
+**Cost accepted.** One JSON pass per assistant message at echo and at history
+load. A caller that set `TopLogprobs` still reads them from the response.
+
+Rules: spec §2.1b

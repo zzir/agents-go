@@ -1,6 +1,11 @@
 package agents
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"slices"
+
+	"github.com/zzir/agents-go/agents/session"
+)
 
 // toolCallToOutputType maps tool-call input item types to the output item type
 // that completes them. This SDK produces only function_call items, but stored
@@ -29,7 +34,88 @@ func normalizeStoredInput(items []InputItem) []InputItem {
 		itemMaps[i] = inputItemAsMap(items[i])
 	}
 	items, itemMaps = dropOrphanToolCalls(items, itemMaps)
+	items = stripStoredLogprobs(items, itemMaps)
 	return dedupeInputItemsPreferringLatest(items, itemMaps)
+}
+
+// stripMessageLogprobs removes logprobs from an assistant message's content
+// parts; false when raw is not a message carrying any — see spec §2.1b.
+func stripMessageLogprobs(raw []byte) ([]byte, bool) {
+	var m map[string]json.RawMessage
+	var typ string
+	if json.Unmarshal(raw, &m) != nil || json.Unmarshal(m["type"], &typ) != nil || typ != "message" {
+		return raw, false
+	}
+	var parts []map[string]json.RawMessage
+	if json.Unmarshal(m["content"], &parts) != nil {
+		return raw, false
+	}
+	changed := false
+	for _, p := range parts {
+		if _, ok := p["logprobs"]; ok {
+			delete(p, "logprobs")
+			changed = true
+		}
+	}
+	if !changed {
+		return raw, false
+	}
+	content, err := json.Marshal(parts)
+	if err != nil {
+		return raw, false
+	}
+	m["content"] = content
+	out, err := json.Marshal(m)
+	if err != nil {
+		return raw, false
+	}
+	return out, true
+}
+
+// stripStoredLogprobs rebuilds each stored assistant message whose content
+// parts carry logprobs; the caller's slice is left untouched.
+func stripStoredLogprobs(items []InputItem, itemMaps []map[string]any) []InputItem {
+	var out []InputItem
+	for i, m := range itemMaps {
+		if !messageHasLogprobs(m) {
+			continue
+		}
+		raw, err := json.Marshal(items[i])
+		if err != nil {
+			continue
+		}
+		cleaned, changed := stripMessageLogprobs(raw)
+		if !changed {
+			continue
+		}
+		item, err := session.UnmarshalInputItem(cleaned)
+		if err != nil {
+			continue
+		}
+		if out == nil {
+			out = slices.Clone(items)
+		}
+		out[i] = item
+	}
+	if out == nil {
+		return items
+	}
+	return out
+}
+
+func messageHasLogprobs(m map[string]any) bool {
+	if m == nil || m["type"] != "message" {
+		return false
+	}
+	parts, _ := m["content"].([]any)
+	for _, p := range parts {
+		if pm, ok := p.(map[string]any); ok {
+			if _, has := pm["logprobs"]; has {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // inputItemAsMap projects an input item to a generic map via its JSON form;
