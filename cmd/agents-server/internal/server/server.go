@@ -178,7 +178,7 @@ func (s *Server) ServeStatic(staticFS fs.FS) {
 			c.JSON(http.StatusNotFound, protocol.NewErrorResponse(protocol.CodeNotFound, "not found"))
 			return
 		}
-		p := c.Request.URL.Path[1:]
+		p := strings.TrimPrefix(c.Request.URL.Path, "/")
 		p = cmp.Or(p, "index.html")
 		if serveAsset(c, staticFS, httpFS, p) {
 			return
