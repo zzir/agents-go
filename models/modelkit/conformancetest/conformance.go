@@ -474,10 +474,12 @@ var allowedEventTypes = map[string]bool{
 // assembles the final ModelResponse the way the runner does.
 func consumeStream(t *testing.T, model agents.Model, s Scenario) *agents.ModelResponse {
 	t.Helper()
+	type announced struct{ id, typ string }
 	var (
 		events       []*agents.ResponseStreamEvent
 		final        *agents.ModelResponse
 		terminalSeen bool
+		added        = map[int]announced{} // output_item.added by output index
 		doneItems    []agents.OutputItem
 		doneItemIDs  = map[string]bool{}
 		textDeltas   strings.Builder
@@ -502,8 +504,27 @@ func consumeStream(t *testing.T, model agents.Model, s Scenario) *agents.ModelRe
 		}
 		events = append(events, event)
 		switch event.Type {
+		case agents.EventResponseOutputItemAdded:
+			a := event.AsResponseOutputItemAdded()
+			idx := int(a.OutputIndex)
+			if _, dup := added[idx]; dup {
+				t.Errorf("output_item.added repeated for output index %d", idx)
+			}
+			added[idx] = announced{id: a.Item.ID, typ: a.Item.Type}
 		case agents.EventResponseOutputItemDone:
 			done := event.AsResponseOutputItemDone()
+			// Every finished item was announced at the same index with the same
+			// id, and finishes in index order; the type may only change under a
+			// refusal (decisions §5.49).
+			idx := int(done.OutputIndex)
+			if idx != len(doneItems) {
+				t.Errorf("output_item.done at index %d arrived out of order (want %d)", idx, len(doneItems))
+			}
+			if a, ok := added[idx]; !ok {
+				t.Errorf("output_item.done at index %d without a prior output_item.added", idx)
+			} else if a.id != done.Item.ID {
+				t.Errorf("output_item.done at index %d carries id %q; output_item.added announced %q", idx, done.Item.ID, a.id)
+			}
 			doneItems = append(doneItems, done.Item)
 			if done.Item.ID != "" {
 				doneItemIDs[done.Item.ID] = true
@@ -563,6 +584,18 @@ func consumeStream(t *testing.T, model agents.Model, s Scenario) *agents.ModelRe
 	}
 	if len(final.Output) == 0 {
 		final.Output = doneItems
+	}
+	// Outside a refusal every announced item finishes, as the type it was
+	// announced with; a refusal may leave announced items unfinished (decisions §5.49).
+	if s.Turn.Refusal == "" {
+		if len(added) != len(doneItems) {
+			t.Errorf("output_item.added count %d != output_item.done count %d", len(added), len(doneItems))
+		}
+		for i, item := range doneItems {
+			if a, ok := added[i]; ok && a.typ != item.Type {
+				t.Errorf("item %d announced as %q finished as %q", i, a.typ, item.Type)
+			}
+		}
 	}
 	if s.Turn.Text != "" && textDeltas.String() != s.Turn.Text {
 		t.Errorf("output_text deltas concatenate to %q, want %q — streaming consumers render these", textDeltas.String(), s.Turn.Text)

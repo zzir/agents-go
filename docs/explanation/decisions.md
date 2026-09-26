@@ -1065,8 +1065,10 @@ turned out to be `refusal`, an item the terminal output rightly did not
 carry, breaking the contract that the two are interchangeable.
 
 **Cost accepted.** Finished items wait for the verdict; text deltas still
-stream live. The other lossy input translations are listed in
-[Models](../howto/models.md).
+stream live. Under a refusal, the items announced past index 0 get no
+`output_item.done`, and index 0's finished type may differ from the announced
+one (a thinking-first refusal finishes as a message). The other lossy input
+translations are listed in [Models](../howto/models.md).
 
 Rules: spec §2.15.
 
