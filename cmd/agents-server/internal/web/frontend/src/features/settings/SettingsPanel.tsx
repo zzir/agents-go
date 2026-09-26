@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, type ChangeEvent, type ReactNode } fr
 import { Button, TextInput, Textarea, FormControl, Stack, PageHeader, Label, useConfirm } from '@primer/react';
 import { SecretInput } from '@/components/SecretInput';
 import { ToggleRow } from '@/components/ToggleRow';
+import { UnsavedForm } from '@/components/UnsavedForm';
 import { useReadOnly } from '@/lib/access';
 import { api } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
@@ -157,17 +158,21 @@ function SettingRow({ def, value, saving, onSave }: SettingRowProps) {
     return <ToggleRow label={def.label} description={def.description} checked={boolOf(def, draft)} onChange={store} />;
   }
   const caption = settingCaption(def);
+  // The row stays mounted after its Save, so the draft against the stored
+  // value is its dirty flag, not the edits since mount.
   return (
-    <FormControl>
-      <FormControl.Label>{def.label}</FormControl.Label>
-      {caption && <FormControl.Caption>{caption}</FormControl.Caption>}
-      <SettingInput def={def} draft={draft} setDraft={setDraft} />
-      {changed && (
-        <Button onClick={() => onSave(draft)} disabled={saving} variant="primary" size="small">
-          {saving ? 'Saving…' : 'Save'}
-        </Button>
-      )}
-    </FormControl>
+    <UnsavedForm dirty={changed}>
+      <FormControl>
+        <FormControl.Label>{def.label}</FormControl.Label>
+        {caption && <FormControl.Caption>{caption}</FormControl.Caption>}
+        <SettingInput def={def} draft={draft} setDraft={setDraft} />
+        {changed && (
+          <Button onClick={() => onSave(draft)} disabled={saving} variant="primary" size="small">
+            {saving ? 'Saving…' : 'Save'}
+          </Button>
+        )}
+      </FormControl>
+    </UnsavedForm>
   );
 }
 
@@ -250,6 +255,7 @@ const STORAGE_FIELDS: Record<string, string> = {
 };
 
 function StorageForm({ defs, getValue, onSaved }: { defs: SettingDef[]; getValue: (key: string) => string; onSaved: () => void }) {
+  const confirm = useConfirm();
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<'save' | 'test' | 'clear' | null>(null);
   const stored = defs.map(d => getValue(d.key)).join('\u0000');
@@ -260,6 +266,9 @@ function StorageForm({ defs, getValue, onSaved }: { defs: SettingDef[]; getValue
     // Re-seed when the stored values change (initial load, save, clear).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stored]);
+
+  // Dirty while the draft differs from what is stored (it re-seeds on save).
+  const changed = defs.some(d => (draft[d.key] ?? getValue(d.key)) !== getValue(d.key));
 
   const body = (clear: boolean): Record<string, unknown> => {
     if (clear) return {};
@@ -289,7 +298,20 @@ function StorageForm({ defs, getValue, onSaved }: { defs: SettingDef[]; getValue
     }
   };
 
+  // Clearing empties the whole section at once: confirmed like every other
+  // destructive action (invariant 41).
+  const clear = async () => {
+    if (!(await confirm({
+      title: 'Clear attachment storage?',
+      content: 'The bucket settings and its access keys are removed, and image input turns off.',
+      confirmButtonContent: 'Clear',
+      confirmButtonType: 'danger',
+    }))) return;
+    await run('clear');
+  };
+
   return (
+    <UnsavedForm dirty={changed}>
     <Stack gap="spacious">
       {defs.map(def => def.kind === 'bool' ? (
         <ToggleRow key={def.key} label={def.label} description={def.description}
@@ -308,12 +330,13 @@ function StorageForm({ defs, getValue, onSaved }: { defs: SettingDef[]; getValue
         <Button size="small" onClick={() => run('test')} disabled={busy !== null}>
           {busy === 'test' ? 'Testing…' : 'Test'}
         </Button>
-        <Button variant="danger" size="small" onClick={() => run('clear')} disabled={busy !== null}>
+        <Button variant="danger" size="small" onClick={clear} disabled={busy !== null}>
           {busy === 'clear' ? 'Clearing…' : 'Clear'}
         </Button>
         <span className="settings-card-note">Save writes every field above at once; Test probes the bucket without saving.</span>
       </Stack>
     </Stack>
+    </UnsavedForm>
   );
 }
 

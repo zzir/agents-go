@@ -244,12 +244,12 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     its own fallback), masking is `Kind == secret`, the panel renders the
     served table, and every bool is one switch with a registered default,
     stored on click (`SettingsPanel.tsx`); no env fallback (spec §2.14).
-41. **A destructive action confirms once, in one place.** Every Delete goes
-    through `useCrud.remove` or the same Primer `useConfirm` dialog
-    (sessions, skills, tasks, triggers, unrecognized settings) — never
-    `window.confirm`, never a bare button. Discarding an edited form is one:
-    a settings form's Cancel and the dialog's close paths ask through the
-    same dialog while `UnsavedForm` reports edits (`lib/unsaved.tsx`).
+41. **A destructive action confirms once, in one place.** Every Delete (sessions,
+    skills, tasks, triggers, unrecognized settings), clearing a settings section
+    and a scope flip (`lib/scopeFlipPrompt.ts`) go through `useCrud.remove` or
+    the same Primer `useConfirm` dialog — never `window.confirm`, never a bare
+    button. Discarding an edited form is one: every form's Cancel, the dialog's
+    close paths and leaving the page ask while `UnsavedForm` reports edits (`lib/unsaved.tsx`).
 42. **Ownership is sessions' owner column, configuration scope, or projects'
     per-user ownership — nothing invents a fourth scheme.** A hidden task
     session, a trigger or an approval takes its session's owner; configuration

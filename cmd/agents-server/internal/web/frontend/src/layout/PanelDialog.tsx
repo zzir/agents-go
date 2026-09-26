@@ -1,11 +1,12 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Dialog, NavList as PrimerNavList, Flash, useConfirm } from '@primer/react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Dialog, NavList as PrimerNavList, Flash } from '@primer/react';
 import { LockIcon } from '@primer/octicons-react';
 import type { Icon } from '@primer/octicons-react';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { ReadOnlyContext } from '@/lib/access';
 import { useNarrow } from '@/lib/hooks';
-import { DISCARD_PROMPT, UnsavedContext, type UnsavedRegistry } from '@/lib/unsaved';
+import { UnsavedContext } from '@/lib/unsaved';
+import { useUnsavedRegistry } from '@/lib/useUnsavedRegistry';
 
 export interface DialogTab {
   key: string;
@@ -50,16 +51,8 @@ export function PanelDialog({ title, tabs, adminTabs, readOnly, initialTab, onCl
 
   // The forms inside with unsaved edits, whichever tab holds them (panels
   // stay mounted): every close path asks before discarding them.
-  const dirtyForms = useRef(new Set<string>());
-  const unsaved = useMemo<UnsavedRegistry>(() => ({
-    set: (id, dirty) => { if (dirty) dirtyForms.current.add(id); else dirtyForms.current.delete(id); },
-    any: () => dirtyForms.current.size > 0,
-  }), []);
-  const confirm = useConfirm();
-  const close = async () => {
-    if (unsaved.any() && !(await confirm(DISCARD_PROMPT))) return;
-    onClose();
-  };
+  const { registry: unsaved, guardedClose } = useUnsavedRegistry();
+  const close = () => guardedClose(onClose);
 
   useEffect(() => {
     if (loaded[tab]) return;

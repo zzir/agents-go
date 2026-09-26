@@ -4,6 +4,8 @@ import { HistoryIcon, WorkflowIcon, ZapIcon } from '@primer/octicons-react';
 import { WorkflowPanel } from '@/features/workflows/WorkflowPanel';
 import { TriggersView } from '@/features/workflows/TriggersView';
 import { RunsView } from '@/features/workflows/RunsView';
+import { UnsavedContext } from '@/lib/unsaved';
+import { useUnsavedRegistry } from '@/lib/useUnsavedRegistry';
 import './hub.css';
 
 // The hub's three views: what a workflow IS, what fires it on its own, and
@@ -37,8 +39,11 @@ export function WorkflowsHub({ tab, onTabChange, sessionId, tasksSig, onOpenRun 
   useEffect(() => {
     setVisited(prev => (prev.has(tab) ? prev : new Set(prev).add(tab)));
   }, [tab]);
+  // A page has no close of its own; its forms' edits guard leaving the page.
+  const { registry } = useUnsavedRegistry();
 
   return (
+    <UnsavedContext value={registry}>
     <div className="hub">
       <div className="chat-topbar hub-topbar">
         <div className="chat-topbar-info">
@@ -71,5 +76,6 @@ export function WorkflowsHub({ tab, onTabChange, sessionId, tasksSig, onOpenRun 
         )}
       </div>
     </div>
+    </UnsavedContext>
   );
 }

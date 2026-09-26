@@ -11,6 +11,7 @@ import { useMe } from '@/lib/me';
 import { OwnerCell, ownerLabel } from '@/features/admin/OwnerCell';
 import { useLoadError } from '@/features/admin/useLoadError';
 import { LOCAL_USER_ID, useOwnerLabels } from '@/lib/owners';
+import { scopeFlipPrompt } from '@/lib/scopeFlipPrompt';
 import { toast } from '@/lib/toast';
 
 // One row, flattened to what this table shows.
@@ -60,15 +61,7 @@ export function ScopedRowsPanel({ kind }: { kind: EntityKind }) {
 
   const flip = useCallback(async (row: ConfigRow) => {
     const target = row.scope === 'global' ? 'private' : 'global';
-    if (!(await confirm({
-      title: target === 'global' ? `Publish “${row.name}”?` : `Unpublish “${row.name}”?`,
-      content: target === 'global'
-        ? 'Every member will see it. Its author keeps it and can still edit it.'
-        : row.owner_id
-          ? `It returns to ${labelFor(row.owner_id)} alone; members using it lose access.`
-          : 'Members using it lose access. It has no author to return to — transfer it first if someone should keep it.',
-      confirmButtonContent: target === 'global' ? 'Publish' : 'Unpublish',
-    }))) return;
+    if (!(await confirm(scopeFlipPrompt(row.name, target, { id: row.owner_id, label: row.owner_id ? labelFor(row.owner_id) : undefined })))) return;
     try {
       await kind.setScope(row.id, target);
       reload();

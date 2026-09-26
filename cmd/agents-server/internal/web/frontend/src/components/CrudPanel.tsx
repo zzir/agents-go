@@ -1,5 +1,5 @@
 import { type ReactNode } from 'react';
-import { ActionList, Button, Label, PageHeader, Stack, TextInput } from '@primer/react';
+import { ActionList, Button, Label, PageHeader, Stack, TextInput, useConfirm } from '@primer/react';
 import { SearchIcon } from '@primer/octicons-react';
 import { ScopeFilter, useScopeFilter } from '@/components/ScopeFilter';
 import { Blankslate } from '@primer/react/experimental';
@@ -9,6 +9,8 @@ import { Loading } from '@/components/Loading';
 import { UnsavedForm } from '@/components/UnsavedForm';
 import { useReadOnly, type ScopedRow } from '@/lib/access';
 import { BADGE } from '@/lib/badges';
+import { useMe } from '@/lib/me';
+import { scopeFlipPrompt } from '@/lib/scopeFlipPrompt';
 import { toast } from '@/lib/toast';
 
 /** The list-or-form scaffold every settings panel shares: a PageHeader whose
@@ -124,8 +126,9 @@ export function RowActionsMenu({ name, onEdit, editReadOnly, onDuplicate, onFork
   onFork?: () => void;
   // The promote/demote item — pass `canPromote`/`canDemote` from the caller's
   // role and the row's author (publishing is the admin's, unpublishing the
-  // admin's or the author's). POST /<entity>/:id/scope, with the server's
-  // 400/409 (non-global references, name collisions) as toasts.
+  // admin's or the author's). Confirmed first (scopeFlipPrompt), then
+  // POST /<entity>/:id/scope, with the server's 400/409 (non-global
+  // references, name collisions) as toasts.
   scope?: {
     row: ScopedRow & { id: string | number };
     setScope: (id: string | number, scope: 'global' | 'private') => Promise<null>;
@@ -139,13 +142,18 @@ export function RowActionsMenu({ name, onEdit, editReadOnly, onDuplicate, onFork
   onDelete?: () => void;
 }) {
   const ctx = useReadOnly();
+  const confirm = useConfirm();
+  const { me } = useMe();
   const global = scope?.row.scope === 'global';
   const showScope = !!scope && (global ? scope.canDemote : scope.canPromote);
   if (!onEdit && !onDuplicate && !onFork && !showScope && !onTransfer && !onDelete) return null;
   const flip = async () => {
     if (!scope) return;
+    const target = global ? 'private' : 'global';
+    const ownerId = scope.row.owner_id;
+    if (!(await confirm(scopeFlipPrompt(name, target, { id: ownerId, label: ownerId && ownerId === me?.id ? 'you' : undefined })))) return;
     try {
-      await scope.setScope(scope.row.id, global ? 'private' : 'global');
+      await scope.setScope(scope.row.id, target);
       scope.onDone();
     } catch (e) {
       toast.error((e as Error).message);

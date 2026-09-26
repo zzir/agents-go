@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ActionList, Button, TextInput, Textarea, Label, Stack } from '@primer/react';
+import { ActionList, Button, TextInput, Textarea, Label, Stack, useConfirm } from '@primer/react';
 import { RowMenu } from '@/components/ListTable';
 import { FormActions } from '@/components/FormActions';
 import { CrudPanel, ScopeBadge } from '@/components/CrudPanel';
@@ -11,6 +11,7 @@ import { useCrud } from '@/lib/hooks';
 import { ReadOnlyContext, canDeleteRow, canDemoteRow, canEditRow } from '@/lib/access';
 import { toast } from '@/lib/toast';
 import { listEmpty } from '@/features/settings/listEmpty';
+import { scopeFlipPrompt } from '@/lib/scopeFlipPrompt';
 import { type Skill, type SkillGroup, groupSkills } from '@/lib/skills';
 import { BADGE } from '@/lib/badges';
 import { useMe } from '@/lib/me';
@@ -85,6 +86,7 @@ export function SkillsPanel() {
   const [importUrl, setImportUrl] = useState('');
   const [busy, setBusy] = useState(false);
   const [syncing, setSyncing] = useState<Set<string>>(new Set());
+  const confirm = useConfirm();
 
   const runImport = async (url: string, ownerId?: string) => {
     const result = (await api.skills.import(url, ownerId)) as ImportResult;
@@ -133,7 +135,10 @@ export function SkillsPanel() {
   // An imported repo flips as ONE group, server-side and all-or-nothing —
   // a repo's skills publish together, so the group is never half-published
   // (decisions §5.29). A workbench-authored skill flips on its own row.
+  // Confirmed like every flip (invariant 41), under the group's heading.
   const setGroupScope = async (group: SkillGroup, scope: 'global' | 'private') => {
+    const ownerId = group.ownerId || undefined;
+    if (!(await confirm(scopeFlipPrompt(group.label, scope, { id: ownerId, label: ownerId && ownerId === me?.id ? 'you' : undefined })))) return;
     if (group.repo !== '') {
       try {
         await api.skills.setRepoScope(group.repo, scope, group.ownerId || undefined);

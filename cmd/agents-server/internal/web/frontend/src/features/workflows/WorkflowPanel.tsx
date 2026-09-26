@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Button, TextInput, Textarea, Label, CounterLabel, Select, IconButton, Stack, Dialog } from '@primer/react';
 import { FormActions } from '@/components/FormActions';
+import { UnsavedForm } from '@/components/UnsavedForm';
 import { Paged } from '@/components/Paged';
 import { Blankslate } from '@primer/react/experimental';
 import { LoadError } from '@/components/LoadError';
@@ -119,6 +120,7 @@ function WorkflowForm({ initial, onSave, onCancel, onDelete, saving, agents }: W
   const branching = form.steps.some(s => s.on_success || s.on_failure || s.gate);
 
   return (
+    <UnsavedForm>
     <Stack gap="normal">
       {fc('Name', <TextInput block value={form.name}
         onChange={e => setForm(prev => ({ ...prev, name: e.target.value }))} placeholder="e.g. codegen" />,
@@ -239,6 +241,7 @@ function WorkflowForm({ initial, onSave, onCancel, onDelete, saving, agents }: W
 
       <FormActions saving={saving} onSave={() => onSave(form)} onCancel={onCancel} onDelete={onDelete} />
     </Stack>
+    </UnsavedForm>
   );
 }
 

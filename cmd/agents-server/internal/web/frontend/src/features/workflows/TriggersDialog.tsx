@@ -11,11 +11,15 @@ import { toast } from '@/lib/toast';
 import { sessionTitle } from '@/lib/sessionTitle';
 import { BADGE } from '@/lib/badges';
 import { Disclosure } from '@/components/Disclosure';
+import { FormActions } from '@/components/FormActions';
 import { Loading } from '@/components/Loading';
+import { UnsavedForm } from '@/components/UnsavedForm';
 import { AgentAvatar } from '@/components/AgentAvatar';
 import { AgentPicker } from '@/components/AgentPicker';
 import { NEW_SESSION, SessionPicker, UnboundHint } from '@/features/sessions/SessionPicker';
 import { useServerInfo } from '@/features/settings/serverInfo';
+import { UnsavedContext } from '@/lib/unsaved';
+import { useUnsavedRegistry } from '@/lib/useUnsavedRegistry';
 
 // A trigger starts work without a conversation asking — on a cron schedule,
 // or on a signed webhook call — into the session it names, with the brief its
@@ -287,7 +291,7 @@ export function TriggerForm({ fixedWorkflow, sessionId, initial, timezone, inlin
   };
 
   return (
-    <div className={'wf-trigger-form' + (inline ? ' wf-trigger-form--inline' : '')}>
+    <UnsavedForm className={'wf-trigger-form' + (inline ? ' wf-trigger-form--inline' : '')}>
       <Stack gap="condensed">
         {fixedWorkflow ? (
           fc('Starts', <TextInput block disabled value={`workflow ${fixedWorkflow.name || fixedWorkflow.id.slice(0, 8)}`} />)
@@ -320,14 +324,9 @@ export function TriggerForm({ fixedWorkflow, sessionId, initial, timezone, inlin
           placeholder={form.target === 'agent' ? 'The message to send each time — say everything the agent needs' : 'What each run is about — it cannot see the session, so say everything it needs'}
           onChange={e => set({ brief: e.target.value })} />,
           form.kind === 'webhook' ? 'The call’s body is appended as the payload' : null)}
-        <Stack direction="horizontal" gap="condensed">
-          <Button variant="primary" size="small" onClick={save} disabled={busy || !ready}>
-            {busy ? (initial ? 'Saving…' : 'Adding…') : (initial ? 'Save' : 'Add')}
-          </Button>
-          <Button size="small" onClick={onCancel}>Cancel</Button>
-        </Stack>
+        <FormActions size="small" saving={busy} saveDisabled={!ready} onSave={() => void save()} onCancel={onCancel} />
       </Stack>
-    </div>
+    </UnsavedForm>
   );
 }
 
@@ -343,10 +342,14 @@ export function TriggersDialog({ workflowId, workflowName, sessionId, onClose }:
   const actions = useTriggerActions(reload, sessionName);
   const fixed = { id: workflowId, name: workflowName };
   const list = triggers || [];
+  // Every close path asks while a trigger form inside holds edits.
+  const { registry, guardedClose } = useUnsavedRegistry();
+  const close = () => void guardedClose(onClose);
 
   return (
-    <Dialog title={`Triggers · ${workflowName}`} onClose={onClose} width="xlarge"
-      footerButtons={[{ buttonType: 'default', content: 'Close', onClick: onClose }]}>
+    <Dialog title={`Triggers · ${workflowName}`} onClose={close} width="xlarge"
+      footerButtons={[{ buttonType: 'default', content: 'Close', onClick: close }]}>
+      <UnsavedContext value={registry}>
       <Stack gap="normal">
         <div className="wf-run-hint">
           A trigger runs this workflow without anyone asking — on a schedule, or when something calls its webhook —
@@ -372,6 +375,7 @@ export function TriggersDialog({ workflowId, workflowName, sessionId, onClose }:
           <div><Button variant="primary" size="small" onClick={() => setAdding(true)}>+ Add</Button></div>
         )}
       </Stack>
+      </UnsavedContext>
     </Dialog>
   );
 }

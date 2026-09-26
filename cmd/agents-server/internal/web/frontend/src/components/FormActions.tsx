@@ -7,13 +7,15 @@ import { DISCARD_PROMPT, FormDirtyContext } from '@/lib/unsaved';
  * keeps the form's own packing/validation; Delete sits alone on the far edge.
  * Cancel asks first when the form was edited (UnsavedForm tracks that).
  * Absent in a read-only dialog: the form is a view, closed from its header. */
-export function FormActions({ onSave, onCancel, onDelete, size, saving }: {
+export function FormActions({ onSave, onCancel, onDelete, size, saving, saveDisabled }: {
   onSave: () => void;
   onCancel?: (() => void) | null;
   onDelete?: (() => void) | null;
   size?: 'small';
   // useCrud's in-flight flag: Save waits, so a double click cannot post twice.
   saving?: boolean;
+  // The form is not complete yet (a required pick still empty).
+  saveDisabled?: boolean;
 }) {
   const readOnly = useReadOnly();
   const dirty = useContext(FormDirtyContext);
@@ -25,7 +27,7 @@ export function FormActions({ onSave, onCancel, onDelete, size, saving }: {
   };
   return (
     <div className="form-actions">
-      <Button onClick={onSave} variant="primary" size={size} loading={saving} disabled={saving}>Save</Button>
+      <Button onClick={onSave} variant="primary" size={size} loading={saving} disabled={saving || saveDisabled}>Save</Button>
       {onCancel && <Button onClick={() => void cancel()} size={size}>Cancel</Button>}
       {onDelete && <Button onClick={onDelete} variant="danger" size={size} className="form-actions-delete">Delete</Button>}
     </div>
