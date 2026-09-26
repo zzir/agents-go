@@ -263,6 +263,7 @@ func runOne(ctx context.Context, rc *RunContext, g Guardrail, p GuardrailPayload
 
 // runStageConcurrent runs every guardrail covering stage concurrently, failing
 // fast on the first tripwire or error (spec §2.6); Replace is the caller's to apply.
+// Results come back in declaration order, whatever order they finished in.
 func runStageConcurrent(ctx context.Context, rc *RunContext, guardrails []Guardrail, p GuardrailPayload) ([]GuardrailResult, error) {
 	sel := selectStage(guardrails, p.Stage)
 	if len(sel) == 0 {
@@ -272,30 +273,39 @@ func runStageConcurrent(ctx context.Context, rc *RunContext, guardrails []Guardr
 	defer cancel()
 
 	type outcome struct {
+		index  int
 		result GuardrailResult
 		err    error
 	}
 	// Buffered to len(sel): every goroutine can deliver its outcome and exit
 	// even when this function has already returned, so none leaks.
 	done := make(chan outcome, len(sel))
-	for _, g := range sel {
+	for i, g := range sel {
 		go func() {
 			d, err := runOne(gctx, rc, g, p)
-			done <- outcome{result: newGuardrailResult(g, p, d), err: err}
+			done <- outcome{index: i, result: newGuardrailResult(g, p, d), err: err}
 		}()
 	}
-	results := make([]GuardrailResult, 0, len(sel))
+	outcomes := make([]outcome, 0, len(sel))
+	declared := func() []GuardrailResult {
+		slices.SortFunc(outcomes, func(a, b outcome) int { return a.index - b.index })
+		results := make([]GuardrailResult, 0, len(outcomes))
+		for _, oc := range outcomes {
+			results = append(results, oc.result)
+		}
+		return results
+	}
 	for range sel {
 		oc := <-done
 		if oc.err != nil {
-			return results, oc.err
+			return declared(), oc.err
 		}
-		results = append(results, oc.result)
+		outcomes = append(outcomes, oc)
 		if oc.result.Decision.Action == GuardrailTrip {
-			return results, newTripwireError(oc.result)
+			return declared(), newTripwireError(oc.result)
 		}
 	}
-	return results, nil
+	return declared(), nil
 }
 
 // inputReplacement reports the substituted run input when a StageInput

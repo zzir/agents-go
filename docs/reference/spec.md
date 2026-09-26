@@ -837,6 +837,9 @@ only.
 
 - **Input and output stages run their guardrails concurrently and fail fast**:
   the first tripwire or error ends the wait and cancels the rest.
+- **Concurrent results are reported in declaration order, and when more than
+  one of them is `Replace`, the first declared applies** — completion order
+  never decides.
 - **Tool stages run in order and stop at the first `Replace` or `Trip`.**
 - **A non-`Blocking` input guardrail runs concurrently with the model call, and
   a tripwire cancels the in-flight call**: it is not billed and produces no
