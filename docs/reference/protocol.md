@@ -88,6 +88,7 @@ a global row the caller may see but not touch answers `403`.
 | Publish — `POST /<entity>/:id/scope {"scope":"global"}` | `403` | `403` / `404` | `204`; `409` when already global or the name is taken among global rows |
 | Unpublish — `{"scope":"private"}` | `204`; the row returns to the author | `403` / `404` | `204`; `409` when already private, the name is taken in the author's namespace, or a provider is still referenced by global or foreign agents |
 | Transfer — `PUT /<entity>/:id/owner {"user_id"}` | `403` | `403` | `204`; `400` for an unknown account or a reference the new owner cannot see; `409` when the name is taken in the target namespace or a provider's move would strand agents |
+| Run / tool surface — a session bound to an agent (`POST /sessions`), `GET /agents/:id/tools`, `POST /playground/generate` | own rows and every global row | global rows only; a foreign private agent is absent (`404` on the tool listing, `400` binding or replaying it) | global rows and their own; a member's private agent is `403` — managed, never run |
 
 - **References follow visibility** (`RefVisible`): a private row may reference
   global rows and its owner's private rows, a global row only global rows — a

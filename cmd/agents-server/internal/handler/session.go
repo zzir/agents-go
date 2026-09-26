@@ -159,6 +159,7 @@ type sessionCreateReq struct {
 //	@Param		session	body		sessionCreateReq	false	"Session; name defaults to \"New	Chat\", agent_config_id optionally binds an agent"
 //	@Success	201		{object}	store.Session
 //	@Failure	400		{object}	ErrorResponse
+//	@Failure	403		{object}	ErrorResponse	"an admin binding a member's private agent"
 //	@Failure	500		{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/sessions [post]
@@ -175,11 +176,14 @@ func (h *SessionHandler) Create(c *gin.Context) {
 	ctx := c.Request.Context()
 	u, _ := server.CurrentUser(c)
 	if req.AgentConfigID != "" {
-		// A foreign private agent reads as absent, admin included — the rule
-		// the run-time build applies (decisions §5.29).
+		// A foreign private agent reads as absent to a member — the rule the
+		// run-time build applies (decisions §5.29); an admin is told (403).
 		ac, err := h.agents.Get(ctx, req.AgentConfigID)
 		if err != nil && !errors.Is(err, store.ErrNotFound) && !store.IsMalformedID(err) {
 			storeError(c, err)
+			return
+		}
+		if err == nil && !runnableRow(c, ac.Scope, ac.OwnerID) {
 			return
 		}
 		if err != nil || !store.Visible(ac.Scope, ac.OwnerID, u.ID, false) {

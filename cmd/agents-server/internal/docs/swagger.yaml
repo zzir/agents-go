@@ -2575,6 +2575,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/handler.ErrorResponse'
           description: Bad Request
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: an admin on a member's private agent
         "404":
           content:
             application/json:
@@ -4066,6 +4072,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/handler.ErrorResponse'
           description: Bad Request
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: an admin on a member's private agent
         "502":
           content:
             application/json:
@@ -5356,6 +5368,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/handler.ErrorResponse'
           description: Bad Request
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: an admin binding a member's private agent
         "500":
           content:
             application/json:

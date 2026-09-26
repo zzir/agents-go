@@ -866,11 +866,60 @@ func TestSessionCreateHidesForeignPrivateAgents(t *testing.T) {
 	if rec := serve(r.engine, as(otherUser, http.MethodPost, "/api/v1/sessions", body)); rec.Code != http.StatusBadRequest {
 		t.Fatalf("other member binding a foreign private agent = %d, want 400", rec.Code)
 	}
-	if rec := serve(r.engine, as(adminUser, http.MethodPost, "/api/v1/sessions", body)); rec.Code != http.StatusBadRequest {
-		t.Fatalf("admin binding a member's private agent = %d, want 400", rec.Code)
+	// The admin knows the row exists (they manage it), so they are told.
+	if rec := serve(r.engine, as(adminUser, http.MethodPost, "/api/v1/sessions", body)); rec.Code != http.StatusForbidden {
+		t.Fatalf("admin binding a member's private agent = %d, want 403", rec.Code)
 	}
 	if rec := serve(r.engine, as(memberUser, http.MethodPost, "/api/v1/sessions", body)); rec.Code != http.StatusCreated {
 		t.Fatalf("owner binding their own agent = %d, want 201 (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// The tool surface follows the run rule: a member's private agent is absent
+// to another member (404) and refused to the admin (403), who manages the
+// row but does not run it; the owner and anyone on a global row read it.
+func TestAgentToolSurfaceFollowsTheRunRule(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := testdb.New(t)
+	agents := store.NewAgentConfigStore(db)
+	ctx := context.Background()
+	private := &store.AgentConfig{Name: "theirs", Model: "m", Scope: store.ScopePrivate, OwnerID: memberUser.ID}
+	global := &store.AgentConfig{Name: "shared", Model: "m", Scope: store.ScopeGlobal, OwnerID: adminUser.ID}
+	for _, ac := range []*store.AgentConfig{private, global} {
+		if err := agents.Create(ctx, ac); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deps := &bridge.AgentDeps{AgentConfigs: agents, Providers: store.NewProviderStore(db), Sessions: store.NewSessionStore(db),
+		Settings: settings.NewReader(store.NewSettingStore(db)), Memories: store.NewMemoryStore(db), Traces: store.NewTraceStore(db)}
+	bridge.NewRunner(t.Context(), db, deps)
+	s := server.New(slog.New(slog.DiscardHandler), usersByToken, nil)
+	s.RegisterAPI(Handlers{Agents: testAgentConfigHandler(db), Playground: NewPlaygroundHandler(deps)}.Register)
+
+	cases := []struct {
+		user protocol.UserInfo
+		id   string
+		want int
+	}{
+		{otherUser, private.ID, http.StatusNotFound},
+		{adminUser, private.ID, http.StatusForbidden},
+		{memberUser, private.ID, http.StatusOK},
+		{memberUser, global.ID, http.StatusOK},
+		{adminUser, global.ID, http.StatusOK},
+	}
+	for _, c := range cases {
+		if rec := serve(s.Engine, as(c.user, http.MethodGet, "/api/v1/agents/"+c.id+"/tools", "")); rec.Code != c.want {
+			t.Errorf("%s GET tools of %s = %d, want %d (%s)", c.user.ID, c.id, rec.Code, c.want, rec.Body.String())
+		}
+	}
+	// The playground call is the same surface: the admin is told, the member
+	// keeps the build's answer.
+	body := `{"agent_config_id":"` + private.ID + `","input_items":[]}`
+	if rec := serve(s.Engine, as(adminUser, http.MethodPost, "/api/v1/playground/generate", body)); rec.Code != http.StatusForbidden {
+		t.Errorf("admin playground on a member's private agent = %d, want 403 (%s)", rec.Code, rec.Body.String())
+	}
+	if rec := serve(s.Engine, as(otherUser, http.MethodPost, "/api/v1/playground/generate", body)); rec.Code != http.StatusBadRequest {
+		t.Errorf("other member playground on a foreign private agent = %d, want 400 (%s)", rec.Code, rec.Body.String())
 	}
 }
 

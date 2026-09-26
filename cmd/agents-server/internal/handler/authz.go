@@ -372,6 +372,19 @@ func callerSees(c *gin.Context, scope, rowOwner string) bool {
 	return ok && store.Visible(scope, rowOwner, u.ID, u.Role == store.RoleAdmin)
 }
 
+// runnableRow gates the RUN surface of an agent (a session bound to it, its
+// tool listing, a playground call): an admin does not run a member's private
+// row — 403, the row being known to them. A member's own answer is the
+// caller's (visibleRow or the build), left as it is.
+func runnableRow(c *gin.Context, scope, rowOwner string) bool {
+	u, ok := server.CurrentUser(c)
+	if ok && u.Role == store.RoleAdmin && !store.Visible(scope, rowOwner, u.ID, false) {
+		abortError(c, http.StatusForbidden, protocol.CodeForbidden, "an admin does not run a member's private agent")
+		return false
+	}
+	return true
+}
+
 // visibleRow 404s a row the caller may not see — a foreign private row reads
 // as absent, never as forbidden (ownership is not an oracle for existence).
 func visibleRow(c *gin.Context, scope, rowOwner string) bool {

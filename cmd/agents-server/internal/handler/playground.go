@@ -90,6 +90,7 @@ type playgroundResp struct {
 //	@Param			request	body		playgroundReq	true	"Generation request"
 //	@Success		200		{object}	playgroundResp
 //	@Failure		400		{object}	ErrorResponse
+//	@Failure		403		{object}	ErrorResponse	"an admin on a member's private agent"
 //	@Failure		502		{object}	ErrorResponse	"model call failed"
 //	@Security		BearerAuth
 //	@Router			/playground/generate [post]
@@ -105,6 +106,9 @@ func (h *PlaygroundHandler) Generate(c *gin.Context) {
 	}
 
 	u, _ := server.CurrentUser(c)
+	if ac, err := h.deps.AgentConfigs.Get(c.Request.Context(), req.AgentConfigID); err == nil && !runnableRow(c, ac.Scope, ac.OwnerID) {
+		return
+	}
 	built, err := bridge.BuildFullAgent(c.Request.Context(), h.deps, req.AgentConfigID, "", u.ID)
 	if err != nil {
 		badRequest(c, "building agent: "+err.Error())
@@ -305,6 +309,7 @@ func (h *PlaygroundHandler) generateStream(c *gin.Context, model agents.Model, m
 //	@Param			id	path		string	true	"Agent config ID"
 //	@Success		200	{array}		playgroundTool
 //	@Failure		400	{object}	ErrorResponse
+//	@Failure		403	{object}	ErrorResponse	"an admin on a member's private agent"
 //	@Failure		404	{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/agents/{id}/tools [get]
@@ -316,7 +321,7 @@ func (h *PlaygroundHandler) AgentTools(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
-	if !visibleRow(c, ac.Scope, ac.OwnerID) {
+	if !visibleRow(c, ac.Scope, ac.OwnerID) || !runnableRow(c, ac.Scope, ac.OwnerID) {
 		return
 	}
 	// The surface as the caller's own runs would get it — a member's
