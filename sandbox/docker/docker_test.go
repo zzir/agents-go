@@ -279,6 +279,65 @@ func TestCopyAttached_ReportsARefusedWrite(t *testing.T) {
 	}
 }
 
+// blockingWriter is a sink nobody drains: Write reports that it was entered,
+// then holds until released.
+type blockingWriter struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (w blockingWriter) Write(p []byte) (int, error) {
+	select {
+	case w.entered <- struct{}{}:
+	default:
+	}
+	<-w.release
+	return len(p), nil
+}
+
+// hangingReader stands in for an attach stream still open: Read returns only
+// once the stream is severed.
+type hangingReader struct{ severed chan struct{} }
+
+func (r hangingReader) Read([]byte) (int, error) {
+	<-r.severed
+	return 0, io.ErrClosedPipe
+}
+
+// Severing the attachment unblocks a read, not a write into a sink the caller
+// stopped draining; the wait for the copy after the context fired is bounded
+// so the exec call returns rather than hanging behind that writer.
+func TestCopyAttached_BoundsTheWaitAfterSever(t *testing.T) {
+	var mux bytes.Buffer
+	muxWrite(&mux, stdcopy.Stdout, []byte("hello"))
+	severed := make(chan struct{})
+	stream := io.MultiReader(&mux, hangingReader{severed})
+	sink := blockingWriter{entered: make(chan struct{}, 1), release: make(chan struct{})}
+	defer close(sink.release) // lets the parked copy finish once the test is done
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- copyAttached(ctx, stream, func() { close(severed) }, sink, io.Discard)
+	}()
+	<-sink.entered // the copy is parked in the writer, past anything sever can reach
+
+	start := time.Now()
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("copyAttached err = %v, want the context's error", err)
+		}
+		if elapsed := time.Since(start); elapsed < severWaitDelay {
+			t.Errorf("copyAttached returned after %v, before the %v grace the copy is given", elapsed, severWaitDelay)
+		}
+	case <-time.After(3 * severWaitDelay):
+		t.Fatal("copyAttached hung behind the blocked writer")
+	}
+}
+
 // A stream that ends mid-frame is truncation, not failure: the bytes that did
 // arrive are the result, and the exit status is still worth reading.
 func TestCopyAttached_TruncatedStreamIsNotAnError(t *testing.T) {

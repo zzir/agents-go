@@ -498,10 +498,14 @@ func (s *Sandbox) execPersistent(ctx context.Context, req sandbox.ExecRequest, s
 	return res, nil
 }
 
+// severWaitDelay bounds how long copyAttached waits for the copy once the
+// attachment is severed; the same order as the local backend's WaitDelay.
+const severWaitDelay = 2 * time.Second
+
 // copyAttached demultiplexes an exec attach stream into stdout/stderr, reading
 // to the END even once the sinks are full: the end is what says the process exited.
 func copyAttached(ctx context.Context, r io.Reader, sever func(), stdout, stderr io.Writer) error {
-	done := make(chan error, 1)
+	done := make(chan error, 1) // buffered: the copy must not hang on a caller that stopped waiting
 	go func() {
 		_, err := stdcopy.StdCopy(stdout, stderr, r)
 		done <- err
@@ -511,8 +515,13 @@ func copyAttached(ctx context.Context, r io.Reader, sever func(), stdout, stderr
 	select {
 	case err = <-done:
 	case <-ctx.Done():
+		// Severing unblocks the read, not a write into a sink nobody drains.
 		sever()
-		err = <-done
+		select {
+		case err = <-done:
+		case <-time.After(severWaitDelay):
+			err = fmt.Errorf("%w: output copy did not finish within %s after the attachment closed", ctx.Err(), severWaitDelay)
+		}
 	}
 	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
 		return err
