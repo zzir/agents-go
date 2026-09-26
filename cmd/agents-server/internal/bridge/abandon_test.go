@@ -57,6 +57,10 @@ func cancelledReason(t *testing.T, got <-chan *protocol.Envelope) string {
 // {reason: superseded}. An explicit cancel of the paused run does the same
 // with reason stopped, and adds the cancelled marker a stop always leaves.
 func TestAbandonPausedApproval(t *testing.T) {
+	p4 := store.NewID()
+	p3 := store.NewID()
+	p2 := store.NewID()
+	p1 := store.NewID()
 	ctx := context.Background()
 	db := testdb.New(t)
 	sessions := store.NewSessionStore(db)
@@ -103,28 +107,28 @@ func TestAbandonPausedApproval(t *testing.T) {
 
 	// Superseded by a newer message.
 	sid := newSession()
-	got := pausedRun(t, runner, sid, "paused-1")
+	got := pausedRun(t, runner, sid, p1)
 	runner.abandonPaused(ctx, sid, protocol.RunCancelSuperseded)
-	if _, err := approvals.Get(ctx, "paused-1"); !errors.Is(err, store.ErrNotFound) {
+	if _, err := approvals.Get(ctx, p1); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("the approval row must be gone, got %v", err)
 	}
 	if r := cancelledReason(t, got); r != protocol.RunCancelSuperseded {
 		t.Fatalf("reason = %q, want superseded", r)
 	}
-	if info, _ := runner.hub.Info("paused-1"); info.Status != RunCancelled {
+	if info, _ := runner.hub.Info(p1); info.Status != RunCancelled {
 		t.Fatalf("hub status = %q, want cancelled", info.Status)
 	}
 	if notRun, cancelled, reason, prompt := kinds(entriesOf(sid)); notRun != 1 || reason != protocol.RunCancelSuperseded || cancelled != 0 || !prompt {
 		t.Fatalf("persisted turn: not_run=%d reason=%q cancelled=%d prompt=%v, want one superseded call, no marker, the prompt", notRun, reason, cancelled, prompt)
 	}
-	if _, _, err := runner.ResolveApproval(ctx, "call-paused-1", true, ApprovalOnce, "", nil); !errors.Is(err, store.ErrNotFound) {
+	if _, _, err := runner.ResolveApproval(ctx, "call-"+p1, true, ApprovalOnce, "", nil); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("a decision after the abandon = %v, want not found", err)
 	}
 
 	// Stopped by an explicit cancel of the paused run.
 	sid = newSession()
-	got = pausedRun(t, runner, sid, "paused-2")
-	runner.CancelRun("paused-2")
+	got = pausedRun(t, runner, sid, p2)
+	runner.CancelRun(p2)
 	if r := cancelledReason(t, got); r != protocol.RunCancelStopped {
 		t.Fatalf("reason = %q, want stopped", r)
 	}
@@ -134,23 +138,23 @@ func TestAbandonPausedApproval(t *testing.T) {
 
 	// A graceful stop has no turn to finish on a paused run: it abandons the same way.
 	sid = newSession()
-	got = pausedRun(t, runner, sid, "paused-4")
-	runner.StopRunAfterTurn("paused-4")
+	got = pausedRun(t, runner, sid, p4)
+	runner.StopRunAfterTurn(p4)
 	if r := cancelledReason(t, got); r != protocol.RunCancelStopped {
 		t.Fatalf("graceful stop on a pause: reason = %q, want stopped", r)
 	}
-	if _, err := approvals.Get(ctx, "paused-4"); !errors.Is(err, store.ErrNotFound) {
+	if _, err := approvals.Get(ctx, p4); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("the approval row must be gone after a graceful stop, got %v", err)
 	}
 
 	// A decision that claimed the row first wins: nothing to abandon.
 	sid = newSession()
-	got = pausedRun(t, runner, sid, "paused-3")
-	if err := approvals.Delete(ctx, "paused-3"); err != nil {
+	got = pausedRun(t, runner, sid, p3)
+	if err := approvals.Delete(ctx, p3); err != nil {
 		t.Fatal(err)
 	}
 	runner.abandonPaused(ctx, sid, protocol.RunCancelSuperseded)
-	if info, _ := runner.hub.Info("paused-3"); info.Status != RunInterrupted {
+	if info, _ := runner.hub.Info(p3); info.Status != RunInterrupted {
 		t.Fatalf("hub status = %q, want the pause untouched", info.Status)
 	}
 	select {

@@ -25,9 +25,9 @@ import (
 )
 
 var (
-	adminUser  = protocol.UserInfo{ID: "u-admin", Email: "admin@example.com", Role: store.RoleAdmin}
-	memberUser = protocol.UserInfo{ID: "u-member", Email: "member@example.com", Role: store.RoleMember}
-	otherUser  = protocol.UserInfo{ID: "u-other", Email: "other@example.com", Role: store.RoleMember}
+	adminUser  = protocol.UserInfo{ID: store.NewID(), Email: "admin@example.com", Role: store.RoleAdmin}
+	memberUser = protocol.UserInfo{ID: store.NewID(), Email: "member@example.com", Role: store.RoleMember}
+	otherUser  = protocol.UserInfo{ID: store.NewID(), Email: "other@example.com", Role: store.RoleMember}
 )
 
 // usersByToken resolves a bearer to one of the test users: the token IS the id.

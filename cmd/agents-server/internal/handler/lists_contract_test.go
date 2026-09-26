@@ -18,6 +18,7 @@ import (
 // Every list endpoint answers [] for an empty collection, never null — the
 // frontend maps over the result directly (protocol.md, Response conventions).
 func TestListsNeverNull(t *testing.T) {
+	testdb.SkipOnPostgres(t)
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
 	engine := newTestEngine()

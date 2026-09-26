@@ -10,6 +10,7 @@ import (
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
 // createTarget persists a docker target under the given id, and createProject
@@ -92,6 +93,7 @@ func countBoundEvents(t *testing.T, r *Runner, runID string) int {
 // by the binding no matter what the client sends, and exactly one
 // session.project_bound is published — by the winner.
 func TestStartRunBindsSessionProject(t *testing.T) {
+	testdb.SkipOnPostgres(t)
 	runner, _ := newBareRunner(t)
 	ctx := context.Background()
 
@@ -134,6 +136,7 @@ func TestStartRunBindsSessionProject(t *testing.T) {
 
 // A run with no project binds nothing — the session stays bindable later.
 func TestStartRunWithoutProjectLeavesSessionBindable(t *testing.T) {
+	testdb.SkipOnPostgres(t)
 	runner, _ := newBareRunner(t)
 	ctx := context.Background()
 
@@ -159,6 +162,7 @@ func TestStartRunWithoutProjectLeavesSessionBindable(t *testing.T) {
 // session: the bind is written only after the hub accepts the run, so a 409
 // leaves the session exactly as it was.
 func TestRefusedRunDoesNotBind(t *testing.T) {
+	testdb.SkipOnPostgres(t)
 	runner, _ := newBareRunner(t)
 	ctx := context.Background()
 
@@ -188,6 +192,7 @@ func TestRefusedRunDoesNotBind(t *testing.T) {
 // one that is not the caller's, refuses the run and leaves the session unbound
 // (and its slot free for the corrected retry).
 func TestInvalidBindingRefusedUnbound(t *testing.T) {
+	testdb.SkipOnPostgres(t)
 	runner, _ := newBareRunner(t)
 	ctx := context.Background()
 

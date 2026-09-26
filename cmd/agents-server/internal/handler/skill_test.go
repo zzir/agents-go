@@ -377,6 +377,7 @@ func TestSkillRepoScopeGroup(t *testing.T) {
 // — syncing the published one must update THAT group, never quietly refresh
 // the caller's instead (decisions §5.31).
 func TestSkillSyncTargetsTheNamedGroup(t *testing.T) {
+	testdb.SkipOnPostgres(t)
 	engine, h, st := skillTestEnv(t)
 	engine.POST("/skill-repos/scope", h.SetRepoScope)
 	files := map[string]string{"pdf/SKILL.md": pdfSkillDoc}

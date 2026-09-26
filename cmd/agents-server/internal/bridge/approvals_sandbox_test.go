@@ -163,7 +163,7 @@ func TestResumeBuildsTheAgentOnce(t *testing.T) {
 	}
 	calls, _ := json.Marshal([]store.PendingToolCall{{ToolCallID: "call-once-1", ToolName: "exec_command", Arguments: args}})
 	if err := runner.Deps.PendingApprovals.Save(ctx, &store.PendingApproval{
-		RunID: "paused-run", SessionID: sess.ID, AgentConfigID: ac.ID, ProjectID: proj.ID, State: string(stateJSON), ToolCalls: calls,
+		RunID: store.NewID(), SessionID: sess.ID, AgentConfigID: ac.ID, ProjectID: proj.ID, State: string(stateJSON), ToolCalls: calls,
 	}); err != nil {
 		t.Fatal(err)
 	}

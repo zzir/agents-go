@@ -106,10 +106,10 @@ jobs:
       - name: Test agents-server module
         run: (cd cmd/agents-server && go vet ./... && go test -race ./...)
 
-      - name: Test agents-server store on PostgreSQL
+      - name: Test agents-server store, bridge and handler on PostgreSQL
         env:
           AGENTS_PG_TEST_DSN: postgres://postgres:test@localhost:5432/agents_test?sslmode=disable
-        run: (cd cmd/agents-server && go test ./internal/store/)
+        run: (cd cmd/agents-server && go test ./internal/store/ ./internal/bridge/ ./internal/handler/)
 
       # Stale means "regenerating changes the file" — compared by content, so
       # a fresh-but-uncommitted regeneration passes locally and a clean CI

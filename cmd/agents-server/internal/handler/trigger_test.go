@@ -89,6 +89,7 @@ func decodeView(t *testing.T, w *httptest.ResponseRecorder) TriggerView {
 // A trigger names a workflow and a session that must exist, a cron one a
 // schedule that parses; a webhook one is minted a secret shown ONCE.
 func TestTriggerCreateValidatesAndMintsTheSecretOnce(t *testing.T) {
+	testdb.SkipOnPostgres(t)
 	engine, firer, wf, sess, sessions := triggerRigWithSessions(t)
 	body := func(kind, schedule, wfID, sessID string) string {
 		b, _ := json.Marshal(map[string]any{"workflow_id": wfID, "session_id": sessID, "kind": kind, "schedule": schedule, "brief": "go", "enabled": true})
@@ -149,6 +150,7 @@ func TestTriggerCreateValidatesAndMintsTheSecretOnce(t *testing.T) {
 // secret, fresh timestamp and matching body fire the trigger with the body as
 // payload; anything else is 401 and fires nothing.
 func TestHookVerifiesTheSignature(t *testing.T) {
+	testdb.SkipOnPostgres(t)
 	engine, firer, wf, sess := triggerRig(t)
 	b, _ := json.Marshal(map[string]any{"workflow_id": wf.ID, "session_id": sess.ID, "kind": "webhook", "brief": "review the PR", "enabled": true})
 	created := decodeView(t, doJSON(t, engine, "POST", server.APIPrefix+"/triggers", string(b)))

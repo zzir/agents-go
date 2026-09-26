@@ -16,6 +16,7 @@ import (
 	"github.com/zzir/agents-go/agents/tasks"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
 // finishedResponse is one completed assistant message, the shape both the
@@ -229,6 +230,7 @@ func TestWorkflowStopsAtAFailedStep(t *testing.T) {
 // that turn in the trace instead of opening a second root. The id comes from
 // the run context the tool call executes in — nothing else knows it.
 func TestWorkflowRecordsTheTurnThatStartedIt(t *testing.T) {
+	testdb.SkipOnPostgres(t)
 	ctx := context.Background()
 	srv := oneShotModel(t)
 	defer srv.Close()
@@ -535,6 +537,7 @@ func TestWorkflowRunCarriesItsOwnSnapshot(t *testing.T) {
 // A restart leaves no live step, so an execution recorded as running is failed
 // by the task sweep at the step it reached — which a retry resumes from.
 func TestWorkflowInterruptedByRestartFailsAtItsStep(t *testing.T) {
+	testdb.SkipOnPostgres(t)
 	ctx := context.Background()
 	runner, sess, wf := workflowFixture(t, "http://127.0.0.1:1")
 
@@ -1181,6 +1184,7 @@ func awaitState(t *testing.T, runner *Runner, taskID string) (*store.Task, *stor
 // A person can run a workflow too — the same start the tool makes, with the
 // brief they wrote — against a session that exists.
 func TestRunWorkflowStartsAnExecutionForAPerson(t *testing.T) {
+	testdb.SkipOnPostgres(t)
 	ctx := context.Background()
 	srv := oneShotModel(t)
 	defer srv.Close()

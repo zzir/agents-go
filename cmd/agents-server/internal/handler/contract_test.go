@@ -16,6 +16,7 @@ import (
 // missing resources, 204 for deletes, PATCH partial updates returning the
 // resource, and the {"error": {code, message}} envelope.
 func TestRestContract(t *testing.T) {
+	testdb.SkipOnPostgres(t)
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
 	sessions := store.NewSessionStore(db)
@@ -102,6 +103,7 @@ func TestRestContract(t *testing.T) {
 // A fork inherits the source's sandbox binding verbatim — it continues the
 // same conversation over the same file system context, with no CAS of its own.
 func TestForkCopiesSandboxBinding(t *testing.T) {
+	testdb.SkipOnPostgres(t)
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
 	sessions := store.NewSessionStore(db)
@@ -145,6 +147,7 @@ func TestForkCopiesSandboxBinding(t *testing.T) {
 // no binding fields, so a request naming one changes nothing — switching
 // projects means starting (or forking into) another session.
 func TestPatchCannotMoveBinding(t *testing.T) {
+	testdb.SkipOnPostgres(t)
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
 	sessions := store.NewSessionStore(db)

@@ -18,6 +18,7 @@ import (
 // invisibly, since a spawn passes the freshly resolved snapshot straight to the
 // launcher and never reads this one back.
 func TestTaskAdapter_InheritKeepsTheTaskAgent(t *testing.T) {
+	testdb.SkipOnPostgres(t)
 	ctx := context.Background()
 	adapter := store.NewTaskAdapter(store.NewTaskStore(testdb.New(t)))
 

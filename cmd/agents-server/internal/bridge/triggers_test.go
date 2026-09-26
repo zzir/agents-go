@@ -10,6 +10,7 @@ import (
 	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
 // triggerFixture is a workflow fixture with a trigger store and a scheduler
@@ -40,6 +41,7 @@ func TestValidateCronSchedule(t *testing.T) {
 // workflow on the trigger's session, led by its brief and the payload — and
 // what happened is written on the trigger. A disabled trigger does not fire.
 func TestTriggerFireStartsTheWorkflowAndRecordsIt(t *testing.T) {
+	testdb.SkipOnPostgres(t)
 	ctx := context.Background()
 	srv := oneShotModel(t)
 	defer srv.Close()

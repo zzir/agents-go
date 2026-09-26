@@ -32,7 +32,7 @@ func TestApprovalReaperEndsThePausedTaskAndAnnouncesIt(t *testing.T) {
 	if err := tasks.Create(ctx, row); err != nil {
 		t.Fatal(err)
 	}
-	pending := &store.PendingApproval{RunID: row.RunID, SessionID: row.ChildSessionID, Kind: store.ApprovalKindStep, AgentConfigID: "a"}
+	pending := &store.PendingApproval{RunID: row.RunID, SessionID: row.ChildSessionID, Kind: store.ApprovalKindStep, AgentConfigID: store.NewID()}
 	if err := runner.Deps.PendingApprovals.Save(ctx, pending); err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestApprovalReaperEndsThePausedHubRun(t *testing.T) {
 	if err := tasks.Create(ctx, row); err != nil {
 		t.Fatal(err)
 	}
-	pending := &store.PendingApproval{RunID: row.RunID, SessionID: row.ChildSessionID, AgentConfigID: "a"}
+	pending := &store.PendingApproval{RunID: row.RunID, SessionID: row.ChildSessionID, AgentConfigID: store.NewID()}
 	if err := runner.Deps.PendingApprovals.Save(ctx, pending); err != nil {
 		t.Fatal(err)
 	}

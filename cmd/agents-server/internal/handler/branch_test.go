@@ -46,7 +46,7 @@ func TestBranchRefusesLiveRun(t *testing.T) {
 		return session.Entry{Kind: session.EntryKindItem, Source: agents.Source{Type: agents.SourceUser},
 			Item: json.RawMessage(`{"role":"` + role + `","content":` + string(q) + `}`)}
 	}
-	entries.SetRunID("run-a")
+	entries.SetRunID(store.NewID())
 	if err := entries.Append(ctx, mk("user", "first"), mk("assistant", "a1")); err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestBranchRefusesLiveRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	entries.SetRunID("run-b")
+	entries.SetRunID(store.NewID())
 	if err := entries.Append(ctx, mk("user", "second"), mk("assistant", "a2")); err != nil {
 		t.Fatal(err)
 	}

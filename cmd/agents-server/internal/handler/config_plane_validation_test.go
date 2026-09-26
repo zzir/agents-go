@@ -113,6 +113,7 @@ func TestMcpServerNameUnique(t *testing.T) {
 // GET /mcp-servers/:id/tools must distinguish a missing server (404) from one
 // that exists but isn't connected (409).
 func TestMcpServerToolsNotFoundVsNotConnected(t *testing.T) {
+	testdb.SkipOnPostgres(t)
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
 	mcpStore := store.NewMcpServerStore(db)

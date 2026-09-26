@@ -29,6 +29,7 @@ func userInputItems(t *testing.T, raws ...string) []agents.InputItem {
 // persistInterruption keeps the paused turn's user prompt on the row, so a
 // reload during approval rebuilds the bubble without the entries.
 func TestPersistInterruptionStoresUserInput(t *testing.T) {
+	runID := store.NewID()
 	ctx := context.Background()
 	db := testdb.New(t)
 	approvals := store.NewPendingApprovalStore(db)
@@ -50,8 +51,8 @@ func TestPersistInterruptionStoresUserInput(t *testing.T) {
 		}},
 	}
 	result := &RunOutcome{
-		RunID:       "run-1",
-		SessionID:   "sess-1",
+		RunID:       runID,
+		SessionID:   store.NewID(),
 		Interrupted: true,
 		SDKState:    state,
 		Interruptions: []*agents.ToolApprovalItem{
@@ -62,7 +63,7 @@ func TestPersistInterruptionStoresUserInput(t *testing.T) {
 	if err := runner.persistInterruption(result); err != nil {
 		t.Fatalf("persistInterruption: %v", err)
 	}
-	got, err := approvals.Get(ctx, "run-1")
+	got, err := approvals.Get(ctx, runID)
 	if err != nil {
 		t.Fatalf("get pending: %v", err)
 	}

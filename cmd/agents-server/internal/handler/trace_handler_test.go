@@ -17,6 +17,7 @@ import (
 // The listing the trace panel opens with leaves the payload out and says so;
 // one span is fetched whole on demand, 404 when it is not there.
 func TestTraceListingSummaryAndSpan(t *testing.T) {
+	testdb.SkipOnPostgres(t)
 	gin.SetMode(gin.TestMode)
 	ctx := context.Background()
 	db := testdb.New(t)
@@ -68,6 +69,7 @@ func traceJSONEqual(a, b string) bool {
 // A span's attachments come back with URLs against the current public base —
 // the store contributes the rows, the handler the deployment fact.
 func TestTraceSpanAttachmentURLs(t *testing.T) {
+	testdb.SkipOnPostgres(t)
 	gin.SetMode(gin.TestMode)
 	ctx := context.Background()
 	db := testdb.New(t)

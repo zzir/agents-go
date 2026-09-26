@@ -18,6 +18,7 @@ import (
 // ErrSessionBusy AND leave the pending row in place so the decision can be
 // retried — losing the row would strand the paused run forever.
 func TestResolveApprovalBusyKeepsPending(t *testing.T) {
+	pausedRun := store.NewID()
 	ctx := context.Background()
 	db := testdb.New(t)
 
@@ -68,7 +69,7 @@ func TestResolveApprovalBusyKeepsPending(t *testing.T) {
 	}
 	calls, _ := json.Marshal([]store.PendingToolCall{{ToolCallID: "call-busy-1", ToolName: "shell"}})
 	if err := approvals.Save(ctx, &store.PendingApproval{
-		RunID:         "paused-run",
+		RunID:         pausedRun,
 		SessionID:     sess.ID,
 		AgentConfigID: ac.ID,
 		State:         string(stateJSON),
@@ -86,7 +87,7 @@ func TestResolveApprovalBusyKeepsPending(t *testing.T) {
 	if _, ok := errors.AsType[ErrSessionBusy](err); !ok {
 		t.Fatalf("want ErrSessionBusy, got %v", err)
 	}
-	if _, err := approvals.Get(ctx, "paused-run"); err != nil {
+	if _, err := approvals.Get(ctx, pausedRun); err != nil {
 		t.Fatalf("pending row must survive a busy failure, got %v", err)
 	}
 
@@ -100,7 +101,7 @@ func TestResolveApprovalBusyKeepsPending(t *testing.T) {
 	if runID == "" {
 		t.Fatal("expected a continuation run id")
 	}
-	if _, err := approvals.Get(ctx, "paused-run"); !errors.Is(err, store.ErrNotFound) {
+	if _, err := approvals.Get(ctx, pausedRun); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("pending row should be consumed, got %v", err)
 	}
 
@@ -114,6 +115,7 @@ func TestResolveApprovalBusyKeepsPending(t *testing.T) {
 // restoring the claimed row: the cascade removes the approvals, and a row
 // written back after it would be an orphan nothing can reach.
 func TestResolveApprovalDeletingSessionDoesNotRestore(t *testing.T) {
+	pausedRun := store.NewID()
 	ctx := context.Background()
 	db := testdb.New(t)
 
@@ -153,7 +155,7 @@ func TestResolveApprovalDeletingSessionDoesNotRestore(t *testing.T) {
 	}
 	calls, _ := json.Marshal([]store.PendingToolCall{{ToolCallID: "call-del-1", ToolName: "shell"}})
 	if err := approvals.Save(ctx, &store.PendingApproval{
-		RunID: "paused-run", SessionID: sess.ID, AgentConfigID: ac.ID, State: string(stateJSON), ToolCalls: calls,
+		RunID: pausedRun, SessionID: sess.ID, AgentConfigID: ac.ID, State: string(stateJSON), ToolCalls: calls,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +165,7 @@ func TestResolveApprovalDeletingSessionDoesNotRestore(t *testing.T) {
 	if _, ok := errors.AsType[ErrSessionDeleting](err); !ok {
 		t.Fatalf("want ErrSessionDeleting, got %v", err)
 	}
-	if _, err := approvals.Get(ctx, "paused-run"); !errors.Is(err, store.ErrNotFound) {
+	if _, err := approvals.Get(ctx, pausedRun); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("the claimed row must not be restored on a deleting session, got %v", err)
 	}
 }
@@ -172,6 +174,7 @@ func TestResolveApprovalDeletingSessionDoesNotRestore(t *testing.T) {
 // version is unresumable: ResolveApproval reports a StaleApprovalStateError and
 // discards the row so it can't wedge the session with a masked 500 on retry.
 func TestResolveApprovalStaleSchemaDiscarded(t *testing.T) {
+	pausedRun := store.NewID()
 	ctx := context.Background()
 	db := testdb.New(t)
 
@@ -201,7 +204,7 @@ func TestResolveApprovalStaleSchemaDiscarded(t *testing.T) {
 	staleState := `{"schema_version":"1.1","current_agent":"approver","interruptions":[]}`
 	calls, _ := json.Marshal([]store.PendingToolCall{{ToolCallID: "call-old", ToolName: "shell"}})
 	if err := approvals.Save(ctx, &store.PendingApproval{
-		RunID:         "paused-old",
+		RunID:         pausedRun,
 		SessionID:     sess.ID,
 		AgentConfigID: ac.ID,
 		State:         staleState,
@@ -218,7 +221,7 @@ func TestResolveApprovalStaleSchemaDiscarded(t *testing.T) {
 	if stale.HaveVersion != "1.1" {
 		t.Errorf("HaveVersion = %q, want 1.1", stale.HaveVersion)
 	}
-	if _, err := approvals.Get(ctx, "paused-old"); !errors.Is(err, store.ErrNotFound) {
+	if _, err := approvals.Get(ctx, pausedRun); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("stale pending row should be discarded, got %v", err)
 	}
 }
@@ -229,6 +232,7 @@ func TestResolveApprovalStaleSchemaDiscarded(t *testing.T) {
 // an equality gate here destroyed states a purely additive SDK bump resumes
 // fine, which is exactly the failure this test pins.
 func TestResolveApprovalOlderDecodableSchemaNotDiscarded(t *testing.T) {
+	pausedRun := store.NewID()
 	ctx := context.Background()
 	db := testdb.New(t)
 
@@ -261,7 +265,7 @@ func TestResolveApprovalOlderDecodableSchemaNotDiscarded(t *testing.T) {
 		`"interrupted_response":null,"interruptions":[]}`
 	calls, _ := json.Marshal([]store.PendingToolCall{{ToolCallID: "call-15", ToolName: "shell"}})
 	if err := approvals.Save(ctx, &store.PendingApproval{
-		RunID:         "paused-15",
+		RunID:         pausedRun,
 		SessionID:     sess.ID,
 		AgentConfigID: ac.ID,
 		State:         olderState,
@@ -280,7 +284,7 @@ func TestResolveApprovalOlderDecodableSchemaNotDiscarded(t *testing.T) {
 	if _, ok := errors.AsType[*StaleApprovalStateError](err); ok {
 		t.Fatalf("a decodable 1.5 state was reported stale: %v", err)
 	}
-	if _, err := approvals.Get(ctx, "paused-15"); err != nil {
+	if _, err := approvals.Get(ctx, pausedRun); err != nil {
 		t.Errorf("the decodable pending row must survive, got %v", err)
 	}
 }
@@ -292,6 +296,7 @@ func TestResolveApprovalOlderDecodableSchemaNotDiscarded(t *testing.T) {
 // (returning a retryable ApprovalNotReadyError) instead of deleting it and
 // stranding the paused run forever, which is what the old code did.
 func TestResolveApprovalTaskNotYetInputRequiredKeepsPending(t *testing.T) {
+	pausedRun := store.NewID()
 	ctx := context.Background()
 	db := testdb.New(t)
 
@@ -312,7 +317,7 @@ func TestResolveApprovalTaskNotYetInputRequiredKeepsPending(t *testing.T) {
 	// A task still recorded as "working": its run interrupted and persisted the
 	// approval, but postRun has not yet flipped it to input_required.
 	task := &store.Task{
-		ID: store.NewID(), RunID: "paused-task-run", ParentSessionID: store.NewID(),
+		ID: store.NewID(), RunID: pausedRun, ParentSessionID: store.NewID(),
 		ChildSessionID: child.ID, Label: "audit", Status: protocol.TaskWorking,
 	}
 	if err := tasks.Create(ctx, task); err != nil {

@@ -36,6 +36,7 @@ func endedSpan(spanID string, data map[string]any) *tracing.Span {
 // The wire and the row are bounded separately: what the browser cannot hold
 // is whole in the row a Replay reads, minus the redundant name.
 func TestLiveSpanDataIsBoundedAndTheRowIsWhole(t *testing.T) {
+	testdb.SkipOnPostgres(t)
 	data := fatSpanData()
 	live, omitted := liveSpanData(data)
 	if !omitted || live["input"] != liveOmitted {
@@ -78,6 +79,7 @@ func TestLiveSpanDataIsBoundedAndTheRowIsWhole(t *testing.T) {
 // again — the property the blob store rests on, checked with the SDK's own
 // input items rather than maps.
 func TestGenerationInputHashesAreStableAcrossCalls(t *testing.T) {
+	testdb.SkipOnPostgres(t)
 	ctx := context.Background()
 	db := testdb.New(t)
 	traces := store.NewTraceStore(db)
@@ -112,6 +114,7 @@ func TestGenerationInputHashesAreStableAcrossCalls(t *testing.T) {
 // run a wake-up belongs to — the panel's grouping reads it here, and a fork
 // (which copies trace rows but not task rows) carries it for free.
 func TestSpanRowsCarryTheRunLineage(t *testing.T) {
+	testdb.SkipOnPostgres(t)
 	ctx := context.Background()
 	traces := store.NewTraceStore(testdb.New(t))
 	p := newWSProcessor(ctx, func(string, any) {}, traces, "sess", "run_wake", "run_origin", 0, nil)
@@ -135,6 +138,7 @@ func TestSpanRowsCarryTheRunLineage(t *testing.T) {
 // run.started does for the message — while the stored payload keeps the
 // reference and the row lists what rows exist.
 func TestSpanEventCarriesItsAttachments(t *testing.T) {
+	testdb.SkipOnPostgres(t)
 	ctx := context.Background()
 	traces := store.NewTraceStore(testdb.New(t))
 	var sent []protocol.TraceSpan

@@ -11,6 +11,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 export GOWORK=off
+# The PostgreSQL DSN reaches the PostgreSQL step only: every other step runs the
+# suites on SQLite, as CI does (testdb.New switches on the variable).
+PG_DSN="${AGENTS_PG_TEST_DSN:-}"
+unset AGENTS_PG_TEST_DSN
 
 step() { printf '\n\033[1m== %s ==\033[0m\n' "$*"; }
 
@@ -76,15 +80,17 @@ step "Test models/anthropic module"
 step "Test agents-server module"
 (cd cmd/agents-server && go vet ./... && go test -race ./...)
 
-# CI runs the store suite on PostgreSQL too (a service container). Locally
-# it takes a server: set AGENTS_PG_TEST_DSN to run it, else the step is skipped.
+# CI runs the store, bridge and handler suites on PostgreSQL too (a service
+# container); a test whose fixture is SQLite-shaped skips itself there
+# (testdb.SkipOnPostgres). Locally it takes a server: set AGENTS_PG_TEST_DSN
+# to run it, else the step is skipped.
 #   docker run -d -e POSTGRES_PASSWORD=test -e POSTGRES_DB=agents_test -p 54329:5432 postgres:16-alpine
 #   AGENTS_PG_TEST_DSN='postgres://postgres:test@localhost:54329/agents_test?sslmode=disable' ./scripts/ci.sh
-if [ -n "${AGENTS_PG_TEST_DSN:-}" ]; then
-  step "Test agents-server store on PostgreSQL"
-  (cd cmd/agents-server && go test ./internal/store/)
+if [ -n "$PG_DSN" ]; then
+  step "Test agents-server store, bridge and handler on PostgreSQL"
+  (cd cmd/agents-server && AGENTS_PG_TEST_DSN="$PG_DSN" go test ./internal/store/ ./internal/bridge/ ./internal/handler/)
 else
-  step "Test agents-server store on PostgreSQL (skipped: AGENTS_PG_TEST_DSN unset)"
+  step "Test agents-server on PostgreSQL (skipped: AGENTS_PG_TEST_DSN unset)"
 fi
 
 step "govulncheck"
