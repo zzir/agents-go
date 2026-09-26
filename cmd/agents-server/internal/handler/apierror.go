@@ -107,14 +107,31 @@ func saveError(c *gin.Context, err error) {
 }
 
 // pageParams reads the backwards-pagination query parameters before_id
-// (exclusive upper bound) and limit (0 = unbounded); invalid values read as 0.
-func pageParams(c *gin.Context) (beforeID string, limit int) {
-	beforeID = c.Query("before_id")
-	limit, _ = strconv.Atoi(c.Query("limit"))
-	if limit < 0 {
-		limit = 0
+// (exclusive upper bound) and limit (absent or 0 = unbounded); a limit that is
+// not a non-negative integer answers 400 and returns ok=false.
+func pageParams(c *gin.Context) (beforeID string, limit int, ok bool) {
+	limit, ok = queryInt(c, "limit")
+	return c.Query("before_id"), limit, ok
+}
+
+// queryInt reads a non-negative integer query parameter (absent = 0); an
+// invalid value answers 400 and returns false.
+func queryInt(c *gin.Context, name string) (int, bool) {
+	return nonNegativeInt(c, name, c.Query(name))
+}
+
+// nonNegativeInt parses raw as a non-negative integer (empty = 0), answering
+// 400 naming the parameter when it is not one.
+func nonNegativeInt(c *gin.Context, name, raw string) (int, bool) {
+	if raw == "" {
+		return 0, true
 	}
-	return beforeID, limit
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		badRequest(c, name+" must be a non-negative integer")
+		return 0, false
+	}
+	return n, true
 }
 
 // maxNameLen caps a free-text name (a session's, an agent's) at bind time.

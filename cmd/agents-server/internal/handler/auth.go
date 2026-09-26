@@ -42,11 +42,15 @@ func NewAuthHandler(svc *authn.Service, tokens *store.AuthTokenStore, users *sto
 //	@Param		limit	query		int		false	"Page size (default 100, max 500)"
 //	@Param		before	query		string	false	"An event id; the page before it"
 //	@Success	200		{array}		store.AuditEvent
+//	@Failure	400		{object}	ErrorResponse	"limit is not a non-negative integer"
 //	@Failure	403		{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/auth/audit [get]
 func (h *AuthHandler) ListAudit(c *gin.Context) {
-	limit, _ := strconv.Atoi(c.Query("limit"))
+	limit, ok := queryInt(c, "limit")
+	if !ok {
+		return
+	}
 	list, err := h.audit.ListRecent(c.Request.Context(), limit, c.Query("before"))
 	if err != nil {
 		internalError(c, err)

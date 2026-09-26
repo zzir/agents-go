@@ -246,19 +246,24 @@ func (h *RunHandler) Cancel(c *gin.Context) {
 //	@Description	Server-Sent Events stream. Each event id is the hub sequence number; reconnect with the Last-Event-ID header or from_seq to resume. The stream closes after a final event: run.output, run.error or run.cancelled. run.interrupted (paused for approval) does not close a live stream — deciding via /approvals resumes the SAME run id and its events continue on the open connection; a disconnected client reconnects with Last-Event-ID.
 //	@Tags			runs
 //	@Produce		text/event-stream
-//	@Param			id			path		string	true	"Run ID"
-//	@Param			from_seq	query		int		false	"Resume after this sequence number"
-//	@Success		200			{string}	string	"SSE stream"
+//	@Param			id			path		string			true	"Run ID"
+//	@Param			from_seq	query		int				false	"Resume after this sequence number"
+//	@Success		200			{string}	string			"SSE stream"
+//	@Failure		400			{object}	ErrorResponse	"from_seq or Last-Event-ID is not a non-negative integer"
 //	@Failure		404			{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/runs/{id}/events [get]
 func (h *RunHandler) Events(c *gin.Context) {
 	runID := c.Param("id")
-	fromSeq := 0
+	var fromSeq int
+	var ok bool
 	if lastID := c.GetHeader("Last-Event-ID"); lastID != "" {
-		fromSeq, _ = strconv.Atoi(lastID)
-	} else if q := c.Query("from_seq"); q != "" {
-		fromSeq, _ = strconv.Atoi(q)
+		fromSeq, ok = nonNegativeInt(c, "Last-Event-ID", lastID)
+	} else {
+		fromSeq, ok = queryInt(c, "from_seq")
+	}
+	if !ok {
+		return
 	}
 
 	ctx := c.Request.Context()

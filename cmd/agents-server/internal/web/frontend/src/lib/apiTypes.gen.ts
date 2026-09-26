@@ -883,6 +883,15 @@ export interface paths {
                         "application/json": components["schemas"]["store.AuditEvent"][];
                     };
                 };
+                /** @description limit is not a non-negative integer */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
                 /** @description Forbidden */
                 403: {
                     headers: {
@@ -4162,6 +4171,15 @@ export interface paths {
                         "text/event-stream": string;
                     };
                 };
+                /** @description from_seq or Last-Event-ID is not a non-negative integer */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/event-stream": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
                 /** @description Not Found */
                 404: {
                     headers: {
@@ -5740,6 +5758,15 @@ export interface paths {
                         "application/json": components["schemas"]["store.TraceEvent"][];
                     };
                 };
+                /** @description limit is not a non-negative integer */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
                 /** @description Internal Server Error */
                 500: {
                     headers: {
@@ -6561,6 +6588,15 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["handler.TaskPage"];
+                    };
+                };
+                /** @description limit or offset is not a non-negative integer */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
                     };
                 };
                 /** @description Internal Server Error */

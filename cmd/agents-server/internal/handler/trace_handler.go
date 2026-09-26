@@ -32,11 +32,15 @@ func NewTraceHandler(traces *store.TraceStore, settings *settings.Reader) *Trace
 //	@Param			before_id	query		string	false	"Only events with id < before_id (backwards cursor)"
 //	@Param			summary		query		bool	false	"Leave the payload fields out of data (rows marked payload_omitted)"
 //	@Success		200			{array}		store.TraceEvent
+//	@Failure		400			{object}	ErrorResponse	"limit is not a non-negative integer"
 //	@Failure		500			{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/sessions/{id}/traces [get]
 func (h *TraceHandler) ListBySession(c *gin.Context) {
-	beforeID, limit := pageParams(c)
+	beforeID, limit, ok := pageParams(c)
+	if !ok {
+		return
+	}
 	list := h.traces.ListBySession
 	if c.Query("summary") == "true" {
 		list = h.traces.ListSummaryBySession

@@ -3,7 +3,6 @@ package handler
 import (
 	"errors"
 	"net/http"
-	"strconv"
 
 	"github.com/gin-gonic/gin"
 
@@ -194,12 +193,19 @@ type TaskPage struct {
 //	@Param			limit	query		int		false	"Page size (default and maximum 500)"
 //	@Param			offset	query		int		false	"Rows to skip"
 //	@Success		200		{object}	TaskPage
+//	@Failure		400		{object}	ErrorResponse	"limit or offset is not a non-negative integer"
 //	@Failure		500		{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/tasks [get]
 func (h *TaskHandler) List(c *gin.Context) {
-	limit, _ := strconv.Atoi(c.Query("limit"))
-	offset, _ := strconv.Atoi(c.Query("offset"))
+	limit, ok := queryInt(c, "limit")
+	if !ok {
+		return
+	}
+	offset, ok := queryInt(c, "offset")
+	if !ok {
+		return
+	}
 	u, _ := server.CurrentUser(c)
 	rows, total, err := h.tasks.ListRecent(c.Request.Context(), u.ID, c.Query("kind"), c.Query("live") == "true", limit, offset)
 	if err != nil {
