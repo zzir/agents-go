@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"sync"
@@ -356,6 +357,51 @@ func TestShellSession_ClosedSessionRefuses(t *testing.T) {
 	// Close is idempotent.
 	if err := s.Close(); err != nil {
 		t.Errorf("second Close: %v", err)
+	}
+}
+
+// erroringTerminal hands the reader a fixed run of chunks, then fails the read
+// with a non-EOF error; writes are accepted and never echoed.
+type erroringTerminal struct {
+	chunks []string
+	err    error
+	next   int
+}
+
+func (f *erroringTerminal) Read(p []byte) (int, error) {
+	if f.next >= len(f.chunks) {
+		return 0, f.err
+	}
+	n := copy(p, f.chunks[f.next])
+	f.next++
+	return n, nil
+}
+
+func (f *erroringTerminal) Write(p []byte) (int, error) { return len(p), nil }
+func (f *erroringTerminal) Close() error                { return nil }
+func (f *erroringTerminal) Resize(int, int) error       { return nil }
+func (f *erroringTerminal) Wait() (int, error)          { return 0, nil }
+
+// A read that fails mid-command reports that failure, with every chunk read
+// before it in the partial output: the buffered tail and the error are ready
+// at the same moment, and which one is seen first must not be a coin toss.
+func TestShellSession_ReadErrorKeepsTheTailAndTheCause(t *testing.T) {
+	boom := errors.New("pty went away")
+	chunks := []string{"one\n", "two\n", "three\n", "four\n", "five\n", "six\n", "seven\n", "eight\n"}
+	want := strings.Join(chunks, "")
+	for range 200 {
+		s := newShellSession(&erroringTerminal{chunks: chunks, err: boom})
+		out, code, err := s.Run(context.Background(), "probe", time.Second)
+		_ = s.Close()
+		if !errors.Is(err, boom) {
+			t.Fatalf("err = %v, want the read error %q", err, boom)
+		}
+		if code != -1 {
+			t.Fatalf("exit code = %d, want -1 for an unknown outcome", code)
+		}
+		if out != want {
+			t.Fatalf("partial output = %q, want every chunk read before the failure %q", out, want)
+		}
 	}
 }
 

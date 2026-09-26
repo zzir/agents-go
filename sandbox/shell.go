@@ -25,7 +25,9 @@ type ShellSession struct {
 
 	// chunks carries what the reader goroutine has read; Terminal has no read
 	// deadline, so only a background reader makes the timeout real.
-	chunks  chan []byte
+	chunks chan []byte
+	// readErr holds the read's failure, parked before chunks closes so a
+	// consumer sees it only once the tail is drained.
 	readErr chan error
 	// done releases a reader blocked on a full chunks channel when the session
 	// closes; closing the Terminal does not unblock a channel send.
@@ -181,12 +183,17 @@ func (s *ShellSession) readUntilSentinel(ctx context.Context, timeout time.Durat
 		select {
 		case chunk, ok := <-s.chunks:
 			if !ok {
+				// The reader parks its error before closing chunks, so the
+				// tail is drained by now and the cause, if any, is waiting.
+				select {
+				case err := <-s.readErr:
+					return partial(), -1, fmt.Errorf("sandbox: reading from shell session: %w", err)
+				default:
+				}
 				return partial(), -1, errors.New("sandbox: shell session ended")
 			}
 			s.buf = append(s.buf, chunk...)
 			scanFrom = s.capBuf(scanFrom)
-		case err := <-s.readErr:
-			return partial(), -1, fmt.Errorf("sandbox: reading from shell session: %w", err)
 		case <-timer.C:
 			return partial(), -1, fmt.Errorf("sandbox: shell session command timed out after %s", timeout)
 		case <-ctx.Done():
