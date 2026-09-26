@@ -103,8 +103,10 @@ func convertInput(items []agents.InputItem) ([]ant.MessageParam, error) {
 			}
 			appendBlocks(role, blocks...)
 		case "function_call":
+			// A call cut off mid-arguments (spec §2.7e) cannot be replayed as the
+			// object the API requires; an empty one stands in for it.
 			args := item.Arguments
-			if args == "" {
+			if !json.Valid([]byte(args)) {
 				args = "{}"
 			}
 			appendBlocks(ant.MessageParamRoleAssistant,

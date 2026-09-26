@@ -280,3 +280,53 @@ func TestStreamRefusalDoneItemsMatchTerminal(t *testing.T) {
 		t.Fatalf("terminal output = %d items, want the single refusal", len(final))
 	}
 }
+
+// A tool_use cut off by max_tokens mid-arguments: the partial input_json is
+// not JSON, and the stream must still end as an incomplete response rather
+// than an accumulator error.
+func TestStreamMaxTokensMidToolArguments(t *testing.T) {
+	model := sseModel(t, sseEvents(
+		`{"type":"message_start","message":{"id":"msg_t","type":"message","role":"assistant","model":"claude-test","content":[],"usage":{"input_tokens":10,"output_tokens":0}}}`,
+		`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+		`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Looking it up."}}`,
+		`{"type":"content_block_stop","index":0}`,
+		`{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"lookup","input":{}}}`,
+		`{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"query\": \"wea"}}`,
+		`{"type":"content_block_stop","index":1}`,
+		`{"type":"message_delta","delta":{"stop_reason":"max_tokens","stop_sequence":null},"usage":{"output_tokens":16}}`,
+		`{"type":"message_stop"}`,
+	))
+	var final *agents.ModelResponse
+	var doneTypes []string
+	for event, err := range model.StreamResponse(context.Background(), agents.ModelRequest{
+		Input: agents.InputItemsFromText("go"),
+	}) {
+		if err != nil {
+			t.Fatalf("a call cut off by max_tokens failed the stream: %v", err)
+		}
+		switch event.Type {
+		case agents.EventResponseOutputItemDone:
+			doneTypes = append(doneTypes, event.AsResponseOutputItemDone().Item.Type)
+		case agents.EventResponseIncomplete:
+			inc := event.AsResponseIncomplete()
+			final = &agents.ModelResponse{
+				Output: inc.Response.Output, Status: string(inc.Response.Status),
+				IncompleteReason: inc.Response.IncompleteDetails.Reason,
+			}
+		}
+	}
+	if final == nil || !final.Truncated() {
+		t.Fatalf("terminal = %+v, want response.incomplete with reason max_output_tokens", final)
+	}
+	if len(final.Output) != 2 || final.Output[0].Type != "message" || final.Output[1].Type != "function_call" {
+		t.Fatalf("output = %d items, want [message function_call]", len(final.Output))
+	}
+	// The call surfaces with its arguments as generated: the runner refuses to
+	// run it (spec §2.7e) and the model resends.
+	if fc := final.Output[1].AsFunctionCall(); fc.CallID != "toolu_1" || fc.Arguments != `{"query": "wea` {
+		t.Errorf("function_call = %s %q, want toolu_1 with the partial arguments", fc.CallID, fc.Arguments)
+	}
+	if len(doneTypes) != 2 {
+		t.Errorf("output_item.done types = %v, want one per item", doneTypes)
+	}
+}

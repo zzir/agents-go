@@ -991,6 +991,9 @@ A response the provider marks `status="incomplete"` with reason
   incomplete reason still fails the run.
 - **Both model paths report it**: `Status` reaches the loop from the blocking
   call and the stream alike.
+- **A call cut off mid-arguments still surfaces**, as a `function_call`
+  carrying the arguments as generated; an adapter whose backend needs an
+  object on replay (Anthropic) sends `{}` in their place.
 - **None of its tool calls PAUSE, either.** The guard runs before the approval
   partition, and `Status`/`IncompleteReason` survive `RunState` serialization
   so a cross-process resume refuses the same calls.

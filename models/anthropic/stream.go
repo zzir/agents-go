@@ -1,7 +1,9 @@
 package anthropic
 
 import (
+	"encoding/json"
 	"fmt"
+	"slices"
 
 	ant "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
@@ -36,7 +38,7 @@ func synthesizeStream(stream *ssestream.Stream[ant.MessageStreamEventUnion], yie
 
 	for stream.Next() {
 		event := stream.Current()
-		if err := acc.Accumulate(event); err != nil {
+		if err := accumulate(&acc, event); err != nil {
 			yield(nil, fmt.Errorf("anthropic messages stream: accumulating %s: %w", event.Type, err))
 			return
 		}
@@ -148,6 +150,28 @@ func synthesizeStream(stream *ssestream.Stream[ant.MessageStreamEventUnion], yie
 	// A clean SSE end without message_stop is a severed connection, surfaced
 	// retryably rather than as a vague, unretryable early end.
 	yield(nil, modelkit.TruncatedStreamError("anthropic messages stream"))
+}
+
+// accumulate folds event into acc, skipping the SDK's re-marshal at the two
+// stop events while a tool_use holds JSON cut off by max_tokens: it would fail,
+// and nothing read here comes from it, so the call surfaces as-is (spec §2.7e).
+func accumulate(acc *ant.Message, event ant.MessageStreamEventUnion) error {
+	switch event.Type {
+	case "content_block_stop":
+		if idx := int(event.Index); idx >= 0 && idx < len(acc.Content) && partialToolInput(acc.Content[idx]) {
+			return nil
+		}
+	case "message_stop":
+		if slices.ContainsFunc(acc.Content, partialToolInput) {
+			return nil
+		}
+	}
+	return acc.Accumulate(event)
+}
+
+// partialToolInput reports a tool_use whose accumulated input is not (yet) JSON.
+func partialToolInput(block ant.ContentBlockUnion) bool {
+	return block.Type == "tool_use" && !json.Valid(block.Input)
 }
 
 // blockItemID synthesizes a stable item id for anonymous blocks; convertOutput

@@ -479,3 +479,29 @@ func TestRespondMergesConsecutiveTextBlocks(t *testing.T) {
 		t.Errorf("merged text = %q", got)
 	}
 }
+
+// A function_call cut off mid-arguments (spec §2.7e) replays as a tool_use
+// with an empty input: the API requires an object, and the runner already
+// refused the call, so the model resends it.
+func TestBuildParamsPartialArgumentsReplayAsEmptyObject(t *testing.T) {
+	fc, err := modelkit.FunctionCallItem("fc_1", "toolu_1", "lookup", `{"query": "wea`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err := agents.OutputToInput([]agents.OutputItem{fc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input = append(agents.InputItemsFromText("go"), input...)
+	input = append(input, responses.ResponseInputItemParamOfFunctionCallOutput("toolu_1", "truncated; not run"))
+
+	wire := wireParams(t, testModel(), agents.ModelRequest{Input: input})
+	assistant := wire["messages"].([]any)[1].(map[string]any)
+	toolUse := assistant["content"].([]any)[0].(map[string]any)
+	if toolUse["id"] != "toolu_1" || toolUse["name"] != "lookup" {
+		t.Fatalf("tool_use block = %v", toolUse)
+	}
+	if in, ok := toolUse["input"].(map[string]any); !ok || len(in) != 0 {
+		t.Errorf("tool_use input = %v, want an empty object in place of the partial arguments", toolUse["input"])
+	}
+}
