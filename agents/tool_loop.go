@@ -76,6 +76,19 @@ func truncatedCallResults(agent *Agent, calls []functionCall) []functionToolResu
 	return out
 }
 
+// unknownCallResults answers every call naming no tool on the agent with a
+// not-found error output, so the model corrects itself (spec §2.2 step 7).
+func unknownCallResults(agent *Agent, calls []functionCall) []functionToolResult {
+	out := make([]functionToolResult, 0, len(calls))
+	for _, call := range calls {
+		msg := fmt.Sprintf("Tool '%s' not found.", call.Name)
+		item := newFunctionCallOutputItem(agent, call.CallID, msg)
+		item.IsError = true
+		out = append(out, functionToolResult{callID: call.CallID, output: msg, outputItem: item})
+	}
+	return out
+}
+
 // anySequential reports whether any tool in the batch refuses to run beside
 // others.
 func anySequential(runs []toolRunFunction) bool {

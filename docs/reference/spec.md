@@ -250,7 +250,7 @@ reordered.
 | 4 | **If any call needs approval, pause the whole turn — no tool runs** | Pausing only the gated calls would leave `RunState` holding partial results |
 | 5 | Run `toRun` concurrently, then merge with `rejected` in **original call order** | Result order is deterministic and independent of completion order |
 | 6 | A nested agent-as-tool interruption pauses the parent run too | Completed siblings **keep** their outputs; the interrupted call's output is **withheld** |
-| 7 | Unknown tool → feed back `Tool 'X' not found.` | Only under `ToolNotFoundReturnToModel`; otherwise it is a `*ModelBehaviorError` |
+| 7 | Unknown tool → feed back `Tool 'X' not found.` as an error output, merged in call order with step 5 | Only under `ToolNotFoundReturnToModel`; otherwise it is a `*ModelBehaviorError` |
 | 8 | **Handoffs win**: switch to the target agent, end the turn | Tools in the same response have **already executed**; the final-output check is skipped |
 | 9 | Decide the final output ([§2.3](#23-deciding-the-final-output)) | — |
 
@@ -971,6 +971,9 @@ The loop's own failure modes, where an agent keeps going and gets nowhere:
   `ToolLoop.MaxConsecutiveErrorTurns` (default 3) counts TURNS in which *every*
   tool call failed; any success clears it, and a turn with no tool calls is
   neither counted nor cleared. A negative value disables it.
+- **A call naming no tool is a failed call under this valve**
+  ([§2.2](#22-ordering-within-a-turn) step 7): its not-found output is an
+  error output, so a turn of only such calls counts.
 - **`ToolLoop.FinalTurnWithoutTools` is opt-in.** With it, an exhausted turn
   budget buys one more model call **with no tools and no handoffs**, so the
   model closes out in prose. Opt-in, since the budget may be a cost ceiling.

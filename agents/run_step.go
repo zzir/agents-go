@@ -2,7 +2,6 @@ package agents
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"slices"
 )
@@ -91,6 +90,9 @@ type processedResponse struct {
 	Handoffs     []toolRunHandoff
 	ToolsUsed    []string
 	UnknownTools []functionCall
+	// CallIDs is every function-shaped call — tool, handoff or unknown — in
+	// the order the model emitted them; results merge back in this order.
+	CallIDs []string
 }
 
 func (p *processedResponse) hasToolsToRun() bool {
@@ -128,6 +130,7 @@ func processModelResponse(
 			fc := output.AsFunctionCall()
 			call := functionCall{CallID: fc.CallID, Name: fc.Name, Arguments: fc.Arguments, Raw: output}
 			pr.ToolsUsed = append(pr.ToolsUsed, fc.Name)
+			pr.CallIDs = append(pr.CallIDs, fc.CallID)
 			if h, ok := handoffMap[fc.Name]; ok {
 				pr.NewItems = append(pr.NewItems, NewModelItem(ItemHandoffCall, agent, output))
 				pr.Handoffs = append(pr.Handoffs, toolRunHandoff{Handoff: h, Call: call})
@@ -180,10 +183,16 @@ func (r *runner) executeToolsAndSideEffects(
 	}
 
 	// A resume re-processes the interrupted response; sibling calls that
-	// completed before the pause are dropped (dropCompletedResumedCalls).
-	functions := pr.Functions
+	// completed before the pause are dropped, unknown ones included.
+	functions, unknown := pr.Functions, pr.UnknownTools
 	if resumed {
-		functions = dropCompletedResumedCalls(functions, prog.preStepItems)
+		completed := completedCallIDs(prog.preStepItems)
+		functions = slices.DeleteFunc(slices.Clone(functions), func(f toolRunFunction) bool {
+			return completed[f.Call.CallID]
+		})
+		unknown = slices.DeleteFunc(slices.Clone(unknown), func(c functionCall) bool {
+			return completed[c.CallID]
+		})
 	}
 
 	// Partition calls by approval — except on a truncated response, whose
@@ -242,7 +251,18 @@ func (r *runner) executeToolsAndSideEffects(
 			return nil, err
 		}
 	}
-	functionResults := append(orderToolResults(functions, executed, rejected), refusedHandoffs...)
+	// Unknown calls (ToolNotFoundReturnToModel) are answered with an error
+	// output like any other failed call; hasToolsToRun stays true, forcing another turn.
+	if len(unknown) > 0 {
+		names := make([]string, len(unknown))
+		for i, call := range unknown {
+			names[i] = call.Name
+		}
+		// Data, not SetError: the model recovers next turn, so the run is not
+		// failed. The name is model-chosen metadata, recorded regardless.
+		r.agentSpan.Set("tool_not_found", names)
+	}
+	functionResults := orderToolResults(pr.CallIDs, executed, rejected, refusedHandoffs, unknownCallResults(agent, unknown))
 
 	// A model stuck calling a broken tool would otherwise burn the whole turn
 	// budget rediscovering that it is broken, and bill for it.
@@ -280,19 +300,6 @@ func (r *runner) executeToolsAndSideEffects(
 			Interruptions: nestedInterruptions,
 			NestedStates:  nestedStates,
 		}, nil
-	}
-
-	// Unknown tool calls (ToolNotFoundReturnToModel): feed an error output back so
-	// the model can correct itself. hasToolsToRun stays true, forcing another turn.
-	if len(pr.UnknownTools) > 0 {
-		names := make([]string, len(pr.UnknownTools))
-		for i, call := range pr.UnknownTools {
-			names[i] = call.Name
-			newStepItems = append(newStepItems, newFunctionCallOutputItem(agent, call.CallID, fmt.Sprintf("Tool '%s' not found.", call.Name)))
-		}
-		// Data, not SetError: the model recovers next turn, so the run is not
-		// failed. The name is model-chosen metadata, recorded regardless.
-		r.agentSpan.Set("tool_not_found", names)
 	}
 
 	// Handoffs take precedence: switch to the first requested target agent.
@@ -399,49 +406,35 @@ func (r *runner) decideFinalOutput(
 	return &singleStepResult{NewStepItems: newStepItems, NextStep: stepFinalOutput, FinalOutput: final}, nil
 }
 
-// orderToolResults merges executed and rejected results back into the model's
-// call order, matched by call id.
-func orderToolResults(calls []toolRunFunction, executed, rejected []functionToolResult) []functionToolResult {
-	byCallID := make(map[string]functionToolResult, len(executed)+len(rejected))
-	for _, r := range executed {
-		byCallID[r.callID] = r
-	}
-	for _, r := range rejected {
-		byCallID[r.callID] = r
+// orderToolResults merges every group of results back into the model's call
+// order (callIDs), matched by call id; a call without a result is skipped.
+func orderToolResults(callIDs []string, groups ...[]functionToolResult) []functionToolResult {
+	byCallID := make(map[string]functionToolResult, len(callIDs))
+	for _, g := range groups {
+		for _, r := range g {
+			byCallID[r.callID] = r
+		}
 	}
 	out := make([]functionToolResult, 0, len(byCallID))
-	for _, c := range calls {
-		if res, ok := byCallID[c.Call.CallID]; ok {
+	for _, id := range callIDs {
+		if res, ok := byCallID[id]; ok {
 			out = append(out, res)
-			delete(byCallID, c.Call.CallID)
+			delete(byCallID, id)
 		}
 	}
 	return out
 }
 
-// dropCompletedResumedCalls removes calls whose output already exists among
+// completedCallIDs lists the calls whose output already exists among
 // priorItems: on a resume they must be neither re-run nor re-output.
-func dropCompletedResumedCalls(functions []toolRunFunction, priorItems []*RunItem) []toolRunFunction {
-	if len(functions) == 0 {
-		return functions
-	}
-	completed := map[string]struct{}{}
+func completedCallIDs(priorItems []*RunItem) map[string]bool {
+	completed := map[string]bool{}
 	for _, it := range priorItems {
 		if id, _, isOutput := runItemCallID(it); isOutput {
-			completed[id] = struct{}{}
+			completed[id] = true
 		}
 	}
-	if len(completed) == 0 {
-		return functions
-	}
-	out := make([]toolRunFunction, 0, len(functions))
-	for _, f := range functions {
-		if _, done := completed[f.Call.CallID]; done {
-			continue
-		}
-		out = append(out, f)
-	}
-	return out
+	return completed
 }
 
 // allTerminate reports whether every tool in the batch asked the run to stop.
