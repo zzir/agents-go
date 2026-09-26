@@ -60,6 +60,7 @@ const maxBodyBytes = 1 << 20
 
 // SetBodyLimit gives one path its own body cap, read per request — for the
 // playground, whose replay carries a stored span payload the settings size.
+// Wire-time only: called before the engine serves (the map is unsynchronized).
 func (s *Server) SetBodyLimit(path string, limit func() int64) {
 	s.bodyLimits[path] = limit
 }
@@ -125,7 +126,7 @@ func New(log *slog.Logger, auth AuthFunc, audit protocol.AuditFunc) *Server {
 	s := &Server{Engine: engine, auth: auth, guard: NewAuthGuard(), Conns: NewConnTracker(), bodyLimits: map[string]func() int64{}}
 	s.cspPolicy.Store(buildCSP(nil, nil))
 	engine.Use(s.limitBody)
-	engine.Use(s.cspMiddleware())
+	engine.Use(s.securityHeaders())
 	engine.Use(logMiddleware(log))
 	engine.Use(TokenAuth(auth, s.guard))
 	if audit != nil {
@@ -249,12 +250,19 @@ func buildCSP(scriptHashes, imgHosts []string) string {
 		"style-src 'self' 'unsafe-inline'; " +
 		imgSrc + "; " +
 		"connect-src 'self'; " +
-		"font-src 'self' data:"
+		"font-src 'self' data:; " +
+		"frame-ancestors 'none'"
 }
 
-func (s *Server) cspMiddleware() gin.HandlerFunc {
+// securityHeaders sets the response headers every route carries: the CSP,
+// and the three the app never embeds, sniffs or leaks a URL to. HSTS is the
+// TLS-terminating proxy's to send.
+func (s *Server) securityHeaders() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Header("Content-Security-Policy", s.cspPolicy.Load().(string))
+		c.Header("X-Frame-Options", "DENY")
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("Referrer-Policy", "same-origin")
 		c.Next()
 	}
 }

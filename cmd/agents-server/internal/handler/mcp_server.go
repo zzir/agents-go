@@ -523,7 +523,7 @@ func writeOAuthCallbackPage(c *gin.Context, status, errMsg string) {
 		html.EscapeString(msg) +
 		`</p><script>` + oauthCallbackScript + `</script></body></html>`
 	c.Header("Content-Security-Policy",
-		"default-src 'self'; script-src 'sha256-"+oauthCallbackScriptHash+"'")
+		"default-src 'self'; script-src 'sha256-"+oauthCallbackScriptHash+"'; frame-ancestors 'none'")
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	c.String(http.StatusOK, page)
 }

@@ -52,7 +52,11 @@ reverse proxy, two things change:
   in the header and dodge the budgets. (This overrides gin's trust-everyone
   default.)
 
-The server itself speaks plain HTTP; TLS is the proxy's job. Compression is
+The server itself speaks plain HTTP; TLS is the proxy's job, and so is HSTS:
+the server sends the other security headers (CSP, `X-Frame-Options`,
+`X-Content-Type-Options`, `Referrer-Policy`) but never
+`Strict-Transport-Security`, which only the endpoint terminating TLS can
+vouch for. Compression is
 not: API responses go out gzip-compressed from 1 KiB when the client accepts
 it, the UI's assets are pre-compressed at build, and the WebSocket stays
 uncompressed by design — a proxy that compresses on its own gains nothing
