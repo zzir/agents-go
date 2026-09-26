@@ -251,10 +251,21 @@ func serverTimezone() string {
 	if name != "Local" {
 		return name
 	}
-	abbr, off := time.Now().Zone()
+	return formatLocalZone(time.Now().Zone())
+}
+
+// formatLocalZone renders an unnamed zone as "Local (CST UTC+08:00)"; an
+// abbreviation that is itself an offset ("+08") would repeat it, so it is dropped.
+func formatLocalZone(abbr string, off int) string {
 	sign := "+"
 	if off < 0 {
 		sign, off = "-", -off
 	}
-	return fmt.Sprintf("Local (%s UTC%s%02d:%02d)", abbr, sign, off/3600, off%3600/60)
+	if abbr != "" && (abbr[0] == '+' || abbr[0] == '-') {
+		abbr = ""
+	}
+	if abbr != "" {
+		abbr += " "
+	}
+	return fmt.Sprintf("Local (%sUTC%s%02d:%02d)", abbr, sign, off/3600, off%3600/60)
 }
