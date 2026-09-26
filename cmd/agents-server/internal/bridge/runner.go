@@ -349,7 +349,8 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	}
 
 	// Refuse to run against a session that doesn't exist — otherwise the run
-	// would write orphaned messages under an arbitrary session id.
+	// would write orphaned messages under an arbitrary session id. This read
+	// (RefFor below, for a resume) is what lets EndSessionDelete lift the mark.
 	if spec.fresh {
 		if _, err := r.Deps.Sessions.Get(ctx, sessionID); err != nil {
 			return failLookup(err, "session not found: "+sessionID)

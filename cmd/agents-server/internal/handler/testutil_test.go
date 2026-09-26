@@ -66,7 +66,7 @@ func doJSON(t *testing.T, engine *gin.Engine, method, path, body string) *httpte
 type noopStopper struct{}
 
 func (noopStopper) StopSessionTree(string)       {}
-func (noopStopper) AbortSessionDelete(string)    {}
+func (noopStopper) EndSessionDelete(string)      {}
 func (noopStopper) ReleaseSessionBinding(string) {}
 func (noopStopper) ForgetSessionTrust(string)    {}
 func (noopStopper) WithSessionTreeFenced(_ context.Context, _ string, fn func() error) error {

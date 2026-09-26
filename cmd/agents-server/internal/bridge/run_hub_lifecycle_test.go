@@ -198,3 +198,24 @@ func TestWaitDoneTracksLiveSegment(t *testing.T) {
 		t.Fatal("waitDone did not return after the segment finalized")
 	}
 }
+
+// TestRegisterResumesAfterDeleteEnds locks: the deleting mark is lifted once
+// the cascade has ended, so a session that survived a failed delete — or an
+// id a later run is refused on by its own session read — is no longer refused
+// by the hub.
+func TestRegisterResumesAfterDeleteEnds(t *testing.T) {
+	h := NewRunHub(context.Background())
+	h.markSessionDeleting("sess1")
+	if _, _, err := h.register("run1", "sess1", "", "", "", nil); !errors.As(err, &ErrSessionDeleting{}) {
+		t.Fatalf("register mid-delete: err = %v, want ErrSessionDeleting", err)
+	}
+	h.unmarkSessionDeleting("sess1")
+	if h.SessionDeleting("sess1") {
+		t.Fatal("SessionDeleting still true after the delete ended")
+	}
+	seg, _, err := h.register("run1", "sess1", "", "", "", nil)
+	if err != nil {
+		t.Fatalf("register after the delete ended: %v", err)
+	}
+	h.unregister("run1", seg)
+}

@@ -283,8 +283,9 @@ func (h *RunHub) markSessionDeleting(sessionID string) {
 	h.mu.Unlock()
 }
 
-// unmarkSessionDeleting clears the mark after a delete cascade FAILED; a
-// successful delete never clears it — the id is never reused.
+// unmarkSessionDeleting clears the mark once the delete cascade has ended,
+// committed or rolled back; a run registered on a deleted session fails on
+// its own first session read (execStreamed).
 func (h *RunHub) unmarkSessionDeleting(sessionID string) {
 	h.mu.Lock()
 	delete(h.deleting, sessionID)

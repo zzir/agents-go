@@ -26,9 +26,9 @@ import (
 // by the bridge runner. Deletion must stop execution before removing data.
 type RunStopper interface {
 	StopSessionTree(sessionID string)
-	// AbortSessionDelete clears the deleting mark when the store delete fails,
-	// so the surviving session is not left refusing every run until restart.
-	AbortSessionDelete(sessionID string)
+	// EndSessionDelete lifts the deleting mark once the store delete has ended,
+	// committed or not.
+	EndSessionDelete(sessionID string)
 	// ReleaseSessionBinding releases the cached sandbox instance behind a
 	// deleted session's project binding when no other session references it.
 	ReleaseSessionBinding(projectID string)
@@ -386,8 +386,9 @@ func (h *SessionHandler) Delete(c *gin.Context) {
 	// Stop the live run and every background task (bounded wait) BEFORE the
 	// cascade, or a task still executing keeps writing into the deleted rows.
 	h.stopper.StopSessionTree(id)
-	if err := h.sessions.Delete(c.Request.Context(), id); err != nil {
-		h.stopper.AbortSessionDelete(id)
+	err = h.sessions.Delete(c.Request.Context(), id)
+	h.stopper.EndSessionDelete(id)
+	if err != nil {
 		storeError(c, err)
 		return
 	}

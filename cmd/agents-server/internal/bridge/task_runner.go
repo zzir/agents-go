@@ -274,10 +274,10 @@ func (r *Runner) WithSessionTreeFenced(ctx context.Context, sessionID string, fn
 	return err
 }
 
-// AbortSessionDelete undoes StopSessionTree's deleting mark after the store
-// delete failed and rolled back — the session still exists and must accept
-// runs again.
-func (r *Runner) AbortSessionDelete(sessionID string) { r.hub.unmarkSessionDeleting(sessionID) }
+// EndSessionDelete lifts StopSessionTree's deleting mark once the store delete
+// has ended either way: a surviving session accepts runs again, a deleted one
+// refuses them at the run's own session read.
+func (r *Runner) EndSessionDelete(sessionID string) { r.hub.unmarkSessionDeleting(sessionID) }
 
 // StopSessionTree cancels the session's live run and every non-terminal task it
 // spawned (a workflow's steps included), then waits, bounded, for their
