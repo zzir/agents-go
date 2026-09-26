@@ -393,7 +393,7 @@ is the counterpart of [`RunState`](human_in_the_loop.md), not a replacement
 - When a run pauses for [tool approval](human_in_the_loop.md), the completed part of the turn is already saved; the pending, output-less tool calls are held back (they would break replay) and saved together with their outputs once the resumed run continues. Pass the same `Session` to `ResumeRun`.
 - [Handoff input filters](handoffs.md#input-filters) do not affect what is saved: the session keeps the unfiltered conversation.
 - Corrections (letting a user edit an earlier question) are a branch, not a deletion: fork the session from the entry before the question, or append the corrected turn — the projection decides what the model reads.
-- What the model reads out of the loaded history is shaped by [projection](#projection-what-the-model-reads) and [compaction](#run-level-compaction), not by rewriting the load. One knob adjusts how much is loaded: `Conversation.Settings: session.Settings{Limit: 50}` caps the load to the most recent N entries; anything not positive (the zero value included) loads the full history, and it is ignored when no `Session` is set.
+- What the model reads out of the loaded history is shaped by [projection](#projection-what-the-model-reads) and [compaction](#run-level-compaction), not by rewriting the load. One knob bounds how much of it a run hands the model: `Conversation.Settings: session.Settings{Limit: 50}` keeps the most recent N entries of the active branch; the store is still read whole and the cursor only trims the answer ([spec §2.5c](../reference/spec.md#25c-session-layering)). Anything not positive (the zero value included) means no bound, and the setting is ignored when no `Session` is set.
 
 ## Branching
 
