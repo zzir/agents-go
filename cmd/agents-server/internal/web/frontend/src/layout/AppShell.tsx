@@ -1,5 +1,5 @@
-import { type ReactNode, useCallback } from 'react';
-import { IconButton } from '@primer/react';
+import { type ReactNode, useCallback, useRef } from 'react';
+import { IconButton, useOnEscapePress } from '@primer/react';
 import { MoonIcon, SidebarExpandIcon, SunIcon, ThreeBarsIcon } from '@primer/octicons-react';
 import { useTheme } from '@/theme/ThemeProvider';
 import { useNarrow, useResizablePane } from '@/lib/hooks';
@@ -27,6 +27,17 @@ export function AppShell({ onSettingsOpen, sidebarPane, railActions, sidebarOpen
   const { theme, toggle } = useTheme();
   const narrow = useNarrow();
   const closeSidebar = useCallback(() => onSidebarToggle(false), [onSidebarToggle]);
+  // The drawer is a CSS shift with no dialog behind it, so Escape is wired
+  // here: it closes the drawer and puts focus back on the button that opened
+  // it. Through Primer's registry, so an overlay open on top takes the key first.
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const drawerOpen = narrow && sidebarOpen;
+  useOnEscapePress(useCallback((e: KeyboardEvent) => {
+    if (!drawerOpen) return;
+    e.preventDefault();
+    onSidebarToggle(false);
+    menuButtonRef.current?.focus();
+  }, [drawerOpen, onSidebarToggle]));
 
   const { width, collapsed, snapping, dragging, expand, handleProps } = useResizablePane({ storageKey: PANE_WIDTH_KEY, min: PANE_MIN, max: PANE_MAX, defaultWidth: PANE_DEFAULT, edge: 'left', collapsedWidth: RAIL_WIDTH });
   // The rail is a desktop shape; the narrow layout's drawer ignores it.
@@ -37,14 +48,15 @@ export function AppShell({ onSettingsOpen, sidebarPane, railActions, sidebarOpen
     <div className={'app-layout' + (sidebarOpen ? ' sidebar-open' : '')}>
       {narrow && (
         <header className="mobile-header">
-          <IconButton icon={ThreeBarsIcon} variant="invisible" aria-label="Open sidebar" onClick={() => onSidebarToggle(true)} />
-          <span className="mobile-header-title" />
-          <IconButton icon={theme === 'day' ? MoonIcon : SunIcon} variant="invisible" aria-label="Toggle theme" onClick={toggle} />
-          <UserMenu onSettingsOpen={onSettingsOpen} compact align="end" />
+          <IconButton ref={menuButtonRef} icon={ThreeBarsIcon} variant="invisible" aria-label="Open sidebar" onClick={() => onSidebarToggle(true)} />
+          <div className="mobile-header-actions">
+            <IconButton icon={theme === 'day' ? MoonIcon : SunIcon} variant="invisible" aria-label="Toggle theme" onClick={toggle} />
+            <UserMenu onSettingsOpen={onSettingsOpen} compact align="end" />
+          </div>
         </header>
       )}
 
-      {narrow && <div className="sidebar-backdrop" onClick={closeSidebar} />}
+      {narrow && <div className="sidebar-backdrop" role="presentation" onClick={closeSidebar} />}
 
       <div className="app-body">
         <div className={'app-sidebar-pane' + (rail ? ' rail' : '') + (snapping && !narrow ? ' snapping' : '')} style={narrow ? undefined : { width: paneWidth }}>

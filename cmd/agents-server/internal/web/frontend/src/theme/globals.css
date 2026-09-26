@@ -118,13 +118,11 @@ a:hover {
     z-index: var(--zIndex-topbar);
 }
 
-.mobile-header-title {
-    flex: 1;
-    font-weight: var(--base-text-weight-semibold);
-    font-size: var(--base-text-size-md);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+.mobile-header-actions {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: var(--base-size-8);
 }
 
 /* Sidebar backdrop — conditionally rendered via useNarrow() in AppShell */
