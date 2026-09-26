@@ -16,6 +16,16 @@ the grant was minted for the previous identity — so the next connect prompts
 again. What each status means is in
 [the wire surface](../reference/protocol.md#mcp-servers--apiv1mcp-servers).
 
+## The sign-in popup never appeared
+
+The panel opens the popup on the click itself, but a browser set to block
+popups still blocks it. The row keeps the authorization URL for the flow it
+started: while it is `needs_auth` or `authorizing`, an **Open sign-in page**
+link sits beside the button and opens the same page in a tab. Finish there;
+the panel's polling picks the result up (the popup's own notification is only
+a shortcut). The ChatGPT sign-in under Providers offers the same link beside
+its paste field.
+
 ## A server stuck at "authorizing"
 
 The connect button opened the popup, and the row never leaves `authorizing`.

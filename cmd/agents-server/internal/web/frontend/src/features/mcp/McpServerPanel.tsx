@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Button, TextInput, Label, Select, Stack, ToggleSwitch, useConfirm } from '@primer/react';
+import { Button, TextInput, Label, Link, Select, Stack, ToggleSwitch, useConfirm } from '@primer/react';
 import { SecretInput } from '@/components/SecretInput';
 import { ToggleRow } from '@/components/ToggleRow';
 import { TokenListInput } from '@/components/TokenListInput';
@@ -245,6 +245,15 @@ function EnabledToggle({ server, onToggle }: { server: McpServer; onToggle: (s: 
 // handshake starts). Poll through this grace window until the list stabilizes.
 const MUTATION_GRACE_MS = 8000;
 const POLL_INTERVAL_MS = 1500;
+const OAUTH_POPUP = 'width=520,height=640,popup=yes';
+
+// A live authorization's URL, kept behind the row's "Open sign-in page" link
+// while the flow is in flight (a blocked popup leaves that the only way in).
+type AuthorizeLink = { url: string; at: number };
+
+// AUTH_PENDING are the statuses under which a connect is expected to ask for
+// authorization, and the row shows its link.
+const AUTH_PENDING = new Set<McpStatus>(['needs_auth', 'authorizing']);
 
 export function McpServerPanel() {
   const { me } = useMe();
@@ -261,6 +270,21 @@ export function McpServerPanel() {
   const [busy, setBusy] = useState<Record<string | number, boolean>>({});
   const [graceUntil, setGraceUntil] = useState(0);
   const bumpGrace = useCallback(() => setGraceUntil(Date.now() + MUTATION_GRACE_MS), []);
+  const [authorizeLink, setAuthorizeLink] = useState<Record<string | number, AuthorizeLink>>({});
+  // A link outlives its flow only through the grace window after the click
+  // (the poll has not flipped the row to authorizing yet); a row seen in any
+  // other status past it — connected, timed out back to needs_auth — drops it.
+  useEffect(() => {
+    setAuthorizeLink(prev => {
+      const now = Date.now();
+      const next: Record<string | number, AuthorizeLink> = {};
+      for (const [id, link] of Object.entries(prev)) {
+        const row = servers.find(s => String(s.id) === id);
+        if (row && (row.status === 'authorizing' || now - link.at < MUTATION_GRACE_MS)) next[id] = link;
+      }
+      return Object.keys(next).length === Object.keys(prev).length ? prev : next;
+    });
+  }, [servers]);
 
   // One poll loop for the whole panel: run while any server is in a
   // transitional status or a recent mutation may still be settling.
@@ -287,14 +311,24 @@ export function McpServerPanel() {
     return () => window.removeEventListener('message', handler);
   }, [reload, bumpGrace]);
 
-  const handleConnect = async (id: string | number) => {
+  const handleConnect = async (s: McpServer) => {
+    const id = s.id;
     setBusy(prev => ({ ...prev, [id]: true }));
+    // A popup opened after the await is not the click's any more and gets
+    // blocked, so a row expected to ask for authorization opens one now and
+    // points it once the URL is known; a plain reconnect opens none.
+    let popup = AUTH_PENDING.has(s.status) ? window.open('', 'mcp_oauth', OAUTH_POPUP) : null;
     try {
       const res = await api.mcpServers.connect(id) as { status?: string; authorize_url?: string } | null;
       if (res && res.status === 'authorization_required' && res.authorize_url) {
-        window.open(res.authorize_url, 'mcp_oauth', 'width=520,height=640,popup=yes');
+        setAuthorizeLink(prev => ({ ...prev, [id]: { url: res.authorize_url!, at: Date.now() } }));
+        if (popup) popup.location.href = res.authorize_url;
+        else popup = window.open(res.authorize_url, 'mcp_oauth', OAUTH_POPUP);
+      } else {
+        popup?.close();
       }
     } catch (e: unknown) {
+      popup?.close();
       toast.error((e as Error).message || 'Connect failed');
     }
     setBusy(prev => ({ ...prev, [id]: false }));
@@ -364,11 +398,14 @@ export function McpServerPanel() {
               actions={<>
                 {action && editable && (
                   <Button
-                    onClick={() => handleConnect(s.id)}
+                    onClick={() => handleConnect(s)}
                     disabled={action.inProgress || busy[s.id]}
                     size="small"
                     className="mcp-connect-btn"
                   >{busy[s.id] ? '…' : action.label}</Button>
+                )}
+                {editable && AUTH_PENDING.has(s.status) && authorizeLink[s.id] && (
+                  <Link href={authorizeLink[s.id].url} target="_blank" rel="noopener">Open sign-in page</Link>
                 )}
                 {/* Connecting arms a shared credential, so on a global row it
                     stays the admin's act — tell the member whose move it is

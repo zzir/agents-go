@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Button, TextInput, Label, SegmentedControl, Stack } from '@primer/react';
+import { Button, TextInput, Label, Link, SegmentedControl, Stack } from '@primer/react';
 import { SecretInput } from '@/components/SecretInput';
 import { FormActions } from '@/components/FormActions';
 import { CrudPanel, RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
@@ -131,14 +131,21 @@ export function ProviderPanel() {
   const [pasteURL, setPasteURL] = useState<Record<string, string>>({});
   const [awaiting, setAwaiting] = useState<Record<string, boolean>>({});
   const [completing, setCompleting] = useState<Record<string, boolean>>({});
+  // The authorize URL behind the paste field's link, for a blocked popup.
+  const [authorizeURL, setAuthorizeURL] = useState<Record<string, string>>({});
 
   const handleLogin = async (id: string) => {
+    // Opened on the click, before the await: a popup opened after one is
+    // not the click's any more and gets blocked.
+    const popup = window.open('', 'chatgpt_oauth', 'width=500,height=700');
     try {
       const d = await api.chatgpt.login(id) as { authorize_url: string };
-      window.open(d.authorize_url, 'chatgpt_oauth', 'width=500,height=700');
+      if (popup) popup.location.href = d.authorize_url;
+      setAuthorizeURL(prev => ({ ...prev, [id]: d.authorize_url }));
       setPasteURL(prev => ({ ...prev, [id]: '' }));
       setAwaiting(prev => ({ ...prev, [id]: true }));
     } catch (e) {
+      popup?.close();
       toast.error((e as Error).message);
     }
   };
@@ -222,6 +229,9 @@ export function ProviderPanel() {
                           onClick={() => handleComplete(p.id)}>Complete</Button>
                         <Button size="small" variant="invisible"
                           onClick={() => setAwaiting(prev => ({ ...prev, [p.id]: false }))}>Cancel</Button>
+                        {authorizeURL[p.id] && (
+                          <Link href={authorizeURL[p.id]} target="_blank" rel="noopener">Open sign-in page</Link>
+                        )}
                       </Stack>
                     : <Button onClick={() => handleLogin(p.id)} size="small" variant="invisible">Sign in</Button>)}
                 <RowActionsMenu name={p.name} editReadOnly={!rowEditable(p)} onEdit={() => startEdit(p)}
