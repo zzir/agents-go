@@ -178,21 +178,52 @@ func (r *Runner) startRunReserved(runID, sessionID, agentConfigID, projectID str
 func (r *Runner) launchSegment(seg *runSegment, runID, sessionID string, onDone func(*RunOutcome), exec func() *RunOutcome) {
 	go func() {
 		defer seg.finalize()
-		// Last-resort recover (exec recovers its own panics): free the session
-		// slot — a leaked slot bricks the session — and keep the process.
+		// Last-resort recover (exec recovers its own panics past its preamble): the
+		// segment ends as an internal error with its bookkeeping, and the process lives.
 		defer func() {
 			if p := recover(); p != nil {
-				logging.Ctx(r.hub.rootCtx).Error("run teardown panicked", "run_id", runID, "panic", p, "stack", string(debug.Stack()))
-				r.hub.finish(runID, false)
+				logging.Ctx(r.hub.rootCtx).Error("run segment panicked", "run_id", runID, "panic", p, "stack", string(debug.Stack()))
+				r.endSegment(runID, sessionID, r.panicOutcome(runID, sessionID, p), onDone)
 			}
 		}()
-		result := exec()
-		r.hub.finish(runID, result.Interrupted)
-		r.postRun(runID, sessionID, result)
-		if onDone != nil {
-			onDone(result)
+		r.endSegment(runID, sessionID, exec(), onDone)
+	}()
+}
+
+// endSegment is a segment's terminal bookkeeping: free the slot, drain and
+// settle (postRun), tell the caller — the last two each on their own recover,
+// so a failing step neither skips the next nor re-enters the recover above.
+func (r *Runner) endSegment(runID, sessionID string, result *RunOutcome, onDone func(*RunOutcome)) {
+	r.hub.finish(runID, result.Interrupted)
+	r.guarded(runID, "postRun", func() { r.postRun(runID, sessionID, result) })
+	if onDone != nil {
+		r.guarded(runID, "onDone", func() { onDone(result) })
+	}
+}
+
+// guarded runs one teardown step, logging a panic instead of unwinding.
+func (r *Runner) guarded(runID, step string, fn func()) {
+	defer func() {
+		if p := recover(); p != nil {
+			logging.Ctx(r.hub.rootCtx).Error("run teardown panicked", "run_id", runID, "step", step, "panic", p, "stack", string(debug.Stack()))
 		}
 	}()
+	fn()
+}
+
+// panicOutcome ends a segment that panicked before its own recover: run.error
+// is published (so the hub status, and thereby the task row, read errored)
+// and the outcome mirrors it.
+func (r *Runner) panicOutcome(runID, sessionID string, p any) *RunOutcome {
+	msg := fmt.Sprintf("internal error: %v", p)
+	if env, err := protocol.NewEnvelope(protocol.EventRunError, protocol.RunError{RunID: runID, Code: protocol.CodeInternal, Message: msg}); err == nil {
+		r.hub.publish(runID, env)
+	}
+	out := &RunOutcome{RunID: runID, SessionID: sessionID, ErrCode: protocol.CodeInternal, ErrMessage: msg}
+	if info, ok := r.hub.Info(runID); ok {
+		out.AgentConfigID, out.ProjectID = info.AgentConfigID, info.ProjectID
+	}
+	return out
 }
 
 // segmentSpec is what differs between a fresh segment and a resume
@@ -212,8 +243,8 @@ type segmentSpec struct {
 	// fresh gates the fresh-run extras (session pre-check, run.agent_start,
 	// arming the plan unlock, title generation); a resume already did them.
 	fresh bool
-	// built is a resume's agent, built by the approval path and released by
-	// its onDone; nil means the segment builds (and releases) its own.
+	// built is a resume's agent, built by the approval path; the segment
+	// releases it. nil means the segment builds (and releases) its own.
 	built *BuildResult
 	// start launches the SDK run — agents.Run for a fresh segment,
 	// agents.ResumeRun for a continuation.
@@ -223,6 +254,10 @@ type segmentSpec struct {
 // execStreamed executes one run segment — fresh or resumed — to completion,
 // publishing events to the hub, and returns its outcome.
 func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfigID, projectID string, spec segmentSpec) (out *RunOutcome) {
+	// Owned from here, whatever the segment does next — a panic included.
+	if spec.built != nil {
+		defer spec.built.Release()
+	}
 	log := logging.Ctx(ctx)
 	// Stamp the run id so a spawn_task inside the run records which run spawned
 	// it — that is what lets the trace panel nest the task's wake-up run here.
@@ -476,8 +511,9 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 
 // ResumeRun registers a continuation of a paused run and launches it in the
 // background, reopening the SAME hub run (one id, one event sequence). built
-// is the agent the state was restored against; onDone fires once when the
-// continuation terminates. ErrSessionBusy if the session has a live run.
+// is the agent the state was restored against, released by the segment once
+// this returns nil; onDone fires once when the continuation terminates.
+// ErrSessionBusy if the session has a live run.
 // verify, when non-nil, runs after the run is registered and before the
 // goroutine launches: an error withdraws the run, so nothing executes ahead of a recheck.
 func (r *Runner) ResumeRun(runID string, state *agents.RunState, built *BuildResult, sessionID, agentConfigID, projectID string, verify func() error, onDone func(*RunOutcome)) (string, error) {

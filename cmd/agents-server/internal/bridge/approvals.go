@@ -241,7 +241,7 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 		return "", pending.SessionID, fmt.Errorf("rebuilding agent: %w", err)
 	}
 	// The rebuilt agent IS the resumed run's executor (ResumeRun), so its
-	// sandbox reference lives as long as that run: released by onDone below
+	// sandbox reference lives as long as that run: the segment releases it
 	// once handed off, else here.
 	handedOff := false
 	defer func() {
@@ -305,14 +305,7 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 		return "", pending.SessionID, fmt.Errorf("claiming pending approval: %w", err)
 	}
 
-	// The continuation reopens the SAME run id. The wrapped onDone releases the
-	// rebuild's sandbox reference when the resumed segment ends.
-	resumeDone := func(res *RunOutcome) {
-		rebuilt.Release()
-		if onDone != nil {
-			onDone(res)
-		}
-	}
+	// The continuation reopens the SAME run id.
 	// verify runs after the run registers but BEFORE its goroutine launches:
 	// a stop that finalized the task meanwhile means the tool must not run.
 	verify := func() error {
@@ -328,7 +321,7 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 		}
 		return nil
 	}
-	runID, err = r.ResumeRun(pending.RunID, state, rebuilt, pending.SessionID, pending.AgentConfigID, pending.ProjectID, verify, resumeDone)
+	runID, err = r.ResumeRun(pending.RunID, state, rebuilt, pending.SessionID, pending.AgentConfigID, pending.ProjectID, verify, onDone)
 	if errors.Is(err, errResumeStopped) {
 		// Stopped between the claim and the launch: nothing ran, nothing to
 		// restore. A 409 like a terminal run's, not a 500.
