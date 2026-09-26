@@ -292,6 +292,13 @@ describe('useAgentSocket run events', () => {
     await t.unmount();
   });
 
+  it('an approval refused without a session or run id rebuilds the session on screen', async () => {
+    const t = await mount(() => S1);
+    await act(async () => { t.sock().receive(EV.runError, { code: ERR.approvalFailed, message: 'approval not found' }); });
+    expect(apiMock.sessions.messages).toHaveBeenCalledWith(S1);
+    await t.unmount();
+  });
+
   it('session_busy rolls back the newest unsent bubble and leaves the rest', async () => {
     const t = await mount(() => S1);
     const updateSS = (fn: (s: SessionState) => SessionState) => { t.store[S1] = fn(t.store[S1] || defaultSS()); };

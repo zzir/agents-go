@@ -597,10 +597,12 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
       // An approve/reject that failed server-side (session busy, config deleted,
       // stale state): the optimistic 'approved'/'rejected' card status was never
       // rolled back. Rebuild the paused turn from the durable approval row so its
-      // pending card and Approve/Reject controls reappear, and surface why.
+      // pending card and Approve/Reject controls reappear, and surface why. A
+      // refusal that found no row carries neither id: the decision was clicked
+      // on the session on screen, so that is the one to rebuild.
       if (p.code === ERR.approvalFailed) {
         toast.error(p.message || 'Approval failed');
-        const sid = p.session_id || (p.run_id ? runMapRef.current[p.run_id] : undefined);
+        const sid = p.session_id || (p.run_id ? runMapRef.current[p.run_id] : undefined) || eventsRef.current.activeSession();
         if (sid) reloadMessages(sid);
         return;
       }
