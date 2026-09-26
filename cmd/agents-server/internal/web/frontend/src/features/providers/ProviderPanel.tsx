@@ -10,6 +10,7 @@ import { ReadOnlyContext, canDeleteRow, canDemoteRow, canEditRow } from '@/lib/a
 import { useMe } from '@/lib/me';
 import { ResourceRow } from '@/components/ResourceRow';
 import { api } from '@/lib/api';
+import { SECRET_MASK } from '@/lib/binding';
 import { useApi, useCrud } from '@/lib/hooks';
 import { fc, seg } from '@/lib/form';
 import { toast } from '@/lib/toast';
@@ -66,7 +67,7 @@ function ProviderForm({ initial, onSave, onCancel, onDelete, saving, providerTyp
   const destinationChanged = initial !== undefined && initial !== null &&
     (providerMeta(form.type).type !== providerMeta(initialType).type ||
       form.base_url.replace(/\/+$/, '') !== initialBaseURL.replace(/\/+$/, ''));
-  const staleKeyHint = destinationChanged && form.api_key === '********'
+  const staleKeyHint = destinationChanged && form.api_key === SECRET_MASK
     ? 'The stored key belongs to the previous destination — enter a new one or clear it'
     : undefined;
 

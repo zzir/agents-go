@@ -5,6 +5,7 @@ import { ToggleRow } from '@/components/ToggleRow';
 import { UnsavedForm } from '@/components/UnsavedForm';
 import { useReadOnly } from '@/lib/access';
 import { api } from '@/lib/api';
+import { SECRET_MASK } from '@/lib/binding';
 import { useApi } from '@/lib/hooks';
 import { toast } from '@/lib/toast';
 import { UNSEALED_TEXT, useServerInfo } from '@/features/settings/serverInfo';
@@ -223,7 +224,7 @@ function SettingInput({ def, draft, setDraft }: { def: SettingDef; draft: string
         <SecretInput
           value={draft}
           onChange={(e: ChangeEvent<HTMLInputElement>) => setDraft(e.target.value)}
-          placeholder="******** keeps the stored value"
+          placeholder={`${SECRET_MASK} keeps the stored value`}
           block
         />
       );
