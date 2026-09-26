@@ -1,0 +1,12 @@
+/* A failed list read: one line and its Retry, above the rows. */
+.load-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--base-size-8);
+}
+
+.load-error-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

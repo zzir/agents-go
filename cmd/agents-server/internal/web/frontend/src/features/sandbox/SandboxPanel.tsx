@@ -344,7 +344,7 @@ function copyOf(s: SandboxRow): SandboxRow {
 
 export function SandboxPanel() {
   const readOnly = useReadOnly();
-  const { items, loading, adding, editing, startAdd, startEdit, cancel, save, saving, remove } =
+  const { items, loading, error, reload, adding, editing, startAdd, startEdit, cancel, save, saving, remove } =
     useCrud<SandboxRow, PackedForm>(api.sandboxes, 'sandboxes');
   const [seed, setSeed] = useState<SandboxRow | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
@@ -376,7 +376,7 @@ export function SandboxPanel() {
     : null;
 
   return (
-    <CrudPanel title="Sandboxes" onAdd={() => { setSeed(null); startAdd(); }} onCancel={close} form={form} loading={loading} isEmpty={items.length === 0}
+    <CrudPanel title="Sandboxes" onAdd={() => { setSeed(null); startAdd(); }} onCancel={close} form={form} loading={loading} error={error} onRetry={reload} isEmpty={items.length === 0}
       empty="No sandboxes yet." emptyHint="A sandbox is where a project's files live and its commands run.">
       {items.map(s => (
         <ResourceRow key={s.id}

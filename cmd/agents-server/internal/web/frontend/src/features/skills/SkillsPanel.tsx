@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { ActionList, Button, TextInput, Textarea, Label, Stack } from '@primer/react';
-import { Blankslate } from '@primer/react/experimental';
 import { RowMenu } from '@/components/ListTable';
 import { FormActions } from '@/components/FormActions';
 import { CrudPanel, ScopeBadge } from '@/components/CrudPanel';
@@ -197,23 +196,13 @@ export function SkillsPanel() {
       onDelete={canDeleteRow(isAdmin, me?.id, editing) ? async () => { if (await remove(editing.id, editing.name)) cancel(); } : undefined} />
   ) : null;
 
-  if (error) {
-    return (
-      <Blankslate>
-        <Blankslate.Heading>Could not load skills</Blankslate.Heading>
-        <Blankslate.Description>{error}</Blankslate.Description>
-        <Blankslate.PrimaryAction onClick={() => reload()}>Retry</Blankslate.PrimaryAction>
-      </Blankslate>
-    );
-  }
-
   return (
     // Scoped rows: the form is a disabled view exactly when the opened row is
     // not the caller's to edit (canEditRow), not for every member. Creating
     // and importing are every member's: the rows land private, owned by them.
     <ReadOnlyContext value={!!editing && !skillEditable(editing)}>
       <CrudPanel title="Skills" onAdd={startAdd} onCancel={importing ? closeImport : cancel} form={form}
-        loading={loading} isEmpty={grouped.length === 0}
+        loading={loading} error={error} onRetry={reload} isEmpty={grouped.length === 0}
         search={{ value: query, onChange: setQuery, placeholder: 'Search skills' }}
         actions={<Button onClick={() => setImporting(true)} size="small">Import</Button>}
         onDelete={editing && canDeleteRow(isAdmin, me?.id, editing)

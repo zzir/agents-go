@@ -3,6 +3,7 @@ import { Button, TextInput, Textarea, Label, CounterLabel, Select, IconButton, S
 import { FormActions } from '@/components/FormActions';
 import { Paged } from '@/components/Paged';
 import { Blankslate } from '@primer/react/experimental';
+import { LoadError } from '@/components/LoadError';
 import { Loading } from '@/components/Loading';
 import { ChevronUpIcon, ChevronDownIcon, TrashIcon, PlayIcon, WorkflowIcon, ZapIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
@@ -315,7 +316,7 @@ export function WorkflowPanel({ sessionId }: { sessionId: string | null }) {
   const isAdmin = me?.role === 'admin';
   const canCreate = !meLoading;
   const rowEditable = (w: Workflow) => canEditRow(isAdmin, me?.id, w);
-  const { items: workflows, loading, adding, editing, startAdd, startEdit, cancel, save, saving, remove, reload } =
+  const { items: workflows, loading, error, adding, editing, startAdd, startEdit, cancel, save, saving, remove, reload } =
     useCrud<Workflow, WorkflowFormData>(api.workflows, 'workflows');
   const { data: agents } = useApi<AgentRef[]>(() => api.agents.list() as Promise<AgentRef[]>);
   // A template pre-fills the add form; cleared when the form closes.
@@ -370,6 +371,7 @@ export function WorkflowPanel({ sessionId }: { sessionId: string | null }) {
       {adding && <WorkflowForm saving={saving} initial={template} onSave={f => { setTemplate(null); save(f); }} onCancel={closeForm} agents={agents} />}
       {editing && editForm}
 
+      {!adding && !editing && error && <LoadError what="workflows" error={error} onRetry={reload} />}
       {!adding && !editing && <Paged page={page} total={workflows.length} label="Workflow pages">
         <div className="Box">
           {/* The row is the toggle (a div header: it nests the buttons, whose
@@ -410,8 +412,8 @@ export function WorkflowPanel({ sessionId }: { sessionId: string | null }) {
               </div>
             </Disclosure>
           ))}
-          {loading && workflows.length === 0 && <Loading kind="list" />}
-          {!loading && workflows.length === 0 && (
+          {loading && workflows.length === 0 && !error && <Loading kind="list" />}
+          {!loading && workflows.length === 0 && !error && (
             <Blankslate>
               <Blankslate.Visual><WorkflowIcon size={24} /></Blankslate.Visual>
               <Blankslate.Heading>No workflows yet</Blankslate.Heading>

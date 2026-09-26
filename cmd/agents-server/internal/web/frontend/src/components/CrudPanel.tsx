@@ -4,6 +4,7 @@ import { SearchIcon } from '@primer/octicons-react';
 import { ScopeFilter, useScopeFilter } from '@/components/ScopeFilter';
 import { Blankslate } from '@primer/react/experimental';
 import { RowMenu } from '@/components/ListTable';
+import { LoadError } from '@/components/LoadError';
 import { Loading } from '@/components/Loading';
 import { UnsavedForm } from '@/components/UnsavedForm';
 import { useReadOnly, type ScopedRow } from '@/lib/access';
@@ -12,14 +13,15 @@ import { toast } from '@/lib/toast';
 
 /** The list-or-form scaffold every settings panel shares: a PageHeader whose
  * "+ Add" hides while a form shows, the form in the list's place, a skeleton
- * while the first fetch is out, and a Blankslate when the list is empty. The
+ * while the first fetch is out, a Blankslate when the list is empty, and a
+ * LoadError line over the rows when the read failed (invariant 79). The
  * form and each row stay the panel's own. as="section" nests it inside a page
  * (the Settings routes block).
  * Read-only (a member's dialog, or a scoped row not the caller's to edit):
  * no Add, and the form opens disabled — a view of the record — with Back
  * where Cancel would be, plus Delete when onDelete allows it (the admin's
  * one write on a foreign private row). */
-export function CrudPanel({ title, as, description, actions, search, filter, onAdd, onCancel, onDelete, form, loading, isEmpty, empty, emptyHint, children }: {
+export function CrudPanel({ title, as, description, actions, search, filter, onAdd, onCancel, onDelete, form, loading, error, onRetry, noun, isEmpty, empty, emptyHint, children }: {
   title: string;
   as?: 'page' | 'section';
   description?: ReactNode;
@@ -40,6 +42,12 @@ export function CrudPanel({ title, as, description, actions, search, filter, onA
   // useCrud's flag: an empty list is a skeleton, not "No X yet", until the
   // first fetch answers.
   loading?: boolean;
+  // useCrud's error: why the last read failed, shown over the rows (stale
+  // ones included) with Retry; never the empty state.
+  error?: string | null;
+  onRetry?: () => void;
+  // The plural the error line names the list by; the title, lowercased, otherwise.
+  noun?: string;
   isEmpty: boolean;
   // "No <things> yet." — and, under it, what to do about that.
   empty: ReactNode;
@@ -78,10 +86,11 @@ export function CrudPanel({ title, as, description, actions, search, filter, onA
       {form && (readOnly
         ? <fieldset disabled className="readonly-form settings-form">{form}</fieldset>
         : <UnsavedForm className="settings-form">{form}</UnsavedForm>)}
+      {!form && error && <LoadError what={noun ?? title.toLowerCase()} error={error} onRetry={onRetry} />}
       {!form && (
         <div className="Box">
           {children}
-          {isEmpty && (loading
+          {isEmpty && !error && (loading
             ? <Loading kind="list" />
             : <Blankslate>
                 <Blankslate.Description>

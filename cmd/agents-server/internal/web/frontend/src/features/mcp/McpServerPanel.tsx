@@ -246,7 +246,7 @@ export function McpServerPanel() {
   const { me } = useMe();
   const isAdmin = me?.role === 'admin';
   const rowEditable = (s: McpServer) => canEditRow(isAdmin, me?.id, s);
-  const { items: servers, loading, reload, adding, editing, startAdd, startEdit, cancel, save, saving, remove } = useCrud<McpServer, Partial<McpServer>>(api.mcpServers, 'mcp-servers');
+  const { items: servers, loading, error, reload, adding, editing, startAdd, startEdit, cancel, save, saving, remove } = useCrud<McpServer, Partial<McpServer>>(api.mcpServers, 'mcp-servers');
   const [query, setQuery] = useState('');
   const scopeFilter = useScopeFilter();
   const rows = filterRows(servers, { mine: !!scopeFilter?.mine, meId: me?.id, query }, s => `${s.name} ${(s.config && s.config.endpoint) || ''}`);
@@ -339,7 +339,7 @@ export function McpServerPanel() {
     // Scoped rows: the form is a disabled view exactly when the opened row is
     // not the caller's to edit (canEditRow), not for every member.
     <ReadOnlyContext value={!!editing && !rowEditable(editing)}>
-      <CrudPanel title="MCP servers" onAdd={startAdd} onCancel={cancel} form={form} loading={loading} isEmpty={rows.length === 0}
+      <CrudPanel title="MCP servers" onAdd={startAdd} onCancel={cancel} form={form} loading={loading} error={error} onRetry={reload} isEmpty={rows.length === 0}
         search={{ value: query, onChange: setQuery, placeholder: 'Search MCP servers' }}
         {...listEmpty({ noun: 'MCP servers', total: servers.length, query, mine: !!scopeFilter?.mine, hint: 'An MCP server lends its tools to the agents that select it.' })}
         onDelete={editing && canDeleteRow(isAdmin, me?.id, editing)

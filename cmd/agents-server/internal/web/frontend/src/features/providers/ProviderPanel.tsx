@@ -117,7 +117,7 @@ export function ProviderPanel() {
   const { me } = useMe();
   const isAdmin = me?.role === 'admin';
   const rowEditable = (p: Provider) => canEditRow(isAdmin, me?.id, p);
-  const { items: providers, loading, adding, editing, startAdd, startEdit, cancel, save, saving, remove, reload } =
+  const { items: providers, loading, error, adding, editing, startAdd, startEdit, cancel, save, saving, remove, reload } =
     useCrud<Provider, ProviderFormData>(api.providers, 'providers');
   const [query, setQuery] = useState('');
   const scopeFilter = useScopeFilter();
@@ -187,7 +187,7 @@ export function ProviderPanel() {
     // Scoped rows: the form is a disabled view exactly when the opened row is
     // not the caller's to edit (canEditRow), not for every member.
     <ReadOnlyContext value={!!editing && !rowEditable(editing)}>
-      <CrudPanel title="Providers" onAdd={startAdd} onCancel={cancel} form={form} loading={loading} isEmpty={rows.length === 0}
+      <CrudPanel title="Providers" onAdd={startAdd} onCancel={cancel} form={form} loading={loading} error={error} onRetry={reload} isEmpty={rows.length === 0}
         search={{ value: query, onChange: setQuery, placeholder: 'Search providers' }}
         onDelete={editing && canDeleteRow(isAdmin, me?.id, editing)
           ? async () => { if (await remove(editing.id, editing.name)) cancel(); } : null}

@@ -459,3 +459,8 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     <brief>` all pass through it, and the form that names a session ahead of
     its start mirrors it (`lib/sessionTitle.ts`). A fork's base is clipped so
     the `(fork N)` suffix keeps the name inside the 256 a rename is held to.
+79. **A list that failed to load says so and offers Retry above its rows; it
+    never renders the empty state for a failed read.** `CrudPanel` takes
+    `useCrud`'s `error` and `reload` and shows `LoadError` over the rows a
+    cache still holds — a stale list under a line, never a "No X yet" that
+    reads as none, and never a toast for a read (`components/LoadError.tsx`).

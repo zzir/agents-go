@@ -144,7 +144,7 @@ function GuardrailForm({ initial, onSave, onCancel, onDelete, saving }: Guardrai
 }
 
 export function GuardrailPanel() {
-  const { items: guardrails, loading, adding, editing, startAdd, startEdit, cancel, save, saving, remove } =
+  const { items: guardrails, loading, error, reload, adding, editing, startAdd, startEdit, cancel, save, saving, remove } =
     useCrud<Guardrail, GuardrailFormData>(api.guardrails, 'guardrails');
 
   const isBuiltin = (g: Guardrail): boolean => !g.id;
@@ -154,7 +154,7 @@ export function GuardrailPanel() {
     : null;
 
   return (
-    <CrudPanel title="Guardrails" onAdd={startAdd} onCancel={cancel} form={form} loading={loading} isEmpty={guardrails.length === 0}
+    <CrudPanel title="Guardrails" onAdd={startAdd} onCancel={cancel} form={form} loading={loading} error={error} onRetry={reload} isEmpty={guardrails.length === 0}
       empty="No guardrails yet." emptyHint="content_filter, max_input_length and max_output_length are always available.">
       {guardrails.map((g, i) => (
         <ResourceRow key={g.id || ('builtin-' + i)}
