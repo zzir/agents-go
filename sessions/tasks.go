@@ -256,8 +256,23 @@ func (s *TaskStore) Finalize(ctx context.Context, id, runID string, st tasks.Sta
 	if err != nil {
 		return false, fmt.Errorf("finalizing task %q: %w", id, err)
 	}
-	n, _ := res.RowsAffected()
-	return n > 0, nil
+	if n, aerr := res.RowsAffected(); aerr == nil && n > 0 {
+		return true, nil
+	}
+	return false, s.casMiss(ctx, id)
+}
+
+// casMiss classifies a CAS that changed no row: an absent id is ErrNotFound,
+// a present one a lost claim (nil, for won=false). Every store answers alike.
+func (s *TaskStore) casMiss(ctx context.Context, id string) error {
+	exists, err := s.db.NewSelect().Model((*taskRow)(nil)).Where("id = ?", id).Exists(ctx)
+	if err != nil {
+		return fmt.Errorf("looking up task %q: %w", id, err)
+	}
+	if !exists {
+		return tasks.ErrNotFound
+	}
+	return nil
 }
 
 // RetryClaim implements tasks.Store as one conditional UPDATE, so the attempt
@@ -289,16 +304,7 @@ func (s *TaskStore) RetryClaim(ctx context.Context, id, newRunID string, maxAtte
 	if n, aerr := res.RowsAffected(); aerr == nil && n > 0 {
 		return true, nil
 	}
-	// Zero rows is "could not claim" or "no such task", which mean different things
-	// to a caller — the same disambiguation ReclaimWorking makes.
-	exists, eerr := s.db.NewSelect().Model((*taskRow)(nil)).Where("id = ?", id).Exists(ctx)
-	if eerr != nil {
-		return false, fmt.Errorf("claiming a retry of task %q: %w", id, eerr)
-	}
-	if !exists {
-		return false, tasks.ErrNotFound
-	}
-	return false, nil
+	return false, s.casMiss(ctx, id)
 }
 
 // Advance implements tasks.Store as one conditional UPDATE: the run moves and
@@ -323,14 +329,7 @@ func (s *TaskStore) Advance(ctx context.Context, id, runID, nextRunID string, st
 	if n, aerr := res.RowsAffected(); aerr == nil && n > 0 {
 		return true, nil
 	}
-	exists, eerr := s.db.NewSelect().Model((*taskRow)(nil)).Where("id = ?", id).Exists(ctx)
-	if eerr != nil {
-		return false, fmt.Errorf("advancing task %q: %w", id, eerr)
-	}
-	if !exists {
-		return false, tasks.ErrNotFound
-	}
-	return false, nil
+	return false, s.casMiss(ctx, id)
 }
 
 // ReleaseRetryClaim implements tasks.Store as one conditional UPDATE bound to
@@ -351,8 +350,10 @@ func (s *TaskStore) ReleaseRetryClaim(ctx context.Context, id, runID, summary, r
 	if err != nil {
 		return false, fmt.Errorf("releasing the retry claim of task %q: %w", id, err)
 	}
-	n, _ := res.RowsAffected()
-	return n > 0, nil
+	if n, aerr := res.RowsAffected(); aerr == nil && n > 0 {
+		return true, nil
+	}
+	return false, s.casMiss(ctx, id)
 }
 
 // MarkInputRequired implements tasks.Store, bound to the current attempt like
@@ -390,16 +391,7 @@ func (s *TaskStore) ReclaimWorking(ctx context.Context, id, runID string) (bool,
 	if n, aerr := res.RowsAffected(); aerr == nil && n > 0 {
 		return true, nil
 	}
-	// Zero rows is "not in input_required" (lost the claim) or "no such task"; the
-	// in-memory store distinguishes them, so two shipped Stores must agree.
-	exists, eerr := s.db.NewSelect().Model((*taskRow)(nil)).Where("id = ?", id).Exists(ctx)
-	if eerr != nil {
-		return false, fmt.Errorf("reclaiming task %q: %w", id, eerr)
-	}
-	if !exists {
-		return false, tasks.ErrNotFound
-	}
-	return false, nil
+	return false, s.casMiss(ctx, id)
 }
 
 // FailOrphans implements tasks.Store, as ONE statement so the rows reported

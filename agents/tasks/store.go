@@ -24,8 +24,9 @@ type Store interface {
 	// Finalize records a terminal status and its result in ONE conditional
 	// transition, only while the task is non-terminal AND still on the attempt
 	// runID names. won=false means another finalizer owned the transition or the
-	// attempt is no longer current: do nothing further. state, when non-nil, is
-	// the job's final State, written in the same transition — spec §2.13.
+	// attempt is no longer current: do nothing further; an unknown id is
+	// ErrNotFound. state, when non-nil, is the job's final State, written in
+	// the same transition — spec §2.13.
 	Finalize(ctx context.Context, id, runID string, st Status, summary, result string, state json.RawMessage) (won bool, err error)
 
 	// RetryClaim reopens a failed task for another attempt, in one transition
@@ -46,7 +47,7 @@ type Store interface {
 	// again, the attempt rolled back (it counts runs the task HAD), the launch
 	// failure recorded as summary/result — an ending reported like any other.
 	// Only while runID is current and the row is working; won=false means
-	// another writer moved the task first — spec §2.13.
+	// another writer moved the task first; an unknown id is ErrNotFound — spec §2.13.
 	ReleaseRetryClaim(ctx context.Context, id, runID, summary, result string) (won bool, err error)
 
 	// MarkInputRequired flips working → input_required, only while runID is the

@@ -183,7 +183,10 @@ func (s *TaskStore) Finalize(ctx context.Context, id, runID, status, summary, re
 		}
 		n, _ := res.RowsAffected()
 		won = n > 0
-		if won && row != nil {
+		if !won {
+			return casMiss(ctx, tx, id)
+		}
+		if row != nil {
 			if wk := buildWakeup(row); wk != nil {
 				if _, err := tx.NewInsert().Model(wk).Exec(ctx); err != nil {
 					return fmt.Errorf("recording task %s wake-up: %w", id, err)
@@ -196,7 +199,7 @@ func (s *TaskStore) Finalize(ctx context.Context, id, runID, status, summary, re
 }
 
 // taskRowForWakeup reads the row a debt will be addressed from, inside the
-// caller's tx. A missing row is nil (the CAS reports the miss); any other failure is an error.
+// caller's tx; nil when no debt is built. A missing row is ErrNotFound.
 func taskRowForWakeup(ctx context.Context, tx bun.Tx, id string, buildWakeup func(*Task) *Wakeup) (*Task, error) {
 	if buildWakeup == nil {
 		return nil, nil
@@ -204,11 +207,24 @@ func taskRowForWakeup(ctx context.Context, tx bun.Tx, id string, buildWakeup fun
 	row := new(Task)
 	if err := tx.NewSelect().Model(row).Where("id = ?", id).Scan(ctx); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
+			return nil, ErrNotFound
 		}
 		return nil, fmt.Errorf("reading task %s for its wake-up: %w", id, err)
 	}
 	return row, nil
+}
+
+// casMiss classifies a CAS that changed no row: an absent id is ErrNotFound,
+// a present one a lost claim (nil, for won=false). Every store answers alike.
+func casMiss(ctx context.Context, db bun.IDB, id string) error {
+	exists, err := db.NewSelect().Model((*Task)(nil)).Where("id = ?", id).Exists(ctx)
+	if err != nil {
+		return fmt.Errorf("looking up task %s: %w", id, err)
+	}
+	if !exists {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // RetryClaim implements the tasks.Store contract as one conditional UPDATE,
@@ -258,16 +274,7 @@ func (s *TaskStore) RetryClaim(ctx context.Context, id, newRunID string, maxAtte
 	if won {
 		return true, nil
 	}
-	// Zero rows is "could not claim" or "no such task"; the SDK's in-memory
-	// store distinguishes them, so this one must too.
-	exists, eerr := s.db.NewSelect().Model((*Task)(nil)).Where("id = ?", id).Exists(ctx)
-	if eerr != nil {
-		return false, fmt.Errorf("claiming a retry of task %s: %w", id, eerr)
-	}
-	if !exists {
-		return false, ErrNotFound
-	}
-	return false, nil
+	return false, casMiss(ctx, s.db, id)
 }
 
 // Advance implements the tasks.Store contract as one conditional UPDATE: the
@@ -290,14 +297,7 @@ func (s *TaskStore) Advance(ctx context.Context, id, runID, nextRunID string, st
 	if n, aerr := res.RowsAffected(); aerr == nil && n > 0 {
 		return true, nil
 	}
-	exists, eerr := s.db.NewSelect().Model((*Task)(nil)).Where("id = ?", id).Exists(ctx)
-	if eerr != nil {
-		return false, fmt.Errorf("advancing task %s: %w", id, eerr)
-	}
-	if !exists {
-		return false, ErrNotFound
-	}
-	return false, nil
+	return false, casMiss(ctx, s.db, id)
 }
 
 // Dismiss hides a terminal task from the live strip. Terminal-only: a running
@@ -346,7 +346,10 @@ func (s *TaskStore) ReleaseRetryClaim(ctx context.Context, id, runID, summary, r
 		}
 		n, _ := res.RowsAffected()
 		won = n > 0
-		if won && row != nil {
+		if !won {
+			return casMiss(ctx, tx, id)
+		}
+		if row != nil {
 			if wk := buildWakeup(row); wk != nil {
 				if _, err := tx.NewInsert().Model(wk).Exec(ctx); err != nil {
 					return err
@@ -544,14 +547,7 @@ func (s *TaskStore) ReclaimWorking(ctx context.Context, id, runID string) (bool,
 	if n, aerr := res.RowsAffected(); aerr == nil && n > 0 {
 		return true, nil
 	}
-	exists, eerr := s.db.NewSelect().Model((*Task)(nil)).Where("id = ?", id).Exists(ctx)
-	if eerr != nil {
-		return false, fmt.Errorf("reclaiming task %s: %w", id, eerr)
-	}
-	if !exists {
-		return false, ErrNotFound
-	}
-	return false, nil
+	return false, casMiss(ctx, s.db, id)
 }
 
 // DeleteByID removes a task row — only used to unwind a spawn whose run never

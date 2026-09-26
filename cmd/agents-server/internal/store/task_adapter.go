@@ -146,9 +146,10 @@ func (a *TaskAdapter) ListByParent(ctx context.Context, parentSessionID string) 
 // Finalize implements tasks.Store. The closure builds the wake-up the
 // finished task owes its parent inside the SAME transaction — invariant 32.
 func (a *TaskAdapter) Finalize(ctx context.Context, id, runID string, st tasks.Status, summary, result string, state json.RawMessage) (bool, error) {
-	return a.store.Finalize(ctx, id, runID, string(st), summary, result, state, func(row *Task) *Wakeup {
+	won, err := a.store.Finalize(ctx, id, runID, string(st), summary, result, state, func(row *Task) *Wakeup {
 		return taskWakeup(row, st, summary, result, runID)
 	})
+	return won, mapNotFound(err)
 }
 
 // taskWakeup is the debt a finished task owes its parent, or nil: only a

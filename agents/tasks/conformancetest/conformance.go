@@ -96,6 +96,10 @@ func Run(t *testing.T, newStore func(t *testing.T) tasks.Store) {
 		if won, err := s.Finalize(ctx, task.ID, task.RunID, tasks.StatusFailed, "", "", nil); err != nil || won {
 			t.Fatalf("re-finalize: won=%v err=%v, want a refusal", won, err)
 		}
+		// Unknown id is a different answer from a lost transition.
+		if _, err := s.Finalize(ctx, name("absent"), name("run"), tasks.StatusFailed, "", "", nil); !errors.Is(err, tasks.ErrNotFound) {
+			t.Fatalf("missing task: err = %v, want ErrNotFound", err)
+		}
 	})
 
 	t.Run("retry claim reopens exactly one failed attempt", func(t *testing.T) {
@@ -251,6 +255,9 @@ func Run(t *testing.T, newStore func(t *testing.T) tasks.Store) {
 		// Released, the row is failed — nothing left to undo.
 		if won, err := s.ReleaseRetryClaim(ctx, task.ID, name("run2"), "s", "r"); err != nil || won {
 			t.Fatalf("double release: won=%v err=%v, want a refusal", won, err)
+		}
+		if _, err := s.ReleaseRetryClaim(ctx, name("absent"), name("run"), "s", "r"); !errors.Is(err, tasks.ErrNotFound) {
+			t.Fatalf("missing task: err = %v, want ErrNotFound", err)
 		}
 	})
 

@@ -1645,6 +1645,9 @@ A task is a sub-agent that outlives the turn that started it
   silent no-op, its resolve is refused as stale and discarded, and the expiry
   reaper finalizes against the approval's OWN run id. A stop chases **one**
   retry.
+- **Every compare-and-set answers an unknown id with `ErrNotFound`, never
+  `won=false`**: a lost transition and a missing task are different answers,
+  in every store alike.
 - **`input_required` is not terminal**, and a restart sweep leaves it alone.
 - **A failed task can be retried in place** — `failed → working`, the only
   transition out of a terminal state, a compare-and-set that lands the new run
