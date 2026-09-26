@@ -18,9 +18,12 @@ type Repo struct {
 	db *bun.DB
 }
 
-// NewRepo wraps a *bun.DB as a session repository. Call CreateSchema once
-// before first use.
-func NewRepo(db *bun.DB) *Repo { return &Repo{db: db} }
+// NewRepo wraps a *bun.DB as a session repository; on SQLite the pool is
+// capped at one connection (spec §2.5e2). Call CreateSchema once before first use.
+func NewRepo(db *bun.DB) *Repo {
+	capSQLitePool(db)
+	return &Repo{db: db}
+}
 
 // Create records a new session and returns it.
 func (r *Repo) Create(ctx context.Context, opts session.CreateOptions) (*session.Session, error) {

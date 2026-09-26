@@ -7,7 +7,11 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect/pgdialect"
+	"github.com/uptrace/bun/dialect/sqlitedialect"
 	"github.com/uptrace/bun/driver/pgdriver"
+	"github.com/uptrace/bun/driver/sqliteshim"
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/session"
@@ -170,6 +174,39 @@ func TestSQLite_SessionIsolation(t *testing.T) {
 	got, _ := session.NewSession(b).ContextItems(ctx, session.Cursor{})
 	if len(got) != 0 {
 		t.Errorf("session b leaked %d items from a", len(got))
+	}
+}
+
+// New and NewRepo cap a caller-opened SQLite pool at one connection, the
+// serialization an append relies on there (spec §2.5e2); another dialect's
+// pool is the caller's. No PostgreSQL is dialled: the pool is only configured.
+func TestSQLite_WrappingCapsThePoolAtOneConnection(t *testing.T) {
+	wraps := map[string]func(*bun.DB){
+		"New":     func(db *bun.DB) { _ = sessions.New(db, "sess") },
+		"NewRepo": func(db *bun.DB) { _ = sessions.NewRepo(db) },
+	}
+	for name, wrap := range wraps {
+		t.Run(name, func(t *testing.T) {
+			sqldb, err := sql.Open(sqliteshim.ShimName, "file:"+filepath.Join(t.TempDir(), "agents.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			sqldb.SetMaxOpenConns(4)
+			lite := bun.NewDB(sqldb, sqlitedialect.New())
+			defer lite.Close()
+			wrap(lite)
+			if got := lite.Stats().MaxOpenConnections; got != 1 {
+				t.Errorf("SQLite MaxOpenConnections = %d after %s, want 1", got, name)
+			}
+
+			pg := bun.NewDB(sql.OpenDB(pgdriver.NewConnector()), pgdialect.New())
+			defer pg.Close()
+			pg.SetMaxOpenConns(4)
+			wrap(pg)
+			if got := pg.Stats().MaxOpenConnections; got != 4 {
+				t.Errorf("PostgreSQL MaxOpenConnections = %d after %s, want the caller's 4", got, name)
+			}
+		})
 	}
 }
 

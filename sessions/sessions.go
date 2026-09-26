@@ -67,10 +67,21 @@ type Session struct {
 }
 
 // New wraps an existing *bun.DB as a Session for the given session ID. The
-// caller owns the db's lifecycle (and dialect). Use NewSQLite or NewPostgres for
-// the common cases. Call CreateSchema once before first use.
+// caller owns the db's lifecycle (and dialect); on SQLite the pool is capped at
+// one connection (spec §2.5e2). Use NewSQLite or NewPostgres for the common
+// cases. Call CreateSchema once before first use.
 func New(db *bun.DB, sessionID string) *Session {
+	capSQLitePool(db)
 	return &Session{db: db, ref: session.Direct(sessionID)}
+}
+
+// capSQLitePool caps a SQLite pool at one connection, so a transaction owns it
+// (spec §2.5e2): a second writer would fail at once with SQLITE_BUSY, which a
+// CAS UPDATE cannot tell from "lost". Any other dialect keeps the caller's pool.
+func capSQLitePool(db *bun.DB) {
+	if db.Dialect().Name() == dialect.SQLite {
+		db.SetMaxOpenConns(1)
+	}
 }
 
 // forRef is New for a repo-created session, addressed by one generation of an
@@ -94,21 +105,17 @@ func NewSQLite(dsn, sessionID string) (*Session, *bun.DB, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	tuneSQLite(sqldb)
 	db := bun.NewDB(sqldb, sqlitedialect.New())
-	return New(db, sessionID), db, nil
-}
-
-// tuneSQLite caps the pool at one connection: a second writer fails at once
-// with SQLITE_BUSY, which a CAS UPDATE cannot tell from "lost"; pragmas are best-effort.
-func tuneSQLite(sqldb *sql.DB) {
-	sqldb.SetMaxOpenConns(1)
+	s := New(db, sessionID)
+	// The pool is one connection by now (see New), so the per-connection
+	// pragma reaches the one every query uses; both are best-effort.
 	for _, pragma := range []string{
 		"PRAGMA journal_mode = WAL",
 		"PRAGMA busy_timeout = 5000",
 	} {
 		_, _ = sqldb.Exec(pragma)
 	}
+	return s, db, nil
 }
 
 // NewPostgres wraps an existing PostgreSQL *sql.DB as a Session, returning the
