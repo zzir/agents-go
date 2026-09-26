@@ -88,7 +88,7 @@ func (r *Runner) BindSessionProject(ctx context.Context, sessionID, projectID st
 				if env, eerr := protocol.NewEnvelope(protocol.EventSessionProjectBound, protocol.SessionProjectBound{
 					SessionID: sessionID, ProjectID: plan.projectID,
 				}); eerr == nil {
-					r.OnBroadcast(env, "", sessionID)
+					r.OnBroadcast(ctx, env, "", sessionID)
 				}
 			}
 			return true, nil

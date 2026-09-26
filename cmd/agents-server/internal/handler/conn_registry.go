@@ -4,8 +4,10 @@ import (
 	"context"
 	"maps"
 	"sync"
+	"time"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
@@ -20,6 +22,9 @@ type ConnRegistry struct {
 	mu    sync.Mutex
 	conns map[*server.WSConn]*connSubs
 }
+
+// broadcastResolveTimeout bounds a broadcast's owner lookup.
+const broadcastResolveTimeout = 10 * time.Second
 
 // NewConnRegistry returns a registry that attaches connections to runs on hub;
 // sessions resolves a broadcast's session to the owner it may reach.
@@ -70,9 +75,13 @@ func (r *ConnRegistry) AttachAll(runID string) {
 // Broadcast writes env to every connection of sessionID's owner not attached
 // to exceptRunID's stream (Runner.OnBroadcast). No replay: a later joiner
 // reads the durable rows. A session that cannot be resolved reaches nobody.
-func (r *ConnRegistry) Broadcast(env *protocol.Envelope, exceptRunID, sessionID string) {
-	sess, err := r.sessions.Get(context.Background(), sessionID)
+func (r *ConnRegistry) Broadcast(ctx context.Context, env *protocol.Envelope, exceptRunID, sessionID string) {
+	// Detached: the caller's ctx is often a run's that just ended.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), broadcastResolveTimeout)
+	defer cancel()
+	sess, err := r.sessions.Get(ctx, sessionID)
 	if err != nil {
+		logging.Ctx(ctx).Warn("broadcast: resolving session", "error", err, "session_id", sessionID)
 		return
 	}
 	r.mu.Lock()

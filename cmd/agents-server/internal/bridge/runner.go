@@ -38,8 +38,9 @@ type Runner struct {
 	OnRunAttach func(runID string)
 	// OnBroadcast, when set, delivers an event about sessionID to every
 	// connection of its owner NOT attached to exceptRunID's stream ("" = all) —
-	// invariant 37. Same wiring rule as OnRunAttach.
-	OnBroadcast func(env *protocol.Envelope, exceptRunID, sessionID string)
+	// invariant 37. Same wiring rule as OnRunAttach; ctx carries the caller's
+	// logger, not its cancellation.
+	OnBroadcast func(ctx context.Context, env *protocol.Envelope, exceptRunID, sessionID string)
 }
 
 // NewRunner creates a Runner backed by the given database and agent

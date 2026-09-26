@@ -119,7 +119,7 @@ func (r *Runner) nameSessionAfterWorkflow(ctx context.Context, sessionID, workfl
 		return
 	}
 	if env, eerr := protocol.NewEnvelope(protocol.EventSessionTitleUpdated, protocol.SessionTitleUpdated{SessionID: sessionID, Title: title}); eerr == nil {
-		r.OnBroadcast(env, "", sessionID)
+		r.OnBroadcast(ctx, env, "", sessionID)
 	}
 }
 

@@ -155,7 +155,7 @@ func TestRunEventsBroadcastToAllConnections(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	upd, _ := json.Marshal(protocol.TaskUpdated{TaskID: "t1", ParentSessionID: sess.ID, Status: "cancelled"})
-	runner.OnBroadcast(&protocol.Envelope{Type: protocol.EventTaskUpdated, Payload: upd}, sp2.RunID, sess.ID)
+	runner.OnBroadcast(t.Context(), &protocol.Envelope{Type: protocol.EventTaskUpdated, Payload: upd}, sp2.RunID, sess.ID)
 	got := readUntil(t, late, protocol.EventTaskUpdated)
 	var tu protocol.TaskUpdated
 	_ = json.Unmarshal(got.Payload, &tu)

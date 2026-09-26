@@ -729,7 +729,7 @@ func TestRunEventsStayWithTheOwner(t *testing.T) {
 	// The broadcast bus — a fact about the session a run stream cannot carry
 	// to everyone — reaches the owner's connections only.
 	fact := &protocol.Envelope{Type: protocol.EventSessionProjectBound, Payload: json.RawMessage(`{"session_id":"` + sess.ID + `"}`)}
-	wsh.registry.Broadcast(fact, "", sess.ID)
+	wsh.registry.Broadcast(t.Context(), fact, "", sess.ID)
 	if got := readUntil(t, owner, protocol.EventSessionProjectBound); got.Type != protocol.EventSessionProjectBound {
 		t.Fatalf("owner did not hear the broadcast")
 	}

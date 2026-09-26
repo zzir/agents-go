@@ -924,7 +924,7 @@ func TestPausedStepIsAnnouncedWithoutARun(t *testing.T) {
 	runner, sess, wf := workflowFixture(t, srv.URL)
 	var mu sync.Mutex
 	var seen []protocol.TaskUpdated
-	runner.OnBroadcast = func(env *protocol.Envelope, _, _ string) {
+	runner.OnBroadcast = func(_ context.Context, env *protocol.Envelope, _, _ string) {
 		if env.Type != protocol.EventTaskUpdated {
 			return
 		}
