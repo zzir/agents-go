@@ -9,6 +9,8 @@ import (
 	"time"
 
 	ant "github.com/anthropics/anthropic-sdk-go"
+
+	"github.com/zzir/agents-go/agents"
 )
 
 func apiError(status int, header http.Header) *ant.Error {
@@ -52,5 +54,32 @@ func TestRetryAfter(t *testing.T) {
 	}
 	if _, ok := RetryAfter(errors.New("plain")); ok {
 		t.Error("RetryAfter on a non-API error should report false")
+	}
+}
+
+// An error event after the 200 has no failing status to read, so the event's
+// own type decides.
+func TestRetryableErrorMidStream(t *testing.T) {
+	streamErr := func(errType string) error {
+		t.Helper()
+		model := sseModel(t, sseEvents(
+			`{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-test","content":[],"usage":{"input_tokens":10,"output_tokens":0}}}`,
+			`{"type":"error","error":{"type":"`+errType+`","message":"Overloaded"}}`,
+		))
+		for _, err := range model.StreamResponse(context.Background(), agents.ModelRequest{
+			Input: agents.InputItemsFromText("hi"),
+		}) {
+			if err != nil {
+				return err
+			}
+		}
+		t.Fatal("the stream ended without the error event's error")
+		return nil
+	}
+	if err := streamErr("overloaded_error"); !RetryableError(err) {
+		t.Errorf("an overload inside the stream must be retryable: %v", err)
+	}
+	if err := streamErr("invalid_request_error"); RetryableError(err) {
+		t.Errorf("an invalid request inside the stream must not be retryable: %v", err)
 	}
 }

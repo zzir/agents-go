@@ -1,6 +1,7 @@
 package anthropic
 
 import (
+	"errors"
 	"net/http"
 	"time"
 
@@ -22,12 +23,20 @@ var unwrapAPIError = modelkit.UnwrapAs(func(e *ant.Error) (int, http.Header) {
 // worth retrying: HTTP 408/409/429 and any 5xx — including Anthropic's 529
 // overloaded_error — with an explicit X-Should-Retry header outranking the
 // status, plus network-level transport errors; never context cancellation. See
-// modelkit.RetryableError for the full rules.
+// modelkit.RetryableError for the full rules. An error event inside a 200
+// stream is classified by its error type.
 //
 // Use it as agents.RetryPolicy.RetryIf:
 //
 //	policy := agents.RetryPolicy{RetryIf: anthropic.RetryableError, RetryAfter: anthropic.RetryAfter}
 func RetryableError(err error) bool {
+	if e, ok := errors.AsType[*ant.Error](err); ok && e.StatusCode < 300 {
+		switch e.Type() {
+		case ant.ErrorTypeOverloadedError, ant.ErrorTypeAPIError, ant.ErrorTypeRateLimitError, ant.ErrorTypeTimeoutError:
+			return true
+		}
+		return false
+	}
 	return modelkit.RetryableError(err, unwrapAPIError)
 }
 
