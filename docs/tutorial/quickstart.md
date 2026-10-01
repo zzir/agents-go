@@ -19,6 +19,16 @@ own modules, each a further `go get` when you reach for it — the list, and
 why it is split that way, is in
 [Architecture](../explanation/architecture.md#module-boundaries).
 
+Those modules carry no release tags of their own yet (the release notes will
+say from which version they do), so a bare `go get` of one takes it from the
+tip of `main` and builds it against the tagged core, which need not compile.
+Until then, take both from the same commit:
+
+```bash
+go get github.com/zzir/agents-go@main
+go get github.com/zzir/agents-go/mcp@main   # or models/anthropic, sessions, sandbox/docker
+```
+
 ## Create your first agent
 
 An agent is a plain struct: instructions, a name, and optional configuration such as tools or a structured output type.

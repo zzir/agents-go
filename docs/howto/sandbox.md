@@ -11,7 +11,7 @@ agents.Agent ── CodeTool  ──► sandbox.Sandbox (interface)
                                                                or a compatible service)
 ```
 
-The Docker backend is a **separate Go module** (`sandbox/docker`) so the core module stays dependency-light; the E2B backend needs only the standard library and lives in the root module.
+The Docker backend is a **separate Go module** (`sandbox/docker`; [how to `go get` it today](../tutorial/quickstart.md#create-a-project)) so the core module stays dependency-light; the E2B backend needs only the standard library and lives in the root module.
 
 ## Restricting what may run
 

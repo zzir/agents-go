@@ -49,6 +49,8 @@ provider = provider.WithDefaultModel("claude-opus-5")
 go get github.com/zzir/agents-go/models/anthropic
 ```
 
+Until the module carries its own release tags, take it and the core from the same commit: [Create a project](../tutorial/quickstart.md#create-a-project).
+
 The adapter (`anthropic.MessagesModel`) translates the **Messages API** to and from the SDK's canonical Responses format at the model boundary, so tools, sessions, streaming, handoffs and structured output work unchanged.
 
 ### Anthropic backend defaults

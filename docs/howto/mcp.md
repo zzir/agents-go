@@ -8,6 +8,8 @@
 go get github.com/zzir/agents-go/mcp
 ```
 
+Until the module carries its own release tags, take it and the core from the same commit: [Create a project](../tutorial/quickstart.md#create-a-project).
+
 ## Connecting a server
 
 ```go

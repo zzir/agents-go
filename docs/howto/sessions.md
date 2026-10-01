@@ -155,7 +155,7 @@ The built-ins sit on a spectrum from "zero dependencies" to "full database". The
 
 ### SQL sessions (SQLite / PostgreSQL)
 
-The `github.com/zzir/agents-go/sessions` module backs a `Session` with a SQL database via [uptrace/bun](https://bun.uptrace.dev). It is a **separate Go module** so its database-driver dependencies never reach the core SDK — add it only if you use it:
+The `github.com/zzir/agents-go/sessions` module backs a `Session` with a SQL database via [uptrace/bun](https://bun.uptrace.dev). It is a **separate Go module** so its database-driver dependencies never reach the core SDK — add it only if you use it ([how to `go get` it today](../tutorial/quickstart.md#create-a-project)):
 
 ```go
 import "github.com/zzir/agents-go/sessions"
