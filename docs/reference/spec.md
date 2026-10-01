@@ -907,11 +907,13 @@ An empty result with no error is a **success with no output**, not a failure.
 
 - `NeedsApproval` / `NeedsApprovalFunc` decide; the function takes precedence.
 - `Agent.ApproveTools` lists tool names (or `"*"`) that need approval whatever
-  the tool itself says. Precedence for one call: a decision already recorded
-  on the `RunState` (approve/reject, per call or per tool) settles it and
-  nothing else is consulted; else the tool's own answer (`NeedsApprovalFunc`,
-  then `NeedsApproval`); else the agent's listing. The listing only ever adds
-  a pause — it cannot exempt a tool that asks for one.
+  the tool itself says. The listing only ever adds a pause — it cannot exempt
+  a tool that asks for one.
+- **A decision recorded on the `RunState` settles a call**, one recorded for
+  this call outranking one for all calls to its tool, and nothing else is
+  consulted — see [decisions §5.74](../explanation/decisions.md#574-an-exact-approval-decision-outranks-a-standing-one).
+- **With no recorded decision the tool answers** (`NeedsApprovalFunc`, then
+  `NeedsApproval`), and after it the agent's listing.
 - If **any** call in a turn needs approval, the whole turn pauses
   (step 4 of [§2.2](#22-ordering-within-a-turn)).
 - Approval decisions may be scoped ("this call", "all calls to this tool", …);

@@ -1762,3 +1762,23 @@ nothing consumes an echoed logprobs, so there is no case that keeps it.
 load. A caller that set `TopLogprobs` still reads them from the response.
 
 Rules: spec §2.1b
+
+### 5.74 An exact approval decision outranks a standing one
+
+Decided 2026-10.
+
+**Decision.** A decision recorded for one call wins over an "always" decision
+for its tool, whichever was recorded first; an "always" decision made through
+a call replaces that call's own earlier one.
+
+**Rejected.** Standing decisions first: "always approve" on one call ran a
+second call the person had just rejected in the same paused turn. Bumping the
+RunState schema for the new order: §5.18 makes a reinterpreting bump raise the
+decode floor, and a host that discards undecodable states would drop every
+approval pending across the upgrade.
+
+**Cost accepted.** An "always reject" no longer stops a call approved by
+itself. The schema version is unchanged, so an older build resuming a state
+this one wrote resolves it by the old order.
+
+Rules: spec §2.7

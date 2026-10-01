@@ -353,30 +353,30 @@ func (c *tracingCollector) named(prefix string) int {
 
 func newTestTracer(c *tracingCollector) *tracing.Tracer { return tracing.NewTracer(c) }
 
-// Approval precedence. A permanent approval wins over a later per-call
-// rejection of the same tool.
+// Approval precedence: a decision recorded for a call outranks an "always"
+// one for its tool (spec §2.7).
 func TestApprovalStore_Precedence(t *testing.T) {
 	item := func(tool, callID string) *ToolApprovalItem {
 		return &ToolApprovalItem{ToolName: tool, CallID: callID}
 	}
 
-	t.Run("permanent approve beats later per-call reject", func(t *testing.T) {
+	t.Run("per-call reject beats permanent approve", func(t *testing.T) {
 		s := NewApprovalStore()
 		s.Approve(item("t", "c1"), true)       // always-approve t
-		s.Reject(item("t", "c2"), false, "no") // reject a specific later call
+		s.Reject(item("t", "c2"), false, "no") // reject a specific call
 		d, ok := s.decisionFor("t", "c2")
-		if !ok || !d.approved {
-			t.Errorf("c2 decision = %+v (ok=%v), want approved (permanent approval wins)", d, ok)
+		if !ok || d.approved || d.message != "no" {
+			t.Errorf("c2 decision = %+v (ok=%v), want its own rejection", d, ok)
 		}
 	})
 
-	t.Run("permanent reject beats per-call approve", func(t *testing.T) {
+	t.Run("per-call approve beats permanent reject", func(t *testing.T) {
 		s := NewApprovalStore()
 		s.Reject(item("t", "c1"), true, "denied")
 		s.Approve(item("t", "c2"), false)
 		d, ok := s.decisionFor("t", "c2")
-		if !ok || d.approved {
-			t.Errorf("c2 decision = %+v (ok=%v), want rejected (permanent rejection wins)", d, ok)
+		if !ok || !d.approved {
+			t.Errorf("c2 decision = %+v (ok=%v), want its own approval", d, ok)
 		}
 	})
 
@@ -419,8 +419,12 @@ func TestApprovalStore_SerializationRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Permanent approval survives and still wins over the per-call rejection.
-	if d, ok := restored.Approvals.decisionFor("delete_db", "other"); !ok || !d.approved {
-		t.Errorf("restored decision = %+v (ok=%v), want approved", d, ok)
+	// Both survive: the call that was rejected stays rejected, and the permanent
+	// approval still answers a call with no decision of its own.
+	if d, ok := restored.Approvals.decisionFor("delete_db", "other"); !ok || d.approved || d.message != "blocked" {
+		t.Errorf("restored decision for the rejected call = %+v (ok=%v), want its rejection", d, ok)
+	}
+	if d, ok := restored.Approvals.decisionFor("delete_db", "later"); !ok || !d.approved {
+		t.Errorf("restored decision for an undecided call = %+v (ok=%v), want the permanent approval", d, ok)
 	}
 }

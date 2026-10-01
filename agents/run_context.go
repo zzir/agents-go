@@ -122,9 +122,8 @@ func NewRunContext(userData any) *RunContext {
 
 // ApprovalStore records human-in-the-loop approval decisions for tool calls,
 // scoped to a single call (by call ID) or "always" for a tool name. It is
-// goroutine-safe. Precedence when resolving a call: a permanent approval wins
-// over everything, then a permanent rejection, then a per-call approval, then
-// a per-call rejection.
+// goroutine-safe. A decision recorded for a call outranks an "always" one for
+// its tool — see spec §2.7.
 type ApprovalStore struct {
 	mu      sync.Mutex
 	entries map[string]*approvalEntry // keyed by tool name
@@ -138,6 +137,14 @@ type approvalEntry struct {
 	rejectedIDs   map[string]bool
 	messages      map[string]string // per-call rejection message
 	stickyMessage string            // permanent-rejection message
+}
+
+// forget drops the decision recorded for one call, so an "always" decision
+// made through that call is the one that stands for it.
+func (e *approvalEntry) forget(callID string) {
+	delete(e.approvedIDs, callID)
+	delete(e.rejectedIDs, callID)
+	delete(e.messages, callID)
 }
 
 type approvalDecision struct {
@@ -161,9 +168,9 @@ func (s *ApprovalStore) entryFor(toolName string) *approvalEntry {
 	return e
 }
 
-// Approve records approval for a tool call. If always is true, every future call
-// to the same tool is approved (and any prior rejections for it are cleared, so
-// the permanent approval takes precedence).
+// Approve records approval for a tool call. If always is true, every call to
+// the same tool with no decision of its own is approved: an "always" rejection
+// is replaced, and so is this call's own earlier decision.
 func (s *ApprovalStore) Approve(item *ToolApprovalItem, always bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -171,9 +178,8 @@ func (s *ApprovalStore) Approve(item *ToolApprovalItem, always bool) {
 	if always {
 		e.approvedAll = true
 		e.rejectedAll = false
-		e.rejectedIDs = map[string]bool{}
-		e.messages = map[string]string{}
 		e.stickyMessage = ""
+		e.forget(item.CallID)
 		return
 	}
 	e.approvedIDs[item.CallID] = true
@@ -182,8 +188,9 @@ func (s *ApprovalStore) Approve(item *ToolApprovalItem, always bool) {
 }
 
 // Reject records rejection for a tool call, optionally with a custom message
-// sent back to the model. If always is true, every future call to the same tool
-// is rejected.
+// sent back to the model. If always is true, every call to the same tool with
+// no decision of its own is rejected, and this call's own earlier decision is
+// replaced.
 func (s *ApprovalStore) Reject(item *ToolApprovalItem, always bool, message string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -192,6 +199,7 @@ func (s *ApprovalStore) Reject(item *ToolApprovalItem, always bool, message stri
 		e.rejectedAll = true
 		e.approvedAll = false
 		e.stickyMessage = message
+		e.forget(item.CallID)
 		return
 	}
 	e.rejectedIDs[item.CallID] = true
@@ -212,17 +220,17 @@ func (s *ApprovalStore) decisionFor(toolName, callID string) (approvalDecision, 
 	if e == nil {
 		return approvalDecision{}, false
 	}
-	if e.approvedAll {
-		return approvalDecision{approved: true}, true
-	}
-	if e.rejectedAll {
-		return approvalDecision{message: e.stickyMessage}, true
-	}
 	if e.approvedIDs[callID] {
 		return approvalDecision{approved: true}, true
 	}
 	if e.rejectedIDs[callID] {
 		return approvalDecision{message: e.messages[callID]}, true
+	}
+	if e.approvedAll {
+		return approvalDecision{approved: true}, true
+	}
+	if e.rejectedAll {
+		return approvalDecision{message: e.stickyMessage}, true
 	}
 	return approvalDecision{}, false
 }
@@ -268,8 +276,9 @@ func (s *ApprovalStore) restore(entries map[string]serialApprovalEntry) {
 	}
 }
 
-// mirrorInto copies this store's decision for each item into dst, keyed by
-// call id; permanent decisions stay permanent (an agent-as-tool resume needs it).
+// mirrorInto copies this store's decisions for each item into dst, keyed by
+// call id; permanent decisions stay permanent (an agent-as-tool resume needs
+// it) and are copied first, so the call's own decision lands on top.
 func (s *ApprovalStore) mirrorInto(dst *ApprovalStore, items []*ToolApprovalItem) {
 	if dst == nil {
 		return
@@ -280,24 +289,27 @@ func (s *ApprovalStore) mirrorInto(dst *ApprovalStore, items []*ToolApprovalItem
 		}
 		s.mu.Lock()
 		e := s.entries[it.ToolName]
-		var apply func()
+		var apply []func()
 		item := it
-		switch {
-		case e == nil:
-		case e.approvedAll:
-			apply = func() { dst.Approve(item, true) }
-		case e.rejectedAll:
-			msg := e.stickyMessage
-			apply = func() { dst.Reject(item, true, msg) }
-		case e.approvedIDs[it.CallID]:
-			apply = func() { dst.Approve(item, false) }
-		case e.rejectedIDs[it.CallID]:
-			msg := e.messages[it.CallID]
-			apply = func() { dst.Reject(item, false, msg) }
+		if e != nil {
+			switch {
+			case e.approvedAll:
+				apply = append(apply, func() { dst.Approve(item, true) })
+			case e.rejectedAll:
+				msg := e.stickyMessage
+				apply = append(apply, func() { dst.Reject(item, true, msg) })
+			}
+			switch {
+			case e.approvedIDs[it.CallID]:
+				apply = append(apply, func() { dst.Approve(item, false) })
+			case e.rejectedIDs[it.CallID]:
+				msg := e.messages[it.CallID]
+				apply = append(apply, func() { dst.Reject(item, false, msg) })
+			}
 		}
 		s.mu.Unlock()
-		if apply != nil {
-			apply()
+		for _, f := range apply {
+			f()
 		}
 	}
 }

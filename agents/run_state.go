@@ -111,7 +111,7 @@ type RunState struct {
 }
 
 // Approve records approval for a pending tool call. Pass always=true to approve
-// every future call to the same tool.
+// every call to the same tool that has no decision of its own.
 //
 // Concurrent Approve/Reject calls are safe once Approvals is non-nil, which
 // every state the SDK produces guarantees; a hand-constructed zero value must
@@ -125,7 +125,8 @@ func (s *RunState) Approve(item *ToolApprovalItem, always bool) {
 
 // Reject records rejection for a pending tool call. message, if non-empty, is
 // sent back to the model in place of the tool output. Pass always=true to reject
-// every future call to the same tool. Concurrency: see Approve.
+// every call to the same tool that has no decision of its own. Concurrency: see
+// Approve.
 func (s *RunState) Reject(item *ToolApprovalItem, always bool, message string) {
 	if s.Approvals == nil {
 		s.Approvals = NewApprovalStore()
