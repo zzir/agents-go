@@ -211,7 +211,7 @@ export function TriggerRow({ t, sessionName, targetName, targetAvatar, timezone,
       <div className="hub-row-detail wf-trigger-detail">
         <div className="resource-row-meta">
           <span><KindIcon size={12} /> <code className="wf-trigger-when">{t.kind === 'cron' ? t.schedule : (t.hook_path || '')}</code></span>
-          {t.kind === 'cron' && timezone && <span>· server time {timezone}</span>}
+          {t.kind === 'cron' && timezone && !/^(CRON_)?TZ=/.test(t.schedule || '') && <span>· server time {timezone}</span>}
           {t.kind === 'cron' && t.enabled && t.next_fire_at && <span>· next {formatTime(t.next_fire_at)}</span>}
           <span>→ {sessionName}</span>
           {t.kind === 'webhook' && t.secret_hint && <span>· secret {t.secret_hint}</span>}
@@ -316,7 +316,7 @@ export function TriggerForm({ fixedWorkflow, sessionId, initial, timezone, inlin
         </Select>)}
         {form.kind === 'cron' && fc('Schedule', <TextInput block value={form.schedule} placeholder="0 9 * * 1-5"
           onChange={e => set({ schedule: e.target.value })} />,
-          SCHEDULE_HINT + (timezone ? ` In server time (${timezone}).` : ' In server time.'))}
+          SCHEDULE_HINT + (timezone ? ` In server time (${timezone}) unless prefixed CRON_TZ=<zone>.` : ' In server time unless prefixed CRON_TZ=<zone>.'))}
         {fc('Session', <SessionPicker value={form.session_id} onChange={id => set({ session_id: id })} />,
           form.target === 'agent' ? 'Where the turn happens' : 'Where each run reports back')}
         <UnboundHint key={form.session_id} sessionId={form.session_id} what={form.target === 'agent' ? 'the turn' : 'each run'} />

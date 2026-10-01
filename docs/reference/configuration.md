@@ -66,10 +66,10 @@ Each is the fallback of one flag (flag wins), never a standalone knob
 
 Three variables the process does not define but honors, each a vendor
 convention ([spec §2.14](spec.md#214-the-sdk-reads-no-environment-variable)):
-`TZ` is the zone cron triggers tick in (Go's `time.Local`, reported by
-`GET /api/v1/server`), `DOCKER_HOST` is where a docker sandbox with an empty
-`host` dials, and `SSH_AUTH_SOCK` is the agent an `ssh://` sandbox with
-`ssh_use_agent` authenticates through.
+`TZ` is the zone cron triggers tick in unless a schedule carries a `CRON_TZ=`
+prefix (Go's `time.Local`, reported by `GET /api/v1/server`), `DOCKER_HOST` is
+where a docker sandbox with an empty `host` dials, and `SSH_AUTH_SOCK` is the
+agent an `ssh://` sandbox with `ssh_use_agent` authenticates through.
 
 ## Runtime settings
 

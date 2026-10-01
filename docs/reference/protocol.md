@@ -400,8 +400,9 @@ refuses them one at a time — see
 ### Server info — `/api/v1/server` (read-only)
 
 The process facts a client is subject to but cannot change: the build version;
-the server's local time zone (an IANA name — cron triggers tick in it, so a
-client showing a schedule or a `next_fire_at` can say which zone it means);
+the server's local time zone (an IANA name — cron triggers tick in it unless a
+schedule carries a `CRON_TZ=` prefix, so a client showing a schedule or a
+`next_fire_at` can say which zone it means);
 and whether a credential-sealing key is in force, so a panel can say that
 stored secrets are plaintext ([Secret handling](#secret-handling)). Caps are
 settings, not reported here.

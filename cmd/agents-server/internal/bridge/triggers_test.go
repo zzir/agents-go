@@ -23,17 +23,37 @@ func triggerFixture(t *testing.T, modelURL string) (*Runner, *store.Session, *st
 }
 
 func TestValidateCronSchedule(t *testing.T) {
-	for _, ok := range []string{"0 9 * * 1-5", "*/15 * * * *", "@hourly", "@every 10m", " @daily "} {
+	for _, ok := range []string{
+		"0 9 * * 1-5", "*/15 * * * *", "@hourly", "@every 10m", " @daily ",
+		"CRON_TZ=Asia/Shanghai 0 9 * * 1-5", "CRON_TZ=UTC @every 10m",
+	} {
 		if err := ValidateCronSchedule(ok); err != nil {
 			t.Errorf("%q: %v, want accepted", ok, err)
 		}
 	}
 	// Prose, a seconds field, and an @every under a minute are not schedules
-	// here.
-	for _, bad := range []string{"every day at nine", "* * * * * *", "", "@every", "@every 30s", "@every 1s"} {
+	// here — behind a zone prefix as much as bare — and a prefix with nothing
+	// after it is an error, not a panic.
+	for _, bad := range []string{
+		"every day at nine", "* * * * * *", "", "@every", "@every 30s", "@every 1s",
+		"CRON_TZ=UTC @every 1s", "TZ=UTC @every 30s", "CRON_TZ=UTC @every 59s", "CRON_TZ=UTC", "TZ=UTC",
+	} {
 		if err := ValidateCronSchedule(bad); err == nil {
 			t.Errorf("%q: accepted, want refused", bad)
 		}
+	}
+}
+
+// The list shows no next fire for a schedule the clock will not run.
+func TestNextCronFireIsNilForARefusedSchedule(t *testing.T) {
+	now := time.Now()
+	for _, refused := range []string{"TZ=UTC", "CRON_TZ=UTC @every 1s", "@every 1s", "nonsense"} {
+		if next := NextCronFire(refused, now); next != nil {
+			t.Errorf("%q: next fire = %v, want none", refused, next)
+		}
+	}
+	if next := NextCronFire("CRON_TZ=UTC @every 10m", now); next == nil || !next.After(now) {
+		t.Errorf("a valid prefixed schedule: next fire = %v, want a time after now", next)
 	}
 }
 
@@ -138,6 +158,25 @@ func TestTriggerFireStartsTheWorkflowAndRecordsIt(t *testing.T) {
 	}
 }
 
+// A row stored with a schedule the rule refuses — written before the rule, or
+// around the handler — stays off the clock.
+func TestSyncSkipsSubMinuteStoredSchedule(t *testing.T) {
+	ctx := context.Background()
+	srv := oneShotModel(t)
+	defer srv.Close()
+	_, sess, wf, sched := triggerFixture(t, srv.URL)
+	for _, schedule := range []string{"@every 1s", "CRON_TZ=UTC @every 30s", "CRON_TZ=UTC"} {
+		trg := &store.Trigger{WorkflowID: wf.ID, SessionID: sess.ID, Kind: store.TriggerKindCron, Schedule: schedule, Brief: "b", Enabled: true}
+		if err := sched.store.Create(ctx, trg); err != nil {
+			t.Fatal(err)
+		}
+		sched.Sync(ctx, trg.ID)
+		if _, ok := sched.entries[trg.ID]; ok {
+			t.Errorf("%q: on the clock, want it skipped", schedule)
+		}
+	}
+}
+
 // Only an enabled cron trigger is on the clock; Sync follows every change,
 // and a tick starts the workflow like any fire.
 func TestTriggerSchedulerFollowsTheTable(t *testing.T) {
@@ -145,6 +184,7 @@ func TestTriggerSchedulerFollowsTheTable(t *testing.T) {
 	srv := oneShotModel(t)
 	defer srv.Close()
 	runner, sess, wf, sched := triggerFixture(t, srv.URL)
+	sched.minEvery = time.Second // so the test can watch a tick
 	hook := &store.Trigger{WorkflowID: wf.ID, SessionID: sess.ID, Kind: store.TriggerKindWebhook, Brief: "b", Enabled: true}
 	tick := &store.Trigger{WorkflowID: wf.ID, SessionID: sess.ID, Kind: store.TriggerKindCron, Schedule: "@every 1s", Brief: "on the clock", Enabled: false}
 	for _, trg := range []*store.Trigger{hook, tick} {

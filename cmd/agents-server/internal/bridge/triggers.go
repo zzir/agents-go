@@ -25,10 +25,11 @@ var cronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month 
 // form cannot go below a minute either.
 const minEveryInterval = time.Minute
 
-// NextCronFire is when expr next fires after now, in the zone the scheduler
-// runs in (the process's local zone); nil when expr does not parse.
+// NextCronFire is when expr next fires after now, in the schedule's zone (a
+// CRON_TZ= prefix, else the process's local zone); nil when the scheduler
+// would not run expr.
 func NextCronFire(expr string, now time.Time) *time.Time {
-	sched, err := cronParser.Parse(strings.TrimSpace(expr))
+	sched, err := scheduleFor(expr, minEveryInterval)
 	if err != nil {
 		return nil
 	}
@@ -41,16 +42,27 @@ func NextCronFire(expr string, now time.Time) *time.Time {
 
 // ValidateCronSchedule reports whether expr is a schedule the scheduler runs.
 func ValidateCronSchedule(expr string) error {
+	_, err := scheduleFor(expr, minEveryInterval)
+	return err
+}
+
+// scheduleFor parses expr and refuses a fixed interval shorter than minEvery,
+// whatever spelling reached it.
+func scheduleFor(expr string, minEvery time.Duration) (cron.Schedule, error) {
 	expr = strings.TrimSpace(expr)
-	if _, err := cronParser.Parse(expr); err != nil {
-		return fmt.Errorf("schedule %q: %w", expr, err)
+	// The parser slices a zone prefix up to the first space, and panics on a
+	// prefix with nothing after it.
+	if (strings.HasPrefix(expr, "TZ=") || strings.HasPrefix(expr, "CRON_TZ=")) && !strings.Contains(expr, " ") {
+		return nil, fmt.Errorf("schedule %q: a time-zone prefix needs a schedule after it", expr)
 	}
-	if rest, ok := strings.CutPrefix(expr, "@every "); ok {
-		if d, err := time.ParseDuration(strings.TrimSpace(rest)); err == nil && d < minEveryInterval {
-			return fmt.Errorf("schedule %q: @every may not be shorter than %s", expr, minEveryInterval)
-		}
+	sched, err := cronParser.Parse(expr)
+	if err != nil {
+		return nil, fmt.Errorf("schedule %q: %w", expr, err)
 	}
-	return nil
+	if every, ok := sched.(cron.ConstantDelaySchedule); ok && every.Delay < minEvery {
+		return nil, fmt.Errorf("schedule %q: @every may not be shorter than %s", expr, minEvery)
+	}
+	return sched, nil
 }
 
 // TriggerScheduler fires triggers: cron ones on their schedule from a table it
@@ -66,6 +78,9 @@ type TriggerScheduler struct {
 
 	mu      sync.Mutex
 	entries map[string]heldEntry // trigger id → what the clock holds for it
+
+	// minEvery is the shortest fixed interval Sync puts on the clock.
+	minEvery time.Duration
 }
 
 // heldEntry is one trigger as the clock has it: the cron entry and the
@@ -83,11 +98,12 @@ const reconcileEvery = time.Minute
 // loads the table and begins ticking.
 func NewTriggerScheduler(r *Runner, s *store.TriggerStore) *TriggerScheduler {
 	return &TriggerScheduler{
-		runner:  r,
-		store:   s,
-		cron:    cron.New(cron.WithParser(cronParser)),
-		stop:    make(chan struct{}),
-		entries: map[string]heldEntry{},
+		runner:   r,
+		store:    s,
+		cron:     cron.New(cron.WithParser(cronParser)),
+		stop:     make(chan struct{}),
+		entries:  map[string]heldEntry{},
+		minEvery: minEveryInterval,
 	}
 }
 
@@ -187,6 +203,12 @@ func (s *TriggerScheduler) Sync(ctx context.Context, triggerID string) {
 		delete(s.entries, triggerID)
 	}
 	if !wanted {
+		return
+	}
+	// A stored row is held to the rule a new one is: one written before the
+	// rule, or past it, stays off the clock.
+	if _, err := scheduleFor(t.Schedule, s.minEvery); err != nil {
+		logging.Ctx(ctx).Warn("trigger schedule not scheduled", "error", err, "trigger_id", t.ID)
 		return
 	}
 	entry, err := s.cron.AddFunc(t.Schedule, func() {

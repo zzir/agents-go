@@ -41,7 +41,7 @@ type Trigger struct {
 	Kind      string `bun:"kind,notnull"       json:"kind"`
 	// Brief leads every execution or turn this trigger starts; a webhook's payload is appended.
 	Brief string `bun:"brief,notnull" json:"brief"`
-	// Schedule is the cron expression (five fields, @hourly, @every 10m); cron kind only.
+	// Schedule is the cron expression (five fields, @hourly, @every 10m), optionally prefixed CRON_TZ=<IANA zone>; cron kind only.
 	Schedule string `bun:"schedule,nullzero" json:"schedule,omitempty"`
 	// Secret signs a webhook's calls (HMAC-SHA256); the API shows it once, at creation or rotation.
 	Secret  string `bun:"secret,nullzero" json:"-"`

@@ -611,7 +611,7 @@ components:
           type: string
         schedule:
           description: Schedule is the cron expression (five fields, @hourly, @every
-            10m); cron kind only.
+            10m), optionally prefixed CRON_TZ=<IANA zone>; cron kind only.
           type: string
         secret:
           description: Secret is set on the response that minted it, and never again.

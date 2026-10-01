@@ -7948,7 +7948,7 @@ export interface components {
              *     zone (ServerInfo.Timezone); absent for webhooks and disabled triggers.
              */
             next_fire_at?: string;
-            /** @description Schedule is the cron expression (five fields, @hourly, @every 10m); cron kind only. */
+            /** @description Schedule is the cron expression (five fields, @hourly, @every 10m), optionally prefixed CRON_TZ=<IANA zone>; cron kind only. */
             schedule?: string;
             /** @description Secret is set on the response that minted it, and never again. */
             secret?: string;
