@@ -9,6 +9,7 @@ import { api, authConfig, type ApiSchemas, type AuthConfig } from '@/lib/api';
 import { useApi, useCopy } from '@/lib/hooks';
 import { useMe } from '@/lib/me';
 import { formatTime } from '@/lib/time';
+import { parseOptionalPositive } from '@/lib/numericField';
 import { toast } from '@/lib/toast';
 import { useLoadError } from '@/features/admin/useLoadError';
 
@@ -151,14 +152,23 @@ function PatSection() {
 function NewTokenDialog({ onClose, onMinted }: { onClose: () => void; onMinted: (token: string) => void }) {
   const [name, setName] = useState('');
   const [days, setDays] = useState('');
+  const [daysError, setDaysError] = useState('');
   const [busy, setBusy] = useState(false);
   const nameRef = useRef<HTMLInputElement>(null);
 
   const create = useCallback(async () => {
     if (busy || !name.trim()) return;
+    // Only an empty box mints a token that never expires (invariant 80).
+    let expiresInDays: number;
+    try {
+      expiresInDays = parseOptionalPositive(days, 'Expires in days');
+    } catch (e) {
+      setDaysError(e instanceof Error ? e.message : 'Expires in days is not valid');
+      return;
+    }
     setBusy(true);
     try {
-      const res = await api.auth.pats.create(name.trim(), days ? parseInt(days, 10) || 0 : 0);
+      const res = await api.auth.pats.create(name.trim(), expiresInDays);
       onMinted(res.token || '');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to create the token.');
@@ -187,7 +197,8 @@ function NewTokenDialog({ onClose, onMinted }: { onClose: () => void; onMinted: 
         <FormControl>
           <FormControl.Label>Expires in days</FormControl.Label>
           <FormControl.Caption>Leave empty for a token that never expires.</FormControl.Caption>
-          <TextInput block value={days} type="number" min={1} onChange={e => setDays(e.target.value)} />
+          <TextInput block value={days} type="text" inputMode="numeric" onChange={e => { setDays(e.target.value); setDaysError(''); }} />
+          {daysError && <FormControl.Validation variant="error">{daysError}</FormControl.Validation>}
         </FormControl>
       </Stack>
     </Dialog>

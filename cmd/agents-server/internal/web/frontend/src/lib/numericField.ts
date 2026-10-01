@@ -14,3 +14,12 @@ export function parseWholeNumber(raw: string, label: string): number {
   if (!/^-?\d+$/.test(s)) throw new Error(`${label} is not a whole number — fix or clear it before saving`);
   return Number(s);
 }
+
+// parseOptionalPositive reads a count that may be left out: empty is 0, the
+// server's "none", and anything else must be a whole number of at least 1.
+export function parseOptionalPositive(raw: string, label: string): number {
+  const s = raw.trim();
+  if (s === '') return 0;
+  if (!/^\d+$/.test(s) || Number(s) < 1) throw new Error(`${label} must be a whole number of at least 1 — fix or clear it`);
+  return Number(s);
+}
