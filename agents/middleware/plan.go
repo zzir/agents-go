@@ -25,7 +25,7 @@ var DefaultReadOnlyTools = []string{
 
 // DefaultPlanInstructions is the planning preamble. It tells the model what
 // phase it is in, what it can touch, and how to leave the phase — the three
-// things a hidden toolset cannot say for itself.
+// things a toolset cannot say for itself.
 const DefaultPlanInstructions = `You are in PLAN MODE. Before making any changes:
 1. Understand the task, exploring with the read-only tools in your toolset.
    Work from the tools you can see — this session may have no filesystem or

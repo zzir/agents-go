@@ -618,7 +618,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
             {/* Older configs spell the default out ("return_to_model" or its
                 alias); it is the default now, so those read as the unset button. */}
             {seg('Tool not found behavior', RETURN_TO_MODEL.has(form.tool_not_found_behavior || '') ? '' : form.tool_not_found_behavior, [['', 'Return to model (default)'], ['error', 'End the run']], v => set('tool_not_found_behavior', v),
-              'What happens when the model calls a tool it does not have — a name it invented, or one plan mode is hiding')}
+              'What happens when the model calls a tool it does not have — a name it invented, or a handoff plan mode hides')}
             {seg('Reasoning item ID policy', form.reasoning_item_id_policy || '', [['', 'Preserve (default)'], ['omit', 'Omit']], v => set('reasoning_item_id_policy', v),
               'Whether reasoning-item ids are kept when prior items are re-sent to the model on later turns')}
             <ToggleRow label="Reset tool choice after use" checked={form.tool_choice_reset !== false} onChange={v => set('tool_choice_reset', v)}

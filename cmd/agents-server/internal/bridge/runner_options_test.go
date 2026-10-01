@@ -63,9 +63,10 @@ func TestRunOptionsForCarriesEveryPolicy(t *testing.T) {
 }
 
 // An unconfigured agent feeds a bad tool name BACK to the model instead of
-// ending the run: models invent tool names, and plan mode hides real ones, so
-// aborting would take down the turn and any workflow driving it over a slip
-// the model corrects on being told. "error" restores the abort.
+// ending the run: models invent tool names, plan mode hides handoffs, and a
+// session with no sandbox never had the sandbox tools, so aborting would take
+// down the turn and any workflow driving it over a slip the model corrects on
+// being told. "error" restores the abort.
 func TestUnknownToolReturnsToTheModelByDefault(t *testing.T) {
 	built := &BuildResult{}
 	if got := runOptionsFor(built, nil, nil, nil, "", nil, agents.ContextBudget{}); got.Exec.ToolNotFoundBehavior != agents.ToolNotFoundReturnToModel {

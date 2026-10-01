@@ -42,7 +42,7 @@ func inventedToolModel(t *testing.T, calls *atomic.Int32) *httptest.Server {
 }
 
 // A tool name the agent does not have must not take the run down. Models invent
-// them, plan mode HIDES real ones, and a session with no sandbox never had the
+// them, plan mode hides handoffs, and a session with no sandbox never had the
 // sandbox tools at all — so the run tells the model and carries on. Aborting
 // took the turn with it, and any workflow the turn was a step of.
 func TestInventedToolNameDoesNotEndTheRun(t *testing.T) {
