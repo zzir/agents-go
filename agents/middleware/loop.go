@@ -69,6 +69,11 @@ func (l Loop) Run(ctx context.Context, next agents.RunFunc, in agents.RunInput) 
 			if res.StoppedEarly {
 				break
 			}
+			// A paused run is the caller's or an inner middleware's to resolve,
+			// so it goes back unevaluated (spec §2.12).
+			if len(res.Interruptions) > 0 {
+				break
+			}
 			if l.Evaluate == nil {
 				break
 			}

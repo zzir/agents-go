@@ -1023,6 +1023,10 @@ correct for a serialized state in a new process, wrong in-chain: every
 resume reached a run that had already ended, and the caller had no way to
 know.
 
+**Cost accepted.** `Loop` needs `RunResult.StoppedEarly` to tell "finished"
+from "stopped", so the stop is never cleared and is reported wherever the run
+ends.
+
 Rules: spec §2.11b, §2.12.
 
 ### 5.46 A tool panic takes the tool-error path
@@ -1232,9 +1236,7 @@ malformed list refused whole keeps `OnUpdate` from seeing a half-applied state.
 
 **Cost accepted.** A gated write tool spends a model turn on a refusal. A
 read-only tool named in `ApproveTools` keeps its approval in both phases.
-Nothing checks that a tool claiming read-only behaves. `Loop` needs
-`RunResult.StoppedEarly` to tell "finished" from "stopped", so the stop is
-never cleared and is reported wherever the run ends.
+Nothing checks that a tool claiming read-only behaves.
 
 Rules: spec §2.12
 

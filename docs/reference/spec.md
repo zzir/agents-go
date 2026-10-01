@@ -1578,6 +1578,9 @@ run).
   (`RunResult.StoppedEarly`), wherever the run ends — the turn boundary that
   saw it, or a final output reached on that same turn. It answers "did the
   caller stop this", not where; the stop is never cleared.
+- **`Loop` passes a paused run through**: a result with `Interruptions` is
+  returned unevaluated; resolving the pause is the caller's or an inner
+  middleware's.
 - **A middleware that resumes strips `Middlewares` first**: the chain is
   already unwound.
 - **A middleware that resumes keeps the caller's control**: `RunInput.Control`

@@ -39,6 +39,42 @@ func TestLoop_RunsAgainUntilTheEvaluatorAccepts(t *testing.T) {
 	}
 }
 
+// A run paused on an approval is not an answer to grade: evaluating it would
+// re-run the agent and drop the interruption the caller is owed.
+func TestLoop_PassesAPausedRunThrough(t *testing.T) {
+	tool := agents.NewTool("delete_db", "", func(context.Context, *agents.ToolContext, struct{}) (string, error) {
+		return "gone", nil
+	})
+	tool.NeedsApproval = true
+	model := &scriptedModel{responses: []*agents.ModelResponse{
+		resp(toolCall(t, "delete_db", "c1")),
+		resp(message(t, "never asked")),
+	}}
+	agent := &agents.Agent{Name: "a", Tools: []*agents.Tool{tool}, ModelImpl: model}
+	evals := 0
+
+	res, err := agents.RunSync(context.Background(), agent, "go", agents.RunOptions{
+		Middlewares: []agents.RunMiddleware{Loop{
+			Evaluate: func(context.Context, *agents.RunResult) (Evaluation, error) {
+				evals++
+				return Continue("again"), nil
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Interruptions) != 1 {
+		t.Errorf("interruptions = %d, want the paused call handed back", len(res.Interruptions))
+	}
+	if evals != 0 {
+		t.Errorf("the evaluator ran %d times on a paused run, want 0", evals)
+	}
+	if model.calls != 1 {
+		t.Errorf("model calls = %d, want 1", model.calls)
+	}
+}
+
 // An evaluator that never accepts must not run forever on the caller's budget.
 func TestLoop_BoundedByMaxAttempts(t *testing.T) {
 	agent := says(t, "a", "b", "c", "d", "e")
