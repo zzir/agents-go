@@ -116,15 +116,12 @@ func (w Waker) canWake(ctx context.Context, sessionID string) bool {
 	if _, busy := w.r.hub.ActiveRunForSession(sessionID); busy {
 		return false
 	}
-	if w.r.Deps.PendingApprovals == nil {
-		return true
-	}
-	approvals, err := w.r.Deps.PendingApprovals.ListBySession(ctx, sessionID)
+	paused, err := w.r.pausedOnApproval(ctx, sessionID)
 	if err != nil {
 		logging.Ctx(ctx).Warn("checking pending approvals before a wake-up; skipping", "error", err, "session_id", sessionID)
 		return false
 	}
-	return len(approvals) == 0
+	return !paused
 }
 
 // DrainAll pays every session owed something — the restart sweep. Runs after

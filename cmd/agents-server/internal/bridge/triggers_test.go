@@ -372,3 +372,70 @@ func TestTriggerFireRunsAnAgentTurn(t *testing.T) {
 		t.Fatalf("last_error = %q, want the busy refusal", rec.LastError)
 	}
 }
+
+// A trigger's agent turn waits a paused approval out (invariant 19): the fire
+// is refused with the reason on the trigger, the approval stays pending and no
+// run starts. Once the approval is answered the same fire goes through.
+func TestTriggerAgentTurnRefusesWhilePaused(t *testing.T) {
+	ctx := context.Background()
+	srv := oneShotModel(t)
+	defer srv.Close()
+	runner, sess, wf, sched := triggerFixture(t, srv.URL)
+	pausedID := store.NewID()
+	pausedRun(t, runner, sess.ID, pausedID)
+	trg := &store.Trigger{Target: store.TriggerTargetAgent, AgentConfigID: wf.Steps[0].AgentConfigID, SessionID: sess.ID, Kind: store.TriggerKindCron, Schedule: "@daily", Brief: "morning: what changed?", Enabled: true}
+	if err := sched.store.Create(ctx, trg); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := sched.Fire(ctx, trg.ID, "", FireCron); !errors.Is(err, ErrSessionAwaitingApproval) {
+		t.Fatalf("Fire on a paused session = %v, want ErrSessionAwaitingApproval", err)
+	}
+	rows, err := runner.Deps.PendingApprovals.ListBySession(ctx, sess.ID)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("pending approvals = %d (%v), want the one pause left standing", len(rows), err)
+	}
+	rec, err := sched.store.Get(ctx, trg.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rec.LastError, "approval") || rec.LastStartedID != "" {
+		t.Fatalf("record = started %q error %q, want the refusal and no run", rec.LastStartedID, rec.LastError)
+	}
+	if runID, live := runner.hub.ActiveRunForSession(sess.ID); live {
+		t.Fatalf("run %s holds the session — a refused fire must leave the slot free", runID)
+	}
+	if info, ok := runner.hub.Info(pausedID); !ok || info.Status != RunInterrupted {
+		t.Fatalf("paused run = %+v (found %v), want it still interrupted", info, ok)
+	}
+	ref, err := store.RefFor(ctx, runner.db, sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := store.NewEntryStoreFor(runner.db, ref).Entries(ctx, session.Cursor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("entries = %d, want none: a refused turn writes no note", len(entries))
+	}
+
+	// Answered: the pause is gone, and the next fire starts the turn.
+	if err := runner.Deps.PendingApprovals.Delete(ctx, pausedID); err != nil {
+		t.Fatal(err)
+	}
+	fired, err := sched.Fire(ctx, trg.ID, "", FireCron)
+	if err != nil || fired.RunID == "" {
+		t.Fatalf("Fire once the approval is answered = %+v, %v; want a run", fired, err)
+	}
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		if info, ok := runner.hub.Info(fired.RunID); ok && info.Status != RunRunning {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the agent turn did not finish")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}

@@ -267,9 +267,9 @@ abandoned when the session takes a new message (`POST /sessions/:id/runs`,
 `run.cancel`): its `pending_approvals` row is deleted, the calls it was
 waiting on are recorded as not run with the reason, and `run.cancelled`
 carries that reason — `superseded` or `stopped`; a decision arriving after
-that is `404`. Only a person's message abandons: a wake-up or a task's start
-leaves the pause standing, and a background task's paused run is its task's
-to stop.
+that is `404`. Only a person's message abandons: a wake-up, a task's start or
+a trigger's turn leaves the pause standing (a trigger's turn is refused), and
+a background task's paused run is its task's to stop.
 
 **exec_command session approval.** An agent whose `approve_tools` includes
 `exec_command` gates each shell command through a per-session trust store
@@ -546,7 +546,8 @@ makes, into the trigger's `session_id`; `target: agent` sends the brief as a
 MESSAGE of that session, run by that agent under the session's own
 sandbox binding, with a `trigger_fired` note before it. Either way the brief
 is the author's, written in advance, and a webhook's body (up to 64 KB) is
-appended to it as the payload. A session busy with a run, or at its cap,
+appended to it as the payload. A session busy with a run or paused on an
+approval (an agent turn; a workflow starts beside either), or at its cap,
 refuses — that refusal is what the trigger shows as `last_error`. Cron ticks
 missed while the process was down are not replayed. Deleting the session,
 the workflow or the agent a trigger fires deletes the trigger. Triggers are capped at 50 per owner (`409`
@@ -564,10 +565,12 @@ the window — a sender's retry, a captured request — is a replay and answers
 `409`, so a sender that wants a second run sends a new timestamp (the guard is
 in memory; a restart inside the five-minute window is the one gap). Only a
 delivery that FIRED is remembered: one refused before anything started — the
-session busy or at its cap, the server draining — may be resent as it was.
+session busy, paused on an approval or at its cap, the server draining — may
+be resent as it was.
 `POST /triggers/:id/fire` is a person's fire, answering `201` with the task (a
 workflow) or `{run_id}` (an agent turn), `400` when its target cannot start,
-`409` when the trigger is disabled or the session is busy or at its cap.
+`409` when the trigger is disabled or the session is busy, paused on an
+approval or at its cap.
 
 ### Guardrails — `/api/v1/guardrails`
 

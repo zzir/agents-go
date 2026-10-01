@@ -236,6 +236,11 @@ func TestTriggerFireByHand(t *testing.T) {
 	if w := doJSON(t, engine, "POST", server.APIPrefix+"/triggers/"+created.ID+"/fire", ""); w.Code != http.StatusConflict {
 		t.Fatalf("fire of a disabled trigger: %d, want 409", w.Code)
 	}
+	// A session paused on an approval refuses the turn: a conflict, with the reason.
+	firer.refuse = bridge.ErrSessionAwaitingApproval
+	if w := doJSON(t, engine, "POST", server.APIPrefix+"/triggers/"+created.ID+"/fire", ""); w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "approval") {
+		t.Fatalf("fire on a paused session: %d %s, want 409 naming the approval", w.Code, w.Body.String())
+	}
 	// Update keeps the kind; delete takes it off the clock.
 	b, _ = json.Marshal(map[string]any{"workflow_id": wf.ID, "session_id": sess.ID, "kind": "webhook", "brief": "go", "enabled": false})
 	if w := doJSON(t, engine, "PUT", server.APIPrefix+"/triggers/"+created.ID, string(b)); w.Code != http.StatusBadRequest {

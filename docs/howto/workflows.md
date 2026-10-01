@@ -100,7 +100,10 @@ curl -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
 - `target: workflow` (`workflow_id`) starts an execution into `session_id`;
   `target: agent` (`agent_config_id`) sends the brief as a message of that
   session instead, run by that agent — the scheduled question, its reply
-  the next turn, with a `trigger_fired` note before it.
+  the next turn, with a `trigger_fired` note before it. A session paused on
+  an approval refuses every such turn, the reason in the trigger's
+  `last_error`, until someone answers or the approval expires
+  (`approval_ttl_minutes`, [runtime settings](../reference/configuration.md#runtime-settings)).
 - `kind: webhook` fires on `POST /hooks/<trigger id>` (outside `/api/v1`, no
   token). The create response carries the `secret` **once** — the hub shows it
   in a box with a signing example; **Rotate secret** mints another and retires

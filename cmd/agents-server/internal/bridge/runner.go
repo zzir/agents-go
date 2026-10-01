@@ -141,14 +141,18 @@ func (r *Runner) startRunWithID(runID, sessionID, agentConfigID, projectID strin
 }
 
 // startRunReserved is startRunWithID with a hook run once the session is
-// RESERVED and before the launch — a write that must precede the run's own.
-func (r *Runner) startRunReserved(runID, sessionID, agentConfigID, projectID string, input RunInput, wakeParentRunID string, planIntent *bool, onDone func(*RunOutcome), reserved func()) (string, error) {
+// RESERVED and before the launch — a write that must precede the run's own, or
+// a refusal: an error from it withdraws the reservation.
+func (r *Runner) startRunReserved(runID, sessionID, agentConfigID, projectID string, input RunInput, wakeParentRunID string, planIntent *bool, onDone func(*RunOutcome), reserved func() error) (string, error) {
 	seg, ctx, plan, boundNow, err := r.reserveRun(runID, sessionID, agentConfigID, projectID)
 	if err != nil {
 		return "", err
 	}
 	if reserved != nil {
-		reserved()
+		if err := reserved(); err != nil {
+			r.hub.unregister(runID, seg)
+			return "", err
+		}
 	}
 	// The slot is held, so the plan phase is set atomically with the run using
 	// it; a request refused above left the session's phase untouched.

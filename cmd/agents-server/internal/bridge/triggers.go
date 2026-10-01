@@ -247,8 +247,8 @@ const (
 // Fire starts what the trigger names now — its workflow, or a turn of its
 // agent — with its brief led by payload when there is one (a webhook's
 // body), and records the outcome on the trigger. A disabled trigger does not
-// fire; a session at its background cap, or busy with a run, refuses like
-// any start would, and that refusal is what the trigger then shows.
+// fire; a session at its background cap, busy with a run or paused on an
+// approval refuses, and that refusal is what the trigger then shows.
 func (s *TriggerScheduler) Fire(ctx context.Context, triggerID, payload, source string) (*Fired, error) {
 	t, err := s.store.Get(ctx, triggerID)
 	if err != nil {
@@ -333,8 +333,9 @@ func (s *TriggerScheduler) fireAgentTurn(ctx context.Context, t *store.Trigger, 
 		return nil, fmt.Errorf("agent: %w", err)
 	}
 	runID := store.NewID()
-	// The note is written once the run holds the session (after the reservation,
-	// before the launch), so a refused turn leaves no note. Detached context.
+	// Both run once the run holds the session (after the reservation, before
+	// the launch): a pause that landed first refuses the turn — invariant 19 —
+	// and a refused turn leaves no note. Detached context.
 	noteCtx := context.WithoutCancel(ctx)
 	note := func() {
 		ref, rerr := store.RefFor(noteCtx, s.runner.db, t.SessionID)
@@ -346,7 +347,18 @@ func (s *TriggerScheduler) fireAgentTurn(ctx context.Context, t *store.Trigger, 
 			logging.Ctx(noteCtx).Warn("recording the trigger-fired note", "error", aerr, "trigger_id", t.ID)
 		}
 	}
-	if _, err := s.runner.startRunReserved(runID, t.SessionID, agent.ID, "", TextInput(input), "", nil, nil, note); err != nil {
+	reserved := func() error {
+		paused, perr := s.runner.pausedOnApproval(noteCtx, t.SessionID)
+		if perr != nil {
+			return fmt.Errorf("pending approvals: %w", perr)
+		}
+		if paused {
+			return ErrSessionAwaitingApproval
+		}
+		note()
+		return nil
+	}
+	if _, err := s.runner.startRunReserved(runID, t.SessionID, agent.ID, "", TextInput(input), "", nil, nil, reserved); err != nil {
 		return nil, err
 	}
 	return &Fired{RunID: runID}, nil

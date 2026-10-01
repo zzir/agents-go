@@ -1614,8 +1614,8 @@ Rules: [invariant 1](workbench-invariants.md);
 
 Decided 2026-09-11 (workbench invariant 19).
 
-**Decision.** A chat run paused for tool approval ends when its session takes
-a new message, or when the paused run is cancelled: the `pending_approvals`
+**Decision.** A chat run paused for tool approval ends when the person sends a
+new message, or when the paused run is cancelled: the `pending_approvals`
 row is deleted (the claim a racing decision loses), the calls it waited on
 persist as `tool_call` annotations whose display carries `not_run` with the
 reason, and the hub ends the record with `run.cancelled {reason}` —
@@ -1623,6 +1623,7 @@ reason, and the hub ends the record with `run.cancelled {reason}` —
 from the stored marker on reload, and from the newer run's `run.started`
 when the event never came (a restart between the pause and the message).
 A background task's paused run is its task's to stop and is left alone.
+A trigger's agent turn refuses while a pause stands, as a wake-up does.
 
 **Rejected.** Refusing the send (`409`) — the composer sat locked on a
 question the person had moved past. Letting both stand — the later approval

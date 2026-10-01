@@ -110,13 +110,12 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     Bottom-following re-fires on content growth and yields to an upward
     wheel/drag or an actively changing selection; a stale selection never
     blocks re-sticking (`useScrollToBottom` in `lib/hooks.ts`).
-19. **A newer message wins over a paused approval; a branch move obsoletes
-    every client view of the old path.** A send or a cancel while the
-    session's run waits for approval abandons that run (decisions §5.68);
-    regenerate and attempt-switch are server-side appends
-    (`POST /sessions/:id/branch`) reconciled by refetch, an off-path pending
-    approval kept but out of view; `409` while a run is live — held by the
-    hub fence of invariant 82, not a snapshot taken before the write (`useAgentSocket.ts`).
+19. **A person's message wins over a paused approval, a machine's turn waits
+    it out; a branch move obsoletes every client view of the old path.** A
+    send or cancel abandons the paused run (decisions §5.68); a trigger's turn
+    or wake-up is refused. Regenerate and attempt-switch are server-side
+    appends (`POST /sessions/:id/branch`) reconciled by refetch, an off-path
+    approval kept but out of view; `409` while a run is live (invariant 82).
 
 **Background tasks**
 

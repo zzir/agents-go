@@ -7023,7 +7023,7 @@ export interface paths {
         put?: never;
         /**
          * Fire a trigger
-         * @description Starts the trigger's workflow into its session, or its agent's turn in it, as a tick or a webhook call would; the optional payload is appended to the brief. 201 with the task (a workflow) or {run_id} (an agent turn). 400 when the workflow cannot start, 404 for an unknown trigger, 409 when the trigger is disabled or the session is at its background-task cap or busy with a run.
+         * @description Starts the trigger's workflow into its session, or its agent's turn in it, as a tick or a webhook call would; the optional payload is appended to the brief. 201 with the task (a workflow) or {run_id} (an agent turn). 400 when the workflow cannot start, 404 for an unknown trigger, 409 when the trigger is disabled or the session is at its background-task cap, busy with a run or paused on an approval.
          */
         post: {
             parameters: {

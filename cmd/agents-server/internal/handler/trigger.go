@@ -366,7 +366,7 @@ type fireReq struct {
 // Fire starts what the trigger names now, by hand — the way to test one.
 //
 //	@Summary		Fire a trigger
-//	@Description	Starts the trigger's workflow into its session, or its agent's turn in it, as a tick or a webhook call would; the optional payload is appended to the brief. 201 with the task (a workflow) or {run_id} (an agent turn). 400 when the workflow cannot start, 404 for an unknown trigger, 409 when the trigger is disabled or the session is at its background-task cap or busy with a run.
+//	@Description	Starts the trigger's workflow into its session, or its agent's turn in it, as a tick or a webhook call would; the optional payload is appended to the brief. 201 with the task (a workflow) or {run_id} (an agent turn). 400 when the workflow cannot start, 404 for an unknown trigger, 409 when the trigger is disabled or the session is at its background-task cap, busy with a run or paused on an approval.
 //	@Tags			triggers
 //	@Accept			json
 //	@Produce		json
@@ -402,7 +402,7 @@ func (h *TriggerHandler) fire(c *gin.Context, id, payload, source string) bool {
 		switch {
 		case errors.Is(err, bridge.ErrWorkflowUnavailable), errors.Is(err, bridge.ErrTriggerTarget):
 			badRequest(c, err.Error())
-		case errors.Is(err, bridge.ErrTriggerDisabled), taskLimit, bridgeLimit, busy, deleting:
+		case errors.Is(err, bridge.ErrTriggerDisabled), errors.Is(err, bridge.ErrSessionAwaitingApproval), taskLimit, bridgeLimit, busy, deleting:
 			conflict(c, err.Error())
 		case draining:
 			unavailable(c, err.Error())

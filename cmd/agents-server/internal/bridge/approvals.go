@@ -348,6 +348,22 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 	return runID, pending.SessionID, nil
 }
 
+// ErrSessionAwaitingApproval refuses a machine-started turn on a session whose
+// run is paused for a person's decision.
+var ErrSessionAwaitingApproval = errors.New("the session is paused on an approval; answer it first")
+
+// pausedOnApproval reports whether the session holds an unanswered approval.
+func (r *Runner) pausedOnApproval(ctx context.Context, sessionID string) (bool, error) {
+	if r.Deps.PendingApprovals == nil {
+		return false, nil
+	}
+	rows, err := r.Deps.PendingApprovals.ListBySession(ctx, sessionID)
+	if err != nil {
+		return false, err
+	}
+	return len(rows) > 0, nil
+}
+
 // abandonPaused abandons the session's chat run paused for approval, if any: a
 // newer message wins over the pause — invariant 19. A task's paused run is
 // left to its task.
