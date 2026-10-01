@@ -34,7 +34,7 @@ go run ./examples/hello
 | [`examples/runcompaction`](../../examples/runcompaction/main.go) | Run-level compaction: a `compaction.Strategy` folding tool results mid-run, at the turn boundary |
 | [`examples/contextmanagement`](../../examples/contextmanagement/main.go) | The context levers: the budget notice, `history_search`/`history_read` over folded history, the model's own memory by scope, and a `new_context` reset |
 | [`examples/conversations`](../../examples/conversations/main.go) | `openai.ConversationsSession`: history stored server-side via the Conversations API |
-| [`examples/prompt`](../../examples/prompt/main.go) | Binding an OpenAI stored prompt via `Agent.Prompt` |
+| [`examples/prompt`](../../examples/prompt/main.go) | Binding an OpenAI stored prompt via `Agent.Prompt` (deprecated: see [Stored prompts](../howto/agents.md#stored-prompts)) |
 | [`examples/sandbox`](../../examples/sandbox/main.go) | An agent that writes and runs code in a local sandbox |
 | [`sandbox/docker/example`](../../sandbox/docker/example/main.go) | The Docker sandbox backend (separate module) |
 | [`examples/e2b`](../../examples/e2b/main.go) | The same coding agent inside an E2B-compatible cloud sandbox, with `OnSandboxID` and `Destroy` |
@@ -45,7 +45,7 @@ go run ./examples/hello
 
 Most examples only need `OPENAI_API_KEY`. The exceptions:
 
-- `examples/prompt` — a stored prompt ID: `OPENAI_PROMPT_ID=pmpt_... go run ./examples/prompt`
+- `examples/prompt` — a stored prompt ID: `OPENAI_PROMPT_ID=pmpt_... go run ./examples/prompt` (deprecated: see [Stored prompts](../howto/agents.md#stored-prompts))
 - `examples/anthropic` — `ANTHROPIC_API_KEY=... go run .` (from its directory; separate module)
 - `examples/sandbox` — the host needs `python3`
 - `examples/e2b` — an E2B-compatible service: `E2B_API_KEY=... E2B_TEMPLATE_ID=base go run ./examples/e2b`

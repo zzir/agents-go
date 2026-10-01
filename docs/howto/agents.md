@@ -49,7 +49,7 @@ agent.Prompt = agents.StaticPrompt(agents.Prompt{
 })
 ```
 
-`Agent.Prompt` is a func type too — assign `func(ctx, rc, agent) (*agents.Prompt, error)` to compute the prompt per run from the [run context](running_agents.md#local-context). `StaticPrompt` hands every run its own copy of the `Prompt`, `Variables` map included, so rewriting a variable for one run neither leaks into later runs nor races with concurrent ones. Only the OpenAI Responses backend honors `Prompt`; other backends ignore it. This is distinct from MCP server prompts (`server.Session().GetPrompt(...)`, see [MCP](mcp.md)), which fetch prompt *text* to use as instructions.
+`Agent.Prompt` is a func type too — assign `func(ctx, rc, agent) (*agents.Prompt, error)` to compute the prompt per run from the [run context](running_agents.md#local-context). `StaticPrompt` hands every run its own copy of the `Prompt`, `Variables` map included, so rewriting a variable for one run neither leaks into later runs nor races with concurrent ones. Only the OpenAI Responses backend accepts `Prompt`; another backend rejects it with a `*UserError` ([spec §2.15](../reference/spec.md#215-the-model-adapter-contract)). OpenAI shuts reusable prompt objects (`v1/prompts`) down on 2026-11-30 — move the prompt text into `Instructions` before then ([deprecations](https://developers.openai.com/api/docs/deprecations)). This is distinct from MCP server prompts (`server.Session().GetPrompt(...)`, see [MCP](mcp.md)), which fetch prompt *text* to use as instructions.
 
 ## Structured output types
 
