@@ -51,7 +51,7 @@ var rootCmd = &cobra.Command{
 func init() {
 	rootCmd.Flags().StringVar(&flagHost, "host", "127.0.0.1", "Bind address (use 0.0.0.0 for LAN access)")
 	rootCmd.Flags().IntVar(&flagPort, "port", 9527, "HTTP server port")
-	rootCmd.Flags().StringVar(&flagDB, "db", "data.db", "SQLite database path, or a postgres:// DSN")
+	rootCmd.Flags().StringVar(&flagDB, "db", "data.db", "SQLite database path, or a postgres:// DSN (or env AGENTS_DB)")
 	rootCmd.Flags().StringVar(&flagToken, "token", "", "Authentication token (or env AGENTS_TOKEN; auto-generated if empty)")
 	rootCmd.Flags().StringVar(&flagLogLevel, "log-level", "info", "Log level: debug, info, warn, error")
 	rootCmd.Flags().StringVar(&flagLogFormat, "log-format", "text", "Log format: text, json")
@@ -86,7 +86,19 @@ func Execute() {
 	}
 }
 
-func run(_ *cobra.Command, _ []string) error {
+// dbTarget resolves the database argument: an explicit --db wins, then
+// AGENTS_DB, then the flag's default.
+func dbTarget(flag string, set bool, getenv func(string) string) string {
+	if set {
+		return flag
+	}
+	if env := getenv("AGENTS_DB"); env != "" {
+		return env
+	}
+	return flag
+}
+
+func run(cmd *cobra.Command, _ []string) error {
 	log, err := logging.New(os.Stderr, flagLogLevel, flagLogFormat)
 	if err != nil {
 		return err
@@ -120,7 +132,7 @@ func run(_ *cobra.Command, _ []string) error {
 		log.Warn("stored credentials are not encrypted at rest; set AGENTS_SECRET_KEY (or --secret-key-file) to seal them")
 	}
 
-	db, err := store.OpenDB(flagDB)
+	db, err := store.OpenDB(dbTarget(flagDB, cmd.Flags().Changed("db"), os.Getenv))
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}

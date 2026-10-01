@@ -21,3 +21,32 @@ func TestFormatLocalZone(t *testing.T) {
 		}
 	}
 }
+
+// An explicit --db wins, AGENTS_DB backs it, and the default is last: the flag's
+// own default must not shadow the variable.
+func TestDBTargetPrecedence(t *testing.T) {
+	env := func(v string) func(string) string {
+		return func(key string) string {
+			if key == "AGENTS_DB" {
+				return v
+			}
+			return ""
+		}
+	}
+	cases := []struct {
+		name string
+		flag string
+		set  bool
+		env  string
+		want string
+	}{
+		{"explicit flag over the variable", "mine.db", true, "postgres://env", "mine.db"},
+		{"variable over the default", "data.db", false, "postgres://env", "postgres://env"},
+		{"default when neither is given", "data.db", false, "", "data.db"},
+	}
+	for _, c := range cases {
+		if got := dbTarget(c.flag, c.set, env(c.env)); got != c.want {
+			t.Errorf("%s: dbTarget = %q, want %q", c.name, got, c.want)
+		}
+	}
+}

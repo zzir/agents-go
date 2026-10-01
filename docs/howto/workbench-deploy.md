@@ -116,12 +116,13 @@ content is `log_sensitive_data` — stderr — which is a different switch from
 SQLite in WAL mode with a 5s busy timeout by default — both applied as PRAGMA
 statements and verified when the database opens, because the two SQLite drivers
 the build can pick disagree on DSN pragma syntax and silently drop what they
-don't recognize. Pass `--db` a `postgres://` (or `postgresql://`) DSN to use
-PostgreSQL 16+ instead — same schema, created the same way; the Postgres pool
-is capped at 16 connections:
+don't recognize. Give `--db`, or `AGENTS_DB` to keep the password off the
+command line, a `postgres://` (or `postgresql://`) DSN to use PostgreSQL 16+
+instead — same schema, created the same way; the Postgres pool is capped at 16
+connections:
 
 ```bash
-./agents-server --db 'postgres://user:pass@localhost:5432/agents?sslmode=disable'
+AGENTS_DB='postgres://user:pass@localhost:5432/agents?sslmode=disable' ./agents-server
 ```
 
 Run **one instance per database**

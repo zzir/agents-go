@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -26,9 +27,22 @@ const instanceLockKey int64 = 0x61_67_6e_74_73_67_6f
 var ErrInstanceLocked = errors.New("another agents-server holds this database; run one instance per database")
 
 // OpenDB opens the store database from the --db flag's value: a postgres:// or
-// postgresql:// URL opens PostgreSQL, anything else is a SQLite file path.
-func OpenDB(arg string) (*bun.DB, error) {
+// postgresql:// URL opens PostgreSQL, anything else is a SQLite file path. A
+// DSN that does not parse is an error that never echoes it: it holds a password.
+func OpenDB(arg string) (db *bun.DB, err error) {
 	if strings.HasPrefix(arg, "postgres://") || strings.HasPrefix(arg, "postgresql://") {
+		if _, perr := url.Parse(arg); perr != nil {
+			if uerr, ok := errors.AsType[*url.Error](perr); ok {
+				perr = uerr.Err
+			}
+			return nil, fmt.Errorf("the PostgreSQL DSN does not parse: %w", perr)
+		}
+		// The driver panics on a DSN it cannot read, with the DSN in the message.
+		defer func() {
+			if recover() != nil {
+				db, err = nil, errors.New("the PostgreSQL DSN is not valid")
+			}
+		}()
 		return NewPostgresDB(arg), nil
 	}
 	return NewSQLiteDB(fmt.Sprintf("file:%s?cache=shared", arg))

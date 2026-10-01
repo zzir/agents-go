@@ -54,3 +54,23 @@ func TestInstanceLockNoOpOnSQLite(t *testing.T) {
 	rel1()
 	rel2()
 }
+
+// A DSN that does not parse is an error, not the driver's panic, and neither
+// way out repeats the DSN: it carries the password.
+func TestOpenDBDoesNotEchoTheDSN(t *testing.T) {
+	for name, dsn := range map[string]string{
+		"a bad port":           "postgres://u:s3cretpw@localhost:54a32/db",
+		"an unknown sslmode":   "postgres://u:s3cretpw@localhost/db?sslmode=bogus",
+		"the postgresql alias": "postgresql://u:s3cretpw@localhost:54a32/db",
+	} {
+		db, err := OpenDB(dsn)
+		if err == nil {
+			_ = db.Close()
+			t.Errorf("%s: opened, want an error", name)
+			continue
+		}
+		if strings.Contains(err.Error(), "s3cretpw") || strings.Contains(err.Error(), "u:") {
+			t.Errorf("%s: the error repeats the credentials: %v", name, err)
+		}
+	}
+}

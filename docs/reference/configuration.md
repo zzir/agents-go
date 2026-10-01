@@ -30,7 +30,7 @@ settings table is generated from the registry (`make settings-doc` in
 |---|---|---|
 | `--host` | `127.0.0.1` | Bind address (`0.0.0.0` for LAN) |
 | `--port` | `9527` | HTTP port |
-| `--db` | `data.db` | SQLite path, or a `postgres://` / `postgresql://` DSN |
+| `--db` | `data.db` | SQLite path, or a `postgres://` / `postgresql://` DSN (or env, below) |
 | `--base-url` | — | Public origin of this server (required behind a proxy for OAuth) |
 | `--auth` | `token` | `token` (one static token) or `oauth` (per-user login) |
 | `--oauth-google-client-id` | — | Enables the Google login provider |
@@ -59,6 +59,7 @@ Each is the fallback of one flag (flag wins), never a standalone knob
 
 | Variable | Flag it backs | Holds |
 |---|---|---|
+| `AGENTS_DB` | `--db` | The database path or DSN (keeps a PostgreSQL password off argv) |
 | `AGENTS_TOKEN` | `--token` | The static auth token |
 | `AGENTS_SECRET_KEY` | `--secret-key-file` | The 32-byte credential-sealing key (base64 or hex) |
 | `AGENTS_OAUTH_GOOGLE_CLIENT_SECRET` | `--oauth-google-client-secret` | The Google OAuth client secret |
