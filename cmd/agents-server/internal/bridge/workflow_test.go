@@ -117,7 +117,7 @@ func TestWorkflowRunsEveryStepInOrder(t *testing.T) {
 	defer srv.Close()
 	runner, sess, wf := workflowFixture(t, srv.URL)
 
-	info, err := runner.StartWorkflow(ctx, wf.ID, sess.ID, "sort a list", "call_start")
+	info, err := runner.StartWorkflow(ctx, wf.ID, sess.ID, "sort a list", "call_start", store.WorkflowOrigin{})
 	if err != nil {
 		t.Fatalf("StartWorkflow: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestWorkflowStopsAtAFailedStep(t *testing.T) {
 	// No model server: the first step's call fails.
 	runner, sess, wf := workflowFixture(t, "http://127.0.0.1:1")
 
-	info, err := runner.StartWorkflow(ctx, wf.ID, sess.ID, "", "")
+	info, err := runner.StartWorkflow(ctx, wf.ID, sess.ID, "", "", store.WorkflowOrigin{})
 	if err != nil {
 		t.Fatalf("StartWorkflow: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestWorkflowRecordsTheTurnThatStartedIt(t *testing.T) {
 	defer srv.Close()
 	runner, sess, wf := workflowFixture(t, srv.URL)
 
-	info, err := runner.StartWorkflow(tasks.WithParentRunID(ctx, "run_asked"), wf.ID, sess.ID, "", "")
+	info, err := runner.StartWorkflow(tasks.WithParentRunID(ctx, "run_asked"), wf.ID, sess.ID, "", "", store.WorkflowOrigin{})
 	if err != nil {
 		t.Fatalf("StartWorkflow: %v", err)
 	}
@@ -307,7 +307,7 @@ func TestWorkflowFailureEdgeLoopsBackAndCompletes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	info, err := runner.StartWorkflow(ctx, wf.ID, sess.ID, "", "")
+	info, err := runner.StartWorkflow(ctx, wf.ID, sess.ID, "", "", store.WorkflowOrigin{})
 	if err != nil {
 		t.Fatalf("StartWorkflow: %v", err)
 	}
@@ -457,7 +457,7 @@ func TestWorkflowTokenBudgetIsMeasuredOnTheSession(t *testing.T) {
 	if err := runner.Deps.Workflows.Update(ctx, wf.ID, wf, nil); err != nil {
 		t.Fatal(err)
 	}
-	info, err := runner.StartWorkflow(ctx, wf.ID, sess.ID, "spend wisely", "")
+	info, err := runner.StartWorkflow(ctx, wf.ID, sess.ID, "spend wisely", "", store.WorkflowOrigin{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -501,7 +501,7 @@ func TestWorkflowRefusesPastTheBackgroundBudget(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	_, err := runner.StartWorkflow(ctx, wf.ID, sess.ID, "", "")
+	_, err := runner.StartWorkflow(ctx, wf.ID, sess.ID, "", "", store.WorkflowOrigin{})
 	if err == nil {
 		t.Fatal("a workflow past the background budget must be refused")
 	}
@@ -518,7 +518,7 @@ func TestWorkflowRunCarriesItsOwnSnapshot(t *testing.T) {
 	defer srv.Close()
 	runner, sess, wf := workflowFixture(t, srv.URL)
 
-	info, err := runner.StartWorkflow(ctx, wf.ID, sess.ID, "", "")
+	info, err := runner.StartWorkflow(ctx, wf.ID, sess.ID, "", "", store.WorkflowOrigin{})
 	if err != nil {
 		t.Fatalf("StartWorkflow: %v", err)
 	}
@@ -628,7 +628,7 @@ func TestWorkflowCompactsBeforeAStep(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	info, err := runner.StartWorkflow(ctx, wf.ID, sess.ID, "the task", "")
+	info, err := runner.StartWorkflow(ctx, wf.ID, sess.ID, "the task", "", store.WorkflowOrigin{})
 	if err != nil {
 		t.Fatalf("StartWorkflow: %v", err)
 	}
@@ -689,7 +689,7 @@ func TestRetryWorkflowResumesFromTheFailedStep(t *testing.T) {
 	defer srv.Close()
 	runner, sess, wf := workflowFixture(t, srv.URL)
 
-	info, err := runner.StartWorkflow(ctx, wf.ID, sess.ID, "", "")
+	info, err := runner.StartWorkflow(ctx, wf.ID, sess.ID, "", "", store.WorkflowOrigin{})
 	if err != nil {
 		t.Fatalf("StartWorkflow: %v", err)
 	}
@@ -862,7 +862,7 @@ func TestWorkflowGateDrivesTheFixLoop(t *testing.T) {
 	if err := runner.Deps.Workflows.Update(ctx, wf.ID, wf, nil); err != nil {
 		t.Fatal(err)
 	}
-	info, err := runner.StartWorkflow(ctx, wf.ID, sess.ID, "", "")
+	info, err := runner.StartWorkflow(ctx, wf.ID, sess.ID, "", "", store.WorkflowOrigin{})
 	if err != nil {
 		t.Fatalf("StartWorkflow: %v", err)
 	}
@@ -894,7 +894,7 @@ func pausedFixture(t *testing.T, modelURL string) (*Runner, *store.Session, *tas
 	if err := runner.Deps.Workflows.Update(ctx, wf.ID, wf, nil); err != nil {
 		t.Fatal(err)
 	}
-	info, err := runner.StartWorkflow(ctx, wf.ID, sess.ID, "the brief", "")
+	info, err := runner.StartWorkflow(ctx, wf.ID, sess.ID, "the brief", "", store.WorkflowOrigin{})
 	if err != nil {
 		t.Fatalf("StartWorkflow: %v", err)
 	}
@@ -943,7 +943,7 @@ func TestPausedStepIsAnnouncedWithoutARun(t *testing.T) {
 	if err := runner.Deps.Workflows.Update(ctx, wf.ID, wf, nil); err != nil {
 		t.Fatal(err)
 	}
-	info, err := runner.StartWorkflow(ctx, wf.ID, sess.ID, "the brief", "")
+	info, err := runner.StartWorkflow(ctx, wf.ID, sess.ID, "the brief", "", store.WorkflowOrigin{})
 	if err != nil {
 		t.Fatal(err)
 	}

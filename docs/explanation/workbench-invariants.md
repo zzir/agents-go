@@ -484,3 +484,8 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     `runOptionsFor` skips it when any backend in the agent's provider chain,
     primary or fallback, is anthropic — for the entry agent and a handoff
     target alike. The Context panel still shows the figure (decisions §5.60).
+84. **Work a trigger started does not run on a person's standing trust.** A
+    trigger's turn, the tasks it spawns, a trigger-started workflow's steps
+    and the wake-ups that report them ask for every `exec_command` the agent
+    gates, whatever the session's `same`/`all` grants; a chat turn a person's
+    decision resumed reads the grants again (decisions §5.75).

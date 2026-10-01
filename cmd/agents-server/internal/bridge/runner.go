@@ -14,6 +14,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/attachments"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
@@ -130,8 +131,9 @@ func (r *Runner) StartRun(sessionID, agentConfigID, projectID string, input RunI
 
 // StartWakeRun is StartRun for a task notification delivery: same launch, plus
 // the lineage (the run whose spawn started the chain) the trace records.
-func (r *Runner) StartWakeRun(sessionID, agentConfigID, projectID, input, parentRunID string, onDone func(*RunOutcome)) (string, error) {
-	return r.startRunWithID(store.NewID(), sessionID, agentConfigID, projectID, TextInput(input), parentRunID, nil, onDone)
+// withholdTrust is set for a delivery of work a trigger started.
+func (r *Runner) StartWakeRun(sessionID, agentConfigID, projectID, input, parentRunID string, withholdTrust bool, onDone func(*RunOutcome)) (string, error) {
+	return r.startRunWithID(store.NewID(), sessionID, agentConfigID, projectID, RunInput{Text: input, WithholdTrust: withholdTrust}, parentRunID, nil, onDone)
 }
 
 // startRunWithID is StartRun with a caller-chosen run id: a task's row carries
@@ -248,6 +250,8 @@ type segmentSpec struct {
 	// fresh gates the fresh-run extras (session pre-check, run.agent_start,
 	// arming the plan unlock, title generation); a resume already did them.
 	fresh bool
+	// withholdTrust is the fresh chat segment's RunInput.WithholdTrust.
+	withholdTrust bool
 	// built is a resume's agent, built by the approval path; the segment
 	// releases it. nil means the segment builds (and releases) its own.
 	built *BuildResult
@@ -283,6 +287,13 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	var ownerID string
 	if info, ok := r.hub.Info(runID); ok {
 		task, ownerID = info.Task, info.OwnerID
+	}
+	// Recorded as well as marked, so the tasks this run spawns are withheld too.
+	if r.withholdsTrust(ctx, task, spec.fresh, spec.withholdTrust) {
+		ctx = sandboxes.WithoutStandingTrust(ctx)
+		if r.Deps.SandboxManager != nil {
+			r.Deps.SandboxManager.Trust().WithholdRun(trustSessionID(sessionID, task), runID)
+		}
 	}
 	// Attachments are validated before anything is announced; the metadata
 	// also feeds run.started so clients render thumbnails without a request.
@@ -500,6 +511,7 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 		wakeParentRunID: wakeParentRunID,
 		failCode:        protocol.CodeStreamError,
 		fresh:           true,
+		withholdTrust:   input.WithholdTrust,
 		start: func(ctx context.Context, agent *agents.Agent, opts agents.RunOptions) (agents.RunStream, agents.RunControl) {
 			// Empty input means "continue from the branch point" (regenerate):
 			// an empty ITEM LIST, so no empty user turn is appended.

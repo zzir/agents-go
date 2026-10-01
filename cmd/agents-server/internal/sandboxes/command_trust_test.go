@@ -73,3 +73,46 @@ func TestTrustStoreForget(t *testing.T) {
 		t.Fatalf("bySession holds %d entries after Forget, want 0", n)
 	}
 }
+
+// A run marked as withheld asks for every command, whatever its session
+// granted (invariant 84); the same session's unmarked run still uses the grant.
+func TestCommandGateWithheldIgnoresTrust(t *testing.T) {
+	m := NewManager()
+	args := `{"cmd":"ls","workdir":""}`
+	rc := &agents.RunContext{Context: "sess1"}
+	m.Trust().ForSession("sess1").AllowAll()
+
+	withheld := WithoutStandingTrust(context.Background())
+	if need, _ := m.commandGate(withheld, rc, args, ""); !need {
+		t.Fatal("a withheld run used the session's standing trust")
+	}
+	// A context derived from it is still withheld: the mark rides the run.
+	derived, cancel := context.WithCancel(withheld)
+	defer cancel()
+	if need, _ := m.commandGate(derived, rc, args, ""); !need {
+		t.Fatal("a context derived from a withheld run lost the mark")
+	}
+	if need, _ := m.commandGate(context.Background(), rc, args, ""); need {
+		t.Fatal("an unmarked run on the same session should still use the grant")
+	}
+}
+
+// The withheld-run record answers by run id and goes with its session.
+func TestTrustStoreWithheldRuns(t *testing.T) {
+	s := NewTrustStore()
+	s.WithholdRun("sess1", "run-a")
+	s.WithholdRun("sess2", "run-b")
+	if !s.RunWithheld("run-a") || !s.RunWithheld("run-b") {
+		t.Fatal("a recorded run is not reported withheld")
+	}
+	if s.RunWithheld("run-c") || s.RunWithheld("") {
+		t.Fatal("an unrecorded run is reported withheld")
+	}
+	s.Forget("sess1")
+	if s.RunWithheld("run-a") {
+		t.Fatal("a forgotten session's withheld run survived")
+	}
+	if !s.RunWithheld("run-b") {
+		t.Fatal("forgetting one session dropped another's withheld run")
+	}
+}

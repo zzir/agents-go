@@ -17,6 +17,9 @@ import (
 type RunInput struct {
 	Text          string
 	AttachmentIDs []string
+	// WithholdTrust starts the run without the session's standing command
+	// trust: a trigger's turn, or a wake-up reporting work one started.
+	WithholdTrust bool
 }
 
 // TextInput is the text-only RunInput every internal caller passes.

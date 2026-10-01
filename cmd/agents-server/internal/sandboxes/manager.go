@@ -154,9 +154,10 @@ func NewManager() *Manager {
 func (m *Manager) Trust() *TrustStore { return m.trust }
 
 // commandGate is exec_command's per-call approval gate: required unless the
-// session trusted this command (or all). The session id rides in RunContext.Context.
-func (m *Manager) commandGate(_ context.Context, rc *agents.RunContext, argsJSON string, _ string) (bool, error) {
-	if rc == nil {
+// session trusted this command (or all) and the run may use that trust. The
+// session id rides in RunContext.Context.
+func (m *Manager) commandGate(ctx context.Context, rc *agents.RunContext, argsJSON string, _ string) (bool, error) {
+	if rc == nil || standingTrustWithheld(ctx) {
 		return true, nil
 	}
 	sid, _ := rc.Context.(string)

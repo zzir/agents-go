@@ -80,7 +80,7 @@ func (w Waker) Drain(ctx context.Context, sessionID string) {
 	}
 
 	if _, err := w.r.StartWakeRun(sessionID, inherit.AgentConfigID, inherit.ProjectID,
-		strings.Join(payloads, "\n\n"), parentRunID, nil); err != nil {
+		strings.Join(payloads, "\n\n"), parentRunID, w.r.wakeWithheld(ctx, batch), nil); err != nil {
 		// Lost a race with a run that started between the guard and here. The
 		// debts stay pending and that run's own boundary re-drains them.
 		log.Debug("wake-up run did not start", "error", err, "session_id", sessionID)

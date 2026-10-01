@@ -145,7 +145,8 @@ func (r *Runner) taskMeta(ctx context.Context, sessionID string) (*TaskMeta, err
 }
 
 // trustSessionID picks the session the exec_command trust gate scopes to: a
-// task run inherits its parent chat session's command trust.
+// task run reads its parent chat session's command trust, unless what started
+// it withholds that — invariant 84.
 func trustSessionID(sessionID string, task *TaskMeta) string {
 	if task != nil && task.ParentSessionID != "" {
 		return task.ParentSessionID

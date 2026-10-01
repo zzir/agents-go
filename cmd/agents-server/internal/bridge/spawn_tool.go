@@ -124,7 +124,7 @@ func (r *Runner) spawnWorkflow(ctx context.Context, tc *agents.ToolContext, pare
 		return agents.TextResult(fmt.Sprintf("Could not look up workflows right now: %s. Try again, or leave workflow empty for a free-form task.", err.Error())), nil
 	}
 	if wf := matchWorkflow(offered, ownerID, name); wf != nil {
-		info, err := r.StartWorkflow(ctx, wf.ID, parent, input, tc.ToolCallID)
+		info, err := r.StartWorkflow(ctx, wf.ID, parent, input, tc.ToolCallID, store.WorkflowOrigin{})
 		if err != nil {
 			// The refusal is the model's to read and relay — a full budget or a
 			// deleted agent is something the person can act on.

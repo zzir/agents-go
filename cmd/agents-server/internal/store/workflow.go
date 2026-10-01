@@ -363,6 +363,8 @@ type WorkflowState struct {
 	PendingInput string `json:"pending_input,omitempty"`
 	// Stopped names the bound that ended the execution for good (StoppedBy*); a retry would be refused.
 	Stopped string `json:"stopped,omitempty"`
+	// Origin is who started the execution when no run did; zero when a run's tool call started it.
+	Origin WorkflowOrigin `json:"origin,omitzero"`
 }
 
 // The bounds that end an execution for good.

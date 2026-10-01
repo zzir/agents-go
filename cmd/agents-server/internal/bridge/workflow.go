@@ -25,7 +25,8 @@ var ErrWorkflowUnavailable = errors.New("workflow unavailable")
 // run is the first step. input is the brief — what this execution is about,
 // written by the agent that asked for it; toolCallID is the spawn_task
 // call, so the card it produced follows the execution (workbench invariant 30).
-func (r *Runner) StartWorkflow(ctx context.Context, workflowID, parentSessionID, input, toolCallID string) (*tasks.Info, error) {
+// origin is who started it when no run did, kept on the state; zero for a tool call's.
+func (r *Runner) StartWorkflow(ctx context.Context, workflowID, parentSessionID, input, toolCallID string, origin store.WorkflowOrigin) (*tasks.Info, error) {
 	if r.Deps.Workflows == nil || r.tasks == nil {
 		return nil, errors.New("workflows are not wired")
 	}
@@ -50,6 +51,7 @@ func (r *Runner) StartWorkflow(ctx context.Context, workflowID, parentSessionID,
 		Budget:     wf.Budget,
 		Input:      input,
 		StepID:     first.ID,
+		Origin:     origin,
 	}
 	// The manager does the rest: cap, hidden child session, row, launch, stop
 	// reconciliation. AgentName names the first step; each step brings its own.
@@ -81,7 +83,7 @@ func (r *Runner) RunWorkflow(ctx context.Context, workflowID, sessionID, input s
 	if sess.Hidden {
 		return nil, fmt.Errorf("%w: session %s is a task's own; a workflow reports to a conversation", ErrWorkflowUnavailable, sessionID)
 	}
-	info, err := r.StartWorkflow(ctx, workflowID, sessionID, input, "")
+	info, err := r.StartWorkflow(ctx, workflowID, sessionID, input, "", origin)
 	if err != nil {
 		return nil, err
 	}

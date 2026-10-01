@@ -1788,3 +1788,25 @@ itself. The schema version is unchanged, so an older build resuming a state
 this one wrote resolves it by the old order.
 
 Rules: spec §2.7
+
+### 5.75 Work a trigger started does not run on standing command trust
+
+Decided 2026-10-02 (workbench invariant 84).
+
+**Decision.** A trigger's agent turn, the tasks it spawns, a trigger-started
+workflow's steps and the wake-ups that report any of them ask for every
+`exec_command` the agent gates, whatever `same`/`all` grants the session
+holds. A chat turn resumed by a person's decision reads the grants again.
+
+**Rejected.** Withholding the wake-ups alone: the turn and its tasks had
+already run a webhook's text under the person's trust. A persisted revocation
+table: the trust it would guard lives in memory. A per-trigger `allow_tools`:
+pointing the trigger at an agent with fewer tools narrows it already.
+
+**Cost accepted.** An unattended trigger turn that reaches a gated command
+waits for a person. A grant chosen on such a card is the session's: it never
+quiets a task of that chain. Which runs were withheld is kept in memory, so
+after a restart a retried task of one reads the grants made since; a
+workflow's origin rides its state and survives.
+
+Rules: [invariant 84](workbench-invariants.md)

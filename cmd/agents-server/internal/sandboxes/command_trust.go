@@ -1,9 +1,11 @@
 package sandboxes
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"maps"
 	"sync"
 )
 
@@ -44,11 +46,43 @@ func (t *CommandTrust) AllowAll() {
 type TrustStore struct {
 	mu        sync.Mutex
 	bySession map[string]*CommandTrust
+	// withheld is the runs started without standing trust, each under the
+	// session whose trust it was denied.
+	withheld map[string]string
 }
 
 // NewTrustStore returns an empty store.
 func NewTrustStore() *TrustStore {
-	return &TrustStore{bySession: make(map[string]*CommandTrust)}
+	return &TrustStore{bySession: make(map[string]*CommandTrust), withheld: make(map[string]string)}
+}
+
+type trustWithheldKey struct{}
+
+// WithoutStandingTrust marks a run's context so exec_command asks for every
+// command, whatever its session granted — invariant 84.
+func WithoutStandingTrust(ctx context.Context) context.Context {
+	return context.WithValue(ctx, trustWithheldKey{}, true)
+}
+
+func standingTrustWithheld(ctx context.Context) bool {
+	withheld, _ := ctx.Value(trustWithheldKey{}).(bool)
+	return withheld
+}
+
+// WithholdRun records that runID runs without sessionID's standing trust, so
+// the work it starts can be told from a person's.
+func (s *TrustStore) WithholdRun(sessionID, runID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.withheld[runID] = sessionID
+}
+
+// RunWithheld reports whether WithholdRun recorded runID.
+func (s *TrustStore) RunWithheld(runID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.withheld[runID]
+	return ok
 }
 
 // ForSession returns the session's trust, created empty on first use.
@@ -63,12 +97,13 @@ func (s *TrustStore) ForSession(id string) *CommandTrust {
 	return t
 }
 
-// Forget drops a session's trust — the session-delete path calls it, since the
-// map otherwise grows for the process lifetime.
+// Forget drops a session's trust and its withheld runs — the session-delete
+// path calls it, since the maps otherwise grow for the process lifetime.
 func (s *TrustStore) Forget(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.bySession, id)
+	maps.DeleteFunc(s.withheld, func(_, sessionID string) bool { return sessionID == id })
 }
 
 // CommandHash canonicalizes an exec_command argsJSON to a stable key, so

@@ -358,7 +358,9 @@ func (s *TriggerScheduler) fireAgentTurn(ctx context.Context, t *store.Trigger, 
 		note()
 		return nil
 	}
-	if _, err := s.runner.startRunReserved(runID, t.SessionID, agent.ID, "", TextInput(input), "", nil, nil, reserved); err != nil {
+	// No person asked for this turn, so it runs on nobody's standing trust — invariant 84.
+	in := RunInput{Text: input, WithholdTrust: true}
+	if _, err := s.runner.startRunReserved(runID, t.SessionID, agent.ID, "", in, "", nil, nil, reserved); err != nil {
 		return nil, err
 	}
 	return &Fired{RunID: runID}, nil

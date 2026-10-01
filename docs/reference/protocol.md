@@ -276,7 +276,8 @@ a background task's paused run is its task's to stop.
 that the approve body's `scope` (REST and `tool.approve` alike) widens:
 `once`, `same` or `all`. Trust is in-memory and per session — it survives
 interrupt/resume and resets on restart — and matching is exact, so approving
-`go test` never green-lights `go test && rm -rf`.
+`go test` never green-lights `go test && rm -rf`. Work a trigger started does
+not read it ([invariant 84](../explanation/workbench-invariants.md)).
 
 ### Tasks — `/api/v1/tasks`
 

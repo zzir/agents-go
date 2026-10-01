@@ -414,7 +414,7 @@ func TestWorkflowStepIsBuiltAsABackgroundRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	info, err := runner.StartWorkflow(ctx, wf.ID, sess.ID, "the brief", "")
+	info, err := runner.StartWorkflow(ctx, wf.ID, sess.ID, "the brief", "", store.WorkflowOrigin{})
 	if err != nil {
 		t.Fatalf("StartWorkflow: %v", err)
 	}
