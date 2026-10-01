@@ -80,6 +80,22 @@ func TestAgentConfigRejectsEmptyModel(t *testing.T) {
 	}
 }
 
+// An output schema strict mode cannot express would save and then fail every
+// run, so the save refuses it.
+func TestAgentConfigRejectsInexpressibleOutputSchema(t *testing.T) {
+	engine, _ := newAgentEngine(t)
+
+	body := `{"name":"a","model":"gpt-4o","guardrails":{"output_schema":"{\"type\":\"object\",\"additionalProperties\":{\"type\":\"string\"}}"}}`
+	w := doJSON(t, engine, http.MethodPost, "/agents", body)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("create: got %d, want 400 (body %s)", w.Code, w.Body.String())
+	}
+	msg := errMessage(t, w.Body.Bytes())
+	if !strings.Contains(msg, "output_schema") || strings.Contains(msg, "NewToolNonStrict") {
+		t.Errorf("error = %q, want it to name output_schema without the SDK's Go-caller advice", msg)
+	}
+}
+
 // Only the built-in catalog is a valid avatar: an external URL would be
 // blocked by the CSP and render as a broken image, so it is refused at save.
 func TestAgentConfigAvatarShape(t *testing.T) {

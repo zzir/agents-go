@@ -160,6 +160,12 @@ func (h *PlaygroundHandler) Generate(c *gin.Context) {
 
 	var outputSchema agents.OutputSchema
 	if req.OutputSchema != nil && req.OutputSchema.Schema != nil {
+		if req.OutputSchema.Strict {
+			if err := bridge.CheckStrictOutputSchema(req.OutputSchema.Schema); err != nil {
+				badRequest(c, err.Error())
+				return
+			}
+		}
 		outputSchema = agents.NewDynamicOutputSchema(
 			cmp.Or(req.OutputSchema.Name, "final_output"), req.OutputSchema.Schema, req.OutputSchema.Strict)
 	}

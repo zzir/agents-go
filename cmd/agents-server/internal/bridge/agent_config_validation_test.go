@@ -33,6 +33,9 @@ func TestBuildFullAgentFailsOnBadCriticalConfig(t *testing.T) {
 		wantSub string
 	}{
 		{"bad output_schema", func(a *store.AgentConfig) { a.Guardrails.OutputSchema = "{not json" }, "output_schema"},
+		{"inexpressible output_schema", func(a *store.AgentConfig) {
+			a.Guardrails.OutputSchema = `{"type":"object","additionalProperties":{"type":"string"}}`
+		}, "output_schema"},
 		{"unknown guardrail", func(a *store.AgentConfig) { a.Guardrails.Guardrails = `["no_such_guardrail"]` }, "not found"},
 		{"wrong-typed model_settings", func(a *store.AgentConfig) { a.ModelSettings = `{"temperature":"hot"}` }, "model_settings"},
 		{"malformed retry_policy", func(a *store.AgentConfig) {
@@ -136,5 +139,26 @@ func TestValidateAgentToolNamesCatchesPrefixCollisions(t *testing.T) {
 	}
 	if err := ValidateAgentToolNames(ctx, servers, []string{global.ID}); err != nil {
 		t.Fatalf("a single selection must pass: %v", err)
+	}
+}
+
+// A schema strict mode cannot express is refused when it is built, and the
+// reason is the schema's: the SDK's advice to a Go caller is left out.
+func TestBuildOutputSchemaRefusesWhatStrictModeCannotExpress(t *testing.T) {
+	for _, schema := range []string{
+		`{"type":"object","additionalProperties":{"type":"string"}}`,
+		`{"type":"object","properties":{"x":{}}}`,
+	} {
+		_, err := BuildOutputSchema(schema)
+		if err == nil {
+			t.Errorf("%s: built, want a refusal", schema)
+			continue
+		}
+		if msg := err.Error(); !strings.Contains(msg, "output_schema") || !strings.Contains(msg, "path=") || strings.Contains(msg, "NewToolNonStrict") {
+			t.Errorf("%s: error = %q, want the field, the path and no Go-caller advice", schema, msg)
+		}
+	}
+	if _, err := BuildOutputSchema(`{"type":"object","properties":{"x":{"type":"string"}}}`); err != nil {
+		t.Errorf("an expressible schema: %v", err)
 	}
 }
