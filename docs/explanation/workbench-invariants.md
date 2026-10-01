@@ -455,10 +455,10 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     one; it opens on the last agent picked anywhere, never the last one sent.
 78. **A name the workbench makes for a session is 40 characters at most, by one
     rule.** `store.ClipName` cuts to 40 runes with an ellipsis as the last: the
-    generated title, its first-line fallback and a workflow's `<workflow>:
-    <brief>` all pass through it, and the form that names a session ahead of
-    its start mirrors it (`lib/sessionTitle.ts`). A fork's base is clipped so
-    the `(fork N)` suffix keeps the name inside the 256 a rename is held to.
+    generated title and its first-line fallback (markdown wrapping the whole of
+    either is stripped first) and a workflow's `<workflow>: <brief>`; the form
+    that names a session ahead of its start mirrors it (`lib/sessionTitle.ts`).
+    A fork's base is clipped so its `(fork N)` suffix fits a rename's 256.
 79. **A list that failed to load says so and offers Retry above its rows; it
     never renders the empty state for a failed read.** `CrudPanel` takes
     `useCrud`'s `error` and `reload` and shows `LoadError` over the rows a

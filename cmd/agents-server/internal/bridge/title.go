@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"context"
+	"regexp"
 	"strings"
 	"time"
 
@@ -42,7 +43,7 @@ func (r *Runner) maybeGenerateTitle(parentCtx context.Context, sessionID, model,
 	if err != nil {
 		log.Warn("title gen: run failed, using first message", "error", err)
 	} else {
-		title = store.ClipName(strings.Trim(strings.TrimSpace(res.FinalOutputString()), "\"'"))
+		title = store.ClipName(plainTitle(res.FinalOutputString()))
 	}
 	// A reachable provider that failed or garbled the title leaves the session
 	// nameless; fall back to the first message.
@@ -76,5 +77,49 @@ func fallbackTitle(userInput string) string {
 	if i := strings.IndexAny(line, "\r\n"); i >= 0 {
 		line = line[:i]
 	}
-	return store.ClipName(strings.TrimSpace(line))
+	return store.ClipName(plainTitle(line))
+}
+
+var (
+	// A heading, quote or list marker that opens the title.
+	titleLeadRE = regexp.MustCompile(`^(#{1,6}|>|[-*+]|\d+\.) `)
+	// A link that is the whole title.
+	titleLinkRE = regexp.MustCompile(`^\[([^\[\]]+)\]\([^()\s]*\)$`)
+	// The marks a title may be wrapped in, the longer of a kind first.
+	titleWraps = [][2]string{{"**", "**"}, {"__", "__"}, {"*", "*"}, {"_", "_"}, {"`", "`"}, {`"`, `"`}, {"'", "'"}, {"“", "”"}, {"‘", "’"}}
+)
+
+// plainTitle strips the markdown that wraps a WHOLE title — the sidebar shows a
+// name as text — and collapses its whitespace. Marks inside it stay: the title
+// may be the person's own words (user_id, *.go, 2 * 3).
+func plainTitle(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	for {
+		t := unwrapTitle(s)
+		if t == s {
+			return s
+		}
+		s = t
+	}
+}
+
+// unwrapTitle takes one layer off: a leading marker, a link around everything,
+// or a pair of marks whose inside holds none of them.
+func unwrapTitle(s string) string {
+	if loc := titleLeadRE.FindStringIndex(s); loc != nil {
+		return strings.TrimSpace(s[loc[1]:])
+	}
+	if m := titleLinkRE.FindStringSubmatch(s); m != nil {
+		return strings.TrimSpace(m[1])
+	}
+	for _, w := range titleWraps {
+		if len(s) < len(w[0])+len(w[1]) || !strings.HasPrefix(s, w[0]) || !strings.HasSuffix(s, w[1]) {
+			continue
+		}
+		inner := s[len(w[0]) : len(s)-len(w[1])]
+		if !strings.Contains(inner, w[0]) && !strings.Contains(inner, w[1]) {
+			return strings.TrimSpace(inner)
+		}
+	}
+	return s
 }

@@ -61,3 +61,57 @@ func TestFallbackTitleClipsTheFirstLine(t *testing.T) {
 		t.Fatalf("fallbackTitle(long) = %q (%d runes), want %d ending in an ellipsis", got, len(r), store.AutoNameMax)
 	}
 }
+
+// A title is shown as text, so markdown wrapping the WHOLE of it is stripped
+// before the clip (invariant 78); marks inside it are the person's own words.
+func TestPlainTitleStripsMarkdown(t *testing.T) {
+	for in, want := range map[string]string{
+		// Wrapped: what a model returns despite being told not to.
+		"**Fix build**":             "Fix build",
+		"# Plan":                    "Plan",
+		"### Release notes":         "Release notes",
+		"`go test`":                 "go test",
+		`"Quoted"`:                  "Quoted",
+		"'Quoted'":                  "Quoted",
+		"“Quoted”":                  "Quoted",
+		"[docs](https://x)":         "docs",
+		"> Summary of the thread":   "Summary of the thread",
+		"- Fix the flaky test":      "Fix the flaky test",
+		"1. Getting started":        "Getting started",
+		"**\"Deploy plan\"**":       "Deploy plan",
+		"***Bold and italic***":     "Bold and italic",
+		"_Draft_":                   "Draft",
+		"**2 * 3**":                 "2 * 3",
+		"  Spread \n over\tlines  ": "Spread over lines",
+		// Not wrapped: inner marks stay as written.
+		"fix user_id and order_id":   "fix user_id and order_id",
+		"rename *.go to *.txt":       "rename *.go to *.txt",
+		"2 * 3 * 4":                  "2 * 3 * 4",
+		"__init__.py":                "__init__.py",
+		"_private_var_":              "_private_var_",
+		"*args and **kwargs":         "*args and **kwargs",
+		"**Fix** the **build**":      "**Fix** the **build**",
+		`"a" and "b"`:                `"a" and "b"`,
+		"`a` and `b`":                "`a` and `b`",
+		`It's "fine"`:                `It's "fine"`,
+		"#123 is broken":             "#123 is broken",
+		"-5 degrees":                 "-5 degrees",
+		"[docs](https://x) and more": "[docs](https://x) and more",
+		"see [docs](https://x)":      "see [docs](https://x)",
+		"C# basics":                  "C# basics",
+		// Marks around nothing are no title: the caller falls back.
+		"**": "",
+		`""`: "",
+	} {
+		if got := plainTitle(in); got != want {
+			t.Errorf("plainTitle(%q) = %q, want %q", in, got, want)
+		}
+	}
+	// The fallback is the person's first line, through the same rule.
+	if got := fallbackTitle("**Ship it**\nthe rest"); got != "Ship it" {
+		t.Errorf("fallbackTitle = %q, want the first line without its markdown", got)
+	}
+	if got := fallbackTitle("fix user_id in __init__.py"); got != "fix user_id in __init__.py" {
+		t.Errorf("fallbackTitle = %q, want the person's words untouched", got)
+	}
+}
