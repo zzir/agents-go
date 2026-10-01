@@ -50,20 +50,32 @@ func TestTodo_WriteReplacesAndNotifies(t *testing.T) {
 func TestTodo_InvalidStatusRefusedWhole(t *testing.T) {
 	model := &scriptedModel{responses: []*agents.ModelResponse{
 		resp(toolCallArgs(t, TodoToolName, "c1",
-			`{"todos":[{"content":"ok"},{"content":"bad","status":"someday"}]}`)),
+			`{"todos":[{"content":"ok","status":"pending"},{"content":"bad","status":"someday"}]}`)),
 		resp(message(t, "done")),
 	}}
 	var updates int
 	agent := &agents.Agent{Name: "a", ModelImpl: model}
-	if _, err := agents.RunSync(context.Background(), agent, "go", agents.RunOptions{
+	res, err := agents.RunSync(context.Background(), agent, "go", agents.RunOptions{
 		Middlewares: []agents.RunMiddleware{Todo{
 			OnUpdate: func(context.Context, []TodoItem) { updates++ },
 		}},
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	if updates != 0 {
 		t.Fatalf("a rejected write must not notify; got %d updates", updates)
+	}
+	// The refusal is the handler's own, not the schema's: the list was valid
+	// in shape, and the second item's status is what it names.
+	var refusal string
+	for _, it := range res.NewItems {
+		if it.Kind == agents.ItemToolCallOutput {
+			refusal, _ = it.Output.(string)
+		}
+	}
+	if !strings.Contains(refusal, `unknown status "someday"`) {
+		t.Fatalf("refusal = %q, want the unknown-status error", refusal)
 	}
 }
 
