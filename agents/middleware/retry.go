@@ -9,10 +9,11 @@ import (
 )
 
 // Retry re-runs a run that failed — the whole run, which is what a failure the
-// loop could not absorb needs (a guardrail tripwire, a max-turns overrun);
-// agents.NewRetryModel retries one model call, and both are usually right at
-// once. An attempt is retried from the start, never resumed: the SDK cannot
-// know which side effects happened. With a Session, see spec §2.12.
+// loop could not absorb needs (a guardrail tripwire, a max-turns overrun).
+// agents.NewRetryModel retries one model call; wrapping a run whose model
+// already retries multiplies the attempts. An attempt is retried from the
+// start, never resumed: the SDK cannot know which side effects happened. With
+// a Session, see spec §2.12.
 type Retry struct {
 	// MaxAttempts includes the first. Zero means 2 — one retry.
 	MaxAttempts int
