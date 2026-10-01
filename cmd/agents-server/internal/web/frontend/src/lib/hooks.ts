@@ -519,6 +519,17 @@ export function useScrollToBottom(dep: unknown, resetDep: unknown): ScrollAnchor
   // invariant 18.
   const lastSelChange = useRef(0);
   const lastUpIntent = useRef(0);
+  // The person pressed a pointer or key inside the log since content last
+  // arrived: growth after it is theirs (a block they opened), however late it
+  // lands, not content to follow.
+  const pressed = useRef(false);
+  // Where the hook last put or saw the view; a scroll event is read against
+  // it, so a position the hook set itself never reads as the person's move.
+  const seen = useRef({ top: 0, dist: 0 });
+  const pin = useCallback((el: HTMLElement) => {
+    el.scrollTop = el.scrollHeight;
+    seen.current = { top: el.scrollTop, dist: el.scrollHeight - el.scrollTop - el.clientHeight };
+  }, []);
   const selectionInside = useCallback(() => {
     const sel = document.getSelection();
     return !!(sel && !sel.isCollapsed && elRef.current?.contains(sel.anchorNode));
@@ -529,11 +540,12 @@ export function useScrollToBottom(dep: unknown, resetDep: unknown): ScrollAnchor
     cleanupRef.current = null;
     elRef.current = node;
     if (node) {
+      // Set below where the browser has one: while pinned it follows height
+      // that arrives with no dep change (a block rendered late, a resize).
+      let observer: ResizeObserver | null = null;
       // Trackpads fire scroll events well above frame rate; coalesce the
       // layout reads (scrollHeight/scrollTop) to one per frame.
       let rafId = 0;
-      let prevTop = node.scrollTop;
-      let prevDist = 0;
       const onScroll = () => {
         if (rafId) return;
         rafId = requestAnimationFrame(() => {
@@ -543,15 +555,17 @@ export function useScrollToBottom(dep: unknown, resetDep: unknown): ScrollAnchor
           // touch scroll (wheel is caught below, before position even moves).
           // The dist guard keeps content shrinkage — which clamps scrollTop
           // but leaves dist at 0 — from reading as user intent.
-          const movedUp = node.scrollTop < prevTop - 1 && dist > prevDist + 1;
-          prevTop = node.scrollTop;
-          prevDist = dist;
+          const movedUp = node.scrollTop < seen.current.top - 1 && dist > seen.current.dist + 1;
+          seen.current = { top: node.scrollTop, dist };
           const now = performance.now();
           if (movedUp) {
             lastUpIntent.current = now;
             updateSticky(false);
           } else if (dist >= 80) {
-            updateSticky(false);
+            // Away from the bottom without having moved up: the log grew under
+            // the pin. Following it or handing over is the observer's call,
+            // made later in this same frame; without one, this is the notice.
+            if (!observer) updateSticky(false);
           } else if (now - lastSelChange.current > 350 && now - lastUpIntent.current > 350) {
             // At the bottom with no recent stop-following intent: (re)stick.
             updateSticky(true);
@@ -571,16 +585,39 @@ export function useScrollToBottom(dep: unknown, resetDep: unknown): ScrollAnchor
           lastUpIntent.current = 0; // wheeling down: let dist<80 re-stick at once
         }
       };
+      const onPress = () => { pressed.current = true; };
       node.addEventListener('scroll', onScroll, { passive: true });
       node.addEventListener('wheel', onWheel, { passive: true });
-      node.scrollTop = node.scrollHeight;
+      node.addEventListener('pointerdown', onPress, { passive: true });
+      node.addEventListener('keydown', onPress, { passive: true });
+      pin(node);
+      const log = node.firstElementChild;
+      if (log && typeof ResizeObserver !== 'undefined') {
+        observer = new ResizeObserver(() => {
+          if (!stick.current) return;
+          const now = performance.now();
+          if (pressed.current || now - lastSelChange.current < 350 || now - lastUpIntent.current < 350) {
+            // The person is working in the log (opened a block, is selecting,
+            // just scrolled): stay where they are, and stop following once the
+            // growth pushes the bottom out of reach, so nothing later yanks.
+            if (node.scrollHeight - node.scrollTop - node.clientHeight >= 80) updateSticky(false);
+            return;
+          }
+          pin(node);
+        });
+        observer.observe(log);
+        observer.observe(node);
+      }
       cleanupRef.current = () => {
         if (rafId) cancelAnimationFrame(rafId);
+        observer?.disconnect();
         node.removeEventListener('scroll', onScroll);
         node.removeEventListener('wheel', onWheel);
+        node.removeEventListener('pointerdown', onPress);
+        node.removeEventListener('keydown', onPress);
       };
     }
-  }, [updateSticky]);
+  }, [updateSticky, pin]);
 
   useEffect(() => {
     // Making or growing a selection in the log suspends bottom-following even
@@ -621,15 +658,18 @@ export function useScrollToBottom(dep: unknown, resetDep: unknown): ScrollAnchor
       updateSticky(false);
       return;
     }
-    el.scrollTop = el.scrollHeight;
-  }, [dep, resetDep, updateSticky]);
+    // New content while pinned: following is passive again.
+    pressed.current = false;
+    pin(el);
+  }, [dep, resetDep, updateSticky, pin]);
 
   const scrollToBottom = useCallback(() => {
     if (elRef.current) {
-      // Explicit "follow again" click: clear both re-stick vetoes so the
-      // smooth scroll's own trailing events can't leave the view unstuck.
+      // Explicit "follow again" (the button, or the person's own send): clear
+      // every veto so the smooth scroll's trailing events can't leave the view unstuck.
       lastUpIntent.current = 0;
       lastSelChange.current = 0;
+      pressed.current = false;
       elRef.current.scrollTo({ top: elRef.current.scrollHeight, behavior: 'smooth' });
       updateSticky(true);
     }

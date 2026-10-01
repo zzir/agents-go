@@ -250,9 +250,9 @@ export function ChatView({
     if (settingsReloadKey) { reloadAgents(); reloadSandboxes(); }
   }, [settingsReloadKey, reloadAgents, reloadSandboxes]);
 
-  // The dep must change on every content growth, not just on new messages:
-  // .chat-messages opts out of native scroll anchoring, so streamed text and
-  // reasoning deltas only keep the view pinned if they re-fire this effect.
+  // The dep changes whenever content ARRIVES (a message, streamed text, a
+  // reasoning delta): that is what tells the hook apart new content from
+  // height that merely rendered late, which it follows by observing the log.
   const { ref: scrollRef, isSticky, scrollToBottom } = useScrollToBottom(
     messages.length + (streaming?.length ?? 0) + (reasoning?.length ?? 0),
     sessionId,
@@ -310,9 +310,11 @@ export function ChatView({
     // No sessionId is fine: sending with no active session starts a new session
     // (app-level onSend auto-creates it). Only an agent is required.
     if (!agentConfigId) return;
+    // Your own send follows the log again, wherever you had scrolled — invariant 18.
+    scrollToBottom();
     // Bound: the server uses the binding regardless — send no project claim.
     onSend(text, agentConfigId, sessionBinding ? '' : projectId, attachments);
-  }, [agentConfigId, projectId, sessionBinding, onSend]);
+  }, [agentConfigId, projectId, sessionBinding, onSend, scrollToBottom]);
 
   // Image affordances follow the PICKED agent's Vision flag; the server
   // re-checks at run start, so this is presentation, not the gate.
@@ -782,7 +784,8 @@ export function ChatView({
         {topBar}
         <div className="chat-messages-area">
         <div ref={composedScrollRef} className="chat-messages" onClick={handleCopyClick}>
-          {messages.map(renderMessage)}
+          {/* One child, so useScrollToBottom can watch the log's height. */}
+          <div className="chat-log">{messages.map(renderMessage)}</div>
         </div>
 
         {!isSticky && (

@@ -105,11 +105,11 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     `guardrail_tripwire`, which keeps the retracted-answer view the SDK never
     persists; a new exception is listed here (`useAgentSocket.ts`).
 18. **The streaming block patches the DOM; user intent beats the pin.** Live
-    text is morphdom-patched, never rewritten via innerHTML — node identity is
-    what keeps a selection alive across deltas (`StreamingMarkdown.tsx`).
-    Bottom-following re-fires on content growth and yields to an upward
-    wheel/drag or an actively changing selection; a stale selection never
-    blocks re-sticking (`useScrollToBottom` in `lib/hooks.ts`).
+    text is morphdom-patched, never innerHTML — node identity keeps a selection
+    alive across deltas (`StreamingMarkdown.tsx`). The pin follows growth,
+    late-rendered height included, and yields to an upward wheel/drag, a
+    changing selection or a press in the log; a stale selection never blocks
+    re-sticking, and your own send re-pins (`useScrollToBottom`, `lib/hooks.ts`).
 19. **A person's message wins over a paused approval, a machine's turn waits
     it out; a branch move obsoletes every client view of the old path.** A
     send or cancel abandons the paused run (decisions §5.68); a trigger's turn
