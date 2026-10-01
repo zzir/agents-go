@@ -39,6 +39,8 @@ agent.Instructions = func(ctx context.Context, rc *agents.RunContext, a *agents.
 
 ## Stored prompts
 
+**Deprecated.** `Agent.Prompt`, `PromptProvider` and `StaticPrompt` carry `Deprecated:` and leave in the next breaking minor ([decisions §5.3](../explanation/decisions.md#53-instructions-and-prompt-both-stay-both-are-func-types)).
+
 Instead of (or alongside) inline `Instructions`, an agent can reference an [OpenAI stored prompt](https://platform.openai.com/docs/guides/prompting) via `Agent.Prompt`. The prompt's id, optional version, and variable substitutions are sent as the Responses API `prompt` parameter:
 
 ```go

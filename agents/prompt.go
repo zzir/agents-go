@@ -26,11 +26,19 @@ type Prompt struct {
 // It is a func type: assign a function directly, or use StaticPrompt for a
 // fixed configuration. (It was an interface once, with only unexported
 // implementations — an adapter layer nothing ever plugged into.)
+//
+// Deprecated: OpenAI shuts reusable prompt objects down on 2026-11-30, and
+// the OpenAI Responses backend is the only one that honors a Prompt; put the
+// text in Instructions. Removed in the next breaking minor.
 type PromptProvider func(ctx context.Context, rc *RunContext, agent *Agent) (*Prompt, error)
 
 // StaticPrompt returns a PromptProvider yielding a fixed Prompt. Every call
 // gets its own copy, Variables included, so a caller that rewrites a variable
 // for one run neither leaks into later runs nor races with concurrent ones.
+//
+// Deprecated: OpenAI shuts reusable prompt objects down on 2026-11-30, and
+// the OpenAI Responses backend is the only one that honors a Prompt; put the
+// text in Instructions. Removed in the next breaking minor.
 func StaticPrompt(p Prompt) PromptProvider {
 	return func(context.Context, *RunContext, *Agent) (*Prompt, error) {
 		pp := p

@@ -8691,6 +8691,7 @@ export interface components {
         "store.SessionGroup": {
             /** @description HistoryLimit caps how many recent session items each turn loads (0 = all). */
             history_limit?: number;
+            /** @description PromptID is an OpenAI stored prompt's id; deprecated, OpenAI shuts stored prompts down on 2026-11-30. */
             prompt_id?: string;
             prompt_version?: string;
         };

@@ -23,7 +23,7 @@ func main() {
 		Name:  "assistant",
 		Model: "gpt-4o",
 		// No inline Instructions: the system prompt comes from the stored prompt.
-		Prompt: agents.StaticPrompt(agents.Prompt{
+		Prompt: agents.StaticPrompt(agents.Prompt{ //nolint:staticcheck // SA1019: until the stored Prompt surface is removed
 			ID:        promptID,
 			Variables: map[string]any{"tone": "concise"},
 		}),

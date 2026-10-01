@@ -62,6 +62,11 @@ same rule collapsed `tasks.AgentResolver`, `Launcher`, `Stopper` and
 single-method injection point is a func type unless a second method is
 already in sight.
 
+**Cost accepted.** OpenAI shuts reusable prompt objects down on 2026-11-30,
+and its Responses backend is the only adapter that honors `Prompt`.
+`Agent.Prompt` carries `Deprecated:` as a provider-shutdown notice, not the
+pre-v1 cycle §5.8 rejects, and leaves in the next breaking minor.
+
 ### 5.4 A tool is a struct, not an interface
 
 **Decision.** `*Tool` is the tool type. There is no `Tool` interface, which is

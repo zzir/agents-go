@@ -375,7 +375,7 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID string,
 
 	// Stored prompt
 	if ac.Session.PromptID != "" {
-		agent.Prompt = agents.StaticPrompt(agents.Prompt{
+		agent.Prompt = agents.StaticPrompt(agents.Prompt{ //nolint:staticcheck // SA1019: until the stored Prompt surface is removed
 			ID:      ac.Session.PromptID,
 			Version: ac.Session.PromptVersion,
 		})

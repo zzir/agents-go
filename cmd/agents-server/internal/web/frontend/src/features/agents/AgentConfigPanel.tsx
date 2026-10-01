@@ -668,7 +668,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
           <div className="form-group">
             <div className="form-group-title">Session</div>
             {fc('History limit', <TextInput block type="number" min={0} value={form.history_limit} placeholder="0" onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('history_limit', e.target.value)} />, 'Max recent session items loaded per turn (0 = full history)')}
-            {fc('Stored prompt ID', <TextInput value={form.prompt_id || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('prompt_id', e.target.value)} placeholder="prompt_abc123" block />, 'OpenAI stored prompt ID')}
+            {fc('Stored prompt ID', <TextInput value={form.prompt_id || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('prompt_id', e.target.value)} placeholder="prompt_abc123" block />, 'OpenAI stored prompt ID — deprecated: OpenAI shuts stored prompts down on 2026-11-30')}
             {form.prompt_id && fc('Prompt version', <TextInput value={form.prompt_version || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('prompt_version', e.target.value)} placeholder="Optional version pin" block />)}
           </div>
 

@@ -1998,6 +1998,8 @@ components:
             (0 = all).
           type: integer
         prompt_id:
+          description: PromptID is an OpenAI stored prompt's id; deprecated, OpenAI
+            shuts stored prompts down on 2026-11-30.
           type: string
         prompt_version:
           type: string
