@@ -175,5 +175,12 @@ Tables are created automatically on startup:
 | `auth_tokens`       | Session tokens and personal access tokens (hashes only)                             |
 | `triggers`          | Cron and webhook starts filed on a session (see [Workflows](../reference/protocol.md#workflows--apiv1workflows)) |
 
-The database file can be deleted and recreated freely — there is no migration
-mechanism.
+There is no migration mechanism yet
+([decisions §5.59](../explanation/decisions.md#559-a-schema-change-recreates-the-database)):
+a release that changes the schema refuses an older database at startup
+([invariant 25](../explanation/workbench-invariants.md)) and the database must
+be recreated. Before upgrading across one, export what you need — project
+files with `GET /api/v1/projects/:id/export`, memories with
+`GET /api/v1/memories`; sessions, users, tokens and the audit log have no
+export. Back up the database file (or dump the PostgreSQL database) before any
+upgrade.

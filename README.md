@@ -50,7 +50,9 @@ PostgreSQL and teams.
 - **Sandboxes**: a Docker container here or on a remote daemon, or any E2B-compatible service. Optional.
 
 Also: MCP servers with OAuth, Agent Skills, background tasks, workflows, image
-input, and a team mode with Google or GitHub sign-in.
+input, and a team mode with Google or GitHub sign-in. Until the workbench has
+migrations, a release that changes the schema needs the database recreated
+([Deploying](docs/howto/workbench-deploy.md#database)).
 
 ## Embed the runtime
 

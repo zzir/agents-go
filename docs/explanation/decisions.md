@@ -1389,7 +1389,7 @@ Rules: workbench invariant 39; authorization per §5.29.
 
 ### 5.59 A schema change recreates the database
 
-Decided 2026-08 (invariant 25).
+Decided 2026-07-13 (invariant 25).
 
 **Decision.** No migrations: a structural change means dropping and recreating
 the database, a dev-tool stance taken deliberately. The stance is honest only
@@ -1398,7 +1398,10 @@ if a mismatch is loud, which is what the startup zero-row probe buys.
 **Rejected.** `ALTER TABLE` migrations — a second schema language to keep
 correct for a store that is rebuilt anyway.
 
-**Cost accepted.** Production use needs this decision reversed first.
+**Cost accepted.** Production use needs this decision reversed first: before
+team mode is promoted for production use, or before multi-instance work
+starts, whichever comes first. Every release that changes the layout says so
+in its release body, and the database must be recreated across such a release.
 
 Rules: workbench invariant 25.
 

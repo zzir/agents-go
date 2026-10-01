@@ -88,6 +88,7 @@ changelog:
       order: 999
 
 release:
+  # schema-changing releases say so in the body — see decisions §5.59
   draft: true                     # Generate a draft, manually polish it and then publish on GitHub page
   replace_existing_draft: true    # Overwrite the old draft when rerunning the workflow for the same tag
   footer: |
