@@ -310,6 +310,11 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []In
 		// A graceful stop lands at the turn boundary: the finished turn's
 		// tools and session save are in, so the run ends cleanly.
 		if turn > st.startTurn && r.ctrl.stopRequested() {
+			// Input the save point drained before the stop arrived is written
+			// here, which commits its take — see spec §2.11b.
+			if err := r.persistSessionItems(ctx); err != nil {
+				return nil, r.fail(err)
+			}
 			r.agentSpan.Set("ended_by", "stop")
 			res := r.baseResult()
 			res.StoppedEarly = true
@@ -550,7 +555,13 @@ func loopReturn(res *RunResult, err error) stepAction {
 // handleFinalOutput ends the run, unless a late steer or queued follow-up
 // continues it in the same trace/usage/session.
 func (r *runner) handleFinalOutput(ctx context.Context, st *turnState, step *singleStepResult) stepAction {
-	if extra := r.ctrl.takeContinuation(); len(extra) > 0 {
+	// A caller's stop outranks a late steer or follow-up, which stays queued —
+	// see spec §2.11b.
+	var extra []InputItem
+	if !r.ctrl.stopRequested() {
+		extra = r.ctrl.takeContinuation()
+	}
+	if len(extra) > 0 {
 		// Appended before the closing write, so that write commits the take.
 		injected := injectedInput(st.agent, extra)
 		r.appendInjected(injected)

@@ -119,9 +119,11 @@ ranging.
 
 - `ctrl.StopAfterTurn()` requests a **graceful** stop: the in-flight turn
   finishes — tool calls and session save included — and the run then stops
-  cleanly before the next turn, with no error and a nil `FinalOutput`. **This is
-  the one that leaves the session consistent**: breaking out of the range loop
-  stops mid-turn, and cancelling the context does the same, harder.
+  cleanly before the next turn, with no error; `FinalOutput` is nil unless
+  that turn itself produced the final output, and input the run had not yet
+  consumed stays in `Pending()`. **This is the one that leaves the session
+  consistent**: breaking out of the range loop stops mid-turn, and cancelling
+  the context does the same, harder.
 - `ctrl.Steer(...)` / `ctrl.NextTurn(...)` / `ctrl.FollowUp(...)` put input into
   a run that is already going — see
   [Steering a run in flight](running_agents.md#steering-a-run-in-flight).

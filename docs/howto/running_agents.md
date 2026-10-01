@@ -154,10 +154,12 @@ opts.Exec.PrepareNextTurn = func(ctx context.Context, tr *agents.TurnResult) (*a
 ```
 
 `ShouldStopAfterTurn` is a predicate, not a producer: a run stopped here has
-its full history saved, its final output is the turn's last message (else its
-last tool output), and `RunResult.StoppedEarly` is set. The other place a run
-can end early is a tool's own result, `ToolResult.Terminate`
-([Tools](tools.md#returning-more-than-a-value-toolresult)). The policy belongs
+its full history saved, and its final output is the turn's last message (else
+its last tool output). The other two places a run can end early are a tool's
+own result, `ToolResult.Terminate`
+([Tools](tools.md#returning-more-than-a-value-toolresult)), and the caller's
+`RunControl.StopAfterTurn`, the only one that sets `RunResult.StoppedEarly`
+([Streaming](streaming.md)). The policy belongs
 to the run rather than the agent, so the same agent stops at different points
 in different runs ([spec §2.3c](../reference/spec.md#23c-stopping-early)).
 

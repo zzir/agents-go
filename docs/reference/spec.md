@@ -53,7 +53,7 @@ renumbered — which is why the letters run out of alphabetical order in places.
 | [§2.3](#23-deciding-the-final-output) | Deciding the final output | Which of message / refusal / schema parse becomes the final output |
 | [§2.3a](#23a-the-save-point) | The save point | The turn boundary, and the fixed order of its five steps |
 | [§2.3b](#23b-turn-snapshots) | Turn snapshots | A turn reads a `TurnSnapshot`, never the live `Agent` |
-| [§2.3c](#23c-stopping-early) | Stopping early | The two places a turn can be ended, and what each guarantees |
+| [§2.3c](#23c-stopping-early) | Stopping early | The three places a turn can be ended, and what each guarantees |
 | [§2.4](#24-handoffs) | Handoffs | A handoff is a function call the runner intercepts |
 | [§2.5](#25-session-persistence-boundaries) | Session persistence boundaries | When the session is written, and what goes in |
 | [§2.5b](#25b-session-entries) | Session entries | A session stores entries, not bare Responses items |
@@ -297,7 +297,8 @@ one place in the code, and its step order is the contract:
 1. flush the turn to the session
 2. ask `ShouldStopAfterTurn`
 3. compact ([§2.5f](#25f-compaction)), rebuilding the context from the log
-4. drain the steer and next-turn queues ([§2.11b](#211b-run-control))
+4. drain the steer and next-turn queues ([§2.11b](#211b-run-control)), unless
+   the caller asked to stop
 5. call `PrepareNextTurn`
 
 - **Persist first**: a run that stops at step 2, or whose context is rewritten
@@ -327,13 +328,14 @@ is called, and the turn reads the snapshot from then on, never the agent.
 
 ### 2.3c Stopping early
 
-A turn that would otherwise continue can be ended from two places, and only
-two:
+A turn that would otherwise continue can be ended from three places, and only
+three:
 
 | Level | Mechanism | Final output |
 |---|---|---|
 | tool | `ToolResult.Terminate` | the last tool's output |
 | run | `ExecOptions.ShouldStopAfterTurn` | the turn's last message, else its last tool output |
+| caller | `RunControl.StopAfterTurn` ([§2.11b](#211b-run-control)) | none — `StoppedEarly`, `FinalOutput` nil |
 
 - **`Terminate` requires unanimity** across the batch ([§2.7b](#27b-tool-results)).
 - **`ShouldStopAfterTurn` is consulted at the save point**
@@ -345,7 +347,9 @@ two:
   turn; a caller wanting something else computes it from `RunResult.NewItems`.
 - **The `*TurnResult` a hook is handed is its own to read.** Writes to its
   fields reach neither the run nor the next hook.
-- **Both survive `ResumeRun`**: an approved run carries the same stop policy.
+- **`Terminate` and `ShouldStopAfterTurn` survive `ResumeRun`**: an approved
+  run carries the same stop policy; a caller's stop lives on its `RunControl`,
+  which `ResumeRunWith` keeps ([§2.11b](#211b-run-control)).
 - There is no agent-level early-stop configuration; the policy belongs to the
   run.
 
@@ -1462,6 +1466,10 @@ nothing more: a host renders progress from the stream's own events. Beyond
   `ItemUnknown`.
 - **Nothing is silently dropped.** `Pending()` reports what a run did not
   consume.
+- **A caller's stop outranks a late steer or follow-up**: the run ends at its
+  final output and the input stays in `Pending()`.
+- **A stop that arrives after the save point drained** leaves the drained
+  input persisted with the turn, unanswered.
 - **Queued input survives an interruption** on `RunState.PendingInput`, across
   serialization ([§2.1](#21-the-run-loop)). The wire shape is three lists and
   does not record cross-kind arrival order — an accepted loss at the pause
