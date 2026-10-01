@@ -2,9 +2,7 @@ package anthropic
 
 import (
 	"context"
-	"fmt"
 	"iter"
-	"net/http"
 
 	ant "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -147,39 +145,10 @@ func requestOptions(s *agents.ModelSettings) []option.RequestOption {
 	return modelkit.ExtraOptions(s, option.WithHeader, option.WithQuery, option.WithJSONSet)
 }
 
-// Respond implements agents.Model.
+// Respond implements agents.Model, served from the stream: the SDK refuses a
+// non-streaming request with a large max_tokens — see decisions §5.15.
 func (m *MessagesModel) Respond(ctx context.Context, req agents.ModelRequest) (*agents.ModelResponse, error) {
-	params, err := m.buildParams(req)
-	if err != nil {
-		return nil, err
-	}
-	var httpResp *http.Response
-	opts := append(requestOptions(req.Settings), option.WithResponseInto(&httpResp))
-	msg, err := m.client.New(ctx, params, opts...)
-	if err != nil {
-		return nil, fmt.Errorf("anthropic messages: %w", err)
-	}
-	status, incompleteReason, err := statusFromStopReason(msg.StopReason)
-	if err != nil {
-		return nil, err
-	}
-	items, err := convertOutput(msg)
-	if err != nil {
-		return nil, err
-	}
-	var requestID string
-	if httpResp != nil {
-		requestID = httpResp.Header.Get("Request-Id")
-	}
-	return &agents.ModelResponse{
-		Output:           items,
-		Usage:            usageFromMessage(msg.Usage),
-		ResponseID:       msg.ID,
-		RequestID:        requestID,
-		Model:            string(msg.Model),
-		Status:           status,
-		IncompleteReason: incompleteReason,
-	}, nil
+	return agents.NewStreamOnlyModel(m).Respond(ctx, req)
 }
 
 // StreamResponse implements agents.Model. The Messages SSE stream is

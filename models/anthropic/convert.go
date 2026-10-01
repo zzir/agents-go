@@ -495,20 +495,3 @@ func statusFromStopReason(reason ant.StopReason) (status, incompleteReason strin
 		return "", "", agents.NewModelBehaviorError("anthropic: unexpected stop_reason %q", reason)
 	}
 }
-
-// usageFromMessage maps Messages usage onto canonical accounting for the
-// blocking path, counted as one request; the arithmetic is responseUsage's.
-func usageFromMessage(u ant.Usage) *agents.Usage {
-	ru := responseUsage(u)
-	return &agents.Usage{
-		Requests:     1,
-		InputTokens:  ru.InputTokens,
-		OutputTokens: ru.OutputTokens,
-		TotalTokens:  ru.TotalTokens,
-		InputTokensDetails: agents.InputTokensDetails{
-			CachedTokens:     ru.CachedTokens,
-			CacheWriteTokens: ru.CacheWriteTokens,
-		},
-		OutputTokensDetails: agents.OutputTokensDetails{ReasoningTokens: ru.ReasoningTokens},
-	}
-}

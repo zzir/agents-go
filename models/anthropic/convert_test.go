@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -441,8 +440,7 @@ func TestBuildParamsRefusalPartDropped(t *testing.T) {
 // the last (decisions §5.49).
 func TestRespondMergesConsecutiveTextBlocks(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{
+		writeMessageSSE(t, w, `{
 			"id": "msg_m", "type": "message", "role": "assistant", "model": "claude-test",
 			"content": [
 				{"type": "thinking", "thinking": "hmm", "signature": "sig-1"},
@@ -477,6 +475,67 @@ func TestRespondMergesConsecutiveTextBlocks(t *testing.T) {
 	}
 	if got := msg.Content[0].AsOutputText().Text + msg.Content[1].AsOutputText().Text; got != "First part. Second part." {
 		t.Errorf("merged text = %q", got)
+	}
+}
+
+// Respond is served from the stream, so a max_tokens the SDK refuses on a
+// blocking call goes through.
+func TestRespondStreamsLargeMaxTokens(t *testing.T) {
+	var streamed bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Stream    bool  `json:"stream"`
+			MaxTokens int64 `json:"max_tokens"`
+		}
+		if err := json.Unmarshal(readBody(t, r), &body); err != nil {
+			t.Error(err)
+		}
+		streamed = body.Stream && body.MaxTokens == 64000
+		writeMessageSSE(t, w, `{
+			"id": "msg_big", "type": "message", "role": "assistant", "model": "claude-test",
+			"content": [{"type": "text", "text": "ok"}],
+			"stop_reason": "end_turn",
+			"usage": {"input_tokens": 10, "output_tokens": 1}
+		}`)
+	}))
+	t.Cleanup(srv.Close)
+	model, err := NewProvider(option.WithBaseURL(srv.URL), option.WithAPIKey("test-key")).Model("claude-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	maxTokens := int64(64000)
+	resp, err := model.Respond(context.Background(), agents.ModelRequest{
+		Input:    agents.InputItemsFromText("hi"),
+		Settings: &agents.ModelSettings{MaxTokens: &maxTokens},
+	})
+	if err != nil {
+		t.Fatalf("Respond with max_tokens 64000: %v", err)
+	}
+	if !streamed {
+		t.Error("the request must carry stream:true and the caller's max_tokens")
+	}
+	if len(resp.Output) != 1 || resp.Output[0].AsMessage().Content[0].AsOutputText().Text != "ok" {
+		t.Errorf("output = %+v", resp.Output)
+	}
+}
+
+// A refusal reaches a blocking caller as the same canonical refusal part the
+// streamed path builds.
+func TestRespondRefusalFromStream(t *testing.T) {
+	model, err := refusalProvider(t).Model("claude-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := model.Respond(context.Background(), agents.ModelRequest{Input: agents.InputItemsFromText("hi")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Output) != 1 {
+		t.Fatalf("output items = %d, want the one refusal message", len(resp.Output))
+	}
+	parts := resp.Output[0].AsMessage().Content
+	if len(parts) != 1 || parts[0].Type != "refusal" || parts[0].AsRefusal().Refusal != "I cannot help with that." {
+		t.Fatalf("content = %+v, want one refusal part", parts)
 	}
 }
 

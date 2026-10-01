@@ -3,7 +3,6 @@ package anthropic
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -25,7 +24,6 @@ func TestRunSyncToolLoop(t *testing.T) {
 	var calls atomic.Int64
 	var secondRequest []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
 		var reply string
 		switch calls.Add(1) {
 		case 1:
@@ -51,7 +49,7 @@ func TestRunSyncToolLoop(t *testing.T) {
 				"usage": {"input_tokens": 30, "output_tokens": 6}
 			}`
 		}
-		_, _ = fmt.Fprint(w, reply)
+		writeMessageSSE(t, w, reply)
 	}))
 	t.Cleanup(srv.Close)
 

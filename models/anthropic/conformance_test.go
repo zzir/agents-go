@@ -3,6 +3,7 @@ package anthropic
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -34,11 +35,10 @@ func TestConformance(t *testing.T) {
 					http.Error(w, err.Error(), http.StatusBadRequest)
 					return
 				}
-				if body.Stream {
-					writeMessagesStream(t, w, s.Turn)
-				} else {
-					writeMessagesResponse(t, w, s.Turn)
+				if !body.Stream {
+					t.Error("the adapter sent a non-streaming request; Respond is served from the stream")
 				}
+				writeMessagesStream(t, w, s.Turn)
 			}))
 			t.Cleanup(srv.Close)
 			provider := NewProvider(option.WithBaseURL(srv.URL), option.WithAPIKey("test-key"))
@@ -107,24 +107,45 @@ func wireUsage(turn conformancetest.TurnSpec) map[string]any {
 	}
 }
 
-func writeMessagesResponse(t *testing.T, w http.ResponseWriter, turn conformancetest.TurnSpec) {
+func writeMessagesStream(t *testing.T, w http.ResponseWriter, turn conformancetest.TurnSpec) {
 	t.Helper()
-	w.Header().Set("Content-Type", "application/json")
-	err := json.NewEncoder(w).Encode(map[string]any{
-		"id":          turn.ResponseID,
-		"type":        "message",
-		"role":        "assistant",
-		"model":       "claude-test",
-		"content":     wireBlocks(t, turn),
-		"stop_reason": wireStopReason(turn),
-		"usage":       wireUsage(turn),
-	})
-	if err != nil {
-		t.Error(err)
-	}
+	// message_start carries input/cache counts but no output yet — the real
+	// API reports output_tokens and the thinking breakdown in message_delta.
+	// Keeping the fixture honest here matters: a fixture that front-loads the
+	// final numbers would mask an adapter that reads them from the wrong event.
+	startUsage := wireUsage(turn)
+	startUsage["output_tokens"] = 0
+	startUsage["output_tokens_details"] = map[string]any{"thinking_tokens": 0}
+	stop := map[string]any{"stop_reason": wireStopReason(turn), "stop_sequence": nil}
+	writeSSE(t, w, turn.ResponseID, wireBlocks(t, turn), stop, startUsage, wireUsage(turn))
 }
 
-func writeMessagesStream(t *testing.T, w http.ResponseWriter, turn conformancetest.TurnSpec) {
+// writeMessageSSE serves a fixture written as one whole Messages response as
+// the event stream the API sends for it.
+func writeMessageSSE(t *testing.T, w http.ResponseWriter, messageJSON string) {
+	t.Helper()
+	var msg struct {
+		ID          string           `json:"id"`
+		Content     []map[string]any `json:"content"`
+		StopReason  string           `json:"stop_reason"`
+		StopDetails map[string]any   `json:"stop_details"`
+		Usage       map[string]any   `json:"usage"`
+	}
+	if err := json.Unmarshal([]byte(messageJSON), &msg); err != nil {
+		t.Fatal(err)
+	}
+	startUsage := maps.Clone(msg.Usage)
+	startUsage["output_tokens"] = 0
+	stop := map[string]any{"stop_reason": msg.StopReason, "stop_sequence": nil}
+	if msg.StopDetails != nil {
+		stop["stop_details"] = msg.StopDetails
+	}
+	writeSSE(t, w, msg.ID, msg.Content, stop, startUsage, msg.Usage)
+}
+
+// writeSSE streams one Messages response: message_start, each block as
+// start/delta/stop events, then message_delta with stop and message_stop.
+func writeSSE(t *testing.T, w http.ResponseWriter, id string, blocks []map[string]any, stop, startUsage, deltaUsage map[string]any) {
 	t.Helper()
 	w.Header().Set("Content-Type", "text/event-stream")
 	send := func(eventType string, payload map[string]any) {
@@ -134,23 +155,15 @@ func writeMessagesStream(t *testing.T, w http.ResponseWriter, turn conformancete
 		}
 		_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, data)
 	}
-
-	// message_start carries input/cache counts but no output yet — the real
-	// API reports output_tokens and the thinking breakdown in message_delta.
-	// Keeping the fixture honest here matters: a fixture that front-loads the
-	// final numbers would mask an adapter that reads them from the wrong event.
-	startUsage := wireUsage(turn)
-	startUsage["output_tokens"] = 0
-	startUsage["output_tokens_details"] = map[string]any{"thinking_tokens": 0}
 	send("message_start", map[string]any{
 		"type": "message_start",
 		"message": map[string]any{
-			"id": turn.ResponseID, "type": "message", "role": "assistant",
+			"id": id, "type": "message", "role": "assistant",
 			"model": "claude-test", "content": []any{}, "usage": startUsage,
 		},
 	})
 
-	for i, block := range wireBlocks(t, turn) {
+	for i, block := range blocks {
 		switch block["type"] {
 		case "text":
 			send("content_block_start", map[string]any{
@@ -199,12 +212,7 @@ func writeMessagesStream(t *testing.T, w http.ResponseWriter, turn conformancete
 		send("content_block_stop", map[string]any{"type": "content_block_stop", "index": i})
 	}
 
-	deltaUsage := wireUsage(turn)
-	send("message_delta", map[string]any{
-		"type":  "message_delta",
-		"delta": map[string]any{"stop_reason": wireStopReason(turn), "stop_sequence": nil},
-		"usage": deltaUsage,
-	})
+	send("message_delta", map[string]any{"type": "message_delta", "delta": stop, "usage": deltaUsage})
 	send("message_stop", map[string]any{"type": "message_stop"})
 }
 

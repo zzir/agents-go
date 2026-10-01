@@ -287,14 +287,15 @@ Rules: spec §2.7t.
 
 ### 5.15 Streaming-only backends adapt with a Model decorator
 
-**Decision.** A backend that accepts only streaming requests — the ChatGPT
-Codex backend rejects a non-streaming POST with 400 — is adapted by
-`NewStreamOnlyModel` / `NewStreamOnlyProvider`: `Respond` runs the request as
-an internal `StreamResponse` and assembles the final response from the
-terminal event, sharing the runner's own `responseAssembler` so the two paths
-cannot drift. It composes **innermost**, directly on the backend, so retry,
-fallback and routing above it see a severed stream as an ordinary `Respond`
-error.
+**Decision.** A backend, or its client SDK, that refuses non-streaming
+requests — the ChatGPT Codex backend returns 400; anthropic-sdk-go refuses
+`max_tokens` above 21,333 client-side — is adapted by `NewStreamOnlyModel` /
+`NewStreamOnlyProvider`: `Respond` runs the request as an internal
+`StreamResponse` and assembles the final response from the terminal event,
+sharing the runner's own `responseAssembler` so the two paths cannot drift. It
+composes **innermost**, directly on the backend, so retry, fallback and
+routing above it see a severed stream as an ordinary `Respond` error. The
+Anthropic adapter's `Respond` is always served this way.
 
 **Rejected.** Forcing `"stream": true` as an HTTP middleware — it hands an SSE
 body to a caller that parses a JSON response; the request shape and the

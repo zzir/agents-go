@@ -3,7 +3,6 @@ package anthropic
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -13,9 +12,8 @@ import (
 	"github.com/zzir/agents-go/agents"
 )
 
-// refusalJSON is a blocking Messages response whose stop_reason is refusal —
-// the API reports refusal OUT-OF-BAND, with the refusal text as an ordinary
-// text block.
+// refusalJSON is a Messages response whose stop_reason is refusal — the API
+// reports refusal OUT-OF-BAND, with the refusal text as an ordinary text block.
 const refusalJSON = `{
 	"id": "msg_r", "type": "message", "role": "assistant", "model": "claude-test",
 	"content": [{"type": "text", "text": "I cannot help with that."}],
@@ -26,8 +24,7 @@ const refusalJSON = `{
 func refusalProvider(t *testing.T) agents.ModelProvider {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, refusalJSON)
+		writeMessageSSE(t, w, refusalJSON)
 	}))
 	t.Cleanup(srv.Close)
 	return NewProvider(option.WithBaseURL(srv.URL), option.WithAPIKey("test-key"))
@@ -104,8 +101,7 @@ func TestStreamedRunRefusalSurfacesModelRefusalError(t *testing.T) {
 // looks for a refusal, and a refused response's actions must not run.
 func TestRunSyncRefusalDropsToolCalls(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{
+		writeMessageSSE(t, w, `{
 			"id": "msg_r", "type": "message", "role": "assistant", "model": "claude-test",
 			"content": [
 				{"type": "text", "text": "I cannot help with that."},
@@ -139,8 +135,7 @@ func TestRunSyncRefusalDropsToolCalls(t *testing.T) {
 // stop_details' explanation, or the fixed line when even that is absent.
 func TestRunSyncRefusalEmptyContentUsesExplanation(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{
+		writeMessageSSE(t, w, `{
 			"id": "msg_r", "type": "message", "role": "assistant", "model": "claude-test",
 			"content": [],
 			"stop_reason": "refusal",
