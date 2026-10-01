@@ -6,6 +6,7 @@ import (
 	"slices"
 
 	"github.com/zzir/agents-go/agents/session"
+	"github.com/zzir/agents-go/internal/oaicompat"
 	"github.com/zzir/agents-go/tracing"
 )
 
@@ -99,7 +100,7 @@ func runItemCallID(it *RunItem) (callID string, isCall, isOutput bool) {
 	case in.OfFunctionCall != nil:
 		return in.OfFunctionCall.CallID, true, false
 	case in.OfFunctionCallOutput != nil:
-		return in.OfFunctionCallOutput.CallID, false, true
+		return oaicompat.CallID(in.OfFunctionCallOutput), false, true
 	}
 	return "", false, false
 }

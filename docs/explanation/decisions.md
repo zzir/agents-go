@@ -99,6 +99,10 @@ two.
 round-trip fidelity §5.5 exists for, plus a conversion layer that must chase
 every Responses API addition forever.
 
+**Cost accepted.** openai-go retypes fields inside v3 minors (v3.54 did, to a
+function_call_output's `CallID`). `internal/oaicompat` absorbs it so the floor
+stays put; a CI job builds against `@latest` to catch the next.
+
 ### 5.6 Background work runs in-process, not in isolated processes
 
 **Decision.** Background sub-agents ("tasks") run as nested runs inside the

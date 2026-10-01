@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/zzir/agents-go/agents/session"
+	"github.com/zzir/agents-go/internal/oaicompat"
 )
 
 // recordingStorage wraps session.InMemoryStorage and records each Append batch, so
@@ -67,7 +68,7 @@ func classify(items []InputItem) itemStats {
 			st.callIDs[items[i].OfFunctionCall.CallID] = true
 		case items[i].OfFunctionCallOutput != nil:
 			st.outputs++
-			st.outputIDs[items[i].OfFunctionCallOutput.CallID] = true
+			st.outputIDs[oaicompat.CallID(items[i].OfFunctionCallOutput)] = true
 		case items[i].OfMessage != nil:
 			// EasyInputMessage: user/system/developer input, or an assistant
 			// message rebuilt from serialized state.

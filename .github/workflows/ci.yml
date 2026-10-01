@@ -156,6 +156,25 @@ jobs:
           # split must not quietly drop it out of the scan.
           (cd mcp && govulncheck ./...)
 
+  # Not in scripts/ci.sh: this follows openai-go's @latest, so its result is not
+  # reproducible. It catches a v3 minor that retypes a field the SDK touches.
+  openai-go-latest:
+    runs-on: ubuntu-latest
+    env:
+      GOWORK: "off"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+          check-latest: true
+          cache: true
+      - name: Root module against openai-go/v3@latest
+        run: |
+          cp go.mod /tmp/go.latest.mod && cp go.sum /tmp/go.latest.sum
+          go get -modfile=/tmp/go.latest.mod github.com/openai/openai-go/v3@latest
+          go build -modfile=/tmp/go.latest.mod ./... && go vet -modfile=/tmp/go.latest.mod ./... && go test -modfile=/tmp/go.latest.mod ./agents/... ./models/... ./internal/...
+
   lint:
     runs-on: ubuntu-latest
     steps:

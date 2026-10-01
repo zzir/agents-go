@@ -5,7 +5,10 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/openai/openai-go/v3/packages/param"
 	"github.com/openai/openai-go/v3/responses"
+
+	"github.com/zzir/agents-go/internal/oaicompat"
 )
 
 // RecoveryAction is what to do about a tool call a crashed run left without
@@ -95,7 +98,7 @@ func Recover(ctx context.Context, sess *Session, policy RecoveryPolicy) (Recover
 			// The caller is handling it.
 		default:
 			msg := message(name, callID)
-			raw := responses.ResponseInputItemParamOfFunctionCallOutput(callID, msg)
+			raw := oaicompat.FunctionCallOutput(callID, responses.ResponseInputItemFunctionCallOutputOutputUnionParam{OfString: param.NewOpt(msg)})
 			e, err := NewItemEntry(raw, Source{Type: SourceErrorHandler})
 			if err != nil {
 				return report, fmt.Errorf("recovering call %q: %w", callID, err)

@@ -9,6 +9,7 @@ import (
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/session"
+	"github.com/zzir/agents-go/internal/oaicompat"
 )
 
 // textContent concatenates the text of all text-bearing parts.
@@ -61,7 +62,7 @@ func TestParseInputModelOutputRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	in = append(in, responses.ResponseInputItemParamOfFunctionCallOutput("call_1", "result"))
+	in = append(in, oaicompat.FunctionCallOutput("call_1", responses.ResponseInputItemFunctionCallOutputOutputUnionParam{OfString: param.NewOpt("result")}))
 
 	parsed, err := ParseInput(in)
 	if err != nil {
@@ -134,7 +135,7 @@ func toolOutputItem(t *testing.T, callID string, content []agents.ToolOutputCont
 			t.Fatalf("unsupported content %T", c)
 		}
 	}
-	return responses.ResponseInputItemParamOfFunctionCallOutput(callID, list), true
+	return oaicompat.FunctionCallOutput(callID, responses.ResponseInputItemFunctionCallOutputOutputUnionParam{OfResponseFunctionCallOutputItemArray: list}), true
 }
 
 func TestParseInputUnknownTypePassesThrough(t *testing.T) {

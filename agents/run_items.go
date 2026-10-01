@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/openai/openai-go/v3/packages/param"
 	"github.com/openai/openai-go/v3/responses"
 
 	"github.com/zzir/agents-go/agents/session"
+	"github.com/zzir/agents-go/internal/oaicompat"
 )
 
 // ItemKind classifies what a RunItem holds. The set is closed: the runner
@@ -231,7 +233,7 @@ func (i *RunItem) FunctionCall() FunctionToolCall {
 func (i *RunItem) CallID() string {
 	if i.RawInput != nil {
 		if fco := i.RawInput.OfFunctionCallOutput; fco != nil {
-			return fco.CallID
+			return oaicompat.CallID(fco)
 		}
 		return ""
 	}
@@ -321,7 +323,7 @@ func extractMessageRefusal(item OutputItem) string {
 func newFunctionCallOutputItem(agent *Agent, callID string, output any) *RunItem {
 	raw, ok := toolOutputContentItem(callID, output)
 	if !ok {
-		raw = responses.ResponseInputItemParamOfFunctionCallOutput(callID, stringifyToolOutput(output))
+		raw = oaicompat.FunctionCallOutput(callID, responses.ResponseInputItemFunctionCallOutputOutputUnionParam{OfString: param.NewOpt(stringifyToolOutput(output))})
 	}
 	return &RunItem{
 		Kind:     ItemToolCallOutput,
@@ -349,7 +351,7 @@ func newHandoffOutputItem(agent, from, to *Agent, raw InputItem) *RunItem {
 // the transfer marker plus an identity line for the target — spec §2.4.
 func handoffOutputInput(callID, targetAgentName string) InputItem {
 	msg := fmt.Sprintf("{\"assistant\":%q}\n\nYou are now %q, handling this conversation directly.", targetAgentName, targetAgentName)
-	return responses.ResponseInputItemParamOfFunctionCallOutput(callID, msg)
+	return oaicompat.FunctionCallOutput(callID, responses.ResponseInputItemFunctionCallOutputOutputUnionParam{OfString: param.NewOpt(msg)})
 }
 
 // stringifyToolOutput renders a tool's return value as the string sent back to

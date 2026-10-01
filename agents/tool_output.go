@@ -5,6 +5,8 @@ import (
 
 	"github.com/openai/openai-go/v3/packages/param"
 	"github.com/openai/openai-go/v3/responses"
+
+	"github.com/zzir/agents-go/internal/oaicompat"
 )
 
 // ToolOutputContent is one content part of a structured tool result fed back to
@@ -135,5 +137,5 @@ func toolOutputContentItem(callID string, output any) (InputItem, bool) {
 	for i, p := range parts {
 		list[i] = p.toContentParam()
 	}
-	return responses.ResponseInputItemParamOfFunctionCallOutput(callID, list), true
+	return oaicompat.FunctionCallOutput(callID, responses.ResponseInputItemFunctionCallOutputOutputUnionParam{OfResponseFunctionCallOutputItemArray: list}), true
 }
