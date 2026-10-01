@@ -109,6 +109,10 @@ type BuildResult struct {
 	// handoff lands on. Set only on the entry build.
 	ContextWindow  int
 	ContextWindows map[string]int
+	// PrefixBound reports an anthropic backend in the provider chain, whose runs
+	// carry no budget notice (invariant 83); PrefixBoundAgents is every built agent's.
+	PrefixBound       bool
+	PrefixBoundAgents map[string]bool
 
 	// TraceIncludeSensitive gates whether generation spans record request and
 	// response content (trace_include_sensitive_data); off, Replay has no seed.
@@ -189,9 +193,11 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, project
 		result.LogSensitive = deps.Settings.Bool(ctx, settings.KeyLogSensitiveData)
 		result.AgentIDs = make(map[string]string, len(bc.cache))
 		result.ContextWindows = make(map[string]int, len(bc.cache))
+		result.PrefixBoundAgents = make(map[string]bool, len(bc.cache))
 		for id, r := range bc.cache {
 			result.AgentIDs[r.Agent.Name] = id
 			result.ContextWindows[r.Agent.Name] = r.ContextWindow
+			result.PrefixBoundAgents[r.Agent.Name] = r.PrefixBound
 		}
 	}
 	if err == nil && !background && deps.TaskManager != nil && result.Behavior.SubagentsOn() {
@@ -377,7 +383,7 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID string,
 
 	// Provider + retry/fallback decorators.
 	proxyClient := deps.Settings.ProxyClient(ctx)
-	result.Provider, result.ProviderType, err = resolveProvider(ctx, deps, ac, spec, proxyClient)
+	result.Provider, result.ProviderType, result.PrefixBound, err = resolveProvider(ctx, deps, ac, spec, proxyClient)
 	if err != nil {
 		return nil, err
 	}

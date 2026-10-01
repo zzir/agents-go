@@ -250,6 +250,9 @@ to the instructions, so a cached prompt prefix stays cached, and it is not
 saved to the session ([spec §2.5i](../reference/spec.md#25i-the-model-manages-its-own-context)).
 When handoffs cross models, `WindowFor func(*agents.Agent) int` answers the
 active agent's window and `Window` is the fallback.
+Leave it off on an Anthropic backend, which discards the reasoning it replays
+once the previous notice is gone
+([decisions §5.60](../explanation/decisions.md#560-the-budget-rides-on-the-input-not-the-instructions)).
 A runnable program is [examples/contextmanagement](../../examples/contextmanagement/main.go).
 
 ### Searching what the model no longer sees

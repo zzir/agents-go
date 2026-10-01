@@ -481,3 +481,7 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     inside `Runner.WithSessionTreeFenced`: a live run anywhere in the tree is
     `409`, register and resume refuse the fenced sessions meanwhile, and the
     release drains their wake-ups so a refused debt is paid at once.
+83. **An agent with an Anthropic backend runs without the budget notice.**
+    `runOptionsFor` skips it when any backend in the agent's provider chain,
+    primary or fallback, is anthropic — for the entry agent and a handoff
+    target alike. The Context panel still shows the figure (decisions §5.60).

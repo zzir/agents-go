@@ -134,6 +134,23 @@ func TestRunOptionsForCarriesTheContextBudget(t *testing.T) {
 	}
 }
 
+// An agent whose provider chain has an anthropic backend gets no notice, on
+// the entry agent and on one a handoff lands on alike (invariant 83).
+func TestContextBudgetSkipsAnthropicAgents(t *testing.T) {
+	built := &BuildResult{PrefixBoundAgents: map[string]bool{"a": true}}
+	opts := runOptionsFor(built, nil, nil, nil, "", nil, agents.ContextBudget{Window: 8000, Occupied: 100})
+	in := agents.ModelInputData{Input: agents.InputItemsFromText("hi")}
+	for name, wantNotice := range map[string]bool{"a": false, "b": true} {
+		got, err := opts.Model.InputFilter(context.Background(), nil, &agents.Agent{Name: name}, in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if noticed := len(got.Input) == len(in.Input)+1; noticed != wantNotice {
+			t.Errorf("agent %q: notice appended = %v, want %v", name, noticed, wantNotice)
+		}
+	}
+}
+
 // The figure the run starts from is the conversation's last measured call,
 // input and output together, read off the session's lifted columns.
 func TestContextBudgetReadsTheLastMeasuredCall(t *testing.T) {

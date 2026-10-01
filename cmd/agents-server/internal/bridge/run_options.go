@@ -67,8 +67,15 @@ func runOptionsFor(built *BuildResult, sess *session.Session, provider agents.Mo
 		opts.Exec.HandoffInputFilter = agents.NestHandoffHistory(agents.NestHistoryOptions{})
 	}
 	if budget.Window > 0 {
-		// The notice rides on the input, never the instructions (spec §2.5i).
-		opts.Model.InputFilter = budget.InputFilter()
+		// The notice rides on the input, never the instructions (spec §2.5i);
+		// an agent with an anthropic backend gets none (invariant 83).
+		notice := budget.InputFilter()
+		opts.Model.InputFilter = func(ctx context.Context, rc *agents.RunContext, agent *agents.Agent, data agents.ModelInputData) (agents.ModelInputData, error) {
+			if agent != nil && built.PrefixBoundAgents[agent.Name] {
+				return data, nil
+			}
+			return notice(ctx, rc, agent, data)
+		}
 	}
 	return opts
 }

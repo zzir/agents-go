@@ -40,27 +40,30 @@ func AgentProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig) 
 }
 
 // resolveProvider builds the agent's model provider with retry and fallback
-// decorators; nil (no error) when no API key is available.
-func resolveProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig, spec *AgentSpec, proxyClient *http.Client) (agents.ModelProvider, string, error) {
+// decorators; nil (no error) when no API key is available. prefixBound reports
+// an anthropic backend anywhere in the chain (invariant 83).
+func resolveProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig, spec *AgentSpec, proxyClient *http.Client) (provider agents.ModelProvider, providerType string, prefixBound bool, err error) {
 	pv, err := AgentProvider(ctx, deps, ac)
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	provider, def, err := buildProvider(ctx, deps, ac, pv, proxyClient)
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
+	prefixBound = def.Type == providers.TypeAnthropic
 	if provider == nil {
-		return nil, def.Type, nil
+		return nil, def.Type, prefixBound, nil
 	}
 	if ac.Resilience.RetryEnabled {
 		provider = agents.NewRetryProvider(provider, spec.RetryPolicy)
 	}
 	if len(spec.FallbackModels) > 0 {
-		fallbacks, err := fallbackProviders(ctx, deps, ac, spec.FallbackModels, proxyClient)
+		fallbacks, anthropic, err := fallbackProviders(ctx, deps, ac, spec.FallbackModels, proxyClient)
 		if err != nil {
-			return nil, "", err
+			return nil, "", false, err
 		}
+		prefixBound = prefixBound || anthropic
 		provider = agents.NewFallbackProvider(provider, fallbacks...)
 	}
 	// Outermost, so every model — fallbacks included — resolves attachment
@@ -68,7 +71,7 @@ func resolveProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig
 	provider = hydrateAttachments(provider, deps.Attachments, func(ctx context.Context) string {
 		return deps.Settings.S3Config(ctx).PublicBaseURL
 	})
-	return provider, def.Type, nil
+	return provider, def.Type, prefixBound, nil
 }
 
 // buildProvider turns a provider row into a model provider; nil (no error)
@@ -106,29 +109,30 @@ func buildProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig, 
 // fallbackProviders resolves each fallback entry to a keyed provider the agent
 // may reference, pinned to the entry's model; an entry that resolves to no
 // such provider fails the build — decisions §5.69.
-func fallbackProviders(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig, entries []store.FallbackModel, proxyClient *http.Client) ([]agents.ModelProvider, error) {
+func fallbackProviders(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig, entries []store.FallbackModel, proxyClient *http.Client) (fallbacks []agents.ModelProvider, anthropic bool, err error) {
 	if deps.Providers == nil {
-		return nil, fmt.Errorf("agent %q names fallback providers but no provider store is wired", ac.Name)
+		return nil, false, fmt.Errorf("agent %q names fallback providers but no provider store is wired", ac.Name)
 	}
-	fallbacks := make([]agents.ModelProvider, 0, len(entries))
+	fallbacks = make([]agents.ModelProvider, 0, len(entries))
 	for i, e := range entries {
 		pv, err := fallbackProvider(ctx, deps, ac, i, e)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
-		fp, _, err := buildProvider(ctx, deps, ac, pv, proxyClient)
+		fp, def, err := buildProvider(ctx, deps, ac, pv, proxyClient)
 		if err != nil {
-			return nil, fmt.Errorf("fallback_models[%d]: %w", i, err)
+			return nil, false, fmt.Errorf("fallback_models[%d]: %w", i, err)
 		}
 		if fp == nil {
-			return nil, fmt.Errorf("agent %q: fallback_models[%d]: provider %q reaches no API key", ac.Name, i, pv.Name)
+			return nil, false, fmt.Errorf("agent %q: fallback_models[%d]: provider %q reaches no API key", ac.Name, i, pv.Name)
 		}
+		anthropic = anthropic || def.Type == providers.TypeAnthropic
 		if e.Model != "" {
 			fp = fixedModelProvider{inner: fp, model: e.Model}
 		}
 		fallbacks = append(fallbacks, fp)
 	}
-	return fallbacks, nil
+	return fallbacks, anthropic, nil
 }
 
 // fallbackProvider loads the entry's provider row: by id, re-checking the

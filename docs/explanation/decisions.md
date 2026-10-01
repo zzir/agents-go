@@ -1415,6 +1415,9 @@ replays wrong later, and inflates the history it measures.
 **Cost accepted.** Roughly two dozen tokens per call. Before the run's first
 call the figure is the host's, the conversation's last measured call, so a
 run right after a manual compaction reports the pre-fold number once.
+Dropping the previous notice makes a backend that binds replayed reasoning to
+its prefix (Anthropic) discard it, so the workbench sends such an agent none:
+under reset or hybrid compaction it gets no warning before its window fills.
 
 Rules: spec §2.5i
 

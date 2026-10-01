@@ -40,7 +40,7 @@ func TestFallbackProvidersResolveByIDOrEndpoint(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		_, _, err = resolveProvider(ctx, deps, ac, spec, nil)
+		_, _, _, err = resolveProvider(ctx, deps, ac, spec, nil)
 		return err
 	}
 	if err := resolve(store.FallbackModel{ProviderID: keyed.ID, Model: "claude"}); err != nil {
@@ -62,5 +62,46 @@ func TestFallbackProvidersResolveByIDOrEndpoint(t *testing.T) {
 	}
 	if err := resolve(store.FallbackModel{ProviderType: "openai", BaseURL: "https://x.example/v1/"}); err == nil || !strings.Contains(err.Error(), "no provider at") {
 		t.Fatalf("an endpoint only another user's provider reaches = %v, want a refusal naming the endpoint", err)
+	}
+}
+
+// An anthropic backend anywhere in the chain marks it, a fallback as much as
+// the primary: either one may answer a call (invariant 83).
+func TestProviderChainWithAnthropicIsPrefixBound(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	providers := store.NewProviderStore(db)
+	deps := &AgentDeps{Providers: providers, Settings: settings.NewReader(store.NewSettingStore(db))}
+	mk := func(name, typ string) *store.Provider {
+		t.Helper()
+		pv := &store.Provider{Name: name, Type: typ, APIKey: "sk-" + name, Scope: store.ScopeGlobal, OwnerID: store.LocalUserID}
+		if err := providers.Create(ctx, pv); err != nil {
+			t.Fatal(err)
+		}
+		return pv
+	}
+	oai, ant := mk("oai", "openai"), mk("ant", "anthropic")
+	bound := func(primary *store.Provider, fallbacks ...store.FallbackModel) bool {
+		t.Helper()
+		ac := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "a", Model: "m", ProviderID: primary.ID, Scope: store.ScopePrivate}
+		ac.Resilience.FallbackModels = fallbacks
+		spec, err := DecodeAgentSpec(ac)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _, prefixBound, err := resolveProvider(ctx, deps, ac, spec, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return prefixBound
+	}
+	if bound(oai) {
+		t.Error("an openai-only chain is not prefix-bound")
+	}
+	if !bound(ant) {
+		t.Error("an anthropic primary is prefix-bound")
+	}
+	if !bound(oai, store.FallbackModel{ProviderID: ant.ID, Model: "claude"}) {
+		t.Error("an anthropic fallback behind an openai primary is prefix-bound")
 	}
 }
