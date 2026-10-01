@@ -183,4 +183,6 @@ be recreated. Before upgrading across one, export what you need — project
 files with `GET /api/v1/projects/:id/export`, memories with
 `GET /api/v1/memories`; sessions, users, tokens and the audit log have no
 export. Back up the database file (or dump the PostgreSQL database) before any
-upgrade.
+upgrade. Each release's notes open with whether it refuses the previous
+release's database; `./scripts/schema-compat.sh <tag>` answers the same for a
+checkout.

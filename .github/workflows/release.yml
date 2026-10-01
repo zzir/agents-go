@@ -47,6 +47,14 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # The root module's previous tag: --match keeps a submodule's prefixed tag out.
+      - name: Previous root tag
+        run: echo "PREV_TAG=$(git describe --tags --abbrev=0 --match 'v[0-9]*' "${GITHUB_REF_NAME}^")" >> "$GITHUB_ENV"
+
+      # One line for the release header; the script exits 0 whatever it finds.
+      - name: Workbench schema note
+        run: echo "SCHEMA_NOTE=$(./scripts/schema-compat.sh "$PREV_TAG")" >> "$GITHUB_ENV"
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"

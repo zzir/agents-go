@@ -31,6 +31,7 @@ Requires Go 1.27+.
 go test -race ./...                   # race detector is ON in CI — keep it green
 go test -race ./agents -run TestName  # single test
 golangci-lint run                     # CI uses golangci-lint v2.13
+./scripts/schema-compat.sh v0.4.4     # does HEAD open a database that tag created? (the release header's line)
 ```
 
 ## Layout
