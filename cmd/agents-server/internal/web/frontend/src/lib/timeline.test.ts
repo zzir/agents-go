@@ -558,7 +558,9 @@ describe('stream/replay isomorphism', () => {
   // React keep a ghost of one when the stored rows replaced them.
   it('a split run renders under distinct keys, live and stored', () => {
     let live = ensureLiveTurn([], RUN, 'deploy')!;
+    live = appendMessageItem(live, 'deploying', false)!;
     live = appendInjected(live, RUN, 'use staging', 1)!;
+    live = appendMessageItem(live, 'switching', false)!;
     live = appendInjected(live, RUN, 'and tag it', 2)!;
     const keys = rowKeys(live);
     expect(new Set(keys).size).toBe(keys.length);
@@ -595,6 +597,83 @@ describe('stream/replay isomorphism', () => {
     expect(early.map(m => m.role)).toEqual(['user', 'turn', 'user', 'turn']);
     expect((early[2] as { content?: string }).content).toBe('use staging');
     expect((early[3] as TurnEntry).parts).toEqual([{ type: 'text', content: 'switching…' }]);
+  });
+
+  // Two inputs the run read at one save point follow each other in the store
+  // with nothing between them; the live view must not leave an empty turn there.
+  it('two inputs read at one point sit side by side, live as on reload', () => {
+    let live = ensureLiveTurn([], RUN, 'deploy')!;
+    live = appendMessageItem(live, 'deploying', false)!;
+    live = appendInjected(live, RUN, 'use staging', 1)!;
+    live = appendInjected(live, RUN, 'and tag it', 2)!;
+    live = appendMessageItem(live, 'staging, tagged', false)!;
+    const rows: EntryView[] = [
+      { id: "1", run_id: RUN, kind: 'item', role: 'user', content: 'deploy' },
+      { id: "2", run_id: RUN, kind: 'item', role: 'assistant', content: 'deploying', display: { kind: 'message', text: 'deploying' } },
+      { id: "3", run_id: RUN, kind: 'item', role: 'user', content: 'use staging' },
+      { id: "4", run_id: RUN, kind: 'item', role: 'user', content: 'and tag it' },
+      { id: "5", run_id: RUN, kind: 'item', role: 'assistant', content: 'staging, tagged', display: { kind: 'message', text: 'staging, tagged' } },
+    ];
+    expect(live.map(m => m.role)).toEqual(['user', 'turn', 'user', 'user', 'turn']);
+    expect(live.map(m => m.role)).toEqual(buildTimeline(rows).map(m => m.role));
+    // Once the store holds all of it, nothing of the live copy is left over.
+    expect(mergeLiveTail(buildTimeline(rows), live, RUN)).toEqual(buildTimeline(rows));
+    // A replay of either injection changes nothing.
+    expect(appendInjected(live, RUN, 'use staging', 1)).toBeNull();
+    expect(appendInjected(live, RUN, 'and tag it', 2)).toBeNull();
+  });
+
+  // A tab that loaded the store mid-run shows the run's first turn stamped;
+  // the turn after an injection is live. A resync must not count the stamped
+  // turn against the live one, or the view freezes until the run ends.
+  it('mergeLiveTail: a turn the timeline already shows stamped does not cover the live one', () => {
+    const rows: EntryView[] = [
+      { id: "1", run_id: RUN, kind: 'item', role: 'user', content: 'deploy' },
+      { id: "2", run_id: RUN, kind: 'item', role: 'assistant', content: 'deploying', display: { kind: 'message', text: 'deploying' } },
+    ];
+    let cur = buildTimeline(rows);
+    cur = appendInjected(cur, RUN, 'use staging', 1)!;
+    cur = appendMessageItem(cur, 'switching', false)!;
+    const merged = mergeLiveTail(buildTimeline(rows), cur, RUN);
+    expect(merged.map(m => m.role)).toEqual(['user', 'turn', 'user', 'turn']);
+    expect((merged[3] as TurnEntry).parts).toEqual([{ type: 'text', content: 'switching' }]);
+    // The run's next item still has a live turn to land in, and a second
+    // resync changes nothing.
+    expect(appendMessageItem(merged, 'done', false)).not.toBeNull();
+    expect(mergeLiveTail(buildTimeline(rows), merged, RUN)).toEqual(merged);
+  });
+
+  // An injected message that repeats the prompt's text is not the prompt.
+  it('mergeLiveTail: an injection that repeats the prompt is not covered by the stored prompt', () => {
+    let live = ensureLiveTurn([], RUN, 'continue')!;
+    live = appendMessageItem(live, 'step 1', false)!;
+    live = appendInjected(live, RUN, 'continue', 1)!;
+    live = appendMessageItem(live, 'step 2', false)!;
+    const rows: EntryView[] = [
+      { id: "1", run_id: RUN, kind: 'item', role: 'user', content: 'continue' },
+      { id: "2", run_id: RUN, kind: 'item', role: 'assistant', content: 'step 1', display: { kind: 'message', text: 'step 1' } },
+    ];
+    const merged = mergeLiveTail(buildTimeline(rows), live, RUN);
+    expect(merged.map(m => m.role)).toEqual(['user', 'turn', 'user', 'turn']);
+    expect((merged[2] as { injected?: number }).injected).toBe(1);
+    // Stored, it covers the bubble — one row, not two.
+    const stored = [...rows, { id: "3", run_id: RUN, kind: 'item', role: 'user', content: 'continue' } as EntryView];
+    expect(mergeLiveTail(buildTimeline(stored), live, RUN).filter(m => m.role === 'user')).toHaveLength(2);
+  });
+
+  // A hub replay re-delivers the run from its start: what an earlier turn of
+  // the split run shows is not appended to the newest one.
+  it('replay dedup reaches the turns before a split', () => {
+    let live = ensureLiveTurn([], RUN, 'deploy')!;
+    live = appendHandoffPart(live, { from: 'A', to: 'B' })!;
+    live = appendMessageItem(live, 'deploying', true)!;
+    live = appendReasoningItem(live, 'thinking it over', true)!;
+    live = appendInjected(live, RUN, 'use staging', 1)!;
+    expect(appendHandoffPart(live, { from: 'A', to: 'B' })).toBeNull();
+    expect(appendMessageItem(live, 'deploying', true)).toBeNull();
+    expect(appendReasoningItem(live, 'thinking it over', true)).toBeNull();
+    // What the new turn has not shown still lands.
+    expect(appendMessageItem(live, 'switching', true)).not.toBeNull();
   });
 
   it('replay dedup: re-delivered items and repeated run.started do not duplicate', () => {

@@ -26,6 +26,15 @@ function withParts(msgs: Msgs, turn: TurnEntry, parts: TurnPart[]): Msgs {
   return out;
 }
 
+// runShows reports whether a turn of the live turn's run already holds a part
+// pick admits. An injection splits one run into several turns, and a hub
+// replay re-delivers what the earlier ones show.
+function runShows(msgs: Msgs, turn: TurnEntry, pick: (p: TurnPart) => boolean): boolean {
+  return msgs.some(m => m.role === 'turn'
+    && (m === turn || (turn.runId !== undefined && m.runId === turn.runId))
+    && (m.parts || []).some(pick));
+}
+
 // ensureLiveTurn appends the empty live turn for a starting run — preceded by
 // the user bubble built from run.started's input when this browser doesn't
 // already show it: run events broadcast to every connection, and an in-flight
@@ -65,11 +74,19 @@ export function appendInjected(msgs: Msgs, runId: string, input: string, index: 
     else if (m.role === 'user' && m.runId === runId && turnSeen) shown++;
   }
   const next = { role: 'turn', parts: [], runId } as TurnEntry;
+  const last = msgs[msgs.length - 1];
   if (shown >= index) {
-    const last = msgs[msgs.length - 1];
     return last?.role === 'user' && last.runId === runId ? [...msgs, next] : null;
   }
-  return [...msgs, { role: 'user', content: input, runId, injected: index } as UserEntry, next];
+  const bubble = { role: 'user', content: input, runId, injected: index } as UserEntry;
+  // A second input read at the same point follows the first directly: the
+  // empty turn left between them is a row a reload does not have.
+  const prev = msgs[msgs.length - 2];
+  if (last?.role === 'turn' && last.runId === runId && last.messageId === undefined && (last.parts || []).length === 0
+    && prev?.role === 'user' && prev.runId === runId) {
+    return [...msgs.slice(0, -1), bubble, last];
+  }
+  return [...msgs, bubble, next];
 }
 
 // mergeLiveTail re-appends the unstamped tail of `current` (optimistic and
@@ -85,14 +102,19 @@ export function mergeLiveTail(persisted: Msgs, current: Msgs, liveRunId?: string
   // claimed by an earlier tail entry can't absorb a second identical one, so two
   // successive identical sends don't collapse into a single message.
   const contentConsumed = new Set<number>();
-  // A run an injection split shows as several turns; the store's cover the
-  // first of the live run's, in order.
-  let storedLiveTurns = persisted.filter(p => p.role === 'turn' && p.runId === liveRunId).length;
+  // A run an injection split shows as several turns. The store's cover the
+  // first of the live run's in order — less those `current` already shows
+  // stamped, which are not in the tail to be covered.
+  const liveTurns = (msgs: Msgs) => msgs.filter(p => p.role === 'turn' && p.runId === liveRunId).length;
+  let storedLiveTurns = Math.max(0, liveTurns(persisted) - liveTurns(current.slice(0, i)));
   for (const u of tail) {
     if (u.role === 'user' && u.injected !== undefined) {
       // An injected bubble shares its run id with the prompt, so the store
-      // covers it only where it holds the same text under that run.
-      const idx = out.findIndex((p, k) => !contentConsumed.has(k) && p.role === 'user' && p.runId === u.runId && p.content === u.content && k < persisted.length);
+      // covers it only with the same text under that run, past the run's
+      // first turn — where its injections sit.
+      const firstTurn = persisted.findIndex(p => p.role === 'turn' && p.runId === u.runId);
+      const idx = firstTurn < 0 ? -1 : out.findIndex((p, k) => k > firstTurn && k < persisted.length && !contentConsumed.has(k)
+        && p.role === 'user' && p.runId === u.runId && p.content === u.content);
       if (idx >= 0) contentConsumed.add(idx); else out.push(u);
     } else if (u.role === 'user') {
       // Identity keys win: a shared runId or clientMsgId means the same message.
@@ -137,7 +159,7 @@ export function appendMessageItem(msgs: Msgs, text: string, dedupByText: boolean
   const turn = lastTurn(msgs);
   if (!turn) return null;
   const parts = [...(turn.parts || [])];
-  if (dedupByText && parts.some(pt => pt.type === 'text' && pt.content === text)) return null;
+  if (dedupByText && runShows(msgs, turn, pt => pt.type === 'text' && pt.content === text)) return null;
   parts.push({ type: 'text', content: text });
   return withParts(msgs, turn, parts);
 }
@@ -148,7 +170,7 @@ export function appendReasoningItem(msgs: Msgs, text: string, dedupByText: boole
   const turn = lastTurn(msgs);
   if (!turn) return null;
   const parts = [...(turn.parts || [])];
-  if (dedupByText && parts.some(pt => pt.type === 'thinking' && pt.content === text)) return null;
+  if (dedupByText && runShows(msgs, turn, pt => pt.type === 'thinking' && pt.content === text)) return null;
   parts.push({ type: 'thinking', content: text });
   return withParts(msgs, turn, parts);
 }
@@ -349,6 +371,6 @@ export function appendHandoffPart(msgs: Msgs, handoff: { from: string; to: strin
   const turn = lastTurn(msgs);
   if (!turn) return null;
   const content = handoff.from + ' → ' + handoff.to;
-  if ((turn.parts || []).some(pt => pt.type === 'handoff' && pt.content === content)) return null;
+  if (runShows(msgs, turn, pt => pt.type === 'handoff' && pt.content === content)) return null;
   return withParts(msgs, turn, [...(turn.parts || []), { type: 'handoff', content, ...handoff }]);
 }
