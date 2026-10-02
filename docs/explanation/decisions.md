@@ -1902,3 +1902,23 @@ sees, and the stream showed an output the store does not hold. The notice is
 fixed English text. A cancelled run still saves nothing.
 
 Rules: spec §2.5
+
+### 5.80 A trigger's payload is framed as data, not appended to the brief
+
+Decided 2026-10-03 (workbench invariant 85).
+
+**Decision.** A webhook's body follows the author's brief inside an
+`<external source trigger>` block whose closing tag the payload cannot write,
+then one fixed line saying the block is not the person's request. A task
+notification's closing line says the same of its reports.
+
+**Rejected.** `Payload:` and the raw body: a third party's text read as the
+author's own. A developer- or system-role entry for it: more authority, not
+less, and a wake-up needs a user turn. A general envelope for every non-human
+input: one consumer today.
+
+**Cost accepted.** Delimiting is mitigation: a model that follows the payload
+anyway still calls every tool it is allowed. What bounds that is the approval
+gate and the trust a trigger's work runs on (§5.75), not the frame.
+
+Rules: [invariant 85](workbench-invariants.md)

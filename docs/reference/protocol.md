@@ -570,8 +570,9 @@ schedule, `kind: webhook` when something POSTs to `/hooks/:id` (outside
 makes, into the trigger's `session_id`; `target: agent` sends the brief as a
 MESSAGE of that session, run by that agent under the session's own
 sandbox binding, with a `trigger_fired` note before it. Either way the brief
-is the author's, written in advance, and a webhook's body (up to 64 KB) is
-appended to it as the payload. A session busy with a run or paused on an
+is the author's, written in advance, and a webhook's body (up to 64 KB)
+follows it as data, in an `<external>` block naming the trigger
+([invariant 85](../explanation/workbench-invariants.md)). A session busy with a run or paused on an
 approval (an agent turn; a workflow starts beside either), or at its cap,
 refuses — that refusal is what the trigger shows as `last_error`. Cron ticks
 missed while the process was down are not replayed. Deleting the session,

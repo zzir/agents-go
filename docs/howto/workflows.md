@@ -121,7 +121,8 @@ curl -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   is refused and when a resend is a replay are in
   [the wire surface](../reference/protocol.md#workflows--apiv1workflows).
 - **Fire now** (`POST /triggers/:id/fire`, with an optional `payload`) runs a
-  trigger by hand, as a tick would. Enable / disable, edit and delete are on
+  trigger by hand, as a tick would. A payload — this one or a webhook's body —
+  reaches the model after your brief, marked as data another system sent. Enable / disable, edit and delete are on
   the same row in the hub; a trigger's `last_error` says why the last fire
   started nothing.
 - What a trigger starts does not use the commands you trusted in that

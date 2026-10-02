@@ -490,3 +490,8 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     a gated `exec_command` asks until that run's own cards say otherwise
     (`once` one call, `same` that command, `all` the rest of the run). The
     grant lands on the session too, for the person's turns (decisions §5.75).
+85. **Text no person typed reaches the model as data with its source.** A
+    trigger's payload rides in an `<external>` block after the author's brief,
+    its closing tag escaped, followed by a fixed not-the-person line; a task's
+    notification closes with the same statement. No tool the model can call
+    resolves an approval. Delimiting is mitigation, not defense (decisions §5.80).
