@@ -295,6 +295,47 @@ func toolNames(tools []*agents.Tool) []string {
 	return out
 }
 
+// The hook is handed the plan the approval was for; a host's own Unlock has
+// none to hand over.
+func TestOnUnlockReceivesTheApprovedPlan(t *testing.T) {
+	model := &recordingModel{responses: []*agents.ModelResponse{
+		resp(toolCallArgs(t, PlanToolName, "c1", `{"plan":"change the thing"}`)),
+		resp(message(t, "done")),
+	}}
+	agent, phase := Plan{}.Apply(&agents.Agent{Name: "a", ModelImpl: model})
+	var got []string
+	phase.OnUnlock(func(plan string) error {
+		got = append(got, plan)
+		return nil
+	})
+	res, err := agents.RunSync(context.Background(), agent, "go", agents.RunOptions{})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(res.Interruptions) != 1 || len(got) != 0 {
+		t.Fatalf("interruptions = %d, hook calls = %v; want the review pending and no unlock yet", len(res.Interruptions), got)
+	}
+	res.State.Approve(res.Interruptions[0], false)
+	if _, err := agents.ResumeRunSync(context.Background(), res.State, agents.RunOptions{}); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if !slices.Equal(got, []string{"change the thing"}) {
+		t.Fatalf("hook received %q, want the approved plan once", got)
+	}
+
+	_, hostPhase := Plan{}.Apply(&agents.Agent{Name: "b"})
+	hostPhase.OnUnlock(func(plan string) error {
+		got = append(got, plan)
+		return nil
+	})
+	if err := hostPhase.Unlock(); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got, []string{"change the thing", ""}) {
+		t.Fatalf("hook received %q, want an empty plan for the host's unlock", got)
+	}
+}
+
 // The OnUnlock hook is the unlock's PRECONDITION: it fires exactly once, at
 // the first successful transition, and its error keeps the phase locked — so
 // a run can never be executing ahead of the host's durable record.
@@ -302,7 +343,7 @@ func TestPlanPhase_UnlockGatedByHook(t *testing.T) {
 	phase := &PlanPhase{}
 	fired := 0
 	fail := true
-	phase.OnUnlock(func() error {
+	phase.OnUnlock(func(string) error {
 		fired++
 		if fail {
 			return errors.New("db down")

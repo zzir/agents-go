@@ -1654,6 +1654,8 @@ targets keep their own toolset.
   unlock's precondition.** `PlanPhase.OnUnlock` fires once, when the approved
   `submit_plan` executes; its error fails the unlock and the phase stays
   planning (a submit_plan tool error; the model resubmits).
+- **`OnUnlock` receives the approved plan's text**, empty when the host calls
+  `Unlock`.
 
 — see [decisions §5.53](../explanation/decisions.md)
 

@@ -58,13 +58,13 @@ type planArgs struct {
 type PlanPhase struct {
 	executing atomic.Bool
 	mu        sync.Mutex
-	onUnlock  func() error
+	onUnlock  func(plan string) error
 }
 
-// OnUnlock registers fn to run at the FIRST unlock, when the approved
-// submit_plan executes — where a host persists its durable mark. Its error
-// fails the unlock and the phase stays planning (spec §2.12).
-func (p *PlanPhase) OnUnlock(fn func() error) {
+// OnUnlock registers fn to run at the FIRST unlock — where a host persists its
+// durable mark — with the approved plan's text, empty when the host unlocks.
+// Its error fails the unlock and the phase stays planning (spec §2.12).
+func (p *PlanPhase) OnUnlock(fn func(plan string) error) {
 	p.mu.Lock()
 	p.onUnlock = fn
 	p.mu.Unlock()
@@ -72,15 +72,19 @@ func (p *PlanPhase) OnUnlock(fn func() error) {
 
 // Unlock moves the run into the executing phase: gated tools run and
 // submit_plan disappears. The first transition runs OnUnlock first and stays
-// locked if it fails; submit_plan reports that as a tool error.
-func (p *PlanPhase) Unlock() error {
+// locked if it fails.
+func (p *PlanPhase) Unlock() error { return p.unlock("") }
+
+// unlock is Unlock carrying the plan an approved submit_plan was called with;
+// submit_plan reports its failure as a tool error.
+func (p *PlanPhase) unlock(plan string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.executing.Load() {
 		return nil
 	}
 	if p.onUnlock != nil {
-		if err := p.onUnlock(); err != nil {
+		if err := p.onUnlock(plan); err != nil {
 			return err
 		}
 	}
@@ -132,10 +136,10 @@ func (p Plan) Apply(agent *agents.Agent) (*agents.Agent, *PlanPhase) {
 	}
 	submit := agents.NewTool(PlanToolName,
 		"Submit your plan for approval. Execution tools unlock only after the plan is approved.",
-		func(context.Context, *agents.ToolContext, planArgs) (string, error) {
+		func(_ context.Context, _ *agents.ToolContext, args planArgs) (string, error) {
 			// A failed unlock keeps the phase locked; the error goes back to the
 			// model, which resubmits, and the human re-approves.
-			if err := phase.Unlock(); err != nil {
+			if err := phase.unlock(args.Plan); err != nil {
 				return "", err
 			}
 			return "Plan approved. Proceed with the implementation; the full toolset is now available.", nil

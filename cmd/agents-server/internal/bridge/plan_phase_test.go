@@ -31,7 +31,7 @@ func TestPlanUnlockClearsThePhase(t *testing.T) {
 	sa := store.NewEntryStoreFor(db, ref)
 
 	phase := &middleware.PlanPhase{}
-	armPlanUnlock(phase, sa, ref)
+	armPlanUnlock(phase, sa, ref, nil)
 	if err := phase.Unlock(); err != nil {
 		t.Fatalf("unlock: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestPlanUnlockClearsThePhase(t *testing.T) {
 		t.Fatalf("close db: %v", err)
 	}
 	phase2 := &middleware.PlanPhase{}
-	armPlanUnlock(phase2, sa2, ref2)
+	armPlanUnlock(phase2, sa2, ref2, nil)
 	if err := phase2.Unlock(); err == nil {
 		t.Fatal("a failed write must fail the unlock")
 	}
@@ -93,7 +93,7 @@ func TestRestorePlanPhase(t *testing.T) {
 	// No marker: nobody asked for a plan, so the run executes. Plan mode is a
 	// restraint, and who imposes it is the person, not the agent's build.
 	fresh := &middleware.PlanPhase{}
-	if err := runner.restorePlanPhase(ctx, fresh, sa, ref0); err != nil {
+	if err := runner.restorePlanPhase(ctx, fresh, sa, ref0, store.LocalUserID); err != nil {
 		t.Fatalf("restore (no marker): %v", err)
 	}
 	if !fresh.Executing() {
@@ -106,7 +106,7 @@ func TestRestorePlanPhase(t *testing.T) {
 		t.Fatalf("set planning: %v", err)
 	}
 	phase := &middleware.PlanPhase{}
-	if err := runner.restorePlanPhase(ctx, phase, sa, ref0); err != nil {
+	if err := runner.restorePlanPhase(ctx, phase, sa, ref0, store.LocalUserID); err != nil {
 		t.Fatalf("restore (asked to plan): %v", err)
 	}
 	if phase.Executing() {
@@ -121,7 +121,7 @@ func TestRestorePlanPhase(t *testing.T) {
 	phase2 := &middleware.PlanPhase{}
 	sa2 := store.NewEntryStoreFor(db, ref0)
 	sa2.SetRunID("r2")
-	if err := runner.restorePlanPhase(ctx, phase2, sa2, ref0); err != nil {
+	if err := runner.restorePlanPhase(ctx, phase2, sa2, ref0, store.LocalUserID); err != nil {
 		t.Fatalf("restore (already unlocked): %v", err)
 	}
 	if !phase2.Executing() {
@@ -153,7 +153,7 @@ func TestRestorePlanPhase(t *testing.T) {
 	if err != nil {
 		brokenRef = session.Ref{ID: sess2.ID}
 	}
-	if err := broken.restorePlanPhase(ctx, &middleware.PlanPhase{}, store.NewEntryStoreFor(dbBroken, brokenRef), brokenRef); err == nil {
+	if err := broken.restorePlanPhase(ctx, &middleware.PlanPhase{}, store.NewEntryStoreFor(dbBroken, brokenRef), brokenRef, store.LocalUserID); err == nil {
 		t.Fatal("a failed marker read must abort the run, not fall back to planning")
 	}
 }

@@ -90,19 +90,14 @@ func NewRunner(rootCtx context.Context, db *bun.DB, deps *AgentDeps) *Runner {
 	deps.WorkflowTools = r.workflowTools
 	deps.HistoryTools = r.historyTools
 	deps.MemoryTools = r.memoryTools
-	deps.KeepApprovedPlan = r.keepApprovedPlan
 	return r
 }
 
 // keepApprovedPlan writes plan under the session's reserved key, replacing
 // the plan an earlier approval kept.
-func (r *Runner) keepApprovedPlan(ctx context.Context, sessionID, ownerID, plan string) error {
+func (r *Runner) keepApprovedPlan(ctx context.Context, ref session.Ref, ownerID, plan string) error {
 	if r.Deps.Memories == nil {
 		return nil
-	}
-	ref, err := store.RefFor(ctx, r.db, sessionID)
-	if err != nil {
-		return err
 	}
 	sc := store.SessionMemoryScope(ref)
 	return r.Deps.Memories.Upsert(ctx, &store.Memory{
@@ -508,7 +503,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	if spec.fresh {
 		// The SESSION's plan phase (invariant 33), and the unlock this run may
 		// perform. Fresh-only: a resume's rebuild already restored it.
-		if err := r.restorePlanPhase(ctx, built.PlanPhase, sa, sessionRef); err != nil {
+		if err := r.restorePlanPhase(ctx, built.PlanPhase, sa, sessionRef, ownerID); err != nil {
 			return failTurn("", protocol.CodeConfigError, err, "", "")
 		}
 	}

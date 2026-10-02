@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/zzir/agents-go/agents"
@@ -132,17 +133,21 @@ var errResumeStopped = errors.New("the work was stopped before the approval coul
 
 // armPlanUnlock makes clearing the session's planning column the PRECONDITION
 // of the first unlock: a failed write fails submit_plan and the review repeats.
-func armPlanUnlock(phase *middleware.PlanPhase, sa *store.EntryStore, ref session.Ref) {
+// keep then receives the approved plan, when there is one — invariant 87.
+func armPlanUnlock(phase *middleware.PlanPhase, sa *store.EntryStore, ref session.Ref, keep func(ctx context.Context, plan string)) {
 	if phase == nil {
 		return
 	}
-	phase.OnUnlock(func() error {
+	phase.OnUnlock(func(plan string) error {
 		ctx, cancel := context.WithTimeout(context.Background(), planUnlockPersistTimeout)
 		defer cancel()
 		// Clearing the column IS the durable record of the approval —
 		// invariant 33. Idempotent, so a replayed unlock is a no-op.
 		if err := sa.SetSessionPlanning(ctx, ref, false); err != nil {
 			return fmt.Errorf("persisting the plan-unlock record: %w", err)
+		}
+		if keep != nil && strings.TrimSpace(plan) != "" {
+			keep(ctx, plan)
 		}
 		return nil
 	})
@@ -172,7 +177,7 @@ func (r *Runner) ApplyPlanIntent(ctx context.Context, sessionID string, plan *bo
 
 // restorePlanPhase puts a plan-mode run into the SESSION's phase (invariant 33)
 // and arms the unlock. A read failure is an error: nothing is claimed yet.
-func (r *Runner) restorePlanPhase(ctx context.Context, phase *middleware.PlanPhase, sa *store.EntryStore, ref session.Ref) error {
+func (r *Runner) restorePlanPhase(ctx context.Context, phase *middleware.PlanPhase, sa *store.EntryStore, ref session.Ref, ownerID string) error {
 	if phase == nil {
 		return nil
 	}
@@ -185,7 +190,12 @@ func (r *Runner) restorePlanPhase(ctx context.Context, phase *middleware.PlanPha
 		// what keeps a replayed unlock from writing the column twice.
 		_ = phase.Unlock()
 	}
-	armPlanUnlock(phase, sa, ref)
+	armPlanUnlock(phase, sa, ref, func(ctx context.Context, plan string) {
+		// Best effort: the approval stands whether or not its plan was kept.
+		if err := r.keepApprovedPlan(ctx, ref, ownerID, plan); err != nil {
+			logging.Ctx(ctx).Warn("keeping the approved plan", "error", err, "session_id", ref.ID)
+		}
+	})
 	return nil
 }
 
@@ -262,7 +272,7 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 	}
 	resumeStore := store.NewEntryStoreFor(r.db, resumeRef)
 	resumeStore.SetRunID(pending.RunID)
-	if err := r.restorePlanPhase(ctx, rebuilt.PlanPhase, resumeStore, resumeRef); err != nil {
+	if err := r.restorePlanPhase(ctx, rebuilt.PlanPhase, resumeStore, resumeRef, sess.OwnerID); err != nil {
 		return "", pending.SessionID, err
 	}
 

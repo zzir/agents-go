@@ -505,5 +505,5 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     that unlocks the run writes the plan into session memory under that key,
     marked `plan_approval`; a failed write is logged and the unlock stands.
     The model reads the key and cannot write it, so what it holds is what a
-    person approved; a later approval replaces it (`bridge/agent.go`,
+    person approved; a later approval replaces it (`bridge/approvals.go`,
     `store/run_memory.go`).

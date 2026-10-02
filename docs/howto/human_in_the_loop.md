@@ -121,7 +121,7 @@ if string(state.Extra["plan:unlocked"]) == "true" {
 }
 ```
 
-`Extra` covers pause→resume, not crashes: a fact that must survive a crash mid-run — the moment the plan unlocked — needs your own durable write at that moment, which is what `PlanPhase.OnUnlock` is for ([spec §2.12](../reference/spec.md#212-middleware)).
+`Extra` covers pause→resume, not crashes: a fact that must survive a crash mid-run — the moment the plan unlocked — needs your own durable write at that moment, which is what `PlanPhase.OnUnlock` is for. The hook is handed the approved plan's text (empty when you call `Unlock` yourself), so the same write can keep the plan ([spec §2.12](../reference/spec.md#212-middleware)).
 
 ## Sessions and approvals
 
