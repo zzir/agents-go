@@ -415,7 +415,7 @@ type DockerConfig struct {
 
 	Image   string `json:"image"`
 	Runtime string `json:"runtime,omitempty"` // OCI runtime (e.g. "runsc" for gVisor)
-	User    string `json:"user,omitempty"`    // user[:group] the container runs as; "" = the image's own user
+	User    string `json:"user,omitempty"`    // user[:group] the container runs as; "" = root
 	// Network is the docker network the container joins; empty leaves it with none.
 	Network string `json:"network,omitempty"`
 	// MemoryMB and CPUs cap the container; 0 takes the workbench default (sandboxes.DefaultMemoryMB, DefaultCPUs).

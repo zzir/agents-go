@@ -20,7 +20,7 @@ import (
 )
 
 // Skill imports: walking a GitHub repository or fetching one raw SKILL.md,
-// anonymously and pinned to one commit (decisions §5.26).
+// anonymously and pinned to one commit — see protocol.md, Skills.
 
 // maxImportSkills caps how many SKILL.md files one import walks, so a huge
 // repo cannot flood the table in one request.
@@ -133,7 +133,7 @@ func (h *SkillHandler) Import(c *gin.Context) {
 		return
 	}
 	// One deadline over the whole import: a GitHub walk is up to ~202 serial
-	// fetches — decisions §5.26.
+	// fetches — see protocol.md, Skills.
 	ctx, cancel := context.WithTimeout(c.Request.Context(), skillImportBudget)
 	defer cancel()
 	c.Request = c.Request.WithContext(ctx)

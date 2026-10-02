@@ -43,10 +43,9 @@ const exportTimeout = 10 * time.Minute
 // signal, a terminal write, a rollback kill) so a hung endpoint cannot block it.
 const controlCallTimeout = 30 * time.Second
 
-// DataPlaneAuth selects how envd is authenticated. It is configuration rather
-// than a fixed choice because compatible services differ: E2B mints a
-// per-sandbox access token, and Alibaba Cloud's compatible API does not
-// support one at all — it takes the API key.
+// DataPlaneAuth selects how envd is authenticated. Both services verified so
+// far mint a per-sandbox access token, which AuthAuto sends; the explicit
+// modes are an escape hatch for a compatible service that differs.
 type DataPlaneAuth string
 
 const (

@@ -605,7 +605,8 @@ the transport — the server shells out to nothing.
 backend decision argued here first — gVisor is already reachable via
 `runtime: runsc`. Do not reintroduce a host-exec or raw remote-exec type.
 
-Rules: workbench invariant 27 (where a sandbox runs is its identity).
+Rules: workbench invariant 45 (only a sandbox's identity freezes); invariant
+27 (a session binds a project).
 
 ### 5.28 A project is the unit of working storage, and containers are per project
 
@@ -701,8 +702,8 @@ list ordering are in [the wire surface](../reference/protocol.md#authorization).
 Retired 2026-08-24 as a ledger of removed settings (`openai_api_key`,
 `anthropic_api_key`, `brave_api_key`, `github_token`). What survives: a key
 any keyless row inherits is the ambient authority §5.29 removed — a provider
-row carries its own key or runs keyless, an agent naming no provider fails
-its pre-flight, and settings keep the KindSecret machinery with no keys in it.
+row carries its own key or runs keyless, an agent naming no provider fails its
+pre-flight, and settings' only secret is attachment storage's own S3 key.
 
 ---
 
@@ -713,7 +714,7 @@ Decided 2026-08-25, refining §5.29 for skills alone.
 **Decision.** An import lands a whole repository's `SKILL.md` files at once,
 and two repositories may each ship a `review`, so **the repo is part of the
 name**: the model-facing name is `<repo label>:<frontmatter name>`, and
-uniqueness keys on `(source_repo, name)` within a visibility context. The
+uniqueness keys on `(repo_label, name)` within a visibility context. The
 label is materialized on the row (`repo_label`) because two source URLs can
 reduce to one label, and a duplicate qualified name would make `read_skill`'s
 answer a coin flip. **A repo group is one scope and one owner**: scope and
@@ -777,14 +778,14 @@ reversed the same week — §5.36 holds what replaced it. What stands:
 **Decision.** One runtime axis: the runtime generation lives only on the
 PROJECT, and a content change to a sandbox bumps it on every project naming
 the row (`ProjectStore.BumpRuntimeGen`), so the instance cache, the terminal
-fences and `RetireProject` watch exactly one thing. Storage is a volume,
-always — a container runs as the image's user (root unless the sandbox says
-otherwise), the container is the isolation boundary, and its files live in a
+fences and `RetireProject` watch exactly one thing. For Docker, storage is a
+volume, always — a workbench container runs as root unless the sandbox names
+a user (overriding spec §2.7o's image-user default), with all capabilities
+dropped; the container is the isolation boundary, and its files live in a
 volume nothing else mounts. A project delete destroys its storage: a volume
 nobody has a listing for is an unbounded leak, and the row was its only
-handle. No project, no sandbox tools: an agent without one is a chat. The
-session binding is `project_id` alone — a project pins its machine, so a
-second column could only disagree.
+handle. The session binding is `project_id` alone — a project pins its
+machine, so a second column could only disagree.
 
 **Rejected.** The local daemon's bind mount (`--workspace`, the `DOCKER_HOST`
 guard, the operator uid:gid default) — that default kept the container
@@ -807,12 +808,12 @@ everything the workbench needs, so the second backend is **one backend that
 speaks the E2B API** and a sandbox row naming the service — `api_url`,
 `domain`, `api_key`, `headers` — with no `flavor` discriminator: the moment
 one appears that configuration cannot express, it is a new decision, not a
-switch to grow. The client is written here — five REST calls and Connect-over-JSON,
-~150 lines of standard library — which keeps `sandbox/e2b` in the ROOT module
-(§5.7). The sandbox is remembered, not searched for: its id lands in
-`projects.instance_ref` before the client will use it, and a failure to
-record fails the create, since an unrecorded sandbox is billed compute nobody
-will ever stop. The lease is extended on demand — every control call sends
+switch to grow. The client is written here — five REST calls and
+Connect-over-JSON, a ~150-line Connect codec on the standard library — which
+keeps `sandbox/e2b` in the ROOT module (§5.7). The sandbox is remembered, not
+searched for: its id lands in `projects.instance_ref` before the client will
+use it, and a failure to record fails the create, since an unrecorded sandbox
+is billed compute nobody will ever stop. The lease is extended on demand — every control call sends
 `max(configured TTL, the operation's own bound)` through `connect`, which
 resumes a paused sandbox and only extends a running one — never by a keepalive. Stop
 is pause and Reclaim is kill: the sandbox IS the storage, so killing it is
@@ -840,11 +841,11 @@ the services' rendering quirks live on the code that absorbs them (`sandbox/e2b`
 
 ### 5.35 A port preview is a gateway with a grant, not a published port (retired)
 
-Retired 2026-08-31 (decided 2026-08-28). Was a grant-token reverse proxy from a
-sandbox port to the browser (`sandbox.PortForwarder`/`PortDialer`, `ports`).
-The shipped compose topology publishes a port on the daemon host's loopback,
-unreachable from a containerized server — it worked on some deployments and
-silently failed on others; a headless browser in the sandbox replaces it.
+Retired 2026-08-31. Was a grant-token reverse proxy from a sandbox port to the
+browser (`sandbox.PortForwarder`/`PortDialer`, `ports`). Because the compose
+topology publishes on the daemon host's loopback, unreachable from a
+containerized server. No browser ships: an agent installs one in a sandbox
+with network on, or an operator bakes one into an image. See §5.70.
 
 ### 5.36 A sandbox is one row, and only its identity freezes
 
@@ -897,7 +898,8 @@ Decided 2026-08-28.
 `0` gets the workbench's default cap (4096 MiB, 2 CPUs) in
 `sandboxes.applyImage`: `0` means "this default", never "unlimited". Agent
 code runs in that container, and an uncapped one is a host-DoS surface — a
-fork bomb takes the machine, and on a shared workbench that is everyone's.
+runaway build or a leak can OOM or starve the host (the docker backend already
+caps the process count), and on a shared workbench that is everyone's.
 
 **Rejected.** Putting the default in the SDK's `sandbox` package — its
 isolation-by-default promise covers network, filesystem, capabilities and the
@@ -948,12 +950,12 @@ Rules: spec §2.4.
 
 Decided 2026-08-31.
 
-**Decision.** OpenAI's Codex OAuth client registers only loopback redirect
-URIs, so the authorize URL still names `localhost:1455`, but nothing listens:
-the redirect fails to load, the user pastes its URL back, and the server
-redeems the code against the PKCE verifier it stored by `state`. The standard
-headless-OAuth pattern, behaving identically whether the server is local or
-remote.
+**Decision.** With OpenAI's Codex OAuth client the redirect a client can name
+is loopback-only, so the authorize URL still names `localhost:1455`, but
+nothing listens: the redirect fails to load, the user pastes its URL back, and
+the server redeems the code against the PKCE verifier it stored by `state`. A
+common headless-OAuth pattern, behaving identically whether the server is
+local or remote.
 
 **Rejected.** A CLI-style listener on `127.0.0.1:1455` — deployed to a remote
 host, the popup's `localhost` is the *user's* laptop, so the redirect never
