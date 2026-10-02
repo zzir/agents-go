@@ -767,6 +767,21 @@ components:
         payload:
           type: string
       type: object
+    handler.injectReq:
+      properties:
+        input:
+          type: string
+        queue:
+          description: Queue is steer, next_turn or follow_up.
+          type: string
+      type: object
+    handler.injectResp:
+      properties:
+        queue:
+          type: string
+        run_id:
+          type: string
+      type: object
     handler.mcpConnectResp:
       properties:
         authorize_url:
@@ -5135,6 +5150,60 @@ paths:
       security:
       - BearerAuth: []
       summary: Stream run events (SSE)
+      tags:
+      - runs
+  /runs/{id}/inject:
+    post:
+      description: 'Queues input on a run that is executing: steer changes course
+        inside the current exchange, next_turn rides along with a turn the run takes
+        anyway, follow_up starts a new exchange once this one finishes. 202 means
+        queued, not read: a run that ends before its queue is taken drops it.'
+      parameters:
+      - description: Run ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.injectReq'
+                description: The queue and the input
+                summary: body
+        description: The queue and the input
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.injectResp'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: unknown queue or empty input
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: the run is paused for approval, still starting, or has ended
+      security:
+      - BearerAuth: []
+      summary: Inject input into a live run
       tags:
       - runs
   /sandboxes:

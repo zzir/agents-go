@@ -324,9 +324,10 @@ func (h *WSHandler) inject(conn *server.WSConn, msg protocol.RunInject) {
 	if delivered && err == nil {
 		return
 	}
+	info, _ := h.runner.Hub().Info(msg.RunID)
 	_ = conn.WriteJSON(&protocol.Envelope{Type: protocol.EventRunError, Payload: mustJSON(protocol.RunError{
 		RunID:   msg.RunID,
 		Code:    protocol.CodeRunNotFound,
-		Message: "the run is no longer accepting input",
+		Message: injectRefusal(info.Status),
 	})})
 }

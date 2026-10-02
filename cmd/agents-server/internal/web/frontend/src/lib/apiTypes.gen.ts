@@ -4247,6 +4247,80 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/runs/{id}/inject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Inject input into a live run
+         * @description Queues input on a run that is executing: steer changes course inside the current exchange, next_turn rides along with a turn the run takes anyway, follow_up starts a new exchange once this one finishes. 202 means queued, not read: a run that ends before its queue is taken drops it.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Run ID */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            /** @description The queue and the input */
+            requestBody: {
+                content: {
+                    "application/json": Record<string, never> | components["schemas"]["handler.injectReq"];
+                };
+            };
+            responses: {
+                /** @description Accepted */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.injectResp"];
+                    };
+                };
+                /** @description unknown queue or empty input */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description the run is paused for approval, still starting, or has ended */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sandboxes": {
         parameters: {
             query?: never;
@@ -8087,6 +8161,15 @@ export interface components {
         };
         "handler.fireReq": {
             payload?: string;
+        };
+        "handler.injectReq": {
+            input?: string;
+            /** @description Queue is steer, next_turn or follow_up. */
+            queue?: string;
+        };
+        "handler.injectResp": {
+            queue?: string;
+            run_id?: string;
         };
         "handler.mcpConnectResp": {
             authorize_url?: string;

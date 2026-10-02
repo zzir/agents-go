@@ -237,6 +237,82 @@ func (h *RunHandler) Cancel(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// injectReq is the body of an inject request.
+type injectReq struct {
+	// Queue is steer, next_turn or follow_up.
+	Queue string `json:"queue"`
+	Input string `json:"input"`
+}
+
+type injectResp struct {
+	RunID string `json:"run_id"`
+	Queue string `json:"queue"`
+}
+
+// injectRefusal says why a run took no injected input, from where it stands.
+func injectRefusal(status bridge.RunStatus) string {
+	switch status {
+	case bridge.RunInterrupted:
+		return "the run is paused for approval — decide it or send a new message"
+	case bridge.RunRunning:
+		return "the run is starting — retry"
+	}
+	return "the run has ended"
+}
+
+// Inject queues input on the live run identified by the id path parameter.
+//
+//	@Summary		Inject input into a live run
+//	@Description	Queues input on a run that is executing: steer changes course inside the current exchange, next_turn rides along with a turn the run takes anyway, follow_up starts a new exchange once this one finishes. 202 means queued, not read: a run that ends before its queue is taken drops it.
+//	@Tags			runs
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path		string		true	"Run ID"
+//	@Param			body	body		injectReq	true	"The queue and the input"
+//	@Success		202		{object}	injectResp
+//	@Failure		400		{object}	ErrorResponse	"unknown queue or empty input"
+//	@Failure		404		{object}	ErrorResponse
+//	@Failure		409		{object}	ErrorResponse	"the run is paused for approval, still starting, or has ended"
+//	@Security		BearerAuth
+//	@Router			/runs/{id}/inject [post]
+func (h *RunHandler) Inject(c *gin.Context) {
+	var req injectReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		badRequest(c, err.Error())
+		return
+	}
+	switch req.Queue {
+	case protocol.InjectQueueSteer, protocol.InjectQueueNextTurn, protocol.InjectQueueFollowUp:
+	default:
+		badRequest(c, "queue must be steer, next_turn or follow_up")
+		return
+	}
+	if strings.TrimSpace(req.Input) == "" {
+		badRequest(c, "input is required")
+		return
+	}
+	runID := c.Param("id")
+	info, ok := h.runner.Hub().Info(runID)
+	if !ok {
+		notFound(c)
+		return
+	}
+	delivered, err := h.runner.Hub().Inject(runID, req.Queue, req.Input)
+	if err != nil {
+		internalError(c, err)
+		return
+	}
+	if !delivered {
+		// Read again: the run may have moved between the two looks.
+		if cur, ok := h.runner.Hub().Info(runID); ok {
+			info = cur
+		}
+		conflict(c, injectRefusal(info.Status))
+		return
+	}
+	c.JSON(http.StatusAccepted, injectResp{RunID: runID, Queue: req.Queue})
+}
+
 // Events streams the run's events as Server-Sent Events. Each event's id is
 // its hub sequence number; a reconnect with Last-Event-ID (or ?from_seq)
 // resumes without loss. The stream ends after a FINAL event; run.interrupted

@@ -147,6 +147,7 @@ func TestSessionSubtreesAreTheOwnersAlone(t *testing.T) {
 	for _, p := range []struct{ method, path string }{
 		{http.MethodGet, "/api/v1/runs/" + runID},
 		{http.MethodPost, "/api/v1/runs/" + runID + "/cancel"},
+		{http.MethodPost, "/api/v1/runs/" + runID + "/inject"},
 	} {
 		for _, u := range []protocol.UserInfo{otherUser, adminUser} {
 			if rec := serve(engine, as(u, p.method, p.path, "")); rec.Code != http.StatusNotFound {

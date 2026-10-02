@@ -251,6 +251,15 @@ Besides a final event, the hub tearing the run's subscription down (retention
 passing, a shutdown) closes it, so it never outlives the run. Event payloads
 mirror the WebSocket [server→client events](#server--client).
 
+`POST /runs/:id/inject` queues input on a run that is executing — the REST
+twin of `run.inject`, with the same three queues
+([client→server events](#client--server)). `202` means queued, not read: a
+run that ends before its queue is taken drops the input. `409` says why
+nothing was queued: the run is paused for approval (a pause takes no input —
+a new message abandons it, as [Approvals](#approvals--apiv1approvals)
+describes), is still starting (retry), or has ended. The run to address is
+the session's `live_run_id`.
+
 `POST /runs/:id/cancel` stops a run: `?mode=graceful` lets the current turn
 finish and stops before the next, the default aborts mid-turn — `204` either
 way, `404` for a run the hub no longer holds, and a run paused for approval is
@@ -265,6 +274,7 @@ SID=$(curl -s -H "$H" -X POST $BASE/sessions -d '{"name":"cli"}' | jq -r .id)
 BODY='{"input":"hello","agent_config_id":"<agent-id>"}'   # + "attachment_ids":[…] for images
 RUN=$(curl -s -H "$H" -X POST $BASE/sessions/$SID/runs -d "$BODY" | jq -r .run_id)
 curl -N -H "$H" $BASE/runs/$RUN/events          # stream until run.output
+curl -s -H "$H" -X POST $BASE/runs/$RUN/inject -d '{"queue":"steer","input":"use staging"}'   # while it runs
 
 # or fire-and-wait in one call, for up to a minute:
 curl -s -H "$H" -H "Prefer: wait=60" -X POST $BASE/sessions/$SID/runs -d "$BODY" | jq .final_output
@@ -877,7 +887,7 @@ which run this is.
 | `run.create`    | Start a run — `{session_id, input, attachment_ids?, agent_config_id?, project_id?, plan?}` (the project matters only until the session's first project-carrying run binds it; `plan` and `attachment_ids` as in the REST body) |
 | `run.subscribe` | (Re)attach to a run's event stream — `{run_id, from_seq?}` (omit `from_seq` or `0` replays everything retained) |
 | `run.cancel`    | Cancel an in-flight run — `{run_id, mode?}`; `mode: "graceful"` finishes the current turn, default aborts; a run paused for approval is abandoned either way (see [Approvals](#approvals--apiv1approvals)) |
-| `run.inject`    | Inject input into the live run — `{run_id, queue, input}`; `queue: "steer"` changes course inside the current exchange, `"next_turn"` is consumed at the next turn boundary, `"follow_up"` starts a new exchange once this one finishes |
+| `run.inject`    | Inject input into the live run — `{run_id, queue, input}`; `queue: "steer"` changes course inside the current exchange, `"next_turn"` is consumed at the next turn boundary, `"follow_up"` starts a new exchange once this one finishes. REST twin: `POST /runs/:id/inject` |
 | `tool.approve`  | Approve a pending tool call — `{tool_call_id, scope?}`; `scope` widens an `exec_command` approval's trust: `"once"` (default), `"same"` (this exact command, for the session) or `"all"` (every command) |
 | `tool.reject`   | Reject a tool call — `{tool_call_id, reason?}`                                                                  |
 

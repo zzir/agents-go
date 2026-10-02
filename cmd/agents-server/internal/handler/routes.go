@@ -90,6 +90,7 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		runs.GET("", h.Runs.Get)
 		runs.GET("/events", h.Runs.Events)
 		runs.POST("/cancel", h.Runs.Cancel)
+		runs.POST("/inject", h.Runs.Inject)
 	}
 	{
 		tasks := api.Group("/tasks")
