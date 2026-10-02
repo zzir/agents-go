@@ -1415,7 +1415,9 @@ stored, not as the model spelled it.
 Letting the model switch the gate off.
 
 **Cost accepted.** A proposal that needs a person costs a pause even when the
-change is trivial.
+change is trivial. Whether model authoring stays is decided on a signal the
+maintainer can see — an issue, or the maintainer's own instance — never an
+audit-log count a self-hosted install never reports.
 
 Rules: workbench invariant 39; authorization per §5.29.
 
