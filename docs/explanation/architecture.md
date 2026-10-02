@@ -154,7 +154,8 @@ The Responses WebSocket transport is not implemented
 Anything dependency-free stays in the root module, no matter how peripheral
 it feels — `models/modelkit` is the standing example: shared adapter
 plumbing, stdlib-only, so it lives in root. The table above says which
-dependency earned each module.
+dependency earned each module. Tracing is vendor-neutral for the same reason
+([decisions §5.6b](decisions.md#56b-tracing-stays-vendor-neutral-otel-export-is-the-consumers-job)).
 
 CI builds each module standalone with `GOWORK=off`, so a workspace-only fix
 cannot hide a missing `go.mod` require.
@@ -163,12 +164,6 @@ A release tags the library modules in lockstep with the root: one commit
 carries `vX.Y.Z` and a `<dir>/vX.Y.Z` tag for each, so a consumer pins them
 all to one version. `cmd/agents-server` and `examples/anthropic` are built
 from the repository and carry no tag. `scripts/modules.sh` is the list.
-
-This is also why tracing is vendor-neutral in the core: a span is a `Type` tag
-plus a `Data map[string]any`, and mapping it onto a vendor's model is the
-consumer's `Processor` to write ([decisions §5.6b](decisions.md#56b-tracing-stays-vendor-neutral-otel-export-is-the-consumers-job)).
-Adding an OTel dependency to the core would tax every user for a capability
-most do not enable.
 
 ---
 

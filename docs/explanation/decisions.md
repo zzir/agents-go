@@ -295,9 +295,10 @@ view is what makes those calls work.
 
 **Rejected.** A workdir-rooted "virtual chroot" — absolute paths got re-joined
 under `WorkDir` and read as "not found". Docker's archive API (`docker cp`)
-for persistent containers — it reads only the graph-driver filesystem and
-cannot see a tmpfs or volume mount, so a file exec had just written under
-`/tmp` read back as absent; every file operation goes through `exec` instead.
+for persistent containers — it cannot see a tmpfs mount (the `/tmp` the
+backend mounts), so a file exec had just written there read back as absent; a
+volume is visible, which `ExportTar` relies on. Every file operation goes
+through `exec` instead.
 
 **Cost accepted.** Docker bind-mount mode is the one exception: its file
 operations run on the host side of the mount, so there they are confined to
@@ -516,8 +517,9 @@ Rules: spec §2.16.
 
 ### 5.23 Zero-consumer surface was cut to the workbench's actual needs
 
-Retired 2026-08 as a ledger of cuts under scope §1.2's zero-consumer rule
-(`tracing/otel`, `filesession`, `tools/bravesearch`, `cmd/verify`, MCP serve).
+Retired 2026-08 as a ledger of cuts under the standing rule that a
+zero-consumer feature is removed, not kept (`tracing/otel`, `filesession`,
+`tools/bravesearch`, `cmd/verify`, MCP serve).
 What survives: `internal/agentstest` is test infrastructure, not API — testing
 against the SDK means implementing `agents.Model` — and docs are synced inside
 the change that moved the code, never by a checker run afterwards.
@@ -1060,12 +1062,13 @@ error tail (`IsError`, output guardrails, span error, the valve of spec §2.7d).
 The per-call goroutine's own recover is only a net for a panic outside the
 tool body, and that net aborts the run — it is not the tool's failure.
 
+Rules: spec §2.2 (concurrency), §2.7 (Errors).
+
 ### 5.47 Zero-setter sandbox options were removed
 
-Retired ledger. `ExecRequest.Stdin`, `docker.Options.ContainerWorkDir` and
-the `path` parameter of `Exporter.ExportTar` had no setter anywhere in the
-repository and were cut under scope §1.2's zero-consumer rule; each comes back
-the day a caller needs it, as an option with that caller.
+Retired 2026-09-02. Was `ExecRequest.Stdin`, `docker.Options.ContainerWorkDir`
+and `ExportTar`'s path parameter, none with a setter. Because a zero-consumer
+option is removed, not kept; each returns with its caller. See §5.23.
 
 ### 5.48 apply_patch parks a large file instead of snapshotting it
 
@@ -1436,8 +1439,9 @@ to the session. Every call carries the current number.
 
 **Rejected.** Putting it in the instructions: the number changes every call,
 and an instructions prefix that changes defeats prompt caching for the whole
-conversation. Threshold reminders at 25/50/75%, Codex's shape: one input can
-jump across a mark unnoticed, and a current figure is what the model actually
+conversation. Threshold reminders at 25/50/75%, a shape Codex added and
+dropped within ten days (June 2026) for prompt churn: one input can jump
+across a mark unnoticed, and a current figure is what the model actually
 reasons with. Persisting it as an entry: it describes the moment it was sent,
 replays wrong later, and inflates the history it measures.
 

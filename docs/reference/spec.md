@@ -1297,8 +1297,8 @@ does.
 - **`Rename` exists for `apply_patch`'s parking**
   ([§2.7s](#27s-apply_patch-locates-hunks-by-whole-lines)).
 - **Persistent-mode docker runs every file operation through `exec`**, never
-  the daemon's archive API (`docker cp`), which cannot see a `tmpfs` or volume
-  mount: a base64 round-trip over `sh -c` (`wc -c` size-guarded on read, an
+  the daemon's archive API (`docker cp`), which cannot see a `tmpfs` mount: a
+  base64 round-trip over `sh -c` (`wc -c` size-guarded on read, an
   `ExecRequest.Files` stage-and-move on write) keeps one view.
 - **Docker bind-mount mode is the one exception**: file operations run on the
   host side of the mount and are confined to `WorkDir` via `os.Root` (which
