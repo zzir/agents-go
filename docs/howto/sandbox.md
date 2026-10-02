@@ -82,7 +82,7 @@ agent := &agents.Agent{
 }
 ```
 
-The model writes code, `CodeTool` executes it in the sandbox, and the combined `exit_code` / `stdout` / `stderr` go back to the model so it can fix its own mistakes. `FileTools` adds `read_file`, `write_file` and `list_files` — native file operations backed by the sandbox's `ReadFile`/`WriteFile`/`ListDir` methods, so the model can manipulate files without piping through shell commands. Execution failures (non-zero exit, timeouts) and malformed arguments are normal tool output the model can correct; *infrastructure* failures (daemon down, missing image) abort the run.
+The model writes code, `CodeTool` executes it in the sandbox, and the combined `exit_code` / `stdout` / `stderr` go back to the model so it can fix its own mistakes. `FileTools` adds `read_file`, `write_file` and `list_files` — native file operations backed by the sandbox's `ReadFile`/`WriteFile`/`ListDir` methods, so the model can manipulate files without piping through shell commands. `read_file` returns numbered lines a page at a time (`offset`, `limit`; 0 = default) under a header that says which lines came back of how many and, when a page stops at the output limit, which `offset` continues it — so a file larger than `MaxOutputBytes` is read in full across calls. Execution failures (non-zero exit, timeouts) and malformed arguments are normal tool output the model can correct; *infrastructure* failures (daemon down, missing image) abort the run.
 
 The optional string arguments (`workdir`, `session_id`) accept the zero-value sentinels `null`, `0` and `false` as "unused"; any other non-string scalar is refused as correctable text ([spec §2.7l](../reference/spec.md#27l-sandbox-tool-argument-decoding)).
 
@@ -175,7 +175,7 @@ Authentication methods are tried in order — SSH agent (`UseAgent`), private ke
 ```go
 sandbox.FileToolConfig{
 	Timeout:        10 * time.Second, // per file operation (default: sandbox.DefaultTimeout)
-	MaxOutputBytes: 8192,             // truncation for read_file output
+	MaxOutputBytes: 8192,             // one page of read_file; list_files output is truncated here
 }
 ```
 

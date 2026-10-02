@@ -241,7 +241,7 @@ func TestFileTools_ReadWriteList(t *testing.T) {
 	if rt.Name != "read_file" {
 		t.Fatalf("tools[0].Name = %q, want read_file", rt.Name)
 	}
-	out, err = rt.OnInvoke(ctx, tc, `{"path":"test.txt"}`)
+	out, err = rt.OnInvoke(ctx, tc, `{"path":"test.txt","offset":0,"limit":0}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +266,7 @@ func TestFileTools_ReadWriteList(t *testing.T) {
 func TestReadFileTool_NotFound(t *testing.T) {
 	sb := NewLocal()
 	rt := ReadFileTool(sb, FileToolConfig{})
-	out, err := rt.OnInvoke(context.Background(), &agents.ToolContext{}, `{"path":"/nonexistent/file"}`)
+	out, err := rt.OnInvoke(context.Background(), &agents.ToolContext{}, `{"path":"/nonexistent/file","offset":0,"limit":0}`)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1266,6 +1266,9 @@ does.
   backend**; the in-container docker scripts report absence by exit code,
   never by sniffing a shell's wording.
 - **`ListDir` promises no order**; `list_files` sorts by name.
+- **`read_file` pages by line.** `offset` (1-based, 0 = 1) and `limit` (0 = to
+  the end) select numbered lines; a page stops at `MaxOutputBytes` on a line
+  boundary, and its header names the lines returned, the total, and the next offset.
 - **`Rename` exists for `apply_patch`'s parking**
   ([§2.7s](#27s-apply_patch-locates-hunks-by-whole-lines)).
 - **Persistent-mode docker runs every file operation through `exec`**, never

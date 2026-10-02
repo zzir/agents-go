@@ -35,8 +35,8 @@ func TestFileToolErrors_NoHostPathLeak(t *testing.T) {
 		args     string
 		wantKind string
 	}{
-		{"read missing", ReadFileTool(sb, FileToolConfig{}), `{"path":"missing.txt"}`, "not found"},
-		{"read over limit", ReadFileTool(sb, FileToolConfig{}), `{"path":"big.bin"}`, "file exceeds read limit"},
+		{"read missing", ReadFileTool(sb, FileToolConfig{}), `{"path":"missing.txt","offset":0,"limit":0}`, "not found"},
+		{"read over limit", ReadFileTool(sb, FileToolConfig{}), `{"path":"big.bin","offset":0,"limit":0}`, "file exceeds read limit"},
 		{"list missing dir", ListFilesTool(sb, FileToolConfig{}), `{"path":"no/such/dir"}`, "not found"},
 	}
 	for _, tc := range cases {
@@ -58,7 +58,7 @@ func TestFileToolErrors_NoHostPathLeak(t *testing.T) {
 
 func TestFileToolErrors_IncludeRequestPath(t *testing.T) {
 	sb := NewLocalWithOptions(LocalOptions{WorkDir: t.TempDir()})
-	out := invokeTool(t, ReadFileTool(sb, FileToolConfig{}), `{"path":"sub/wanted.txt"}`)
+	out := invokeTool(t, ReadFileTool(sb, FileToolConfig{}), `{"path":"sub/wanted.txt","offset":0,"limit":0}`)
 	if !strings.Contains(out, "sub/wanted.txt") {
 		t.Errorf("output = %q, want it to echo the requested path", out)
 	}
@@ -70,7 +70,7 @@ func TestFileToolErrors_NoWorkDir(t *testing.T) {
 		tool *agents.Tool
 		args string
 	}{
-		"read":  {ReadFileTool(sb, FileToolConfig{}), `{"path":"a.txt"}`},
+		"read":  {ReadFileTool(sb, FileToolConfig{}), `{"path":"a.txt","offset":0,"limit":0}`},
 		"write": {WriteFileTool(sb, FileToolConfig{}), `{"path":"a.txt","content":"x"}`},
 		"list":  {ListFilesTool(sb, FileToolConfig{}), `{"path":""}`},
 	} {
