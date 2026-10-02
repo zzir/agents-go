@@ -3,12 +3,17 @@ package bridge
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/session"
+	sdktasks "github.com/zzir/agents-go/agents/tasks"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
@@ -319,4 +324,110 @@ func awaitStatuses(t *testing.T, rec *statusRecorder, sessionID string, want ...
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+// Answering a task's approval puts the task back to work, and its parent's
+// status follows at once — not when the task ends.
+func TestTaskApprovalAnswerMovesTheParentStatus(t *testing.T) {
+	ctx := context.Background()
+	release := make(chan struct{})
+	second := make(chan struct{}, 1)
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Stream bool `json:"stream"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if !body.Stream {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(finishedResponse())
+			return
+		}
+		send := sseWriter(w)
+		sseCreated(send)
+		resp := finishedResponse()
+		switch calls.Add(1) {
+		case 1:
+			args, _ := json.Marshal(map[string]any{"cmd": "echo a", "timeout_seconds": 0, "workdir": "", "session_id": ""})
+			resp["output"] = callOutput("call_1", "exec_command", string(args))
+		case 2:
+			second <- struct{}{}
+			select {
+			case <-release:
+			case <-r.Context().Done():
+				return
+			}
+		}
+		send("response.completed", map[string]any{"type": "response.completed", "sequence_number": 1, "response": resp})
+	}))
+	defer srv.Close()
+	defer close(release)
+
+	runner, sess, ac := trustFixture(t, srv.URL)
+	rec := &statusRecorder{}
+	runner.OnBroadcast = rec.record
+
+	info, err := runner.Tasks().Spawn(ctx, sdktasks.SpawnRequest{ParentSessionID: sess.ID, AgentName: ac.Name, Input: "build it", Label: "build"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := func() string {
+		got := rec.statuses(sess.ID)
+		if len(got) == 0 {
+			return ""
+		}
+		return got[len(got)-1]
+	}
+	await := func(want string) {
+		t.Helper()
+		deadline := time.Now().Add(10 * time.Second)
+		for last() != want {
+			if time.Now().After(deadline) {
+				t.Fatalf("statuses = %v, want the last to be %q", rec.statuses(sess.ID), want)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	await(protocol.SessionRequiresAction)
+
+	row, err := runner.Deps.Tasks.Get(ctx, info.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, err := runner.Deps.PendingApprovals.ListBySession(ctx, row.ChildSessionID)
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("pending approvals = %d (%v), want the task's one", len(pending), err)
+	}
+	if _, _, err := runner.ResolveApproval(ctx, pending[0].ParsedToolCalls()[0].ToolCallID, true, ApprovalOnce, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-second:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the approved task never called the model again")
+	}
+	// The task is working and nothing waits: the announced status says so.
+	await(protocol.SessionRunning)
+	if got := statusOf(t, runner, store.LocalUserID, sess.ID); got.Status != protocol.SessionRunning || len(got.Pending) != 0 {
+		t.Fatalf("derived = %+v, want running with nothing pending", got)
+	}
+}
+
+// A run refused after it took the session's slot leaves no trace in the
+// announced status: a status derived while the slot was held is corrected.
+func TestWithdrawnRunRepublishesTheStatus(t *testing.T) {
+	runner, sess, ac := trustFixture(t, "http://127.0.0.1:1")
+	rec := &statusRecorder{}
+	runner.OnBroadcast = rec.record
+
+	refusal := errors.New("refused")
+	_, err := runner.startRunReserved(store.NewID(), sess.ID, ac.ID, "", TextInput("hi"), "", nil, nil, func() error {
+		// What a concurrent derivation sees while the slot is held.
+		runner.PublishSessionStatus(context.Background(), sess.ID)
+		return refusal
+	})
+	if !errors.Is(err, refusal) {
+		t.Fatalf("err = %v, want the refusal", err)
+	}
+	awaitStatuses(t, rec, sess.ID, protocol.SessionRunning, protocol.SessionIdle)
 }

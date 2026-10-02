@@ -142,7 +142,7 @@ func (r *Runner) reserveRun(runID, sessionID, agentConfigID, projectID string) (
 		}
 		won, err := r.Deps.Sessions.BindProjectIfEmpty(r.hub.rootCtx, sessionID, plan.projectID)
 		if err != nil {
-			r.hub.unregister(runID, seg)
+			r.withdrawRun(runID, sessionID, seg)
 			return nil, nil, bindingPlan{}, false, err
 		}
 		if won {
@@ -150,7 +150,7 @@ func (r *Runner) reserveRun(runID, sessionID, agentConfigID, projectID string) (
 		}
 		// The CAS refused (another run bound it, or the project/session vanished):
 		// withdraw and go around; the next pass re-validates. Then it is the client's.
-		r.hub.unregister(runID, seg)
+		r.withdrawRun(runID, sessionID, seg)
 		if attempt == maxBindAttempts {
 			return nil, nil, bindingPlan{}, false, ErrBindingContention
 		}

@@ -174,14 +174,14 @@ func (r *Runner) startRunReserved(runID, sessionID, agentConfigID, projectID str
 	}
 	if reserved != nil {
 		if err := reserved(); err != nil {
-			r.hub.unregister(runID, seg)
+			r.withdrawRun(runID, sessionID, seg)
 			return "", err
 		}
 	}
 	// The slot is held, so the plan phase is set atomically with the run using
 	// it; a request refused above left the session's phase untouched.
 	if err := r.ApplyPlanIntent(r.hub.rootCtx, sessionID, planIntent); err != nil {
-		r.hub.unregister(runID, seg)
+		r.withdrawRun(runID, sessionID, seg)
 		return "", err
 	}
 	if r.OnRunAttach != nil {
@@ -200,6 +200,13 @@ func (r *Runner) startRunReserved(runID, sessionID, agentConfigID, projectID str
 		return r.runStreamed(ctx, runID, sessionID, agentConfigID, plan.projectID, input, wakeParentRunID)
 	})
 	return runID, nil
+}
+
+// withdrawRun gives a registered run's slot back before it launched. A status
+// derived while the slot was held named the run as live: publish it again.
+func (r *Runner) withdrawRun(runID, sessionID string, seg *runSegment) {
+	r.hub.unregister(runID, seg)
+	r.PublishSessionStatus(r.hub.rootCtx, sessionID)
 }
 
 // launchSegment runs one segment's exec in the background. Order matters: the
@@ -586,6 +593,7 @@ func (r *Runner) ResumeRun(runID string, state *agents.RunState, built *BuildRes
 			// Withdraw, don't unregister: a reopened record still has its
 			// history and attached subscribers, and goes back to interrupted.
 			r.hub.abortResume(runID, seg, reopened)
+			r.PublishSessionStatus(r.hub.rootCtx, sessionID)
 			return "", verr
 		}
 	}

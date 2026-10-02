@@ -346,6 +346,12 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 		return "", pending.SessionID, err
 	}
 	handedOff = true
+	// Working again: tell the clients — the run's own run.started follows.
+	if taskMeta != nil && taskMeta.TaskID != "" {
+		if t, gerr := store.NewTaskAdapter(r.Deps.Tasks).Get(mctx, taskMeta.TaskID); gerr == nil {
+			r.publishTaskUpdated(mctx, t)
+		}
+	}
 	return runID, pending.SessionID, nil
 }
 
