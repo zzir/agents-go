@@ -834,6 +834,27 @@ func (s *EntryStore) AppendTriggerFired(ctx context.Context, ref session.Ref, tf
 	return s.appendHostNote(ctx, ref, DisplayTriggerFired, tf.Text(), tf)
 }
 
+// DisplayContainerRebuilt is the display kind of the note left on the session
+// a container rebuild was asked from.
+const DisplayContainerRebuilt = "container_rebuilt"
+
+// ContainerRebuilt is that note's data.
+type ContainerRebuilt struct {
+	ProjectID   string `json:"project_id"`
+	ProjectName string `json:"project_name"`
+}
+
+// Text is the note as a line, for a renderer that knows no better.
+func (n ContainerRebuilt) Text() string {
+	return fmt.Sprintf("Container rebuilt for %q: processes and anything outside /workspace are gone", n.ProjectName)
+}
+
+// AppendContainerRebuilt records a container rebuild on the session; for a
+// person, not the model (SourceHost annotation).
+func (s *EntryStore) AppendContainerRebuilt(ctx context.Context, ref session.Ref, n ContainerRebuilt) error {
+	return s.appendHostNote(ctx, ref, DisplayContainerRebuilt, n.Text(), n)
+}
+
 // appendHostNote writes a host annotation whose display extra is data's JSON
 // object; text is the line a renderer that knows no better shows.
 func (s *EntryStore) appendHostNote(ctx context.Context, ref session.Ref, kind, text string, data any) error {

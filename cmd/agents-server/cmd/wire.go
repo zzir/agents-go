@@ -187,6 +187,7 @@ func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL st
 	projects := handler.NewProjectHandler(st.Projects, st.SandboxDefs, svc.Sandboxes, terminal, st.SettingReader)
 	retirer := handler.NewRetirer(st.Projects, svc.Sandboxes, terminal)
 	projects.Audit = audit
+	projects.Notes = &handler.RebuildNoteDeps{Sessions: st.Sessions, Entries: st.Entries, Fence: svc.Runner}
 	return &handlers{
 		WS:       ws,
 		Terminal: terminal,

@@ -292,6 +292,7 @@ export function ChatView({
   // backend whose store IS the compute cannot be rebuilt.
   const { menu: projectMenu, dialog: envDialog } = useProjectMenu({
     project: boundProject,
+    sessionId,
     rebuildable: !!boundProject && !!boundSandbox?.supports?.rebuild,
     hostable: !!boundProject && !!boundSandbox?.supports?.public_host,
     running,
@@ -487,9 +488,10 @@ export function ChatView({
     for (const a of agentConfigs || []) if (a.avatar) m[a.id] = a.avatar;
     return m;
   }, [agentConfigs]);
+  const projectBound = !!sessionBinding?.projectId;
   const session = useMemo<ChatSessionState>(
-    () => ({ sessionId, running, compacting, diagnostics, agentAvatars, tasksError }),
-    [sessionId, running, compacting, agentAvatars, diagnostics, tasksError],
+    () => ({ sessionId, running, compacting, diagnostics, agentAvatars, tasksError, projectBound }),
+    [sessionId, running, compacting, agentAvatars, diagnostics, tasksError, projectBound],
   );
   const turnActions = useMemo<ChatActions>(() => ({
     approve: onApprove, reject: onReject, fork: onFork, switchBranch: onSwitchBranch,

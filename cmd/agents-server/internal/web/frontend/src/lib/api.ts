@@ -375,7 +375,8 @@ export const api = {
     delete: (id: string) => request<{ deleted: boolean; storage_error?: string }>(`/projects/${id}`, { method: 'DELETE' }),
     // Container calls: create it up front, or discard and recreate it. Both
     // are synchronous and can take an image pull's worth of time.
-    rebuildContainer: (id: string) => request<null>(`/projects/${id}/sandbox/rebuild`, { method: 'POST' }),
+    // sessionId, when given, is the session the rebuilt note is left on.
+    rebuildContainer: (id: string, sessionId?: string) => request<null>(`/projects/${id}/sandbox/rebuild`, { method: 'POST', body: sessionId ? JSON.stringify({ session_id: sessionId }) : undefined }),
     // The project's compute: what it is doing, and starting/stopping it by
     // hand rather than leaving both to the next run and the idle timer.
     sandboxStatus: (id: string) => request<{ state: string }>(`/projects/${id}/sandbox`),

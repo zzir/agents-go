@@ -8,14 +8,15 @@ import { createRoot } from 'react-dom/client';
 // the turn renders are not what this test is about.
 vi.mock('@primer/react', () => ({
   Button: ({ children, onClick }: { children?: ReactNode; onClick?: () => void }) => <button type="button" onClick={onClick}>{children}</button>,
-  IconButton: () => null,
+  IconButton: ({ 'aria-label': label, onClick }: { 'aria-label'?: string; onClick?: () => void }) => <button type="button" aria-label={label} onClick={onClick} />,
 }));
 vi.mock('@/lib/hooks', () => ({ useCopy: () => ({ copied: false, copy: () => {} }) }));
 vi.mock('@/lib/markdown', () => ({ useAsyncMarkdown: () => '' }));
 vi.mock('@/features/chat/StreamingMarkdown', () => ({ StreamingMarkdown: () => null }));
 vi.mock('@/features/chat/TextContent', () => ({ TextContent: () => null }));
 vi.mock('@/features/chat/ProcessTimeline', () => ({ ProcessTimeline: () => null }));
-import { ErrorCard, endpointTrouble } from '@/features/chat/TurnBlock';
+import { ErrorCard, TurnBlock, endpointTrouble } from '@/features/chat/TurnBlock';
+import { ChatSessionProvider, type ChatSessionState, type ChatActions } from '@/features/chat/ChatSessionContext';
 
 const g = globalThis as Record<string, unknown>;
 let savedActEnv: unknown;
@@ -68,5 +69,36 @@ describe('ErrorCard', () => {
     act(() => (b.host.querySelector('.disclosure-header') as HTMLElement).click());
     expect(b.host.querySelector('.error-card-actions')).toBeNull();
     b.unmount();
+  });
+});
+
+describe('TurnBlock controls', () => {
+  const actions: ChatActions = { fork: () => {}, regenerate: () => {}, switchBranch: () => {}, openTrace: () => {}, inspectTask: () => {}, retryTask: async () => {}, stopTask: async () => {}, dismissTask: async () => {} };
+  const turn = (session: ChatSessionState) => mount(
+    <ChatSessionProvider session={session} actions={actions} tasks={{ items: [], lookups: { retryableByCallId: {}, liveTaskStatusByCallId: {}, liveTaskLabelByCallId: {}, taskLabelById: {} } }}>
+      <TurnBlock parts={[{ type: 'text', content: 'done' }]} streaming={null} reasoning={null} isLive={false}
+        prompt={{ entryId: 'e1', content: 'go' }} messageId="m1" branches={{ parentId: 'e1', tips: ['a', 'b'], active: 0 }} />
+    </ChatSessionProvider>,
+  );
+  const labels = (host: HTMLElement) => Array.from(host.querySelectorAll('button[aria-label]')).map(b => b.getAttribute('aria-label'));
+
+  // A session bound to a project: fork, regenerate and the attempt switch
+  // say the project's files are shared (decisions §5.28).
+  it('says the project files are shared on a bound session', () => {
+    const { host, unmount } = turn({ sessionId: 's1', running: false, compacting: false, agentAvatars: {}, projectBound: true });
+    const got = labels(host);
+    expect(got).toContain("Fork — the new session shares the project's files with this one");
+    expect(got).toContain("Regenerate — the project's files keep what the first attempt changed");
+    expect(got).toContain("Next attempt — attempts share the project's files");
+    unmount();
+  });
+
+  it('keeps the plain words on an unbound session', () => {
+    const { host, unmount } = turn({ sessionId: 's1', running: false, compacting: false, agentAvatars: {} });
+    const got = labels(host);
+    expect(got).toContain('Fork');
+    expect(got).toContain('Regenerate');
+    expect(got.some(l => l?.includes('project'))).toBe(false);
+    unmount();
   });
 });

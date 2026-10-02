@@ -172,7 +172,10 @@ announced as `session.status`.
 `fork` copies the source session's entries (and their traces) into a new
 session, bounded by the optional `message_id` (`exclusive: true` stops before
 it; an id that is not an entry of the source is `404`). Entry ids and parent links are rewritten into the fork's namespace, and
-the fork inherits `agent_config_id` and `project_id` with no fresh bind.
+the fork inherits `agent_config_id` and `project_id` with no fresh bind — so
+it shares the project's working tree with its source and with every other
+session on that project; a regenerate or a branch switch in one session runs
+on that same tree.
 
 `branch` moves the session's active branch to an entry, so the next run
 continues from there. It APPENDS a leaf entry rather than deleting anything —
@@ -743,7 +746,11 @@ watching, rather than inside the next run; a `stop` answered `stopped: false`
 dooms the instance — nothing new joins it, and it stops when the run or
 terminal using it ends, since the person asked for the sandbox to stop, not
 for the work to die; a `rebuild` on an E2B-compatible target is refused with
-the way out (decisions §5.34).
+the way out (decisions §5.34). A `rebuild` whose body names `session_id` — the
+caller's own session, bound to the project, with no run live on it — leaves a
+host note on that session that the container was rebuilt (an annotation of
+display kind `container_rebuilt`, for a person, not the model); when the
+session does not qualify the rebuild succeeds without the note.
 
 A project carries the **environment** its container is created with, so
 `exec_command`, a persistent shell and a terminal all read the same values.

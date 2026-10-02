@@ -19,6 +19,15 @@ const STAGE_NOTES: Record<string, string> = {
   tool_output: "A tool's result was blocked before the model could read it.",
 };
 
+// SHARED_FILES_COPY is what the turn controls add on a session bound to a
+// project: a fork, a regenerate and a switch of attempts all act on the one
+// working tree the project's sessions share (decisions §5.28).
+export const SHARED_FILES_COPY = {
+  fork: "the new session shares the project's files with this one",
+  regenerate: "the project's files keep what the first attempt changed",
+  attempts: "attempts share the project's files",
+};
+
 // endpointTrouble recognizes the pre-flight failures a Providers edit fixes:
 // no endpoint on the agent, or an endpoint it cannot reach any more. The
 // messages are the runner's (bridge/runner.go, provider_resolve.go).
@@ -104,8 +113,11 @@ interface TurnBlockProps {
 export const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive, prompt, duration, messageId, branches }: TurnBlockProps) {
   // Live-run state applies to the live turn only — every read below is gated
   // on isLive.
-  const { running, compacting } = useChatSession();
+  const { running, compacting, projectBound } = useChatSession();
   const { regenerate, fork, switchBranch, openSettings } = useChatActions();
+  // On a bound session the attempts and forks share the project's files,
+  // and the controls say so (decisions §5.28).
+  const shared = projectBound ? SHARED_FILES_COPY : null;
   const isEmpty = parts.length === 0 && !streaming && !reasoning;
   const { copied, copy } = useCopy();
 
@@ -181,7 +193,7 @@ export const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, 
                 icon={ChevronLeftIcon}
                 variant="invisible"
                 size="small"
-                aria-label="Previous attempt"
+                aria-label={shared ? 'Previous attempt — ' + shared.attempts : 'Previous attempt'}
                 disabled={running || branches.active === 0}
                 onClick={() => switchBranch(branches.tips[branches.active - 1])}
               />
@@ -190,7 +202,7 @@ export const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, 
                 icon={ChevronRightIcon}
                 variant="invisible"
                 size="small"
-                aria-label="Next attempt"
+                aria-label={shared ? 'Next attempt — ' + shared.attempts : 'Next attempt'}
                 disabled={running || branches.active >= branches.tips.length - 1}
                 onClick={() => switchBranch(branches.tips[branches.active + 1])}
               />
@@ -211,7 +223,7 @@ export const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, 
               icon={RepoForkedIcon}
               variant="invisible"
               size="small"
-              aria-label="Fork"
+              aria-label={shared ? 'Fork — ' + shared.fork : 'Fork'}
               onClick={() => fork(String(messageId))}
             />
           )}
@@ -220,7 +232,7 @@ export const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, 
               icon={SyncIcon}
               variant="invisible"
               size="small"
-              aria-label="Regenerate"
+              aria-label={shared ? 'Regenerate — ' + shared.regenerate : 'Regenerate'}
               onClick={() => regenerate!(regenEntryId!, regenContent!)}
             />
           )}

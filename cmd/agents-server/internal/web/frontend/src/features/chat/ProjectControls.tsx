@@ -90,8 +90,10 @@ export function NewProjectDialog({ sandboxes, initialSandboxId, onCreated, onClo
 // useProjectMenu is the bound project's menu (ChatTopBar.projectMenu): the
 // container's state and the acts on it. `menu` is null while nothing is
 // bound; `dialog` is the environment editor, open or not.
-export function useProjectMenu({ project, rebuildable, hostable, running, onProjectsChanged }: {
+export function useProjectMenu({ project, sessionId, rebuildable, hostable, running, onProjectsChanged }: {
   project: Project | null;
+  // The session the menu is open in: a rebuild leaves its note there.
+  sessionId: string | null;
   // False until the sandbox row declares `rebuild` — never offered on a guess.
   rebuildable: boolean;
   // False until the sandbox row declares `public_host`.
@@ -194,13 +196,13 @@ export function useProjectMenu({ project, rebuildable, hostable, running, onProj
     if (!project || containerBusy) return;
     if (!await confirmDialog({
       title: `Rebuild the container for “${project.name}”?`,
-      content: 'The container is discarded and created again from the image. Files under /workspace survive; anything installed into the container does not, and commands running in it right now will fail.',
+      content: 'The container is discarded and created again from the image. Files under /workspace survive; anything installed into the container does not, and commands running in it right now will fail. Every session on this project shares that container; this session gets a note of the rebuild.',
       confirmButtonType: 'danger',
     })) return;
     setContainerBusy(true);
     toast.info('Rebuilding the container…');
     try {
-      await api.projects.rebuildContainer(project.id);
+      await api.projects.rebuildContainer(project.id, sessionId || undefined);
       setSandboxState('running');
       toast.success('Container rebuilt');
     } catch (e) {

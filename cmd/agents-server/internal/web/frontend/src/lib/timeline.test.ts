@@ -816,3 +816,17 @@ describe('workflow-started note', () => {
     expect((bare[0] as { content?: string }).content).toBe('Workflow "x" started by you');
   });
 });
+
+describe('host notes', () => {
+  // A host annotation of a kind the client has no card for still shows: a
+  // system row carrying the note's text (the container-rebuilt note is one).
+  it('an unknown host note renders as a system row with its text', () => {
+    const rows: EntryView[] = [
+      { id: "1", kind: 'annotation', role: 'system', content: 'Container rebuilt for "p": processes and anything outside /workspace are gone', display: { kind: 'container_rebuilt', text: 'Container rebuilt for "p": processes and anything outside /workspace are gone', extra: { project_id: 'p1' } } },
+    ];
+    const out = buildTimeline(rows);
+    expect(out).toHaveLength(1);
+    expect(out[0].role).toBe('system');
+    expect((out[0] as { content?: string }).content).toContain('Container rebuilt');
+  });
+});

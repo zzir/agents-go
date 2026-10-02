@@ -1050,6 +1050,13 @@ components:
         type:
           type: string
       type: object
+    handler.rebuildReq:
+      properties:
+        session_id:
+          description: SessionID is the caller's session, bound to this project, to
+            leave the rebuilt note on; left out, no note is written.
+          type: string
+      type: object
     handler.rejectReq:
       properties:
         reason:
@@ -4583,7 +4590,10 @@ paths:
         sandbox and environment. Files under /workspace survive; anything installed
         into the container does not, and commands running in it fail. Synchronous.
         Owner or admin. Refused on a sandbox whose instance IS the storage (E2B-compatible):
-        export first.'
+        export first. With a body naming session_id — the caller''s own session, bound
+        to this project and with no run live on it — the session gets a note that
+        the container was rebuilt; otherwise none is written and the rebuild still
+        succeeds.'
       parameters:
       - description: Project id
         in: path
@@ -4591,6 +4601,16 @@ paths:
         required: true
         schema:
           type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.rebuildReq'
+                description: The session to note the rebuild on
+                summary: body
+        description: The session to note the rebuild on
       responses:
         "204":
           description: rebuilt

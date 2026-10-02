@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
@@ -25,7 +26,11 @@ import (
 type ProjectHandler struct {
 	// Audit, when set, records every working-tree export: the one call that
 	// takes a whole project off the machine. Wired at bootstrap.
-	Audit     protocol.AuditFunc
+	Audit protocol.AuditFunc
+	// Notes, when set, lets a rebuild leave its note on the session it was
+	// asked from: the session store, the entry store and the fence that
+	// proves the session at rest. Wired at bootstrap.
+	Notes     *RebuildNoteDeps
 	store     *store.ProjectStore
 	sandboxes *store.SandboxStore
 	manager   *sandboxes.Manager
@@ -363,19 +368,86 @@ func (h *ProjectHandler) Update(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+// RebuildNoteDeps is what a rebuild needs to leave its note on a session.
+type RebuildNoteDeps struct {
+	Sessions *store.SessionStore
+	Entries  *store.EntryStore
+	Fence    RunStopper
+}
+
+// rebuildReq is RebuildContainer's optional body.
+type rebuildReq struct {
+	// SessionID is the caller's session, bound to this project, to leave the rebuilt note on; left out, no note is written.
+	SessionID string `json:"session_id,omitempty"`
+}
+
 // RebuildContainer discards the project's container and creates a fresh one.
 //
 //	@Summary		Rebuild the project's sandbox
-//	@Description	Discards the container and creates a fresh one from the current sandbox and environment. Files under /workspace survive; anything installed into the container does not, and commands running in it fail. Synchronous. Owner or admin. Refused on a sandbox whose instance IS the storage (E2B-compatible): export first.
+//	@Description	Discards the container and creates a fresh one from the current sandbox and environment. Files under /workspace survive; anything installed into the container does not, and commands running in it fail. Synchronous. Owner or admin. Refused on a sandbox whose instance IS the storage (E2B-compatible): export first. With a body naming session_id — the caller's own session, bound to this project and with no run live on it — the session gets a note that the container was rebuilt; otherwise none is written and the rebuild still succeeds.
 //	@Tags			projects
-//	@Param			id	path	string	true	"Project id"
-//	@Success		204	"rebuilt"
-//	@Failure		404	{object}	ErrorResponse
-//	@Failure		502	{object}	ErrorResponse
+//	@Accept			json
+//	@Param			id		path	string		true	"Project id"
+//	@Param			body	body	rebuildReq	false	"The session to note the rebuild on"
+//	@Success		204		"rebuilt"
+//	@Failure		404		{object}	ErrorResponse
+//	@Failure		502		{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/projects/{id}/sandbox/rebuild [post]
 func (h *ProjectHandler) RebuildContainer(c *gin.Context) {
-	h.containerAct(c, h.manager.RebuildContainer)
+	var req rebuildReq
+	if c.Request.ContentLength != 0 {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			badRequest(c, err.Error())
+			return
+		}
+	}
+	p, ok := h.manage(c)
+	if !ok {
+		return
+	}
+	spec, err := resolveSpec(c.Request.Context(), h.sandboxes, p)
+	if err != nil {
+		storeError(c, err)
+		return
+	}
+	if err := h.manager.RebuildContainer(c.Request.Context(), spec); err != nil {
+		upstreamError(c, err)
+		return
+	}
+	if req.SessionID != "" {
+		h.noteRebuild(c, p, req.SessionID)
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// noteRebuild leaves the rebuilt note on the session when it is the caller's,
+// bound to the project and at rest; otherwise nothing, and never a failure.
+func (h *ProjectHandler) noteRebuild(c *gin.Context, p *store.Project, sessionID string) {
+	if h.Notes == nil {
+		return
+	}
+	ownerID, _, ok := callerScope(c)
+	if !ok {
+		return
+	}
+	ctx := c.Request.Context()
+	sess, err := h.Notes.Sessions.Get(ctx, sessionID)
+	if err != nil || sess.OwnerID != ownerID || sess.ProjectID != p.ID {
+		return
+	}
+	err = h.Notes.Fence.WithSessionTreeFenced(ctx, sessionID, func() error {
+		ref, err := h.Notes.Entries.RefFor(ctx, sessionID)
+		if err != nil {
+			return err
+		}
+		return h.Notes.Entries.AppendContainerRebuilt(ctx, ref, store.ContainerRebuilt{ProjectID: p.ID, ProjectName: p.Name})
+	})
+	if err != nil {
+		if _, busy := errors.AsType[bridge.ErrSessionBusy](err); !busy {
+			logging.Ctx(ctx).Warn("recording the container-rebuilt note", "error", err, "session_id", sessionID)
+		}
+	}
 }
 
 // sandboxStateResp is the project's compute state, as the UI badge shows it.

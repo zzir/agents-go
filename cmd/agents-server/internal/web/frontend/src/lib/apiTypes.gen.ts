@@ -3337,7 +3337,7 @@ export interface paths {
         put?: never;
         /**
          * Rebuild the project's sandbox
-         * @description Discards the container and creates a fresh one from the current sandbox and environment. Files under /workspace survive; anything installed into the container does not, and commands running in it fail. Synchronous. Owner or admin. Refused on a sandbox whose instance IS the storage (E2B-compatible): export first.
+         * @description Discards the container and creates a fresh one from the current sandbox and environment. Files under /workspace survive; anything installed into the container does not, and commands running in it fail. Synchronous. Owner or admin. Refused on a sandbox whose instance IS the storage (E2B-compatible): export first. With a body naming session_id — the caller's own session, bound to this project and with no run live on it — the session gets a note that the container was rebuilt; otherwise none is written and the rebuild still succeeds.
          */
         post: {
             parameters: {
@@ -3349,7 +3349,12 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            /** @description The session to note the rebuild on */
+            requestBody?: {
+                content: {
+                    "application/json": Record<string, never> | components["schemas"]["handler.rebuildReq"];
+                };
+            };
             responses: {
                 /** @description rebuilt */
                 204: {
@@ -8322,6 +8327,10 @@ export interface components {
              */
             scope?: string;
             type?: string;
+        };
+        "handler.rebuildReq": {
+            /** @description SessionID is the caller's session, bound to this project, to leave the rebuilt note on; left out, no note is written. */
+            session_id?: string;
         };
         "handler.rejectReq": {
             reason?: string;

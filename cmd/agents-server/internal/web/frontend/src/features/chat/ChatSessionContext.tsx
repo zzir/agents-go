@@ -21,6 +21,9 @@ export interface ChatSessionState {
   // Set when the durable task list failed to load, so the Tasks panel says so
   // instead of showing "no background work".
   tasksError?: string;
+  // Whether the session is bound to a project: its forks and attempts then
+  // share that project's files, and the controls say so.
+  projectBound?: boolean;
 }
 
 export interface ChatActions {
