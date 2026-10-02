@@ -1,7 +1,8 @@
 # Quickstart
 
-> **Pre-1.0 API notice.** Until v1.0.0 a minor release may rename or remove
-> exported identifiers — pin the version. Breaking renames are batched, and the
+> **Pre-1.0 API notice.** Until v1.0.0 a minor release (v0.x.0) may rename or
+> remove exported identifiers; a patch release never does — pin the minor.
+> Breaking renames are batched, and the
 > [release notes](https://github.com/zzir/agents-go/releases) carry every old
 > spelling beside the new ([decisions §5.8](../explanation/decisions.md#58-public-api-compatibility-begins-at-v100)).
 

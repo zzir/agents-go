@@ -39,11 +39,12 @@ Rules: spec §2.4.
 
 ### 5.2 Names describe the thing, and renames are batched
 
-Retired as a ledger: the renames it listed rode the v0.3.0 window and live in
-the release notes. What survives: a name earns a rename only when it
-misdescribes or breaks a Go rule, never to "look less like Python"; a rename
-is a breaking change batched into a window users absorb once (§5.8), and the
-next window is the openai-go v4 bump (§5.5b).
+Retired as a ledger 2026-09-04: the renames it listed rode the v0.3.0 window
+and live in the release notes. What survives: a name earns a rename only when
+it misdescribes or breaks a Go rule, never to "look less like Python"; a
+rename is a breaking change batched into a window users absorb once, and the
+next window is the next breaking minor (§5.8); an openai-go major, if one
+comes, rides in it (§5.5b).
 
 ### 5.3 `Instructions` and `Prompt` both stay; both are func types
 
@@ -156,15 +157,24 @@ Rules: [Architecture](architecture.md#module-boundaries).
 
 ### 5.8 Public API compatibility begins at v1.0.0
 
-**Decision.** A minor release before v1.0.0 may break exported identifiers.
-Each break is recorded in the release notes with the old spelling beside the
-new, and breaks are batched into as few releases as the work allows, so a
-user absorbs one migration rather than a drip.
+**Decision.** Any release before v1.0.0 may break exported identifiers; a
+release that breaks bumps the minor (v0.x.0), so a patch release (v0.x.y)
+carries only fixes and additions. Each break is recorded in the release notes
+with the old spelling beside the new, and breaks are batched into as few
+releases as the work allows, so a user absorbs one migration rather than a
+drip.
 
 **Rejected.** A deprecation cycle before v1.0.0 — it was promised once and
 not kept through the structural collapses, and a rule nobody follows teaches
 the reader that this document describes intentions rather than behavior. The
-cycle begins when the API stops finding its shape.
+cycle begins when the API stops finding its shape. Letting a patch break —
+`go get -u=patch` is the one upgrade Go users treat as safe.
+
+**Cost accepted.** A fix that needs a break waits for the next minor or ships
+as one. `scripts/release-check.sh` compares the exported API with the previous
+tag before a patch is tagged, and `release.yml` runs it again; a refusal there
+comes after the module proxy has the version, so the patch is retracted and
+the next minor tagged on the same commit. A constant's changed value passes.
 
 ### 5.9 A parent-linked checkpoint chain for execution state is declined
 

@@ -32,6 +32,7 @@ go test -race ./...                   # race detector is ON in CI — keep it gr
 go test -race ./agents -run TestName  # single test
 golangci-lint run                     # CI uses golangci-lint v2.13
 ./scripts/schema-compat.sh v0.4.4     # does HEAD open a database that tag created? (the release header's line)
+./scripts/release-check.sh v0.5.1     # before tagging: a patch that breaks exported API is refused (decisions §5.8)
 ```
 
 ## Layout
@@ -293,7 +294,9 @@ Comment bloat is a recurring regression here — the altitude rule is strict.
 ## Commits
 
 - **`type(scope): summary`** — `fix` / `refactor` / `feat` / `docs` / `test` /
-  `chore`. A breaking API change adds `!`: `refactor(session)!:`.
+  `chore`. A breaking API change adds `!`: `refactor(session)!:`. A break to
+  the SDK's exported API ships in a minor, never a patch — the release check
+  compares the API itself, not the `!`.
 - **Behavior change ⇒ same-commit spec update.** The invariant in
   `docs/reference/spec.md`, the reason in `docs/explanation/decisions.md` when
   it is a decision, and the relevant `docs/howto/` page all land in the *same*
