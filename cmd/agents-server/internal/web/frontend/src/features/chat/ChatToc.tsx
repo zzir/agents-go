@@ -67,7 +67,7 @@ export const ChatToc = memo(function ChatToc({ items, scrollElRef, onJump }: Cha
     // focus leaving the rail ends it too, focus moving bar to bar does not.
     <nav
       className="chat-toc"
-      aria-label="Conversation outline"
+      aria-label="Session outline"
       onMouseLeave={() => setPointed(null)}
       onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setPointed(null); }}
     >

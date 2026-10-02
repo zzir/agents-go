@@ -124,6 +124,8 @@ export interface ChatViewActions {
   onSettingsOpen?: (tab?: string) => void;
   // Fetches the session's history again after a failed first load.
   onRetryLoad?: () => void;
+  // Fetches the session's task list again after it failed to load.
+  onRetryTasks?: () => void;
   onPanelChange: (panel: InspectorPanel) => void;
   // Opens the global terminal panel (app-level, independent of the session).
   // Open-only by design: closing/collapsing happens on the panel itself. The
@@ -173,7 +175,7 @@ export function ChatView({
   } = state;
   const {
     onSend, onCancel, onApprove, onReject, onInject, onFork, onSwitchBranch, onCompact, onRegenerate,
-    onWatchTask, onUnwatchTask, onPatchTask, onLoadSpan, onPanelChange, onTerminalOpen, onSettingsOpen,
+    onWatchTask, onUnwatchTask, onPatchTask, onLoadSpan, onPanelChange, onTerminalOpen, onSettingsOpen, onRetryTasks,
   } = actions;
   const [agentConfigId, setAgentConfigIdState] = useState(() => loadSessionAgent(sessionId || ''));
   const [projectId, setProjectIdState] = useState(() => loadSessionProject(sessionId || ''));
@@ -492,8 +494,8 @@ export function ChatView({
   const turnActions = useMemo<ChatActions>(() => ({
     approve: onApprove, reject: onReject, fork: onFork, switchBranch: onSwitchBranch,
     regenerate: onRegenerate ? handleRegen : undefined,
-    openTrace, inspectTask, retryTask, stopTask, dismissTask, loadSpan: onLoadSpan, openSettings: onSettingsOpen,
-  }), [onApprove, onReject, onFork, onSwitchBranch, onRegenerate, handleRegen, openTrace, inspectTask, retryTask, stopTask, dismissTask, onLoadSpan, onSettingsOpen]);
+    openTrace, inspectTask, retryTask, stopTask, dismissTask, loadSpan: onLoadSpan, openSettings: onSettingsOpen, retryTasks: onRetryTasks,
+  }), [onApprove, onReject, onFork, onSwitchBranch, onRegenerate, handleRegen, openTrace, inspectTask, retryTask, stopTask, dismissTask, onLoadSpan, onSettingsOpen, onRetryTasks]);
 
   const topBar = (
     <ChatTopBar

@@ -317,7 +317,7 @@ function App() {
     },
   }), [refreshOwnPending]);
 
-  const { wsRef, sessionRunRef, connected, loadSession, loadTraces, loadSpanPayload, deleteSession, forgetLoaded, watchTask, unwatchTask, queueInput, dropQueued } = useAgentSocket(updateSS, sessionEvents);
+  const { wsRef, sessionRunRef, connected, loadSession, loadTasks, loadTraces, loadSpanPayload, deleteSession, forgetLoaded, watchTask, unwatchTask, queueInput, dropQueued } = useAgentSocket(updateSS, sessionEvents);
 
   // patchTask applies a server-confirmed task state change (e.g. the stop
   // API's response) directly — the fallback for when no hub broadcast will
@@ -358,7 +358,7 @@ function App() {
     // A failed first load shows in the view (state.loadError); a failed
     // re-read of a conversation already on screen can only be said here.
     const tryLoad = () => loadSession(activeSession).catch(() => {
-      if (ssRef.current[activeSession]?.messages.length) toast.error('Could not refresh the conversation');
+      if (ssRef.current[activeSession]?.messages.length) toast.error('Could not refresh the session');
     });
     const pendingGen = ++ownPendingGen.current;
     api.sessions.get(activeSession)
@@ -400,13 +400,17 @@ function App() {
   const handleRetryLoad = useCallback(() => {
     if (activeSession) loadSession(activeSession).catch(() => undefined);
   }, [activeSession, loadSession]);
+  // The Tasks lens's Retry after its list failed to load.
+  const handleRetryTasks = useCallback(() => {
+    if (activeSession) loadTasks(activeSession);
+  }, [activeSession, loadTasks]);
 
   // reloadTimeline re-reads a session's persisted history after a server-side
   // change the client cannot patch in — a branch move (a different branch is a
   // different conversation), a compaction, a note the server wrote.
   const reloadTimeline = useCallback(async (sid: string) => {
     forgetLoaded(sid);
-    await loadSession(sid).catch(() => toast.error('Could not reload conversation'));
+    await loadSession(sid).catch(() => toast.error('Could not reload the session'));
   }, [forgetLoaded, loadSession]);
 
   // runWorkflowCommand is the /workflow command: the first word names the
@@ -463,7 +467,7 @@ function App() {
       // no project — bound or picked — gives the workflow no file or command
       // tools.
       const bound = (sessionMeta && sessionMeta.id === sid ? !!sessionMeta.projectId : false) || !!projectId;
-      if (!bound) toast.info('This conversation has no project — the workflow has no file or command tools');
+      if (!bound) toast.info('This session has no project — the workflow has no file or command tools');
       await reloadTimeline(sid);
     } catch (e) {
       toast.error((e as Error).message || 'Could not start the workflow');
@@ -737,9 +741,9 @@ function App() {
     onSend: handleSend, onCancel: handleCancel, onApprove: handleApprove, onReject: handleReject, onInject: handleInject, onFork: handleFork,
     onSwitchBranch: handleSwitchBranch, onCompact: handleCompact, onRegenerate: handleRegenerate,
     onWatchTask: watchTask, onUnwatchTask: unwatchTask, onPatchTask: patchTask, onLoadSpan: handleLoadSpan,
-    onPanelChange: setActivePanel, onTerminalOpen: handleTerminalOpen, onSettingsOpen: handleOpenSettings, onRetryLoad: handleRetryLoad,
+    onPanelChange: setActivePanel, onTerminalOpen: handleTerminalOpen, onSettingsOpen: handleOpenSettings, onRetryLoad: handleRetryLoad, onRetryTasks: handleRetryTasks,
   }), [handleSend, handleCancel, handleApprove, handleReject, handleInject, handleFork, handleSwitchBranch, handleCompact,
-    handleRegenerate, watchTask, unwatchTask, patchTask, handleLoadSpan, handleTerminalOpen, handleOpenSettings, handleRetryLoad]);
+    handleRegenerate, watchTask, unwatchTask, patchTask, handleLoadSpan, handleTerminalOpen, handleOpenSettings, handleRetryLoad, handleRetryTasks]);
 
   // A signature that moves with any execution in any conversation (every
   // connection hears every session's task.updated), for the hub's Runs view

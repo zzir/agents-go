@@ -43,6 +43,8 @@ export interface ChatActions {
   // Opens the Settings dialog on a tab — what an error card that a Providers
   // edit would fix offers.
   openSettings?: (tab?: string) => void;
+  // Fetches the task list again after it failed to load (invariant 79).
+  retryTasks?: () => void;
 }
 
 export interface ChatTaskLookups {

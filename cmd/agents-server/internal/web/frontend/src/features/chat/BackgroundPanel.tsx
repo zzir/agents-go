@@ -3,6 +3,7 @@ import { Button, IconButton, useConfirm } from '@primer/react';
 import { ArrowLeftIcon, StackIcon, CopyIcon, CheckIcon, WorkflowIcon } from '@primer/octicons-react';
 import { SidePanel } from '@/layout/SidePanel';
 import { Loading } from '@/components/Loading';
+import { LoadError } from '@/components/LoadError';
 import { ToolCallCard } from '@/features/chat/ToolCallCard';
 import { StreamingMarkdown } from '@/features/chat/StreamingMarkdown';
 import { TraceRun, type TraceEventData } from '@/features/chat/TracePanel';
@@ -41,7 +42,7 @@ const GROUPS: Array<{ title: string; match: (s: BackgroundItem['status']) => boo
 export function BackgroundListPanel({ onClose }: { onClose: () => void }) {
   const items = useChatBackground();
   const { tasksError } = useChatSession();
-  const { approve: onApprove, reject: onReject, inspectTask: onOpen, stopTask, retryTask } = useChatActions();
+  const { approve: onApprove, reject: onReject, inspectTask: onOpen, stopTask, retryTask, retryTasks } = useChatActions();
   const { held, decide } = useDecisionHold();
   const hasActive = items.some(it => isLive(it.status));
   // Live durations tick once a second while anything is active.
@@ -52,11 +53,10 @@ export function BackgroundListPanel({ onClose }: { onClose: () => void }) {
 
   return (
     <SidePanel icon={StackIcon} title="Tasks" count={items.length} onClose={onClose} storageKey="inspectorWidth">
-      {items.length === 0 && (
-        <div className="trace-empty">
-          {tasksError ? `${tasksError} — reopen the conversation to retry.` : 'No background work in this session.'}
-        </div>
-      )}
+      {/* A failed read says so above whatever rows live events brought in;
+          the empty state is for a list that loaded empty (invariant 79). */}
+      {tasksError && <LoadError what="background tasks" error={tasksError} onRetry={retryTasks} />}
+      {items.length === 0 && !tasksError && <div className="trace-empty">No background work in this session.</div>}
       {/* One line per row by default (the full result lives in the detail
           lens). Live rows add one action line — activity or Approve/Reject
           on the left, Stop isolated on the right. failed is the only terminal
@@ -134,8 +134,8 @@ interface BackgroundDetailPanelProps {
 }
 
 // BackgroundMissingPanel stands in for the detail lens while the task named
-// by a deep link is not in the conversation's list: still loading, or gone —
-// a row removed with its conversation, or one a fork's copy never carried.
+// by a deep link is not in the session's list: still loading, or gone — a row
+// removed with its session, or one a fork's copy never carried.
 // Either way the panel opens, says so, and leads back to the list.
 export function BackgroundMissingPanel({ taskId, loading, onBack, onClose }: { taskId: string; loading: boolean; onBack: () => void; onClose: () => void }) {
   return (
@@ -147,7 +147,7 @@ export function BackgroundMissingPanel({ taskId, loading, onBack, onClose }: { t
       </div>
       {loading
         ? <Loading kind="inline" />
-        : <div className="trace-empty">This task is not in the conversation's list — it may have been removed, belong to another conversation, or the list could not be loaded (reopen the conversation to try again).</div>}
+        : <div className="trace-empty">This task is not in the session's list — it may have been removed, belong to another session, or the list could not be loaded (open Tasks to retry).</div>}
     </SidePanel>
   );
 }

@@ -101,7 +101,7 @@ func NormalizeTrigger(t *Trigger) error {
 		return fmt.Errorf("target must be %q or %q", TriggerTargetWorkflow, TriggerTargetAgent)
 	}
 	if t.SessionID == "" {
-		return fmt.Errorf("session_id is required: the conversation the work reports to")
+		return fmt.Errorf("session_id is required: the session the work reports to")
 	}
 	switch t.Kind {
 	case TriggerKindCron:

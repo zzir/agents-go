@@ -178,7 +178,7 @@ func (h *TriggerHandler) bind(c *gin.Context) (*store.Trigger, bool) {
 		return nil, false
 	}
 	if sess.Hidden {
-		badRequest(c, "session_id names a task's own session; a trigger reports to a conversation")
+		badRequest(c, "session_id names a task's own session; a trigger reports to a session of its own")
 		return nil, false
 	}
 	// A workflow target must be one the session's owner may see (decisions

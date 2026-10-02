@@ -17,6 +17,7 @@ import { nameOf } from '@/lib/named';
 import { AgentPicker } from '@/components/AgentPicker';
 import { BADGE } from '@/lib/badges';
 import { toast } from '@/lib/toast';
+import { numberDraft, parseOptionalPositive } from '@/lib/numericField';
 import { EdgeGraph, END, stepLabel, type Workflow, type WorkflowBudget, type WorkflowStep } from '@/features/workflows/graph';
 import { Disclosure } from '@/components/Disclosure';
 import { TriggersDialog } from '@/features/workflows/TriggersDialog';
@@ -38,6 +39,15 @@ interface WorkflowFormData {
   steps: WorkflowStep[];
   budget: WorkflowBudget;
 }
+
+// The budget fields: key, unit, hint, and what the blank box means.
+const BUDGET_FIELDS = [
+  ['max_steps', 'steps', 'Step launches, retries included (at most 50)', '50'],
+  ['max_tokens', 'tokens', 'Input + output of every model call', '∞'],
+  ['max_minutes', 'minutes', 'Step run time; waiting for you costs nothing', '∞'],
+  ['max_laps', 'laps', 'Times one run may take the same backward edge (verify → exec) — a loop that keeps returning is stopped', '3'],
+] as const;
+type BudgetKey = typeof BUDGET_FIELDS[number][0];
 
 // A step carries an id from the moment it is added: the edge pickers name steps
 // by id, and a step with none cannot be pointed at until after a save.
@@ -84,6 +94,17 @@ function WorkflowForm({ initial, onSave, onCancel, onDelete, saving, agents }: W
   const [form, setForm] = useState<WorkflowFormData>(
     initial || { name: '', description: '', steps: [emptyStep()], budget: {} },
   );
+  // The budget boxes hold strings while editing (invariant 80).
+  const [budgetDraft, setBudgetDraft] = useState<Record<BudgetKey, string>>(() =>
+    Object.fromEntries(BUDGET_FIELDS.map(([key]) => [key, numberDraft(initial?.budget?.[key])])) as Record<BudgetKey, string>);
+  const save = () => {
+    const budget: WorkflowBudget = {};
+    for (const [key, unit] of BUDGET_FIELDS) {
+      try { budget[key] = parseOptionalPositive(budgetDraft[key], 'Max ' + unit); }
+      catch (e) { toast.error((e as Error).message); return; }
+    }
+    onSave({ ...form, budget });
+  };
 
   const setStep = (i: number, patch: Partial<WorkflowStep>) =>
     setForm(prev => ({ ...prev, steps: prev.steps.map((s, j) => (j === i ? { ...s, ...patch } : s)) }));
@@ -222,16 +243,11 @@ function WorkflowForm({ initial, onSave, onCancel, onDelete, saving, agents }: W
       <div className="form-group">
         <div className="form-group-title">Budget per run</div>
         <div className="wf-budget">
-          {([
-            ['max_steps', 'steps', 'Step launches, retries included (at most 50)', '50'],
-            ['max_tokens', 'tokens', 'Input + output of every model call', '∞'],
-            ['max_minutes', 'minutes', 'Step run time; waiting for you costs nothing', '∞'],
-            ['max_laps', 'laps', 'Times one run may take the same backward edge (verify → exec) — a loop that keeps returning is stopped', '3'],
-          ] as const).map(([key, unit, hint, blank]) => (
+          {BUDGET_FIELDS.map(([key, unit, hint, blank]) => (
             <label key={key} className="wf-step-opt" title={hint}>
-              <TextInput size="small" type="number" min={0} value={form.budget[key] || ''}
+              <TextInput size="small" type="text" inputMode="numeric" value={budgetDraft[key]}
                 aria-label={'max ' + unit} placeholder={blank}
-                onChange={e => setForm(prev => ({ ...prev, budget: { ...prev.budget, [key]: Math.max(0, Number(e.target.value) || 0) } }))} />
+                onChange={e => setBudgetDraft(prev => ({ ...prev, [key]: e.target.value }))} />
               {' '}{unit}
             </label>
           ))}
@@ -239,7 +255,7 @@ function WorkflowForm({ initial, onSave, onCancel, onDelete, saving, agents }: W
         <div className="wf-run-hint">Over any of these the execution stops, failed with the reason. Laps default to 3: a loop that keeps returning to the same step is not converging.</div>
       </div>
 
-      <FormActions saving={saving} onSave={() => onSave(form)} onCancel={onCancel} onDelete={onDelete} />
+      <FormActions saving={saving} onSave={save} onCancel={onCancel} onDelete={onDelete} />
     </Stack>
     </UnsavedForm>
   );

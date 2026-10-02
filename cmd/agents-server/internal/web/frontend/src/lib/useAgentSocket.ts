@@ -328,7 +328,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
       // The persisted timeline did not reload behind the optimistic stream.
       // A conversation gone (deleted here or elsewhere: 404) has nothing to refresh.
       if (deletedRef.current.has(sid) || e?.status === 404) return;
-      toast.error('Could not refresh the conversation — reopen it to retry');
+      toast.error('Could not refresh the session — reopen it to retry');
     });
   }, [fetchTimeline, updateSS]);
 
@@ -349,19 +349,15 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
         : { ...s, messages: timeline, entries, loaded: true });
     }).catch((err: Error) => {
       loadedRef.current.delete(sid);
-      updateSS(sid, s => ({ ...s, loadError: err?.message || 'Could not load the conversation' }));
+      updateSS(sid, s => ({ ...s, loadError: err?.message || 'Could not load the session' }));
       throw err;
     });
   }, [fetchTimeline, updateSS]);
 
-  const loadSession = useCallback((sid: string): Promise<void> => {
-    if (!sid || loadedRef.current.has(sid)) return Promise.resolve();
-    // Loaded again is not deleted: a conversation transferred away and back
-    // (deleteSession marked it on the way out) takes writes again.
-    deletedRef.current.delete(sid);
-    const msgP = loadTimeline(sid);
-    // Seed the task list from the durable rows; live task-run events (which
-    // may already have arrived) win per task id.
+  // loadTasks seeds the task list from the durable rows; live task-run events
+  // (which may already have arrived) win per task id. A failure is the list's
+  // own state (tasksError, invariant 79), and the panel's Retry calls it again.
+  const loadTasks = useCallback((sid: string): void => {
     (api.sessions.tasks(sid) as Promise<TaskRow[]>)
       .then(rows => {
         if (!rows || rows.length === 0) {
@@ -369,14 +365,22 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
           return;
         }
         updateSS(sid, s => ({ ...seedTaskRows(s, rows), tasksError: undefined }));
-      }).catch((e: { status?: number }) => {
+      }).catch((e: { status?: number; message?: string }) => {
         if (deletedRef.current.has(sid) || e?.status === 404) return;
         // Loaded-with-error, not loaded-empty: the panel must not read it as "no tasks".
-        updateSS(sid, s => ({ ...s, tasksLoaded: true, tasksError: 'The task list could not be loaded' }));
-        toast.error('Could not load background tasks — reopen the conversation to retry');
+        updateSS(sid, s => ({ ...s, tasksLoaded: true, tasksError: e?.message || 'request failed' }));
       });
+  }, [updateSS]);
+
+  const loadSession = useCallback((sid: string): Promise<void> => {
+    if (!sid || loadedRef.current.has(sid)) return Promise.resolve();
+    // Loaded again is not deleted: a session transferred away and back
+    // (deleteSession marked it on the way out) takes writes again.
+    deletedRef.current.delete(sid);
+    const msgP = loadTimeline(sid);
+    loadTasks(sid);
     return msgP;
-  }, [loadTimeline, updateSS]);
+  }, [loadTimeline, loadTasks]);
 
   // fetchTraces pulls the session's persisted span SUMMARY (payloads stay
   // lazy, see loadSpanPayload). Per run id, the live group wins unless
@@ -909,7 +913,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
       invalidate('sessions');
       const sid = eventsRef.current.activeSession();
       if (!sid || deletedRef.current.has(sid)) return;
-      loadTimeline(sid).catch(() => toast.error('Could not refresh the conversation — reopen it to retry'));
+      loadTimeline(sid).catch(() => toast.error('Could not refresh the session — reopen it to retry'));
       (api.sessions.tasks(sid) as Promise<TaskRow[]>)
         .then(rows => { if (rows && rows.length > 0) updateSS(sid, s => mergeTaskRows(s, rows)); })
         .catch(() => undefined);
@@ -1017,5 +1021,5 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
     updateSS(sid, s => ({ ...s, loaded: false, entries: [] }));
   }, [updateSS]);
 
-  return { wsRef, sessionRunRef, connected, loadSession, loadTraces, loadSpanPayload, deleteSession, forgetLoaded, watchTask, unwatchTask, queueInput, dropQueued };
+  return { wsRef, sessionRunRef, connected, loadSession, loadTasks, loadTraces, loadSpanPayload, deleteSession, forgetLoaded, watchTask, unwatchTask, queueInput, dropQueued };
 }

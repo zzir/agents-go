@@ -15,9 +15,11 @@ const apiMock = vi.hoisted(() => ({
 }));
 vi.mock('@/lib/api', () => ({ api: apiMock, getToken: () => 'tok', clearToken: vi.fn() }));
 vi.mock('@/lib/composer', () => ({ putBackInComposer: vi.fn() }));
+vi.mock('@/lib/toast', () => ({ toast: { error: vi.fn(), info: vi.fn(), success: vi.fn() } }));
 
 import { invalidate } from '@/lib/apiCache';
 import { putBackInComposer } from '@/lib/composer';
+import { toast } from '@/lib/toast';
 import { EV, ERR } from '@/lib/protocol';
 import { useAgentSocket, defaultSS, type SessionEvents, type SessionState } from '@/lib/useAgentSocket';
 import type { TurnEntry } from '@/lib/timeline';
@@ -67,6 +69,7 @@ beforeEach(() => {
   Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => visibility });
   vi.mocked(invalidate).mockClear();
   vi.mocked(putBackInComposer).mockClear();
+  vi.mocked(toast.error).mockClear();
   for (const fn of Object.values(apiMock.sessions)) fn.mockClear();
   apiMock.sessions.messages.mockImplementation(async () => []);
 });
@@ -109,7 +112,7 @@ const textParts = (s: SessionState | undefined) =>
   (s?.messages || []).filter(m => m.role === 'turn').flatMap(m => (m as TurnEntry).parts.filter(p => p.type === 'text').map(p => (p as { content: string }).content));
 
 describe('useAgentSocket reconnect', () => {
-  it('re-reads the open conversation, forgets the others until their next select, and relists the sidebar', async () => {
+  it('re-reads the open session, forgets the others until their next select, and relists the sidebar', async () => {
     apiMock.sessions.messages.mockImplementation(async (sid: string) => [userRow(sid, 'before')]);
     const t = await mount(() => S1);
     await act(async () => { await t.hook().loadSession(S1); await t.hook().loadSession(S2); });
@@ -395,7 +398,23 @@ describe('useAgentSocket run events', () => {
     await t.unmount();
   });
 
-  it('a deleted conversation takes no writes until it is loaded again', async () => {
+  // Invariant 79: a failed read is the list's own state, shown with Retry;
+  // no toast, and the retry re-reads.
+  it('a failed task-list read is kept on the session for its Retry, never toasted', async () => {
+    apiMock.sessions.tasks.mockImplementation(async () => { throw new Error('503 unavailable'); });
+    const t = await mount(() => S1);
+    await act(async () => { await t.hook().loadSession(S1); });
+    expect(t.store[S1].tasksLoaded).toBe(true);
+    expect(t.store[S1].tasksError).toBe('503 unavailable');
+    expect(toast.error).not.toHaveBeenCalled();
+    apiMock.sessions.tasks.mockImplementation(async () => [{ task_id: 'task-1', status: 'working', label: 'probe', child_session_id: 'c1', run_id: 'r1' }]);
+    await act(async () => { t.hook().loadTasks(S1); });
+    expect(t.store[S1].tasksError).toBeUndefined();
+    expect(Object.keys(t.store[S1].tasks)).toEqual(['task-1']);
+    await t.unmount();
+  });
+
+  it('a deleted session takes no writes until it is loaded again', async () => {
     const t = await mount(() => S1);
     await act(async () => { t.hook().deleteSession(S1); });
     await act(async () => { t.sock().receive(EV.runStarted, { session_id: S1, run_id: RUN, input: 'late' }); });

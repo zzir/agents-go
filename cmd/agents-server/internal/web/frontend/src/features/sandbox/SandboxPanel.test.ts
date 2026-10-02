@@ -28,7 +28,7 @@ describe('SandboxPanel flatten / pack', () => {
   it('packs a local docker row without ssh keys or empty limits', () => {
     const form = flatten({ name: 'local', type: 'docker', config: {} });
     expect(form.image).toBe('ghcr.io/zzir/sandbox:latest');
-    const packed = pack({ ...form, ssh_use_agent: true, memory_mb: '', cpus: '0' });
+    const packed = pack({ ...form, ssh_use_agent: true, memory_mb: '', cpus: '' });
     expect(packed.config).toEqual({ host: '', image: 'ghcr.io/zzir/sandbox:latest', runtime: '', user: '', network: '' });
   });
 
@@ -57,10 +57,17 @@ describe('SandboxPanel flatten / pack', () => {
     expect(pack({ ...base, headers: ' {} ' }).config).not.toHaveProperty('headers');
   });
 
-  it('drops a non-numeric or non-positive limit instead of sending it', () => {
-    const packed = pack({ ...flatten({ name: 'n', type: 'docker', config: {} }), memory_mb: 'lots', cpus: '-1', max_read_file_bytes: '0' });
+  // Invariant 80: a limit that is not a number refuses the save, naming the
+  // field; a blank one is the server's default and is not sent.
+  it('refuses a limit that is not a number and names the field', () => {
+    const base = flatten({ name: 'n', type: 'docker', config: {} });
+    expect(() => pack({ ...base, memory_mb: 'lots' })).toThrow(/Memory MB/);
+    expect(() => pack({ ...base, cpus: '-1' })).toThrow(/CPUs/);
+    expect(() => pack({ ...base, max_read_file_bytes: 'abc' })).toThrow(/Max read file bytes/);
+    expect(() => pack({ ...flatten({ name: 'e', type: 'e2b', config: {} }), timeout_seconds: '1.5' })).toThrow(/Timeout seconds/);
+    const packed = pack({ ...base, memory_mb: '', cpus: '1.5', max_read_file_bytes: '' });
     expect(packed.config).not.toHaveProperty('memory_mb');
-    expect(packed.config).not.toHaveProperty('cpus');
+    expect(packed.config).toHaveProperty('cpus', 1.5);
     expect(packed.config).not.toHaveProperty('max_read_file_bytes');
   });
 });

@@ -8,6 +8,8 @@ import { api } from '@/lib/api';
 import { useCrud } from '@/lib/hooks';
 import { fc } from '@/lib/form';
 import { BADGE } from '@/lib/badges';
+import { toast } from '@/lib/toast';
+import { numberDraft, parseOptionalPositive } from '@/lib/numericField';
 
 // config travels as a JSON object in both directions (the API-wide contract
 // for config blobs) — never as a stringified JSON payload.
@@ -62,15 +64,18 @@ function GuardrailForm({ initial, onSave, onCancel, onDelete, saving }: Guardrai
     name: '', description: '', stages: ['input'], mode: 'regex', blocking: false,
   });
   const [pattern, setPattern] = useState<string>(initial?.config?.pattern || '');
-  const [maxLength, setMaxLength] = useState<string | number>(initial?.config?.max_length || 0);
+  const [maxLength, setMaxLength] = useState(numberDraft(initial?.config?.max_length));
   const set = (k: keyof GuardrailFormData, v: string | boolean | string[]) => setForm(prev => ({ ...prev, [k]: v }));
   const stages = form.stages || [];
   const toggleStage = (st: string) => set('stages', stages.includes(st) ? stages.filter(s => s !== st) : [...stages, st]);
 
   const handleSave = () => {
-    const config: GuardrailConfig = form.mode === 'regex'
-      ? { pattern }
-      : { max_length: parseInt(String(maxLength)) || 0 };
+    let config: GuardrailConfig;
+    if (form.mode === 'regex') config = { pattern };
+    else {
+      try { config = { max_length: parseOptionalPositive(maxLength, 'Max length') }; }
+      catch (e) { toast.error((e as Error).message); return; }
+    }
     onSave({ ...form, config });
   };
 
@@ -126,9 +131,9 @@ function GuardrailForm({ initial, onSave, onCancel, onDelete, saving }: Guardrai
       {form.mode === 'max_length' && fc('Max length',
         <TextInput
           block
-          type="number"
-          min={1}
-          value={maxLength || ''}
+          type="text"
+          inputMode="numeric"
+          value={maxLength}
           onChange={(e: ChangeEvent<HTMLInputElement>) => setMaxLength(e.target.value)}
           placeholder="4096"
         />,

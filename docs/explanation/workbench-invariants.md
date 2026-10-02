@@ -466,9 +466,10 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     reads as none, and never a toast for a read (`components/LoadError.tsx`).
 80. **A numeric form field holds a string while editing and parses on save;
     empty means the server's zero value, never a literal 0 in the box.**
-    `numberDraft` seeds it, `parseWholeNumber` reads it back — an empty box is
-    0, a negative stays (`-1` = unlimited retries), and what is not a whole
-    number refuses the save with the field's name (`lib/numericField.ts`).
+    `numberDraft` seeds it; `parseWholeNumber` reads it back — an empty box is
+    0, a negative stays (`-1` = unlimited retries) — and what is not a number
+    of the field's kind refuses the save with the field's name; a quantity with
+    a fraction (cpus) reads through the decimal reader (`lib/numericField.ts`).
 81. **A terminal tab's lifetime is its shell's: closing the tab ends the
     session, hiding the panel keeps it. The panel's close control hides.**
     The panel stays mounted while hidden and its control is a chevron labelled

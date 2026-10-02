@@ -13,6 +13,7 @@ import { fc } from '@/lib/form';
 import { JsonField } from '@/lib/JsonField';
 import { headersToText, parseHeadersText } from '@/lib/headers';
 import { toast } from '@/lib/toast';
+import { parseOptionalPositive, parseOptionalPositiveDecimal } from '@/lib/numericField';
 
 // A sandbox is one row: WHERE it runs and WHAT runs on it; a project picks one.
 // The fields split by mutability, not section — type and destination freeze
@@ -138,7 +139,9 @@ export function flatten(s: Partial<SandboxRow>): FormState {
 
 // Throws on invalid JSON in the Headers field so the caller can block the save.
 export function pack(form: FormState): PackedForm {
-  const maxRead = parseInt(form.max_read_file_bytes, 10);
+  // Blank limits mean the server's defaults; a limit that is not a number
+  // refuses the save (invariant 80).
+  const maxRead = parseOptionalPositive(form.max_read_file_bytes, 'Max read file bytes');
   if (form.type === 'e2b') {
     const config: Record<string, unknown> = {
       api_url: form.api_url, domain: form.domain,
@@ -150,9 +153,9 @@ export function pack(form: FormState): PackedForm {
     };
     const headers = parseHeadersText(form.headers);
     if (headers) config.headers = headers;
-    const timeout = parseInt(form.timeout_seconds, 10);
-    if (Number.isFinite(timeout) && timeout > 0) config.timeout_seconds = timeout;
-    if (Number.isFinite(maxRead) && maxRead > 0) config.max_read_file_bytes = maxRead;
+    const timeout = parseOptionalPositive(form.timeout_seconds, 'Timeout seconds');
+    if (timeout > 0) config.timeout_seconds = timeout;
+    if (maxRead > 0) config.max_read_file_bytes = maxRead;
     return { name: form.name, type: 'e2b', config, prompt: form.prompt };
   }
   const config: Record<string, unknown> = {
@@ -166,11 +169,11 @@ export function pack(form: FormState): PackedForm {
     config.ssh_known_hosts = form.ssh_known_hosts;
     config.ssh_insecure_host_key = form.ssh_insecure_host_key;
   }
-  const memory = parseInt(form.memory_mb, 10);
-  if (Number.isFinite(memory) && memory > 0) config.memory_mb = memory;
-  const cpus = parseFloat(form.cpus);
-  if (Number.isFinite(cpus) && cpus > 0) config.cpus = cpus;
-  if (Number.isFinite(maxRead) && maxRead > 0) config.max_read_file_bytes = maxRead;
+  const memory = parseOptionalPositive(form.memory_mb, 'Memory MB');
+  if (memory > 0) config.memory_mb = memory;
+  const cpus = parseOptionalPositiveDecimal(form.cpus, 'CPUs');
+  if (cpus > 0) config.cpus = cpus;
+  if (maxRead > 0) config.max_read_file_bytes = maxRead;
   return { name: form.name, type: 'docker', config, prompt: form.prompt };
 }
 
@@ -258,11 +261,11 @@ function SandboxForm({ initial, seed, inUse, onSave, onCancel, onDelete, saving 
         'The Docker network the container joins. Empty = no network at all. "bridge" gives ordinary networking; a user-defined network name puts it where the server can reach it.',
       )}
       {form.type === 'docker' && fc('Memory limit (MB)',
-        <TextInput block type="number" value={form.memory_mb} onChange={e => set('memory_mb', e.target.value)} placeholder="4096 (default)" />,
+        <TextInput block type="text" inputMode="numeric" value={form.memory_mb} onChange={e => set('memory_mb', e.target.value)} placeholder="4096 (default)" />,
         'Hard memory cap per container. Empty = the 4 GiB safe default (agent code runs here — it is never unlimited).',
       )}
       {form.type === 'docker' && fc('CPU limit',
-        <TextInput block type="number" value={form.cpus} onChange={e => set('cpus', e.target.value)} placeholder="2 (default)" />,
+        <TextInput block type="text" inputMode="decimal" value={form.cpus} onChange={e => set('cpus', e.target.value)} placeholder="2 (default)" />,
         'CPU cores per container (fractional allowed, e.g. 0.5). Empty = the 2-core safe default.',
       )}
 
@@ -275,7 +278,7 @@ function SandboxForm({ initial, seed, inUse, onSave, onCancel, onDelete, saving 
         'The account commands run as — must be one the template provides. Empty = the service default, "user".',
       )}
       {form.type === 'e2b' && fc('Lease (seconds)',
-        <TextInput block type="number" value={form.timeout_seconds} onChange={e => set('timeout_seconds', e.target.value)} placeholder="300" />,
+        <TextInput block type="text" inputMode="numeric" value={form.timeout_seconds} onChange={e => set('timeout_seconds', e.target.value)} placeholder="300" />,
         'How long a sandbox lives before the service acts on it. Refreshed while in use.',
       )}
       {form.type === 'e2b' && (
@@ -289,7 +292,7 @@ function SandboxForm({ initial, seed, inUse, onSave, onCancel, onDelete, saving 
         'Appended to the agent\'s instructions for any session working on this sandbox — what the image has, how to use it. Edits reach the next run without replacing the container.',
       )}
       {fc('Max read_file bytes',
-        <TextInput block type="number" value={form.max_read_file_bytes} onChange={e => set('max_read_file_bytes', e.target.value)} placeholder="8388608" />,
+        <TextInput block type="text" inputMode="numeric" value={form.max_read_file_bytes} onChange={e => set('max_read_file_bytes', e.target.value)} placeholder="8388608" />,
         'Cap on bytes a single read_file returns; larger files fail instead of loading into memory. Empty = 8 MiB default.',
       )}
       <FormActions

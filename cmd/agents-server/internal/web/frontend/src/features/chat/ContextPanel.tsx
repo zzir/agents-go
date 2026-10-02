@@ -302,7 +302,7 @@ export function ContextPanel({ sessionId, running, reloadKey, onClose, onCompact
                 </div>
                 {showNext && (
                   <div className="ctx-legend">
-                    <span className="ctx-muted" title="Estimated tokens the NEXT request will send. The figure above is the last measured call and only updates when one follows — so after Compact now this is what the folded conversation now costs.">
+                    <span className="ctx-muted" title="Estimated tokens the NEXT request will send. The figure above is the last measured call and only updates when one follows — so after Compact now this is what the folded session now costs.">
                       next call {approx(estNext)}
                     </span>
                   </div>
