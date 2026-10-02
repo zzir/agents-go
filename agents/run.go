@@ -559,7 +559,18 @@ func (r *runner) handleFinalOutput(ctx context.Context, st *turnState, step *sin
 	// see spec §2.11b.
 	var extra []InputItem
 	if !r.ctrl.stopRequested() {
-		extra = r.ctrl.takeContinuation()
+		var err error
+		if extra, err = r.takeScreened(ctx, st.agent, r.ctrl.takeContinuation); err != nil {
+			// The answer was reached before the refused input: a trip saves it,
+			// then fails the run on the verdict. Any other error leaves the
+			// take in flight, to be rolled back with the attempt.
+			if _, tripped := errors.AsType[*GuardrailTripwireError](err); tripped {
+				if perr := r.persistSessionItems(ctx); perr != nil {
+					err = perr
+				}
+			}
+			return loopReturn(nil, r.fail(err))
+		}
 	}
 	if len(extra) > 0 {
 		// Appended before the closing write, so that write commits the take.

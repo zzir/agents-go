@@ -199,7 +199,11 @@ func (r *runner) savePoint(ctx context.Context, in savePointInput) (savePointRes
 	// Injected input is drained after compaction so it is never folded away by
 	// the pass that ran before it arrived; a caller's stop leaves it queued.
 	if !r.ctrl.stopRequested() {
-		out.Injected = injectedInput(in.Agent, r.ctrl.takeTurnInput())
+		taken, err := r.takeScreened(ctx, in.Agent, r.ctrl.takeTurnInput)
+		if err != nil {
+			return out, err
+		}
+		out.Injected = injectedInput(in.Agent, taken)
 	}
 
 	if prepare := r.opts.Exec.PrepareNextTurn; prepare != nil {

@@ -1863,3 +1863,22 @@ thinking request carries a beta header, which `WithThinkingBinding(false)`
 removes for an endpoint that rejects it.
 
 Rules: spec §2.15
+
+### 5.78 Injected input passes the input guardrails before it is recorded
+
+Decided 2026-10-03.
+
+**Decision.** A steer, next-turn input or follow-up is run through the input
+guardrails where the run takes it, always to completion, whatever `Blocking`
+says: a Replace swaps it for its message, a trip fails the run and consumes it.
+
+**Rejected.** Screening the first turn only: a steer walked around the content
+filter. Racing the next model call: the model has then seen what was refused.
+Returning refused input to the queue: screening it again only trips again, and
+a host that redelivers loops.
+
+**Cost accepted.** Every injection waits for its guardrails. A tripped
+injection fails the whole run, as a tripped first input does; an answer the
+run reached before a refused follow-up is saved first.
+
+Rules: spec §2.6, §2.11b

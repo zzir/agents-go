@@ -131,6 +131,34 @@ func (r *runner) firstTurnInputGuardrails(
 	return out, nil
 }
 
+// takeScreened takes queued input with take and runs the input guardrails over
+// it before it is recorded, always blocking (spec §2.6): a Replace swaps the
+// items for its message, and a trip consumes them.
+func (r *runner) takeScreened(ctx context.Context, agent *Agent, take func() []InputItem) ([]InputItem, error) {
+	mark := r.ctrl.inFlightMark()
+	items := take()
+	guards := selectStage(r.runGuardrails(agent), StageInput)
+	if len(items) == 0 || len(guards) == 0 {
+		return items, nil
+	}
+	gspan := r.trace.StartGuardrailSpan("input", r.agentParentID())
+	defer gspan.Finish()
+	res, err := runStageConcurrent(ctx, r.rc, guards, GuardrailPayload{Stage: StageInput, Agent: agent, Input: items})
+	r.recordGuardrailResults(res...)
+	annotateGuardrailSpan(gspan, res)
+	if err != nil {
+		gspan.SetError(err.Error(), nil)
+		if _, tripped := errors.AsType[*GuardrailTripwireError](err); tripped {
+			r.ctrl.discardInFlightSince(mark)
+		}
+		return nil, err
+	}
+	if repl, ok := inputReplacement(res); ok {
+		return repl, nil
+	}
+	return items, nil
+}
+
 // racedCallOutcome is what a raced first-turn model call produced. On failure
 // exactly one of stopped, guardErr or modelErr is set; guardErr outranks the model.
 type racedCallOutcome struct {

@@ -160,6 +160,23 @@ func (c *runControl) take(want func(injectKind) bool) []InputItem {
 	return out
 }
 
+// inFlightMark is where the in-flight set stands, for discardInFlightSince.
+func (c *runControl) inFlightMark() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.inFlight)
+}
+
+// discardInFlightSince drops the entries taken after mark: input a guardrail
+// refused is consumed, never redelivered (spec §2.11b).
+func (c *runControl) discardInFlightSince(mark int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if mark < len(c.inFlight) {
+		c.inFlight = c.inFlight[:mark]
+	}
+}
+
 // commitInjected marks every in-flight injection delivered: the items have a
 // durable home (spec §2.11b), and no retry re-delivers them.
 func (c *runControl) commitInjected() {

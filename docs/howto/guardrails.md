@@ -24,7 +24,7 @@ scanner := agents.Guardrail{
 
 | Stage | When it runs | What it inspects |
 |---|---|---|
-| `StageInput` | First turn, before or alongside the first model call | `p.Input` |
+| `StageInput` | First turn, before or alongside the first model call; each steer or follow-up before it is recorded | `p.Input` |
 | `StageOutput` | After the final output is produced, before it is persisted | `p.Output` |
 | `StageToolInput` | After arguments are parsed, before the tool runs | `p.ToolName`, `p.Arguments` |
 | `StageToolOutput` | After the tool runs, before its result reaches the model | `p.ToolName`, `p.Output` |

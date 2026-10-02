@@ -297,8 +297,8 @@ one place in the code, and its step order is the contract:
 1. flush the turn to the session
 2. ask `ShouldStopAfterTurn`
 3. compact ([§2.5f](#25f-compaction)), rebuilding the context from the log
-4. drain the steer and next-turn queues ([§2.11b](#211b-run-control)), unless
-   the caller asked to stop
+4. drain the steer and next-turn queues ([§2.11b](#211b-run-control)) and
+   screen them ([§2.6](#26-guardrails)), unless the caller asked to stop
 5. call `PrepareNextTurn`
 
 - **Persist first**: a run that stops at step 2, or whose context is rewritten
@@ -387,11 +387,11 @@ three:
 | End of each turn | The items produced by that turn |
 | Final turn | **After output guardrails pass** — a tripped final output is never persisted |
 
-- **Whether a tripped input guardrail leaves the user message behind is decided
-  by `Blocking` alone.** A blocking guardrail finishes before the save, so a
-  tripwire leaves the session untouched; a racing one (the default) trips while
-  the model call is in flight, so the input is persisted. Both entry points
-  answer identically.
+- **Whether a tripped first-turn input guardrail leaves the user message behind
+  is decided by `Blocking` alone**, in both entry points: a blocking one trips
+  before the save; a racing one (the default) with the input already persisted.
+- **A tripped injection leaves none of its input behind**: injected input is
+  screened before it is recorded ([§2.11b](#211b-run-control)).
 - **A save that leaves nothing behind is announced as `ItemsPersistedEvent`.**
   The implication is one-way: the event guarantees every item the stream showed
   before it is in the store; its absence promises nothing (a run without a
@@ -832,7 +832,7 @@ only.
 
 | Stage | When | Decision space |
 |---|---|---|
-| `input` | First turn, before the model call (`Blocking`) or concurrently with it (default) | Allow / Replace / Trip |
+| `input` | First turn, before the model call (`Blocking`) or concurrently with it (default); every injected input before it is recorded, always blocking | Allow / Replace / Trip |
 | `output` | After the final output is produced, before persistence | Allow / Replace / Trip |
 | `tool_input` | Before execution, on the raw argument JSON | Allow / Replace / Trip |
 | `tool_output` | After the tool runs, before the result is fed back | Allow / Replace / Trip |
@@ -1462,10 +1462,13 @@ nothing more: a host renders progress from the stream's own events. Beyond
   ([§5.45](../explanation/decisions.md#545-a-middleware-resumes-under-the-callers-control)).
 - **A follow-up continues the same run**: one trace, one usage total, one
   session.
-- **Injected input becomes a run item** with `Source{Type: SourceUser}`,
-  treated downstream exactly like the input the run started with. Its stream
-  event is `injected_input_created`; `"unknown"` stays reserved for
-  `ItemUnknown`.
+- **Injected input becomes a run item** with `Source{Type: SourceUser}` after
+  passing the input guardrails ([§2.6](#26-guardrails)), treated downstream
+  exactly like the input the run started with. Its stream event is
+  `injected_input_created`; `"unknown"` stays reserved for `ItemUnknown`.
+- **A tripped injection is consumed**: the run fails with the tripwire, whose
+  `Result.Checked` holds the refused input; none of it is persisted, and an
+  answer reached before it is.
 - **Nothing is silently dropped.** `Pending()` reports what a run did not
   consume.
 - **A caller's stop outranks a late steer or follow-up**: the run ends at its
@@ -1913,7 +1916,7 @@ Defaults that callers may depend on:
 | Handoff input schemas | strict | `Handoff.NonStrictSchema: true` opts out; the zero value is the strict default |
 | Tool errors | fed back to the model | `DefaultToolErrorFunction`; set the field to `nil` to make them fatal |
 | Tool concurrency | unlimited | Bound with `MaxToolConcurrency` |
-| Input guardrails | concurrent with the model call | `Blocking: true` makes one a gate |
+| Input guardrails | concurrent with the model call | `Blocking: true` makes one a gate; injected input always blocking |
 | Session persistence | after each turn | Final turn is written after output guardrails pass |
 | `RunResult.Usage` / `RunState.Usage` | detached snapshot | Never the live accumulator; read without synchronization. Mid-run, `RunContext.Usage` is live — read it via `Snapshot()` |
 | Budget notice | off | `ContextBudget{Window, WindowFor, Occupied}.InputFilter()` appends `Context budget: about N of W tokens in use (P% left).` as the last input item ([§2.5i](#25i-the-model-manages-its-own-context)) |

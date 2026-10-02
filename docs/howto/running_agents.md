@@ -131,6 +131,8 @@ late is reported by `ctrl.Pending()`. Injections reach the model in arrival
 order, delivery is transactional across retries and resumes, and input queued
 before an [approval pause](human_in_the_loop.md) rides along in
 `RunState.PendingInput` ([spec §2.11b](../reference/spec.md#211b-run-control)).
+Injected input passes the run's input guardrails before the model sees it; one a guardrail trips on fails the run ([spec §2.6](../reference/spec.md#26-guardrails)).
+
 A runnable program is [examples/steering](../../examples/steering/main.go).
 
 ## Turn hooks
