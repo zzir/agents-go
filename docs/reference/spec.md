@@ -1787,8 +1787,10 @@ A task is a sub-agent that outlives the turn that started it
 - **A depth check that cannot be made refuses**: `MetaFor` reports a failed
   lookup rather than resolving it to "not a task".
 - **A notification is a user-role entry** the model reads verbatim; a UI
-  renders it as a card. **Its line is machine-readable and its fields come
-  from untrusted text**: formatting escapes the line delimiter AND the field
+  renders it as a card. **It closes with a line saying the reports are
+  background agents', not the person's requests.**
+- **A notification's task line is machine-readable and its fields come from
+  untrusted text**: formatting escapes the line delimiter AND the field
   delimiter, and the retry hint is its own line. Formatting and parsing ship
   together.
 - Defaults: depth 1 (a task cannot spawn tasks), 6 concurrent tasks per

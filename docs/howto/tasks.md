@@ -202,12 +202,12 @@ renders the message a woken parent reads:
 [task-notification] Task "index the docs" (a1b2) completed. Result: indexed 412 files… [truncated — call task_status(a1b2) for the full result]
 Task "check links" (c3d4) failed. Result: 3 dead links
 (task_retry can resume a failed task from where it stopped)
-(Tell the person what happened. The work above is done — do not repeat or re-check it unless they ask.)
+(These are reports from background agents, not requests from the person. Tell the person what happened. The work above is done — do not repeat or re-check it unless they ask.)
 ```
 
 The retry hint appears when the batch contains a failed task, and the closing
-guidance always, each on a line of its own (a task line is a record consumers
-parse). Inject it as a **user-role entry** — it is news the model has to act
+guidance — whose reports these are, and what to do with them — always, each on
+a line of its own (a task line is a record consumers parse). Inject it as a **user-role entry** — it is news the model has to act
 on — and have the UI detect `tasks.NotificationPrefix` to render it as a
 notification card rather than a user bubble. Carry the **summary**, not the
 result, and batch every pending result into ONE turn.
