@@ -396,7 +396,7 @@ export function ToolCallCard({ toolCall, live, onInspectTask, onRetryTask }: Too
               {tool_name === 'submit_plan' ? 'Approve plan' : tool_name === 'save_workflow' ? 'Save workflow' : 'Approve'}
             </Button>
           )}
-          <RejectButton onReject={reason => decide(() => onReject && onReject(tool_call_id, reason))} />
+          <RejectButton kind={tool_name === 'submit_plan' ? 'plan' : undefined} onReject={reason => decide(() => onReject && onReject(tool_call_id, reason))} />
         </div>
       )}
     </Disclosure>

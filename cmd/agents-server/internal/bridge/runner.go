@@ -90,7 +90,25 @@ func NewRunner(rootCtx context.Context, db *bun.DB, deps *AgentDeps) *Runner {
 	deps.WorkflowTools = r.workflowTools
 	deps.HistoryTools = r.historyTools
 	deps.MemoryTools = r.memoryTools
+	deps.KeepApprovedPlan = r.keepApprovedPlan
 	return r
+}
+
+// keepApprovedPlan writes plan under the session's reserved key, replacing
+// the plan an earlier approval kept.
+func (r *Runner) keepApprovedPlan(ctx context.Context, sessionID, ownerID, plan string) error {
+	if r.Deps.Memories == nil {
+		return nil
+	}
+	ref, err := store.RefFor(ctx, r.db, sessionID)
+	if err != nil {
+		return err
+	}
+	sc := store.SessionMemoryScope(ref)
+	return r.Deps.Memories.Upsert(ctx, &store.Memory{
+		ScopeKind: sc.Kind, ScopeID: sc.ID, Gen: sc.Gen, Key: store.ApprovedPlanKey, Content: plan,
+		Metadata: store.ApprovedPlanSource, WrittenBy: store.MemoryWrittenByUser, OwnerID: ownerID,
+	}, nil)
 }
 
 // Tasks exposes the task manager so handlers and the startup path can reach it.

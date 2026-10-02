@@ -66,11 +66,13 @@ what each part costs) and **Tasks** (background work).
 
 Two commands live in the composer, listed when you type `/`: `/plan <message>`
 runs that message in plan mode — the agent reads and proposes, and its
-`submit_plan` waits for your approval before anything changes — and
-`/plan off <message>` leaves plan mode with that message (`/workflow <name>`
-joins them once you have [workflows](#automate-it)). **Stop** aborts the run
-at once; Shift-click it, or open the menu beside it, to let the current turn
-finish first.
+`submit_plan` waits for your approval before anything changes. **Keep
+planning…**, beside Reject, sends the plan back with what should change; an
+approved plan is kept in the session's memory as `approved-plan.md`, where it
+survives a compaction. `/plan off <message>` leaves plan mode with that
+message (`/workflow <name>` joins them once you have
+[workflows](#automate-it)). **Stop** aborts the run at once; Shift-click it,
+or open the menu beside it, to let the current turn finish first.
 
 You do not have to wait for a run to finish to say more. While one is going,
 Enter queues what you typed: the agent reads it after its current step and

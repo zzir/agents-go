@@ -6,6 +6,7 @@ package bridge
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -71,6 +72,9 @@ type AgentDeps struct {
 	// MemoryTools is set by NewRunner and builds the memory_* tools when the
 	// config opts in (memory.memory_tools); chat runs only.
 	MemoryTools func(ctx context.Context, ownerID string, built *BuildResult) []*agents.Tool
+	// KeepApprovedPlan is set by NewRunner and writes an approved plan into
+	// the session's memory (store.ApprovedPlanKey); nil keeps nothing.
+	KeepApprovedPlan func(ctx context.Context, sessionID, ownerID, plan string) error
 }
 
 // BuildResult contains the built agent and its resolved model provider.
@@ -289,8 +293,42 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, project
 		}
 		result.Agent, result.PlanPhase = middleware.Plan{ReadOnlyTools: planReadOnlyTools}.Apply(result.Agent)
 		bucketToolsSince(result.Agent, mark, store.ToolSourcePlan, &result.Profile)
+		keepApprovedPlan(result.Agent, deps.KeepApprovedPlan, ownerID)
 	}
 	return result, nil
+}
+
+// keepApprovedPlan wraps submit_plan so a plan whose approval unlocked the
+// run is kept in the session's memory — invariant 87. Best effort: a failed
+// write is logged and the unlock stands.
+func keepApprovedPlan(agent *agents.Agent, keep func(ctx context.Context, sessionID, ownerID, plan string) error, ownerID string) {
+	at := slices.IndexFunc(agent.Tools, func(t *agents.Tool) bool { return t.Name == middleware.PlanToolName })
+	if keep == nil || at < 0 {
+		return
+	}
+	submit := *agent.Tools[at]
+	inner := submit.OnInvoke
+	submit.OnInvoke = func(ctx context.Context, tc *agents.ToolContext, argsJSON string) (agents.ToolResult, error) {
+		res, err := inner(ctx, tc, argsJSON)
+		if err != nil {
+			return res, err
+		}
+		var args struct {
+			Plan string `json:"plan"`
+		}
+		sessionID, _ := tc.Context.(string)
+		if json.Unmarshal([]byte(argsJSON), &args) != nil || strings.TrimSpace(args.Plan) == "" || sessionID == "" {
+			return res, nil
+		}
+		// Detached: the approval stands whether or not this run is cancelled next.
+		kctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), planUnlockPersistTimeout)
+		defer cancel()
+		if kerr := keep(kctx, sessionID, ownerID, args.Plan); kerr != nil {
+			logging.Ctx(ctx).Warn("keeping the approved plan", "error", kerr, "session_id", sessionID)
+		}
+		return res, nil
+	}
+	agent.Tools[at] = &submit
 }
 
 // planReadOnlyTools are the tools left usable while planning beside those

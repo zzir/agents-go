@@ -501,3 +501,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     what `session.status` announced since (invariant 3). A notification is
     this browser's choice, asked for on a click, shown only while the page is
     hidden (`lib/attention.ts`, `AttentionSignals.tsx`).
+87. **An approved plan is the session's `approved-plan.md`.** The approval
+    that unlocks the run writes the plan into session memory under that key,
+    marked `plan_approval`; a failed write is logged and the unlock stands.
+    The model reads the key and cannot write it, so what it holds is what a
+    person approved; a later approval replaces it (`bridge/agent.go`,
+    `store/run_memory.go`).

@@ -10,6 +10,14 @@ const (
 	MemoryWrittenByModel = "model"
 )
 
+// ApprovedPlanKey is the session memory an approved plan is kept under, and
+// ApprovedPlanSource its Metadata: the workbench writes the row when a person
+// approves submit_plan; the model reads it and cannot write it.
+const (
+	ApprovedPlanKey    = "approved-plan.md"
+	ApprovedPlanSource = "plan_approval"
+)
+
 // Who may write a scope over the API, and whether the model may.
 const (
 	MemoryWriteAdmin        = "admin"

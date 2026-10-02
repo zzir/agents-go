@@ -207,7 +207,9 @@ carries the session memory and answers `reset: true` on the entry.
 
 `/sessions/:id/memory` lists the session's own memory, the keys and sizes the
 model (or its owner) wrote, and `/sessions/:id/memory/*key` reads one in
-full. A row is deleted or edited through `/memories/:id`
+full. `approved-plan.md` is the workbench's: the plan the session's last
+approved `submit_plan` carried
+([invariant 87](../explanation/workbench-invariants.md)). A row is deleted or edited through `/memories/:id`
 ([Memories](#memories--apiv1memories)).
 
 **Pagination** — `traces` accepts `?limit=` and `?before_id=`. Without

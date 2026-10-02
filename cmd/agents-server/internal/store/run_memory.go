@@ -94,8 +94,19 @@ func (rm *RunMemory) Read(ctx context.Context, sc memory.Scope, key string) (str
 	return m.Content, nil
 }
 
+// errKeptKey refuses the model a key the workbench keeps for itself.
+func errKeptKey(sc memory.Scope, key string) error {
+	if sc.Kind == MemoryScopeSession && key == ApprovedPlanKey {
+		return fmt.Errorf("%q holds the plan a person approved and is not yours to write; keep your notes under another key", key)
+	}
+	return nil
+}
+
 // Write implements memory.Store.
 func (rm *RunMemory) Write(ctx context.Context, sc memory.Scope, key, text string) error {
+	if err := errKeptKey(sc, key); err != nil {
+		return err
+	}
 	ms, err := rm.scope(ctx, sc)
 	if err != nil {
 		return err
@@ -108,6 +119,9 @@ func (rm *RunMemory) Write(ctx context.Context, sc memory.Scope, key, text strin
 
 // Append implements memory.Store.
 func (rm *RunMemory) Append(ctx context.Context, sc memory.Scope, key, text string) error {
+	if err := errKeptKey(sc, key); err != nil {
+		return err
+	}
 	ms, err := rm.scope(ctx, sc)
 	if err != nil {
 		return err

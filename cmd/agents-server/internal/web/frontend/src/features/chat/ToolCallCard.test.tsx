@@ -121,8 +121,19 @@ describe('ToolCallCard approval', () => {
     a.click('Approve');
     expect(a.approve).toHaveBeenCalledWith('c1', 'once');
     a.unmount();
+    // A plan's rejection is feedback to revise from: the card asks for it in
+    // those words, and sends it as the reason.
     const b = mount(pending('submit_plan', { plan: '# plan' }));
-    expect(b.buttons()[0].textContent).toBe('Approve plan');
+    expect(b.buttons().map(x => x.textContent)).toEqual(['Approve plan', 'Reject', 'Keep planning…']);
+    b.click('Keep planning…');
+    const box = b.host.querySelector('textarea') as HTMLTextAreaElement;
+    expect(box.placeholder).toContain('The model revises the plan');
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(box, 'split step 2');
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    act(() => { box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); });
+    expect(b.reject.mock.calls).toEqual([['c1', 'split step 2']]);
     b.unmount();
     const c = mount(pending('save_workflow', { name: 'w' }));
     expect(c.buttons()[0].textContent).toBe('Save workflow');
