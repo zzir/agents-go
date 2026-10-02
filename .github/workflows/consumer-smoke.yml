@@ -1,0 +1,61 @@
+name: Consumer smoke
+
+# Fetches a release the way a consumer does (scripts/consumer-smoke.sh). It
+# runs once the Release workflow has succeeded, so it never gates a release: a
+# failure is mended by the next patch release.
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release to fetch (vX.Y.Z); empty takes the latest root tag
+        required: false
+  schedule:
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    # A Release run that failed published nothing to prove.
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # The version comes from the tags.
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+          check-latest: true
+          cache: false # A consumer starts from an empty module cache.
+
+      # Asked for by hand, else the tag the Release ran on, else the latest root tag.
+      - name: Pick the release
+        env:
+          ASKED: ${{ inputs.version }}
+          RELEASED: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          version="$ASKED"
+          if [ -z "$version" ] && [[ "$RELEASED" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then version="$RELEASED"; fi
+          if [ -z "$version" ]; then version=$(git describe --tags --abbrev=0 --match 'v[0-9]*'); fi
+          if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::not a release tag: $version"
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      # The release's own tree supplies the script, the module list and the docs it
+      # is held to; a release from before the script has nothing to prove.
+      - name: Fetch and build every module as a consumer
+        run: |
+          git checkout -q --detach "$VERSION"
+          if [ ! -x scripts/consumer-smoke.sh ]; then
+            echo "::notice::$VERSION predates consumer-smoke; nothing to prove"
+            exit 0
+          fi
+          ./scripts/consumer-smoke.sh "$VERSION"

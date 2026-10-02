@@ -34,6 +34,7 @@ golangci-lint run                     # CI uses golangci-lint v2.13
 ./scripts/schema-compat.sh v0.4.4     # does HEAD open a database that tag created? (the release header's line)
 ./scripts/release-check.sh v0.5.1     # before tagging: a patch that breaks exported API is refused (decisions §5.8)
 ./scripts/release-prep.sh v0.5.1      # release commit: every go.mod requires the version; prints the lockstep tag commands
+./scripts/consumer-smoke.sh v0.5.1    # after the tags are pushed: go get and build every module as a consumer
 ```
 
 ## Layout
@@ -62,7 +63,9 @@ CI builds each module standalone with `GOWORK=off`, so a workspace-only fix can
 hide a missing `go.mod` require — always validate with `./scripts/ci.sh`. The
 reverse hides too: `go.work` is gitignored and CI never reads it, so a module
 missing from the local `use` block drops out of `go test ./...` with no error at
-all — after adding a module, run `go work use ./<module>`.
+all — after adding a module, run `go work use ./<module>`, and list it in
+`scripts/modules.sh`. CI tests HEAD under `replace`, so what a consumer fetches is
+proved only by `scripts/consumer-smoke.sh`, after each release and weekly.
 
 ## Architecture
 
