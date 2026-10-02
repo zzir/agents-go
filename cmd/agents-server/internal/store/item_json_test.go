@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/zzir/agents-go/agents/session"
@@ -57,10 +58,10 @@ func TestNormalizeItemJSONLeavesOtherShapesAlone(t *testing.T) {
 }
 
 func TestAdaptForeignItemJSON(t *testing.T) {
-	if got := adaptForeignItemJSON([]byte(`{"type":"reasoning","id":"rs_1","summary":[]}`)); got != nil {
+	if got := adaptForeignItemJSON([]byte(`{"type":"reasoning","id":"rs_1","summary":[]}`), ""); got != nil {
 		t.Fatalf("reasoning item not dropped: %s", got)
 	}
-	got := adaptForeignItemJSON([]byte(`{"type":"message","role":"assistant","id":"msg_1","content":[{"type":"output_text","text":"hi"}],"status":"completed"}`))
+	got := adaptForeignItemJSON([]byte(`{"type":"message","role":"assistant","id":"msg_1","content":[{"type":"output_text","text":"hi"}],"status":"completed"}`), "")
 	var m map[string]any
 	if err := json.Unmarshal(got, &m); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -104,5 +105,42 @@ func TestNormalizeItemJSONRoundTrip(t *testing.T) {
 	part := parts[0].(map[string]any)
 	if part["type"] != "input_text" || part["text"] != "hello world" {
 		t.Fatalf("round-trip lost text: %s", out)
+	}
+}
+
+// A reasoning item written by another model replays within the backend
+// family that wrote it and is dropped across families (invariant 88); with
+// the family unknown every switch drops it.
+func TestAdaptForeignReasoningStaysInItsFamily(t *testing.T) {
+	claude := []byte(`{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"t"}],"encrypted_content":"thinking_signature:abc"}`)
+	redacted := []byte(`{"type":"reasoning","id":"rs_2","summary":[],"encrypted_content":"redacted_thinking:xyz"}`)
+	gpt := []byte(`{"type":"reasoning","id":"rs_3","summary":[],"encrypted_content":"gAAAAABo"}`)
+	bare := []byte(`{"type":"reasoning","id":"rs_4","summary":[{"type":"summary_text","text":"t"}]}`)
+	cases := []struct {
+		name    string
+		item    []byte
+		backend string
+		kept    bool
+	}{
+		{"claude to claude", claude, "anthropic", true},
+		{"redacted to claude", redacted, "anthropic", true},
+		{"claude to openai", claude, "openai", false},
+		{"gpt to openai", gpt, "openai", true},
+		{"gpt to chatgpt", gpt, "chatgpt", true},
+		{"gpt to claude", gpt, "anthropic", false},
+		{"summary-only to openai", bare, "openai", true},
+		{"summary-only to claude", bare, "anthropic", false},
+		{"claude, family unknown", claude, "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := adaptForeignItemJSON(tc.item, tc.backend)
+			if (got != nil) != tc.kept {
+				t.Fatalf("kept = %v, want %v (%s)", got != nil, tc.kept, got)
+			}
+			if got != nil && strings.Contains(string(got), `"id"`) {
+				t.Fatalf("a kept item keeps its provider id: %s", got)
+			}
+		})
 	}
 }

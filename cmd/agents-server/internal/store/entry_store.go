@@ -83,6 +83,10 @@ type EntryStore struct {
 	// model is what this run targets. Entries produced by a different model are
 	// adapted on the way out; see load.
 	model string
+	// backend is the family the model runs on ("anthropic", or "" / any other
+	// for a Responses-format backend); a foreign reasoning item is kept within
+	// the family that wrote it.
+	backend string
 }
 
 // NewEntryStoreFor returns storage addressed by ref, so the generation is
@@ -106,7 +110,7 @@ func (s *EntryStore) RefFor(ctx context.Context, sessionID string) (session.Ref,
 // forRef returns a handle for another session, carrying this one's run and
 // model.
 func (s *EntryStore) forRef(ref session.Ref) *EntryStore {
-	return &EntryStore{db: s.db, ref: ref, runID: s.runID, model: s.model}
+	return &EntryStore{db: s.db, ref: ref, runID: s.runID, model: s.model, backend: s.backend}
 }
 
 // scoped narrows a query to this session; every read and write of entry rows
@@ -210,6 +214,11 @@ func (s *EntryStore) SetRunID(runID string) { s.runID = runID }
 // SetModel records the model this run targets, so history produced by another
 // one is adapted rather than replayed verbatim into a backend that rejects it.
 func (s *EntryStore) SetModel(model string) { s.model = model }
+
+// SetBackend records the model's backend type (providers.TypeAnthropic or a
+// Responses-format one): another model's reasoning replays within its own
+// family and is dropped across — invariant 88. Unset, every switch drops it.
+func (s *EntryStore) SetBackend(providerType string) { s.backend = providerType }
 
 // Append implements session.Storage. The append point is read and written
 // under the session row's lock (lockSessionIn) — spec §2.5e2.
@@ -466,7 +475,7 @@ func (s *EntryStore) loadIn(ctx context.Context, db bun.IDB, includeCompacted, s
 		// (a reasoning block above all): adapt it, or drop it.
 		if e.Kind == session.EntryKindItem && s.model != "" &&
 			rows[i].SourceModel != "" && rows[i].SourceModel != s.model {
-			adapted := adaptForeignItemJSON(e.Item)
+			adapted := adaptForeignItemJSON(e.Item, s.backend)
 			if adapted == nil {
 				skipped[e.ID] = e.ParentID
 				continue

@@ -146,9 +146,9 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args session.Com
 		if e.Kind != session.EntryKindItem || len(e.Item) == 0 {
 			continue
 		}
-		// Adapted like foreign replay (drop reasoning items, strip
-		// provider-assigned ids): the summary reads content, not provenance.
-		raw := adaptForeignItemJSON(e.Item)
+		// Adapted like foreign replay with the family unknown (drop reasoning
+		// items, strip provider-assigned ids): the summary reads content.
+		raw := adaptForeignItemJSON(e.Item, "")
 		if raw == nil {
 			continue
 		}
@@ -376,7 +376,7 @@ func resetReason(args session.CompactionArgs) string {
 func (ca *CompactionAdapter) recap(ctx context.Context, earlier []string, folded []session.Entry) string {
 	var replayable []session.Entry
 	for _, e := range folded {
-		raw := adaptForeignItemJSON(e.Item)
+		raw := adaptForeignItemJSON(e.Item, "")
 		if raw == nil {
 			continue
 		}

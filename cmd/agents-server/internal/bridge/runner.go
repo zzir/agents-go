@@ -507,6 +507,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	sa := store.NewEntryStoreFor(r.db, sessionRef)
 	sa.SetRunID(runID)
 	sa.SetModel(agent.Model)
+	sa.SetBackend(built.ProviderType)
 	if spec.fresh {
 		// The SESSION's plan phase (invariant 33), and the unlock this run may
 		// perform. Fresh-only: a resume's rebuild already restored it.

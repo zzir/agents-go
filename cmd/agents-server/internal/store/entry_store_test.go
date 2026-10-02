@@ -121,6 +121,41 @@ func TestEntryStoreReplayPolicy(t *testing.T) {
 	}
 }
 
+// A model switch within one backend family keeps the earlier model's
+// reasoning; a switch across families drops it (invariant 88).
+func TestEntryStoreReplayKeepsReasoningWithinTheFamily(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	id := ids(t)
+	s := NewEntryStoreFor(db, session.Direct(id("s1")))
+	s.SetRunID(id("r1"))
+	s.SetModel("claude-a")
+	s.SetBackend("anthropic")
+	seed(t, s,
+		userEntry(t, "hi"),
+		rawEntry(t, `{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"think"}],"encrypted_content":"thinking_signature:sig"}`),
+		rawEntry(t, `{"type":"message","role":"assistant","id":"msg_1","content":[{"type":"output_text","text":"hello"}],"status":"completed"}`),
+	)
+	count := func(model, backend string) int {
+		s.SetModel(model)
+		s.SetBackend(backend)
+		items, err := session.NewSession(s).ContextItems(ctx, session.Cursor{})
+		if err != nil {
+			t.Fatalf("context items: %v", err)
+		}
+		return len(items)
+	}
+	if n := count("claude-b", "anthropic"); n != 3 {
+		t.Fatalf("another Claude replays %d items, want 3 (reasoning kept)", n)
+	}
+	if n := count("gpt-x", "openai"); n != 2 {
+		t.Fatalf("an OpenAI model replays %d items, want 2 (reasoning dropped)", n)
+	}
+	if n := count("claude-b", ""); n != 2 {
+		t.Fatalf("with the family unknown %d items replay, want 2", n)
+	}
+}
+
 // What the runner recorded is what the reader gets. The messages table this
 // replaced kept a column per field the UI wanted and re-derived a display at
 // read time, so everything the SDK knew — provenance, usage, diagnostics — had

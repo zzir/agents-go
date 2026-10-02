@@ -5,9 +5,18 @@ import (
 	"strings"
 )
 
+// The encrypted_content prefixes the Anthropic adapter writes on a reasoning
+// item (models/anthropic); anything else is a Responses-format backend's.
+const (
+	anthropicSignaturePrefix = "thinking_signature:"
+	anthropicRedactedPrefix  = "redacted_thinking:"
+)
+
 // adaptForeignItemJSON adapts an item produced by a different model for
-// replay: reasoning items are dropped (nil), provider-assigned item ids stripped.
-func adaptForeignItemJSON(raw []byte) []byte {
+// replay against backend (a provider type, "" when unknown): a reasoning item
+// is dropped (nil) unless it was written by the same backend family, and
+// provider-assigned item ids are stripped.
+func adaptForeignItemJSON(raw []byte, backend string) []byte {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &m); err != nil {
 		return raw
@@ -17,7 +26,9 @@ func adaptForeignItemJSON(raw []byte) []byte {
 		_ = json.Unmarshal(t, &typ)
 	}
 	if typ == "reasoning" {
-		return nil
+		if backend == "" || reasoningFromAnthropic(m) != (backend == "anthropic") {
+			return nil
+		}
 	}
 	if _, ok := m["id"]; !ok {
 		return raw
@@ -97,4 +108,14 @@ func itemTextJSON(raw []byte) string {
 		b.WriteString(p.Text)
 	}
 	return b.String()
+}
+
+// reasoningFromAnthropic reports whether a reasoning item carries an Anthropic
+// thinking block, by the prefix its adapter puts on encrypted_content.
+func reasoningFromAnthropic(m map[string]json.RawMessage) bool {
+	var enc string
+	if raw, ok := m["encrypted_content"]; ok {
+		_ = json.Unmarshal(raw, &enc)
+	}
+	return strings.HasPrefix(enc, anthropicSignaturePrefix) || strings.HasPrefix(enc, anthropicRedactedPrefix)
 }

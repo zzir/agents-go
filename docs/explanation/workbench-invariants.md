@@ -508,3 +508,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     The model reads the key and cannot write it, so what it holds is what a
     person approved; a later approval replaces it (`bridge/approvals.go`,
     `store/run_memory.go`).
+88. **Another model's reasoning replays within its backend family and is
+    dropped across.** `EntryStore.SetBackend` names the run's provider type;
+    on a model switch a reasoning item whose `encrypted_content` carries the
+    Anthropic prefixes replays to an Anthropic backend and a Responses-format
+    one to a Responses backend, never the other way; with no backend set every
+    switch drops it (`store/item_json.go`).
