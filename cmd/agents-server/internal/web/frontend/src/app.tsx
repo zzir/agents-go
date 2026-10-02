@@ -11,6 +11,7 @@ import { GlobalToast } from '@/layout/GlobalToast';
 import { LoginPage, exchangeErrorTag } from '@/layout/LoginPage';
 import { PanelDialog, type DialogTab } from '@/layout/PanelDialog';
 import { SessionList as SessionListImpl } from '@/features/sessions/SessionList';
+import { AttentionSignals } from '@/features/sessions/AttentionSignals';
 import { ChatView, type ChatViewActions, type InspectorPanel } from '@/features/chat/ChatView';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 
@@ -853,6 +854,7 @@ function App() {
   return (
     <ThemeProvider>
       <MeContext value={meState}>
+        <AttentionSignals announced={sessionStatuses} />
         <AppShell onSettingsOpen={() => handleOpenSettings()} sidebarPane={sidebarPane} railActions={railActions} sidebarOpen={sidebarOpen} onSidebarToggle={setSidebarOpen}>
           {/* A bad turn payload must not take the sidebar, composer and socket
               down with it; switching session or hub tab retries. */}

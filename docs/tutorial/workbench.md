@@ -97,7 +97,10 @@ Now the agent has `read_file`, `write_file`, `list_files`, `apply_patch` and
 `exec_command`. Tick `exec_command` in the agent's **Approvals** checklist and
 every command pauses for you: approve this call, trust this exact command for
 the session, or trust every command. **Reject** can carry a reason, which the
-model reads as that call's result. The top
+model reads as that call's result. A session waiting on you is marked in the
+sidebar of every tab and counted in the page title; the account menu's
+**Notify me when a session needs me** adds a desktop notification while the
+page is in the background. The top
 bar's project menu opens a **terminal** into the same container, sets the
 project's **Environment…** (the variables its container is created with;
 write-only, like every credential), exports the working tree as a tar, shows

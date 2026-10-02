@@ -495,3 +495,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     its closing tag escaped, followed by a fixed not-the-person line; a task's
     notification closes with the same statement. No tool the model can call
     resolves an approval. Delimiting is mitigation, not defense (decisions §5.80).
+86. **What tells a person a session needs them renders the server's status and
+    derives none.** The sidebar's bars, the page title's count, the spoken
+    line and the opt-in desktop notification all read the list's rows under
+    what `session.status` announced since (invariant 3). A notification is
+    this browser's choice, asked for on a click, shown only while the page is
+    hidden (`lib/attention.ts`, `AttentionSignals.tsx`).
