@@ -60,8 +60,8 @@ type RecoveryReport struct {
 func (r RecoveryReport) NeedsRecovery() bool { return len(r.UnfinishedCalls) > 0 }
 
 // Recover repairs a session left inconsistent by a crash: a function_call
-// with no output, which makes the history unloadable. The repair is an
-// append of synthesized outputs; nothing is rewritten — spec §2.5h.
+// with no output, which the runner would drop unseen. The repair is an append
+// of synthesized outputs; nothing is rewritten — spec §2.5h.
 func Recover(ctx context.Context, sess *Session, policy RecoveryPolicy) (RecoveryReport, error) {
 	var report RecoveryReport
 	if sess == nil {

@@ -371,8 +371,8 @@ For the provider-agnostic, append-only alternative see [Run-level compaction](#r
 ## Recovering from a crash
 
 A process killed between issuing a tool call and recording its output leaves a
-`function_call` with no output, which the Responses API refuses to load at all.
-`session.Recover` repairs it:
+`function_call` with no output. The runner drops such a call when it builds
+input, so the model never learns it was issued. `session.Recover` repairs it:
 
 ```go
 report, err := session.Recover(ctx, sess, session.RecoveryPolicy{

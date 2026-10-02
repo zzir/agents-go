@@ -415,9 +415,10 @@ three:
   raw response events.
 - **`safePersistBoundary`: the stored conversation never contains a function
   call without its output.** A run paused for approval withholds the pending
-  `function_call` items and writes them with their outputs after resume. The
-  guarantee does not survive an abnormal process exit;
-  [§2.5h](#25h-crash-recovery) repairs that.
+  `function_call` items and writes them with their outputs after resume.
+- **Two things break that guarantee**: an abnormal process exit, which
+  [§2.5h](#25h-crash-recovery) repairs, and an `openai.ConversationsSession`
+  write failing between its 20-item batches, each committed on its own.
 - **Entries are append-only** ([§2.5b](#25b-session-entries)).
 
 ### 2.5b Session entries
@@ -776,8 +777,10 @@ Compaction predicts; overflow recovery reacts where the prediction was wrong.
 `session.Recover` repairs a session a killed process left inconsistent.
 
 - **The damage is specific**: a run killed between issuing a tool call and
-  recording its output leaves a `function_call` with no `function_call_output`,
-  which the Responses API rejects outright — the session is **unloadable**.
+  recording its output leaves a `function_call` with no `function_call_output`.
+- **The runner drops a dangling call when it builds input**
+  ([§2.1b](#21b-items)), so without the repair the model never learns the call
+  was issued.
 - **The repair appends**: a synthesized error output is added and nothing is
   rewritten.
 - **The synthesized output says what happened** and warns against assuming the
@@ -861,8 +864,8 @@ only.
   never decides.
 - **Tool stages run in order and stop at the first `Replace` or `Trip`.**
 - **A non-`Blocking` input guardrail runs concurrently with the model call, and
-  a tripwire cancels the in-flight call**: it is not billed and produces no
-  response event.
+  a tripwire cancels the in-flight call**: its usage is not recorded and it
+  produces no completed-response event.
 - **A model call that fails on its own cancels the racing guardrails.** A
   verdict already delivered still wins; the guardrails' own cancellation error
   never masks the model's error.
@@ -997,7 +1000,7 @@ The loop's own failure modes, where an agent keeps going and gets nowhere:
   error output, so a turn of only such calls counts.
 - **`ToolLoop.FinalTurnWithoutTools` is opt-in.** With it, an exhausted turn
   budget buys one more model call **with no tools and no handoffs**, so the
-  model closes out in prose. Opt-in, since the budget may be a cost ceiling.
+  model closes out in prose.
 - **One `Sequential` tool serializes the whole batch.**
 
 ### 2.7e Truncated responses
@@ -1952,7 +1955,8 @@ Defaults that callers may depend on:
 that they therefore appear in nearly every exported signature by way of
 `InputItem` and friends. What neither records is the consequence for §5.8:
 **an `openai-go` v3 → v4 bump is transitively breaking for every downstream
-package**, since their signatures name those aliased types.
+package**, since their signatures name those aliased types. A minor is no
+safer — §5.5b records one that retyped a field.
 
 That is survivable before v1.0.0, where §5.8 allows breaking minors. After it,
 a v1 that promises compatibility is implicitly promising `openai-go/v3`. Three
@@ -1972,8 +1976,9 @@ Whichever is taken, it belongs in §5 before v1.0.0 is tagged.
 The `skills` module's only non-root direct dependency is `gopkg.in/yaml.v3`,
 which brings zero transitive requirements — not the heavy dependency §5.7
 makes the sole justification for a submodule. Folding `skills` back into the
-root module is the consistent move, but it is a breaking module change
-(import paths move), so it waits for a breaking window. Open until decided.
+root module is the consistent move. Folding keeps the import path but deletes
+a module someone may require, so it rides the next breaking minor. Open until
+decided.
 
 When a new case comes up that this document does not answer, add it here with
 the options under consideration.
