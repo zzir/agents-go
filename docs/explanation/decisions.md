@@ -121,6 +121,9 @@ serialization and a second lifecycle; nested runs already give independent
 sessions and configuration, and the isolation is not worth the machinery at
 this scale.
 
+**Cost accepted.** A process exit — a crash or an OOM kill — ends every task
+in flight with it.
+
 Rules: spec §2.13.
 
 ### 5.6b Tracing stays vendor-neutral; OTel export is the consumer's job
@@ -490,7 +493,7 @@ Rules: spec §2.16.
 ### 5.22 Retry policy lives in one layer
 
 **Decision.** `openai.NewProvider` and `anthropic.NewProvider` build their
-clients with `WithMaxRetries(0)`; the SDK's one retry layer is
+clients with `WithMaxRetries(0)`; the one retry layer for a model call is
 `NewRetryModel` — provider-agnostic, classifiable (`RetryIf`) and observable
 (a span per attempt). A provider used without it performs no retries; a
 caller's own `option.WithMaxRetries` is appended after the default and
@@ -640,7 +643,8 @@ the sandbox delete refuses instead.
 
 **Cost accepted.** Deletion and binding contracts settle in SQL per dialect —
 single-statement guards on SQLite, parent-row locks on PostgreSQL — two
-shapes to keep equivalent.
+shapes to keep equivalent. Sessions, forks and tasks on one project share its
+tree; a regenerate or fork rewinds the transcript, not the files.
 
 Rules: workbench invariant 27 (binding, fences, locks); the operational
 surface is [Projects](../reference/protocol.md#projects--apiv1projects).
@@ -688,9 +692,9 @@ flip is defined FROM the other scope only, so two racing demotes cannot both
 flip a row.
 
 **Cost accepted.** A member's published row stays theirs to change after the
-admin approved it. Member-supplied URLs (MCP endpoints, skill imports) get
-**no private-network/SSRF defense**: the deployment model is one team, one
-trust boundary, and egress control is applied outside the server.
+admin approved it. Member-supplied URLs (MCP endpoints, provider base URLs,
+skill imports) get **no private-network/SSRF defense**: one team, one trust
+boundary, and egress control is applied outside the server.
 
 Rules: workbench invariant 42 (the in-write re-check); the status matrix and
 list ordering are in [the wire surface](../reference/protocol.md#authorization).
@@ -989,9 +993,10 @@ reach the model without a storage read. The AWS SDK — the server module's
 heaviest dependency for two calls.
 
 **Cost accepted.** Anyone holding a link can read that image; the setting
-says so. The scheme constant lives in `store` beside the row it names,
-because `attachments` → `settings` → `store` leaves the client package
-unable to own it without a cycle.
+says so. An install without a bucket has no image input — attachment storage
+is a power-user step (scope §1.1). The scheme constant lives in `store`
+beside the row it names, because `attachments` → `settings` → `store` leaves
+the client package unable to own it without a cycle.
 
 Rules: workbench invariants 56–58.
 

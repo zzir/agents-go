@@ -79,9 +79,9 @@ budgets exist, each answering `429` with code `rate_limited` when exceeded:
 The model is **one team, one trust boundary**. Three consequences an operator
 owns from outside the server:
 
-- **Member-supplied URLs are not SSRF-guarded.** MCP server endpoints and skill
-  imports are outbound requests to addresses a member typed, with no
-  private-network defence (decisions §5.29). Confine egress at the network — a
+- **Member-supplied URLs are not SSRF-guarded.** MCP server endpoints, provider
+  base URLs and skill imports are outbound requests to addresses a member
+  typed, with no private-network defence (decisions §5.29). Confine egress at the network — a
   proxy allowlist, or `proxy_url` in
   [runtime settings](../reference/configuration.md#runtime-settings) — if
   members are not fully trusted or the server can reach an internal network.
