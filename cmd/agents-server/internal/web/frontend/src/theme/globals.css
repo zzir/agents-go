@@ -813,6 +813,11 @@ textarea.textarea-grow.textarea-rows-4 {
 .form-label-note {
     margin-left: var(--base-size-4);
 }
+/* A selected reference the list no longer carries (invariant 13). */
+.form-dangling-note {
+    color: var(--fgColor-attention);
+    margin-bottom: var(--base-size-4);
+}
 .skill-editor textarea {
     font-family: var(--fontStack-monospace);
     font-size: var(--base-text-size-xs);

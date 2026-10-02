@@ -79,6 +79,18 @@ export function toggleListEntry(list: string[], name: string, on: boolean): stri
   return on ? (list.includes(name) ? list : [...list, name]) : list.filter(t => t !== name);
 }
 
+// danglingRefs returns the selected ids no listed row carries: rows deleted,
+// or no longer referenceable from this agent's scope (invariant 13).
+export function danglingRefs(selected: string[], visibleIds: string[]): string[] {
+  const known = new Set(visibleIds);
+  return selected.filter(id => !known.has(id));
+}
+
+// danglingNote is the one line the editor shows for them.
+export function danglingNote(count: number, noun: string): string {
+  return `${count} selected ${noun}${count === 1 ? '' : 's'} no longer exist${count === 1 ? 's' : ''} or cannot be referenced here — saving removes ${count === 1 ? 'it' : 'them'}.`;
+}
+
 // A fallback entry as the API carries it: a provider by id, or — read-only,
 // from before provider_id — the endpoint the entry named.
 export interface FallbackEntry { provider_id?: string; model?: string; provider_type?: string; base_url?: string }
@@ -312,6 +324,9 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
     set('fallback_models', fallbacks.map((e, j) => j === i ? { provider_id: fallbackProviderId(e), model: e.model, ...patch } : e));
   const visibleMcp = (mcpServers || []).filter(refOK);
   const visibleSkills = (skills || []).filter(refOK);
+  // A selected id the loaded list lacks is dangling; before the list loads
+  // nothing is counted or dropped.
+  const danglingMcp = mcpServers ? danglingRefs(selectedMcp, visibleMcp.map(s => String(s.id))) : [];
   const handoffTargets = (allAgents || []).filter(a => a.id !== initial?.id && refOK(a));
   const handoffCollisions = collidingNames(handoffTargets);
   const toggleHandoff = (id: string | number) => {
@@ -325,6 +340,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
   // before any effect/interaction has run. The selection stores skill IDS.
   const allSkillIds = visibleSkills.map(sk => sk.id);
   const effectiveSkills = selectedSkills ?? allSkillIds;
+  const danglingSkills = skills && selectedSkills ? danglingRefs(selectedSkills, allSkillIds) : [];
   const toggleSkill = (id: string) => {
     setSelectedSkills(prev => {
       const base = prev ?? allSkillIds;
@@ -447,8 +463,9 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
           description="Sends these instructions alone, even when empty; the global System prompt is not prepended." />
       </div>
 
-      {visibleMcp.length > 0 && <div className="form-group">
+      {(visibleMcp.length > 0 || danglingMcp.length > 0) && <div className="form-group">
         <div className="form-group-title">MCP servers</div>
+        {danglingMcp.length > 0 && <div className="FormControl-caption form-dangling-note">{danglingNote(danglingMcp.length, 'MCP server')}</div>}
         <div className="form-checkbox-group">
           {visibleMcp.map(s => {
             // A disabled server cannot be picked; one that is picked can
@@ -471,8 +488,9 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
         <div className="FormControl-caption">Which MCP servers this agent can use. One not connected right now is still selectable — its tools appear once it connects; a disabled one is not.</div>
       </div>}
 
-      {visibleSkills.length > 0 && <div className="form-group">
+      {(visibleSkills.length > 0 || danglingSkills.length > 0) && <div className="form-group">
         <div className="form-group-title">Skills</div>
+        {danglingSkills.length > 0 && <div className="FormControl-caption form-dangling-note">{danglingNote(danglingSkills.length, 'skill')}</div>}
         <div className="form-checkbox-group">
           {skillGroups.map(group => {
             const ids = group.skills.map(sk => sk.id);
@@ -724,7 +742,10 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
             try { numbers[k] = parseWholeNumber(form[k], label); }
             catch (e) { toast.error((e as Error).message); return; }
           }
-          const flatPayload = { ...form, ...numbers, fallback_models, handoffs: selectedHandoffs, tools: selectedMcp, skills: effectiveSkills, model_settings };
+          // Dangling ids leave the saved row; what the editor cannot show it does not write back.
+          const tools = selectedMcp.filter(id => !danglingMcp.includes(id));
+          const skillIds = effectiveSkills.filter(id => !danglingSkills.includes(id));
+          const flatPayload = { ...form, ...numbers, fallback_models, handoffs: selectedHandoffs, tools, skills: skillIds, model_settings };
           onSave(nestConfig(flatPayload) as unknown as AgentFormData & AgentLists);
         }}
         onCancel={onCancel}

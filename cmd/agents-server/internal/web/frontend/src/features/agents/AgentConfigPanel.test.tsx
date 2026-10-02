@@ -6,7 +6,7 @@ vi.mock('@primer/react', () => ({}));
 vi.mock('@primer/react/experimental', () => ({}));
 vi.mock('@/lib/hooks', () => ({ useApi: () => ({}), useCrud: () => ({}) }));
 vi.mock('@/lib/api', () => ({ api: {} }));
-import { APPROVABLE_TOOLS, CONFIG_GROUPS, flattenConfig, legacyFallbackProvider, nestConfig, resolveFallbackEntry, toggleListEntry } from '@/features/agents/AgentConfigPanel';
+import { APPROVABLE_TOOLS, CONFIG_GROUPS, danglingNote, danglingRefs, flattenConfig, legacyFallbackProvider, nestConfig, resolveFallbackEntry, toggleListEntry } from '@/features/agents/AgentConfigPanel';
 
 describe('flattenConfig / nestConfig', () => {
   // A distinct value per grouped key, so a key that fell out or landed in the
@@ -107,5 +107,25 @@ describe('resolveFallbackEntry', () => {
   it('a legacy endpoint entry resolves to its match, or is unreachable', () => {
     expect(resolveFallbackEntry({ provider_type: 'anthropic', base_url: 'https://api.anthropic.com/' }, providers)).toEqual({ providerId: 'anth', unreachable: false });
     expect(resolveFallbackEntry({ provider_type: 'openai', base_url: '' }, providers)).toEqual({ providerId: '', unreachable: true });
+  });
+});
+
+describe('danglingRefs', () => {
+  it('is empty when every selected id is listed', () => {
+    expect(danglingRefs(['m1', 'm2'], ['m2', 'm1', 'm3'])).toEqual([]);
+  });
+
+  it('names the selected ids the list lacks, in selection order', () => {
+    expect(danglingRefs(['m1', 'gone', 'm2', 'lost'], ['m1', 'm2'])).toEqual(['gone', 'lost']);
+  });
+
+  it('is empty for an empty selection, whatever is listed', () => {
+    expect(danglingRefs([], [])).toEqual([]);
+    expect(danglingRefs([], ['m1'])).toEqual([]);
+  });
+
+  it('words the note for one and for several', () => {
+    expect(danglingNote(1, 'skill')).toBe('1 selected skill no longer exists or cannot be referenced here — saving removes it.');
+    expect(danglingNote(3, 'MCP server')).toBe('3 selected MCP servers no longer exist or cannot be referenced here — saving removes them.');
   });
 });

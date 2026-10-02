@@ -123,7 +123,8 @@ func (h *AgentConfigHandler) validateAgentConfig(c *gin.Context, ac *store.Agent
 		}
 	}
 	// MCP servers, skills and handoff targets must be ones this scope may
-	// name; missing ids are tolerated (the run filters them loudly).
+	// name; a missing id is tolerated: the run drops it, the editor counts
+	// it and drops it on its next save (invariant 13).
 	for _, id := range spec.Tools {
 		if ms, err := h.mcpServers.Get(c.Request.Context(), id); err == nil {
 			if !store.RefVisible(ms.Scope, ms.OwnerID, ac.Scope, ac.OwnerID) {
