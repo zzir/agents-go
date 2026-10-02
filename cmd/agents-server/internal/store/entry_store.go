@@ -159,6 +159,35 @@ func (s *EntryStore) RunHasItems(ctx context.Context, runID string) (bool, error
 	return exists, nil
 }
 
+// RunEndsWithUserInputs reports whether the run's newest item entries are user
+// messages carrying texts, in order — what a write that closed on them leaves.
+func (s *EntryStore) RunEndsWithUserInputs(ctx context.Context, runID string, texts []string) (bool, error) {
+	var rows []entryRow
+	err := s.scoped(s.db.NewSelect().Model(&rows)).
+		Column("entry").
+		Where("run_id = ?", runID).
+		Where("kind = ?", string(session.EntryKindItem)).
+		OrderExpr("seq DESC").
+		Limit(len(texts)).
+		Scan(ctx)
+	if err != nil {
+		return false, fmt.Errorf("reading run %s's last entries: %w", runID, err)
+	}
+	if len(rows) != len(texts) {
+		return false, nil
+	}
+	for i, want := range texts {
+		var e session.Entry
+		if err := json.Unmarshal([]byte(rows[len(rows)-1-i].Entry), &e); err != nil {
+			return false, fmt.Errorf("decoding run %s's last entries: %w", runID, err)
+		}
+		if e.Source.Type != agents.SourceUser || itemTextJSON(e.Item) != want {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 // RefFor resolves the generation currently answering to a session id. Only
 // "no such session" is absence; a failure to look is an error (spec §2.5e2).
 func RefFor(ctx context.Context, db bun.IDB, sessionID string) (session.Ref, error) {

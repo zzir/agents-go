@@ -368,6 +368,9 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 		return res
 	}
 
+	// What the stream showed since the SDK's last write: a failure records it.
+	var partial streamedPartial
+
 	// failCancelled ends the segment as a cancellation: save the abandoned
 	// turn (on its own context), then run.cancelled.
 	failCancelled := func(turn partialTurn) *RunOutcome {
@@ -403,6 +406,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 			model:            model,
 			userInput:        spec.input,
 			userAttachments:  spec.attachmentIDs,
+			injected:         partial.injected,
 			partialReasoning: partialReasoning,
 			partialText:      partialText,
 		}
@@ -419,7 +423,6 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 
 	// A panic below fails THIS segment, not the process; recovered here so
 	// failTurn records it durably with whatever the stream had shown.
-	var partial streamedPartial
 	defer func() {
 		if p := recover(); p != nil {
 			log.Error("run panicked", "run_id", runID, "panic", p, "stack", string(debug.Stack()))

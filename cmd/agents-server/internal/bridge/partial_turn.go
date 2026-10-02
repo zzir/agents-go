@@ -24,6 +24,9 @@ type partialTurn struct {
 	// userAttachments are its image attachment ids.
 	userInput       string
 	userAttachments []string
+	// injected are queued inputs the run announced as read (run.injected) after
+	// its last write; the failed attempt took them back.
+	injected []string
 	// annRole is the trailing marker's kind, "cancelled" or "error", and annMsg
 	// its optional detail. Empty annRole writes no marker.
 	annRole string
@@ -42,7 +45,8 @@ type partialTurn struct {
 }
 
 // savePartialTurn records what the SDK cannot for a cancelled or failed run: streamed
-// reasoning/text and a stop marker as annotations, plus the prompt if unpersisted.
+// reasoning/text and a stop marker as annotations, plus the prompt and any
+// injected input left unpersisted.
 func (r *Runner) savePartialTurn(t partialTurn) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -65,6 +69,22 @@ func (r *Runner) savePartialTurn(t partialTurn) {
 				continue
 			}
 			entries = append(entries, e)
+		}
+	}
+
+	// An input the run read stays in the transcript, like the prompt. One read
+	// at the final output was written before its announcement: not twice.
+	if len(t.injected) > 0 {
+		if held, err := es.RunEndsWithUserInputs(ctx, t.runID, t.injected); err != nil || !held {
+			for _, text := range t.injected {
+				for _, item := range agents.InputItemsFromText(text) {
+					e, err := session.NewItemEntry(item, agents.Source{Type: agents.SourceUser})
+					if err != nil {
+						continue
+					}
+					entries = append(entries, e)
+				}
+			}
 		}
 	}
 

@@ -12,8 +12,9 @@ import (
 // The stream bridge translates one way only: SDK run events into protocol
 // envelopes. It decides nothing about the run (that is runner.go's).
 
-// drainStream forwards a run's events to the hub, buffering unpersisted reasoning and
-// text for an abort; the buffer resets on ItemsPersistedEvent, which no delta races.
+// drainStream forwards a run's events to the hub, buffering unpersisted reasoning,
+// text and injected input for an abort; the buffer resets on ItemsPersistedEvent,
+// which no delta races.
 func (r *Runner) drainStream(stream agents.RunStream, runID string, send func(string, any), partial *streamedPartial, agentIDs map[string]string) (res *agents.RunResult, runErr error) {
 	text, reasoning := &partial.text, &partial.reasoning
 	for event, err := range stream {
@@ -24,7 +25,11 @@ func (r *Runner) drainStream(stream agents.RunStream, runID string, send func(st
 		if _, ok := event.(*agents.ItemsPersistedEvent); ok {
 			text.Reset()
 			reasoning.Reset()
+			partial.injected = nil
 			continue
+		}
+		if it, ok := event.(*agents.RunItemStreamEvent); ok && it.Item.Kind == agents.ItemInjectedInput && it.Item.RawInput != nil {
+			partial.injected = append(partial.injected, session.ItemText(*it.Item.RawInput))
 		}
 		if done, ok := event.(*agents.RunCompletedEvent); ok {
 			// The stream's terminal event carries the finished run; it is the
@@ -58,7 +63,11 @@ func (r *Runner) drainStream(stream agents.RunStream, runID string, send func(st
 
 // streamedPartial is what the stream showed since the SDK last persisted —
 // held by the caller so a panic mid-stream can still record it.
-type streamedPartial struct{ text, reasoning strings.Builder }
+type streamedPartial struct {
+	text, reasoning strings.Builder
+	// injected are the queued inputs the run announced as read since then.
+	injected []string
+}
 
 func (p *streamedPartial) Text() string      { return p.text.String() }
 func (p *streamedPartial) Reasoning() string { return p.reasoning.String() }
