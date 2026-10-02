@@ -56,6 +56,12 @@ export function notifyUnavailable(): string {
  *  conversation: a newer one for the same session replaces the older. */
 export function notifyAttention(message: string, sessionId: string): boolean {
   if (!loadNotifyPref() || notifyUnavailable() || Notification.permission !== 'granted' || !document.hidden) return false;
-  new Notification(APP_TITLE, { body: message, tag: 'session-' + sessionId });
+  // Chrome for Android has the API and throws on the constructor (it wants a
+  // service worker): no notification there, and no crash.
+  try {
+    new Notification(APP_TITLE, { body: message, tag: 'session-' + sessionId });
+  } catch {
+    return false;
+  }
   return true;
 }

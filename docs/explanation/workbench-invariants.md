@@ -426,8 +426,8 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     back re-reads the session on screen (timeline under its live tail, task
     rows never moving backwards, stored trace rows winning), unmarks every
     other loaded one so its next select refetches, and relists the sidebar,
-    whose statuses replace what `session.status` announced; while hidden, on
-    the next visible moment (`resyncSessions`, `useAgentSocket.ts`).
+    whose statuses replace what `session.status` announced. Hidden, it relists
+    at once and re-reads the rest when next visible (`resyncSessions`).
 74. **A person reads "session".** Every label, empty state, toast, dialog
     title and column a person sees names the thing a session — never
     conversation or chat; the code, the API and `session_id` were already

@@ -23,7 +23,8 @@ interface MessageInputProps {
   // onQueue, while a run is live, takes what is typed instead of onSend: a
   // steer the run reads at its next step, or a follow-up for when it ends.
   // Text only — an image, /plan and /workflow belong to a new run.
-  onQueue?: (text: string, queue: 'steer' | 'follow_up') => void;
+  // It answers false when nothing took the text, which then stays typed.
+  onQueue?: (text: string, queue: 'steer' | 'follow_up') => boolean;
   // allowAttachments gates every image affordance: attachment storage is
   // configured AND the picked agent has Vision on.
   allowAttachments?: boolean;
@@ -200,7 +201,7 @@ export function MessageInput({ sessionId, onSend, onCancel, disabled, blocked, h
       toast.info('/plan and /workflow start a new run — send it when this one finishes');
       return;
     }
-    onQueue(trimmed, queue);
+    if (!onQueue(trimmed, queue)) return;
     setText('');
     clearDraft(sessionId);
   };

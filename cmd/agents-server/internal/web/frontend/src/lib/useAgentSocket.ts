@@ -685,6 +685,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
         if (p.run_id) dropRunRefs(p.run_id);
         if (staleSid) {
           updateSS(staleSid, s => ({ ...s, streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null }));
+          if (p.run_id) putBackUnread(staleSid, p.run_id);
           reloadMessages(staleSid);
         }
         return;
@@ -924,7 +925,14 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
       // says so): the app refetches who we are.
       window.dispatchEvent(new Event(ME_RELOAD));
       for (const runId of Object.values(sessionRunRef.current)) resubscribe(runId, undefined, false);
-      if (document.visibilityState === 'hidden') { resyncPending = true; return; }
+      if (document.visibilityState === 'hidden') {
+        // The sidebar's statuses feed the title count, which is read exactly
+        // when the tab is hidden: relist now, re-read the rest when seen.
+        eventsRef.current.onStatus(null);
+        invalidate('sessions');
+        resyncPending = true;
+        return;
+      }
       resyncPending = false;
       resyncSessions();
     };

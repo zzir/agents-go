@@ -85,6 +85,18 @@ describe('desktop notifications', () => {
     expect(shown).toHaveLength(1);
   });
 
+  // Chrome for Android has the API and throws from the constructor: that is
+  // no notification, not a crash.
+  it('is quiet where the platform refuses the constructor', () => {
+    class Refusing {
+      static permission: NotificationPermission = 'granted';
+      constructor() { throw new TypeError('Illegal constructor'); }
+    }
+    g.Notification = Refusing;
+    saveNotifyPref(true);
+    expect(notifyAttention('Deploy failed', 's1')).toBe(false);
+  });
+
   it('shows none the browser did not grant', () => {
     const shown = stubNotification('denied');
     saveNotifyPref(true);

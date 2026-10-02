@@ -360,12 +360,13 @@ function App() {
     const tryLoad = () => loadSession(activeSession).catch(() => {
       if (ssRef.current[activeSession]?.messages.length) toast.error('Could not refresh the conversation');
     });
+    const pendingGen = ++ownPendingGen.current;
     api.sessions.get(activeSession)
       .then((sess) => {
         if (cancelled) return;
         const s = sess as { name?: string; project_id?: string; agent_config_id?: string };
-        ownPendingGen.current++;
-        readOwnPending(activeSession, sess);
+        // A re-read a status announcement started since is the newer answer.
+        if (pendingGen === ownPendingGen.current) readOwnPending(activeSession, sess);
         // A binding announced while this fetch was in flight wins: the fetch
         // read the row before the bind landed, and bindings never change.
         const announced = announcedBindings.current[activeSession];
@@ -544,13 +545,12 @@ function App() {
   // handleInject queues a message on the conversation's live run — a steer it
   // reads at its next step, or a follow-up it takes once it finishes. What
   // could not be queued goes back to the box it was typed in.
-  const handleInject = useCallback((text: string, queue: InjectQueue) => {
+  const handleInject = useCallback((text: string, queue: InjectQueue): boolean => {
     const sid = activeSession;
     const runId = sid ? ssRef.current[sid]?.liveRunId : null;
     if (!sid || !runId) {
-      putBackInComposer(sid || '', true, text);
       toast.info('The run just ended — send it as a new message');
-      return;
+      return false;
     }
     const item = { clientMsgId: nextClientMsgId(), runId, text, queue };
     queueInput(sid, item);
@@ -560,6 +560,7 @@ function App() {
       putBackInComposer(sid, activeSessionRef.current === sid, text);
       toast.error(e?.status === 409 ? `Not queued — ${e.message}` : 'Could not queue the message — it is back in the box');
     });
+    return true;
   }, [activeSession, queueInput, dropQueued]);
 
   // handleCancel reports whether the stop was SENT: no live run to stop, or a

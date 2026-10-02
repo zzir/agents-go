@@ -103,7 +103,8 @@ export interface ChatViewActions {
   onApprove?: (id: string, scope?: string) => void;
   onReject?: (id: string, reason?: string) => void;
   // Queues a message on the session's live run: a steer, or a follow-up.
-  onInject?: (text: string, queue: InjectQueue) => void;
+  // False when there was no run to queue on: the text stays in the box.
+  onInject?: (text: string, queue: InjectQueue) => boolean;
   onFork?: (id: string) => void;
   // Switches the session's active branch to another attempt.
   onSwitchBranch?: (tipEntryId: string) => void;
@@ -309,8 +310,9 @@ export function ChatView({
   // A message typed while the run is live is queued on it; like a send, it
   // follows the log again (invariant 18).
   const handleQueue = useCallback((text: string, queue: InjectQueue) => {
+    if (!onInject?.(text, queue)) return false;
     scrollToBottom();
-    onInject?.(text, queue);
+    return true;
   }, [onInject, scrollToBottom]);
 
   // Image affordances follow the PICKED agent's Vision flag; the server
@@ -795,16 +797,16 @@ export function ChatView({
         <ChatToc items={tocItems} scrollElRef={chatElRef} onJump={jumpToMsg} />
         </div>
         <WorkflowStrip />
-        {queued.length > 0 && (
-          <div className="chat-queued" aria-live="polite">
-            {queued.map(q => (
-              <div key={q.clientMsgId} className="chat-queued-item">
-                <span className="chat-queued-note">{q.queue === 'follow_up' ? 'Queued · sent when this run finishes' : 'Queued · read after the current step'}</span>
-                <span className="chat-queued-text">{q.text}</span>
-              </div>
-            ))}
-          </div>
-        )}
+        {/* Mounted empty: a live region announces what is added to it, not
+            what it arrives holding. */}
+        <div className="chat-queued" aria-live="polite">
+          {queued.map(q => (
+            <div key={q.clientMsgId} className="chat-queued-item">
+              <span className="chat-queued-note">{q.queue === 'follow_up' ? 'Queued · sent when this run finishes' : 'Queued · read after the current step'}</span>
+              <span className="chat-queued-text">{q.text}</span>
+            </div>
+          ))}
+        </div>
         <MessageInput
           key={`input-${sessionId}`}
           sessionId={sessionId}

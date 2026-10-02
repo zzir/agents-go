@@ -674,6 +674,7 @@
   max-width: var(--composer-max-width);
   margin: 0 auto var(--base-size-4);
 }
+.chat-queued:empty { margin-bottom: 0; }
 .chat-queued-item {
   display: flex; align-items: baseline; gap: var(--base-size-8);
   padding: var(--base-size-4) var(--base-size-8);

@@ -152,8 +152,14 @@ describe('useAgentSocket reconnect', () => {
     const t = await mount(() => S1);
     await act(async () => { await t.hook().loadSession(S1); });
     visibility = 'hidden';
+    vi.mocked(invalidate).mockClear();
+    vi.mocked(t.events.onStatus).mockClear();
     await t.reconnect();
     expect(apiMock.sessions.messages).toHaveBeenCalledTimes(1);
+    // The sidebar is relisted at once: the title's count is read by exactly
+    // the person who is not looking at this tab.
+    expect(invalidate).toHaveBeenCalledWith('sessions');
+    expect(t.events.onStatus).toHaveBeenCalledWith(null);
     visibility = 'visible';
     await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
     expect(apiMock.sessions.messages).toHaveBeenCalledTimes(2);
@@ -238,6 +244,20 @@ describe('useAgentSocket queued input', () => {
     });
     expect(t.store[S1].queued).toEqual([]);
     expect(vi.mocked(putBackInComposer).mock.calls).toEqual([[S1, true, 'first\nsecond']]);
+    await t.unmount();
+  });
+
+  // The server no longer knows the run (it restarted, or the run ended long
+  // ago): what was queued on it comes back, as when the run ends in sight.
+  it('returns what was queued on a run the server no longer knows', async () => {
+    const t = await mount(() => S1);
+    await act(async () => {
+      t.sock().receive(EV.runStarted, { session_id: S1, run_id: RUN, input: 'deploy' });
+      t.hook().queueInput(S1, queued('c1', 'then tag it', 'follow_up'));
+    });
+    await act(async () => { t.sock().receive(EV.runError, { run_id: RUN, code: ERR.runNotFound, message: 'run not found' }); });
+    expect(t.store[S1].queued).toEqual([]);
+    expect(vi.mocked(putBackInComposer).mock.calls).toEqual([[S1, true, 'then tag it']]);
     await t.unmount();
   });
 

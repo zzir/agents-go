@@ -154,7 +154,7 @@ describe('MessageInput keys', () => {
 
 describe('MessageInput while a run is live', () => {
   const live = (extra: Partial<Parameters<typeof MessageInput>[0]> = {}) => {
-    const onQueue = vi.fn();
+    const onQueue = vi.fn(() => true);
     return { onQueue, ...mount({ running: true, disabled: true, onQueue, ...extra }) };
   };
 
@@ -170,6 +170,17 @@ describe('MessageInput while a run is live', () => {
     // Nothing typed, nothing queued.
     m.key('Enter');
     expect(m.onQueue).toHaveBeenCalledTimes(1);
+    m.unmount();
+  });
+
+  // The run ended under the keypress: nothing took the text, so it stays.
+  it('keeps what is typed when nothing took it', () => {
+    const m = live();
+    m.onQueue.mockReturnValueOnce(false);
+    m.type('use staging instead');
+    m.key('Enter');
+    expect(m.onQueue).toHaveBeenCalledTimes(1);
+    expect(m.textarea().value).toBe('use staging instead');
     m.unmount();
   });
 

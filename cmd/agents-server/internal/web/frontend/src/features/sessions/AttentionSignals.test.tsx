@@ -1,20 +1,23 @@
 // @vitest-environment jsdom
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, useEffect, useState } from 'react';
+import { act, useCallback, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
-const { rows } = vi.hoisted(() => ({ rows: { value: [] as { id: string; name: string; status?: string }[] } }));
-vi.mock('@/lib/api', () => ({ api: { sessions: { list: async () => rows.value } } }));
+// rows.value is what the list endpoint answers; lists counts the reads.
+const { rows } = vi.hoisted(() => ({ rows: { value: [] as { id: string; name: string; status?: string }[], lists: 0 } }));
+vi.mock('@/lib/api', () => ({ api: { sessions: { list: async () => { rows.lists++; return rows.value; } } } }));
 vi.mock('@/lib/hooks', () => ({
   useApi: (fetcher: () => Promise<unknown>) => {
     const [data, setData] = useState<unknown>(null);
+    const [gen, setGen] = useState(0);
     useEffect(() => {
       let alive = true;
       fetcher().then(d => { if (alive) setData(d); });
       return () => { alive = false; };
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
-    return { data, loading: data === null, error: null, reload: () => {}, mutateData: () => {} };
+    }, [gen]);
+    const reload = useCallback(() => setGen(n => n + 1), []);
+    return { data, loading: data === null, error: null, reload, mutateData: () => {} };
   },
 }));
 const notify = vi.hoisted(() => vi.fn());
@@ -26,7 +29,7 @@ const g = globalThis as Record<string, unknown>;
 let savedActEnv: unknown;
 beforeAll(() => { savedActEnv = g.IS_REACT_ACT_ENVIRONMENT; g.IS_REACT_ACT_ENVIRONMENT = true; });
 afterAll(() => { if (savedActEnv === undefined) delete g.IS_REACT_ACT_ENVIRONMENT; else g.IS_REACT_ACT_ENVIRONMENT = savedActEnv; });
-beforeEach(() => { notify.mockClear(); document.title = 'agents-go'; });
+beforeEach(() => { notify.mockClear(); rows.lists = 0; document.title = 'agents-go'; });
 
 async function mount(announced: Record<string, SessionStatus>) {
   const host = document.createElement('div');
@@ -87,6 +90,41 @@ describe('AttentionSignals', () => {
     // the other's line.
     await m.render({ a: 'idle', b: 'requires_action' });
     expect(m.spoken()).toBe('Beta needs your approval');
+    m.unmount();
+  });
+
+  // A conversation made in another tab is not in this one's list: the status
+  // announced for it relists once, and it is then counted and named.
+  it('relists once for a conversation it has not listed, then counts and names it', async () => {
+    rows.value = [{ id: 'a', name: 'Alpha', status: 'idle' }];
+    const m = await mount({});
+    expect(rows.lists).toBe(1);
+    rows.value = [...rows.value, { id: 'n', name: 'Nightly', status: 'requires_action' }];
+    await m.render({ n: 'requires_action' });
+    await act(async () => {});
+    expect(rows.lists).toBe(2);
+    expect(document.title).toBe('(1) waiting · agents-go');
+    expect(m.spoken()).toBe('Nightly needs your approval');
+    expect(notify.mock.calls).toEqual([['Nightly needs your approval', 'n']]);
+    // One the list never returns (deleted since) is asked for once, not forever.
+    await m.render({ n: 'requires_action', gone: 'failed' });
+    await act(async () => {});
+    await act(async () => {});
+    expect(rows.lists).toBe(3);
+    m.unmount();
+  });
+
+  // After an outage the announcements start over and the list is read again:
+  // what moved in between is still news.
+  it('says what a relist shows to have changed', async () => {
+    rows.value = [{ id: 'a', name: 'Alpha', status: 'running' }];
+    const m = await mount({ a: 'running' });
+    rows.value = [{ id: 'a', name: 'Alpha', status: 'failed' }, { id: 'q', name: 'Quiet', status: 'idle' }];
+    // The reconnect clears what was announced; the unknown id forces the relist the socket would ask for.
+    await m.render({ zz: 'idle' });
+    await act(async () => {});
+    expect(m.spoken()).toBe('Alpha failed');
+    expect(notify.mock.calls).toEqual([['Alpha failed', 'a']]);
     m.unmount();
   });
 });
