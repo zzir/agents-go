@@ -334,7 +334,9 @@ pause too
 ([spec §2.5i](../reference/spec.md#25i-the-model-manages-its-own-context)).
 In the workbench an agent's compaction mode chooses between `summary`
 (the default), `reset` and `hybrid`, and the panel's button becomes
-"Reset now".
+"Reset now". `hybrid` is a reset whose checkpoint also carries a short recap
+(at most 300 words) the summary model writes; a failed recap degrades to a
+plain reset.
 
 ### Automatic compaction
 

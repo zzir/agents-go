@@ -130,6 +130,8 @@ return r, nil
 
 Disclosure is cumulative for the run, survives an [approval pause](human_in_the_loop.md), does not override `IsEnabled`, and naming an unknown tool is ignored ([spec §2.7i](../reference/spec.md#27i-progressive-tool-disclosure)).
 
+Each disclosure changes the `tools` array the next call sends. For OpenAI's prompt cache that is a changed prefix, so the call misses the cache; a backend that binds reasoning to its prefix (Anthropic's preserved thinking, where enforced) discards the earlier reasoning ([decisions §5.77](../explanation/decisions.md#577-a-bound-reasoning-block-is-dropped-not-fatal)). Disclose early, or keep the tool set fixed.
+
 ### Streaming partial results
 
 A tool that runs for a while can push progress to a streamed run's consumer:
