@@ -222,6 +222,11 @@ func (r *Runner) postRun(runID, sessionID string, result *RunOutcome) {
 	if !ok {
 		return
 	}
+	// A task a shutdown ended stays working: the restart sweep fails it and
+	// writes the parent's debt — decisions §5.57.
+	if info.Task != nil && result.CancelReason == protocol.RunCancelShutdown {
+		return
+	}
 	out := tasks.RunOutcome{
 		// The attempt that finished, so a task retried while this run was in
 		// flight keeps the new attempt rather than this one's outcome.

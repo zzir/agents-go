@@ -389,8 +389,8 @@ type RunInterrupted struct {
 // RunCancelled notifies the client that a run was cancelled.
 type RunCancelled struct {
 	RunID string `json:"run_id"`
-	// Reason is why: stopped by request, or superseded by a newer message on
-	// the session while the run waited for approval.
+	// Reason is why: stopped by request, superseded by a newer message on the
+	// session while the run waited for approval, or ended by a server shutdown.
 	Reason string `json:"reason,omitempty"`
 }
 
@@ -398,6 +398,7 @@ type RunCancelled struct {
 const (
 	RunCancelStopped    = "stopped"
 	RunCancelSuperseded = "superseded"
+	RunCancelShutdown   = "shutdown"
 )
 
 // RunCompaction reports compaction progress at the end of a run: phase

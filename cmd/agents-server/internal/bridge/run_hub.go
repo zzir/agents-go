@@ -152,7 +152,7 @@ type SeqSink func(SeqEnvelope)
 // sole caller of cancel and sole closer of done, so a resume cannot race either.
 type runSegment struct {
 	done   chan struct{}
-	cancel context.CancelFunc
+	cancel context.CancelCauseFunc
 	once   sync.Once
 }
 
@@ -160,7 +160,7 @@ type runSegment struct {
 // called once, by the goroutine that started the segment.
 func (s *runSegment) finalize() {
 	s.once.Do(func() {
-		s.cancel()
+		s.cancel(nil)
 		close(s.done)
 	})
 }
@@ -168,8 +168,10 @@ func (s *runSegment) finalize() {
 // runRecord is the hub's per-run state: its cancel hook, the replay buffer,
 // and the live subscribers fanned out to.
 type runRecord struct {
-	info   RunInfo
-	cancel context.CancelFunc
+	info RunInfo
+	// cancel aborts the current segment; the cause says who did it (a
+	// Shutdown passes ErrShuttingDown, a person's stop nil).
+	cancel context.CancelCauseFunc
 	// done mirrors the CURRENT segment's gate (a resume swaps it), so the
 	// session-delete path waits on the live segment.
 	done chan struct{}
@@ -254,7 +256,7 @@ func (h *RunHub) Shutdown(ctx context.Context) {
 	for _, rec := range recs {
 		rec.mu.Lock()
 		if rec.info.Status == RunRunning && rec.cancel != nil {
-			rec.cancel()
+			rec.cancel(ErrShuttingDown{})
 		}
 		if rec.done != nil {
 			gates = append(gates, rec.done)
@@ -413,7 +415,7 @@ func (h *RunHub) register(runID, sessionID, ownerID, agentConfigID, projectID st
 	if task != nil && h.liveTaskCountLocked(task.ParentSessionID) >= limit {
 		return nil, nil, ErrTaskLimit{Limit: limit}
 	}
-	ctx, cancel := context.WithCancel(h.rootCtx)
+	ctx, cancel := context.WithCancelCause(h.rootCtx)
 	seg := &runSegment{done: make(chan struct{}), cancel: cancel}
 	rec := &runRecord{
 		info:   RunInfo{RunID: runID, SessionID: sessionID, OwnerID: ownerID, AgentConfigID: agentConfigID, ProjectID: projectID, Status: RunRunning, Task: task},
@@ -473,7 +475,7 @@ func (h *RunHub) resume(runID, sessionID, ownerID, agentConfigID, projectID stri
 	if existing, ok := h.bySession[sessionID]; ok {
 		return nil, nil, false, ErrSessionBusy{RunID: existing}
 	}
-	ctx, cancel := context.WithCancel(h.rootCtx)
+	ctx, cancel := context.WithCancelCause(h.rootCtx)
 	seg = &runSegment{done: make(chan struct{}), cancel: cancel}
 	rec := h.runs[runID]
 	if rec == nil {
@@ -493,7 +495,7 @@ func (h *RunHub) resume(runID, sessionID, ownerID, agentConfigID, projectID stri
 	if rec.info.Status != RunInterrupted {
 		st := rec.info.Status
 		rec.mu.Unlock()
-		cancel()
+		cancel(nil)
 		return nil, nil, false, ErrRunNotResumable{RunID: runID, Status: st}
 	}
 	rec.cancel = seg.cancel
@@ -729,7 +731,7 @@ func (h *RunHub) Cancel(runID string) bool {
 	cancel := rec.cancel
 	rec.mu.Unlock()
 	if cancel != nil {
-		cancel()
+		cancel(nil)
 	}
 	return true
 }

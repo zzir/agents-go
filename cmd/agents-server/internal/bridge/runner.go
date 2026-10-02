@@ -128,8 +128,10 @@ type RunOutcome struct {
 	ErrCode    string
 	ErrMessage string
 	// Cancelled mirrors the run.cancelled event: the run ended by request, so
-	// it carries neither a final output nor an error.
+	// it carries neither a final output nor an error. CancelReason is the
+	// event's reason.
 	Cancelled     bool
+	CancelReason  string
 	Interrupted   bool
 	Interruptions []*agents.ToolApprovalItem
 	SDKState      *agents.RunState
@@ -374,14 +376,19 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	var partial streamedPartial
 
 	// failCancelled ends the segment as a cancellation: save the abandoned
-	// turn (on its own context), then run.cancelled.
+	// turn (on its own context), then run.cancelled with who cancelled it.
 	failCancelled := func(turn partialTurn) *RunOutcome {
 		turn.userAttachments = spec.attachmentIDs
 		turn.annRole = "cancelled"
 		r.savePartialTurn(turn)
-		sendEvent(protocol.EventRunCancelled, protocol.RunCancelled{RunID: runID, Reason: protocol.RunCancelStopped})
+		reason := protocol.RunCancelStopped
+		if _, shutdown := errors.AsType[ErrShuttingDown](context.Cause(ctx)); shutdown {
+			reason = protocol.RunCancelShutdown
+		}
+		sendEvent(protocol.EventRunCancelled, protocol.RunCancelled{RunID: runID, Reason: reason})
 		res := mkResult()
 		res.Cancelled = true
+		res.CancelReason = reason
 		return res
 	}
 

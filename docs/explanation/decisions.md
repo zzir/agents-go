@@ -1344,7 +1344,9 @@ and deliveries, because when a session may be interrupted is host policy.
 Debts drain when a session can take a turn (end of any run on it, startup),
 and one drain pays every debt with the configuration snapshotted from the
 agent that ASKED, so three results landing while a person types produce one
-turn, through the agent that started them. A cancelled task owes nothing.
+turn, through the agent that started them. A task a person stopped owes
+nothing; one a shutdown ended is left working for the restart sweep, which
+fails it with its debt.
 
 **Rejected.** A callback at completion time: it lands mid-run or on a paused
 session, or never, after a crash. Draining per debt: three turns for three
