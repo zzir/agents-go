@@ -12,8 +12,9 @@ import (
 )
 
 // thinkingOnTheWire builds a provider of the given type, applies the mode and
-// returns the "thinking" object of the request a run with an effort sends.
-func thinkingOnTheWire(t *testing.T, providerType, mode string) map[string]any {
+// the binding switch, and returns the "thinking" object of the request a run
+// with an effort sends.
+func thinkingOnTheWire(t *testing.T, providerType, mode string, binding bool) map[string]any {
 	t.Helper()
 	var body map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -27,7 +28,7 @@ func thinkingOnTheWire(t *testing.T, providerType, mode string) map[string]any {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := ApplyThinkingMode(def.Build("k", srv.URL, nil, nil), mode)
+	p := ApplyThinking(def.Build("k", srv.URL, nil, nil), mode, binding)
 	m, err := p.Model("some-model")
 	if err != nil {
 		t.Fatal(err)
@@ -43,16 +44,19 @@ func thinkingOnTheWire(t *testing.T, providerType, mode string) map[string]any {
 	return thinking
 }
 
-// thinking_mode picks the form an Anthropic backend's reasoning effort takes;
-// another backend has no such form and is left as it came.
-func TestApplyThinkingMode(t *testing.T) {
-	if got := thinkingOnTheWire(t, TypeAnthropic, ""); got["type"] != "adaptive" {
-		t.Errorf("unset mode: thinking = %v, want adaptive", got)
+// thinking_mode picks the form an Anthropic backend's reasoning effort takes,
+// and the binding switch whether it asks for mismatched thinking to be dropped;
+// another backend has neither and is left as it came.
+func TestApplyThinking(t *testing.T) {
+	got := thinkingOnTheWire(t, TypeAnthropic, "", true)
+	if got["type"] != "adaptive" || got["block_binding"] == nil {
+		t.Errorf("unset mode, binding on: thinking = %v, want adaptive with a block binding", got)
 	}
-	if got := thinkingOnTheWire(t, TypeAnthropic, ThinkingModeBudget); got["type"] != "enabled" || got["budget_tokens"] == nil {
-		t.Errorf("budget mode: thinking = %v, want an enabled budget", got)
+	got = thinkingOnTheWire(t, TypeAnthropic, ThinkingModeBudget, false)
+	if got["type"] != "enabled" || got["budget_tokens"] == nil || got["block_binding"] != nil {
+		t.Errorf("budget mode, binding off: thinking = %v, want an enabled budget and no block binding", got)
 	}
-	if got := thinkingOnTheWire(t, TypeOpenAI, ThinkingModeBudget); got != nil {
+	if got := thinkingOnTheWire(t, TypeOpenAI, ThinkingModeBudget, true); got != nil {
 		t.Errorf("an OpenAI request carries an Anthropic thinking object: %v", got)
 	}
 }

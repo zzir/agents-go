@@ -1844,6 +1844,9 @@ it.
   reasoning item's `encrypted_content`**, the one slot that survives
   `OutputToInput` and session storage. A reasoning item without one is dropped
   on replay to a backend that requires signatures.
+- **An adapter whose backend binds replayed reasoning to its prefix asks it to
+  drop a mismatched block when the request already enables reasoning**; each
+  drop is a `thinking_dropped` diagnostic naming the block's path and reason.
 - **A backend that reports overflow in a success-shaped response surfaces it
   as an error carrying the overflow marker**
   ([§2.5g](#25g-context-overflow)).

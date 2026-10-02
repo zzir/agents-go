@@ -35,11 +35,19 @@ type BehaviorGroup struct {
 	OverrideSystemPrompt bool `json:"override_system_prompt,omitempty"`
 	// ThinkingMode is how an Anthropic backend sends the reasoning effort: "" as adaptive thinking, "budget" as a thinking token budget.
 	ThinkingMode string `json:"thinking_mode,omitempty"`
+	// ThinkingBinding asks an Anthropic backend to drop a replayed thinking block it can no longer verify instead of failing the request; nil/true = on.
+	ThinkingBinding *bool `json:"thinking_binding,omitempty"`
 }
 
 // SubagentsOn reports whether the agent's chat runs get the task tools;
 // nil (unset) is on.
 func (g BehaviorGroup) SubagentsOn() bool { return g.Subagents == nil || *g.Subagents }
+
+// ThinkingBindingOn reports whether an Anthropic backend is asked to drop a
+// thinking block bound to an edited prefix; nil (unset) is on.
+func (g BehaviorGroup) ThinkingBindingOn() bool {
+	return g.ThinkingBinding == nil || *g.ThinkingBinding
+}
 
 // ToolChoiceResetOn reports whether tool_choice resets after a tool runs;
 // nil (unset) is on.

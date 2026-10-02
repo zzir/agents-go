@@ -8432,6 +8432,8 @@ export interface components {
             stop_at_tools?: string;
             /** @description Subagents grants the agent's chat runs the task tools; nil/true = on. */
             subagents?: boolean;
+            /** @description ThinkingBinding asks an Anthropic backend to drop a replayed thinking block it can no longer verify instead of failing the request; nil/true = on. */
+            thinking_binding?: boolean;
             /** @description ThinkingMode is how an Anthropic backend sends the reasoning effort: "" as adaptive thinking, "budget" as a thinking token budget. */
             thinking_mode?: string;
             /** @description ToolChoiceReset resets a pinned tool_choice after a tool runs; nil/true = on. */

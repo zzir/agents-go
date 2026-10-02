@@ -107,11 +107,12 @@ func newAnthropicModelProvider(apiKey, baseURL string, proxyClient *http.Client)
 // Anthropic backend's reasoning effort as a thinking token budget.
 const ThinkingModeBudget = "budget"
 
-// ApplyThinkingMode sets how an Anthropic provider sends the reasoning effort;
-// any other provider is returned as it came.
-func ApplyThinkingMode(p agents.ModelProvider, mode string) agents.ModelProvider {
+// ApplyThinking sets how an Anthropic provider sends the reasoning effort and
+// whether it asks for mismatched thinking to be dropped; any other provider is
+// returned as it came.
+func ApplyThinking(p agents.ModelProvider, mode string, binding bool) agents.ModelProvider {
 	if ap, ok := p.(*anthropicProvider.Provider); ok {
-		ap.WithBudgetThinking(mode == ThinkingModeBudget)
+		ap.WithBudgetThinking(mode == ThinkingModeBudget).WithThinkingBinding(binding)
 	}
 	return p
 }

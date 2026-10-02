@@ -3,6 +3,7 @@ package anthropic
 import (
 	"context"
 	"iter"
+	"strings"
 
 	ant "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -20,13 +21,16 @@ type MessagesModel struct {
 	// budgetThinking sends reasoning effort as a thinking token budget instead
 	// of adaptive thinking — see Provider.WithBudgetThinking.
 	budgetThinking bool
+	// thinkingBinding asks the API to drop a replayed thinking block bound to
+	// an edited prefix — see Provider.WithThinkingBinding.
+	thinkingBinding bool
 }
 
 // NewMessagesModel returns a MessagesModel for the given model name, using the
-// provided MessageService (typically client.Messages). Prompt caching is
-// enabled, matching NewProvider.
+// provided MessageService (typically client.Messages). Prompt caching and
+// thinking binding are enabled, matching NewProvider.
 func NewMessagesModel(model string, client ant.MessageService) *MessagesModel {
-	return &MessagesModel{model: model, client: client, promptCaching: true}
+	return &MessagesModel{model: model, client: client, promptCaching: true, thinkingBinding: true}
 }
 
 var _ agents.Model = (*MessagesModel)(nil)
@@ -204,8 +208,37 @@ func (m *MessagesModel) StreamResponse(ctx context.Context, req agents.ModelRequ
 			yield(nil, err)
 			return
 		}
-		stream := m.client.NewStreaming(ctx, params, requestOptions(req.Settings)...)
+		opts := requestOptions(req.Settings)
+		if m.thinkingBinding && (params.Thinking.OfAdaptive != nil || params.Thinking.OfEnabled != nil) {
+			opts = append(opts, bindingOptions(req.Settings)...)
+		}
+		stream := m.client.NewStreaming(ctx, params, opts...)
 		defer stream.Close()
-		synthesizeStream(stream, yield)
+		synthesizeStream(ctx, stream, yield)
 	}
+}
+
+// thinkingBindingBeta is the beta the block_binding field needs: without it
+// the API refuses the field.
+const thinkingBindingBeta = "thinking-binding-controls-2026-08-01"
+
+// bindingOptions asks the API to drop a thinking block whose prefix no longer
+// matches. They go AFTER the caller's options: an ExtraHeaders anthropic-beta
+// is set, not added, so the beta joins that value instead of losing to it.
+func bindingOptions(s *agents.ModelSettings) []option.RequestOption {
+	opts := []option.RequestOption{
+		option.WithJSONSet("thinking.block_binding.prefix_mismatch_behavior", "drop_block"),
+	}
+	if s != nil {
+		for k, v := range s.ExtraHeaders {
+			if !strings.EqualFold(k, "anthropic-beta") {
+				continue
+			}
+			if !strings.Contains(v, thinkingBindingBeta) {
+				v += "," + thinkingBindingBeta
+			}
+			return append(opts, option.WithHeader("anthropic-beta", v))
+		}
+	}
+	return append(opts, option.WithHeaderAdd("anthropic-beta", thinkingBindingBeta))
 }

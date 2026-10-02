@@ -23,6 +23,8 @@ type Provider struct {
 	promptCaching bool
 	// budgetThinking: see WithBudgetThinking.
 	budgetThinking bool
+	// thinkingBinding: see WithThinkingBinding. On by default.
+	thinkingBinding bool
 }
 
 // NewProvider builds a Provider. Pass anthropic-sdk-go request options such as
@@ -32,7 +34,7 @@ type Provider struct {
 // (decisions §5.22); pass option.WithMaxRetries explicitly to re-enable them.
 func NewProvider(opts ...option.RequestOption) *Provider {
 	all := append([]option.RequestOption{option.WithMaxRetries(0)}, opts...)
-	return &Provider{client: ant.NewClient(all...), promptCaching: true}
+	return &Provider{client: ant.NewClient(all...), promptCaching: true, thinkingBinding: true}
 }
 
 // WithDefaultModel sets the model used when an agent omits a model name.
@@ -56,6 +58,14 @@ func (p *Provider) WithBudgetThinking(enabled bool) *Provider {
 	return p
 }
 
+// WithThinkingBinding toggles asking the API to drop a replayed thinking block
+// bound to a prefix that has since changed, instead of failing the request
+// (decisions §5.77). Turn it off for an endpoint that rejects the beta header.
+func (p *Provider) WithThinkingBinding(enabled bool) *Provider {
+	p.thinkingBinding = enabled
+	return p
+}
+
 // Model implements agents.ModelProvider.
 func (p *Provider) Model(modelName string) (agents.Model, error) {
 	if modelName == "" {
@@ -64,7 +74,8 @@ func (p *Provider) Model(modelName string) (agents.Model, error) {
 	if modelName == "" {
 		return nil, agents.NewUserError("anthropic: no model specified — set Agent.Model or Provider.WithDefaultModel")
 	}
-	return &MessagesModel{model: modelName, client: p.client.Messages, promptCaching: p.promptCaching, budgetThinking: p.budgetThinking}, nil
+	return &MessagesModel{model: modelName, client: p.client.Messages, promptCaching: p.promptCaching,
+		budgetThinking: p.budgetThinking, thinkingBinding: p.thinkingBinding}, nil
 }
 
 var _ agents.ModelProvider = (*Provider)(nil)

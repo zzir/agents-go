@@ -1840,3 +1840,26 @@ the sampling and forced-tool-choice prechecks: what adaptive thinking refuses
 is the API's to say.
 
 Rules: [models how-to](../howto/models.md#anthropic-backend-defaults)
+
+### 5.77 A bound reasoning block is dropped, not fatal
+
+Decided 2026-10-03.
+
+**Decision.** A request that already carries a thinking object also carries
+`thinking.block_binding.prefix_mismatch_behavior: "drop_block"` and its beta
+header: the API drops a replayed thinking block whose prefix changed, and the
+adapter reports each drop as a `thinking_dropped` diagnostic.
+
+**Rejected.** Stripping blocks client-side from the middle of the history: a
+400, and reasoning lost on every request. Leaving the default `error`: a host
+that edits its prefix (a handoff, a re-rendered instruction layer) fails the
+whole run on an account that enforces the check. Adding a thinking object to
+carry the field: it turns thinking on for models that would not have thought.
+
+**Cost accepted.** An account created before enforcement is opted into the
+check: a mismatched block it used to pass is now dropped. A request with no
+effort set carries no thinking object, so it gets no such protection. Every
+thinking request carries a beta header, which `WithThinkingBinding(false)`
+removes for an endpoint that rejects it.
+
+Rules: spec §2.15

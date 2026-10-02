@@ -103,7 +103,8 @@ func buildProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig, 
 	if chatgptCreds != nil {
 		baseURL = providers.ChatGPTBaseURL
 	}
-	return providers.ApplyThinkingMode(def.Build(apiKey, baseURL, chatgptCreds, proxyClient), ac.Behavior.ThinkingMode), def, nil
+	provider := providers.ApplyThinking(def.Build(apiKey, baseURL, chatgptCreds, proxyClient), ac.Behavior.ThinkingMode, ac.Behavior.ThinkingBindingOn())
+	return provider, def, nil
 }
 
 // fallbackProviders resolves each fallback entry to a keyed provider the agent

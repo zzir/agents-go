@@ -1,6 +1,7 @@
 package anthropic
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -20,7 +21,8 @@ type streamItem struct {
 
 // synthesizeStream translates the Messages SSE stream into canonical
 // response.* events: deltas live, finished items at message_stop (decisions §5.49).
-func synthesizeStream(stream *ssestream.Stream[ant.MessageStreamEventUnion], yield func(*agents.ResponseStreamEvent, error) bool) {
+// ctx carries the run's diagnostic sink.
+func synthesizeStream(ctx context.Context, stream *ssestream.Stream[ant.MessageStreamEventUnion], yield func(*agents.ResponseStreamEvent, error) bool) {
 	emit := func(ev agents.ResponseStreamEvent, err error) bool {
 		if err != nil {
 			yield(nil, err)
@@ -44,6 +46,7 @@ func synthesizeStream(stream *ssestream.Stream[ant.MessageStreamEventUnion], yie
 		}
 		switch event.Type {
 		case "message_start":
+			recordDroppedThinking(ctx, event.Message)
 			if !emit(modelkit.ResponseCreatedEvent(event.Message.ID)) {
 				return
 			}
@@ -191,5 +194,32 @@ func responseUsage(u ant.Usage) modelkit.ResponseUsage {
 		CachedTokens:     u.CacheReadInputTokens,
 		CacheWriteTokens: u.CacheCreationInputTokens,
 		ReasoningTokens:  u.OutputTokensDetails.ThinkingTokens,
+	}
+}
+
+// diagnosticThinkingDropped is the diagnostic type of a replayed thinking
+// block the API dropped — spec §2.15.
+const diagnosticThinkingDropped agents.DiagnosticType = "thinking_dropped"
+
+// recordDroppedThinking reports each thinking block the API dropped from the
+// request, as message_start lists them; any other transformation is ignored.
+func recordDroppedThinking(ctx context.Context, msg ant.Message) {
+	// Raw, not Valid: the SDK does not know the field, so it is an extra one.
+	raw := msg.JSON.ExtraFields["input_transformations"].Raw()
+	if raw == "" {
+		return
+	}
+	var entries []struct {
+		Type   string `json:"type"`
+		Path   string `json:"path"`
+		Reason string `json:"reason"`
+	}
+	if json.Unmarshal([]byte(raw), &entries) != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.Type == string(diagnosticThinkingDropped) {
+			agents.RecordDiagnostic(ctx, diagnosticThinkingDropped, nil, map[string]any{"path": e.Path, "reason": e.Reason})
+		}
 	}
 }
