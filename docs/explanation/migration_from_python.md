@@ -33,6 +33,8 @@ For what this SDK deliberately does not provide (and why), read
 | `@input_guardrail` / `@output_guardrail` | one `agents.Guardrail` type across all stages: `agents.NewInputGuardrail(name, fn)` / `agents.NewOutputGuardrail(name, fn)` |
 | `RunContextWrapper[T]` | `*agents.RunContext` with `Context any` (type-assert back) |
 | `SQLiteSession` | `sessions.NewSQLite` / `sessions.New` (the `sessions` module: SQLite or PostgreSQL) |
+| `SandboxAgent` with a sandbox client (unix-local, Docker, hosted providers), a manifest and workspace snapshots | no agent subtype: a [`sandbox.Sandbox`](../howto/sandbox.md) — local, Docker (local or SSH-reached daemon), any E2B-compatible service — given to any agent as `exec_command`, the file tools and `apply_patch`. No manifest and no workspace snapshot or restore; `ExportTar` exports the tree |
+| the sandbox `Skills` capability | the [`skills`](../howto/skills.md) module: the open [Agent Skills](https://github.com/agentskills/agentskills) `SKILL.md` document alone, on `Instructions` plus a function tool, with no sandbox ([decisions §5.26](decisions.md#526-a-skill-is-one-skillmd-document)) |
 | `reset_tool_choice=True` (default) | `DisableToolChoiceReset` (zero value = Python's default behavior) |
 | `max_turns=10` | `RunOptions.Exec.MaxTurns` (0 means the same default of 10) |
 | exceptions (`MaxTurnsExceeded`, …) | error values (`*MaxTurnsError`, …) matched with `errors.As` |
@@ -120,9 +122,7 @@ needed yet** (open to contribution). Each entry says which it is.
 
 ## Beyond the Python SDK
 
-- **Self-hosted [sandboxes](../howto/sandbox.md)**: local, Docker (local or SSH-reached daemon) and any E2B-compatible service behind one `Sandbox` interface, exposed as `exec_command`, the file tools and `apply_patch`, with persistent shells and interactive terminals
 - **Hooks can veto**: any hook returning an error aborts the run (Python hooks are observe-only)
-- **[Skills](../howto/skills.md)** (`skills` module): the open [Agent Skills](https://github.com/agentskills/agentskills) `SKILL.md` format on `Instructions` + a function tool — provider-agnostic and sandbox-free
 - **Session forking** (`session.Fork`) across any `Session` backend pair; Python's closest is `AdvancedSQLiteSession`'s backend-bound branches ([Sessions](../howto/sessions.md#forking-sessions))
 - **`AtomicReplacer` / `GuardedReplacer`**: optional storage capabilities for swapping the whole history in one step, needed only by `openai.CompactionSession` ([Sessions](../howto/sessions.md#optional-storage-capabilities))
 - **Run-level compaction** (`RunOptions.Compaction` + `agents/compaction`): provider-agnostic, grouped, triggered at three points, append-only ([Sessions](../howto/sessions.md#run-level-compaction))

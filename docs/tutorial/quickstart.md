@@ -80,7 +80,7 @@ import (
 )
 
 func main() {
-	provider := openai.NewProvider()
+	provider := openai.NewProvider().WithDefaultModel("gpt-6-luna")
 
 	res, err := agents.RunSync(context.Background(), triage, "What is the French Revolution?", agents.RunOptions{
 		Model: agents.ModelOptions{Provider: provider},
