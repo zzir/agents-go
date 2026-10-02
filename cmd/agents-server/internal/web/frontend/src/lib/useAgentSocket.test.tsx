@@ -80,7 +80,7 @@ async function mount(active: () => string | null) {
     const next = fn(cur);
     if (next !== cur) store[sid] = next;
   };
-  const events: SessionEvents = { activeSession: active, onTitleUpdated: vi.fn(), onProjectBound: vi.fn() };
+  const events: SessionEvents = { activeSession: active, onTitleUpdated: vi.fn(), onProjectBound: vi.fn(), onStatus: vi.fn() };
   let hook!: ReturnType<typeof useAgentSocket>;
   function Probe() { hook = useAgentSocket(updateSS, events); return null; }
   const root = createRoot(document.createElement('div'));
@@ -157,6 +157,26 @@ describe('useAgentSocket reconnect', () => {
     // Once repaired, a later visibility flip does nothing.
     await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
     expect(apiMock.sessions.messages).toHaveBeenCalledTimes(2);
+    await t.unmount();
+  });
+});
+
+describe('useAgentSocket session status', () => {
+  // The sidebar's markers are the server's word (invariant 3): the event is
+  // handed on as it came, for a conversation this tab never opened too.
+  it('hands the server\'s status on, and drops what it heard once an outage may have missed some', async () => {
+    const t = await mount(() => S1);
+    const st = { session_id: S2, status: 'requires_action', pending_count: 1, oldest_pending_at: '2026-01-01T00:00:00Z' };
+    await act(async () => { t.sock().receive(EV.sessionStatus, st); });
+    expect(t.events.onStatus).toHaveBeenCalledWith(st);
+    // Nothing of the conversation was loaded to derive it from.
+    expect(t.store[S2]).toBeUndefined();
+
+    vi.mocked(t.events.onStatus).mockClear();
+    await t.reconnect();
+    // The reset comes with the relisting that answers in its place.
+    expect(t.events.onStatus).toHaveBeenCalledWith(null);
+    expect(vi.mocked(invalidate)).toHaveBeenCalledWith('sessions');
     await t.unmount();
   });
 });

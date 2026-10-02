@@ -13,6 +13,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/guardrails"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
@@ -73,6 +74,14 @@ func (noopStopper) WithSessionTreeFenced(_ context.Context, _ string, fn func() 
 	return fn()
 }
 
+// noStatuses is a SessionStatuser under which every session is idle.
+type noStatuses struct{}
+
+func (noStatuses) SessionStatuses(context.Context, string, []string) (bridge.SessionStates, error) {
+	return bridge.SessionStates{}, nil
+}
+func (noStatuses) PublishSessionStatus(context.Context, string) {}
+
 // noopCompactor is a SessionCompactor that finds nothing to fold.
 type noopCompactor struct{}
 
@@ -94,7 +103,7 @@ func testSessionDeps(db *bun.DB, tune ...func(*SessionDeps)) SessionDeps {
 		Sessions: store.NewSessionStore(db), Entries: store.NewSharedEntryStore(db), Traces: store.NewTraceStore(db),
 		Agents: store.NewAgentConfigStore(db), Profiles: store.NewContextProfileStore(db),
 		MCP: noLister{}, MCPServers: store.NewMcpServerStore(db), Users: store.NewUserStore(db),
-		Projects: store.NewProjectStore(db), Stopper: noopStopper{}, Compactor: noopCompactor{},
+		Projects: store.NewProjectStore(db), Stopper: noopStopper{}, Compactor: noopCompactor{}, Statuses: noStatuses{},
 		Settings: settings.NewReader(store.NewSettingStore(db)),
 	}
 	for _, f := range tune {

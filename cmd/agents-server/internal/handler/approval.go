@@ -72,6 +72,26 @@ func (h *ApprovalHandler) ListBySession(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+// List responds with every decision the caller's conversations wait on.
+//
+//	@Summary		List the caller's pending approvals
+//	@Description	Every tool call and workflow step waiting on the caller, across conversations and their background tasks, oldest first. Read-only: a decision is made on the call itself.
+//	@Tags			approvals
+//	@Produce		json
+//	@Success		200	{array}		bridge.PendingCall
+//	@Failure		500	{object}	ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/approvals [get]
+func (h *ApprovalHandler) List(c *gin.Context) {
+	u, _ := server.CurrentUser(c)
+	states, err := h.runner.SessionStatuses(c.Request.Context(), u.ID, nil)
+	if err != nil {
+		internalError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, states.Pending())
+}
+
 type rejectReq struct {
 	Reason string `json:"reason"`
 }

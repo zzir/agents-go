@@ -45,6 +45,9 @@ export const EV = {
   // The session's first project-carrying run permanently bound its project —
   // published once, by the run that won the bind.
   sessionProjectBound: 'session.project_bound',
+  // A conversation's status as the server derives it (GET /sessions carries
+  // the same): broadcast to every connection of its owner, never replayed.
+  sessionStatus: 'session.status',
   // One of a session's background tasks changed state — spawned, paused,
   // moved to its next run (a workflow step), ended. Rides the task run's
   // stream (there is no live parent run) and carries the row as the tasks
@@ -134,6 +137,19 @@ export function parseTaskNotification(content: string | undefined | null): null 
   }
   const first = items[0];
   return { text, label: first ? first.label : null, taskId: first ? first.taskId : null, items };
+}
+
+// A conversation's derived status (mirror of the Go protocol.Session*
+// consts), highest priority first; the client renders it and derives none.
+export type SessionStatus = 'requires_action' | 'running' | 'failed' | 'idle';
+
+/** The session.status payload, and the same fields on a GET /sessions row. */
+export interface SessionStatusEvent {
+  session_id: string;
+  status: SessionStatus;
+  live_run_id?: string;
+  pending_count: number;
+  oldest_pending_at?: string;
 }
 
 // MCP-Tasks-aligned task statuses (mirror of the Go protocol.Task* consts).

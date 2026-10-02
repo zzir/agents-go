@@ -55,6 +55,9 @@ const (
 	// EventSessionProjectBound announces that a session's first
 	// project-carrying run bound a project to it — once, by the run that won.
 	EventSessionProjectBound = "session.project_bound"
+	// EventSessionStatus carries a conversation's derived status to every
+	// connection of its owner whenever it may have changed; never replayed.
+	EventSessionStatus = "session.status"
 	// EventTaskUpdated tells a parent session's subscribers that a background
 	// task changed state. It rides the TASK run's stream, carries the parent
 	// id, and its payload is the row as the tasks list returns it.
@@ -420,6 +423,26 @@ type SessionTitleUpdated struct {
 type SessionProjectBound struct {
 	SessionID string `json:"session_id"`
 	ProjectID string `json:"project_id"`
+}
+
+// A conversation's derived status, highest priority first: a decision is
+// waited on, work is live, the newest run-written entry is an error notice.
+const (
+	SessionRequiresAction = "requires_action"
+	SessionRunning        = "running"
+	SessionFailed         = "failed"
+	SessionIdle           = "idle"
+)
+
+// SessionStatus is a conversation's status as GET /sessions reports it.
+type SessionStatus struct {
+	SessionID string `json:"session_id"`
+	Status    string `json:"status"`
+	// LiveRunID is the conversation's own executing run; a paused run is not live.
+	LiveRunID    string `json:"live_run_id,omitempty"`
+	PendingCount int    `json:"pending_count"`
+	// OldestPendingAt is when the longest-waiting decision was asked for.
+	OldestPendingAt *time.Time `json:"oldest_pending_at,omitempty"`
 }
 
 // TaskUpdated is a task's state as its parent session's subscribers should

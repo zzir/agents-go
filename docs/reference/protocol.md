@@ -151,6 +151,24 @@ immutable afterwards, over the API included
 ([invariant 27](../explanation/workbench-invariants.md)): switching projects
 means starting (or forking into) another session.
 
+`GET /sessions` and `GET /sessions/:id` carry each session's **derived
+status**, computed server-side from the durable rows and the live runs
+([invariant 3](../explanation/workbench-invariants.md)) — the first that
+holds, in this order:
+
+| `status` | Holds when |
+|---|---|
+| `requires_action` | a decision is waited on: the session's own run is paused for approval (a pause whose run was branched away does not count), or one of its background tasks is `input_required` |
+| `running` | the session's own run is executing, or one of its background tasks is `working` |
+| `failed` | the newest entry a run wrote is an error notice — a failed run, or an approval that expired; the next run's first write clears it |
+| `idle` | none of the above |
+
+`live_run_id` names the session's own executing run — a run paused for
+approval is not live, and a background task's run is the task's.
+`pending_count` and `oldest_pending_at` size what is waited on;
+`GET /sessions/:id` adds `pending`, the calls themselves. A change is
+announced as `session.status`.
+
 `fork` copies the source session's entries (and their traces) into a new
 session, bounded by the optional `message_id` (`exclusive: true` stops before
 it; an id that is not an entry of the source is `404`). Entry ids and parent links are rewritten into the fork's namespace, and
@@ -260,6 +278,12 @@ WebSocket share the hub. A decision on a session that already has an active
 run is `409`. Unanswered approvals expire after `approval_ttl_minutes`: the
 record is dropped and an error annotation written to the session, so the
 timeout is visible.
+
+`GET /approvals` is the caller's inbox: every tool call and workflow step
+waiting on them, across their sessions and those sessions' background tasks,
+oldest first. Each names the session to open (`session_id` — the parent's
+for a task's call) and when it expires. It is read-only and the caller's
+alone, with no `all=true`; a decision is made on the call itself.
 
 **A newer message wins over a pause.** A run paused for approval is
 abandoned when the session takes a new message (`POST /sessions/:id/runs`,
@@ -879,6 +903,7 @@ which run this is.
 | `session.title_updated` | Title changed — `{session_id, title}`                                                                                                                   |
 | `task.updated`          | A background task moved — the task row (`task_id`, `status`, `kind`, `state`, `attempt`, `dismissed`, a paused one's `pending_call_id`…) as the store has it; on the task's run stream when the hub holds that run, else broadcast to every connection |
 | `session.project_bound` | The session's first project-carrying run permanently bound its project — `{session_id, project_id}`; published exactly once, by the run that won the bind |
+| `session.status`        | A session's derived status may have changed — `{session_id, status, live_run_id?, pending_count, oldest_pending_at?}`, the fields `GET /sessions` carries; broadcast to every connection of the owner and never replayed, so a reconnect relists |
 | `trace.span`            | Trace span — `{run_id, trace_id, span_id, error?, data?, payload_omitted?, attachments?, ...}`; `payload_omitted` says the 256KB live cap replaced the payload fields, which the stored row still has; `attachments` lists the image attachments the span's input references, resolved to `{id, url}` as `run.started` carries the message's |
 
 Generation spans carry the full model request/response in their `data` — what

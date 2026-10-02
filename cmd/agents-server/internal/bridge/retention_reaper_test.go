@@ -43,9 +43,10 @@ func TestApprovalReaperEndsThePausedTaskAndAnnouncesIt(t *testing.T) {
 	}
 
 	var mu sync.Mutex
-	var announced []string
+	var announced, expired []string
 	go RunApprovalReaper(ctx, runner.Deps.Settings, runner.Deps.PendingApprovals, store.NewSharedEntryStore(runner.db), tasks,
-		func(_ context.Context, id string) { mu.Lock(); announced = append(announced, id); mu.Unlock() })
+		func(_ context.Context, id string) { mu.Lock(); announced = append(announced, id); mu.Unlock() },
+		func(_ context.Context, id string) { mu.Lock(); expired = append(expired, id); mu.Unlock() })
 
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -64,10 +65,24 @@ func TestApprovalReaperEndsThePausedTaskAndAnnouncesIt(t *testing.T) {
 	if _, err := runner.Deps.PendingApprovals.Get(ctx, row.RunID); err == nil {
 		t.Fatal("the expired approval must be gone")
 	}
+	// The session the approval was filed on is named once the row is gone, so
+	// its status can be announced: poll, the callback trails the task's end.
+	for {
+		mu.Lock()
+		got := len(expired)
+		mu.Unlock()
+		if got > 0 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 	mu.Lock()
 	defer mu.Unlock()
 	if len(announced) != 1 || announced[0] != row.ID {
 		t.Fatalf("announced = %v, want the ended task once", announced)
+	}
+	if len(expired) != 1 || expired[0] != row.ChildSessionID {
+		t.Fatalf("expired = %v, want the approval's session once", expired)
 	}
 }
 
@@ -108,7 +123,7 @@ func TestApprovalReaperEndsThePausedHubRun(t *testing.T) {
 	runner.hub.finish(row.RunID, true)
 	seg.finalize()
 
-	go RunApprovalReaper(ctx, runner.Deps.Settings, runner.Deps.PendingApprovals, store.NewSharedEntryStore(runner.db), tasks, runner.AnnounceTask)
+	go RunApprovalReaper(ctx, runner.Deps.Settings, runner.Deps.PendingApprovals, store.NewSharedEntryStore(runner.db), tasks, runner.AnnounceTask, runner.PublishSessionStatus)
 
 	deadline := time.Now().Add(5 * time.Second)
 	for {

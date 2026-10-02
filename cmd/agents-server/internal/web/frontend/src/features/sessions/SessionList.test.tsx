@@ -30,7 +30,7 @@ vi.mock('@primer/octicons-react', () => Object.fromEntries(
   ['KebabHorizontalIcon', 'PencilIcon', 'PinIcon', 'PinSlashIcon', 'PlusIcon', 'RepoForkedIcon', 'SearchIcon', 'TrashIcon', 'WorkflowIcon', 'XIcon']
     .map(n => [n, () => null]),
 ));
-const { rows } = vi.hoisted(() => ({ rows: { value: [] as { id: string; name: string; pinned: boolean }[] } }));
+const { rows } = vi.hoisted(() => ({ rows: { value: [] as { id: string; name: string; pinned: boolean; status?: string }[] } }));
 vi.mock('@/lib/api', () => ({ api: { sessions: { list: async () => rows.value } } }));
 vi.mock('@/lib/toast', () => ({ toast: { error: () => {} } }));
 vi.mock('@/lib/hooks', () => ({
@@ -74,14 +74,36 @@ describe('SessionList', () => {
   });
 
   // The running and awaiting bars are color alone; the row's text carries the
-  // words for a screen reader.
+  // words for a screen reader. Both come from the status the server derived —
+  // the list row's — with nothing of the conversation loaded.
   it('says in words which sessions run and which wait for approval', async () => {
-    rows.value = [{ id: 'a', name: 'Alpha', pinned: false }, { id: 'b', name: 'Beta', pinned: false }];
-    const { host, unmount } = await mount({ runningSessions: new Set(['a']), awaitingSessions: new Set(['b']) });
+    rows.value = [
+      { id: 'a', name: 'Alpha', pinned: false, status: 'running' },
+      { id: 'b', name: 'Beta', pinned: false, status: 'requires_action' },
+      { id: 'c', name: 'Gamma', pinned: false, status: 'failed' },
+      { id: 'd', name: 'Delta', pinned: false },
+    ];
+    const { host, unmount } = await mount();
     const text = (name: string) => [...host.querySelectorAll('li')].find(li => li.textContent?.startsWith(name))?.textContent;
     expect(text('Alpha')).toBe('Alpha — running');
     expect(text('Beta')).toBe('Beta — awaiting your approval');
+    // A failed or idle conversation carries no marker.
+    expect(text('Gamma')).toBe('Gamma');
+    expect(text('Delta')).toBe('Delta');
     expect(host.querySelector('li .sr-only')).not.toBeNull();
+    unmount();
+  });
+
+  // What session.status announced since the list was read wins over the row.
+  it('shows the status last announced over the one the list carried', async () => {
+    rows.value = [
+      { id: 'a', name: 'Alpha', pinned: false, status: 'running' },
+      { id: 'b', name: 'Beta', pinned: false, status: 'idle' },
+    ];
+    const { host, unmount } = await mount({ statuses: { a: 'idle', b: 'requires_action' } });
+    const text = (name: string) => [...host.querySelectorAll('li')].find(li => li.textContent?.startsWith(name))?.textContent;
+    expect(text('Alpha')).toBe('Alpha');
+    expect(text('Beta')).toBe('Beta — awaiting your approval');
     unmount();
   });
 });

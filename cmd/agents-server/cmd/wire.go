@@ -198,7 +198,8 @@ func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL st
 			Sessions: handler.NewSessionHandler(handler.SessionDeps{
 				Sessions: st.Sessions, Entries: st.Entries, Traces: st.Traces, Agents: st.AgentConfigs,
 				Profiles: st.ContextProfiles, MCP: svc.Mcp, MCPServers: st.McpServers, Users: st.Users,
-				Projects: st.Projects, Stopper: svc.Runner, Compactor: svc.Runner, Settings: st.SettingReader,
+				Projects: st.Projects, Stopper: svc.Runner, Compactor: svc.Runner, Statuses: svc.Runner,
+				Settings: st.SettingReader,
 			}),
 			Runs:       handler.NewRunHandler(svc.Runner),
 			Approvals:  handler.NewApprovalHandler(st.PendingApprovals, svc.Runner),

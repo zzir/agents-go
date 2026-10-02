@@ -29,10 +29,10 @@ func runEvery(ctx context.Context, period time.Duration, fn func()) {
 }
 
 // RunApprovalReaper expires pending tool approvals that have gone unanswered
-// past the TTL. On expiry it drops the record and writes a session annotation
-// so the timeout is visible instead of silently vanishing. It runs at startup
-// and hourly until ctx ends — run it in a goroutine.
-func RunApprovalReaper(ctx context.Context, cfg *settings.Reader, approvals *store.PendingApprovalStore, entries *store.EntryStore, tasks *store.TaskStore, announce func(ctx context.Context, taskID string)) {
+// past the TTL. On expiry it drops the record, writes a session annotation so
+// the timeout is visible, and calls onExpire with the session it was filed on.
+// It runs at startup and hourly until ctx ends — run it in a goroutine.
+func RunApprovalReaper(ctx context.Context, cfg *settings.Reader, approvals *store.PendingApprovalStore, entries *store.EntryStore, tasks *store.TaskStore, announce func(ctx context.Context, taskID string), onExpire func(ctx context.Context, sessionID string)) {
 	log := logging.Ctx(ctx)
 	reap := func() {
 		ttl := cfg.Int(ctx, settings.KeyApprovalTTLMinutes)
@@ -91,6 +91,9 @@ func RunApprovalReaper(ctx context.Context, cfg *settings.Reader, approvals *sto
 					banner = "Step approval timed out after " + strconv.Itoa(ttl) + " minutes; the workflow was cancelled."
 				}
 				_ = entries.AppendAnnotation(ctx, ref, p.RunID, banner)
+			}
+			if onExpire != nil {
+				onExpire(ctx, p.SessionID)
 			}
 			log.Info("expired pending approval", "run_id", p.RunID, "session_id", p.SessionID)
 		}

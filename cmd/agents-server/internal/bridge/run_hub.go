@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"sync"
 	"time"
 
@@ -822,6 +823,13 @@ func (h *RunHub) ActiveRunForSession(sessionID string) (string, bool) {
 	defer h.mu.Unlock()
 	id, ok := h.bySession[sessionID]
 	return id, ok
+}
+
+// liveBySession snapshots the executing run of every busy session.
+func (h *RunHub) liveBySession() map[string]string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return maps.Clone(h.bySession)
 }
 
 // LiveRunIDs returns the ids of every currently executing run (one per busy

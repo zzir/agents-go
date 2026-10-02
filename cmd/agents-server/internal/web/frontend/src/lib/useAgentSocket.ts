@@ -1,7 +1,7 @@
 import type { AttachmentMeta } from '@/lib/attachments';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { WSClient } from '@/lib/ws';
-import { EV, ERR, type RunDiagnostic, type TaskRow } from '@/lib/protocol';
+import { EV, ERR, type RunDiagnostic, type SessionStatusEvent, type TaskRow } from '@/lib/protocol';
 import { buildTimeline, type DisplayExtra, type EntryView, type TimelineEntry, type ToolCall } from '@/lib/timeline';
 import {
   ensureLiveTurn, mergeLiveTail, appendMessageItem, appendReasoningItem, finalizeTurn,
@@ -135,6 +135,9 @@ export interface SessionEvents {
   activeSession: () => string | null;
   onTitleUpdated: (sessionId: string, title: string) => void;
   onProjectBound: (sessionId: string, projectId: string) => void;
+  // The server's word on a conversation's status; null drops every one heard
+  // so far (an outage may have missed some — the refetched list answers).
+  onStatus: (status: SessionStatusEvent | null) => void;
 }
 
 export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
@@ -819,6 +822,10 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
       if (p?.session_id && p.project_id) eventsRef.current.onProjectBound(p.session_id, p.project_id);
     });
 
+    ws.on(EV.sessionStatus, (p: SessionStatusEvent) => {
+      if (p?.session_id && p.status) eventsRef.current.onStatus(p);
+    });
+
     // resyncSessions repairs what an outage may have moved: the conversation
     // on screen is re-read now (timeline under its live tail, task rows under
     // the no-move-backwards rule, traces with the stored rows winning), every
@@ -826,6 +833,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
     const resyncSessions = () => {
       loadedRef.current.clear();
       tracesLoadedRef.current.clear();
+      eventsRef.current.onStatus(null);
       invalidate('sessions');
       const sid = eventsRef.current.activeSession();
       if (!sid || deletedRef.current.has(sid)) return;

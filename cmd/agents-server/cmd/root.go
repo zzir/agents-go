@@ -174,7 +174,7 @@ func run(cmd *cobra.Command, _ []string) error {
 	// The reaper and the clock start after the sweep AND after the handlers,
 	// for the same reason the drain does: they end and start runs, and they
 	// announce through hooks (OnBroadcast) the WS handler has only now wired.
-	go bridge.RunApprovalReaper(bgCtx, st.SettingReader, st.PendingApprovals, st.Entries, st.Tasks, svc.Runner.AnnounceTask)
+	go bridge.RunApprovalReaper(bgCtx, st.SettingReader, st.PendingApprovals, st.Entries, st.Tasks, svc.Runner.AnnounceTask, svc.Runner.PublishSessionStatus)
 	if err := svc.Scheduler.Start(ctx); err != nil {
 		return fmt.Errorf("starting the trigger scheduler: %w", err)
 	}

@@ -220,6 +220,7 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 		if delErr := r.Deps.PendingApprovals.Delete(mctx, pending.RunID); delErr != nil {
 			logging.Ctx(ctx).Error("discarding stale pending approval", "error", delErr, "run_id", pending.RunID)
 		}
+		r.PublishSessionStatus(mctx, pending.SessionID)
 		return "", pending.SessionID, &StaleApprovalStateError{RunID: pending.RunID, HaveVersion: v, WantVersion: agents.RunStateSchemaVersion}
 	}
 
@@ -407,6 +408,7 @@ func (r *Runner) abandonApproval(ctx context.Context, pending *store.PendingAppr
 	if !r.hub.endPaused(pending.RunID, reason) {
 		logging.Ctx(ctx).Info("abandoned approval had no paused hub run to end", "run_id", pending.RunID, "reason", reason)
 	}
+	r.PublishSessionStatus(ctx, pending.SessionID)
 	return true
 }
 

@@ -225,6 +225,7 @@ func (r *Runner) publishTaskUpdated(ctx context.Context, t *tasks.Task) {
 	if r.OnBroadcast != nil {
 		r.OnBroadcast(ctx, env, except, t.ParentSessionID)
 	}
+	r.PublishSessionStatus(ctx, t.ParentSessionID)
 }
 
 // taskInfoFrom converts the SDK's task view to this server's API shape;

@@ -441,6 +441,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/approvals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the caller's pending approvals
+         * @description Every tool call and workflow step waiting on the caller, across conversations and their background tasks, oldest first. Read-only: a decision is made on the call itself.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["bridge.PendingCall"][];
+                    };
+                };
+                /** @description Internal Server Error */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/approvals/{tool_call_id}/approve": {
         parameters: {
             query?: never;
@@ -4749,7 +4797,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["store.Session"][];
+                        "application/json": components["schemas"]["handler.sessionView"][];
                     };
                 };
                 /** @description all=true by a member */
@@ -4858,7 +4906,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["store.Session"];
+                        "application/json": components["schemas"]["handler.sessionDetail"];
                     };
                 };
                 /** @description Not Found */
@@ -7799,6 +7847,20 @@ export interface components {
             summary?: string;
             task_id?: string;
         };
+        "bridge.PendingCall": {
+            created_at?: string;
+            /** @description ExpiresAt is when the wait ends unanswered; absent when approvals do not expire. */
+            expires_at?: string;
+            /** @description Kind is "step" for a workflow step waiting to start, empty for a tool call. */
+            kind?: string;
+            run_id?: string;
+            /** @description SessionID is the conversation to open; a task's call names its parent conversation. */
+            session_id?: string;
+            task_id?: string;
+            task_label?: string;
+            tool_call_id?: string;
+            tool_name?: string;
+        };
         "bridge.RunInfo": {
             agent_config_id?: string;
             last_seq?: number;
@@ -8229,9 +8291,59 @@ export interface components {
             agent_config_id?: string;
             name?: string;
         };
+        "handler.sessionDetail": {
+            agent_config_id?: string;
+            created_at?: string;
+            /** @description Hidden marks a background task's transcript session; listings leave it out. */
+            hidden?: boolean;
+            id?: string;
+            /** @description LiveRunID is the session's own executing run; a run paused for approval is not live. */
+            live_run_id?: string;
+            name?: string;
+            /** @description OldestPendingAt is when the longest-waiting decision was asked for. */
+            oldest_pending_at?: string;
+            /** @description OwnerID is the user the conversation belongs to; a task's hidden session inherits its parent's. */
+            owner_id?: string;
+            /** @description Pending lists the decisions waited on, oldest first. */
+            pending?: components["schemas"]["bridge.PendingCall"][];
+            /** @description PendingCount is how many decisions the session and its background tasks wait on. */
+            pending_count?: number;
+            pinned?: boolean;
+            /** @description Planning is the session's plan phase: the next run starts read-only until a plan is approved. */
+            planning?: boolean;
+            /** @description ProjectID is the project the session is bound to, set once by the first project-carrying run and never rewritten. */
+            project_id?: string;
+            /** @description Status is idle, running, requires_action or failed. */
+            status?: string;
+            updated_at?: string;
+        };
         "handler.sessionPatchReq": {
             name?: string;
             pinned?: boolean;
+        };
+        "handler.sessionView": {
+            agent_config_id?: string;
+            created_at?: string;
+            /** @description Hidden marks a background task's transcript session; listings leave it out. */
+            hidden?: boolean;
+            id?: string;
+            /** @description LiveRunID is the session's own executing run; a run paused for approval is not live. */
+            live_run_id?: string;
+            name?: string;
+            /** @description OldestPendingAt is when the longest-waiting decision was asked for. */
+            oldest_pending_at?: string;
+            /** @description OwnerID is the user the conversation belongs to; a task's hidden session inherits its parent's. */
+            owner_id?: string;
+            /** @description PendingCount is how many decisions the session and its background tasks wait on. */
+            pending_count?: number;
+            pinned?: boolean;
+            /** @description Planning is the session's plan phase: the next run starts read-only until a plan is approved. */
+            planning?: boolean;
+            /** @description ProjectID is the project the session is bound to, set once by the first project-carrying run and never rewritten. */
+            project_id?: string;
+            /** @description Status is idle, running, requires_action or failed. */
+            status?: string;
+            updated_at?: string;
         };
         "handler.setSettingReq": {
             value?: string;

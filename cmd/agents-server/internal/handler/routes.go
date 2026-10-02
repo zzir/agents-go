@@ -99,6 +99,8 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		task.POST("/retry", h.Tasks.Retry)
 		task.POST("/dismiss", h.Tasks.Dismiss)
 
+		// The caller's own inbox: scoped to the caller in the handler, no gate.
+		api.GET("/approvals", h.Approvals.List)
 		approvals := api.Group("/approvals/:tool_call_id", h.Authz.approvalGate())
 		approvals.POST("/approve", h.Approvals.Approve)
 		approvals.POST("/reject", h.Approvals.Reject)

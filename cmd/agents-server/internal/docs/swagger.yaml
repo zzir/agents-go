@@ -354,6 +354,33 @@ components:
         task_id:
           type: string
       type: object
+    bridge.PendingCall:
+      properties:
+        created_at:
+          type: string
+        expires_at:
+          description: ExpiresAt is when the wait ends unanswered; absent when approvals
+            do not expire.
+          type: string
+        kind:
+          description: Kind is "step" for a workflow step waiting to start, empty
+            for a tool call.
+          type: string
+        run_id:
+          type: string
+        session_id:
+          description: SessionID is the conversation to open; a task's call names
+            its parent conversation.
+          type: string
+        task_id:
+          type: string
+        task_label:
+          type: string
+        tool_call_id:
+          type: string
+        tool_name:
+          type: string
+      type: object
     bridge.RunInfo:
       properties:
         agent_config_id:
@@ -1094,12 +1121,110 @@ components:
         name:
           type: string
       type: object
+    handler.sessionDetail:
+      properties:
+        agent_config_id:
+          type: string
+        created_at:
+          type: string
+        hidden:
+          description: Hidden marks a background task's transcript session; listings
+            leave it out.
+          type: boolean
+        id:
+          type: string
+        live_run_id:
+          description: LiveRunID is the session's own executing run; a run paused
+            for approval is not live.
+          type: string
+        name:
+          type: string
+        oldest_pending_at:
+          description: OldestPendingAt is when the longest-waiting decision was asked
+            for.
+          type: string
+        owner_id:
+          description: OwnerID is the user the conversation belongs to; a task's hidden
+            session inherits its parent's.
+          type: string
+        pending:
+          description: Pending lists the decisions waited on, oldest first.
+          items:
+            $ref: '#/components/schemas/bridge.PendingCall'
+          type: array
+          uniqueItems: false
+        pending_count:
+          description: PendingCount is how many decisions the session and its background
+            tasks wait on.
+          type: integer
+        pinned:
+          type: boolean
+        planning:
+          description: 'Planning is the session''s plan phase: the next run starts
+            read-only until a plan is approved.'
+          type: boolean
+        project_id:
+          description: ProjectID is the project the session is bound to, set once
+            by the first project-carrying run and never rewritten.
+          type: string
+        status:
+          description: Status is idle, running, requires_action or failed.
+          type: string
+        updated_at:
+          type: string
+      type: object
     handler.sessionPatchReq:
       properties:
         name:
           type: string
         pinned:
           type: boolean
+      type: object
+    handler.sessionView:
+      properties:
+        agent_config_id:
+          type: string
+        created_at:
+          type: string
+        hidden:
+          description: Hidden marks a background task's transcript session; listings
+            leave it out.
+          type: boolean
+        id:
+          type: string
+        live_run_id:
+          description: LiveRunID is the session's own executing run; a run paused
+            for approval is not live.
+          type: string
+        name:
+          type: string
+        oldest_pending_at:
+          description: OldestPendingAt is when the longest-waiting decision was asked
+            for.
+          type: string
+        owner_id:
+          description: OwnerID is the user the conversation belongs to; a task's hidden
+            session inherits its parent's.
+          type: string
+        pending_count:
+          description: PendingCount is how many decisions the session and its background
+            tasks wait on.
+          type: integer
+        pinned:
+          type: boolean
+        planning:
+          description: 'Planning is the session''s plan phase: the next run starts
+            read-only until a plan is approved.'
+          type: boolean
+        project_id:
+          description: ProjectID is the project the session is bound to, set once
+            by the first project-carrying run and never rewritten.
+          type: string
+        status:
+          description: Status is idle, running, requires_action or failed.
+          type: string
+        updated_at:
+          type: string
       type: object
     handler.setSettingReq:
       properties:
@@ -2609,6 +2734,31 @@ paths:
       summary: Agent tool surface
       tags:
       - agents
+  /approvals:
+    get:
+      description: 'Every tool call and workflow step waiting on the caller, across
+        conversations and their background tasks, oldest first. Read-only: a decision
+        is made on the call itself.'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/bridge.PendingCall'
+                type: array
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List the caller's pending approvals
+      tags:
+      - approvals
   /approvals/{tool_call_id}/approve:
     post:
       description: 'Approves a pending tool call and resumes the run under its original
@@ -5353,7 +5503,7 @@ paths:
             application/json:
               schema:
                 items:
-                  $ref: '#/components/schemas/store.Session'
+                  $ref: '#/components/schemas/handler.sessionView'
                 type: array
           description: OK
         "403":
@@ -5456,7 +5606,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/store.Session'
+                $ref: '#/components/schemas/handler.sessionDetail'
           description: OK
         "404":
           content:

@@ -53,6 +53,13 @@ type SessionCompactor interface {
 	CompactSession(ctx context.Context, sessionID string) (compacted bool, beforeItems, afterItems int, err error)
 }
 
+// SessionStatuser derives conversations' statuses and announces a change this
+// handler made to one (the bridge's Runner).
+type SessionStatuser interface {
+	SessionStatuses(ctx context.Context, ownerID string, ids []string) (bridge.SessionStates, error)
+	PublishSessionStatus(ctx context.Context, sessionID string)
+}
+
 // SessionDeps is what a SessionHandler runs on. Every field is required;
 // NewSessionHandler refuses a nil.
 type SessionDeps struct {
@@ -73,6 +80,8 @@ type SessionDeps struct {
 	// the manual compaction pass. Both the bridge Runner.
 	Stopper   RunStopper
 	Compactor SessionCompactor
+	// Statuses derives the status each listed session carries.
+	Statuses SessionStatuser
 	// Settings resolves the attachment public base URL for message views.
 	Settings *settings.Reader
 }
@@ -90,6 +99,7 @@ type SessionHandler struct {
 	projects   *store.ProjectStore
 	stopper    RunStopper
 	compactor  SessionCompactor
+	statuses   SessionStatuser
 	settings   *settings.Reader
 }
 
@@ -100,25 +110,54 @@ func NewSessionHandler(d SessionDeps) *SessionHandler {
 	case d.Sessions == nil, d.Entries == nil, d.Traces == nil, d.Agents == nil,
 		d.Profiles == nil, d.MCPServers == nil, d.Users == nil, d.Projects == nil:
 		panic("handler: SessionDeps has a nil store")
-	case d.MCP == nil, d.Stopper == nil, d.Compactor == nil, d.Settings == nil:
-		panic("handler: SessionDeps has a nil MCP lister, stopper, compactor or settings")
+	case d.MCP == nil, d.Stopper == nil, d.Compactor == nil, d.Statuses == nil, d.Settings == nil:
+		panic("handler: SessionDeps has a nil MCP lister, stopper, compactor, statuses or settings")
 	}
 	return &SessionHandler{
 		sessions: d.Sessions, entries: d.Entries, traces: d.Traces, agents: d.Agents,
 		profiles: d.Profiles, mcp: d.MCP, mcpServers: d.MCPServers, users: d.Users,
-		projects: d.Projects, stopper: d.Stopper, compactor: d.Compactor, settings: d.Settings,
+		projects: d.Projects, stopper: d.Stopper, compactor: d.Compactor, statuses: d.Statuses,
+		settings: d.Settings,
 	}
 }
 
-// List responds with the caller's sessions. `?all=true` is the admin's
-// management view — every owner's sessions; content stays behind the
-// per-session owner checks.
+// sessionView is a session with its derived status.
+type sessionView struct {
+	store.Session
+	// Status is idle, running, requires_action or failed.
+	Status string `json:"status"`
+	// LiveRunID is the session's own executing run; a run paused for approval is not live.
+	LiveRunID string `json:"live_run_id,omitempty"`
+	// PendingCount is how many decisions the session and its background tasks wait on.
+	PendingCount int `json:"pending_count"`
+	// OldestPendingAt is when the longest-waiting decision was asked for.
+	OldestPendingAt *time.Time `json:"oldest_pending_at,omitempty"`
+}
+
+// sessionDetail is a session view with the decisions it waits on.
+type sessionDetail struct {
+	sessionView
+	// Pending lists the decisions waited on, oldest first.
+	Pending []bridge.PendingCall `json:"pending"`
+}
+
+func newSessionView(sess store.Session, st bridge.SessionState) sessionView {
+	w := st.Wire(sess.ID)
+	return sessionView{
+		Session: sess, Status: w.Status, LiveRunID: w.LiveRunID,
+		PendingCount: w.PendingCount, OldestPendingAt: w.OldestPendingAt,
+	}
+}
+
+// List responds with the caller's sessions, each with its derived status.
+// `?all=true` is the admin's management view — every owner's sessions;
+// content stays behind the per-session owner checks.
 //
 //	@Summary	List sessions
 //	@Tags		sessions
 //	@Produce	json
 //	@Param		all	query		bool	false	"Every owner's sessions (admin only)"
-//	@Success	200	{array}		store.Session
+//	@Success	200	{array}		sessionView
 //	@Failure	403	{object}	ErrorResponse	"all=true by a member"
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
@@ -132,15 +171,22 @@ func (h *SessionHandler) List(c *gin.Context) {
 		}
 		owner = store.EveryOwner
 	}
-	sessions, err := h.sessions.List(c.Request.Context(), owner)
+	ctx := c.Request.Context()
+	sessions, err := h.sessions.List(ctx, owner)
 	if err != nil {
 		internalError(c, err)
 		return
 	}
-	if sessions == nil {
-		sessions = []store.Session{} // an empty list, never JSON null
+	states, err := h.statuses.SessionStatuses(ctx, owner, nil)
+	if err != nil {
+		internalError(c, err)
+		return
 	}
-	c.JSON(http.StatusOK, sessions)
+	views := make([]sessionView, 0, len(sessions)) // an empty list, never JSON null
+	for _, sess := range sessions {
+		views = append(views, newSessionView(sess, states.Of(sess.ID)))
+	}
+	c.JSON(http.StatusOK, views)
 }
 
 // sessionCreateReq is the request body for Create.
@@ -204,13 +250,14 @@ func (h *SessionHandler) Create(c *gin.Context) {
 	created(c, sess.ID, sess)
 }
 
-// Get responds with the session identified by the id path parameter.
+// Get responds with the session identified by the id path parameter, its
+// derived status and the decisions it waits on.
 //
 //	@Summary	Get session
 //	@Tags		sessions
 //	@Produce	json
 //	@Param		id	path		string	true	"Session ID"
-//	@Success	200	{object}	store.Session
+//	@Success	200	{object}	sessionDetail
 //	@Failure	404	{object}	ErrorResponse
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
@@ -221,9 +268,19 @@ func (h *SessionHandler) Get(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
+	states, err := h.statuses.SessionStatuses(c.Request.Context(), store.EveryOwner, []string{sess.ID})
+	if err != nil {
+		internalError(c, err)
+		return
+	}
+	st := states.Of(sess.ID)
+	pending := st.Pending
+	if pending == nil {
+		pending = []bridge.PendingCall{}
+	}
 	// planning is a column of the row, so the response and the list carry it
 	// with no extra read.
-	c.JSON(http.StatusOK, sess)
+	c.JSON(http.StatusOK, sessionDetail{sessionView: newSessionView(*sess, st), Pending: pending})
 }
 
 // sessionPatchReq is the request body for Patch; absent fields are unchanged.
@@ -716,6 +773,9 @@ func (h *SessionHandler) Branch(c *gin.Context) {
 		fencedError(c, err)
 		return
 	}
+	// A pause the move left behind, or returned to, changes what the session
+	// waits on.
+	h.statuses.PublishSessionStatus(ctx, id)
 	c.JSON(http.StatusOK, gin.H{"leaf": leaf, "previous_leaf": previousLeaf})
 }
 

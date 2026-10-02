@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime/debug"
+	"sync"
 
 	"github.com/uptrace/bun"
 
@@ -42,6 +43,9 @@ type Runner struct {
 	// invariant 37. Same wiring rule as OnRunAttach; ctx carries the caller's
 	// logger, not its cancellation.
 	OnBroadcast func(ctx context.Context, env *protocol.Envelope, exceptRunID, sessionID string)
+
+	// statusMu serializes one conversation's status broadcasts (PublishSessionStatus).
+	statusMu [statusStripes]sync.Mutex
 }
 
 // NewRunner creates a Runner backed by the given database and agent
@@ -183,6 +187,7 @@ func (r *Runner) startRunReserved(runID, sessionID, agentConfigID, projectID str
 // launchSegment runs one segment's exec in the background. Order matters: the
 // approval row lands inside exec, before finish frees the slot; finalize runs last.
 func (r *Runner) launchSegment(seg *runSegment, runID, sessionID string, onDone func(*RunOutcome), exec func() *RunOutcome) {
+	r.publishRunStatus(runID, sessionID)
 	go func() {
 		defer seg.finalize()
 		// Last-resort recover (exec recovers its own panics past its preamble): the
@@ -206,6 +211,16 @@ func (r *Runner) endSegment(runID, sessionID string, result *RunOutcome, onDone 
 	if onDone != nil {
 		r.guarded(runID, "onDone", func() { onDone(result) })
 	}
+	r.guarded(runID, "status", func() { r.publishRunStatus(runID, sessionID) })
+}
+
+// publishRunStatus announces the conversation's status as a chat run starts
+// or ends; a task's run moves its parent through task.updated instead.
+func (r *Runner) publishRunStatus(runID, sessionID string) {
+	if info, ok := r.hub.Info(runID); ok && info.Task != nil {
+		return
+	}
+	r.PublishSessionStatus(r.hub.rootCtx, sessionID)
 }
 
 // guarded runs one teardown step, logging a panic instead of unwinding.

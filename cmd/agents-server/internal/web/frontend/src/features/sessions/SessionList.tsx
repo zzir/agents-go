@@ -4,6 +4,7 @@ import { ActionList, ActionMenu, Dialog, FormControl, IconButton, TextInput, use
 import { KebabHorizontalIcon, PencilIcon, PinIcon, PinSlashIcon, PlusIcon, RepoForkedIcon, SearchIcon, TrashIcon, WorkflowIcon, XIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
+import type { SessionStatus } from '@/lib/protocol';
 import { filterSessionsByName } from '@/lib/sessionFilter';
 import { toast } from '@/lib/toast';
 
@@ -11,6 +12,9 @@ interface Session {
   id: string;
   name: string;
   pinned: boolean;
+  // The status the server derived when the list was read; absent on a row a
+  // mutation returned.
+  status?: SessionStatus;
   created_at: string;
   updated_at: string;
 }
@@ -37,8 +41,9 @@ interface SessionListProps {
   // conversation (invariant 69).
   onNew: () => void;
   reloadKey: unknown;
-  runningSessions?: Set<string>;
-  awaitingSessions?: Set<string>;
+  // Each conversation's status as session.status last announced it; a row
+  // not named here shows the status the list carried (invariant 3).
+  statuses?: Record<string, SessionStatus>;
   // The two places in the sidebar that are not a conversation sit with the
   // list's controls, not in the list.
   onOpenHub: () => void;
@@ -150,7 +155,7 @@ function RenameDialog({ session, onClose, onRenamed }: { session: Session; onClo
   );
 }
 
-export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onRenamed: onRenamedNotify, onNew, reloadKey, runningSessions, awaitingSessions, onOpenHub }: SessionListProps): ReactElement {
+export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onRenamed: onRenamedNotify, onNew, reloadKey, statuses, onOpenHub }: SessionListProps): ReactElement {
   const confirmDialog = useConfirm();
   const { data: sessions, reload, mutateData } = useApi(() => api.sessions.list() as Promise<Session[]>, [], 'sessions');
 
@@ -238,20 +243,23 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onRe
   const loaded = sessions !== null;
   const emptyText = query.trim() ? 'No matching sessions' : 'No sessions yet';
 
-  const renderItem = (s: Session) => (
-    <SessionItem
-      key={s.id}
-      s={s}
-      activeId={activeId}
-      isRunning={!!(runningSessions && runningSessions.has(s.id))}
-      isAwaiting={!!(awaitingSessions && awaitingSessions.has(s.id))}
-      onSelect={onSelect}
-      onPin={handlePin}
-      onRename={setRenaming}
-      onFork={handleFork}
-      onDelete={handleDelete}
-    />
-  );
+  const renderItem = (s: Session) => {
+    const status = statuses?.[s.id] ?? s.status;
+    return (
+      <SessionItem
+        key={s.id}
+        s={s}
+        activeId={activeId}
+        isRunning={status === 'running'}
+        isAwaiting={status === 'requires_action'}
+        onSelect={onSelect}
+        onPin={handlePin}
+        onRename={setRenaming}
+        onFork={handleFork}
+        onDelete={handleDelete}
+      />
+    );
+  };
 
   return (
     <>

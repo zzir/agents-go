@@ -21,13 +21,12 @@ const TerminalPanel = React.lazy(() =>
   import('@/features/terminal/TerminalPanel').then(m => ({ default: m.TerminalPanel })),
 );
 import { checkAuth, getToken, api, exchangeCode, TOKEN_KEY } from '@/lib/api';
-import { EV, TASK_KIND_WORKFLOW } from '@/lib/protocol';
-import { hasTaskInStatus } from '@/lib/background';
+import { EV, TASK_KIND_WORKFLOW, type SessionStatus, type SessionStatusEvent } from '@/lib/protocol';
 import { WorkflowsHub, type HubTab } from '@/features/workflows/WorkflowsHub';
 import { WORKFLOW_COMMAND } from '@/features/chat/SlashMenu';
 import { SESSION_REMOVED } from '@/features/sessions/SessionPicker';
 import { useAgentSocket, defaultSS, type SessionState } from '@/lib/useAgentSocket';
-import { hasPendingApproval, patchToolCall, type ToolCallPatch } from '@/lib/timeline';
+import { patchToolCall, type ToolCallPatch } from '@/lib/timeline';
 import { syncTaskCard } from '@/lib/streamReducer';
 import { adoptNewSessionPrefs, clearSessionPrefs } from '@/lib/drafts';
 import { toast } from '@/lib/toast';
@@ -78,17 +77,9 @@ let clientMsgSeq = 0;
 function nextClientMsgId(): string { return 'c' + (++clientMsgSeq); }
 
 const MemoizedChatView = memo(ChatView);
-// The sidebar re-renders only when a prop moves — the sets below keep their
-// identity while their membership holds, so a streaming frame does not redraw
-// the whole list.
+// The sidebar re-renders only when a prop moves: a streaming frame changes
+// none of them, so it does not redraw the whole list.
 const MemoizedSessionList = memo(SessionListImpl);
-
-// sameMembers reports whether two sets hold the same ids.
-function sameMembers(a: Set<string>, b: Set<string>): boolean {
-  if (a.size !== b.size) return false;
-  for (const x of a) if (!b.has(x)) return false;
-  return true;
-}
 
 // PLAN_COMMAND is the composer's plan-mode command: a prefix that puts the
 // session into plan mode before the request it leads runs. (WORKFLOW_COMMAND,
@@ -273,6 +264,11 @@ function App() {
     });
   }, []);
 
+  // The sidebar's markers: each conversation's status as the server last
+  // announced it (session.status), over the one its list row carries. Derived
+  // server-side and rendered as is — invariant 3.
+  const [sessionStatuses, setSessionStatuses] = useState<Record<string, SessionStatus>>({});
+
   // What the socket tells the app about a conversation beyond its runs: the
   // auto-title after the first turn, and the project binding, whose record
   // (announcedBindings) survives a meta cleared by a session switch mid-fetch.
@@ -285,6 +281,12 @@ function App() {
       announcedBindings.current[sid] = projectId;
       setSessionMeta(prev => (prev && prev.id === sid ? { ...prev, projectId } : prev));
       setBindingsVersion(v => v + 1);
+    },
+    onStatus: (st: SessionStatusEvent | null) => {
+      setSessionStatuses(prev => {
+        if (!st) return Object.keys(prev).length === 0 ? prev : {};
+        return prev[st.session_id] === st.status ? prev : { ...prev, [st.session_id]: st.status };
+      });
     },
   }), []);
 
@@ -704,20 +706,6 @@ function App() {
     return sig.join('|');
   }, [ss]);
 
-  // Streaming moves ss every animation frame; these two are derived from it
-  // but hand out the SAME Set while their membership holds, so the sidebar
-  // (memoized on them) redraws on a run starting or ending, not per frame.
-  const runningRef = useRef(new Set<string>());
-  const runningSessions = useMemo(() => {
-    const set = new Set<string>();
-    for (const [sid, state] of Object.entries(ss)) {
-      if (state.running || hasTaskInStatus(state.tasks, 'working')) set.add(sid);
-    }
-    if (sameMembers(runningRef.current, set)) return runningRef.current;
-    runningRef.current = set;
-    return set;
-  }, [ss]);
-
   // Stable reference so MemoizedChatView's shallow compare isn't defeated by a
   // fresh object literal every render.
   const sessionBinding = useMemo(() =>
@@ -725,28 +713,6 @@ function App() {
       ? { projectId: sessionMeta.projectId }
       : null,
   [sessionMeta, activeSession]);
-
-  // The sidebar's marker: a tool call in the conversation's own turns, or a
-  // background task (a workflow step) of it, awaits a decision. Nothing
-  // blocks a send — a newer message abandons the conversation's own pause
-  // (invariant 19). Derived from the messages, so it survives a reload and
-  // self-clears the moment a status lands; the scan is cached per message
-  // list, which a streaming delta does not replace.
-  const approvalCache = useRef(new WeakMap<object, boolean>());
-  const awaitingRef = useRef(new Set<string>());
-  const awaitingSessions = useMemo(() => {
-    const awaiting = new Set<string>();
-    for (const [sid, state] of Object.entries(ss)) {
-      let pending = approvalCache.current.get(state.messages);
-      if (pending === undefined) {
-        pending = hasPendingApproval(state.messages);
-        approvalCache.current.set(state.messages, pending);
-      }
-      if (pending || hasTaskInStatus(state.tasks, 'input_required')) awaiting.add(sid);
-    }
-    if (!sameMembers(awaitingRef.current, awaiting)) awaitingRef.current = awaiting;
-    return awaitingRef.current;
-  }, [ss]);
 
   const focusComposer = useCallback(() => {
     setTimeout(() => {
@@ -806,8 +772,7 @@ function App() {
       onRenamed={handleRenamed}
       onNew={handleNewSession}
       reloadKey={sessionReloadKey}
-      runningSessions={runningSessions}
-      awaitingSessions={awaitingSessions}
+      statuses={sessionStatuses}
       onOpenHub={handleOpenHub}
     />
   );

@@ -21,11 +21,11 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
    drops fields makes the next save silently wipe them. Return full rows from
    List, or make the panel fetch Get before editing (`useCrud`, `lib/hooks.ts`).
 3. **Derived state is computed in one backend function; the frontend renders
-   it verbatim.** A lifecycle is one server-derived `status` (MCP: `disabled |
-   connecting | authorizing | needs_auth | disconnected | connected`) or
-   boolean (`chatgpt_logged_in`, `has_oauth_token`). The frontend never
-   reconstructs state from several fields or its own per-item maps
-   (`mcpservers/manager.go`).
+   it verbatim.** A lifecycle is one server-derived `status` — MCP: `disabled |
+   connecting | authorizing | needs_auth | disconnected | connected`
+   (`mcpservers/manager.go`); a session: `idle | running | requires_action |
+   failed` (`bridge.SessionStatuses`) — or boolean (`chatgpt_logged_in`). The
+   frontend never reconstructs state from several fields or per-item maps.
 4. **Swagger annotations match the actual response type.** Run `make openapi`
    after any handler change — CI diffs the generated spec (`scripts/ci.sh`).
 
@@ -422,12 +422,12 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     through the same cascade as a delete; `task_session_retention_days` takes a
     finished task's transcript and its row together after the window. Nothing
     else creates or keeps a hidden session (`session_repo_adapter.go`).
-73. **A reconnect never leaves a loaded session stale.** The socket
-    coming back re-reads the session on screen (timeline under its live
-    tail, task rows under the no-move-backwards rule, traces with the stored
-    rows winning), drops every other loaded one's mark so its next select
-    refetches, and relists the sidebar; a reconnect while the tab is hidden
-    does this on its next visible moment (`resyncSessions`, `useAgentSocket.ts`).
+73. **A reconnect never leaves a loaded session stale.** The socket coming
+    back re-reads the session on screen (timeline under its live tail, task
+    rows never moving backwards, stored trace rows winning), unmarks every
+    other loaded one so its next select refetches, and relists the sidebar,
+    whose statuses replace what `session.status` announced; while hidden, on
+    the next visible moment (`resyncSessions`, `useAgentSocket.ts`).
 74. **A person reads "session".** Every label, empty state, toast, dialog
     title and column a person sees names the thing a session — never
     conversation or chat; the code, the API and `session_id` were already
