@@ -1799,19 +1799,20 @@ Rules: spec §2.7
 Decided 2026-10-02 (workbench invariant 84).
 
 **Decision.** A trigger's agent turn, the tasks it spawns, a trigger-started
-workflow's steps and the wake-ups that report any of them ask for every
-`exec_command` the agent gates, whatever `same`/`all` grants the session
-holds. A chat turn resumed by a person's decision reads the grants again.
+workflow's steps and the wake-ups that report any of them each run on their
+own grants: a gated `exec_command` asks until a card of that run says `same`
+or `all`, whatever the session holds. The grant is the session's too.
 
-**Rejected.** Withholding the wake-ups alone: the turn and its tasks had
-already run a webhook's text under the person's trust. A persisted revocation
-table: the trust it would guard lives in memory. A per-trigger `allow_tools`:
-pointing the trigger at an agent with fewer tools narrows it already.
+**Rejected.** Reading the session's trust again once a person answered:
+"approve once" then ran every later command on an older `all`. Asking for
+every command with the scope ignored: the card's own buttons did nothing.
+Withholding the wake-ups alone: the turn and its tasks had already run a
+webhook's text under the person's trust. A per-trigger `allow_tools`: pointing
+the trigger at an agent with fewer tools narrows it already.
 
 **Cost accepted.** An unattended trigger turn that reaches a gated command
-waits for a person. A grant chosen on such a card is the session's: it never
-quiets a task of that chain. Which runs were withheld is kept in memory, so
-after a restart a retried task of one reads the grants made since; a
-workflow's origin rides its state and survives.
+waits for a person, and every run of the chain — a retry, the next step, the
+next fire — asks anew. A run's grants live in memory like the trust they stand
+in for: a turn resumed after a restart reads the session's, emptied by it.
 
 Rules: [invariant 84](workbench-invariants.md)

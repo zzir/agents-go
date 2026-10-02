@@ -74,45 +74,58 @@ func TestTrustStoreForget(t *testing.T) {
 	}
 }
 
-// A run marked as withheld asks for every command, whatever its session
-// granted (invariant 84); the same session's unmarked run still uses the grant.
-func TestCommandGateWithheldIgnoresTrust(t *testing.T) {
+// A run on its own grants reads those and not its session's (invariant 84): it
+// asks despite the session's "all", and stops asking only for what its own
+// cards granted. The same session's other runs still read the session's.
+func TestCommandGateReadsTheRunsOwnTrust(t *testing.T) {
 	m := NewManager()
-	args := `{"cmd":"ls","workdir":""}`
+	ls, rm := `{"cmd":"ls","workdir":""}`, `{"cmd":"rm -rf x","workdir":""}`
 	rc := &agents.RunContext{Context: "sess1"}
 	m.Trust().ForSession("sess1").AllowAll()
 
-	withheld := WithoutStandingTrust(context.Background())
-	if need, _ := m.commandGate(withheld, rc, args, ""); !need {
-		t.Fatal("a withheld run used the session's standing trust")
-	}
-	// A context derived from it is still withheld: the mark rides the run.
-	derived, cancel := context.WithCancel(withheld)
+	own := m.Trust().WithholdRun("sess1", "run-a")
+	ctx, cancel := context.WithCancel(WithRunTrust(context.Background(), own))
 	defer cancel()
-	if need, _ := m.commandGate(derived, rc, args, ""); !need {
-		t.Fatal("a context derived from a withheld run lost the mark")
+	if need, _ := m.commandGate(ctx, rc, ls, ""); !need {
+		t.Fatal("a run on its own grants used the session's standing trust")
 	}
-	if need, _ := m.commandGate(context.Background(), rc, args, ""); need {
-		t.Fatal("an unmarked run on the same session should still use the grant")
+	own.AllowCommand(CommandHash(ls))
+	if need, _ := m.commandGate(ctx, rc, ls, ""); need {
+		t.Fatal("the command this run's card trusted still asks")
+	}
+	if need, _ := m.commandGate(ctx, rc, rm, ""); !need {
+		t.Fatal("trusting one command let a different one through")
+	}
+	own.AllowAll()
+	if need, _ := m.commandGate(ctx, rc, rm, ""); need {
+		t.Fatal("the run's own \"all\" still asks")
+	}
+	if need, _ := m.commandGate(context.Background(), rc, rm, ""); need {
+		t.Fatal("a run of the same session without its own trust should read the session's")
+	}
+	// The run's grants are its own: another session's ordinary run sees none of them.
+	if need, _ := m.commandGate(context.Background(), &agents.RunContext{Context: "sess2"}, rm, ""); !need {
+		t.Fatal("a run's own grant leaked to another session")
 	}
 }
 
-// The withheld-run record answers by run id and goes with its session.
+// A withheld run's trust is kept by run id — a resume finds the same grants —
+// and goes with its session.
 func TestTrustStoreWithheldRuns(t *testing.T) {
 	s := NewTrustStore()
-	s.WithholdRun("sess1", "run-a")
+	a := s.WithholdRun("sess1", "run-a")
 	s.WithholdRun("sess2", "run-b")
-	if !s.RunWithheld("run-a") || !s.RunWithheld("run-b") {
-		t.Fatal("a recorded run is not reported withheld")
+	if a == nil || s.WithholdRun("sess1", "run-a") != a || s.RunTrust("run-a") != a {
+		t.Fatal("a second look at a withheld run did not return the same trust")
 	}
-	if s.RunWithheld("run-c") || s.RunWithheld("") {
-		t.Fatal("an unrecorded run is reported withheld")
+	if s.RunTrust("run-c") != nil || s.RunTrust("") != nil {
+		t.Fatal("a run never withheld has a trust of its own")
 	}
 	s.Forget("sess1")
-	if s.RunWithheld("run-a") {
+	if s.RunTrust("run-a") != nil {
 		t.Fatal("a forgotten session's withheld run survived")
 	}
-	if !s.RunWithheld("run-b") {
+	if s.RunTrust("run-b") == nil {
 		t.Fatal("forgetting one session dropped another's withheld run")
 	}
 }

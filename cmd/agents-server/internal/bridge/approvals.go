@@ -317,7 +317,7 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 		// Standing trust (same_command, all) is written HERE: after the claim
 		// held, before the launch, so the loser of two decisions widens nothing.
 		if approve {
-			r.applyCommandTrust(scope, item, trustSessionID(pending.SessionID, taskMeta))
+			r.applyCommandTrust(scope, item, trustSessionID(pending.SessionID, taskMeta), pending.RunID)
 		}
 		return nil
 	}
@@ -457,7 +457,8 @@ func findApprovalItem(state *agents.RunState, callID string) *agents.ToolApprova
 
 // ApprovalScope controls how far an approve decision extends for exec_command:
 // once = just this call; same = trust this exact command for the rest of the
-// session; all = trust every command for the session. Ignored for other tools.
+// session; all = trust every command for the session. A run on its own grants
+// takes the same scope for itself. Ignored for other tools.
 type ApprovalScope string
 
 // Approval scopes for ResolveApproval — how far an approve decision extends.
@@ -484,17 +485,24 @@ func ParseApprovalScope(s string) ApprovalScope {
 // executions carry per-session command-trust grants.
 const execCommandToolName = "exec_command"
 
-// applyCommandTrust records a session-level exec_command grant per scope; a
-// no-op for other tools, an empty session, or the once scope.
-func (r *Runner) applyCommandTrust(scope ApprovalScope, item *agents.ToolApprovalItem, sessionID string) {
+// applyCommandTrust records an exec_command grant per scope on the session and,
+// for a run on its own grants, on that run too — invariant 84. A no-op for
+// other tools, an empty session, or the once scope.
+func (r *Runner) applyCommandTrust(scope ApprovalScope, item *agents.ToolApprovalItem, sessionID, runID string) {
 	if item.ToolName != execCommandToolName || sessionID == "" || r.Deps.SandboxManager == nil {
 		return
 	}
-	trust := r.Deps.SandboxManager.Trust().ForSession(sessionID)
-	switch scope {
-	case ApprovalSameCommand:
-		trust.AllowCommand(sandboxes.CommandHash(item.Arguments))
-	case ApprovalAll:
-		trust.AllowAll()
+	store := r.Deps.SandboxManager.Trust()
+	grant := func(trust *sandboxes.CommandTrust) {
+		switch scope {
+		case ApprovalSameCommand:
+			trust.AllowCommand(sandboxes.CommandHash(item.Arguments))
+		case ApprovalAll:
+			trust.AllowAll()
+		}
+	}
+	grant(store.ForSession(sessionID))
+	if own := store.RunTrust(runID); own != nil {
+		grant(own)
 	}
 }

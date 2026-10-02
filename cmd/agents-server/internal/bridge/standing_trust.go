@@ -6,19 +6,20 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// withholdsTrust reports whether a segment runs without its session's standing
-// command trust — invariant 84. asked is a fresh chat segment's own flag; a
-// task's run answers from what started it, on every segment.
-func (r *Runner) withholdsTrust(ctx context.Context, task *TaskMeta, fresh, asked bool) bool {
+// withholdsTrust reports whether a segment runs on its own grants instead of
+// its session's standing command trust — invariant 84. asked is a fresh chat
+// segment's own flag, and a resumed one stays what it started as; a task's run
+// answers from what started it.
+func (r *Runner) withholdsTrust(ctx context.Context, runID string, task *TaskMeta, fresh, asked bool) bool {
 	if task == nil {
-		return fresh && asked
+		return (fresh && asked) || r.runWithheld(runID)
 	}
 	return r.runWithheld(task.ParentRunID) || (task.Kind == store.TaskKindWorkflow && r.workflowFromTrigger(ctx, task.TaskID))
 }
 
 // runWithheld reports whether runID was started without standing trust.
 func (r *Runner) runWithheld(runID string) bool {
-	return runID != "" && r.Deps.SandboxManager != nil && r.Deps.SandboxManager.Trust().RunWithheld(runID)
+	return runID != "" && r.Deps.SandboxManager != nil && r.Deps.SandboxManager.Trust().RunTrust(runID) != nil
 }
 
 // workflowFromTrigger reports whether the task is a workflow execution a

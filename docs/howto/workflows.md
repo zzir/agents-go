@@ -125,12 +125,12 @@ curl -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   the same row in the hub; a trigger's `last_error` says why the last fire
   started nothing.
 - What a trigger starts does not use the commands you trusted in that
-  session: with `exec_command` in the agent's approve list, its turn stops at
-  the first command and waits for you (once you answer, the rest of that turn
-  reads your grants again), and its tasks and workflow steps ask for every
-  command. **Trust this command** or **Trust all this session** on such a
-  card is recorded for your own turns; the next fire still asks
-  ([invariant 84](../explanation/workbench-invariants.md)).
+  session: with `exec_command` in the agent's approve list, each run it starts
+  (its turn, a task, a workflow step) asks until one of that run's own cards
+  says otherwise. **Approve once** lets that call through, **Trust this
+  command** that command for the rest of the run, **Trust all this session**
+  the rest of the run and, as always, your own turns. The next fire starts
+  from nothing again ([invariant 84](../explanation/workbench-invariants.md)).
 
 Deleting the session, the workflow or the agent a trigger fires deletes the
 trigger with it.

@@ -288,12 +288,11 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	if info, ok := r.hub.Info(runID); ok {
 		task, ownerID = info.Task, info.OwnerID
 	}
-	// Recorded as well as marked, so the tasks this run spawns are withheld too.
-	if r.withholdsTrust(ctx, task, spec.fresh, spec.withholdTrust) {
-		ctx = sandboxes.WithoutStandingTrust(ctx)
-		if r.Deps.SandboxManager != nil {
-			r.Deps.SandboxManager.Trust().WithholdRun(trustSessionID(sessionID, task), runID)
-		}
+	// The run's own grants, kept by run id so a resume finds them again and the
+	// tasks this run spawns are withheld too.
+	if r.Deps.SandboxManager != nil && r.withholdsTrust(ctx, runID, task, spec.fresh, spec.withholdTrust) {
+		own := r.Deps.SandboxManager.Trust().WithholdRun(trustSessionID(sessionID, task), runID)
+		ctx = sandboxes.WithRunTrust(ctx, own)
 	}
 	// Attachments are validated before anything is announced; the metadata
 	// also feeds run.started so clients render thumbnails without a request.
