@@ -234,3 +234,40 @@ func (s *failAfterStorage) Append(ctx context.Context, entries ...session.Entry)
 	s.allowed--
 	return s.Storage.Append(ctx, entries...)
 }
+
+// A turn the stop hook ends is written at its save point, before the output
+// guardrails see it: a refusal there cannot take the real output back.
+func TestStopAfterTurnRefusalKeepsTheStoredTurn(t *testing.T) {
+	model := agentstest.NewResponseBuilder().
+		FunctionCall("lookup", "call-1", "{}").
+		NewTurn().
+		Text("never asked").
+		Build()
+	lookup := agents.NewTool("lookup", "looks it up",
+		func(context.Context, *agents.ToolContext, struct{}) (string, error) {
+			return "order placed, " + orderSecret, nil
+		})
+	agent := &agents.Agent{
+		Name: "a", ModelImpl: model,
+		Tools:      []*agents.Tool{lookup},
+		Guardrails: []agents.Guardrail{noCardNumbers()},
+	}
+	sess := session.NewInMemorySession()
+	_, err := agents.RunSync(context.Background(), agent, "place it", agents.RunOptions{
+		Conversation: agents.ConversationOptions{Session: sess},
+		Exec: agents.ExecOptions{
+			ShouldStopAfterTurn: func(_ context.Context, tr *agents.TurnResult) (bool, error) {
+				return len(tr.ToolCallNames()) > 0, nil
+			},
+		},
+	})
+	if _, ok := errors.AsType[*agents.GuardrailTripwireError](err); !ok {
+		t.Fatalf("err = %v, want the output tripwire", err)
+	}
+	if got := storedKinds(t, sess); !slices.Equal(got, []string{"message", "function_call", "function_call_output"}) {
+		t.Fatalf("stored = %v, want the turn its save point wrote", got)
+	}
+	if !sessionCarries(t, sess, orderSecret) || sessionCarries(t, sess, "Output withheld") {
+		t.Fatal("the stored turn should hold the real output, not the notice")
+	}
+}

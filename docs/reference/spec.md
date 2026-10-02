@@ -385,18 +385,20 @@ three:
 |---|---|
 | Just before the first model call | The new user input — deferred so a failure ahead of that leaves no orphan message |
 | End of each turn | The items produced by that turn |
-| Final turn | **After `OnEnd` and the output guardrails pass** — a refused final output is never persisted |
+| Final turn | **After `OnEnd` and the output guardrails pass** — a final message they refuse is never persisted |
 
 - **Whether a tripped first-turn input guardrail leaves the user message behind
   is decided by `Blocking` alone**, in both entry points: a blocking one trips
   before the save; a racing one (the default) with the input already persisted.
 - **A tripped injection leaves none of its input behind**: injected input is
   screened before it is recorded ([§2.11b](#211b-run-control)).
-- **A refused final turn that ran tools is saved with their outputs
-  withheld**: written and announced as any other turn, each tool output
-  replaced by a fixed notice; `RunError.Result` keeps the real items. A turn
-  that ran no tool leaves nothing
+- **A turn `ToolResult.Terminate` ended, then refused by `OnEnd` or an output
+  guardrail, is saved with its tool outputs withheld**: each is replaced by a
+  fixed notice, and `RunError.Result` keeps the real items
   ([§5.79](../explanation/decisions.md#579-a-refused-final-turn-keeps-the-record-that-its-tools-ran)).
+- **A turn `ShouldStopAfterTurn` ended was written at its save point**, before
+  `OnEnd` and the output guardrails: a refusal there leaves its real items in
+  the session.
 - **A save that leaves nothing behind is announced as `ItemsPersistedEvent`.**
   The implication is one-way: the event guarantees every item the stream showed
   before it is in the store; its absence promises nothing (a run without a
