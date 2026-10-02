@@ -356,11 +356,13 @@ for a structured one. With compaction enabled, a context-overflow error from
 the provider also triggers a FORCED pass and the turn retries from the shrunk
 history (spec §2.5g) — the threshold predicts, this reacts.
 
-Plan and todo mode are NOT agent settings: `todo_write` is on every chat
-agent, and plan mode rides on the run request (`plan`) and belongs to the
-session, which reports it as `planning`
-([invariant 33](../explanation/workbench-invariants.md)); workflow authoring
-IS one, `behavior.workflow_authoring`, off by default
+Plan mode is NOT an agent setting: it rides on the run request (`plan`) and
+belongs to the session, which reports it as `planning`
+([invariant 33](../explanation/workbench-invariants.md)). The checklist IS
+one, `behavior.checklist`, off by default — on, chat runs get `todo_write`,
+which plan mode refuses while planning
+([decisions §5.82](../explanation/decisions.md#582-a-checklist-belongs-to-whoever-renders-it));
+so is workflow authoring, `behavior.workflow_authoring`, off by default
 ([invariant 39](../explanation/workbench-invariants.md)).
 `behavior.override_system_prompt` sends the agent's `instructions` alone —
 the `system_prompt` setting is not prepended, even when they are empty

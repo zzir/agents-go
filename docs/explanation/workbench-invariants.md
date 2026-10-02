@@ -202,12 +202,12 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     absent leaves the phase alone. Never an agent setting, never the model's
     decision. The phase is the materialized `sessions.planning` column,
     cleared by an approved `submit_plan`, copied by a fork (decisions §5.53).
-34. **A background run is built without plan mode or the task tools — and is
-    told that nobody is reading.** `submit_plan` would pause on an approval
-    nobody can see, so a background run gets neither, plus
-    `BackgroundInstructions` as a suffix (`bridge/agent.go`). Background means
-    the session is a task's child, and a lookup that FAILS is an error, not
-    "no". A chat run drops the task tools only via `behavior.subagents: false`.
+34. **A background run is built without what only a chat has, and is told
+    nobody is reading.** No plan mode (a person's switch, invariant 33),
+    checklist, task tools, memory or history tools, or workflow authoring;
+    `BackgroundInstructions` is its suffix. A trigger's turn and a wake-up are
+    chat runs. Background is "a task's child session", a FAILED lookup an
+    error; a chat run drops the task tools only via `behavior.subagents: false`.
 35. **A step's approval is answerable from the session that asked.**
     `GET /sessions/:id/approvals` includes the approvals paused inside this
     session's tasks, tagged with their task, so the chat is the one approval
@@ -390,8 +390,8 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     agent overrides it.** `behavior.override_system_prompt` sends the agent's
     own text alone, empty included (`layerInstructions`, `bridge/agent.go`),
     and the Context panel then lists no System prompt layer. Memories, the
-    sandbox prompt and the skills index are other layers with their own
-    switches and are unaffected — decisions §5.65.
+    sandbox prompt, the skills index, the plan preamble while planning and a
+    background run's suffix are other layers and unaffected — decisions §5.65.
 68. **The sidebar has two shapes and one divider.** Dragged well inside its
     260px minimum it snaps to a 48px rail (Expand, Workflows, New; the account
     menu at the foot) and snaps back only past a wider point, so the edge never

@@ -321,7 +321,7 @@ const (
 	// save_workflow (workbench invariant 39).
 	ToolSourceWorkflows = "workflows"
 	ToolSourceContext   = "context"
-	ToolSourceTodo      = "todo"
+	ToolSourceChecklist = "checklist"
 	ToolSourcePlan      = "plan"
 	// ToolSourceMCP is a prefix: "mcp:<server name>".
 	ToolSourceMCP = "mcp:"

@@ -2,6 +2,8 @@ package bridge
 
 import (
 	"context"
+	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -91,9 +93,10 @@ func TestBackgroundBuildIsToldNobodyIsReading(t *testing.T) {
 	}
 }
 
-// Plan and Todo rewrite the built ENTRY agent at build time, for every chat
-// agent — the registry a resume rebuilds must carry submit_plan/todo_write, or
-// the approved call fails with "tool not found on agent".
+// Plan rewrites the built ENTRY agent at build time, for every chat agent —
+// the registry a resume rebuilds must carry submit_plan, or the approved call
+// fails with "tool not found on agent". The checklist is not part of that: an
+// agent that did not ask for it has no todo_write.
 func TestBuildFullAgentAppliesWorkflowModes(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
@@ -117,8 +120,8 @@ func TestBuildFullAgentAppliesWorkflowModes(t *testing.T) {
 	for _, tl := range built.Agent.Tools {
 		names[tl.Name] = true
 	}
-	if !names[middleware.PlanToolName] || !names[middleware.TodoToolName] {
-		t.Fatalf("workflow tools missing from build: %v", names)
+	if !names[middleware.PlanToolName] || names[ChecklistToolName] {
+		t.Fatalf("a default build carries submit_plan and no checklist; got %v", names)
 	}
 	if built.PlanPhase == nil {
 		t.Fatal("plan mode build must expose its PlanPhase for the resume unlock")
@@ -222,5 +225,120 @@ func TestBuildFullAgentOverridesSystemPrompt(t *testing.T) {
 	}
 	if text, built := build(&store.AgentConfig{OwnerID: store.LocalUserID, Name: "overrides", Model: "gpt-test", Instructions: "Be brief.", Behavior: override}); !strings.Contains(text, "Be brief.") || strings.Contains(text, "Global rules.") || built.Profile.GlobalPromptChars != 0 {
 		t.Errorf("a stored agent with the override carries its own text and no global prompt; got:\n%s", text)
+	}
+	// "No text sends none" holds through the whole chat build: once the plan
+	// phase is over nothing the harness adds is left.
+	_, bare := build(&store.AgentConfig{OwnerID: store.LocalUserID, Name: "bare", Model: "gpt-test", Behavior: override})
+	if err := bare.PlanPhase.Unlock(); err != nil {
+		t.Fatal(err)
+	}
+	if text := resolve(bare.Agent); text != "" {
+		t.Errorf("an overriding agent with no text, past planning, sends %q; want no system prompt", text)
+	}
+}
+
+// The checklist is the agent's choice (behavior.checklist), off by default,
+// and a chat run's alone: a background run keeps no list nobody watches.
+func TestChecklistIsOptInAndChatOnly(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	agentConfigs := store.NewAgentConfigStore(db)
+	deps := &AgentDeps{
+		AgentConfigs: agentConfigs,
+		Providers:    store.NewProviderStore(db),
+		Settings:     settings.NewReader(store.NewSettingStore(db)),
+		Memories:     store.NewMemoryStore(db),
+	}
+	has := func(ac *store.AgentConfig, background bool) (bool, *BuildResult) {
+		t.Helper()
+		built, err := buildFullAgent(ctx, deps, ac.ID, "", background, "")
+		if err != nil {
+			t.Fatalf("build %q (background=%v): %v", ac.Name, background, err)
+		}
+		return hasTool(built, ChecklistToolName), built
+	}
+	plain := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "plain", Model: "gpt-test", Instructions: "Be brief."}
+	listed := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "listed", Model: "gpt-test", Instructions: "Be brief.", Behavior: store.BehaviorGroup{Checklist: true}}
+	for _, ac := range []*store.AgentConfig{plain, listed} {
+		if err := agentConfigs.Create(ctx, ac); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, _ := has(plain, false); got {
+		t.Error("an agent that did not ask for the checklist was given todo_write")
+	}
+	got, built := has(listed, false)
+	if !got {
+		t.Fatal("behavior.checklist did not give the chat run todo_write")
+	}
+	if got, _ := has(listed, true); got {
+		t.Error("a background run was given todo_write")
+	}
+	// It is a tool and nothing else: no preamble rides in the instructions,
+	// and the Context panel sizes it under its own source.
+	text, err := built.Agent.Instructions(ctx, nil, built.Agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.ToLower(text), "todo") || strings.Contains(strings.ToLower(text), "checklist") {
+		t.Errorf("the checklist added to the instructions:\n%s", text)
+	}
+	if !slices.ContainsFunc(built.Profile.Tools, func(b store.ToolBucket) bool { return b.Source == store.ToolSourceChecklist && b.Count == 1 }) {
+		t.Errorf("tool buckets = %+v, want one tool under %q", built.Profile.Tools, store.ToolSourceChecklist)
+	}
+}
+
+// Plan mode refuses the checklist like any tool that changes something: a
+// model that could keep a list while planning keeps one instead of a plan.
+func TestChecklistIsRefusedWhilePlanning(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	agentConfigs := store.NewAgentConfigStore(db)
+	ac := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "listed", Model: "gpt-test", Behavior: store.BehaviorGroup{Checklist: true}}
+	if err := agentConfigs.Create(ctx, ac); err != nil {
+		t.Fatal(err)
+	}
+	built, err := BuildFullAgent(ctx, &AgentDeps{
+		AgentConfigs: agentConfigs, Providers: store.NewProviderStore(db),
+		Settings: settings.NewReader(store.NewSettingStore(db)), Memories: store.NewMemoryStore(db),
+	}, ac.ID, "", store.LocalUserID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool := toolNamed(t, built.Agent.Tools, ChecklistToolName)
+	const args = `{"todos":[{"content":"write the migration","status":"in_progress"},{"content":"run it","status":"pending"}]}`
+	if out := invokeText(t, tool, args); !strings.Contains(out, "disabled while planning") {
+		t.Fatalf("while planning: %q, want the plan gate's refusal", out)
+	}
+	if err := built.PlanPhase.Unlock(); err != nil {
+		t.Fatal(err)
+	}
+	if out := invokeText(t, tool, args); out != "Checklist updated: 2 items (0 completed, 1 in progress, 1 pending)." {
+		t.Fatalf("after the plan: %q, want the update acknowledged", out)
+	}
+}
+
+// The schema says which statuses exist, and the call holds a model to it: a
+// backend that does not enforce the enum is answered with an error, the whole
+// list refused.
+func TestChecklistStatusIsAnEnum(t *testing.T) {
+	tool := checklistTool()
+	schema, _ := json.Marshal(tool.ParamsJSONSchema)
+	if !strings.Contains(string(schema), `"enum":["pending","in_progress","completed"]`) {
+		t.Fatalf("schema = %s, want status as an enum", schema)
+	}
+	for _, bad := range []string{
+		`{"todos":[{"content":"ship","status":"done"}]}`,
+		`{"todos":[{"content":"ship","status":""}]}`,
+		`{"todos":[{"content":"  ","status":"pending"}]}`,
+		`not json`,
+	} {
+		if _, err := tool.OnInvoke(context.Background(), &agents.ToolContext{}, bad); err == nil {
+			t.Errorf("%s was accepted, want an error", bad)
+		}
+	}
+	// An empty list is how the model clears it.
+	if out := invokeText(t, tool, `{"todos":[]}`); out != "Checklist updated: 0 items (0 completed, 0 in progress, 0 pending)." {
+		t.Errorf("empty list: %q", out)
 	}
 }

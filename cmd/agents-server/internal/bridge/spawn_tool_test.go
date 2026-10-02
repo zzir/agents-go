@@ -380,10 +380,9 @@ func TestDescribeTaskStateSaysTheStep(t *testing.T) {
 	}
 }
 
-// A workflow STEP is a background run: no plan mode, no todo, no task tools
-// (spawn_task included). Plan mode is the one that deadlocks — submit_plan pauses
-// for an approval, and a step's approval lands in a session nobody can open, so
-// the sequence would wait forever on a decision nobody can see.
+// A workflow STEP is a background run: no plan mode, no checklist, no task
+// tools (spawn_task included). Plan mode is a restraint only a person turns
+// on (invariant 33), and nobody started a step by typing.
 func TestWorkflowStepIsBuiltAsABackgroundRun(t *testing.T) {
 	ctx := context.Background()
 	var offered []string

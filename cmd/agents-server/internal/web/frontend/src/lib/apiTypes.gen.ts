@@ -8615,6 +8615,8 @@ export interface components {
         };
         /** @description The run-level settings, one JSON column per category (agent_config_groups.go); each a nested object in the API. */
         "store.BehaviorGroup": {
+            /** @description Checklist gives the agent's chat runs the todo_write checklist tool; off by default. */
+            checklist?: boolean;
             handoff_description?: string;
             handoff_input_filter?: string;
             max_tool_concurrency?: number;

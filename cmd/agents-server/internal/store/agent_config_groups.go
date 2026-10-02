@@ -27,6 +27,8 @@ type BehaviorGroup struct {
 	ReasoningItemIDPolicy string `json:"reasoning_item_id_policy,omitempty"`
 	// WorkflowAuthoring gives the agent's chat runs get_workflow / save_workflow; off by default.
 	WorkflowAuthoring bool `json:"workflow_authoring,omitempty"`
+	// Checklist gives the agent's chat runs the todo_write checklist tool; off by default.
+	Checklist bool `json:"checklist,omitempty"`
 	// Subagents grants the agent's chat runs the task tools; nil/true = on.
 	Subagents *bool `json:"subagents,omitempty"`
 	// Vision admits image attachments on this agent's runs; off by default.

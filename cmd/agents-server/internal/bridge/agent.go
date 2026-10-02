@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/zzir/agents-go/agents"
@@ -274,17 +275,27 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, project
 		result.RunGuardrails = result.Agent.Guardrails
 		result.Agent.Guardrails = nil
 	}
-	// Plan/todo rewrite the ENTRY agent at BUILD time (spec §2.12), last so the
-	// gates cover the task tools; unconditional (invariant 33); never background.
+	// Plan rewrites the ENTRY agent at BUILD time (spec §2.12), last so its
+	// gate covers the task tools and the checklist; unconditional (invariant
+	// 33); never background.
 	if !background && result.Agent != nil {
 		mark := len(result.Agent.Tools)
-		result.Agent = middleware.Todo{}.Apply(result.Agent)
-		mark = bucketToolsSince(result.Agent, mark, store.ToolSourceTodo, &result.Profile)
-		result.Agent, result.PlanPhase = middleware.Plan{}.Apply(result.Agent)
+		if result.Behavior.Checklist {
+			// A clone: the entry agent may also be a handoff target of its own graph.
+			entry := result.Agent.Clone()
+			entry.Tools = append(slices.Clone(entry.Tools), checklistTool())
+			result.Agent = entry
+			mark = bucketToolsSince(result.Agent, mark, store.ToolSourceChecklist, &result.Profile)
+		}
+		result.Agent, result.PlanPhase = middleware.Plan{ReadOnlyTools: planReadOnlyTools}.Apply(result.Agent)
 		bucketToolsSince(result.Agent, mark, store.ToolSourcePlan, &result.Profile)
 	}
 	return result, nil
 }
+
+// planReadOnlyTools are the tools left usable while planning beside those
+// that declare themselves read-only: the checklist is not one of them.
+var planReadOnlyTools = []string{"read_file", "list_files", "task_status"}
 
 // agentBuildCtx threads a recursive handoff build: stack is the recursion PATH
 // (cycle detection — a diamond's shared node is no back-edge), cache reuses builds.

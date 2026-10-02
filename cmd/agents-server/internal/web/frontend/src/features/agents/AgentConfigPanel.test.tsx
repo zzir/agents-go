@@ -33,6 +33,13 @@ describe('flattenConfig / nestConfig', () => {
     expect(new Set(all).size).toBe(all.length);
   });
 
+  // The checklist switch is the behavior group's: read from it, saved into it.
+  it('reads and writes the checklist switch as behavior.checklist', () => {
+    expect(flattenConfig({ name: 'x', behavior: { checklist: true } }).checklist).toBe(true);
+    expect(flattenConfig({ name: 'x', behavior: {} }).checklist).toBeUndefined();
+    expect(nestConfig({ name: 'x', checklist: true }).behavior).toEqual({ checklist: true });
+  });
+
   // A group the server omitted, or a key it never set, reads as unset — never
   // as a thrown error or a stray empty group on the form.
   it('tolerates a missing group and an undefined key', () => {

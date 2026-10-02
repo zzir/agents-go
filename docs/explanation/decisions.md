@@ -1550,7 +1550,9 @@ Decided 2026-09-08.
 setting from that agent's instructions wholesale: the model's system prompt
 is the agent's own text, and an agent with no text sends none. The other
 layers — memories, the sandbox prompt, the skills index — keep their own
-switches; a handoff target decides for itself.
+switches, and the harness's mode layers stay: the plan preamble while the
+session plans, the suffix a background run is told nobody reads through. A
+handoff target decides for itself.
 
 **Rejected.** Falling back to the global prompt when the agent's text is
 empty — the empty case is the point: an agent driven by a stored prompt
@@ -1944,3 +1946,28 @@ guardrail replaced matches no queued bubble: it shows in the timeline, and the
 original returns to the box when the run ends.
 
 Rules: [invariant 16](workbench-invariants.md)
+
+### 5.82 A checklist belongs to whoever renders it
+
+Decided 2026-10-03.
+
+**Decision.** The workbench owns `todo_write`: a tool of its own, on an
+agent's chat runs when `behavior.checklist` is set, off by default, refused
+while the session plans. The SDK's `middleware.Todo` loses its one consumer
+and is deprecated, to be removed with the next breaking minor.
+
+**Rejected.** On for every chat agent, as since 2026-08 ("when a job is worth
+tracking is the model's judgement"): the judgement needs the tool listed on
+every request, and the listing is the cost — about 260 tokens a request, a
+preamble that an overriding agent with no text still sent, and both reference
+harnesses off by default. Keeping it in the SDK: a list is rendered by a host,
+and the host is who knows its statuses. Folding it into `agents/tasks`: a
+checklist is one run's notes, a task outlives its run. Deleting it before the
+checklist benchmark reports.
+
+**Cost accepted.** A weaker or local model that needs the list has to be given
+it by hand, per agent rather than per model: the project keeps no table of
+model capabilities (scope §1.2). An agent that had `todo_write` loses it until
+the switch is turned on. Revisit when the checklist benchmark reports.
+
+Rules: [invariant 34](workbench-invariants.md), [invariant 67](workbench-invariants.md)
