@@ -14,7 +14,8 @@ The agent workbench you run yourself: see what the model saw, replay it,
 fork it — **"Go agents. Local first."** Concretely, `agents-server`: one
 binary, your data in SQLite (or PostgreSQL), an embedded UI, and a debug loop
 in which the transcript is the truth, a context lens and traces show what the
-model was sent, and any turn can be replayed or forked.
+model was sent, any model call can be replayed with edits, and any turn forked
+or regenerated.
 
 The SDK underneath it — the root module of this repository — is the same core
 consumed a second way: embedded in your own Go program, with no dependency on
@@ -101,7 +102,7 @@ against graduates into §1.2 above.
   tool's arguments go through this guardrail" — is a separate thing the SDK
   does not model; it would need a `Stages`-like selector keyed by tool name.
 - **Renderer hints on tool-call cards.** The `display.renderer` hint
-  ("terminal", "diff", "table") travels end to end — `ToolResult.Display` to
-  the stored display JSON to the timeline, live and replay — but
-  `ToolCallCard` does not branch on it yet: a terminal view for shell output
-  and a diff view for a patch are the remaining work.
+  ("terminal", "task") travels end to end — `ToolResult.Display` to the stored
+  display JSON to the timeline, live and replay — but `ToolCallCard` does not
+  branch on it yet: a terminal view for `exec_command` output is the remaining
+  work. A patch's arguments already render as a diff, keyed by tool name.

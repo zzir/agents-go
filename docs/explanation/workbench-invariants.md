@@ -122,9 +122,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
 20. **A task is a durable entity; a run is one execution of it.** The row
     carries `run_id` (the current attempt); events carry `task_id` and
     `attempt`, so clients route by run id and key task state by task id. The
-    transcript lives in a hidden child session; the spawn target is an agent
-    config by name (`task_runner.go`). Task events use the chat runs' bus,
-    cursors, approval persistence and retention — never their own transport.
+    transcript lives in a hidden child session; the spawn target is the handoff
+    graph's config (invariant 75). Task events use the chat runs' bus, cursors,
+    approval persistence and retention — never their own transport.
 21. **The spawn card's durable truth is an appended update entry.** A state
     change APPENDS an update addressed to the spawn call's id; the read folds
     it in — non-empty fields, terminal only, never backwards (`task_env.go`,
@@ -243,7 +243,7 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     presentation; the backend reads through `settings.Reader` (no reader has
     its own fallback), masking is `Kind == secret`, the panel renders the
     served table, and every bool is one switch with a registered default,
-    stored on click (`SettingsPanel.tsx`); no env fallback (spec §2.14).
+    stored on click (`SettingsPanel.tsx`); no env fallback (invariant 54).
 41. **A destructive action confirms once, in one place.** Every Delete (sessions,
     skills, tasks, triggers, unrecognized settings), clearing a settings section
     and a scope flip (`lib/scopeFlipPrompt.ts`) go through `useCrud.remove` or
