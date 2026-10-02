@@ -187,6 +187,10 @@ non-goals, §3 capabilities not provided). The two that come up most:
 
   and read the snippets around each hit rather than only the prose.
 
+  The same check runs when you **write or rewrite** a decision, a spec bullet
+  or an invariant: every path, symbol, default and number it names is read in
+  the code in that change.
+
 - **`docs/` is sorted by what the reader came for**, and a new page goes in the
   directory that matches — a page that fits none of the four is two pages:
 
