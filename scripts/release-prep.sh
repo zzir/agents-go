@@ -29,14 +29,17 @@ own_requires() {
   ' "$1/go.mod"
 }
 
-# Every go.mod beside the root's is in exactly one of the two lists.
+# Every go.mod beside the root's is in exactly one of the two lists. The tree
+# is walked rather than asked of git, so the check also runs in a container
+# that mounts the repository (where git refuses another user's checkout).
 check_lists() {
-  local listed tracked
+  local listed found
   listed=$(printf '%s\n' "${LIB_MODULES[@]}" "${APP_MODULES[@]}" | sort)
-  tracked=$(git ls-files '*/go.mod' | sed 's|/go.mod$||' | sort)
-  if [ "$listed" != "$tracked" ]; then
+  found=$(find . \( -name node_modules -o -name '.?*' \) -prune -o -name go.mod ! -path ./go.mod -print |
+    sed -e 's|^\./||' -e 's|/go.mod$||' | sort)
+  if [ "$listed" != "$found" ]; then
     echo "scripts/modules.sh does not list the repository's modules:" >&2
-    diff <(echo "$listed") <(echo "$tracked") >&2 || true
+    diff <(echo "$listed") <(echo "$found") >&2 || true
     exit 1
   fi
 }
